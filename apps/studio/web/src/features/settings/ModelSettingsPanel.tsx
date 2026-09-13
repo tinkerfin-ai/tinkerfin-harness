@@ -83,12 +83,14 @@ export function ModelSettingsPanel({ onChanged, onToast }: { onChanged?: () => v
   const optionsCount = parsed.value ? Object.keys(parsed.value).length : 0
 
   return <section className="settings-section settings-models">
+    {editing && <div className="settings-models__navigation">
+      <Button type="button" className="settings-models__back" variant="text" size="sm" leadingIcon={<ArrowLeft size={16} />} disabled={saving} onClick={leaveEditing}>{t('返回模型列表')}</Button>
+    </div>}
     <div ref={scrollViewport} className="settings-models__scroll ui-scrollbar" role="region" aria-label={t('设置')} tabIndex={0}>
     {!editing && <div className="settings-models__heading">
       <h3>{t('模型配置')}</h3>
       <Button type="button" variant="primary" size="xs" disabled={loading || saving} onClick={() => startEditing(newModel())}>{t('添加模型')}</Button>
     </div>}
-    {editing && <Button type="button" className="settings-models__back" variant="text" leadingIcon={<ArrowLeft size={16} />} disabled={saving} onClick={leaveEditing}>{t('返回模型列表')}</Button>}
     {loadFailed && !editing && <div className="settings-models__error-row"><Button type="button" size="xs" disabled={saving} onClick={() => state.setRevision((value) => value + 1)}>{t('重新加载模型')}</Button></div>}
     {editing ? <>
       <ValidatedForm id={`${id}-form`} errors={validation.errors} validationAttempt={validation.attempt} onSubmit={(event) => { event.preventDefault(); if (validation.validate() && !invalidOptions) { test.invalidate(); void state.save(editing.purpose === 'image' ? merged ?? {} : {}) } }}>

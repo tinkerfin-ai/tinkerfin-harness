@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   normalizeAppLocation,
+  readPageFromLocation,
   readThreadFromLocation,
-  writeThreadToLocation,
+  writeWorkspaceToLocation,
 } from './threadRoute'
 
 describe('threadRoute', () => {
@@ -27,14 +28,14 @@ describe('threadRoute', () => {
   })
 
   it('writes the thread id into the URL', () => {
-    writeThreadToLocation('thread-xyz')
+    writeWorkspaceToLocation('conversation', 'thread-xyz')
     expect(window.location.search).toContain('thread=thread-xyz')
     expect(readThreadFromLocation()).toBe('thread-xyz')
   })
 
   it('removes the param when given an empty thread id', () => {
     window.history.replaceState(null, '', '/?thread=stale')
-    writeThreadToLocation('')
+    writeWorkspaceToLocation('conversation', '')
     expect(window.location.search).toBe('')
     expect(readThreadFromLocation()).toBe('')
   })
@@ -42,7 +43,7 @@ describe('threadRoute', () => {
   it('does not call replaceState when the URL already matches', () => {
     window.history.replaceState(null, '', '/?thread=already')
     const replaceState = vi.spyOn(window.history, 'replaceState')
-    writeThreadToLocation('already')
+    writeWorkspaceToLocation('conversation', 'already')
     expect(replaceState).not.toHaveBeenCalled()
   })
 
@@ -78,5 +79,44 @@ describe('threadRoute', () => {
 
     expect(readThreadFromLocation()).toBe('scroll-thread')
     expect(window.sessionStorage.getItem('tinkerfin:conversation-scroll:scroll-thread')).toBe('240')
+  })
+})
+
+describe('页面与会话独立恢复', () => {
+  afterEach(() => { window.history.replaceState(null, '', '/'); window.sessionStorage.clear() })
+  it('自动化地址不携带后台会话，返回对话时恢复指定会话并保留其他 URL 信息', () => {
+    window.history.replaceState(null, '', '/?thread=existing&filter=a#top')
+    writeWorkspaceToLocation('automation', 'existing')
+    expect(readPageFromLocation()).toBe('automation')
+    expect(window.location.search).toBe('?filter=a&page=automation')
+    expect(readThreadFromLocation()).toBe('')
+    writeWorkspaceToLocation('automation', 'next')
+    expect(window.location.search).toBe('?filter=a&page=automation')
+    writeWorkspaceToLocation('conversation', 'next')
+    expect(window.location.search).toBe('?filter=a&thread=next')
+    expect(window.location.hash).toBe('#top')
+  })
+  it('自动化页不从无关 thread 参数恢复会话', () => {
+    window.history.replaceState(null, '', '/?page=automation&thread=irrelevant')
+    expect(readThreadFromLocation()).toBe('')
+  })
+  it('自动化刷新、重复写入和未知路径恢复不依赖会话，返回草稿清空页面参数', () => {
+    window.history.replaceState(null, '', '/?thread=old')
+    writeWorkspaceToLocation('automation', 'old')
+    const replace = vi.spyOn(window.history, 'replaceState')
+    writeWorkspaceToLocation('automation', 'old')
+    expect(replace).not.toHaveBeenCalled()
+    replace.mockRestore()
+    window.history.replaceState(null, '', '/unknown')
+    normalizeAppLocation()
+    expect(window.location.search).toBe('?page=automation')
+    expect(readThreadFromLocation()).toBe('')
+    writeWorkspaceToLocation('conversation', '')
+    expect(window.location.search).toBe('')
+  })
+  it('缺省或未知页面继续打开对话', () => {
+    window.history.replaceState(null, '', '/?page=unknown&thread=existing')
+    expect(readPageFromLocation()).toBe('conversation')
+    expect(readThreadFromLocation()).toBe('existing')
   })
 })

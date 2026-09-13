@@ -72,7 +72,7 @@ import {
   selectCurrentConversation,
   updateConversation,
 } from '../../lib/workspace'
-import { readThreadFromLocation, writeThreadToLocation } from '../../lib/threadRoute'
+import { readPageFromLocation, readThreadFromLocation, writeWorkspaceToLocation } from '../../lib/threadRoute'
 import type {
   ApprovalState,
   Conversation,
@@ -153,7 +153,7 @@ export function WorkspaceScreen({
   const [isModelPickerOpen, setModelPickerOpen] = useState(false)
   const [pendingResume, setPendingResume] = useState<PendingResume | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [activePage, setActivePage] = useState<'conversation' | 'automation'>('conversation')
+  const [activePage, setActivePage] = useState(readPageFromLocation)
   const [automationModalOpen, setAutomationModalOpen] = useState(false)
   const [workspaceView, setWorkspaceView] = useState<'conversation' | 'trace'>('conversation')
   const settingsRestoreFocus = useRef<HTMLElement | null>(null)
@@ -352,20 +352,20 @@ export function WorkspaceScreen({
     const observer = new ResizeObserver(measure)
     observer.observe(composer)
     return () => observer.disconnect()
-  }, [syncConversationToBottomIfFollowing, workspaceView])
+  }, [activePage, syncConversationToBottomIfFollowing, workspaceView])
 
-  // 当前会话变化时同步进 URL（草稿 currentThreadId==='' → 删除参数），覆盖点击选择、
-  // 新建草稿、首条消息后后端回报 reportedThreadId、删除会话等全部来源
+  // 页面与会话统一写入地址，自动化页中的后台会话更新不会带入 thread 参数
   useEffect(() => {
     if (!isHistoryBootstrapped) return
-    writeThreadToLocation(workspace.currentThreadId)
-  }, [isHistoryBootstrapped, workspace.currentThreadId])
+    writeWorkspaceToLocation(activePage, workspace.currentThreadId)
+  }, [activePage, isHistoryBootstrapped, workspace.currentThreadId])
 
   // 历史导航释放草稿的页面选择权，迟到的首帧只能更新原会话
   useEffect(() => {
     const onPopState = () => {
       releaseDraft()
       const threadId = readThreadFromLocation()
+      setActivePage(readPageFromLocation())
       setWorkspaceView('conversation')
       setWorkspace((state) =>
         state.currentThreadId === threadId

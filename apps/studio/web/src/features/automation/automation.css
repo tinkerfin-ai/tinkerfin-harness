@@ -6,7 +6,11 @@
 
   .automation-content {
     width: 100%;
-    padding: var(--space-6);
+    padding: var(--space-6) var(--space-8);
+  }
+
+  .chat-header:has(.header-navigation):has(.automation-header-actions) {
+    padding-inline: var(--space-8);
   }
 
   .automation-toolbar,
@@ -186,6 +190,7 @@
 
   @media (max-width: 767px) {
     .automation-content { padding: var(--space-4); }
+    .chat-header:has(.header-navigation):has(.automation-header-actions) { padding-inline: var(--space-2); }
     .automation-toolbar { flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-4); }
     .automation-date-nav { flex-wrap: wrap; }
     .automation-week { display: flex; padding-bottom: var(--space-2); }

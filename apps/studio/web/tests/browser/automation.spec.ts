@@ -518,3 +518,60 @@ test('触控环境的会话与自动化权限按钮及选项达到44像素', asy
     }
   } finally { await context.close() }
 })
+
+test('自动化刷新保留页面，新会话的 Logo 与输入框独立居中', async ({ page }) => {
+  await prepare(page)
+  await expect(page).toHaveURL(/\/\?page=automation$/)
+  await page.reload()
+  await expect(page).toHaveURL(/\/\?page=automation$/)
+  await expect(page.getByRole('tab', { name: '历史', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '新会话', exact: true }).click()
+  await expect(page.locator('.composer-dock.is-hero')).toBeVisible()
+  await expect(page).not.toHaveURL(/page=automation/)
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme }, theme)
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect.poll(() => page.evaluate(() => {
+        const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect()
+        const area = box('.workspace-main')
+        const logo = box('.composer-hero')
+        const input = box('.composer')
+        return Math.abs((logo.top + input.bottom - area.top - area.bottom) / 2)
+      })).toBeLessThanOrEqual(1)
+    }
+  }
+  await page.reload()
+  await expect(page.locator('.composer-dock.is-hero')).toBeVisible()
+})
+
+
+test('功能菜单常规字重，日期范围两端完整显示且适应浅深主题四尺寸', async ({ page }, testInfo) => {
+  await prepare(page)
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme }, theme)
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      if (width < 768) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+      else if (await page.getByRole('button', { name: '打开侧边栏', exact: true }).isVisible()) {
+        await page.getByRole('button', { name: '打开侧边栏', exact: true }).click()
+      }
+      const menu = page.getByRole('navigation', { name: '工作区功能' })
+      for (const name of ['智能体', '技能库', '自动化', '更多']) {
+        await expect(menu.getByRole('button', { name, exact: true })).toHaveCSS('font-weight', '400')
+      }
+      await expect(menu.getByRole('button', { name: '自动化', exact: true })).toHaveAttribute('aria-current', 'page')
+      await page.screenshot({ path: testInfo.outputPath(`menu-${theme}-${width}.png`) })
+      if (width < 768) await page.getByRole('button', { name: '关闭导航', exact: true }).click()
+      await expect(page.getByRole('heading', { name: '9月7日 – 9月13日', exact: true })).toBeVisible()
+      await page.getByRole('button', { name: '上一周', exact: true }).click()
+      await expect(page.getByRole('heading', { name: '8月31日 – 9月6日', exact: true })).toBeVisible()
+      await page.getByRole('button', { name: '上一周', exact: true }).click()
+      await expect(page.getByRole('heading', { name: '8月24日 – 8月30日', exact: true })).toBeVisible()
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)
+      expect(overflow).toBe(false)
+      await page.screenshot({ path: testInfo.outputPath(`dates-${theme}-${width}.png`) })
+      await page.getByRole('button', { name: '回到本周', exact: true }).click()
+    }
+  }
+})

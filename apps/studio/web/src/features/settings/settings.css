@@ -121,9 +121,9 @@
   .settings-choice-trigger:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 0; }
   .settings-choice-trigger:disabled { cursor: not-allowed; opacity: .48; }
   .settings-choice-options { position: absolute; z-index: var(--layer-dropdown); right: 0; left: 0; margin-top: var(--space-1); padding: var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-xl); background: var(--color-layer-1); box-shadow: var(--shadow-3); outline: 0; }
-  .settings-choice-option { border: 0; border-radius: var(--radius-lg); }
-  .settings-choice-option:hover,
-  .settings-choice-option[data-active='true'] { background: var(--color-hover); }
+  .settings-choice-option { border: 0; border-radius: var(--radius-lg); background: transparent; box-shadow: none; }
+  .settings-choice-option[data-active='true']:not([aria-selected='true']) { outline: 1px solid var(--color-border-strong); outline-offset: -1px; }
+  .settings-choice-option:hover { background: var(--color-hover); outline: 0; }
   .settings-choice-option:active { background: var(--color-active); }
   .settings-choice-option:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
   .settings-choice-check { display: grid; width: var(--icon-md); height: var(--icon-md); flex: 0 0 auto; place-items: center; color: var(--color-brand-text); }

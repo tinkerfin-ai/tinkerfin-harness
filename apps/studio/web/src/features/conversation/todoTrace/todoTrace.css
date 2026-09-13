@@ -144,9 +144,9 @@
     grid-template-rows: var(--type-ui-line);
   }
 
-  .todo-trace-group-toggle:hover { background: var(--color-hover); }
+  .todo-trace-group-toggle:hover { background: transparent; }
 
-  .todo-trace-group-toggle:active { background: var(--color-active); }
+  .todo-trace-group-toggle:active { background: transparent; }
 
   .todo-trace-node-icon {
     display: grid;

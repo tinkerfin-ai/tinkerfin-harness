@@ -181,7 +181,7 @@
     justify-content: flex-start;
     border: 0;
     font-size: var(--type-ui-size);
-    font-weight: var(--weight-medium);
+    font-weight: var(--weight-regular);
     line-height: var(--type-ui-line);
   }
 
@@ -558,6 +558,11 @@
     padding: 0 var(--space-3);
     background: color-mix(in srgb, var(--color-canvas) 94%, transparent);
     backdrop-filter: blur(12px);
+  }
+
+  .workspace-main:has(.composer-dock.is-hero) > .chat-header {
+    grid-row: 1;
+    grid-column: 1;
   }
 
   .chat-header:has(.header-navigation) {

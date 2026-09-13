@@ -3494,3 +3494,59 @@ test('审批确认按钮在浅深主题与四尺寸保持中性色实心胶囊�
     await page.screenshot({ path: testInfo.outputPath(`approval-solid-${theme}.png`) })
   }
 })
+
+test('工具图标、展开箭头和错误状态点共用第一行图标中心线', async ({ page }, testInfo) => {
+  const tools = (prefix: string, runId: string): Message[] => (['completed', 'failed', 'cancelled'] as const).map((status, index) => ({
+    id: `${prefix}-${index}`, role: 'tool', content: 'glob', createdAt: BASE_TIME,
+    meta: {
+      toolName: 'glob', toolCallId: `${prefix}-${index}`, runId,
+      params: '{"pattern":"**/AGENTS.md"}', result: index ? 'Error: file_not_found' : '/AGENTS.md',
+      status,
+    },
+  }))
+  await mockStudio(page, {
+    conversationMessages: [
+      { id: 'align-user', role: 'user', content: '图标中心线检查', createdAt: BASE_TIME },
+      ...tools('align-main', 'browser-run'),
+      { id: 'align-agent', role: 'subagent', content: '', createdAt: BASE_TIME,
+        meta: { agentName: 'researcher', status: 'completed', subRunId: 'align-subrun', result: '完成' } },
+      ...tools('align-child', 'align-subrun'),
+    ],
+    expectedMessageText: '图标中心线检查',
+  })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.locator('#align-agent > summary').click()
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => {
+      document.documentElement.dataset.theme = theme
+      document.documentElement.style.colorScheme = theme
+    }, theme)
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      for (const prefix of ['align-main', 'align-child']) {
+        const normal = page.locator(`#${prefix}-0 > summary`)
+        const icon = normal.locator('.tool-row-icon svg')
+        const center = async (target: Locator) => target.evaluate(el => {
+          const rect = el.getBoundingClientRect()
+          return rect.left + rect.width / 2
+        })
+        const baseline = await center(icon)
+        expect(await icon.evaluate(el => el.getBoundingClientRect().left))
+          .toBe(await normal.locator('.tool-row-leading').evaluate(el => el.getBoundingClientRect().left))
+        for (const index of [1, 2]) {
+          expect(await center(page.locator(`#${prefix}-${index} .tool-row-state-dot`))).toBe(baseline)
+        }
+        await normal.hover()
+        const arrow = normal.locator('.tool-row-chevron')
+        await expect(arrow).toHaveCSS('opacity', '1')
+        expect(await center(arrow)).toBe(baseline)
+        await normal.click()
+        await expect(page.locator(`#${prefix}-0`)).toHaveAttribute('open', '')
+        expect(await center(arrow)).toBe(baseline)
+        await normal.click()
+      }
+      await page.mouse.move(0, 0)
+      await page.screenshot({ path: testInfo.outputPath(`icon-centers-${theme}-${width}.png`) })
+    }
+  }
+})

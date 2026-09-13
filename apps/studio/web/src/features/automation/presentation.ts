@@ -16,11 +16,7 @@ export function formatDateRange(start: string, end: string, locale: string): str
     month: 'short', day: 'numeric', timeZone: 'UTC',
     ...(sameYear ? {} : { year: 'numeric' }),
   })
-  if (locale !== 'zh-CN') return formatter.formatRange(first, last)
-  const endFormatter = sameYear && start.slice(0, 7) === end.slice(0, 7)
-    ? new Intl.DateTimeFormat(locale, { day: 'numeric', timeZone: 'UTC' })
-    : formatter
-  return `${formatter.format(first)} – ${endFormatter.format(last)}`
+  return `${formatter.format(first)} – ${formatter.format(last)}`
 }
 
 export function formatSchedule(schedule: AutomationSchedule, locale: string, t: Translate): string {

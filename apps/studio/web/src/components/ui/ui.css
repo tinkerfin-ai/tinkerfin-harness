@@ -1368,17 +1368,55 @@
   .ui-compact-picker-trigger:focus-visible { outline: 0; background: var(--color-hover); color: var(--color-text-primary); box-shadow: none; }
   .ui-compact-picker-trigger:disabled { cursor: not-allowed; opacity: .48; }
   .ui-compact-picker-trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ui-compact-picker-options { position: absolute; right: 0; bottom: calc(100% + var(--space-2)); z-index: var(--layer-dropdown); width: min(250px, calc(100cqw - var(--control-lg) - var(--space-2))); max-height: min(320px, calc(100vh - 96px)); overflow-y: auto; padding: var(--space-1); border: 0; outline: 0; border-radius: var(--radius-xl); background: var(--color-layer-1); box-shadow: var(--shadow-2); }
-  .ui-compact-picker--trigger-width .ui-compact-picker-options { width: 100%; }
-  .ui-compact-picker-options [role='option'] { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: var(--control-xs); padding: var(--space-1) calc(var(--space-2) + var(--space-0-5)); border-radius: var(--radius-lg); cursor: pointer; box-shadow: none; }
-  .ui-compact-picker--trigger-width .ui-compact-picker-options [role='option'] { gap: var(--space-1); padding-inline: var(--space-1); }
-  .ui-compact-picker-options [role='option']:focus { outline: 0; background: var(--color-hover); }
-  .ui-compact-picker-options [role='option']:hover,
-  .ui-compact-picker-options [role='option'][data-active='true'] { background: var(--color-hover); box-shadow: none; }
-  .ui-compact-picker-options .ui-compact-option-label { flex: 1; min-width: 0; }
+  .ui-compact-picker--access-mode .ui-compact-picker-trigger {
+    display: flex;
+    justify-content: flex-start;
+    gap: var(--space-2);
+    padding-inline: var(--space-3);
+    border-radius: var(--radius-lg);
+    text-align: left;
+  }
+  .ui-compact-picker--access-mode .ui-compact-picker-chevron { margin-left: var(--space-1); }
+  .ui-compact-picker--access-mode .ui-compact-picker-trigger[aria-expanded='true'] { background: transparent; box-shadow: none; color: var(--color-text-primary); }
+  .ui-compact-picker-options { position: absolute; right: 0; bottom: calc(100% + var(--space-2)); z-index: var(--layer-dropdown); width: min(250px, calc(100cqw - var(--control-lg) - var(--space-2))); max-height: min(320px, calc(100vh - 96px)); overflow-y: auto; padding: var(--space-2); border: 0; outline: 0; border-radius: var(--radius-2xl); background: var(--color-layer-1); box-shadow: var(--shadow-2); }
+  .ui-compact-picker--access-mode .ui-compact-picker-options {
+    right: auto;
+    left: 0;
+    width: min(calc(var(--space-16) * 2 + var(--space-12)), calc(100cqw - var(--control-lg) - var(--space-2)));
+  }
+  .ui-compact-picker-options [role='option'] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--icon-sm);
+    align-items: center;
+    justify-content: stretch;
+    gap: var(--space-2);
+    min-height: var(--control-md);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-md);
+    font-size: var(--type-ui-size);
+    font-weight: var(--weight-regular);
+    line-height: var(--type-ui-line);
+    cursor: pointer;
+    box-shadow: none;
+  }
+  .ui-compact-picker--access-mode .ui-compact-picker-options [role='option'] {
+    grid-template-columns: var(--icon-sm) minmax(0, 1fr) var(--icon-sm);
+  }
+  .ui-compact-picker-options [role='option']:focus { outline: 0; background: transparent; }
+  .ui-compact-picker-options [role='option'][aria-selected='true'],
+  .ui-compact-picker-options [role='option'][data-active='true'] { background: transparent; box-shadow: none; }
+  .ui-compact-picker-options [role='option'][data-active='true']:not([aria-selected='true']) { outline: 1px solid var(--color-border-strong); outline-offset: -1px; }
+  .ui-compact-picker-options [role='option']:hover { background: var(--color-hover); outline: 0; }
+  .ui-compact-picker-options .ui-compact-option-label { min-width: 0; }
+  .ui-compact-picker--access-mode .ui-compact-option-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ui-compact-picker-options .ui-compact-option-check { display: grid; width: var(--icon-sm); place-items: center; }
+  .ui-compact-picker-chevron { flex: 0 0 auto; transition: transform var(--motion-fast) var(--ease-out); }
+  .ui-compact-picker-trigger[aria-expanded='true'] .ui-compact-picker-chevron { transform: rotate(180deg); }
   @media (forced-colors: active) {
     .ui-compact-picker-options { border-color: ButtonText; background: Canvas; color: CanvasText; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ui-compact-picker-chevron { transition: none; }
   }
 }
 

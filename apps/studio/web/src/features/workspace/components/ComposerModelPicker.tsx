@@ -71,7 +71,7 @@ export function ComposerModelPicker({
       renderTrigger={(selected) => (
         <>
           <span>{modelDisplayName(selected) || t('加载模型…')}</span>
-          <ChevronDown size={14} />
+          <ChevronDown className="ui-compact-picker-chevron" size={14} />
         </>
       )}
       renderOption={(option, selected) => (

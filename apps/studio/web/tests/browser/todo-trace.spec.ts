@@ -116,15 +116,23 @@ const detail = ({
   visibleGroups = groups,
   taskTraceGroups = groups,
   includeTaskTrace,
+  answer,
   historyCursor = null,
 }: {
   groups: readonly TodoGroup[]
   visibleGroups?: readonly TodoGroup[]
   taskTraceGroups?: readonly TodoGroup[]
   includeTaskTrace: boolean
+  answer?: string
   historyCursor?: string | null
 }): ConversationHistoryDetail => {
   const entities = traceEntities(groups, visibleGroups)
+  if (answer) entities.messages.push({
+    agui: null, id: 'spacing-answer', traceSeq: groups.length * 2 + 1,
+    sourceId: 'spacing-answer', graphNamespace: [], runId: RUN_ID,
+    role: 'assistant', content: answer, contentOmitted: false, status: 'completed',
+    createdAt: new Date(BASE_TIME).toISOString(), completedAt: new Date(BASE_TIME).toISOString(),
+  })
   const taskTrace: TaskTraceSnapshot | null = includeTaskTrace
     ? { status: 'ready', todoGroups: [...taskTraceGroups] }
     : null
@@ -144,7 +152,7 @@ const detail = ({
     runFailures: [],
     availableHeads: [RUN_ID],
     historyCursor,
-    messageCount: groups.length,
+    messageCount: groups.length + (answer ? 1 : 0),
     toolCallCount: groups.length,
     messages: entities.messages,
     reasoning: [],
@@ -171,12 +179,14 @@ const detail = ({
 
 async function mockTodoTraceStudio(page: Page, {
   groups,
+  answer,
   taskTraceGroups = groups,
   visibleGroups = groups,
   olderGroups,
   historyCursor = null,
 }: {
   groups: TodoGroup[]
+  answer?: string
   taskTraceGroups?: TodoGroup[]
   visibleGroups?: TodoGroup[]
   olderGroups?: TodoGroup[]
@@ -229,7 +239,7 @@ async function mockTodoTraceStudio(page: Page, {
           status: visibleGroups[0]?.status === 'running' ? 'running' : 'idle',
           lastRunId: RUN_ID,
           lastModel: 'GPT-5.5',
-          messageCount: groups.length,
+          messageCount: groups.length + (answer ? 1 : 0),
           toolCallCount: groups.length,
           hasPendingInterrupt: false,
           pendingInteractionKind: null,
@@ -248,6 +258,7 @@ async function mockTodoTraceStudio(page: Page, {
         olderRequests += 1
         await fulfillJson(route, detail({
           groups,
+          answer,
           taskTraceGroups,
           visibleGroups: [...visibleGroups, ...olderGroups],
           includeTaskTrace: false,
@@ -257,6 +268,7 @@ async function mockTodoTraceStudio(page: Page, {
       }
       await fulfillJson(route, detail({
         groups,
+        answer,
         taskTraceGroups,
         visibleGroups,
         includeTaskTrace,
@@ -273,6 +285,7 @@ async function mockTodoTraceStudio(page: Page, {
           type: 'snapshot',
           snapshot: detail({
             groups,
+            answer,
             taskTraceGroups,
             visibleGroups,
             includeTaskTrace,
@@ -513,6 +526,15 @@ test('浅深主题和四个目标视口保持无描边、无提示与对齐', as
 
     for (const width of [320, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: 900 })
+      const historyToggle = drawer.getByRole('button', { name: `收起任务组：${completedPreview}` })
+      await historyToggle.hover()
+      await expect(historyToggle).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(historyToggle).toHaveCSS('box-shadow', 'none')
+      await page.mouse.down()
+      await expect(historyToggle).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await page.mouse.move(0, 0)
+      await page.mouse.up()
+
       const metrics = await drawer.evaluate((element) => {
         const mark = element.querySelector('.todo-trace-completed-mark')
         const wrapper = mark?.parentElement
@@ -785,3 +807,54 @@ test('对话 Todos 卡片在浅深色和各视口保持布局与完成图标契�
   await expect(mark).toBeHidden()
   expect(evidence.pageErrors).toEqual([])
 })
+
+
+for (const hasTouch of [false, true]) {
+  test(`有无任务轨迹时复制按钮到输入框的间距一致（触控：${hasTouch}）`, async ({ browser, baseURL }, testInfo) => {
+    const context = await browser.newContext({ hasTouch, baseURL })
+    const page = await context.newPage()
+    try {
+      const groups = makeGroups(1)
+      const taskTraceGroups: TodoGroup[] = []
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await mockTodoTraceStudio(page, {
+        groups, taskTraceGroups,
+        answer: Array.from({ length: 40 }, (_, i) => `验证段落 ${i + 1}：用于保持回答内容超过当前视口。`).join('\n\n'),
+      })
+      for (const theme of ['light', 'dark']) {
+        for (const width of [320, 768, 1024, 1440]) {
+          const gaps: number[] = []
+          await page.setViewportSize({ width, height: 900 })
+          for (const withTasks of [false, true]) {
+            taskTraceGroups.splice(0, taskTraceGroups.length, ...(withTasks ? groups : []))
+            await page.evaluate(theme => localStorage.setItem('tinkerfin:theme', theme), theme)
+            await page.reload()
+            await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+            const copy = page.getByRole('button', { name: '复制回答', exact: true }).last()
+            await expect(copy).toBeAttached()
+            await expect(page.getByRole('button', { name: '任务轨迹 1', exact: true })).toHaveCount(withTasks ? 1 : 0)
+            await expect.poll(() => page.evaluate(() => {
+              const dock = document.querySelector('.composer-dock')!
+              const measured = parseFloat(getComputedStyle(document.querySelector('.message-list')!).paddingBottom)
+              return Math.abs(dock.getBoundingClientRect().height - measured)
+            })).toBeLessThanOrEqual(1)
+            await page.evaluate(() => document.fonts.ready)
+            const gap = await page.getByRole('region', { name: '对话内容', exact: true }).evaluate(el => {
+              el.scrollTop = el.scrollHeight
+              const copy = el.querySelectorAll<HTMLButtonElement>('button[aria-label="复制回答"]')
+              const copyBox = copy[copy.length - 1].getBoundingClientRect()
+              const composerBox = document.querySelector('.composer')!.getBoundingClientRect()
+              return composerBox.top - copyBox.bottom
+            })
+            await expect(copy).toBeInViewport()
+            expect(gap).toBeGreaterThan(40)
+            gaps.push(gap)
+            if (width === 320 || width === 1440) await page.screenshot({ path: testInfo.outputPath(`spacing-${theme}-${width}-${withTasks}.png`) })
+          }
+          console.log(JSON.stringify({ hasTouch, theme, width, gaps }))
+          expect(Math.abs(gaps[0] - gaps[1])).toBeLessThanOrEqual(1)
+        }
+      }
+    } finally { await context.close() }
+  })
+}

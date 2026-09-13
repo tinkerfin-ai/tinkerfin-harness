@@ -234,9 +234,11 @@ function SubagentCard({ message, childTools }: { message: Message; childTools: M
         <span className="tool-row-title">Task</span>
         <span className="tool-row-separator" aria-hidden="true" />
         <span className="tool-row-summary">SubAgent</span>
-        <span className="subagent-card-meta">
-          <span className="subagent-tool-count">{t('{count} 个工具', { count: childTools.length })}</span>
-        </span>
+        {childTools.length > 0 && (
+          <span className="subagent-card-meta">
+            <span className="subagent-tool-count">{t('{count} 个工具', { count: childTools.length })}</span>
+          </span>
+        )}
         <span className="subagent-visually-hidden">{agentName}，{statusLabel}</span>
       </summary>
       <div className="subagent-card-body">

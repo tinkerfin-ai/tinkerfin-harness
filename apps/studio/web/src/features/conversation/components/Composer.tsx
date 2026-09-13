@@ -233,7 +233,7 @@ export function Composer({
 
   return (
     <footer className={`composer-dock${hero ? ' is-hero' : ''}${takeover ? ' is-taken-over' : ''}`}>
-      {(scrollToBottomControl || taskTraceControl) && (
+      {((!hero && !takeover) || scrollToBottomControl || taskTraceControl) && (
         <div className="composer-auxiliary-controls">
           {scrollToBottomControl && (
             <div className="composer-scroll-to-bottom-control">{scrollToBottomControl}</div>

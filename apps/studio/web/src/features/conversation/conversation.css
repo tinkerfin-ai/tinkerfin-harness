@@ -552,10 +552,12 @@
     position: absolute;
     inset: 0;
     display: inline-flex;
+    width: var(--icon-xs);
+    height: var(--icon-xs);
     align-items: center;
-    /* Tool 图标从行首绘制，避免小图标在固定轨道内产生视觉缩进 */
-    justify-content: flex-start;
-    margin: auto;
+    /* 保持普通图标的行首位置，让箭头与较小的状态点共用其中心 */
+    justify-content: center;
+    margin: auto 0;
     transition: opacity var(--motion-fast) var(--ease-out);
   }
 
@@ -1571,21 +1573,19 @@
     background: transparent;
   }
 
-  /* 临时辅助操作浮于内容上沿，不改变阅读区域及目录的高度 */
+  /* 会话始终保留辅助操作栏的空间，任务轨迹出现或消失不改变回答到输入框的距离 */
   .composer-auxiliary-controls {
-    position: absolute;
-    bottom: calc(100% - var(--composer-top-inset) + var(--space-1-5));
-    left: 50%;
-    transform: translateX(-50%);
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     width: min(calc(100% - 2 * var(--composer-inline-inset)), var(--layout-composer-width));
     min-height: var(--control-sm);
-    margin: 0;
+    margin: 0 auto var(--space-1-5);
     align-items: center;
     gap: var(--space-3);
     pointer-events: none;
   }
+
+  .composer-dock:is(.is-hero, .is-taken-over) .composer-auxiliary-controls:not(:has(.composer-auxiliary-control)) { display: none; }
 
   .composer-scroll-to-bottom-control {
     grid-column: 2;
@@ -1677,12 +1677,21 @@
   .composer-dock.is-taken-over::before { display: none; }
 
   .composer-dock.is-hero {
+    grid-row: 1 / -1;
     align-self: center;
     display: flex;
     width: 100%;
     padding-top: 0;
-    padding-bottom: max(calc(var(--space-8) + var(--type-composer-line) + var(--type-composer-line) + var(--type-composer-line)), env(safe-area-inset-bottom));
+    padding-bottom: 0;
     flex-direction: column;
+  }
+
+  .composer-dock.is-hero .composer-note {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(calc(100% - 2 * var(--composer-inline-inset)), var(--layout-content-wide));
   }
 
   .composer-dock.is-hero::before { display: none; }
@@ -1858,10 +1867,9 @@
   }
 
   @media (any-hover: none), (any-pointer: coarse) {
-    .composer-auxiliary-control { min-height: var(--control-lg); }
-    :is(.composer-scroll-to-bottom-control, .composer-task-trace-control)
+    .composer-auxiliary-controls { min-height: var(--control-lg); }
     .composer-auxiliary-control {
-      width: var(--control-lg);
+      min-height: var(--control-lg);
       min-width: var(--control-lg);
     }
     .composer-add-button,

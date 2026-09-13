@@ -39,7 +39,7 @@ async function openSettings(page: Page, language: 'zh-CN'|'en', theme: 'light'|'
 }
 
 for (const language of ['zh-CN','en'] as const) for (const theme of ['light','dark'] as const) {
-  test(`模型配置布局 ${language} ${theme}`, async ({page}) => {
+  test(`模型配置布局 ${language} ${theme}`, async ({page}, testInfo) => {
     test.setTimeout(90_000)
     const failures: string[] = []
     page.on('pageerror', error => failures.push(error.message))
@@ -64,14 +64,51 @@ for (const language of ['zh-CN','en'] as const) for (const theme of ['light','da
         const box = button.getBoundingClientRect()
         return {
           centers: Math.abs(icon.top + icon.height / 2 - label.top - label.height / 2),
-          left: Math.abs(box.left - form.left),
+          left: Math.abs(icon.left - form.left),
+          leftInset: icon.left - box.left,
+          rightInset: box.right - label.right,
+          topInset: label.top - box.top,
+          bottomInset: box.bottom - label.bottom,
           gap: label.left - icon.right,
           expectedGap: parseFloat(getComputedStyle(button).columnGap),
         }
       })
       expect(returnAlignment.centers).toBeLessThanOrEqual(1)
       expect(returnAlignment.left).toBeLessThanOrEqual(1)
+      expect(returnAlignment.leftInset).toBe(8)
+      expect(returnAlignment.rightInset).toBe(8)
+      expect(Math.abs(returnAlignment.topInset - returnAlignment.bottomInset)).toBeLessThanOrEqual(1)
       expect(Math.abs(returnAlignment.gap - returnAlignment.expectedGap)).toBeLessThanOrEqual(1)
+
+      const backButton = page.getByRole('button', { name: back, exact: true })
+      const viewport = dialog.locator('.settings-models__scroll')
+      await backButton.hover()
+      await expect(backButton).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(backButton).toHaveCSS('box-shadow', 'none')
+      await page.mouse.down()
+      await expect(backButton).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(backButton).toHaveCSS('transform', 'none')
+      await page.mouse.move(0, 0)
+      await page.mouse.up()
+      await backButton.hover()
+      await page.screenshot({ path: testInfo.outputPath(`back-hover-${language}-${theme}-${width}.png`) })
+      const beforeScroll = (await backButton.boundingBox())!
+      await viewport.evaluate(element => { element.scrollTop = element.scrollHeight })
+      expect((await backButton.boundingBox())!.y).toBe(beforeScroll.y)
+      const fixedHeader = await page.evaluate(() => {
+        const button = document.querySelector('.settings-models__back')!.getBoundingClientRect()
+        const panel = document.querySelector('.settings-models')!.getBoundingClientRect()
+        const viewport = document.querySelector('.settings-models__scroll')!.getBoundingClientRect()
+        return { topSpace: button.top - panel.top, bottomSpace: viewport.top - button.bottom }
+      })
+      expect(fixedHeader.topSpace).toBe(4)
+      expect(fixedHeader.bottomSpace).toBe(4)
+      await expect.poll(() => page.evaluate(() => {
+        const viewport = document.querySelector('.settings-models__scroll')!.getBoundingClientRect()
+        const track = document.querySelector('.settings-models .ui-overlay-scrollbar')!.getBoundingClientRect()
+        return track.top - viewport.top
+      })).toBeGreaterThanOrEqual(0)
+      await viewport.evaluate(element => { element.scrollTop = 0 })
 
       await page.getByText(language==='en'?'Advanced parameters':'高级参数',{exact:true}).click()
       await page.getByRole('textbox',{name:language==='en'?'Advanced parameters JSON':'高级参数 JSON'}).waitFor()
@@ -119,6 +156,7 @@ for (const language of ['zh-CN','en'] as const) for (const theme of ['light','da
       expect(dimensions.editorBorder).toBe('0px')
       expect(Math.abs(dimensions.footerTop - dimensions.viewportBottom)).toBeLessThanOrEqual(1)
       expect(dimensions.trackBottom).toBeLessThanOrEqual(dimensions.footerTop)
+      await page.screenshot({ path: testInfo.outputPath(`model-header-${language}-${theme}-${width}.png`) })
       expect(dimensions.saveHeight).toBe(32)
       expect(dimensions.alignment).toBeLessThanOrEqual(1)
       expect(dimensions.radius).toBe(dimensions.buttonRadius)
@@ -415,3 +453,44 @@ test('保存失败后返回或取消不会把编辑错误和密钥带入列表',
     await expect(page.getByRole('alert')).toHaveCount(0)
   }
 })
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`设置选项仅悬浮显示灰底，选中只显示勾选 ${theme}`, async ({ page }, testInfo) => {
+    await setup(page)
+    await openSettings(page, 'zh-CN', theme)
+    const verifyPicker = async (label: string) => {
+      const trigger = page.getByRole('button', { name: label, exact: true })
+      await trigger.click()
+      const list = page.getByRole('listbox', { name: label, exact: true })
+      const selected = list.getByRole('option', { selected: true })
+      await page.mouse.move(0, 0)
+      await expect(selected).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(selected).toHaveCSS('box-shadow', 'none')
+      await expect(selected.locator('svg')).toHaveCount(1)
+      if (label === '接口类型') await page.screenshot({ path: testInfo.outputPath(`selected-${theme}-${page.viewportSize()!.width}.png`) })
+      await selected.hover()
+      await expect(selected).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await page.mouse.move(0, 0)
+      await expect(selected).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await list.press('ArrowDown')
+      const active = list.locator('[data-active="true"]')
+      await expect(active).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(active).toHaveCSS('outline-width', '1px')
+      await list.press('Escape')
+      await expect(trigger).toBeFocused()
+    }
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 960 })
+      await page.getByRole('button', { name: '编辑', exact: true }).first().click()
+      await verifyPicker('接口类型')
+      await verifyPicker('图片输入能力')
+      await page.getByRole('button', { name: '返回模型列表', exact: true }).click()
+      await page.getByRole('button', { name: '编辑', exact: true }).last().click()
+      await verifyPicker('图片格式')
+      await page.getByRole('button', { name: '返回模型列表', exact: true }).click()
+      await page.getByRole('button', { name: '通用', exact: true }).click()
+      await verifyPicker('界面语言')
+      await page.getByRole('button', { name: '模型配置', exact: true }).click()
+    }
+  })
+}

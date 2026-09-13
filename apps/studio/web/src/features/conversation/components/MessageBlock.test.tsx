@@ -57,6 +57,15 @@ const secondChildTool: Message = {
 }
 
 describe('MessageBlock subagent card', () => {
+  it('工具数量从零变为正数时才显示计数，归零后隐藏', () => {
+    const { rerender } = render(<MessageBlock message={subagentMessage} childTools={[]} />)
+    expect(screen.queryByText('0 个工具')).not.toBeInTheDocument()
+    rerender(<MessageBlock message={subagentMessage} childTools={[childTool, secondChildTool]} />)
+    expect(screen.getByText('2 个工具')).toBeVisible()
+    rerender(<MessageBlock message={subagentMessage} childTools={[]} />)
+    expect(screen.queryByText(/\d+ 个工具/)).not.toBeInTheDocument()
+  })
+
   it('keeps Tool and SubAgent summaries within touch target sizing', () => {
     expect(conversationStyles).toMatch(/@media \(any-hover:\s*none\), \(any-pointer:\s*coarse\)[\s\S]*\.subagent-card-head\s*{\s*height:\s*var\(--control-lg\)/s)
     expect(conversationStyles).toMatch(/@media \(any-hover:\s*none\), \(any-pointer:\s*coarse\)[\s\S]*\.tool-row > summary\s*{\s*height:\s*var\(--control-lg\)/s)

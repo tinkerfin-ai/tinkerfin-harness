@@ -1,6 +1,6 @@
 /**
  * 极简「会话 URL 路由」：用 `?thread={threadId}` 查询参数记录当前会话，
- * 让浏览器刷新后能回到原会话（页面无 react-router，也无工作区持久化）
+ * 让浏览器刷新后能回到原会话；自动化页面使用 `?page=automation`
  *
  * 用 `history.replaceState` 同步而非 `pushState`——只保证 URL 始终反映当前
  * 会话、刷新可还原，不为每次选择追加浏览器历史条目
@@ -50,19 +50,28 @@ export function normalizeAppLocation(): void {
 
 /** 从当前 URL 读取 `?thread=` 指定的会话 id，无则返回空串 */
 export function readThreadFromLocation(): string {
+  if (readPageFromLocation() === 'automation') return ''
   return new URLSearchParams(window.location.search).get(THREAD_PARAM) ?? ''
 }
 
-/** 把会话 id 写进 `?thread=`（空串则删除参数），与当前 URL 相同时不重复 replaceState */
-export function writeThreadToLocation(threadId: string): void {
+export type WorkspacePage = 'conversation' | 'automation'
+
+export function readPageFromLocation(): WorkspacePage {
+  return new URLSearchParams(window.location.search).get('page') === 'automation'
+    ? 'automation'
+    : 'conversation'
+}
+
+/** 按当前页面一次性同步地址；自动化不携带后台会话身份，草稿不携带 thread */
+export function writeWorkspaceToLocation(page: WorkspacePage, threadId: string): void {
   const url = new URL(window.location.href)
   url.pathname = APP_PATHNAME
-  if (threadId) url.searchParams.set(THREAD_PARAM, threadId)
+  if (page === 'automation') url.searchParams.set('page', page)
+  else url.searchParams.delete('page')
+  if (page === 'conversation' && threadId) url.searchParams.set(THREAD_PARAM, threadId)
   else url.searchParams.delete(THREAD_PARAM)
-  // url.toString() 含 origin，去掉以得到 pathname+search+hash
-  const desired = url.toString().slice(url.origin.length)
-  const current = window.location.pathname + window.location.search + window.location.hash
-  if (desired !== current) {
+  const desired = relativeLocation(url)
+  if (desired !== relativeLocation(new URL(window.location.href))) {
     window.history.replaceState(null, '', desired)
   }
   rememberCurrentLocation()

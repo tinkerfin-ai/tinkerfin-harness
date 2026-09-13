@@ -5,6 +5,7 @@ import { AutomationHistory } from './AutomationHistory'
 import { AutomationRunDialog } from './AutomationRunDialog'
 import { AUTOMATION_TEST_NOW, createAutomationFixture, runFixture } from '../../test/automationFixtures'
 import { fetchRunDetail } from './api'
+import automationStyles from './automation.css?raw'
 
 vi.mock('./api', () => ({ fetchRunDetail: vi.fn() }))
 beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(AUTOMATION_TEST_NOW)) })
@@ -17,6 +18,13 @@ function HistoryExample() {
 }
 
 describe('自动化运行历史', () => {
+  it('桌面顶栏与内容使用一致的宽松水平边距', () => {
+    expect(automationStyles).toMatch(/\.automation-content\s*\{[^}]*padding:\s*var\(--space-6\) var\(--space-8\);/s)
+    expect(automationStyles).toMatch(/\.chat-header:has\(\.header-navigation\):has\(\.automation-header-actions\)\s*\{[^}]*padding-inline:\s*var\(--space-8\);/s)
+    expect(automationStyles).toMatch(/@media \(max-width: 767px\)[\s\S]*\.automation-content\s*\{[^}]*padding:\s*var\(--space-4\);/s)
+    expect(automationStyles).toMatch(/@media \(max-width: 767px\)[\s\S]*\.chat-header:has\(\.header-navigation\):has\(\.automation-header-actions\)\s*\{[^}]*padding-inline:\s*var\(--space-2\);/s)
+  })
+
   it('每天具有独立滚动区域，列表不提供再次执行操作', () => {
     render(<HistoryExample />)
     expect(screen.getAllByRole('region', { name: /的运行记录，可上下滚动/ })).toHaveLength(7)
@@ -26,9 +34,11 @@ describe('自动化运行历史', () => {
   })
   it('浏览过去周次后可返回当前周并恢复焦点', () => {
     render(<HistoryExample />)
-    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('9月7日 – 13日')
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('9月7日 – 9月13日')
     fireEvent.click(screen.getByRole('button', { name: '上一周' }))
     expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('8月31日 – 9月6日')
+    fireEvent.click(screen.getByRole('button', { name: '上一周' }))
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('8月24日 – 8月30日')
     fireEvent.click(screen.getByRole('button', { name: '回到本周' }))
     expect(screen.getByRole('button', { name: '上一周' })).toHaveFocus()
   })

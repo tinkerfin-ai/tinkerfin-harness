@@ -72,7 +72,7 @@ describe('Composer', () => {
     expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('保留正文')
   })
 
-  it('places centered scroll and ordered trace actions in one auxiliary row without an empty fallback', () => {
+  it('保留普通会话的辅助栏空间，并排列返回底部与任务轨迹操作', () => {
     const { container, rerender } = render(
       <Composer
         {...composerChromeProps()}
@@ -142,7 +142,7 @@ describe('Composer', () => {
         onStop={vi.fn()}
       />,
     )
-    expect(container.querySelector('.composer-auxiliary-controls')).not.toBeInTheDocument()
+    expect(container.querySelector('.composer-auxiliary-controls')).toBeEmptyDOMElement()
   })
 
   it('keeps the default composer mounted and inert during a takeover, then restores focus', () => {
