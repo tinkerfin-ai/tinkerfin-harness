@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, MutableMapping
+from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TypeAlias, cast
@@ -675,11 +675,15 @@ def graph_node_mutations(
                     result_seq=event.trace_seq,
                 )
             )
-    return _coalesce_graph_mutations(mutations)
+    return _coalesce_graph_mutations(
+        mutations, source_events={event.trace_seq: event for event in events}
+    )
 
 
 def _coalesce_graph_mutations(
     mutations: list[TraceGraphNodeMutation],
+    *,
+    source_events: Mapping[int, TraceEvent],
 ) -> tuple[TraceGraphNodeMutation, ...]:
     """Collapse one commit batch to at most one write per event revision."""
 
@@ -696,12 +700,8 @@ def _coalesce_graph_mutations(
             values[key] = mutation
             continue
         kind = resolve_graph_node_kind(current.kind, mutation.kind)
-        replace_tool_start = (
-            kind is TraceGraphNodeKind.TOOL
-            and current.status is TraceGraphNodeStatus.WAITING
-            and mutation.status is TraceGraphNodeStatus.RUNNING
-            and mutation.started_at is not None
-            and mutation.started_seq is not None
+        replace_tool_start = graph_execution_started(
+            mutation, source_events=source_events
         )
         status = mutation.status or current.status
         completed_at = (
@@ -748,8 +748,16 @@ def _coalesce_graph_mutations(
                 else current.started_seq or mutation.started_seq
             ),
             request_seq=mutation.request_seq or current.request_seq,
-            result_seq=mutation.result_seq or current.result_seq,
-            failure_seq=mutation.failure_seq or current.failure_seq,
+            result_seq=(
+                mutation.result_seq
+                if replace_tool_start
+                else mutation.result_seq or current.result_seq
+            ),
+            failure_seq=graph_failure_sequence(
+                current.failure_seq,
+                mutation,
+                source_events=source_events,
+            ),
             link_issue=resolve_graph_link_issue(
                 parent_subagent_id,
                 model_call_id,
@@ -759,9 +767,66 @@ def _coalesce_graph_mutations(
     return tuple(values[key] for key in ordered_keys)
 
 
+def graph_execution_started(
+    mutation: TraceGraphNodeMutation,
+    *,
+    source_events: Mapping[int, TraceEvent],
+) -> bool:
+    """Recognize an execution only from the exact retained start fact.
+
+    Argument snapshots and execution starts can share request locators after batch
+    coalescing. Status and locator equality cannot distinguish their provenance.
+    """
+
+    source = source_events.get(mutation.started_seq or 0)
+    if source is None:
+        return False
+    fact = source.fact
+    if (
+        fact.identity.run_id != mutation.run_id
+        or fact.graph_namespace != mutation.graph_namespace
+    ):
+        return False
+    if isinstance(fact, ToolExecutionFact):
+        expected_node = (
+            _tool_node(fact.graph_namespace, fact.source_tool_call_id)
+            if fact.source_tool_call_id is not None
+            else fact.execution_id
+        )
+        return fact.phase == "started" and mutation.node_id == expected_node
+    if isinstance(fact, SubagentFact):
+        return fact.phase == "started" and mutation.node_id == fact.subagent_id
+    return False
+
+
+def graph_failure_sequence(
+    current: int | None,
+    mutation: TraceGraphNodeMutation,
+    *,
+    source_events: Mapping[int, TraceEvent],
+) -> int | None:
+    """Keep failure evidence only for the current failed execution.
+
+    Relationship-only updates preserve evidence. A new execution clears the previous
+    failure even when its start and terminal were committed together; its immutable
+    Ledger facts and earlier Run revision remain available for historical queries.
+    """
+
+    if (
+        mutation.status is not None
+        and mutation.status is not TraceGraphNodeStatus.FAILED
+    ):
+        return None
+    if graph_execution_started(mutation, source_events=source_events):
+        return mutation.failure_seq
+    return mutation.failure_seq or current
+
+
 def apply_graph_node_mutation(
     revisions: MutableMapping[tuple[str, str], ReducedTraceGraphRevision],
     mutation: TraceGraphNodeMutation,
+    *,
+    source_events: Mapping[int, TraceEvent],
 ) -> None:
     """Apply one mutation while preserving immutable event identity fields."""
 
@@ -849,16 +914,11 @@ def apply_graph_node_mutation(
             raise TraceStoreProtocolError("Trace Graph model call changed")
         row.model_call_id = mutation.model_call_id
         row.model_call_seq = mutation.model_call_seq
-    replace_tool_start = (
-        row.kind is TraceGraphNodeKind.TOOL
-        and row.status is TraceGraphNodeStatus.WAITING
-        and mutation.status is TraceGraphNodeStatus.RUNNING
-        and mutation.started_at is not None
-        and mutation.started_seq is not None
-    )
+    replace_tool_start = graph_execution_started(mutation, source_events=source_events)
     if replace_tool_start:
         row.started_at = cast(datetime, mutation.started_at)
         row.started_seq = cast(int, mutation.started_seq)
+        row.result_seq = None
     if mutation.status is not None:
         row.status = mutation.status
         if mutation.status in {
@@ -880,8 +940,9 @@ def apply_graph_node_mutation(
         row.request_seq = mutation.request_seq
     if mutation.result_seq is not None:
         row.result_seq = mutation.result_seq
-    if mutation.failure_seq is not None:
-        row.failure_seq = mutation.failure_seq
+    row.failure_seq = graph_failure_sequence(
+        row.failure_seq, mutation, source_events=source_events
+    )
     row.link_issue = resolve_graph_link_issue(
         row.parent_subagent_id,
         row.model_call_id,
@@ -938,6 +999,13 @@ def effective_graph_nodes(
             and latest.kind in {TraceGraphNodeKind.TOOL, TraceGraphNodeKind.SUBAGENT}
             else origin
         )
+        # A logical Tool can execute again in another Run. Locators before its
+        # latest execution belong to the earlier result, not the current delivery.
+        execution_boundary = (
+            timing_origin.started_seq
+            if latest.kind in {TraceGraphNodeKind.TOOL, TraceGraphNodeKind.SUBAGENT}
+            else 0
+        )
         completed_at = (
             None
             if latest.status
@@ -982,7 +1050,12 @@ def effective_graph_nodes(
                     default=None,
                 ),
                 result_seq=max(
-                    (item.result_seq for item in nodes if item.result_seq is not None),
+                    (
+                        item.result_seq
+                        for item in nodes
+                        if item.result_seq is not None
+                        and item.result_seq >= execution_boundary
+                    ),
                     default=None,
                 ),
                 failure_seq=max(
@@ -990,6 +1063,8 @@ def effective_graph_nodes(
                         item.failure_seq
                         for item in nodes
                         if item.failure_seq is not None
+                        and item.failure_seq >= execution_boundary
+                        and latest.status is TraceGraphNodeStatus.FAILED
                     ),
                     default=None,
                 ),
@@ -1055,21 +1130,24 @@ def apply_graph_events(
 ) -> None:
     """Replay explicit facts and proven Run closure with identical prefix semantics."""
 
+    source_events = {event.trace_seq: event for event in events}
     for event in events:
         for mutation in graph_node_mutations((event,)):
-            apply_graph_node_mutation(revisions, mutation)
+            apply_graph_node_mutation(revisions, mutation, source_events=source_events)
         for mutation in assistant_run_terminal_mutations(event, revisions.values()):
-            apply_graph_node_mutation(revisions, mutation)
+            apply_graph_node_mutation(revisions, mutation, source_events=source_events)
 
 
 def reduce_graph_mutations(
     mutations: Iterable[TraceGraphNodeMutation],
+    *,
+    source_events: Mapping[int, TraceEvent],
 ) -> tuple[TraceGraphNodeMutation, ...]:
     """Collapse sequential rebuild mutations to one complete revision per key."""
 
     revisions: dict[tuple[str, str], ReducedTraceGraphRevision] = {}
     for mutation in mutations:
-        apply_graph_node_mutation(revisions, mutation)
+        apply_graph_node_mutation(revisions, mutation, source_events=source_events)
     return graph_revision_mutations(revisions.values())
 
 

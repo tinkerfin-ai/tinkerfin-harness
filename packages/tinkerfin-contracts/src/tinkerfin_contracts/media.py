@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal, cast
+from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
@@ -30,16 +30,11 @@ class Attachment(BaseModel):
         attachment-aware middleware resolves the host file ID before model use.
         """
         return {
-            "type": "image" if self.kind == "image" else "file",
+            "type": "image" if self.mime_type.startswith("image/") else "file",
             "file_id": self.id,
             "mime_type": self.mime_type,
             "extras": {"attachment": self.model_dump(mode="json")},
         }
-
-    @property
-    def kind(self) -> Literal["image", "document"]:
-        """Return the presentation category determined by the validated MIME type."""
-        return "image" if self.mime_type.startswith("image/") else "document"
 
 
 def attachment_from_block(value: object) -> Attachment | None:
@@ -56,7 +51,8 @@ def attachment_from_block(value: object) -> Attachment | None:
     if (
         block.get("file_id") != attachment.id
         or block.get("mime_type") != attachment.mime_type
-        or block.get("type") != ("image" if attachment.kind == "image" else "file")
+        or block.get("type")
+        != ("image" if attachment.mime_type.startswith("image/") else "file")
     ):
         raise ValueError("attachment source and descriptor must identify the same file")
     return attachment

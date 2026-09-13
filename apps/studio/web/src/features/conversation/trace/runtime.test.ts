@@ -1,3 +1,7 @@
+import { applyConversationEvent, prepareResumeSubmission } from '../agui'
+import type { JsonValue } from '../../../types'
+import type { ConversationAgUiEvent } from '../../../api/conversation/types'
+import { toolReviewInterrupts, planInterrupt } from '../../../test/aguiFixtures'
 import { describe, expect, it } from 'vitest'
 import mediaFixture from '../agui/contracts/message-attachments.fixture.json'
 
@@ -24,6 +28,7 @@ const detail = (): ConversationHistoryDetail => ({
   toolCallCount: 1,
   messages: [
     {
+      agui: { kind: 'message', messageId: 'public-user-1' },
       id: 'message:user-1',
       traceSeq: 1,
       sourceId: 'user-1',
@@ -37,6 +42,7 @@ const detail = (): ConversationHistoryDetail => ({
       completedAt: '2026-08-28T00:00:00Z',
     },
     {
+      agui: { kind: 'message', messageId: 'public-assistant-1' },
       id: 'message:assistant-1',
       traceSeq: 2,
       sourceId: 'assistant-1',
@@ -50,6 +56,7 @@ const detail = (): ConversationHistoryDetail => ({
       completedAt: '2026-08-28T00:00:02Z',
     },
     {
+      agui: { kind: 'tool_message', messageId: 'public-result', toolCallId: 'public-call-write' },
       id: 'message:tool-result',
       traceSeq: 4,
       sourceId: 'tool-result',
@@ -87,6 +94,7 @@ const detail = (): ConversationHistoryDetail => ({
       startedAt: '2026-08-28T00:00:02Z',
     }],
     nodes: [{
+      agui: { kind: 'tool', toolCallId: 'public-call-write' },
       id: 'tool-node',
       turnId: 'turn-1',
       parentSubagentId: null,
@@ -319,8 +327,8 @@ describe('Trace conversation projection', () => {
     expect(restored.messages.filter((message) => (
       message.role === 'user' || message.role === 'assistant'
     )).map((message) => message.id)).toEqual([
-      'message:user-1',
-      'message:assistant-1',
+      'public-user-1',
+      'public-assistant-1',
     ])
   })
 
@@ -371,8 +379,8 @@ describe('Trace conversation projection', () => {
     expect(restored.messages.filter((message) => (
       message.role === 'user' || message.role === 'assistant'
     )).map((message) => message.id)).toEqual([
-      'message:user-1',
-      'message:assistant-1',
+      'public-user-1',
+      'public-assistant-1',
     ])
   })
 
@@ -502,10 +510,11 @@ describe('Trace conversation projection', () => {
     expect(updated.taskTrace).toBe(initial.taskTrace)
   })
 
-  it('reconstructs stable multi-action approval IDs from native Trace facts', () => {
+  it('restores public multi-action approval IDs without decoding captured arguments', () => {
     const source = detail()
     source.status = { execution: 'waiting', headRunId: 'run-1' }
     source.interactions = [{
+      agui: toolReviewInterrupts('native-interrupt', [{ toolCallId: 'call-a', args: { file_path: '/a.txt' }, description: '写入 A 文件' }, { toolCallId: 'call-b', args: { file_path: '/b.txt' } }]),
       id: 'interaction-scoped',
       traceSeq: 5,
       sourceId: 'native-interrupt',
@@ -569,10 +578,11 @@ describe('Trace conversation projection', () => {
     expect(restored.pendingInteractionKind).toBe('tool_approval')
   })
 
-  it('preserves full captured arguments for each same-name HITL action', () => {
+  it('preserves public arguments for each same-name HITL action', () => {
     const source = detail()
     source.status = { execution: 'waiting', headRunId: 'run-1' }
     source.interactions = [{
+      agui: toolReviewInterrupts('native-interrupt', [{ toolCallId: 'call-a', args: { content: 'A', file_path: '/multi-hitl-a.txt' } }, { toolCallId: 'call-b', args: { content: 'B', file_path: '/multi-hitl-b.txt' } }]),
       id: 'interaction-full-content',
       traceSeq: 5,
       sourceId: 'native-interrupt',
@@ -657,6 +667,7 @@ describe('Trace conversation projection', () => {
       toolCallId: string,
       filePath: string,
     ): ConversationHistoryDetail['interactions'][number] => ({
+      agui: toolReviewInterrupts(sourceId, [{ toolCallId, args: { file_path: filePath } }]),
       id,
       traceSeq,
       sourceId,
@@ -731,6 +742,7 @@ describe('Trace conversation projection', () => {
     source.status = { execution: 'waiting', headRunId: 'run-1' }
     source.interactions = [
       {
+      agui: toolReviewInterrupts('interrupt-tool', [{ toolCallId: 'public-call-write', args: {}, allowedDecisions: ['approve'] }]),
         id: 'interaction-tool',
         traceSeq: 5,
         sourceId: 'interrupt-tool',
@@ -750,6 +762,7 @@ describe('Trace conversation projection', () => {
         openedAt: '2026-08-28T00:00:04Z',
       },
       {
+      agui: [{ id: 'unknown', reason: 'host_input' }],
         id: 'interaction-unknown',
         traceSeq: 6,
         sourceId: 'unknown',
@@ -768,10 +781,31 @@ describe('Trace conversation projection', () => {
       .toThrowError('stream_event_invalid')
   })
 
-  it('hydrates Plan clarification directly from the native Runtime envelope', () => {
+  it('hydrates Plan clarification from the public interrupt', () => {
     const source = detail()
     source.status = { execution: 'succeeded', headRunId: 'run-1' }
     source.interactions = [{
+      agui: [planInterrupt('plan-interrupt', {
+        schema: 'tinkerfin.runtime-interrupt',
+        kind: 'tinkerfin:plan_clarification',
+        message: '回答问题',
+        responseSchema: { type: 'object' },
+        metadata: {
+          origin: 'plan',
+          clarification: {
+            form: {
+              title: '确认范围',
+              description: '补充执行范围',
+              questions: [{
+                id: 'scope',
+                answerType: 'text',
+                prompt: '请输入范围',
+                required: true,
+              }],
+            },
+          },
+        },
+      })],
       id: 'interaction-plan',
       traceSeq: 5,
       sourceId: 'plan-interrupt',
@@ -836,4 +870,134 @@ describe('运行失败历史反馈', () => {
     const restored = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
     expect(restored.messages.some(message => message.role === 'error')).toBe(false)
   })
+})
+
+describe('历史恢复与实时续流联合验证', () => {
+  it('审批恢复后的成功工具不会被后续失败覆盖，也不会新增无名工具卡片', () => {
+    const snapshot = detail()
+    snapshot.status.execution = 'waiting'
+    snapshot.messages = snapshot.messages.filter(message => message.role !== 'tool')
+    snapshot.graph.nodes[0] = { ...snapshot.graph.nodes[0]!, status: 'waiting', completedAt: null, result: null }
+    snapshot.interactions = [{
+      id: 'review', traceSeq: 5, sourceId: 'native-review', graphNamespace: [], runId: 'run-1',
+      kind: 'tool_approval', toolCallIds: ['call-write'], status: 'pending', payloadOmitted: true,
+      openedAt: '2026-08-28T00:00:04Z',
+      agui: toolReviewInterrupts('native-review', [{ toolCallId: 'public-call-write', args: { file_path: '/result.txt' } }]),
+    }]
+    let conversation = restoreConversationFromTrace(snapshot, { model: 'main', includeTaskTrace: true })
+    conversation = prepareResumeSubmission(conversation)
+    for (const event of [
+      { type: 'RUN_STARTED', threadId: snapshot.threadId, runId: 'run-resume' },
+      { type: 'TOOL_CALL_RESULT', toolCallId: 'public-call-write', messageId: 'public-result', role: 'tool', content: 'written' },
+      { type: 'TOOL_CALL_START', toolCallId: 'public-deliver', toolCallName: 'deliver_file' },
+      { type: 'RUN_ERROR', message: '交付失败', code: 'tool_error' },
+    ] as ConversationAgUiEvent[]) conversation = applyConversationEvent(conversation, event)
+    const tools = conversation.messages.filter(message => message.role === 'tool')
+    expect(tools).toHaveLength(2)
+    expect(tools[0]).toMatchObject({ id: 'tool-node', content: 'write_file', meta: { status: 'completed', result: 'written', toolCallId: 'public-call-write' } })
+    expect(tools[1]).toMatchObject({ content: 'deliver_file', meta: { status: 'failed' } })
+    expect(conversation.runStatus).toBe('error')
+    expect(snapshot.graph.nodes[0]?.sourceId).toBe('call-write')
+  })
+
+  it('助手续流以公开消息ID更新同一条历史消息，重复快照不复制消息', () => {
+    const snapshot = detail()
+    snapshot.messages[1] = { ...snapshot.messages[1]!, status: 'streaming', content: '部分' }
+    let conversation = restoreConversationFromTrace(snapshot, { model: 'main', includeTaskTrace: true })
+    conversation = applyConversationEvent(conversation, { type: 'TEXT_MESSAGE_CONTENT', messageId: 'public-assistant-1', delta: '完成' })
+    const event: ConversationAgUiEvent = { type: 'MESSAGES_SNAPSHOT', messages: [{ id: 'public-assistant-1', role: 'assistant', content: '部分完成' }] }
+    conversation = applyConversationEvent(applyConversationEvent(conversation, event), event)
+    expect(conversation.messages.filter(message => message.role === 'assistant')).toHaveLength(1)
+    expect(conversation.messages.find(message => message.role === 'assistant')?.content).toBe('部分完成')
+    expect(conversation.trace?.messages[1]?.id).toBe('message:assistant-1')
+  })
+
+  it('省略审批内容不从保留的原生payload猜测可提交动作', () => {
+    const snapshot = detail()
+    snapshot.status.execution = 'waiting'
+    snapshot.interactions = [{
+      id: 'omitted', traceSeq: 5, sourceId: 'native-review', graphNamespace: [], runId: 'run-1',
+      kind: 'tool_approval', toolCallIds: ['call-write'], status: 'pending', payloadOmitted: true,
+      openedAt: '2026-08-28T00:00:04Z', agui: null,
+      payload: { action_requests: [{ name: 'write_file', args: {} }], review_configs: [] },
+    }]
+    const conversation = restoreConversationFromTrace(snapshot, { model: 'main', includeTaskTrace: true })
+    expect(conversation.pendingInteractionKind).toBe('input_required')
+    expect(conversation.approval).toBeUndefined()
+  })
+
+  it.each<{ request: JsonValue; requestOmitted: boolean }>([
+    { request: null, requestOmitted: true },
+    { request: { '/description': '分析门店数据' }, requestOmitted: false },
+    { request: { '/subagent_type': 'researcher' }, requestOmitted: false },
+    { request: { description: '分析门店数据' }, requestOmitted: false },
+  ])('子智能体恢复后补全真实来源，已知来源矛盾必须拒绝 %#', (capture) => {
+    const snapshot = detail()
+    snapshot.graph.nodes = [{
+      ...snapshot.graph.nodes[0]!, id: 'native-child', kind: 'subagent', name: 'researcher',
+      graphNamespace: ['tools:opaque:task'], sourceId: 'native-parent-call', ...capture,
+      agui: { kind: 'subagent', parentToolCallId: 'public-parent-call', subagentInvocationId: 'subagent-11111111-1111-5111-8111-111111111111' },
+      status: 'waiting', completedAt: null,
+    }]
+    const restored = restoreConversationFromTrace(snapshot, { model: 'main', includeTaskTrace: true })
+    const event: ConversationAgUiEvent = {
+      type: 'RAW', source: 'langgraph.tasks', rawEvent: { type: 'tasks', phase: 'start', ns: [] },
+      event: { data: { id: 'opaque:task', name: 'tools' }, provenance: {
+        kind: 'root', graphNamespace: [], agentType: 'main', agentName: 'main', subagents: [{
+          schema: 'tinkerfin.subagent-provenance',
+          subagentInvocationId: 'subagent-11111111-1111-5111-8111-111111111111', parentToolCallId: 'public-parent-call',
+          graphNamespace: ['tools:opaque:task'], parentGraphNamespace: [], graphTaskId: 'opaque:task',
+          agentName: 'researcher', description: '分析门店数据', requestRunId: 'run-resume',
+        }],
+      } },
+    }
+    let conversation = applyConversationEvent(restored, event)
+    conversation = applyConversationEvent(conversation, event)
+    const children = conversation.messages.filter(message => message.role === 'subagent')
+    expect(children).toHaveLength(1)
+    expect(children[0]).toMatchObject({ id: 'native-child', meta: {
+      subRunId: 'subagent-11111111-1111-5111-8111-111111111111', graphTaskId: 'opaque:task', input: '分析门店数据', originMainRunId: 'run-1', lastMainRunId: 'run-resume',
+    } })
+    const conflicts = conversation.messages.map(message => message.role === 'subagent'
+      ? { ...message, meta: { ...message.meta, graphTaskId: 'different-task' } } : message)
+    expect(() => applyConversationEvent({ ...conversation, messages: conflicts }, event)).toThrow('身份冲突')
+    const conflictingInput = conversation.messages.map(message => message.role === 'subagent'
+      ? { ...message, meta: { ...message.meta, input: '另一个任务' } } : message)
+    expect(() => applyConversationEvent({ ...conversation, messages: conflictingInput }, event)).toThrow('身份冲突')
+    const source = {
+      kind: 'deep_agent_subagent' as const, agentType: 'subagent' as const, agentName: 'researcher',
+      graphNamespace: ['tools:opaque:task'], subagentInvocationId: 'subagent-11111111-1111-5111-8111-111111111111',
+    }
+    conversation = applyConversationEvent(conversation, {
+      type: 'TOOL_CALL_START', toolCallId: 'public-child-read', toolCallName: 'read_file',
+      rawEvent: { source, runId: 'run-resume' },
+    })
+    conversation = applyConversationEvent(conversation, {
+      type: 'TOOL_CALL_RESULT', toolCallId: 'public-child-read', messageId: 'child-result', role: 'tool', content: '门店分析完成',
+      rawEvent: { source, runId: 'run-resume' },
+    })
+    expect(conversation.messages.find(message => message.meta?.toolCallId === 'public-child-read')).toMatchObject({
+      role: 'tool', meta: { runId: 'subagent-11111111-1111-5111-8111-111111111111', status: 'completed', result: '门店分析完成' },
+    })
+  })
+})
+
+
+it.each(['runtime_error', 'cancelled'])('恢复的父委派工具与子智能体共同结算 %s', (code) => {
+  const snapshot = detail()
+  snapshot.status.execution = 'running'
+  snapshot.graph.nodes = [
+    { ...snapshot.graph.nodes[0]!, id: 'parent-task', kind: 'tool', name: 'task', status: 'running', completedAt: null,
+      agui: { kind: 'tool', toolCallId: 'public-delegate' } },
+    { ...snapshot.graph.nodes[0]!, id: 'child-task', kind: 'subagent', name: 'researcher', status: 'running', completedAt: null,
+      graphNamespace: ['tools:child-task'], sourceId: 'delegate',
+      agui: { kind: 'subagent', parentToolCallId: 'public-delegate', subagentInvocationId: 'subagent-11111111-1111-5111-8111-111111111111' } },
+  ]
+  let conversation = restoreConversationFromTrace(snapshot, { model: 'main', includeTaskTrace: true })
+  conversation = applyConversationEvent(conversation, {
+    type: 'RUN_ERROR', code, message: '执行已结束', rawEvent: { runId: snapshot.headRunId },
+  })
+  const executions = conversation.messages.filter(message => message.role === 'tool' || message.role === 'subagent')
+  expect(executions).toHaveLength(2)
+  expect(executions.every(message => message.meta?.status === (code === 'cancelled' ? 'cancelled' : 'failed'))).toBe(true)
 })

@@ -770,6 +770,14 @@ export function useWorkspaceHistory({
           requestIdentity,
         )
       ) return false
+      const previous = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
+      if (!previous) return false
+      const restored = restoreConversationFromTrace(detail, {
+        previous,
+        model: previous.model,
+        lastDeliveredSeq: previous.lastSeq,
+        includeTaskTrace: true,
+      })
       setWorkspace((state) => (
         state.currentThreadId !== threadId
           ? state
@@ -777,12 +785,7 @@ export function useWorkspaceHistory({
               state,
               threadId,
               (item) => ownsTaskTraceRequest(item, requestIdentity)
-                ? restoreConversationFromTrace(detail, {
-                    previous: item,
-                    model: item.model,
-                    lastDeliveredSeq: item.lastSeq,
-                    includeTaskTrace: true,
-                  })
+                ? { ...restored, ...mergeConversationTitle(item, restored) }
                 : item,
             )
       ))
@@ -874,13 +877,8 @@ export function useWorkspaceHistory({
         const previous = state.conversations.find((item) => item.threadId === threadId)
         if (requestIdentity && !matchesTaskTraceRequestIdentity(previous, requestIdentity)) return state
         return upsertConversation(state, {
-          ...restoreConversationFromTrace(detail, {
-            previous,
-            preserveHistory: options.refresh,
-            model: restored.model,
-            lastDeliveredSeq: restored.lastSeq,
-            includeTaskTrace: true,
-          }),
+          ...restored,
+          ...mergeConversationTitle(previous, restored),
           isHydrated: true,
         })
       })
@@ -991,19 +989,19 @@ export function useWorkspaceHistory({
         || detail.generation !== requestIdentity.generation
         || detail.headRunId !== requestIdentity.headRunId
       ) return false
+      const restored = restoreConversationFromTrace(detail, {
+        previous: latest,
+        expandHistory: true,
+        model: latest?.model ?? target.model,
+        lastDeliveredSeq: latest?.lastSeq,
+        includeTaskTrace: false,
+        taskTrace: latest?.taskTrace,
+      })
       setWorkspace((state) => {
         const current = state.conversations.find((item) => item.threadId === threadId)
         // follow 已推进权威前缀时丢弃旧分页，不能让 fixed-as-of 响应回退新状态
         if (!ownsTracePageRequest(current, requestIdentity)) return state
-        const restored = restoreConversationFromTrace(detail, {
-          previous: current,
-          expandHistory: true,
-          model: current?.model ?? target.model,
-          lastDeliveredSeq: current?.lastSeq,
-          includeTaskTrace: false,
-          taskTrace: current?.taskTrace,
-        })
-        return upsertConversation(state, restored)
+        return upsertConversation(state, { ...restored, ...mergeConversationTitle(current, restored) })
       })
       return true
     } catch {

@@ -1,11 +1,33 @@
 import { loadEnv } from 'vite'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import license from 'rollup-plugin-license'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   return {
     plugins: [react()],
+    worker: {
+      plugins: () => {
+        let notices = ''
+        return [
+          license({ thirdParty: { output(dependencies) {
+            notices = dependencies.map(dependency => {
+              if (!dependency.name || !dependency.version || !dependency.license) {
+                throw new Error(`Missing worker dependency license: ${dependency.name}`)
+              }
+              return `## ${dependency.name} - ${dependency.version} (${dependency.license})\n\n${dependency.text()}`
+            }).join('\n\n')
+          } } }),
+          {
+            name: 'document-preview-licenses',
+            generateBundle() {
+              this.emitFile({ type: 'asset', fileName: 'document-preview-licenses.md', source: notices })
+            },
+          },
+        ]
+      },
+    },
     build: {
       license: {
         fileName: 'third-party-licenses.md',

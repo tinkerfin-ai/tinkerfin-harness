@@ -13,7 +13,7 @@ from anyio import to_thread
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tinkerfin.media import AttachmentImage
+from tinkerfin.media import AttachmentContent
 from tinkerfin_contracts.media import Attachment
 from tinkerfin_studio.api.errors import AttachmentErrorCode, BusinessException
 from tinkerfin_studio.attachments.documents import DocumentProcessor
@@ -163,7 +163,7 @@ class AttachmentService:
         if variant not in {"original", "preview", "model"}:
             raise BusinessException(AttachmentErrorCode.INVALID_VARIANT)
         suffix = "" if variant == "original" else f"-{variant}"
-        if suffix and attachment.kind != "image":
+        if suffix and not attachment.mime_type.startswith("image/"):
             raise BusinessException(AttachmentErrorCode.INVALID_VARIANT)
         try:
             data = await self._storage.read(attachment.id + suffix)
@@ -173,7 +173,7 @@ class AttachmentService:
 
     async def read_image(
         self, attachment: Attachment, *, user_id: int, thread_id: str
-    ) -> AttachmentImage:
+    ) -> AttachmentContent:
         """提供模型用图，原件失效时让框架明确标记为不可阅读"""
         try:
             _, data = await self.read(
@@ -183,7 +183,7 @@ class AttachmentService:
             if error.error_code.http_status == 404:
                 raise FileNotFoundError("附件图片不可用") from error
             raise
-        return AttachmentImage(data=data, mime_type="image/jpeg")
+        return AttachmentContent(data=data, mime_type="image/jpeg")
 
     async def list_thread(self, *, user_id: int, thread_id: str) -> list[Attachment]:
         """为长对话和压缩后的重新阅读列出当前会话附件"""

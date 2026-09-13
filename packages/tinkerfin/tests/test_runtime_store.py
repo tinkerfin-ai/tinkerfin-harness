@@ -57,7 +57,7 @@ async def _runtime_store(
         return "memory is available"
 
     runtime = (
-        TinkerFin()
+        TinkerFin(store=store)
         .with_namespace(namespace)
         .build(
             model=_Model(
@@ -77,7 +77,6 @@ async def _runtime_store(
                 ]
             ),
             tools=[inspect_memory],
-            store=store,
         )
     )
     if direct:
@@ -186,9 +185,8 @@ def test_filesystem_memory_cannot_bypass_the_runtime_store(routed: bool) -> None
     )
     if routed:
         backend = CompositeBackend(default=StateBackend(), routes={"/memory/": backend})
-    with pytest.raises(ValueError, match="pass store= to build"):
-        TinkerFin().with_namespace("scope").build(
+    with pytest.raises(ValueError, match="pass store= to TinkerFin"):
+        TinkerFin(store=store).with_namespace("scope").build(
             model=_Model(responses=[AIMessage(content="done")]),
             backend=backend,
-            store=store,
         )

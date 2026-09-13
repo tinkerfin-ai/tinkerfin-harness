@@ -15,7 +15,7 @@ from typing import Any, cast
 import pytest
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, LocalShellBackend, StoreBackend
-from deepagents.backends.protocol import BackendProtocol, ExecuteResponse
+from deepagents.backends.protocol import ExecuteResponse
 from deepagents.middleware.filesystem import FilesystemPermission
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
@@ -1836,38 +1836,14 @@ async def test_manager_lifecycle_uses_backend_coroutines_without_thread_bridge(
         await manager.aclose()
 
 
-def test_manager_omits_rooted_middleware_when_workspace_root_is_disabled() -> None:
-    """Use raw Sandbox paths without rooted middleware when no root is configured."""
-
-    client = _FakeClient()
-    client.config = client.config.model_copy(update={"workspace_root": None})
-    manager = _new_manager(client=client, warm_pool_size=0)
-    backend = cast(BackendProtocol, object())
-    permissions = [
-        FilesystemPermission(
-            operations=["write"],
-            paths=["/policies/**"],
-            mode="deny",
-        )
-    ]
-
-    middleware = manager.build_agent_middleware(
-        backend,
-        permissions=permissions,
-    )
-
-    assert middleware == ()
-
-
 @pytest.mark.asyncio
-async def test_manager_forwards_route_permissions_to_rooted_middleware(
+async def test_standalone_rooted_middleware_enforces_route_permissions(
     tmp_path: Path,
 ) -> None:
-    """Enforce route permissions through the manager-produced middleware."""
+    """Use the standalone Sandbox integration with Deep Agents directly."""
 
-    client = _FakeClient()
-    client.config = client.config.model_copy(update={"workspace_root": "/workspace"})
-    manager = _new_manager(client=client, warm_pool_size=0)
+    from tinkerfin_sandbox import build_rooted_filesystem_middleware
+
     store = InMemoryStore()
     backend = CompositeBackend(
         default=LocalShellBackend(
@@ -1910,10 +1886,9 @@ async def test_manager_forwards_route_permissions_to_rooted_middleware(
     agent = create_deep_agent(
         model=model,
         backend=backend,
-        middleware=manager.build_agent_middleware(
-            backend,
-            permissions=permissions,
-        ),
+        middleware=[
+            build_rooted_filesystem_middleware(backend, permissions=permissions)
+        ],
         permissions=permissions,
         store=store,
     )

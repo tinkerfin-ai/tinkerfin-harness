@@ -163,6 +163,95 @@
     font-size: var(--type-micro-size);
     margin-top: var(--space-1);
   }
+  .attachment-document-preview {
+    display: block;
+    min-height: var(--control-lg);
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+  .attachment-document-preview:hover {
+    text-decoration: underline;
+    text-underline-offset: var(--space-1);
+  }
+  .attachment-document-preview:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: var(--space-1);
+    border-radius: var(--radius-sm);
+  }
+  .attachment-document-viewer {
+    display: flex;
+    flex-direction: column;
+    width: min(100%, var(--layout-settings-dialog));
+    max-height: calc(100dvh - var(--space-8));
+  }
+  .attachment-document-viewer .modal-dialog-head {
+    flex-shrink: 0;
+  }
+  .attachment-document-viewer .modal-dialog-head h2 {
+    overflow-wrap: anywhere;
+  }
+  .attachment-document-body {
+    min-height: 0;
+    overflow: auto;
+    padding: var(--space-4) var(--space-5) var(--space-6);
+  }
+  .attachment-document-pdf {
+    display: block;
+    width: 100%;
+    height: 65dvh;
+    border: 0;
+    background: var(--color-layer-2);
+  }
+  .attachment-document-content {
+    overflow-wrap: anywhere;
+  }
+  .attachment-document-content.markdown-content--article .markdown-table-wrap {
+    margin-inline: 0;
+    padding-inline: 0;
+  }
+  .attachment-sheet-scroll {
+    overflow: auto;
+    max-height: 60dvh;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+  }
+  .attachment-sheet {
+    width: max-content;
+    min-width: 100%;
+    border-collapse: collapse;
+    font-size: var(--type-caption-size);
+    font-variant-numeric: tabular-nums;
+  }
+  .attachment-sheet :is(th, td) {
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    min-width: var(--control-xl);
+    max-width: var(--layout-image-width);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    text-align: start;
+    vertical-align: top;
+  }
+  .attachment-sheet th {
+    background: var(--color-layer-2);
+    font-weight: var(--weight-medium);
+  }
+  .attachment-sheet thead th {
+    position: sticky;
+    top: 0;
+    z-index: var(--layer-local);
+  }
+  .attachment-preview-note {
+    color: var(--color-text-secondary);
+    font-size: var(--type-caption-size);
+    margin-block: var(--space-3);
+  }
   .attachment-error {
     display: flex;
     flex-wrap: wrap;
@@ -513,6 +602,10 @@
   }
 
   @media (max-width: 767px) {
+    .attachment-document-body { padding: var(--space-3); }
+    .attachment-document-viewer .modal-dialog-head { padding: var(--space-3); gap: var(--space-1); }
+    .attachment-document-viewer .modal-dialog-head h2 { font-size: var(--type-body-size); }
+
     .attachment-viewer .modal-dialog-head {
       padding: var(--space-2);
       gap: var(--space-1);

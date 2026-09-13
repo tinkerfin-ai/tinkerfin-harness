@@ -12,7 +12,7 @@ from .facts import TraceEvent, TraceSemanticFact
 from .graph import TraceGraphDelta
 
 
-class TraceMessage(TraceModel):
+class TraceMessage(TraceModel, frozen=True):
     """One projected message with the content actually retained from delivery.
 
     ``completed`` means delivery ended or paused, not that the provider succeeded.
@@ -35,7 +35,7 @@ class TraceMessage(TraceModel):
     completed_at: datetime | None = None
 
 
-class TraceReasoning(TraceModel):
+class TraceReasoning(TraceModel, frozen=True):
     """One explicitly enabled provider reasoning stream for a scoped message."""
 
     id: str
@@ -51,7 +51,7 @@ class TraceReasoning(TraceModel):
     completed_at: datetime | None = None
 
 
-class TraceInteraction(TraceModel):
+class TraceInteraction(TraceModel, frozen=True):
     """One approval, clarification, or review interaction.
 
     ``source_id`` preserves the canonical native interrupt identity. Protocol adapters
@@ -73,14 +73,14 @@ class TraceInteraction(TraceModel):
     resolved_at: datetime | None = None
 
 
-class TraceState(TraceModel):
+class TraceState(TraceModel, frozen=True):
     """Latest complete root state plus isolated subgraph state snapshots."""
 
     root: dict[str, JsonValue] = Field(default_factory=dict)
     subgraphs: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
 
 
-class TraceStatus(TraceModel):
+class TraceStatus(TraceModel, frozen=True):
     """Current Agent execution status for the selected head lineage."""
 
     execution: Literal[
@@ -95,7 +95,7 @@ class TraceStatus(TraceModel):
     head_run_id: str
 
 
-class TraceCompleteness(TraceModel):
+class TraceCompleteness(TraceModel, frozen=True):
     """Describe structural or capture gaps without overloading execution status."""
 
     missing_prefix: bool = False
@@ -103,7 +103,7 @@ class TraceCompleteness(TraceModel):
     payload_omitted: bool = False
 
 
-class TraceSummary(TraceModel):
+class TraceSummary(TraceModel, frozen=True):
     """Return complete cumulative status for one selected fixed-as-of lineage.
 
     Counts, pending interactions, and the latest source time are independent of the
@@ -127,7 +127,7 @@ class TraceSummary(TraceModel):
         return value
 
 
-class TraceEventPage(TraceModel):
+class TraceEventPage(TraceModel, frozen=True):
     """One fixed-as-of ascending page of safe Ledger events."""
 
     items: tuple[TraceEvent, ...]
@@ -135,17 +135,17 @@ class TraceEventPage(TraceModel):
     page_as_of_seq: int
 
 
-EntityT = TypeVar("EntityT", bound=BaseModel)
+EntityT = TypeVar("EntityT", bound=BaseModel, covariant=True)
 
 
-class TraceEntityDelta(TraceModel, Generic[EntityT]):
+class TraceEntityDelta(TraceModel, Generic[EntityT], frozen=True):
     """Upsert and remove immutable entities by their stable IDs."""
 
     upserts: tuple[EntityT, ...] = ()
     removes: tuple[str, ...] = ()
 
 
-class TraceUpdate(TraceModel):
+class TraceUpdate(TraceModel, frozen=True):
     """A committed event update or execution-status change at the same sequence.
 
     Writer close or lease expiry can change status and completeness with empty

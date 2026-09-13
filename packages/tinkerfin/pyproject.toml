@@ -18,10 +18,10 @@ classifiers = [
 
 dependencies = [
     "anyio>=4,<5",
-    "deepagents==0.7.5",
-    "langchain==1.3.14",
-    "langchain-core==1.5.3",
-    "langgraph==1.2.10",
+    "deepagents>=0.7.5,<=0.7.13",
+    "langchain>=1.3.14,<=1.4.0",
+    "langchain-core>=1.5.3,<=1.6.3",
+    "langgraph>=1.2.10,<=1.2.11",
     "jsonschema>=4.25,<5",
     "pydantic>=2,<3",
     "tinkerfin-contracts==0.1.0",
@@ -32,6 +32,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+tracing = ["tinkerfin-tracing==0.1.0"]
 agui = [
     "ag-ui-protocol==0.1.19",
     "tinkerfin-agui-adapter==0.1.0",
@@ -58,6 +59,7 @@ where = ["src"]
 tinkerfin = ["*.pyi", "py.typed"]
 
 [tool.uv.sources]
+tinkerfin-tracing = { workspace = true }
 tinkerfin-agui-adapter = { workspace = true }
 tinkerfin-contracts = { workspace = true }
 tinkerfin-native-stream = { workspace = true }

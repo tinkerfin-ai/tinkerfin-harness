@@ -17,8 +17,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "langchain-core==1.5.3",
-    "langgraph==1.2.10",
+    "langchain-core>=1.5.3,<=1.6.3",
+    "langgraph>=1.2.10,<=1.2.11",
     "pydantic>=2,<3",
     "pydantic-core>=2,<3",
     "tinkerfin-contracts==0.1.0",

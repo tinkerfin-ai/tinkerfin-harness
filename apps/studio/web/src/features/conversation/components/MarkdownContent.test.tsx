@@ -158,3 +158,13 @@ describe('MarkdownContent article contract', () => {
     expect(conversationStyles).toMatch(/\.tool-rich-field \.markdown-content :is\(h1, h2, h3, h4, h5, h6\)/s)
   })
 })
+
+
+it('文档可关闭远端图片加载，聊天默认仍可展示 Markdown 图片', () => {
+  const content = '![营收趋势](https://example.com/chart.png)'
+  const { rerender } = render(<MarkdownContent content={content} allowRemoteImages={false} />)
+  expect(screen.queryByRole('img')).not.toBeInTheDocument()
+  expect(screen.getByText('营收趋势')).toBeVisible()
+  rerender(<MarkdownContent content={content} />)
+  expect(screen.getByRole('img', { name: '营收趋势' })).toHaveAttribute('src', 'https://example.com/chart.png')
+})

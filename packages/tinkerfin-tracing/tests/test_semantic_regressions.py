@@ -9,6 +9,7 @@ import pytest
 from pydantic import JsonValue
 
 from tinkerfin_contracts import (
+    ModelCallObservation,
     NativeInterruptRecord,
     NativeMessageObservation,
     NativeMessageRecord,
@@ -36,6 +37,7 @@ from tinkerfin_tracing import (
     InteractionFact,
     MessageFact,
     PlanRevisionFact,
+    RedactionContext,
     RunFact,
     StateRevisionFact,
     SubagentFact,
@@ -2021,3 +2023,194 @@ async def test_native_remove_message_removes_the_target_without_waiting_for_stat
     )
 
     assert all(message.source_id != "remove-target" for message in thread.messages)
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_child"),
+    [
+        ("inherited", False),
+        ("different-content", True),
+        ("sibling", True),
+        ("delivered", True),
+        ("model-output", True),
+        ("later-snapshot", True),
+        ("changed-after-input", True),
+        ("delivered-after-input", True),
+        ("nested", False),
+        ("resumed", False),
+    ],
+)
+async def test_child_snapshot_distinguishes_inherited_input_from_output(
+    case: str, expected_child: bool
+) -> None:
+    tracer = Tracer()
+    context = _context(run_id="parent")
+    session = await _start(tracer, context)
+    parent_scope = ("left:1",) if case == "sibling" else ()
+    child_scope = ("right:1", "nested:2") if case == "nested" else ("right:1",)
+    original = NativeMessageRecord(
+        message_type="assistant", id="shared-message", content="Existing answer"
+    )
+
+    async def state(scope: tuple[str, ...], message: NativeMessageRecord) -> None:
+        await session.observe(
+            NativeStateObservation(
+                identity=context.identity,
+                graph_namespace=scope,
+                messages=(message,),
+                state={},
+                observed_at=datetime.now(UTC),
+                monotonic_ns=3,
+            )
+        )
+
+    async def deliver() -> None:
+        await session.observe(
+            NativeMessageObservation(
+                identity=context.identity,
+                graph_namespace=child_scope,
+                message=original,
+                metadata={},
+                observed_at=datetime.now(UTC),
+                monotonic_ns=4,
+            )
+        )
+
+    await state(parent_scope, original)
+    if case == "delivered":
+        await deliver()
+    elif case == "model-output":
+        await session.observe(
+            ModelCallObservation(
+                identity=context.identity,
+                graph_namespace=child_scope,
+                phase="first_output",
+                call_id="real-child-model",
+                output_message_ids=("shared-message",),
+                observed_at=datetime.now(UTC),
+                monotonic_ns=4,
+            )
+        )
+    elif case == "later-snapshot":
+        await session.observe(
+            NativeStateObservation(
+                identity=context.identity,
+                graph_namespace=child_scope,
+                messages=(),
+                state={},
+                observed_at=datetime.now(UTC),
+                monotonic_ns=4,
+            )
+        )
+    changed = NativeMessageRecord(
+        message_type="assistant", id="shared-message", content="New local answer"
+    )
+    await state(child_scope, changed if case == "different-content" else original)
+    if case == "changed-after-input":
+        await state(child_scope, changed)
+    elif case == "delivered-after-input":
+        await deliver()
+        await state(child_scope, original)
+    else:
+        await state(child_scope, changed if case == "different-content" else original)
+    await _finish(session, context)
+    if case == "resumed":
+        context = _context(run_id="continued", parent_run_id="parent")
+        session = await _start(tracer, context)
+        await state(parent_scope, original)
+        await state(child_scope, original)
+        await _finish(session, context)
+    graph = await tracer.query(
+        ThreadIdentity(namespace="test", thread_id="thread-semantic"), limit=100
+    )
+    nodes = [
+        node
+        for node in graph.nodes
+        if node.source_id == "shared-message" and node.graph_namespace == child_scope
+    ]
+    assert bool(nodes) is expected_child
+    if nodes:
+        expected_content = (
+            "New local answer"
+            if case in {"different-content", "changed-after-input"}
+            else "Existing answer"
+        )
+        assert nodes[0].content == expected_content
+
+
+class _InheritedMessageRedactor:
+    def redact(self, value: JsonValue, *, context: RedactionContext) -> JsonValue:
+        if context.content_kind == "message" and isinstance(value, str):
+            return "[hidden]" if value.startswith("secret-") else value
+        return value
+
+
+@pytest.mark.parametrize("case", ["redacted", "redacted-parent", "omitted", "selected"])
+async def test_child_input_equality_requires_complete_unmodified_ancestor_and_child(
+    case: str,
+) -> None:
+    tracer = Tracer(
+        redactor=_InheritedMessageRedactor(),
+        capture_policy=CapturePolicy.public_safe(
+            tool_rules=(
+                ToolCaptureRule(tool_name="lookup", argument_paths=("/shown",)),
+            )
+        ),
+    )
+    context = _context(run_id="unproven-equality")
+    session = await _start(tracer, context)
+    parent = NativeMessageRecord(
+        message_type="assistant", id="same-source", content="secret-parent"
+    )
+    child = NativeMessageRecord(
+        message_type="assistant",
+        id="same-source",
+        content="[hidden]" if case == "redacted-parent" else "secret-child",
+    )
+    if case == "omitted":
+        parent = parent.model_copy(update={"content": "A" * 600_000})
+        child = child.model_copy(update={"content": "B" * 600_000})
+    elif case == "selected":
+        parent = NativeMessageRecord(
+            message_type="assistant",
+            id="same-source",
+            content="",
+            tool_calls=(
+                NativeToolCall(
+                    id="lookup-call",
+                    name="lookup",
+                    arguments={"shown": 1, "hidden": "A"},
+                ),
+            ),
+        )
+        child = NativeMessageRecord(
+            message_type="assistant",
+            id="same-source",
+            content="",
+            tool_calls=(
+                NativeToolCall(
+                    id="lookup-call",
+                    name="lookup",
+                    arguments={"shown": 1, "hidden": "B"},
+                ),
+            ),
+        )
+    for scope, message in (((), parent), (("child:1",), child)):
+        await session.observe(
+            NativeStateObservation(
+                identity=context.identity,
+                graph_namespace=scope,
+                messages=(message,),
+                state={},
+                observed_at=datetime.now(UTC),
+                monotonic_ns=3,
+            )
+        )
+    await _finish(session, context)
+    graph = await tracer.query(
+        ThreadIdentity(namespace="test", thread_id="thread-semantic"), limit=100
+    )
+    assert any(
+        node.source_id == "same-source" and node.graph_namespace == ("child:1",)
+        for node in graph.nodes
+    )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -30,6 +31,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
     UserMessage,
 )
+from deepagents.backends import StateBackend
 from langchain.agents.middleware.types import InputAgentState
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
@@ -43,7 +45,7 @@ from tinkerfin import (
     RunIdentity,
     TinkerFin,
 )
-from tinkerfin_contracts import AgentRunPreparation
+from tinkerfin_contracts import PreparedWorkspace
 from tinkerfin_messaging import (
     MessageCodecInputSource,
     MessageSubscription,
@@ -268,16 +270,20 @@ async def test_agui_run_source_prepares_only_the_selected_owner() -> None:
     prepared: list[RunIdentity] = []
     transformed: list[str] = []
 
-    async def prepare_tools(run: AgentRunPreparation[None]) -> list[BaseTool]:
-        prepared.append(run.identity)
-        return []
+    class Workspace:
+        @asynccontextmanager
+        async def prepare(
+            self, identity: RunIdentity
+        ) -> AsyncIterator[PreparedWorkspace[None, StateBackend]]:
+            prepared.append(identity)
+            yield PreparedWorkspace(None, StateBackend())
 
     definition = (
         TinkerFin()
         .with_namespace("test")
         .build(
             model=_ToolBindingFakeModel(responses=[AIMessage(content="answer")]),
-            prepare_tools=prepare_tools,
+            backend=Workspace(),
         )
     )
     identity = _identity(thread_id="managed-thread", run_id="managed-run")

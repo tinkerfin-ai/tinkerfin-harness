@@ -79,9 +79,7 @@ def _builder(
     def create(*args: object, **kwargs: object) -> object:
         return graph
 
-    monkeypatch.setattr(
-        "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent", create
-    )
+    monkeypatch.setattr("tinkerfin.deep_agent.create_agent_graph", create)
     return TinkerFin(run_coordinator=coordinator).with_namespace("company")
 
 

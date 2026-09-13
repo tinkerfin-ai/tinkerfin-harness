@@ -54,18 +54,17 @@ def test_declared_middleware_reject_raw_stores_before_execution(
     if routed:
         backend = CompositeBackend(default=StateBackend(), routes={"/memory/": backend})
     middleware = _middleware(kind, backend)
-    builder = TinkerFin().with_namespace("alpha")
-    spec: SubAgent[None] = {
+    builder = TinkerFin(store=shared).with_namespace("alpha")
+    spec: SubAgent = {
         "name": "worker",
         "description": "Inspect files",
         "system_prompt": "Inspect the available files.",
         "middleware": [middleware],
     }
     subagents = [spec] if subagent else None
-    with pytest.raises(ValueError, match="pass store= to build"):
+    with pytest.raises(ValueError, match="pass store= to TinkerFin"):
         builder.build(
             model=_Model(responses=[AIMessage(content="done")]),
-            store=shared,
             middleware=[] if subagent else [middleware],
             subagents=subagents,
         )
@@ -110,9 +109,9 @@ async def test_builtin_middleware_use_async_scoped_stores_without_mutating_hosts
             else _Model(responses=[AIMessage(content="done")])
         )
         runtime = (
-            TinkerFin()
+            TinkerFin(store=shared)
             .with_namespace(namespace)
-            .build(model=model, store=shared, middleware=[middleware])
+            .build(model=model, middleware=[middleware])
         )
         if direct:
             result = await (await create_graph(runtime)).ainvoke({"messages": []})
@@ -165,9 +164,9 @@ async def test_file_middleware_keeps_permissions_and_its_tool_allowlist(
         ]
     )
     runtime = (
-        TinkerFin()
+        TinkerFin(store=shared)
         .with_namespace("alpha")
-        .build(model=model, store=shared, middleware=[middleware])
+        .build(model=model, middleware=[middleware])
     )
     if agui:
         async with aclosing(
@@ -197,11 +196,10 @@ async def test_summary_history_uses_the_current_namespace_store() -> None:
     )
     for namespace in ("alpha", "beta"):
         runtime = (
-            TinkerFin()
+            TinkerFin(store=shared)
             .with_namespace(namespace)
             .build(
                 model=_Model(responses=[AIMessage(content="done")]),
-                store=shared,
                 middleware=[middleware],
             )
         )

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager
 from typing import Any, cast
 
 import pytest
 from ag_ui.core import BaseEvent, RunFinishedEvent
 from ag_ui.core.types import ResumeEntry
+from deepagents.backends import StateBackend
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
@@ -28,25 +30,23 @@ from tinkerfin._checkpoint import NamespaceCheckpointer
 from tinkerfin.runtime_profile import DeepAgentsV2RuntimeProfile
 from tinkerfin_contracts import (
     ObservationBoundary,
+    PreparedWorkspace,
     RunObservationSession,
     RunSourceContext,
     RuntimeObservation,
 )
 
 
-class _SetupProfile(DeepAgentsV2RuntimeProfile):
+class _SetupWorkspace:
     def __init__(self, before_build: Callable[[], Awaitable[None]]) -> None:
-        super().__init__()
         self._before_build = before_build
 
-    async def create_agent_graph(
-        self,
-        factory: Callable[..., object],
-        args: tuple[object, ...],
-        kwargs: Mapping[str, object],
-    ) -> object:
+    @asynccontextmanager
+    async def prepare(
+        self, identity: RunIdentity
+    ) -> AsyncIterator[PreparedWorkspace[None, StateBackend]]:
         await self._before_build()
-        return await super().create_agent_graph(factory, args, kwargs)
+        yield PreparedWorkspace(None, StateBackend())
 
 
 class _ResumeState(MessagesState, total=False):
@@ -124,7 +124,7 @@ def _install_resume_graph(
         return graph
 
     monkeypatch.setattr(
-        "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent",
+        "tinkerfin.deep_agent.create_agent_graph",
         build,
     )
     return saver, graphs, executions
@@ -190,9 +190,8 @@ def _assert_private_marker_absent(events: list[BaseEvent]) -> None:
 async def test_open_agui_run_reuses_one_graph_for_resume_resolution_and_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    default_saver = MemorySaver()
     saver = MemorySaver()
-    tinkerfin = TinkerFin(checkpointer=default_saver).with_namespace("test")
+    tinkerfin = TinkerFin(checkpointer=saver).with_namespace("test")
     graphs: list[CompiledStateGraph[Any, Any, Any, Any]] = []
     resumed: list[object] = []
 
@@ -222,10 +221,10 @@ async def test_open_agui_run_reuses_one_graph_for_resume_resolution_and_executio
         return graph
 
     monkeypatch.setattr(
-        "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent",
+        "tinkerfin.deep_agent.create_agent_graph",
         build,
     )
-    definition = tinkerfin.build(model="provider:model", tools=[], checkpointer=saver)
+    definition = tinkerfin.build(model="provider:model", tools=[])
     parent_identity = RunIdentity(
         namespace="test", thread_id="thread-managed", run_id="run-parent"
     )
@@ -297,9 +296,11 @@ async def test_open_agui_run_reuses_one_graph_for_resume_resolution_and_executio
         releases += 1
 
     retry_runtime = (
-        TinkerFin(checkpointer=saver, runtime_profile=_SetupProfile(fail_agent_setup))
+        TinkerFin(
+            checkpointer=saver,
+        )
         .with_namespace("test")
-        .build(model="provider:model")
+        .build(backend=_SetupWorkspace(fail_agent_setup), model="provider:model")
     )
     retry = retry_runtime.open_agui_run(
         thread_id=resume_identity.thread_id,
@@ -340,9 +341,11 @@ async def test_open_agui_run_releases_preparation_failure_once() -> None:
         releases += 1
 
     runtime = (
-        TinkerFin(checkpointer=saver, runtime_profile=_SetupProfile(fail_agent_setup))
+        TinkerFin(
+            checkpointer=saver,
+        )
         .with_namespace("test")
-        .build(model="provider:model")
+        .build(backend=_SetupWorkspace(fail_agent_setup), model="provider:model")
     )
     stream = runtime.open_agui_run(
         thread_id=identity.thread_id,
@@ -356,8 +359,7 @@ async def test_open_agui_run_releases_preparation_failure_once() -> None:
     assert releases == 1
 
 
-async def test_resume_preparation_uses_the_bound_override_saver() -> None:
-    default_saver = MemorySaver()
+async def test_resume_preparation_uses_the_configured_saver() -> None:
     override_saver = MemorySaver()
     identity = RunIdentity(
         namespace="test", thread_id="thread-declared-saver", run_id="run-resume"
@@ -383,10 +385,10 @@ async def test_resume_preparation_uses_the_bound_override_saver() -> None:
 
     runtime = (
         TinkerFin(
-            checkpointer=default_saver, runtime_profile=_SetupProfile(fail_agent_setup)
+            checkpointer=override_saver,
         )
         .with_namespace("test")
-        .build(model="provider:model", checkpointer=override_saver)
+        .build(backend=_SetupWorkspace(fail_agent_setup), model="provider:model")
     )
     stream = runtime.open_agui_run(
         thread_id=identity.thread_id,
@@ -463,9 +465,11 @@ async def test_open_agui_run_settles_preparation_cancellation_once(
             raise release_error
 
     runtime = (
-        TinkerFin(checkpointer=saver, runtime_profile=_SetupProfile(create_agent))
+        TinkerFin(
+            checkpointer=saver,
+        )
         .with_namespace("test")
-        .build(model="provider:model")
+        .build(backend=_SetupWorkspace(create_agent), model="provider:model")
     )
     stream = runtime.open_agui_run(
         thread_id=identity.thread_id,
@@ -548,9 +552,11 @@ async def test_open_agui_run_retains_marker_probe_across_repeated_cancellation(
         marker_is_durable,
     )
     runtime = (
-        TinkerFin(checkpointer=saver, runtime_profile=_SetupProfile(create_agent))
+        TinkerFin(
+            checkpointer=saver,
+        )
         .with_namespace("test")
-        .build(model="provider:model")
+        .build(backend=_SetupWorkspace(create_agent), model="provider:model")
     )
     stream = runtime.open_agui_run(
         thread_id=identity.thread_id,
@@ -609,7 +615,7 @@ async def test_runtime_resolves_resume_from_checkpoint_decisions(
         return builder.compile(checkpointer=NamespaceCheckpointer(saver, "test"))
 
     monkeypatch.setattr(
-        "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent",
+        "tinkerfin.deep_agent.create_agent_graph",
         build,
     )
     definition = (
@@ -991,7 +997,7 @@ async def test_resume_graph_factory_failure_uses_pre_marker_settlement(
         releases += 1
 
     monkeypatch.setattr(
-        "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent",
+        "tinkerfin.deep_agent.create_agent_graph",
         fail_factory,
     )
     failing_definition = (
@@ -1053,7 +1059,7 @@ async def test_resume_graph_factory_failure_preserves_a_durable_retry_claim(
         raise RuntimeError("retry factory failed")
 
     monkeypatch.setattr(
-        "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent",
+        "tinkerfin.deep_agent.create_agent_graph",
         fail_factory,
     )
     releases = 0

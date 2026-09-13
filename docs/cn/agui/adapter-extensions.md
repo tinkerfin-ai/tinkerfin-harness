@@ -53,20 +53,30 @@ async with aclosing(events):
 独立转换器无法推断宿主的私有字段，因此 `private_state_keys` 需要显式提供，并且只过滤顶层
 channel，不会递归删除嵌套同名业务字段。TinkerFin Plan Runtime 会自动提供自己的内部 key。
 
-## 持久图片与文档
+## 持久附件
 
 `tinkerfin_contracts.media` 的 `Attachment` 包含 `id`、`name`、`mime_type`
 和 `size_bytes`。调用 `content_block()` 会得到 LangChain 的 `image` 或 `file`
 内容块，带有 `file_id`、`mime_type` 和 `extras.attachment`。消息保存该引用；宿主
-负责访问授权，并通过 `TinkerFin().with_attachments(AttachmentSupport(read_image=...))`
-在模型请求时提供图片字节。每个目标模型独立判断图片能力；自定义编译 Agent 单独配置附件访问。
+负责访问授权，并通过 `TinkerFin().with_attachments(AttachmentSupport(read_content=...))`
+在模型请求时提供有大小限制的文件内容。异步读取函数返回
+`AttachmentContent(data=..., mime_type=...)`。目标模型必须支持对应格式；默认依据模型
+profile 判断图片、音频、视频和 PDF 输入能力，也可通过
+`supports_content(model, mime_type)` 显式判断。不支持的格式保留引用，供文件读取工具处理；
+该能力不负责文件解析或视频抽帧。
+
+`max_attachments` 默认每次请求读取最近 5 个受支持附件；`max_bytes` 默认限制编码前的
+内容总量为 20 MiB，超出时在调用模型前抛出 `ValueError`。宿主还需在返回字节前限制
+存储读取量。该策略作用于框架创建的图；外部编译图和远程智能体自行选择文件输入方式。
 
 普通运行直接向 `runtime.open_agui_run(messages=...)` 提交标准用户消息，由 Runtime 校验并转换。宿主自行分配消息 ID 时，可用 `AgUiUserInput` 提前读取文字和附件引用，并替换已授权的附件描述。
 
-自定义适配集成可使用底层 `tinkerfin_agui_adapter.media` 的 `user_message_to_langchain()` 转换 AG-UI
-用户输入。持久图片使用 `type: "image"`，文档使用 `type: "document"`，
-`source` 为 `{"type": "url", "value": "attachment:<id>"}`，`metadata` 放附件描述。
-用户消息快照保留这一形态。
+自定义适配集成可使用 `tinkerfin_agui_adapter.media` 的
+`user_message_to_langchain()` 将 AG-UI 用户消息转换为 LangChain 消息，或使用
+`user_content_to_agui()` 将 LangChain 用户内容转换为 AG-UI。图片、音频、视频分别
+使用 `type: "image"`、`"audio"`、`"video"`，其他文件使用 `"document"`。
+附件片段的 `source` 为 `{"type": "url", "value": "attachment:<id>"}`，
+`metadata` 保存附件描述；用户消息快照保留这一形态。
 
 工具结果与助手快照通过 `attachments` 数组提供附件描述。助手流式输出使用 CUSTOM
 事件 `tinkerfin.message.attachments`，值为

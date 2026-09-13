@@ -171,7 +171,7 @@ class CoreProjection:
         return self.summary.tool_call_count
 
 
-class CoreRunCheckpoint(TraceModel):
+class CoreRunCheckpoint(TraceModel, frozen=True):
     """Incremental lineage, state, and completeness for one semantic Run."""
 
     run_id: str
@@ -203,7 +203,7 @@ class CoreRunCheckpoint(TraceModel):
     interaction_sequences: tuple[int, ...] = ()
 
 
-class CoreTurnCheckpoint(TraceModel):
+class CoreTurnCheckpoint(TraceModel, frozen=True):
     """Index one Turn's Run membership and inclusive Ledger sequence range."""
 
     turn_id: str
@@ -213,7 +213,7 @@ class CoreTurnCheckpoint(TraceModel):
     user_message_id: str | None = None
 
 
-class CoreProjectionState(TraceModel):
+class CoreProjectionState(TraceModel, frozen=True):
     """Serializable incremental state for bounded core Trace queries.
 
     The state keeps Turn paging metadata and one independent cumulative snapshot per
@@ -524,7 +524,11 @@ def advance_core_projection_state(
             # Runtime lifecycle phases may omit the parent already bound by ``started``.
             # Repeated input evidence must not degrade that lineage, while a continuation
             # with no explicit, inferred, or previously bound parent remains incomplete.
-            if known_parent_run_id is None and fact.input_kind in {"resume", "abandon"}:
+            if known_parent_run_id is None and fact.input_kind in {
+                "continuation",
+                "resume",
+                "abandon",
+            }:
                 info = info or inherited_run(
                     run_id,
                     occurred_at=fact.occurred_at,
@@ -558,11 +562,15 @@ def advance_core_projection_state(
             )
             if (
                 parent is not None
-                and fact.input_kind in {"resume", "abandon"}
+                and fact.input_kind in {"continuation", "resume", "abandon"}
                 and parent.turn_id is not None
             ):
                 info = assign_turn(info, parent.turn_id, event.trace_seq)
-            elif info.turn_id is None and fact.input_kind in {"resume", "abandon"}:
+            elif info.turn_id is None and fact.input_kind in {
+                "continuation",
+                "resume",
+                "abandon",
+            }:
                 info = assign_turn(
                     info,
                     f"turn-partial:{run_id}",
@@ -1301,14 +1309,21 @@ def _lineage(
                     candidate = next(iter(candidates))
                     if runs[candidate].terminal is not None:
                         parent = candidate
-                elif fact.input_kind in {"resume", "abandon"} and not candidates:
+                elif (
+                    fact.input_kind in {"continuation", "resume", "abandon"}
+                    and not candidates
+                ):
                     missing_prefix_runs.add(run_id)
             info.parent_run_id = parent
             info.input_kind = fact.input_kind
             if parent is not None:
                 heads.discard(parent)
                 parent_turn = run_turns.get(parent)
-                if parent_turn is not None and fact.input_kind in {"resume", "abandon"}:
+                if parent_turn is not None and fact.input_kind in {
+                    "continuation",
+                    "resume",
+                    "abandon",
+                }:
                     run_turns[run_id] = parent_turn
                 elif parent not in runs:
                     missing_prefix_runs.add(run_id)

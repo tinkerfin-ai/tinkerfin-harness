@@ -17,7 +17,7 @@ def _omit_false(value: bool) -> bool:
     return not value
 
 
-class TraceFactBase(TimedTraceModel):
+class TraceFactBase(TimedTraceModel, frozen=True):
     """Attach stable source identity and graph scope to one semantic fact."""
 
     source_observation_id: str = Field(min_length=1, max_length=1024)
@@ -30,7 +30,7 @@ class TraceFactBase(TimedTraceModel):
     )
 
 
-class TurnFact(TraceFactBase):
+class TurnFact(TraceFactBase, frozen=True):
     """Start one user task that can span multiple resumed Run segments."""
 
     kind: Literal["turn.started"] = "turn.started"
@@ -39,7 +39,7 @@ class TurnFact(TraceFactBase):
     parent_run_id: str | None = Field(default=None, min_length=1, max_length=1024)
 
 
-class RunFact(TraceFactBase):
+class RunFact(TraceFactBase, frozen=True):
     """Describe the root Runtime lifecycle without transport or Subagent state.
 
     Run observations describe the whole invocation. Their graph namespace is always empty
@@ -85,8 +85,14 @@ class RunFact(TraceFactBase):
             raise ValueError("started Run facts require input_kind")
         if self.phase == "input" and self.input_kind not in {"ordinary", "branch"}:
             raise ValueError("input Run facts require ordinary or branch input_kind")
-        if self.phase == "resumed" and self.input_kind not in {"resume", "abandon"}:
-            raise ValueError("resumed Run facts require resume or abandon input_kind")
+        if self.phase == "resumed" and self.input_kind not in {
+            "continuation",
+            "resume",
+            "abandon",
+        }:
+            raise ValueError(
+                "resumed Run facts require continuation, resume or abandon input_kind"
+            )
         if self.phase in {"input", "resumed"} and (
             self.input is None or self.config is None
         ):
@@ -116,7 +122,7 @@ class RunFact(TraceFactBase):
         return self
 
 
-class MessageFact(TraceFactBase):
+class MessageFact(TraceFactBase, frozen=True):
     """Record content and delivery state for one scoped conversation message.
 
     A cancelled, interrupted, or abandoned Assistant retains only the content actually
@@ -168,7 +174,7 @@ class MessageFact(TraceFactBase):
         return self
 
 
-class ReasoningFact(TraceFactBase):
+class ReasoningFact(TraceFactBase, frozen=True):
     """Append, reconcile, or complete explicitly enabled provider reasoning."""
 
     kind: Literal["reasoning"] = "reasoning"
@@ -190,7 +196,7 @@ class ReasoningFact(TraceFactBase):
         return self
 
 
-class ToolFact(TraceFactBase):
+class ToolFact(TraceFactBase, frozen=True):
     """Describe one scoped Tool proposal, argument stream, end, or result."""
 
     kind: Literal["tool"] = "tool"
@@ -227,7 +233,7 @@ class ToolFact(TraceFactBase):
         return self
 
 
-class StateRevisionFact(TraceFactBase):
+class StateRevisionFact(TraceFactBase, frozen=True):
     """Store changed top-level state keys without duplicating message snapshots."""
 
     kind: Literal["state.revision"] = "state.revision"
@@ -236,7 +242,7 @@ class StateRevisionFact(TraceFactBase):
     removed_keys: tuple[str, ...] = ()
 
 
-class InteractionFact(TraceFactBase):
+class InteractionFact(TraceFactBase, frozen=True):
     """Open or resolve one native approval, clarification, or review interaction."""
 
     kind: Literal["interaction"] = "interaction"
@@ -266,7 +272,7 @@ class InteractionFact(TraceFactBase):
         return self
 
 
-class SubagentFact(TraceFactBase):
+class SubagentFact(TraceFactBase, frozen=True):
     """Record one validated child Agent execution or its waiting/terminal state.
 
     ``started`` requires ``running``; ``updated`` requires ``waiting``; ``completed``
@@ -327,7 +333,7 @@ class SubagentFact(TraceFactBase):
         return self
 
 
-class PlanRevisionFact(TraceFactBase):
+class PlanRevisionFact(TraceFactBase, frozen=True):
     """Record one public TinkerFin Plan state revision."""
 
     kind: Literal["plan.revision"] = "plan.revision"
@@ -337,7 +343,7 @@ class PlanRevisionFact(TraceFactBase):
     plan: CapturedValue
 
 
-class NativeExtraFact(TraceFactBase):
+class NativeExtraFact(TraceFactBase, frozen=True):
     """Retain structural metadata for an allowed extra Native stream mode."""
 
     kind: Literal["native.extra"] = "native.extra"
@@ -346,7 +352,7 @@ class NativeExtraFact(TraceFactBase):
     top_level_keys: tuple[str, ...] = ()
 
 
-class ModelCallFact(TraceFactBase):
+class ModelCallFact(TraceFactBase, frozen=True):
     """Describe one provider call independently of Native response delivery."""
 
     kind: Literal["model.call"] = "model.call"
@@ -450,13 +456,13 @@ class ModelCallFact(TraceFactBase):
         return self
 
 
-class CallTrackingFact(TraceFactBase):
+class CallTrackingFact(TraceFactBase, frozen=True):
     """Mark one Run as observed through provider and Tool callback boundaries."""
 
     kind: Literal["call.tracking"] = "call.tracking"
 
 
-class ToolExecutionFact(TraceFactBase):
+class ToolExecutionFact(TraceFactBase, frozen=True):
     """Describe actual Tool execution separately from a model Tool proposal."""
 
     kind: Literal["tool.execution"] = "tool.execution"
@@ -502,7 +508,7 @@ class ToolExecutionFact(TraceFactBase):
         return self
 
 
-class ContextContributionFact(TraceFactBase):
+class ContextContributionFact(TraceFactBase, frozen=True):
     """Describe one explicit Memory, Guardrail, retrieval, or custom contribution."""
 
     kind: Literal["context.contribution"] = "context.contribution"
@@ -563,7 +569,7 @@ TraceSemanticFact: TypeAlias = Annotated[
 TRACE_FACT_ADAPTER: TypeAdapter[TraceSemanticFact] = TypeAdapter(TraceSemanticFact)
 
 
-class TraceEvent(TraceModel):
+class TraceEvent(TraceModel, frozen=True):
     """Wrap one committed semantic fact with generation and sequence identity."""
 
     event_id: str = Field(min_length=1, max_length=1024)

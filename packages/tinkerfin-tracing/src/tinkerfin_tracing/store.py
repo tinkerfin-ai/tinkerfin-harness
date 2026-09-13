@@ -45,7 +45,7 @@ class TraceThreadKey(ThreadIdentity):
         return ThreadIdentity(namespace=self.namespace, thread_id=self.thread_id)
 
 
-class StoreWriterSnapshot(TraceModel):
+class StoreWriterSnapshot(TraceModel, frozen=True):
     """Describe one active Run writer at a fixed Store observation point."""
 
     run_id: str = Field(min_length=1, max_length=1024)
@@ -61,7 +61,7 @@ class StoreWriterSnapshot(TraceModel):
         return value
 
 
-class StoreThreadSnapshot(TraceModel):
+class StoreThreadSnapshot(TraceModel, frozen=True):
     """Return immutable generation, prefix, capacity, and writer metadata."""
 
     key: TraceThreadKey
@@ -116,7 +116,7 @@ class TraceStoreUpdate:
     observed_at: datetime
 
 
-class TraceProjectionCheckpoint(TraceModel):
+class TraceProjectionCheckpoint(TraceModel, frozen=True):
     """Store one disposable serializable Projection state at an exact prefix."""
 
     key: TraceThreadKey
@@ -478,8 +478,16 @@ class TraceGraphStore(Protocol):
         max_nodes: int = 4000,
         before_started_at: datetime | None = None,
         before_node_id: str | None = None,
+        started_run_ids: tuple[str, ...] | None = None,
     ) -> TraceGraphNodeRecordPage:
-        """Return direct matches plus their bounded parent Subagent scopes."""
+        """Return direct matches plus their bounded parent Subagent scopes.
+
+        ``run_ids`` supplies the complete selected lineage. ``started_run_ids``
+        optionally limits direct matches by their authoritative start's Run,
+        after lineage facts are merged and before applying the page limit. Its
+        values must be a unique subset of ``run_ids``; None adds no filter and
+        an empty tuple selects no matches. Parent scopes retain full evidence.
+        """
 
         ...
 

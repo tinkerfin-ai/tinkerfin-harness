@@ -80,7 +80,9 @@ def test_multiple_authorized_attachments_keep_submission_order():
         {
             "content": [
                 {
-                    "type": file.kind,
+                    "type": "image"
+                    if file.mime_type.startswith("image/")
+                    else "document",
                     "source": {"type": "url", "value": f"attachment:{file.id}"},
                 }
                 for file in files

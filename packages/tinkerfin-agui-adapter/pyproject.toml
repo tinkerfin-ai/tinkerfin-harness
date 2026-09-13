@@ -19,7 +19,7 @@ classifiers = [
 dependencies = [
     "ag-ui-protocol==0.1.19",
     "jsonschema>=4.25,<5",
-    "langchain-core==1.5.3",
+    "langchain-core>=1.5.3,<=1.6.3",
     "pydantic>=2,<3",
     "pydantic-core>=2,<3",
     "tinkerfin-contracts==0.1.0",

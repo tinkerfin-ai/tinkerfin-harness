@@ -387,11 +387,10 @@ async def test_parallel_compiled_outputs_cannot_replace_checkpoint_ownership() -
         ]
     )
     runtime = (
-        TinkerFin(checkpointer=saver)
+        TinkerFin(checkpointer=saver, store=store)
         .with_namespace("scope")
         .build(
             model=model,
-            store=store,
             subagents=[
                 {
                     "name": name,
@@ -487,17 +486,15 @@ async def test_public_checkpoint_deletion_is_scoped_without_building_a_model() -
     assert await NamespaceCheckpointer(saver, "beta").aget_tuple(config) is not None
 
 
-async def test_native_resume_without_a_new_checkpoint_cannot_stage_an_agui_intent() -> (
-    None
-):
-    from collections.abc import Mapping
+async def test_native_resume_without_a_new_checkpoint_cannot_stage_an_agui_intent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
 
     from langgraph.checkpoint.base import BaseCheckpointSaver
     from langgraph.types import Command, Interrupt, interrupt
 
     from tinkerfin import AgUiResumeRequest
     from tinkerfin._agui_lineage_state import RESUME_WRITE_OWNER
-    from tinkerfin.runtime_profile import DeepAgentsV2RuntimeProfile
 
     entered: list[str] = []
     completed: list[object] = []
@@ -508,34 +505,31 @@ async def test_native_resume_without_a_new_checkpoint_cannot_stage_an_agui_inten
             "review_configs": [{"action_name": name, "allowed_decisions": ["approve"]}],
         }
 
-    class SequentialReviewProfile(DeepAgentsV2RuntimeProfile):
-        async def create_agent_graph(
-            self,
-            factory: Callable[..., object],
-            args: tuple[object, ...],
-            kwargs: Mapping[str, object],
-        ) -> object:
-            del factory, args
-            saver = kwargs["checkpointer"]
-            assert isinstance(saver, BaseCheckpointSaver)
-            builder = StateGraph(MessagesState)
+    from tinkerfin._agent_spec import AgentSpec
 
-            async def ask(state: MessagesState) -> dict[str, object]:
-                del state
-                entered.append("entered")
-                interrupt(review("first"))
-                completed.append(interrupt(review("second")))
-                return {}
+    def build(spec: AgentSpec[None], **kwargs: object) -> object:
+        saver = spec.checkpointer
+        assert isinstance(saver, BaseCheckpointSaver)
+        builder = StateGraph(MessagesState)
 
-            builder.add_node("ask", ask)
-            builder.add_edge(START, "ask")
-            builder.add_edge("ask", END)
-            return builder.compile(checkpointer=saver)
+        async def ask(state: MessagesState) -> dict[str, object]:
+            del state
+            entered.append("entered")
+            interrupt(review("first"))
+            completed.append(interrupt(review("second")))
+            return {}
+
+        builder.add_node("ask", ask)
+        builder.add_edge(START, "ask")
+        builder.add_edge("ask", END)
+        return builder.compile(checkpointer=saver)
+
+    monkeypatch.setattr("tinkerfin.deep_agent.create_agent_graph", build)
 
     raw = InMemorySaver()
     view = NamespaceCheckpointer(raw, "scope")
     runtime = (
-        TinkerFin(checkpointer=raw, runtime_profile=SequentialReviewProfile())
+        TinkerFin(checkpointer=raw)
         .with_namespace("scope")
         .build(model="provider:model")
     )

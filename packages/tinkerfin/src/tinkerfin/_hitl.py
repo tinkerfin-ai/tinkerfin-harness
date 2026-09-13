@@ -1,25 +1,22 @@
-"""Version-bound Deep Agents HITL cancellation integration."""
+"""Bind tool approvals and cancellation to their persisted tool calls."""
 
 from __future__ import annotations
 
 import os
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from importlib.metadata import version
 from pathlib import PurePosixPath
 from typing import Any, Literal, TypeAlias, cast
 from uuid import NAMESPACE_URL, uuid5
 
 from deepagents.middleware.filesystem import FilesystemPermission
-from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents.middleware import (
     AgentState,
     HumanInTheLoopMiddleware,
     InterruptOnConfig,
 )
 from langchain.agents.middleware.human_in_the_loop import Decision, HITLRequest
-from langchain.agents.middleware.types import AgentMiddleware, ToolCallRequest
+from langchain.agents.middleware.types import ToolCallRequest
 from langchain_core.messages import AIMessage, ToolCall, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -43,8 +40,6 @@ from .errors import TinkerFinLifecycleError
 CANCEL_DECISION_TYPE = "tinkerfin_cancel"
 HITL_CONTRACT_ID = "tinkerfin.deepagents.hitl-cancel"
 
-_SUPPORTED_DEEPAGENTS_VERSION = "0.7.5"
-_SUPPORTED_LANGCHAIN_VERSION = "1.3.14"
 _GLOB_FLAGS = wcglob.BRACE | wcglob.GLOBSTAR
 _GLOB_WILDCARD_CHARS = frozenset("*?[") | frozenset("{")
 _CheckpointSaver: TypeAlias = (
@@ -65,25 +60,6 @@ _FS_TOOL_PATH_ARGS: dict[
     "glob": ("read", "path", "bulk", "pattern"),
     "grep": ("read", "path", "bulk", None),
 }
-
-
-def _validate_locked_hitl_versions() -> None:
-    """Fail before graph construction when the reviewed parent contract changed."""
-
-    installed = {
-        "deepagents": version("deepagents"),
-        "langchain": version("langchain"),
-    }
-    expected = {
-        "deepagents": _SUPPORTED_DEEPAGENTS_VERSION,
-        "langchain": _SUPPORTED_LANGCHAIN_VERSION,
-    }
-    if installed != expected:
-        raise TinkerFinLifecycleError(
-            "TinkerFin HITL cancellation requires its locked dependency contract",
-            context=installed,
-            diagnostic_context=expected,
-        )
 
 
 def _normalize_path(path: str) -> str:
@@ -235,21 +211,6 @@ def _permission_interrupts(
     return result
 
 
-def _settled_permissions(
-    rules: tuple[FilesystemPermission, ...],
-) -> list[FilesystemPermission]:
-    """Keep deny/allow enforcement while moving interrupt gating to HITL."""
-
-    return [
-        FilesystemPermission(
-            operations=list(rule.operations),
-            paths=list(rule.paths),
-            mode="allow" if rule.mode == "interrupt" else rule.mode,
-        )
-        for rule in rules
-    ]
-
-
 async def _save_tool_review(
     saver: _CheckpointSaver, config: RunnableConfig, review: PendingToolReview
 ) -> None:
@@ -275,17 +236,14 @@ async def _save_tool_review(
         ) from error
 
 
-class _TinkerFinHitlPatchMiddleware(
-    PatchToolCallsMiddleware,
-    HumanInTheLoopMiddleware,
-):
-    """Preserve patching and bind asynchronous approvals to their exact tool batch."""
+class ToolReviewMiddleware(HumanInTheLoopMiddleware):
+    """Bind asynchronous approvals and cancellation to the exact persisted tool batch."""
 
     @property
     def name(self) -> str:
-        """Replace the Deep Agents patch slot in main and inherited subagents."""
+        """Identify the framework-owned tool review step."""
 
-        return PatchToolCallsMiddleware.__name__
+        return "ToolReview"
 
     def __init__(
         self,
@@ -496,140 +454,25 @@ def _as_interrupt_on(value: object) -> dict[str, bool | InterruptOnConfig]:
     return dict(cast(Mapping[str, bool | InterruptOnConfig], value))
 
 
-def _adapter_for(
-    permissions: tuple[FilesystemPermission, ...],
-    interrupt_on: dict[str, bool | InterruptOnConfig],
-) -> _TinkerFinHitlPatchMiddleware | None:
-    merged: dict[str, bool | InterruptOnConfig] = {
-        **_permission_interrupts(permissions),
-        **interrupt_on,
+def create_tool_review(
+    permissions: Sequence[FilesystemPermission],
+    interrupt_on: Mapping[str, bool | InterruptOnConfig] | None,
+) -> ToolReviewMiddleware | None:
+    """Create one review owner for a role's explicit and file-based policies.
+
+    The caller places review before application middleware in the stack, so
+    LangChain's reverse after-model ordering reviews the final effective calls.
+    File rules retain their normal first-match behavior; cancellation and persisted
+    review identity remain framework responsibilities.
+    """
+    merged = {
+        **_permission_interrupts(_as_permissions(permissions)),
+        **_as_interrupt_on(interrupt_on),
     }
     if not merged:
         return None
-    adapter = _TinkerFinHitlPatchMiddleware(merged)
-    return adapter if adapter.interrupt_on else None
+    review = ToolReviewMiddleware(merged)
+    return review if review.interrupt_on else None
 
 
-def _inject_adapter(
-    middleware: object,
-    adapter: _TinkerFinHitlPatchMiddleware | None,
-) -> tuple[AgentMiddleware[Any, Any, Any], ...]:
-    if middleware is None:
-        current: tuple[AgentMiddleware[Any, Any, Any], ...] = ()
-    elif isinstance(middleware, Sequence) and not isinstance(middleware, (str, bytes)):
-        current = tuple(cast(Sequence[AgentMiddleware[Any, Any, Any]], middleware))
-    else:
-        raise TypeError("middleware must be a sequence")
-    if adapter is None:
-        return current
-    if any(item.name == PatchToolCallsMiddleware.__name__ for item in current):
-        raise TinkerFinLifecycleError(
-            "TinkerFin HITL cancellation owns the PatchToolCallsMiddleware slot"
-        )
-    if any(isinstance(item, HumanInTheLoopMiddleware) for item in current):
-        raise TinkerFinLifecycleError(
-            "configure Tool review through interrupt_on, not custom HITL middleware"
-        )
-    return (*current, adapter)
-
-
-def _prepare_declarative_subagents(
-    value: object,
-    *,
-    inherited_permissions: tuple[FilesystemPermission, ...],
-    inherited_interrupt_on: dict[str, bool | InterruptOnConfig],
-) -> tuple[object, bool]:
-    if value is None:
-        return None, False
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        raise TypeError("subagents must be a sequence or None")
-    prepared: list[object] = []
-    has_adapter = False
-    for raw_spec in cast(Sequence[object], value):
-        if not isinstance(raw_spec, Mapping):
-            raise TypeError("subagents must contain mapping specifications")
-        spec = dict(cast(Mapping[str, object], raw_spec))
-        if "runnable" in spec or "graph_id" in spec:
-            name = spec.get("name")
-            if not isinstance(name, str) or not name:
-                raise ValueError("external subagent requires a stable name")
-            if "tinkerfin_hitl_contract" in spec:
-                raise ValueError(
-                    "tool cancellation requires an installed TinkerFin tool review "
-                    "implementation; a subagent declaration cannot grant support"
-                )
-            prepared.append(spec)
-            continue
-        permissions = (
-            _as_permissions(spec.get("permissions"))
-            if "permissions" in spec
-            else inherited_permissions
-        )
-        interrupt_on = (
-            _as_interrupt_on(spec.get("interrupt_on"))
-            if "interrupt_on" in spec
-            else inherited_interrupt_on
-        )
-        adapter = _adapter_for(permissions, interrupt_on)
-        has_adapter = has_adapter or adapter is not None
-        spec["permissions"] = _settled_permissions(permissions)
-        spec["interrupt_on"] = {}
-        spec["middleware"] = list(_inject_adapter(spec.get("middleware", ()), adapter))
-        prepared.append(spec)
-    return prepared, has_adapter
-
-
-@dataclass(frozen=True, slots=True)
-class HitlFactoryOverrides:
-    """Factory arguments with one cancellation-aware HITL owner per graph."""
-
-    interrupt_on: None
-    middleware: tuple[AgentMiddleware[Any, Any, Any], ...]
-    permissions: list[FilesystemPermission]
-    subagents: object
-
-
-def prepare_hitl_factory_overrides(
-    arguments: Mapping[str, object],
-) -> HitlFactoryOverrides:
-    """Prepare main, general-purpose, and declarative subagent HITL stacks.
-
-    The permission predicates mirror the locked Deep Agents 0.7.5
-    ``_build_interrupt_on_from_permissions`` contract. Contract tests compare exact,
-    bulk, glob-pattern, precedence, and pathless behavior before dependency upgrades.
-
-    Args:
-        arguments: Build arguments already bound to the Profile factory signature.
-
-    Returns:
-        Immutable effective tool review and permission inputs.
-
-    Raises:
-        TypeError: A permission, middleware, or subagent value has the wrong shape.
-        ValueError: Permission and interrupt policies conflict or are incomplete.
-    """
-
-    permissions = _as_permissions(arguments.get("permissions"))
-    interrupt_on = _as_interrupt_on(arguments.get("interrupt_on"))
-    adapter = _adapter_for(permissions, interrupt_on)
-    prepared_subagents, has_subagent_adapter = _prepare_declarative_subagents(
-        arguments.get("subagents"),
-        inherited_permissions=permissions,
-        inherited_interrupt_on=interrupt_on,
-    )
-    if adapter is not None or has_subagent_adapter:
-        _validate_locked_hitl_versions()
-    return HitlFactoryOverrides(
-        interrupt_on=None,
-        middleware=_inject_adapter(arguments.get("middleware", ()), adapter),
-        permissions=_settled_permissions(permissions),
-        subagents=prepared_subagents,
-    )
-
-
-__all__ = [
-    "CANCEL_DECISION_TYPE",
-    "HITL_CONTRACT_ID",
-    "HitlFactoryOverrides",
-    "prepare_hitl_factory_overrides",
-]
+__all__ = ["CANCEL_DECISION_TYPE", "HITL_CONTRACT_ID"]

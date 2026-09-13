@@ -2,13 +2,15 @@
   <img src="apps/studio/web/public/brand/tinkerfin-mark.png" alt="TinkerFin" width="88" />
 </p>
 <h1 align="center">TinkerFin</h1>
-<p align="center"><strong>Build and deliver enterprise agent applications.</strong></p>
+<p align="center"><strong>A Python agent harness for enterprise applications and workflows.</strong></p>
 <p align="center">
   <a href="README.md">English</a> · <a href="README.cn.md">简体中文</a> ·
   <a href="docs/en/index.md">Documentation</a> · <a href="docs/en/quick_start.md">Quick Start</a>
 </p>
 <p align="center">
   <a href="docs/en/runtime/quick_start.md"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white" /></a>
+  <a href="https://docs.langchain.com/oss/python/deepagents/overview"><img alt="Deep Agents" src="https://img.shields.io/badge/Deep_Agents-1C3C3C?style=flat-square" /></a>
+  <a href="https://docs.langchain.com/oss/python/langchain/overview"><img alt="LangChain" src="https://img.shields.io/badge/LangChain-1C3C3C?style=flat-square&amp;logo=langchain&amp;logoColor=white" /></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/License-Apache--2.0-52617A?style=flat-square" /></a>
   <a href="https://github.com/tinkerfin-ai/tinkerfin-harness/actions/workflows/packages-quality.yml"><img alt="Package checks" src="https://github.com/tinkerfin-ai/tinkerfin-harness/actions/workflows/packages-quality.yml/badge.svg" /></a>
   <a href="docs/en/index.md"><img alt="Docs: English / 中文" src="https://img.shields.io/badge/Docs-English%20%2F%20中文-2563EB?style=flat-square" /></a>
@@ -16,12 +18,14 @@
 
 ## What it is
 
-**TinkerFin is an agent application framework built for enterprise workflows.** It combines task orchestration, human collaboration, execution tracing, and isolated environments to turn business workflows into applications that **plan, act, and keep people in control**.
+**TinkerFin is a Python agent harness for enterprise applications.** It connects
+models, tools, and workspaces, with multimodal input, task orchestration, persistent
+state, human approval, and execution tracing.
 
-Connect model capabilities to your business—from research and document workflows to data processing and file generation.
-**Build the application core with Python and deliver the workspace with Studio.** Cover model and tool integration, user interactions, execution management, and results with less application infrastructure to build from scratch.
+Run agents independently or combine them with business workflows for research,
+document processing, data analysis, and file generation.
 
-![Studio demo with a conversation, task checklist, and report](docs/assets/screenshots/studio-en.png)
+![Store operations brief and Markdown preview](docs/assets/screenshots/studio-en.gif)
 
 ## Installation
 
@@ -51,14 +55,16 @@ Requires Python 3.11 or newer. Set your model credentials, then build an `AgentR
 
 ## Core concepts
 
-- **Compose the capabilities your application needs** — Configure models, tools, skills, and subagents, then compose run management, messaging, tracing, and sandbox capabilities as needed. Connect your own frontend or use Studio.
-- **Review the plan before execution** — Plan mode clarifies requirements and drafts a plan for user approval before handing it to the agent. Selected tool operations can require separate approval, keeping people involved in decisions throughout a task.
-- **Stream events and replay after reconnection** — Convert agent output to AG-UI events, then persist, deliver, and replay them through a message channel. Application code can publish custom events during a run through the same subscription and replay mechanism as agent output.
-- **Follow a conversation down to each call** — Trace relationships, inputs, outputs, and timing across models, tools, and subagents. Follow progress live or query past executions to find failed steps and slow operations.
-- **Manage dedicated agent workspaces** — Read files, write files, and run commands in isolated environments, with reuse, warm capacity, pause, and resume. Your application decides how environments are assigned; the framework manages connections and resource lifecycles.
-- **Persist state and coordinate across processes** — Connect checkpointers, storage, and run coordination as needed to retain conversation state and continue after approval. Manage run ownership, duplicate requests, and cancellation across service processes.
-- **Multitenant integration** — Let your application scope conversations and sandboxes by tenant, user, or project, and separate data through storage namespaces. Your application remains responsible for authentication and access authorization.
-- **Run and schedule background tasks** — Run host-registered operations immediately or on one-time, fixed-rate, and Cron schedules. Inspect results, cancel executions, or request retries through [Automation](docs/en/automation/index.md).
+- **Compose your agent harness** — Configure models, tools, skills, and subagents. Add execution management, messaging, tracing, and sandbox capabilities as needed.
+- **Connect agents and workflows** — Invoke agents from application workflows, or register compiled LangGraph workflows as subagents to combine predefined steps with model-directed tool use.
+- **Multimodal input and file delivery** — Pass images, audio, video, and documents to models and tools that support their formats, and return generated files.
+- **Review plans and tool operations** — Clarify requirements and approve a plan before execution. Selected tool operations can require separate approval.
+- **Stream and replay events** — Deliver AG-UI events through persistent message channels and replay after reconnection. Application events can use the same channels.
+- **Trace each call** — Inspect model, tool, and subagent relationships, inputs, outputs, and timing, live or from past runs.
+- **Manage isolated workspaces** — Read and write files, execute commands, and reuse, prewarm, pause, or resume environments.
+- **Persist state and coordinate runs** — Retain conversation state and continue after approval. Coordinate run ownership, duplicate requests, and cancellation across processes.
+- **Multitenant integration** — Scope conversations, storage, and sandboxes by tenant, user, or project. Applications own authentication and access authorization.
+- **Schedule background tasks** — Run operations immediately or on one-time, fixed-rate, and Cron schedules. Query results, cancel executions, and request retries through [Automation](docs/en/automation/index.md).
 
 ## Studio: a multimodal agent workspace
 
@@ -68,22 +74,22 @@ Start tasks with text, images, and documents. Analyze content, generate images, 
 
 Turn a business goal into a reviewable plan, then confirm the scope and steps before execution.
 
-![Studio plan review demo](docs/assets/screenshots/plan-en.png)
+![Business clarification and plan review](docs/assets/screenshots/plan-en.gif)
 
 ### Understand how each task runs
 
 Follow a business conversation through model calls, tools, and subagents to see how the task ran and where time was spent.
 
-![Studio execution trace demo](docs/assets/screenshots/trace-en.png)
+![Store data review through tools and a research subagent](docs/assets/screenshots/trace-en.gif)
 
-*Screenshots show the current Studio interface with demonstration data.*
+*Recorded in Studio with sample store data.*
 
 ## Project layout
 
 | Part | Purpose |
 | --- | --- |
-| `packages/` | Core framework for enterprise agent applications: task orchestration, human collaboration, execution tracing, and isolated environments |
-| `apps/studio/` | A deployable, extensible agent workspace for business interactions, plan approval, and execution tracing |
+| `packages/` | Enterprise agent harness packages for execution, persistence, messaging, human review, tracing, and workspaces |
+| `apps/studio/` | Studio interface for conversations, plan review, files, and traces |
 | `docs/` | Bilingual documentation for application development, deployment, operations, and advanced integration |
 
 ## Documentation

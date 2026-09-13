@@ -747,7 +747,7 @@ class OpenSandboxBackendTests(unittest.IsolatedAsyncioTestCase):
         glob_result = await backend.aglob("**/*.py", "/workspace")
         self.assertEqual(
             glob_result.matches,
-            [{"path": "a.py", "is_dir": False}],
+            [{"path": "/workspace/a.py", "is_dir": False}],
         )
 
         self._set_command_result(sandbox, "/workspace/a.py\x002:needle here")

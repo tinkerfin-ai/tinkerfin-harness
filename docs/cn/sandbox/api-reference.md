@@ -70,7 +70,8 @@ Client 禁用 SDK 隐式的 transport 重试。显式设置的 `ConnectionConfig
 
 `OpenSandboxManager` 的构造参数和操作见 [Sandbox 生命周期](lifecycle.md)。
 `workspace(key)` 返回供 `TinkerFin.build(backend=...)` 使用的惰性声明。
-`build_agent_middleware(...)` 只用于由调用方管理的 Deep Agents Graph。
+直接使用 Deep Agents 时，通过独立的 `build_rooted_filesystem_middleware(backend, ...)`
+配置工作区文件工具。
 
 `pause(key, timeout=30.0)` 在全部登记的持有者完成工作、且远端暂停已确认后返回 `None`。
 `resume(key, timeout=30.0)` 返回同一实例的可用 backend。两者的工作预算均以秒计，必须为正有限数值。

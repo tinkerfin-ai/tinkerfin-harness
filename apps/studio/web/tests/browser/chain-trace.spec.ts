@@ -40,6 +40,7 @@ const graphNode = (
   startedSeq: number,
   values: Partial<TraceGraphNode> = {},
 ): TraceGraphNode => ({
+  agui: null,
   id,
   turnId: 'turn-browser-2',
   parentSubagentId: null,
@@ -271,6 +272,7 @@ const detail = (
   messageCount: 30,
   toolCallCount: 2,
   messages: Array.from({ length: 30 }, (_, index) => ({
+    agui: null,
     id: `${threadId}-message-${index + 1}`,
     traceSeq: index + 1,
     sourceId: `assistant-history-${index + 1}`,

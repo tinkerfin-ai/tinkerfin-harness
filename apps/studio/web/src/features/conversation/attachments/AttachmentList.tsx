@@ -8,6 +8,7 @@ import { AttachmentReferenceContext } from './context'
 import { AttachmentViewer } from './AttachmentViewer'
 import { useAttachmentImage } from './useAttachmentImage'
 import { useAttachmentDownload } from './useAttachmentDownload'
+import { documentFormat } from './documentPreview'
 import './attachments.css'
 
 function AttachmentCard({
@@ -112,7 +113,13 @@ function AttachmentCard({
         <div className="attachment-description">
           <FileText size={20} aria-hidden="true" />
           <div className="attachment-description__text">
-            <strong>{attachment.name}</strong>
+            {documentFormat(attachment.mime_type) ? (
+              <button type="button" className="attachment-document-preview"
+                aria-label={t('预览文档：{name}', { name: attachment.name })}
+                onClick={event => onPreview(attachment, '', event.currentTarget)}>
+                <strong>{attachment.name}</strong>
+              </button>
+            ) : <strong>{attachment.name}</strong>}
             <small>{(attachment.size_bytes / 1024).toFixed(1)} KiB</small>
           </div>
           {actions}
@@ -158,7 +165,7 @@ export function AttachmentList({
             resetKey={attachment.id}
             fallback={({ reset }) => (
               <div className="attachment-error" role="status">
-                {t('图片暂时无法打开，请重试')}
+                {t('附件暂时无法打开，请重试')}
                 <Button type="button" onClick={reset}>
                   {t('重试附件')}
                 </Button>
@@ -178,7 +185,7 @@ export function AttachmentList({
         <ErrorBoundary
           fallback={({ reset }) => (
             <div className="attachment-error" role="status">
-              {t('图片暂时无法打开，请重试')}
+              {t('附件暂时无法打开，请重试')}
               <Button
                 type="button"
                 onClick={() => {
@@ -192,7 +199,7 @@ export function AttachmentList({
           )}
         >
           <AttachmentViewer
-            attachments={attachments.filter((item) =>
+            attachments={documentFormat(preview.attachment.mime_type) ? [preview.attachment] : attachments.filter((item) =>
               item.mime_type.startsWith('image/'),
             )}
             initialId={preview.attachment.id}

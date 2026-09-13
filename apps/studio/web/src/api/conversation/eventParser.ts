@@ -164,14 +164,14 @@ const isStateDeltaOperation = (value: unknown) => {
     && isJsonValue(value.value)
 }
 
-const isInterrupt = (value: unknown) => (
+export const isInterrupt = (value: unknown) => (
   isRecord(value)
   && typeof value.id === 'string'
   && typeof value.reason === 'string'
-  && hasOptionalString(value, 'message')
-  && hasOptionalString(value, 'toolCallId')
-  && (value.responseSchema === undefined || isJsonObject(value.responseSchema))
-  && (value.metadata === undefined || isJsonObject(value.metadata))
+  && hasOptionalString(value, 'message', true)
+  && hasOptionalString(value, 'toolCallId', true)
+  && (value.responseSchema == null || isJsonObject(value.responseSchema))
+  && (value.metadata == null || isJsonObject(value.metadata))
 )
 
 const isRunFinishedOutcome = (value: unknown) => {

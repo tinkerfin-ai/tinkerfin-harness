@@ -22,6 +22,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langgraph.types import Command
 from pydantic import JsonValue
 
 from tinkerfin_contracts import (
@@ -294,6 +295,19 @@ def native_observation(
         safe_size_bytes=len(encoded),
         top_level_keys=tuple(sorted(data)) if isinstance(data, dict) else (),
     )
+
+
+def native_input_kind(graph_input: object) -> RunInputKind:
+    """Distinguish checkpoint continuation from an actual interrupt response.
+
+    LangGraph resumes existing tasks for None or Command input. Only a Command
+    carrying resume values answers dynamic interrupts; update and goto remain input
+    evidence without authorizing interaction resolution.
+    """
+
+    if isinstance(graph_input, Command):
+        return "resume" if graph_input.resume is not None else "continuation"
+    return "continuation" if graph_input is None else "ordinary"
 
 
 def source_context(

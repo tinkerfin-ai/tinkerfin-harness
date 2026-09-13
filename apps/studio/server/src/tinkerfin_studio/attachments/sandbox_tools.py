@@ -9,6 +9,7 @@ from uuid import uuid4
 from langchain_core.tools import BaseTool, tool
 from pydantic import JsonValue
 
+from tinkerfin.tools import ToolRuntime
 from tinkerfin_sandbox import RootedOpenSandboxBackend
 from tinkerfin_studio.attachments.processing import MAX_FILE_BYTES
 from tinkerfin_studio.attachments.service import AttachmentService, byte_chunks
@@ -32,14 +33,15 @@ asyncio.run(main())
 
 def build_sandbox_attachment_tools(
     *,
-    sandbox: RootedOpenSandboxBackend,
     service: AttachmentService,
     user_id: int,
     thread_id: str,
 ) -> list[BaseTool]:
-    """借用用户 Sandbox，在文件验证和持久化完成后才返回交付引用"""
+    """声明文件交付工具，执行时取得当前会话工作区，保存成功后返回附件引用"""
 
-    async def save_file(path: str, name: str) -> list[dict[str, JsonValue]]:
+    async def save_file(
+        sandbox: RootedOpenSandboxBackend, path: str, name: str
+    ) -> list[dict[str, JsonValue]]:
         # 框架负责工作区路径校验、有界读取和取消时的资源释放
         data = await sandbox.aread_bytes(path, max_bytes=MAX_FILE_BYTES)
         file = await service.upload(
@@ -52,11 +54,13 @@ def build_sandbox_attachment_tools(
         return [file.content_block()]
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
-    async def deliver_file(file_path: str, name: str) -> list[dict[str, JsonValue]]:
+    async def deliver_file(
+        file_path: str, name: str, runtime: ToolRuntime[None, RootedOpenSandboxBackend]
+    ) -> list[dict[str, JsonValue]]:
         """把用户工作区中的文件保存为会话附件
 
         Args:
-            file_path: 用户工作区内的图片、PDF、DOCX 或 XLSX 路径
+            file_path: 用户工作区内的图片、Markdown、PDF、DOCX 或 XLSX 路径
             name: 下载文件名，扩展名须与内容一致
 
         Returns:
@@ -67,10 +71,12 @@ def build_sandbox_attachment_tools(
             ValueError: 文件路径或参数无效
             OpenSandboxError: 工作区读取失败或文件超过大小限制
             OSError: 文件不存在、不可读或不是普通文件"""
-        return await save_file(file_path, name)
+        return await save_file(runtime.workspace, file_path, name)
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
-    async def capture_browser(url: str) -> list[dict[str, JsonValue]]:
+    async def capture_browser(
+        url: str, runtime: ToolRuntime[None, RootedOpenSandboxBackend]
+    ) -> list[dict[str, JsonValue]]:
         """在用户 Sandbox 打开网页并交付视口截图
 
         截图作为独立文件保留在工作区，便于后续读取；会话附件单独保存。
@@ -94,6 +100,7 @@ def build_sandbox_attachment_tools(
             or parsed.password
         ):
             raise ValueError("网页地址须为不含账户信息的 HTTP 或 HTTPS URL")
+        sandbox = runtime.workspace
         path = f"/browser-capture-{uuid4().hex}.png"
         command = (
             "python -c "
@@ -107,7 +114,7 @@ def build_sandbox_attachment_tools(
         result = await sandbox.aexecute(command, timeout=45)
         if result.exit_code != 0:
             raise ValueError("网页截图失败，请检查浏览器依赖和网页是否可用")
-        attachments = await save_file(path, "浏览器截图.png")
+        attachments = await save_file(sandbox, path, "浏览器截图.png")
         return [{"type": "text", "text": f"截图保留在工作区：{path}"}, *attachments]
 
     return [deliver_file, capture_browser]

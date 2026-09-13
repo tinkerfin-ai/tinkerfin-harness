@@ -12,11 +12,9 @@ import math
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from types import TracebackType
-from typing import Any, Generic, Self
+from typing import Generic, Self
 
 from deepagents.backends.protocol import BackendProtocol
-from deepagents.middleware.filesystem import FilesystemPermission
-from langchain.agents.middleware import AgentMiddleware
 from typing_extensions import TypeVar
 
 from tinkerfin_contracts import Workspace
@@ -833,41 +831,6 @@ class OpenSandboxManager(Generic[KeyT]):
         if self._workspace_root() is None:
             raise ValueError("workspace requires a configured workspace_root")
         return SandboxWorkspace(self, key, routes or {})
-
-    def build_agent_middleware(
-        self,
-        backend: BackendProtocol,
-        *,
-        permissions: Sequence[FilesystemPermission] | None = None,
-    ) -> tuple[AgentMiddleware[Any, Any, Any], ...]:
-        """Align Deep Agents file and Shell behavior with the rooted workspace.
-
-        The host supplies the final composed backend so replacement filesystem
-        middleware preserves every route it already exposes. No middleware is needed
-        when ``workspace_root`` is disabled and raw Sandbox paths are used. Supply the
-        same permission rules to ``create_deep_agent`` so interrupt-mode rules install
-        the required human-in-the-loop middleware.
-
-        Args:
-            backend: Final backend used to construct the Deep Agents graph.
-            permissions: Route-scoped filesystem rules enforced by the replacement
-                middleware. Rules for executable default backend paths are unsupported
-                because Shell commands can bypass file-tool enforcement.
-
-        Returns:
-            Fresh OpenSandbox filesystem middleware, or an empty tuple when rooted
-            workspaces are disabled.
-
-        Raises:
-            NotImplementedError: The backend supports Shell execution and a permission
-                path is not scoped to a non-Shell ``CompositeBackend`` route.
-        """
-
-        return _manager_bindings.build_agent_middleware(
-            self,
-            backend,
-            permissions=permissions,
-        )
 
     async def get(self, key: KeyT, *, namespace: str | None = None) -> _ManagedBackend:
         """Return the healthy stable backend for one caller-defined key.

@@ -22,8 +22,10 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from langgraph.typing import ContextT
 
-from tinkerfin._attachment_agents import attachment_filesystem
+from tinkerfin._attachment_agents import _AttachmentMiddleware, attachment_filesystem
+from tinkerfin._tool_runtime import _ToolRuntimeMiddleware
 from tinkerfin.media import AttachmentSupport
+from tinkerfin.tools import _ToolRunScope
 
 from ._clarification import ClarificationSchemaBinding, stateless_child_config
 from ._content import PlanContentBinding
@@ -181,27 +183,19 @@ def _invalid_structured_call_messages(
     return messages
 
 
-def create_planner_agent(
-    model: str | BaseChatModel,
-    *,
+def create_planner_filesystem(
     backend: BackendProtocol,
-    clarification: ClarificationSchemaBinding,
-    content: PlanContentBinding,
-    response_type: type[PlannerOutcomeBase],
-    attachments: AttachmentSupport | None = None,
-    read_only_tools: Sequence[BaseTool] = (),
-    filesystem_instructions: str | None = None,
-    permissions: Sequence[FilesystemPermission] = (),
-    context_schema: type[ContextT] | None,
-) -> _StructuredAgent:
-    """Build a Planner that reads only files allowed without human approval.
+    *,
+    filesystem_instructions: str | None,
+    permissions: Sequence[FilesystemPermission],
+) -> FilesystemMiddleware:
+    """Build read-only access whose state schema also defines the parent channels.
 
-    The Planner has no file approval step. Treat read-interrupt rules as denied
-    reads, preserving Deep Agents 0.7.5 first-match ordering. Execution agents
-    retain their own approval behavior; prepared main tools are never inherited.
+    Planning has no file approval step. Read-interrupt rules deny access using
+    the native permission ordering. The same stateless middleware can serve the
+    draft and edit planners; each invocation receives its own graph state.
     """
-
-    filesystem = FilesystemMiddleware[ContextT, object](
+    return FilesystemMiddleware(
         backend=backend,
         tools=_READ_ONLY_TOOLS,
         system_prompt=filesystem_instructions,
@@ -215,6 +209,22 @@ def create_planner_agent(
             if "read" in rule.operations
         ],
     )
+
+
+def create_planner_agent(
+    model: str | BaseChatModel,
+    *,
+    filesystem: FilesystemMiddleware,
+    clarification: ClarificationSchemaBinding,
+    content: PlanContentBinding,
+    response_type: type[PlannerOutcomeBase],
+    attachments: AttachmentSupport | None = None,
+    read_only_tools: Sequence[BaseTool] = (),
+    tool_scope: _ToolRunScope[object] | None = None,
+    context_schema: type[ContextT] | None,
+) -> _StructuredAgent:
+    """Build a structured Planner with explicit read-only file access."""
+
     # LangChain composes heterogeneous middleware state schemas at runtime, but its
     # invariant generic cannot express their intersection.
     middleware = cast(
@@ -229,7 +239,8 @@ def create_planner_agent(
                 run_limit=_PLANNER_MODEL_CALL_LIMIT,
                 exit_behavior="error",
             ),
-            *((attachments.middleware(),) if attachments is not None else ()),
+            _ToolRuntimeMiddleware(tool_scope),
+            *((_AttachmentMiddleware(attachments),) if attachments is not None else ()),
         ),
     )
     return cast(

@@ -28,4 +28,17 @@ def require_agui() -> None:
         raise translated from error
 
 
-__all__ = ["require_agui"]
+def require_tracing() -> None:
+    """Require the optional recorded-history integration without owning its Store."""
+    try:
+        importlib.import_module("tinkerfin_tracing")
+    except ModuleNotFoundError as error:
+        missing = error.name or "unknown"
+        raise ModuleNotFoundError(
+            'TinkerFin history support is not installed; run pip install "tinkerfin[agui,tracing]" '
+            f"(missing module: {missing})",
+            name=missing,
+        ) from error
+
+
+__all__ = ["require_agui", "require_tracing"]

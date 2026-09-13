@@ -28,7 +28,8 @@
       "toolCallId": null,
       "status": "completed",
       "createdAt": "2026-09-06T21:02:45.540858Z",
-      "completedAt": "2026-09-06T21:02:45.540858Z"
+      "completedAt": "2026-09-06T21:02:45.540858Z",
+      "agui": null
     },
     {
       "id": "message:4f53cda18c2baa0c0354bb5f:lc_run--01a07887-df8b-78a0-80fa-35e61caed2f7",
@@ -43,7 +44,8 @@
       "toolCallId": null,
       "status": "completed",
       "createdAt": "2026-09-06T21:02:45.928449Z",
-      "completedAt": "2026-09-06T21:02:46.773248Z"
+      "completedAt": "2026-09-06T21:02:46.773248Z",
+      "agui": null
     },
     {
       "id": "message:4f53cda18c2baa0c0354bb5f:33eeb4b0-56c8-4fc3-aeff-6c1081a0c1f4",
@@ -72,7 +74,8 @@
       "toolCallId": "call_00_hFbYQlPyr3CGeSPhhj0s2804",
       "status": "completed",
       "createdAt": "2026-09-06T21:02:47.312751Z",
-      "completedAt": "2026-09-06T21:02:47.324232Z"
+      "completedAt": "2026-09-06T21:02:47.324232Z",
+      "agui": null
     },
     {
       "id": "message:4f53cda18c2baa0c0354bb5f:lc_run--01a07887-e62a-7701-88a3-fd7af9cd7d7c",
@@ -87,7 +90,8 @@
       "toolCallId": null,
       "status": "completed",
       "createdAt": "2026-09-06T21:02:47.585226Z",
-      "completedAt": "2026-09-06T21:02:48.026132Z"
+      "completedAt": "2026-09-06T21:02:48.026132Z",
+      "agui": null
     }
   ],
   "reasoning": [],
@@ -129,7 +133,8 @@
         "usage": null,
         "responseMetadata": null,
         "failure": null,
-        "linkIssues": []
+        "linkIssues": [],
+        "agui": null
       },
       {
         "id": "context:4f53cda18c2baa0c0354bb5f:model-call:4f53cda18c2baa0c0354bb5f:01a07887-df8b-78a0-80fa-35e61caed2f7",
@@ -173,7 +178,8 @@
         "usage": null,
         "responseMetadata": null,
         "failure": null,
-        "linkIssues": []
+        "linkIssues": [],
+        "agui": null
       },
       {
         "id": "model-call:4f53cda18c2baa0c0354bb5f:01a07887-df8b-78a0-80fa-35e61caed2f7",
@@ -219,7 +225,8 @@
           "system_fingerprint": "a26a7955944dc5c60445bff77fac9c8e"
         },
         "failure": null,
-        "linkIssues": []
+        "linkIssues": [],
+        "agui": null
       },
       {
         "id": "message:4f53cda18c2baa0c0354bb5f:lc_run--01a07887-df8b-78a0-80fa-35e61caed2f7",
@@ -250,7 +257,8 @@
         "usage": null,
         "responseMetadata": null,
         "failure": null,
-        "linkIssues": []
+        "linkIssues": [],
+        "agui": null
       },
       {
         "id": "tool:4f53cda18c2baa0c0354bb5f:call_00_hFbYQlPyr3CGeSPhhj0s2804",
@@ -303,7 +311,8 @@
         "usage": null,
         "responseMetadata": null,
         "failure": null,
-        "linkIssues": []
+        "linkIssues": [],
+        "agui": null
       },
       {
         "id": "context:4f53cda18c2baa0c0354bb5f:model-call:4f53cda18c2baa0c0354bb5f:01a07887-e62a-7701-88a3-fd7af9cd7d7c",
@@ -347,7 +356,8 @@
         "usage": null,
         "responseMetadata": null,
         "failure": null,
-        "linkIssues": []
+        "linkIssues": [],
+        "agui": null
       },
       {
         "id": "model-call:4f53cda18c2baa0c0354bb5f:01a07887-e62a-7701-88a3-fd7af9cd7d7c",
@@ -393,7 +403,8 @@
           "system_fingerprint": "a26a7955944dc5c60445bff77fac9c8e"
         },
         "failure": null,
-        "linkIssues": []
+        "linkIssues": [],
+        "agui": null
       },
       {
         "id": "message:4f53cda18c2baa0c0354bb5f:lc_run--01a07887-e62a-7701-88a3-fd7af9cd7d7c",
@@ -424,7 +435,8 @@
         "usage": null,
         "responseMetadata": null,
         "failure": null,
-        "linkIssues": []
+        "linkIssues": [],
+        "agui": null
       }
     ],
     "orderedNodeIds": [

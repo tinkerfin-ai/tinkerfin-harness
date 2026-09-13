@@ -22,13 +22,15 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
+from tinkerfin_studio.attachments.processing import markdown_text
+
 
 class _ReadDocument(BaseModel):
     """子进程读取请求，限制文件类型和一次读取的范围"""
 
     model_config = ConfigDict(extra="forbid")
     operation: Literal["read"]
-    kind: Literal["pdf", "docx", "xlsx"]
+    kind: Literal["pdf", "docx", "xlsx", "md"]
     data: str = Field(max_length=14_000_000, description="原文件的Base64内容")
     start: int = Field(
         default=1, ge=1, strict=True, description="从1开始的页、段落或行号"
@@ -42,7 +44,7 @@ class _GenerateDocument(BaseModel):
 
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     operation: Literal["generate"]
-    kind: Literal["xlsx", "pdf", "png"]
+    kind: Literal["xlsx", "pdf", "png", "md"]
     text: str = Field(default="", max_length=50_000)
     rows: (
         list[Annotated[list[str | int | float | bool | None], Field(max_length=50)]]
@@ -96,6 +98,13 @@ def read_document(payload: _ReadDocument) -> dict[str, JsonValue]:
             ],
             "total_paragraphs": len(lines),
         }
+    if kind == "md":
+        lines = markdown_text(stream.getvalue()).splitlines()
+        return {
+            "start_line": start,
+            "lines": [line for line in lines[start - 1 : start - 1 + count]],
+            "total_lines": len(lines),
+        }
     if kind == "xlsx":
         workbook = load_workbook(stream, read_only=True, data_only=True)
         try:
@@ -125,7 +134,7 @@ def read_document(payload: _ReadDocument) -> dict[str, JsonValue]:
 
 
 def generate(payload: _GenerateDocument) -> dict[str, JsonValue]:
-    """生成可打开的 XLSX、PDF 或 PNG，限制输入规模"""
+    """生成 Markdown、XLSX、PDF 或 PNG，限制输入规模"""
     kind = payload.kind
     output = io.BytesIO()
     if kind == "xlsx":
@@ -149,6 +158,8 @@ def generate(payload: _GenerateDocument) -> dict[str, JsonValue]:
                 cells.append(cell)
             sheet.append(cells)
         workbook.save(output)
+    elif kind == "md":
+        output.write(payload.text.encode("utf-8"))
     elif kind == "pdf":
         text = payload.text
         if len(text) > 50_000:
@@ -182,7 +193,7 @@ def generate(payload: _GenerateDocument) -> dict[str, JsonValue]:
             draw.text((left, 552), str(index + 1), fill="#111111")
         image.save(output, "PNG")
     else:
-        raise ValueError("生成类型只支持 XLSX、PDF 或 PNG")
+        raise ValueError("生成类型只支持 Markdown、XLSX、PDF 或 PNG")
     data = output.getvalue()
     if len(data) > 10 * 1024 * 1024:
         raise ValueError("生成文件超过 10 MiB")

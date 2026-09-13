@@ -45,11 +45,11 @@ def build_attachment_tools(
     async def read_attachment(
         attachment_id: str, start: int = 1, count: int = 20, sheet: str | None = None
     ) -> str:
-        """读取附件中的 PDF 页、Word 段落或 Excel 行
+        """读取附件中的 Markdown 行、PDF 页、Word 段落或 Excel 行
 
         Args:
             attachment_id: 当前会话附件标识
-            start: 从 1 开始的页、段落或行号
+            start: 从 1 开始的页、段落或行号，Markdown 按原文行号读取
             count: 读取数量，最多 100 项，PDF 单次最多 10 页
             sheet: Excel 工作表名称，留空读取首张表
 
@@ -66,7 +66,9 @@ def build_attachment_tools(
         result = await processor.run(
             {
                 "operation": "read",
-                "kind": file.name.rsplit(".", 1)[-1].lower(),
+                "kind": "md"
+                if file.mime_type == "text/markdown"
+                else file.name.rsplit(".", 1)[-1].lower(),
                 "data": base64.b64encode(data).decode("ascii"),
                 "start": start,
                 "count": count,
@@ -91,24 +93,24 @@ def build_attachment_tools(
         if not supports_images:
             raise ValueError("当前模型不支持图片，请切换支持看图的模型")
         file = await service.get(attachment_id, user_id=user_id, thread_id=thread_id)
-        if file.kind != "image":
+        if not file.mime_type.startswith("image/"):
             raise ValueError("所选附件不是图片")
         return [file.content_block()]
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
     async def create_file(
         name: str,
-        kind: Literal["xlsx", "pdf", "png"],
+        kind: Literal["xlsx", "pdf", "png", "md"],
         text: str = "",
         rows: list[list[str | int | float | bool | None]] | None = None,
         values: list[float] | None = None,
     ) -> list[dict[str, JsonValue]]:
-        """生成并交付 Excel、中文 PDF 或柱状图
+        """生成并交付 Markdown、Excel、中文 PDF 或柱状图
 
         Args:
             name: 下载文件名，扩展名须与 kind 一致
-            kind: 生成格式，支持 xlsx、pdf 或 png
-            text: PDF 正文，最多 50000 字符
+            kind: 生成格式，支持 md、xlsx、pdf 或 png
+            text: Markdown 或 PDF 正文，最多 50000 字符；Markdown 保留原文换行
             rows: Excel 单元格，最多 1000 行、每行 50 列
             values: PNG 柱状图的 1 到 30 个非负数，顺序对应横轴编号
 
@@ -119,7 +121,8 @@ def build_attachment_tools(
             BusinessException: 会话不可用或文件不符合附件要求
             ValueError: 文件名、生成参数或文件内容不符合要求
             TimeoutError: 文件生成超过 30 秒"""
-        if not name.lower().endswith("." + kind):
+        extension = name.rsplit(".", 1)[-1].lower()
+        if extension not in ({"md", "markdown"} if kind == "md" else {kind}):
             raise ValueError("文件名扩展名必须与生成类型一致")
         payload = TypeAdapter(dict[str, JsonValue]).validate_python(
             {

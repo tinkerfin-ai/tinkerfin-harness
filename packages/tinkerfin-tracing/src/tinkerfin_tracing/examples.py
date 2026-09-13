@@ -8,13 +8,13 @@ from ._models import TraceModel
 from .facts import TraceSemanticFact
 
 
-class FactCountState(TraceModel):
+class FactCountState(TraceModel, frozen=True):
     """Internal deterministic counts keyed by semantic fact kind."""
 
     counts: dict[str, int] = Field(default_factory=dict)
 
 
-class FactCountResult(TraceModel):
+class FactCountResult(TraceModel, frozen=True):
     """Public semantic fact counts for one selected head lineage."""
 
     counts: dict[str, int]

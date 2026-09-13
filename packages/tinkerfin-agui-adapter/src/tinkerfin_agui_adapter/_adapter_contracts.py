@@ -4,7 +4,6 @@ from __future__ import annotations
 
 __all__ = [
     "_buffer_child_interrupts",
-    "_build_response_schema",
     "_group_prepared_interrupts",
     "_interrupt_value_json",
     "_prepare_ag_ui_interrupts",
@@ -43,19 +42,17 @@ from .hitl import (
     match_hitl_tool_call_id_groups,
     relevant_malformed_hitl_candidate,
 )
+from .interrupt_projection import project_interrupt
 from .models import AgentRuntimeInterrupt, JsonObject, to_json_value
 from .reasoning import (
     json_values_equal,
     normalize_operational_data,
-    sanitize_public_data,
 )
 from .runtime_interrupts import (
     RuntimeInterruptEnvelope,
     parse_runtime_interrupt,
-    prepare_runtime_ag_ui_interrupt,
 )
 from .subagent import SubagentProvenance
-from .tool_review import TOOL_REVIEW_SCHEMA, ToolReviewInterruptMetadata
 
 if TYPE_CHECKING:
     from .adapter import DeepAgentAgUiAdapter
@@ -564,100 +561,17 @@ def _prepare_ag_ui_interrupts(
     matched_group_index = 0
     prepared: list[AgUiInterrupt] = []
     for interrupt, request, runtime_envelope in parsed:
-        if runtime_envelope is not None:
-            prepared.append(
-                prepare_runtime_ag_ui_interrupt(
-                    interrupt,
-                    runtime_envelope,
-                    source=source.model_dump(mode="json", by_alias=True),
-                )
+        group_ids: Sequence[str] = ()
+        if request is not None:
+            group_ids = matched_id_groups[matched_group_index]
+            matched_group_index += 1
+        prepared.extend(
+            project_interrupt(
+                interrupt,
+                tool_call_ids=group_ids,
+                source=source.model_dump(mode="json", by_alias=True),
             )
-            continue
-        if request is None:
-            prepared.append(
-                AgUiInterrupt(
-                    id=interrupt.id,
-                    reason="langgraph:interrupt",
-                    metadata={
-                        "langgraphValue": sanitize_public_data(interrupt.value),
-                        "source": source.model_dump(
-                            mode="json",
-                            by_alias=True,
-                        ),
-                    },
-                )
-            )
-            continue
-        group_ids = matched_id_groups[matched_group_index]
-        matched_group_index += 1
-        public_langgraph_value = sanitize_public_data(interrupt.value)
-        if not isinstance(public_langgraph_value, dict):
-            raise TypeError("HITL interrupt value must be a JSON object")
-        public_actions = public_langgraph_value.get("action_requests")
-        if not isinstance(public_actions, list) or len(public_actions) != len(
-            request.action_requests
-        ):
-            raise HitlCorrelationError(
-                f"invalid Deep Agents HITL interrupt: {interrupt.id}"
-            )
-        for public_action, action in zip(
-            public_actions,
-            request.action_requests,
-            strict=True,
-        ):
-            if not isinstance(public_action, dict):
-                raise HitlCorrelationError(
-                    f"invalid Deep Agents HITL interrupt: {interrupt.id}"
-                )
-            public_action["args"] = normalize_operational_data(action.args.root)
-        multi_action = len(request.action_requests) > 1
-        for index, (action, review, tool_call_id) in enumerate(
-            zip(
-                request.action_requests,
-                request.review_configs,
-                group_ids,
-                strict=True,
-            )
-        ):
-            public_id = f"{interrupt.id}#{index}" if multi_action else interrupt.id
-            review_metadata = ToolReviewInterruptMetadata(
-                schema=TOOL_REVIEW_SCHEMA,
-                nativeInterruptId=interrupt.id,
-                actionIndex=index,
-                toolName=action.name,
-                allowedDecisions=tuple(review.allowed_decisions),
-                originalArgs=action.args,
-            )
-            prepared.append(
-                AgUiInterrupt(
-                    id=public_id,
-                    reason="tool_call",
-                    message=(action.description or f"Approve tool {action.name}"),
-                    tool_call_id=tool_call_id,
-                    response_schema=self._build_response_schema(
-                        review.allowed_decisions,
-                        action_name=action.name,
-                        args_schema=(
-                            None
-                            if review.args_schema is None
-                            else review.args_schema.root
-                        ),
-                    ),
-                    metadata={
-                        # A validated HITL payload is operational Tool data. Its
-                        # args and args_schema must match the proposal exactly.
-                        "langgraphValue": public_langgraph_value,
-                        "source": source.model_dump(
-                            mode="json",
-                            by_alias=True,
-                        ),
-                        "deepagents": review_metadata.model_dump(
-                            mode="json",
-                            by_alias=True,
-                        ),
-                    },
-                )
-            )
+        )
     self._validate_prepared_interrupts(prepared)
     return prepared
 
@@ -799,46 +713,3 @@ def _tool_call_id_groups_for_actions(
             "streamed Tool call history contains invalid JSON arguments"
         ) from malformed.arguments_error
     return [list(group) for group in matched_groups]
-
-
-def _build_response_schema(
-    allowed_decisions: Sequence[str],
-    *,
-    action_name: str,
-    args_schema: dict[str, JsonValue] | None,
-) -> dict[str, JsonValue]:
-    """Build an AG-UI resume payload schema that fixes the original Tool identity."""
-
-    variants: list[dict[str, object]] = []
-    for decision_type in allowed_decisions:
-        properties: dict[str, object] = {
-            "type": {"const": decision_type},
-        }
-        required = ["type"]
-        if decision_type == "edit":
-            properties["edited_action"] = {
-                "type": "object",
-                "required": ["name", "args"],
-                "properties": {
-                    "name": {"const": action_name},
-                    "args": (
-                        {"type": "object"} if args_schema is None else args_schema
-                    ),
-                },
-                "additionalProperties": False,
-            }
-            required.append("edited_action")
-        elif decision_type == "reject":
-            properties["message"] = {"type": "string"}
-        elif decision_type == "respond":
-            properties["message"] = {"type": "string"}
-            required.append("message")
-        variants.append(
-            {
-                "type": "object",
-                "properties": properties,
-                "required": required,
-                "additionalProperties": False,
-            }
-        )
-    return JsonObject.model_validate({"oneOf": variants}).root

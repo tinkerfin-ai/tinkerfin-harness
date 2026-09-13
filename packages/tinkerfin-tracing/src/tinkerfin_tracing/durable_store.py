@@ -485,8 +485,15 @@ class DurableTraceStore:
         max_nodes: int = 4000,
         before_started_at: datetime | None = None,
         before_node_id: str | None = None,
+        started_run_ids: tuple[str, ...] | None = None,
     ) -> TraceGraphNodeRecordPage:
-        """Apply metadata and content predicates before returning one Graph page."""
+        """Apply metadata and content predicates before returning one Graph page.
+
+        Keep ``run_ids`` as the complete selected lineage. ``started_run_ids``
+        optionally selects starts from a subset of those Runs, after resolving
+        node history and before paging; None adds no filter. Parent scopes may
+        come from other selected Runs and retain their original relationships.
+        """
 
         self._validate_key(key)
         if not isinstance(where, TraceGraphFilter):
@@ -502,6 +509,7 @@ class DurableTraceStore:
                 backend,
                 key,
                 run_ids=run_ids,
+                started_run_ids=started_run_ids,
                 where=where,
                 limit=limit,
                 max_nodes=max_nodes,
@@ -512,6 +520,7 @@ class DurableTraceStore:
             backend,
             key,
             run_ids=run_ids,
+            started_run_ids=started_run_ids,
             where=where,
             limit=limit,
             max_nodes=max_nodes,
@@ -530,6 +539,7 @@ class DurableTraceStore:
         max_nodes: int,
         before_started_at: datetime | None = None,
         before_node_id: str | None = None,
+        started_run_ids: tuple[str, ...] | None = None,
     ) -> TraceGraphNodeRecordPage:
         if len(run_ids) > MAX_TRACE_GRAPH_LINEAGE_RUNS:
             raise TraceQuotaExceeded(
@@ -540,6 +550,7 @@ class DurableTraceStore:
             TraceGraphQueryRequest(
                 key=key,
                 run_ids=run_ids,
+                started_run_ids=started_run_ids,
                 where=where,
                 limit=limit,
                 total_limit=max_nodes,
@@ -647,6 +658,14 @@ class DurableTraceStore:
             )
             for item in stored.nodes
         )
+        if started_run_ids is not None and any(
+            record.node_id in matched_ids
+            and record.started_event.fact.identity.run_id not in started_run_ids
+            for record in records
+        ):
+            raise TraceStoreProtocolError(
+                "Trace Graph direct match started outside the requested Runs"
+            )
         try:
             _validate_trace_graph_subagent_scopes(
                 {
@@ -678,6 +697,7 @@ class DurableTraceStore:
         max_nodes: int,
         before_started_at: datetime | None,
         before_node_id: str | None,
+        started_run_ids: tuple[str, ...] | None = None,
     ) -> TraceGraphNodeRecordPage:
         search = where.search
         if search is None:  # pragma: no cover - private caller contract
@@ -687,6 +707,7 @@ class DurableTraceStore:
             backend,
             key,
             run_ids=run_ids,
+            started_run_ids=started_run_ids,
             where=candidate_where,
             limit=max_nodes + 1,
             max_nodes=max_nodes + 1,
@@ -1277,6 +1298,18 @@ class _InMemoryTraceLedgerBackend:
             matching = [
                 row for row in candidates if _graph_node_matches(row, request.where)
             ]
+            if request.started_run_ids is not None:
+                started_runs = frozenset(request.started_run_ids)
+                try:
+                    matching = [
+                        row
+                        for row in matching
+                        if thread.events[row.started_seq - 1].run_id in started_runs
+                    ]
+                except IndexError as error:
+                    raise TraceStoreProtocolError(
+                        "Trace Graph start locator is outside the Ledger"
+                    ) from error
             matching.sort(
                 key=lambda row: (row.started_at, _node_order_key(row.node_id)),
                 reverse=True,
@@ -1374,8 +1407,13 @@ class _InMemoryTraceLedgerBackend:
             current = thread.graph_nodes
             thread.graph_nodes = rebuilt
             try:
+                source_events = {
+                    event.trace_seq: event.validated_event for event in thread.events
+                }
                 for mutation in request.mutations:
-                    apply_graph_node_mutation(thread.graph_nodes, mutation)
+                    apply_graph_node_mutation(
+                        thread.graph_nodes, mutation, source_events=source_events
+                    )
             except BaseException:
                 thread.graph_nodes = current
                 raise

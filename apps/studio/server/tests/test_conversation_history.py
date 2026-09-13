@@ -15,6 +15,7 @@ from tinkerfin_contracts import (
     NativeMessageObservation,
     NativeMessageRecord,
     NativeStateObservation,
+    NativeToolCall,
     NativeToolCallChunk,
     ObservationBoundary,
     RunClosedObservation,
@@ -230,6 +231,11 @@ async def test_history_reads_fixed_trace_view_without_agui_event_tail(
         ("assistant", "answer"),
     ]
     assert detail.message_count == 2
+    assistant = detail.messages[1]
+    assert assistant.agui is not None
+    assert assistant.agui.kind == "message"
+    assert assistant.agui.message_id != assistant.id
+    assert payload["messages"][1]["agui"]["messageId"] == assistant.agui.message_id
     assert "snapshot" not in payload
     assert "events" not in payload
 
@@ -580,6 +586,13 @@ async def test_trace_follow_sends_snapshot_then_semantic_update_and_closes(
     update = await asyncio.wait_for(pending, timeout=2)
     assert update.type == "update"
     assert update.update.messages.upserts[0].content == "delta"
+    retained = update.update.messages.upserts[0]
+    assert retained.agui is not None
+    wire = update.model_dump(mode="json", by_alias=True)
+    assert (
+        wire["update"]["messages"]["upserts"][0]["agui"]["messageId"]
+        == retained.agui.message_id
+    )
     assert update.task_trace is None
     await events.aclose()
     await _finish_trace(context, trace_session)
@@ -1044,3 +1057,121 @@ async def test_live_failure_and_snapshot_have_identical_results(session):
     finally:
         await stream.aclose()
         await source.aclose()
+
+
+async def test_tool_review_uses_same_reference_in_history_graph_and_follow(
+    session,
+) -> None:
+    """审批与工具在历史、链路分页和订阅快照中保留同一可恢复关联"""
+    tracer = Tracer(projections=(ConversationFailureProjection(),))
+    repository = ConversationRepository(session)
+    thread = await _register(
+        repository,
+        user_id=1,
+        thread_id="thread-review-reference",
+        run_id="run-review-reference",
+    )
+    context, trace_session = await _open_trace(
+        tracer, thread_id=thread.thread_id, run_id="run-review-reference"
+    )
+    await trace_session.observe(
+        NativeMessageObservation(
+            identity=context.identity,
+            graph_namespace=(),
+            message=NativeMessageRecord(
+                message_type="assistant",
+                id="report-proposal",
+                content="",
+                tool_calls=(
+                    NativeToolCall(
+                        id="save-report",
+                        name="write_file",
+                        arguments={"file_path": "/report.md", "content": "报告"},
+                    ),
+                ),
+            ),
+            observed_at=datetime.now(UTC),
+            monotonic_ns=3,
+        )
+    )
+    await trace_session.observe(
+        NativeStateObservation(
+            identity=context.identity,
+            graph_namespace=(),
+            state={},
+            messages=(
+                NativeMessageRecord(
+                    message_type="assistant",
+                    id="report-proposal",
+                    content="",
+                    tool_calls=(
+                        NativeToolCall(
+                            id="save-report",
+                            name="write_file",
+                            arguments={"file_path": "/report.md", "content": "报告"},
+                        ),
+                    ),
+                ),
+            ),
+            interrupts=(
+                NativeInterruptRecord(
+                    id="review-report",
+                    value={
+                        "action_requests": [
+                            {
+                                "name": "write_file",
+                                "args": {"file_path": "/report.md", "content": "报告"},
+                            }
+                        ],
+                        "review_configs": [
+                            {
+                                "action_name": "write_file",
+                                "allowed_decisions": ["approve", "reject"],
+                            }
+                        ],
+                    },
+                ),
+            ),
+            observed_at=datetime.now(UTC),
+            monotonic_ns=4,
+        )
+    )
+    await _finish_trace(context, trace_session, outcome="interrupted")
+    service = _service(repository, tracer=tracer)
+    detail = await service.get_detail(thread.thread_id, include_task_trace=False)
+    tool = next(node for node in detail.graph.nodes if node.kind == "tool")
+    assert tool.agui is not None and tool.agui.kind == "tool"
+    assert tool.source_id == "save-report"
+    assert tool.agui.tool_call_id != tool.source_id
+    review = detail.interactions[0]
+    assert review.agui is not None and len(review.agui) == 1
+    assert review.agui[0].tool_call_id == tool.agui.tool_call_id
+    assert review.agui[0].id == "review-report"
+    page = await service.query_trace_graph(
+        thread.thread_id,
+        where=TraceGraphFilter(kinds={TraceGraphNodeKind.TOOL}),
+        cursor=None,
+        limit=1,
+    )
+    assert next(node for node in page.nodes if node.id == tool.id).agui == tool.agui
+    for events in (
+        await service.follow_trace(thread.thread_id, include_task_trace=False),
+        await service.follow_trace_graph(
+            thread.thread_id,
+            where=TraceGraphFilter(kinds={TraceGraphNodeKind.TOOL}),
+            limit=1,
+        ),
+    ):
+        try:
+            event = await anext(events)
+            assert event.type == "snapshot"
+            wire = event.model_dump(mode="json", by_alias=True)["snapshot"]
+            nodes = wire["graph"]["nodes"] if "graph" in wire else wire["nodes"]
+            assert (
+                next(node for node in nodes if node["id"] == tool.id)["agui"][
+                    "toolCallId"
+                ]
+                == tool.agui.tool_call_id
+            )
+        finally:
+            await events.aclose()

@@ -18,7 +18,7 @@ from .redaction import (
 )
 
 
-class CapturedValue(TraceModel):
+class CapturedValue(TraceModel, frozen=True):
     """Store either one safe JSON value or an explicit omission reason."""
 
     disposition: Literal["inline", "omitted"]
@@ -43,7 +43,7 @@ class CapturedValue(TraceModel):
         return self
 
 
-class ToolCaptureRule(TraceModel):
+class ToolCaptureRule(TraceModel, frozen=True):
     """Allow selected JSON Pointer paths for one Tool's public content."""
 
     tool_name: str = Field(min_length=1, max_length=1024)
@@ -67,7 +67,7 @@ class ToolCaptureRule(TraceModel):
         return paths
 
 
-class ToolTraceCapture(TraceModel):
+class ToolTraceCapture(TraceModel, frozen=True):
     """Define how one Tool contributes content and lifecycle facts to Trace."""
 
     mode: Literal[
@@ -156,7 +156,7 @@ class ToolTraceCapture(TraceModel):
         return self
 
 
-class ReasoningCapturePolicy(TraceModel):
+class ReasoningCapturePolicy(TraceModel, frozen=True):
     """Control provider reasoning retention independently from public messages."""
 
     mode: Literal["omit", "content"] = "omit"
@@ -174,7 +174,7 @@ class ReasoningCapturePolicy(TraceModel):
         return cls(mode="content")
 
 
-class CapturePolicy(TraceModel):
+class CapturePolicy(TraceModel, frozen=True):
     """Define public-safe retention for messages, state, and Tools."""
 
     include_error_messages: bool = False

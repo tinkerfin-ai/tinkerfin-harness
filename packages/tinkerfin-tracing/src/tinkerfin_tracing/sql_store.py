@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -45,6 +45,8 @@ from tinkerfin_sqlalchemy import (
 
 from ._graph_reducer import (
     assistant_run_terminal_status,
+    graph_execution_started,
+    graph_failure_sequence,
     resolve_graph_link_issue,
     resolve_graph_node_kind,
 )
@@ -1294,6 +1296,7 @@ class _SqlAlchemyTraceLedgerBackend:
             connection,
             key,
             effect.graph_node_mutations,
+            source_events={event.trace_seq: event for event in effect.validated_events},
         )
         for event in effect.validated_events:
             fact = event.fact
@@ -1366,6 +1369,8 @@ class _SqlAlchemyTraceLedgerBackend:
         connection: AsyncConnection,
         key: TraceThreadKey,
         mutations: tuple[TraceGraphNodeMutation, ...],
+        *,
+        source_events: Mapping[int, TraceEvent],
     ) -> None:
         """Prefetch one batch and bulk-insert its previously unseen revisions."""
 
@@ -1424,7 +1429,9 @@ class _SqlAlchemyTraceLedgerBackend:
         if inserts:
             await connection.execute(insert(graph_nodes), inserts)
         for mutation, row in updates:
-            await self._apply_graph_node_mutation(connection, key, mutation, row)
+            await self._apply_graph_node_mutation(
+                connection, key, mutation, row, source_events=source_events
+            )
 
     def _new_graph_node_values(
         self,
@@ -1547,6 +1554,8 @@ class _SqlAlchemyTraceLedgerBackend:
         key: TraceThreadKey,
         mutation: TraceGraphNodeMutation,
         row: RowMapping,
+        *,
+        source_events: Mapping[int, TraceEvent],
     ) -> None:
         """Apply one prefetched Graph mutation atomically with its Ledger facts."""
 
@@ -1632,15 +1641,10 @@ class _SqlAlchemyTraceLedgerBackend:
                 TraceGraphNodeStatus.WAITING,
             }:
                 values["completed_at"] = None
-        if (
-            current_kind is TraceGraphNodeKind.TOOL
-            and row["status"] == TraceGraphNodeStatus.WAITING.value
-            and mutation.status is TraceGraphNodeStatus.RUNNING
-            and mutation.started_at is not None
-            and mutation.started_seq is not None
-        ):
-            values["started_at"] = _database_naive(mutation.started_at)
+        if graph_execution_started(mutation, source_events=source_events):
+            values["started_at"] = _database_naive(cast(datetime, mutation.started_at))
             values["started_seq"] = mutation.started_seq
+            values["result_seq"] = None
         if mutation.parent_subagent_id is not None:
             if (
                 row["parent_subagent_id"] is not None
@@ -1693,8 +1697,11 @@ class _SqlAlchemyTraceLedgerBackend:
             values["request_seq"] = mutation.request_seq
         if mutation.result_seq is not None:
             values["result_seq"] = mutation.result_seq
-        if mutation.failure_seq is not None:
-            values["failure_seq"] = mutation.failure_seq
+        values["failure_seq"] = graph_failure_sequence(
+            cast(int | None, row["failure_seq"]),
+            mutation,
+            source_events=source_events,
+        )
         resolved_issue = resolve_graph_link_issue(
             effective_parent_id,
             mutation.model_call_id or cast(str | None, row["model_call_id"]),
@@ -2207,8 +2214,39 @@ def _trace_graph_effective_source(
                 graph_nodes.c.completed_at.type,
             ).label("completed_at"),
             ranked.c._request_seq.label("request_seq"),
-            ranked.c._result_seq.label("result_seq"),
-            ranked.c._failure_seq.label("failure_seq"),
+            case(
+                (
+                    or_(
+                        ranked.c.kind.not_in(
+                            (
+                                TraceGraphNodeKind.TOOL.value,
+                                TraceGraphNodeKind.SUBAGENT.value,
+                            )
+                        ),
+                        ranked.c._result_seq >= ranked.c._origin_started_seq,
+                    ),
+                    ranked.c._result_seq,
+                ),
+                else_=None,
+            ).label("result_seq"),
+            case(
+                (
+                    and_(
+                        ranked.c.status == TraceGraphNodeStatus.FAILED.value,
+                        or_(
+                            ranked.c.kind.not_in(
+                                (
+                                    TraceGraphNodeKind.TOOL.value,
+                                    TraceGraphNodeKind.SUBAGENT.value,
+                                )
+                            ),
+                            ranked.c._failure_seq >= ranked.c._origin_started_seq,
+                        ),
+                    ),
+                    ranked.c._failure_seq,
+                ),
+                else_=None,
+            ).label("failure_seq"),
             ranked.c._link_issue.label("link_issue"),
         )
         .where(
@@ -2231,6 +2269,23 @@ def _trace_graph_criteria(
         nodes.thread_hash == _digest(request.key.thread_id),
         nodes.generation == request.key.generation,
     ]
+    if request.started_run_ids is not None:
+        # The logical node is merged over the whole selected lineage first.
+        # Its existing start locator identifies the execution's owning Run without
+        # reading any fact payload, before paging or parent-scope completion.
+        criteria.append(
+            select(events.c.trace_seq)
+            .where(
+                events.c.namespace_hash == nodes.namespace_hash,
+                events.c.thread_hash == nodes.thread_hash,
+                events.c.generation == nodes.generation,
+                events.c.trace_seq == nodes.started_seq,
+                events.c.run_hash.in_(
+                    tuple(_digest(run_id) for run_id in request.started_run_ids)
+                ),
+            )
+            .exists()
+        )
     if where.kinds:
         criteria.append(nodes.kind.in_(tuple(value.value for value in where.kinds)))
     if where.statuses:

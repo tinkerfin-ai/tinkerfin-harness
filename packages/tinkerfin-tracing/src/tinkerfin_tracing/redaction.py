@@ -334,14 +334,16 @@ def _is_credential_key(value: str) -> bool:
 
 
 def _restore_attachment_references(value: JsonValue) -> JsonValue:
-    """Remove request-only image bytes using the explicit attachment metadata contract."""
+    """Remove request-only file bytes using the explicit attachment metadata contract."""
     if isinstance(value, list):
         return [_restore_attachment_references(item) for item in value]
     if not isinstance(value, dict):
         return value
     extras = value.get("extras")
+    content_type = value.get("type")
     if (
-        value.get("type") == "image_url"
+        isinstance(content_type, str)
+        and content_type in {"image_url", "image", "audio", "video", "file"}
         and isinstance(extras, dict)
         and "attachment" in extras
     ):

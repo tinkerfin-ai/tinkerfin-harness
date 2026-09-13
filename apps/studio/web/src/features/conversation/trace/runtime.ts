@@ -16,8 +16,6 @@ import {
 import type { TaskTraceSnapshot } from '../../../api/conversation/taskTrace'
 import { ConversationError } from '../../../api/conversation/errors'
 import type {
-  ApprovalAllowedDecision,
-  ApprovalItem,
   ApprovalState,
   Conversation,
   JsonObject,
@@ -27,7 +25,7 @@ import type {
   TodoItem,
   WebTaskTraceViewState,
 } from '../../../types'
-import { planInteractionFromTracePayload } from '../agui'
+import { approvalItemsFromInterrupts, planInteractionFromInterrupts } from '../agui'
 
 const isObject = (value: unknown): value is JsonObject => (
   value != null && typeof value === 'object' && !Array.isArray(value)
@@ -154,90 +152,12 @@ const applyTraceGraphDelta = (
   })
 }
 
-const decodePointerToken = (value: string) => value.replaceAll('~1', '/').replaceAll('~0', '~')
-
-const capturedArguments = (value: JsonValue | undefined): JsonObject => {
-  if (!isObject(value) || value.disposition !== 'inline' || !isObject(value.value)) return {}
-  const root = value.value['']
-  if (Object.keys(value.value).length === 1 && isObject(root)) {
-    return structuredClone(root)
-  }
-  const entries = Object.entries(value.value)
-  if (!entries.every(([pointer]) => pointer.startsWith('/'))) {
-    return structuredClone(value.value)
-  }
-  const result: JsonObject = {}
-  for (const [pointer, item] of entries) {
-    if (!pointer.startsWith('/') || pointer.slice(1).includes('/')) continue
-    result[decodePointerToken(pointer.slice(1))] = structuredClone(item)
-  }
-  return result
-}
-
-const allowedDecisions = (value: JsonValue | undefined): ApprovalAllowedDecision[] => {
-  if (!Array.isArray(value)) return []
-  return value.filter((item): item is ApprovalAllowedDecision => (
-    item === 'approve' || item === 'edit' || item === 'reject' || item === 'respond'
-  ))
-}
-
 const scopedSourceKey = (graphNamespace: string[], sourceId: string): string => (
   JSON.stringify([graphNamespace, sourceId])
 )
 
-const approvalFromInteraction = (
-  interaction: TraceInteraction,
-  nodes: TraceGraphNode[],
-): ApprovalState | undefined => {
-  if (interaction.kind !== 'tool_approval' || !isObject(interaction.payload)) return undefined
-  const actions = interaction.payload.action_requests
-  const reviews = interaction.payload.review_configs
-  if (!Array.isArray(actions) || !Array.isArray(reviews) || actions.length !== reviews.length) {
-    return undefined
-  }
-  if (interaction.toolCallIds.length !== actions.length) return undefined
-  const items = actions.flatMap<ApprovalItem>((rawAction, index) => {
-    const rawReview = reviews[index]
-    if (!isObject(rawAction) || !isObject(rawReview) || typeof rawAction.name !== 'string') return []
-    const decisions = allowedDecisions(rawReview.allowed_decisions)
-    if (decisions.length === 0) return []
-    const publicId = actions.length === 1
-      ? interaction.sourceId
-      : interaction.sourceId + '#' + index
-    const originalArgs = capturedArguments(rawAction.arguments)
-    const toolCallId = interaction.toolCallIds[index]
-    const toolNode = nodes.find((node) => (
-      node.kind === 'tool'
-      && (node.status === 'running' || node.status === 'waiting')
-      && node.sourceId === toolCallId
-      && node.name === rawAction.name
-      && node.graphNamespace.length === interaction.graphNamespace.length
-      && node.graphNamespace.every(
-        (value, position) => value === interaction.graphNamespace[position],
-      )
-    ))
-    if (!toolNode || !toolCallId) return []
-    return [{
-      id: publicId,
-      interruptId: publicId,
-      toolCallId,
-      toolName: rawAction.name,
-      params: JSON.stringify(originalArgs, null, 2),
-      input: typeof originalArgs.file_path === 'string' ? originalArgs.file_path : '',
-      description: typeof rawAction.description === 'string'
-        ? rawAction.description
-        : rawAction.name,
-      originalArgs,
-      allowedDecisions: decisions,
-    }]
-  })
-  if (items.length !== actions.length || items.length === 0) return undefined
-  return { items, activeIndex: 0, submitted: false, mode: 'options' }
-}
-
 const interactionState = (
   interactions: TraceInteraction[],
-  nodes: TraceGraphNode[],
 ): {
   approval?: ApprovalState
   planInteraction?: Conversation['planInteraction']
@@ -247,26 +167,21 @@ const interactionState = (
     .filter((interaction) => interaction.status === 'pending')
     .sort((left, right) => left.traceSeq - right.traceSeq || left.id.localeCompare(right.id))
   if (pending.length === 0) return {}
-  if (pending.length === 1) {
-    const interaction = pending[0]
-    if (interaction) {
-      const plan = planInteractionFromTracePayload(interaction.sourceId, interaction.payload)
-      if (plan) {
-        return {
-          planInteraction: plan,
-          pendingInteractionKind: plan.kind === 'questions'
-            ? 'plan_clarification'
-            : 'plan_review',
-        }
-      }
+  // 缺失的审批内容只能提示补全，不能推测参数或生成可提交的动作
+  if (pending.some((interaction) => interaction.agui === null)) {
+    return { pendingInteractionKind: 'input_required' }
+  }
+  const interrupts = pending.flatMap((interaction) => interaction.agui ?? [])
+  const plan = planInteractionFromInterrupts(interrupts)
+  if (plan) {
+    return {
+      planInteraction: plan,
+      pendingInteractionKind: plan.kind === 'questions' ? 'plan_clarification' : 'plan_review',
     }
   }
-  if (pending.every((interaction) => interaction.kind === 'tool_approval')) {
-    const groups = pending.map((interaction) => approvalFromInteraction(interaction, nodes))
-    if (groups.some((group) => !group)) throw new ConversationError('stream_event_invalid')
-    const items = groups.flatMap((group) => group?.items ?? [])
-    const interruptIds = new Set(items.map((item) => item.interruptId))
-    if (items.length === 0 || interruptIds.size !== items.length) {
+  if (interrupts.length && interrupts.every((interrupt) => interrupt.reason === 'tool_call')) {
+    const items = approvalItemsFromInterrupts(interrupts)
+    if (new Set(items.map((item) => item.interruptId)).size !== items.length) {
       throw new ConversationError('stream_event_invalid')
     }
     return {
@@ -324,7 +239,7 @@ const traceMessages = (trace: ConversationHistoryCoreDetail): Message[] => {
     return [{
       sequence: item.traceSeq,
       value: {
-        id: item.id,
+        id: item.agui?.messageId ?? item.id,
         role: item.role,
         content: messageText(item.content),
         attachments: messageAttachments(item.content),
@@ -353,6 +268,10 @@ const traceMessages = (trace: ConversationHistoryCoreDetail): Message[] => {
       : node.graphNamespace
     const result = node.sourceId
       ? toolResults.get(scopedSourceKey(resultNamespace, node.sourceId))
+      : undefined
+    const delegatedChild = node.agui?.kind === 'tool'
+      ? trace.graph.nodes.find(child => child.agui?.kind === 'subagent'
+        && node.agui?.kind === 'tool' && child.agui.parentToolCallId === node.agui.toolCallId)
       : undefined
     const retainedInput = node.requestOmitted ? undefined : node.request
     const retainedResult = node.resultOmitted ? undefined : node.result
@@ -384,7 +303,7 @@ const traceMessages = (trace: ConversationHistoryCoreDetail): Message[] => {
           agentName: node.kind === 'subagent' ? node.name : undefined,
           sourceAgentName: subagent?.name,
           params: node.kind === 'tool' ? text(retainedInput) : undefined,
-          input: node.kind === 'subagent' ? subagentInput : undefined,
+          input: node.kind === 'subagent' && !node.requestOmitted ? subagentInput : undefined,
           result: messageText(
             node.kind === 'subagent'
               ? retainedResult
@@ -396,12 +315,20 @@ const traceMessages = (trace: ConversationHistoryCoreDetail): Message[] => {
               : result?.content ?? retainedResult,
           ),
           status: nodeMessageStatus(node.status),
-          toolCallId: node.kind === 'tool' ? node.sourceId ?? undefined : undefined,
+          toolCallId: node.agui?.kind === 'tool'
+            ? node.agui.toolCallId
+            : node.agui?.kind === 'subagent' ? node.agui.parentToolCallId : undefined,
           batchId: node.kind === 'tool' && !subagent
             ? node.modelCallId ?? undefined
             : undefined,
-          subRunId: node.kind === 'subagent' ? node.id : undefined,
-          runId: subagent?.id ?? node.runId,
+          subRunId: node.agui?.kind === 'subagent'
+            ? node.agui.subagentInvocationId
+            : delegatedChild?.agui?.kind === 'subagent' ? delegatedChild.agui.subagentInvocationId : undefined,
+          runId: subagent?.agui?.kind === 'subagent'
+            ? subagent.agui.subagentInvocationId
+            : node.agui?.kind === 'subagent' ? node.agui.subagentInvocationId : node.runId,
+          originMainRunId: node.kind === 'subagent' ? node.runId : undefined,
+          lastMainRunId: node.kind === 'subagent' || delegatedChild ? trace.headRunId : undefined,
           completedAt: node.completedAt ?? undefined,
           durationMs: elapsedMs(node.startedAt, node.completedAt),
         },
@@ -545,7 +472,7 @@ export const restoreConversationFromTrace = (
   const taskTrace = options.includeTaskTrace && wireTaskTrace != null
     ? taskTraceView(wireTaskTrace)
     : options.taskTrace ?? { phase: 'unloaded' as const }
-  const interaction = interactionState(trace.interactions, trace.graph.nodes)
+  const interaction = interactionState(trace.interactions)
   const projectedStatus = runStatus(trace)
   const status = interaction.pendingInteractionKind && projectedStatus !== 'error'
     ? 'waiting_approval'

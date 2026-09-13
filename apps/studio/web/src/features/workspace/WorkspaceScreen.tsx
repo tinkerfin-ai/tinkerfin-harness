@@ -279,6 +279,8 @@ export function WorkspaceScreen({
     layoutKey: `${navigation.mode}:${taskDrawer.open ? 'open' : 'closed'}:${taskDrawer.usesOverlay ? 'overlay' : 'docked'}`,
   })
   const isRunning = conversation.runStatus === 'streaming'
+    || (conversation.runStatus === 'detached' && conversation.trace?.status.execution === 'running'
+      && conversation.trace.headRunId === conversation.activeRunId)
   const {
     paneRef: conversationPane,
     messageEndRef: messageEnd,
@@ -389,18 +391,7 @@ export function WorkspaceScreen({
       || autoRecoveredRunIds.current.has(active.payload.runId)) return
     autoRecoveredRunIds.current.add(active.payload.runId)
 
-    const threadId = selectedConversation.threadId
-    const payload = { ...active.payload, threadId }
-    const afterSeq = Math.max(active.lastSeq, selectedConversation.lastSeq ?? 0)
-    setWorkspace((state) => updateConversation(state, threadId, (item) => ({
-      ...item,
-      runStatus: 'streaming',
-      activeRunId: active.payload.runId,
-    })))
-    void streamRun(threadId, payload, active.mode, {
-      target: 'workspace',
-      initialAfterSeq: afterSeq,
-    })
+    void recoverConversation(selectedConversation.threadId)
   }, [
     isActiveThread,
     initialActiveSessions,
@@ -409,7 +400,7 @@ export function WorkspaceScreen({
     selectedConversation?.lastSeq,
     selectedConversation?.runStatus,
     selectedConversation?.threadId,
-    streamRun,
+    recoverConversation,
     workspace.currentThreadId,
   ])
 
@@ -899,7 +890,7 @@ export function WorkspaceScreen({
   }, [conversation.mode, conversation.planInteraction, conversation.threadId, isRunning, pushToast, requestDisablePlan, setAgentMode, t])
 
   const stop = async () => {
-    if (!isActiveThread(conversation.threadId)) return
+    if (!isRunning || !conversation.activeRunId) return
     try {
       const cancelled = await cancelRun(conversation.threadId)
       pushToast('info', cancelled ? t('任务已停止') : t('任务已经结束'))

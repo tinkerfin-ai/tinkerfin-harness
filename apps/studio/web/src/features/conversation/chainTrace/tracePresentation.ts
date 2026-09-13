@@ -4,6 +4,7 @@ import type {
 } from '../../../api/conversation/traceGraph'
 import type { useI18n } from '../../../i18n'
 import type { JsonValue } from '../../../types'
+import { messageAttachments } from '../attachments/content'
 
 type Translate = ReturnType<typeof useI18n>['t']
 export type TracePublicCategory =
@@ -82,9 +83,21 @@ const compactContent = (value: JsonValue | null | undefined) => (
   traceContentText(value).replaceAll(/\s+/g, ' ').trim()
 )
 
+const messagePreview = (value: JsonValue | null | undefined) => {
+  if (typeof value === 'string') return value.replaceAll(/\s+/g, ' ').trim()
+  if (!Array.isArray(value)) return ''
+  const visibleText = value.flatMap((block) => {
+    if (typeof block === 'string') return [block]
+    return block !== null && typeof block === 'object' && !Array.isArray(block)
+      && block.type === 'text' && typeof block.text === 'string' ? [block.text] : []
+  }).join(' ').replaceAll(/\s+/g, ' ').trim()
+  return visibleText || messageAttachments(value).map(attachment => attachment.name).join(', ')
+}
+
 export const traceNodePreview = (node: TraceGraphNode) => {
   if (node.failure) return node.failure.message ?? node.failure.errorType
-  if (node.kind.endsWith('_message') || node.kind === 'context') return compactContent(node.content)
+  if (node.kind.endsWith('_message')) return node.contentOmitted ? '' : messagePreview(node.content)
+  if (node.kind === 'context') return compactContent(node.content)
   if (node.kind === 'model') return ''
   if (node.kind === 'tool' || node.kind === 'subagent') {
     return compactContent(node.request)
@@ -92,14 +105,24 @@ export const traceNodePreview = (node: TraceGraphNode) => {
   return compactContent(node.result) || compactContent(node.request)
 }
 
+export const traceNodePreviewFallback = (node: TraceGraphNode, t: Translate) => {
+  if (node.contentOmitted) return ''
+  if (node.kind === 'assistant_message' && node.toolCallOnly) return t('（仅工具调用）')
+  if (node.kind.endsWith('_message') && Array.isArray(node.content)
+    && node.content.some(block => block !== null && typeof block === 'object' && !Array.isArray(block)
+      && typeof block.type === 'string' && ['file', 'image', 'document', 'audio', 'video'].includes(block.type))) {
+    return t('附件')
+  }
+  return ''
+}
+
 export const traceNodeAccessibleLabel = (
   node: TraceGraphNode,
   t: Translate,
-  previewFallback = '',
 ) => {
   const category = traceVisualCategoryLabel(traceVisualCategory(node.kind), t)
   const value = node.kind.endsWith('_message') || node.kind === 'context'
-    ? traceNodePreview(node) || previewFallback
+    ? traceNodePreview(node) || traceNodePreviewFallback(node, t)
     : node.kind === 'tool' ? node.name : traceNodeName(node)
   const summary = value.length > 96 ? `${value.slice(0, 95)}…` : value
   return `${category}，${summary || t('不可用')}`

@@ -1,4 +1,4 @@
-"""有界图片预处理与 Office 文件容器校验"""
+"""有界图片预处理、Markdown 文本与 Office 文件容器校验"""
 
 from __future__ import annotations
 
@@ -21,7 +21,17 @@ MIME_TYPES = {
     "pdf": "application/pdf",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "md": "text/markdown",
+    "markdown": "text/markdown",
 }
+
+
+def markdown_text(data: bytes) -> str:
+    """读取 UTF-8 Markdown，接受字节顺序标记并拒绝二进制空字符"""
+    text = data.decode("utf-8-sig")
+    if "\x00" in text:
+        raise ValueError("Markdown 文件必须是 UTF-8 文本")
+    return text
 
 
 def image_variant(data: bytes, max_side: int) -> bytes:
@@ -46,13 +56,15 @@ def validate_file(name: str, data: bytes) -> str:
     extension = name.rsplit(".", 1)[-1].lower()
     mime = MIME_TYPES.get(extension)
     if mime is None:
-        raise ValueError("仅支持图片、PDF、DOCX 和 XLSX")
+        raise ValueError("仅支持图片、Markdown、PDF、DOCX 和 XLSX")
     if mime.startswith("image/"):
         with Image.open(io.BytesIO(data)) as image:
             actual = Image.MIME.get(image.format or "")
             if actual != mime:
                 raise ValueError("图片内容与扩展名不一致")
         image_variant(data, 2048)
+    elif mime == "text/markdown":
+        markdown_text(data)
     elif extension == "pdf":
         if not data.startswith(b"%PDF-"):
             raise ValueError("PDF 文件内容不正确")

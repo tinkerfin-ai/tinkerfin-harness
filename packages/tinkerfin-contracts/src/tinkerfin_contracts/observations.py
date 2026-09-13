@@ -11,7 +11,9 @@ from ._json import FiniteJsonValue
 from ._models import ContractModel, ObservationModel
 from .identity import RunIdentity
 
-RunInputKind: TypeAlias = Literal["ordinary", "branch", "resume", "abandon"]
+RunInputKind: TypeAlias = Literal[
+    "ordinary", "branch", "continuation", "resume", "abandon"
+]
 RunMode: TypeAlias = Literal["default", "plan"]
 RunTerminalOutcome: TypeAlias = Literal[
     "succeeded",
@@ -64,6 +66,8 @@ class RunSourceContext(ContractModel):
     """Describe the real input and lineage used to open one Runtime request.
 
     Input and configuration values are finite JSON snapshots produced by the Runtime.
+    A continuation operates on existing graph state without resolving an interaction;
+    a resume supplies an interaction decision.
     Nested dictionaries and lists remain mutable. Observer implementations must treat
     received evidence as read-only and apply their retention policy before storing it.
     """

@@ -3,20 +3,14 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from functools import partial
-from types import MappingProxyType
-from typing import Any, Protocol, TypeAlias, cast, runtime_checkable
+from collections.abc import Callable
+from typing import Protocol, TypeAlias, cast, runtime_checkable
 
-from deepagents import graph as _deepagents_graph
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver, CheckpointTuple
 from langgraph.graph.state import CompiledStateGraph
 
 from ._agui_lineage_state import RESUME_WRITE_OWNER
-from ._hitl import prepare_hitl_factory_overrides
-from ._tasks import run_sync_owned
 from ._v3_stream import graph_v3_stream
 from .native_driver import (
     DeepAgentsV2StreamDriver,
@@ -25,11 +19,6 @@ from .native_driver import (
     ReasoningExtractor,
 )
 
-_DEEP_AGENTS_CREATE_FACTORY = cast(
-    Callable[..., object],
-    _deepagents_graph.create_deep_agent,  # pyright: ignore[reportUnknownMemberType]
-)
-_DEEP_AGENTS_CREATE_SIGNATURE = inspect.signature(_DEEP_AGENTS_CREATE_FACTORY)
 _COMPILED_ASTREAM = cast(
     Callable[..., object],
     cast(
@@ -51,72 +40,18 @@ _CheckpointSaver: TypeAlias = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class DeepAgentsFactoryPreparation:
-    """Describe Profile-owned changes to one current agent factory call.
-
-    Attributes:
-        keyword_overrides: Canonical keyword values that replace the caller's values
-            before the selected graph factory is invoked.
-    """
-
-    keyword_overrides: Mapping[str, object]
-
-    def __post_init__(self) -> None:
-        """Snapshot mutable mappings and reject ambiguous override names."""
-
-        if not isinstance(self.keyword_overrides, Mapping):
-            raise TypeError("keyword_overrides must be a mapping")
-        overrides = dict(self.keyword_overrides)
-        if any(
-            not isinstance(name, str) or not name or name != name.strip()
-            for name in overrides
-        ):
-            raise ValueError("factory override names must be canonical text")
-        object.__setattr__(self, "keyword_overrides", MappingProxyType(overrides))
-
-
 @runtime_checkable
 class DeepAgentsRuntimeProfile(Protocol):
-    """Provide one complete Deep Agents build and Native stream integration.
+    """Provide Native stream normalization and checkpoint resume semantics.
 
-    Hosts select a concrete Profile before building a Runtime. One TinkerFin
-    instance and every Run created from it retain that exact Profile; the Runtime never
-    negotiates or infers a profile from stream data. The same Profile owns the upstream
-    saver semantics used to stage a resume without discarding pending root or subgraph
-    work. ``profile_id`` identifies a third-party integration implementation, not a
-    TinkerFin protocol version.
-
-    A Profile whose graph factory is asynchronous may additionally implement
-    ``create_agent_graph(factory, args, kwargs)``. Profiles that expose only this base
-    contract keep their selected synchronous factory; Core invokes it in AnyIO's
-    capacity-limited worker boundary. Both paths preserve the Profile's own factory and
-    never fall back to another integration.
+    Each Runtime retains one integration. Stream selection is explicit and never
+    inferred from payloads. Agent construction is owned by TinkerFin and does not
+    form part of this extension contract.
     """
 
     @property
     def profile_id(self) -> str:
         """Return the canonical host-visible integration identity."""
-
-        ...
-
-    @property
-    def create_agent_factory(self) -> Callable[..., object]:
-        """Return the concrete Deep Agents graph factory owned by this Profile.
-
-        A Profile may return an adapter around a different upstream release, but that
-        adapter must honor ``create_agent_signature`` so TinkerFin can apply current
-        state, HITL, and Plan contracts before invocation.
-
-        Returns:
-            Concrete callable implementing ``create_agent_signature``.
-        """
-
-        ...
-
-    @property
-    def create_agent_signature(self) -> inspect.Signature:
-        """Return the stable build signature implemented by the Profile factory."""
 
         ...
 
@@ -128,14 +63,6 @@ class DeepAgentsRuntimeProfile(Protocol):
 
     def graph_stream(self, graph: object) -> Callable[..., object]:
         """Return the concrete event source callable for one created Graph."""
-
-        ...
-
-    def prepare_create_agent(
-        self,
-        arguments: Mapping[str, object],
-    ) -> DeepAgentsFactoryPreparation:
-        """Adapt one bound current build call to this Profile's upstream contract."""
 
         ...
 
@@ -184,12 +111,10 @@ class DeepAgentsRuntimeProfile(Protocol):
 
 
 class DeepAgentsV2RuntimeProfile:
-    """Integrate the locked Deep Agents 0.7.5 and LangGraph v2 runtime.
+    """Integrate native LangGraph v2 streams and checkpoint resume semantics.
 
-    This is the default stable Runtime Profile. Its factory signature, HITL preparation,
-    invocation binding, checkpoint identity, resume-intent staging, and frame
-    normalization are jointly exercised by the Runtime Profile and lineage contract
-    tests.
+    Invocation binding, checkpoint identity, resume-intent staging, and frame
+    normalization are covered by the Native and lineage contract tests.
 
     Args:
         reasoning_extractors: Verified provider-specific reasoning extractors applied
@@ -219,28 +144,6 @@ class DeepAgentsV2RuntimeProfile:
         return "deepagents-v2"
 
     @property
-    def create_agent_factory(self) -> Callable[..., object]:
-        """Return the currently installed locked factory without invoking it.
-
-        Resolving the symbol on access keeps dependency monkeypatching and process-local
-        instrumentation scoped to Runtime building.
-
-        Returns:
-            Locked Deep Agents graph factory currently installed in this process.
-        """
-
-        return cast(
-            Callable[..., object],
-            _deepagents_graph.create_deep_agent,  # pyright: ignore[reportUnknownMemberType]
-        )
-
-    @property
-    def create_agent_signature(self) -> inspect.Signature:
-        """Return the locked factory contract independent of process instrumentation."""
-
-        return _DEEP_AGENTS_CREATE_SIGNATURE
-
-    @property
     def astream_signature(self) -> inspect.Signature:
         """Return the locked bound LangGraph stream contract used by lazy resume."""
 
@@ -253,69 +156,6 @@ class DeepAgentsV2RuntimeProfile:
         if not callable(stream):
             raise TypeError("Deep Agents v2 graph must expose astream")
         return stream
-
-    def prepare_create_agent(
-        self,
-        arguments: Mapping[str, object],
-    ) -> DeepAgentsFactoryPreparation:
-        """Apply the locked Deep Agents HITL and permission ownership contract.
-
-        Args:
-            arguments: Factory arguments already bound to
-                ``create_agent_signature`` with defaults applied.
-
-        Returns:
-            Immutable tool review and permission overrides for the selected factory.
-        """
-
-        hitl = prepare_hitl_factory_overrides(arguments)
-        return DeepAgentsFactoryPreparation(
-            keyword_overrides={
-                "interrupt_on": hitl.interrupt_on,
-                "middleware": hitl.middleware,
-                "permissions": hitl.permissions,
-                "subagents": hitl.subagents,
-            },
-        )
-
-    async def create_agent_graph(
-        self,
-        factory: Callable[..., object],
-        args: tuple[object, ...],
-        kwargs: Mapping[str, object],
-    ) -> object:
-        """Build the locked synchronous Deep Agents graph in a bounded worker.
-
-        AnyIO's process-wide worker limiter supplies the required capacity bound. The
-        default non-abandoning cancellation behavior keeps the synchronous build owned
-        until it settles, so cancellation cannot leave an unobserved graph construction
-        running after this method returns.
-
-        Args:
-            factory: Exact factory captured by the Runtime.
-            args: Frozen positional arguments for that factory.
-            kwargs: Frozen keyword arguments for that factory.
-
-        Returns:
-            The fresh Graph. Checkpointed Graphs wait for each checkpoint by default,
-            so tool reviews can bind decisions to a persisted source.
-        """
-
-        build = partial(factory, *args, **dict(kwargs))
-        graph = await run_sync_owned(build)
-        if isinstance(graph, CompiledStateGraph):
-            # Upstream's isinstance target omits its state/context generics.
-            # The resource test and with_config preserve the concrete Graph type.
-            compiled = cast(CompiledStateGraph[Any, Any, Any, Any], graph)
-            saver = compiled.checkpointer  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType] - upstream Checkpointer omits BaseCheckpointSaver's generic
-            if saver is None or saver is False:
-                return compiled
-            # LangGraph's per-step durability waits for asynchronous saver I/O;
-            # it does not run a blocking database driver on the event loop.
-            return compiled.with_config(
-                {"configurable": {"__pregel_durability": "sync"}}
-            )
-        return graph
 
     @property
     def stream_driver(self) -> NativeStreamDriver:
@@ -454,7 +294,6 @@ class DeepAgentsV3RuntimeProfile(DeepAgentsV2RuntimeProfile):
 
 
 __all__ = [
-    "DeepAgentsFactoryPreparation",
     "DeepAgentsRuntimeProfile",
     "DeepAgentsV2RuntimeProfile",
     "DeepAgentsV3RuntimeProfile",

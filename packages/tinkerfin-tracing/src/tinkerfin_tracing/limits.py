@@ -7,7 +7,7 @@ from pydantic import Field, model_validator
 from ._models import TraceModel
 
 
-class TraceLimits(TraceModel):
+class TraceLimits(TraceModel, frozen=True):
     """Bound each namespace's events and reserved terminal capacity before writes."""
 
     max_event_bytes: int = Field(default=1024 * 1024, ge=1024)

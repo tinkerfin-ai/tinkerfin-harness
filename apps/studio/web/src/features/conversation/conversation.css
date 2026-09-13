@@ -1508,10 +1508,10 @@
   }
 
   .plan-question-option.is-selected .plan-question-option-index { background: var(--color-brand-soft); color: var(--color-brand-text); }
-  .plan-question-option-copy { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; column-gap: var(--space-1-5); line-height: var(--type-title-line); }
-  .plan-question-option-copy strong { font-size: var(--type-ui-size); font-weight: var(--weight-medium); }
-  .plan-question-option-copy small { color: var(--color-text-tertiary); font-size: var(--type-ui-size); font-weight: var(--weight-regular); line-height: var(--type-title-line); }
-  .plan-question-option-recommended { display: inline-flex; min-height: var(--type-title-line); grid-column: 3; align-self: center; align-items: center; justify-content: center; padding: 0 var(--space-1); border-radius: var(--radius-sm); background: var(--color-brand-soft); color: var(--color-brand-text); font-size: var(--type-micro-size); font-weight: var(--weight-semibold); line-height: var(--type-title-line); }
+  .plan-question-option-copy { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: var(--space-1) var(--space-1-5); line-height: var(--type-title-line); }
+  .plan-question-option-copy strong { min-width: 0; grid-column: 1; grid-row: 1; overflow-wrap: anywhere; font-size: var(--type-ui-size); font-weight: var(--weight-medium); }
+  .plan-question-option-copy small { min-width: 0; grid-column: 1 / -1; grid-row: 2; color: var(--color-text-tertiary); font-size: var(--type-ui-size); font-weight: var(--weight-regular); line-height: var(--type-title-line); }
+  .plan-question-option-recommended { display: inline-flex; min-height: var(--type-title-line); grid-column: 2; grid-row: 1; align-self: start; align-items: center; justify-content: center; padding: 0 var(--space-1); border-radius: var(--radius-sm); background: var(--color-brand-soft); color: var(--color-brand-text); font-size: var(--type-micro-size); font-weight: var(--weight-semibold); line-height: var(--type-title-line); }
 
   .plan-question-custom { cursor: text; }
   .plan-question-custom textarea { width: 100%; height: var(--type-title-line); min-height: var(--type-title-line); max-height: calc(var(--type-title-line) * 3); padding: 0; resize: none; overflow-y: hidden; border: 0; outline: 0; background: transparent; color: var(--color-text-primary); font-size: var(--type-ui-size); line-height: var(--type-title-line); }

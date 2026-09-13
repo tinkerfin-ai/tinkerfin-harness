@@ -1,0 +1,706 @@
+{
+  "before": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "thread",
+      "runId": "first"
+    },
+    {
+      "type": "STATE_SNAPSHOT",
+      "rawEvent": {
+        "streamMode": "values",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "first"
+      },
+      "snapshot": {
+        "files": {}
+      }
+    },
+    {
+      "type": "RAW",
+      "rawEvent": {
+        "type": "tasks",
+        "phase": "start",
+        "ns": []
+      },
+      "event": {
+        "data": {
+          "id": "2f42a910-09cf-0bcd-843d-0417070b906a",
+          "name": "PatchToolCallsMiddleware.before_agent",
+          "input": {
+            "messages": [
+              {
+                "content": "Prepare report",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "human",
+                "name": null,
+                "id": "request-1"
+              }
+            ],
+            "files": {}
+          },
+          "triggers": [
+            "branch:to:PatchToolCallsMiddleware.before_agent"
+          ],
+          "metadata": {
+            "ls_integration": "tinkerfin",
+            "run_id": "first"
+          }
+        },
+        "provenance": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        }
+      },
+      "source": "langgraph.tasks"
+    },
+    {
+      "type": "RAW",
+      "rawEvent": {
+        "type": "tasks",
+        "phase": "result",
+        "ns": []
+      },
+      "event": {
+        "data": {
+          "id": "2f42a910-09cf-0bcd-843d-0417070b906a",
+          "name": "PatchToolCallsMiddleware.before_agent",
+          "error": null,
+          "interrupts": [],
+          "result": {}
+        },
+        "provenance": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        }
+      },
+      "source": "langgraph.tasks"
+    },
+    {
+      "type": "RAW",
+      "rawEvent": {
+        "type": "tasks",
+        "phase": "start",
+        "ns": []
+      },
+      "event": {
+        "data": {
+          "id": "76bb1a66-a2ee-11d9-26c5-0b29cc5c8d1f",
+          "name": "model",
+          "input": {
+            "messages": [
+              {
+                "content": "Prepare report",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "human",
+                "name": null,
+                "id": "request-1"
+              }
+            ],
+            "files": {}
+          },
+          "triggers": [
+            "branch:to:model"
+          ],
+          "metadata": {
+            "ls_integration": "tinkerfin",
+            "run_id": "first"
+          }
+        },
+        "provenance": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        }
+      },
+      "source": "langgraph.tasks"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "first",
+        "langgraphNode": "model"
+      },
+      "messageId": "tf:message:W1tdLCJwcmlvci1yZXBseSJd",
+      "role": "assistant",
+      "name": "main"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "first",
+        "langgraphNode": "model"
+      },
+      "messageId": "tf:message:W1tdLCJwcmlvci1yZXBseSJd",
+      "delta": "The report is prepared."
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "first",
+        "langgraphNode": "model"
+      },
+      "toolCallId": "tf:tool:W1tdLCJkZWxpdmVyeSJd",
+      "toolCallName": "deliver",
+      "parentMessageId": "tf:message:W1tdLCJwcmlvci1yZXBseSJd"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "first",
+        "langgraphNode": "model"
+      },
+      "toolCallId": "tf:tool:W1tdLCJkZWxpdmVyeSJd",
+      "delta": "{}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "first",
+        "langgraphNode": "model"
+      },
+      "toolCallId": "tf:tool:W1tdLCJkZWxpdmVyeSJd"
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "first",
+        "langgraphNode": "model"
+      },
+      "messageId": "tf:message:W1tdLCJwcmlvci1yZXBseSJd"
+    },
+    {
+      "type": "RAW",
+      "rawEvent": {
+        "type": "tasks",
+        "phase": "result",
+        "ns": []
+      },
+      "event": {
+        "data": {
+          "id": "76bb1a66-a2ee-11d9-26c5-0b29cc5c8d1f",
+          "name": "model",
+          "error": null,
+          "interrupts": [],
+          "result": {
+            "messages": [
+              {
+                "content": "The report is prepared.",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "ai",
+                "name": null,
+                "id": "prior-reply",
+                "tool_calls": [
+                  {
+                    "name": "deliver",
+                    "args": {},
+                    "id": "delivery",
+                    "type": "tool_call"
+                  }
+                ],
+                "invalid_tool_calls": [],
+                "usage_metadata": null
+              }
+            ]
+          }
+        },
+        "provenance": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        }
+      },
+      "source": "langgraph.tasks"
+    },
+    {
+      "type": "RAW",
+      "rawEvent": {
+        "type": "tasks",
+        "phase": "start",
+        "ns": []
+      },
+      "event": {
+        "data": {
+          "id": "28f5b120-855b-9ead-3090-ea0edc39e369",
+          "name": "tools",
+          "triggers": [
+            "__pregel_push"
+          ],
+          "metadata": {
+            "ls_integration": "tinkerfin",
+            "run_id": "first"
+          },
+          "input": [
+            {
+              "name": "deliver",
+              "args": {},
+              "id": "delivery",
+              "type": "tool_call"
+            }
+          ]
+        },
+        "provenance": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        }
+      },
+      "source": "langgraph.tasks"
+    },
+    {
+      "type": "RAW",
+      "rawEvent": {
+        "type": "tasks",
+        "phase": "result",
+        "ns": []
+      },
+      "event": {
+        "data": {
+          "id": "28f5b120-855b-9ead-3090-ea0edc39e369",
+          "name": "tools",
+          "error": {
+            "type": "ValueError",
+            "message": "Delivery failed"
+          },
+          "interrupts": [],
+          "result": {}
+        },
+        "provenance": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        }
+      },
+      "source": "langgraph.tasks"
+    },
+    {
+      "type": "RUN_ERROR",
+      "rawEvent": {
+        "threadId": "thread",
+        "runId": "first"
+      },
+      "message": "Agent run failed",
+      "code": "runtime_error"
+    }
+  ],
+  "after": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "thread",
+      "runId": "second"
+    },
+    {
+      "type": "STATE_SNAPSHOT",
+      "rawEvent": {
+        "streamMode": "values",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "second"
+      },
+      "snapshot": {
+        "files": {}
+      }
+    },
+    {
+      "type": "RAW",
+      "rawEvent": {
+        "type": "tasks",
+        "phase": "start",
+        "ns": []
+      },
+      "event": {
+        "data": {
+          "id": "4176e884-d9f6-5527-ac24-fd09c9768200",
+          "name": "PatchToolCallsMiddleware.before_agent",
+          "input": {
+            "messages": [
+              {
+                "content": "Prepare report",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "human",
+                "name": null,
+                "id": "request-1"
+              },
+              {
+                "content": "The report is prepared.",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "ai",
+                "name": null,
+                "id": "prior-reply",
+                "tool_calls": [
+                  {
+                    "name": "deliver",
+                    "args": {},
+                    "id": "delivery",
+                    "type": "tool_call"
+                  }
+                ],
+                "invalid_tool_calls": [],
+                "usage_metadata": null
+              },
+              {
+                "content": "Revise delivery",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "human",
+                "name": null,
+                "id": "request-2"
+              }
+            ],
+            "files": {}
+          },
+          "triggers": [
+            "branch:to:PatchToolCallsMiddleware.before_agent"
+          ],
+          "metadata": {
+            "ls_integration": "tinkerfin",
+            "run_id": "second"
+          }
+        },
+        "provenance": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        }
+      },
+      "source": "langgraph.tasks"
+    },
+    {
+      "type": "TOOL_CALL_RESULT",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "second",
+        "langgraphNode": "PatchToolCallsMiddleware.before_agent",
+        "toolResultStatus": "success"
+      },
+      "messageId": "tf:message:W1tdLCIyOWNkNzY4My0xMTJiLTRmNTItOTA0Mi0zMzI1MDhjOTNhOTAiXQ",
+      "toolCallId": "tf:tool:W1tdLCJkZWxpdmVyeSJd",
+      "content": "Tool call deliver with id delivery was cancelled - another message came in before it could be completed.",
+      "role": "tool",
+      "attachments": []
+    },
+    {
+      "type": "RAW",
+      "rawEvent": {
+        "type": "tasks",
+        "phase": "result",
+        "ns": []
+      },
+      "event": {
+        "data": {
+          "id": "4176e884-d9f6-5527-ac24-fd09c9768200",
+          "name": "PatchToolCallsMiddleware.before_agent",
+          "error": null,
+          "interrupts": [],
+          "result": {
+            "messages": [
+              {
+                "content": "",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "remove",
+                "name": null,
+                "id": "__remove_all__"
+              },
+              {
+                "content": "Prepare report",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "human",
+                "name": null,
+                "id": "request-1"
+              },
+              {
+                "content": "The report is prepared.",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "ai",
+                "name": null,
+                "id": "prior-reply",
+                "tool_calls": [
+                  {
+                    "name": "deliver",
+                    "args": {},
+                    "id": "delivery",
+                    "type": "tool_call"
+                  }
+                ],
+                "invalid_tool_calls": [],
+                "usage_metadata": null
+              },
+              {
+                "content": "Tool call deliver with id delivery was cancelled - another message came in before it could be completed.",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "tool",
+                "name": "deliver",
+                "id": "29cd7683-112b-4f52-9042-332508c93a90",
+                "tool_call_id": "delivery",
+                "artifact": null,
+                "status": "success"
+              },
+              {
+                "content": "Revise delivery",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "human",
+                "name": null,
+                "id": "request-2"
+              }
+            ]
+          }
+        },
+        "provenance": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        }
+      },
+      "source": "langgraph.tasks"
+    },
+    {
+      "type": "RAW",
+      "rawEvent": {
+        "type": "tasks",
+        "phase": "start",
+        "ns": []
+      },
+      "event": {
+        "data": {
+          "id": "8b726c66-6b6d-a2fb-6522-3e2ba4f754af",
+          "name": "model",
+          "input": {
+            "messages": [
+              {
+                "content": "Prepare report",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "human",
+                "name": null,
+                "id": "request-1"
+              },
+              {
+                "content": "The report is prepared.",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "ai",
+                "name": null,
+                "id": "prior-reply",
+                "tool_calls": [
+                  {
+                    "name": "deliver",
+                    "args": {},
+                    "id": "delivery",
+                    "type": "tool_call"
+                  }
+                ],
+                "invalid_tool_calls": [],
+                "usage_metadata": null
+              },
+              {
+                "content": "Tool call deliver with id delivery was cancelled - another message came in before it could be completed.",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "tool",
+                "name": "deliver",
+                "id": "29cd7683-112b-4f52-9042-332508c93a90",
+                "tool_call_id": "delivery",
+                "artifact": null,
+                "status": "success"
+              },
+              {
+                "content": "Revise delivery",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "human",
+                "name": null,
+                "id": "request-2"
+              }
+            ],
+            "files": {}
+          },
+          "triggers": [
+            "branch:to:model"
+          ],
+          "metadata": {
+            "ls_integration": "tinkerfin",
+            "run_id": "second"
+          }
+        },
+        "provenance": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        }
+      },
+      "source": "langgraph.tasks"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "second",
+        "langgraphNode": "model"
+      },
+      "messageId": "tf:message:W1tdLCJuZXctcmVwbHkiXQ",
+      "role": "assistant",
+      "name": "main"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "second",
+        "langgraphNode": "model"
+      },
+      "messageId": "tf:message:W1tdLCJuZXctcmVwbHkiXQ",
+      "delta": "I will revise the delivery."
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "second",
+        "langgraphNode": "model"
+      },
+      "messageId": "tf:message:W1tdLCJuZXctcmVwbHkiXQ"
+    },
+    {
+      "type": "RAW",
+      "rawEvent": {
+        "type": "tasks",
+        "phase": "result",
+        "ns": []
+      },
+      "event": {
+        "data": {
+          "id": "8b726c66-6b6d-a2fb-6522-3e2ba4f754af",
+          "name": "model",
+          "error": null,
+          "interrupts": [],
+          "result": {
+            "messages": [
+              {
+                "content": "I will revise the delivery.",
+                "additional_kwargs": {},
+                "response_metadata": {},
+                "type": "ai",
+                "name": null,
+                "id": "new-reply",
+                "tool_calls": [],
+                "invalid_tool_calls": [],
+                "usage_metadata": null
+              }
+            ]
+          }
+        },
+        "provenance": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        }
+      },
+      "source": "langgraph.tasks"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "thread",
+      "runId": "second",
+      "outcome": {
+        "type": "success"
+      }
+    }
+  ]
+}

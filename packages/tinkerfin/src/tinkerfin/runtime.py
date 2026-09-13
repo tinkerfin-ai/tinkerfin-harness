@@ -18,11 +18,15 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, overload
 
 from deepagents.graph import DeepAgentState
+from deepagents.middleware.filesystem import FilesystemPermission
+from langchain.agents.middleware import InterruptOnConfig
 from langchain.agents.middleware.types import InputAgentState
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.pregel.main import All, Durability, RunControl, StreamMode
+from langgraph.store.base import BaseStore
 from langgraph.types import Command
 from langgraph.typing import ContextT
 
@@ -42,18 +46,30 @@ from tinkerfin_native_stream import (
 )
 
 from . import _runtime_streams
+from ._agent_spec import (
+    AgentBackend,
+    AgentMiddlewareType,
+    AgentSpec,
+    ResponseFormatType,
+    SubagentDefinition,
+    ToolDefinition,
+)
 from ._failure_evidence import select_failure
 from ._lazy_run import AgUiRunStream, NativeRunStream
-from ._observation import RuntimeObservationHub, observer_tuple, source_context
+from ._observation import (
+    RuntimeObservationHub,
+    native_input_kind,
+    observer_tuple,
+    source_context,
+)
 from ._optional_dependencies import require_agui
 from ._run_owner import RunOwner
 from ._run_resources import RunResources
 from ._runtime_streams import _validate_timeout
-from ._state_schema import validate_state_schema
 from ._tasks import OwnedOperationFailures, join_task
 from ._terminal_observer import TerminalCallbackObserver, TerminalObserver
 from .coordination import RunCoordinator
-from .deep_agent import BUILD_AGENT, _AgentDefinition
+from .deep_agent import _AgentDefinition, bind_agent
 from .errors import (
     AgUiSettlementTimeoutError,
     TinkerFinLifecycleError,
@@ -92,6 +108,7 @@ PartT = TypeVar("PartT")
 if TYPE_CHECKING:
     from ag_ui.core import BaseEvent, UserMessage
 
+    from .agui import RuntimeAgUi
     from .agui_resume import (
         AgUiResumeBinding,
         AgUiResumeCheckpointObserver,
@@ -110,9 +127,7 @@ NativeFrameResolver = Callable[[object], NativeStreamFrame]
 _CheckpointSaver: TypeAlias = (
     BaseCheckpointSaver[int] | BaseCheckpointSaver[float] | BaseCheckpointSaver[str]
 )
-_DefinitionAny: TypeAlias = _AgentDefinition[
-    object, Callable[..., AsyncIterator[Mapping[str, object]]]
-]
+_DefinitionAny: TypeAlias = _AgentDefinition
 
 
 def _translate_agui_conversion_error(error: Exception) -> Exception:
@@ -771,28 +786,25 @@ class TinkerFin:
         "_plan_options",
         "_run_coordinator",
         "_runtime_profile",
-        "_state_schema",
+        "_store",
     )
-
-    build = BUILD_AGENT
 
     def __init__(
         self,
         *,
         checkpointer: _CheckpointSaver | None = None,
         run_coordinator: RunCoordinator | None = None,
-        state_schema: type[DeepAgentState] | None = None,
+        store: BaseStore | None = None,
         runtime_profile: DeepAgentsRuntimeProfile | None = None,
     ) -> None:
         """Configure shared resources without opening an execution.
 
         Args:
             checkpointer: Borrowed default checkpoint saver. The application opens
-                and closes it; build() can select a different saver.
+                and closes it.
             run_coordinator: Optional exclusive scope provider for run identities.
-            state_schema: Optional global Deep Agent TypedDict contribution.
-            runtime_profile: Optional agent integration. Omit it to use the supported
-                Deep Agents integration.
+            store: Borrowed long-term memory store, isolated by Runtime namespace.
+            runtime_profile: Optional Native stream and checkpoint integration.
 
         Raises:
             TypeError: The checkpointer, coordinator, or Runtime Profile has the wrong
@@ -822,32 +834,148 @@ class TinkerFin:
             or profile_id != profile_id.strip()
         ):
             raise ValueError("runtime_profile.profile_id must be canonical text")
-        if not isinstance(resolved_profile.create_agent_signature, inspect.Signature):
-            raise TypeError(
-                "runtime_profile.create_agent_signature must be a Signature"
-            )
         if not isinstance(resolved_profile.astream_signature, inspect.Signature):
             raise TypeError("runtime_profile.astream_signature must be a Signature")
-        validate_state_schema(state_schema, source="TinkerFin state_schema")
+        if store is not None and not isinstance(store, BaseStore):
+            raise TypeError("store must implement BaseStore or be None")
         self._checkpointer = checkpointer
         self._namespace: str | None = None
         self._run_coordinator = run_coordinator
-        self._state_schema = state_schema
+        self._store = store
         self._runtime_profile = resolved_profile
         self._observers: tuple[RuntimeObserver, ...] = ()
         self._plan_options: PlanOptions | None = None
         self._attachments: AttachmentSupport | None = None
 
+    @overload
+    def build(
+        self,
+        model: str | BaseChatModel,
+        tools: Sequence[ToolDefinition] | None = None,
+        *,
+        system_prompt: str | SystemMessage | None = None,
+        middleware: Sequence[AgentMiddlewareType] = (),
+        subagents: Sequence[SubagentDefinition] | None = None,
+        skills: Sequence[str] | None = None,
+        memory: Sequence[str] | None = None,
+        permissions: Sequence[FilesystemPermission] | None = None,
+        backend: AgentBackend = None,
+        interrupt_on: dict[str, bool | InterruptOnConfig] | None = None,
+        response_format: ResponseFormatType = None,
+        state_schema: type[DeepAgentState] | None = None,
+        context_schema: type[ContextT],
+        name: str | None = None,
+    ) -> AgentRuntime[ContextT]: ...
+
+    @overload
+    def build(
+        self,
+        model: str | BaseChatModel,
+        tools: Sequence[ToolDefinition] | None = None,
+        *,
+        system_prompt: str | SystemMessage | None = None,
+        middleware: Sequence[AgentMiddlewareType] = (),
+        subagents: Sequence[SubagentDefinition] | None = None,
+        skills: Sequence[str] | None = None,
+        memory: Sequence[str] | None = None,
+        permissions: Sequence[FilesystemPermission] | None = None,
+        backend: AgentBackend = None,
+        interrupt_on: dict[str, bool | InterruptOnConfig] | None = None,
+        response_format: ResponseFormatType = None,
+        state_schema: type[DeepAgentState] | None = None,
+        context_schema: None = None,
+        name: str | None = None,
+    ) -> AgentRuntime[None]: ...
+
+    def build(
+        self,
+        model: str | BaseChatModel,
+        tools: Sequence[ToolDefinition] | None = None,
+        *,
+        system_prompt: str | SystemMessage | None = None,
+        middleware: Sequence[AgentMiddlewareType] = (),
+        subagents: Sequence[SubagentDefinition] | None = None,
+        skills: Sequence[str] | None = None,
+        memory: Sequence[str] | None = None,
+        permissions: Sequence[FilesystemPermission] | None = None,
+        backend: AgentBackend = None,
+        interrupt_on: dict[str, bool | InterruptOnConfig] | None = None,
+        response_format: ResponseFormatType = None,
+        state_schema: type[DeepAgentState] | None = None,
+        context_schema: type[ContextT] | None = None,
+        name: str | None = None,
+    ) -> AgentRuntime[Any]:
+        """Build a reusable agent Runtime without model or resource I/O.
+
+        The explicit model, tools, and optional capabilities describe this agent.
+        Shared persistence is configured on TinkerFin. Configuration containers
+        are copied, while models, tools, middleware, and resources stay borrowed.
+        Each admitted run prepares and releases its own workspace and graph.
+
+        Args:
+            model: Chat model instance or provider:model identifier.
+            tools: Additional tools, created before execution. Tools may request
+                ToolRuntime to access the current run's workspace and context.
+            system_prompt: Instructions supplied to the main model.
+            middleware: Additional behavior or named replacements for default
+                middleware. Configure delegation through subagents and tool review
+                through interrupt_on; their middleware and tool names are reserved.
+                Resource-bearing declarations use the Runtime store.
+                A workspace owns its filesystem middleware and file tools. Without
+                a workspace, replacing these is allowed only for roles without
+                effective file permissions.
+            subagents: Declared, compiled, or remote agents available for delegation.
+                A general-purpose agent is added unless explicitly declared.
+            skills: Backend directories containing this agent's skills.
+            memory: Backend files loaded as persistent instructions.
+            permissions: File-tool rules. These do not restrict arbitrary shell
+                commands; executable backends only support protected non-shell routes.
+            backend: Borrowed filesystem backend or lazy workspace declaration.
+            interrupt_on: Tool-review rules requiring a configured checkpointer.
+            response_format: Optional structured response schema or strategy.
+            state_schema: Additional persistent fields for this agent.
+            context_schema: Type of business context supplied to execution methods.
+            name: Optional name identifying this agent in observations.
+
+        Returns:
+            A reusable Runtime bound to this namespace and context type.
+
+        Raises:
+            TypeError: Configuration contains invalid types or unsupported fields.
+            ValueError: The namespace, model, or declarations are inconsistent,
+                including filesystem replacements that conflict with workspace
+                ownership or a role's effective file permissions.
+            StateSchemaCompositionError: Persistent state fields conflict.
+        """
+        spec: AgentSpec[ContextT] = AgentSpec(
+            model=model,
+            tools=tools if tools is not None else (),
+            system_prompt=system_prompt,
+            middleware=middleware,
+            subagents=subagents if subagents is not None else (),
+            skills=skills,
+            memory=memory,
+            permissions=permissions if permissions is not None else (),
+            backend=backend,
+            interrupt_on=interrupt_on,
+            response_format=response_format,
+            state_schema=state_schema,
+            context_schema=context_schema,
+            checkpointer=self._checkpointer,
+            store=self._store,
+            name=name,
+            attachments=self._attachments,
+        )
+        return bind_agent(self, spec)
+
     def with_attachments(self, support: AttachmentSupport) -> TinkerFin:
         """Configure authorized attachment access for the selected models.
 
-        Automatic integration requires the locked native Deep Agents factory.
-        Decorated or replaced factories are rejected at graph construction before
-        model/backend preparation. Caller-owned custom graphs can install the
-        support's middleware explicitly at their final model-request boundary.
+        Framework-created agents apply this policy after model routing. The reader
+        remains borrowed; authorization and its resource lifetime belong to the host.
 
         Args:
-            support: Borrowed per-model image policy and host-authorized file reader.
+            support: Borrowed per-model content policy and host-authorized file reader.
 
         Returns:
             An independent builder retaining its namespace and other options.
@@ -860,7 +988,7 @@ class TinkerFin:
         configured = TinkerFin(
             checkpointer=self._checkpointer,
             run_coordinator=self._run_coordinator,
-            state_schema=self._state_schema,
+            store=self._store,
             runtime_profile=self._runtime_profile,
         )
         configured._observers = self._observers
@@ -904,7 +1032,7 @@ class TinkerFin:
         configured = TinkerFin(
             checkpointer=self._checkpointer,
             run_coordinator=self._run_coordinator,
-            state_schema=self._state_schema,
+            store=self._store,
             runtime_profile=self._runtime_profile,
         )
         configured._plan_options = self._plan_options
@@ -982,7 +1110,7 @@ class TinkerFin:
         configured = TinkerFin(
             checkpointer=self._checkpointer,
             run_coordinator=self._run_coordinator,
-            state_schema=self._state_schema,
+            store=self._store,
             runtime_profile=self._runtime_profile,
         )
         configured._observers = self._observers
@@ -1026,7 +1154,7 @@ class TinkerFin:
         configured = TinkerFin(
             checkpointer=self._checkpointer,
             run_coordinator=self._run_coordinator,
-            state_schema=self._state_schema,
+            store=self._store,
             runtime_profile=self._runtime_profile,
         )
         configured._namespace = value
@@ -1078,6 +1206,14 @@ class AgentRuntime(Generic[ContextT]):
         return runtime
 
     @property
+    def agui(self) -> RuntimeAgUi:
+        """Access AG-UI history in this Runtime's namespace with a borrowed source."""
+        require_agui()
+        from .agui import RuntimeAgUi
+
+        return RuntimeAgUi._create(self._namespace)
+
+    @property
     def namespace(self) -> str:
         """Return the immutable namespace selected when this Runtime was built."""
 
@@ -1118,7 +1254,8 @@ class AgentRuntime(Generic[ContextT]):
         Args:
             thread_id: Application thread identifier within this Runtime's namespace.
             run_id: Identifier of this run within its thread.
-            input: Agent state, native continuation command, or no new input.
+            input: New Agent state, a native command, or None to continue checkpointed
+                work without new input. None does not answer pending approvals.
             mode: Optional execution or Plan mode for new input.
             config: Optional graph execution settings.
             context: Context matching the schema supplied to build().
@@ -1523,11 +1660,7 @@ class AgentRuntime(Generic[ContextT]):
                 return stream
             except Exception as error:  # noqa: BLE001 - Runtime owns failed Observation
                 setup_error = error
-                input_kind = (
-                    "resume"
-                    if isinstance(input, Command) and input.resume is not None
-                    else "ordinary"
-                )
+                input_kind = native_input_kind(input)
                 source = source_context(
                     identity=identity,
                     runtime_profile=self._runtime_profile.profile_id,

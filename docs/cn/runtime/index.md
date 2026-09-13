@@ -69,18 +69,18 @@ async with aclosing(stream):
 
 ```python
 runtime = (
-    TinkerFin(checkpointer=checkpointer)
+    TinkerFin(checkpointer=checkpointer, store=store)
     .with_namespace(namespace)
-    .build(model=model, tools=tools, store=store)
+    .build(model=model, tools=tools)
 )
 ```
 
-模型、Store、checkpointer、cache、协调器和传入的 backend 仍由应用管理。每次运行负责关闭自己创建的 Graph、惰性 workspace、流和清理资源。
+模型、Store、checkpointer、协调器和传入的 backend 仍由应用管理。每次运行负责关闭自己创建的 Graph、惰性 workspace、流和清理资源。
 
 ## 后续阅读
 
 - [运行第一个智能体](quick_start.md)
-- [配置智能体与 Plan](deep-agents.md)
+- [配置智能体与 Plan](agent-configuration.md)
 - [流与 SSE](streams-and-sse.md)
 - [Runtime 扩展](extensions.md)
 - [Runtime API](api-reference.md)

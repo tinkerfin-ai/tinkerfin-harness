@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from types import ModuleType
 from typing import Literal
 
 import pytest
+from deepagents.backends import StateBackend
 from langchain_core.messages import AIMessage
 from langgraph.graph import END, START, MessagesState, StateGraph
 
 import tinkerfin._tasks as task_module
 from tinkerfin import TinkerFin
-from tinkerfin.runtime_profile import DeepAgentsV2RuntimeProfile
+from tinkerfin_contracts import PreparedWorkspace, RunIdentity
 
 
 class _Control(BaseException):
@@ -64,8 +67,11 @@ async def test_preparation_result_is_received_before_cancelled_caller_exits(
     graph.add_edge("reply", END)
     compiled = graph.compile()
 
-    class Profile(DeepAgentsV2RuntimeProfile):
-        async def create_agent_graph(self, factory, args, kwargs):
+    class Workspace:
+        @asynccontextmanager
+        async def prepare(
+            self, identity: RunIdentity
+        ) -> AsyncIterator[PreparedWorkspace[None, StateBackend]]:
             try:
                 entered.set()
                 await asyncio.Event().wait()
@@ -78,14 +84,18 @@ async def test_preparation_result_is_received_before_cancelled_caller_exits(
                 if failure is not None:
                     raise failure
                 if outcome == "success":
-                    return compiled
+                    yield PreparedWorkspace(None, StateBackend())
+                    return
                 raise
             raise AssertionError("preparation resumed without cancellation")
 
+    monkeypatch.setattr(
+        "tinkerfin.deep_agent.create_agent_graph", lambda *args, **kwargs: compiled
+    )
     runtime = (
-        TinkerFin(runtime_profile=Profile())
+        TinkerFin()
         .with_namespace("test")
-        .build(model="provider:model")
+        .build(model="provider:model", backend=Workspace())
     )
     run = (runtime.open_run if protocol == "native" else runtime.open_agui_run)(
         thread_id="preparation", run_id="cancelled", input={"messages": []}

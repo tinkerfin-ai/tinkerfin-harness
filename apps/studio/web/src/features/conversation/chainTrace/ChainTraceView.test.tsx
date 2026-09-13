@@ -25,6 +25,7 @@ const node = (
   startedSeq: number,
   values: Partial<TraceGraphNode> = {},
 ): TraceGraphNode => ({
+  agui: null,
   id,
   turnId: startedSeq < 10 ? 'turn-1' : 'turn-2',
   parentSubagentId: null,
@@ -263,6 +264,31 @@ describe('ChainTraceView', () => {
     const toolOnly = row('助手，（仅工具调用），已完成，查看详情')
     expect(within(toolOnly).getByText('（仅工具调用）')).toHaveClass('is-muted')
     expect(row('助手，不可用，已完成，查看详情')).toBeVisible()
+    expect(screen.getByRole('button', { name: /^选择 助手，（仅工具调用），已完成/ })).toBeVisible()
+    expect(screen.getByRole('button', { name: /^选择 助手，不可用，已完成/ })).toBeVisible()
+  })
+
+  it('消息摘要只展示可见文字或附件名称，不挤入文件元数据', () => {
+    const attachment = { type: 'file', file_id: 'private-file-id', extras: { attachment: {
+      id: 'report', name: '门店经营简报.pdf', mime_type: 'application/pdf', size_bytes: 20,
+    } } }
+    useChainTrace.mockReturnValue({
+      state: { phase: 'ready', page: graphPage([
+        node('mixed', 'human_message', 1, { content: [{ type: 'text', text: '整理门店经营数据' }, attachment] }),
+        node('attachment', 'human_message', 2, { content: [attachment] }),
+        node('unnamed', 'human_message', 3, { content: [{ type: 'file', file_id: 'unnamed' }] }),
+        node('omitted', 'assistant_message', 4, { content: null, contentOmitted: true }),
+      ]) }, retry: vi.fn(),
+    })
+    render(<ChainTraceView threadId="thread-summary" active live={false} />)
+    for (const summary of ['整理门店经营数据', '门店经营简报.pdf', '附件']) {
+      expect(row(`用户，${summary}，已完成，查看详情`)).toBeVisible()
+      expect(screen.getByRole('button', { name: new RegExp(`^选择 用户，${summary}，已完成`) })).toBeVisible()
+    }
+    expect(row('助手，不可用，已完成，查看详情')).toBeVisible()
+    expect(screen.queryByText(/private-file-id|extras/)).not.toBeInTheDocument()
+    fireEvent.click(row('用户，整理门店经营数据，已完成，查看详情'))
+    expect(screen.getByText(/private-file-id/)).toBeVisible()
   })
 
   it('scopes the timeline summary to the selected Turn', () => {

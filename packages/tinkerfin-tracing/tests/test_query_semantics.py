@@ -77,6 +77,7 @@ class _RacingGraphStore(InMemoryTraceStore):
         max_nodes: int = 4000,
         before_started_at: datetime | None = None,
         before_node_id: str | None = None,
+        started_run_ids: tuple[str, ...] | None = None,
     ) -> TraceGraphNodeRecordPage:
         writer = self.child_writer
         if writer is not None:
@@ -132,6 +133,7 @@ class _RacingGraphStore(InMemoryTraceStore):
         return await super().query_trace_graph(
             key,
             run_ids=run_ids,
+            started_run_ids=started_run_ids,
             where=where,
             limit=limit,
             max_nodes=max_nodes,
@@ -961,7 +963,7 @@ async def test_missing_prefix_is_scoped_to_the_selected_head_lineage() -> None:
     assert orphan.completeness.missing_prefix is True
 
 
-@pytest.mark.parametrize("input_kind", ["resume", "abandon"])
+@pytest.mark.parametrize("input_kind", ["continuation", "resume", "abandon"])
 async def test_implicit_continuation_keeps_the_sole_completed_parent_lineage(
     input_kind: RunInputKind,
 ) -> None:
@@ -987,7 +989,7 @@ async def test_implicit_continuation_keeps_the_sole_completed_parent_lineage(
     assert all(node.kind != "run" for node in thread.graph.nodes)
 
 
-@pytest.mark.parametrize("input_kind", ["resume", "abandon"])
+@pytest.mark.parametrize("input_kind", ["continuation", "resume", "abandon"])
 async def test_continuation_without_any_parent_evidence_remains_partial(
     input_kind: RunInputKind,
 ) -> None:
@@ -1053,7 +1055,7 @@ async def test_implicit_resume_does_not_inherit_one_unterminated_head() -> None:
         await _finish(active_session, active)
 
 
-@pytest.mark.parametrize("input_kind", ["resume", "abandon"])
+@pytest.mark.parametrize("input_kind", ["continuation", "resume", "abandon"])
 async def test_explicit_continuation_parent_stays_complete(
     input_kind: RunInputKind,
 ) -> None:

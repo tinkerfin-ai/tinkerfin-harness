@@ -15,7 +15,8 @@
     "test:proxy": "node --test tests/server/*.test.mjs",
     "test:browser": "pnpm build && playwright test --grep-invert @performance && playwright test --grep @performance --workers=1",
     "test:watch": "vitest",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:licenses": "pnpm build && node --test tests/packaging/document-preview-licenses.test.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",
@@ -33,13 +34,17 @@
     "@zag-js/date-picker": "1.43.3",
     "@zag-js/react": "1.43.3",
     "axios": "^1.19.0",
+    "dompurify": "3.4.15",
+    "fflate": "0.8.3",
     "gsap": "^3.15.0",
     "jsonc-parser": "^3.3.1",
     "lucide-react": "^0.468.0",
+    "mammoth": "1.12.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.0",
@@ -57,6 +62,7 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.2.0",
     "jsdom": "^26.1.0",
+    "rollup-plugin-license": "3.7.1",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.35.1",
     "vite": "^7.0.0",

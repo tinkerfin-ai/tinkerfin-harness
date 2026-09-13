@@ -91,7 +91,7 @@ class _RatingResponse(ClarificationResponseBase):
 
 
 if TYPE_CHECKING:
-    tinkerfin = TinkerFin().with_namespace("test")
+    tinkerfin = TinkerFin(checkpointer=InMemorySaver()).with_namespace("test")
     observer = cast(RuntimeObserver, object())
     observed = tinkerfin.with_observer(observer)
     assert_type(observed, TinkerFin)
@@ -118,7 +118,6 @@ if TYPE_CHECKING:
         model=_FakeModel(responses=[AIMessage(content="ok")]),
         tools=[],
         context_schema=_Context,
-        checkpointer=InMemorySaver(),
     )
     assert_type(planned_definition, AgentRuntime[_Context])
 

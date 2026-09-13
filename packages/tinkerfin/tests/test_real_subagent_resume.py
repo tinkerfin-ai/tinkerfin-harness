@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from importlib.metadata import version
 from typing import Any, cast
 
 from ag_ui.core import RawEvent, ToolCallResultEvent, ToolCallStartEvent
@@ -105,8 +104,6 @@ def _root_interrupt(parts: Sequence[Mapping[str, object]]) -> Interrupt:
 async def test_real_subagent_tool_resume_preserves_native_identity() -> None:
     """The locked runtime must preserve the logical task across child HITL resume."""
 
-    assert version("deepagents") == "0.7.5"
-    assert version("langgraph") == "1.2.10"
     root_model = _ToolBindingFakeModel(
         responses=[
             AIMessage(

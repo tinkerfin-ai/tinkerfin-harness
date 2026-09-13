@@ -298,6 +298,7 @@ def test_failure_origin_requires_a_failed_terminal_run() -> None:
         {"phase": "started", "input_kind": "ordinary"},
         {"phase": "input", "input_kind": "ordinary"},
         {"phase": "resumed", "input_kind": "resume"},
+        {"phase": "resumed", "input_kind": "continuation"},
         {"phase": "resume_checkpointed", "interrupt_ids": ("approval",)},
         {
             "phase": "observer_failed",

@@ -26,7 +26,7 @@ def definition_factory(
             return graph
 
         monkeypatch.setattr(
-            "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent",
+            "tinkerfin.deep_agent.create_agent_graph",
             build,
         )
         return (tinkerfin or TinkerFin().with_namespace("test")).build(

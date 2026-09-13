@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import ClassVar, Generic, TypeVar
 
 import pytest
 
-from tinkerfin_contracts import RunIdentity
+from tinkerfin_contracts import PreparedWorkspace, RunIdentity
 from tinkerfin_messaging import (
     BackendOwnershipLost,
     DeferredMessageSource,
@@ -229,11 +230,12 @@ async def test_caller_cancellation_during_deferred_preparation_is_propagated() -
 
 async def test_managed_initialization_timeout_emits_one_failed_lifecycle() -> None:
     from ag_ui.core import RunErrorEvent, RunStartedEvent
+    from deepagents.backends import StateBackend
 
     from tinkerfin import TinkerFin
-    from tinkerfin.runtime_profile import DeepAgentsV2RuntimeProfile
 
     renewed = asyncio.Event()
+    released = asyncio.Event()
 
     class Backend(_LeaseBackend):
         async def commit_messaging_transition(
@@ -244,16 +246,24 @@ async def test_managed_initialization_timeout_emits_one_failed_lifecycle() -> No
                 renewed.set()
             return result
 
-    class TimedOutPreparation(DeepAgentsV2RuntimeProfile):
-        async def create_agent_graph(self, factory, args, kwargs):
-            await renewed.wait()
-            raise TimeoutError("private infrastructure timeout")
+    class TimedOutWorkspace:
+        @asynccontextmanager
+        async def prepare(
+            self, identity: RunIdentity
+        ) -> AsyncIterator[PreparedWorkspace[None, StateBackend]]:
+            assert identity.namespace == "test"
+            try:
+                await renewed.wait()
+                raise TimeoutError("private infrastructure timeout")
+                yield PreparedWorkspace(workspace=None, backend=StateBackend())
+            finally:
+                released.set()
 
     backend = Backend()
     runtime = (
-        TinkerFin(runtime_profile=TimedOutPreparation())
+        TinkerFin()
         .with_namespace("test")
-        .build(model="provider:model")
+        .build(model="provider:model", backend=TimedOutWorkspace())
     )
     identity = runtime.run_identity("thread", "run")
     source = runtime.open_agui_run(
@@ -266,6 +276,7 @@ async def test_managed_initialization_timeout_emits_one_failed_lifecycle() -> No
         subscription = await channel.wrap(source, after=0)
         events = [message.data async for message in subscription]
         assert backend.renewed > 0
+        assert released.is_set()
         assert sum(isinstance(event, RunStartedEvent) for event in events) == 1
         terminals = [event for event in events if isinstance(event, RunErrorEvent)]
         assert len(terminals) == 1

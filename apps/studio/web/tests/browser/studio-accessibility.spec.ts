@@ -1,3 +1,4 @@
+import { toolReviewInterrupts, planInterrupt } from '../../src/test/aguiFixtures'
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
 import { resolve } from 'node:path'
 import type { ConversationHistoryDetail, TraceMessage } from '../../src/api/conversation/history'
@@ -341,7 +342,7 @@ const approvalItems = [
     input: filePath,
     description: `需要人工审批：Agent 正准备写入 ${filePath}`,
     originalArgs,
-    allowedDecisions: ['approve', 'reject'],
+    allowedDecisions: ['approve', 'reject'] as Array<'approve' | 'reject'>,
   }
 })
 
@@ -560,6 +561,7 @@ async function mockStudio(page: Page, {
     const traceMessages = historyMessages.flatMap<TraceMessage>((message, index) => {
       if (message.role === 'user' || message.role === 'assistant') {
         return [{
+          agui: null,
           id: message.id,
           traceSeq: (index * 2) + 1,
           sourceId: message.id,
@@ -575,6 +577,7 @@ async function mockStudio(page: Page, {
       }
       if (message.role === 'tool' && message.meta?.toolCallId) {
         return [{
+          agui: null,
           id: message.id,
           traceSeq: (index * 2) + 1,
           sourceId: message.id,
@@ -630,6 +633,11 @@ async function mockStudio(page: Page, {
       const result = message.meta?.result
       return [traceGraphNode({
         id: message.id,
+        agui: message.role === 'tool' && message.meta?.toolCallId
+          ? { kind: 'tool', toolCallId: message.meta.toolCallId }
+          : message.role === 'subagent' && message.meta?.subRunId
+            ? { kind: 'subagent', parentToolCallId: message.meta.toolCallId ?? message.id, subagentInvocationId: message.meta.subRunId }
+            : null,
         parentSubagentId: message.role === 'tool'
           ? subagentNodeIdsByRunId.get(message.meta?.runId ?? '')
             ?? null
@@ -676,6 +684,7 @@ async function mockStudio(page: Page, {
     const graph = traceGraphWithNodes(graphNodes, traceAsOfSeq)
     const interactions = approval
       ? [{
+      agui: toolReviewInterrupts('browser-approval', approvalItems.map(item => ({ toolCallId: item.toolCallId, name: item.toolName, args: item.originalArgs, allowedDecisions: item.allowedDecisions }))),
           id: 'interaction-browser-approval',
           traceSeq: (historyMessages.length * 2) + 1,
           sourceId: 'browser-approval',
@@ -706,6 +715,7 @@ async function mockStudio(page: Page, {
         }]
       : planQuestion
         ? [{
+      agui: [planInterrupt('browser-plan-question', createPlanQuestionPayload(planQuestionFormOverride ?? planQuestionForm))],
             id: 'interaction-browser-plan-question',
             traceSeq: (historyMessages.length * 2) + 1,
             sourceId: 'browser-plan-question',
@@ -721,6 +731,7 @@ async function mockStudio(page: Page, {
           }]
         : planReview
           ? [{
+      agui: [planInterrupt('browser-plan-review', planReviewPayload)],
               id: 'interaction-browser-plan-review',
               traceSeq: (historyMessages.length * 2) + 1,
               sourceId: 'browser-plan-review',

@@ -122,7 +122,7 @@ def _install_branch_graph(
         return graph
 
     monkeypatch.setattr(
-        "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent",
+        "tinkerfin.deep_agent.create_agent_graph",
         build,
     )
     return saver, graphs

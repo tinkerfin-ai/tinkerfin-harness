@@ -41,6 +41,7 @@ export const traceGraphNode = (
 ): TraceGraphNode => {
   const startedSeq = overrides.startedSeq ?? 1
   return {
+    agui: null,
     turnId: 'turn-fixture',
     parentSubagentId: null,
     modelCallId: null,

@@ -15,12 +15,7 @@ __all__ = [
 ]
 
 import asyncio
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast
-
-from deepagents.backends.protocol import BackendProtocol
-from deepagents.middleware.filesystem import FilesystemPermission
-from langchain.agents.middleware import AgentMiddleware
+from typing import TYPE_CHECKING, Literal, TypeAlias, TypeVar
 
 from ..backends.handle import OpenSandboxHandle
 from ..backends.rooted import RootedOpenSandboxBackend
@@ -32,7 +27,6 @@ from ..errors import (
     OpenSandboxStateError,
     OpenSandboxStateOwnershipError,
 )
-from ..middleware.filesystem import build_rooted_filesystem_middleware
 from ..models import (
     OpenSandboxDetails,
     OpenSandboxRuntimeInfo,
@@ -260,43 +254,6 @@ def _backend_view(
     )
     self._backend_views[owner_key] = (handle, backend)
     return backend
-
-
-def build_agent_middleware(
-    self: OpenSandboxManager[KeyT],
-    backend: BackendProtocol,
-    *,
-    permissions: Sequence[FilesystemPermission] | None = None,
-) -> tuple[AgentMiddleware[Any, Any, Any], ...]:
-    """Align Deep Agents file and Shell behavior with the rooted workspace.
-
-    The host supplies the final composed backend so replacement filesystem
-    middleware preserves every route it already exposes. No middleware is needed
-    when ``workspace_root`` is disabled and raw Sandbox paths are used. Supply the
-    same permission rules to ``create_deep_agent`` so interrupt-mode rules install
-    the required human-in-the-loop middleware.
-
-    Args:
-        backend: Final backend used to construct the Deep Agents graph.
-        permissions: Route-scoped filesystem rules enforced by the replacement
-            middleware. Rules for executable default backend paths are unsupported
-            because Shell commands can bypass file-tool enforcement.
-
-    Returns:
-        Fresh OpenSandbox filesystem middleware, or an empty tuple when rooted
-        workspaces are disabled.
-
-    Raises:
-        NotImplementedError: The backend supports Shell execution and a permission
-            path is not scoped to a non-Shell ``CompositeBackend`` route.
-    """
-    if self._workspace_root() is None:
-        return ()
-    middleware = build_rooted_filesystem_middleware(
-        backend,
-        permissions=permissions,
-    )
-    return (cast(AgentMiddleware[Any, Any, Any], middleware),)
 
 
 async def get(

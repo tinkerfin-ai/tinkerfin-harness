@@ -1,5 +1,8 @@
+import type { JsonObject } from '../../../types'
+import { planInterrupt } from '../../../test/aguiFixtures'
 import { describe, expect, it } from 'vitest'
 import mediaFixture from './contracts/message-attachments.fixture.json'
+import checkpointReplay from '../../../../../../../packages/tinkerfin/tests/fixtures/checkpoint-message-replay.json'
 import { parseConversationAgUiEvent } from '../../../api/conversation/eventParser'
 import { messageAttachments, messageText } from '../attachments/content'
 
@@ -11,12 +14,23 @@ import {
   buildPlanResumePayload,
   buildResumePayload,
   markConversationDetached,
-  planInteractionFromTracePayload,
+  planInteractionFromInterrupts,
   prepareResumeSubmission,
 } from './runtime'
 
 const THREAD_ID = 'thread-order-check'
 const RUN_ID = 'run-order-check'
+
+it('失败后新提问使用真实框架流，历史消息修复不重复追加旧正文', () => {
+  const initial = buildEmptyConversation({ threadId: 'thread', now: '2026-09-13T00:00:00Z' })
+  const failed = checkpointReplay.before.map(parseConversationAgUiEvent).reduce(applyConversationEvent, initial)
+  const finished = checkpointReplay.after.map(parseConversationAgUiEvent).reduce(applyConversationEvent, failed)
+  expect(finished.messages.filter(message => message.role === 'assistant').map(message => message.content)).toEqual([
+    'The report is prepared.',
+    'I will revise the delivery.',
+  ])
+  expect(finished.runStatus).toBe('idle')
+})
 
 it('真实工具输出在流式文字之后仍保留图片，快照可以替换附件', () => {
   const events = mediaFixture.events.map(parseConversationAgUiEvent)
@@ -209,8 +223,10 @@ function nativeContractEvents(): ConversationAgUiEvent[] {
   ]
 }
 
+const planFromEnvelope = (id: string, envelope: JsonObject) => planInteractionFromInterrupts([planInterrupt(id, envelope)])
+
 it('parses bounded time clarification and submits an RFC time answer', () => {
-  const interaction = planInteractionFromTracePayload('plan-time', {
+  const interaction = planFromEnvelope('plan-time', {
     schema: 'tinkerfin.runtime-interrupt',
     kind: 'tinkerfin:plan_clarification',
     message: 'Choose a time',
@@ -271,7 +287,7 @@ it('parses bounded time clarification and submits an RFC time answer', () => {
 })
 
 it('parses a zoned datetime clarification and submits one local minute', () => {
-  const interaction = planInteractionFromTracePayload('plan-datetime', {
+  const interaction = planFromEnvelope('plan-datetime', {
     schema: 'tinkerfin.runtime-interrupt',
     kind: 'tinkerfin:plan_clarification',
     responseSchema: {},
@@ -332,7 +348,7 @@ it('parses a zoned datetime clarification and submits one local minute', () => {
 })
 
 it('uses each Plan review interrupt response Schema as its action authority', () => {
-  const interaction = planInteractionFromTracePayload('plan-review-actions', {
+  const interaction = planFromEnvelope('plan-review-actions', {
     schema: 'tinkerfin.runtime-interrupt',
     kind: 'tinkerfin:plan_review',
     responseSchema: {

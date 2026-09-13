@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -13,33 +13,14 @@ from ag_ui.core import BaseEvent, RunFinishedEvent, RunFinishedInterruptOutcome
 from langchain.agents.middleware.types import InputAgentState
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.base import BaseCheckpointSaver, CheckpointTuple
+from langgraph.checkpoint.base import CheckpointTuple
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.types import Command, interrupt
 
 from tinkerfin import AgentRuntime, AgUiResumeCheckpoint, AgUiResumeRequest, TinkerFin
+from tinkerfin._agent_spec import AgentSpec
 from tinkerfin._checkpoint import NamespaceCheckpointer
-from tinkerfin.runtime_profile import DeepAgentsV2RuntimeProfile
-
-
-class _GraphProfile(DeepAgentsV2RuntimeProfile):
-    def __init__(self, graph: StateGraph[MessagesState]) -> None:
-        super().__init__()
-        self.graph = graph
-
-    async def create_agent_graph(
-        self,
-        factory: Callable[..., object],
-        args: tuple[object, ...],
-        kwargs: Mapping[str, object],
-    ) -> object:
-        del factory, args
-        saver = kwargs["checkpointer"]
-        assert isinstance(saver, BaseCheckpointSaver)
-        return self.graph.compile(checkpointer=saver).with_config(
-            {"configurable": {"__pregel_durability": "sync"}}
-        )
 
 
 def _review(name: str) -> dict[str, object]:
@@ -86,16 +67,26 @@ def _completed(name: str) -> dict[str, object]:
 
 
 def _runtime(
-    saver: InMemorySaver, graph: StateGraph[MessagesState]
+    saver: InMemorySaver,
+    graph: StateGraph[MessagesState],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AgentRuntime[None]:
+    def build(spec: AgentSpec[None], **kwargs: object) -> object:
+        return graph.compile(checkpointer=spec.checkpointer).with_config(
+            {"configurable": {"__pregel_durability": "sync"}}
+        )
+
+    monkeypatch.setattr("tinkerfin.deep_agent.create_agent_graph", build)
     return (
-        TinkerFin(checkpointer=saver, runtime_profile=_GraphProfile(graph))
+        TinkerFin(checkpointer=saver)
         .with_namespace("recovery")
         .build(model="provider:model", tools=[])
     )
 
 
-async def test_first_approval_preserves_a_completed_parallel_sibling() -> None:
+async def test_first_approval_preserves_a_completed_parallel_sibling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     actions: list[str] = []
 
     async def completed(state: MessagesState) -> dict[str, object]:
@@ -115,7 +106,7 @@ async def test_first_approval_preserves_a_completed_parallel_sibling() -> None:
     for name in ("completed", "reviewed"):
         graph.add_edge(START, name)
         graph.add_edge(name, END)
-    runtime = _runtime(InMemorySaver(), graph)
+    runtime = _runtime(InMemorySaver(), graph, monkeypatch)
     initial = runtime.open_agui_run(
         thread_id="thread", run_id="A", input=_input("first", "second")
     )
@@ -135,6 +126,7 @@ async def test_first_approval_preserves_a_completed_parallel_sibling() -> None:
 
 @pytest.mark.parametrize("native_decision", ["approve", "reject"])
 async def test_another_native_run_cannot_be_counted_as_this_approval(
+    monkeypatch: pytest.MonkeyPatch,
     native_decision: str,
 ) -> None:
     actions: list[str] = []
@@ -159,7 +151,7 @@ async def test_another_native_run_cannot_be_counted_as_this_approval(
         graph.add_edge(START, name)
         graph.add_edge(name, END)
     saver = InMemorySaver()
-    runtime = _runtime(saver, graph)
+    runtime = _runtime(saver, graph, monkeypatch)
     initial = runtime.open_agui_run(
         thread_id="thread", run_id="A", input=_input("first", "second")
     )
@@ -287,6 +279,7 @@ class _ResumeWriteFailureSaver(InMemorySaver):
     ],
 )
 async def test_original_approval_recovers_from_each_decision_write_window(
+    monkeypatch: pytest.MonkeyPatch,
     failure: str,
 ) -> None:
     saver = _ResumeWriteFailureSaver(failure)
@@ -300,7 +293,7 @@ async def test_original_approval_recovers_from_each_decision_write_window(
     graph.add_node("reviewed", reviewed)
     graph.add_edge(START, "reviewed")
     graph.add_edge("reviewed", END)
-    runtime = _runtime(saver, graph)
+    runtime = _runtime(saver, graph, monkeypatch)
     initial = runtime.open_agui_run(
         thread_id="thread", run_id="A", input=_input("first")
     )
@@ -319,7 +312,7 @@ async def test_original_approval_recovers_from_each_decision_write_window(
         except asyncio.CancelledError:
             assert failure == "reservation_cancel"
     assert saver.snapshot is not None
-    recovered = _runtime(saver.snapshot, graph).open_agui_run(
+    recovered = _runtime(saver.snapshot, graph, monkeypatch).open_agui_run(
         thread_id="thread", run_id="B", resume=request
     )
     result = [event async for event in recovered]
@@ -329,9 +322,9 @@ async def test_original_approval_recovers_from_each_decision_write_window(
     assert terminal.outcome is not None and terminal.outcome.type == "success"
 
 
-async def test_native_resume_retains_opaque_values_without_fabricating_json_proof() -> (
-    None
-):
+async def test_native_resume_retains_opaque_values_without_fabricating_json_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     observed: list[object] = []
 
     async def paused(state: MessagesState) -> dict[str, object]:
@@ -343,7 +336,7 @@ async def test_native_resume_retains_opaque_values_without_fabricating_json_proo
     graph.add_node("paused", paused)
     graph.add_edge(START, "paused")
     graph.add_edge("paused", END)
-    runtime = _runtime(InMemorySaver(), graph)
+    runtime = _runtime(InMemorySaver(), graph, monkeypatch)
     initial = runtime.open_run(thread_id="thread", run_id="A", input=_input())
     [part async for part in initial]
     assert initial.error is None
@@ -360,7 +353,9 @@ async def test_native_resume_retains_opaque_values_without_fabricating_json_proo
     assert observed == [value]
 
 
-async def test_approval_retry_rejects_an_ordinary_run_reusing_its_run_id() -> None:
+async def test_approval_retry_rejects_an_ordinary_run_reusing_its_run_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     visits: list[bool] = []
 
     async def paused(state: MessagesState) -> dict[str, object]:
@@ -373,7 +368,7 @@ async def test_approval_retry_rejects_an_ordinary_run_reusing_its_run_id() -> No
     graph.add_node("paused", paused)
     graph.add_edge(START, "paused")
     graph.add_edge("paused", END)
-    runtime = _runtime(InMemorySaver(), graph)
+    runtime = _runtime(InMemorySaver(), graph, monkeypatch)
     initial = runtime.open_agui_run(
         thread_id="thread", run_id="A", input=_input("first")
     )
@@ -482,6 +477,7 @@ def _failure_text(error: BaseException | None) -> str:
 )
 @pytest.mark.parametrize("control", [False, True])
 async def test_decision_storage_failure_survives_concurrent_run_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
     boundary: str,
     control: bool,
 ) -> None:
@@ -521,7 +517,7 @@ async def test_decision_storage_failure_survives_concurrent_run_cancellation(
     for name in ("first", "second"):
         graph.add_edge(START, name)
         graph.add_edge(name, END)
-    runtime = _runtime(saver, graph)
+    runtime = _runtime(saver, graph, monkeypatch)
     initial = runtime.open_agui_run(
         thread_id="thread", run_id="A", input=_input("first", "second")
     )
@@ -569,6 +565,7 @@ async def test_decision_storage_failure_survives_concurrent_run_cancellation(
 
 @pytest.mark.parametrize("next_interrupt", [False, True])
 async def test_partial_crash_resumes_only_unconsumed_original_decisions(
+    monkeypatch: pytest.MonkeyPatch,
     next_interrupt: bool,
 ) -> None:
     saver = _CrashSnapshotSaver("__interrupt__" if next_interrupt else "messages")
@@ -603,7 +600,7 @@ async def test_partial_crash_resumes_only_unconsumed_original_decisions(
     for name in ("left", "right"):
         graph.add_edge(START, name)
         graph.add_edge(name, END)
-    runtime = _runtime(saver, graph)
+    runtime = _runtime(saver, graph, monkeypatch)
     initial = runtime.open_agui_run(
         thread_id="thread", run_id="A", input=_input("first", "second", "third")
     )
@@ -636,7 +633,7 @@ async def test_partial_crash_resumes_only_unconsumed_original_decisions(
         == 1
     )
     assert all(channel != "__error__" for _, channel, _ in before.pending_writes or ())
-    resumed = _runtime(recovered, graph).open_agui_run(
+    resumed = _runtime(recovered, graph, monkeypatch).open_agui_run(
         thread_id="thread", run_id="B", resume=request
     )
     result = [event async for event in resumed]

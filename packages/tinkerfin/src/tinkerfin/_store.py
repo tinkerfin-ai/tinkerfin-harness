@@ -43,7 +43,7 @@ def validate_store_backend(backend: object) -> None:
             # Deep Agents 0.7.5 StoreBackend._get_store gives this constructor
             # value precedence over get_store(), bypassing Runtime isolation.
             raise ValueError(
-                "StoreBackend must use the Runtime store; pass store= to build() "
+                "StoreBackend must use the Runtime store; pass store= to TinkerFin() "
                 "and omit store= from StoreBackend"
             )
         if isinstance(current, CompositeBackend):

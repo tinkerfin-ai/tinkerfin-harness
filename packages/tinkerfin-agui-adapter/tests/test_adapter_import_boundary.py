@@ -54,7 +54,7 @@ expected_exports = {
     "ValidatedTaskStartPayload", "ValidatedTasksStreamPart",
     "ValidatedUpdatesStreamPart", "ValidatedValuesStreamPart",
     "create_subagent_provenance", "encode_sse", "micro_batch",
-    "parse_tool_review_interrupt", "require_valid_schema", "subagent_invocation_id",
+    "parse_tool_review_interrupt", "project_interrupt", "require_valid_schema", "subagent_invocation_id",
     "validate_deep_agent_stream_part", "validate_json_schema_instance",
 }
 assert set(tinkerfin_agui_adapter.__all__) == expected_exports

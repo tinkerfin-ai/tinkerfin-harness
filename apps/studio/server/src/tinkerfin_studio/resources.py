@@ -235,7 +235,7 @@ def build_lifespan():
                 # 为会话记录运行轨迹；轨迹写入失败时中止运行
                 # 保留有长度限制的错误摘要，省略模型的内部推理内容
                 tinkerfin = TinkerFin(
-                    checkpointer=persistence.checkpointer
+                    checkpointer=persistence.checkpointer, store=persistence.store
                 ).with_observer(tracer)
                 sandbox_settings = settings.sandbox
                 sandbox_manager = await _enter_lifespan_context(

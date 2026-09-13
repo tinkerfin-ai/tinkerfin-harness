@@ -21,12 +21,14 @@ __all__ = [
     "_process_tool_result",
     "_reasoning_deltas",
     "_record_agent_name",
+    "_remember_message_baseline",
     "_require_started_source",
     "_source",
     "_stable_message_id",
     "_tool_call_id",
 ]
 
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Literal, cast
@@ -88,6 +90,57 @@ from .reasoning import (
 
 if TYPE_CHECKING:
     from .adapter import DeepAgentAgUiAdapter
+
+
+def _message_fingerprint(message: AIMessage | ToolMessage) -> bytes:
+    public = normalize_operational_data(message)
+    return hashlib.sha256(
+        json.dumps(public, sort_keys=True, ensure_ascii=False).encode()
+    ).digest()
+
+
+def _remember_message_baseline(
+    self: DeepAgentAgUiAdapter,
+    namespace: tuple[str, ...],
+    messages: object,
+) -> None:
+    """Keep existing complete messages separate from new streamed content.
+
+    The first values frame is the only evidence of preexisting messages. Native
+    middleware can emit those same objects when repairing message history; they
+    must not append their text again. Retain only fingerprints and known Tool IDs,
+    scoped to this adapter's lifetime, and never suppress model chunks.
+    """
+    if namespace in self._message_baseline_namespaces:
+        return
+    if not isinstance(messages, (tuple, list)):
+        return
+    self._message_baseline_namespaces.add(namespace)
+    for message in cast(Sequence[object], messages):
+        if not isinstance(message, (AIMessage, ToolMessage)) or isinstance(
+            message, AIMessageChunk
+        ):
+            continue
+        if isinstance(message.id, str) and message.id:
+            self._message_baselines[(namespace, message.id)] = _message_fingerprint(
+                message
+            )
+        if isinstance(message, AIMessage):
+            for call in message.tool_calls:
+                raw_id = call.get("id")
+                if not isinstance(raw_id, str) or not raw_id:
+                    continue
+                tool_id = self._tool_call_id(namespace, raw_id)
+                if tool_id in self._started_tool_ids:
+                    continue
+                if isinstance(message.id, str) and message.id:
+                    self._baseline_tool_parent_ids[tool_id] = self._message_id(
+                        namespace, message.id
+                    )
+                self._prior_tool_call_ids.add(tool_id)
+                self._started_tool_ids.add(tool_id)
+                self._ended_tool_ids.add(tool_id)
+                self._tool_names_by_id[tool_id] = call["name"]
 
 
 def _escape_json_pointer(value: str) -> str:
@@ -252,6 +305,18 @@ def _process_message_part(
     source_namespace = part.ns
     source = self._source(source_namespace)
     self._require_started_source(source)
+    prior = (
+        self._message_baselines.get((source_namespace, message.id))
+        if isinstance(message.id, str)
+        else None
+    )
+    if (
+        prior is not None
+        and isinstance(message, (AIMessage, ToolMessage))
+        and not isinstance(message, AIMessageChunk)
+        and prior == _message_fingerprint(message)
+    ):
+        return []
     self._record_agent_name(source_namespace, agent_name)
     source = self._source(source_namespace)
     events: list[BaseEvent] = []

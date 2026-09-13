@@ -132,7 +132,7 @@ async def test_real_redis_scoped_checkpoints_resume_once(
     try:
         await saver.asetup()
         runtime = (
-            TinkerFin()
+            TinkerFin(checkpointer=saver)
             .with_namespace("test")
             .build(
                 model=_ReviewModel(
@@ -154,7 +154,6 @@ async def test_real_redis_scoped_checkpoints_resume_once(
                 ),
                 tools=[first_action, second_action],
                 interrupt_on={"first_action": True, "second_action": True},
-                checkpointer=saver,
             )
         )
         parent = runtime.open_agui_run(

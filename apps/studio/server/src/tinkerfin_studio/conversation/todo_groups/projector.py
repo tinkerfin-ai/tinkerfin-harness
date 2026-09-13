@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, TypeGuard
 
+from pydantic import JsonValue
+
+from tinkerfin_contracts import RunInputKind
+from tinkerfin_contracts.media import attachment_from_block
 from tinkerfin_tracing import (
     MessageFact,
     RunFact,
@@ -87,7 +91,7 @@ class _RunState:
     """普通提问或恢复运行在所属提问中的状态"""
 
     run_id: str
-    input_kind: Literal["ordinary", "branch", "resume", "abandon"]
+    input_kind: RunInputKind
     parent_run_id: str | None
     turn_id: str | None
     resume_checkpointed: bool = field(default=False, init=False)
@@ -352,15 +356,22 @@ class TodoGroupProjector:
                 self._fail("trace_incomplete")
                 return
             resolved_parent = candidates[0]
-        if input_kind in {"resume", "abandon"} and resolved_parent is None:
+        if (
+            input_kind in {"resume", "abandon", "continuation"}
+            and resolved_parent is None
+        ):
             self._fail("trace_incomplete")
             return
         inherited_turn_id = (
             self._run_to_turn.get(resolved_parent)
-            if input_kind in {"resume", "abandon"} and resolved_parent is not None
+            if input_kind in {"resume", "abandon", "continuation"}
+            and resolved_parent is not None
             else None
         )
-        if input_kind in {"resume", "abandon"} and inherited_turn_id is None:
+        if (
+            input_kind in {"resume", "abandon", "continuation"}
+            and inherited_turn_id is None
+        ):
             self._fail("trace_incomplete")
             return
         run = _RunState(
@@ -417,15 +428,13 @@ class TodoGroupProjector:
             return
         if fact.phase not in {"content", "reconciled"}:
             return
-        if (
-            fact.content is None
-            or fact.content.disposition != "inline"
-            or not isinstance(fact.content.value, str)
-            or not fact.content.value.strip()
-        ):
+        if fact.content is None or fact.content.disposition != "inline":
             turn.message_error = True
             return
         preview = self._message_preview(fact.content.value)
+        if preview is None:
+            turn.message_error = True
+            return
         if turn.user_message_id is not None and (
             turn.user_message_id != fact.message_id
             or turn.user_message_preview != preview
@@ -613,8 +622,40 @@ class TodoGroupProjector:
         return self._turns.get(turn_id) if turn_id is not None else None
 
     @staticmethod
-    def _message_preview(content: str) -> str:
-        normalized = " ".join(content.split())
+    def _message_preview(content: JsonValue) -> str | None:
+        if isinstance(content, str):
+            visible = content
+        elif isinstance(content, list):
+            texts: list[str] = []
+            for block in content:
+                if isinstance(block, str):
+                    texts.append(block)
+                elif not isinstance(block, dict) or not isinstance(
+                    block.get("type"), str
+                ):
+                    return None
+                elif block["type"] == "text":
+                    text = block.get("text")
+                    if not isinstance(text, str):
+                        return None
+                    texts.append(text)
+            visible = "".join(texts)
+            if not visible.strip():
+                # 纯附件提问使用真实文件名作为任务组标题，不生成用户未发送的正文
+                names: list[str] = []
+                for block in content:
+                    try:
+                        attachment = attachment_from_block(block)
+                    except ValueError:
+                        return None
+                    if attachment is not None:
+                        names.append(attachment.name)
+                visible = ", ".join(names)
+        else:
+            return None
+        normalized = " ".join(visible.split())
+        if not normalized:
+            return None
         return normalized if len(normalized) <= 160 else f"{normalized[:160]}…"
 
     @staticmethod

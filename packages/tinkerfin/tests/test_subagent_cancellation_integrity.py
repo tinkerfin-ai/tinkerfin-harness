@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from importlib.metadata import version
 from typing import Any, Protocol, cast
 
 import pytest
@@ -108,14 +107,13 @@ async def _run_default_agui(
         native_parts.append(part)
 
     definition = (
-        TinkerFin()
+        TinkerFin(checkpointer=InMemorySaver())
         .with_namespace("test")
         .with_plan(enabled=True)
         .build(
             model=model,
             tools=[],
             subagents=cast(Any, subagents),
-            checkpointer=InMemorySaver(),
         )
     )
     identity = RunIdentity(
@@ -168,9 +166,6 @@ def _task_error_types(events: Sequence[BaseEvent]) -> list[str]:
 @pytest.mark.asyncio
 async def test_extra_task_arguments_do_not_cancel_a_valid_subagent_run() -> None:
     """Native pre-validation Tool args must not invalidate effective provenance."""
-
-    assert version("deepagents") == "0.7.5"
-    assert version("langgraph") == "1.2.10"
 
     async def complete(state: MessagesState) -> dict[str, object]:
         del state
@@ -324,7 +319,7 @@ async def test_external_abort_stays_cancelled_and_cleans_the_subagent() -> None:
         return {"messages": [AIMessage(content="unreachable")]}
 
     definition = (
-        TinkerFin()
+        TinkerFin(checkpointer=InMemorySaver())
         .with_namespace("test")
         .with_plan(enabled=True)
         .build(
@@ -340,7 +335,6 @@ async def test_external_abort_stays_cancelled_and_cleans_the_subagent() -> None:
                     }
                 ],
             ),
-            checkpointer=InMemorySaver(),
         )
     )
     identity = RunIdentity(

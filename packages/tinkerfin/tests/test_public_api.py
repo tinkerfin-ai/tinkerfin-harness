@@ -24,7 +24,7 @@ def test_top_level_exposes_the_stateless_runtime_contract() -> None:
         "AgUiUserInput",
         "AgentMode",
         "AgentRuntime",
-        "AttachmentImage",
+        "AttachmentContent",
         "AttachmentSupport",
         "ContextKind",
         "EventObserver",
@@ -54,7 +54,6 @@ def test_top_level_exposes_the_stateless_runtime_contract() -> None:
 
 def test_extension_contracts_are_not_exposed_from_the_root() -> None:
     extension_names = {
-        "DeepAgentsFactoryPreparation",
         "DeepAgentsRuntimeProfile",
         "DeepAgentsV2RuntimeProfile",
         "DeepAgentsV3RuntimeProfile",
@@ -85,7 +84,7 @@ def test_factory_has_no_application_resource_lifecycle() -> None:
     assert tuple(constructor) == (
         "checkpointer",
         "run_coordinator",
-        "state_schema",
+        "store",
         "runtime_profile",
     )
     assert not hasattr(TinkerFin, "__aenter__")

@@ -16,7 +16,7 @@ from .errors import TinkerFinError as TinkerFinError
 from .errors import TinkerFinErrorCode as TinkerFinErrorCode
 from .errors import TinkerFinLifecycleError as TinkerFinLifecycleError
 from .errors import TinkerFinStreamProtocolError as TinkerFinStreamProtocolError
-from .media import AttachmentImage as AttachmentImage
+from .media import AttachmentContent as AttachmentContent
 from .media import AttachmentSupport as AttachmentSupport
 from .plan import AgentMode as AgentMode
 from .runtime import AgentRuntime as AgentRuntime
@@ -54,23 +54,27 @@ _AGUI_RESUME_EXPORTS = frozenset(
 )
 
 
-def __getattr__(name: str) -> object:
-    """Load AG-UI input and resume contracts only when their optional extra is present."""
+# Static declarations enumerate the lazy exports; dynamic lookup is runtime-only
+# so type checkers continue to reject names outside the public API.
+if not TYPE_CHECKING:
 
-    if name == "AgUiUserInput":
+    def __getattr__(name: str) -> object:
+        """Load AG-UI input and resume contracts only when their optional extra is present."""
+
+        if name == "AgUiUserInput":
+            require_agui()
+            from .agui_input import AgUiUserInput
+
+            globals()[name] = AgUiUserInput
+            return AgUiUserInput
+        if name not in _AGUI_RESUME_EXPORTS:
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
         require_agui()
-        from .agui_input import AgUiUserInput
+        from . import agui_resume
 
-        globals()[name] = AgUiUserInput
-        return AgUiUserInput
-    if name not in _AGUI_RESUME_EXPORTS:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    require_agui()
-    from . import agui_resume
-
-    value = getattr(agui_resume, name)
-    globals()[name] = value
-    return value
+        value = getattr(agui_resume, name)
+        globals()[name] = value
+        return value
 
 
 __all__ = [
@@ -85,7 +89,7 @@ __all__ = [
     "AgUiUserInput",
     "AgentMode",
     "AgentRuntime",
-    "AttachmentImage",
+    "AttachmentContent",
     "AttachmentSupport",
     "ContextKind",
     "EventObserver",

@@ -129,7 +129,7 @@ const approvalInputFromArgs = (args: JsonObject, fallback: string | undefined) =
   return fallback ?? ""
 }
 
-const approvalItemsFromInterrupts = (interrupts: InterruptEvent[]): ApprovalItem[] =>
+export const approvalItemsFromInterrupts = (interrupts: InterruptEvent[]): ApprovalItem[] =>
   interrupts.map((interrupt) => {
     const review = parseToolReviewInterrupt(interrupt)
     const originalArgs = review.originalArgs
@@ -139,10 +139,10 @@ const approvalItemsFromInterrupts = (interrupts: InterruptEvent[]): ApprovalItem
     return {
       id: interrupt.id,
       interruptId: interrupt.id,
-      toolCallId: interrupt.toolCallId,
+      toolCallId: interrupt.toolCallId ?? undefined,
       toolName,
       params: JSON.stringify(originalArgs, null, 2),
-      input: approvalInputFromArgs(originalArgs, interrupt.message),
+      input: approvalInputFromArgs(originalArgs, interrupt.message ?? undefined),
       description: interrupt.message ?? "",
       originalArgs,
       allowedDecisions,
@@ -422,7 +422,7 @@ const parsePlanReviewActions = (
   return actions as PlanReviewState['allowedActions']
 }
 
-const planInteractionFromInterrupts = (
+export const planInteractionFromInterrupts = (
   interrupts: readonly PlanInterruptLike[],
 ): Conversation['planInteraction'] => {
   const planInterrupts = interrupts.filter((interrupt) => (
@@ -510,36 +510,6 @@ const planInteractionFromInterrupts = (
   }
 
   return undefined
-}
-
-export const planInteractionFromTracePayload = (
-  interruptId: string,
-  payload: JsonValue | null | undefined,
-): Conversation['planInteraction'] => {
-  if (!isJsonObject(payload)) return undefined
-  const kind = payload.kind
-  const responseSchema = payload.responseSchema
-  if (
-    (kind !== 'tinkerfin:plan_clarification' && kind !== 'tinkerfin:plan_review')
-    || !isJsonObject(responseSchema)
-    || payload.schema !== 'tinkerfin.runtime-interrupt'
-  ) return undefined
-  const message = typeof payload.message === 'string' ? payload.message : undefined
-  return planInteractionFromInterrupts([
-    {
-      id: interruptId,
-      reason: kind,
-      message,
-      responseSchema,
-      metadata: {
-        runtimeInterrupt: {
-          schema: 'tinkerfin.runtime-interrupt',
-          nativeInterruptId: interruptId,
-          envelope: structuredClone(payload),
-        },
-      },
-    },
-  ])
 }
 
 const attachApproval = (conversation: Conversation, interrupts: InterruptEvent[]) => ({
@@ -657,19 +627,22 @@ const startSubagentRun = (
     if (
       existing.meta?.originMainRunId == null
       || existing.meta?.agentName !== provenance.agentName
-      || existing.meta?.graphTaskId !== provenance.graphTaskId
+      || (existing.meta?.graphTaskId != null && existing.meta.graphTaskId !== provenance.graphTaskId)
       || existing.meta?.toolCallId !== provenance.parentToolCallId
-      || existing.meta?.input !== provenance.description
+      || (existing.meta?.graphTaskId != null && existing.meta.input !== provenance.description)
     ) throw new Error(`子 Agent 身份冲突: ${subRunId}`)
     return updateMessage(
       conversation,
-      (message) => message.id === existing.id,
+      (message) => message.id === existing.id
+        || (message.role === "tool" && message.meta?.toolCallId === provenance.parentToolCallId),
       (message) => ({
         ...message,
         meta: {
           ...message.meta,
           status: "running",
           lastMainRunId: provenance.requestRunId,
+          graphTaskId: provenance.graphTaskId,
+          input: message.role === "subagent" ? provenance.description : message.meta?.input,
           completedAt: undefined,
           durationMs: undefined,
         },
@@ -718,6 +691,7 @@ const startSubagentRun = (
               ...message.meta,
               subRunId,
               graphTaskId,
+              lastMainRunId: provenance.requestRunId,
             },
           }
         : message),

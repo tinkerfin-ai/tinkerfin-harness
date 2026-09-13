@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import tracemalloc
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Literal
 
 import pytest
 from pydantic import JsonValue, ValidationError
 
 from tinkerfin_contracts import RunIdentity
+from tinkerfin_contracts.media import Attachment
 from tinkerfin_studio.conversation.todo_groups import (
     TaskTraceSnapshot,
     TodoGroup,
@@ -540,3 +542,234 @@ def test_projector_streams_one_hundred_thousand_events_without_retaining_input()
     projector.close()
     with pytest.raises(RuntimeError, match="已关闭"):
         projector.consume(last)
+
+
+@pytest.mark.parametrize(
+    "outcome,execution,expected",
+    [
+        ("succeeded", "succeeded", "completed"),
+        ("failed", "failed", "failed"),
+        ("cancelled", "cancelled", "cancelled"),
+        ("interrupted", "waiting", "running"),
+    ],
+)
+def test_continuation_preserves_todo_group_and_applies_execution_outcome(
+    outcome: Literal["succeeded", "failed", "cancelled", "interrupted"],
+    execution: Literal["succeeded", "failed", "cancelled", "waiting"],
+    expected: Literal["completed", "failed", "cancelled", "running"],
+) -> None:
+    """无新提问的续跑沿用原任务组，失败也不能被误当审批初始化失败忽略"""
+    projector = TodoGroupProjector()
+    for event in _confirmed_todo_events():
+        projector.consume(event)
+    original = _snapshot_for(projector).todo_groups[0]
+    projector.consume(
+        _event(
+            7,
+            RunFact(
+                source_observation_id="first-terminal",
+                identity=_IDENTITY,
+                occurred_at=_OCCURRED_AT + timedelta(seconds=8),
+                monotonic_ns=7,
+                phase="terminal",
+                outcome="failed",
+            ),
+        )
+    )
+    continued = _IDENTITY.model_copy(update={"run_id": "continued"})
+    projector.consume(
+        _event(
+            8,
+            RunFact(
+                source_observation_id="continued-start",
+                identity=continued,
+                occurred_at=_OCCURRED_AT + timedelta(seconds=9),
+                monotonic_ns=8,
+                phase="started",
+                input_kind="continuation",
+                parent_run_id=_IDENTITY.run_id,
+            ),
+        )
+    )
+    projector.consume(
+        _event(
+            9,
+            RunFact(
+                source_observation_id="continued-input",
+                identity=continued,
+                occurred_at=_OCCURRED_AT + timedelta(seconds=10),
+                monotonic_ns=9,
+                phase="resumed",
+                input_kind="continuation",
+                parent_run_id=_IDENTITY.run_id,
+                input=_capture(None),
+                config=_capture({}),
+            ),
+        )
+    )
+    projector.consume(
+        _event(
+            10,
+            RunFact(
+                source_observation_id="continued-terminal",
+                identity=continued,
+                occurred_at=_OCCURRED_AT + timedelta(seconds=11),
+                monotonic_ns=10,
+                phase="terminal",
+                outcome=outcome,
+            ),
+        )
+    )
+    view = projector.snapshot(
+        status=TraceStatus(execution=execution, head_run_id="continued"),
+        completeness=TraceCompleteness(
+            missing_prefix=False, missing_tail=False, payload_omitted=False
+        ),
+    )
+    assert view.status == "ready"
+    assert len(view.todo_groups) == 1
+    group = view.todo_groups[0]
+    assert (group.id, group.user_message_id, group.group_tool_call_id) == (
+        original.id,
+        original.user_message_id,
+        original.group_tool_call_id,
+    )
+    assert group.status == expected
+    assert group.todos[1].status == "pending"
+    projector.close()
+
+
+@pytest.mark.parametrize("batch_size", [1, 4, 1000])
+@pytest.mark.parametrize("message_form", ["plain", "multimodal", "attachments"])
+def test_multimodal_user_turn_keeps_completed_todo_group(
+    message_form: str, batch_size: int
+) -> None:
+    values = json.loads(
+        (Path(__file__).parent / "fixtures" / "todo-multimodal.json").read_text()
+    )
+    projector = TodoGroupProjector()
+    for index, value in enumerate(values, start=1):
+        event = TraceEvent.model_validate_json(json.dumps(value))
+        if isinstance(event.fact, MessageFact) and event.fact.role == "user":
+            content = event.fact.content
+            assert content is not None and isinstance(content.value, list)
+            if message_form == "plain":
+                replacement = _capture("核对销售与库存，整理交付清单")
+            elif message_form == "attachments":
+                replacement = _capture(content.value[1:])
+            else:
+                replacement = content
+            event = event.model_copy(
+                update={"fact": event.fact.model_copy(update={"content": replacement})}
+            )
+        projector.consume(event)
+        if index % batch_size == 0 and index < len(values):
+            prefix = projector.snapshot(
+                status=TraceStatus(execution="running", head_run_id="run:multimodal"),
+                completeness=TraceCompleteness(
+                    missing_prefix=False, missing_tail=False, payload_omitted=False
+                ),
+            )
+            assert prefix.status == "ready"
+    result = projector.snapshot(
+        status=TraceStatus(execution="succeeded", head_run_id="run:multimodal"),
+        completeness=TraceCompleteness(
+            missing_prefix=False, missing_tail=False, payload_omitted=False
+        ),
+    )
+    assert result.status == "ready"
+    assert len(result.todo_groups) == 1
+    group = result.todo_groups[0]
+    assert group.user_message_preview == (
+        "销售表.xlsx, 库存.pdf, 说明.docx"
+        if message_form == "attachments"
+        else "核对销售与库存，整理交付清单"
+    )
+    assert group.id == "todo-group:run:multimodal"
+    assert group.user_message_id == "message:user"
+    assert group.group_tool_call_id == "tool:todos:1"
+    assert group.status == "completed"
+    assert len(group.todos) == 6
+    assert all(todo.status == "completed" for todo in group.todos)
+    expected = json.loads(
+        (
+            Path(__file__).parent / "fixtures" / "todo-multimodal-expected.json"
+        ).read_text()
+    )
+    expected["todoGroups"][0]["userMessagePreview"] = group.user_message_preview
+    assert result == TaskTraceSnapshot.model_validate_json(json.dumps(expected))
+    projector.close()
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        None,
+        {},
+        [],
+        [5],
+        [{"type": []}],
+        [{"type": "text", "text": 4}],
+        [{"type": "non_standard", "metadata": {"name": "不作为用户标题"}}],
+    ],
+)
+def test_todo_preview_rejects_content_without_visible_text_or_attachment(
+    content: JsonValue,
+) -> None:
+    projector = TodoGroupProjector()
+    for event in _confirmed_todo_events():
+        if isinstance(event.fact, MessageFact) and event.fact.role == "user":
+            event = event.model_copy(
+                update={
+                    "fact": event.fact.model_copy(update={"content": _capture(content)})
+                }
+            )
+        projector.consume(event)
+    assert _snapshot_for(projector).error_code == "trace_incomplete"
+    projector.close()
+
+
+def test_todo_preview_preserves_message_identity_and_visible_text_constraints() -> None:
+    attachment = Attachment(
+        id="attachment-1",
+        name="不替代正文.pdf",
+        mime_type="application/pdf",
+        size_bytes=64,
+    )
+    content: JsonValue = [
+        {"type": "text", "text": "核对 "},
+        attachment.content_block(),
+        {"type": "text", "text": "营收"},
+    ]
+    projector = TodoGroupProjector()
+    message: MessageFact | None = None
+    for event in _confirmed_todo_events():
+        if isinstance(event.fact, MessageFact) and event.fact.role == "user":
+            message = event.fact.model_copy(update={"content": _capture(content)})
+            event = event.model_copy(update={"fact": message})
+        projector.consume(event)
+    assert _snapshot_for(projector).todo_groups[0].user_message_preview == "核对 营收"
+    assert message is not None
+    projector.consume(
+        _event(7, message.model_copy(update={"content": _capture("不同正文")}))
+    )
+    assert _snapshot_for(projector).error_code == "trace_incomplete"
+    projector.close()
+
+
+def test_todo_preview_rejects_a_conflicting_attachment_source() -> None:
+    block = Attachment(
+        id="file-1", name="财务.pdf", mime_type="application/pdf", size_bytes=3
+    ).content_block()
+    block["file_id"] = "another-file"
+    projector = TodoGroupProjector()
+    for event in _confirmed_todo_events():
+        if isinstance(event.fact, MessageFact) and event.fact.role == "user":
+            event = event.model_copy(
+                update={
+                    "fact": event.fact.model_copy(update={"content": _capture([block])})
+                }
+            )
+        projector.consume(event)
+    assert _snapshot_for(projector).error_code == "trace_incomplete"
+    projector.close()

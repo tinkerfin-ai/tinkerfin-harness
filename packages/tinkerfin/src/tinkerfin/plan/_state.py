@@ -6,7 +6,6 @@ from collections.abc import Mapping, Sequence
 from typing import NotRequired
 
 from deepagents.graph import DeepAgentState
-from deepagents.middleware.filesystem import FilesystemState
 from langchain.agents.middleware.todo import PlanningState
 from langchain.agents.middleware.types import AgentMiddleware, AgentState
 from pydantic import JsonValue
@@ -65,11 +64,6 @@ def create_plan_state_schema(
         sources = [StateSchemaSource("Deep Agent base state", base)]
         sources.extend(
             (
-                StateSchemaSource(
-                    "Deep Agents filesystem state",
-                    FilesystemState,
-                    agent_fields,
-                ),
                 StateSchemaSource(
                     "Deep Agents todo state",
                     PlanningState,

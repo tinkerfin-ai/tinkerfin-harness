@@ -11,6 +11,7 @@ from tinkerfin_contracts import PreparedWorkspace, RunIdentity, Workspace
 
 from ._failure_evidence import retain_failure
 from ._run_owner import RunOwner
+from .tools import _ToolRunScope
 
 WorkspaceT = TypeVar("WorkspaceT")
 BackendT = TypeVar("BackendT")
@@ -61,6 +62,14 @@ class RunResources:
     ) -> PreparedWorkspace[WorkspaceT, BackendT]:
         """Borrow a workspace in the Task that will release it after Graph closure."""
         return await self._stack.enter_async_context(declaration.prepare(identity))
+
+    def borrow_tools(
+        self, identity: RunIdentity, workspace: WorkspaceT | None
+    ) -> _ToolRunScope[WorkspaceT]:
+        """Keep tool access valid until graph settlement, then revoke before release."""
+        scope = _ToolRunScope(identity, workspace)
+        self._stack.callback(scope.close)
+        return scope
 
     async def aclose(self, error: BaseException | None) -> None:
         """Release workspace and admission once before reporting a final outcome."""

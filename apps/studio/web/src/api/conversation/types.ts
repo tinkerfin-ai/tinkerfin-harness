@@ -266,10 +266,10 @@ export interface RawStreamEvent {
 export interface InterruptEvent {
   id: string
   reason: string
-  message?: string
-  toolCallId?: string
-  responseSchema?: JsonObject
-  metadata?: JsonObject
+  message?: string | null
+  toolCallId?: string | null
+  responseSchema?: JsonObject | null
+  metadata?: JsonObject | null
 }
 
 export interface RunFinishedSuccessOutcome {

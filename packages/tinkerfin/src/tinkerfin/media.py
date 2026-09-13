@@ -8,11 +8,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from langchain.agents.middleware.types import (
-    AgentMiddleware,
-    ModelRequest,
-    ModelResponse,
-)
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
 
@@ -20,8 +15,13 @@ from tinkerfin_contracts.media import Attachment, attachment_from_block
 
 
 @dataclass(frozen=True, slots=True)
-class AttachmentImage:
-    """A bounded image variant whose bytes are borrowed for one model request."""
+class AttachmentContent:
+    """File bytes borrowed for one model request, with their actual MIME type.
+
+    The host may return a bounded rendition, such as a resized image. The MIME
+    type describes these bytes; the persistent Attachment still describes the
+    original file. The host must bound storage reads before returning content.
+    """
 
     data: bytes
     mime_type: str
@@ -30,108 +30,135 @@ class AttachmentImage:
 _MessageT = TypeVar("_MessageT", bound=BaseMessage)
 
 
+def _model_supports_content(model: BaseChatModel, mime_type: str) -> bool:
+    profile = model.profile or {}
+    if mime_type.startswith("image/"):
+        return profile.get("image_inputs") is True
+    if mime_type.startswith("audio/"):
+        return profile.get("audio_inputs") is True
+    if mime_type.startswith("video/"):
+        return profile.get("video_inputs") is True
+    return mime_type == "application/pdf" and profile.get("pdf_inputs") is True
+
+
+def _model_content(
+    attachment: Attachment, content: AttachmentContent
+) -> dict[str, Any]:
+    # LangChain Core's standard media blocks carry base64 and MIME type. Keep
+    # attachment metadata on every request-only block so tracing can restore the
+    # durable reference before any content is persisted.
+    encoded = base64.b64encode(content.data).decode("ascii")
+    extras = {"attachment": attachment.model_dump(mode="json")}
+    if content.mime_type.startswith("image/"):
+        return {
+            "type": "image_url",
+            "image_url": {"url": f"data:{content.mime_type};base64,{encoded}"},
+            "extras": extras,
+        }
+    family = content.mime_type.partition("/")[0]
+    return {
+        "type": family if family in {"audio", "video"} else "file",
+        "base64": encoded,
+        "mime_type": content.mime_type,
+        "extras": extras
+        if family in {"audio", "video"}
+        else {**extras, "filename": attachment.name},
+    }
+
+
 class AttachmentSupport:
-    """Keep checkpoints durable while presenting supported images to a model.
+    """Present authorized file content while keeping durable attachment references.
 
-    The host authorizes each attachment in ``read_image`` and owns its storage.
-    This support borrows that resolver and creates no background tasks. Images
-    from tool results are appended as a user message after the complete tool batch,
-    preserving the assistant/tool pairing expected by chat providers. Documents
-    remain references for the host's document-reading tools. Cancellation propagates.
+    File reads are borrowed from the host, which owns storage and authorizes each
+    read. Content is resolved only for the actual destination model. Unsupported
+    files remain explicit references for file-reading tools. This class does not
+    parse documents, transcribe audio, or extract video frames.
 
-    Automatic integration requires the built-in native Deep Agents factory; decorated
-    or replaced factories are rejected before resource preparation. Independently
-    constructed agents may install ``middleware()`` explicitly at their final model
-    boundary, after model routing and before the provider invocation.
+    Content from tool results is presented after the complete tool batch in a
+    user message, preserving assistant/tool pairing. Original messages remain
+    unchanged; cancellation and authorization failures propagate.
     """
 
     def __init__(
         self,
         *,
-        read_image: Callable[[Attachment], Awaitable[AttachmentImage]],
-        supports_images: Callable[[BaseChatModel], bool] | None = None,
-        max_images: int = 5,
+        read_content: Callable[[Attachment], Awaitable[AttachmentContent]],
+        supports_content: Callable[[BaseChatModel, str], bool] | None = None,
+        max_attachments: int = 5,
+        max_bytes: int = 20 * 1024 * 1024,
     ) -> None:
-        """Configure request-time image access without acquiring host resources.
+        """Configure authorized request-time file access.
 
         Args:
-            read_image: Authorize and read a size-limited image variant. Raise
-                FileNotFoundError for unavailable attachments; other errors propagate.
-            supports_images: Optional capability check for the actual request model.
-                By default only an explicit ``image_inputs=True`` model profile
-                enables images. This check never grants attachment access.
-            max_images: Maximum distinct recent images resolved per invocation.
+            read_content: Authorize and read bounded content. Raise FileNotFoundError
+                for missing files; other errors propagate. Storage reads must be
+                bounded by the host before allocating their result.
+            supports_content: Optional check of the actual model and content MIME
+                type. Defaults to explicit image, audio, video, and PDF input
+                capabilities in the model profile. This never grants file access.
+                Profiles identify media families, not every supported encoding.
+                Supply this check when the adapter accepts a narrower set of formats.
+                A positive result requires the model adapter to accept that format.
+            max_attachments: Maximum distinct recent supported files read per call.
+            max_bytes: Maximum total resolved bytes before base64 encoding per call.
+                Oversized content raises ValueError before provider invocation.
 
         Raises:
-            TypeError: max_images is not an integer.
-            ValueError: max_images is not positive.
+            TypeError: Readers or capability checks are not callable, or limits
+                are not integers.
+            ValueError: Limits are not positive.
         """
-        if not callable(read_image):
-            raise TypeError("read_image must be callable")
-        if supports_images is not None and not callable(supports_images):
-            raise TypeError("supports_images must be callable or None")
-        if isinstance(max_images, bool) or not isinstance(max_images, int):
-            raise TypeError("max_images must be an integer")
-        if max_images < 1:
-            raise ValueError("max_images must be positive")
+        if not callable(read_content):
+            raise TypeError("read_content must be callable")
+        if supports_content is not None and not callable(supports_content):
+            raise TypeError("supports_content must be callable or None")
+        for name, value in (
+            ("max_attachments", max_attachments),
+            ("max_bytes", max_bytes),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer")
+            if value < 1:
+                raise ValueError(f"{name} must be positive")
         self._reference_token: ContextVar[str | None] = ContextVar(
             "attachment_reference_token", default=None
         )
-        self._max_images = max_images
-        self._read_image = read_image
-        self._supports_images = supports_images
-
-    def middleware(self) -> AgentMiddleware:
-        """Protect model calls in an independently constructed async agent.
-
-        Install this after model-routing middleware inside custom compiled agents.
-        Registering a custom
-        graph as a subagent does not grant it the parent's attachment resolver.
-        """
-        return _AttachmentMiddleware(self)
+        self._max_attachments = max_attachments
+        self._max_bytes = max_bytes
+        self._read_content = read_content
+        self._supports_content = supports_content or _model_supports_content
 
     async def _prepare_messages(
         self, source: Sequence[_MessageT], *, model: BaseChatModel
     ) -> list[_MessageT | HumanMessage]:
-        """Return request-only content for an explicit direct model invocation.
-
-        Args:
-            source: Durable messages whose attachment references remain unchanged.
-            model: Actual destination model; capability is evaluated for each call.
-
-        Returns:
-            Message copies containing authorized images or explanatory text.
-
-        Raises:
-            TypeError: The capability check returns anything other than a boolean.
-            Exception: Authorization or storage failures other than missing files.
-                Cancellation propagates without changing source messages.
-        """
         token = self._reference_token.get()
         if token is not None:
             from ._attachment_agents import _reference_messages
 
             source = _reference_messages(source, shield=False, token=token)
-        supports_images = (
-            self._supports_images(model)
-            if self._supports_images is not None
-            else (model.profile or {}).get("image_inputs") is True
-        )
-        if not isinstance(supports_images, bool):
-            raise TypeError("supports_images must return a boolean")
-        recent: list[str] = []
+        capabilities: dict[str, bool] = {}
+
+        def supports(mime_type: str) -> bool:
+            if mime_type not in capabilities:
+                supported = self._supports_content(model, mime_type)
+                if not isinstance(supported, bool):
+                    raise TypeError("supports_content must return a boolean")
+                capabilities[mime_type] = supported
+            return capabilities[mime_type]
+
+        recent: dict[str, None] = {}
         for message in source:
             if isinstance(message.content, list):
                 for block in message.content:
                     attachment = attachment_from_block(block)
-                    if attachment is not None and attachment.kind == "image":
-                        if attachment.id in recent:
-                            recent.remove(attachment.id)
-                        recent.append(attachment.id)
-        selected = set(recent[-self._max_images :])
+                    if attachment is not None and supports(attachment.mime_type):
+                        recent.pop(attachment.id, None)
+                        recent[attachment.id] = None
+        selected = set(list(recent)[-self._max_attachments :])
         messages: list[_MessageT | HumanMessage] = []
-        tool_images: list[str | dict[str, Any]] = []
-        cache: dict[str, AttachmentImage] = {}
+        tool_content: list[str | dict[str, Any]] = []
+        resolved_ids: set[str] = set()
+        total_bytes = 0
         for message in source:
             if not isinstance(message.content, list):
                 messages.append(message)
@@ -142,83 +169,60 @@ class AttachmentSupport:
                 if attachment is None:
                     blocks.append(block)
                     continue
-                caption = f"Attachment: {attachment.name}; id={attachment.id}"
-                if attachment.kind != "image":
+                caption = (
+                    f"Attachment: {attachment.name}; id={attachment.id}; "
+                    f"mime_type={attachment.mime_type}"
+                )
+                if not supports(attachment.mime_type):
                     blocks.append(
                         {
                             "type": "text",
                             "text": caption
-                            + ". Use the available document-reading tools to read its contents.",
+                            + ". Content omitted: the current model does not "
+                            "support this file format. Use an available file-reading tool "
+                            "to inspect its contents.",
                         }
                     )
                     continue
-                if not supports_images:
+                if attachment.id not in selected or attachment.id in resolved_ids:
+                    blocks.append(
+                        {
+                            "type": "text",
+                            "text": caption + ". File remains stored; use an available "
+                            "file-reading tool to load it if needed.",
+                        }
+                    )
+                    continue
+                resolved_ids.add(attachment.id)
+                try:
+                    resolved = await self._read_content(attachment)
+                except FileNotFoundError:
                     blocks.append(
                         {
                             "type": "text",
                             "text": caption
-                            + ". Image omitted: the current model cannot view images.",
+                            + ". Original file is unavailable; ask the user "
+                            "to upload it again before analyzing it.",
                         }
                     )
                     continue
-                if attachment.id not in selected or attachment.id in cache:
-                    blocks.append(
-                        {
-                            "type": "text",
-                            "text": caption
-                            + ". Image remains stored; use the available image-reading tools to load it if needed.",
-                        }
+                total_bytes += len(resolved.data)
+                if total_bytes > self._max_bytes:
+                    raise ValueError("resolved attachment content exceeds max_bytes")
+                if not supports(resolved.mime_type):
+                    raise ValueError(
+                        "resolved attachment MIME type is not supported by the model"
                     )
-                    continue
-                if attachment.id not in cache:
-                    try:
-                        cache[attachment.id] = await self._read_image(attachment)
-                    except FileNotFoundError:
-                        blocks.append(
-                            {
-                                "type": "text",
-                                "text": caption
-                                + ". Original image is unavailable; ask the user to upload it again before analyzing it.",
-                            }
-                        )
-                        continue
-                resolved = cache[attachment.id]
-                image: dict[str, Any] = {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{resolved.mime_type};base64,{base64.b64encode(resolved.data).decode('ascii')}"
-                    },
-                    "extras": {"attachment": attachment.model_dump(mode="json")},
-                }
+                content = _model_content(attachment, resolved)
                 blocks.append({"type": "text", "text": caption})
                 if isinstance(message, ToolMessage):
-                    tool_images.extend([{"type": "text", "text": caption}, image])
+                    tool_content.extend([{"type": "text", "text": caption}, content])
                 else:
-                    blocks.append(image)
+                    blocks.append(content)
             messages.append(message.model_copy(update={"content": blocks}))
-        if tool_images:
-            messages.append(HumanMessage(content=tool_images))
+        if tool_content:
+            messages.append(HumanMessage(content=tool_content))
         return messages
 
 
-class _AttachmentMiddleware(AgentMiddleware):
-    """Project attachments at the final destination model boundary."""
-
-    def __init__(self, support: AttachmentSupport) -> None:
-        self._support = support
-
-    async def awrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
-    ) -> ModelResponse:
-        return await handler(
-            request.override(
-                messages=await self._support._prepare_messages(
-                    request.messages, model=request.model
-                )
-            )
-        )
-
-
-__all__ = ["Attachment", "AttachmentImage", "AttachmentSupport"]
+__all__ = ["Attachment", "AttachmentContent", "AttachmentSupport"]

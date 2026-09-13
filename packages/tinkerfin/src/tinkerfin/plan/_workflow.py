@@ -6,17 +6,14 @@ import hashlib
 import inspect
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from typing import Any, Generic, Protocol, TypeAlias, TypeVar, cast
+from typing import Generic, Protocol, TypeAlias, TypeVar, cast
 
 from deepagents.backends import StateBackend
 from deepagents.backends.protocol import BackendProtocol
-from deepagents.graph import DeepAgentState
-from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.runnables import Runnable, RunnableConfig
 from langchain_core.tools import BaseTool
-from langgraph.cache.base import BaseCache
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -25,10 +22,10 @@ from langgraph.types import StateSnapshot, interrupt
 from langgraph.typing import ContextT
 from pydantic import ConfigDict, JsonValue, TypeAdapter
 
-from tinkerfin.media import AttachmentSupport
 from tinkerfin_contracts import PreparedWorkspace
 from tinkerfin_native_stream import RuntimeInterruptEnvelope
 
+from .._agent_spec import AgentSpec
 from .._agui_lineage_state import (
     CHECKPOINT_ROLE_METADATA_KEY,
     LINEAGE_CONFIG_KEY,
@@ -58,6 +55,7 @@ from ._contracts import (
 from ._json_schema import require_valid_schema
 from ._planner import (
     create_planner_agent,
+    create_planner_filesystem,
     invoke_plan_review_reply,
     invoke_planner,
     resolve_planner_model,
@@ -165,7 +163,6 @@ class _PlanningGraphBuilder(Protocol):
         *,
         checkpointer: _CheckpointSaver,
         store: BaseStore | None,
-        cache: BaseCache[object] | None,
         name: str,
     ) -> _CompiledPlanningRuntime: ...
 
@@ -268,14 +265,6 @@ def _checkpoint_saver(value: object) -> _CheckpointSaver:
             "Plan Mode requires a concrete BaseCheckpointSaver"
         )
     return cast(_CheckpointSaver, value)
-
-
-def _optional_cache(value: object) -> BaseCache[object] | None:
-    if value is None:
-        return None
-    if not isinstance(value, BaseCache):
-        raise PlanModeConfigurationError("Plan Mode cache must be a BaseCache or None")
-    return cast(BaseCache[object], value)
 
 
 def _planning_config(value: object) -> RunnableConfig:
@@ -474,67 +463,38 @@ setattr(
 class _PlanningGraphFactory(Generic[ContextT]):
     """Deferred builder that borrows one Deep Agent definition's resources."""
 
-    __slots__ = ("_attachments", "_options", "_signature")
-
-    def __init__(
-        self,
-        signature: inspect.Signature,
-        options: PlanOptions,
-        attachments: AttachmentSupport | None,
-    ) -> None:
-        self._attachments = attachments
-        self._signature = signature
+    def __init__(self, options: PlanOptions) -> None:
         self._options = options
-
-    def __call__(
-        self,
-        *args: object,
-        _workspace: PreparedWorkspace[object, BackendProtocol] | None = None,
-        **kwargs: object,
-    ) -> PlanningWorkflowGraph[ContextT]:
-        bound = self._signature.bind(*args, **kwargs)
-        bound.apply_defaults()
-        return self._build(bound.arguments, workspace=_workspace)
 
     def _require_runtime_configuration(
         self,
-        arguments: Mapping[str, object],
+        spec: AgentSpec[ContextT],
     ) -> str | BaseChatModel:
-        model = self._options.planner_model or arguments.get("model")
+        model = self._options.planner_model or spec.model
         if not isinstance(model, (str, BaseChatModel)) or (
             isinstance(model, str) and not model.strip()
         ):
             raise PlanModeConfigurationError("Plan Mode requires an explicit model")
-        _checkpoint_saver(arguments.get("checkpointer"))
+        _checkpoint_saver(spec.checkpointer)
         return model
 
     def _build(
         self,
-        arguments: Mapping[str, object],
+        spec: AgentSpec[ContextT],
         *,
         workspace: PreparedWorkspace[object, BackendProtocol] | None = None,
     ) -> PlanningWorkflowGraph[ContextT]:
-        model = self._require_runtime_configuration(arguments)
-        context_schema = cast(type[ContextT] | None, arguments.get("context_schema"))
-        backend_value = arguments.get("backend")
+        model = self._require_runtime_configuration(spec)
+        context_schema = spec.context_schema
+        backend_value = spec.backend
         backend = (
             StateBackend()
             if backend_value is None
             else cast(BackendProtocol, backend_value)
         )
-        base_state_schema = cast(
-            type[DeepAgentState] | None,
-            arguments.get("state_schema"),
-        )
-        caller_middleware = cast(
-            Sequence[AgentMiddleware[Any, Any, Any]],
-            arguments.get("middleware", ()),
-        )
-        state_schema = create_plan_state_schema(
-            base_state_schema,
-            middleware=caller_middleware,
-        )
-        supplied_tools = arguments.get("tools", ())
+        base_state_schema = spec.state_schema
+        caller_middleware = spec.middleware
+        supplied_tools = spec.tools
         read_only_tools = (
             tuple(
                 tool
@@ -547,16 +507,23 @@ class _PlanningGraphFactory(Generic[ContextT]):
             else ()
         )
         resolved_model = resolve_planner_model(self._options.planner_model or model)
-        permissions = _as_permissions(arguments.get("permissions"))
-        planner = create_planner_agent(
-            resolved_model,
-            backend=backend,
-            attachments=self._attachments,
-            read_only_tools=read_only_tools,
-            permissions=permissions,
+        filesystem = create_planner_filesystem(
+            backend,
+            permissions=_as_permissions(spec.permissions),
             filesystem_instructions=(
                 None if workspace is None else workspace.filesystem_instructions
             ),
+        )
+        state_schema = create_plan_state_schema(
+            base_state_schema,
+            middleware=(*caller_middleware, filesystem),
+        )
+        planner = create_planner_agent(
+            resolved_model,
+            filesystem=filesystem,
+            attachments=spec.attachments,
+            read_only_tools=read_only_tools,
+            tool_scope=spec.tool_scope,
             clarification=self._options.clarification,
             content=self._options.content,
             response_type=self._options.contracts.planner_response_type,
@@ -564,13 +531,10 @@ class _PlanningGraphFactory(Generic[ContextT]):
         )
         edit_planner = create_planner_agent(
             resolved_model,
-            backend=backend,
-            attachments=self._attachments,
+            filesystem=filesystem,
+            attachments=spec.attachments,
             read_only_tools=read_only_tools,
-            permissions=permissions,
-            filesystem_instructions=(
-                None if workspace is None else workspace.filesystem_instructions
-            ),
+            tool_scope=spec.tool_scope,
             clarification=self._options.clarification,
             content=self._options.content,
             response_type=self._options.contracts.planner_edit_response_type,
@@ -885,7 +849,7 @@ class _PlanningGraphFactory(Generic[ContextT]):
                 reply_messages,
                 current,
                 config=config,
-                attachments=self._attachments,
+                attachments=spec.attachments,
             )
             return {"messages": [reply]}
 
@@ -936,26 +900,21 @@ class _PlanningGraphFactory(Generic[ContextT]):
         builder.add_edge("respond_to_review", END)
 
         parent = builder.compile(
-            checkpointer=_checkpoint_saver(arguments["checkpointer"]),
-            store=cast(BaseStore | None, arguments.get("store")),
-            cache=_optional_cache(arguments.get("cache")),
+            checkpointer=_checkpoint_saver(spec.checkpointer),
+            store=spec.store,
             name="tinkerfin_planning_workflow",
         )
         return PlanningWorkflowGraph[ContextT](parent)
 
 
-def prepare_plan_factory(
-    signature: inspect.Signature,
-    options: PlanOptions,
+def create_planning_graph(
+    spec: AgentSpec[ContextT],
     *,
-    attachments: AttachmentSupport | None = None,
-) -> _PlanningFactory:
-    """Return a lazy standalone Planning graph factory for one Definition."""
-
-    return cast(
-        _PlanningFactory,
-        _PlanningGraphFactory(signature, options, attachments),
-    )
+    options: PlanOptions,
+    workspace: PreparedWorkspace[object, BackendProtocol] | None = None,
+) -> PlanningWorkflowGraph[ContextT]:
+    """Build the read-only planning workflow from its declared agent resources."""
+    return _PlanningGraphFactory[ContextT](options)._build(spec, workspace=workspace)
 
 
-__all__ = ["PlanningWorkflowGraph", "prepare_plan_factory"]
+__all__ = ["PlanningWorkflowGraph", "create_planning_graph"]

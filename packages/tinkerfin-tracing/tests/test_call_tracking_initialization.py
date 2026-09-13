@@ -4,22 +4,24 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import pytest
+from deepagents.backends import StateBackend
 from langchain.agents.middleware.types import InputAgentState
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import BaseTool
+from langgraph.types import Command
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tinkerfin import TinkerFin
-from tinkerfin.runtime_profile import DeepAgentsV2RuntimeProfile
 from tinkerfin_contracts import (
     NativeTaskObservation,
+    PreparedWorkspace,
     RunClosedObservation,
     RunIdentity,
     RunInputObservation,
@@ -40,14 +42,16 @@ from tinkerfin_tracing import (
 )
 
 
-class _PreparationProfile(DeepAgentsV2RuntimeProfile):
+class _PreparationWorkspace:
     def __init__(self, prepare: Callable[[], Awaitable[None]]) -> None:
-        super().__init__()
         self._prepare = prepare
 
-    async def create_agent_graph(self, factory, args, kwargs):
+    @asynccontextmanager
+    async def prepare(
+        self, identity: RunIdentity
+    ) -> AsyncIterator[PreparedWorkspace[None, StateBackend]]:
         await self._prepare()
-        return await super().create_agent_graph(factory, args, kwargs)
+        yield PreparedWorkspace(None, StateBackend())
 
 
 class _LocalModel(FakeMessagesListChatModel):
@@ -115,6 +119,68 @@ async def _run_healthy(runtime: TinkerFin, identity: RunIdentity) -> None:
         await stream.aclose()
 
 
+@pytest.mark.parametrize("update", [False, True])
+async def test_native_continuation_initialization_failure_keeps_input_and_turn(
+    trace_store: TraceStore, update: bool
+) -> None:
+    tracer = Tracer(store=trace_store)
+    runtime = TinkerFin().with_namespace("test").with_observer(tracer)
+    first = RunIdentity(
+        namespace="test", thread_id="continuation-setup", run_id="first"
+    )
+    await _run_healthy(runtime, first)
+    failure = RuntimeError("continuation workspace unavailable")
+
+    async def prepare_graph() -> None:
+        raise failure
+
+    broken = runtime.build(
+        model=_LocalModel(responses=[AIMessage(content="unused")]),
+        backend=_PreparationWorkspace(prepare_graph),
+    )
+    graph_input: Command[object] | None = (
+        Command(update={"note": "updated"}) if update else None
+    )
+    stream = broken.open_run(
+        thread_id=first.thread_id, run_id="failed", input=graph_input
+    )
+    with pytest.raises(RuntimeError) as captured:
+        async for _part in stream:
+            raise AssertionError("Failed preparation emitted a graph part")
+    assert captured.value is failure
+    view = await tracer.get(first.thread)
+    assert len(view.graph.turns) == 1
+    assert view.status.execution == "failed"
+    facts = [event.fact for event in (await view.events(limit=100)).items]
+    source = next(
+        fact
+        for fact in facts
+        if isinstance(fact, RunFact)
+        and fact.identity.run_id == "failed"
+        and fact.phase == "resumed"
+    )
+    assert source.input_kind == "continuation"
+    assert source.input is not None
+    if update:
+        assert isinstance(source.input.value, dict)
+        command_value = source.input.value["value"]
+        assert isinstance(command_value, dict)
+        assert command_value["update"] == {"note": "updated"}
+    else:
+        assert source.input.value is None
+    terminal = next(
+        fact
+        for fact in facts
+        if isinstance(fact, RunFact)
+        and fact.identity.run_id == "failed"
+        and fact.phase == "terminal"
+    )
+    assert terminal.code == "runtime_initialization_error"
+    assert terminal.error_type == "builtins.RuntimeError"
+    await _run_healthy(runtime, first.model_copy(update={"run_id": "next"}))
+    assert len((await tracer.get(first.thread)).graph.turns) == 2
+
+
 @pytest.mark.parametrize("transport", ("native", "agui"))
 async def test_initialization_failure_keeps_existing_and_future_call_history(
     trace_store: TraceStore, transport: Literal["native", "agui"]
@@ -143,10 +209,13 @@ async def test_initialization_failure_keeps_existing_and_future_call_history(
     assert len(original_models) == 1
     assert not before.completeness.call_tracking_missing
     failed_runtime = (
-        TinkerFin(runtime_profile=_PreparationProfile(prepare_graph))
+        TinkerFin()
         .with_namespace("test")
         .with_observer(tracer)
-        .build(model="provider:model")
+        .build(
+            model=_LocalModel(responses=[AIMessage(content="unused")]),
+            backend=_PreparationWorkspace(prepare_graph),
+        )
     )
     if transport == "native":
         native = failed_runtime.open_run(
@@ -308,10 +377,13 @@ async def test_cancelled_initialization_preserves_cancellation_and_next_run(
         raise AssertionError("cancelled initialization continued")
 
     cancelled_runtime = (
-        TinkerFin(runtime_profile=_PreparationProfile(prepare_graph))
+        TinkerFin()
         .with_namespace("test")
         .with_observer(tracer)
-        .build(model="provider:model")
+        .build(
+            model=_LocalModel(responses=[AIMessage(content="unused")]),
+            backend=_PreparationWorkspace(prepare_graph),
+        )
     )
     stream = (
         cancelled_runtime.open_run(

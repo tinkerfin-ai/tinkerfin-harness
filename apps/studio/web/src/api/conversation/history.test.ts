@@ -1,3 +1,7 @@
+import frameworkResume from '../../../../../../packages/tinkerfin/tests/fixtures/agui-history-resume.json'
+import { restoreConversationFromTrace } from '../../features/conversation/trace/runtime'
+import { applyConversationEvent, prepareResumeSubmission } from '../../features/conversation/agui'
+import { parseConversationAgUiEvent } from './eventParser'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -47,6 +51,15 @@ const detail = (): ConversationHistoryDetail => ({
   taskTrace: { status: 'ready', todoGroups: [] },
   createdAt: '2026-08-28T00:00:00',
   updatedAt: '2026-08-28T00:01:00',
+})
+
+const frameworkDetail = (history: typeof frameworkResume.history | typeof frameworkResume.finalHistory) => ({
+  ...detail(),
+  ...history,
+  status: history.summary.status,
+  completeness: history.summary.completeness,
+  messageCount: history.summary.messageCount,
+  toolCallCount: history.summary.toolCallCount,
 })
 
 const streamResponse = (...values: unknown[]) => {
@@ -215,4 +228,87 @@ describe('conversation Trace client', () => {
     )
     await expect(deleteConversation('thread-idle')).resolves.toBeUndefined()
   })
+  it('真实框架审批恢复流与失败后的历史重载保持相同工具结果', async () => {
+    const wire = frameworkDetail(frameworkResume.history)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(envelope(wire)))
+    const loaded = await fetchConversationHistoryDetail(wire.threadId, { includeTaskTrace: true })
+    let conversation = prepareResumeSubmission(restoreConversationFromTrace(loaded, { model: 'main', includeTaskTrace: true }))
+    for (const event of frameworkResume.resumedEvents) {
+      conversation = applyConversationEvent(conversation, parseConversationAgUiEvent(event))
+    }
+    const results = (value: typeof conversation) => value.messages.filter(message => message.role === 'tool')
+      .map(message => ({ name: message.meta?.toolName, id: message.meta?.toolCallId, status: message.meta?.status, result: message.meta?.result }))
+    expect(results(conversation)).toHaveLength(2)
+    expect(results(conversation)[0]).toMatchObject({ name: 'save_report', status: 'completed' })
+    expect(results(conversation)[1]).toMatchObject({ name: 'fail_delivery', status: 'failed' })
+    const finalWire = frameworkDetail(frameworkResume.finalHistory)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(envelope(finalWire)))
+    const final = restoreConversationFromTrace(await fetchConversationHistoryDetail(finalWire.threadId, { includeTaskTrace: true }), { model: 'main', includeTaskTrace: true })
+    expect(results(final).map(({ name, id, status }) => ({ name, id, status })))
+      .toEqual(results(conversation).map(({ name, id, status }) => ({ name, id, status })))
+    expect(results(final)[0]?.result).toBe(results(conversation)[0]?.result)
+    expect(final.approval).toBeUndefined()
+    expect(final.runStatus).toBe('error')
+  })
+
+  it.each([
+    ['缺少消息关联字段', (wire: Record<string, unknown>) => { wire.messages = [{ role: 'assistant' }] }],
+    ['消息使用工具结果关联', (wire: Record<string, unknown>) => { wire.messages = [{ role: 'assistant', agui: { kind: 'tool_message', messageId: 'm', toolCallId: 't' } }] }],
+    ['消息关联含未知字段', (wire: Record<string, unknown>) => { wire.messages = [{ role: 'assistant', agui: { kind: 'message', messageId: 'm', extra: true } }] }],
+    ['缺少交互关联字段', (wire: Record<string, unknown>) => { wire.interactions = [{ status: 'pending' }] }],
+    ['待审批交互没有动作', (wire: Record<string, unknown>) => { wire.interactions = [{ status: 'pending', agui: [] }] }],
+    ['工具节点缺少关联字段', (wire: Record<string, unknown>) => {
+      const graph = wire.graph as { nodes: Array<Record<string, unknown>> }
+      const tool = graph.nodes.find(node => node.kind === 'tool')!
+      delete tool.agui
+    }],
+    ['工具节点使用子智能体关联', (wire: Record<string, unknown>) => {
+      const graph = wire.graph as { nodes: Array<Record<string, unknown>> }
+      graph.nodes.find(node => node.kind === 'tool')!.agui = { kind: 'subagent', parentToolCallId: 'p', subagentInvocationId: 'c' }
+    }],
+  ])('拒绝不符合实体关联契约的历史：%s', async (_name, mutate) => {
+    const wire = structuredClone(frameworkDetail(frameworkResume.history))
+    mutate(wire)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(envelope(wire)))
+    await expect(fetchConversationHistoryDetail(wire.threadId, { includeTaskTrace: true })).rejects.toThrow('stream_event_invalid')
+  })
+
+  it('允许明确缺失的关联与已解决交互空动作，拒绝把缺失当作旧格式', async () => {
+    const wire = structuredClone(frameworkDetail(frameworkResume.history))
+    const messages: Array<{ agui: unknown }> = wire.messages
+    messages.forEach(message => { message.agui = null })
+    const interaction = wire.interactions[0]!
+    interaction.status = 'resolved'
+    interaction.agui = []
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(envelope(wire)))
+    const loaded = await fetchConversationHistoryDetail(wire.threadId, { includeTaskTrace: true })
+    expect(loaded.messages.every(message => message.agui === null)).toBe(true)
+    expect(loaded.interactions[0]?.agui).toEqual([])
+  })
+
+  it('订阅增量携带消息关联，缺少关联字段时拒绝该增量', async () => {
+    const base = detail()
+    const message = frameworkResume.history.messages[0]!
+    const update = {
+      type: 'update', runFailures: [], taskTrace: null,
+      update: {
+        asOfSeq: 5, generation: base.generation, observedAt: base.observedAt,
+        messages: { upserts: [message], removes: [] }, reasoning: { upserts: [], removes: [] },
+        interactions: { upserts: [], removes: [] }, graph: emptyTraceGraphDelta(5),
+        state: base.state, status: base.status, completeness: base.completeness,
+        events: [], facts: [], messageCount: 1, toolCallCount: 0, projections: {},
+      },
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => streamResponse(update)))
+    const events = []
+    for await (const event of followConversationTrace(base.threadId, { includeTaskTrace: true })) events.push(event)
+    expect(events[0]).toHaveProperty('update.messages.upserts.0.agui', message.agui)
+    const invalid: Record<string, unknown> = { ...message }
+    delete invalid.agui
+    vi.stubGlobal('fetch', vi.fn(async () => streamResponse({ ...update, update: { ...update.update, messages: { upserts: [invalid], removes: [] } } })))
+    await expect(async () => {
+      for await (const event of followConversationTrace(base.threadId, { includeTaskTrace: true })) events.push(event)
+    }).rejects.toThrow('stream_event_invalid')
+  })
+
 })

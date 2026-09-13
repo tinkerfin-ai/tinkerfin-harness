@@ -142,7 +142,7 @@ from tinkerfin.checkpoints import delete_thread
 await delete_thread(checkpointer, thread=runtime.thread_identity(thread_id))
 ```
 
-Pass long-term memory with `build(store=store)`. Each Runtime uses its own namespace
+Pass long-term memory with `TinkerFin(store=store)`. Each Runtime uses its own namespace
 root while tools see relative memory paths. Use asynchronous Store methods.
 `StoreBackend` obtains this scoped Store from the running Graph; omit its `store`
 constructor argument. The host retains ownership of the underlying Store.
@@ -195,14 +195,22 @@ receives `RunTerminalObservation` and is awaited. Callback failure propagates wi
 emitting a second terminal event. A terminal notification does not guarantee that
 all resources have closed or provide delivery after a process crash.
 
-`with_attachments(AttachmentSupport(...))` enables authorized attachment resolution.
-The host authorizes files and bounds their size. Each destination model must support
-image input to receive images. Compiled and remote agents configure their own
+`with_attachments(AttachmentSupport(read_content=read_content))` enables authorized
+attachment access. The asynchronous reader returns `AttachmentContent(data=...,
+mime_type=...)` and authorizes and bounds each storage read. File references remain
+in history; content is supplied only to a model that supports its format. Model
+profiles determine image, audio, video, and PDF input capabilities by default;
+`supports_content(model, mime_type)` can provide an explicit capability check.
+
+Each request reads at most `max_attachments` recent supported files (default 5).
+`max_bytes` limits their total content before base64 encoding (default 20 MiB);
+oversized content raises `ValueError` before the model call. Other formats remain
+references for file-reading tools. Compiled and remote agents configure their own
 attachment access. See the runtime guide for submission parsing and file references.
 
 ### Resource ownership
 
-Runtimes borrow supplied models, stores, checkpointers, backends, caches, and observers.
+Runtimes borrow supplied models, stores, checkpointers, backends, and observers.
 The host initializes and closes shared resources. Each managed run closes its own
 execution resources, including after errors or cancellation. Closing an unused
 stream does not start preparation.
@@ -236,6 +244,7 @@ resume requires the same profile that created the pending run.
 
 ## Documentation
 
+- [Recorded AG-UI conversations](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/runtime/api-reference.md#recorded-ag-ui-conversations) — use `AgUiHistory` with `tinkerfin[agui,tracing]` to read and follow an existing Tracer
 - [Runtime guide](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/runtime/index.md)
 - [AG-UI guide](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/agui/index.md)
 - [Tracing guide](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/tracing/index.md)

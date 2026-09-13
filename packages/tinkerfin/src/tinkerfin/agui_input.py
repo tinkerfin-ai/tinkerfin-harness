@@ -6,15 +6,30 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Literal, cast
 
 from ag_ui.core import UserMessage
-from ag_ui.core.types import DocumentInputContent, ImageInputContent, InputContentPart
+from ag_ui.core.types import (
+    AudioInputContent,
+    DocumentInputContent,
+    ImageInputContent,
+    InputContentPart,
+    VideoInputContent,
+)
 from langchain.agents.middleware.types import InputAgentState
 from langchain_core.messages import AnyMessage
 from pydantic import BaseModel, ConfigDict, JsonValue, model_validator
 
-from tinkerfin_agui_adapter.media import user_message_to_langchain
+from tinkerfin_agui_adapter.media import (
+    user_content_to_agui,
+    user_message_to_langchain,
+)
 from tinkerfin_contracts.media import Attachment
 
 __all__ = ["AgUiUserInput", "_user_messages_to_input"]
+
+
+def _attachment_content(attachment: Attachment) -> dict[str, JsonValue]:
+    content = user_content_to_agui([attachment.content_block()])
+    assert isinstance(content, list)
+    return content[0]
 
 
 class AgUiUserInput(BaseModel):
@@ -57,7 +72,15 @@ class AgUiUserInput(BaseModel):
         return tuple(
             part.source.value.removeprefix("attachment:")
             for part in self.content
-            if isinstance(part, (ImageInputContent, DocumentInputContent))
+            if isinstance(
+                part,
+                (
+                    ImageInputContent,
+                    AudioInputContent,
+                    VideoInputContent,
+                    DocumentInputContent,
+                ),
+            )
             and part.source.type == "url"
             and part.source.value.startswith("attachment:")
         )
@@ -77,14 +100,22 @@ class AgUiUserInput(BaseModel):
         attachments: list[Attachment] = []
         for part in self.content:
             if (
-                isinstance(part, (ImageInputContent, DocumentInputContent))
+                isinstance(
+                    part,
+                    (
+                        ImageInputContent,
+                        AudioInputContent,
+                        VideoInputContent,
+                        DocumentInputContent,
+                    ),
+                )
                 and part.source.type == "url"
                 and part.source.value.startswith("attachment:")
             ):
                 attachment = Attachment.model_validate(part.metadata)
                 if (
                     part.source.value != f"attachment:{attachment.id}"
-                    or part.type != attachment.kind
+                    or part.type != _attachment_content(attachment)["type"]
                 ):
                     raise ValueError(
                         "attachment source and descriptor must identify the same file"
@@ -115,22 +146,30 @@ class AgUiUserInput(BaseModel):
             parts: list[dict[str, JsonValue]] = []
             for part in self.content:
                 if (
-                    isinstance(part, (ImageInputContent, DocumentInputContent))
+                    isinstance(
+                        part,
+                        (
+                            ImageInputContent,
+                            AudioInputContent,
+                            VideoInputContent,
+                            DocumentInputContent,
+                        ),
+                    )
                     and part.source.type == "url"
                     and part.source.value.startswith("attachment:")
                 ):
                     attachment = by_id[part.source.value.removeprefix("attachment:")]
+                    canonical = _attachment_content(attachment)
+                    canonical_source = canonical["source"]
+                    assert isinstance(canonical_source, dict)
                     parts.append(
                         {
                             **part.model_dump(mode="json", by_alias=True),
-                            "type": attachment.kind,
+                            **canonical,
                             "source": {
                                 **part.source.model_dump(mode="json", by_alias=True),
-                                "type": "url",
-                                "value": f"attachment:{attachment.id}",
-                                "mimeType": attachment.mime_type,
+                                **canonical_source,
                             },
-                            "metadata": attachment.model_dump(mode="json"),
                         }
                     )
                 else:

@@ -6,11 +6,10 @@ import asyncio
 import inspect
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import Any, TypedDict, cast, get_origin
+from typing import Any, TypedDict, cast
 
 import pytest
 from ag_ui.core import BaseEvent, RunStartedEvent
-from deepagents.graph import create_deep_agent as upstream_create_deep_agent
 from langchain.agents.middleware.types import InputAgentState
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -151,7 +150,7 @@ def _install_builder(
         return graph
 
     monkeypatch.setattr(
-        "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent",
+        "tinkerfin.deep_agent.create_agent_graph",
         build,
     )
     return calls, graphs
@@ -319,21 +318,16 @@ async def test_tinkerfin_uses_its_default_checkpointer() -> None:
     assert [row async for row in checkpointer.alist(None)]
 
 
-@pytest.mark.asyncio
-async def test_explicit_checkpointer_overrides_the_builder_default() -> None:
-    default = MemorySaver()
-    explicit = MemorySaver()
-    runtime = (
-        TinkerFin(checkpointer=default)
-        .with_namespace("test")
-        .build(
+def test_build_cannot_override_the_constructor_checkpointer() -> None:
+    from test_agent_construction import invalid_call
+
+    builder = TinkerFin(checkpointer=MemorySaver()).with_namespace("test")
+    with pytest.raises(TypeError, match="checkpointer"):
+        invalid_call(
+            builder.build,
             model=_FakeModel(responses=[AIMessage(content="saved")]),
-            checkpointer=explicit,
+            checkpointer=MemorySaver(),
         )
-    )
-    await runtime.ainvoke(thread_id="thread-1", run_id="run-1", input=_graph_input())
-    assert [row async for row in explicit.alist(None)]
-    assert [row async for row in default.alist(None)] == []
 
 
 def test_direct_graph_rejects_synchronous_execution() -> None:
@@ -663,9 +657,13 @@ async def test_build_defers_fresh_builds_until_stream_consumption(
     assert len(calls) == 2
     assert len(graphs) == 2
     assert graphs[0] is not graphs[1]
-    assert calls[0][1]["tools"] == []
-    assert calls[1][1]["tools"] == []
-    assert calls[0][1]["tools"] is not calls[1][1]["tools"]
+    from tinkerfin._agent_spec import AgentSpec
+
+    specifications = [call[0][0] for call in calls]
+    assert all(
+        isinstance(spec, AgentSpec) and spec.tools == () for spec in specifications
+    )
+    assert specifications[0] is not specifications[1]
 
 
 def test_factory_parameter_binding_fails_without_building_a_graph(
@@ -992,18 +990,23 @@ async def test_agui_runtime_preserves_observer_order_and_error_terminal(
 
 def test_builder_signature_retains_model_configuration_and_names_its_result() -> None:
     build = inspect.signature(TinkerFin().build)
-    upstream = inspect.signature(upstream_create_deep_agent)
-    assert set(build.parameters) == set(upstream.parameters) | {"prepare_tools"}
-    assert all(
-        build.parameters[name].replace(annotation=parameter.annotation) == parameter
-        for name, parameter in upstream.parameters.items()
-    )
-    assert all(
-        build.parameters[name].annotation == parameter.annotation
-        for name, parameter in upstream.parameters.items()
-        if name not in {"backend", "subagents", "tools", "checkpointer", "cache"}
-    )
-    assert get_origin(build.return_annotation) is AgentRuntime
+    assert set(build.parameters) == {
+        "model",
+        "tools",
+        "system_prompt",
+        "middleware",
+        "subagents",
+        "skills",
+        "memory",
+        "permissions",
+        "backend",
+        "interrupt_on",
+        "response_format",
+        "state_schema",
+        "context_schema",
+        "name",
+    }
+    assert build.parameters["model"].default is inspect.Parameter.empty
     runtime = _real_definition()
     for operation in (runtime.open_run, runtime.open_agui_run, runtime.ainvoke):
         parameters = inspect.signature(operation).parameters

@@ -5,20 +5,22 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from tinkerfin.agui import (
+    AgUiTraceGraph,
+    AgUiTraceGraphDelta,
+    AgUiTraceGraphPage,
+    AgUiTraceInteraction,
+    AgUiTraceMessage,
+    AgUiTraceUpdate,
+)
 from tinkerfin_studio.conversation.failures import ConversationRunFailure
 from tinkerfin_studio.conversation.models import TitleGenerationStatus, TitleSource
 from tinkerfin_studio.conversation.todo_groups import TaskTraceSnapshot
 from tinkerfin_tracing import (
     TraceCompleteness,
-    TraceGraph,
-    TraceGraphDelta,
-    TraceGraphPage,
-    TraceInteraction,
-    TraceMessage,
     TraceReasoning,
     TraceState,
     TraceStatus,
-    TraceUpdate,
 )
 
 PendingInteractionKind = Literal[
@@ -107,12 +109,12 @@ class ConversationHistoryDetail(ConversationTitle):
     history_cursor: str | None = Field(default=None, alias="historyCursor")
     message_count: int = Field(alias="messageCount", ge=0)
     tool_call_count: int = Field(alias="toolCallCount", ge=0)
-    messages: tuple[TraceMessage, ...]
+    messages: tuple[AgUiTraceMessage, ...]
     run_failures: tuple[ConversationRunFailure, ...] = Field(alias="runFailures")
     reasoning: tuple[TraceReasoning, ...]
-    graph: TraceGraph
+    graph: AgUiTraceGraph
     state: TraceState
-    interactions: tuple[TraceInteraction, ...]
+    interactions: tuple[AgUiTraceInteraction, ...]
     status: TraceStatus
     completeness: TraceCompleteness
     task_trace: TaskTraceSnapshot | None = Field(alias="taskTrace")
@@ -134,7 +136,7 @@ class ConversationTraceUpdateEvent(BaseModel):
     """Trace SSE 在快照之后发送的语义增量"""
 
     type: Literal["update"] = "update"
-    update: TraceUpdate
+    update: AgUiTraceUpdate
     run_failures: tuple[ConversationRunFailure, ...] = Field(alias="runFailures")
     task_trace: TaskTraceSnapshot | None = Field(alias="taskTrace")
 
@@ -150,14 +152,14 @@ class ConversationTraceGraphSnapshotEvent(BaseModel):
     """链路跟随连接建立后的完整筛选页"""
 
     type: Literal["snapshot"] = "snapshot"
-    snapshot: TraceGraphPage
+    snapshot: AgUiTraceGraphPage
 
 
 class ConversationTraceGraphUpdateEvent(BaseModel):
     """同一筛选条件下的链路增删、完整顺序、直接命中与完整性更新"""
 
     type: Literal["update"] = "update"
-    update: TraceGraphDelta
+    update: AgUiTraceGraphDelta
 
 
 class ConversationTraceGraphErrorEvent(BaseModel):

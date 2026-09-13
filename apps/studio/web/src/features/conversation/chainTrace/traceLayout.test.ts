@@ -57,6 +57,7 @@ describe('Chain Trace layout derivation', () => {
         completedAt: '2026-09-03T00:00:02.000Z',
       }),
       traceGraphNode({
+        agui: null,
         id: 'turn-2-user',
         turnId: 'turn-2',
         kind: 'human_message',
@@ -81,8 +82,10 @@ describe('Chain Trace layout derivation', () => {
     ], [
       traceGraphNode({ id: 'user', kind: 'human_message' }),
       traceGraphNode({ id: 'model', kind: 'model', startedSeq: 2 }),
-      traceGraphNode({ id: 'tool', turnId: 'turn-2', kind: 'tool', startedSeq: 3 }),
       traceGraphNode({
+      agui: null, id: 'tool', turnId: 'turn-2', kind: 'tool', startedSeq: 3 }),
+      traceGraphNode({
+        agui: null,
         id: 'assistant',
         turnId: 'turn-2',
         kind: 'assistant_message',

@@ -78,6 +78,7 @@ const traceEntities = (groups: readonly TodoGroup[], visibleGroups: readonly Tod
     const turnId = `turn:${group.id}`
     turns.push({ id: turnId, ordinal: position + 1, startedAt: group.createdAt })
     messages.push({
+      agui: null,
       id: group.userMessageId,
       traceSeq: sequence,
       sourceId: group.userMessageId,

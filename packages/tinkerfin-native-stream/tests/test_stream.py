@@ -84,3 +84,40 @@ def test_updates_require_non_empty_text_node_names() -> None:
         validate_native_stream_part(
             {"type": "updates", "ns": (), "data": {"": {"value": 1}}}
         )
+
+
+@pytest.mark.parametrize("namespace", [(), ("tools:worker",)])
+@pytest.mark.parametrize("message_type", ["human", "system", "remove", "ai", "tool"])
+def test_all_live_message_roles_are_borrowed_and_serialized_lookalikes_rejected(
+    namespace: tuple[str, ...],
+    message_type: str,
+) -> None:
+    from langchain_core.messages import (
+        AIMessage,
+        HumanMessage,
+        RemoveMessage,
+        SystemMessage,
+        ToolMessage,
+    )
+
+    message = {
+        "human": HumanMessage(id="user", content="New request"),
+        "system": SystemMessage(id="system", content="Model instructions"),
+        "remove": RemoveMessage(id="__remove_all__"),
+        "ai": AIMessage(id="answer", content="Visible answer"),
+        "tool": ToolMessage(id="result", tool_call_id="call", content="Tool result"),
+    }[message_type]
+    metadata = {"langgraph_node": "PatchToolCallsMiddleware.before_agent"}
+    part = {"type": "messages", "ns": namespace, "data": (message, metadata)}
+    parsed = validate_native_stream_part(part)
+    assert isinstance(parsed, NativeMessageStreamPart)
+    assert parsed.data.message is message
+    assert parsed.ns == namespace
+    for serialized in (
+        message.model_dump(),
+        {"type": message.type, "data": message.model_dump()},
+    ):
+        with pytest.raises(
+            NativeStreamContractError, match="live LangChain BaseMessage"
+        ):
+            validate_native_stream_part({**part, "data": (serialized, metadata)})

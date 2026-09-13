@@ -257,7 +257,10 @@ class ConversationChatService:
                 user_id=self._user.user_id,
                 thread_id=request.thread_id or None,
             )
-            if attachment.kind == "image" and model.image_support != "supported":
+            if (
+                attachment.mime_type.startswith("image/")
+                and model.image_support != "supported"
+            ):
                 raise BusinessException(ModelErrorCode.IMAGE_UNSUPPORTED)
             total += attachment.size_bytes
             attachments.append(attachment)

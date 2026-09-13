@@ -416,24 +416,24 @@ def test_tool_execution_start_replaces_proposal_time_and_interrupt_has_no_comple
 
 
 def test_rebuild_reduction_preserves_scope_and_model_relations() -> None:
-    mutations = graph_node_mutations(
-        (
-            _event(
-                1,
-                ToolFact(
-                    **_common(1, namespace=("tools:parent",)),
-                    in_subagent_scope=True,
-                    phase="started",
-                    tool_call_id=scope_id("tool", ("tools:parent",), "call"),
-                    source_tool_call_id="call",
-                    parent_call_id="model",
-                    tool_name="read_file",
-                ),
+    events = (
+        _event(
+            1,
+            ToolFact(
+                **_common(1, namespace=("tools:parent",)),
+                in_subagent_scope=True,
+                phase="started",
+                tool_call_id=scope_id("tool", ("tools:parent",), "call"),
+                source_tool_call_id="call",
+                parent_call_id="model",
+                tool_name="read_file",
             ),
-        )
+        ),
     )
-
-    reduced = reduce_graph_mutations(mutations)
+    mutations = graph_node_mutations(events)
+    reduced = reduce_graph_mutations(
+        mutations, source_events={event.trace_seq: event for event in events}
+    )
 
     assert len(reduced) == 1
     assert reduced[0].parent_subagent_id == scope_id(

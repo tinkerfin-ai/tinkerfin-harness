@@ -8,7 +8,7 @@ AG-UI entry points require `pip install "tinkerfin[agui]"`.
 
 | API | Purpose |
 | --- | --- |
-| `TinkerFin(checkpointer=..., run_coordinator=..., state_schema=..., runtime_profile=...)` | Configure shared borrowed resources |
+| `TinkerFin(checkpointer=..., run_coordinator=..., store=..., runtime_profile=...)` | Configure shared borrowed resources |
 | `.with_namespace(namespace)` | Select the application's isolation scope; required before `build()` |
 | `.with_observer(observer)` | Add a Runtime observer |
 | `.with_observer(on_terminal=callback)` | Add one asynchronous terminal callback |
@@ -28,12 +28,11 @@ and borrows supplied resources.
 | `subagents` | Declarative, compiled, or remote subagents |
 | `skills`, `memory` | Skill directories and memory files |
 | `backend`, `permissions` | Filesystem backend or lazy workspace and its file rules |
-| `prepare_tools` | Create additional tools after per-run preparation |
 | `interrupt_on` | Require decisions before selected tools execute |
 | `response_format` | Structured output contract |
 | `state_schema`, `context_schema` | Persistent state fields and invocation context type |
-| `checkpointer`, `store`, `cache` | Persistence and Graph cache |
 
+`model` is required. Configure persistence on `TinkerFin(checkpointer=..., store=...)`.
 `context_schema` determines the type of each execution method's `context` argument.
 
 ## AgentRuntime
@@ -46,6 +45,7 @@ and borrows supplied resources.
 | `await runtime.ainvoke(...)` | Final defensive state mapping |
 | `runtime.open_run(...)` | Lazy `NativeRunStream` |
 | `runtime.open_agui_run(...)` | Lazy `AgUiRunStream` |
+| `runtime.agui.history(tracer)` | Recorded AG-UI conversations in this Runtime's namespace |
 
 All execution methods accept `thread_id`, `run_id`, `input` or AG-UI input, optional
 `mode`, Graph `config`, typed `context`, observation callbacks, and supported LangGraph
@@ -61,6 +61,38 @@ stream controls.
 
 Resume-only callbacks are `on_resume_saved` and `on_resume_not_saved`. They settle host
 state around the durable resume marker and are awaited.
+
+## Recorded AG-UI conversations
+
+Install `tinkerfin[agui,tracing]` and select an existing Tracer as the history source:
+
+```python
+from tinkerfin.agui import AgUiHistory
+
+history = AgUiHistory(tracer, namespace=namespace)
+view = await history.get(thread_id)
+snapshot = view.snapshot
+
+async with view.follow() as updates:
+    async for update in updates:
+        await publish(update)
+```
+
+With an existing Runtime, `runtime.agui.history(tracer)` uses its namespace.
+Neither entry point creates an agent or takes ownership of the Tracer or its Store.
+The application authorizes the namespace and conversation before querying.
+
+Snapshots and updates include live AG-UI references for messages, tools, subagents,
+and pending interactions. A missing reference or omitted interaction content is
+represented by `agui=None`; it cannot be reconstructed into an approval request.
+`view.trace` exposes original facts and registered application projections.
+
+`await view.load_older(limit=100)` expands the loaded history at the same fixed
+prefix. For a filtered execution graph, use `await history.query(thread_id,
+where=filters)` and read its `snapshot` or `follow()` updates. Graph cursors apply
+to the same filter and graph tail; query again if that tail changes. Use `async with`
+for followers when stopping early. Cancellation and query errors propagate, and
+closing a follower leaves the caller's history source open.
 
 ## Streams
 
@@ -86,6 +118,10 @@ Extension contracts use focused modules:
 
 | Module | API family |
 | --- | --- |
+| `tinkerfin.agui` | `AgUiHistory` and recorded conversation models |
+| `tinkerfin.tools` | `ToolRuntime` with business context, run identity, and workspace access |
+| `tinkerfin.media` | `Attachment`, `AttachmentContent`, and `AttachmentSupport` |
+| `tinkerfin.subagents` | Declarative `SubAgent` configuration |
 | `tinkerfin.runtime_profile` | Deep Agents Runtime profiles |
 | `tinkerfin.native_driver` | Native stream drivers and reasoning extractors |
 | `tinkerfin.coordination` | Run coordinator protocol and in-memory implementation |
@@ -93,6 +129,6 @@ Extension contracts use focused modules:
 | `tinkerfin.plan` | Plan forms, content models, decisions, and Plan errors |
 | `tinkerfin.deep_agent` | Caller-managed Graph construction |
 
-The application opens and closes models, checkpointers, Stores, caches, database pools,
+The application opens and closes models, checkpointers, Stores, database pools,
 and supplied service clients. Managed runs close the Graph, prepared workspace, streams,
 and per-run resources they create.

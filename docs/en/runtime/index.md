@@ -74,20 +74,20 @@ Pass a Store for long-term memory. The Runtime scopes both by its namespace.
 
 ```python
 runtime = (
-    TinkerFin(checkpointer=checkpointer)
+    TinkerFin(checkpointer=checkpointer, store=store)
     .with_namespace(namespace)
-    .build(model=model, tools=tools, store=store)
+    .build(model=model, tools=tools)
 )
 ```
 
-Models, stores, checkpointers, caches, coordinators, and supplied backends remain owned
+Models, stores, checkpointers, coordinators, and supplied backends remain owned
 by the application. Each run owns its Graph, lazy workspace preparation, stream, and
 cleanup.
 
 ## Next steps
 
 - [Run your first agent](quick_start.md)
-- [Configure agents and Plan](deep-agents.md)
+- [Configure agents and Plan](agent-configuration.md)
 - [Streams and SSE](streams-and-sse.md)
 - [Runtime extensions](extensions.md)
 - [Runtime API](api-reference.md)

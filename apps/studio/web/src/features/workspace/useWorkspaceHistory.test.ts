@@ -69,6 +69,7 @@ const detail = (
   messageCount: 1,
   toolCallCount: 0,
   messages: [{
+    agui: null,
     id: 'message-1',
     traceSeq: 1,
     sourceId: 'assistant-1',
@@ -195,6 +196,42 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
     vi.clearAllMocks()
     historyMocks.list.mockResolvedValue({ items: [], nextCursor: null })
     historyMocks.groupConfig.mockResolvedValue({ dayRanges: [] })
+  })
+
+  it.each(['refresh', 'taskTrace', 'older'] as const)('%s 接口遇到同一观测的矛盾正文时保留已有内容并报告失败', async (operation) => {
+    const initial = detail({
+      status: { execution: 'succeeded', headRunId: RUN_ID },
+      taskTrace: { status: 'unavailable', todoGroups: [], errorCode: 'trace_incomplete' },
+    })
+    const inconsistent = structuredClone(initial)
+    inconsistent.messages[0]!.content = '相同观测中的另一份正文'
+    const response = deferred<ConversationHistoryDetail>()
+    historyMocks.detail.mockReturnValue(response.promise)
+    const onToast = vi.fn()
+    const { result } = renderHook(() => useHarness(initial, { onToast }))
+    let loading: Promise<void | boolean> = Promise.resolve()
+    act(() => {
+      if (operation === 'refresh') {
+        loading = result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+      } else if (operation === 'taskTrace') {
+        loading = result.current.history.hydrateTaskTrace(THREAD_ID, true)
+      } else {
+        loading = result.current.history.loadOlderTrace(THREAD_ID)
+      }
+    })
+    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => {
+      response.resolve(inconsistent)
+      const loaded = await loading
+      if (operation !== 'refresh') expect(loaded).toBe(false)
+    })
+    expect(result.current.workspace.conversations[0]?.messages[0]?.content).toBe('初始内容')
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
+    if (operation === 'taskTrace') {
+      expect(result.current.history.taskTraceLoadFailed).toBe(true)
+    } else {
+      expect(onToast).toHaveBeenCalledWith('error', '会话加载失败，请重试')
+    }
   })
 
   it('重新激活的历史详情不能覆盖等待期间新启动的本地 Run', async () => {
@@ -841,6 +878,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
     const source = detail({
       interactions: [
         {
+          agui: null,
           id: 'interaction-a',
           traceSeq: 5,
           sourceId: 'interrupt-a',
@@ -854,6 +892,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
           openedAt: BASE_TIME,
         },
         {
+          agui: null,
           id: 'interaction-b',
           traceSeq: 6,
           sourceId: 'interrupt-b',

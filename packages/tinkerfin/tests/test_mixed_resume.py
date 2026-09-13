@@ -110,14 +110,13 @@ async def test_mixed_resume_executes_resolved_tool_and_settles_cancelled_tool_on
     )
     saver = InMemorySaver()
     definition = (
-        TinkerFin()
+        TinkerFin(checkpointer=saver)
         .with_namespace("test")
         .build(
             model=model,
             tools=[approved_tool, cancelled_tool],
             subagents=cast(Any, [_external_subagent(declared=False)]),
             interrupt_on={"approved_tool": True, "cancelled_tool": True},
-            checkpointer=saver,
         )
     )
     first_identity = RunIdentity(
@@ -290,7 +289,7 @@ async def test_mixed_resume_is_injected_into_supported_subagents(
         ]
     )
     definition = (
-        TinkerFin()
+        TinkerFin(checkpointer=InMemorySaver())
         .with_namespace("test")
         .build(
             model=model,
@@ -299,7 +298,6 @@ async def test_mixed_resume_is_injected_into_supported_subagents(
                 Any, [*(subagents or []), _external_subagent(declared=False)]
             ),
             interrupt_on={"child_approved": True, "child_cancelled": True},
-            checkpointer=InMemorySaver(),
         )
     )
     review_identity = RunIdentity(
@@ -396,7 +394,7 @@ async def test_permission_interrupt_uses_the_same_mixed_cancellation_contract() 
         ]
     )
     definition = (
-        TinkerFin()
+        TinkerFin(checkpointer=InMemorySaver())
         .with_namespace("test")
         .build(
             model=model,
@@ -407,7 +405,6 @@ async def test_permission_interrupt_uses_the_same_mixed_cancellation_contract() 
                 )
             ],
             interrupt_on={"permission_peer": True},
-            checkpointer=InMemorySaver(),
         )
     )
     review_identity = RunIdentity(
@@ -571,7 +568,7 @@ async def test_external_subagent_without_contract_rejects_mixed_resume_before_ex
     )
     saver = InMemorySaver()
     runtime = (
-        TinkerFin()
+        TinkerFin(checkpointer=saver)
         .with_namespace("test")
         .build(
             model=model,
@@ -582,7 +579,6 @@ async def test_external_subagent_without_contract_rejects_mixed_resume_before_ex
                     "runnable": child,
                 }
             ],
-            checkpointer=saver,
         )
     )
     events = [
@@ -650,10 +646,11 @@ async def test_external_subagent_without_contract_rejects_mixed_resume_before_ex
 
 
 def test_subagent_declaration_cannot_grant_tool_cancellation_support() -> None:
-    with pytest.raises(ValueError, match="a subagent declaration cannot grant support"):
-        TinkerFin().with_namespace("test").build(
+    with pytest.raises(
+        TypeError, match="unsupported subagent fields: tinkerfin_hitl_contract"
+    ):
+        TinkerFin(checkpointer=InMemorySaver()).with_namespace("test").build(
             model=_ToolBindingModel(responses=[AIMessage(content="unused")]),
             tools=[],
             subagents=cast(Any, [_external_subagent(declared=True)]),
-            checkpointer=InMemorySaver(),
         )

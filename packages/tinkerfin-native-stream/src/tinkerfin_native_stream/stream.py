@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Annotated, Literal, cast
 
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import BaseMessage
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -123,10 +123,13 @@ class NativeMessageData(NativeBoundaryModel):
     def require_live_message(cls, value: object) -> object:
         """Reject serialized data where a live LangChain message is required."""
 
-        if not isinstance(value, (AIMessage, ToolMessage)):
+        # LangGraph's messages handler also emits state updates from middleware,
+        # including HumanMessage and RemoveMessage. These are live messages, not
+        # assistant content; consumers project their own supported semantics.
+        if not isinstance(value, BaseMessage):
             raise PydanticCustomError(
                 "messages_native_object",
-                "messages stream data must contain a live AIMessage or ToolMessage",
+                "messages stream data must contain a live LangChain BaseMessage",
             )
         return value
 

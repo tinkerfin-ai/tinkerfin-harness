@@ -6,7 +6,6 @@ import asyncio
 import inspect
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-from importlib.metadata import version
 from typing import Any, cast
 
 import pytest
@@ -1053,7 +1052,7 @@ def _definition(
         return graph
 
     monkeypatch.setattr(
-        "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent",
+        "tinkerfin.deep_agent.create_agent_graph",
         build,
     )
     tinkerfin = (
@@ -1185,7 +1184,7 @@ async def test_managed_run_is_queryable_before_native_output(
         return graph
 
     monkeypatch.setattr(
-        "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent",
+        "tinkerfin.deep_agent.create_agent_graph",
         build,
     )
     tracer = Tracer()
@@ -1474,8 +1473,6 @@ async def test_propagated_subagent_interrupt_uses_the_deepest_trace_scope(
 
 
 async def test_locked_subagent_hitl_remains_an_interrupt_with_tracing() -> None:
-    assert version("deepagents") == "0.7.5"
-    assert version("langgraph") == "1.2.10"
     model = _SubagentToolBindingModel(
         responses=[
             AIMessage(
@@ -1508,12 +1505,15 @@ async def test_locked_subagent_hitl_remains_an_interrupt_with_tracing() -> None:
         ]
     )
     tracer = Tracer(store=InMemoryTraceStore())
-    tinkerfin = TinkerFin().with_namespace("test").with_observer(tracer)
+    tinkerfin = (
+        TinkerFin(checkpointer=InMemorySaver())
+        .with_namespace("test")
+        .with_observer(tracer)
+    )
     definition = tinkerfin.build(
         model=model,
         tools=[reviewed_child_tool],
         interrupt_on={"reviewed_child_tool": {"allowed_decisions": ["approve"]}},
-        checkpointer=InMemorySaver(),
     )
     identity = RunIdentity(
         namespace="test", thread_id="thread-real-child-review", run_id="run-review"

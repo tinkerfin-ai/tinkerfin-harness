@@ -1,38 +1,22 @@
-"""Attachment access composed with the locked Deep Agents filesystem boundary."""
+"""Attachment projection composed with borrowed filesystem middleware."""
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
-from functools import wraps
-from importlib.metadata import version
-from types import FunctionType
-from typing import Any, Concatenate, ParamSpec, TypeVar, cast
+from typing import Any, ParamSpec, TypeVar, cast
 from uuid import uuid4
 
-from deepagents.backends import StateBackend
-from deepagents.backends.protocol import BackendProtocol
-from deepagents.graph import get_default_model
-from deepagents.middleware import subagents as native_subagents
-from deepagents.middleware.filesystem import FilesystemMiddleware, FilesystemPermission
-from deepagents.profiles.harness.harness_profiles import (
-    HarnessProfile,
-    _get_harness_profile,
-    _harness_profile_for_model,
-)
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     ExtendedModelResponse,
     ModelRequest,
     ModelResponse,
 )
-from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 
 from tinkerfin_contracts.media import Attachment, attachment_from_block
 
-from .errors import TinkerFinLifecycleError
 from .media import AttachmentSupport
 
 _MessageT = TypeVar("_MessageT", bound=BaseMessage)
@@ -101,27 +85,35 @@ def _reference_messages(
 
 
 class _AttachmentFilesystem(AgentMiddleware):
-    """Borrow all native filesystem behavior while owning attachment model access.
+    """Protect attachment references while borrowing complete filesystem behavior.
 
-    Deep Agents 0.7.5 inherits named filesystem replacements in its automatic
-    general-purpose agent. Keeping that genuine filesystem slot preserves the
-    native GP profile, dynamic response schema, permissions and tool construction.
-    Filesystem eviction may tag request copies in a Command; restore durable
-    descriptors before the command can reach checkpoint state.
+    The generated class inherits the original middleware's hooks. Instance access
+    delegates to the borrowed middleware so tools, mutable hook state, trace policy,
+    and custom settings retain their original owner. Only model projection is local.
+    Eviction updates are restored before they can reach checkpoint state.
     """
+
+    _filesystem: AgentMiddleware[Any, Any, Any]
+    _support: AttachmentSupport
 
     def __init__(
         self, filesystem: AgentMiddleware[Any, Any, Any], support: AttachmentSupport
     ) -> None:
-        self._filesystem = filesystem
-        self._support = support
-        self.state_schema = filesystem.state_schema
-        self.tools = filesystem.tools
-        self.transformers = filesystem.transformers
+        object.__setattr__(self, "_filesystem", filesystem)
+        object.__setattr__(self, "_support", support)
 
-    @property
-    def name(self) -> str:
-        return self._filesystem.name
+    def __getattribute__(self, name: str) -> Any:
+        # Attribute access is the untyped third-party object boundary. Its public
+        # AgentMiddleware fields keep their upstream types at all consumers.
+        if name in {
+            "_filesystem",
+            "_support",
+            "__class__",
+            "wrap_model_call",
+            "awrap_model_call",
+        }:
+            return object.__getattribute__(self, name)
+        return getattr(object.__getattribute__(self, "_filesystem"), name)
 
     def wrap_model_call(
         self,
@@ -172,236 +164,36 @@ class _AttachmentFilesystem(AgentMiddleware):
 def attachment_filesystem(
     filesystem: AgentMiddleware[Any, Any, Any], support: AttachmentSupport
 ) -> AgentMiddleware[Any, Any, Any]:
-    """Decorate only hooks present on the borrowed filesystem middleware.
+    """Add attachment projection without changing native hooks or trace policy.
 
-    LangChain detects hooks on the class when constructing nodes. Delegating
-    only existing overrides preserves the graph topology and custom hook metadata;
-    registering no-op before/after hooks would introduce additional checkpoints.
+    Class inheritance preserves hook discovery, including metadata on custom
+    hooks. The original instance continues to own tool closures and mutable state.
+    No native method or constructor is copied or replaced.
     """
-    hooks: dict[str, object] = {}
-    for name in (
-        "before_agent",
-        "abefore_agent",
-        "before_model",
-        "abefore_model",
-        "after_model",
-        "aafter_model",
-        "after_agent",
-        "aafter_agent",
-        "wrap_tool_call",
-        "awrap_tool_call",
-    ):
-        if getattr(type(filesystem), name) is getattr(AgentMiddleware, name):
-            continue
-        original = getattr(filesystem, name)
-
-        # The bound original retains ownership of configuration, tools and state.
-        def delegate(
-            method: Callable[_HookParams, Any],
-        ) -> Callable[Concatenate[_AttachmentFilesystem, _HookParams], Any]:
-            if inspect.iscoroutinefunction(method):
-
-                @wraps(method)
-                async def async_hook(
-                    self: _AttachmentFilesystem,
-                    *args: _HookParams.args,
-                    **kwargs: _HookParams.kwargs,
-                ) -> Any:
-                    return await method(*args, **kwargs)
-
-                return async_hook
-
-            @wraps(method)
-            def sync_hook(
-                self: _AttachmentFilesystem,
-                *args: _HookParams.args,
-                **kwargs: _HookParams.kwargs,
-            ) -> Any:
-                return method(*args, **kwargs)
-
-            return sync_hook
-
-        hooks[name] = delegate(original)
-    decorated = type("_AttachmentFilesystem", (_AttachmentFilesystem,), hooks)
+    decorated = type(
+        "AttachmentFilesystem", (_AttachmentFilesystem, type(filesystem)), {}
+    )
     return decorated(filesystem, support)
 
 
-def _bind_dependencies(
-    original: Callable[..., Any], **dependencies: object
-) -> Callable[..., Any]:
-    """Bind reviewed upstream dependencies without touching module globals.
+class _AttachmentMiddleware(AgentMiddleware):
+    """Project attachments at the final destination model boundary."""
 
-    The callable retains its original code, closure, defaults and signature. The
-    isolated globals dictionary replaces only named construction dependencies.
-    Deep Agents exposes no per-agent terminal middleware hook for the automatic
-    GP or for dynamic-schema recompilation; binding those construction calls
-    keeps its own assembly and routing implementation authoritative.
-    """
-    source = original
-    if not isinstance(source, FunctionType):
-        raise TinkerFinLifecycleError(
-            "Attachment access requires a Python native factory"
-        )
-    if hasattr(source, "__wrapped__"):
-        raise TinkerFinLifecycleError(
-            "Automatic attachment access requires the unmodified native Deep Agents factory"
-        )
-    if not dependencies.keys() <= source.__globals__.keys():
-        raise TinkerFinLifecycleError(
-            "Attachment access requires the native Deep Agents construction contract"
-        )
-    configured = FunctionType(
-        source.__code__,
-        {**source.__globals__, **dependencies},
-        source.__name__,
-        source.__defaults__,
-        source.__closure__,
-    )
-    configured.__kwdefaults__ = source.__kwdefaults__
-    return wraps(source)(configured)
+    def __init__(self, support: AttachmentSupport) -> None:
+        self._support = support
 
-
-def _native_attachment_factory(
-    factory: Callable[..., object], support: AttachmentSupport
-) -> Callable[..., object]:
-    """Install model projection after user and harness routing in every owned agent."""
-
-    from .deep_agent import _public_create_agent_contract
-
-    # Never clone or unwrap caller instrumentation: copying its globals could
-    # hide side effects, while mutating them would break concurrent builds.
-    source = factory
-    if (
-        not isinstance(source, FunctionType)
-        or not isinstance(_public_create_agent_contract, FunctionType)
-        or source.__code__ is not _public_create_agent_contract.__code__
-        or source.__code__.co_name != "create_deep_agent"
-        or hasattr(source, "__wrapped__")
-    ):
-        raise TinkerFinLifecycleError(
-            "Automatic attachment access requires the unmodified native Deep Agents factory"
-        )
-
-    def final_projection(builder: Callable[..., object]) -> Callable[..., object]:
-        @wraps(builder)
-        def create_with_attachments(*args: object, **kwargs: Any) -> object:
-            middleware = kwargs.get("middleware", ())
-            kwargs["middleware"] = (*middleware, support.middleware())
-            return builder(*args, **kwargs)
-
-        return create_with_attachments
-
-    # Deep Agents 0.7.5 annotates create_sub_agent with an unparameterized
-    # Runnable. Cloning inspects only the function, never that unknown output.
-    subagent_factory = _bind_dependencies(
-        native_subagents.create_sub_agent,  # type: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-        create_agent=final_projection(
-            native_subagents.create_sub_agent.__globals__["create_agent"]  # type: ignore[reportUnknownMemberType]
-        ),
-    )
-    task_factory = _bind_dependencies(
-        native_subagents._build_task_tool, create_sub_agent=subagent_factory
-    )
-    subagent_init = _bind_dependencies(
-        native_subagents.SubAgentMiddleware.__init__, _build_task_tool=task_factory
-    )
-    private_keys = native_subagents.SubAgentMiddleware.private_state_keys
-    assert private_keys.fset is not None
-    private_keys_setter = _bind_dependencies(
-        private_keys.fset, _build_task_tool=task_factory
-    )
-    subagent_middleware = type(
-        "SubAgentMiddleware",
-        (native_subagents.SubAgentMiddleware,),
-        {
-            "__init__": subagent_init,
-            "private_state_keys": private_keys.setter(private_keys_setter),
-        },
-    )
-    return _bind_dependencies(
-        factory,
-        create_agent=final_projection(source.__globals__["create_agent"]),
-        SubAgentMiddleware=subagent_middleware,
-    )
-
-
-def attachment_agent_factory(
-    factory: Callable[..., object],
-    signature: inspect.Signature,
-    support: AttachmentSupport,
-) -> Callable[..., object]:
-    """Install complete attachment-aware filesystem stacks at native build time."""
-
-    @wraps(factory)
-    def build(*args: object, **kwargs: object) -> object:
-        installed = {
-            package: version(package) for package in ("deepagents", "langchain")
-        }
-        if installed != {"deepagents": "0.7.5", "langchain": "1.3.14"}:
-            raise TinkerFinLifecycleError(
-                "Attachment access requires the locked Deep Agents middleware contract",
-                context=installed,
-            )
-        native_factory = _native_attachment_factory(factory, support)
-        bound = signature.bind(*args, **kwargs)
-        bound.apply_defaults()
-        arguments = bound.arguments
-        raw_model = arguments.get("model")
-        model = (
-            get_default_model()
-            if raw_model is None
-            else cast(str | BaseChatModel, raw_model)
-        )
-        if raw_model is None:
-            arguments["model"] = model
-        backend = cast(BackendProtocol, arguments.get("backend") or StateBackend())
-        arguments["backend"] = backend
-
-        def middleware_for(
-            values: object, destination: str | BaseChatModel, permissions: object
-        ) -> tuple[AgentMiddleware[Any, Any, Any], ...]:
-            middleware = list(cast(Sequence[AgentMiddleware[Any, Any, Any]], values))
-            existing = next(
-                (item for item in middleware if item.name == "FilesystemMiddleware"),
-                None,
-            )
-            if existing is None:
-                # Query the same profile without constructing a second provider
-                # client. Native graph construction resolves string models once.
-                profile = (
-                    _get_harness_profile(destination) or HarnessProfile()
-                    if isinstance(destination, str)
-                    else _harness_profile_for_model(destination, None)
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        return await handler(
+            request.override(
+                messages=await self._support._prepare_messages(
+                    request.messages, model=request.model
                 )
-                existing = FilesystemMiddleware(
-                    backend=backend,
-                    custom_tool_descriptions=profile.tool_description_overrides,
-                    _permissions=cast(list[FilesystemPermission] | None, permissions),
-                )
-                middleware.insert(0, existing)
-            return tuple(
-                attachment_filesystem(item, support) if item is existing else item
-                for item in middleware
             )
-
-        arguments["middleware"] = middleware_for(
-            arguments.get("middleware", ()),
-            cast(str | BaseChatModel, raw_model or model),
-            arguments.get("permissions"),
         )
-        subagents: list[dict[str, object]] = []
-        for original in cast(
-            Sequence[Mapping[str, object]], arguments.get("subagents") or ()
-        ):
-            spec = dict(original)
-            if "runnable" not in spec and "graph_id" not in spec:
-                spec["middleware"] = middleware_for(
-                    spec.get("middleware", ()),
-                    cast(str | BaseChatModel, spec.get("model", raw_model or model)),
-                    spec.get("permissions", arguments.get("permissions")),
-                )
-            subagents.append(spec)
-        arguments["subagents"] = subagents
-        return native_factory(*bound.args, **bound.kwargs)
 
-    return build
+
+__all__ = ["_AttachmentMiddleware", "attachment_filesystem"]

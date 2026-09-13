@@ -1,3 +1,4 @@
+import frameworkResume from '../../../../../../packages/tinkerfin/tests/fixtures/agui-history-resume.json'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { clearAuthSession, saveAuthSession } from '../../auth/session'
@@ -19,6 +20,7 @@ const page = (): TraceGraphPage => ({
   }],
   nodes: [
     {
+      agui: null,
       id: 'human-1',
       turnId: 'turn-1',
       parentSubagentId: null,
@@ -40,6 +42,7 @@ const page = (): TraceGraphPage => ({
       linkIssues: [],
     },
     {
+      agui: null,
       id: 'model-call',
       turnId: 'turn-1',
       parentSubagentId: null,
@@ -419,4 +422,23 @@ describe('Trace Graph client', () => {
       orderedNodeIds: ['human-1', 'model-call'],
     })).toThrow()
   })
+})
+
+
+it('图页和增量保留框架提供的关联，同时保持原生节点顺序和游标', () => {
+  const graph = frameworkResume.history.graph
+  const page = parseTraceGraphPage({ ...graph, nextCursor: 'opaque-next-page' })
+  const delta = parseTraceGraphDelta({
+    asOfSeq: graph.asOfSeq, nextCursor: 'opaque-next-page',
+    turnUpserts: graph.turns, turnRemoves: [], nodeUpserts: graph.nodes, nodeRemoves: [],
+    orderedNodeIds: graph.orderedNodeIds, matchedNodeIds: graph.matchedNodeIds, completeness: graph.completeness,
+  })
+  expect(page.nodes.map(node => node.agui)).toEqual(delta.nodeUpserts.map(node => node.agui))
+  expect(page.nodes.find(node => node.kind === 'tool')?.agui).toMatchObject({ kind: 'tool' })
+  expect(page.orderedNodeIds).toEqual(graph.orderedNodeIds)
+  expect(delta.orderedNodeIds).toEqual(graph.orderedNodeIds)
+  expect(page.nextCursor).toBe('opaque-next-page')
+  expect(delta.nextCursor).toBe('opaque-next-page')
+  const invalidNode = { ...graph.nodes.find(node => node.kind === 'tool'), agui: { kind: 'tool', toolCallId: 'valid', unknown: 'field' } }
+  expect(() => parseTraceGraphDelta({ ...delta, nodeUpserts: [invalidNode] })).toThrow('stream_event_invalid')
 })

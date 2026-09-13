@@ -38,7 +38,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Pass the Store to `TinkerFin().with_namespace(...).build(store=store, ...)` to
+Pass the Store to `TinkerFin(store=store).with_namespace(...).build(model=...)` to
 isolate memory by Runtime namespace. The caller owns the Engine. Closing the Store
 waits for accepted operations and does not close the Engine. Setup is automatic;
 `await store.setup()` can validate storage at application startup.

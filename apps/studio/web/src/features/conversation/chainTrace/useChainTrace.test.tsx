@@ -21,6 +21,7 @@ const page: TraceGraphPage = {
     startedAt: '2026-08-31T00:00:00Z',
   }],
   nodes: [{
+    agui: null,
     id: 'human-1',
     turnId: 'turn-1',
     parentSubagentId: null,

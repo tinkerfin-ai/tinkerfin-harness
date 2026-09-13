@@ -43,4 +43,4 @@ asyncio.run(main())
 
 持续对话复用同一个 `thread_id`，每次新输入使用新的 `run_id`。只有配置 checkpointer 后，thread 才会持久保存。
 
-下一步：[配置智能体与 Plan](deep-agents.md)。
+下一步：[配置智能体与 Plan](agent-configuration.md)。

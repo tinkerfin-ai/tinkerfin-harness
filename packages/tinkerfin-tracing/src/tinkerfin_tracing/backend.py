@@ -190,7 +190,14 @@ class StoredTraceGraphNode:
 
 @dataclass(frozen=True, slots=True)
 class TraceGraphQueryRequest:
-    """Select one stable page from the backend-maintained Graph index."""
+    """Select one stable page from the backend-maintained Graph index.
+
+    ``run_ids`` retains the complete selected lineage for resolving node facts.
+    ``started_run_ids`` optionally restricts direct matches to nodes whose real
+    start belongs to those Runs; it is a subset of ``run_ids``. Apply it after
+    merging logical nodes and before paging. Parent scopes still use the complete
+    lineage. None leaves starts unrestricted; an empty tuple selects no matches.
+    """
 
     key: TraceThreadKey
     run_ids: tuple[str, ...]
@@ -199,6 +206,7 @@ class TraceGraphQueryRequest:
     total_limit: int = 4000
     before_started_at: datetime | None = None
     before_node_id: str | None = None
+    started_run_ids: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         """Reject an incomplete or timezone-dependent backend cursor."""
@@ -213,6 +221,12 @@ class TraceGraphQueryRequest:
             )
         ):
             raise ValueError("Graph run lineage is invalid or exceeds 10000 Runs")
+        if self.started_run_ids is not None and (
+            not isinstance(self.started_run_ids, tuple)
+            or len(set(self.started_run_ids)) != len(self.started_run_ids)
+            or not set(self.started_run_ids) <= set(self.run_ids)
+        ):
+            raise ValueError("Graph start Runs must be a unique subset of its lineage")
         if isinstance(self.limit, bool) or not isinstance(self.limit, int):
             raise TypeError("Graph page limit must be an integer")
         if isinstance(self.total_limit, bool) or not isinstance(self.total_limit, int):

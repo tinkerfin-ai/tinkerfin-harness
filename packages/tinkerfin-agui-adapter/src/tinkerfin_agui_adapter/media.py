@@ -3,14 +3,37 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import cast
+from typing import Literal, cast
 
 from ag_ui.core import UserMessage
-from ag_ui.core.types import DocumentInputContent, ImageInputContent
+from ag_ui.core.types import (
+    AudioInputContent,
+    DocumentInputContent,
+    ImageInputContent,
+    VideoInputContent,
+)
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from tinkerfin_contracts.media import Attachment, attachment_from_block
+
+
+def _attachment_input_type(
+    attachment: Attachment,
+) -> Literal["image", "audio", "video", "document"]:
+    """Return the AG-UI fragment type for a durable file descriptor.
+
+    AG-UI uses document fragments for general files; this wire representation
+    does not assert that the file is a document or that a model can read it.
+    """
+    family = attachment.mime_type.partition("/")[0]
+    if family == "image":
+        return "image"
+    if family == "audio":
+        return "audio"
+    if family == "video":
+        return "video"
+    return "document"
 
 
 class MessageAttachments(BaseModel):
@@ -40,7 +63,7 @@ def content_attachments(content: object) -> list[dict[str, JsonValue]]:
 
 
 def user_message_to_langchain(message: UserMessage) -> HumanMessage:
-    """Convert standard AG-UI text/image/document input, retaining durable references.
+    """Convert AG-UI input while retaining durable file references.
 
     A source URI ``attachment:<id>`` requires an Attachment descriptor in metadata.
     The host must validate access before invoking an agent. Other source URIs are
@@ -52,13 +75,21 @@ def user_message_to_langchain(message: UserMessage) -> HumanMessage:
     for part in message.content:
         if part.type == "text":
             blocks.append({"type": "text", "text": part.text})
-        elif isinstance(part, (ImageInputContent, DocumentInputContent)):
+        elif isinstance(
+            part,
+            (
+                ImageInputContent,
+                AudioInputContent,
+                VideoInputContent,
+                DocumentInputContent,
+            ),
+        ):
             source = part.source
             if source.type == "url" and source.value.startswith("attachment:"):
                 attachment = Attachment.model_validate(part.metadata)
                 if (
                     source.value != f"attachment:{attachment.id}"
-                    or part.type != attachment.kind
+                    or part.type != _attachment_input_type(attachment)
                 ):
                     raise ValueError(
                         "attachment source and metadata must identify the same file"
@@ -79,7 +110,7 @@ def user_message_to_langchain(message: UserMessage) -> HumanMessage:
 
 
 def user_content_to_agui(content: object) -> str | list[dict[str, JsonValue]]:
-    """Project durable user blocks into standard AG-UI image/document fragments."""
+    """Project durable user blocks into standard AG-UI media fragments."""
     if isinstance(content, str):
         return content
     if not isinstance(content, list):
@@ -93,7 +124,7 @@ def user_content_to_agui(content: object) -> str | list[dict[str, JsonValue]]:
         if attachment is not None:
             result.append(
                 {
-                    "type": attachment.kind,
+                    "type": _attachment_input_type(attachment),
                     "source": {
                         "type": "url",
                         "value": f"attachment:{attachment.id}",

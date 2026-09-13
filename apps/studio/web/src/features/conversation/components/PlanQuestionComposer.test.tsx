@@ -45,6 +45,30 @@ describe('PlanQuestionComposer', () => {
   beforeEach(() => window.sessionStorage.clear())
   afterEach(() => vi.useRealTimers())
 
+  it.each(['single_choice', 'multiple_choice'] as const)('长英文标题和说明完整保留，%s 选择语义不变', (answerType) => {
+    const options = [
+      { id: 'greeter', label: 'Fixed entrance greeter on peak lunch shift: menu guidance and pickup-line flow control', description: 'Existing staff only; directly targets conversion.', recommended: true },
+      { id: 'upsell', label: 'Standard one-line upsell at order (large / add topping?)', description: 'Targets average ticket; keep base pricing unchanged.', recommended: false },
+      { id: 'unchanged', label: 'Keep current service', recommended: false },
+    ]
+    const base = { id: 'actions', prompt: 'Which practical actions should the pilot run?', required: true, options, allowFreeText: true }
+    let current: PlanQuestionState = { ...interaction(), questions: [answerType === 'single_choice'
+      ? { ...base, answerType }
+      : { ...base, answerType, minSelections: 1, maxSelections: 3, selectedOptionIds: [] }] }
+    const change = (updater: (value: PlanQuestionState) => PlanQuestionState) => { current = updater(current) }
+    const view = render(<PlanQuestionComposer threadId="business-actions" interaction={current} onChange={change} onSubmit={vi.fn()} />)
+    const role = answerType === 'single_choice' ? 'radio' : 'checkbox'
+    for (const option of options) {
+      expect(screen.getByRole(role, { name: new RegExp(option.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) })).toBeVisible()
+      if ('description' in option) expect(screen.getByText(option.description!)).toBeVisible()
+    }
+    fireEvent.click(screen.getByRole(role, { name: /^Fixed entrance greeter/ }))
+    view.rerender(<PlanQuestionComposer threadId="business-actions" interaction={current} onChange={change} onSubmit={vi.fn()} />)
+    expect(current.questions[0]).toMatchObject(answerType === 'single_choice'
+      ? { selectedOptionId: 'greeter' } : { selectedOptionIds: ['greeter'] })
+    expect(screen.getByRole(role, { name: /^Fixed entrance greeter/ })).toBeChecked()
+  })
+
   it('takes one question at a time and auto-advances after a selection', () => {
     let current = interaction()
     const change = (updater: (value: PlanQuestionState) => PlanQuestionState) => {

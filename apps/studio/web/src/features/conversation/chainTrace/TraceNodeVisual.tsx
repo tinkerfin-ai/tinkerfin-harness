@@ -5,6 +5,7 @@ import {
   elapsedMilliseconds,
   traceKindCompactLabel,
   traceNodePreview,
+  traceNodePreviewFallback,
   traceNodeName,
   traceVisualCategory,
 } from './tracePresentation'
@@ -13,15 +14,14 @@ export function TraceNodeCopy({
   node,
   showKind = true,
   showPreview = true,
-  previewFallback,
 }: {
   node: TraceGraphNode
   showKind?: boolean
   showPreview?: boolean
-  previewFallback?: string
 }) {
   const { t } = useI18n()
   const nodePreview = traceNodePreview(node)
+  const previewFallback = traceNodePreviewFallback(node, t)
   const preview = nodePreview || previewFallback || ''
   const fallbackPreview = !nodePreview && Boolean(previewFallback)
   const title = node.kind.endsWith('_message') || node.kind === 'context'

@@ -118,9 +118,11 @@ export function useAttachments(onError?: (message: string) => void) {
             'pdf',
             'docx',
             'xlsx',
+            'md',
+            'markdown',
           ].includes(ext)
         ) {
-          failure = '仅支持图片、PDF、DOCX 和 XLSX'
+          failure = '仅支持图片、Markdown、PDF、DOCX 和 XLSX'
           continue
         }
         if (

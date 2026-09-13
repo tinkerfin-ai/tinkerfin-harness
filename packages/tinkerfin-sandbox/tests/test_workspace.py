@@ -12,7 +12,7 @@ from test_lifecycle_notifications import _Recorder
 from test_manager import _FakeClient, _FakeState, _resource_key
 from test_pause_resume import _Client, _Remote
 
-from tinkerfin_contracts import AgentRunPreparation, PreparedWorkspace, RunIdentity
+from tinkerfin_contracts import PreparedWorkspace, RunIdentity
 from tinkerfin_sandbox import (
     InMemoryOpenSandboxState,
     OpenSandboxManager,
@@ -168,7 +168,7 @@ async def test_workspace_body_failure_releases_borrow_without_destroying_sandbox
         async with manager.workspace("owner").prepare(_identity()):
             entered.set()
             if failure == "error":
-                raise ValueError("tool preparation failed")
+                raise ValueError("workspace use failed")
             await asyncio.Event().wait()
 
     async with manager:
@@ -226,7 +226,6 @@ def test_preparation_values_are_immutable_and_keep_workspace_distinct() -> None:
     prepared = PreparedWorkspace(workspace, "backend", tool_descriptions=descriptions)
     descriptions.clear()
     assert prepared.tool_descriptions["execute"]
-    context = AgentRunPreparation(_identity(), workspace)
     with pytest.raises(FrozenInstanceError):
-        setattr(context, "workspace", Path("/other"))
-    assert context.workspace is workspace
+        setattr(prepared, "workspace", Path("/other"))
+    assert prepared.workspace is workspace

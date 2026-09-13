@@ -143,10 +143,24 @@ data. `require_valid_schema(...)` and `validate_json_schema_instance(...)` expos
 same generic validation boundary to framework integrations. The graph that emitted the
 envelope remains responsible for domain validation such as revision checks.
 
+## Exporting retained human-input requests
+
+`project_interrupt(native, tool_call_ids=..., source=...)` converts a retained
+native interrupt into the same public action contract used by live conversion.
+For Tool approval, pass the complete scoped Tool IDs already correlated in native
+action order. Runtime and generic interrupts do not take Tool IDs. The function
+preserves positional review policies and response schemas; it does not correlate
+messages, access checkpoints, or authorize a response.
+
+To read recorded conversations, use
+[AgUiHistory](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/runtime/api-reference.md#recorded-ag-ui-conversations)
+from `tinkerfin.agui`. Its snapshots and updates include the references used by live
+AG-UI messages and pending interactions.
+
 ## Durable attachment content
 
 `user_message_to_langchain()` from `tinkerfin_agui_adapter.media` converts text and
-image inputs into LangChain messages. A durable image or document uses the AG-UI
+attachment inputs into LangChain messages. A durable attachment uses the AG-UI
 `source.value` URI `attachment:<id>` and a validated Attachment descriptor in `metadata`.
 Hosts authorize the reference before invoking an agent. Snapshot conversion preserves
 these typed content fragments rather than serializing them into answer text.

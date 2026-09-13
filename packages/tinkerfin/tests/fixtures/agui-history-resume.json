@@ -1,0 +1,1634 @@
+{
+  "scenario": "Refresh during approval, approve the saved report, then fail delivery",
+  "dependencies": {
+    "deepagents": "0.7.13",
+    "langchain": "1.3.18",
+    "langgraph": "1.2.11",
+    "ag-ui-protocol": "0.1.19"
+  },
+  "wireEncoding": "tinkerfin_messaging.agui.AgUiCodec.encode",
+  "history": {
+    "namespace": "history",
+    "threadId": "report",
+    "generation": "c00cb60419ed4eb4b95674d609983544",
+    "asOfSeq": 17,
+    "observedAt": "2026-09-13T00:17:08.487287Z",
+    "headRunId": "request",
+    "availableHeads": [
+      "request"
+    ],
+    "historyCursor": null,
+    "state": {
+      "root": {
+        "files": {}
+      },
+      "subgraphs": {}
+    },
+    "messages": [
+      {
+        "id": "message:4f53cda18c2baa0c0354bb5f:user",
+        "traceSeq": 5,
+        "sourceId": "user",
+        "graphNamespace": [],
+        "runId": "request",
+        "role": "user",
+        "content": "Prepare report",
+        "contentOmitted": false,
+        "name": null,
+        "toolCallId": null,
+        "status": "completed",
+        "createdAt": "2026-09-13T00:17:08.458562Z",
+        "completedAt": "2026-09-13T00:17:08.458562Z",
+        "agui": {
+          "kind": "message",
+          "messageId": "tf:message:W1tdLCJ1c2VyIl0"
+        }
+      },
+      {
+        "id": "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
+        "traceSeq": 9,
+        "sourceId": "lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
+        "graphNamespace": [],
+        "runId": "request",
+        "role": "assistant",
+        "content": "",
+        "contentOmitted": false,
+        "name": null,
+        "toolCallId": null,
+        "status": "completed",
+        "createdAt": "2026-09-13T00:17:08.475218Z",
+        "completedAt": "2026-09-13T00:17:08.477707Z",
+        "agui": {
+          "kind": "message",
+          "messageId": "tf:message:W1tdLCJsY19ydW4tLTAxYTA5ODFmLWZkNzctNzU3MS05NDY3LWY0YWY0YjZmZTliYS0wIl0"
+        }
+      }
+    ],
+    "reasoning": [],
+    "graph": {
+      "turns": [
+        {
+          "id": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "ordinal": 1,
+          "startedAt": "2026-09-13T00:17:08.458154Z"
+        }
+      ],
+      "nodes": [
+        {
+          "id": "message:4f53cda18c2baa0c0354bb5f:user",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": null,
+          "kind": "human_message",
+          "status": "succeeded",
+          "name": "HumanMessage",
+          "runId": "request",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": null,
+          "model": null,
+          "sourceId": "user",
+          "startedAt": "2026-09-13T00:17:08.458562Z",
+          "firstOutputAt": null,
+          "completedAt": "2026-09-13T00:17:08.458562Z",
+          "startedSeq": 2,
+          "updatedSeq": 5,
+          "content": "Prepare report",
+          "contentOmitted": false,
+          "toolCallOnly": false,
+          "request": null,
+          "requestOmitted": false,
+          "result": null,
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": null
+        },
+        {
+          "id": "context:4f53cda18c2baa0c0354bb5f:model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": null,
+          "kind": "context",
+          "status": "succeeded",
+          "name": "Context",
+          "runId": "request",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": "_toolmodel",
+          "model": null,
+          "sourceId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+          "startedAt": "2026-09-13T00:17:08.458562Z",
+          "firstOutputAt": null,
+          "completedAt": "2026-09-13T00:17:08.471971Z",
+          "startedSeq": 7,
+          "updatedSeq": 7,
+          "content": null,
+          "contentOmitted": false,
+          "toolCallOnly": false,
+          "request": null,
+          "requestOmitted": false,
+          "result": null,
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": null
+        },
+        {
+          "id": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": null,
+          "kind": "model",
+          "status": "succeeded",
+          "name": "Model",
+          "runId": "request",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": "_toolmodel",
+          "model": null,
+          "sourceId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+          "startedAt": "2026-09-13T00:17:08.471971Z",
+          "firstOutputAt": null,
+          "completedAt": "2026-09-13T00:17:08.474778Z",
+          "startedSeq": 7,
+          "updatedSeq": 8,
+          "content": null,
+          "contentOmitted": false,
+          "toolCallOnly": false,
+          "request": {
+            "messages": [
+              {
+                "messageType": "human",
+                "id": "user",
+                "name": null,
+                "content": "Prepare report",
+                "toolCalls": [],
+                "toolCallChunks": [],
+                "toolCallId": null,
+                "toolStatus": null,
+                "responseMetadata": {},
+                "usageMetadata": null
+              }
+            ],
+            "invocation": {
+              "_type": "fake-messages-list-chat-model",
+              "stop": null
+            },
+            "options": {
+              "stop": null
+            }
+          },
+          "requestOmitted": false,
+          "result": null,
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": null
+        },
+        {
+          "id": "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+          "kind": "assistant_message",
+          "status": "succeeded",
+          "name": "AssistantMessage",
+          "runId": "request",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": null,
+          "model": null,
+          "sourceId": "lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
+          "startedAt": "2026-09-13T00:17:08.474778Z",
+          "firstOutputAt": null,
+          "completedAt": "2026-09-13T00:17:08.477707Z",
+          "startedSeq": 8,
+          "updatedSeq": 14,
+          "content": "",
+          "contentOmitted": false,
+          "toolCallOnly": true,
+          "request": null,
+          "requestOmitted": false,
+          "result": null,
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": null
+        },
+        {
+          "id": "tool:4f53cda18c2baa0c0354bb5f:save-call",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+          "kind": "tool",
+          "status": "waiting",
+          "name": "save_report",
+          "runId": "request",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": null,
+          "model": null,
+          "sourceId": "save-call",
+          "startedAt": "2026-09-13T00:17:08.475218Z",
+          "firstOutputAt": null,
+          "completedAt": null,
+          "startedSeq": 11,
+          "updatedSeq": 12,
+          "content": null,
+          "contentOmitted": false,
+          "toolCallOnly": false,
+          "request": {},
+          "requestOmitted": false,
+          "result": null,
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": {
+            "kind": "tool",
+            "toolCallId": "tf:tool:W1tdLCJzYXZlLWNhbGwiXQ"
+          }
+        },
+        {
+          "id": "interaction:4f53cda18c2baa0c0354bb5f:1ff929c657bf56a0857a637f38370787",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": null,
+          "kind": "interaction",
+          "status": "waiting",
+          "name": "tool_approval",
+          "runId": "request",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": null,
+          "model": null,
+          "sourceId": "1ff929c657bf56a0857a637f38370787",
+          "startedAt": "2026-09-13T00:17:08.479529Z",
+          "firstOutputAt": null,
+          "completedAt": null,
+          "startedSeq": 15,
+          "updatedSeq": 15,
+          "content": null,
+          "contentOmitted": false,
+          "toolCallOnly": false,
+          "request": null,
+          "requestOmitted": false,
+          "result": {
+            "review_configs": [
+              {
+                "action_name": "save_report",
+                "allowed_decisions": [
+                  "approve",
+                  "edit",
+                  "reject",
+                  "respond"
+                ]
+              }
+            ],
+            "action_requests": [
+              {
+                "name": "save_report",
+                "arguments": {
+                  "disposition": "inline",
+                  "safeSizeBytes": 2,
+                  "value": {},
+                  "reason": null
+                },
+                "arguments_retention": "full",
+                "description": "Tool execution requires approval\n\nTool: save_report\nArgs: {}"
+              }
+            ]
+          },
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": null
+        }
+      ],
+      "orderedNodeIds": [
+        "message:4f53cda18c2baa0c0354bb5f:user",
+        "context:4f53cda18c2baa0c0354bb5f:model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+        "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+        "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
+        "tool:4f53cda18c2baa0c0354bb5f:save-call",
+        "interaction:4f53cda18c2baa0c0354bb5f:1ff929c657bf56a0857a637f38370787"
+      ],
+      "matchedNodeIds": [
+        "message:4f53cda18c2baa0c0354bb5f:user",
+        "context:4f53cda18c2baa0c0354bb5f:model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+        "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+        "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
+        "tool:4f53cda18c2baa0c0354bb5f:save-call",
+        "interaction:4f53cda18c2baa0c0354bb5f:1ff929c657bf56a0857a637f38370787"
+      ],
+      "asOfSeq": 17,
+      "completeness": {
+        "callTrackingMissing": false,
+        "relationshipEvidenceMissing": false,
+        "detailsOmitted": false
+      }
+    },
+    "interactions": [
+      {
+        "id": "interaction:4f53cda18c2baa0c0354bb5f:1ff929c657bf56a0857a637f38370787",
+        "traceSeq": 15,
+        "sourceId": "1ff929c657bf56a0857a637f38370787",
+        "graphNamespace": [],
+        "runId": "request",
+        "kind": "tool_approval",
+        "toolCallIds": [
+          "save-call"
+        ],
+        "status": "pending",
+        "payload": {
+          "action_requests": [
+            {
+              "arguments": {
+                "disposition": "inline",
+                "reason": null,
+                "safeSizeBytes": 2,
+                "value": {}
+              },
+              "arguments_retention": "full",
+              "description": "Tool execution requires approval\n\nTool: save_report\nArgs: {}",
+              "name": "save_report"
+            }
+          ],
+          "review_configs": [
+            {
+              "action_name": "save_report",
+              "allowed_decisions": [
+                "approve",
+                "edit",
+                "reject",
+                "respond"
+              ]
+            }
+          ]
+        },
+        "payloadOmitted": false,
+        "openedAt": "2026-09-13T00:17:08.479529Z",
+        "resolvedAt": null,
+        "agui": [
+          {
+            "id": "1ff929c657bf56a0857a637f38370787",
+            "reason": "tool_call",
+            "message": "Tool execution requires approval\n\nTool: save_report\nArgs: {}",
+            "toolCallId": "tf:tool:W1tdLCJzYXZlLWNhbGwiXQ",
+            "responseSchema": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "approve"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "edit"
+                    },
+                    "edited_action": {
+                      "type": "object",
+                      "required": [
+                        "name",
+                        "args"
+                      ],
+                      "properties": {
+                        "name": {
+                          "const": "save_report"
+                        },
+                        "args": {
+                          "type": "object"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "edited_action"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "reject"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "respond"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "expiresAt": null,
+            "metadata": {
+              "langgraphValue": {
+                "action_requests": [
+                  {
+                    "description": "Tool execution requires approval\n\nTool: save_report\nArgs: {}",
+                    "name": "save_report",
+                    "args": {}
+                  }
+                ],
+                "review_configs": [
+                  {
+                    "action_name": "save_report",
+                    "allowed_decisions": [
+                      "approve",
+                      "edit",
+                      "reject",
+                      "respond"
+                    ]
+                  }
+                ]
+              },
+              "source": {
+                "graphNamespace": []
+              },
+              "deepagents": {
+                "schema": "tinkerfin.deepagents.tool-review",
+                "nativeInterruptId": "1ff929c657bf56a0857a637f38370787",
+                "actionIndex": 0,
+                "toolName": "save_report",
+                "allowedDecisions": [
+                  "approve",
+                  "edit",
+                  "reject",
+                  "respond"
+                ],
+                "originalArgs": {}
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "status": {
+        "execution": "waiting",
+        "headRunId": "request"
+      },
+      "completeness": {
+        "missingPrefix": false,
+        "missingTail": false,
+        "payloadOmitted": false
+      },
+      "messageCount": 2,
+      "toolCallCount": 1,
+      "pendingInteractions": [
+        {
+          "id": "interaction:4f53cda18c2baa0c0354bb5f:1ff929c657bf56a0857a637f38370787",
+          "traceSeq": 15,
+          "sourceId": "1ff929c657bf56a0857a637f38370787",
+          "graphNamespace": [],
+          "runId": "request",
+          "kind": "tool_approval",
+          "toolCallIds": [
+            "save-call"
+          ],
+          "status": "pending",
+          "payload": {
+            "action_requests": [
+              {
+                "arguments": {
+                  "disposition": "inline",
+                  "reason": null,
+                  "safeSizeBytes": 2,
+                  "value": {}
+                },
+                "arguments_retention": "full",
+                "description": "Tool execution requires approval\n\nTool: save_report\nArgs: {}",
+                "name": "save_report"
+              }
+            ],
+            "review_configs": [
+              {
+                "action_name": "save_report",
+                "allowed_decisions": [
+                  "approve",
+                  "edit",
+                  "reject",
+                  "respond"
+                ]
+              }
+            ]
+          },
+          "payloadOmitted": false,
+          "openedAt": "2026-09-13T00:17:08.479529Z",
+          "resolvedAt": null,
+          "agui": [
+            {
+              "id": "1ff929c657bf56a0857a637f38370787",
+              "reason": "tool_call",
+              "message": "Tool execution requires approval\n\nTool: save_report\nArgs: {}",
+              "toolCallId": "tf:tool:W1tdLCJzYXZlLWNhbGwiXQ",
+              "responseSchema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "approve"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "edit"
+                      },
+                      "edited_action": {
+                        "type": "object",
+                        "required": [
+                          "name",
+                          "args"
+                        ],
+                        "properties": {
+                          "name": {
+                            "const": "save_report"
+                          },
+                          "args": {
+                            "type": "object"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "edited_action"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "reject"
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "respond"
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "message"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "expiresAt": null,
+              "metadata": {
+                "langgraphValue": {
+                  "action_requests": [
+                    {
+                      "description": "Tool execution requires approval\n\nTool: save_report\nArgs: {}",
+                      "name": "save_report",
+                      "args": {}
+                    }
+                  ],
+                  "review_configs": [
+                    {
+                      "action_name": "save_report",
+                      "allowed_decisions": [
+                        "approve",
+                        "edit",
+                        "reject",
+                        "respond"
+                      ]
+                    }
+                  ]
+                },
+                "source": {
+                  "graphNamespace": []
+                },
+                "deepagents": {
+                  "schema": "tinkerfin.deepagents.tool-review",
+                  "nativeInterruptId": "1ff929c657bf56a0857a637f38370787",
+                  "actionIndex": 0,
+                  "toolName": "save_report",
+                  "allowedDecisions": [
+                    "approve",
+                    "edit",
+                    "reject",
+                    "respond"
+                  ],
+                  "originalArgs": {}
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "lastOccurredAt": "2026-09-13T00:17:08.485431Z"
+    }
+  },
+  "initialEvents": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "report",
+      "runId": "request"
+    },
+    {
+      "type": "STATE_SNAPSHOT",
+      "rawEvent": {
+        "streamMode": "values",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "request"
+      },
+      "snapshot": {
+        "files": {}
+      }
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "request",
+        "langgraphNode": "model"
+      },
+      "toolCallId": "tf:tool:W1tdLCJzYXZlLWNhbGwiXQ",
+      "toolCallName": "save_report",
+      "parentMessageId": "tf:message:W1tdLCJsY19ydW4tLTAxYTA5ODFmLWZkNzctNzU3MS05NDY3LWY0YWY0YjZmZTliYS0wIl0"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "request",
+        "langgraphNode": "model"
+      },
+      "toolCallId": "tf:tool:W1tdLCJzYXZlLWNhbGwiXQ",
+      "delta": "{}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "request",
+        "langgraphNode": "model"
+      },
+      "toolCallId": "tf:tool:W1tdLCJzYXZlLWNhbGwiXQ"
+    },
+    {
+      "type": "STATE_SNAPSHOT",
+      "rawEvent": {
+        "streamMode": "values",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "request"
+      },
+      "snapshot": {
+        "files": {}
+      }
+    },
+    {
+      "type": "MESSAGES_SNAPSHOT",
+      "rawEvent": {
+        "streamMode": "values",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "request"
+      },
+      "messages": [
+        {
+          "id": "tf:message:W1tdLCJ1c2VyIl0",
+          "role": "user",
+          "content": "Prepare report"
+        },
+        {
+          "id": "tf:message:W1tdLCJsY19ydW4tLTAxYTA5ODFmLWZkNzctNzU3MS05NDY3LWY0YWY0YjZmZTliYS0wIl0",
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "tf:tool:W1tdLCJzYXZlLWNhbGwiXQ",
+              "type": "function",
+              "function": {
+                "name": "save_report",
+                "arguments": "{}"
+              }
+            }
+          ],
+          "attachments": [],
+          "additional_kwargs": {},
+          "response_metadata": {}
+        }
+      ]
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "report",
+      "runId": "request",
+      "outcome": {
+        "type": "interrupt",
+        "interrupts": [
+          {
+            "id": "1ff929c657bf56a0857a637f38370787",
+            "reason": "tool_call",
+            "message": "Tool execution requires approval\n\nTool: save_report\nArgs: {}",
+            "toolCallId": "tf:tool:W1tdLCJzYXZlLWNhbGwiXQ",
+            "responseSchema": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "approve"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "edit"
+                    },
+                    "edited_action": {
+                      "type": "object",
+                      "required": [
+                        "name",
+                        "args"
+                      ],
+                      "properties": {
+                        "name": {
+                          "const": "save_report"
+                        },
+                        "args": {
+                          "type": "object"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "edited_action"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "reject"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "respond"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "metadata": {
+              "langgraphValue": {
+                "action_requests": [
+                  {
+                    "name": "save_report",
+                    "args": {},
+                    "description": "Tool execution requires approval\n\nTool: save_report\nArgs: {}"
+                  }
+                ],
+                "review_configs": [
+                  {
+                    "action_name": "save_report",
+                    "allowed_decisions": [
+                      "approve",
+                      "edit",
+                      "reject",
+                      "respond"
+                    ]
+                  }
+                ]
+              },
+              "source": {
+                "kind": "root",
+                "graphNamespace": [],
+                "parentGraphNamespace": null,
+                "graphTaskId": null,
+                "nodeName": null,
+                "agentType": "main",
+                "agentName": "main",
+                "parentToolCallId": null,
+                "subagentInput": null,
+                "subagentInvocationId": null
+              },
+              "deepagents": {
+                "schema": "tinkerfin.deepagents.tool-review",
+                "nativeInterruptId": "1ff929c657bf56a0857a637f38370787",
+                "actionIndex": 0,
+                "toolName": "save_report",
+                "allowedDecisions": [
+                  "approve",
+                  "edit",
+                  "reject",
+                  "respond"
+                ],
+                "originalArgs": {}
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "resumedEvents": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "report",
+      "runId": "resume"
+    },
+    {
+      "type": "STATE_SNAPSHOT",
+      "rawEvent": {
+        "streamMode": "values",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "resume"
+      },
+      "snapshot": {
+        "files": {}
+      }
+    },
+    {
+      "type": "TOOL_CALL_RESULT",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "resume",
+        "langgraphNode": "tools",
+        "toolResultStatus": "success"
+      },
+      "messageId": "tf:message:W1tdLCI1MDg4YWU4My02OGU5LTRkYWItYWQ0OC01N2U5NmE0MzNkNTYiXQ",
+      "toolCallId": "tf:tool:W1tdLCJzYXZlLWNhbGwiXQ",
+      "content": "Report saved",
+      "role": "tool",
+      "attachments": []
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "resume",
+        "langgraphNode": "model"
+      },
+      "toolCallId": "tf:tool:W1tdLCJkZWxpdmVyeS1jYWxsIl0",
+      "toolCallName": "fail_delivery",
+      "parentMessageId": "tf:message:W1tdLCJsY19ydW4tLTAxYTA5ODFmLWZkYjQtNzM0MS04MWU3LTBlZDcxYWIxMTg4ZC0wIl0"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "resume",
+        "langgraphNode": "model"
+      },
+      "toolCallId": "tf:tool:W1tdLCJkZWxpdmVyeS1jYWxsIl0",
+      "delta": "{}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "rawEvent": {
+        "streamMode": "messages",
+        "source": {
+          "kind": "root",
+          "graphNamespace": [],
+          "agentType": "main",
+          "agentName": "main"
+        },
+        "runId": "resume",
+        "langgraphNode": "model"
+      },
+      "toolCallId": "tf:tool:W1tdLCJkZWxpdmVyeS1jYWxsIl0"
+    },
+    {
+      "type": "RUN_ERROR",
+      "rawEvent": {
+        "threadId": "report",
+        "runId": "resume"
+      },
+      "message": "Agent run failed",
+      "code": "runtime_error"
+    }
+  ],
+  "finalHistory": {
+    "namespace": "history",
+    "threadId": "report",
+    "generation": "c00cb60419ed4eb4b95674d609983544",
+    "asOfSeq": 40,
+    "observedAt": "2026-09-13T00:17:08.554217Z",
+    "headRunId": "resume",
+    "availableHeads": [
+      "resume"
+    ],
+    "historyCursor": null,
+    "state": {
+      "root": {
+        "files": {}
+      },
+      "subgraphs": {}
+    },
+    "messages": [
+      {
+        "id": "message:4f53cda18c2baa0c0354bb5f:user",
+        "traceSeq": 5,
+        "sourceId": "user",
+        "graphNamespace": [],
+        "runId": "request",
+        "role": "user",
+        "content": "Prepare report",
+        "contentOmitted": false,
+        "name": null,
+        "toolCallId": null,
+        "status": "completed",
+        "createdAt": "2026-09-13T00:17:08.458562Z",
+        "completedAt": "2026-09-13T00:17:08.458562Z",
+        "agui": {
+          "kind": "message",
+          "messageId": "tf:message:W1tdLCJ1c2VyIl0"
+        }
+      },
+      {
+        "id": "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
+        "traceSeq": 9,
+        "sourceId": "lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
+        "graphNamespace": [],
+        "runId": "request",
+        "role": "assistant",
+        "content": "",
+        "contentOmitted": false,
+        "name": null,
+        "toolCallId": null,
+        "status": "completed",
+        "createdAt": "2026-09-13T00:17:08.475218Z",
+        "completedAt": "2026-09-13T00:17:08.477707Z",
+        "agui": {
+          "kind": "message",
+          "messageId": "tf:message:W1tdLCJsY19ydW4tLTAxYTA5ODFmLWZkNzctNzU3MS05NDY3LWY0YWY0YjZmZTliYS0wIl0"
+        }
+      },
+      {
+        "id": "message:4f53cda18c2baa0c0354bb5f:5088ae83-68e9-4dab-ad48-57e96a433d56",
+        "traceSeq": 25,
+        "sourceId": "5088ae83-68e9-4dab-ad48-57e96a433d56",
+        "graphNamespace": [],
+        "runId": "resume",
+        "role": "tool",
+        "content": "Report saved",
+        "contentOmitted": false,
+        "name": "save_report",
+        "toolCallId": "save-call",
+        "status": "completed",
+        "createdAt": "2026-09-13T00:17:08.525694Z",
+        "completedAt": "2026-09-13T00:17:08.527217Z",
+        "agui": {
+          "kind": "tool_message",
+          "messageId": "tf:message:W1tdLCI1MDg4YWU4My02OGU5LTRkYWItYWQ0OC01N2U5NmE0MzNkNTYiXQ",
+          "toolCallId": "tf:tool:W1tdLCJzYXZlLWNhbGwiXQ"
+        }
+      },
+      {
+        "id": "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fdb4-7341-81e7-0ed71ab1188d-0",
+        "traceSeq": 31,
+        "sourceId": "lc_run--01a0981f-fdb4-7341-81e7-0ed71ab1188d-0",
+        "graphNamespace": [],
+        "runId": "resume",
+        "role": "assistant",
+        "content": "",
+        "contentOmitted": false,
+        "name": null,
+        "toolCallId": null,
+        "status": "completed",
+        "createdAt": "2026-09-13T00:17:08.537710Z",
+        "completedAt": "2026-09-13T00:17:08.540053Z",
+        "agui": {
+          "kind": "message",
+          "messageId": "tf:message:W1tdLCJsY19ydW4tLTAxYTA5ODFmLWZkYjQtNzM0MS04MWU3LTBlZDcxYWIxMTg4ZC0wIl0"
+        }
+      }
+    ],
+    "reasoning": [],
+    "graph": {
+      "turns": [
+        {
+          "id": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "ordinal": 1,
+          "startedAt": "2026-09-13T00:17:08.458154Z"
+        }
+      ],
+      "nodes": [
+        {
+          "id": "message:4f53cda18c2baa0c0354bb5f:user",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": null,
+          "kind": "human_message",
+          "status": "succeeded",
+          "name": "HumanMessage",
+          "runId": "request",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": null,
+          "model": null,
+          "sourceId": "user",
+          "startedAt": "2026-09-13T00:17:08.458562Z",
+          "firstOutputAt": null,
+          "completedAt": "2026-09-13T00:17:08.458562Z",
+          "startedSeq": 2,
+          "updatedSeq": 5,
+          "content": "Prepare report",
+          "contentOmitted": false,
+          "toolCallOnly": false,
+          "request": null,
+          "requestOmitted": false,
+          "result": null,
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": null
+        },
+        {
+          "id": "context:4f53cda18c2baa0c0354bb5f:model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": null,
+          "kind": "context",
+          "status": "succeeded",
+          "name": "Context",
+          "runId": "request",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": "_toolmodel",
+          "model": null,
+          "sourceId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+          "startedAt": "2026-09-13T00:17:08.458562Z",
+          "firstOutputAt": null,
+          "completedAt": "2026-09-13T00:17:08.471971Z",
+          "startedSeq": 7,
+          "updatedSeq": 7,
+          "content": null,
+          "contentOmitted": false,
+          "toolCallOnly": false,
+          "request": null,
+          "requestOmitted": false,
+          "result": null,
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": null
+        },
+        {
+          "id": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": null,
+          "kind": "model",
+          "status": "succeeded",
+          "name": "Model",
+          "runId": "request",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": "_toolmodel",
+          "model": null,
+          "sourceId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+          "startedAt": "2026-09-13T00:17:08.471971Z",
+          "firstOutputAt": null,
+          "completedAt": "2026-09-13T00:17:08.474778Z",
+          "startedSeq": 7,
+          "updatedSeq": 8,
+          "content": null,
+          "contentOmitted": false,
+          "toolCallOnly": false,
+          "request": {
+            "messages": [
+              {
+                "messageType": "human",
+                "id": "user",
+                "name": null,
+                "content": "Prepare report",
+                "toolCalls": [],
+                "toolCallChunks": [],
+                "toolCallId": null,
+                "toolStatus": null,
+                "responseMetadata": {},
+                "usageMetadata": null
+              }
+            ],
+            "invocation": {
+              "_type": "fake-messages-list-chat-model",
+              "stop": null
+            },
+            "options": {
+              "stop": null
+            }
+          },
+          "requestOmitted": false,
+          "result": null,
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": null
+        },
+        {
+          "id": "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+          "kind": "assistant_message",
+          "status": "succeeded",
+          "name": "AssistantMessage",
+          "runId": "request",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": null,
+          "model": null,
+          "sourceId": "lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
+          "startedAt": "2026-09-13T00:17:08.474778Z",
+          "firstOutputAt": null,
+          "completedAt": "2026-09-13T00:17:08.477707Z",
+          "startedSeq": 8,
+          "updatedSeq": 14,
+          "content": "",
+          "contentOmitted": false,
+          "toolCallOnly": true,
+          "request": null,
+          "requestOmitted": false,
+          "result": null,
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": null
+        },
+        {
+          "id": "interaction:4f53cda18c2baa0c0354bb5f:1ff929c657bf56a0857a637f38370787",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": null,
+          "kind": "interaction",
+          "status": "succeeded",
+          "name": "tool_approval",
+          "runId": "resume",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": null,
+          "model": null,
+          "sourceId": "1ff929c657bf56a0857a637f38370787",
+          "startedAt": "2026-09-13T00:17:08.479529Z",
+          "firstOutputAt": null,
+          "completedAt": "2026-09-13T00:17:08.507847Z",
+          "startedSeq": 15,
+          "updatedSeq": 21,
+          "content": null,
+          "contentOmitted": false,
+          "toolCallOnly": false,
+          "request": null,
+          "requestOmitted": false,
+          "result": {
+            "decision": "approve"
+          },
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": null
+        },
+        {
+          "id": "tool:4f53cda18c2baa0c0354bb5f:save-call",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+          "kind": "tool",
+          "status": "succeeded",
+          "name": "save_report",
+          "runId": "resume",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": null,
+          "model": null,
+          "sourceId": "save-call",
+          "startedAt": "2026-09-13T00:17:08.522368Z",
+          "firstOutputAt": null,
+          "completedAt": "2026-09-13T00:17:08.525694Z",
+          "startedSeq": 23,
+          "updatedSeq": 26,
+          "content": null,
+          "contentOmitted": false,
+          "toolCallOnly": false,
+          "request": {},
+          "requestOmitted": false,
+          "result": "Report saved",
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": {
+            "kind": "tool",
+            "toolCallId": "tf:tool:W1tdLCJzYXZlLWNhbGwiXQ"
+          }
+        },
+        {
+          "id": "context:4f53cda18c2baa0c0354bb5f:model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fdb4-7341-81e7-0ed71ab1188d",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": null,
+          "kind": "context",
+          "status": "succeeded",
+          "name": "Context",
+          "runId": "resume",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": "_toolmodel",
+          "model": null,
+          "sourceId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fdb4-7341-81e7-0ed71ab1188d",
+          "startedAt": "2026-09-13T00:17:08.527217Z",
+          "firstOutputAt": null,
+          "completedAt": "2026-09-13T00:17:08.532987Z",
+          "startedSeq": 29,
+          "updatedSeq": 29,
+          "content": null,
+          "contentOmitted": false,
+          "toolCallOnly": false,
+          "request": null,
+          "requestOmitted": false,
+          "result": null,
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": null
+        },
+        {
+          "id": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fdb4-7341-81e7-0ed71ab1188d",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": null,
+          "kind": "model",
+          "status": "succeeded",
+          "name": "Model",
+          "runId": "resume",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": "_toolmodel",
+          "model": null,
+          "sourceId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fdb4-7341-81e7-0ed71ab1188d",
+          "startedAt": "2026-09-13T00:17:08.532987Z",
+          "firstOutputAt": null,
+          "completedAt": "2026-09-13T00:17:08.537146Z",
+          "startedSeq": 29,
+          "updatedSeq": 30,
+          "content": null,
+          "contentOmitted": false,
+          "toolCallOnly": false,
+          "request": {
+            "messages": [
+              {
+                "messageType": "human",
+                "id": "user",
+                "name": null,
+                "content": "Prepare report",
+                "toolCalls": [],
+                "toolCallChunks": [],
+                "toolCallId": null,
+                "toolStatus": null,
+                "responseMetadata": {},
+                "usageMetadata": null
+              },
+              {
+                "messageType": "assistant",
+                "id": "lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
+                "name": null,
+                "content": "",
+                "toolCalls": [
+                  {
+                    "id": "save-call",
+                    "name": "save_report",
+                    "arguments": {}
+                  }
+                ],
+                "toolCallChunks": [],
+                "toolCallId": null,
+                "toolStatus": null,
+                "responseMetadata": {},
+                "usageMetadata": null
+              },
+              {
+                "messageType": "tool",
+                "id": "5088ae83-68e9-4dab-ad48-57e96a433d56",
+                "name": "save_report",
+                "content": "Report saved",
+                "toolCalls": [],
+                "toolCallChunks": [],
+                "toolCallId": "save-call",
+                "toolStatus": "success",
+                "responseMetadata": {},
+                "usageMetadata": null
+              }
+            ],
+            "invocation": {
+              "_type": "fake-messages-list-chat-model",
+              "stop": null
+            },
+            "options": {
+              "stop": null
+            }
+          },
+          "requestOmitted": false,
+          "result": null,
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": null
+        },
+        {
+          "id": "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fdb4-7341-81e7-0ed71ab1188d-0",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fdb4-7341-81e7-0ed71ab1188d",
+          "kind": "assistant_message",
+          "status": "succeeded",
+          "name": "AssistantMessage",
+          "runId": "resume",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": null,
+          "model": null,
+          "sourceId": "lc_run--01a0981f-fdb4-7341-81e7-0ed71ab1188d-0",
+          "startedAt": "2026-09-13T00:17:08.537146Z",
+          "firstOutputAt": null,
+          "completedAt": "2026-09-13T00:17:08.540053Z",
+          "startedSeq": 30,
+          "updatedSeq": 36,
+          "content": "",
+          "contentOmitted": false,
+          "toolCallOnly": true,
+          "request": null,
+          "requestOmitted": false,
+          "result": null,
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": null,
+          "linkIssues": [],
+          "agui": null
+        },
+        {
+          "id": "tool:4f53cda18c2baa0c0354bb5f:delivery-call",
+          "turnId": "turn:c00cb60419ed4eb4b95674d609983544:request",
+          "parentSubagentId": null,
+          "modelCallId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fdb4-7341-81e7-0ed71ab1188d",
+          "kind": "tool",
+          "status": "failed",
+          "name": "fail_delivery",
+          "runId": "resume",
+          "graphNamespace": [],
+          "agentName": null,
+          "provider": null,
+          "model": null,
+          "sourceId": "delivery-call",
+          "startedAt": "2026-09-13T00:17:08.543691Z",
+          "firstOutputAt": null,
+          "completedAt": "2026-09-13T00:17:08.547355Z",
+          "startedSeq": 37,
+          "updatedSeq": 38,
+          "content": null,
+          "contentOmitted": false,
+          "toolCallOnly": false,
+          "request": {},
+          "requestOmitted": false,
+          "result": null,
+          "resultOmitted": false,
+          "usage": null,
+          "responseMetadata": null,
+          "failure": {
+            "errorType": "builtins.ValueError",
+            "message": null
+          },
+          "linkIssues": [],
+          "agui": {
+            "kind": "tool",
+            "toolCallId": "tf:tool:W1tdLCJkZWxpdmVyeS1jYWxsIl0"
+          }
+        }
+      ],
+      "orderedNodeIds": [
+        "message:4f53cda18c2baa0c0354bb5f:user",
+        "context:4f53cda18c2baa0c0354bb5f:model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+        "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+        "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
+        "interaction:4f53cda18c2baa0c0354bb5f:1ff929c657bf56a0857a637f38370787",
+        "tool:4f53cda18c2baa0c0354bb5f:save-call",
+        "context:4f53cda18c2baa0c0354bb5f:model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fdb4-7341-81e7-0ed71ab1188d",
+        "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fdb4-7341-81e7-0ed71ab1188d",
+        "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fdb4-7341-81e7-0ed71ab1188d-0",
+        "tool:4f53cda18c2baa0c0354bb5f:delivery-call"
+      ],
+      "matchedNodeIds": [
+        "message:4f53cda18c2baa0c0354bb5f:user",
+        "context:4f53cda18c2baa0c0354bb5f:model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+        "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+        "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
+        "interaction:4f53cda18c2baa0c0354bb5f:1ff929c657bf56a0857a637f38370787",
+        "tool:4f53cda18c2baa0c0354bb5f:save-call",
+        "context:4f53cda18c2baa0c0354bb5f:model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fdb4-7341-81e7-0ed71ab1188d",
+        "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fdb4-7341-81e7-0ed71ab1188d",
+        "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fdb4-7341-81e7-0ed71ab1188d-0",
+        "tool:4f53cda18c2baa0c0354bb5f:delivery-call"
+      ],
+      "asOfSeq": 40,
+      "completeness": {
+        "callTrackingMissing": false,
+        "relationshipEvidenceMissing": false,
+        "detailsOmitted": false
+      }
+    },
+    "interactions": [
+      {
+        "id": "interaction:4f53cda18c2baa0c0354bb5f:1ff929c657bf56a0857a637f38370787",
+        "traceSeq": 15,
+        "sourceId": "1ff929c657bf56a0857a637f38370787",
+        "graphNamespace": [],
+        "runId": "resume",
+        "kind": "tool_approval",
+        "toolCallIds": [
+          "save-call"
+        ],
+        "status": "resolved",
+        "payload": {
+          "decision": "approve"
+        },
+        "payloadOmitted": false,
+        "openedAt": "2026-09-13T00:17:08.479529Z",
+        "resolvedAt": "2026-09-13T00:17:08.507847Z",
+        "agui": []
+      }
+    ],
+    "summary": {
+      "status": {
+        "execution": "failed",
+        "headRunId": "resume"
+      },
+      "completeness": {
+        "missingPrefix": false,
+        "missingTail": false,
+        "payloadOmitted": false
+      },
+      "messageCount": 3,
+      "toolCallCount": 2,
+      "pendingInteractions": [],
+      "lastOccurredAt": "2026-09-13T00:17:08.551948Z"
+    }
+  }
+}

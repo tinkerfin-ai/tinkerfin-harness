@@ -6,6 +6,7 @@ export {
   buildResumePayload,
   createRunId,
   markConversationDetached,
-  planInteractionFromTracePayload,
+  approvalItemsFromInterrupts,
+  planInteractionFromInterrupts,
   prepareResumeSubmission,
 } from "./runtime"

@@ -1,3 +1,4 @@
+import { toolReviewInterrupts } from './test/aguiFixtures'
 import { StrictMode, useCallback, useEffect, useState } from 'react'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -108,6 +109,7 @@ const traceDetail = (
   messageCount: 1,
   toolCallCount: 0,
   messages: [{
+    agui: null,
     id: 'message-history',
     traceSeq: 1,
     sourceId: 'assistant-history',
@@ -578,7 +580,7 @@ describe('Studio Trace history integration', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('restores a saved run once and keeps exhausted automatic recovery stopped across page renders', async () => {
+  it('刷新后已受理的运行只跟随历史，断连和主动恢复都不重新提交', async () => {
     const user = userEvent.setup()
     const payload: ChatRequestPayload = {
       threadId: THREAD_ID, runId: RUN_ID, state: {}, messages: [], tools: [], context: [],
@@ -586,19 +588,31 @@ describe('Studio Trace history integration', () => {
     }
     writeActiveRunSession({ threadId: THREAD_ID, payload, mode: 'start', lastSeq: 0 })
     let submitted = 0
-    installFetch({
+    const fetchMock = installFetch({
       list: [historyItem({ status: 'running' })],
       details: { [THREAD_ID]: traceDetail({ status: { execution: 'running', headRunId: RUN_ID } }) },
       onChat: () => { submitted += 1; throw new TypeError('offline') },
     })
-    render(<App />)
-    const reconnect = await screen.findByRole('button', { name: '恢复连接' }, { timeout: 4000 })
-    expect(submitted).toBe(4)
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)) })
-    expect(submitted).toBe(4)
-    expect((readActiveRunSessions()[0] ?? null)?.payload.runId).toBe(RUN_ID)
+    const originalFetch = fetchMock.getMockImplementation()!
+    let followed = 0
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : String(input), window.location.origin).pathname
+      if (path === `/api/conversation/${THREAD_ID}/trace`) {
+        followed += 1
+        throw new TypeError('offline')
+      }
+      return originalFetch(input, init)
+    })
+    const view = render(<App />)
+    const reconnect = await screen.findByRole('button', { name: '恢复连接' })
+    expect(followed).toBe(1)
+    expect(submitted).toBe(0)
+    expect(readActiveRunSessions()).toEqual([])
+    view.rerender(<App />)
+    expect(followed).toBe(1)
     await user.click(reconnect)
-    await waitFor(() => expect(submitted).toBeGreaterThan(4))
+    await waitFor(() => expect(followed).toBe(2))
+    expect(submitted).toBe(0)
   })
 
   it('returns to chat when selecting another conversation from the Trace view', async () => {
@@ -781,10 +795,11 @@ describe('Studio Trace history integration', () => {
     visibility.mockRestore()
   })
 
-  it('restores a multi-action approval from native Trace interaction facts', async () => {
+  it('restores an approval from public Trace interaction references', async () => {
     const waiting = traceDetail({
       status: { execution: 'waiting', headRunId: RUN_ID },
       interactions: [{
+      agui: toolReviewInterrupts('native-review', [{ toolCallId: 'call-write', args: { file_path: '/root-hitl.txt', content: 'ROOT_HITL' } }]),
         id: 'interaction-1',
         traceSeq: 4,
         sourceId: 'native-review',
@@ -846,6 +861,7 @@ describe('Studio Trace history integration', () => {
     const waiting = traceDetail({
       status: { execution: 'waiting', headRunId: RUN_ID },
       interactions: [{
+      agui: toolReviewInterrupts('child-review', [{ toolCallId: 'call-child-write', args: { file_path: '/ui-subagent-hitl.txt', content: 'UI_SUBAGENT_HITL' } }]),
         id: 'interaction-child',
         traceSeq: 6,
         sourceId: 'child-review',
@@ -878,6 +894,7 @@ describe('Studio Trace history integration', () => {
       graph: traceGraphWithNodes([
         traceGraphNode({
           id: 'subagent-node',
+          agui: { kind: 'subagent', parentToolCallId: 'call-task', subagentInvocationId: 'public-child' },
           startedSeq: 3,
           parentSubagentId: null,
           kind: 'subagent',
@@ -895,6 +912,7 @@ describe('Studio Trace history integration', () => {
         }),
         traceGraphNode({
           id: 'child-tool',
+          agui: { kind: 'tool', toolCallId: 'call-child-write' },
           startedSeq: 4,
           parentSubagentId: 'subagent-node',
           name: 'write_file',
@@ -932,6 +950,7 @@ describe('Studio Trace history integration', () => {
     const waiting = traceDetail({
       status: { execution: 'waiting', headRunId: RUN_ID },
       interactions: [{
+      agui: toolReviewInterrupts('native-review-multi', [{ toolCallId: 'call-a', args: { file_path: '/a.txt', content: 'A' }, description: '写入 A' }, { toolCallId: 'call-b', args: { file_path: '/b.txt', content: 'B' }, description: '写入 B' }]),
         id: 'interaction-multi',
         traceSeq: 4,
         sourceId: 'native-review-multi',

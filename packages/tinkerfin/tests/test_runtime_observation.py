@@ -28,7 +28,6 @@ from tinkerfin._observation import RuntimeObservationHub
 from tinkerfin.deep_agent import create_graph
 from tinkerfin.native_driver import DeepAgentsV2StreamDriver
 from tinkerfin.runtime_profile import (
-    DeepAgentsFactoryPreparation,
     DeepAgentsRuntimeProfile,
     DeepAgentsV2RuntimeProfile,
 )
@@ -1018,14 +1017,6 @@ class _FixtureRuntimeProfile:
         return "fixture-profile"
 
     @property
-    def create_agent_factory(self) -> Callable[..., object]:
-        return self._build
-
-    @property
-    def create_agent_signature(self) -> inspect.Signature:
-        return inspect.signature(self._build)
-
-    @property
     def astream_signature(self) -> inspect.Signature:
         return inspect.signature(self._graph.astream)
 
@@ -1034,13 +1025,6 @@ class _FixtureRuntimeProfile:
         if not callable(stream):
             raise TypeError("fixture graph must expose astream")
         return stream
-
-    def prepare_create_agent(
-        self,
-        arguments: Mapping[str, object],
-    ) -> DeepAgentsFactoryPreparation:
-        del arguments
-        return DeepAgentsFactoryPreparation(keyword_overrides={})
 
     @property
     def stream_driver(self) -> _FixtureStreamDriver:
@@ -1069,28 +1053,13 @@ class _FixtureRuntimeProfile:
         return self._graph
 
 
-class _AsyncFixtureRuntimeProfile(_FixtureRuntimeProfile):
-    def __init__(self, graph: _FixtureGraph) -> None:
-        super().__init__(graph)
-        self.async_build_calls = 0
-
-    async def create_agent_graph(
-        self,
-        factory: Callable[..., object],
-        args: tuple[object, ...],
-        kwargs: Mapping[str, object],
-    ) -> object:
-        self.async_build_calls += 1
-        await asyncio.sleep(0)
-        return factory(*args, **dict(kwargs))
-
-
 @pytest.mark.asyncio
-async def test_open_run_is_observable_before_output_and_closes_without_iteration() -> (
-    None
-):
+async def test_open_run_is_observable_before_output_and_closes_without_iteration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     graph = _FixtureGraph()
     profile = _FixtureRuntimeProfile(graph)
+    monkeypatch.setattr("tinkerfin.deep_agent.create_agent_graph", profile._build)
     session = _Session()
     tinkerfin = (
         TinkerFin(runtime_profile=profile)
@@ -1122,9 +1091,12 @@ async def test_open_run_is_observable_before_output_and_closes_without_iteration
 
 
 @pytest.mark.asyncio
-async def test_open_agui_run_is_observable_before_its_first_public_event() -> None:
+async def test_open_agui_run_is_observable_before_its_first_public_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     graph = _FixtureGraph()
     profile = _FixtureRuntimeProfile(graph)
+    monkeypatch.setattr("tinkerfin.deep_agent.create_agent_graph", profile._build)
     session = _Session()
     tinkerfin = (
         TinkerFin(runtime_profile=profile)
@@ -1155,9 +1127,12 @@ async def test_open_agui_run_is_observable_before_its_first_public_event() -> No
     assert session.closed == 1
 
 
-async def test_profile_maps_a_non_v2_source_once_for_observer_and_agui() -> None:
+async def test_profile_maps_a_non_v2_source_once_for_observer_and_agui(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     graph = _FixtureGraph()
     profile = _FixtureRuntimeProfile(graph)
+    monkeypatch.setattr("tinkerfin.deep_agent.create_agent_graph", profile._build)
     assert isinstance(profile, DeepAgentsRuntimeProfile)
     event_loop_thread = threading.get_ident()
     session = _Session()
@@ -1200,9 +1175,12 @@ async def test_profile_maps_a_non_v2_source_once_for_observer_and_agui() -> None
     ]
 
 
-async def test_existing_profile_uses_its_own_signature_for_direct_graph() -> None:
+async def test_profile_uses_its_stream_signature_for_direct_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     graph = _FixtureGraph()
     profile = _FixtureRuntimeProfile(graph)
+    monkeypatch.setattr("tinkerfin.deep_agent.create_agent_graph", profile._build)
     definition = (
         TinkerFin(runtime_profile=profile)
         .with_namespace("test")
@@ -1216,41 +1194,3 @@ async def test_existing_profile_uses_its_own_signature_for_direct_graph() -> Non
     assert graph.options == {"config": None, "fixture_mode": None}
     assert profile.stream_driver.validate_calls == 1
     assert profile.stream_driver.normalize_calls == 0
-
-
-async def test_custom_profile_can_own_asynchronous_graph_creation() -> None:
-    graph = _FixtureGraph()
-    profile = _AsyncFixtureRuntimeProfile(graph)
-    definition = (
-        TinkerFin(runtime_profile=profile)
-        .with_namespace("test")
-        .build(model="provider:model", tools=[])
-    )
-
-    direct = await create_graph(definition)
-    state = await direct.ainvoke(_input())
-
-    assert state == {"messages": [], "fixture": "value"}
-    assert profile.async_build_calls == 1
-
-
-async def test_custom_async_graph_capability_must_return_an_awaitable() -> None:
-    class InvalidAsyncProfile(_FixtureRuntimeProfile):
-        def create_agent_graph(
-            self,
-            factory: Callable[..., object],
-            args: tuple[object, ...],
-            kwargs: Mapping[str, object],
-        ) -> object:
-            del factory, args, kwargs
-            return object()
-
-    profile = InvalidAsyncProfile(_FixtureGraph())
-    definition = (
-        TinkerFin(runtime_profile=profile)
-        .with_namespace("test")
-        .build(model="provider:model", tools=[])
-    )
-
-    with pytest.raises(TypeError, match="must return an awaitable"):
-        await create_graph(definition)

@@ -245,6 +245,13 @@ class _TracingSession:
         self._delivered_message_fingerprints: dict[
             tuple[tuple[str, ...], str], str
         ] = {}
+        self._initial_state_scopes: set[tuple[str, ...]] = set()
+        self._inheritable_message_fingerprints: dict[
+            tuple[tuple[str, ...], str], str
+        ] = {}
+        self._inherited_message_fingerprints: dict[
+            tuple[tuple[str, ...], str], str
+        ] = {}
         self._message_seen: set[tuple[tuple[str, ...], str]] = set()
         self._message_contents: dict[tuple[tuple[str, ...], str], CapturedValue] = {}
         self._message_completed: set[tuple[tuple[str, ...], str]] = set()
@@ -265,6 +272,7 @@ class _TracingSession:
         self._tool_argument_snapshots: set[tuple[tuple[str, ...], str]] = set()
         self._tool_completed: set[tuple[tuple[str, ...], str]] = set()
         self._tool_results: set[tuple[tuple[str, ...], str]] = set()
+        self._settled_tool_calls: set[tuple[tuple[str, ...], str]] = set()
         self._tool_call_models: dict[tuple[tuple[str, ...], str], str] = {}
         self._tool_executions: dict[str, _PendingToolExecution] = {}
         self._tool_execution_by_call: dict[tuple[tuple[str, ...], str], str] = {}
@@ -277,6 +285,7 @@ class _TracingSession:
         ] = {}
         self._subagent_descriptors: dict[tuple[str, ...], _SubagentDescriptor] = {}
         self._active_subagents: dict[tuple[str, ...], tuple[str, str | None]] = {}
+        self._subagent_parent_calls: dict[tuple[str, ...], str] = {}
         self._subagent_task_descriptions: dict[tuple[str, ...], str] = {}
         self._subagent_task_message_scopes: set[tuple[str, ...]] = set()
         self._subagent_task_message_keys: set[tuple[tuple[str, ...], str]] = set()
@@ -371,12 +380,14 @@ class _TracingSession:
                         )
             elif (
                 isinstance(fact, ToolExecutionFact)
-                and fact.phase == "started"
                 and fact.source_tool_call_id is not None
             ):
-                self._tool_execution_by_call[
-                    (fact.graph_namespace, fact.source_tool_call_id)
-                ] = fact.execution_id
+                key = (fact.graph_namespace, fact.source_tool_call_id)
+                if fact.phase == "started":
+                    self._tool_execution_by_call[key] = fact.execution_id
+                    self._settled_tool_calls.discard(key)
+                elif fact.phase != "interrupted":
+                    self._settled_tool_calls.add(key)
             elif isinstance(fact, StateRevisionFact):
                 state = self._states.setdefault(fact.graph_namespace, {})
                 for key in fact.removed_keys:
@@ -399,6 +410,12 @@ class _TracingSession:
                 else:
                     self._pending_interactions.pop(key, None)
             elif isinstance(fact, SubagentFact):
+                if fact.phase == "started" and fact.parent_tool_call_id is not None:
+                    if not fact.graph_namespace:
+                        raise TraceCorruption("A child call requires a graph namespace")
+                    self._subagent_parent_calls[fact.graph_namespace] = (
+                        fact.parent_tool_call_id
+                    )
                 if (
                     fact.phase == "started"
                     and fact.input is not None
@@ -424,6 +441,19 @@ class _TracingSession:
                 else:
                     self._active_subagents.pop(fact.graph_namespace, None)
                     self._subagent_task_descriptions.pop(fact.graph_namespace, None)
+
+        # A failed attempt can still own checkpoint-backed child requests. Keep
+        # only those proven relationships or scopes that are currently active.
+        pending_scopes = {
+            namespace[:depth]
+            for namespace, _interrupt_id in self._pending_interactions
+            for depth in range(1, len(namespace) + 1)
+        }
+        self._subagent_parent_calls = {
+            namespace: call
+            for namespace, call in self._subagent_parent_calls.items()
+            if namespace in self._active_subagents or namespace in pending_scopes
+        }
 
     async def observe(self, observation: RuntimeObservation) -> None:
         """Map and enqueue one already ordered Runtime observation.
@@ -712,7 +742,7 @@ class _TracingSession:
                     common,
                     phase=(
                         "resumed"
-                        if source.input_kind in {"resume", "abandon"}
+                        if source.input_kind in {"continuation", "resume", "abandon"}
                         else "input"
                     ),
                     input_kind=source.input_kind,
@@ -726,12 +756,22 @@ class _TracingSession:
                         )
                         if source.input_kind in {"ordinary", "branch"}
                         else self._capture(
-                            [
+                            public_input
+                            if source.input_kind == "continuation"
+                            else [
                                 item.model_dump(mode="json", by_alias=True)
                                 for item in source.resume
                             ],
-                            content_kind="interaction",
-                            component_name="resume",
+                            content_kind=(
+                                "custom"
+                                if source.input_kind == "continuation"
+                                else "interaction"
+                            ),
+                            component_name=(
+                                "run_input"
+                                if source.input_kind == "continuation"
+                                else "resume"
+                            ),
                             divisor=2,
                         )
                     ),
@@ -888,6 +928,7 @@ class _TracingSession:
                     ] = component_name
             for message_id in observation.output_message_ids:
                 message_key = (observation.graph_namespace, message_id)
+                self._inherited_message_fingerprints.pop(message_key, None)
                 if observation.phase == "completed":
                     self._completed_model_messages.add(message_key)
                 if message_key not in self._message_completed:
@@ -978,6 +1019,9 @@ class _TracingSession:
                 if observation.input is None:  # pragma: no cover - contract validation
                     raise TraceCorruption("Tool execution start has no input")
                 if observation.tool_call_id is not None:
+                    self._settled_tool_calls.discard(
+                        (observation.graph_namespace, observation.tool_call_id)
+                    )
                     self._tool_execution_by_call[
                         (observation.graph_namespace, observation.tool_call_id)
                     ] = execution_id
@@ -1037,6 +1081,13 @@ class _TracingSession:
                 raise TraceCorruption("Tool execution identity changed before terminal")
             if not pending.traced:
                 return []
+            if (
+                observation.tool_call_id is not None
+                and observation.phase != "interrupted"
+            ):
+                self._settled_tool_calls.add(
+                    (observation.graph_namespace, observation.tool_call_id)
+                )
             if observation.failure_origin:
                 self._failure_origin_seen = True
             output = (
@@ -1217,7 +1268,8 @@ class _TracingSession:
     ) -> list[TraceSemanticFact]:
         """Settle Native work that emitted no result before the Run terminal.
 
-        Native task results remain authoritative when present. Missing results cannot
+        Actual execution terminals and Native task results remain authoritative.
+        An execution callback does not suppress a later ToolMessage result. Missing results cannot
         inherit a Run failure as their own error: interrupted work waits, explicit Run
         cancellation cancels it, and every other unmatched node is abandoned. Tool
         proposals remain waiting across an interrupt so a resumed checkpoint can still
@@ -1304,7 +1356,9 @@ class _TracingSession:
             )
             self._subagent_descriptors.pop(namespace, None)
         if terminal_phase != "interrupted":
-            unresolved_tools = sorted(self._tool_started - self._tool_results)
+            unresolved_tools = sorted(
+                self._tool_started - self._tool_results - self._settled_tool_calls
+            )
             for namespace, tool_call_id in unresolved_tools:
                 tool_name = self._tool_names.get((namespace, tool_call_id))
                 if tool_name is None or not self._policy.traces_tool(tool_name):
@@ -1494,7 +1548,7 @@ class _TracingSession:
             tool_key = (observation.graph_namespace, message.tool_call_id)
             tool_name = self._tool_names.get(tool_key) or message.name or "unknown"
             if not self._policy.traces_tool(tool_name):
-                self._tool_result(
+                return self._tool_result(
                     message,
                     namespace=observation.graph_namespace,
                     common={
@@ -1508,7 +1562,6 @@ class _TracingSession:
                         "monotonic_ns": observation.monotonic_ns,
                     },
                 )
-                return []
         message_source_id = message.id or (
             f"anonymous-{self._message_fingerprint(message, observation.graph_namespace)}"
         )
@@ -1516,6 +1569,8 @@ class _TracingSession:
             "message", observation.graph_namespace, message_source_id
         )
         key = (observation.graph_namespace, message_source_id)
+        inherited = self._inherited_message_fingerprints.pop(key, None)
+        self._register_inheritable_message(message, key=key)
         common = {
             "source_observation_id": source_id,
             "identity": observation.identity,
@@ -1528,7 +1583,9 @@ class _TracingSession:
         if message.message_type == "remove":
             if message.id is None:
                 raise TraceCorruption("RemoveMessage requires a stable target ID")
-            suppressed = key in self._subagent_task_message_keys
+            suppressed = (
+                key in self._subagent_task_message_keys or inherited is not None
+            )
             self._message_seen.discard(key)
             self._message_fingerprints.pop(key, None)
             self._delivered_message_fingerprints.pop(key, None)
@@ -1813,15 +1870,18 @@ class _TracingSession:
     ) -> list[TraceSemanticFact]:
         assert message.tool_call_id is not None
         key = (namespace, message.tool_call_id)
+        # A real parent result settles its call even if an earlier failed Run
+        # provisionally marked the attempt abandoned. Its exact ID and scope,
+        # not result text or the new Run's outcome, identify owned requests.
+        facts = self._complete_subagent_call(key, common=common)
         if key in self._tool_results:
-            return []
+            return facts
         self._tool_results.add(key)
         self._tool_argument_fragments.pop(key, None)
         tool_name = self._tool_names.get(key) or message.name or "unknown"
         if not self._policy.traces_tool(tool_name):
             self._tool_completed.add(key)
-            return []
-        facts: list[TraceSemanticFact] = []
+            return facts
         if key not in self._tool_completed:
             facts.append(
                 _make_fact(
@@ -1954,6 +2014,8 @@ class _TracingSession:
                 )
             )
         self._states[namespace] = dict(public_state)
+        first_snapshot = namespace not in self._initial_state_scopes
+        self._initial_state_scopes.add(namespace)
         current_message_keys: set[tuple[tuple[str, ...], str]] = set()
         first_human_index = next(
             (
@@ -1970,6 +2032,14 @@ class _TracingSession:
             key = (namespace, message_source_id)
             current_message_keys.add(key)
             fingerprint = self._message_fingerprint(message, namespace)
+            self._register_inheritable_message(message, key=key)
+            if self._is_inherited_message(
+                message,
+                key=key,
+                fingerprint=fingerprint,
+                first_snapshot=first_snapshot,
+            ):
+                continue
             if index == first_human_index and self._register_subagent_task_message(
                 message,
                 namespace=namespace,
@@ -2046,6 +2116,13 @@ class _TracingSession:
                 facts.extend(
                     self._tool_result(message, namespace=namespace, common=common)
                 )
+        for baselines in (
+            self._inherited_message_fingerprints,
+            self._inheritable_message_fingerprints,
+        ):
+            for key in tuple(baselines):
+                if key[0] == namespace and key not in current_message_keys:
+                    baselines.pop(key)
         previous_message_keys = {
             key for key in self._message_fingerprints if key[0] == namespace
         }
@@ -2228,6 +2305,7 @@ class _TracingSession:
             else parent_execution.monotonic_ns
         )
         self._active_subagents[namespace] = (subagent_id, agent_name)
+        self._subagent_parent_calls[namespace] = parent_tool_call_id
         return [
             SubagentFact(
                 source_observation_id=source_id,
@@ -2364,6 +2442,97 @@ class _TracingSession:
                     status="failed" if observation.error_type else "succeeded",
                 )
             )
+        return facts
+
+    def _complete_subagent_call(
+        self,
+        parent_key: tuple[tuple[str, ...], str],
+        *,
+        common: Mapping[str, object],
+    ) -> list[TraceSemanticFact]:
+        """Cancel unresolved child reviews only when their parent call has returned.
+
+        A parent result can precede the owning task's authoritative completion.
+        Without a pending review, keep that task active so its actual outcome is
+        recorded. A still-pending review cannot resume after its parent returns.
+        """
+
+        returned_scopes = tuple(
+            namespace
+            for namespace, call in self._subagent_parent_calls.items()
+            if (namespace[:-1], call) == parent_key
+        )
+        facts: list[TraceSemanticFact] = []
+        for namespace in returned_scopes:
+            for scope in tuple(self._subagent_parent_calls):
+                if scope[: len(namespace)] == namespace:
+                    self._subagent_parent_calls.pop(scope)
+            if not any(
+                scope[: len(namespace)] == namespace
+                for scope, _interrupt_id in self._pending_interactions
+            ):
+                continue
+            for scope in tuple(self._active_subagents):
+                if scope[: len(namespace)] != namespace:
+                    continue
+                subagent_id, agent_name = self._active_subagents.pop(scope)
+                facts.append(
+                    _make_fact(
+                        SubagentFact,
+                        common,
+                        graph_namespace=scope,
+                        in_subagent_scope=True,
+                        phase="completed",
+                        subagent_id=subagent_id,
+                        agent_name=agent_name,
+                        status="abandoned",
+                    )
+                )
+                self._subagent_descriptors.pop(scope, None)
+                self._subagent_task_descriptions.pop(scope, None)
+            for key in tuple(self._pending_interactions):
+                scope, interrupt_id = key
+                if scope[: len(namespace)] != namespace:
+                    continue
+                pending = self._pending_interactions.pop(key)
+                facts.append(
+                    _make_fact(
+                        InteractionFact,
+                        common,
+                        graph_namespace=scope,
+                        in_subagent_scope=True,
+                        phase="resolved",
+                        interaction_id=_scope_id("interaction", scope, interrupt_id),
+                        source_interaction_id=interrupt_id,
+                        interaction_kind=pending.kind,
+                        tool_call_ids=pending.tool_call_ids,
+                        status="cancelled",
+                    )
+                )
+            unresolved = (
+                self._tool_started - self._tool_results - self._settled_tool_calls
+            )
+            for scope, tool_call_id in sorted(unresolved):
+                if scope[: len(namespace)] != namespace:
+                    continue
+                tool_key = (scope, tool_call_id)
+                tool_name = self._tool_names.get(tool_key)
+                if tool_name is not None and self._policy.traces_tool(tool_name):
+                    facts.append(
+                        _make_fact(
+                            ToolFact,
+                            common,
+                            graph_namespace=scope,
+                            in_subagent_scope=True,
+                            phase="abandoned",
+                            tool_call_id=_scope_id("tool", scope, tool_call_id),
+                            source_tool_call_id=tool_call_id,
+                            parent_call_id=self._tool_call_models.get(tool_key),
+                            tool_name=tool_name,
+                        )
+                    )
+                self._tool_results.add(tool_key)
+                self._tool_completed.add(tool_key)
         return facts
 
     def _resolve_pending_interaction(
@@ -2543,6 +2712,13 @@ class _TracingSession:
                 mode="json",
                 by_alias=True,
             )
+            # Selected captures contain JSON Pointer keys, not original arguments.
+            action["arguments_retention"] = {
+                "full_content": "full",
+                "selected_content": "selected",
+                "metadata_only": "none",
+                "disabled": "none",
+            }[self._policy.tool_capture(tool_name).mode]
             description = raw_action.get("description")
             if (
                 isinstance(description, str)
@@ -2627,6 +2803,81 @@ class _TracingSession:
                 "toolStatus": message.tool_status,
             }
         )
+
+    def _register_inheritable_message(
+        self,
+        message: NativeMessageRecord,
+        *,
+        key: tuple[tuple[str, ...], str],
+    ) -> None:
+        """Retain equality evidence only for complete, unchanged public messages."""
+
+        self._inheritable_message_fingerprints.pop(key, None)
+        if (
+            message.id is None
+            or message.message_type in {"assistant_chunk", "remove"}
+            or message.tool_call_chunks
+        ):
+            return
+        if message.message_type == "tool":
+            tool_name = self._tool_names.get((key[0], message.tool_call_id or ""))
+            content = self._capture_tool(
+                tool_name=tool_name or message.name or "unknown",
+                value=message.content,
+                target="result",
+            )
+        else:
+            content = self._message_content(message)
+        if content.disposition != "inline" or content.value != message.content:
+            return
+        for call in message.tool_calls:
+            captured = self._capture_tool(
+                tool_name=call.name, value=call.arguments, target="arguments"
+            )
+            if captured.disposition != "inline" or captured.value != call.arguments:
+                return
+        self._inheritable_message_fingerprints[key] = self._message_fingerprint(
+            message, key[0]
+        )
+
+    def _is_inherited_message(
+        self,
+        message: NativeMessageRecord,
+        *,
+        key: tuple[tuple[str, ...], str],
+        fingerprint: str,
+        first_snapshot: bool,
+    ) -> bool:
+        """Keep proven ancestor inputs from becoming new child outputs.
+
+        A child's first state can contain the parent's conversation. Both copies
+        must have been observed with complete, unchanged capture in this session;
+        historical sanitized facts alone cannot prove that raw inputs were equal.
+        Actual local message delivery or model output always takes precedence.
+        """
+
+        inherited = self._inherited_message_fingerprints.pop(key, None)
+        if self._inheritable_message_fingerprints.get(key) != fingerprint:
+            return False
+        if inherited == fingerprint:
+            self._inherited_message_fingerprints[key] = fingerprint
+            return True
+        namespace, source_id = key
+        if (
+            not first_snapshot
+            or not namespace
+            or message.id is None
+            or key in self._message_seen
+            or key in self._pending_assistant_messages
+            or key in self._completed_model_messages
+        ):
+            return False
+        for depth in range(len(namespace)):
+            ancestor = (namespace[:depth], source_id)
+            if self._inheritable_message_fingerprints.get(ancestor) == fingerprint:
+                self._inherited_message_fingerprints[key] = fingerprint
+                return True
+        return False
 
     def _register_subagent_task_message(
         self,
@@ -3126,9 +3377,9 @@ class Tracer:
                 "Trace Graph changed repeatedly during one consistent query"
             )
         turn_ids = {
-            window.run_turns[record.run_id]
+            window.run_turns[record.started_event.fact.identity.run_id]
             for record in records.nodes
-            if record.run_id in window.run_turns
+            if record.started_event.fact.identity.run_id in window.run_turns
         }
         turns = trace_graph_turns(core_state, window, selected_turn_ids=turn_ids)
         nodes, ordered_ids = project_trace_graph_records(

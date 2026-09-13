@@ -119,13 +119,20 @@ function MarkdownContentView({
   content,
   className,
   variant = 'article',
+  allowRemoteImages = true,
 }: {
   content: string
   className?: string
   variant?: MarkdownVariant
+  allowRemoteImages?: boolean
 }) {
   const { t } = useI18n()
   const components = useMemo(() => ({
+    img({ src, alt, title }: ComponentPropsWithoutRef<'img'>) {
+      return allowRemoteImages || src?.startsWith('blob:')
+        ? <img src={src} alt={alt} title={title} />
+        : <span>{alt}</span>
+    },
     a({ children, href }: { children?: ReactNode; href?: string }) {
       const bareUrl = splitBareUrl(children)
       if (bareUrl && isLiteralAutolink(href, bareUrl.literal)) {
@@ -157,7 +164,7 @@ function MarkdownContentView({
         ? <input {...props} type={type} aria-hidden="true" tabIndex={-1} />
         : <input {...props} type={type} />
     },
-  }), [t])
+  }), [allowRemoteImages, t])
   const classes = [
     'markdown-content',
     `markdown-content--${variant}`,

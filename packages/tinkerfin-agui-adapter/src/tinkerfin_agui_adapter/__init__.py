@@ -32,6 +32,7 @@ from .hitl import HitlActionRequest as HitlActionRequest
 from .hitl import HitlRequest as HitlRequest
 from .hitl import HitlReviewConfig as HitlReviewConfig
 from .ids import ScopedIdCodec as ScopedIdCodec
+from .interrupt_projection import project_interrupt as project_interrupt
 from .lifecycle import AgUiLifecycleEventFactory as AgUiLifecycleEventFactory
 from .media_events import (
     AttachmentAssistantMessage,
@@ -110,6 +111,7 @@ __all__ = [
     "micro_batch",
     "parse_attachment_output_event",
     "parse_tool_review_interrupt",
+    "project_interrupt",
     "require_valid_schema",
     "subagent_invocation_id",
     "validate_deep_agent_stream_part",

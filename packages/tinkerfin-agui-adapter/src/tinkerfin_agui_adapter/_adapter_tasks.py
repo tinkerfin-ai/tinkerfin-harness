@@ -56,7 +56,7 @@ from ._adapter_contracts import (
     TaskStartFingerprint,
     _to_json_value,
 )
-from ._adapter_messages import _json_patch
+from ._adapter_messages import _json_patch, _remember_message_baseline
 from .media_events import AttachmentMessagesSnapshotEvent
 from .reasoning import normalize_operational_data, sanitize_public_data
 from .subagent import SubagentTaskInput, create_subagent_provenance
@@ -619,6 +619,7 @@ def _emit_values_part(
     source = self._source(part.ns)
     raw_event = self._event_context("values", source)
     raw_messages = part.data.get(_MESSAGE_STATE_KEY, [])
+    _remember_message_baseline(self, part.ns, raw_messages)
     # Messages have a dedicated AG-UI channel. Keeping LangChain messages in
     # `STATE_*` would duplicate data, so state events contain non-message state.
     raw_current = {

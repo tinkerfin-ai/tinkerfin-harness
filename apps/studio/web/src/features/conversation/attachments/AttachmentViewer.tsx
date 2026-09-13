@@ -16,6 +16,8 @@ import { AttachmentReferenceContext } from './context'
 import { useAttachmentImage } from './useAttachmentImage'
 import { useAttachmentDownload } from './useAttachmentDownload'
 import { useImageViewport } from './useImageViewport'
+import { DocumentAttachmentPreview } from './DocumentAttachmentPreview'
+import { documentFormat } from './documentPreview'
 
 function GalleryThumbnail({
   attachment,
@@ -78,6 +80,9 @@ export function AttachmentViewer({
     if (!attachment) onClose()
   }, [attachment, onClose])
   if (!attachment) return null
+  if (documentFormat(attachment.mime_type)) {
+    return <DocumentAttachmentPreview key={attachment.id} attachment={attachment} onClose={onClose} returnFocus={returnFocus} />
+  }
   return (
     <ViewerImage
       attachment={attachment}

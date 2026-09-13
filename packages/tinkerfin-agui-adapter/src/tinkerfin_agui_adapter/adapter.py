@@ -248,6 +248,9 @@ class DeepAgentAgUiAdapter:
             tuple[tuple[str, ...], str], TaskResultFingerprint
         ] = {}
         self._previous_root_state: dict[str, JsonValue] | None = None
+        self._message_baseline_namespaces: set[tuple[str, ...]] = set()
+        self._message_baselines: dict[tuple[tuple[str, ...], str], bytes] = {}
+        self._baseline_tool_parent_ids: dict[str, str] = {}
         self._child_interrupts: dict[str, BufferedChildInterrupt] = {}
         self._resolved_child_interrupt_ids: set[str] = set()
         self._child_interrupt_ids_by_namespace: dict[
@@ -379,6 +382,17 @@ class DeepAgentAgUiAdapter:
         }
         tool_names = dict(self._tool_names_by_id)
         parent_message_id = self._message_id(part.ns, raw_message_id)
+        # Checkpoint proposals retain their identity across resume. A different
+        # assistant message must not reuse that identity for a new proposal.
+        for tool_chunk in chunk.tool_call_chunks:
+            raw_id = tool_chunk.get("id")
+            if isinstance(raw_id, str) and raw_id:
+                tool_id = self._tool_call_id(part.ns, raw_id)
+                prior_parent = self._baseline_tool_parent_ids.get(tool_id)
+                if prior_parent is not None and prior_parent != parent_message_id:
+                    raise ValueError(
+                        "new Tool proposals require unique IDs within their graph scope"
+                    )
         for tool_chunk in chunk.tool_call_chunks:
             index = tool_chunk.get("index")
             if type(index) is not int:
@@ -860,19 +874,4 @@ class DeepAgentAgUiAdapter:
             namespace,
             action_groups,
             raw_messages,
-        )
-
-    @staticmethod
-    def _build_response_schema(
-        allowed_decisions: Sequence[str],
-        *,
-        action_name: str,
-        args_schema: dict[str, JsonValue] | None,
-    ) -> dict[str, JsonValue]:
-        """Build an AG-UI resume payload schema that fixes the original Tool identity."""
-
-        return _adapter_contracts._build_response_schema(
-            allowed_decisions,
-            action_name=action_name,
-            args_schema=args_schema,
         )

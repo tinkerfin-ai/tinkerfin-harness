@@ -150,7 +150,7 @@ async def _case(profile_name: str, scenario: str) -> dict[str, object]:
     if scenario != "no_observer":
         runtime = runtime.with_observer(tracer).with_observer(_Observer(session))
     if scenario == "subagent":
-        subagent: SubAgent[None] = {
+        subagent: SubAgent = {
             "name": "worker",
             "description": "Echo a value",
             "system_prompt": "Use the echo Tool.",

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
-from importlib.metadata import version
 from typing import Any
 from uuid import UUID
 
@@ -271,10 +270,6 @@ class _Recorder(AsyncCallbackHandler):
 async def test_callbacks_see_the_final_request_and_real_tool_execution() -> None:
     """Locked callbacks expose post-middleware input before provider execution."""
 
-    assert version("deepagents") == "0.7.5"
-    assert version("langchain") == "1.3.14"
-    assert version("langchain-core") == "1.5.3"
-    assert version("langgraph") == "1.2.10"
     model = _ToolBindingModel(
         responses=[
             AIMessage(

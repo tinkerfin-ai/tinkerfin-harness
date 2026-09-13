@@ -16,8 +16,8 @@ from langchain_core.messages import ToolCall
 from tinkerfin._hitl import (
     CANCEL_DECISION_TYPE,
     HITL_CONTRACT_ID,
+    ToolReviewMiddleware,
     _permission_interrupts,
-    _TinkerFinHitlPatchMiddleware,
 )
 
 
@@ -58,7 +58,7 @@ def test_standard_decisions_delegate_exactly_to_locked_parent(
         _tool_call(),
         config,
     )
-    actual = _TinkerFinHitlPatchMiddleware._process_decision(
+    actual = ToolReviewMiddleware._process_decision(
         typed,
         _tool_call(),
         config,
@@ -71,12 +71,12 @@ def test_internal_cancel_is_non_executable_deterministic_and_auditable() -> None
     config = InterruptOnConfig(allowed_decisions=["approve"])
     decision = cast(Decision, {"type": CANCEL_DECISION_TYPE})
 
-    first_call, first_message = _TinkerFinHitlPatchMiddleware._process_decision(
+    first_call, first_message = ToolReviewMiddleware._process_decision(
         decision,
         _tool_call(),
         config,
     )
-    second_call, second_message = _TinkerFinHitlPatchMiddleware._process_decision(
+    second_call, second_message = ToolReviewMiddleware._process_decision(
         decision,
         _tool_call(),
         config,

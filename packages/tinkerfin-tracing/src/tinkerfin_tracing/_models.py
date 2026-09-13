@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from pydantic.alias_generators import to_camel
 
 
-class TraceModel(BaseModel):
+class TraceModel(BaseModel, frozen=True):
     """Provide strict immutable validation for Trace values."""
 
     model_config = ConfigDict(
@@ -20,7 +20,7 @@ class TraceModel(BaseModel):
     )
 
 
-class TimedTraceModel(TraceModel):
+class TimedTraceModel(TraceModel, frozen=True):
     """Attach comparable source timestamps to one semantic fact."""
 
     occurred_at: datetime

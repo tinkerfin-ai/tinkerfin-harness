@@ -51,7 +51,12 @@ export interface TraceGraphTurn {
   startedAt: string
 }
 
+export type TraceNodeReference =
+  | { kind: 'tool'; toolCallId: string }
+  | { kind: 'subagent'; parentToolCallId: string; subagentInvocationId: string }
+
 export interface TraceGraphNode {
+  agui: TraceNodeReference | null
   id: string
   turnId: string
   parentSubagentId?: string | null
@@ -169,6 +174,7 @@ const LINK_ISSUES = new Set<TraceGraphLinkIssue>([
 const TURN_KEYS = new Set(['id', 'ordinal', 'startedAt'])
 const FAILURE_KEYS = new Set(['errorType', 'message'])
 const NODE_KEYS = new Set([
+  'agui',
   'id',
   'turnId',
   'parentSubagentId',
@@ -298,6 +304,10 @@ const TERMINAL_STATUSES = new Set<TraceGraphNodeStatus>([
   'abandoned',
 ])
 
+const isReferenceId = (value: unknown) => (
+  typeof value === 'string' && value.length > 0 && value.trim() === value
+)
+
 const parseNode = (value: unknown): TraceGraphNode => {
   if (!isRecord(value)
     || !hasOnlyKeys(value, NODE_KEYS)
@@ -333,6 +343,15 @@ const parseNode = (value: unknown): TraceGraphNode => {
     ))
     || new Set(value.linkIssues).size !== value.linkIssues.length
   ) throw new ConversationError('stream_event_invalid')
+  const ref = value.agui
+  if (ref !== null && (!isRecord(ref) || ref.kind !== value.kind
+    || (ref.kind !== 'tool' && ref.kind !== 'subagent')
+    || (ref.kind === 'tool' && (!isReferenceId(ref.toolCallId)
+      || !hasOnlyKeys(ref, new Set(['kind', 'toolCallId']))))
+    || (ref.kind === 'subagent' && (!isReferenceId(ref.parentToolCallId)
+      || !isReferenceId(ref.subagentInvocationId)
+      || !hasOnlyKeys(ref, new Set(['kind', 'parentToolCallId', 'subagentInvocationId']))))
+  )) throw new ConversationError('stream_event_invalid')
   const status = value.status as TraceGraphNodeStatus
   const startedAt = Date.parse(value.startedAt as string)
   const firstOutputAt = value.firstOutputAt == null

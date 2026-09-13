@@ -18,7 +18,12 @@ from pydantic import (
     field_validator,
 )
 
-from tinkerfin_contracts import ThreadIdentity
+from tinkerfin.agui import (
+    AgUiGraphQuery,
+    AgUiHistory,
+    AgUiHistoryView,
+    AgUiTraceGraphPage,
+)
 from tinkerfin_studio.api.errors import (
     BusinessException,
     ConversationErrorCode,
@@ -52,8 +57,6 @@ from tinkerfin_studio.conversation.todo_groups import (
 from tinkerfin_tracing import (
     InvalidTraceCursor,
     TraceGraphFilter,
-    TraceGraphPage,
-    TraceGraphQuery,
     Tracer,
     TraceThread,
     TraceThreadNotFound,
@@ -128,7 +131,8 @@ class ConversationHistoryService:
     ) -> None:
         self._repository = repository
         self._user_id = user_id
-        self._tracer = tracer
+        # 读取源与用户作用域在此绑定，快照、分页和跟随均使用同一会话身份
+        self._history = AgUiHistory(tracer, namespace=f"ns_{user_id}")
         self._todo_group_query = todo_group_query
 
     async def list_history(
@@ -177,11 +181,12 @@ class ConversationHistoryService:
     ) -> ConversationHistoryDetail:
         """返回一个固定 as-of、可继续向前扩展的 Trace 视图"""
 
-        thread, trace = await self._load_trace(
+        thread, history = await self._load_trace(
             thread_id,
             history_cursor=history_cursor,
             limit=limit,
         )
+        trace = history.trace
         projector: TodoGroupProjector | None = None
         try:
             task_trace = None
@@ -193,7 +198,7 @@ class ConversationHistoryService:
                 )
             detail = await self._detail(
                 thread=thread,
-                trace=trace,
+                history=history,
                 task_trace=task_trace,
             )
             await self._repository.commit()
@@ -215,11 +220,12 @@ class ConversationHistoryService:
     ]:
         """先返回权威快照，再按框架顺序跟随同一 generation 的语义增量"""
 
-        thread, trace = await self._load_trace(
+        thread, history = await self._load_trace(
             thread_id,
             history_cursor=None,
             limit=100,
         )
+        trace = history.trace
         projector: TodoGroupProjector | None = None
         try:
             task_trace = None
@@ -231,7 +237,7 @@ class ConversationHistoryService:
                 )
             detail = await self._detail(
                 thread=thread,
-                trace=trace,
+                history=history,
                 task_trace=task_trace,
             )
             # 归属和 Run 配置已固定到 snapshot；长流开始前归还业务连接
@@ -247,7 +253,7 @@ class ConversationHistoryService:
             | ConversationTraceErrorEvent,
             None,
         ]:
-            updates = trace.follow()
+            updates = history.follow()
             last_revision = projector.revision if projector is not None else 0
             last_task_trace = task_trace
             user_runs = {
@@ -315,7 +321,7 @@ class ConversationHistoryService:
         where: TraceGraphFilter,
         cursor: str | None,
         limit: int,
-    ) -> TraceGraphPage:
+    ) -> AgUiTraceGraphPage:
         """在框架 Store 内筛选当前会话链路节点"""
 
         query = await self._load_graph_query(
@@ -379,7 +385,7 @@ class ConversationHistoryService:
         where: TraceGraphFilter,
         cursor: str | None,
         limit: int,
-    ) -> TraceGraphQuery:
+    ) -> AgUiGraphQuery:
         """校验会话归属并在释放业务连接后查询框架索引"""
 
         thread = await self._require_thread(thread_id)
@@ -388,10 +394,8 @@ class ConversationHistoryService:
             raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
         await self._repository.commit()
         try:
-            return await self._tracer.query(
-                ThreadIdentity(
-                    namespace=f"ns_{self._user_id}", thread_id=thread.thread_id
-                ),
+            return await self._history.query(
+                thread.thread_id,
                 where=where,
                 head_run_id=head_run_id,
                 cursor=cursor,
@@ -408,7 +412,7 @@ class ConversationHistoryService:
         *,
         history_cursor: str | None,
         limit: int,
-    ) -> tuple[ConversationThread, TraceThread]:
+    ) -> tuple[ConversationThread, AgUiHistoryView]:
         """释放业务事务后读取借用 Engine 上的框架 Trace Store"""
 
         thread = await self._require_thread(thread_id)
@@ -418,10 +422,8 @@ class ConversationHistoryService:
         # Trace Store 使用独立事务；先结束归属查询，避免一个请求同时占用两条共享池连接
         await self._repository.commit()
         try:
-            trace = await self._tracer.get(
-                ThreadIdentity(
-                    namespace=f"ns_{self._user_id}", thread_id=thread.thread_id
-                ),
+            history = await self._history.get(
+                thread.thread_id,
                 head_run_id=None if history_cursor is not None else head_run_id,
                 history_cursor=history_cursor,
                 projections=(FAILURE_PROJECTION,),
@@ -431,7 +433,7 @@ class ConversationHistoryService:
             raise BusinessException(ConversationErrorCode.INVALID_CURSOR) from error
         except (TraceThreadNotFound, TracingError) as error:
             raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE) from error
-        return thread, trace
+        return thread, history
 
     async def _project_task_trace(
         self,
@@ -448,17 +450,19 @@ class ConversationHistoryService:
         self,
         *,
         thread: ConversationThread,
-        trace: TraceThread,
+        history: AgUiHistoryView,
         task_trace: TaskTraceSnapshot | None,
     ) -> ConversationHistoryDetail:
+        snapshot = history.snapshot
+        trace = history.trace
         registration = await self._repository.get_run(
             thread_pk=thread.id,
-            run_id=trace.head_run_id,
+            run_id=snapshot.head_run_id,
         )
         if registration is None:
             raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
-        summary = trace.summary
-        interactions = {item.id: item for item in trace.interactions}
+        summary = snapshot.summary
+        interactions = {item.id: item for item in snapshot.interactions}
         # Pending 项必须跨越可见 Turn 窗口保留，避免历史分页隐藏仍需用户处理的交互
         interactions.update({item.id: item for item in summary.pending_interactions})
         return ConversationHistoryDetail(
@@ -470,26 +474,26 @@ class ConversationHistoryService:
             titleSeq=thread.title_seq,
             lastModel=registration.model_id,
             pinned=thread.pinned,
-            asOfSeq=trace.as_of_seq,
-            generation=trace.key.generation,
-            observedAt=trace.observed_at,
-            headRunId=trace.head_run_id,
-            availableHeads=trace.available_heads,
-            historyCursor=trace.history_cursor,
+            asOfSeq=snapshot.as_of_seq,
+            generation=snapshot.generation,
+            observedAt=snapshot.observed_at,
+            headRunId=snapshot.head_run_id,
+            availableHeads=snapshot.available_heads,
+            historyCursor=snapshot.history_cursor,
             messageCount=summary.message_count,
             toolCallCount=summary.tool_call_count,
-            messages=trace.messages,
+            messages=snapshot.messages,
             runFailures=visible_run_failures(
                 trace.projections[FAILURE_PROJECTION],
                 {
                     item.run_id
-                    for item in trace.messages
+                    for item in snapshot.messages
                     if item.role == "user" and not item.graph_namespace
                 },
             ),
-            reasoning=trace.reasoning,
-            graph=trace.graph,
-            state=trace.state,
+            reasoning=snapshot.reasoning,
+            graph=snapshot.graph,
+            state=snapshot.state,
             interactions=tuple(
                 sorted(
                     interactions.values(),

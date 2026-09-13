@@ -44,4 +44,4 @@ asyncio.run(main())
 Use the same `thread_id` for a continuing conversation and a new `run_id` for each new
 input. A thread becomes persistent only when the Runtime has a checkpointer.
 
-Next: [Configure agents and Plan](deep-agents.md).
+Next: [Configure agents and Plan](agent-configuration.md).

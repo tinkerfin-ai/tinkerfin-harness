@@ -888,7 +888,10 @@ def project_trace_graph_records(
     record_ids = {record.node_id for record in records}
     projected: dict[str, TraceGraphNode] = {}
     for record in records:
-        turn_id = run_turns.get(record.run_id)
+        # A later input can settle an earlier pending call without starting it
+        # again. Its latest observation belongs to the new Run, while the call
+        # and its child scope remain in the Turn that owns the recorded start.
+        turn_id = run_turns.get(record.started_event.fact.identity.run_id)
         turn = None if turn_id is None else turn_by_id.get(turn_id)
         if turn is None:
             raise TraceStoreProtocolError(

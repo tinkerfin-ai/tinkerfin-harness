@@ -86,9 +86,7 @@ def build_runtime(monkeypatch: pytest.MonkeyPatch) -> Callable[..., AgentRuntime
             graph.builds += 1
             return graph
 
-        monkeypatch.setattr(
-            "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent", create
-        )
+        monkeypatch.setattr("tinkerfin.deep_agent.create_agent_graph", create)
         return (builder or TinkerFin().with_namespace("chosen-by-host")).build(
             model="provider:model"
         )
@@ -219,6 +217,7 @@ def test_builder_and_runtime_have_distinct_real_public_methods(
         "build",
     }
     assert {name for name in dir(runtime) if not name.startswith("_")} == {
+        "agui",
         "namespace",
         "thread_identity",
         "run_identity",
@@ -500,7 +499,7 @@ async def test_cancelled_closer_and_repeated_close_preserve_finally(
         Graph.astream, "__signature__", inspect.signature(CompiledStateGraph.astream)
     )
     monkeypatch.setattr(
-        "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent",
+        "tinkerfin.deep_agent.create_agent_graph",
         lambda *args, **kwargs: Graph(),
     )
     runtime = TinkerFin().with_namespace("chosen").build(model="provider:model")
@@ -544,9 +543,7 @@ async def test_cancelled_preparation_joins_sync_worker_and_keeps_its_failure(
             raise failure
         return _Graph()
 
-    monkeypatch.setattr(
-        "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent", create
-    )
+    monkeypatch.setattr("tinkerfin.deep_agent.create_agent_graph", create)
     stream = _open(
         TinkerFin().with_namespace("chosen").build(model="provider:model"), "native"
     )
@@ -572,16 +569,16 @@ async def test_cancelled_preparation_joins_sync_worker_and_keeps_its_failure(
 async def test_build_copies_configuration_containers_without_copying_resources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    received: list[dict[str, object]] = []
+    from tinkerfin._agent_spec import AgentSpec
+
+    received: list[AgentSpec[None]] = []
     graph = _Graph()
 
-    def create(*args: object, **kwargs: object) -> _Graph:
-        received.append(kwargs)
+    def create(spec: AgentSpec[None], **kwargs: object) -> _Graph:
+        received.append(spec)
         return graph
 
-    monkeypatch.setattr(
-        "tinkerfin.runtime_profile._deepagents_graph.create_deep_agent", create
-    )
+    monkeypatch.setattr("tinkerfin.deep_agent.create_agent_graph", create)
     tools: list[Callable[..., object]] = []
     builder = TinkerFin().with_namespace("original")
     runtime = builder.build(model="provider:model", tools=tools)
@@ -589,7 +586,7 @@ async def test_build_copies_configuration_containers_without_copying_resources(
     assert await runtime.ainvoke(
         thread_id="thread", run_id="run", input={"messages": []}
     ) == {"answer": 42}
-    assert received[0]["tools"] == []
+    assert received[0].tools == ()
     derived = builder.with_namespace("other").build(model="provider:model")
     assert runtime.namespace == "original"
     assert derived.namespace == "other"

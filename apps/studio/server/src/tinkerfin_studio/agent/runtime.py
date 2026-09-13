@@ -6,14 +6,11 @@ from typing import TYPE_CHECKING
 
 from deepagents.backends.store import StoreBackend
 from langchain.agents.middleware import InterruptOnConfig, TodoListMiddleware
-from langchain_core.tools import BaseTool
 
 from tinkerfin import AgentRuntime
 from tinkerfin.media import AttachmentSupport
 from tinkerfin.plan import PlanReviewAction
 from tinkerfin.subagents import SubAgent
-from tinkerfin_contracts import AgentRunPreparation
-from tinkerfin_sandbox import RootedOpenSandboxBackend
 from tinkerfin_studio.agent.plan_clarification import StudioPlanClarificationForm
 from tinkerfin_studio.agent.plan_content import StudioMarkdownPlanContent
 from tinkerfin_studio.agent.tools import build_web_search_tool
@@ -79,46 +76,43 @@ def build_conversation_runtime(
         None if api_key is None else api_key.get_secret_value()
     )
 
-    async def prepare_attachments(
-        run: AgentRunPreparation[RootedOpenSandboxBackend],
-    ) -> list[BaseTool]:
-        """为当前执行准备已授权的附件读取、文件交付和截图工具"""
-
-        return [
-            *build_attachment_tools(
-                service=resources.attachments,
-                processor=resources.attachments.documents,
-                user_id=user_id,
-                thread_id=thread_id,
-                image_model=image_model,
-                supports_images=model_config.image_support == "supported",
-                model_allowed_origins=resources.settings.model_allowed_origins,
-            ),
-            *build_sandbox_attachment_tools(
-                sandbox=run.workspace,
-                service=resources.attachments,
-                user_id=user_id,
-                thread_id=thread_id,
-            ),
-        ]
+    attachment_tools = [
+        *build_attachment_tools(
+            service=resources.attachments,
+            processor=resources.attachments.documents,
+            user_id=user_id,
+            thread_id=thread_id,
+            image_model=image_model,
+            supports_images=model_config.image_support == "supported",
+            model_allowed_origins=resources.settings.model_allowed_origins,
+        ),
+        *build_sandbox_attachment_tools(
+            service=resources.attachments,
+            user_id=user_id,
+            thread_id=thread_id,
+        ),
+    ]
 
     attachment_support = AttachmentSupport(
-        read_image=lambda attachment: resources.attachments.read_image(
+        read_content=lambda attachment: resources.attachments.read_image(
             attachment, user_id=user_id, thread_id=thread_id
         ),
-        supports_images=lambda candidate: (
-            (candidate is model or candidate is plan_model)
+        supports_content=lambda candidate, mime_type: (
+            mime_type.startswith("image/")
+            and (candidate is model or candidate is plan_model)
             and model_config.image_support == "supported"
         ),
     )
     tool_registry = {web_search.name: web_search}
-    subagents: list[SubAgent[RootedOpenSandboxBackend]] = [
+    subagents: list[SubAgent] = [
         {
             "name": name,
             "description": definition.description,
             "system_prompt": definition.system_prompt,
-            "tools": [tool_registry[tool] for tool in definition.tools],
-            "prepare_tools": prepare_attachments,
+            "tools": [
+                *(tool_registry[tool] for tool in definition.tools),
+                *attachment_tools,
+            ],
         }
         for name, definition in resources.agent_subagents.items()
     ]
@@ -142,8 +136,7 @@ def build_conversation_runtime(
         )
         .build(
             model=model,
-            tools=[web_search],
-            prepare_tools=prepare_attachments,
+            tools=[web_search, *attachment_tools],
             system_prompt=_SYSTEM_PROMPT,
             middleware=(TodoListMiddleware(),),
             subagents=subagents,
@@ -154,7 +147,6 @@ def build_conversation_runtime(
                 },
             ),
             interrupt_on={"write_file": interrupt},
-            store=resources.agent_persistence.store,
         )
     )
 

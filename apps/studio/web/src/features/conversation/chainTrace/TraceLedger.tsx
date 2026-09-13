@@ -225,7 +225,6 @@ export function TraceLedger({
                         stepOrdinal={index + 1}
                         hidden={hiddenNodeIds.has(node.id)}
                         controlledRowIds={controlledRowIds.get(node.id) ?? []}
-                        toolOnlyAssistant={node.toolCallOnly}
                         firstTurnRoot={node.id === firstRootId}
                         lastTurnRoot={node.id === lastRootId}
                         onToggleSubagent={toggleSubagent}
@@ -255,7 +254,6 @@ function TraceLedgerRow({
   stepOrdinal,
   hidden,
   controlledRowIds,
-  toolOnlyAssistant,
   firstTurnRoot,
   lastTurnRoot,
   onToggleSubagent,
@@ -271,7 +269,6 @@ function TraceLedgerRow({
   stepOrdinal: number
   hidden: boolean
   controlledRowIds: string[]
-  toolOnlyAssistant: boolean
   firstTurnRoot: boolean
   lastTurnRoot: boolean
   onToggleSubagent: (nodeId: string, trigger: HTMLButtonElement) => void
@@ -279,7 +276,6 @@ function TraceLedgerRow({
 }) {
   const { t } = useI18n()
   const subagent = node.kind === 'subagent'
-  const previewFallback = toolOnlyAssistant ? t('（仅工具调用）') : undefined
   return (
     <div
       id={traceLedgerRowId(node.id)}
@@ -313,7 +309,7 @@ function TraceLedgerRow({
         type="button"
         className={`chain-trace-ledger-row${selected ? ' is-selected' : ''}${node.failure ? ' has-error' : ''}${firstTurnRoot ? ' is-turn-root-start' : ''}${lastTurnRoot ? ' is-turn-root-end' : ''}`}
         data-trace-node-id={node.id}
-        aria-label={`${direct ? '' : `${t('范围')}，`}${traceNodeAccessibleLabel(node, t, previewFallback)}，${traceStatusLabel(node.status, t)}，${t('查看详情')}`}
+        aria-label={`${direct ? '' : `${t('范围')}，`}${traceNodeAccessibleLabel(node, t)}，${traceStatusLabel(node.status, t)}，${t('查看详情')}`}
         aria-current={selected || undefined}
         onClick={(event) => onSelect(node.id, event.currentTarget)}
       >
@@ -324,7 +320,6 @@ function TraceLedgerRow({
           <TraceNodeCopy
             node={node}
             showKind={false}
-            previewFallback={previewFallback}
           />
         </span>
         <TraceNodeMeta node={node} />

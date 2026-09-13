@@ -13,66 +13,53 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
+from dataclasses import replace
 from functools import partial, wraps
-from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
     Any,
-    Generic,
     ParamSpec,
     Protocol,
     TypeVar,
     cast,
-    overload,
 )
 
-from deepagents import graph as _deepagents_graph
 from deepagents.backends.protocol import BackendProtocol
-from deepagents.graph import DeepAgentState
-from langchain.agents.middleware.types import AgentMiddleware, InputAgentState
+from langchain.agents.middleware.types import InputAgentState
 from langchain_core.callbacks import BaseCallbackManager
 from langchain_core.runnables import Runnable, RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import Command, StateSnapshot
 from langgraph.typing import ContextT
 
-from tinkerfin_contracts import PreparedWorkspace, RunIdentity
+from tinkerfin_contracts import PreparedWorkspace, RunIdentity, Workspace
 from tinkerfin_native_stream import NativeRuntimeInterrupt, NativeValidatedStreamPart
 
-from ._agent_preparation import (
-    build_signature,
-    prepare_agent_arguments,
-    prepare_agent_middleware,
-    requires_run_preparation,
-    validate_agent_middleware,
-    validate_tool_preparation,
-)
+from ._agent_construction import create_agent_graph
+from ._agent_preparation import prepare_agent_spec, validate_agent_spec
+from ._agent_spec import AgentSpec
 from ._agui_lineage_state import (
     RESUME_METADATA_KEY,
     bind_checkpoint_run,
 )
 from ._checkpoint import NamespaceCheckpointer
 from ._failure_evidence import retain_failure, select_failure
-from ._observation import RuntimeObservationHub, source_context
+from ._observation import RuntimeObservationHub, native_input_kind, source_context
 from ._optional_dependencies import require_agui
 from ._run_owner import in_native_owner, native_iterator_cleanup
 from ._run_resources import RunResources
 from ._state_schema import compose_deep_agent_base_schema
-from ._store import NamespaceStore, validate_store_backend
+from ._store import NamespaceStore
 from ._store_backend import async_store_backend
-from ._subagents import validate_subagent_resources
 from ._tasks import OwnedOperationFailures, join_task, run_sync_owned
 from .errors import TinkerFinLifecycleError
 from .native_driver import NativeStreamDriver
 from .plan._config import (
     AgentMode,
-    PlanOptions,
     resolve_agent_mode,
 )
-from .runtime_profile import DeepAgentsRuntimeProfile
 
 if TYPE_CHECKING:
-    from ._build_api import BuildAgent
     from .agui_resume import (
         AgUiResumeBinding,
         AgUiResumeCheckpointObserver,
@@ -121,15 +108,6 @@ class _PlanNativeGraph(Protocol):
     ) -> RunnableConfig: ...
 
 
-# The built-in factory supplies the public ParamSpec and generated-stub contract only.
-# Every actual Definition build resolves the selected Profile's factory below, so this
-# symbol must never become an invocation fallback for a custom Profile.
-_public_create_agent_contract = cast(
-    Callable[..., object],
-    _deepagents_graph.create_deep_agent,  # pyright: ignore[reportUnknownMemberType]
-)
-
-
 def _install_call_handler(
     bound: inspect.BoundArguments,
     observation: RuntimeObservationHub,
@@ -162,45 +140,6 @@ def _install_call_handler(
         raise TypeError("config callbacks must be a callback list or manager")
     config["callbacks"] = configured_callbacks
     bound.arguments["config"] = config
-
-
-async def _create_profile_graph(
-    profile: DeepAgentsRuntimeProfile,
-    factory: Callable[..., object],
-    args: tuple[object, ...],
-    kwargs: Mapping[str, object],
-) -> object:
-    """Create one Profile-owned Graph through its optional async capability.
-
-    Existing structural Profiles own synchronous factories through the base contract.
-    Running that exact factory in AnyIO's bounded worker preserves the integration while
-    keeping managed and direct graph creation non-blocking. A Profile may instead expose
-    ``create_agent_graph`` when its factory requires native asynchronous construction.
-
-    Args:
-        profile: Selected integration that owns the exact factory and stream contract.
-        factory: Concrete factory captured when the Definition was created.
-        args: Frozen positional factory arguments.
-        kwargs: Frozen keyword factory arguments.
-
-    Returns:
-        A fresh Profile-owned Graph for direct or managed execution.
-
-    Raises:
-        TypeError: An advertised async creation capability is not callable or awaitable.
-        BaseException: Profile construction fails or caller cancellation propagates.
-    """
-
-    create_graph = getattr(profile, "create_agent_graph", None)
-    if create_graph is None:
-        build = partial(factory, *args, **dict(kwargs))
-        return await run_sync_owned(build)
-    if not callable(create_graph):
-        raise TypeError("runtime_profile.create_agent_graph must be callable")
-    pending = create_graph(factory, args, kwargs)
-    if not inspect.isawaitable(pending):
-        raise TypeError("runtime_profile.create_agent_graph must return an awaitable")
-    return await pending
 
 
 async def _close_owned_iterator(
@@ -423,11 +362,7 @@ def _wrap_native_astream(
         claim.claim()
         graph_input = bound.arguments.get("input")
         raw_config = bound.arguments.get("config", {})
-        input_kind = (
-            "resume"
-            if isinstance(graph_input, Command) and graph_input.resume is not None
-            else "ordinary"
-        )
+        input_kind = native_input_kind(graph_input)
         context = source_context(
             identity=identity,
             runtime_profile=tinkerfin._runtime_profile.profile_id,
@@ -1153,94 +1088,23 @@ class DeepAgentGraph(Runnable[_GraphInput, Mapping[str, object]]):
         return None
 
 
-def _copy_config_value(value: object) -> object:
-    """Copy configuration containers while retaining borrowed integration objects."""
-
-    if isinstance(value, dict):
-        return {
-            key: _copy_config_value(item)
-            for key, item in cast(dict[object, object], value).items()
-        }
-    if isinstance(value, list):
-        return [_copy_config_value(item) for item in cast(list[object], value)]
-    if isinstance(value, tuple):
-        return tuple(
-            _copy_config_value(item) for item in cast(tuple[object, ...], value)
-        )
-    if isinstance(value, set):
-        return set(cast(set[object], value))
-    return value
-
-
-class _AgentDefinition(Generic[GraphT, AstreamT]):
-    """Store one Graph build call and create a fresh Graph for every execution."""
-
-    __slots__ = (
-        "_args",
-        "_checkpointer",
-        "_factory",
-        "_get_astream",
-        "_kwargs",
-        "_plan_factory",
-        "_plan_options",
-        "_private_state_keys",
-        "_prepare_tools",
-        "_static_tools",
-        "_plan_permissions",
-        "_tinkerfin",
-    )
+class _AgentDefinition:
+    """Keep immutable agent configuration and build a fresh graph per run."""
 
     def __init__(
         self,
         *,
         tinkerfin: AgentRuntime[Any],
-        factory: Callable[..., GraphT],
-        args: tuple[object, ...],
-        checkpointer: object | None,
-        kwargs: dict[str, object],
-        get_astream: Callable[[GraphT], AstreamT],
-        plan_factory: Callable[..., object] | None,
-        plan_options: PlanOptions | None,
+        spec: AgentSpec[Any],
         private_state_keys: frozenset[str],
-        prepare_tools: object,
-        static_tools: object,
-        plan_permissions: object,
     ) -> None:
-        """Freeze graph construction inputs while borrowing shared resources.
-
-        Captured configuration opens no Graph or external resource. Each execution
-        copies its containers and borrows the supplied model, checkpointer, Store,
-        backend, and coordinator without transferring their ownership.
-
-        Args:
-            tinkerfin: Immutable Runtime/Profile configuration.
-            factory: Profile-selected Deep Agents graph factory.
-            args: Positional graph-construction inputs retained by value.
-            checkpointer: Effective borrowed saver captured by this Definition.
-            kwargs: Keyword graph-construction inputs retained by value.
-            get_astream: Adapter from one fresh Graph to its stream callable.
-            plan_factory: Optional fresh Planning Graph factory.
-            plan_options: Optional immutable Plan configuration.
-            private_state_keys: Runtime-owned channels excluded from public output.
-            prepare_tools: Optional main-agent tool preparation from the build call.
-            static_tools: Borrowed static tools used to check role-local collisions.
-            plan_permissions: Unsettled filesystem rules retained for the Planner.
-        """
-
         self._tinkerfin = tinkerfin
-        self._factory = factory
-        self._args = tuple(_copy_config_value(value) for value in args)
-        self._checkpointer = checkpointer
-        self._kwargs = {key: _copy_config_value(value) for key, value in kwargs.items()}
-        self._get_astream = get_astream
-        self._plan_factory = plan_factory
-        self._plan_options = plan_options
+        self._spec = spec.snapshot()
+        self._checkpointer = spec.checkpointer
+        self._plan_options = tinkerfin._plan_options
         self._private_state_keys = private_state_keys
-        self._prepare_tools = prepare_tools
-        self._static_tools = _copy_config_value(static_tools)
-        self._plan_permissions = _copy_config_value(plan_permissions)
 
-    def _deferred_astream(self, mode: AgentMode) -> AstreamT:
+    def _deferred_astream(self, mode: AgentMode) -> _NativeAstream:
         """Return one signature-preserving stream that builds its Graph asynchronously."""
 
         async def build_astream() -> _NativeAstream:
@@ -1280,7 +1144,7 @@ class _AgentDefinition(Generic[GraphT, AstreamT]):
             self._tinkerfin._runtime_profile.astream_signature,
         )
         setattr(deferred, "_tinkerfin_resolve_astream", resolve_astream)
-        return cast(AstreamT, deferred)
+        return deferred
 
     async def create_graph(
         self,
@@ -1289,10 +1153,10 @@ class _AgentDefinition(Generic[GraphT, AstreamT]):
     ) -> DeepAgentGraph:
         """Create one complete reusable async native or Plan-capable Graph.
 
-        The selected Runtime Profile owns asynchronous construction of the native Graph.
+        TinkerFin assembles the native graph in a bounded worker.
         Plan capability adds one lazily built Planning Graph to the same reusable router;
         it never creates a second native Graph. The returned Runnable owns no borrowed
-        model, checkpointer, Store, backend, or cache resource and never closes them.
+        model, checkpointer, Store, or backend resource and never closes them.
 
         Args:
             mode: Default route for new input. Resume always follows durable checkpoint
@@ -1303,81 +1167,59 @@ class _AgentDefinition(Generic[GraphT, AstreamT]):
             optional Plan behavior.
 
         Raises:
-            TypeError: The Profile factory does not produce the declared Graph boundary.
+            TypeError: Graph configuration violates the selected integration.
             ValueError: The requested mode is unavailable on this Definition.
-            BaseException: Profile or Planning Graph construction fails.
+            BaseException: Agent or Planning Graph construction fails.
         """
 
-        if requires_run_preparation(self._kwargs, self._prepare_tools):
-            raise ValueError(
-                "Workspace and prepare_tools require managed Runtime execution"
-            )
-        return await self._build_graph(
-            mode=mode,
-            kwargs={
-                key: _copy_config_value(value) for key, value in self._kwargs.items()
-            },
-        )
+        if isinstance(self._spec.backend, Workspace):
+            raise ValueError("Workspace requires managed Runtime execution")  # noqa: TRY004 - the declaration is valid but requires a managed resource scope
+        spec = self._spec.snapshot()
+        if isinstance(spec.backend, BackendProtocol):
+            spec = replace(spec, backend=async_store_backend(spec.backend))
+        return await self._build_graph(mode=mode, spec=spec)
 
     async def _create_run_graph(
         self, identity: RunIdentity, resources: RunResources, *, mode: AgentMode
     ) -> DeepAgentGraph:
-        arguments = await prepare_agent_arguments(
-            {key: _copy_config_value(value) for key, value in self._kwargs.items()},
-            static_tools=self._static_tools,
-            prepare_tools=self._prepare_tools,
-            identity=identity,
-            resources=resources,
-        )
+        prepared = await prepare_agent_spec(self._spec.snapshot(), identity, resources)
         return await self._build_graph(
-            mode=mode, kwargs=arguments.arguments, workspace=arguments.workspace
+            mode=mode, spec=prepared.spec, workspace=prepared.workspace
         )
 
     async def _build_graph(
         self,
         *,
         mode: AgentMode | None,
-        kwargs: dict[str, object],
+        spec: AgentSpec[Any],
         workspace: PreparedWorkspace[object, BackendProtocol] | None = None,
     ) -> DeepAgentGraph:
-        """Construct native and optional Planning graphs using one Run's resources."""
-
         resolved_mode = resolve_agent_mode(mode, options=self._plan_options)
-        prepare_agent_middleware(kwargs)
-        native_value = await _create_profile_graph(
-            self._tinkerfin._runtime_profile,
-            cast(Callable[..., object], self._factory),
-            tuple(_copy_config_value(value) for value in self._args),
-            kwargs,
+        native = await run_sync_owned(
+            partial(create_agent_graph, spec, workspace=workspace)
         )
-        native = cast(GraphT, native_value)
-        native_astream = self._get_astream(native)
+        native_astream = self._tinkerfin._runtime_profile.graph_stream(native)
         if not callable(native_astream):
             raise TypeError("Runtime Profile Graph must expose a callable astream")
-        effective: Callable[..., AsyncIterator[Mapping[str, object]]]
-        plan_factory = self._plan_factory
-        if plan_factory is None:
-            effective = cast(
-                Callable[..., AsyncIterator[Mapping[str, object]]],
-                native_astream,
-            )
-        else:
-            plan_options = self._plan_options
-            if plan_options is None:
-                raise RuntimeError("Plan factory requires frozen Plan options")
+        effective = cast(_NativeAstream, native_astream)
+        if self._plan_options is not None:
             from .plan._runtime import PlanCapableGraphRuntime
-            from .plan._workflow import PlanningWorkflowGraph
+            from .plan._workflow import PlanningWorkflowGraph, create_planning_graph
+
+            options = self._plan_options
 
             async def planning_graph() -> PlanningWorkflowGraph[Any]:
-                plan_kwargs = {**kwargs, "permissions": self._plan_permissions}
-                build = partial(
-                    plan_factory, *self._args, _workspace=workspace, **plan_kwargs
+                return await run_sync_owned(
+                    partial(
+                        create_planning_graph,
+                        spec,
+                        options=options,
+                        workspace=workspace,
+                    )
                 )
-                value = await run_sync_owned(build)
-                return cast(PlanningWorkflowGraph[Any], value)
 
             runtime = PlanCapableGraphRuntime(
-                options=plan_options,
+                options=options,
                 native=cast(_PlanNativeGraph, native),
                 planning_factory=planning_graph,
                 prefer_plan=resolved_mode == "plan",
@@ -1410,7 +1252,7 @@ class _AgentDefinition(Generic[GraphT, AstreamT]):
         resolved_mode = resolve_agent_mode(mode, options=self._plan_options)
         graph = await self._create_run_graph(identity, resources, mode=resolved_mode)
         astream = _wrap_native_astream(
-            cast(AstreamT, graph._astream),
+            graph._astream,
             tinkerfin=self._tinkerfin,
             identity=identity,
             mode=resolved_mode,
@@ -1456,7 +1298,7 @@ class _AgentDefinition(Generic[GraphT, AstreamT]):
             if input is None:
                 raise ValueError("ordinary AG-UI run requires input")
             astream = _wrap_agui_astream(
-                cast(AstreamT, graph._astream),
+                graph._astream,
                 tinkerfin=self._tinkerfin,
                 identity=identity,
                 parent_run_id=parent_run_id,
@@ -1554,229 +1396,45 @@ class _AgentDefinition(Generic[GraphT, AstreamT]):
         return binding
 
 
-class _AgentBuilder(Generic[CreateP, GraphT, AstreamT]):
-    """Preserve the public factory ParamSpec while resolving each Profile at runtime."""
+def bind_agent(builder: TinkerFin, spec: AgentSpec[ContextT]) -> AgentRuntime[ContextT]:
+    """Bind declared resources to one namespace without constructing a graph."""
+    from ._hitl_state import TOOL_REVIEW_CHANNEL
+    from .runtime import AgentRuntime
 
-    __slots__ = ("_factory",)
-
-    def __init__(
-        self,
-        factory: Callable[CreateP, GraphT],
-    ) -> None:
-        self._factory = factory
-
-    @overload
-    def __get__(
-        self,
-        instance: None,
-        owner: type[TinkerFin],
-    ) -> _AgentBuilder[CreateP, GraphT, AstreamT]: ...
-
-    @overload
-    def __get__(
-        self,
-        instance: TinkerFin,
-        owner: type[TinkerFin],
-    ) -> BuildAgent: ...
-
-    def __get__(
-        self,
-        instance: TinkerFin | None,
-        owner: type[TinkerFin],
-    ) -> object:
-        if instance is None:
-            return self
-        from .runtime import AgentRuntime
-
-        # A Profile may adapt a newer upstream factory behind the current TinkerFin
-        # build contract. Bind against that exact callable so defaults, HITL inputs,
-        # state composition, and Plan forwarding cannot silently use the v2 template.
-        selected_factory = cast(
-            Callable[..., GraphT],
-            instance._runtime_profile.create_agent_factory,
+    namespace = builder._require_namespace()
+    validate_agent_spec(spec)
+    checkpointer = (
+        None
+        if spec.checkpointer is None
+        else NamespaceCheckpointer(
+            cast(BaseCheckpointSaver[Any], spec.checkpointer), namespace
         )
-        selected_signature = instance._runtime_profile.create_agent_signature
-        public_signature = build_signature(selected_signature)
+    )
+    store = None if spec.store is None else NamespaceStore(spec.store, namespace)
+    state = compose_deep_agent_base_schema(spec.state_schema)
+    private_keys = frozenset({RESUME_METADATA_KEY, TOOL_REVIEW_CHANNEL})
+    middleware = tuple(spec.middleware)
+    if builder._plan_options is not None:
+        from .plan._handoff import create_plan_handoff_middleware
+        from .plan._state import PLAN_PRIVATE_STATE_KEYS
 
-        @wraps(selected_factory)
-        def create(
-            *args: CreateP.args,
-            **kwargs: CreateP.kwargs,
-        ) -> AgentRuntime[Any]:
-            instance._require_namespace()
-            bound = public_signature.bind(*args, **kwargs)
-            bound.apply_defaults()
-            validate_subagent_resources(bound.arguments.get("subagents"))
-            validate_tool_preparation(bound.arguments)
-            validate_agent_middleware(bound.arguments)
-            prepare_tools = bound.arguments.pop("prepare_tools", None)
-            definition_kwargs = dict(kwargs)
-            definition_kwargs.pop("prepare_tools", None)
-            definition_kwargs["middleware"] = bound.arguments.get("middleware", ())
-            checkpointer = bound.arguments.get("checkpointer")
-            if checkpointer is None and instance._checkpointer is not None:
-                checkpointer = instance._checkpointer
-                bound.arguments["checkpointer"] = checkpointer
-                definition_kwargs["checkpointer"] = checkpointer
-            if isinstance(checkpointer, BaseCheckpointSaver):
-                checkpointer = NamespaceCheckpointer(
-                    cast(BaseCheckpointSaver[Any], checkpointer),
-                    instance._require_namespace(),
-                )
-                bound.arguments["checkpointer"] = checkpointer
-                definition_kwargs["checkpointer"] = checkpointer
-            preparation = instance._runtime_profile.prepare_create_agent(
-                cast(Mapping[str, object], bound.arguments)
-            )
-            definition_kwargs.update(preparation.keyword_overrides)
-            validate_store_backend(bound.arguments.get("backend"))
-            backend = bound.arguments.get("backend")
-            if isinstance(backend, BackendProtocol):
-                definition_kwargs["backend"] = async_store_backend(backend)
-            store = bound.arguments.get("store")
-            if store is not None:
-                from langgraph.store.base import BaseStore
-
-                if not isinstance(store, BaseStore):
-                    raise TypeError("store must implement LangGraph BaseStore")
-                definition_kwargs["store"] = NamespaceStore(
-                    store, instance._require_namespace()
-                )
-            definition_state = cast(
-                type[DeepAgentState] | None,
-                bound.arguments.get("state_schema"),
-            )
-            composed_state = compose_deep_agent_base_schema(
-                instance._state_schema,
-                definition_state,
-            )
-            if composed_state is not None:
-                definition_kwargs["state_schema"] = composed_state
-            plan_factory: Callable[..., object] | None = None
-            from ._hitl_state import TOOL_REVIEW_CHANNEL
-
-            private_state_keys = frozenset({RESUME_METADATA_KEY, TOOL_REVIEW_CHANNEL})
-            if instance._plan_options is not None:
-                from .plan._handoff import create_plan_handoff_middleware
-                from .plan._state import PLAN_PRIVATE_STATE_KEYS
-                from .plan._workflow import prepare_plan_factory
-
-                middleware = cast(
-                    Sequence[AgentMiddleware[Any, Any, Any]],
-                    definition_kwargs.get("middleware", ()),
-                )
-                definition_kwargs["middleware"] = (
-                    *middleware,
-                    create_plan_handoff_middleware(),
-                )
-                plan_factory = prepare_plan_factory(
-                    selected_signature,
-                    instance._plan_options,
-                    attachments=instance._attachments,
-                )
-                private_state_keys |= PLAN_PRIVATE_STATE_KEYS
-            definition_factory = selected_factory
-            if instance._attachments is not None:
-                from ._attachment_agents import attachment_agent_factory
-
-                definition_factory = cast(
-                    Callable[..., GraphT],
-                    attachment_agent_factory(
-                        selected_factory, selected_signature, instance._attachments
-                    ),
-                )
-            runtime: AgentRuntime[Any] = AgentRuntime._create(instance)
-            runtime._definition = _AgentDefinition(
-                tinkerfin=runtime,
-                factory=cast(Callable[..., object], definition_factory),
-                args=cast(tuple[object, ...], args),
-                checkpointer=checkpointer,
-                kwargs=definition_kwargs,
-                get_astream=lambda graph: cast(
-                    _NativeAstream,
-                    instance._runtime_profile.graph_stream(graph),
-                ),
-                plan_factory=plan_factory,
-                plan_options=instance._plan_options,
-                private_state_keys=private_state_keys,
-                prepare_tools=prepare_tools,
-                static_tools=bound.arguments.get("tools"),
-                plan_permissions=bound.arguments.get("permissions"),
-            )
-
-            return runtime
-
-        # ``wraps`` follows the concrete callable, which process instrumentation may
-        # replace with a broad ``*args, **kwargs`` wrapper. Preserve the Profile's
-        # declared contract for IDEs, introspection, and deterministic preflight.
-        runtime_annotation = GenericAlias(AgentRuntime, ContextT)
-        setattr(
-            create,
-            "__signature__",
-            public_signature.replace(return_annotation=runtime_annotation),
-        )
-        create.__annotations__ = {
-            **{
-                parameter.name: parameter.annotation
-                for parameter in public_signature.parameters.values()
-                if parameter.annotation is not inspect.Parameter.empty
-            },
-            "return": runtime_annotation,
-        }
-        create.__name__ = "build"
-        create.__qualname__ = "TinkerFin.build"
-        create.__module__ = "tinkerfin.runtime"
-        create.__doc__ = """Build an AgentRuntime with the selected model and capabilities.
-
-        Configuration containers are copied; models, stores, backends, middleware,
-        and other supplied resources remain borrowed. Building performs no execution
-        I/O. Each admitted run prepares its own Graph and closes its owned resources.
-
-        Args:
-            model: Chat model instance or provider:model identifier.
-            tools: Additional tools available to the agent.
-            system_prompt: Instructions supplied to the model.
-            middleware: Additional agent behavior and request processing. Built-in
-                Store-backed middleware must use the Runtime store, without binding
-                a separate store. Their file operations use asynchronous Store I/O.
-            subagents: Declarative, compiled, or remote agents available for delegation.
-            skills: Backend directories containing agent skills.
-            memory: Backend files loaded as persistent instructions.
-            permissions: Rules for filesystem tools; these do not restrict arbitrary
-                shell commands. The Planner reads only allowed files; read rules
-                requiring approval deny access during planning.
-            backend: Borrowed filesystem capabilities or a lazy Workspace declaration.
-            prepare_tools: Async function returning this agent's additional tools for
-                the Run. Receives its identity and borrowed workspace (None without a
-                Workspace). Names must be unique among this role's explicit tools,
-                middleware, and prepared tools. Other roles do not inherit these
-                tools; declarative subagents can register their own.
-                Built-in file, Todo, and task tool names are reserved in every role.
-            interrupt_on: Tools requiring human decisions before execution.
-            response_format: Optional structured response schema or strategy.
-            state_schema: Additional state fields for this agent.
-            context_schema: Type of the context supplied to execution methods.
-            checkpointer: Borrowed saver overriding the builder's default. False
-                disables saving; True requires checkpoint inheritance from a parent.
-            store: Borrowed long-term memory store. All graph access uses paths
-                relative to this Runtime's namespace; synchronous access is rejected.
-            debug: Whether the agent enables upstream diagnostics.
-            name: Optional agent name.
-            cache: Borrowed cache for graph computation.
-
-        Returns:
-            A reusable Runtime bound to this namespace and context schema.
-
-        Raises:
-            TypeError: Build arguments or their types violate the selected integration.
-            ValueError: Namespace is missing or configuration is inconsistent.
-        """
-        return create
-
-
-BUILD_AGENT: _AgentBuilder[..., object, _NativeAstream] = _AgentBuilder(
-    _public_create_agent_contract,
-)
+        middleware = (*middleware, create_plan_handoff_middleware())
+        private_keys |= PLAN_PRIVATE_STATE_KEYS
+    spec = replace(
+        spec,
+        checkpointer=checkpointer,
+        store=store,
+        state_schema=state,
+        middleware=middleware,
+        attachments=builder._attachments,
+    )
+    runtime: AgentRuntime[ContextT] = AgentRuntime[ContextT]._create(builder)
+    runtime._definition = _AgentDefinition(
+        tinkerfin=runtime,
+        spec=spec,
+        private_state_keys=private_keys,
+    )
+    return runtime
 
 
 async def create_graph(

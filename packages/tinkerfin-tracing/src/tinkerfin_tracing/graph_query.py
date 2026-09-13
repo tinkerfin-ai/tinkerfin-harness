@@ -25,7 +25,7 @@ from .graph import (
 from .store import TraceStore, TraceThreadKey
 
 
-class _GraphCursor(TraceModel):
+class _GraphCursor(TraceModel, frozen=True):
     namespace: str = Field(min_length=1, max_length=2048)
     thread_id: str = Field(min_length=1, max_length=2048)
     generation: str = Field(min_length=1, max_length=2048)
@@ -160,6 +160,12 @@ class TraceGraphQuery:
         self._refresh = refresh
         self._follow_enabled = follow_enabled
         self._max_page_bytes = max_page_bytes
+
+    @property
+    def key(self) -> TraceThreadKey:
+        """Return the immutable thread and generation selected by this query."""
+
+        return self._key
 
     @property
     def nodes(self) -> tuple[TraceGraphNode, ...]:

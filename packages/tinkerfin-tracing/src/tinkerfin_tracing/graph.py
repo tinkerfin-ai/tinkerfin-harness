@@ -52,7 +52,7 @@ class TraceGraphLinkIssue(StrEnum):
     MISSING_TOOL_PROPOSAL = "missing_tool_proposal"
 
 
-class TraceGraphFilter(TraceModel):
+class TraceGraphFilter(TraceModel, frozen=True):
     """Select timeline events through bounded Store-side predicates.
 
     Parent Subagent containers are added automatically after direct selection so a
@@ -156,7 +156,7 @@ class TraceGraphFilter(TraceModel):
         return self
 
 
-class TraceGraphQueryLimits(TraceModel):
+class TraceGraphQueryLimits(TraceModel, frozen=True):
     """Bound direct matches, Subagent expansion, and serialized Graph pages."""
 
     max_direct_nodes: int = Field(default=1000, ge=1, le=10_000)
@@ -172,7 +172,7 @@ class TraceGraphQueryLimits(TraceModel):
         return self
 
 
-class TraceGraphFailure(TraceModel):
+class TraceGraphFailure(TraceModel, frozen=True):
     """Failure retained only by the timeline event that owns it."""
 
     error_type: str = Field(min_length=1, max_length=1024)
@@ -188,7 +188,7 @@ class TraceGraphFailure(TraceModel):
         return value
 
 
-class TraceGraphTurn(TraceModel):
+class TraceGraphTurn(TraceModel, frozen=True):
     """One selected-lineage user turn that owns a flat root execution scope."""
 
     id: str = Field(min_length=1, max_length=2048)
@@ -214,7 +214,7 @@ class TraceGraphTurn(TraceModel):
         return value
 
 
-class TraceGraphNode(TraceModel):
+class TraceGraphNode(TraceModel, frozen=True):
     """One canonical event in a Turn or nested Subagent execution scope."""
 
     id: str = Field(min_length=1, max_length=2048)
@@ -466,7 +466,7 @@ def canonical_trace_graph_node_order(
     return tuple(ordered)
 
 
-class TraceGraphCompleteness(TraceModel):
+class TraceGraphCompleteness(TraceModel, frozen=True):
     """Expose missing call or relationship evidence without inventing events."""
 
     call_tracking_missing: bool = Field(
@@ -480,7 +480,7 @@ class TraceGraphCompleteness(TraceModel):
     details_omitted: bool = False
 
 
-class TraceGraph(TraceModel):
+class TraceGraph(TraceModel, frozen=True):
     """One authoritative ordered timeline projection at an exact Ledger tail."""
 
     turns: tuple[TraceGraphTurn, ...] = ()
@@ -542,13 +542,13 @@ class TraceGraph(TraceModel):
         return self
 
 
-class TraceGraphPage(TraceGraph):
+class TraceGraphPage(TraceGraph, frozen=True):
     """One directly filtered timeline page with an optional older-page cursor."""
 
     next_cursor: str | None = None
 
 
-class TraceGraphDelta(TraceModel):
+class TraceGraphDelta(TraceModel, frozen=True):
     """Replace changed timeline values while retaining authoritative display order."""
 
     as_of_seq: int = Field(ge=1)

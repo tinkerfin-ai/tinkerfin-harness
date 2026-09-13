@@ -697,7 +697,7 @@ async def main():
     graph = Graph()
     state.update(observer=observer, graph=graph)
     factory = TinkerFin().with_namespace("test").with_observer(observer)
-    with patch("tinkerfin.runtime_profile._deepagents_graph.create_deep_agent", return_value=graph):
+    with patch("tinkerfin.deep_agent.create_agent_graph", return_value=graph):
         definition = factory.build(model="provider:model", tools=[])
         stream = definition.open_run(thread_id="shutdown", run_id=phase, input={"messages": []})
         caller = asyncio.create_task(anext(stream))

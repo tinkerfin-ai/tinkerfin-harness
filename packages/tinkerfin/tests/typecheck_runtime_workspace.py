@@ -1,52 +1,53 @@
-"""Workspace, prepared tools, and context keep their types through build()."""
+"""Tools preserve business context, workspace, and state type parameters."""
 
-from collections.abc import Sequence
 from pathlib import Path
 from typing import TypedDict, assert_type
 
+from deepagents import DeepAgentState
 from deepagents.backends.protocol import BackendProtocol
-from langchain_core.tools import BaseTool
+from langchain_core.tools import tool
 
 from tinkerfin import AgentRuntime, TinkerFin
-from tinkerfin.runtime import TinkerFin as RuntimeBuilder
 from tinkerfin.subagents import SubAgent
-from tinkerfin_contracts import AgentRunPreparation, Workspace
+from tinkerfin.tools import ToolRuntime
+from tinkerfin_contracts import Workspace
 
 
 class Context(TypedDict):
     customer: str
 
 
-async def prepare_files(run: AgentRunPreparation[Path]) -> Sequence[BaseTool]:
-    assert_type(run.workspace, Path)
-    assert_type(run.identity.namespace, str)
-    return []
+class State(DeepAgentState):
+    account: str
 
 
-async def prepare_text(run: AgentRunPreparation[str]) -> Sequence[BaseTool]:
-    assert_type(run.workspace, str)
-    return []
+@tool
+async def read_files(runtime: ToolRuntime[Context, Path]) -> str:
+    """Read the workspace name."""
+    assert_type(runtime.workspace, Path)
+    assert_type(runtime.identity.namespace, str)
+    assert_type(runtime.context, Context)
+    assert_type(runtime.state, DeepAgentState)
+    return runtime.workspace.name
 
 
-async def prepare_without_workspace(
-    run: AgentRunPreparation[None],
-) -> Sequence[BaseTool]:
-    assert_type(run.workspace, None)
-    return []
+def inspect_state(runtime: ToolRuntime[Context, Path, State]) -> None:
+    assert_type(runtime.state, State)
+    assert_type(runtime.state["account"], str)
 
 
 def build(workspace: Workspace[Path, BackendProtocol]) -> None:
-    reader: SubAgent[Path] = {
+    reader: SubAgent = {
         "name": "reader",
         "description": "Read workspace reports",
         "system_prompt": "Read reports",
-        "prepare_tools": prepare_files,
+        "tools": [read_files],
     }
     builder = TinkerFin().with_namespace("company")
     runtime = builder.build(
-        model="provider:model",
+        model="openai:example",
         backend=workspace,
-        prepare_tools=prepare_files,
+        tools=[read_files],
         subagents=[reader],
         context_schema=Context,
     )
@@ -57,18 +58,4 @@ def build(workspace: Workspace[Path, BackendProtocol]) -> None:
         input={"messages": []},
         context={"customer": "customer"},
     )
-    assert_type(
-        builder.build(model="provider:model", prepare_tools=prepare_without_workspace),
-        AgentRuntime[None],
-    )
-    source_runtime = (
-        RuntimeBuilder()
-        .with_namespace("company")
-        .build(
-            model="provider:model",
-            backend=workspace,
-            prepare_tools=prepare_files,
-            subagents=[reader],
-        )
-    )
-    assert_type(source_runtime, AgentRuntime[None])
+    assert_type(builder.build(model="openai:example"), AgentRuntime[None])

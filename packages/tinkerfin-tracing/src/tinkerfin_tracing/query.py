@@ -74,7 +74,7 @@ EntityT = TypeVar("EntityT", bound=BaseModel)
 _CORE_PROJECTION_NAME = "tinkerfin.core.summary"
 
 
-class _CursorPayload(TraceModel):
+class _CursorPayload(TraceModel, frozen=True):
     namespace: str
     thread_id: str
     generation: str
@@ -89,7 +89,7 @@ class _CursorPayload(TraceModel):
         return self
 
 
-class _HistoryCursorPayload(TraceModel):
+class _HistoryCursorPayload(TraceModel, frozen=True):
     namespace: str
     thread_id: str
     generation: str
@@ -854,7 +854,8 @@ async def _materialize_history_graph(
     if isinstance(store, TraceGraphStore) and store.supports_graph_queries:
         current = await store.query_trace_graph(
             key,
-            run_ids=tuple(sorted(window.visible_run_ids)),
+            run_ids=tuple(sorted(window.selected_run_ids)),
+            started_run_ids=tuple(sorted(window.visible_run_ids)),
             where=where,
             limit=limits.max_direct_nodes,
             max_nodes=limits.max_total_nodes,
@@ -868,16 +869,24 @@ async def _materialize_history_graph(
             records = current.nodes
             relationship_evidence_missing = current.relationship_evidence_missing
     if records is None:
+        # A fixed-prefix rebuild needs the whole lineage to resolve a later
+        # settlement's original start. Keep the existing bounded Ledger pages,
+        # then select visible starts before applying the Graph output quota.
         events = await _read_events_for_runs(
             store,
             key,
-            run_ids=window.visible_run_ids,
+            run_ids=window.selected_run_ids,
             after_seq=0,
             as_of_seq=as_of_seq,
         )
         records = reduce_trace_graph_records(
             events,
-            run_ids=window.visible_run_ids,
+            run_ids=window.selected_run_ids,
+        )
+        records = tuple(
+            record
+            for record in records
+            if record.started_event.fact.identity.run_id in window.visible_run_ids
         )
         if len(records) > limits.max_direct_nodes:
             raise TraceQuotaExceeded(
@@ -893,7 +902,7 @@ async def _materialize_history_graph(
         records,
         turns=turns,
         run_turns=window.run_turns,
-        selected_run_ids=window.visible_run_ids,
+        selected_run_ids=window.selected_run_ids,
     )
     relationship_missing = relationship_evidence_missing or any(
         node.link_issues for node in nodes

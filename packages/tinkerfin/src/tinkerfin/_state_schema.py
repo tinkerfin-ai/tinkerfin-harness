@@ -5,15 +5,18 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import (
+    Annotated,
     Any,
     NotRequired,
     Required,
     cast,
+    get_args,
     get_origin,
     get_type_hints,
 )
 
 from deepagents.graph import DeepAgentState
+from langchain.agents.middleware.types import PrivateStateAttr
 from typing_extensions import TypedDict, is_typeddict
 
 
@@ -80,6 +83,27 @@ def validate_state_schema(schema: type | None, *, source: str) -> None:
         _schema_hints(schema, source=source)
 
 
+def private_state_fields(schemas: Iterable[type]) -> frozenset[str]:
+    """Keep declared private channels out of delegated agent input.
+
+    Resolve all schemas before delegation. Unresolvable annotations fail rather
+    than silently exposing a field whose privacy cannot be established.
+    """
+
+    def private(annotation: object) -> bool:
+        arguments = get_args(annotation)
+        if get_origin(annotation) is Annotated:
+            return any(marker is PrivateStateAttr for marker in arguments[1:])
+        return any(private(argument) for argument in arguments)
+
+    return frozenset(
+        name
+        for schema in schemas
+        for name, annotation in _schema_hints(schema, source=schema.__name__).items()
+        if private(annotation)
+    )
+
+
 def compose_state_schema(
     sources: Sequence[StateSchemaSource],
     *,
@@ -114,20 +138,15 @@ def compose_state_schema(
 
 
 def compose_deep_agent_base_schema(
-    global_schema: type[DeepAgentState] | None,
     definition_schema: type[DeepAgentState] | None,
 ) -> type[DeepAgentState] | None:
-    """Merge framework, global, and Definition state without field precedence."""
+    """Merge the framework and declared agent state without field precedence."""
 
     sources = [
         StateSchemaSource("DeepAgentState", DeepAgentState),
     ]
-    if global_schema is not None:
-        sources.append(StateSchemaSource("TinkerFin state_schema", global_schema))
     if definition_schema is not None:
-        sources.append(
-            StateSchemaSource("create_deep_agent state_schema", definition_schema)
-        )
+        sources.append(StateSchemaSource("Agent state_schema", definition_schema))
     return compose_state_schema(sources, name="TinkerFinDeepAgentState")
 
 

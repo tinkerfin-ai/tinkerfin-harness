@@ -15,22 +15,10 @@ BackendT_co = TypeVar("BackendT_co", covariant=True)
 
 
 @dataclass(frozen=True, slots=True)
-class AgentRunPreparation(Generic[WorkspaceT_co]):
-    """Provide a Tool preparation function with this Run and its borrowed workspace.
-
-    The workspace remains available until the Run closes. Tools must not close its
-    provider or retain it for work that outlives this Run.
-    """
-
-    identity: RunIdentity
-    workspace: WorkspaceT_co
-
-
-@dataclass(frozen=True, slots=True)
 class PreparedWorkspace(Generic[WorkspaceT_co, BackendT_co]):
     """Expose workspace access and the final filesystem backend for one Run.
 
-    ``workspace`` is the capability supplied to application Tool preparation.
+    ``workspace`` is the capability borrowed by tools during managed execution.
     ``backend`` serves the agent's filesystem operations and may combine routes.
     Both are borrowed until the provider's context exits. Instructions describe
     path usage; they do not grant permissions or replace authorization.
@@ -74,4 +62,4 @@ class Workspace(Protocol[WorkspaceT_co, BackendT_co]):
         ...
 
 
-__all__ = ["AgentRunPreparation", "PreparedWorkspace", "Workspace"]
+__all__ = ["PreparedWorkspace", "Workspace"]

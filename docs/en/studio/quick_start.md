@@ -54,6 +54,10 @@ Open the user menu at the bottom left, go to model settings, and add your provid
 Capability tests in model settings call the selected provider and may incur usage charges; review your configuration before testing.
 Send “Hello” to check the connection, then try attachments or plan mode. Image inputs require a model with image support; image generation requires a separately configured provider.
 
+Attachments support images, Markdown, PDF, DOCX, and XLSX. Markdown files use UTF-8 with a `.md` or `.markdown` extension. Upload them for the agent to read by line, or ask it to generate and deliver a Markdown file. Click the filename to preview headings, tables, and code blocks, then download the original. Long previews show the first 100,000 characters; downloads retain the complete file.
+
+DOCX previews show text and tables; download the original for images and layout. PDF uses your browser’s viewer. XLSX previews show saved values from the first sheet, up to 100 rows and 20 columns, without recalculating formulas. Files too large to preview remain downloadable.
+
 ## Change the initial password
 
 Change the initial password before exposing the service. Account updates are administrator operations. Generate a new password hash from the backend's `deploy` directory:

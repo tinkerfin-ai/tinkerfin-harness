@@ -67,6 +67,7 @@ _PUBLIC_EXPORTS = {
     "encode_sse",
     "micro_batch",
     "parse_tool_review_interrupt",
+    "project_interrupt",
     "require_valid_schema",
     "subagent_invocation_id",
     "validate_json_schema_instance",

@@ -1,6 +1,5 @@
 """Planner reads respect workspace permissions without inheriting prepared tools."""
 
-from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -10,14 +9,12 @@ from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from deepagents.backends.utils import create_file_data
 from langchain.tools import tool
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
 from test_plan_mode import _FakeModel, _parts, _planner
 from test_runtime_workspace import _Workspace
 
 from tinkerfin import TinkerFin
-from tinkerfin_contracts import AgentRunPreparation
 
 
 @pytest.mark.parametrize("mode", ["allow", "deny", "interrupt"])
@@ -61,14 +58,12 @@ async def test_planner_workspace_filters_protected_reads(
         ]
     )
     runtime = (
-        TinkerFin()
+        TinkerFin(store=store, checkpointer=InMemorySaver())
         .with_namespace("test")
         .with_plan(enabled=True)
         .build(
             model=model,
             backend=workspace,
-            store=store,
-            checkpointer=InMemorySaver(),
             permissions=[
                 FilesystemPermission(["read"], ["/memory/public.txt"], "allow"),
                 FilesystemPermission(["read"], ["/memory/**"], mode),
@@ -96,42 +91,45 @@ async def test_planner_workspace_filters_protected_reads(
     assert workspace.closed == workspace.opened and len(workspace.opened) == 1
 
 
-async def test_planner_does_not_inherit_prepared_main_tools_even_if_read_only() -> None:
+async def test_read_only_planner_tools_receive_the_prepared_workspace() -> None:
+    from tinkerfin.tools import ToolRuntime
+
+    seen: list[Path] = []
+
     @tool
-    async def read_customer() -> str:
-        """Read customer information for execution."""
-        raise AssertionError("The Planner must not receive prepared main tools")
+    async def read_customer(runtime: ToolRuntime[None, Path]) -> str:
+        """Read customer information for planning."""
+        seen.append(runtime.workspace)
+        return "customer information"
 
     read_customer.metadata = {"read_only": True}
     workspace = _Workspace()
-    prepared: list[Path] = []
-
-    async def prepare(run: AgentRunPreparation[Path]) -> Sequence[BaseTool]:
-        prepared.append(run.workspace)
-        return [read_customer]
-
-    model = _FakeModel(responses=[_planner()])
+    model = _FakeModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "read_customer", "args": {}, "id": "read-customer"}
+                ],
+            ),
+            _planner(),
+        ]
+    )
     runtime = (
-        TinkerFin()
+        TinkerFin(checkpointer=InMemorySaver())
         .with_namespace("test")
         .with_plan(enabled=True)
-        .build(
-            model=model,
-            backend=workspace,
-            prepare_tools=prepare,
-            checkpointer=InMemorySaver(),
-        )
+        .build(model=model, backend=workspace, tools=[read_customer])
     )
     await _parts(
         runtime,
         {"messages": [HumanMessage(content="Plan", id="message")]},
-        run_id="planner-prepared-tools",
+        run_id="planner-workspace-tools",
         config={"configurable": {"thread_id": "plan-thread"}},
         mode="plan",
     )
-    assert prepared == [Path("/files/test")]
-    planner_tools = [set(names) for names in model.bound_tool_names]
-    assert planner_tools and all(
-        "read_customer" not in names for names in planner_tools
+    assert seen == [Path("/files/test")]
+    assert model.bound_tool_names and all(
+        "read_customer" in names for names in model.bound_tool_names
     )
     assert workspace.closed == workspace.opened

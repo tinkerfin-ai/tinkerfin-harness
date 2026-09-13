@@ -357,3 +357,110 @@ def test_attachment_tools_describe_all_model_visible_parameters(attachments):
         assert all(
             field.get("description") for field in schema.get("properties", {}).values()
         )
+
+
+@pytest.mark.parametrize("extension", ["md", "markdown", "MD"])
+async def test_markdown_upload_keeps_original_encoding_and_reads_line_ranges(
+    attachments, extension
+):
+    """Markdown 保留原件字节，读取接受 BOM 并按原文行号返回内容"""
+    original = "\ufeff# 门店月报\r\n\r\n| 门店 | 营收 |\r\n| --- | --- |\r\n| 一店 | 128 |\r\n".encode()
+    file = await attachments.upload(
+        user_id=1, name=f"月报.{extension}", chunks=byte_chunks(original)
+    )
+    assert file.mime_type == "text/markdown"
+    assert file.size_bytes == len(original)
+    _, downloaded = await attachments.read(file.id, user_id=1)
+    assert downloaded == original
+    result = await attachments.documents.run(
+        {
+            "operation": "read",
+            "kind": "md",
+            "data": base64.b64encode(downloaded).decode("ascii"),
+            "start": 2,
+            "count": 2,
+        }
+    )
+    assert result == {
+        "start_line": 2,
+        "lines": ["", "| 门店 | 营收 |"],
+        "total_lines": 5,
+    }
+    with pytest.raises(BusinessException):
+        await attachments.read(file.id, user_id=2)
+    with pytest.raises(BusinessException):
+        await attachments.read(file.id, user_id=1, variant="preview")
+
+
+@pytest.mark.parametrize("data", [b"", b"\xff\xfe#\x00", b"# report\x00data"])
+async def test_invalid_markdown_is_not_published(attachments, database, data):
+    """空文件、非 UTF-8 和二进制内容不得留下可见附件"""
+    with pytest.raises(BusinessException):
+        await attachments.upload(user_id=1, name="report.md", chunks=byte_chunks(data))
+    async with database.session() as session:
+        assert await session.scalar(select(AttachmentFile.id)) is None
+
+
+@pytest.mark.parametrize("extension", ["md", "markdown"])
+async def test_markdown_tools_generate_deliver_read_and_reopen(
+    attachments, database, tmp_path, extension
+):
+    """真实生成和读取工具交付同一 Markdown，服务重建后保留正文与会话权限"""
+    import json
+
+    from langchain_core.messages import ToolMessage
+
+    from tinkerfin_contracts.media import attachment_from_block
+    from tinkerfin_studio.attachments.tools import build_attachment_tools
+
+    async with database.session() as session:
+        now = datetime.now(UTC).replace(tzinfo=None)
+        session.add(
+            ConversationThread(
+                user_id=1,
+                thread_id="markdown-report",
+                title="门店月报",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.commit()
+    tools = {
+        item.name: item
+        for item in build_attachment_tools(
+            service=attachments,
+            processor=attachments.documents,
+            user_id=1,
+            thread_id="markdown-report",
+            image_model=None,
+            supports_images=False,
+        )
+    }
+    text = "# 门店月报\n\n- 营收：128 万元\n- 下月安排：优化排班\n"
+    result = await tools["create_file"].ainvoke(
+        {
+            "type": "tool_call",
+            "id": "create-report",
+            "name": "create_file",
+            "args": {"name": f"月报.{extension}", "kind": "md", "text": text},
+        }
+    )
+    assert isinstance(result, ToolMessage)
+    assert isinstance(result.content, list)
+    file = attachment_from_block(result.content[0])
+    assert file is not None and file.mime_type == "text/markdown"
+    read = await tools["read_attachment"].ainvoke({"attachment_id": file.id})
+    assert json.loads(read)["lines"] == text.splitlines()
+    restored = AttachmentService(
+        database, DiskAttachmentStorage(tmp_path / "attachments")
+    )
+    _, original = await restored.read(file.id, user_id=1, thread_id="markdown-report")
+    assert original == text.encode()
+    assert [
+        item.id
+        for item in await restored.list_thread(user_id=1, thread_id="markdown-report")
+    ] == [file.id]
+    with pytest.raises(BusinessException):
+        await restored.read(file.id, user_id=1, thread_id="another-thread")
+    with pytest.raises(BusinessException):
+        await restored.read(file.id, user_id=2, thread_id="markdown-report")

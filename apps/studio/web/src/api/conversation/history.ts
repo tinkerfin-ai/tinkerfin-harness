@@ -1,3 +1,5 @@
+import { isInterrupt } from './eventParser'
+import type { InterruptEvent } from './types'
 import type { ConversationTitleSnapshot } from "./titles"
 import type { PendingInteractionKind, JsonObject, JsonValue } from '../../types'
 import { requestEventStream, requestJson } from '../shared/http'
@@ -38,7 +40,12 @@ export interface ConversationHistoryGroupConfig {
   dayRanges: number[]
 }
 
+export type TraceMessageReference =
+  | { kind: 'message'; messageId: string }
+  | { kind: 'tool_message'; messageId: string; toolCallId: string }
+
 export interface TraceMessage {
+  agui: TraceMessageReference | null
   id: string
   traceSeq: number
   sourceId?: string | null
@@ -69,6 +76,7 @@ export interface TraceReasoning {
 }
 
 export interface TraceInteraction {
+  agui: InterruptEvent[] | null
   id: string
   traceSeq: number
   sourceId: string
@@ -262,6 +270,39 @@ const isRecord = (value: unknown): value is Record<string, unknown> => (
   value !== null && typeof value === 'object' && !Array.isArray(value)
 )
 
+const validateMessageReferences = (value: unknown) => {
+  if (!Array.isArray(value)) throw new ConversationError('stream_event_invalid')
+  for (const message of value) {
+    if (!isRecord(message) || !Object.hasOwn(message, 'agui')) {
+      throw new ConversationError('stream_event_invalid')
+    }
+    const ref = message.agui
+    if (ref === null) continue
+    if (!isRecord(ref) || typeof ref.messageId !== 'string' || !ref.messageId
+      || (ref.kind !== 'message' && ref.kind !== 'tool_message')
+      || (ref.kind === 'tool_message' && (message.role !== 'tool'
+        || typeof ref.toolCallId !== 'string' || !ref.toolCallId))
+      || (ref.kind === 'message' && message.role === 'tool')
+      || Object.keys(ref).some(key => !(
+        ref.kind === 'message' ? ['kind', 'messageId'] : ['kind', 'messageId', 'toolCallId']
+      ).includes(key))) throw new ConversationError('stream_event_invalid')
+  }
+}
+
+const validateInteractionReferences = (value: unknown) => {
+  if (!Array.isArray(value)) throw new ConversationError('stream_event_invalid')
+  for (const interaction of value) {
+    if (!isRecord(interaction) || !Object.hasOwn(interaction, 'agui')) {
+      throw new ConversationError('stream_event_invalid')
+    }
+    if (interaction.agui !== null && (!Array.isArray(interaction.agui)
+      || (interaction.status === 'pending' && interaction.agui.length === 0)
+      || !interaction.agui.every(isInterrupt))) {
+      throw new ConversationError('stream_event_invalid')
+    }
+  }
+}
+
 const parseHistoryDetail = (
   value: unknown,
   includeTaskTrace: boolean,
@@ -276,6 +317,8 @@ const parseHistoryDetail = (
   } else if (value.taskTrace !== null) {
     throw new ConversationError('stream_event_invalid')
   }
+  validateMessageReferences(value.messages)
+  validateInteractionReferences(value.interactions)
   const graph = parseTraceGraph(value.graph)
   if (graph.asOfSeq !== value.asOfSeq) {
     throw new ConversationError('stream_event_invalid')
@@ -304,6 +347,11 @@ const parseTraceEvent = (
       if (!includeTaskTrace) throw new ConversationError('stream_event_invalid')
       parseTaskTraceSnapshot(record.taskTrace)
     }
+    if (!isRecord(record.update.messages) || !isRecord(record.update.interactions)) {
+      throw new ConversationError('stream_event_invalid')
+    }
+    validateMessageReferences(record.update.messages.upserts)
+    validateInteractionReferences(record.update.interactions.upserts)
     const graph = parseTraceGraphDelta(record.update.graph)
     if (graph.asOfSeq !== record.update.asOfSeq) {
       throw new ConversationError('stream_event_invalid')

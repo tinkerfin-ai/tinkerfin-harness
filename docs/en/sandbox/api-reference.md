@@ -78,7 +78,8 @@ and cannot interrupt blocking synchronous work. Initialization failures raise
 
 See [Sandbox lifecycle](lifecycle.md) for constructor parameters and operations.
 `workspace(key)` returns the lazy declaration used by `TinkerFin.build(backend=...)`.
-`build_agent_middleware(...)` is available for caller-managed Deep Agents Graphs.
+`build_rooted_filesystem_middleware(backend, ...)` is the standalone integration for
+caller-managed Deep Agents Graphs.
 
 `pause(key, timeout=30.0)` returns `None` after all registered holders finish work and
 the remote pause is confirmed. `resume(key, timeout=30.0)` returns a ready backend for
