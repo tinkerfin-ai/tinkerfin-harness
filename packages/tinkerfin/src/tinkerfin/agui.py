@@ -63,6 +63,7 @@ class RuntimeAgUi:
     _namespace: str
 
     def __init__(self) -> None:
+        """Require access through ``runtime.agui`` instead of direct construction."""
         raise TypeError("RuntimeAgUi is obtained from runtime.agui")
 
     @classmethod

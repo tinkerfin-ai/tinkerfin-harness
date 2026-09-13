@@ -1,11 +1,16 @@
 import { expect, test } from '@playwright/test'
+import type { ConversationHistoryDetail, TraceMessage } from '../../src/api/conversation/history'
 import { emptyTraceGraph } from '../../src/test/traceFixtures'
 
 const threadId = 'failure-browser'
 const time = '2026-09-08T00:00:00.000Z'
 const user = { user_id: 1, username: 'failure-test', display_name: '会话验收', avatar_url: null, roles: [], disabled: false }
-const messages = [1, 2, 3].map(id => ({ id: `question-${id}`, traceSeq: id, runId: `run-${id}`, graphNamespace: [], role: 'user', content: `你好 ${id}`, contentOmitted: false, status: 'completed', createdAt: time, completedAt: time }))
-const detail = {
+const messages: TraceMessage[] = [1, 2, 3].map(id => ({
+  id: `question-${id}`, agui: null, traceSeq: id, runId: `run-${id}`,
+  graphNamespace: [], role: 'user', content: `你好 ${id}`, contentOmitted: false,
+  status: 'completed', createdAt: time, completedAt: time,
+}))
+const detail: ConversationHistoryDetail = {
   id: 1, threadId, title: '连续失败验收', titleSource: 'user', titleGenerationStatus: 'idle', titleSeq: 1,
   lastModel: 'main', pinned: false, asOfSeq: 10, generation: 'failure-generation', observedAt: time,
   headRunId: 'run-3', availableHeads: ['run-3'], historyCursor: null, messageCount: 5, toolCallCount: 0,
