@@ -2,8 +2,7 @@
  * 极简「会话 URL 路由」：用 `?thread={threadId}` 查询参数记录当前会话，
  * 让浏览器刷新后能回到原会话；自动化页面使用 `?page=automation`
  *
- * 用 `history.replaceState` 同步而非 `pushState`——只保证 URL 始终反映当前
- * 会话、刷新可还原，不为每次选择追加浏览器历史条目
+ * 会话和页面选择写入浏览器历史，让浏览器返回手势及后退按钮恢复上一个路由
  */
 
 const THREAD_PARAM = 'thread'
@@ -63,7 +62,11 @@ export function readPageFromLocation(): WorkspacePage {
 }
 
 /** 按当前页面一次性同步地址；自动化不携带后台会话身份，草稿不携带 thread */
-export function writeWorkspaceToLocation(page: WorkspacePage, threadId: string): void {
+export function writeWorkspaceToLocation(
+  page: WorkspacePage,
+  threadId: string,
+  options: { history?: 'push' | 'replace' } = {},
+): void {
   const url = new URL(window.location.href)
   url.pathname = APP_PATHNAME
   if (page === 'automation') url.searchParams.set('page', page)
@@ -72,7 +75,10 @@ export function writeWorkspaceToLocation(page: WorkspacePage, threadId: string):
   else url.searchParams.delete(THREAD_PARAM)
   const desired = relativeLocation(url)
   if (desired !== relativeLocation(new URL(window.location.href))) {
-    window.history.replaceState(null, '', desired)
+    const writeState = options.history === 'replace'
+      ? window.history.replaceState
+      : window.history.pushState
+    writeState.call(window.history, null, '', desired)
   }
   rememberCurrentLocation()
 }

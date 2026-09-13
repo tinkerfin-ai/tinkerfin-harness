@@ -183,14 +183,14 @@ describe('Sidebar', () => {
     const productNavigation = screen.getByRole('navigation', { name: '工作区功能' })
     expect(historyScroll).toContainElement(productNavigation)
     expect(screen.getByRole('button', { name: '技能库' }).querySelector('.lucide-book-open-check')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '智能体' }).querySelector('.lucide-workflow')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '记忆管理' }).querySelector('.lucide-brain-circuit')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '自动化' }).querySelector('.lucide-alarm-clock')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '自动化' })).toBeEnabled()
-    const agentButton = screen.getByRole('button', { name: '智能体' })
-    expect(agentButton).not.toHaveAttribute('aria-current')
-    expect(agentButton).not.toHaveAttribute('aria-pressed')
-    expect(agentButton).not.toHaveClass('is-selected')
-    expect(agentButton).toBeDisabled()
+    const memoryButton = screen.getByRole('button', { name: '记忆管理' })
+    expect(memoryButton).not.toHaveAttribute('aria-current')
+    expect(memoryButton).not.toHaveAttribute('aria-pressed')
+    expect(memoryButton).not.toHaveClass('is-selected')
+    expect(memoryButton).toBeDisabled()
     expect(screen.queryByRole('button', { name: '工作区' })).not.toBeInTheDocument()
     for (const label of ['技能库', '更多']) {
       expect(screen.getByRole('button', { name: label })).toBeDisabled()
@@ -775,12 +775,12 @@ describe('Sidebar rail and inline search', () => {
     expect(screen.queryByRole('button', { name: '打开会话：最近会话' })).not.toBeInTheDocument()
   })
 
-  it('在 Rail 导航中也禁用智能体入口', () => {
+  it('在 Rail 导航中也禁用记忆管理入口', () => {
     render(
       <Sidebar {...baseProps} mode="rail" settledMode="rail" wideInteractive={false} railInteractive />,
     )
 
-    expect(screen.getByRole('button', { name: '智能体' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '记忆管理' })).toBeDisabled()
   })
 
   it('在 Rail 底部复用真实用户头像并保持点击后仅展开侧边栏', () => {

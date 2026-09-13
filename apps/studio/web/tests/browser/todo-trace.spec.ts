@@ -402,6 +402,9 @@ test('统一抽屉展示、独立展开、定位和 overlay 焦点恢复可真�
   await expect(drawer).toBeHidden()
   await expect(page.locator('#todo-user-message-1')).toBeFocused()
   await expect(page.locator('#todo-user-message-1')).toHaveClass(/todo-trace-locate-target/)
+  await expect(page.locator('#todo-user-message-1')).toHaveCSS('outline-style', 'none')
+  await expect(page.locator('#todo-user-message-1')).toHaveCSS('border-width', '0px')
+  await expect(page.locator('#todo-user-message-1 .message-markdown')).toHaveCSS('outline-style', 'none')
 
   await launcher.click()
   await expect(drawer).toBeVisible()
@@ -438,6 +441,25 @@ test('未水化消息通过可取消的旧 Trace 分页后定位', async ({ page
   await expect(page.locator('#todo-user-message-2')).toBeFocused()
   await expect(page.locator('#todo-user-message-2')).toHaveClass(/todo-trace-locate-target/)
   expect(evidence.pageErrors).toEqual([])
+})
+
+test('任务对应的用户消息缺失时静默关闭定位', async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 900 })
+  const groups = makeGroups(1)
+  const missing = {
+    ...makeGroups(1)[0]!,
+    id: 'todo-group:missing',
+    userMessageId: 'missing-user-message',
+    userMessagePreview: '缺失的用户消息',
+  }
+  await mockTodoTraceStudio(page, { groups, taskTraceGroups: [...groups, missing] })
+
+  await page.getByRole('button', { name: '任务轨迹 2', exact: true }).click()
+  await page.getByRole('button', { name: '展开任务组：缺失的用户消息', exact: true }).click()
+  await page.getByRole('button', { name: '定位到对话：缺失的用户消息', exact: true }).click()
+
+  await expect(page.getByRole('complementary', { name: '任务轨迹' })).toBeHidden()
+  await expect(page.getByText('未找到任务对应的用户消息', { exact: true })).toHaveCount(0)
 })
 
 test('320px 深色高对比与 reduced-motion 下保持全宽和静态状态反馈', async ({ page }) => {

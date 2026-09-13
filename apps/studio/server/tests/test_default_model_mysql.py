@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tinkerfin_studio.api.errors import BusinessException, ModelErrorCode
 from tinkerfin_studio.auth.models import User
 from tinkerfin_studio.infrastructure.database import Base, Database
-from tinkerfin_studio.models.entity import AgentModel
+from tinkerfin_studio.models.entity import AgentModel, ModelConnection
 from tinkerfin_studio.models.repository import AgentModelRepository
-from tinkerfin_studio.models.schemas import AgentModelSave
+from tinkerfin_studio.models.schemas import AgentModelSave, ModelConnectionSave
 from tinkerfin_studio.models.service import AgentModelService
 
 pytestmark = pytest.mark.studio_mysql_integration
@@ -48,15 +48,23 @@ async def default_database(mysql_admin_url: str) -> AsyncIterator[Database]:
                 )
                 await session.commit()
                 service = AgentModelService(AgentModelRepository(session, user_id=1))
+                await service.save_connection(
+                    ModelConnectionSave(
+                        connection_id="shared",
+                        display_name="连接",
+                        provider_id="custom",
+                        api_type="openai_chat_completions",
+                        base_url="https://models.example/v1",
+                        api_key=SecretStr("saved-key"),
+                    )
+                )
                 for model_id in ("first", "second"):
                     await service.save_settings(
                         AgentModelSave(
                             model_id=model_id,
                             display_name=model_id,
-                            provider="openai",
+                            connection_id="shared",
                             model_name=model_id,
-                            base_url="https://models.example/v1",
-                            api_key=SecretStr("saved-key"),
                         )
                     )
             yield database
@@ -85,6 +93,7 @@ async def test_concurrent_defaults_commit_one_default_per_owner(
 
 async def test_default_waits_for_owner_and_checks_latest_saved_key(
     default_database: Database,
+    monkeypatch,
 ) -> None:
     async with (
         default_database.session() as held,
@@ -92,17 +101,26 @@ async def test_default_waits_for_owner_and_checks_latest_saved_key(
     ):
         waiting_repository = AgentModelRepository(waiting, user_id=1)
         stale = await waiting_repository.get("first")
-        assert stale is not None and stale.api_key
+        assert stale is not None
+        stale_connection = await waiting_repository.connection(stale.connection_id)
+        assert stale_connection is not None and stale_connection.api_key
         await AgentModelRepository(held, user_id=1).lock_owner()
+        entered = asyncio.Event()
+        original_lock = waiting_repository.lock_owner
+
+        async def signal_lock():
+            entered.set()
+            await original_lock()
+
+        monkeypatch.setattr(waiting_repository, "lock_owner", signal_lock)
         task = asyncio.create_task(
             AgentModelService(waiting_repository).set_default("first")
         )
         try:
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(asyncio.shield(task), timeout=0.1)
+            await entered.wait()
             await held.execute(
-                update(AgentModel)
-                .where(AgentModel.user_id == 1, AgentModel.model_id == "first")
+                update(ModelConnection)
+                .where(ModelConnection.user_id == 1)
                 .values(api_key="")
             )
             await held.commit()

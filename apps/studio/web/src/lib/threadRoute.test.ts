@@ -40,11 +40,24 @@ describe('threadRoute', () => {
     expect(readThreadFromLocation()).toBe('')
   })
 
-  it('does not call replaceState when the URL already matches', () => {
+  it('adds a browser history entry when the URL changes', () => {
+    const pushState = vi.spyOn(window.history, 'pushState')
+    writeWorkspaceToLocation('conversation', 'next-thread')
+    expect(pushState).toHaveBeenCalledWith(null, '', '/?thread=next-thread')
+  })
+
+  it('does not write history when the URL already matches', () => {
     window.history.replaceState(null, '', '/?thread=already')
-    const replaceState = vi.spyOn(window.history, 'replaceState')
+    const pushState = vi.spyOn(window.history, 'pushState')
     writeWorkspaceToLocation('conversation', 'already')
-    expect(replaceState).not.toHaveBeenCalled()
+    expect(pushState).not.toHaveBeenCalled()
+  })
+
+  it('can replace the current entry for auth cleanup', () => {
+    window.history.replaceState(null, '', '/?thread=signed-in')
+    const replaceState = vi.spyOn(window.history, 'replaceState')
+    writeWorkspaceToLocation('conversation', '', { history: 'replace' })
+    expect(replaceState).toHaveBeenCalledWith(null, '', '/')
   })
 
   it('restores the last valid thread URL when an unsupported path is opened', () => {

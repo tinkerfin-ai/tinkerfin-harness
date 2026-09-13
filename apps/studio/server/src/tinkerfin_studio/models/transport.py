@@ -70,6 +70,7 @@ class ModelTransport(httpx.AsyncBaseTransport):
         allowed_origins: tuple[str, ...] = (),
         response_limit_bytes: int | None = None,
     ) -> None:
+        self._closed = False
         self._response_limit_bytes = response_limit_bytes
         self._allowed_origins = frozenset(
             normalize_model_origin(value) for value in allowed_origins
@@ -78,6 +79,11 @@ class ModelTransport(httpx.AsyncBaseTransport):
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         """校验服务来源并解析目的地，把请求发往已确认的地址"""
+        if self._closed:
+            raise RuntimeError("模型连接池已关闭")
+        # 免密连接显式覆盖 SDK 认证后，网络请求不携带空认证头
+        if request.headers.get("Authorization") == "":
+            request.headers.pop("Authorization", None)
         url = validate_model_url(str(request.url))
         host = url.host
         port = url.port or (443 if url.scheme == "https" else 80)
@@ -141,6 +147,7 @@ class ModelTransport(httpx.AsyncBaseTransport):
 
     async def aclose(self) -> None:
         """关闭本次客户端拥有的全部连接池"""
+        self._closed = True
         with anyio.CancelScope(shield=True):
             for transport in self._transports.values():
                 await transport.aclose()

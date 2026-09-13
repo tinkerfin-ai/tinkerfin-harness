@@ -29,6 +29,99 @@ ModelId = Annotated[
 ]
 
 
+ModelProvider = Literal["openai", "deepseek", "ollama"]
+ModelAPI = Literal["openai_chat_completions", "ollama"]
+
+
+class ChatOptions(BaseModel):
+    """聊天生成参数；空值表示不向服务覆盖该参数"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+    max_tokens: int | None = Field(default=None, gt=0, description="单次最大输出令牌数")
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    top_p: float | None = Field(default=None, ge=0, le=1)
+    stop: list[str] | None = Field(
+        default=None, max_length=4, description="停止生成的字符串，最多四项"
+    )
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
+    context_window: int | None = Field(
+        default=None, gt=0, description="Ollama 单次请求的上下文令牌容量"
+    )
+    keep_alive: int | None = Field(
+        default=None,
+        ge=0,
+        le=86400,
+        description="Ollama 模型在请求结束后保持加载的秒数",
+    )
+
+
+class ModelConnectionSave(BaseModel):
+    """保存本人的提供方连接；密钥为 null 时保留同地址已有密钥"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    connection_id: ModelId
+    display_name: str = Field(min_length=1, max_length=128)
+    provider_id: str = Field(
+        min_length=1, max_length=64, description="提供方目录标识，自定义连接使用 custom"
+    )
+    api_type: ModelAPI = Field(description="服务采用的模型接口")
+    base_url: str = Field(
+        min_length=1,
+        max_length=1024,
+        description="模型 API 基础地址，Ollama 使用服务根地址",
+    )
+    auth_type: Literal["api_key", "none"] = "api_key"
+    api_key: SecretStr | None = Field(
+        default=None, description="新密钥；null 保留已有密钥，无需认证时清除密钥"
+    )
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        return str(TypeAdapter(AnyHttpUrl).validate_python(value))
+
+
+class ModelConnectionSettings(BaseModel):
+    """提供方设置，不包含密钥原文"""
+
+    connection_id: str
+    display_name: str
+    provider_id: str
+    api_type: ModelAPI
+    base_url: str
+    auth_type: Literal["api_key", "none"]
+    has_key: bool
+
+
+class ProviderPreset(BaseModel):
+    """新建连接时提供的服务默认值"""
+
+    provider_id: str
+    display_name: str
+    api_type: ModelAPI
+    base_url: str
+    auth_type: Literal["api_key", "none"] = "api_key"
+    models: list[str] = Field(
+        default_factory=list, description="推荐模型 ID，不代表当前账户的可用模型"
+    )
+
+
+class DiscoveredModel(BaseModel):
+    """模型服务实际返回的候选项；未返回的能力保持未知"""
+
+    model_name: str = Field(min_length=1, max_length=128)
+    display_name: str
+    image_support: Literal["supported", "unsupported", "unknown"] = "unknown"
+
+
+class ModelDiscoveryResult(BaseModel):
+    """一次模型发现的结果，不保存或启用模型"""
+
+    outcome: Literal["success", "inconclusive", "failed"]
+    items: list[DiscoveredModel] = Field(default_factory=list)
+    code: str
+
+
 class AgentModelWrite(BaseModel):
     """受控模型配置写入使用的边界数据"""
 
@@ -41,16 +134,11 @@ class AgentModelWrite(BaseModel):
     purpose: Literal["chat", "image"] = "chat"
     model_id: ModelId = Field(description="前后端使用的稳定模型 ID")
     display_name: str = Field(min_length=1, max_length=128, description="前端展示名称")
-    provider: Literal["deepseek", "openai"] = Field(
-        description="已安装的 LangChain provider"
-    )
+    connection_id: ModelId = Field(description="所属提供方连接 ID")
+    chat_options: ChatOptions = Field(default_factory=ChatOptions)
     model_name: str = Field(
         min_length=1, max_length=128, description="供应商实际模型名称"
     )
-    base_url: str = Field(
-        min_length=1, max_length=1024, description="模型服务 API 基础地址"
-    )
-    api_key: SecretStr = Field(description="写入数据库的明文 API 密钥")
     image_support: Literal["supported", "unsupported", "unknown"] = Field(
         default="unknown", description="已确认的图片输入能力，未知时禁止发送新图片"
     )
@@ -102,13 +190,6 @@ class AgentModelWrite(BaseModel):
             raise ValueError("默认模型必须处于启用状态")
         return self
 
-    @field_validator("base_url")
-    @classmethod
-    def validate_base_url(cls, value: str) -> str:
-        """校验并规范化 HTTP 模型服务地址"""
-
-        return str(TypeAdapter(AnyHttpUrl).validate_python(value))
-
 
 class AgentModelCatalogItem(BaseModel):
     """返回前端的安全模型目录项"""
@@ -144,11 +225,12 @@ class AgentModelConfig(BaseModel):
 
     model_id: str
     display_name: str
-    provider: Literal["deepseek", "openai"]
+    provider: ModelProvider
     model_name: str
     base_url: str
     api_key: SecretStr
     reasoning_enabled: bool
+    chat_options: ChatOptions = Field(default_factory=ChatOptions)
     generation_options: dict[str, JsonValue] = Field(
         default_factory=dict,
         description="生图接口附加参数，不得覆盖 model、prompt 或 n",
@@ -157,28 +239,20 @@ class AgentModelConfig(BaseModel):
     image_support: Literal["supported", "unsupported", "unknown"] = "unknown"
 
 
-class AgentModelSettings(BaseModel):
-    """当前用户可编辑的模型信息，任何响应均不包含密钥原文"""
-
-    model_id: str
-    display_name: str
-    purpose: Literal["chat", "image"]
-    provider: Literal["deepseek", "openai"]
-    model_name: str
-    base_url: str
-    generation_options: dict[str, JsonValue]
-    has_key: bool
-    image_support: Literal["supported", "unsupported", "unknown"]
-    reasoning_enabled: bool
-    enabled: bool
-    is_default: bool
-    sort_order: int
+class AgentModelSettings(AgentModelWrite):
+    """当前用户保存的模型设置，连接与密钥单独管理"""
 
 
 class AgentModelSave(AgentModelWrite):
-    """设置页提交的模型配置，密钥留空表示保留当前用户已有密钥"""
+    """设置页提交的模型配置，引用本人已保存的连接"""
 
-    api_key: SecretStr = SecretStr("")
+
+class ModelSettingsOverview(BaseModel):
+    """模型设置页的连接、模型和内置提供方目录"""
+
+    models: list[AgentModelSettings]
+    connections: list[ModelConnectionSettings]
+    providers: list[ProviderPreset]
 
 
 ModelTestKind = Literal["basic", "text", "vision", "image"]

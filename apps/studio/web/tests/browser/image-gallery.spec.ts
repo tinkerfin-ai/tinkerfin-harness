@@ -87,6 +87,13 @@ test('图片失败态、恢复与多图连续键盘浏览保持无边框布局',
   originalAvailable = true
   await dialog.getByRole('button', { name: '重试原图' }).click()
   await expect(dialog.getByText('原图暂时无法加载，仍可查看预览')).toHaveCount(0)
+  await dialog.getByRole('button', { name: '关闭对话框' }).click()
+  await expect(preview).toBeFocused()
+  const returnedMedia = page.locator('.attachment-media').first()
+  expect(await returnedMedia.evaluate(element => getComputedStyle(element, '::after').opacity)).toBe('0')
+  expect(await returnedMedia.locator('.attachment-image-actions').evaluate(element => getComputedStyle(element).opacity)).toBe('0')
+  await preview.click()
+  await expect(dialog).toBeVisible()
   const next = dialog.getByRole('button', { name: '下一张', exact: true })
   await next.focus()
   await page.keyboard.press('Enter')

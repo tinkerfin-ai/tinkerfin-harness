@@ -21,7 +21,7 @@ cd tinkerfin-harness/apps/studio/server/deploy
 ```
 
 The first run creates configuration and service credentials, builds the backend image, and waits for readiness. Preparing an isolated workspace also requires downloading its runtime image.
-The readiness endpoint is `http://127.0.0.1:8090/health/ready`.
+After startup: [readiness](http://127.0.0.1:8090/health/ready) · [API docs (Swagger)](http://127.0.0.1:8090/docs).
 
 Use `./deploy.sh` when a published image is available to you. See [server deployment](../../../apps/studio/server/README.md) for external databases, configuration, and log commands.
 
@@ -37,7 +37,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Open the address printed in the terminal, normally `http://localhost:5173`. The development server proxies `/api` to local port `8090`.
+Open the address printed in the terminal, normally `http://localhost:5173`.
 
 ## Sign in and configure a model
 
@@ -50,7 +50,13 @@ Initializing a new database creates this account:
 
 Existing data volumes do not rerun the initialization SQL or overwrite accounts. There is no public registration endpoint.
 
-Open the user menu at the bottom left, go to model settings, and add your provider endpoint, model name, and API key. Enable the model and make it the default.
+Open the user menu at the bottom left, select Models, and choose Add provider. Select a preset such as Qwen, DeepSeek, OpenAI, or Ollama, or configure a custom service. Save its URL and authentication first. Models under one connection share its key; you can create multiple connections for the same provider.
+
+Select a connection and use Fetch models to add the models you need, or enter the provider’s Model ID manually. A failed listing does not prove that generation is unavailable: you can still add a model and test it. Enable a model and make it the default as needed. Chat and image generation have separate defaults. Keys are saved through the form for the current user’s connection and are never returned in settings responses.
+
+Chat supports OpenAI Chat Completions compatible endpoints and the native Ollama API. Leave generation parameters blank to use model defaults. DeepSeek and Ollama support the reasoning toggle; reasoning effort for other compatible services must match the selected model. Set image input support according to the model’s actual capabilities; unknown capability blocks image input.
+
+Ollama defaults to `http://localhost:11434` and requires no placeholder key. Start the service and install models before connecting. For container deployments, use an address reachable from the container. Local, private-network, and HTTP endpoints must be included in the administrator’s `MODEL_ALLOWED_ORIGINS`; see the [server guide](../../../apps/studio/server/README.md). Download and delete models through Ollama.
 Capability tests in model settings call the selected provider and may incur usage charges; review your configuration before testing.
 Send “Hello” to check the connection, then try attachments or plan mode. Image inputs require a model with image support; image generation requires a separately configured provider.
 

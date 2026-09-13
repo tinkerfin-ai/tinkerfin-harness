@@ -13,6 +13,7 @@ import { memo, useEffect, useId, useRef, useState } from 'react'
 import { IconButton } from '../../../components/ui'
 import type { Message } from '../../../types'
 import { MarkdownContent } from './MarkdownContent'
+import { useTypewriterText } from './useTypewriterText'
 import { ToolCallRow } from './ToolCallRow'
 import { COPY_FEEDBACK_DURATION_MS } from './copyFeedback'
 import { useI18n } from '../../../i18n'
@@ -322,12 +323,17 @@ function MessageBlockView({
   if (message.role === 'error') {
     return null
   }
+  return <AssistantMessage message={message} showActions={showActions} />
+}
+
+function AssistantMessage({ message, showActions }: { message: Message; showActions: boolean }) {
+  const content = useTypewriterText(message.content, message.liveText, message.meta?.status !== 'running')
   if (!message.content && !message.attachments?.length) return null
   return (
     <article id={message.id} className="message assistant-message">
-      <MarkdownContent content={message.content} className="message-markdown" />
-        <AttachmentList attachments={message.attachments} />
-      {showActions && message.meta?.status !== 'running' && <MessageActionRow content={message.content} kind="assistant" />}
+      <MarkdownContent content={content} className="message-markdown" />
+      <AttachmentList attachments={message.attachments} />
+      {showActions && content === message.content && message.meta?.status !== 'running' && <MessageActionRow content={message.content} kind="assistant" />}
     </article>
   )
 }

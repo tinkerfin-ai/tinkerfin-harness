@@ -28,14 +28,16 @@ test('Vite forwards normal SSE and closes interrupted upstream responses', async
       root,
       logLevel: 'silent',
       optimizeDeps: { noDiscovery: true },
-      server: { host: '127.0.0.1', port: 0, hmr: false, watch: null, proxy: { '/api': { target } } },
+      server: { port: 0, hmr: false, watch: null, proxy: { '/api': { target } } },
     })
     await proxy.listen()
     const base = `http://127.0.0.1:${proxy.httpServer.address().port}`
     await t.test('normal EOF is preserved', async () => {
-      const response = await fetch(`${base}/api/normal`)
-      assert.equal(response.status, 200)
-      assert.equal(await response.text(), 'data: {"ok":true}\n\n')
+      for (const host of ['127.0.0.1', 'localhost']) {
+        const response = await fetch(`http://${host}:${proxy.httpServer.address().port}/api/normal`)
+        assert.equal(response.status, 200)
+        assert.equal(await response.text(), 'data: {"ok":true}\n\n')
+      }
     })
     for (const endpoint of ['before-frame', 'after-frame']) {
       await t.test(endpoint, async () => {

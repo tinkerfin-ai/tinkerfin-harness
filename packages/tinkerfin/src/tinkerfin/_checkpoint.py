@@ -81,7 +81,7 @@ def _redis_saver(saver: BaseCheckpointSaver[V]) -> AsyncRedisSaver | None:
 def _physical_thread(identity: ThreadIdentity, saver: BaseCheckpointSaver[V]) -> str:
     canonical = _identity_json(identity)
     if redis := _redis_saver(saver):
-        # Redis 0.5.1's write registry is shared across configured key prefixes.
+        # Redis 0.5.2's write registry is shared across configured key prefixes.
         # Bind both stable prefixes here so every read/write/registry/delete key
         # stays in one storage domain, including after a connection is rebuilt.
         canonical = json.dumps(
@@ -536,7 +536,7 @@ class NamespaceCheckpointer(BaseCheckpointSaver[V]):
             )
         physical = self._physical(config)
         # BaseCheckpointSaver's scalar configuration metadata is part of history
-        # selection. Redis 0.5.1 does not merge it in aput; apply the base contract
+        # selection. Redis 0.5.2 does not merge it in aput; apply the base contract
         # consistently before delegation, after protecting our identity evidence.
         merged = get_checkpoint_metadata(physical, owned_metadata)
         saved = await self._saver.aput(

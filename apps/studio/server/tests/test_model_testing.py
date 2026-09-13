@@ -10,11 +10,11 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from PIL import Image
-from pydantic import SecretStr, ValidationError
+from pydantic import ValidationError
 from sqlalchemy import event
 
 from tinkerfin_studio.api import model_router
-from tinkerfin_studio.api.errors import BusinessException, ModelErrorCode
+from tinkerfin_studio.api.errors import BusinessException
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.models import testing
 from tinkerfin_studio.models.repository import AgentModelRepository
@@ -27,10 +27,8 @@ def draft(**updates) -> AgentModelSave:
         {
             "model_id": "draft",
             "display_name": "草稿",
-            "provider": "openai",
+            "connection_id": "configured",
             "model_name": "draft-model",
-            "base_url": "https://models.example/v1",
-            "api_key": SecretStr("private-draft-key"),
             **updates,
         }
     )
@@ -135,7 +133,8 @@ async def test_capability_uses_real_sdk_current_draft_and_borrowed_client(
         {
             "kind": kind,
             "configuration": draft(
-                provider=provider, reasoning_enabled=provider == "deepseek"
+                connection_id="deepseek" if provider == "deepseek" else "configured",
+                reasoning_enabled=provider == "deepseek",
             ),
         }
     )
@@ -233,52 +232,35 @@ async def test_empty_or_large_text_is_bounded_and_secrets_are_redacted(
         )
 
 
-async def test_saved_key_reuse_requires_owner_id_and_same_endpoint_without_saving(
+async def test_model_test_uses_saved_owner_connection_without_saving(
     database, monkeypatch
 ):
+    seen = []
+
+    async def send(self, request):
+        seen.append(request.headers.get("authorization"))
+        return httpx.Response(
+            200, json={"data": [{"id": "draft-model"}]}, request=request
+        )
+
+    monkeypatch.setattr(testing.ModelTransport, "handle_async_request", send)
+    result = await testing.run_model_test(
+        database,
+        user_id=1,
+        payload=ModelTestRequest(
+            kind="basic", configuration=draft(display_name="未保存")
+        ),
+        allowed_origins=(),
+    )
+    assert result.outcome == "success"
+    assert seen == ["Bearer private-draft-key"]
     async with database.session() as session:
         service = AgentModelService(AgentModelRepository(session, user_id=1))
-        await service.save_settings(draft(api_key="saved-private-key"))
-    keys = []
-
-    async def handle(request):
-        keys.append(request.headers["authorization"])
-        return httpx.Response(200, json={"data": [{"id": "draft-model"}]})
-
-    monkeypatch.setattr(
-        testing, "ModelTransport", lambda **kwargs: httpx.MockTransport(handle)
-    )
-    payload = ModelTestRequest(
-        kind="basic", configuration=draft(api_key="", display_name="unsaved")
-    )
-    assert (
-        await testing.run_model_test(database, user_id=1, payload=payload)
-    ).outcome == "success"
-    assert keys == ["Bearer saved-private-key"]
-    for user_id, configuration, code in [
-        (2, draft(api_key=""), ModelErrorCode.KEY_REQUIRED),
-        (1, draft(api_key="", model_id="other"), ModelErrorCode.KEY_REQUIRED),
-        (
-            1,
-            draft(api_key="", base_url="https://other.example/v1"),
-            ModelErrorCode.KEY_ENDPOINT_CHANGED,
-        ),
-    ]:
-        with pytest.raises(BusinessException) as error:
-            await testing.run_model_test(
-                database,
-                user_id=user_id,
-                payload=ModelTestRequest(kind="basic", configuration=configuration),
-            )
-        assert error.value.error_code == code
-    assert len(keys) == 1
-    async with database.session() as session:
-        saved = await AgentModelRepository(session, user_id=1).get("draft")
-        assert (
-            saved is not None
-            and saved.display_name == "草稿"
-            and saved.api_key == "saved-private-key"
-        )
+        assert await service.settings() == []
+        with pytest.raises(BusinessException):
+            await AgentModelService(
+                AgentModelRepository(session, user_id=3)
+            ).resolve_draft(draft())
 
 
 @pytest.mark.parametrize(
@@ -442,7 +424,6 @@ async def test_http_test_route_returns_current_response_envelope(database, monke
                 "kind": "basic",
                 "configuration": {
                     **draft().model_dump(mode="json"),
-                    "api_key": "private-draft-key",
                 },
             },
         )
@@ -500,7 +481,6 @@ async def test_browser_disconnect_cancels_model_request_and_joins_cleanup(
                         "kind": "text",
                         "configuration": {
                             **draft().model_dump(mode="json"),
-                            "api_key": "private-draft-key",
                         },
                     }
                 ).encode(),
@@ -616,7 +596,6 @@ async def test_test_endpoint_authenticates_in_a_short_session_before_model_io(
                 "kind": "basic",
                 "configuration": {
                     **draft().model_dump(mode="json"),
-                    "api_key": "private-draft-key",
                 },
             },
         )
@@ -761,7 +740,6 @@ async def test_http_cancellation_waits_for_client_close_after_repeated_cancel(
                     "kind": "basic",
                     "configuration": {
                         **draft().model_dump(mode="json"),
-                        "api_key": "private-draft-key",
                     },
                 },
             )
@@ -784,3 +762,6 @@ async def test_http_cancellation_waits_for_client_close_after_repeated_cancel(
             if not request.done():
                 request.cancel()
             await asyncio.gather(request, return_exceptions=True)
+
+
+pytestmark = pytest.mark.usefixtures("model_connections")

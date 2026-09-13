@@ -27,7 +27,7 @@ from tinkerfin_studio.automation.target import (
     StudioAutomationTarget,
     fail_interactive_execution,
 )
-from tinkerfin_studio.models.entity import AgentModel
+from tinkerfin_studio.models.entity import AgentModel, ModelConnection
 from tinkerfin_studio.resources import ApplicationResources
 from tinkerfin_tracing import Tracer
 
@@ -45,14 +45,24 @@ async def automation_resources(database, attachments, monkeypatch):
             )
         )
         session.add(
+            ModelConnection(
+                user_id=1,
+                connection_id="auto",
+                display_name="自动化",
+                provider_id="custom",
+                api_type="openai_chat_completions",
+                base_url="https://model.invalid/v1",
+                auth_type="api_key",
+                api_key="key",
+            )
+        )
+        session.add(
             AgentModel(
                 user_id=1,
                 model_id="main",
                 display_name="Main",
-                provider="openai",
+                connection_id="auto",
                 model_name="test-model",
-                base_url="https://model.invalid",
-                api_key="never-sent",
                 enabled=True,
                 is_default=True,
             )
@@ -87,6 +97,7 @@ async def automation_resources(database, attachments, monkeypatch):
                         tinkerfin=TinkerFin(
                             checkpointer=InMemorySaver(), store=InMemoryStore()
                         ).with_observer(tracer),
+                        model_http_transport=None,
                         model_http_client=client,
                         sandbox_manager=Sandboxes(),
                         agent_subagents={},

@@ -10,6 +10,8 @@ from typing import Any, Literal, TypedDict, cast
 from uuid import UUID, uuid4
 
 import pytest
+from deepagents import DeepAgentState
+from langchain_core.messages import AnyMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import CheckpointMetadata, empty_checkpoint
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
@@ -73,6 +75,90 @@ def _thread(saver: AsyncRedisSaver, namespace: str = "alpha") -> ThreadIdentity:
         namespace=namespace,
         thread_id=saver.checkpoints_index.schema.index.name.split(":")[2],
     )
+
+
+@pytest.mark.parametrize("cancel_after_snapshot", [False, True])
+async def test_message_snapshot_survives_redis_reconnection_and_cancellation(
+    history_saver: AsyncRedisSaver,
+    redis_checkpoint_url: str,
+    cancel_after_snapshot: bool,
+) -> None:
+    """A persisted message snapshot remains readable after a new saver is opened."""
+    identity = _thread(history_saver)
+    config: RunnableConfig = {"configurable": {"thread_id": identity.thread_id}}
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    block_next = False
+
+    async def unchanged(state: DeepAgentState) -> dict[str, list[AnyMessage]]:
+        del state
+        if block_next:
+            entered.set()
+            await release.wait()
+        return {}
+
+    builder = StateGraph(DeepAgentState)
+    builder.add_node("unchanged", unchanged)
+    builder.add_edge(START, "unchanged")
+    builder.add_edge("unchanged", END)
+    graph = builder.compile(
+        checkpointer=NamespaceCheckpointer(history_saver, identity.namespace)
+    )
+    for number in range(50):
+        await graph.ainvoke(
+            {"messages": [HumanMessage(content="message", id=str(number))]},
+            config,
+            durability="sync",
+        )
+    expected = 50
+    if cancel_after_snapshot:
+        block_next = True
+        task = asyncio.create_task(
+            graph.ainvoke(
+                {"messages": [HumanMessage(content="cancel", id="50")]},
+                config,
+                durability="sync",
+            )
+        )
+        entered_task = asyncio.create_task(entered.wait())
+        try:
+            done, _ = await asyncio.wait(
+                (task, entered_task), return_when=asyncio.FIRST_COMPLETED
+            )
+            if task in done:
+                await task
+                pytest.fail("The run ended before the cancellation boundary")
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            task.cancel()
+            entered_task.cancel()
+            await asyncio.gather(task, entered_task, return_exceptions=True)
+        expected += 1
+        block_next = False
+
+    async with Redis.from_url(redis_checkpoint_url, decode_responses=False) as client:
+        reopened = AsyncRedisSaver(
+            redis_client=client,
+            checkpoint_prefix=history_saver.checkpoints_index.schema.index.name,
+            checkpoint_write_prefix=history_saver.checkpoint_writes_index.schema.index.name,
+        )
+        restored = builder.compile(
+            checkpointer=NamespaceCheckpointer(reopened, identity.namespace)
+        )
+        state = await restored.aget_state(config)
+        assert [message.id for message in state.values["messages"]] == [
+            str(number) for number in range(expected)
+        ]
+        result = await restored.ainvoke(
+            {"messages": [HumanMessage(content="continue", id=str(expected))]},
+            config,
+            durability="sync",
+        )
+        assert [message.id for message in result["messages"]] == [
+            str(number) for number in range(expected + 1)
+        ]
 
 
 async def _seed_history(saver: AsyncRedisSaver, count: int) -> list[str]:

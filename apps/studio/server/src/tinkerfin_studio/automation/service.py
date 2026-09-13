@@ -1,5 +1,7 @@
 """把认证用户的业务任务交给框架调度，并读取授权结果"""
 
+from __future__ import annotations
+
 from datetime import datetime
 from typing import TYPE_CHECKING, TypedDict
 from uuid import NAMESPACE_URL, uuid5

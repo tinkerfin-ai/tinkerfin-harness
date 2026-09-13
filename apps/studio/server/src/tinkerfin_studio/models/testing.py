@@ -11,7 +11,7 @@ import anyio
 import httpx
 from anyio import to_thread
 from langchain_core.messages import HumanMessage
-from pydantic import BaseModel, Field, ValidationError
+from ollama import ResponseError
 
 from tinkerfin_studio.attachments.generation import (
     ImageGenerationHTTPError,
@@ -20,6 +20,7 @@ from tinkerfin_studio.attachments.generation import (
 from tinkerfin_studio.attachments.processing import image_variant
 from tinkerfin_studio.infrastructure.database import Database
 from tinkerfin_studio.models.chat import create_chat_model
+from tinkerfin_studio.models.discovery import discover_models
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import (
     AgentModelConfig,
@@ -53,14 +54,6 @@ _VISION_IMAGE_BASE64 = (
 )
 
 
-class _ListedModel(BaseModel):
-    id: str = Field(max_length=512)
-
-
-class _ModelList(BaseModel):
-    data: list[_ListedModel] = Field(max_length=2000)
-
-
 def _http_error_code(status: int) -> ModelTestCode:
     if status in {401, 403}:
         return "authentication_failed"
@@ -88,6 +81,8 @@ def _failure_code(error: Exception) -> ModelTestCode:
         if cause is None:
             break
         cause = cause.__cause__
+    if isinstance(error, ResponseError) and error.status_code is not None:
+        return _http_error_code(error.status_code)
     if isinstance(error, (ValueError, OSError)):
         return "invalid_response"
     return "service_error"
@@ -100,29 +95,19 @@ async def _raise_http_error(response: httpx.Response) -> None:
 async def _check_model_list(
     config: AgentModelConfig, client: httpx.AsyncClient
 ) -> ModelTestResult:
-    response = await client.get(
-        config.base_url.rstrip("/") + "/models",
-        headers={"Authorization": f"Bearer {config.api_key.get_secret_value()}"},
+    result = await discover_models(
+        config.provider, config.base_url, config.api_key.get_secret_value(), client
     )
-    if response.status_code != 200:
-        code: ModelTestCode = (
-            _http_error_code(response.status_code)
-            if response.status_code in {401, 403, 429}
-            else "models_unavailable"
+    if result.outcome != "success":
+        return ModelTestResult.model_validate(
+            {
+                "kind": "basic",
+                "outcome": "inconclusive",
+                "code": result.code,
+                "elapsed_ms": 0,
+            }
         )
-        return ModelTestResult(
-            kind="basic", outcome="inconclusive", code=code, elapsed_ms=0
-        )
-    try:
-        models = _ModelList.model_validate_json(response.content)
-    except ValidationError:
-        return ModelTestResult(
-            kind="basic",
-            outcome="inconclusive",
-            code="models_unavailable",
-            elapsed_ms=0,
-        )
-    listed = any(item.id == config.model_name for item in models.data)
+    listed = any(item.model_name == config.model_name for item in result.items)
     return ModelTestResult(
         kind="basic",
         outcome="success" if listed else "inconclusive",
@@ -132,11 +117,15 @@ async def _check_model_list(
 
 
 async def _check_chat(
-    config: AgentModelConfig, kind: ModelTestKind, client: httpx.AsyncClient
+    config: AgentModelConfig,
+    kind: ModelTestKind,
+    client: httpx.AsyncClient,
+    transport: ModelTransport | None = None,
 ) -> ModelTestResult:
     model = create_chat_model(
         config,
         http_async_client=client,
+        http_async_transport=transport,
         timeout=TEST_TIMEOUT_SECONDS[kind],
         max_tokens=512,
         max_retries=0,
@@ -160,9 +149,10 @@ async def _check_chat(
             ]
         )
     response = await model.ainvoke([message])
-    text = response.text.strip().replace(
-        config.api_key.get_secret_value(), "[redacted]"
-    )[:2000]
+    text = response.text.strip()[:2000]
+    key = config.api_key.get_secret_value()
+    if key:
+        text = text.replace(key, "[redacted]")
     return ModelTestResult(
         kind=kind,
         outcome="success" if text else "inconclusive",
@@ -249,15 +239,16 @@ async def run_model_test(
                     ),
                 )
             else:
+                transport = ModelTransport(
+                    allowed_origins=allowed_origins,
+                    response_limit_bytes=_RESPONSE_LIMIT_BYTES,
+                )
                 async with httpx.AsyncClient(
                     timeout=TEST_TIMEOUT_SECONDS[kind],
                     trust_env=False,
                     follow_redirects=False,
                     headers={"Accept-Encoding": "identity"},
-                    transport=ModelTransport(
-                        allowed_origins=allowed_origins,
-                        response_limit_bytes=_RESPONSE_LIMIT_BYTES,
-                    ),
+                    transport=transport,
                     event_hooks={"response": [_raise_http_error]}
                     if kind != "basic"
                     else {},
@@ -265,7 +256,7 @@ async def run_model_test(
                     result = (
                         await _check_model_list(config, client)
                         if kind == "basic"
-                        else await _check_chat(config, kind, client)
+                        else await _check_chat(config, kind, client, transport)
                     )
     except Exception as error:  # noqa: BLE001 - 不可信供应商与 SDK 的异常仅转换为固定错误码
         result = ModelTestResult(

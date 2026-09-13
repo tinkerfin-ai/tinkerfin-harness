@@ -169,6 +169,7 @@ describe('Composer', () => {
     expect(fallback).toHaveAttribute('inert')
     expect(input).toBeInTheDocument()
     expect(screen.getByRole('region', { name: '澄清接管' })).toBeVisible()
+    expect(container.querySelector('.composer-auxiliary-controls')).toBeEmptyDOMElement()
     expect(note).toBeVisible()
     expect(fallback).not.toContainElement(note)
     expect(container.querySelector('.composer-takeover')).not.toContainElement(note)
@@ -414,32 +415,19 @@ describe('Composer', () => {
     expect(input.selectionStart).toBe(0)
   })
 
-  it('forwards wheel input to conversation history unless the input region itself overflows', () => {
-    const onScrollConversation = vi.fn()
-    render(
-      <Composer
-        {...composerChromeProps()}
-        value=""
-        isRunning={false}
-        onChange={vi.fn()}
-        onSend={vi.fn()}
-        onStop={vi.fn()}
-        onScrollConversation={onScrollConversation}
-      />,
-    )
-
+  it('keeps wheel input inside the composer even when the input does not overflow', () => {
+    const outerWheel = vi.fn()
+    render(<div onWheel={outerWheel}>
+      <Composer {...composerChromeProps()} value="" isRunning={false} onChange={vi.fn()} onSend={vi.fn()} onStop={vi.fn()} />
+    </div>)
     const input = screen.getByLabelText('消息输入')
     fireEvent.wheel(input, { deltaY: -120 })
-
-    expect(onScrollConversation).toHaveBeenCalledWith(-120)
-
-    const inputScroll = input.closest('.composer-input-scroll')
-    if (!(inputScroll instanceof HTMLElement)) throw new Error('missing input scroll region')
+    expect(outerWheel).not.toHaveBeenCalled()
+    const inputScroll = input.closest('.composer-input-scroll')!
     Object.defineProperty(inputScroll, 'scrollHeight', { configurable: true, value: 220 })
     Object.defineProperty(inputScroll, 'clientHeight', { configurable: true, value: 144 })
-    onScrollConversation.mockClear()
     fireEvent.wheel(input, { deltaY: 120 })
-    expect(onScrollConversation).not.toHaveBeenCalled()
+    expect(outerWheel).not.toHaveBeenCalled()
   })
 
   it('shows the dedicated running stop control', () => {
@@ -668,7 +656,7 @@ describe('Composer', () => {
   })
 
   it('keeps menu scrolling inside the popup and restores input focus after a blank outside pointer', async () => {
-    const onScrollConversation = vi.fn()
+    const outerWheel = vi.fn()
     function ComposerHarness() {
       const [value, setValue] = useState('/')
       return (
@@ -679,11 +667,10 @@ describe('Composer', () => {
           onChange={setValue}
           onSend={vi.fn()}
           onStop={vi.fn()}
-          onScrollConversation={onScrollConversation}
         />
       )
     }
-    render(<ComposerHarness />)
+    render(<div onWheel={outerWheel}><ComposerHarness /></div>)
 
     const menu = screen.getByRole('listbox', { name: '命令和技能建议' })
     const input = screen.getByLabelText('消息输入') as HTMLTextAreaElement
@@ -691,7 +678,7 @@ describe('Composer', () => {
     input.setSelectionRange(1, 1)
     fireEvent.select(input)
     fireEvent.wheel(menu, { deltaY: 120 })
-    expect(onScrollConversation).not.toHaveBeenCalled()
+    expect(outerWheel).not.toHaveBeenCalled()
 
     fireEvent.pointerDown(input)
     expect(menu).toBeVisible()

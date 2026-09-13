@@ -1,6 +1,7 @@
 import {
   BookOpenCheck,
   AlarmClock,
+  BrainCircuit,
   CircleEllipsis,
   Ellipsis,
   LogOut,
@@ -12,7 +13,6 @@ import {
   Settings2,
   SquarePen,
   Trash2,
-  Workflow,
   X,
 } from 'lucide-react'
 import {
@@ -670,7 +670,7 @@ export function Sidebar({
               }}
             >
               <nav className="primary-nav" aria-label={t('工作区功能')}>
-                <Button size="sm" variant="ghost" leadingIcon={<Workflow size={18} />} disabled>{t('智能体')}</Button>
+                <Button size="sm" variant="ghost" leadingIcon={<BrainCircuit size={18} />} disabled>{t('记忆管理')}</Button>
                 <Button size="sm" variant="ghost" leadingIcon={<BookOpenCheck size={18} />} disabled>{t('技能库')}</Button>
                 <Button type="button" size="sm" variant="ghost" leadingIcon={<AlarmClock size={18} />} selected={automationActive}
                   aria-current={automationActive ? 'page' : undefined} onClick={onOpenAutomation}>{t('自动化')}</Button>
@@ -802,7 +802,7 @@ export function Sidebar({
             aria-controls="sidebar-search"
             onClick={() => openSearch(true)}
           />
-          <IconButton label={t('智能体')} tooltip={t('智能体')} icon={<Workflow size={18} />} tabIndex={railInteractive ? 0 : -1} disabled />
+          <IconButton label={t('记忆管理')} tooltip={t('记忆管理')} icon={<BrainCircuit size={18} />} tabIndex={railInteractive ? 0 : -1} disabled />
           <span className="rail-spacer" />
           <IconButton
             label={t('展开侧边栏以查看账户')}

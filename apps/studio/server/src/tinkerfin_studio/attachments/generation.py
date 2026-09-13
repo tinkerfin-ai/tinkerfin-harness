@@ -72,7 +72,9 @@ async def generate_image_bytes(
         async with client.stream(
             "POST",
             model.base_url.rstrip("/") + "/images/generations",
-            headers={"Authorization": f"Bearer {model.api_key.get_secret_value()}"},
+            headers={"Authorization": f"Bearer {model.api_key.get_secret_value()}"}
+            if model.api_key.get_secret_value()
+            else {},
             json={
                 "model": model.model_name,
                 "prompt": prompt,

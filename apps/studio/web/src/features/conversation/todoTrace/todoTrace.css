@@ -61,7 +61,8 @@
     height: 100%;
     min-height: 0;
     overflow-y: auto;
-    overscroll-behavior: contain;
+    overscroll-behavior-y: none;
+    overscroll-behavior-x: auto;
     scrollbar-gutter: stable;
   }
 
@@ -344,14 +345,14 @@
 
   .todo-trace-locate-target {
     border-radius: var(--radius-md);
-    outline: 1px solid var(--color-focus);
+    outline: 0;
     outline-offset: 0;
   }
 
   .user-message.todo-trace-locate-target { outline: 0; }
 
   .user-message.todo-trace-locate-target .message-markdown {
-    outline: 1px solid var(--color-focus);
+    outline: 0;
     outline-offset: 0;
   }
 
@@ -402,8 +403,6 @@
     .todo-trace-scrim { background: Canvas; opacity: .68; }
     .todo-trace-todo-list::before,
     .todo-trace-todo::before { background: ButtonText; }
-    .todo-trace-locate-target,
-    .user-message.todo-trace-locate-target .message-markdown { outline-color: Highlight; }
     .todo-trace-group-toggle:focus-visible,
     .todo-trace-locate:focus-visible,
     .todo-trace-scroll:focus-visible { outline-color: Highlight; }

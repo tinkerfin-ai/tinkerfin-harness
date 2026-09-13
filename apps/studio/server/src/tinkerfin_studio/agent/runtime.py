@@ -69,12 +69,15 @@ def _build_runtime(
     """
 
     model = create_chat_model(
-        model_config, http_async_client=resources.model_http_client
+        model_config,
+        http_async_transport=resources.model_http_transport,
+        http_async_client=resources.model_http_client,
     )
     plan_model = (
         create_chat_model(
             model_config,
             reasoning_enabled=False,
+            http_async_transport=resources.model_http_transport,
             http_async_client=resources.model_http_client,
         )
         if plan_enabled

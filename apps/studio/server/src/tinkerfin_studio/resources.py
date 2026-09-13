@@ -154,6 +154,7 @@ class ApplicationResources:
 
     settings: Settings
     model_http_client: httpx.AsyncClient
+    model_http_transport: ModelTransport
     attachments: AttachmentService
     database: Database
     redis_runtime: Redis
@@ -211,13 +212,14 @@ def build_lifespan():
                 http_client = await _enter_lifespan_context(
                     stack, outcome, httpx.AsyncClient(trust_env=False)
                 )
+                model_http_transport = ModelTransport(
+                    allowed_origins=settings.model_allowed_origins
+                )
                 model_http_client = await _enter_lifespan_context(
                     stack,
                     outcome,
                     httpx.AsyncClient(
-                        transport=ModelTransport(
-                            allowed_origins=settings.model_allowed_origins
-                        ),
+                        transport=model_http_transport,
                         trust_env=False,
                         follow_redirects=False,
                         timeout=600,
@@ -320,6 +322,7 @@ def build_lifespan():
                     settings=settings,
                     automation=automation,
                     model_http_client=model_http_client,
+                    model_http_transport=model_http_transport,
                     attachments=AttachmentService(
                         database, DiskAttachmentStorage(settings.attachment_directory)
                     ),

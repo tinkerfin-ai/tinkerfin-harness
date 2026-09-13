@@ -193,6 +193,7 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
         *,
         reasoning_enabled: bool | None = None,
         http_async_client=None,
+        http_async_transport=None,
     ) -> BaseChatModel:
         reasoning_overrides.append(reasoning_enabled)
         return root_model if reasoning_enabled is None else plan_model
@@ -210,6 +211,7 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
         ApplicationResources,
         SimpleNamespace(
             attachments=attachments,
+            model_http_transport=None,
             model_http_client=model_http_client,
             agent_persistence=SimpleNamespace(store=InMemoryStore()),
             agent_subagents=await load_subagents(),
@@ -343,6 +345,7 @@ async def test_file_access_choice_controls_root_and_subagent_review(
         ApplicationResources,
         SimpleNamespace(
             attachments=attachments,
+            model_http_transport=None,
             model_http_client=model_http_client,
             agent_subagents=await load_subagents(),
             tinkerfin=TinkerFin(checkpointer=InMemorySaver()),

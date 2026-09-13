@@ -1182,6 +1182,19 @@ wheels = [
 ]
 
 [[package]]
+name = "langchain-ollama"
+version = "1.1.0"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+dependencies = [
+    { name = "langchain-core" },
+    { name = "ollama" },
+]
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/d4/9b/6641afe8a5bf807e454fd464eddfc7eb2f2df53cb0b29744381171f9c609/langchain_ollama-1.1.0.tar.gz", hash = "sha256:f776f56f6782ae4da7692579b94a6575906118318d1023b455d7207f9d059811", size = 133075, upload-time = "2026-04-07T02:48:00.873Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/2c/b2/c2acb076590a98bee2816ed5f285e00df162a34238f9e276e175e14ebc35/langchain_ollama-1.1.0-py3-none-any.whl", hash = "sha256:43ac83a6eacb0f43855810739794dd55019e0d9b17bdcf3ecb3b1991ac3b59dd", size = 31413, upload-time = "2026-04-07T02:47:59.642Z" },
+]
+
+[[package]]
 name = "langchain-openai"
 version = "1.4.3"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -1239,7 +1252,7 @@ wheels = [
 
 [[package]]
 name = "langgraph-checkpoint-redis"
-version = "0.5.1"
+version = "0.5.2"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 dependencies = [
     { name = "langgraph-checkpoint" },
@@ -1247,9 +1260,9 @@ dependencies = [
     { name = "redis" },
     { name = "redisvl" },
 ]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/52/81/8a578f048e8ae3ff79cdd223b98158c8b23e3efc640281f3986b03bc8779/langgraph_checkpoint_redis-0.5.1.tar.gz", hash = "sha256:ea3696f7b78ec8380949961cd9b9767c373437ec0c6fcc56dfbab3bde4d78ff4", size = 119869, upload-time = "2026-07-14T17:46:45.176Z" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/fc/40/8eb4cc6d4aeda603783e8abc7695c0791ffcea52dacc2b58b063f02ceb18/langgraph_checkpoint_redis-0.5.2.tar.gz", hash = "sha256:be67fd850b0799e99b10d2c3a2be2b0bda35c45ad0269e1414da30d9a9f97752", size = 120928, upload-time = "2026-08-20T09:05:20.183Z" }
 wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/4f/71/e968397941d24d013a833e894731a3dadd5022e6bf3650b898efddf10a5b/langgraph_checkpoint_redis-0.5.1-py3-none-any.whl", hash = "sha256:9c9b1184fb98991d49ebed6a7b81ff05f2e994ee7d695bfb91410a9a512c178c", size = 131688, upload-time = "2026-07-14T17:46:43.723Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/83/4c/4b9524c4f451760765be72bac67c45bc3be25dfd126184fa101dffee1c33/langgraph_checkpoint_redis-0.5.2-py3-none-any.whl", hash = "sha256:9347b8806065377fdb72ab3fd94bae97b5c62d092807c0e3633796195a0d333a", size = 132614, upload-time = "2026-08-20T09:05:18.892Z" },
 ]
 
 [[package]]
@@ -1652,6 +1665,19 @@ wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/42/06/6e11443f7b64ee376c860506091103bf68f92d2cab9e8d96d4501babf07c/numpy-2.5.2-cp315-cp315t-win32.whl", hash = "sha256:7354826bc6f8f69402e9b7fe28d15fcd34feebd74f856f111585c5b0c9fb0251", size = 6269775, upload-time = "2026-08-09T13:48:17.543Z" },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/f1/18/195d6b86cd72dbbc501edfa778005fa6b87afd34c153e46028cd3a0938f4/numpy-2.5.2-cp315-cp315t-win_amd64.whl", hash = "sha256:e5651f3f87add730ee6608d915009e19c911fba0cb000c7e3ea994b7d768eb12", size = 12782559, upload-time = "2026-08-09T13:48:21.023Z" },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/b4/07/458c344f0f0c178f4481dad5cca790626ffe4c34eabf9467069d06ee4999/numpy-2.5.2-cp315-cp315t-win_arm64.whl", hash = "sha256:5f8e00be2ec6f45f4e8a41a527f68d44a7d96fee92a650e4d8b1326f77f61e6e", size = 10748103, upload-time = "2026-08-09T13:48:24.21Z" },
+]
+
+[[package]]
+name = "ollama"
+version = "0.6.2"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/fc/72/5f12423b6b39ca8430fbe56f77fcf4ef60f63067c7c4a2e30e200ed9ec16/ollama-0.6.2.tar.gz", hash = "sha256:936d55daa684f474364c098611c933626f8d6c7d67065c5b7ae0c477b508b07f", size = 53145, upload-time = "2026-04-29T21:21:15.018Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/c4/ab/d6722beeb2d10f7a3b9ff49375708904fde18f82b5609a0bc4aeb5996a4d/ollama-0.6.2-py3-none-any.whl", hash = "sha256:3ad7daab28e5a973445c36a73882a3ef698c2ebb00e21e308652741577509f7d", size = 15115, upload-time = "2026-04-29T21:21:13.794Z" },
 ]
 
 [[package]]
@@ -2848,7 +2874,7 @@ requires-dist = [
     { name = "langchain", specifier = ">=1.3.14,<=1.4.0" },
     { name = "langchain-core", specifier = ">=1.5.3,<=1.6.3" },
     { name = "langgraph", specifier = ">=1.2.10,<=1.2.11" },
-    { name = "langgraph-checkpoint-redis", marker = "extra == 'redis'", specifier = "==0.5.1" },
+    { name = "langgraph-checkpoint-redis", marker = "extra == 'redis'", specifier = "==0.5.2" },
     { name = "pydantic", specifier = ">=2,<3" },
     { name = "redis", marker = "extra == 'redis'", specifier = ">=6,<9" },
     { name = "redisvl", marker = "extra == 'redis'", specifier = "==0.25.1" },
@@ -3121,6 +3147,7 @@ dependencies = [
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-deepseek" },
+    { name = "langchain-ollama" },
     { name = "langchain-openai" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-redis" },
@@ -3160,9 +3187,10 @@ requires-dist = [
     { name = "langchain", specifier = "==1.3.18" },
     { name = "langchain-core", specifier = "==1.6.1" },
     { name = "langchain-deepseek", specifier = "==1.1.0" },
+    { name = "langchain-ollama", specifier = "==1.1.0" },
     { name = "langchain-openai", specifier = "==1.4.3" },
     { name = "langgraph", specifier = "==1.2.11" },
-    { name = "langgraph-checkpoint-redis", specifier = "==0.5.1" },
+    { name = "langgraph-checkpoint-redis", specifier = "==0.5.2" },
     { name = "openpyxl", specifier = ">=3.1.5,<4" },
     { name = "opensandbox", specifier = "==0.1.16" },
     { name = "pillow", specifier = ">=12,<13" },

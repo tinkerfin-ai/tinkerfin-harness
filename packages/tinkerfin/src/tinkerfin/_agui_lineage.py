@@ -1536,7 +1536,7 @@ async def bind_agui_lineage(
     if configured_profile not in (None, profile_id):
         raise TinkerFinLifecycleError("Graph config belongs to another Runtime Profile")
     configurable[RUNTIME_PROFILE_METADATA_KEY] = profile_id
-    # RedisSaver 0.5.1 indexes only its standard configurable run_id. Keep the
+    # RedisSaver 0.5.2 indexes only its standard configurable run_id. Keep the
     # private metadata as the cross-saver authority and verify every listed result.
     configurable[_CHECKPOINTER_RUN_ID_KEY] = identity.run_id
     configurable[CHECKPOINT_ROLE_METADATA_KEY] = NATIVE_CHECKPOINT_ROLE

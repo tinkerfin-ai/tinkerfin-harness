@@ -12,28 +12,47 @@ CREATE TABLE users (
   UNIQUE KEY ix_users_username (username)
 ) COMMENT='TinkerFin Studio 登录用户';
 
+CREATE TABLE model_connections (
+  id INTEGER NOT NULL COMMENT '连接记录主键' AUTO_INCREMENT,
+  user_id INTEGER NOT NULL COMMENT '连接所属用户 ID',
+  connection_id VARCHAR(64) NOT NULL COMMENT '用户范围内稳定的连接 ID',
+  display_name VARCHAR(128) NOT NULL COMMENT '用户自定义连接显示名称',
+  provider_id VARCHAR(64) NOT NULL COMMENT '提供方目录标识，custom 表示自定义',
+  api_type VARCHAR(32) NOT NULL COMMENT 'API 类型：openai_chat_completions 或 ollama',
+  base_url VARCHAR(1024) NOT NULL COMMENT '模型 API 基础地址，Ollama 为服务根地址',
+  auth_type VARCHAR(16) NOT NULL COMMENT 'api_key 密钥认证或 none 无需认证',
+  api_key TEXT NOT NULL COMMENT '服务明文密钥，禁止通过响应或日志暴露',
+  created_at DATETIME NOT NULL COMMENT 'UTC 创建时间',
+  updated_at DATETIME NOT NULL COMMENT 'UTC 更新时间',
+  PRIMARY KEY (id),
+  CONSTRAINT uq_model_connections_owner_connection UNIQUE (user_id, connection_id)
+) COMMENT='用户模型服务的地址与认证';
+
 CREATE TABLE agent_models (
-	id INTEGER NOT NULL COMMENT '模型配置主键' AUTO_INCREMENT,
-	generation_options JSON NOT NULL COMMENT '生图接口附加参数，不包含认证信息',
-	user_id INTEGER NOT NULL COMMENT '模型及密钥所属用户 ID',
-	purpose VARCHAR(16) NOT NULL COMMENT 'chat 对话模型或 image 生图服务' DEFAULT 'chat',
-	model_id VARCHAR(64) NOT NULL COMMENT '前后端使用的稳定模型 ID',
-	display_name VARCHAR(128) NOT NULL COMMENT '前端展示名称',
-	provider VARCHAR(32) NOT NULL COMMENT '已安装的 LangChain provider：deepseek 或 openai',
-	model_name VARCHAR(128) NOT NULL COMMENT '供应商实际模型名称',
-	base_url VARCHAR(1024) NOT NULL COMMENT '模型服务 API 基础地址',
-	api_key TEXT NOT NULL COMMENT '模型服务明文 API 密钥，禁止通过接口或日志暴露',
-	image_support VARCHAR(16) NOT NULL COMMENT '图片输入能力：supported、unsupported 或 unknown' DEFAULT 'unknown',
-	reasoning_enabled BOOL NOT NULL COMMENT '是否启用已验证的 provider reasoning 参数',
-	enabled BOOL NOT NULL COMMENT '是否允许创建新 run',
-	is_default BOOL NOT NULL COMMENT '是否为前端默认模型，由应用事务保证唯一',
-	sort_order INTEGER NOT NULL COMMENT '模型目录升序排序值',
-	created_at DATETIME NOT NULL COMMENT '创建时间',
-	updated_at DATETIME NOT NULL COMMENT '更新时间',
-	PRIMARY KEY (id),
-	CONSTRAINT uq_agent_models_owner_model UNIQUE (user_id, model_id)
-)COMMENT='可由前端选择的 Agent 模型与连接配置';
+  id INTEGER NOT NULL COMMENT '模型配置主键' AUTO_INCREMENT,
+  generation_options JSON NOT NULL COMMENT '生图接口附加参数，不包含认证信息',
+  user_id INTEGER NOT NULL COMMENT '模型配置所属用户 ID',
+  purpose VARCHAR(16) NOT NULL COMMENT 'chat 对话模型或 image 生图服务' DEFAULT 'chat',
+  model_id VARCHAR(64) NOT NULL COMMENT '前后端使用的稳定模型 ID',
+  display_name VARCHAR(128) NOT NULL COMMENT '前端展示名称',
+  connection_id VARCHAR(64) NOT NULL COMMENT '所属连接 ID，与 user_id 共同确定连接',
+  chat_options JSON NOT NULL COMMENT '聊天生成参数，不包含连接或认证信息',
+  model_name VARCHAR(128) NOT NULL COMMENT '供应商实际模型名称',
+  image_support VARCHAR(16) NOT NULL COMMENT '图片输入能力：supported、unsupported 或 unknown' DEFAULT 'unknown',
+  reasoning_enabled BOOL NOT NULL COMMENT '是否启用已验证的 provider reasoning 参数',
+  enabled BOOL NOT NULL COMMENT '是否允许创建新 run',
+  is_default BOOL NOT NULL COMMENT '是否为前端默认模型，由应用事务保证唯一',
+  sort_order INTEGER NOT NULL COMMENT '模型目录升序排序值',
+  created_at DATETIME NOT NULL COMMENT '创建时间',
+  updated_at DATETIME NOT NULL COMMENT '更新时间',
+  PRIMARY KEY (id),
+  CONSTRAINT uq_agent_models_owner_model UNIQUE (user_id, model_id)
+) COMMENT='可由前端选择的 Agent 模型与连接配置';
+
+CREATE INDEX ix_agent_models_connection ON agent_models (user_id, connection_id);
+
 CREATE INDEX ix_agent_models_default ON agent_models (user_id, purpose, is_default, enabled);
+
 CREATE INDEX ix_agent_models_enabled_order ON agent_models (user_id, enabled, sort_order, id);
 
 CREATE TABLE conversation_threads (

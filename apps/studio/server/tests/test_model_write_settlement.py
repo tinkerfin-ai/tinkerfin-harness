@@ -4,7 +4,6 @@ import asyncio
 from unittest.mock import create_autospec
 
 import pytest
-from pydantic import SecretStr
 
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import AgentModelSave
@@ -39,12 +38,10 @@ async def test_model_write_waits_for_rollback_after_repeated_cancellation(
     if operation == "save":
         command = service.save_settings(
             AgentModelSave(
+                connection_id="configured",
                 model_id="model",
                 display_name="模型",
-                provider="openai",
                 model_name="model",
-                base_url="https://example.com/v1",
-                api_key=SecretStr("synthetic"),
             )
         )
     elif operation == "default":

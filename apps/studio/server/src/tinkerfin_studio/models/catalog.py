@@ -1,0 +1,115 @@
+"""模型提供方的连接预设，目录不代表账户可用性或模型能力"""
+
+from tinkerfin_studio.models.schemas import ProviderPreset
+
+PROVIDER_PRESETS = (
+    ProviderPreset(
+        provider_id="deepseek",
+        display_name="DeepSeek",
+        api_type="openai_chat_completions",
+        base_url="https://api.deepseek.com",
+    ),
+    ProviderPreset(
+        provider_id="openai",
+        display_name="OpenAI",
+        api_type="openai_chat_completions",
+        base_url="https://api.openai.com/v1",
+    ),
+    ProviderPreset(
+        provider_id="gemini",
+        display_name="Google Gemini",
+        api_type="openai_chat_completions",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+    ),
+    ProviderPreset(
+        provider_id="ollama",
+        display_name="Ollama",
+        api_type="ollama",
+        base_url="http://localhost:11434",
+        auth_type="none",
+    ),
+    ProviderPreset(
+        provider_id="dashscope",
+        display_name="通义千问",
+        api_type="openai_chat_completions",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    ),
+    ProviderPreset(
+        provider_id="moonshot",
+        display_name="Moonshot / Kimi",
+        api_type="openai_chat_completions",
+        base_url="https://api.moonshot.cn/v1",
+    ),
+    ProviderPreset(
+        provider_id="zhipu",
+        display_name="智谱 GLM",
+        api_type="openai_chat_completions",
+        base_url="https://open.bigmodel.cn/api/paas/v4",
+    ),
+    ProviderPreset(
+        provider_id="siliconflow",
+        display_name="硅基流动",
+        api_type="openai_chat_completions",
+        base_url="https://api.siliconflow.cn/v1",
+    ),
+    ProviderPreset(
+        provider_id="volcengine",
+        display_name="火山方舟",
+        api_type="openai_chat_completions",
+        base_url="https://ark.cn-beijing.volces.com/api/v3",
+    ),
+    ProviderPreset(
+        provider_id="minimax",
+        display_name="MiniMax",
+        api_type="openai_chat_completions",
+        base_url="https://api.minimaxi.com/v1",
+    ),
+    ProviderPreset(
+        provider_id="baichuan",
+        display_name="百川",
+        api_type="openai_chat_completions",
+        base_url="https://api.baichuan-ai.com/v1",
+    ),
+    ProviderPreset(
+        provider_id="xai",
+        display_name="xAI",
+        api_type="openai_chat_completions",
+        base_url="https://api.x.ai/v1",
+    ),
+    ProviderPreset(
+        provider_id="openrouter",
+        display_name="OpenRouter",
+        api_type="openai_chat_completions",
+        base_url="https://openrouter.ai/api/v1",
+    ),
+    ProviderPreset(
+        provider_id="groq",
+        display_name="Groq",
+        api_type="openai_chat_completions",
+        base_url="https://api.groq.com/openai/v1",
+    ),
+    ProviderPreset(
+        provider_id="mistral",
+        display_name="Mistral",
+        api_type="openai_chat_completions",
+        base_url="https://api.mistral.ai/v1",
+    ),
+    ProviderPreset(
+        provider_id="together",
+        display_name="Together AI",
+        api_type="openai_chat_completions",
+        base_url="https://api.together.xyz/v1",
+    ),
+    ProviderPreset(
+        provider_id="fireworks",
+        display_name="Fireworks AI",
+        api_type="openai_chat_completions",
+        base_url="https://api.fireworks.ai/inference/v1",
+    ),
+    ProviderPreset(
+        provider_id="custom",
+        display_name="自定义提供方",
+        api_type="openai_chat_completions",
+        base_url="",
+    ),
+)

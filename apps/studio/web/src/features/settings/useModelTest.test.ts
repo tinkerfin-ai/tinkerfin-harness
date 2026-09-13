@@ -5,7 +5,7 @@ import { newModel } from './useModelSettings'
 import { useModelTest, type ModelTestConfiguration, type ModelTestResult } from './useModelTest'
 
 vi.mock('../../api/shared/http', () => ({ requestJson: vi.fn() }))
-const config: ModelTestConfiguration = {...newModel(), api_key: 'test-key'}
+const config: ModelTestConfiguration = newModel('connection')
 const result: ModelTestResult = {kind: 'text', outcome: 'success', elapsed_ms: 12, code: 'text_received', text: 'OK', image: null}
 
 describe('草稿模型测试生命周期', () => {

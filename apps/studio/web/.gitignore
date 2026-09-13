@@ -7,6 +7,7 @@ node_modules/
 # Build and test output
 dist/
 coverage/
+test-results/
 .vite/
 *.tsbuildinfo
 

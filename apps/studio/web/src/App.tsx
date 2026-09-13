@@ -81,7 +81,7 @@ export default function App() {
     authEntry.current = 'restore'
     clearActiveRunSession()
     setToasts([])
-    writeWorkspaceToLocation('conversation', '')
+    writeWorkspaceToLocation('conversation', '', { history: 'replace' })
     setPhase('signedOut')
   }), [])
 
@@ -94,7 +94,7 @@ export default function App() {
   }), [])
 
   useEffect(() => {
-    if (phase === 'signedOut') writeWorkspaceToLocation('conversation', '')
+    if (phase === 'signedOut') writeWorkspaceToLocation('conversation', '', { history: 'replace' })
   }, [phase])
 
   let content: ReactNode

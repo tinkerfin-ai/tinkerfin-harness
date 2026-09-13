@@ -1,5 +1,7 @@
 """按执行快照准备用户模型和文件，运行生命周期交给框架"""
 
+from __future__ import annotations
+
 from dataclasses import replace
 from typing import TYPE_CHECKING
 

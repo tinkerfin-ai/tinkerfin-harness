@@ -17,7 +17,7 @@ import { useAttachmentImage } from './useAttachmentImage'
 import { useAttachmentDownload } from './useAttachmentDownload'
 import { useImageViewport } from './useImageViewport'
 import { DocumentAttachmentPreview } from './DocumentAttachmentPreview'
-import { documentFormat } from './documentPreview'
+import { AttachmentViewerTitle } from './AttachmentViewerTitle'
 
 function GalleryThumbnail({
   attachment,
@@ -80,8 +80,15 @@ export function AttachmentViewer({
     if (!attachment) onClose()
   }, [attachment, onClose])
   if (!attachment) return null
-  if (documentFormat(attachment.mime_type)) {
-    return <DocumentAttachmentPreview key={attachment.id} attachment={attachment} onClose={onClose} returnFocus={returnFocus} />
+  if (!attachment.mime_type.startsWith('image/')) {
+    return <DocumentAttachmentPreview
+      key={attachment.id}
+      attachment={attachment}
+      attachments={attachments}
+      onSelect={setSelectedId}
+      onClose={onClose}
+      returnFocus={returnFocus}
+    />
   }
   return (
     <ViewerImage
@@ -131,7 +138,7 @@ function ViewerImage({
   return (
     <Dialog
       open
-      title={attachment.name}
+      title={<AttachmentViewerTitle attachment={attachment} />}
       className="attachment-viewer"
       restoreFocusTo={returnFocus}
       onClose={onClose}

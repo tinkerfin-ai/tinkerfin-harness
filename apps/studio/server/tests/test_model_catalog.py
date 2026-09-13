@@ -1,4 +1,4 @@
-from pydantic import SecretStr
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tinkerfin_studio.models.repository import AgentModelRepository
@@ -14,12 +14,10 @@ async def test_model_catalog_returns_only_enabled_safe_fields(
     service = AgentModelService(AgentModelRepository(session, user_id=1))
     await service.save_settings(
         AgentModelSave(
+            connection_id="deepseek",
             model_id="deepseek-v4-pro",
             display_name="DeepSeek V4 Pro",
-            provider="deepseek",
             model_name="deepseek-v4-pro",
-            base_url="https://models.example.test/v1",
-            api_key=SecretStr("database-plain-secret"),
             reasoning_enabled=True,
             enabled=True,
             is_default=True,
@@ -28,12 +26,10 @@ async def test_model_catalog_returns_only_enabled_safe_fields(
     )
     await service.save_settings(
         AgentModelSave(
+            connection_id="configured",
             model_id="disabled",
             display_name="Disabled",
-            provider="openai",
             model_name="disabled-model",
-            base_url="https://models.example.test/v1",
-            api_key=SecretStr("disabled-secret"),
             enabled=False,
             is_default=False,
             sort_order=10,
@@ -67,12 +63,10 @@ async def test_setting_a_new_default_clears_the_previous_default(
     for model_id, is_default in (("first", True), ("second", True)):
         await service.save_settings(
             AgentModelSave(
+                connection_id="configured",
                 model_id=model_id,
                 display_name=model_id.title(),
-                provider="openai",
                 model_name=f"provider-{model_id}",
-                base_url="https://models.example.test/v1",
-                api_key=SecretStr(f"secret-{model_id}"),
                 enabled=True,
                 is_default=is_default,
             )
@@ -83,5 +77,8 @@ async def test_setting_a_new_default_clears_the_previous_default(
 
     assert catalog.default_model_id == "second"
     assert sum(item.is_default for item in catalog.items) == 1
-    assert resolved.api_key.get_secret_value() == "secret-second"
+    assert resolved.api_key.get_secret_value() == "private-draft-key"
     assert resolved.provider == "openai"
+
+
+pytestmark = pytest.mark.usefixtures("model_connections")

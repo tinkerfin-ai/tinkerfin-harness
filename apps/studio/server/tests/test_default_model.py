@@ -7,7 +7,6 @@ from typing import Literal
 import anyio
 import pytest
 from httpx import ASGITransport, AsyncClient
-from pydantic import SecretStr
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +17,7 @@ from tinkerfin_studio.conversation.models import (
     ConversationRunRegistration,
     ConversationThread,
 )
-from tinkerfin_studio.models.entity import AgentModel
+from tinkerfin_studio.models.entity import AgentModel, ModelConnection
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import AgentModelSave
 from tinkerfin_studio.models.service import AgentModelService
@@ -32,16 +31,14 @@ def configuration(
     default: bool = False,
 ) -> AgentModelSave:
     return AgentModelSave(
+        connection_id="configured",
         model_id=model_id,
         display_name=f"模型 {model_id}",
-        provider="openai",
         model_name="provider-model",
-        base_url="https://models.example/v1",
-        api_key=SecretStr("private-key"),
         generation_options={"temperature": 0.3, "custom": {"values": [1, 2]}},
         purpose=purpose,
         image_support="supported",
-        reasoning_enabled=True,
+        reasoning_enabled=False,
         sort_order=17,
         enabled=enabled,
         is_default=default,
@@ -111,7 +108,7 @@ async def test_default_requires_saved_key_without_changing_existing_default(
     await service.save_settings(configuration("old", default=True))
     await service.save_settings(configuration("target", enabled=False))
     await session.execute(
-        update(AgentModel).where(AgentModel.model_id == "target").values(api_key=key)
+        update(ModelConnection).where(ModelConnection.user_id == 1).values(api_key=key)
     )
     await session.commit()
     with pytest.raises(BusinessException) as rejected:
@@ -269,3 +266,6 @@ async def test_default_http_action_has_no_body_and_returns_null_envelope(
     assert "200" in operation["responses"]
     assert "204" not in operation["responses"]
     assert len(list(await session.scalars(select(AgentModel)))) == 1
+
+
+pytestmark = pytest.mark.usefixtures("model_connections")

@@ -58,7 +58,7 @@ export function ListboxPicker<T extends string>({
 
   const closeAndFocusTrigger = () => {
     onOpenChange(false)
-    triggerRef.current?.focus()
+    triggerRef.current?.focus({ preventScroll: true })
   }
 
   useEffect(() => {
@@ -68,14 +68,19 @@ export function ListboxPicker<T extends string>({
   useLayoutEffect(() => {
     if (!open) return
     setActiveIndex(selectedIndex)
-    listboxRef.current?.focus()
+    listboxRef.current?.focus({ preventScroll: true })
   }, [open, options.length, selectedIndex])
 
   useLayoutEffect(() => {
     if (!open) return
     const activeOption = document.getElementById(`${listboxId}-option-${activeIndex}`)
-    if (activeOption && listboxRef.current?.contains(activeOption)) {
-      activeOption.scrollIntoView?.({ block: 'nearest' })
+    const listbox = listboxRef.current
+    if (activeOption && listbox?.contains(activeOption)) {
+      // 只移动选项列表，避免打开下拉框时带动外层表单滚动
+      const optionBounds = activeOption.getBoundingClientRect()
+      const bounds = listbox.getBoundingClientRect()
+      if (optionBounds.top < bounds.top) listbox.scrollTop += optionBounds.top - bounds.top
+      else if (optionBounds.bottom > bounds.bottom) listbox.scrollTop += optionBounds.bottom - bounds.bottom
     }
   }, [activeIndex, listboxId, open])
 
@@ -143,6 +148,7 @@ export function ListboxPicker<T extends string>({
       aria-activedescendant={`${listboxId}-option-${activeIndex}`}
       tabIndex={-1}
       onKeyDown={handleListboxKeyDown}
+      onWheel={event => event.stopPropagation()}
     >
       {options.map((option, index) => (
         <div

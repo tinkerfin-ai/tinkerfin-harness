@@ -1,81 +1,184 @@
-"""用户模型配置的隔离、密钥保留和默认选择"""
+"""提供方连接、模型配置的用户隔离、认证和运行保护"""
 
-from typing import Literal
+import asyncio
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import SecretStr
 
 from tinkerfin_studio.api.errors import BusinessException, ModelErrorCode
+from tinkerfin_studio.conversation.models import (
+    ConversationRunRegistration,
+    ConversationThread,
+)
 from tinkerfin_studio.models.repository import AgentModelRepository
-from tinkerfin_studio.models.schemas import AgentModelSave
+from tinkerfin_studio.models.schemas import AgentModelSave, ModelConnectionSave
 from tinkerfin_studio.models.service import AgentModelService
 
 
-def config(key: str, *, purpose: Literal["chat", "image"] = "chat", default=False):
-    return AgentModelSave(
-        model_id="same-id",
-        display_name="My model",
-        provider="openai",
-        model_name="provider-model",
-        base_url="https://api.openai.com/v1",
-        api_key=SecretStr(key),
-        purpose=purpose,
-        is_default=default,
+def connection(key: str | None = "secret", **updates):
+    return ModelConnectionSave.model_validate(
+        {
+            "connection_id": "shared",
+            "display_name": "连接",
+            "provider_id": "custom",
+            "api_type": "openai_chat_completions",
+            "base_url": "https://models.example/v1",
+            "api_key": None if key is None else SecretStr(key),
+            **updates,
+        }
     )
 
 
-async def test_model_settings_are_owned_by_user_and_do_not_expose_keys(session):
-    first = AgentModelService(AgentModelRepository(session, user_id=1))
-    second = AgentModelService(AgentModelRepository(session, user_id=2))
-    await first.save_settings(config("owner-one"))
-    await second.save_settings(config("owner-two"))
-    assert (await first.resolve("same-id")).api_key.get_secret_value() == "owner-one"
-    assert (await second.resolve("same-id")).api_key.get_secret_value() == "owner-two"
-    assert "owner-one" not in (await first.settings())[0].model_dump_json()
-    await second.delete_settings("same-id")
-    assert len(await second.settings()) == 0
-    assert len(await first.settings()) == 1
+def model(**updates):
+    return AgentModelSave.model_validate(
+        {
+            "model_id": "main",
+            "display_name": "模型",
+            "model_name": "provider-model",
+            "connection_id": "shared",
+            **updates,
+        }
+    )
 
 
-async def test_blank_key_is_retained_only_for_same_owner_and_endpoint(session):
-    first = AgentModelService(AgentModelRepository(session, user_id=1))
-    await first.save_settings(config("private"))
-    await first.save_settings(config(""))
-    assert (await first.resolve("same-id")).api_key.get_secret_value() == "private"
-    second = AgentModelService(AgentModelRepository(session, user_id=2))
+def service(session, user_id=1):
+    return AgentModelService(AgentModelRepository(session, user_id=user_id))
+
+
+async def test_connections_and_models_are_owned_and_credentials_never_returned(session):
+    first, second = service(session), service(session, 2)
+    await first.save_connection(connection("owner-one"))
+    await second.save_connection(connection("owner-two"))
+    await first.save_settings(model())
+    await first.save_settings(model(model_id="another"))
+    await second.save_settings(model())
+    assert (await first.resolve("main")).api_key.get_secret_value() == "owner-one"
+    assert (await second.resolve("main")).api_key.get_secret_value() == "owner-two"
+    assert len(await first.connections()) == 1
+    assert len(await first.settings()) == 2
+    assert "owner-one" not in (await first.connections())[0].model_dump_json()
+    assert "api_key" not in (await first.settings())[0].model_dump_json()
+    await second.delete_connection("shared")
+    assert await second.settings() == []
+    assert len(await first.settings()) == 2
+
+
+async def test_connection_key_retention_replacement_and_explicit_clearing(session):
+    owner = service(session)
+    await owner.save_connection(connection("original"))
+    await owner.save_settings(model())
+    await owner.save_connection(connection(None, display_name="重命名"))
+    assert (await owner.resolve("main")).api_key.get_secret_value() == "original"
+    await owner.save_connection(connection("replacement"))
+    assert (await owner.resolve("main")).api_key.get_secret_value() == "replacement"
+    await owner.save_connection(connection(None, auth_type="none"))
+    assert (await owner.resolve("main")).api_key.get_secret_value() == ""
+    assert not (await owner.connections())[0].has_key
+
+
+@pytest.mark.parametrize("invalid", ["missing_connection", "duplicate_model"])
+async def test_batch_rejection_preserves_existing_models_and_default(session, invalid):
+    owner = service(session)
+    await owner.save_connection(connection())
+    await owner.save_settings(model(is_default=True))
+    first = model(model_id="new", is_default=True)
+    second = (
+        model(model_id="other", connection_id="missing")
+        if invalid == "missing_connection"
+        else first
+    )
     with pytest.raises(BusinessException):
-        await second.save_settings(config(""))
+        await owner.save_models([first, second])
+    assert not session.in_transaction()
+    saved = await owner.settings()
+    assert len(saved) == 1
+    assert saved[0].model_id == "main" and saved[0].is_default
+
+
+async def test_batch_cannot_reference_another_users_connection(session):
+    await service(session, 2).save_connection(connection(connection_id="private"))
+    owner = service(session)
+    await owner.save_connection(connection())
     with pytest.raises(BusinessException):
-        await first.save_settings(
-            config("").model_copy(update={"base_url": "https://other.example/v1"})
+        await owner.save_models(
+            [model(), model(model_id="other", connection_id="private")]
         )
+    assert await owner.settings() == []
+    await owner.save_models([model(), model(model_id="other")])
+    assert {saved.model_id for saved in await owner.settings()} == {"main", "other"}
+    assert await service(session, 2).settings() == []
 
 
-async def test_image_service_does_not_appear_in_chat_catalog(session):
-    service = AgentModelService(AgentModelRepository(session, user_id=1))
-    await service.save_settings(config("image-secret", purpose="image", default=True))
-    assert (await service.list_catalog()).items == []
-    image = await service.resolve_image_model()
-    assert image is not None and image.purpose == "image"
+async def test_endpoint_change_requires_explicit_key_and_missing_owner_cannot_reuse(
+    session,
+):
+    owner = service(session)
+    await owner.save_connection(connection())
+    with pytest.raises(BusinessException) as rejected:
+        await owner.save_connection(
+            connection(None, base_url="https://other.example/v1")
+        )
+    assert rejected.value.error_code == ModelErrorCode.KEY_ENDPOINT_CHANGED
+    with pytest.raises(BusinessException):
+        await service(session, 2).save_connection(connection(None))
+    with pytest.raises(BusinessException):
+        await service(session, 2).save_settings(model())
+    assert not session.in_transaction()
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "http://localhost:11434",
+        "http://127.0.0.1:11434",
+        "http://ollama:11434",
+        "http://192.168.1.20:11434",
+    ],
+)
+async def test_ollama_can_be_saved_and_defaulted_without_dummy_key(session, address):
+    owner = service(session)
+    await owner.save_connection(
+        connection(
+            None,
+            provider_id="ollama",
+            api_type="ollama",
+            base_url=address,
+            auth_type="none",
+        )
+    )
+    await owner.save_settings(
+        model(
+            model_name="qwen3:14b",
+            chat_options={"context_window": 8192, "keep_alive": 300},
+        )
+    )
+    await owner.set_default("main")
+    saved = await owner.resolve("main")
+    assert saved.provider == "ollama" and saved.base_url.rstrip("/") == address
+    assert saved.api_key.get_secret_value() == ""
+    assert saved.chat_options.context_window == 8192
+    assert (await owner.list_catalog()).default_model_id == "main"
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["http://user:secret@localhost:11434", "https://user:secret@models.example"],
+)
+async def test_embedded_url_credentials_are_rejected(session, address):
+    with pytest.raises(BusinessException):
+        await service(session).save_connection(connection(base_url=address))
+    assert await service(session).connections() == []
 
 
 @pytest.mark.parametrize("status", ["preparing", "starting", "running", "waiting"])
-async def test_unfinished_run_protects_only_its_owners_model(session, status):
-    """运行和审批期间固定所用配置，其他用户的同名模型仍可编辑"""
-    from datetime import UTC, datetime
-
-    from tinkerfin_studio.conversation.models import (
-        ConversationRunRegistration,
-        ConversationThread,
-    )
-
-    first = AgentModelService(AgentModelRepository(session, user_id=1))
-    second = AgentModelService(AgentModelRepository(session, user_id=2))
-    await first.save_settings(config("one"))
-    await second.save_settings(config("two"))
+async def test_active_run_protects_model_and_its_shared_connection(session, status):
+    owner = service(session)
+    await owner.save_connection(connection())
+    await owner.save_settings(model())
     now = datetime.now(UTC).replace(tzinfo=None)
     thread = ConversationThread(
-        user_id=1, thread_id="active", title="进行中", created_at=now, updated_at=now
+        user_id=1, thread_id="active", title="对话", created_at=now, updated_at=now
     )
     session.add(thread)
     await session.flush()
@@ -83,7 +186,7 @@ async def test_unfinished_run_protects_only_its_owners_model(session, status):
         ConversationRunRegistration(
             conversation_thread_id=thread.id,
             run_id="run",
-            model_id="same-id",
+            model_id="main",
             status=status,
             input_json={},
             started_at=now,
@@ -92,123 +195,79 @@ async def test_unfinished_run_protects_only_its_owners_model(session, status):
         )
     )
     await session.commit()
-    for operation in (
-        first.save_settings(config("changed")),
-        first.delete_settings("same-id"),
-    ):
+    for operation in [
+        lambda: owner.save_connection(connection("changed")),
+        lambda: owner.delete_connection("shared"),
+        lambda: owner.save_settings(model(display_name="changed")),
+        lambda: owner.delete_settings("main"),
+    ]:
         with pytest.raises(BusinessException) as rejected:
-            await operation
-        assert rejected.value.error_code.http_status == 409
-    await second.save_settings(config("updated"))
-    assert (await second.resolve("same-id")).api_key.get_secret_value() == "updated"
+            await operation()
+        assert rejected.value.error_code == ModelErrorCode.IN_USE
+    await owner.set_default("main")
+    assert (await owner.resolve("main")).api_key.get_secret_value() == "secret"
 
 
-@pytest.mark.parametrize(
-    "base_url",
-    [
-        "http://localhost:11434/v1",
-        "http://127.0.0.1:11434/v1",
-        "http://ollama:11434/v1",
-        "http://192.168.1.20:11434/v1",
-        "https://models.internal/v1",
-    ],
-)
-async def test_personal_model_can_save_and_resolve_local_service(session, base_url):
-    service = AgentModelService(AgentModelRepository(session, user_id=1))
-    value = config("ollama").model_copy(update={"base_url": base_url})
-    await service.save_settings(value)
-    saved = await service.resolve(value.model_id)
-    assert saved.base_url == base_url
-    assert saved.api_key.get_secret_value() == "ollama"
-
-
-@pytest.mark.parametrize(
-    "base_url",
-    ["http://user:secret@localhost:11434/v1", "https://user:secret@models.internal/v1"],
-)
-async def test_model_endpoint_rejects_embedded_credentials(session, base_url):
-    service = AgentModelService(AgentModelRepository(session, user_id=1))
+async def test_image_and_chat_defaults_are_independent_and_missing_image_has_no_fallback(
+    session,
+):
+    owner = service(session)
+    await owner.save_connection(connection())
+    await owner.save_settings(model(is_default=True))
+    await owner.save_settings(model(model_id="image", purpose="image"))
+    assert await owner.resolve_image_model() is None
+    await owner.set_default("image")
+    image = await owner.resolve_image_model()
+    assert image is not None and image.model_id == "image"
+    assert [m.model_id for m in (await owner.list_catalog()).items] == ["main"]
     with pytest.raises(BusinessException) as rejected:
-        await service.save_settings(
-            config("ollama").model_copy(update={"base_url": base_url})
-        )
-    assert rejected.value.error_code.http_status == 422
-    assert await service.settings() == []
-
-
-async def test_no_default_image_model_does_not_select_another_service(session):
-    service = AgentModelService(AgentModelRepository(session, user_id=1))
-    await service.save_settings(config("image-secret", purpose="image"))
-    assert await service.resolve_image_model() is None
-
-
-async def test_rejected_save_finishes_its_transaction(session):
-    service = AgentModelService(AgentModelRepository(session, user_id=1))
-    with pytest.raises(BusinessException) as rejected:
-        await service.save_settings(config(""))
-    assert rejected.value.error_code == ModelErrorCode.KEY_REQUIRED
-    assert not session.in_transaction()
-
-
-async def test_model_purpose_mismatch_is_not_reported_as_disabled(session):
-    service = AgentModelService(AgentModelRepository(session, user_id=1))
-    await service.save_settings(config("image-secret", purpose="image"))
-    with pytest.raises(BusinessException) as rejected:
-        await service.resolve("same-id")
+        await owner.resolve("image")
     assert rejected.value.error_code == ModelErrorCode.PURPOSE_MISMATCH
 
 
-async def test_model_rejection_reaches_http_with_actionable_message(session):
-    from starlette.requests import Request
-
-    from tinkerfin_studio.api.errors import application_exception_handler
-
-    service = AgentModelService(AgentModelRepository(session, user_id=1))
-    with pytest.raises(BusinessException) as rejected:
-        await service.save_settings(config(""))
-    request = Request(
-        {
-            "type": "http",
-            "method": "PUT",
-            "path": "/models/configurations/same-id",
-            "headers": [],
-        }
-    )
-    response = await application_exception_handler(request, rejected.value)
-    assert response.status_code == 422
-    assert "新增模型需要填写 API 密钥" in bytes(response.body).decode()
+async def test_invalid_model_parameters_do_not_change_existing_default(session):
+    owner = service(session)
+    await owner.save_connection(connection())
+    await owner.save_settings(model(is_default=True))
+    with pytest.raises(BusinessException):
+        await owner.save_settings(
+            model(
+                model_id="invalid",
+                is_default=True,
+                chat_options={"context_window": 8192},
+            )
+        )
+    assert (await owner.list_catalog()).default_model_id == "main"
 
 
 async def test_failed_model_commit_rolls_back_default_change(session, monkeypatch):
     repository = AgentModelRepository(session, user_id=1)
-    service = AgentModelService(repository)
-    await service.save_settings(config("first", default=True))
+    owner = AgentModelService(repository)
+    await owner.save_connection(connection())
+    await owner.save_settings(model(is_default=True))
 
     async def fail_commit():
         raise RuntimeError("commit unavailable")
 
     monkeypatch.setattr(repository, "commit", fail_commit)
-    with pytest.raises(RuntimeError, match="commit unavailable"):
-        await service.save_settings(
-            config("second", default=True).model_copy(update={"model_id": "second"})
-        )
+    with pytest.raises(RuntimeError):
+        await owner.save_settings(model(model_id="other", is_default=True))
     assert not session.in_transaction()
-    assert (await service.list_catalog()).default_model_id == "same-id"
-    assert len(await service.settings()) == 1
+    assert (await owner.list_catalog()).default_model_id == "main"
 
 
-async def test_cancelled_model_save_rolls_back_and_propagates(session, monkeypatch):
-    import asyncio
-
+async def test_cancelled_connection_save_rolls_back_and_propagates(
+    session, monkeypatch
+):
     repository = AgentModelRepository(session, user_id=1)
-    service = AgentModelService(repository)
-    await service.save_settings(config("first", default=True))
+    owner = AgentModelService(repository)
+    await owner.save_connection(connection())
 
-    async def cancel_commit():
+    async def cancelled():
         raise asyncio.CancelledError()
 
-    monkeypatch.setattr(repository, "commit", cancel_commit)
+    monkeypatch.setattr(repository, "commit", cancelled)
     with pytest.raises(asyncio.CancelledError):
-        await service.save_settings(config("second"))
+        await owner.save_connection(connection("changed"))
     assert not session.in_transaction()
-    assert (await service.resolve("same-id")).api_key.get_secret_value() == "first"
+    assert (await owner.require_connection("shared")).api_key == "secret"

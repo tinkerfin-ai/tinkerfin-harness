@@ -7,7 +7,7 @@ import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 
-from ag_ui.core import BaseEvent, CustomEvent, RunStartedEvent
+from ag_ui.core import BaseEvent, CustomEvent, RunErrorEvent, RunStartedEvent
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tinkerfin import AgUiResumeCheckpoint, RunIdentity, SseBody
@@ -33,6 +33,7 @@ from tinkerfin_studio.api.errors import (
     SystemException,
 )
 from tinkerfin_studio.auth.types import UserContext
+from tinkerfin_studio.conversation.error_logging import log_conversation_error
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.request import ChatRequest
 from tinkerfin_studio.conversation.run_preparation import (
@@ -399,8 +400,21 @@ class ConversationChatService:
                 )
                 await repository.commit()
 
-        def attach_run_metadata(event: BaseEvent) -> BaseEvent:
-            """补充 Studio 标题与取消文案"""
+        async def observe_conversation_event(event: BaseEvent) -> BaseEvent:
+            """记录主运行错误并补充标题，重放不会重复执行此回调"""
+
+            if (
+                isinstance(event, RunErrorEvent)
+                and event.code != "cancelled"
+                and AgUiCodec().ends_publication(event, identity=prepared.identity)
+            ):
+                await log_conversation_error(
+                    identity=prepared.identity,
+                    model=model,
+                    image_model=image_model,
+                    code=event.code,
+                    error=events.error,
+                )
 
             return decorate_main_event(
                 event,
@@ -432,7 +446,9 @@ class ConversationChatService:
                 on_resume_saved=record_resume_checkpoint,
                 on_resume_not_saved=release_resume_claims,
             )
-        return create_agui_run_source(events, transform_event=attach_run_metadata)
+        return create_agui_run_source(
+            events, transform_event=observe_conversation_event
+        )
 
     async def _start_delivery(
         self,
@@ -546,6 +562,7 @@ class ConversationChatService:
                         max_tokens=64,
                         timeout=60,
                         http_async_client=self._resources.model_http_client,
+                        http_async_transport=self._resources.model_http_transport,
                     ),
                 )
                 if title is not None:

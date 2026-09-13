@@ -1303,6 +1303,7 @@ export const applyConversationEvent = (
         id: event.messageId,
         role: "assistant",
         content: message?.content ?? "",
+        liveText: message?.liveText,
         attachments: message?.attachments,
         createdAt: message?.createdAt ?? nowIso(),
         meta: {
@@ -1330,6 +1331,10 @@ export const applyConversationEvent = (
         id: event.messageId,
         role: "assistant",
         content: `${message?.content ?? ""}${event.delta}`,
+        liveText: message?.liveText ?? {
+          key: JSON.stringify([conversation.threadId, conversation.activeRunId, event.messageId]),
+          initialContent: message?.content ?? "",
+        },
         attachments: message?.attachments,
         createdAt: message?.createdAt ?? nowIso(),
         meta: {

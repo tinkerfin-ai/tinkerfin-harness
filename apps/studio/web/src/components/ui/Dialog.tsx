@@ -18,7 +18,7 @@ const FOCUSABLE_SELECTOR = [
 
 export interface DialogProps {
   open: boolean
-  title: string
+  title: ReactNode
   description?: ReactNode
   children: ReactNode
   className?: string

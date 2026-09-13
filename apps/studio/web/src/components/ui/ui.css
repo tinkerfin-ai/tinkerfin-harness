@@ -1362,10 +1362,11 @@
 
 @layer ui {
   .ui-compact-picker { position: relative; width: max-content; max-width: min(220px, 45cqw); min-width: 0; }
-  .ui-compact-picker-trigger { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-1); width: 100%; height: var(--control-composer); min-height: var(--control-composer); padding: 0 var(--space-1) 0 var(--space-2); border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--color-text-secondary); font-size: var(--type-meta-size); font-weight: var(--weight-medium); line-height: var(--type-meta-line); cursor: pointer; box-shadow: none; }
+  .ui-compact-picker-trigger { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-1); width: 100%; height: var(--control-composer); min-height: var(--control-composer); padding-inline: var(--space-3); border: 0; border-radius: var(--radius-lg); background: transparent; color: var(--color-text-secondary); font-size: var(--type-meta-size); font-weight: var(--weight-medium); line-height: var(--type-meta-line); cursor: pointer; box-shadow: none; }
   .ui-compact-picker-trigger:hover:not(:disabled) { background: var(--color-hover); color: var(--color-text-primary); box-shadow: var(--shadow-1); }
   .ui-compact-picker-trigger:active:not(:disabled) { background: var(--color-active); box-shadow: none; }
   .ui-compact-picker-trigger:focus-visible { outline: 0; background: var(--color-hover); color: var(--color-text-primary); box-shadow: none; }
+  .ui-compact-picker-trigger[aria-expanded='true'] { background: transparent; box-shadow: none; color: var(--color-text-primary); }
   .ui-compact-picker-trigger:disabled { cursor: not-allowed; opacity: .48; }
   .ui-compact-picker-trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ui-compact-picker--access-mode .ui-compact-picker-trigger {
@@ -1373,12 +1374,10 @@
     justify-content: flex-start;
     gap: var(--space-2);
     padding-inline: var(--space-3);
-    border-radius: var(--radius-lg);
     text-align: left;
   }
   .ui-compact-picker--access-mode .ui-compact-picker-chevron { margin-left: var(--space-1); }
-  .ui-compact-picker--access-mode .ui-compact-picker-trigger[aria-expanded='true'] { background: transparent; box-shadow: none; color: var(--color-text-primary); }
-  .ui-compact-picker-options { position: absolute; right: 0; bottom: calc(100% + var(--space-2)); z-index: var(--layer-dropdown); width: min(250px, calc(100cqw - var(--control-lg) - var(--space-2))); max-height: min(320px, calc(100vh - 96px)); overflow-y: auto; padding: var(--space-2); border: 0; outline: 0; border-radius: var(--radius-2xl); background: var(--color-layer-1); box-shadow: var(--shadow-2); }
+  .ui-compact-picker-options { position: absolute; right: 0; bottom: calc(100% + var(--space-2)); z-index: var(--layer-dropdown); width: min(250px, calc(100cqw - var(--control-lg) - var(--space-2))); max-height: min(320px, calc(100vh - 96px)); overflow-y: auto; overscroll-behavior: none; padding: var(--space-2); border: 0; outline: 0; border-radius: var(--radius-2xl); background: var(--color-layer-1); box-shadow: var(--shadow-2); }
   .ui-compact-picker--access-mode .ui-compact-picker-options {
     right: auto;
     left: 0;

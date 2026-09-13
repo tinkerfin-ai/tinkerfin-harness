@@ -57,5 +57,7 @@
     --type-inline-code-line: 22px;
     --type-code-block-size: 13px;
     --type-code-block-line: 22px;
+    --type-file-icon-size: 8px;
+    --type-file-icon-compact-size: 7px;
   }
 }

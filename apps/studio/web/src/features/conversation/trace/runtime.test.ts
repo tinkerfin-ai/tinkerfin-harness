@@ -8,6 +8,22 @@ import mediaFixture from '../agui/contracts/message-attachments.fixture.json'
 import type { ConversationHistoryDetail, ConversationTraceUpdate } from '../../../api/conversation/history'
 import { applyConversationTraceUpdate, restoreConversationFromTrace } from './runtime'
 
+it('运行结束后的权威历史保留实时正文的展示来源，首次打开历史不创建逐字播放', () => {
+  const history = detail()
+  const initial = restoreConversationFromTrace(history, { model: 'main', includeTaskTrace: false })
+  expect(initial.messages.every(message => !message.liveText)).toBe(true)
+  const source = { key: 'thread-trace/run-1/public-assistant-1', initialContent: '' }
+  const previous = {
+    ...initial,
+    messages: initial.messages.map(message => message.role === 'assistant'
+      ? { ...message, liveText: source }
+      : message),
+  }
+  const restored = restoreConversationFromTrace(history, { previous, model: 'main', includeTaskTrace: false })
+  expect(restored.messages.find(message => message.role === 'assistant')?.liveText).toBe(source)
+  expect(restored.messages.find(message => message.role === 'assistant')?.content).toBe('完成')
+})
+
 const detail = (): ConversationHistoryDetail => ({ accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',

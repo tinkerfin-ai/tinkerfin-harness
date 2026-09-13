@@ -37,6 +37,8 @@ export type JsonValue =
   | JsonValue[]
 
 export interface Message {
+  /** 仅供本次实时正文逐字展示；历史数据不创建此标记 */
+  liveText?: { key: string; initialContent: string }
   attachments?: import('./features/conversation/attachments/content').Attachment[]
   id: string
   role: MessageRole

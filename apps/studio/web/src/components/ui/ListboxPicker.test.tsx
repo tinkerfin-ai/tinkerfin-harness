@@ -30,12 +30,6 @@ function PortalPicker() {
 
 describe('ListboxPicker', () => {
   it('keeps portal options inside the shared keyboard and focus contract', () => {
-    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
-    const scrollIntoView = vi.fn()
-    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-      configurable: true,
-      value: scrollIntoView,
-    })
     render(<PortalPicker />)
 
     const trigger = screen.getByRole('button', { name: '类型筛选' })
@@ -44,9 +38,10 @@ describe('ListboxPicker', () => {
     expect(listbox.parentElement).toBe(document.body)
     expect(listbox).toHaveFocus()
     expect(listbox).toHaveStyle({ position: 'fixed', top: '40px', left: '12px' })
-    scrollIntoView.mockClear()
+    vi.spyOn(listbox, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 100, 40))
+    vi.spyOn(screen.getByRole('option', { name: 'model' }), 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 60, 100, 20))
     fireEvent.keyDown(listbox, { key: 'End' })
-    expect(scrollIntoView).toHaveBeenCalled()
+    expect(listbox.scrollTop).toBe(40)
 
     const model = screen.getByRole('option', { name: 'model' })
     fireEvent.pointerDown(model)
@@ -60,13 +55,5 @@ describe('ListboxPicker', () => {
     fireEvent.keyDown(screen.getByRole('listbox', { name: '类型' }), { key: 'Enter' })
     expect(trigger).toHaveTextContent('all')
     expect(trigger).toHaveFocus()
-    if (originalScrollIntoView) {
-      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-        configurable: true,
-        value: originalScrollIntoView,
-      })
-    } else {
-      Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
-    }
   })
 })

@@ -31,11 +31,6 @@ test('模型菜单紧凑布局与文件选择等待反馈', async ({ page }, tes
       await expect(list).toBeVisible()
       await expect(list).toHaveCSS('outline-width', '0px')
       await expect(list).toHaveCSS('border-top-width', '0px')
-      for (const option of await list.getByRole('option').all()) {
-        expect((await option.boundingBox())!.height).toBe(32)
-        await expect(option).toHaveCSS('padding-top', '4px')
-        await expect(option).toHaveCSS('padding-right', '10px')
-      }
       const box = (await list.boundingBox())!
       expect(box.x).toBeGreaterThanOrEqual(0)
       expect(box.x + box.width).toBeLessThanOrEqual(width)

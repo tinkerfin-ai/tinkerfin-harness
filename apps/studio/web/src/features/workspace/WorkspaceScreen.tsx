@@ -1,6 +1,7 @@
 import { AccessModePicker } from "../../components/AccessModePicker"
 import { AutomationPage } from '../automation/AutomationPage'
 import { AttachmentReferenceContext } from '../conversation/attachments/context'
+import { TextRevealProgressContext } from '../conversation/components/textRevealProgress'
 import { messageText, messageAttachments } from '../conversation/attachments/content'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from 'react'
 
@@ -141,6 +142,17 @@ export function WorkspaceScreen({
   const { t } = useI18n()
   const [workspace, setWorkspace] = useState<WorkspaceState>(createEmptyWorkspace)
   const [draftConversation, setDraftConversation] = useState<Conversation | null>(null)
+  const [textRevealProgress] = useState(() => new Map<string, string>())
+  useEffect(() => {
+    const conversations = draftConversation ? [...workspace.conversations, draftConversation] : workspace.conversations
+    const retained = new Set(conversations.flatMap(conversation => conversation.messages.flatMap(
+      message => message.liveText ? [message.liveText.key] : [],
+    )))
+    // 展示进度只随当前工作台中的消息保留，删除会话或释放历史窗口后同步清理
+    for (const key of textRevealProgress.keys()) {
+      if (!retained.has(key)) textRevealProgress.delete(key)
+    }
+  }, [workspace.conversations, draftConversation, textRevealProgress])
   const [draftModel, setDraftModel] = useState('')
   const [draftAccessMode, setDraftAccessMode] = useState<Conversation['accessMode']>('full')
   const [draft, setDraftValue] = useState('')
@@ -296,7 +308,6 @@ export function WorkspaceScreen({
     syncToBottomIfFollowing: syncConversationToBottomIfFollowing,
     markUserScrollIntent,
     pauseFollowing,
-    scrollBy: scrollConversationBy,
     scrollToBottom: scrollConversationToBottom,
     pauseScrollToBottomFade,
     resumeScrollToBottomFade,
@@ -370,7 +381,7 @@ export function WorkspaceScreen({
       setWorkspace((state) =>
         state.currentThreadId === threadId
           ? state
-          : threadId && state.conversations.some((item) => item.threadId === threadId)
+          : !threadId || state.conversations.some((item) => item.threadId === threadId)
             ? selectCurrentConversation(state, threadId)
             : state,
       )
@@ -946,8 +957,7 @@ export function WorkspaceScreen({
   const locateTodoGroup = useCallback((group: TodoGroup) => {
     const locate = async () => {
       const result = await messageWindow.revealMessage(group.userMessageId)
-      if (result === 'not-found') pushToast('error', t('未找到任务对应的用户消息'))
-      else if (result === 'failed') pushToast('error', t('定位消息失败，请重试'))
+      if (result === 'failed') pushToast('error', t('定位消息失败，请重试'))
     }
     if (taskDrawer.modalActive) {
       taskDrawer.close(false)
@@ -978,6 +988,7 @@ export function WorkspaceScreen({
   }
 
   return (
+    <TextRevealProgressContext.Provider value={textRevealProgress}>
     <AttachmentReferenceContext.Provider value={localAttachments.addReference}>
     <div
       ref={appShell}
@@ -1218,7 +1229,6 @@ export function WorkspaceScreen({
               onExitPlan={exitPlanMode}
               onAddAttachments={localAttachments.addFiles}
               onRemoveAttachment={localAttachments.removeAttachment}
-              onScrollConversation={scrollConversationBy}
             />
           </>
         ) : (
@@ -1291,5 +1301,6 @@ export function WorkspaceScreen({
       />
     </div>
     </AttachmentReferenceContext.Provider>
+    </TextRevealProgressContext.Provider>
   )
 }

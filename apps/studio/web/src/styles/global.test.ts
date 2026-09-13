@@ -137,7 +137,7 @@ describe('前端视觉契约', () => {
       '--layout-settings-dialog: 760px;',
       '--layout-settings-nav: 180px;',
       '--layout-settings-height: 540px;',
-      '--layout-composer-surface-height: 94px;',
+      '--layout-composer-surface-height: 118px;',
       '--control-lg: 44px;',
       '--control-plan-chip: 24px;',
       '--control-composer: 34px;',
@@ -195,8 +195,12 @@ describe('前端视觉契约', () => {
     expect(tokensStyles).toContain('--layout-drawer-width: 400px;')
     expect(todoTraceStyles).toMatch(/\.todo-trace-drawer\s*\{[^}]*grid-template-rows:\s*var\(--layout-drawer-header-height\) minmax\(0, 1fr\);/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-drawer\s*\{[^}]*width:\s*min\(var\(--layout-drawer-width\), 100vw\);/s)
+    expect(todoTraceStyles).toMatch(/\.todo-trace-scroll\s*\{[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior-y:\s*none;[^}]*overscroll-behavior-x:\s*auto;/s)
+    expect(chainTraceStyles).toMatch(/\.chain-trace-ledger\s*\{[^}]*padding-bottom:\s*var\(--chain-trace-turn-height\);/s)
     expect(chainTraceStyles).toMatch(/\.chain-trace-details\s*\{[^}]*position:\s*relative;[^}]*grid-template-rows:\s*var\(--space-16\) var\(--chain-trace-detail-tabs-height\) minmax\(0, 1fr\);/s)
     expect(chainTraceStyles).toMatch(/\.chain-trace-details\s*\{[^}]*width:\s*var\(--layout-drawer-width\);/s)
+    expect(chainTraceStyles).toMatch(/\.chain-trace-ledger\s*\{[^}]*overflow:\s*auto;[^}]*overscroll-behavior-y:\s*none;[^}]*overscroll-behavior-x:\s*auto;/s)
+    expect(chainTraceStyles).toMatch(/\.chain-trace-detail-body\s*\{[^}]*overflow:\s*auto;[^}]*overscroll-behavior-y:\s*none;[^}]*overscroll-behavior-x:\s*auto;/s)
     expect(uiStyles).toMatch(/\.modal-backdrop\s*\{[^}]*position:\s*fixed;[^}]*z-index:\s*var\(--layer-modal\);[^}]*inset:\s*0;/s)
     expect(chainTraceStyles).toMatch(/\.chain-trace-details-backdrop\s*\{[^}]*place-items:\s*stretch;[^}]*justify-items:\s*end;[^}]*padding:\s*0;/s)
     expect(chainTraceStyles).toMatch(/\.chain-trace-details-backdrop \.chain-trace-details\s*\{[^}]*width:\s*min\(var\(--layout-drawer-width\), calc\(100vw - var\(--space-8\)\)\);[^}]*height:\s*100dvh;/s)
@@ -246,7 +250,7 @@ describe('前端视觉契约', () => {
 
     expect(tokensStyles).toContain('--layout-conversation-width: 748px;')
     expect(tokensStyles).toContain('--layout-composer-width: 780px;')
-    expect(tokensStyles).toContain('--layout-composer-surface-height: 94px;')
+    expect(tokensStyles).toContain('--layout-composer-surface-height: 118px;')
     expect(tokensStyles).toContain('--layout-interaction-card-min-height: clamp(260px, 32dvh, 320px);')
     expect(tokensStyles).toContain('--layout-interaction-card-context-reserve: 120px;')
     expect(tokensStyles).toContain('--layout-interaction-card-max-cap: 680px;')
@@ -537,9 +541,10 @@ describe('前端视觉契约', () => {
       /\.message-list\s*\{[^}]*padding:[^;}]*var\(--composer-height\);/s,
     )
     expect(conversationStyles).toMatch(
-      /\.composer-auxiliary-controls\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\);[^}]*width:\s*min\(calc\(100% - 2 \* var\(--composer-inline-inset\)\), var\(--layout-composer-width\)\);[^}]*margin:\s*0 auto var\(--space-1-5\);[^}]*align-items:\s*center;/s,
+      /\.composer-auxiliary-controls\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\);[^}]*width:\s*min\(100%, var\(--layout-composer-width\)\);[^}]*margin:\s*0 auto var\(--space-1-5\);[^}]*align-items:\s*center;/s,
     )
     expect(conversationStyles).not.toMatch(/\.composer-auxiliary-controls\s*\{[^}]*position:\s*absolute;/s)
+    expect(conversationStyles).toMatch(/\.composer-dock\.is-hero \.composer-note\s*\{[^}]*position:\s*static;[^}]*transform:\s*none;[^}]*margin-top:\s*var\(--space-3\);/s)
     expect(conversationStyles).toMatch(/\.composer-scroll-to-bottom-control\s*\{[^}]*grid-column:\s*2;[^}]*justify-self:\s*center;/s)
     expect(conversationStyles).toMatch(/\.composer-task-trace-control\s*\{[^}]*grid-column:\s*3;[^}]*justify-self:\s*end;/s)
     expect(conversationStyles).toMatch(/@media \(max-width: 440px\)[\s\S]*\.composer-auxiliary-controls\s*\{[^}]*gap:\s*var\(--space-4\);[^}]*\}[\s\S]*\.composer-auxiliary-control\s*\{[^}]*padding-inline:\s*var\(--space-1-5\);/s)
@@ -595,6 +600,7 @@ describe('前端视觉契约', () => {
     expect(workspaceStyles).toMatch(/\.sidebar-head\s*\{[^}]*z-index:\s*var\(--layer-dropdown\);[^}]*overflow:\s*visible;/s)
     expect(workspaceStyles).toMatch(/\.new-chat\s*\{[^}]*min-height:\s*var\(--control-lg\);[^}]*justify-content:\s*center;[^}]*box-shadow:\s*var\(--shadow-1\);/s)
     expect(workspaceStyles).toMatch(/\.new-chat-wrap\s*\{[^}]*margin-bottom:\s*var\(--space-3\);/s)
+    expect(workspaceStyles).toMatch(/\.new-chat-shortcut\s*\{[^}]*color:\s*inherit;/s)
     expect(workspaceStyles).toMatch(/\.primary-nav \.ui-button\s*\{[^}]*font-size:\s*var\(--type-ui-size\);[^}]*font-weight:\s*var\(--weight-regular\);[^}]*line-height:\s*var\(--type-ui-line\);/s)
     expect(workspaceStyles).toMatch(/\.primary-nav\s*\{[^}]*padding-bottom:\s*var\(--space-4\);[^}]*border:\s*0;/s)
     expect(workspaceStyles).toContain('.new-chat:hover .new-chat-shortcut')
@@ -721,11 +727,19 @@ describe('前端视觉契约', () => {
     expect(conversationStyles).toMatch(/@media \(any-hover: none\), \(any-pointer: coarse\)[\s\S]*\.composer-plan-chip,[\s\S]*min-height:\s*var\(--control-lg\);[^}]*height:\s*var\(--control-lg\);/s)
     expect(conversationStyles).toMatch(/@media \(any-hover: none\), \(any-pointer: coarse\)[\s\S]*\.plan-question-option,[\s\S]*\.composer-suggestion-item\s*\{[^}]*min-height:\s*var\(--control-lg\);/s)
     expect(cssFiles['../features/conversation/attachments/attachments.css']).toMatch(/\.composer-attachment\s*\{[^}]*height:\s*var\(--control-md\);/s)
-    expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker-trigger\s*\{[^}]*height:\s*var\(--control-composer\);[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s)
+    expect(cssFiles['../features/conversation/attachments/attachments.css']).toMatch(/\.attachment-description\s*\{[^}]*min-height:\s*64px;[^}]*padding:\s*var\(--space-2\) var\(--space-4\);/s)
+    expect(cssFiles['../features/conversation/attachments/attachments.css']).toMatch(/\.attachment-document-summary,[\s\S]*\.attachment-document-preview\s*\{[^}]*gap:\s*var\(--space-3\);/s)
+    expect(cssFiles['../features/conversation/attachments/attachments.css']).toMatch(/\.attachment-description strong\s*\{[^}]*font-size:\s*var\(--type-meta-size\);/s)
+    expect(cssFiles['../features/conversation/attachments/attachments.css']).toMatch(/body:has\(\.attachment-document-viewer\) \.attachment-card \.attachment-file-actions\s*\{[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;/s)
+    expect(cssFiles['../features/conversation/attachments/attachments.css']).toMatch(/body:not\(:has\(\.modal-backdrop\)\) \.attachment-description:not\(:hover\):has\(\.attachment-document-preview:focus\) \.attachment-file-actions\s*\{[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;/s)
+    expect(cssFiles['../features/conversation/attachments/attachments.css']).toMatch(/\.attachment-file-icon\s*\{[^}]*width:\s*var\(--control-lg\);[^}]*height:\s*var\(--control-xl\);[^}]*border-radius:\s*var\(--radius-lg\);/s)
+    expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker-trigger\s*\{[^}]*height:\s*var\(--control-composer\);[^}]*padding-inline:\s*var\(--space-3\);[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s)
+    expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker-trigger\s*\{[^}]*border-radius:\s*var\(--radius-lg\);/s)
     expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker-trigger:hover:not\(:disabled\)\s*\{[^}]*box-shadow:\s*var\(--shadow-1\);/s)
     expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker-options\s*\{[^}]*width:\s*min\(250px,[^}]*padding:\s*var\(--space-2\);[^}]*border-radius:\s*var\(--radius-2xl\);[^}]*box-shadow:\s*var\(--shadow-2\);/s)
     expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker--access-mode \.ui-compact-picker-trigger\s*\{[^}]*justify-content:\s*flex-start;[^}]*gap:\s*var\(--space-2\);[^}]*padding-inline:\s*var\(--space-3\);[^}]*text-align:\s*left;/s)
     expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker--access-mode \.ui-compact-picker-chevron\s*\{[^}]*margin-left:\s*var\(--space-1\);/s)
+    expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker-trigger\[aria-expanded='true'\]\s*\{[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s)
     expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker--access-mode \.ui-compact-picker-options\s*\{[^}]*right:\s*auto;[^}]*left:\s*0;[^}]*width:\s*min\(calc\(var\(--space-16\) \* 2 \+ var\(--space-12\)\), calc\(100cqw - var\(--control-lg\) - var\(--space-2\)\)\);/s)
     expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker--access-mode \.ui-compact-option-label\s*\{[^}]*white-space:\s*nowrap;/s)
     expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker-trigger\[aria-expanded='true'\] \.ui-compact-picker-chevron\s*\{[^}]*transform:\s*rotate\(180deg\);/s)

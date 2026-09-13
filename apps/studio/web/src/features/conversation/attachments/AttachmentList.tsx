@@ -1,4 +1,4 @@
-import { CornerDownLeft, Download, FileText, RotateCcw } from 'lucide-react'
+import { CornerDownLeft, Download, RotateCcw } from 'lucide-react'
 import { useContext, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { Button, ErrorBoundary, IconButton } from '../../../components/ui'
@@ -9,6 +9,8 @@ import { AttachmentViewer } from './AttachmentViewer'
 import { useAttachmentImage } from './useAttachmentImage'
 import { useAttachmentDownload } from './useAttachmentDownload'
 import { documentFormat } from './documentPreview'
+import { AttachmentFileIcon } from './AttachmentFileIcon'
+import { formatAttachmentSize } from './attachmentPresentation'
 import './attachments.css'
 
 function AttachmentCard({
@@ -24,6 +26,7 @@ function AttachmentCard({
   const image = useAttachmentImage(isImage ? attachment.id : undefined)
   const download = useAttachmentDownload(attachment)
   const [ratio, setRatio] = useState(1)
+  const documentPreview = documentFormat(attachment.mime_type)
   const actions = (
     <>
       {reference && (
@@ -111,18 +114,25 @@ function AttachmentCard({
         </div>
       ) : (
         <div className="attachment-description">
-          <FileText size={20} aria-hidden="true" />
-          <div className="attachment-description__text">
-            {documentFormat(attachment.mime_type) ? (
-              <button type="button" className="attachment-document-preview"
-                aria-label={t('预览文档：{name}', { name: attachment.name })}
-                onClick={event => onPreview(attachment, '', event.currentTarget)}>
-                <strong>{attachment.name}</strong>
-              </button>
-            ) : <strong>{attachment.name}</strong>}
-            <small>{(attachment.size_bytes / 1024).toFixed(1)} KiB</small>
+          <button
+            type="button"
+            className="attachment-document-preview"
+            aria-label={t(documentPreview ? '预览文档：{name}' : '查看文件：{name}', { name: attachment.name })}
+            onClick={event => onPreview(attachment, '', event.currentTarget)}
+          >
+            <AttachmentFileIcon attachment={attachment} />
+            <span className="attachment-description__text">
+              <strong>{attachment.name}</strong>
+              <small>{formatAttachmentSize(attachment.size_bytes)}</small>
+            </span>
+          </button>
+          <div
+            className="attachment-file-actions"
+            role="group"
+            aria-label={t('附件操作')}
+          >
+            {actions}
           </div>
-          {actions}
         </div>
       )}
       {download.failed && (
@@ -199,9 +209,9 @@ export function AttachmentList({
           )}
         >
           <AttachmentViewer
-            attachments={documentFormat(preview.attachment.mime_type) ? [preview.attachment] : attachments.filter((item) =>
-              item.mime_type.startsWith('image/'),
-            )}
+            attachments={preview.attachment.mime_type.startsWith('image/')
+              ? attachments.filter(item => item.mime_type.startsWith('image/'))
+              : attachments.filter(item => !item.mime_type.startsWith('image/'))}
             initialId={preview.attachment.id}
             initialPreview={preview.url}
             returnFocus={preview.target}

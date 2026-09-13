@@ -10,7 +10,7 @@ from tinkerfin_studio.conversation.models import (
     ConversationThread,
 )
 from tinkerfin_studio.infrastructure.database import Base
-from tinkerfin_studio.models.entity import AgentModel
+from tinkerfin_studio.models.entity import AgentModel, ModelConnection
 
 
 def test_business_schema_contains_no_foreign_keys() -> None:
@@ -22,6 +22,7 @@ def test_business_schema_contains_no_foreign_keys() -> None:
         AttachmentCollection,
         AttachmentReference,
         AgentModel,
+        ModelConnection,
         ConversationThread,
         ConversationRunRegistration,
         ConversationInterruptClaim,

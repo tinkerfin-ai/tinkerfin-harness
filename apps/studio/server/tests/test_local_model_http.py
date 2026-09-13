@@ -11,7 +11,15 @@ from pydantic import SecretStr
 
 from tinkerfin_studio.attachments.generation import generate_image_bytes
 from tinkerfin_studio.models.chat import create_chat_model
-from tinkerfin_studio.models.schemas import AgentModelConfig
+from tinkerfin_studio.models.repository import AgentModelRepository
+from tinkerfin_studio.models.schemas import (
+    AgentModelConfig,
+    AgentModelSave,
+    ModelConnectionSave,
+    ModelTestRequest,
+)
+from tinkerfin_studio.models.service import AgentModelService
+from tinkerfin_studio.models.testing import run_model_test
 from tinkerfin_studio.models.transport import ModelTransport
 
 
@@ -135,11 +143,29 @@ async def test_allowed_localhost_connects_to_ipv4_only_service(model_server):
 
 
 async def test_draft_model_test_uses_actual_allowed_local_http(database, model_server):
-    from tinkerfin_studio.models.schemas import AgentModelSave, ModelTestRequest
-    from tinkerfin_studio.models.testing import run_model_test
 
     origin, requests = model_server
-    configuration = AgentModelSave.model_validate(model_config(origin).model_dump())
+
+    resolved = model_config(origin)
+    async with database.session() as session:
+        await AgentModelService(
+            AgentModelRepository(session, user_id=1)
+        ).save_connection(
+            ModelConnectionSave(
+                connection_id="local",
+                display_name="本地",
+                provider_id="custom",
+                api_type="openai_chat_completions",
+                base_url=resolved.base_url,
+                api_key=resolved.api_key,
+            )
+        )
+    configuration = AgentModelSave.model_validate(
+        {
+            **resolved.model_dump(exclude={"provider", "base_url", "api_key"}),
+            "connection_id": "local",
+        }
+    )
     result = await run_model_test(
         database,
         user_id=1,

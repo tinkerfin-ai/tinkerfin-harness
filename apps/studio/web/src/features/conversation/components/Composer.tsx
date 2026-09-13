@@ -62,7 +62,6 @@ export function Composer({
   onRemoveAttachment,
   onRetryAttachment,
   attachmentBlocked = false,
-  onScrollConversation,
 }: {
   value: string
   isRunning: boolean
@@ -90,7 +89,6 @@ export function Composer({
   onRemoveAttachment: (id: string) => void
   onRetryAttachment?: (id: string) => void
   attachmentBlocked?: boolean
-  onScrollConversation?: (deltaY: number) => void
 }) {
   const { t } = useI18n()
   const errorText = (message: string) => isTranslationKey(message) ? t(message) : message
@@ -233,7 +231,7 @@ export function Composer({
 
   return (
     <footer className={`composer-dock${hero ? ' is-hero' : ''}${takeover ? ' is-taken-over' : ''}`}>
-      {((!hero && !takeover) || scrollToBottomControl || taskTraceControl) && (
+      {(!hero || scrollToBottomControl || taskTraceControl) && (
         <div className="composer-auxiliary-controls">
           {scrollToBottomControl && (
             <div className="composer-scroll-to-bottom-control">{scrollToBottomControl}</div>
@@ -252,13 +250,7 @@ export function Composer({
         <div className="composer" onPointerDown={(event) => {
         if (event.target instanceof Element && event.target.closest('button')) return
         input.current?.focus()
-      }} onWheel={(event) => {
-        const scroll = inputScroll.current
-        if (scroll?.contains(event.target as Node) && scroll.scrollHeight > scroll.clientHeight) return
-        if (!onScrollConversation) return
-        event.preventDefault()
-        onScrollConversation(event.deltaY)
-      }}>
+      }} onWheel={(event) => event.stopPropagation()}>
         {menuOpen && (
           <ComposerSuggestionMenu
             id={menuId}

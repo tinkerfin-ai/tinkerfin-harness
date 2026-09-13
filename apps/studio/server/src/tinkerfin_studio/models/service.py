@@ -1,4 +1,4 @@
-"""Agent 模型目录业务服务"""
+"""用户提供方连接、模型目录和默认选择"""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -13,6 +13,7 @@ from tinkerfin_studio.api.errors import (
     ModelErrorCode,
     SystemException,
 )
+from tinkerfin_studio.models.entity import AgentModel, ModelConnection
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import (
     AgentModelCatalog,
@@ -21,173 +22,249 @@ from tinkerfin_studio.models.schemas import (
     AgentModelSave,
     AgentModelSettings,
     AgentModelWrite,
+    ModelConnectionSave,
+    ModelConnectionSettings,
+    ModelProvider,
 )
 from tinkerfin_studio.models.transport import validate_model_url
 
 
+def model_settings(row: AgentModel) -> AgentModelSettings:
+    return AgentModelSettings.model_validate(row, from_attributes=True)
+
+
+def connection_provider(connection: ModelConnection) -> ModelProvider:
+    """将服务选择对应到已安装的模型集成"""
+    if connection.api_type == "ollama":
+        return "ollama"
+    return "deepseek" if connection.provider_id == "deepseek" else "openai"
+
+
+def resolved_model(
+    value: AgentModelWrite, connection: ModelConnection
+) -> AgentModelConfig:
+    """绑定已经核验归属的连接，供本次运行或测试使用"""
+    if (
+        connection.auth_type == "api_key"
+        or connection_provider(connection) == "deepseek"
+    ) and not connection.api_key.strip():
+        raise BusinessException(ModelErrorCode.KEY_REQUIRED)
+    if value.purpose == "image" and connection.api_type != "openai_chat_completions":
+        raise BusinessException(
+            ModelErrorCode.INVALID_CONFIGURATION, message="图片生成需要 OpenAI 兼容接口"
+        )
+    options = value.chat_options
+    if connection.api_type != "ollama" and (
+        options.context_window is not None or options.keep_alive is not None
+    ):
+        raise BusinessException(
+            ModelErrorCode.INVALID_CONFIGURATION,
+            message="上下文容量和保持加载时间仅适用于 Ollama",
+        )
+    if value.reasoning_enabled and connection_provider(connection) == "openai":
+        raise BusinessException(
+            ModelErrorCode.INVALID_CONFIGURATION,
+            message="当前兼容接口不提供推理内容展示，请使用推理强度参数",
+        )
+    return AgentModelConfig.model_validate(
+        {
+            **value.model_dump(),
+            "provider": connection_provider(connection),
+            "base_url": connection.base_url,
+            "api_key": SecretStr(connection.api_key),
+        }
+    )
+
+
 class AgentModelService:
-    """维护默认模型并向运行时提供完整连接配置"""
+    """维护本人连接与模型，在同一用户锁内完成配置和默认项写入"""
 
     def __init__(self, repository: AgentModelRepository) -> None:
         self._repository = repository
 
     async def list_catalog(self) -> AgentModelCatalog:
-        """返回不含连接信息和密钥的启用模型目录"""
-
-        models = await self._repository.list_enabled()
+        rows = await self._repository.list_enabled()
         try:
             items = [
-                AgentModelCatalogItem.model_validate(
-                    {
-                        "modelId": model.model_id,
-                        "displayName": model.display_name,
-                        "reasoningEnabled": model.reasoning_enabled,
-                        "imageSupport": model.image_support,
-                        "isDefault": model.is_default,
-                    }
-                )
-                for model in models
+                AgentModelCatalogItem.model_validate(row, from_attributes=True)
+                for row in rows
             ]
         except ValidationError as error:
             raise SystemException(ModelErrorCode.CATALOG_UNAVAILABLE) from error
-        default = next((item.model_id for item in items if item.is_default), None)
-        return AgentModelCatalog(items=items, defaultModelId=default)
+        return AgentModelCatalog(
+            items=items,
+            defaultModelId=next(
+                (item.model_id for item in items if item.is_default), None
+            ),
+        )
 
     async def resolve(
         self, model_id: str, *, purpose: Literal["chat", "image"] = "chat"
     ) -> AgentModelConfig:
-        """校验所选模型，返回当前请求需要的连接配置"""
-
-        model = await self._repository.get(model_id)
-        if model is None:
+        """核验本人模型的用途和启用状态，固定本次调用的连接与生成参数"""
+        row = await self._repository.get(model_id)
+        if row is None:
             raise BusinessException(ModelErrorCode.NOT_FOUND)
-        if not model.enabled:
+        if not row.enabled:
             raise BusinessException(ModelErrorCode.DISABLED)
-        if model.purpose != purpose:
+        if row.purpose != purpose:
             raise BusinessException(ModelErrorCode.PURPOSE_MISMATCH)
         try:
-            return AgentModelConfig.model_validate(
-                {
-                    "model_id": model.model_id,
-                    "display_name": model.display_name,
-                    "provider": model.provider,
-                    "model_name": model.model_name,
-                    "base_url": model.base_url,
-                    "api_key": SecretStr(model.api_key),
-                    "reasoning_enabled": model.reasoning_enabled,
-                    "image_support": model.image_support,
-                    "purpose": model.purpose,
-                    "generation_options": model.generation_options,
-                }
+            return resolved_model(
+                model_settings(row), await self.require_connection(row.connection_id)
             )
         except ValidationError as error:
             raise SystemException(ModelErrorCode.CATALOG_UNAVAILABLE) from error
 
     async def settings(self) -> list[AgentModelSettings]:
-        """读取当前用户设置，密钥只返回是否已配置"""
-        rows = await self._repository.list_settings()
+        return [model_settings(row) for row in await self._repository.list_settings()]
+
+    async def connections(self) -> list[ModelConnectionSettings]:
         return [
-            AgentModelSettings.model_validate(
+            ModelConnectionSettings.model_validate(
                 {
-                    "model_id": row.model_id,
+                    "connection_id": row.connection_id,
                     "display_name": row.display_name,
-                    "purpose": row.purpose,
-                    "provider": row.provider,
-                    "model_name": row.model_name,
+                    "provider_id": row.provider_id,
+                    "api_type": row.api_type,
                     "base_url": row.base_url,
+                    "auth_type": row.auth_type,
                     "has_key": bool(row.api_key),
-                    "generation_options": row.generation_options,
-                    "image_support": row.image_support,
-                    "reasoning_enabled": row.reasoning_enabled,
-                    "enabled": row.enabled,
-                    "is_default": row.is_default,
-                    "sort_order": row.sort_order,
                 }
             )
-            for row in rows
+            for row in await self._repository.connections()
         ]
 
-    async def _configuration_key(self, value: AgentModelSave) -> SecretStr:
-        key = value.api_key
-        if not key.get_secret_value().strip():
-            existing = await self._repository.get(value.model_id)
-            if existing is None or not existing.api_key:
-                raise BusinessException(ModelErrorCode.KEY_REQUIRED)
-            if existing.base_url.rstrip("/") != value.base_url.rstrip("/"):
-                raise BusinessException(ModelErrorCode.KEY_ENDPOINT_CHANGED)
-            key = SecretStr(existing.api_key)
-        return key
-
-    async def resolve_draft(self, value: AgentModelSave) -> AgentModelConfig:
-        """读取本人草稿所需密钥，不写入配置；调用方在网络请求前关闭会话"""
-        try:
-            validate_model_url(value.base_url)
-        except ValueError as error:
-            raise BusinessException(ModelErrorCode.INVALID_CONFIGURATION) from error
-        return AgentModelConfig.model_validate(
-            {**value.model_dump(), "api_key": await self._configuration_key(value)}
+    async def require_connection(
+        self, connection_id: str, *, for_update: bool = False
+    ) -> ModelConnection:
+        connection = await self._repository.connection(
+            connection_id, for_update=for_update
         )
-
-    async def save_settings(self, value: AgentModelSave) -> None:
-        """保存本人配置；本方法拥有用户加锁到提交或回滚的完整事务
-
-        密钥留空只复用本人同 ID、同服务地址的密钥。运行和审批未结束时
-        不允许修改配置；取消时先回滚，再向调用方传播取消。
-
-        Args:
-            value: 设置页提交的模型配置
-
-        Raises:
-            BusinessException: 配置不合法、缺少密钥或模型仍在使用中
-        """
-        try:
-            validate_model_url(value.base_url)
-        except ValueError as error:
-            raise BusinessException(
-                ModelErrorCode.INVALID_CONFIGURATION, message=str(error)
-            ) from error
-        if {"model", "prompt", "n", "api_key", "authorization"}.intersection(
-            value.generation_options
-        ):
+        if connection is None:
             raise BusinessException(
                 ModelErrorCode.INVALID_CONFIGURATION,
-                message="附加参数不能覆盖模型、提示词、数量或认证字段",
+                message="提供方连接不存在，请先添加连接",
             )
+        return connection
+
+    async def resolve_draft(self, value: AgentModelSave) -> AgentModelConfig:
+        """测试未保存的模型参数，使用本人已保存连接，外部请求前归还数据库会话"""
+        return resolved_model(value, await self.require_connection(value.connection_id))
+
+    async def save_connection(self, value: ModelConnectionSave) -> None:
+        """保存连接，地址或接口改变时禁止复用密钥，运行期间保护关联模型
+
+        Args:
+            value: 本人连接的完整配置；无需认证时清除密钥
+
+        Raises:
+            BusinessException: 地址、认证或接口不合法，或关联模型仍在使用
+        """
         async with self._write_transaction():
             await self._repository.lock_owner()
-            if await self._repository.in_use(value.model_id):
-                raise BusinessException(ModelErrorCode.IN_USE)
-            key = await self._configuration_key(value)
-            write = AgentModelWrite.model_validate(
-                {**value.model_dump(), "api_key": key}
+            try:
+                validate_model_url(value.base_url)
+            except ValueError as error:
+                raise BusinessException(
+                    ModelErrorCode.INVALID_CONFIGURATION, message=str(error)
+                ) from error
+            existing = await self._repository.connection(
+                value.connection_id, for_update=True
             )
-            if write.is_default:
-                await self._repository.clear_default(write.purpose)
-            await self._repository.upsert(write)
+            rows = await self._repository.connection_models(value.connection_id)
+            for row in rows:
+                if await self._repository.in_use(row.model_id):
+                    raise BusinessException(ModelErrorCode.IN_USE)
+            if (
+                any(row.purpose == "image" for row in rows)
+                and value.api_type != "openai_chat_completions"
+            ):
+                raise BusinessException(
+                    ModelErrorCode.INVALID_CONFIGURATION,
+                    message="连接下已有生图模型，请先移除后再更改接口",
+                )
+            if (
+                value.provider_id == "deepseek"
+                and value.api_type == "openai_chat_completions"
+                and value.auth_type == "none"
+            ):
+                raise BusinessException(
+                    ModelErrorCode.INVALID_CONFIGURATION,
+                    message="DeepSeek 连接需要 API 密钥",
+                )
+            key = ""
+            if value.auth_type == "api_key":
+                if value.api_key is None:
+                    if existing is not None and (
+                        existing.base_url.rstrip("/") != value.base_url.rstrip("/")
+                        or existing.api_type != value.api_type
+                    ):
+                        raise BusinessException(ModelErrorCode.KEY_ENDPOINT_CHANGED)
+                    key = existing.api_key if existing is not None else ""
+                else:
+                    key = value.api_key.get_secret_value().strip()
+                if not key:
+                    raise BusinessException(ModelErrorCode.KEY_REQUIRED)
+            # 更换接口前校验已有模型参数，避免连接保存后才发现模型不可用
+            candidate = ModelConnection(
+                api_type=value.api_type,
+                provider_id=value.provider_id,
+                base_url=value.base_url,
+                auth_type=value.auth_type,
+                api_key=key,
+            )
+            for row in rows:
+                resolved_model(model_settings(row), candidate)
+            await self._repository.save_connection(value, key)
+            await self._repository.commit()
+
+    async def delete_connection(self, connection_id: str) -> None:
+        """删除本人连接及其模型配置，保留会话和运行历史"""
+        async with self._write_transaction():
+            await self._repository.lock_owner()
+            for row in await self._repository.connection_models(connection_id):
+                if await self._repository.in_use(row.model_id):
+                    raise BusinessException(ModelErrorCode.IN_USE)
+            await self._repository.delete_connection(connection_id)
+            await self._repository.commit()
+
+    async def save_settings(self, value: AgentModelSave) -> None:
+        """保存模型参数，引用本人已保存的连接；事务失败或取消时回滚"""
+        await self.save_models([value])
+
+    async def save_models(self, values: list[AgentModelSave]) -> None:
+        """在一次事务内保存所选模型，任一项不合法时全部回滚"""
+        async with self._write_transaction():
+            await self._repository.lock_owner()
+            if len({value.model_id for value in values}) != len(values):
+                raise BusinessException(
+                    ModelErrorCode.INVALID_CONFIGURATION,
+                    message="同一批次包含重复模型标识",
+                )
+            for value in values:
+                if await self._repository.in_use(value.model_id):
+                    raise BusinessException(ModelErrorCode.IN_USE)
+                resolved_model(
+                    value,
+                    await self.require_connection(value.connection_id, for_update=True),
+                )
+                if value.is_default:
+                    await self._repository.clear_default(value.purpose)
+                await self._repository.upsert(value)
             await self._repository.commit()
 
     async def set_default(self, model_id: str) -> None:
-        """启用本人模型并设为同用途默认项，仅影响后续选择
-
-        本方法拥有加锁、提交和回滚的完整事务；连接配置和进行中的运行
-        保持不变。请求取消时等待回滚完成，再传播取消。
-
-        Args:
-            model_id: 当前用户已保存的模型标识
-
-        Raises:
-            BusinessException: 模型不存在或尚未配置密钥
-        """
+        """启用本人模型并设为同用途默认项，不改变连接或进行中的运行"""
         async with self._write_transaction():
             await self._repository.lock_owner()
             model = await self._repository.get_for_update(model_id)
             if model is None:
                 raise BusinessException(ModelErrorCode.NOT_FOUND)
-            if not model.api_key.strip():
-                raise BusinessException(
-                    ModelErrorCode.KEY_REQUIRED,
-                    message="模型需要填写 API 密钥后才能设为默认",
-                )
+            resolved_model(
+                model_settings(model),
+                await self.require_connection(model.connection_id, for_update=True),
+            )
             await self._repository.set_default(model_id, purpose=model.purpose)
             await self._repository.commit()
 

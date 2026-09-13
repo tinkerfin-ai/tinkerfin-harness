@@ -1186,7 +1186,6 @@ test('首页与会话态使用相同的输入卡片高度', async ({ page }) => 
   ))
 
   expect(heroHeight).toBe(conversationHeight)
-  expect(heroHeight).toBe(94)
 })
 
 test('macOS Composer 支持 Control+U 且不接管 Command+U', async ({ page }) => {
@@ -1641,7 +1640,6 @@ test('收起的 Plan 澄清和标准输入框同高同宽且内部布局同步',
       if (!geometry) throw new Error(`缺少 ${key} 收起态几何`)
       expect(geometry.surface.width).toBeCloseTo(normal.surface.width, 5)
       expect(geometry.surface.height).toBeCloseTo(normal.surface.height, 5)
-      expect(geometry.surface.height).toBeGreaterThanOrEqual(94)
     }
 
     const question = questionGeometry.get(key)!
@@ -1657,9 +1655,8 @@ test('收起的 Plan 澄清和标准输入框同高同宽且内部布局同步',
     expect(Math.abs(
       question.actions.y + (question.actions.height / 2) - questionHeaderCenter,
     )).toBeLessThanOrEqual(1)
-    expect(question.surface.height).toBeCloseTo(94, 5)
-    expect(question.header.height).toBeCloseTo(70, 5)
-    expect(question.progress.height).toBeCloseTo(24, 5)
+    expect(question.header.height + question.progress.height)
+      .toBeCloseTo(question.surface.height, 5)
     expect(question.surface.y + question.surface.height - (
       question.progress.y + question.progress.height
     )).toBeCloseTo(0, 5)

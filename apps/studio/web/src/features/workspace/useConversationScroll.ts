@@ -294,14 +294,6 @@ export function useConversationScroll({
     if (!scrollButtonHovered.current && !followLatest.current) armScrollButtonFade()
   }, [armScrollButtonFade])
 
-  const scrollBy = useCallback((deltaY: number) => {
-    const pane = paneRef.current
-    if (!pane || deltaY === 0) return
-    markUserScrollIntent()
-    pane.scrollTop += deltaY
-    handleScroll(pane)
-  }, [handleScroll, markUserScrollIntent])
-
   useLayoutEffect(() => {
     // 会话切换前先提交旧会话最后一次滚动位置，避免新线程覆盖待写状态
     flushScrollPersistence()
@@ -434,6 +426,15 @@ export function useConversationScroll({
     return () => window.removeEventListener('resize', measure)
   }, [handleScroll])
 
+  useLayoutEffect(() => {
+    const content = messageEndRef.current?.parentElement
+    if (!active || !content) return
+    // 正文逐字增长发生在消息组件内，接收结束后仍需跟随；阅读历史时不移动视口
+    const observer = new ResizeObserver(syncToBottomIfFollowing)
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [active, conversation.threadId, conversation.messages.length, conversation.isHydrated, syncToBottomIfFollowing])
+
   useEffect(() => {
     const handlePageHide = () => flushScrollPersistence()
     window.addEventListener('pagehide', handlePageHide)
@@ -460,7 +461,6 @@ export function useConversationScroll({
     syncToBottomIfFollowing,
     pauseFollowing,
     markUserScrollIntent,
-    scrollBy,
     scrollToBottom,
     pauseScrollToBottomFade,
     resumeScrollToBottomFade,

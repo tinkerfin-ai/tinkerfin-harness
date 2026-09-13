@@ -30,7 +30,11 @@ from tinkerfin_studio.conversation.run_preparation import (
 from tinkerfin_studio.conversation.run_registration import ConversationRunPreparer
 from tinkerfin_studio.conversation.service import ConversationChatService
 from tinkerfin_studio.models.repository import AgentModelRepository
-from tinkerfin_studio.models.schemas import AgentModelConfig, AgentModelSave
+from tinkerfin_studio.models.schemas import (
+    AgentModelConfig,
+    AgentModelSave,
+    ModelConnectionSave,
+)
 from tinkerfin_studio.models.service import AgentModelService
 from tinkerfin_studio.resources import ApplicationResources
 
@@ -51,9 +55,26 @@ def _model(model_id: str = "model-main") -> AgentModelConfig:
 async def stored_model_configs(session):
     """登记测试使用的真实模型配置，运行登记校验当前配置未变化"""
     service = AgentModelService(AgentModelRepository(session, user_id=1))
+    await service.save_connection(
+        ModelConnectionSave(
+            connection_id="trace",
+            display_name="Trace",
+            provider_id="deepseek",
+            api_type="openai_chat_completions",
+            base_url="https://example.invalid/v1",
+            api_key=SecretStr("secret"),
+        )
+    )
     for model_id in ("model-main", "model-other"):
         await service.save_settings(
-            AgentModelSave.model_validate(_model(model_id).model_dump())
+            AgentModelSave.model_validate(
+                {
+                    **_model(model_id).model_dump(
+                        exclude={"provider", "base_url", "api_key"}
+                    ),
+                    "connection_id": "trace",
+                }
+            )
         )
 
 
@@ -412,12 +433,10 @@ async def test_chat_service_uses_messaging_only_for_delivery(
 ) -> None:
     await AgentModelService(AgentModelRepository(session, user_id=1)).save_settings(
         AgentModelSave(
+            connection_id="deepseek",
             model_id="model-main",
             display_name="主模型",
-            provider="deepseek",
             model_name="deepseek-chat",
-            base_url="https://example.invalid/v1",
-            api_key=SecretStr("secret"),
             enabled=True,
             is_default=True,
         )
@@ -429,6 +448,7 @@ async def test_chat_service_uses_messaging_only_for_delivery(
         SimpleNamespace(
             database=database,
             attachments=attachments,
+            model_http_transport=None,
             model_http_client=None,
             agent_persistence=object(),
             sandbox_manager=object(),
@@ -486,12 +506,10 @@ async def test_chat_service_closes_sse_body_when_trace_follow_cannot_start(
 
     await AgentModelService(AgentModelRepository(session, user_id=1)).save_settings(
         AgentModelSave(
+            connection_id="deepseek",
             model_id="model-main",
             display_name="主模型",
-            provider="deepseek",
             model_name="deepseek-chat",
-            base_url="https://example.invalid/v1",
-            api_key=SecretStr("secret"),
             enabled=True,
             is_default=True,
         )
@@ -503,6 +521,7 @@ async def test_chat_service_closes_sse_body_when_trace_follow_cannot_start(
         SimpleNamespace(
             database=database,
             attachments=attachments,
+            model_http_transport=None,
             model_http_client=None,
             agent_persistence=object(),
             sandbox_manager=object(),
@@ -547,12 +566,10 @@ async def test_previous_head_reconcile_releases_the_request_transaction(
 
     await AgentModelService(AgentModelRepository(session, user_id=1)).save_settings(
         AgentModelSave(
+            connection_id="deepseek",
             model_id="model-main",
             display_name="主模型",
-            provider="deepseek",
             model_name="deepseek-chat",
-            base_url="https://example.invalid/v1",
-            api_key=SecretStr("secret"),
             enabled=True,
             is_default=True,
         )
@@ -582,6 +599,7 @@ async def test_previous_head_reconcile_releases_the_request_transaction(
         SimpleNamespace(
             database=database,
             attachments=attachments,
+            model_http_transport=None,
             model_http_client=None,
             agent_persistence=object(),
             sandbox_manager=object(),
@@ -700,6 +718,7 @@ async def test_title_notification_shares_chat_stream_and_response_lifetime(
             SimpleNamespace(
                 database=database,
                 attachments=attachments,
+                model_http_transport=None,
                 model_http_client=client,
                 agent_persistence=object(),
                 sandbox_manager=object(),
@@ -980,3 +999,73 @@ async def test_business_registration_cleanup_settles_before_request_cancellation
         assert (
             list((await verification.scalars(select(ConversationThread))).all()) == []
         )
+
+
+pytestmark = pytest.mark.usefixtures("model_connections")
+
+
+async def test_initialization_error_is_logged_once_and_replay_does_not_log_again(
+    database, session, attachments, monkeypatch, caplog
+):
+    """初始化失败记录原始异常和会话身份，历史重放不再次记录错误"""
+    import logging
+
+    from tinkerfin_messaging import Messaging
+
+    build_count = 0
+
+    def failed_graph(*args, **kwargs):
+        nonlocal build_count
+        build_count += 1
+        raise RuntimeError("sandbox connection unavailable")
+
+    monkeypatch.setattr("tinkerfin.deep_agent.create_agent_graph", failed_graph)
+    repository = ConversationRepository(session)
+    thread = await repository.create_thread(
+        user_id=1, thread_id="thread-log", title="日志验证", model_id="model-main"
+    )
+    thread.title_source = "user"
+    await repository.commit()
+    async with Messaging() as messaging:
+        resources = cast(
+            ApplicationResources,
+            SimpleNamespace(
+                database=database,
+                attachments=attachments,
+                model_http_transport=None,
+                model_http_client=None,
+                tinkerfin=TinkerFin(),
+                settings=SimpleNamespace(model_allowed_origins=()),
+                conversation_channel=messaging.channel(name="failure-logging"),
+                conversation_trace=_TraceCoordinator(),
+            ),
+        )
+        service = ConversationChatService(
+            session,
+            user=UserContext(
+                user_id=1,
+                username="user",
+                display_name="用户",
+                roles=(),
+                disabled=False,
+            ),
+            resources=resources,
+        )
+        with caplog.at_level(logging.ERROR):
+            request = _ordinary_request(thread_id="thread-log", run_id="run-log")
+            first = await service.start(request, last_event_id=None)
+            first_body = b"".join([chunk async for chunk in first.body])
+            replay = await service.start(request, last_event_id="0")
+            replay_body = b"".join([chunk async for chunk in replay.body])
+        assert b'"type":"RUN_ERROR"' in first_body
+        assert b'"type":"RUN_ERROR"' in replay_body
+        records = [
+            r for r in caplog.records if r.name.endswith("conversation.error_logging")
+        ]
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert "thread_id=thread-log" in message
+        assert "run_id=run-log" in message
+        assert "model_id=model-main" in message
+        assert "RuntimeError: sandbox connection unavailable" in message
+        assert build_count == 1

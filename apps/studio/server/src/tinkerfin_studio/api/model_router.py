@@ -1,10 +1,13 @@
 """前端可用模型目录路由"""
 
 import asyncio
-from typing import Annotated
+from collections.abc import Awaitable, Callable
+from typing import Annotated, TypeVar
 
 import anyio
+import httpx
 from fastapi import APIRouter, Depends, Request
+from pydantic import Field
 
 from tinkerfin_studio.api.dependencies import (
     ModelServiceDep,
@@ -17,14 +20,24 @@ from tinkerfin_studio.api.errors import BusinessException, ModelErrorCode
 from tinkerfin_studio.api.responses import ApiResponse
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.infrastructure._failures import _cleanup_failure_priority
+from tinkerfin_studio.models.catalog import PROVIDER_PRESETS
+from tinkerfin_studio.models.discovery import discover_models
+from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import (
     AgentModelCatalog,
     AgentModelSave,
     AgentModelSettings,
+    ModelConnectionSave,
+    ModelConnectionSettings,
+    ModelDiscoveryResult,
+    ModelSettingsOverview,
     ModelTestRequest,
     ModelTestResult,
+    ProviderPreset,
 )
-from tinkerfin_studio.models.testing import run_model_test
+from tinkerfin_studio.models.service import AgentModelService, connection_provider
+from tinkerfin_studio.models.testing import _failure_code, run_model_test
+from tinkerfin_studio.models.transport import ModelTransport
 from tinkerfin_studio.resources import get_resources
 
 router = APIRouter(prefix="/models", tags=["模型"])
@@ -41,12 +54,36 @@ async def list_models(
     return ApiResponse.success(await service.list_catalog())
 
 
+@router.get("/settings", response_model=ApiResponse[ModelSettingsOverview])
+async def model_settings_overview(
+    service: ModelServiceDep,
+) -> ApiResponse[ModelSettingsOverview]:
+    """一次读取本人模型设置，避免分散加载产生重复错误提示"""
+    return ApiResponse.success(
+        ModelSettingsOverview(
+            models=await service.settings(),
+            connections=await service.connections(),
+            providers=list(PROVIDER_PRESETS),
+        )
+    )
+
+
 @router.get("/configurations", response_model=ApiResponse[list[AgentModelSettings]])
 async def model_settings(
     service: ModelServiceDep,
 ) -> ApiResponse[list[AgentModelSettings]]:
     """返回当前用户的可编辑模型配置，密钥不回显"""
     return ApiResponse.success(await service.settings())
+
+
+@router.post("/configurations", response_model=ApiResponse[None])
+async def add_models(
+    payload: Annotated[list[AgentModelSave], Field(min_length=1, max_length=200)],
+    service: ModelServiceDep,
+) -> ApiResponse[None]:
+    """原子保存当前用户选择的模型"""
+    await service.save_models(payload)
+    return ApiResponse.success()
 
 
 @router.put("/configurations/{model_id}", response_model=ApiResponse[None])
@@ -80,6 +117,40 @@ async def delete_model_settings(
     return ApiResponse.success()
 
 
+@router.get("/providers", response_model=ApiResponse[list[ProviderPreset]])
+async def provider_presets(user: UserContextDep) -> ApiResponse[list[ProviderPreset]]:
+    """返回连接默认值，不请求供应商或读取密钥"""
+    del user
+    return ApiResponse.success(list(PROVIDER_PRESETS))
+
+
+@router.get("/connections", response_model=ApiResponse[list[ModelConnectionSettings]])
+async def connections(
+    service: ModelServiceDep,
+) -> ApiResponse[list[ModelConnectionSettings]]:
+    return ApiResponse.success(await service.connections())
+
+
+@router.put("/connections/{connection_id}", response_model=ApiResponse[None])
+async def save_connection(
+    connection_id: str, payload: ModelConnectionSave, service: ModelServiceDep
+) -> ApiResponse[None]:
+    if connection_id != payload.connection_id:
+        raise BusinessException(
+            ModelErrorCode.INVALID_CONFIGURATION, message="连接标识与请求路径不一致"
+        )
+    await service.save_connection(payload)
+    return ApiResponse.success()
+
+
+@router.delete("/connections/{connection_id}", response_model=ApiResponse[None])
+async def delete_connection(
+    connection_id: str, service: ModelServiceDep
+) -> ApiResponse[None]:
+    await service.delete_connection(connection_id)
+    return ApiResponse.success()
+
+
 async def _test_user(request: Request, token: RawTokenDep) -> UserContext:
     """测试前完成认证并归还连接，外部模型等待不占用认证数据库会话"""
     async with get_resources(request.app).database.session() as session:
@@ -95,19 +166,78 @@ async def test_model_configuration(
 ) -> ApiResponse[ModelTestResult]:
     """仅测试当前草稿；请求断开时取消本次任务，并等待客户端关闭"""
     resources = get_resources(request.app)
+    result = await _connected_operation(
+        request,
+        lambda: run_model_test(
+            resources.database,
+            user_id=user.user_id,
+            payload=payload,
+            allowed_origins=resources.settings.model_allowed_origins,
+        ),
+    )
+    return ApiResponse.success(result)
+
+
+@router.post(
+    "/connections/{connection_id}/models",
+    response_model=ApiResponse[ModelDiscoveryResult],
+)
+async def connection_models(
+    request: Request,
+    connection_id: str,
+    user: Annotated[UserContext, Depends(_test_user)],
+) -> ApiResponse[ModelDiscoveryResult]:
+    """获取本人连接的模型列表，网络等待不占用数据库连接，断连时取消"""
+    resources = get_resources(request.app)
+    async with resources.database.session() as session:
+        connection = await AgentModelService(
+            AgentModelRepository(session, user_id=user.user_id)
+        ).require_connection(connection_id)
+        provider = connection_provider(connection)
+        base_url = connection.base_url
+        api_key = connection.api_key
+
+    async def discover() -> ModelDiscoveryResult:
+        try:
+            with anyio.fail_after(15):
+                async with httpx.AsyncClient(
+                    transport=ModelTransport(
+                        allowed_origins=resources.settings.model_allowed_origins,
+                        response_limit_bytes=4 * 1024 * 1024,
+                    ),
+                    timeout=10,
+                    trust_env=False,
+                    follow_redirects=False,
+                    headers={"Accept-Encoding": "identity"},
+                ) as client:
+                    return await discover_models(
+                        provider,
+                        base_url,
+                        api_key,
+                        client,
+                    )
+        except Exception as error:  # noqa: BLE001 - 供应商错误只返回固定原因
+            return ModelDiscoveryResult(outcome="failed", code=_failure_code(error))
+
+    return ApiResponse.success(await _connected_operation(request, discover))
+
+
+_ResultT = TypeVar("_ResultT")
+
+
+async def _connected_operation(
+    request: Request, operation: Callable[[], Awaitable[_ResultT]]
+) -> _ResultT:
+    """拥有测试或发现请求，浏览器断连时取消并等待全部任务清理"""
 
     async def watch_disconnect() -> None:
         while not await request.is_disconnected():
             await asyncio.sleep(0.1)
 
-    test = asyncio.create_task(
-        run_model_test(
-            resources.database,
-            user_id=user.user_id,
-            payload=payload,
-            allowed_origins=resources.settings.model_allowed_origins,
-        )
-    )
+    async def execute() -> _ResultT:
+        return await operation()
+
+    test = asyncio.create_task(execute())
     disconnected = asyncio.create_task(watch_disconnect())
     primary: BaseException | None = None
     try:
@@ -116,7 +246,7 @@ async def test_model_configuration(
         )
         if test not in done:
             raise asyncio.CancelledError()
-        return ApiResponse.success(await test)
+        return await test
     except BaseException as error:
         primary = error
         raise

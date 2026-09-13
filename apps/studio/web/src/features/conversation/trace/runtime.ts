@@ -477,7 +477,14 @@ export const restoreConversationFromTrace = (
   const status = interaction.pendingInteractionKind && projectedStatus !== 'error'
     ? 'waiting_approval'
     : projectedStatus
-  const messages = traceMessages(trace)
+  // 权威历史更新正文和终态时，保留当前页面尚未显示完的实时文字进度
+  const liveTextById = new Map(options.previous?.messages
+    .filter(message => message.role === 'assistant' && message.liveText)
+    .map(message => [message.id, message.liveText]))
+  const messages = traceMessages(trace).map(message => {
+    const liveText = message.role === 'assistant' ? liveTextById.get(message.id) : undefined
+    return liveText ? { ...message, liveText } : message
+  })
 
   return {
     threadId: trace.threadId,

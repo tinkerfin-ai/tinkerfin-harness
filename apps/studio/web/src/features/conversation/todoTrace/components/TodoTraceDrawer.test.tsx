@@ -125,7 +125,7 @@ describe('TodoTraceDrawer', () => {
     expect(todoTraceStyles).toMatch(/\.todo-trace-group-panel\s*{[^}]*border:\s*0;[^}]*background:\s*transparent;/s)
     expect(todoTraceStyles).not.toContain('.todo-trace-group-tooltip')
     expect(todoTraceStyles).toMatch(/\.todo-trace-locate:hover\s*{[^}]*background:\s*transparent;/s)
-    expect(todoTraceStyles).toMatch(/\.todo-trace-locate-target\s*{[^}]*outline:\s*1px solid var\(--color-focus\);[^}]*outline-offset:\s*0;/s)
+    expect(todoTraceStyles).toMatch(/\.todo-trace-locate-target\s*{[^}]*outline:\s*0;[^}]*outline-offset:\s*0;/s)
     const statusRule = todoTraceStyles.match(/\.todo-trace-status-label\s*{([^}]*)}/s)?.[1] ?? ''
     expect(statusRule).not.toMatch(/background|border|padding/)
   })

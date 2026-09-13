@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, TypeGuard
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
@@ -58,6 +59,19 @@ async def test_real_busy_with_close_failure_does_not_retry_or_lose_cause(
     cleanup.__cause__ = cause
     original_driver = AsyncConnection.exec_driver_sql
     original_close = AsyncConnection.close
+
+    def reject_busy_immediately(
+        _connection: Any,
+        cursor: Any,
+        statement: str,
+        _parameters: Any,
+        _context: Any,
+        _executemany: bool,
+    ) -> None:
+        if statement == "BEGIN IMMEDIATE":
+            cursor.execute("PRAGMA busy_timeout = 0")
+
+    event.listen(engine.sync_engine, "before_cursor_execute", reject_busy_immediately)
 
     async def execute(
         connection: AsyncConnection, statement: str, *args: Any, **kwargs: Any

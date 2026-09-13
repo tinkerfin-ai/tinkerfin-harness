@@ -207,7 +207,7 @@
   }
 
   .new-chat-shortcut {
-    color: var(--color-text-tertiary);
+    color: inherit;
     font-family: var(--font-ui);
     font-size: var(--type-caption-size);
     font-weight: var(--weight-medium);
@@ -650,7 +650,9 @@
     min-height: 0;
     padding-inline: var(--space-8);
     overflow-y: auto;
-    overscroll-behavior: contain;
+    overflow-x: hidden;
+    overscroll-behavior-y: none;
+    overscroll-behavior-x: auto;
   }
 
   .conversation-pane.is-empty { overflow: hidden; }

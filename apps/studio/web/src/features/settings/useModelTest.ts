@@ -6,7 +6,7 @@ import { modelTestMessages } from './modelTestMessages'
 import type { ModelSettings } from './useModelSettings'
 
 export type ModelTestKind = 'basic' | 'text' | 'vision' | 'image'
-export type ModelTestConfiguration = Omit<ModelSettings, 'has_key'> & { api_key: string }
+export type ModelTestConfiguration = ModelSettings
 export interface ModelTestResult {
   kind: ModelTestKind
   outcome: 'success' | 'failed' | 'inconclusive'

@@ -32,7 +32,7 @@ from tinkerfin_studio.conversation.models import (
     ConversationThread,
 )
 from tinkerfin_studio.infrastructure.database import Base
-from tinkerfin_studio.models.entity import AgentModel
+from tinkerfin_studio.models.entity import AgentModel, ModelConnection
 from tinkerfin_tracing import SqlAlchemyTraceStore
 
 _SCHEMA_PATH = Path(__file__).parents[1] / "database" / "mysql" / "schema.sql"
@@ -45,6 +45,7 @@ _EXPECTED_TABLES = frozenset(
         *AUTOMATION_TABLE_NAMES,
         "conversation_attachments",
         "agent_models",
+        "model_connections",
         "conversation_threads",
         "conversation_run_registrations",
         "conversation_interrupt_claims",
@@ -72,6 +73,7 @@ _BUSINESS_MODELS = (
     AttachmentCollection,
     AttachmentReference,
     AgentModel,
+    ModelConnection,
     ConversationThread,
     ConversationRunRegistration,
     ConversationInterruptClaim,

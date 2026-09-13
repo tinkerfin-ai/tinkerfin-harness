@@ -1573,11 +1573,11 @@
     background: transparent;
   }
 
-  /* 会话始终保留辅助操作栏的空间，任务轨迹出现或消失不改变回答到输入框的距离 */
+  /* 会话和接管态始终保留辅助操作栏空间，操作显隐不改变阅读区与输入区的位置 */
   .composer-auxiliary-controls {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    width: min(calc(100% - 2 * var(--composer-inline-inset)), var(--layout-composer-width));
+    width: min(100%, var(--layout-composer-width));
     min-height: var(--control-sm);
     margin: 0 auto var(--space-1-5);
     align-items: center;
@@ -1585,7 +1585,7 @@
     pointer-events: none;
   }
 
-  .composer-dock:is(.is-hero, .is-taken-over) .composer-auxiliary-controls:not(:has(.composer-auxiliary-control)) { display: none; }
+  .composer-dock.is-hero .composer-auxiliary-controls:not(:has(.composer-auxiliary-control)) { display: none; }
 
   .composer-scroll-to-bottom-control {
     grid-column: 2;
@@ -1687,11 +1687,10 @@
   }
 
   .composer-dock.is-hero .composer-note {
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%);
+    position: static;
+    transform: none;
     width: min(calc(100% - 2 * var(--composer-inline-inset)), var(--layout-content-wide));
+    margin-top: var(--space-3);
   }
 
   .composer-dock.is-hero::before { display: none; }
@@ -1723,7 +1722,7 @@
 
   .composer:focus-within { border-color: var(--color-border-strong); outline: 0; box-shadow: var(--shadow-2); }
 
-  .composer-input-scroll { max-height: 144px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--color-scroll-thumb) transparent; }
+  .composer-input-scroll { max-height: 144px; overflow-y: auto; overscroll-behavior: none; scrollbar-width: thin; scrollbar-color: var(--color-scroll-thumb) transparent; }
   .composer-input-grow,
   .composer-input-mirror { min-height: calc((var(--type-composer-line) * 2) + var(--space-1)); }
   .composer-input-grow { position: relative; }

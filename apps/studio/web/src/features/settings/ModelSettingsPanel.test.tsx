@@ -1,157 +1,145 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ModelOptionsEditorProps } from './ModelOptionsEditor'
 import { ModelSettingsPanel } from './ModelSettingsPanel'
 import { requestJson } from '../../api/shared/http'
-import { newModel } from './useModelSettings'
+import { newModel, type ConnectionWrite, type ModelConnection, type ModelSettings, type ProviderPreset } from './useModelSettings'
 
 vi.mock('../../api/shared/http', () => ({ requestJson: vi.fn() }))
-vi.mock('./ModelOptionsEditor', () => ({ default: ({value, onChange}: ModelOptionsEditorProps) => <textarea aria-label="高级参数 JSON" value={value} onChange={(event) => onChange(event.target.value)} /> }))
+const connection: ModelConnection = { connection_id: 'shared', display_name: '我的服务', provider_id: 'custom', api_type: 'openai_chat_completions', base_url: 'https://api.example/v1', auth_type: 'api_key', has_key: true }
+const presets: ProviderPreset[] = [
+  { provider_id: 'custom', display_name: '自定义提供方', api_type: 'openai_chat_completions', base_url: '', auth_type: 'api_key', models: [] },
+  { provider_id: 'dashscope', display_name: '通义千问', api_type: 'openai_chat_completions', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', auth_type: 'api_key', models: [] },
+  { provider_id: 'ollama', display_name: 'Ollama', api_type: 'ollama', base_url: 'http://localhost:11434', auth_type: 'none', models: [] },
+]
+let models: ModelSettings[]
+let connections: ModelConnection[]
+let failWrite: boolean
+function writes() { return vi.mocked(requestJson).mock.calls.filter(([, options]) => options?.method && options.method !== 'GET') }
 
-describe('personal model settings', () => {
-  beforeEach(() => { vi.mocked(requestJson).mockReset(); HTMLElement.prototype.scrollIntoView = vi.fn() })
-  it('shows key presence without exposing a secret and saves an edited name', async () => {
-    const model = {
-      model_id: 'mine',
-      display_name: 'Mine',
-      purpose: 'chat',
-      provider: 'openai',
-      model_name: 'model',
-      base_url: 'https://api.openai.com/v1',
-      has_key: true,
-      image_support: 'unknown',
-      reasoning_enabled: false,
-      enabled: true,
-      is_default: true,
-      sort_order: 0,
-      generation_options: {},
-    }
-    vi.mocked(requestJson)
-      .mockResolvedValueOnce([model])
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce([{ ...model, display_name: 'Updated' }])
+beforeEach(() => {
+  models = [{ ...newModel('shared'), model_id: 'mine', display_name: '我的模型', model_name: 'provider-model' }]
+  connections = [connection]; failWrite = false
+  vi.mocked(requestJson).mockReset()
+  vi.mocked(requestJson).mockImplementation(async (path, options) => {
+    if (!options?.method) return { models, connections, providers: presets }
+    if (failWrite) throw new Error('保存失败')
+    if (path.endsWith('/models')) return { outcome: 'success', code: 'models_received', items: [{ model_name: 'provider-model', display_name: 'provider-model', image_support: 'unknown' }, { model_name: 'new-model', display_name: 'new-model', image_support: 'unknown' }] }
+    if (path.endsWith('/default')) models = models.map(model => ({ ...model, is_default: true, enabled: true }))
+    else if (path.includes('/connections/')) {
+      const value = options.body as ConnectionWrite
+      const saved = { ...value, has_key: value.auth_type === 'api_key' }
+      connections = connections.some(item => item.connection_id === value.connection_id) ? connections.map(item => item.connection_id === value.connection_id ? saved : item) : [...connections, saved]
+    } else if (options.method === 'POST') models = [...models, ...options.body as ModelSettings[]]
+    else models = [options.body as ModelSettings]
+    return null
+  })
+  HTMLElement.prototype.scrollIntoView = vi.fn()
+})
+
+describe('提供方与模型设置', () => {
+  it('面包屑展示提供方和当前模型，上级入口返回提供方模型列表', async () => {
+    render(<ModelSettingsPanel onToast={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: '配置模型 我的模型' }))
+    const navigation = screen.getByRole('navigation', { name: '模型配置导航' })
+    expect(navigation).toHaveTextContent('模型配置我的服务我的模型')
+    expect(screen.queryByText('返回模型列表')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '模型设置' })).not.toBeInTheDocument()
+    fireEvent.click(within(navigation).getByRole('button', { name: '我的服务' }))
+    expect(await screen.findByRole('button', { name: '获取模型' })).toBeVisible()
+  })
+  it('分栏支持方向键及最小最大宽度，模型列表有独立滚动区域', async () => {
+    render(<ModelSettingsPanel onToast={vi.fn()} />)
+    const splitter = await screen.findByRole('separator', { name: '调整提供方列表宽度' })
+    expect(screen.getByRole('region', { name: '模型列表' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: '模型配置' })).not.toBeInTheDocument()
+    fireEvent.keyDown(splitter, { key: 'ArrowRight' })
+    expect(splitter).toHaveAttribute('aria-valuenow', '188')
+    fireEvent.keyDown(splitter, { key: 'Home' })
+    expect(splitter.getAttribute('aria-valuenow')).toBe(splitter.getAttribute('aria-valuemin'))
+    fireEvent.keyDown(splitter, { key: 'End' })
+    fireEvent.keyDown(splitter, { key: 'ArrowRight' })
+    expect(splitter.getAttribute('aria-valuenow')).toBe(splitter.getAttribute('aria-valuemax'))
+  })
+  it('连接共享凭据，编辑模型只提交连接引用和模型参数', async () => {
     const changed = vi.fn()
     render(<ModelSettingsPanel onToast={vi.fn()} onChanged={changed} />)
-    await screen.findByText('Mine')
-    expect(screen.queryByText('model', {exact: true})).not.toBeInTheDocument()
-    expect(screen.getByText(/已配置密钥/)).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
-    expect(screen.getByLabelText('API Key')).toHaveValue('')
-    fireEvent.change(screen.getByLabelText('显示名称'), {
-      target: { value: 'Updated' },
-    })
+    await screen.findByText('我的模型')
+    expect(screen.getByText('已配置密钥')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '配置模型 我的模型' }))
+    expect(screen.queryByLabelText('API Key')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('显示名称'), { target: { value: '重命名模型' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(changed).toHaveBeenCalledOnce())
-    expect(vi.mocked(requestJson).mock.calls[1][1]?.body).toMatchObject({
-      display_name: 'Updated',
-      api_key: '',
-    })
+    expect(writes()[0][1]?.body).toMatchObject({ connection_id: 'shared', display_name: '重命名模型' })
+    expect(writes()[0][1]?.body).not.toHaveProperty('api_key')
+    expect(writes()[0][1]?.body).not.toHaveProperty('base_url')
   })
-  it.each(['返回模型列表', '取消'])('preserves a failed draft until leaving with %s', async (leave) => {
-    vi.mocked(requestJson).mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('模型仍在运行，请结束后再修改'))
+  it('连接表单密钥留空表示保留数据库中的密钥', async () => {
     render(<ModelSettingsPanel onToast={vi.fn()} />)
-    await screen.findByText('还没有模型配置，请先添加')
-    fireEvent.click(screen.getByRole('button', { name: '添加模型' }))
-    fireEvent.change(screen.getByLabelText('显示名称'), {target: {value: 'My model'}})
-    fireEvent.change(screen.getByLabelText('Model ID'), {target: {value: 'provider-model'}})
-    fireEvent.change(screen.getByLabelText('API Key'), {target: {value: 'secret'}})
-    fireEvent.click(screen.getByRole('button', {name: '保存'}))
-    await waitFor(() => expect(screen.getByRole('button', {name: '保存'})).toBeEnabled())
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(vi.mocked(requestJson).mock.calls[1][1]?.suppressGlobalError).not.toBe(true)
-    expect(screen.getByLabelText('显示名称')).toHaveValue('My model')
-    expect(screen.getByRole('button', {name: '保存'})).toBeEnabled()
-    fireEvent.click(screen.getByRole('button', {name: leave}))
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', {name: '添加模型'}))
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: '连接设置' }))
     expect(screen.getByLabelText('API Key')).toHaveValue('')
+    fireEvent.change(screen.getByLabelText('显示名称'), { target: { value: '新的连接名' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    expect(writes()[0][1]?.body).toMatchObject({ display_name: '新的连接名', api_key: null })
   })
-
-  it('uses the shared keyboard picker and restores focus', async () => {
-    vi.mocked(requestJson).mockResolvedValueOnce([])
+  it('选择千问预设填写地址，密钥仍由表单输入', async () => {
     render(<ModelSettingsPanel onToast={vi.fn()} />)
-    await screen.findByText('还没有模型配置，请先添加')
-    fireEvent.click(screen.getByRole('button', {name: '添加模型'}))
-    fireEvent.click(screen.getByRole('radio', {name: '图片生成'}))
-    fireEvent.click(screen.getByRole('button', {name: '图片格式'}))
-    const listbox = screen.getByRole('listbox', {name: '图片格式'})
-    fireEvent.keyDown(listbox, {key: 'End'})
-    fireEvent.keyDown(listbox, {key: 'Enter'})
-    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', {name: '图片格式'})).toHaveFocus()
-    fireEvent.click(screen.getByText('高级参数', {exact: true}))
-    await screen.findByLabelText('高级参数 JSON')
+    fireEvent.click(await screen.findByRole('button', { name: '添加提供方' }))
+    fireEvent.click(screen.getByRole('button', { name: '提供方' }))
+    fireEvent.click(screen.getByRole('option', { name: '通义千问' }))
+    expect(screen.getByLabelText('服务地址')).toHaveValue('https://dashscope.aliyuncs.com/compatible-mode/v1')
+    expect(screen.getByLabelText('API Key')).toHaveValue('')
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'synthetic-test-key' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    expect(writes()[0][1]?.body).toMatchObject({ provider_id: 'dashscope', api_key: 'synthetic-test-key' })
+    expect(writes()[0][1]?.body).not.toHaveProperty('models')
   })
-
-  it('keeps the chat provider and reasoning selection when switching purpose', async () => {
-    const model = {...newModel(), display_name: 'DeepSeek', model_name: 'deepseek-model', provider: 'deepseek', reasoning_enabled: true, has_key: true}
-    vi.mocked(requestJson).mockResolvedValueOnce([model]).mockResolvedValueOnce(null).mockResolvedValueOnce([model])
+  it('Ollama 预设无需输入占位密钥，也不展示未支持协议', async () => {
     render(<ModelSettingsPanel onToast={vi.fn()} />)
-    await screen.findByText('DeepSeek')
-    fireEvent.click(screen.getByRole('button', {name: '编辑'}))
-    fireEvent.click(screen.getByRole('radio', {name: '图片生成'}))
-    fireEvent.click(screen.getByRole('radio', {name: '对话模型'}))
-    expect(screen.getByRole('button', {name: '接口类型'})).toHaveTextContent('DeepSeek')
-    expect(screen.getByRole('checkbox', {name: '启用推理'})).toBeChecked()
-    fireEvent.click(screen.getByRole('button', {name: '保存'}))
-    await waitFor(() => expect(vi.mocked(requestJson).mock.calls[1]?.[1]?.body).toMatchObject({provider: 'deepseek', reasoning_enabled: true}))
-  })
-
-  it.each([true, false])('sets the default directly for an enabled=%s model', async (enabled) => {
-    const model = {...newModel(), display_name: 'Mine', has_key: true, enabled}
-    vi.mocked(requestJson).mockResolvedValueOnce([model]).mockResolvedValueOnce(null).mockResolvedValueOnce([{...model, enabled: true, is_default: true}])
-    const changed = vi.fn()
-    render(<ModelSettingsPanel onToast={vi.fn()} onChanged={changed} />)
-    fireEvent.click(await screen.findByRole('button', {name: enabled ? '设为默认' : '启用并设为默认'}))
-    await screen.findByText('默认', {exact: true})
-    const [path, request] = vi.mocked(requestJson).mock.calls[1]
-    expect(path).toBe(`/api/models/configurations/${model.model_id}/default`)
-    expect(request?.method).toBe('PUT')
-    expect(request?.body).toBeUndefined()
+    fireEvent.click(await screen.findByRole('button', { name: '添加提供方' }))
+    fireEvent.click(screen.getByRole('button', { name: '提供方' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Ollama' }))
     expect(screen.queryByLabelText('API Key')).not.toBeInTheDocument()
-    expect(changed).toHaveBeenCalledOnce()
+    expect(screen.getByRole('radio', { name: '无需认证' })).toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'API 类型' }))
+    expect(screen.queryByText(/Responses|Anthropic/)).not.toBeInTheDocument()
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    expect(writes()[0][1]?.body).toMatchObject({ api_type: 'ollama', auth_type: 'none', api_key: '' })
   })
-
-  it('requires a key before choosing a default', async () => {
-    vi.mocked(requestJson).mockResolvedValueOnce([{...newModel(), display_name: 'Missing key'}])
+  it('写入失败保留模型草稿，重试时仍使用相同模型身份', async () => {
     render(<ModelSettingsPanel onToast={vi.fn()} />)
-    expect(await screen.findByRole('button', {name: '设为默认'})).toBeDisabled()
-    expect(screen.getByRole('button', {name: '设为默认'})).toHaveAttribute('title', '请先配置密钥')
-    expect(requestJson).toHaveBeenCalledOnce()
+    fireEvent.click(await screen.findByRole('button', { name: '手动添加' }))
+    fireEvent.change(screen.getByLabelText('显示名称'), { target: { value: '新模型' } })
+    fireEvent.change(screen.getByLabelText('Model ID'), { target: { value: 'new-model' } })
+    failWrite = true
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toBeEnabled())
+    expect(screen.getByLabelText('显示名称')).toHaveValue('新模型')
+    failWrite = false
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(writes()).toHaveLength(2))
+    expect(writes()[1][0]).toBe(writes()[0][0])
   })
-
-  it('requires a new key for a different address and accepts the saved endpoint again', async () => {
-    const model = {...newModel(), display_name: 'Mine', model_name: 'example', has_key: true}
-    vi.mocked(requestJson).mockResolvedValueOnce([model])
+  it('发现模型后选择添加，已有模型不重复写入', async () => {
     render(<ModelSettingsPanel onToast={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', {name: '编辑'}))
-    const key = screen.getByLabelText('API Key')
-    expect(key).not.toBeRequired()
-    fireEvent.change(screen.getByLabelText('Base URL'), {target: {value: 'https://different.example/v1'}})
-    expect(key).toBeRequired()
-    expect(key).toHaveAttribute('placeholder', '服务地址已更改，请重新输入 API Key')
-    fireEvent.click(screen.getByRole('button', {name: '保存'}))
-    expect(requestJson).toHaveBeenCalledOnce()
-    fireEvent.change(screen.getByLabelText('Base URL'), {target: {value: 'https://API.OPENAI.COM:443/v1/'}})
-    expect(key).not.toBeRequired()
-    expect(key).toHaveAttribute('placeholder', '留空保留已保存的密钥')
-    fireEvent.change(screen.getByLabelText('Base URL'), {target: {value: 'https://api.openai.com/v2'}})
-    expect(key).toBeRequired()
-    fireEvent.change(screen.getByLabelText('Base URL'), {target: {value: 'invalid'}})
-    expect(key).toBeRequired()
+    fireEvent.click(await screen.findByRole('button', { name: '获取模型' }))
+    expect(await screen.findByRole('checkbox', { name: /provider-model/ })).toBeDisabled()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'new-model' }))
+    fireEvent.click(screen.getByRole('button', { name: '添加所选模型' }))
+    await waitFor(() => expect(writes()).toHaveLength(2))
+    expect(writes()[1][0]).toBe('/api/models/configurations')
+    expect(writes()[1][1]?.body).toEqual([expect.objectContaining({ model_name: 'new-model', connection_id: 'shared' })])
   })
-
-  it('preserves the list and allows another default attempt after failure', async () => {
-    const model = {...newModel(), display_name: 'Mine', has_key: true}
-    vi.mocked(requestJson).mockResolvedValueOnce([model]).mockRejectedValueOnce(new Error('服务暂不可用')).mockResolvedValueOnce(null).mockResolvedValueOnce([{...model, is_default: true}])
+  it('设默认不要求再次输入密钥', async () => {
     render(<ModelSettingsPanel onToast={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', {name: '设为默认'}))
-    await waitFor(() => expect(screen.getByRole('button', {name: '设为默认'})).toBeEnabled())
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByText('Mine')).toBeVisible()
-    fireEvent.click(screen.getByRole('button', {name: '设为默认'}))
-    await screen.findByText('默认', {exact: true})
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: '设为默认' }))
+    await screen.findByText('默认', { exact: true })
+    expect(writes()[0][0]).toBe('/api/models/configurations/mine/default')
+    expect(writes()[0][1]?.body).toBeUndefined()
   })
 })

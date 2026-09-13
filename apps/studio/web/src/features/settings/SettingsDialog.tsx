@@ -57,7 +57,7 @@ export function SettingsDialog({
     <Dialog
       open={open}
       title={t('设置')}
-      className={`settings-dialog${activeSection === 'models' ? ' settings-dialog--models' : ''}`}
+      className="settings-dialog"
       restoreFocusTo={restoreFocusTo}
       onClose={onClose}
     >
@@ -115,24 +115,12 @@ export function SettingsDialog({
             </div>
             <fieldset className="settings-theme-options">
               <legend className="visually-hidden">{t('外观主题')}</legend>
-              {APPEARANCE_OPTIONS.map((option) => {
+              {APPEARANCE_OPTIONS.map(option => {
                 const OptionIcon = option.icon
-                return (
-                  <label
-                    key={option.value}
-                    className={`settings-theme-option${themePreference === option.value ? ' is-selected' : ''}`}
-                  >
-                    <input
-                      type="radio"
-                      name={appearanceName}
-                      value={option.value}
-                      checked={themePreference === option.value}
-                      onChange={() => onThemePreferenceChange(option.value)}
-                    />
-                    <OptionIcon size={18} aria-hidden="true" />
-                    <span>{t(option.label)}</span>
-                  </label>
-                )
+                return <label key={option.value} className={`settings-theme-option${themePreference === option.value ? ' is-selected' : ''}`}>
+                  <input type="radio" name={appearanceName} value={option.value} checked={themePreference === option.value} onChange={() => onThemePreferenceChange(option.value)} />
+                  <OptionIcon size={18} aria-hidden="true" /><span>{t(option.label)}</span>
+                </label>
               })}
             </fieldset>
           </section>
@@ -149,7 +137,7 @@ export function SettingsDialog({
               onChange={setLanguagePreference}
               triggerLabel={t('界面语言')}
               listboxLabel={t('界面语言')}
-              rootClassName="settings-choice-picker"
+              rootClassName="settings-choice-picker settings-preference-picker"
               triggerClassName="settings-choice-trigger"
               listboxClassName="settings-choice-options"
               optionClassName="settings-choice-option"

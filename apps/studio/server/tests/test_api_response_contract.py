@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from httpx import ASGITransport, AsyncClient
 from PIL import Image
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tinkerfin_studio.api.dependencies import (
@@ -17,6 +18,7 @@ from tinkerfin_studio.application import create_application
 from tinkerfin_studio.attachments.service import AttachmentService
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.models.repository import AgentModelRepository
+from tinkerfin_studio.models.schemas import ModelConnectionSave
 from tinkerfin_studio.models.service import AgentModelService
 
 
@@ -57,19 +59,37 @@ async def test_empty_json_results_and_file_content_keep_their_http_contract(
     image = io.BytesIO()
     Image.new("RGB", (2, 2), "blue").save(image, format="PNG")
     content = image.getvalue()
+    await models.save_connection(
+        ModelConnectionSave(
+            connection_id="shared",
+            display_name="连接",
+            provider_id="custom",
+            api_type="openai_chat_completions",
+            base_url="https://api.openai.com/v1",
+            api_key=SecretStr("private-key"),
+        )
+    )
     payload = {
         "model_id": "main",
         "display_name": "Main",
-        "provider": "openai",
+        "connection_id": "shared",
         "model_name": "provider-model",
-        "base_url": "https://api.openai.com/v1",
-        "api_key": "private-key",
     }
 
     async with AsyncClient(
         transport=ASGITransport(app=application), base_url="http://test"
     ) as client:
         saved = await client.put("/api/models/configurations/main", json=payload)
+        assert len(await models.settings()) == 1
+        overview = await client.get("/api/models/settings")
+        assert overview.status_code == 200
+        settings = overview.json()["data"]
+        assert settings["connections"][0]["has_key"] is True
+        assert "api_key" not in settings["connections"][0]
+        assert "private-key" not in overview.text
+        assert settings["models"][0]["connection_id"] == "shared"
+        batch = await client.post("/api/models/configurations", json=[payload])
+        assert batch.status_code == 200
         assert len(await models.settings()) == 1
         mismatched = await client.put("/api/models/configurations/other", json=payload)
         deleted_model = await client.delete("/api/models/configurations/main")

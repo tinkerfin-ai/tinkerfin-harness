@@ -62,6 +62,41 @@ describe('useConversationScroll', () => {
     vi.unstubAllGlobals()
   })
 
+  it('接收结束后正文增长仍跟随，用户阅读历史时不抢滚动，卸载后释放观察', () => {
+    let resized = () => {}
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resized = callback }
+      observe() {}
+      disconnect = disconnect
+    })
+    const { result, rerender, unmount } = renderHook(({ currentConversation }) => useConversationScroll({
+      conversation: currentConversation,
+      isRunning: false,
+    }), { initialProps: { currentConversation: conversation } })
+    const pane = document.createElement('section')
+    const content = document.createElement('div')
+    const end = document.createElement('div')
+    content.append(end)
+    pane.append(content)
+    Object.defineProperties(pane, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1200 },
+      scrollTop: { configurable: true, writable: true, value: 800 },
+    })
+    result.current.paneRef.current = pane
+    result.current.messageEndRef.current = end
+    rerender({ currentConversation: { ...conversation, messages: [{ id: 'reply', role: 'assistant', content: '正文', createdAt: '' }] } })
+    act(() => resized())
+    expect(pane.scrollTop).toBe(1200)
+    act(() => result.current.pauseFollowing())
+    pane.scrollTop = 100
+    act(() => resized())
+    expect(pane.scrollTop).toBe(100)
+    unmount()
+    expect(disconnect).toHaveBeenCalledOnce()
+  })
+
   it('定位历史时不会因窗口暂时接近底部恢复跟随，返回底部后恢复', () => {
     const { result, rerender, unmount } = renderHook(({ currentConversation }) => useConversationScroll({
       conversation: currentConversation,
@@ -463,23 +498,6 @@ describe('useConversationScroll', () => {
     expect(remountedPane.scrollTop).toBe(1000)
     act(() => vi.runOnlyPendingTimers())
     unmount()
-  })
-
-  it('treats wheel input forwarded from the composer as user scrolling', () => {
-    const { result } = renderHook(() => useConversationScroll({ conversation, isRunning: false }))
-    const pane = document.createElement('section')
-    Object.defineProperties(pane, {
-      clientHeight: { configurable: true, value: 400 },
-      scrollHeight: { configurable: true, value: 1200 },
-      scrollTop: { configurable: true, writable: true, value: 300 },
-    })
-    result.current.paneRef.current = pane
-
-    act(() => result.current.scrollBy(-120))
-    act(() => vi.advanceTimersByTime(0))
-
-    expect(pane.scrollTop).toBe(180)
-    expect(result.current.showScrollToBottom).toBe(true)
   })
 
   it('does not stop following when wheel or touch intent cannot move past the bottom', () => {

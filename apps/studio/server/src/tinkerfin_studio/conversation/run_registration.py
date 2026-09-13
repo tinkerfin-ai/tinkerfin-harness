@@ -30,6 +30,7 @@ from tinkerfin_studio.conversation.run_preparation import (
 )
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import AgentModelConfig
+from tinkerfin_studio.models.service import model_settings, resolved_model
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,21 +135,19 @@ class ConversationRunPreparer:
             models = AgentModelRepository(self._session, user_id=self._user_id)
             await models.lock_owner()
             current_model = await models.get_for_update(model.model_id)
+            current_connection = (
+                await models.connection(current_model.connection_id, for_update=True)
+                if current_model is not None
+                else None
+            )
             if (
                 current_model is None
                 or not current_model.enabled
-                or any(
-                    (
-                        current_model.provider != model.provider,
-                        current_model.purpose != model.purpose,
-                        current_model.model_name != model.model_name,
-                        current_model.base_url != model.base_url,
-                        current_model.api_key != model.api_key.get_secret_value(),
-                        current_model.reasoning_enabled != model.reasoning_enabled,
-                        current_model.image_support != model.image_support,
-                    )
-                )
+                or current_connection is None
             ):
+                raise BusinessException(ModelErrorCode.CONFIGURATION_CHANGED)
+            current = resolved_model(model_settings(current_model), current_connection)
+            if current != model:
                 raise BusinessException(ModelErrorCode.CONFIGURATION_CHANGED)
             locked = await self._repository.lock_thread(thread.id)
             if locked is None or locked.status == "deleting":

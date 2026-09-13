@@ -187,6 +187,54 @@ describe('无边图片和全屏预览', () => {
   })
 })
 
+describe('文件附件类型', () => {
+  it('常见格式使用对应大图标，未知格式和无扩展名使用中性兜底', () => {
+    const { container } = render(
+      <AttachmentList
+        attachments={[
+          { ...cat, id: 'docx', name: '方案.docx', mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+          { ...cat, id: 'pdf', name: '报告.pdf', mime_type: 'application/pdf' },
+          { ...cat, id: 'markdown', name: 'README.md', mime_type: 'text/markdown' },
+          { ...cat, id: 'sheet', name: '报价.xlsx', mime_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+          { ...cat, id: 'slides', name: '汇报.pptx', mime_type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' },
+          { ...cat, id: 'unknown', name: 'model.abcdefgh', mime_type: 'application/octet-stream', size_bytes: 2 * 1024 * 1024 },
+          { ...cat, id: 'extensionless', name: 'LICENSE', mime_type: 'application/octet-stream' },
+        ]}
+      />,
+    )
+
+    expect(
+      Array.from(container.querySelectorAll('.attachment-file-icon')).map(
+        icon => icon.getAttribute('data-file-kind'),
+      ),
+    ).toEqual(['word', 'pdf', 'markdown', 'sheet', 'slides', 'unknown', 'unknown'])
+    for (const label of ['DOCX', 'PDF', 'MD', 'XLSX', 'PPTX', 'ABCD', 'FILE'])
+      expect(screen.getByText(label)).toBeVisible()
+    expect(screen.getByText('2.0 MiB')).toBeVisible()
+    expect(screen.getByRole('button', { name: '查看文件：model.abcdefgh' })).toBeEnabled()
+  })
+
+  it('未知格式打开统一预览器并保留下载路径', async () => {
+    const user = userEvent.setup()
+    render(
+      <AttachmentList
+        attachments={[
+          { ...cat, id: 'unknown', name: 'model.bin', mime_type: 'application/octet-stream' },
+        ]}
+      />,
+    )
+
+    const opener = screen.getByRole('button', { name: '查看文件：model.bin' })
+    await user.click(opener)
+    const dialog = screen.getByRole('dialog', { name: 'model.bin' })
+    expect(within(dialog).getByRole('heading', { name: '此格式无法在线预览' })).toBeVisible()
+    expect(within(dialog).getByRole('button', { name: '下载文件' })).toBeEnabled()
+    expect(attachmentBlob).not.toHaveBeenCalled()
+    await user.click(within(dialog).getByRole('button', { name: '关闭对话框' }))
+    expect(opener).toHaveFocus()
+  })
+})
+
 const tool: Message = {
   id: 'tool',
   role: 'tool',

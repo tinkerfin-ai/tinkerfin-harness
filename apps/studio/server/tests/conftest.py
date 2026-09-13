@@ -32,3 +32,32 @@ async def attachments(database, tmp_path):
     from tinkerfin_studio.attachments.storage import DiskAttachmentStorage
 
     return AttachmentService(database, DiskAttachmentStorage(tmp_path / "attachments"))
+
+
+@pytest_asyncio.fixture
+async def model_connections(database):
+    """为模型调用测试准备已保存的用户连接，测试仍通过当前模型接口操作"""
+    from pydantic import SecretStr
+
+    from tinkerfin_studio.models.repository import AgentModelRepository
+    from tinkerfin_studio.models.schemas import ModelConnectionSave
+    from tinkerfin_studio.models.service import AgentModelService
+
+    async with database.session() as session:
+        for user_id in (1, 2):
+            service = AgentModelService(AgentModelRepository(session, user_id=user_id))
+            for connection_id in ("configured", "deepseek"):
+                await service.save_connection(
+                    ModelConnectionSave(
+                        connection_id=connection_id,
+                        display_name=connection_id,
+                        provider_id="deepseek"
+                        if connection_id == "deepseek"
+                        else "custom",
+                        api_type="openai_chat_completions",
+                        base_url="https://models.example/v1",
+                        api_key=SecretStr(
+                            "private-draft-key" if user_id == 1 else "owner-two-key"
+                        ),
+                    )
+                )
