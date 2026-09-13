@@ -947,7 +947,7 @@
   .subagent-output-copy {
     display: grid;
     min-width: 0;
-    gap: var(--space-1);
+    gap: var(--space-3);
   }
 
   .subagent-output-copy > strong {
@@ -1715,7 +1715,9 @@
   .composer:focus-within { border-color: var(--color-border-strong); outline: 0; box-shadow: var(--shadow-2); }
 
   .composer-input-scroll { max-height: 144px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--color-scroll-thumb) transparent; }
-  .composer-input-grow { position: relative; min-height: 28px; }
+  .composer-input-grow,
+  .composer-input-mirror { min-height: calc((var(--type-composer-line) * 2) + var(--space-1)); }
+  .composer-input-grow { position: relative; }
   .composer-input-backdrop { position: absolute; inset: 0; overflow: hidden; color: var(--color-text-primary); pointer-events: none; }
   .composer-input-backdrop.is-disabled,
   .composer-input-backdrop.is-disabled :is(mark, span) { color: var(--color-text-tertiary); }
@@ -1724,7 +1726,7 @@
   .composer-input { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; overflow: hidden; border: 0; outline: 0; background: transparent; color: transparent; caret-color: var(--color-brand); -webkit-text-fill-color: transparent; }
   .composer-input::placeholder { color: var(--color-placeholder); opacity: 1; -webkit-text-fill-color: var(--color-placeholder); user-select: none; }
   .composer-input:disabled { color: transparent; cursor: not-allowed; -webkit-text-fill-color: transparent; }
-  .composer-input-mirror { min-height: 28px; visibility: hidden; pointer-events: none; }
+  .composer-input-mirror { visibility: hidden; pointer-events: none; }
   .composer-input,
   .composer-input-mirror,
   .composer-input-backdrop { box-sizing: border-box; padding: 4px 12px 0 16px; font-family: var(--font-ui); font-size: var(--type-body-size); line-height: var(--type-composer-line); white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }

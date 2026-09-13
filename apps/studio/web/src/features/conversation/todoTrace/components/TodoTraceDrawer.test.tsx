@@ -113,7 +113,7 @@ describe('TodoTraceDrawer', () => {
     expect(todoTraceStyles).toMatch(/\.todo-trace-drawer\s*{[^}]*border:\s*0;[^}]*background:\s*var\(--color-canvas\);/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-group-surface\s*{[^}]*border:\s*0;[^}]*background:\s*transparent;/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-group\.is-current \.todo-trace-group-surface\s*{[^}]*linear-gradient\(/s)
-    expect(todoTraceStyles).toMatch(/\.todo-trace-group\.is-expanded\.is-history \.todo-trace-group-surface\s*{[^}]*linear-gradient\(/s)
+    expect(todoTraceStyles).not.toMatch(/\.todo-trace-group\.is-expanded\.is-history \.todo-trace-group-surface\s*{[^}]*linear-gradient\(/s)
     expect(todoTraceStyles).not.toContain('.todo-trace-group-state')
     expect(todoTraceStyles).toMatch(/\.todo-trace-todo\.is-completed \.todo-trace-node-icon\s*{[^}]*color:\s*var\(--color-text-secondary\);/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-todo\.is-completed \.todo-trace-node-icon\s*{[^}]*background:\s*transparent;/s)

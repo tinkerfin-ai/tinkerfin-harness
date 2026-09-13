@@ -723,13 +723,33 @@ test('5k Group 冷水化、windowing、键盘与 heap 门禁', { tag: '@performa
   expect(evidence.pageErrors).toEqual([])
 })
 
-test('对话 Todos 卡片的完成图标在浅深色和各视口保持细线中性色', async ({ page }) => {
+test('对话 Todos 卡片在浅深色和各视口保持布局与完成图标契约', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   const evidence = await mockTodoTraceStudio(page, { groups: makeGroups(1, false, 3) })
   const card = page.locator('details').filter({ has: page.getByText('Todos', { exact: true }) }).first()
   await card.locator('summary').click()
   const mark = card.locator('.todo-trace-completed-mark').first()
   await expect(mark).toBeVisible()
+  const treeMetrics = await card.evaluate((element) => {
+    const summary = element.querySelector(':scope > summary')
+    const list = element.querySelector('.todo-trace-todo-list')
+    const items = [...element.querySelectorAll('.todo-trace-todo')]
+    if (!summary || !list || items.length < 2) throw new Error('Todos 卡片缺少布局测量目标')
+    const centerY = (target: Element) => {
+      const rect = target.getBoundingClientRect()
+      return rect.top + (rect.height / 2)
+    }
+    const listRect = list.getBoundingClientRect()
+    const treeStyle = getComputedStyle(list, '::before')
+    return {
+      firstInterval: centerY(items[0]) - centerY(summary),
+      itemInterval: centerY(items[1]) - centerY(items[0]),
+      treeEnd: listRect.bottom - Number.parseFloat(treeStyle.bottom),
+      lastItemCenter: centerY(items.at(-1)!),
+    }
+  })
+  expect(treeMetrics.firstInterval).toBe(treeMetrics.itemInterval)
+  expect(treeMetrics.treeEnd).toBe(treeMetrics.lastItemCenter)
   for (const theme of ['light', 'dark']) {
     await page.evaluate((value) => {
       document.documentElement.dataset.theme = value

@@ -19,7 +19,7 @@ export function AccessModePicker({ value, onChange, disabled = false }: {
   const icon = (option: AccessMode) => option === 'full' ? <KeyRound size={14} /> : <FilePenLine size={14} />
   return <ListboxPicker value={value} options={options} open={open} onOpenChange={setOpen}
     onChange={onChange} disabled={disabled} triggerLabel={t('选择访问权限')} listboxLabel={t('访问权限选项')}
-    rootClassName="ui-compact-picker" triggerClassName="ui-compact-picker-trigger" listboxClassName="ui-compact-picker-options"
+    rootClassName="ui-compact-picker ui-compact-picker--trigger-width" triggerClassName="ui-compact-picker-trigger" listboxClassName="ui-compact-picker-options"
     renderTrigger={selected => <>{icon(selected)}<span>{t(labels[selected])}</span><ChevronDown size={14} /></>}
     renderOption={(option, selected) => <>{icon(option)}<span className="ui-compact-option-label">{t(labels[option])}</span><span className="ui-compact-option-check">{selected && <Check size={14} />}</span></>} />
 }

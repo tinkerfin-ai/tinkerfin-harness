@@ -10,6 +10,8 @@ describe('文件审批选择', () => {
     const trigger = screen.getByRole('button', { name: '选择访问权限' })
     fireEvent.click(trigger)
     const menu = screen.getByRole('listbox', { name: '访问权限选项' })
+    expect(trigger.parentElement).toHaveClass('ui-compact-picker--trigger-width')
+    expect(menu.parentElement).toBe(trigger.parentElement)
     expect(screen.getAllByRole('option')).toHaveLength(2)
     fireEvent.keyDown(menu, { key: 'ArrowDown' })
     fireEvent.keyDown(menu, { key: 'Enter' })

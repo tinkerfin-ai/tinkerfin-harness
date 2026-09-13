@@ -92,6 +92,7 @@ describe('MessageBlock subagent card', () => {
     const output = container.querySelector('.subagent-output-node')
     expect(output).toHaveClass('is-completed')
     expect(within(output as HTMLElement).getByText('已完成')).toBeVisible()
+    expect(conversationStyles).toMatch(/\.subagent-output-copy\s*\{[^}]*gap:\s*var\(--space-3\);/s)
     expect(within(output as HTMLElement).getByText('公司定位：中国最大的搜索引擎和 AI 科技公司。')).toBeVisible()
     expect(screen.getByText('Read')).toBeVisible()
     expect(screen.getByText('/research/url.json')).toBeVisible()

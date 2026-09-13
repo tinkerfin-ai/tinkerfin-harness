@@ -111,15 +111,6 @@
     );
   }
 
-  .todo-trace-group.is-expanded.is-history .todo-trace-group-surface {
-    background: linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--color-brand-soft) 48%, var(--color-canvas)),
-      color-mix(in srgb, var(--color-brand-soft) 18%, var(--color-canvas)) 64%,
-      var(--color-canvas)
-    );
-  }
-
   .todo-trace-group-head {
     min-height: 0;
   }
@@ -291,7 +282,7 @@
   .todo-trace-todo-list::before {
     position: absolute;
     top: 0;
-    bottom: var(--space-3);
+    bottom: calc(var(--space-2) + var(--control-sm) / 2);
     left: var(--space-4);
     width: 1px;
     background: var(--color-border);
@@ -341,7 +332,9 @@
     white-space: nowrap;
   }
 
-  .todo-trace-update-body { padding: 0 var(--space-3) var(--space-3); }
+  .todo-trace-update-body { padding: var(--space-1-5) var(--space-3) 0; }
+  .todo-trace-update-body .todo-trace-todo-list { padding-bottom: 0; }
+  .todo-trace-update-body .todo-trace-todo-list::before { bottom: calc(var(--control-sm) / 2); }
   .todo-trace-tool-status {
     padding: var(--space-3);
     color: var(--color-text-secondary);
