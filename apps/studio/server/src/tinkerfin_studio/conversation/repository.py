@@ -11,6 +11,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.dml import Update
 
+from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.conversation.models import (
     ConversationInterruptClaim,
     ConversationRunRegistration,
@@ -71,6 +72,7 @@ class ConversationRepository:
         parent_run_id: str | None,
         model_id: str,
         input_json: dict[str, JsonValue],
+        access_mode: AccessMode = "full",
     ) -> ConversationRunRegistration:
         """创建固定模型与请求快照的主 Run 注册"""
 
@@ -80,6 +82,7 @@ class ConversationRepository:
             run_id=run_id,
             parent_run_id=parent_run_id,
             model_id=model_id,
+            access_mode=access_mode,
             status="preparing",
             input_json=input_json,
             terminal_outcome=None,
@@ -116,6 +119,7 @@ class ConversationRepository:
         run.updated_at = now
         thread.last_run_id = run_id
         thread.last_model = run.model_id
+        thread.last_access_mode = run.access_mode
         thread.status = "running"
         thread.updated_at = now
         await self._session.flush()
@@ -608,12 +612,14 @@ class ConversationRepository:
             if previous is None:
                 thread.last_run_id = None
                 thread.last_model = None
+                thread.last_access_mode = "full"
                 thread.status = "idle"
                 thread.has_pending_interrupt = False
                 thread.pending_interaction_kind = None
             else:
                 thread.last_run_id = previous.run_id
                 thread.last_model = previous.model_id
+                thread.last_access_mode = previous.access_mode
                 thread.status = _thread_status(previous.status)
         await self._session.flush()
         return UnstartedRunCleanup(

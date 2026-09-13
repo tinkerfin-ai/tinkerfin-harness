@@ -23,7 +23,7 @@ function envelope(data: unknown, code = 0, message = 'success', status = 200) {
   })
 }
 
-const detail = (): ConversationHistoryDetail => ({
+const detail = (): ConversationHistoryDetail => ({ accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',
   titleSeq: 0,

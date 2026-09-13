@@ -2897,6 +2897,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "tinkerfin" },
     { name = "tinkerfin-contracts" },
+    { name = "tinkerfin-native-stream" },
     { name = "tzdata" },
 ]
 
@@ -2914,6 +2915,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'sqlalchemy'", specifier = "==2.0.52" },
     { name = "tinkerfin", editable = "packages/tinkerfin" },
     { name = "tinkerfin-contracts", editable = "packages/tinkerfin-contracts" },
+    { name = "tinkerfin-native-stream", editable = "packages/tinkerfin-native-stream" },
     { name = "tinkerfin-sqlalchemy", marker = "extra == 'sqlalchemy'", editable = "packages/tinkerfin-sqlalchemy" },
     { name = "tzdata", specifier = ">=2025.2" },
 ]
@@ -3137,6 +3139,7 @@ dependencies = [
     { name = "starlette" },
     { name = "tavily-python" },
     { name = "tinkerfin", extra = ["agui", "redis", "tracing"] },
+    { name = "tinkerfin-automation", extra = ["sqlalchemy"] },
     { name = "tinkerfin-contracts" },
     { name = "tinkerfin-langgraph-store", extra = ["sqlalchemy"] },
     { name = "tinkerfin-messaging", extra = ["agui", "redis"] },
@@ -3175,6 +3178,7 @@ requires-dist = [
     { name = "starlette", specifier = ">=1.3.1,<2" },
     { name = "tavily-python", specifier = ">=0.7,<1" },
     { name = "tinkerfin", extras = ["agui", "redis", "tracing"], editable = "packages/tinkerfin" },
+    { name = "tinkerfin-automation", extras = ["sqlalchemy"], editable = "packages/tinkerfin-automation" },
     { name = "tinkerfin-contracts", editable = "packages/tinkerfin-contracts" },
     { name = "tinkerfin-langgraph-store", extras = ["sqlalchemy"], editable = "packages/tinkerfin-langgraph-store" },
     { name = "tinkerfin-messaging", extras = ["agui", "redis"], editable = "packages/tinkerfin-messaging" },

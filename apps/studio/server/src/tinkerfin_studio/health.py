@@ -12,6 +12,7 @@ from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from tinkerfin_automation import AutomationError
 from tinkerfin_studio.config.settings import SandboxSettings
 from tinkerfin_studio.infrastructure.database import Database
 
@@ -26,6 +27,7 @@ class ReadinessService:
         redis: Redis,
         sandbox: SandboxSettings,
         sandbox_ready: Callable[[], Awaitable[None]],
+        automation_ready: Callable[[], Awaitable[None]],
         http_client: httpx.AsyncClient,
         timeout_seconds: float = 3,
     ) -> None:
@@ -33,6 +35,7 @@ class ReadinessService:
         self._redis = redis
         self._sandbox = sandbox
         self._sandbox_ready = sandbox_ready
+        self._automation_ready = automation_ready
         self._http_client = http_client
         self._timeout_seconds = timeout_seconds
 
@@ -60,6 +63,7 @@ class ReadinessService:
         try:
             await asyncio.wait_for(check(), timeout=self._timeout_seconds)
         except (
+            AutomationError,
             OSError,
             RedisError,
             RuntimeError,
@@ -73,13 +77,15 @@ class ReadinessService:
     async def check(self) -> dict[str, bool]:
         """返回不含异常和凭据的稳定组件状态"""
 
-        mysql, redis, opensandbox = await asyncio.gather(
+        mysql, redis, opensandbox, automation = await asyncio.gather(
             self._safe(self._check_mysql),
             self._safe(self._check_redis),
             self._safe(self._check_opensandbox),
+            self._safe(self._automation_ready),
         )
         return {
             "mysql": mysql,
             "redis": redis,
             "opensandbox": opensandbox,
+            "automation": automation,
         }

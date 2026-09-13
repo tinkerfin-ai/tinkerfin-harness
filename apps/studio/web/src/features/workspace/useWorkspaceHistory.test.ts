@@ -50,7 +50,7 @@ const readyTaskTrace = (suffix: string): ReadyTaskTrace => ({
 
 const detail = (
   overrides: Partial<ConversationHistoryDetail> = {},
-): ConversationHistoryDetail => ({
+): ConversationHistoryDetail => ({ accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',
   titleSeq: 0,

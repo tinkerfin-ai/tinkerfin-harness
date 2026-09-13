@@ -183,6 +183,10 @@ test('模型设置触控操作和减少动态效果保持可用', async ({browse
         expect(box?.height).toBeGreaterThanOrEqual(44)
       }
       await page.getByRole('button', {name: '编辑', exact: true}).last().click()
+      for (const label of ['显示名称', 'Model ID', 'Base URL', 'API Key']) {
+        const input = page.getByLabel(label, {exact: true})
+        expect((await input.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+      }
       await page.getByText('高级参数', {exact: true}).click()
       const editor = page.getByRole('textbox', {name: '高级参数 JSON'})
       await editor.focus()

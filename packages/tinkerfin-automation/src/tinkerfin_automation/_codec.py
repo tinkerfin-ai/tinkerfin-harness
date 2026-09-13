@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue, field_validator
 
 from tinkerfin_contracts import RunIdentity
 
@@ -56,10 +56,20 @@ class _TaskRecord(_RecordModel):
     created_at: datetime
     updated_at: datetime
 
+    @field_validator("schedule", mode="before")
+    @classmethod
+    def canonical_schedule(cls, value: JsonValue | Schedule) -> JsonValue | Schedule:
+        if isinstance(value, dict) and not {"active_from", "active_until"}.issubset(
+            value
+        ):
+            raise ValueError("Stored schedules must include their active period")
+        return value
+
 
 class _ExecutionRecord(_RecordModel):
     execution_id: str
     task_id: str | None
+    task_name: str | None
     namespace: str
     owner_id: str
     identity: RunIdentity
@@ -190,6 +200,7 @@ def encode_execution(execution: AutomationExecution) -> str:
     return _ExecutionRecord(
         execution_id=execution.execution_id,
         task_id=execution.task_id,
+        task_name=execution.task_name,
         namespace=execution.namespace,
         owner_id=execution.owner_id,
         identity=execution.identity,
@@ -224,6 +235,7 @@ def decode_execution(payload: str) -> AutomationExecution:
         record = _ExecutionRecord.model_validate_json(payload)
         return AutomationExecution(
             execution_id=record.execution_id,
+            task_name=record.task_name,
             task_id=record.task_id,
             namespace=record.namespace,
             owner_id=record.owner_id,

@@ -13,6 +13,7 @@ from tinkerfin.agui import (
     AgUiTraceMessage,
     AgUiTraceUpdate,
 )
+from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.conversation.failures import ConversationRunFailure
 from tinkerfin_studio.conversation.models import TitleGenerationStatus, TitleSource
 from tinkerfin_studio.conversation.todo_groups import TaskTraceSnapshot
@@ -57,6 +58,7 @@ class ConversationHistoryListItem(ConversationTitle):
     status: str
     last_run_id: str | None = Field(default=None, alias="lastRunId")
     last_model: str | None = Field(default=None, alias="lastModel")
+    access_mode: AccessMode = Field(default="full", alias="accessMode")
     message_count: int = Field(alias="messageCount", ge=0)
     tool_call_count: int = Field(alias="toolCallCount", ge=0)
     has_pending_interrupt: bool = Field(alias="hasPendingInterrupt")
@@ -98,6 +100,7 @@ class ConversationHistoryDetail(ConversationTitle):
 
     id: int = Field(ge=1)
     last_model: str | None = Field(default=None, alias="lastModel")
+    access_mode: AccessMode = Field(default="full", alias="accessMode")
     pinned: bool
     as_of_seq: int = Field(alias="asOfSeq", ge=1)
     generation: str

@@ -10,7 +10,7 @@ from typing import Protocol, TypeAlias, TypeGuard
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from tinkerfin_contracts import NativeInterruptRecord
+from tinkerfin_native_stream import NativeRuntimeInterrupt
 
 from .errors import TargetExecutionError
 from .models import AutomationExecution, ExecutionFailure
@@ -131,7 +131,7 @@ def normalize_target_result(value: object) -> ExecutionOutcome:
 
     Args:
         value: Target output. Runtime interrupt results contain ``__interrupt__``
-            records, either NativeInterruptRecord values or serialized mappings.
+            records, either NativeRuntimeInterrupt values or serialized mappings.
 
     Returns:
         A validated execution result or the pending interrupt identities.
@@ -153,7 +153,7 @@ def normalize_target_result(value: object) -> ExecutionOutcome:
             raise TargetExecutionError("Runtime interrupt state has an invalid shape")
         interrupt_ids: list[str] = []
         for item in raw_interrupts:
-            if isinstance(item, NativeInterruptRecord):
+            if isinstance(item, NativeRuntimeInterrupt):
                 interrupt_id = item.id
             elif _is_mapping(item):
                 candidate = item.get("id")

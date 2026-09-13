@@ -80,6 +80,10 @@ namespace、owner、任务名称、target 和 request ID 必须是非空、无�
 
 `AutomationEngine.close()` 停止接收新工作，在 `drain_timeout` 内等待执行完成，再取消并收齐剩余任务。并发关闭共享清理；调用方取消等待，也会在清理完成后才收到取消异常。存储或续租失败会停止监督并由 Engine 报错，外部执行结果未确认时保留并发额度。
 
+所有日程都可设置带时区的 `active_from`（包含）和 `active_until`（不包含）。
+定时触发、预览和错过时间后的补跑均受有效期约束，`run_task_now()` 手动运行不受限制。
+清空有效期时，传入对应边界未设置的完整日程。
+
 ## 持久化
 
 只安装实际使用的数据库驱动：
@@ -149,6 +153,24 @@ worker 未注册某个目标时，对应执行会失败。
 也返回原幂等结果。业务上的再次尝试通过 `retry_execution` 创建新的执行身份，
 `retry_of` 指向原尝试。
 
+### 筛选任务和运行历史
+
+`list_tasks(filters=TaskFilter(...))` 支持名称和状态筛选。
+`list_executions(filters=ExecutionFilter(...))` 还支持 `queued_from`（包含）和
+`queued_until`（不包含）的入队时间范围；时间必须带时区。`name_contains` 使用 Unicode
+casefold 后的字面子串匹配，`%` 和 `_` 没有通配含义；空 `statuses` 选择所有状态。
+执行名称在入队时保存，不随任务改名或删除变化；无任务或无法确定的历史名称可为 `None`。
+
+列表返回 `items` 和 `next_cursor`，按创建时间和 ID 倒序排列。翻页时原样传递游标，
+保持相同的用户、筛选条件及执行查询的任务 ID；改变条件后从无游标开始。
+上一页末行被删除不影响继续翻页。查询反映当前数据，不提供冻结快照。
+`summarize_tasks()` 和 `summarize_executions()` 接受相同筛选条件，按状态统计全部匹配记录，
+不受当前页大小限制。
+
+[完整有效期示例](../../../packages/tinkerfin-automation/examples/active_period.py)
+演示本地任务、手动执行、筛选和统计，不需要模型密钥或网络服务。
+宿主就绪检查可调用 `await worker.check_ready()`，检查工作器是否健康，不触发执行。
+
 ## 执行 TinkerFin Agent
 
 ```python
@@ -216,7 +238,7 @@ Scheduler 实现 `start(on_task_due)`、`schedule_task`、`remove_task` 和 `clo
 再关闭其所属资源。Clock 提供 `now()` 与异步 `wait_until()`；测试可以通过
 `ManualClock.advance()` 明确推进时间。
 
-Store 实现22个异步操作，各组操作保护不同的原子边界：
+Store 提供异步命令、查询和状态统计，各组操作保护不同的原子边界：
 
 | 操作 | 必须保持的不变量 |
 | --- | --- |

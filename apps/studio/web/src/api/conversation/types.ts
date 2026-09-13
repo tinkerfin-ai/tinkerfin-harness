@@ -1,5 +1,5 @@
 import type { ConversationTitleSnapshot } from "./titles"
-import type { AgentMode, JsonObject, JsonValue } from "../../types"
+import type { AccessMode, AgentMode, JsonObject, JsonValue } from "../../types"
 
 export type { AgentMode }
 
@@ -11,6 +11,7 @@ export interface ConversationCommandMap extends JsonObject {
 
 export interface ConversationForwardedProps extends JsonObject {
   model: string
+  accessMode: AccessMode
   command: ConversationCommandMap
 }
 

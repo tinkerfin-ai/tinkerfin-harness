@@ -267,7 +267,7 @@ export function ApprovalCard({
               ref={retryButtonRef}
               size="sm"
               shape="capsule"
-              className="approval-allow-button"
+              variant="solid"
               onClick={() => onSubmit(interruptIds)}
             >
               {t('重新提交')}
@@ -290,7 +290,7 @@ export function ApprovalCard({
                   ref={approveButtonRef}
                   size="sm"
                   shape="capsule"
-                  className="approval-allow-button"
+                  variant="solid"
                   onClick={() => recordDecision({
                     interruptId: active.interruptId,
                     decision: 'approved',

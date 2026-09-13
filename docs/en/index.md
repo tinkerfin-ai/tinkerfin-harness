@@ -29,5 +29,6 @@ Each topic includes examples, usage constraints, and API references. See the [gl
 ## Development and operations
 
 - [Repository development](development.md)
+- [Studio automation](studio/automation.md): schedules, permissions, and execution results
 - [Studio server deployment and configuration](../../apps/studio/server/README.md)
 - [Studio Web development](../../apps/studio/web/README.md)

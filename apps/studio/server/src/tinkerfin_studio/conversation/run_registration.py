@@ -167,6 +167,8 @@ class ConversationRunPreparer:
                 if source_run is None:
                     raise BusinessException(ConversationErrorCode.RUN_NOT_FOUND)
                 self._require_source_model(source_run, model=model)
+                if source_run.access_mode != prepared.access_mode:
+                    raise BusinessException(ConversationErrorCode.RUN_IDENTITY_CONFLICT)
             if isinstance(intent, ResumeChatIntent):
                 if source_run_id is None:
                     raise BusinessException(ConversationErrorCode.RESUME_REQUIRED)
@@ -383,6 +385,7 @@ class ConversationRunPreparer:
                     parent_run_id=prepared.parent_run_id,
                     model_id=model.model_id,
                     input_json=prepared.input_json,
+                    access_mode=prepared.access_mode,
                 )
                 return created, True
         except IntegrityError:

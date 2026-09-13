@@ -253,7 +253,7 @@ const emptyGraph = (asOfSeq: number): TraceGraph => ({
 const detail = (
   threadId = THREAD_ID,
   includeTaskTrace = true,
-): ConversationHistoryDetail => ({
+): ConversationHistoryDetail => ({ accessMode: 'write_approval',
   id: threadId === THREAD_ID ? 1 : 2,
   threadId,
   title: threadId === THREAD_ID ? '链路浏览器会话' : '另一个会话',
@@ -431,7 +431,7 @@ async function mockChainTraceStudio(
     }
     if (url.pathname === '/api/conversation/history') {
       await fulfillJson(route, {
-        items: [THREAD_ID, OTHER_THREAD_ID].map((threadId, index) => ({
+        items: [THREAD_ID, OTHER_THREAD_ID].map((threadId, index) => ({ accessMode: 'full',
           id: index + 1,
           threadId,
           title: threadId === THREAD_ID ? '链路浏览器会话' : '另一个会话',

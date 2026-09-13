@@ -22,7 +22,7 @@ from tinkerfin_automation import (
 from tinkerfin_automation.clock import ManualClock
 from tinkerfin_automation.store import WorkItemClaim
 from tinkerfin_automation.targets import normalize_target_result
-from tinkerfin_contracts import NativeInterruptRecord
+from tinkerfin_native_stream import NativeRuntimeInterrupt
 
 NOW = datetime(2026, 9, 9, 8, tzinfo=UTC)
 
@@ -117,7 +117,7 @@ def test_runtime_interrupt_shape_is_normalized_without_decision() -> None:
         {
             "messages": [],
             "__interrupt__": [
-                NativeInterruptRecord(id="interrupt-1", value={"action": "write"})
+                NativeRuntimeInterrupt(id="interrupt-1", value={"action": "write"})
             ],
         }
     )

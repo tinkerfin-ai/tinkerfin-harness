@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 
 import { useI18n } from '../../i18n'
 import { IconButton } from './IconButton'
+import { DialogContext } from './DialogContext'
 
 const FOCUSABLE_SELECTOR = [
   'button:not([disabled])',
@@ -54,7 +55,13 @@ export function Dialog({
     restoreFocusRef.current = restoreFocusTo
       ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
     ;(initialFocusRef?.current ?? closeRef.current ?? dialogRef.current)?.focus()
-    return () => restoreFocusRef.current?.focus()
+    return () => {
+      const target = restoreFocusRef.current
+      // 等待宿主解除模态隔离；其他交互已设置新焦点时不再抢回入口
+      queueMicrotask(() => {
+        if (document.activeElement === document.body) target?.focus()
+      })
+    }
   }, [initialFocusRef, open, restoreFocusTo])
 
   if (!open) return null
@@ -93,8 +100,9 @@ export function Dialog({
   }
 
   return createPortal(
-    // 遮罩只处理对话框外部的指针取消，不进入键盘顺序，键盘关闭由对话框自身负责
-    // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+    <DialogContext.Provider value={true}>
+    {/* 遮罩只处理对话框外部的指针取消，不进入键盘顺序，键盘关闭由对话框自身负责 */}
+    {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
     <div
       className="modal-backdrop"
       onMouseDown={(event) => {
@@ -132,7 +140,8 @@ export function Dialog({
         </header>
         {children}
       </div>
-    </div>,
+    </div>
+    </DialogContext.Provider>,
     document.body,
   )
 }

@@ -46,6 +46,7 @@ CREATE TABLE conversation_threads (
   title_seq INT NOT NULL DEFAULT 0 COMMENT '标题及生成状态每次提交递增的序号，与 Trace 序号无关',
   status VARCHAR(32) NOT NULL COMMENT '列表状态：idle/running/waiting_approval/error/deleting',
   last_run_id VARCHAR(128) COMMENT '最近主 Run ID',
+  last_access_mode VARCHAR(32) NOT NULL DEFAULT 'full' COMMENT '最近主运行文件审批模式：full 或 write_approval',
   last_model VARCHAR(64) COMMENT '最近主 Run 使用的稳定模型 ID',
   message_count INTEGER NOT NULL COMMENT 'Trace 中 user 与 assistant 消息数',
   tool_call_count INTEGER NOT NULL COMMENT 'Trace 中 Tool proposal 数',
@@ -67,6 +68,7 @@ CREATE TABLE conversation_run_registrations (
   conversation_thread_id BIGINT NOT NULL COMMENT '所属会话主键，由应用层保证存在',
   run_id VARCHAR(128) NOT NULL COMMENT '公开且幂等的主 Run ID',
   parent_run_id VARCHAR(128) COMMENT 'branch 或 resume 来源 Run ID',
+  access_mode VARCHAR(32) NOT NULL DEFAULT 'full' COMMENT '本运行固定的文件审批模式：full 或 write_approval',
   model_id VARCHAR(64) NOT NULL COMMENT '主 Run 使用的稳定模型 ID',
   status VARCHAR(32) NOT NULL COMMENT 'preparing/starting/running/waiting/succeeded/failed/cancelled/abandoned',
   input_json JSON NOT NULL COMMENT '用于同 runId 幂等核验的标准请求',
@@ -117,6 +119,26 @@ CREATE TABLE conversation_attachments (
 )COMMENT='会话上传和生成附件的持久化引用';
 CREATE INDEX ix_conversation_attachments_cleanup ON conversation_attachments (thread_id, created_at);
 CREATE INDEX ix_conversation_attachments_owner ON conversation_attachments (user_id, thread_id);
+
+CREATE TABLE attachment_collections (
+	id VARCHAR(36) NOT NULL COMMENT '集合稳定ID，任务配置由请求ID推导，运行使用执行ID',
+	user_id INTEGER NOT NULL COMMENT '所属用户ID',
+	purpose VARCHAR(16) NOT NULL COMMENT 'input为不可变任务配置，execution为运行附件',
+	task_id VARCHAR(36) COMMENT '关联自动化任务ID，删除任务后仍保留历史引用',
+	configuration JSON NOT NULL COMMENT '不含凭据的不可变任务或运行输入快照',
+	created_at DATETIME NOT NULL COMMENT 'UTC创建时间',
+	PRIMARY KEY (id)
+)COMMENT='自动化任务配置和运行附件的持久归属';
+
+CREATE INDEX ix_attachment_collections_owner_task ON attachment_collections (user_id, task_id);
+
+CREATE TABLE attachment_references (
+	collection_id VARCHAR(36) NOT NULL COMMENT '附件集合ID',
+	attachment_id VARCHAR(32) NOT NULL COMMENT '附件文件ID',
+	PRIMARY KEY (collection_id, attachment_id)
+)COMMENT='自动化附件集合与文件引用，由服务校验归属';
+
+CREATE INDEX ix_attachment_references_file ON attachment_references (attachment_id);
 
 INSERT INTO users (username, display_name, avatar_url, password_hash, roles, disabled)
 VALUES ('tinkerfin', 'TinkerFin', NULL, '$pbkdf2-sha256$600000$1ZFendL8broCk5OyW_zBQA$FHwGHqHzxz2n3-ksjSWYySw1tq6sE3X83sIsAGB1REI', '[]', FALSE);

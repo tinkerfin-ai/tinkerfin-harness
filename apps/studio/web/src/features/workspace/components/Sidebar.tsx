@@ -1,6 +1,6 @@
 import {
   BookOpenCheck,
-  Cable,
+  AlarmClock,
   CircleEllipsis,
   Ellipsis,
   LogOut,
@@ -113,6 +113,8 @@ export interface SidebarProps {
   onToggleMode: () => void
   onRequestExpanded: () => void
   onCloseOverlay: (restoreFocus?: boolean) => void
+  onOpenAutomation: () => void
+  automationActive: boolean
   onNew: () => void
   onSelect: (threadId: string) => void
   onPin: (threadId: string) => void
@@ -146,6 +148,8 @@ export function Sidebar({
   onToggleMode,
   onRequestExpanded,
   onCloseOverlay,
+  onOpenAutomation,
+  automationActive,
   onNew,
   onSelect,
   onPin,
@@ -543,7 +547,7 @@ export function Sidebar({
     <ConversationItem
       key={conversation.threadId}
       conversation={conversation}
-      isActive={conversation.threadId === workspace.currentThreadId}
+      isActive={!automationActive && conversation.threadId === workspace.currentThreadId}
       isMenuOpen={openMenu?.threadId === conversation.threadId}
       onSelect={() => selectConversation(conversation.threadId)}
       onToggleMenu={conversation.threadId
@@ -668,7 +672,8 @@ export function Sidebar({
               <nav className="primary-nav" aria-label={t('工作区功能')}>
                 <Button size="sm" variant="ghost" leadingIcon={<Workflow size={18} />} disabled>{t('智能体')}</Button>
                 <Button size="sm" variant="ghost" leadingIcon={<BookOpenCheck size={18} />} disabled>{t('技能库')}</Button>
-                <Button size="sm" variant="ghost" leadingIcon={<Cable size={18} />} disabled>{t('MCP管理')}</Button>
+                <Button type="button" size="sm" variant="ghost" leadingIcon={<AlarmClock size={18} />} selected={automationActive}
+                  aria-current={automationActive ? 'page' : undefined} onClick={onOpenAutomation}>{t('自动化')}</Button>
                 <Button size="sm" variant="ghost" leadingIcon={<CircleEllipsis size={18} />} disabled>{t('更多')}</Button>
               </nav>
               <div className="conversation-groups">

@@ -111,6 +111,11 @@ state. Read those through the Runtime's configured Trace or application storage.
 - `CronSchedule(expression=..., timezone=...)` uses five fields and an explicit IANA
   timezone. Weekdays use `mon` through `sun` names.
 
+All schedules accept optional timezone-aware `active_from` (inclusive) and
+`active_until` (exclusive). Scheduled occurrences, previews, and misfire catch-up
+stay inside this interval. `run_task_now()` remains available outside it. To clear
+a period, pass a complete replacement schedule with the corresponding bound unset.
+
 Cron skips nonexistent local times during a DST gap. When a local time occurs twice,
 only the earlier UTC occurrence runs. `MisfirePolicy` selects `skip`, `latest`, or
 bounded `catch_up`; `latest` is the default.
@@ -125,7 +130,8 @@ task executions and per owner for taskless `execute_once()` executions.
 `AutomationEngine.close()` stops new work, allows running targets to finish within
 `drain_timeout`, then cancels and joins the remaining tasks. Concurrent close calls
 share cleanup; cancelling a caller waits for cleanup before propagating cancellation.
-A storage or renewal failure stops supervision and is reported by the Engine. Work
+Use `await worker.check_ready()` in host readiness checks; it validates worker health
+without dispatching work. A storage or renewal failure stops supervision and is reported by the Engine. Work
 whose external completion is unconfirmed retains its concurrency reservation.
 
 
@@ -152,6 +158,27 @@ request; conflicting input raises `RequestConflictError`.
 `run_task_now` optionally accepts `expected_revision` when execution must use a
 specific task revision. New queue admission checks it atomically; an existing
 idempotent result is returned even if the task has since changed.
+
+### Filter tasks and execution history
+
+Pass `TaskFilter(name_contains=..., statuses=(... ,))` to `list_tasks(filters=...)`.
+Use `ExecutionFilter` with the same name/status options and optional `queued_from`
+and `queued_until` for execution history. Text is a literal Unicode-casefold
+substring; `%` and `_` are ordinary characters. Queue time bounds are aware instants,
+with an inclusive start and exclusive end. Empty statuses mean every status.
+Execution names are captured when queued, survive task deletion, and do not follow
+later renames. Taskless or unknown historical names may be `None`.
+
+Both list methods return `items` and `next_cursor`. Pass that opaque cursor unchanged
+with the same owner and filters (and task ID for execution queries); start without a
+cursor when changing the query. Pages are ordered by creation time and ID, newest
+first, and remain usable if the preceding row is deleted. They are live queries,
+not a frozen snapshot. `summarize_tasks()` and `summarize_executions()` accept the same
+filters and count every matching record by status, independently of pagination.
+
+The [active-period example](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/packages/tinkerfin-automation/examples/active_period.py)
+shows a complete local task, manual execution, filtering, and aggregation without
+network services or model credentials.
 
 ### Interrupts
 

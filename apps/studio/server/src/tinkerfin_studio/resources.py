@@ -21,6 +21,11 @@ from opensandbox.config import ConnectionConfig
 from redis.asyncio import Redis
 
 from tinkerfin import TinkerFin
+from tinkerfin_automation import (
+    AutomationEngine,
+    AutomationService,
+    SqlAlchemyAutomationStore,
+)
 from tinkerfin_messaging import MessagingLimits, MessagingRetentionPolicy
 from tinkerfin_messaging.agui import AgUiCodec
 from tinkerfin_messaging.messaging import MessageChannel, Messaging
@@ -33,6 +38,10 @@ from tinkerfin_studio.agent.persistence import AgentPersistence
 from tinkerfin_studio.agent.subagents import SubagentSettings, load_subagents
 from tinkerfin_studio.attachments.service import AttachmentService
 from tinkerfin_studio.attachments.storage import DiskAttachmentStorage
+from tinkerfin_studio.automation.target import (
+    StudioAutomationTarget,
+    fail_interactive_execution,
+)
 from tinkerfin_studio.config.logging import setup_logging
 from tinkerfin_studio.config.settings import Settings, get_settings
 from tinkerfin_studio.conversation.coordinator import (
@@ -158,6 +167,7 @@ class ApplicationResources:
     sandbox_manager: OpenSandboxManager[str]
     conversation_trace: ConversationTraceCoordinator
     readiness: ReadinessService
+    automation: AutomationService
 
 
 def build_lifespan():
@@ -293,8 +303,22 @@ def build_lifespan():
                 stack.push_async_callback(conversation_trace.aclose)
                 await conversation_trace.recover_preparing()
                 agent_subagents = await load_subagents()
-                application.state.resources = ApplicationResources(
+                automation_store = SqlAlchemyAutomationStore(database.engine)
+                stack.push_async_callback(automation_store.close)
+                automation = await _enter_lifespan_context(
+                    stack,
+                    outcome,
+                    AutomationService(
+                        namespace="studio_automation", store=automation_store
+                    ),
+                )
+
+                async def check_automation() -> None:
+                    await automation_worker.check_ready()
+
+                resources = ApplicationResources(
                     settings=settings,
+                    automation=automation,
                     model_http_client=model_http_client,
                     attachments=AttachmentService(
                         database, DiskAttachmentStorage(settings.attachment_directory)
@@ -315,9 +339,20 @@ def build_lifespan():
                         redis=redis_runtime,
                         sandbox=settings.sandbox,
                         sandbox_ready=sandbox_manager.check_ready,
+                        automation_ready=check_automation,
                         http_client=http_client,
                     ),
                 )
+                automation_worker = await _enter_lifespan_context(
+                    stack,
+                    outcome,
+                    AutomationEngine(
+                        automation,
+                        targets={"studio_agent": StudioAutomationTarget(resources)},
+                        on_interrupt=fail_interactive_execution,
+                    ),
+                )
+                application.state.resources = resources
                 resources_published = True
                 await application.state.resources.attachments.cleanup()
                 yield

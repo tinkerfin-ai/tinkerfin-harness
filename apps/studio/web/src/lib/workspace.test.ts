@@ -36,6 +36,7 @@ function conversation(
     updatedAt,
     model: 'GPT-5.5',
     mode: 'default' as const,
+    accessMode: 'write_approval' as const,
     messages: content
       ? [
           {

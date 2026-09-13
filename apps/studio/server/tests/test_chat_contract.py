@@ -58,6 +58,7 @@ def test_chat_request_preserves_command_extensions_and_derives_plan_mode() -> No
         }
     ]
     assert payload["forwardedProps"] == {
+        "accessMode": "full",
         "model": "main",
         "command": {"plan": "on", "compact": "保留这段命令输入"},
         "trace": "x",

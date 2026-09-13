@@ -17,6 +17,7 @@ from pydantic import JsonValue
 
 from tinkerfin import AgentMode, RunIdentity
 from tinkerfin_contracts.media import Attachment
+from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
 from tinkerfin_studio.conversation.models import TitleGenerationStatus, TitleSource
 from tinkerfin_studio.conversation.request import ChatRequest
@@ -57,6 +58,7 @@ class PreparedRunRequest:
     graph_config: RunnableConfig
     message_ids: tuple[str, ...]
     mode: AgentMode
+    access_mode: AccessMode = "full"
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +126,7 @@ def prepare_run_request(
         graph_config=graph_config,
         message_ids=message_ids,
         mode=request.forwarded_props.agent_mode,
+        access_mode=request.forwarded_props.access_mode,
     )
 
 

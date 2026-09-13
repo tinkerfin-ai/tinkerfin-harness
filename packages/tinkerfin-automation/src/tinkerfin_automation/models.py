@@ -150,9 +150,13 @@ class AutomationExecution:
     created_at: datetime
     updated_at: datetime
 
+    task_name: str | None = None
+
     def __post_init__(self) -> None:
         """Require finite JSON and freeze the top-level input mapping."""
 
+        if self.task_name is not None:
+            _validate_persisted_text(self.task_name, name="task_name", maximum=255)
         _validate_persisted_text(self.execution_id, name="execution_id", maximum=36)
         if self.task_id is not None:
             _validate_persisted_text(self.task_id, name="task_id", maximum=36)

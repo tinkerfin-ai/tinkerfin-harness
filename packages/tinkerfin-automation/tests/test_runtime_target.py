@@ -21,6 +21,7 @@ from tinkerfin_automation import (
     TinkerFinTarget,
 )
 from tinkerfin_contracts import RunIdentity
+from tinkerfin_native_stream import NativeRuntimeInterrupt
 
 
 def _execution(now: datetime) -> AutomationExecution:
@@ -70,7 +71,12 @@ async def test_runtime_target_uses_ainvoke_and_returns_interrupt_without_resume(
         **_options: object,
     ) -> Mapping[str, object]:
         calls.append((self.run_identity(thread_id, run_id), input, mode))
-        return {"messages": [], "__interrupt__": [{"id": "interrupt-1"}]}
+        return {
+            "messages": [],
+            "__interrupt__": [
+                NativeRuntimeInterrupt(id="interrupt-1", value={"action_requests": []})
+            ],
+        }
 
     monkeypatch.setattr(AgentRuntime, "ainvoke", fake_ainvoke)
     runtime = TinkerFin().with_namespace("app").build(model="provider:model")

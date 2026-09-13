@@ -1,3 +1,4 @@
+import type { AccessMode } from "../../types"
 import { isInterrupt } from './eventParser'
 import type { InterruptEvent } from './types'
 import type { ConversationTitleSnapshot } from "./titles"
@@ -22,6 +23,7 @@ export interface ConversationHistoryListItem extends ConversationTitleSnapshot {
   status: string
   lastRunId?: string | null
   lastModel?: string | null
+  accessMode: AccessMode
   messageCount: number
   toolCallCount: number
   hasPendingInterrupt: boolean
@@ -136,6 +138,7 @@ export interface ConversationHistoryDetail extends ConversationTitleSnapshot {
   threadId: string
   title: string
   lastModel?: string | null
+  accessMode: AccessMode
   pinned: boolean
   asOfSeq: number
   generation: string

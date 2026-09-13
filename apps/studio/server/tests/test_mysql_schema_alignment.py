@@ -15,9 +15,15 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from tinkerfin_automation import SqlAlchemyAutomationStore
+from tinkerfin_automation.sql_schema import AUTOMATION_TABLE_NAMES
 from tinkerfin_langgraph_store import SqlAlchemyStore
 from tinkerfin_sandbox import get_sqlalchemy_opensandbox_state_schema
-from tinkerfin_studio.attachments.entity import AttachmentFile
+from tinkerfin_studio.attachments.entity import (
+    AttachmentCollection,
+    AttachmentFile,
+    AttachmentReference,
+)
 from tinkerfin_studio.auth.models import User
 from tinkerfin_studio.auth.passwords import verify_password
 from tinkerfin_studio.conversation.models import (
@@ -34,6 +40,9 @@ _DATABASE_NAME_PATTERN = re.compile(r"\Atinkerfin_schema_[a-f0-9]{16}_(sql|runti
 _EXPECTED_TABLES = frozenset(
     {
         "users",
+        "attachment_collections",
+        "attachment_references",
+        *AUTOMATION_TABLE_NAMES,
         "conversation_attachments",
         "agent_models",
         "conversation_threads",
@@ -60,6 +69,8 @@ _EXPECTED_TABLES = frozenset(
 _BUSINESS_MODELS = (
     User,
     AttachmentFile,
+    AttachmentCollection,
+    AttachmentReference,
     AgentModel,
     ConversationThread,
     ConversationRunRegistration,
@@ -265,6 +276,11 @@ async def _create_runtime_schema(engine: AsyncEngine) -> None:
     sandbox_schema = get_sqlalchemy_opensandbox_state_schema(dialect="mysql")
     await _execute_ddl(engine, sandbox_schema.ddl)
     await SqlAlchemyTraceStore(engine).setup()
+    automation = SqlAlchemyAutomationStore(engine)
+    try:
+        await automation.setup()
+    finally:
+        await automation.close()
 
 
 async def _create_database(admin_engine: AsyncEngine, database_name: str) -> None:

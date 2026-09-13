@@ -1,4 +1,8 @@
-from tinkerfin_studio.attachments.entity import AttachmentFile
+from tinkerfin_studio.attachments.entity import (
+    AttachmentCollection,
+    AttachmentFile,
+    AttachmentReference,
+)
 from tinkerfin_studio.auth.models import User
 from tinkerfin_studio.conversation.models import (
     ConversationInterruptClaim,
@@ -15,6 +19,8 @@ def test_business_schema_contains_no_foreign_keys() -> None:
     registered = (
         User,
         AttachmentFile,
+        AttachmentCollection,
+        AttachmentReference,
         AgentModel,
         ConversationThread,
         ConversationRunRegistration,

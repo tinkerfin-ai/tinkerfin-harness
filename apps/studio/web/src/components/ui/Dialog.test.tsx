@@ -42,6 +42,27 @@ function Example({
 }
 
 describe('Dialog组合契约', () => {
+  it('关闭流程已指定下一处焦点时，不抢回原入口', async () => {
+    const user = userEvent.setup()
+    function RedirectExample() {
+      const [open, setOpen] = useState(false)
+      const next = useRef<HTMLInputElement>(null)
+      return <>
+        <button type="button" onClick={() => setOpen(true)}>打开</button>
+        <input ref={next} aria-label="下一步" />
+        <Dialog open={open} title="示例" onClose={() => {
+          next.current?.focus()
+          setOpen(false)
+        }}>内容</Dialog>
+      </>
+    }
+    render(<RedirectExample />)
+    await user.click(screen.getByRole('button', { name: '打开' }))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '下一步' })).toHaveFocus()
+  })
+
   it('默认关闭、指定初始焦点、跳过禁用控件、焦点循环及恢复', async () => {
     const user = userEvent.setup()
     render(<Example />)

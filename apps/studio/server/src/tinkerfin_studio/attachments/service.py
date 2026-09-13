@@ -10,14 +10,20 @@ from uuid import uuid4
 
 import anyio
 from anyio import to_thread
-from sqlalchemy import or_, select
+from pydantic import JsonValue
+from sqlalchemy import delete, exists, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tinkerfin.media import AttachmentContent
 from tinkerfin_contracts.media import Attachment
 from tinkerfin_studio.api.errors import AttachmentErrorCode, BusinessException
 from tinkerfin_studio.attachments.documents import DocumentProcessor
-from tinkerfin_studio.attachments.entity import AttachmentFile
+from tinkerfin_studio.attachments.entity import (
+    AttachmentCollection,
+    AttachmentFile,
+    AttachmentReference,
+)
 from tinkerfin_studio.attachments.processing import (
     MAX_FILE_BYTES,
     MAX_TOTAL_BYTES,
@@ -58,6 +64,7 @@ class AttachmentService:
         name: str,
         chunks: AsyncIterator[bytes],
         thread_id: str | None = None,
+        collection_id: str | None = None,
         source: Literal["user", "tool"] = "user",
     ) -> Attachment:
         """有界接收并验证文件，完整保存原件和派生图后发布
@@ -65,6 +72,8 @@ class AttachmentService:
         上传中断和进程崩溃留下的 staging 记录由清理入口回收。
         当前进程取消时完成对象清理，再传播取消，不发布半成品。
         """
+        if thread_id is not None and collection_id is not None:
+            raise ValueError("附件只能属于会话或集合中的一种范围")
         async with self._uploads:
             if (
                 not name
@@ -102,6 +111,10 @@ class AttachmentService:
             async with self._database.session() as session:
                 if thread_id is not None:
                     await self._require_thread(session, user_id, thread_id)
+                if collection_id is not None:
+                    await self._require_collection(
+                        session, user_id, collection_id, writable=True
+                    )
                 session.add(row)
                 await session.commit()
             try:
@@ -116,6 +129,15 @@ class AttachmentService:
                     saved = await session.get(AttachmentFile, row.id)
                     if saved is None:
                         raise RuntimeError("附件上传记录不可用")
+                    if collection_id is not None:
+                        await self._require_collection(
+                            session, user_id, collection_id, writable=True
+                        )
+                        session.add(
+                            AttachmentReference(
+                                collection_id=collection_id, attachment_id=row.id
+                            )
+                        )
                     saved.status = "ready"
                     await session.commit()
                 return descriptor(row)
@@ -123,6 +145,176 @@ class AttachmentService:
                 with anyio.CancelScope(shield=True):
                     await self._delete(row.id)
                 raise
+
+    async def _require_collection(
+        self,
+        session: AsyncSession,
+        user_id: int,
+        collection_id: str,
+        *,
+        writable: bool = False,
+    ) -> AttachmentCollection:
+        collection = await session.get(AttachmentCollection, collection_id)
+        if (
+            collection is None
+            or collection.user_id != user_id
+            or (writable and collection.purpose != "execution")
+        ):
+            raise BusinessException(AttachmentErrorCode.NOT_FOUND)
+        return collection
+
+    async def create_collection(
+        self,
+        *,
+        user_id: int,
+        collection_id: str,
+        purpose: Literal["input", "execution"],
+        attachment_ids: tuple[str, ...],
+        configuration: dict[str, JsonValue],
+        task_id: str | None = None,
+    ) -> None:
+        """在提交调度前保留不可变输入；重复请求只能复用完全相同的配置和文件"""
+        if len(attachment_ids) > 5 or len(set(attachment_ids)) != len(attachment_ids):
+            raise BusinessException(AttachmentErrorCode.INVALID_FILE)
+        try:
+            async with self._database.session() as session:
+                existing = await session.get(AttachmentCollection, collection_id)
+                if existing is not None:
+                    await self._verify_collection(
+                        session,
+                        existing,
+                        user_id=user_id,
+                        collection_id=collection_id,
+                        purpose=purpose,
+                        attachment_ids=attachment_ids,
+                        configuration=configuration,
+                    )
+                    return
+                files: list[AttachmentFile] = []
+                for identity in sorted(attachment_ids):
+                    row = await session.scalar(
+                        select(AttachmentFile)
+                        .where(AttachmentFile.id == identity)
+                        .with_for_update()
+                    )
+                    if row is None or row.user_id != user_id or row.status != "ready":
+                        raise BusinessException(AttachmentErrorCode.NOT_FOUND)
+                    files.append(row)
+                if sum(row.size_bytes for row in files) > MAX_TOTAL_BYTES:
+                    raise BusinessException(AttachmentErrorCode.TOO_LARGE)
+                session.add(
+                    AttachmentCollection(
+                        id=collection_id,
+                        user_id=user_id,
+                        purpose=purpose,
+                        configuration=configuration,
+                        task_id=task_id,
+                    )
+                )
+                for row in files:
+                    session.add(
+                        AttachmentReference(
+                            collection_id=collection_id, attachment_id=row.id
+                        )
+                    )
+                await session.commit()
+        except IntegrityError:
+            async with self._database.session() as session:
+                existing = await session.get(AttachmentCollection, collection_id)
+                if existing is None:
+                    raise
+                await self._verify_collection(
+                    session,
+                    existing,
+                    user_id=user_id,
+                    collection_id=collection_id,
+                    purpose=purpose,
+                    attachment_ids=attachment_ids,
+                    configuration=configuration,
+                )
+
+    async def _verify_collection(
+        self,
+        session: AsyncSession,
+        existing: AttachmentCollection,
+        *,
+        user_id: int,
+        collection_id: str,
+        purpose: str,
+        attachment_ids: tuple[str, ...],
+        configuration: dict[str, JsonValue],
+    ) -> None:
+        if (
+            existing.user_id != user_id
+            or existing.purpose != purpose
+            or existing.configuration != configuration
+        ):
+            raise BusinessException(AttachmentErrorCode.REFERENCE_CONFLICT)
+        if purpose == "input":
+            saved_ids = set(
+                await session.scalars(
+                    select(AttachmentReference.attachment_id).where(
+                        AttachmentReference.collection_id == collection_id
+                    )
+                )
+            )
+            if saved_ids != set(attachment_ids):
+                raise BusinessException(AttachmentErrorCode.REFERENCE_CONFLICT)
+
+    async def list_collection(
+        self, *, user_id: int, collection_id: str
+    ) -> list[Attachment]:
+        """读取当前任务输入或运行结果中的附件，不扩大到用户其他文件"""
+        async with self._database.session() as session:
+            await self._require_collection(session, user_id, collection_id)
+            rows = await session.scalars(
+                select(AttachmentFile)
+                .join(
+                    AttachmentReference,
+                    AttachmentReference.attachment_id == AttachmentFile.id,
+                )
+                .where(
+                    AttachmentReference.collection_id == collection_id,
+                    AttachmentFile.user_id == user_id,
+                    AttachmentFile.status == "ready",
+                )
+                .order_by(AttachmentFile.created_at, AttachmentFile.id)
+                .limit(100)
+            )
+            return [descriptor(row) for row in rows]
+
+    async def collection_created_at(
+        self, *, user_id: int, collection_id: str
+    ) -> datetime:
+        """读取输入集合的固定创建时间，供间隔日程在重复请求时保持同一起点"""
+        async with self._database.session() as session:
+            collection = await self._require_collection(session, user_id, collection_id)
+            return collection.created_at.replace(tzinfo=UTC)
+
+    async def mark_collection_task(
+        self, *, user_id: int, collection_id: str, task_id: str
+    ) -> None:
+        """登记任务引用，保留历史配置而不改写其内容"""
+        async with self._database.session() as session:
+            collection = await self._require_collection(session, user_id, collection_id)
+            if collection.task_id is not None and collection.task_id != task_id:
+                raise BusinessException(AttachmentErrorCode.REFERENCE_CONFLICT)
+            collection.task_id = task_id
+            await session.commit()
+
+    async def discard_collection(self, *, user_id: int, collection_id: str) -> None:
+        """仅回收确认未提交任务的输入集合；不删除文件或运行历史"""
+        async with self._database.session() as session:
+            collection = await self._require_collection(session, user_id, collection_id)
+            if collection.task_id is not None or collection.purpose != "input":
+                raise BusinessException(AttachmentErrorCode.ALREADY_SENT)
+            await session.execute(
+                delete(AttachmentReference).where(
+                    AttachmentReference.collection_id == collection_id
+                )
+            )
+            await session.delete(collection)
+            await session.commit()
 
     async def _require_thread(
         self, session: AsyncSession, user_id: int, thread_id: str
@@ -137,7 +329,12 @@ class AttachmentService:
             raise BusinessException(AttachmentErrorCode.THREAD_UNAVAILABLE)
 
     async def get(
-        self, attachment_id: str, *, user_id: int, thread_id: str | None = None
+        self,
+        attachment_id: str,
+        *,
+        user_id: int,
+        thread_id: str | None = None,
+        collection_id: str | None = None,
     ) -> Attachment:
         """检查用户与会话归属，失效或未发布附件不提供内容"""
         async with self._database.session() as session:
@@ -146,8 +343,23 @@ class AttachmentService:
                 raise BusinessException(AttachmentErrorCode.NOT_FOUND)
             if thread_id is not None and row.thread_id not in (None, thread_id):
                 raise BusinessException(AttachmentErrorCode.NOT_FOUND)
-            if row.thread_id is not None:
-                await self._require_thread(session, user_id, row.thread_id)
+            if collection_id is not None:
+                await self._require_collection(session, user_id, collection_id)
+                reference = await session.get(
+                    AttachmentReference, (collection_id, attachment_id)
+                )
+                if reference is None:
+                    raise BusinessException(AttachmentErrorCode.NOT_FOUND)
+            elif row.thread_id is not None:
+                retained = await session.scalar(
+                    select(
+                        exists().where(
+                            AttachmentReference.attachment_id == attachment_id
+                        )
+                    )
+                )
+                if not retained:
+                    await self._require_thread(session, user_id, row.thread_id)
             return descriptor(row)
 
     async def read(
@@ -156,10 +368,16 @@ class AttachmentService:
         *,
         user_id: int,
         thread_id: str | None = None,
+        collection_id: str | None = None,
         variant: Literal["original", "preview", "model"] = "original",
     ) -> tuple[Attachment, bytes]:
         """鉴权后读取原件或预生成的图片派生文件"""
-        attachment = await self.get(attachment_id, user_id=user_id, thread_id=thread_id)
+        attachment = await self.get(
+            attachment_id,
+            user_id=user_id,
+            thread_id=thread_id,
+            collection_id=collection_id,
+        )
         if variant not in {"original", "preview", "model"}:
             raise BusinessException(AttachmentErrorCode.INVALID_VARIANT)
         suffix = "" if variant == "original" else f"-{variant}"
@@ -172,12 +390,21 @@ class AttachmentService:
         return attachment, data
 
     async def read_image(
-        self, attachment: Attachment, *, user_id: int, thread_id: str
+        self,
+        attachment: Attachment,
+        *,
+        user_id: int,
+        thread_id: str | None = None,
+        collection_id: str | None = None,
     ) -> AttachmentContent:
         """提供模型用图，原件失效时让框架明确标记为不可阅读"""
         try:
             _, data = await self.read(
-                attachment.id, user_id=user_id, thread_id=thread_id, variant="model"
+                attachment.id,
+                user_id=user_id,
+                thread_id=thread_id,
+                collection_id=collection_id,
+                variant="model",
             )
         except BusinessException as error:
             if error.error_code.http_status == 404:
@@ -243,7 +470,12 @@ class AttachmentService:
             )
             if row is None or row.user_id != user_id:
                 raise BusinessException(AttachmentErrorCode.NOT_FOUND)
-            if row.thread_id is not None:
+            retained = await session.scalar(
+                select(
+                    exists().where(AttachmentReference.attachment_id == attachment_id)
+                )
+            )
+            if row.thread_id is not None or retained:
                 raise BusinessException(AttachmentErrorCode.ALREADY_SENT)
             row.status = "deleting"
             await session.commit()
@@ -266,6 +498,9 @@ class AttachmentService:
             rows = await session.scalars(
                 select(AttachmentFile)
                 .where(
+                    ~exists().where(
+                        AttachmentReference.attachment_id == AttachmentFile.id
+                    ),
                     or_(
                         AttachmentFile.status == "deleting",
                         (
@@ -276,7 +511,7 @@ class AttachmentService:
                             AttachmentFile.thread_id.is_not(None)
                             & AttachmentFile.thread_id.not_in(live_threads)
                         ),
-                    )
+                    ),
                 )
                 .limit(100)
                 .with_for_update(skip_locked=True)

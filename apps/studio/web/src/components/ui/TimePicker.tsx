@@ -3,6 +3,7 @@ import { Clock3 } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
+  useContext,
   useId,
   useLayoutEffect,
   useRef,
@@ -13,6 +14,7 @@ import {
 } from 'react'
 
 import { useI18n } from '../../i18n'
+import { DialogContext } from './DialogContext'
 
 export type TimePickerSize = 'xs' | 'md' | 'lg'
 
@@ -91,6 +93,7 @@ export const TimePicker = forwardRef<HTMLButtonElement, TimePickerProps>(functio
   ...buttonProps
 }, forwardedRef) {
   const { t } = useI18n()
+  const inDialog = useContext(DialogContext)
   const pickerId = useId()
   const panelId = `time-picker-${pickerId}`
   const hourLabelId = `${panelId}-hours-label`
@@ -132,8 +135,8 @@ export const TimePicker = forwardRef<HTMLButtonElement, TimePickerProps>(functio
   }
 
   const closeAndFocusTrigger = () => {
+    triggerRef.current?.focus()
     setOpen(false)
-    window.requestAnimationFrame(() => triggerRef.current?.focus())
   }
 
   const chooseHour = (hour: number, focusMinute = true) => {
@@ -162,6 +165,19 @@ export const TimePicker = forwardRef<HTMLButtonElement, TimePickerProps>(functio
     refs: Array<HTMLButtonElement | null>,
   ) => {
     const key = event.key
+    if (key === 'Escape') {
+      event.preventDefault()
+      closeAndFocusTrigger()
+      return
+    }
+    if (key === 'Tab') {
+      event.preventDefault()
+      // 按视觉顺序切换两列，离开选项时回到入口，由表单继续管理焦点
+      const next = event.shiftKey ? hourRefs.current[draftHour] : minuteRefs.current[draftMinute]
+      if (next === event.currentTarget) closeAndFocusTrigger()
+      else next?.focus()
+      return
+    }
     if (!['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Home', 'End'].includes(key)) {
       return
     }
@@ -279,6 +295,12 @@ export const TimePicker = forwardRef<HTMLButtonElement, TimePickerProps>(functio
           aria-controls={open ? panelId : undefined}
           disabled={pickerDisabled}
           onClick={() => open ? closeAndFocusTrigger() : openPicker()}
+          onKeyDown={(event) => {
+            if (open && event.key === 'Escape') {
+              event.preventDefault()
+              closeAndFocusTrigger()
+            }
+          }}
         >
           <span>{displayValue}</span>
           <Clock3 size={16} aria-hidden="true" />
@@ -286,11 +308,11 @@ export const TimePicker = forwardRef<HTMLButtonElement, TimePickerProps>(functio
       </span>
       {open && (
         <Portal>
-          <div className="ui-time-picker__positioner" style={positionStyle}>
+          <div className={`ui-time-picker__positioner${inDialog ? ' is-in-dialog' : ''}`} style={positionStyle}>
             <div
               ref={panelRef}
               id={panelId}
-              className="ui-temporal-picker__popover ui-time-picker__popover"
+              className={`ui-temporal-picker__popover ui-time-picker__popover${inDialog ? ' is-in-dialog' : ''}`}
               role="dialog"
               aria-label={t('选择时间')}
             >

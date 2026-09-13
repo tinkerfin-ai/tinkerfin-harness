@@ -61,12 +61,14 @@ async def test_readiness_checks_all_dependencies_concurrently() -> None:
                 workspace_root="/workspace",
                 state_namespace="studio",
             ),
+            automation_ready=_sandbox_ready,
             sandbox_ready=_sandbox_ready,
             http_client=http_client,
             timeout_seconds=1,
         )
 
         assert await service.check() == {
+            "automation": True,
             "mysql": True,
             "redis": True,
             "opensandbox": True,
@@ -96,6 +98,7 @@ async def test_readiness_hides_redis_and_sandbox_failures() -> None:
                 workspace_root="/workspace",
                 state_namespace="studio",
             ),
+            automation_ready=_sandbox_ready,
             sandbox_ready=_sandbox_ready,
             http_client=http_client,
             timeout_seconds=1,
@@ -130,6 +133,7 @@ async def test_readiness_rejects_control_plane_health_without_warm_capacity() ->
                 workspace_root="/workspace",
                 state_namespace="studio",
             ),
+            automation_ready=_sandbox_ready,
             sandbox_ready=unavailable,
             http_client=http_client,
             timeout_seconds=1,

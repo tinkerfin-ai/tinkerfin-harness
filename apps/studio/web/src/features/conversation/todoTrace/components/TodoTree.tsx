@@ -1,4 +1,4 @@
-import { Check, Circle, LoaderCircle, X } from 'lucide-react'
+import { CircleCheck, Circle, LoaderCircle, X } from 'lucide-react'
 
 import type {
   TodoGroup,
@@ -9,9 +9,9 @@ import { useI18n } from '../../../../i18n'
 const statusIcon = (status: TodoTraceItemStatus) => {
   if (status === 'completed') {
     return (
-      <Check
-        size={17}
-        strokeWidth={2.6}
+      <CircleCheck
+        size={16}
+        strokeWidth={1.5}
         className="todo-trace-completed-mark"
         aria-hidden="true"
       />

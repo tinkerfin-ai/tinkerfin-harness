@@ -14,7 +14,7 @@ from ag_ui.core import RunAgentInput
 from deepagents.backends import BackendProtocol, StateBackend
 from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
@@ -271,3 +271,97 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
         } <= root_model.seen_tools[-1]
     assert workspace.opened == [runtime.run_identity("thread-1", "run-1")]
     assert workspace.closed == workspace.opened
+
+
+@pytest.mark.parametrize("access_mode", ["write_approval", "full"])
+@pytest.mark.parametrize("delegated", [False, True])
+async def test_file_access_choice_controls_root_and_subagent_review(
+    monkeypatch: pytest.MonkeyPatch,
+    attachments,
+    model_http_client,
+    access_mode,
+    delegated: bool,
+) -> None:
+    """普通与委派写入均遵守保存的文件审批选择"""
+    from langchain_core.language_models.fake_chat_models import (
+        FakeMessagesListChatModel,
+    )
+
+    class FileModel(FakeMessagesListChatModel):
+        def bind_tools(
+            self,
+            tools: Sequence[dict[str, Any] | type | Callable[..., Any] | BaseTool],
+            **kwargs: Any,
+        ) -> BaseChatModel:
+            return self
+
+    responses: list[BaseMessage] = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "id": "write",
+                    "args": {"file_path": "/result.txt", "content": "result"},
+                }
+            ],
+        ),
+        AIMessage(content="完成"),
+    ]
+    if delegated:
+        responses.insert(
+            0,
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "task",
+                        "id": "delegate",
+                        "args": {
+                            "subagent_type": "researcher",
+                            "description": "写入结果",
+                        },
+                    }
+                ],
+            ),
+        )
+        responses.append(AIMessage(content="完成委派"))
+    model = FileModel(responses=responses)
+    monkeypatch.setattr(
+        runtime_module, "create_chat_model", lambda *args, **kwargs: model
+    )
+    workspace = _Workspace()
+
+    class Sandboxes:
+        def workspace(
+            self, key: str, *, routes: dict[str, BackendProtocol]
+        ) -> _Workspace:
+            assert key == "users/7"
+            return workspace
+
+    resources = cast(
+        ApplicationResources,
+        SimpleNamespace(
+            attachments=attachments,
+            model_http_client=model_http_client,
+            agent_subagents=await load_subagents(),
+            tinkerfin=TinkerFin(checkpointer=InMemorySaver()),
+            sandbox_manager=Sandboxes(),
+            settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
+        ),
+    )
+    runtime = build_conversation_runtime(
+        resources=resources,
+        user_id=7,
+        thread_id="thread-1",
+        model_config=_model_config(),
+        image_model=None,
+        access_mode=access_mode,
+    )
+    result = await runtime.ainvoke(
+        thread_id="thread-1",
+        run_id="access-test",
+        input={"messages": [{"role": "user", "content": "写入结果"}]},
+    )
+    assert bool(result.get("__interrupt__")) is (access_mode == "write_approval")
+    assert workspace.opened == workspace.closed

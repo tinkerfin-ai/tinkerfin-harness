@@ -10,7 +10,7 @@ const messages: TraceMessage[] = [1, 2, 3].map(id => ({
   graphNamespace: [], role: 'user', content: `你好 ${id}`, contentOmitted: false,
   status: 'completed', createdAt: time, completedAt: time,
 }))
-const detail: ConversationHistoryDetail = {
+const detail: ConversationHistoryDetail = { accessMode: 'write_approval',
   id: 1, threadId, title: '连续失败验收', titleSource: 'user', titleGenerationStatus: 'idle', titleSeq: 1,
   lastModel: 'main', pinned: false, asOfSeq: 10, generation: 'failure-generation', observedAt: time,
   headRunId: 'run-3', availableHeads: ['run-3'], historyCursor: null, messageCount: 5, toolCallCount: 0,

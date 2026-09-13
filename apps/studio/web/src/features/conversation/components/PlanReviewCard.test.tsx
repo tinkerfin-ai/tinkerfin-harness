@@ -63,7 +63,7 @@ describe('PlanReviewCard', () => {
     const reject = actions.getByRole('button', { name: '拒绝' })
     const approve = actions.getByRole('button', { name: '批准' })
     expect(reject).toHaveClass('approval-reject-button')
-    expect(approve).toHaveClass('approval-allow-button')
+    expect(approve).toHaveClass('ui-button--solid')
 
     await user.click(approve)
     expect(submit).toHaveBeenCalledExactlyOnceWith('approve')

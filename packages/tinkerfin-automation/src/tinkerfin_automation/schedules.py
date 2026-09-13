@@ -4,10 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Literal, Self, TypeAlias
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 from .errors import InvalidScheduleError
 from .policies import MisfireMode, MisfirePolicy
@@ -157,6 +164,32 @@ class _ScheduleModel(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    active_from: datetime | None = Field(
+        default=None,
+        description="Inclusive start of scheduled occurrences; timezone-aware",
+    )
+    active_until: datetime | None = Field(
+        default=None,
+        description="Exclusive end of scheduled occurrences; does not cancel admitted work",
+    )
+
+    @field_validator("active_from", "active_until")
+    @classmethod
+    def active_bound_is_aware(cls, value: datetime | None) -> datetime | None:
+        """Normalize optional occurrence boundaries to UTC."""
+        return None if value is None else _aware_utc(value, name="active boundary")
+
+    @model_validator(mode="after")
+    def active_period_is_ordered(self) -> Self:
+        """Reject an empty or inverted active period."""
+        if (
+            self.active_from is not None
+            and self.active_until is not None
+            and self.active_from >= self.active_until
+        ):
+            raise ValueError("active_from must precede active_until")
+        return self
+
 
 class OnceSchedule(_ScheduleModel):
     """Run once at an explicit timezone-aware instant."""
@@ -291,6 +324,21 @@ def next_run_after(schedule: Schedule, after: datetime) -> datetime | None:
     """
 
     after_utc = _aware_utc(after, name="after")
+    if schedule.active_until is not None and after_utc >= schedule.active_until:
+        return None
+    if schedule.active_from is not None and after_utc < schedule.active_from:
+        after_utc = schedule.active_from - timedelta(microseconds=1)
+    candidate = _next_occurrence(schedule, after_utc)
+    if (
+        candidate is not None
+        and schedule.active_until is not None
+        and candidate >= schedule.active_until
+    ):
+        return None
+    return candidate
+
+
+def _next_occurrence(schedule: Schedule, after_utc: datetime) -> datetime | None:
     if isinstance(schedule, OnceSchedule):
         return schedule.at if schedule.at > after_utc else None
     if isinstance(schedule, IntervalSchedule):
@@ -307,6 +355,11 @@ def next_run_after(schedule: Schedule, after: datetime) -> datetime | None:
     end_year = start_day.year + MAX_CRON_SEARCH_YEARS
     current_day = start_day
     while current_day.year <= end_year:
+        if (
+            schedule.active_until is not None
+            and current_day > schedule.active_until.astimezone(zone).date()
+        ):
+            return None
         if (
             current_day.month in compiled.months
             and current_day.day in compiled.days
@@ -373,6 +426,13 @@ def materialize_schedule(
 
     first_due = _aware_utc(next_run_at, name="next_run_at")
     now_utc = _aware_utc(now, name="now")
+    if schedule.active_from is not None and first_due < schedule.active_from:
+        candidate = next_run_after(schedule, first_due - timedelta(microseconds=1))
+        if candidate is None:
+            return MaterializedSchedule((), None, first_due)
+        first_due = candidate
+    if schedule.active_until is not None and first_due >= schedule.active_until:
+        return MaterializedSchedule((), None, first_due)
     if first_due > now_utc:
         return MaterializedSchedule((), first_due, None)
 
@@ -385,7 +445,12 @@ def materialize_schedule(
         return MaterializedSchedule(due, future, skipped)
 
     if policy.mode is MisfireMode.LATEST and isinstance(schedule, IntervalSchedule):
-        latest = _latest_interval_due(schedule, first_due=first_due, now=now_utc)
+        last_allowed = (
+            now_utc
+            if schedule.active_until is None
+            else min(now_utc, schedule.active_until - timedelta(microseconds=1))
+        )
+        latest = _latest_interval_due(schedule, first_due=first_due, now=last_allowed)
         due = (latest,) if latest >= window_boundary else ()
         return MaterializedSchedule(
             due, future, first_due if latest != first_due else None

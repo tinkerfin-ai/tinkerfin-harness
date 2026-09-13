@@ -200,6 +200,7 @@ export const historyItemFromDetail = (
     status,
     lastRunId: detail.headRunId,
     lastModel: detail.lastModel,
+    accessMode: detail.accessMode,
     messageCount: detail.messageCount,
     toolCallCount: detail.toolCallCount,
     hasPendingInterrupt: pending.length > 0,
@@ -219,6 +220,7 @@ const conversationFromHistoryItem = (
   pinned: item.pinned,
   updatedAt: item.updatedAt,
   model: item.lastModel ?? fallbackModel,
+  accessMode: item.accessMode,
   mode: 'default',
   messages: [],
   todos: [],
@@ -267,6 +269,7 @@ export const mergeHistoryConversations = (
       pinned: item.pinned,
       updatedAt: preserveRuntime ? existing.updatedAt : item.updatedAt,
       model: preserveRuntime ? existing.model : summary.model,
+      accessMode: preserveRuntime ? existing.accessMode : summary.accessMode,
       activeRunId: preserveRuntime ? existing.activeRunId : summary.activeRunId,
       pendingInteractionKind: existing.isHydrated
         && !advanceHydratedRuntime

@@ -215,6 +215,8 @@ export interface PlanReviewState {
 
 export type PlanInteraction = PlanQuestionState | PlanReviewState
 
+export type AccessMode = "full" | "write_approval"
+
 export interface Conversation extends Partial<Pick<ConversationTitleSnapshot, "titleSource" | "titleGenerationStatus" | "titleSeq">> {
   threadId: string
   title: string
@@ -222,6 +224,7 @@ export interface Conversation extends Partial<Pick<ConversationTitleSnapshot, "t
   updatedAt: string
   model: string
   mode: AgentMode
+  accessMode: AccessMode
   messages: Message[]
   /** 尚未加载或发生失败时可为空；运行结果不属于消息正文 */
   runFailures?: import('./api/conversation/history').ConversationRunFailure[]

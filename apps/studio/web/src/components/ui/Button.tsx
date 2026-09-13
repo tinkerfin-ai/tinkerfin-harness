@@ -2,7 +2,7 @@ import { LoaderCircle } from 'lucide-react'
 import { forwardRef } from 'react'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'text'
+export type ButtonVariant = 'primary' | 'solid' | 'secondary' | 'ghost' | 'danger' | 'text'
 export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
 export type ButtonShape = 'round' | 'capsule' | 'circle'
 

@@ -465,7 +465,7 @@ describe('前端视觉契约', () => {
       [cssFiles['../components/ui/ui.css'], '.toast-card > button'],
       [cssFiles['../features/workspace/workspace.css'], '.conversation-main'],
       [cssFiles['../features/workspace/workspace.css'], '.user-card'],
-      [cssFiles['../features/conversation/conversation.css'], '.composer-model-select'],
+      [cssFiles['../components/ui/ui.css'], '.ui-compact-picker-trigger'],
       [cssFiles['../features/conversation/conversation.css'], '.composer-auxiliary-control'],
     ] as const
 
@@ -666,7 +666,7 @@ describe('前端视觉契约', () => {
     const conversationStyles = cssFiles['../features/conversation/conversation.css']
     expect(workspaceStyles).not.toContain('.model-picker')
     expect(workspaceStyles).not.toContain('.agent-preset-picker')
-    expect(conversationStyles).toMatch(/\.composer-model-picker\s*\{[^}]*width:\s*max-content;[^}]*max-width:\s*min\(220px, 45cqw\)/s)
+    expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker\s*\{[^}]*width:\s*max-content;[^}]*max-width:\s*min\(220px, 45cqw\)/s)
     expect(conversationStyles).toMatch(/\.composer-toolbar\s*\{[^}]*justify-content:\s*space-between/s)
     expect(workspaceStyles).toMatch(
       /\.drawer-toggle \.ui-button__label\s*\{[^}]*display:\s*inline-flex;[^}]*white-space:\s*nowrap;/s,
@@ -717,10 +717,10 @@ describe('前端视觉契约', () => {
     expect(conversationStyles).toMatch(/@media \(any-hover: none\), \(any-pointer: coarse\)[\s\S]*\.composer-plan-chip,[\s\S]*min-height:\s*var\(--control-lg\);[^}]*height:\s*var\(--control-lg\);/s)
     expect(conversationStyles).toMatch(/@media \(any-hover: none\), \(any-pointer: coarse\)[\s\S]*\.plan-question-option,[\s\S]*\.composer-suggestion-item\s*\{[^}]*min-height:\s*var\(--control-lg\);/s)
     expect(cssFiles['../features/conversation/attachments/attachments.css']).toMatch(/\.composer-attachment\s*\{[^}]*height:\s*var\(--control-md\);/s)
-    expect(conversationStyles).toMatch(/\.composer-model-select\s*\{[^}]*height:\s*var\(--control-composer\);[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s)
-    expect(conversationStyles).toMatch(/\.composer-model-select:hover:not\(:disabled\)\s*\{[^}]*box-shadow:\s*var\(--shadow-1\);/s)
-    expect(conversationStyles).toMatch(/\.composer-model-options\s*\{[^}]*width:\s*min\(250px,[^}]*box-shadow:\s*var\(--shadow-2\);/s)
-    expect(conversationStyles).toMatch(/\.composer-model-options \[role='option'\]\s*\{[^}]*min-height:\s*var\(--control-xs\);[^}]*padding:\s*var\(--space-1\) calc\(var\(--space-2\) \+ var\(--space-0-5\)\);[^}]*box-shadow:\s*none;/s)
+    expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker-trigger\s*\{[^}]*height:\s*var\(--control-composer\);[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s)
+    expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker-trigger:hover:not\(:disabled\)\s*\{[^}]*box-shadow:\s*var\(--shadow-1\);/s)
+    expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker-options\s*\{[^}]*width:\s*min\(250px,[^}]*box-shadow:\s*var\(--shadow-2\);/s)
+    expect(cssFiles['../components/ui/ui.css']).toMatch(/\.ui-compact-picker-options \[role='option'\]\s*\{[^}]*min-height:\s*var\(--control-xs\);[^}]*padding:\s*var\(--space-1\) calc\(var\(--space-2\) \+ var\(--space-0-5\)\);[^}]*box-shadow:\s*none;/s)
     expect(conversationStyles).toMatch(/\.composer-suggestion-menu\s*\{[^}]*width:\s*min\(547px, 100%\);[^}]*max-height:\s*320px;[^}]*border-radius:\s*var\(--radius-xl\);[^}]*box-shadow:\s*var\(--shadow-3\);/s)
     expect(conversationStyles).toMatch(/\.composer-suggestion-viewport\s*\{[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain;/s)
     expect(conversationStyles).toMatch(/@media \(forced-colors: active\)[\s\S]*\.composer-input-backdrop\s*\{\s*display:\s*none;/s)

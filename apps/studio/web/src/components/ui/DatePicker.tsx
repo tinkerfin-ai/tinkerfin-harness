@@ -5,11 +5,13 @@ import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react'
 import {
   forwardRef,
   useId,
+  useContext,
   useRef,
   type ButtonHTMLAttributes,
 } from 'react'
 
 import { useI18n } from '../../i18n'
+import { DialogContext } from './DialogContext'
 
 export type DatePickerSize = 'xs' | 'md' | 'lg'
 
@@ -49,6 +51,7 @@ export const DatePicker = forwardRef<HTMLButtonElement, DatePickerProps>(functio
   ...buttonProps
 }, forwardedRef) {
   const { locale, t } = useI18n()
+  const inDialog = useContext(DialogContext)
   const pickerId = useId()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const parsedValue = parseCalendarDate(value)
@@ -70,6 +73,8 @@ export const DatePicker = forwardRef<HTMLButtonElement, DatePickerProps>(functio
       placement: 'top-end',
       strategy: 'fixed',
       gutter: 8,
+      // 窄屏七列日期保留完整触控区域，浮层在视口边缘仍可贴近显示
+      overflowPadding: 1,
     },
     translations: {
       content: t('选择日期'),
@@ -135,7 +140,7 @@ export const DatePicker = forwardRef<HTMLButtonElement, DatePickerProps>(functio
       </span>
       <Portal>
         <div {...api.getPositionerProps()}>
-          <div {...api.getContentProps()} className="ui-temporal-picker__popover ui-date-picker__popover">
+          <div {...api.getContentProps()} className={`ui-temporal-picker__popover ui-date-picker__popover${inDialog ? ' is-in-dialog' : ''}`}>
               <header {...api.getViewControlProps({ view: api.view })} className="ui-date-picker__head">
                 <button type="button" {...api.getPrevTriggerProps({ view: api.view })} className="ui-date-picker__nav">
                   <ChevronLeft size={17} aria-hidden="true" />

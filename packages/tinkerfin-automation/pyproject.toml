@@ -22,6 +22,7 @@ dependencies = [
     "pydantic>=2.12,<3",
     "tinkerfin==0.1.0",
     "tinkerfin-contracts==0.1.0",
+    "tinkerfin-native-stream==0.1.0",
     "tzdata>=2025.2",
 ]
 
@@ -48,5 +49,6 @@ tinkerfin_automation = ["py.typed"]
 
 [tool.uv.sources]
 tinkerfin-contracts = { workspace = true }
+tinkerfin-native-stream = { workspace = true }
 tinkerfin = { workspace = true }
 tinkerfin-sqlalchemy = { workspace = true }

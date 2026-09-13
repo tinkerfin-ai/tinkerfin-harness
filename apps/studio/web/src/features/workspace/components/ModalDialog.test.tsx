@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useRef, useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -69,7 +69,7 @@ describe('ModalDialog', () => {
 
     fireEvent.keyDown(dialog, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(opener).toHaveFocus()
+    await waitFor(() => expect(opener).toHaveFocus())
   })
 
   it('submits without closing itself and keeps pending controls unavailable', async () => {
@@ -132,6 +132,6 @@ describe('ModalDialog', () => {
     await user.click(screen.getByRole('button', { name: '重命名' }))
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
 
-    expect(trigger).toHaveFocus()
+    await waitFor(() => expect(trigger).toHaveFocus())
   })
 })

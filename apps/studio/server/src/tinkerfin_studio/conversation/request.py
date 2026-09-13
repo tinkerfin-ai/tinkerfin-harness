@@ -21,6 +21,7 @@ from pydantic import (
 )
 
 from tinkerfin import AgUiUserInput
+from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
 
 MAX_USER_MESSAGE_BYTES = 256 * 1024
@@ -45,6 +46,12 @@ class ConversationForwardedProps(BaseModel):
     """前端传给一次 run 的扩展属性"""
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    access_mode: AccessMode = Field(
+        default="full",
+        alias="accessMode",
+        description="写文件工具是否需要人工审批",
+    )
 
     model: str = Field(min_length=1, max_length=64, description="数据库模型稳定 ID")
     command: ConversationCommand = Field(

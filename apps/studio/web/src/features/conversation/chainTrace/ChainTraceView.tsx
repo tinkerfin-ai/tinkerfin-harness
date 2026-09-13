@@ -1,4 +1,4 @@
-import { Activity, ChevronRight, Search, ShieldAlert, X } from 'lucide-react'
+import { Activity, ChevronRight, Search, ShieldAlert } from 'lucide-react'
 import {
   useEffect,
   useLayoutEffect,
@@ -20,6 +20,7 @@ import {
   FeedbackState,
   IconButton,
   OverlayScrollbar,
+  SearchField,
   ViewTabs,
 } from '../../../components/ui'
 import { useI18n } from '../../../i18n'
@@ -787,32 +788,17 @@ export function ChainTraceView({
                   onClick={openSearch}
                 />
               ) : (
-                <label
+                <SearchField
                   id="chain-trace-search"
                   className="chain-trace-search"
-                >
-                  <Search size={14} aria-hidden="true" />
-                  <input
-                    ref={searchInputRef}
-                    type="text"
-                    role="searchbox"
-                    aria-label={t('搜索链路节点')}
-                    value={searchInput}
-                    placeholder={t('搜索节点、内容')}
-                    onChange={(event) => setSearchInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Escape') return
-                      event.preventDefault()
-                      clearAndCloseSearch()
-                    }}
-                  />
-                  <IconButton
-                    size="xs"
-                    label={t('清除链路搜索')}
-                    icon={<X size={13} />}
-                    onClick={clearAndCloseSearch}
-                  />
-                </label>
+                  ref={searchInputRef}
+                  label={t('搜索链路节点')}
+                  closeLabel={t('清除链路搜索')}
+                  placeholder={t('搜索节点、内容')}
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  onClose={clearAndCloseSearch}
+                />
               )}
             </div>
           </div>

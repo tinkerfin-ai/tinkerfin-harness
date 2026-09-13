@@ -5,12 +5,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from deepagents.backends.store import StoreBackend
-from langchain.agents.middleware import InterruptOnConfig, TodoListMiddleware
+from langchain.agents.middleware import TodoListMiddleware
 
 from tinkerfin import AgentRuntime
 from tinkerfin.media import AttachmentSupport
 from tinkerfin.plan import PlanReviewAction
 from tinkerfin.subagents import SubAgent
+from tinkerfin_studio.agent.access import AccessMode, file_review_policy
 from tinkerfin_studio.agent.plan_clarification import StudioPlanClarificationForm
 from tinkerfin_studio.agent.plan_content import StudioMarkdownPlanContent
 from tinkerfin_studio.agent.tools import build_web_search_tool
@@ -34,15 +35,19 @@ _SYSTEM_PROMPT = """你是 TinkerFin Studio 的主 Agent。
 """
 
 
-def build_conversation_runtime(
+def _build_runtime(
     *,
     resources: ApplicationResources,
     user_id: int,
     thread_id: str,
     model_config: AgentModelConfig,
     image_model: AgentModelConfig | None,
+    access_mode: AccessMode,
+    namespace: str,
+    collection_id: str | None,
+    plan_enabled: bool,
 ) -> AgentRuntime[None]:
-    """为已授权会话构建 Runtime，实际执行时才准备用户工作区
+    """为已授权会话或后台任务绑定执行能力，实际运行时准备用户工作区
 
     Args:
         resources: 请求期间借用的应用资源
@@ -50,6 +55,10 @@ def build_conversation_runtime(
         thread_id: 已校验归属的会话 ID
         model_config: 已解密的聊天模型配置
         image_model: 可选的图片生成模型配置
+        access_mode: 写文件工具的审批选择，不改变用户工作区范围
+        namespace: 已授权业务运行的隔离范围
+        collection_id: 后台执行的附件集合，普通会话不设置
+        plan_enabled: 是否允许会话计划与人工交互
 
     Returns:
         绑定用户 namespace、模型、Plan 和附件能力的 Runtime
@@ -68,7 +77,9 @@ def build_conversation_runtime(
             reasoning_enabled=False,
             http_async_client=resources.model_http_client,
         )
-        if model_config.provider == "deepseek" and model_config.reasoning_enabled
+        if plan_enabled
+        and model_config.provider == "deepseek"
+        and model_config.reasoning_enabled
         else model
     )
     api_key = resources.settings.tavily_api_key
@@ -81,7 +92,8 @@ def build_conversation_runtime(
             service=resources.attachments,
             processor=resources.attachments.documents,
             user_id=user_id,
-            thread_id=thread_id,
+            thread_id=None if collection_id is not None else thread_id,
+            collection_id=collection_id,
             image_model=image_model,
             supports_images=model_config.image_support == "supported",
             model_allowed_origins=resources.settings.model_allowed_origins,
@@ -89,13 +101,17 @@ def build_conversation_runtime(
         *build_sandbox_attachment_tools(
             service=resources.attachments,
             user_id=user_id,
-            thread_id=thread_id,
+            thread_id=None if collection_id is not None else thread_id,
+            collection_id=collection_id,
         ),
     ]
 
     attachment_support = AttachmentSupport(
         read_content=lambda attachment: resources.attachments.read_image(
-            attachment, user_id=user_id, thread_id=thread_id
+            attachment,
+            user_id=user_id,
+            thread_id=None if collection_id is not None else thread_id,
+            collection_id=collection_id,
         ),
         supports_content=lambda candidate, mime_type: (
             mime_type.startswith("image/")
@@ -109,6 +125,7 @@ def build_conversation_runtime(
             "name": name,
             "description": definition.description,
             "system_prompt": definition.system_prompt,
+            "interrupt_on": file_review_policy(access_mode),
             "tools": [
                 *(tool_registry[tool] for tool in definition.tools),
                 *attachment_tools,
@@ -116,14 +133,11 @@ def build_conversation_runtime(
         }
         for name, definition in resources.agent_subagents.items()
     ]
-    interrupt: InterruptOnConfig = {
-        "allowed_decisions": ["approve", "reject"],
-        "description": "需要人工审批：Agent 正准备写入文件",
-    }
-    return (
-        resources.tinkerfin.with_namespace(f"ns_{user_id}")
-        .with_attachments(attachment_support)
-        .with_plan(
+    configured = resources.tinkerfin.with_namespace(namespace).with_attachments(
+        attachment_support
+    )
+    if plan_enabled:
+        configured = configured.with_plan(
             enabled=True,
             planner_model=plan_model,
             clarification_schema=StudioPlanClarificationForm,
@@ -134,21 +148,75 @@ def build_conversation_runtime(
                 PlanReviewAction.CANCEL,
             ),
         )
-        .build(
-            model=model,
-            tools=[web_search, *attachment_tools],
-            system_prompt=_SYSTEM_PROMPT,
-            middleware=(TodoListMiddleware(),),
-            subagents=subagents,
-            backend=resources.sandbox_manager.workspace(
-                f"users/{user_id}",
-                routes={
-                    "/memories/": StoreBackend(namespace=lambda _runtime: ("memories",))
-                },
-            ),
-            interrupt_on={"write_file": interrupt},
-        )
+    else:
+        configured = configured.with_plan(enabled=False)
+    return configured.build(
+        model=model,
+        tools=[web_search, *attachment_tools],
+        system_prompt=_SYSTEM_PROMPT,
+        middleware=(TodoListMiddleware(),),
+        subagents=subagents,
+        backend=resources.sandbox_manager.workspace(
+            f"users/{user_id}",
+            routes={
+                "/memories/": StoreBackend(
+                    namespace=lambda _runtime: (
+                        ("memories",)
+                        if collection_id is None
+                        else ("users", str(user_id), "memories")
+                    )
+                )
+            },
+        ),
+        interrupt_on=file_review_policy(access_mode),
     )
 
 
-__all__ = ["build_conversation_runtime"]
+def build_conversation_runtime(
+    *,
+    resources: ApplicationResources,
+    user_id: int,
+    thread_id: str,
+    model_config: AgentModelConfig,
+    image_model: AgentModelConfig | None,
+    access_mode: AccessMode = "full",
+) -> AgentRuntime[None]:
+    """绑定会话模型、用户工作区与文件审批选择，资源由运行时按需准备"""
+    return _build_runtime(
+        resources=resources,
+        user_id=user_id,
+        thread_id=thread_id,
+        model_config=model_config,
+        image_model=image_model,
+        access_mode=access_mode,
+        namespace=f"ns_{user_id}",
+        collection_id=None,
+        plan_enabled=True,
+    )
+
+
+def build_automation_runtime(
+    *,
+    resources: ApplicationResources,
+    user_id: int,
+    thread_id: str,
+    execution_id: str,
+    model_config: AgentModelConfig,
+    image_model: AgentModelConfig | None,
+    access_mode: AccessMode,
+) -> AgentRuntime[None]:
+    """绑定一次后台执行的文件集合；用户沙箱与记忆分别保持隔离"""
+    return _build_runtime(
+        resources=resources,
+        user_id=user_id,
+        thread_id=thread_id,
+        model_config=model_config,
+        image_model=image_model,
+        access_mode=access_mode,
+        namespace="studio_automation",
+        collection_id=execution_id,
+        plan_enabled=False,
+    )
+
+
+__all__ = ["build_automation_runtime", "build_conversation_runtime"]

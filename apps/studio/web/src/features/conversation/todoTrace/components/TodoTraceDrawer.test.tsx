@@ -115,7 +115,7 @@ describe('TodoTraceDrawer', () => {
     expect(todoTraceStyles).toMatch(/\.todo-trace-group\.is-current \.todo-trace-group-surface\s*{[^}]*linear-gradient\(/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-group\.is-expanded\.is-history \.todo-trace-group-surface\s*{[^}]*linear-gradient\(/s)
     expect(todoTraceStyles).not.toContain('.todo-trace-group-state')
-    expect(todoTraceStyles).toMatch(/\.todo-trace-todo\.is-completed \.todo-trace-node-icon\s*{[^}]*color:\s*var\(--color-brand-text\);/s)
+    expect(todoTraceStyles).toMatch(/\.todo-trace-todo\.is-completed \.todo-trace-node-icon\s*{[^}]*color:\s*var\(--color-text-secondary\);/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-todo\.is-completed \.todo-trace-node-icon\s*{[^}]*background:\s*transparent;/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-completed-mark\s*{[^}]*box-shadow:\s*none;[^}]*filter:\s*none;/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-drawer\s*{[^}]*grid-template-rows:\s*var\(--layout-drawer-header-height\) minmax\(0, 1fr\);/s)

@@ -145,3 +145,26 @@ async def test_clock_uses_database_utc_and_preserves_host_settings(
             assert (await connection.execute(select(tasks))).all() == []
     finally:
         await store.close()
+
+
+async def test_mysql_host_collation_does_not_relax_declared_text_length(
+    automation_sql_engine: AsyncEngine,
+) -> None:
+    engine = automation_sql_engine
+    if engine.dialect.name != "mysql":
+        pytest.skip("MySQL column collation reflection is dialect-specific")
+    original = SqlAlchemyAutomationStore(engine)
+    await original.setup()
+    await original.close()
+    async with engine.begin() as connection:
+        await connection.exec_driver_sql(
+            "ALTER TABLE tinkerfin_automation_tasks MODIFY namespace "
+            "VARCHAR(64) COLLATE utf8mb4_unicode_ci NOT NULL "
+            "COMMENT 'Host-selected isolation namespace'"
+        )
+    candidate = SqlAlchemyAutomationStore(engine)
+    try:
+        with pytest.raises(AutomationStoreProtocolError, match="stale type"):
+            await candidate.setup()
+    finally:
+        await candidate.close()

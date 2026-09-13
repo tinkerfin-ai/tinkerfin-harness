@@ -70,6 +70,12 @@ tasks = Table(
     ),
     Column("name", String(255), nullable=False, comment="User-visible task name"),
     Column(
+        "search_name",
+        String(765),
+        nullable=False,
+        comment="Unicode case-folded name for literal search",
+    ),
+    Column(
         "status",
         String(16),
         nullable=False,
@@ -141,6 +147,18 @@ runs = Table(
         comment="Execution attempt identity",
     ),
     Column("namespace", String(128), nullable=False, comment="Isolation namespace"),
+    Column(
+        "task_name",
+        String(255),
+        nullable=True,
+        comment="Task name captured at queue admission; null if unknown or taskless",
+    ),
+    Column(
+        "search_name",
+        String(765),
+        nullable=True,
+        comment="Unicode case-folded captured name for literal search",
+    ),
     Column(
         "owner_id", String(191), nullable=False, comment="Authorized owner identity"
     ),
@@ -507,6 +525,17 @@ def _validate_automation_schema(connection: Connection) -> None:
                 _raise_schema_error(
                     f"column {table.name}.{column.name} has an invalid reflected type"
                 )
+            declared_type = column.type.dialect_impl(connection.dialect)
+            if (
+                connection.dialect.name == "mysql"
+                and isinstance(declared_type, String)
+                and declared_type.collation is None
+                and isinstance(reflected_type, String)
+            ):
+                # MySQL reflection includes inherited collations when they differ
+                # from the server default; the schema leaves this host choice open.
+                reflected_type = reflected_type.copy()
+                reflected_type.collation = None
             expected_type_name = _normalized_type_name(
                 column.type.compile(dialect=connection.dialect)
             )
@@ -707,3 +736,20 @@ __all__ = [
     "tasks",
     "work_items",
 ]
+
+Index(
+    "ix_tinkerfin_automation_tasks_filter",
+    tasks.c.namespace,
+    tasks.c.owner_id,
+    tasks.c.status,
+    tasks.c.created_at,
+    tasks.c.task_id,
+)
+Index(
+    "ix_tinkerfin_automation_runs_filter",
+    runs.c.namespace,
+    runs.c.owner_id,
+    runs.c.status,
+    runs.c.queued_at,
+    runs.c.execution_id,
+)

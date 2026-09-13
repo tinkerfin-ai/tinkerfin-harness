@@ -758,8 +758,10 @@ const isAgentMode = (value: unknown): value is AgentMode =>
 const forwardedPropsFor = (
   model: string,
   mode: AgentMode,
+  accessMode: Conversation["accessMode"],
 ): ChatRequestPayload["forwardedProps"] => ({
   model,
+  accessMode,
   command: { plan: mode === "plan" ? "on" : "off" },
 })
 
@@ -792,7 +794,7 @@ export const buildInitialPayload = (
     ],
     tools: [],
     context: [],
-    forwardedProps: forwardedPropsFor(conversation.model, conversation.mode),
+    forwardedProps: forwardedPropsFor(conversation.model, conversation.mode, conversation.accessMode),
   }
 }
 
@@ -865,7 +867,7 @@ export const buildResumePayload = (
     messages: [],
     tools: [],
     context: [],
-    forwardedProps: forwardedPropsFor(conversation.model, conversation.mode),
+    forwardedProps: forwardedPropsFor(conversation.model, conversation.mode, conversation.accessMode),
     resume,
   }
 }
@@ -1014,6 +1016,7 @@ export const buildPlanResumePayload = (
       interaction.kind === 'review' && interaction.action === 'approve'
         ? 'default'
         : 'plan',
+      conversation.accessMode,
     ),
     resume: [{
       interruptId: interaction.interruptId,
@@ -1035,7 +1038,7 @@ export const buildPlanAbandonPayload = (
     messages: [],
     tools: [],
     context: [],
-    forwardedProps: forwardedPropsFor(conversation.model, 'default'),
+    forwardedProps: forwardedPropsFor(conversation.model, 'default', conversation.accessMode),
     resume: [{
       interruptId: interaction.interruptId,
       status: 'cancelled',

@@ -378,6 +378,7 @@ class ConversationChatService:
             thread_id=execution.thread.thread_id,
             model_config=model,
             image_model=image_model,
+            access_mode=prepared.access_mode,
         )
 
         async def record_resume_checkpoint(checkpoint: AgUiResumeCheckpoint) -> None:

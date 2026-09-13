@@ -1311,17 +1311,6 @@
     background: var(--color-danger-soft);
   }
 
-  .approval-allow-button {
-    border-color: var(--color-text-primary);
-    background: var(--color-text-primary);
-    color: var(--color-layer-1);
-  }
-
-  .approval-allow-button:hover:not(:disabled) {
-    border-color: var(--color-text-primary);
-    background: color-mix(in srgb, var(--color-text-primary) 88%, var(--color-layer-1));
-  }
-
   .plan-review-composer-body {
     display: flex;
     min-height: 0;
@@ -1768,20 +1757,6 @@
 
   .composer-attachment-error { margin: 0; padding: 0 var(--space-3); color: var(--color-danger-text); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
 
-  .composer-model-picker { position: relative; width: max-content; max-width: min(220px, 45cqw); min-width: 0; }
-  .composer-model-select { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-1); width: 100%; height: var(--control-composer); min-height: var(--control-composer); padding: 0 var(--space-1) 0 var(--space-2); border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--color-text-secondary); font-size: var(--type-meta-size); font-weight: var(--weight-medium); line-height: var(--type-meta-line); cursor: pointer; box-shadow: none; }
-  .composer-model-select:hover:not(:disabled) { background: var(--color-hover); color: var(--color-text-primary); box-shadow: var(--shadow-1); }
-  .composer-model-select:active:not(:disabled) { background: var(--color-active); box-shadow: none; }
-  .composer-model-select:focus-visible { outline: 0; background: var(--color-hover); color: var(--color-text-primary); box-shadow: none; }
-  .composer-model-select:disabled { cursor: not-allowed; opacity: .48; }
-  .composer-model-select > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .composer-model-options { position: absolute; right: 0; bottom: calc(100% + var(--space-2)); z-index: var(--layer-dropdown); width: min(250px, calc(100cqw - var(--control-lg) - var(--space-2))); max-height: min(320px, calc(100vh - 96px)); overflow-y: auto; padding: var(--space-1); border: 0; outline: 0; border-radius: var(--radius-xl); background: var(--color-layer-1); box-shadow: var(--shadow-2); }
-  .composer-model-options [role='option'] { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: var(--control-xs); padding: var(--space-1) calc(var(--space-2) + var(--space-0-5)); border-radius: var(--radius-lg); cursor: pointer; box-shadow: none; }
-  .composer-model-options [role='option']:focus { outline: 0; background: var(--color-hover); }
-  .composer-model-options [role='option']:hover,
-  .composer-model-options [role='option'][data-active='true'] { background: var(--color-hover); box-shadow: none; }
-  .composer-model-options .model-option-label { flex: 1; min-width: 0; }
-  .composer-model-options .model-option-check { display: grid; width: var(--icon-sm); place-items: center; }
   .composer-model-error { display: flex; align-items: center; gap: var(--space-1); color: var(--color-danger-text); font-size: var(--type-caption-size); white-space: nowrap; }
   .composer-model-error .ui-button { min-height: var(--control-composer); }
 
@@ -1889,7 +1864,6 @@
     }
     .composer-add-button,
     .composer-plan-chip,
-    .composer-model-select,
     .send-button { min-width: var(--control-lg); min-height: var(--control-lg); height: var(--control-lg); }
     .markdown-copy-button { min-height: var(--control-lg); }
     .message-action-row { --message-action-control-size: var(--control-lg); }
@@ -1907,7 +1881,6 @@
     .plan-question-option,
     .plan-question-custom,
     .plan-question-date,
-    .composer-model-options [role='option'],
     .composer-suggestion-item { min-height: var(--control-lg); }
     .plan-question-date { height: var(--control-lg); }
     .plan-question-datetime { height: auto; }
@@ -1937,9 +1910,6 @@
     }
 
     .composer-auxiliary-control:focus-visible { outline-color: Highlight; }
-    .composer-model-select:focus-visible,
-    .composer-model-options [role='option'][data-active='true'] { outline: 2px solid Highlight; outline-offset: -2px; }
-    .composer-model-options { border: 1px solid ButtonText; }
     .approval-composer-footer::before,
     .plan-question-composer-footer::before,
     .plan-review-composer-footer::before { background: Canvas; }
@@ -1966,7 +1936,6 @@
     .plan-review-composer,
     .composer,
     .composer-attachment,
-    .composer-model-options,
     .composer-suggestion-menu {
       border-color: ButtonText;
       background: Canvas;
@@ -1986,7 +1955,6 @@
     }
     .interaction-card-resize-handle:focus-visible::after { background: Highlight; }
     .approval-status-dot::before { background: ButtonText; }
-    .approval-allow-button { border-color: ButtonText; background: ButtonText; color: Canvas; }
 
     .subagent-output-icon {
       border-color: ButtonText;

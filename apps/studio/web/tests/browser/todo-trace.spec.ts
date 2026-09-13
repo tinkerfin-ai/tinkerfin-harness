@@ -128,7 +128,7 @@ const detail = ({
   const taskTrace: TaskTraceSnapshot | null = includeTaskTrace
     ? { status: 'ready', todoGroups: [...taskTraceGroups] }
     : null
-  return {
+  return { accessMode: 'write_approval',
     id: 1,
     threadId: THREAD_ID,
     title: '任务轨迹浏览器会话',
@@ -222,7 +222,7 @@ async function mockTodoTraceStudio(page: Page, {
     }
     if (url.pathname === '/api/conversation/history') {
       await fulfillJson(route, {
-        items: [{
+        items: [{ accessMode: 'full',
           id: 1,
           threadId: THREAD_ID,
           title: '任务轨迹浏览器会话',
@@ -349,7 +349,7 @@ test('统一抽屉展示、独立展开、定位和 overlay 焦点恢复可真�
     wrapperBackground: 'rgba(0, 0, 0, 0)',
     wrapperBoxShadow: 'none',
     markFilter: 'none',
-    circleCount: 0,
+    circleCount: 1,
   })
   await expect(drawer.locator('.todo-trace-group-state')).toHaveCount(0)
   const latest = page.getByRole('button', { name: '收起任务组：整理当前交付清单' })
@@ -561,7 +561,7 @@ test('浅深主题和四个目标视口保持无描边、无提示与对齐', as
       expect(metrics.completedBorder).toBe('0px')
       expect(metrics.completedBoxShadow).toBe('none')
       expect(metrics.completedMarkFilter).toBe('none')
-      expect(metrics.completedCircleCount).toBe(0)
+      expect(metrics.completedCircleCount).toBe(1)
       expect(metrics.groupStateCount).toBe(0)
       expect(metrics.titleProgressCenterDelta).not.toBeNull()
       expect(metrics.titleProgressCenterDelta ?? Number.POSITIVE_INFINITY)
@@ -720,5 +720,48 @@ test('5k Group 冷水化、windowing、键盘与 heap 门禁', { tag: '@performa
   expect(heapDelta).toBeLessThanOrEqual(256 * 1024 * 1024)
   expect(maxLongTask).toBeLessThanOrEqual(200)
   await expect(page.getByText('实时输出数据量过大，请重试', { exact: true })).not.toBeVisible()
+  expect(evidence.pageErrors).toEqual([])
+})
+
+test('对话 Todos 卡片的完成图标在浅深色和各视口保持细线中性色', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const evidence = await mockTodoTraceStudio(page, { groups: makeGroups(1, false, 3) })
+  const card = page.locator('details').filter({ has: page.getByText('Todos', { exact: true }) }).first()
+  await card.locator('summary').click()
+  const mark = card.locator('.todo-trace-completed-mark').first()
+  await expect(mark).toBeVisible()
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((value) => {
+      document.documentElement.dataset.theme = value
+      document.documentElement.dataset.themePreference = value
+      document.documentElement.style.colorScheme = value
+    }, theme)
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      await card.scrollIntoViewIfNeeded()
+      await expect(mark).toHaveAttribute('width', '16')
+      await expect(mark).toHaveAttribute('stroke-width', '1.5')
+      await expect(mark.locator('circle')).toHaveCount(1)
+      const metrics = await mark.evaluate((element) => {
+        const probe = document.createElement('span')
+        probe.style.color = 'var(--color-text-secondary)'
+        element.parentElement!.append(probe)
+        const expectedColor = getComputedStyle(probe).color
+        probe.remove()
+        return {
+          color: getComputedStyle(element).color,
+          expectedColor,
+          overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        }
+      })
+      expect(metrics.color).toBe(metrics.expectedColor)
+      expect(metrics.overflow).toBeLessThanOrEqual(0)
+      if (process.env.TINKERFIN_VISUAL_QA_DIR) {
+        await page.screenshot({ path: resolve(process.env.TINKERFIN_VISUAL_QA_DIR, `todo-card-${theme}-${width}.png`) })
+      }
+    }
+  }
+  await card.locator('summary').click()
+  await expect(mark).toBeHidden()
   expect(evidence.pageErrors).toEqual([])
 })

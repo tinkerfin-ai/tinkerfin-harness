@@ -2,6 +2,7 @@
   "id": 59,
   "threadId": "thread-35bbf8ca-3353-5262-a2f0-8dc62bf35644",
   "title": "请调用 create_file 生成一张测试柱状图，name=验",
+  "accessMode": "write_approval",
   "lastModel": "deepseek-v4-flash",
   "pinned": false,
   "asOfSeq": 27,

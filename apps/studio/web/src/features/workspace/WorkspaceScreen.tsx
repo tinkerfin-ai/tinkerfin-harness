@@ -1,3 +1,5 @@
+import { AccessModePicker } from "../../components/AccessModePicker"
+import { AutomationPage } from '../automation/AutomationPage'
 import { AttachmentReferenceContext } from '../conversation/attachments/context'
 import { messageText, messageAttachments } from '../conversation/attachments/content'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from 'react'
@@ -140,6 +142,7 @@ export function WorkspaceScreen({
   const [workspace, setWorkspace] = useState<WorkspaceState>(createEmptyWorkspace)
   const [draftConversation, setDraftConversation] = useState<Conversation | null>(null)
   const [draftModel, setDraftModel] = useState('')
+  const [draftAccessMode, setDraftAccessMode] = useState<Conversation['accessMode']>('full')
   const [draft, setDraftValue] = useState('')
   const submissionLocks = useRef(new Map<string, string>())
   const draftRevision = useRef(0)
@@ -150,6 +153,8 @@ export function WorkspaceScreen({
   const [isModelPickerOpen, setModelPickerOpen] = useState(false)
   const [pendingResume, setPendingResume] = useState<PendingResume | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [activePage, setActivePage] = useState<'conversation' | 'automation'>('conversation')
+  const [automationModalOpen, setAutomationModalOpen] = useState(false)
   const [workspaceView, setWorkspaceView] = useState<'conversation' | 'trace'>('conversation')
   const settingsRestoreFocus = useRef<HTMLElement | null>(null)
   const theme = useThemePreference()
@@ -246,8 +251,8 @@ export function WorkspaceScreen({
           model: draftModel,
         })
     }
-    return draftConversation ?? buildEmptyConversation({ now: new Date().toISOString(), model: draftModel })
-  }, [draftConversation, draftModel, selectedConversation, workspace.currentThreadId])
+    return draftConversation ?? buildEmptyConversation({ now: new Date().toISOString(), model: draftModel, accessMode: draftAccessMode })
+  }, [draftConversation, draftModel, draftAccessMode, selectedConversation, workspace.currentThreadId])
 
   useEffect(() => {
     const notification = conversation.notice
@@ -508,6 +513,7 @@ export function WorkspaceScreen({
         now,
         model: draftConversation?.model ?? draftModel,
         mode: effectiveMode,
+        accessMode: conversation.accessMode,
       })
       const payload = buildInitialPayload(nextConversation, trimmed, readyAttachments)
       const requestMessage = payload.messages.at(0)
@@ -859,6 +865,7 @@ export function WorkspaceScreen({
     isActiveThread,
     onToast: pushToast,
     onConversationBoundary: () => {
+      setActivePage('conversation')
       releaseDraft()
       draftRevision.current += 1
       localAttachments.clearAttachments()
@@ -897,6 +904,13 @@ export function WorkspaceScreen({
     } catch {
       pushToast('error', t('停止任务失败，请重试'))
     }
+  }
+
+  const selectAccessMode = (accessMode: Conversation['accessMode']) => {
+    if (!workspace.currentThreadId) {
+      setDraftAccessMode(accessMode)
+      setDraftConversation(current => current ? { ...current, accessMode } : current)
+    } else updateCurrent(item => ({ ...item, accessMode }))
   }
 
   const selectModel = (model: string) => {
@@ -944,7 +958,7 @@ export function WorkspaceScreen({
   }, [messageWindow, pushToast, t, taskDrawer])
 
   // Portal 对话框打开时整块工作区退出辅助技术与键盘路径，只保留最上层操作
-  const portalModalActive = settingsOpen || dialog != null || directoryOpen
+  const portalModalActive = settingsOpen || dialog != null || directoryOpen || automationModalOpen
   const taskTraceLauncher = taskTraceBlocked ? undefined : (
     <TodoTraceLauncher
       ref={taskDrawer.launcherRef}
@@ -989,11 +1003,22 @@ export function WorkspaceScreen({
         onToggleMode={navigation.toggleDesktopMode}
         onRequestExpanded={navigation.requestExpanded}
         onCloseOverlay={navigation.closeOverlay}
+        automationActive={activePage === 'automation'}
+        onOpenAutomation={() => {
+          taskDrawer.close(false)
+          changeDirectoryOpen(false)
+          navigation.closeOverlay(false)
+          setActivePage('automation')
+        }}
         onNew={() => {
+          setActivePage('conversation')
           setWorkspaceView('conversation')
           newConversation()
         }}
-        onSelect={selectConversation}
+        onSelect={(threadId) => {
+          setActivePage('conversation')
+          selectConversation(threadId)
+        }}
         onPin={pinConversation}
         pinPendingThreadIds={pinPendingThreadIds}
         onRename={renameConversation}
@@ -1019,6 +1044,16 @@ export function WorkspaceScreen({
         aria-hidden={(navigation.mode === 'overlay' && navigation.overlayOpen) || undefined}
         inert={(navigation.mode === 'overlay' && navigation.overlayOpen) || undefined}
       >
+        {activePage === 'automation' ? (
+          <ErrorBoundary onError={() => pushToast('error', t('自动化区域无法显示'))}
+            fallback={({ reset }) => <div className="automation-empty"><p>{t('自动化区域无法显示')}</p><Button type="button" onClick={reset}>{t('重新加载')}</Button></div>}>
+            <AutomationPage navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay}
+              onModalChange={setAutomationModalOpen} onToast={pushToast} defaultModelId={defaultModelId}
+              renderModelChoice={(model, onSelect) => <ComposerModelPicker model={model} modelIds={modelIds} defaultModelId={defaultModelId}
+                modelDisplayName={modelDisplayName} status={modelCatalogStatus} open={isModelPickerOpen} onOpenChange={setModelPickerOpen}
+                onSelectModel={value => { onSelect(value); setModelPickerOpen(false) }} onRetry={retryModelCatalog} />} />
+          </ErrorBoundary>
+        ) : <>
         <WorkspaceHeader
           conversationTitle={conversation.title}
           overlayTriggerRef={navigation.overlayTriggerRef}
@@ -1137,6 +1172,8 @@ export function WorkspaceScreen({
                 : undefined}
               taskTraceControl={taskDrawer.modalActive ? undefined : taskTraceLauncher}
               backgroundInert={taskDrawer.modalActive}
+              accessControl={<AccessModePicker value={conversation.accessMode} onChange={selectAccessMode}
+                disabled={isRunning || Boolean(conversation.approval || conversation.planInteraction) || isConversationHydrating} />}
               modelControl={(
                 <ComposerModelPicker
                   model={conversation.model}
@@ -1203,6 +1240,7 @@ export function WorkspaceScreen({
             />
           </ErrorBoundary>
         )}
+        </>}
       </main>
       {taskDrawer.modalActive && (
         <button

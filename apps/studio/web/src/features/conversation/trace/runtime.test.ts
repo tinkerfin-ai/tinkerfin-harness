@@ -8,7 +8,7 @@ import mediaFixture from '../agui/contracts/message-attachments.fixture.json'
 import type { ConversationHistoryDetail, ConversationTraceUpdate } from '../../../api/conversation/history'
 import { applyConversationTraceUpdate, restoreConversationFromTrace } from './runtime'
 
-const detail = (): ConversationHistoryDetail => ({
+const detail = (): ConversationHistoryDetail => ({ accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',
   titleSeq: 0,

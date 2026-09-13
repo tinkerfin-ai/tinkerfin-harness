@@ -18,7 +18,6 @@ from .schedules import (
     IntervalSchedule,
     OnceSchedule,
     Schedule,
-    schedule_to_json,
 )
 
 _AUTOMATION_NAMESPACE = UUID("154841d6-4a23-50da-8f53-0f3609cab079")
@@ -31,7 +30,7 @@ def _json_value(value: _CanonicalValue) -> JsonValue:
             raise ValueError("identity datetime values must be timezone-aware")
         return value.isoformat()
     if isinstance(value, (OnceSchedule, IntervalSchedule, CronSchedule)):
-        return json.loads(schedule_to_json(value))
+        return value.model_dump(mode="json", exclude_none=True)
     if isinstance(value, Mapping):
         return dict(value)
     return value

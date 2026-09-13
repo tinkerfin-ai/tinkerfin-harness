@@ -168,7 +168,7 @@
   }
 
   .todo-trace-todo.is-running .todo-trace-node-icon { color: var(--color-brand-text); }
-  .todo-trace-todo.is-completed .todo-trace-node-icon { color: var(--color-brand-text); }
+  .todo-trace-todo.is-completed .todo-trace-node-icon { color: var(--color-text-secondary); }
   .todo-trace-todo.is-failed .todo-trace-node-icon { color: var(--color-danger-text); }
   .todo-trace-todo.is-cancelled .todo-trace-node-icon { color: var(--color-text-secondary); }
 

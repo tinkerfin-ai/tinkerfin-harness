@@ -14,6 +14,7 @@ from uuid import uuid4
 from pydantic import JsonValue
 
 from . import _rules
+from ._query_cursor import decode_cursor, encode_cursor, query_scope
 from .clock import AutomationClock, SystemClock
 from .errors import (
     AutomationStoreError,
@@ -33,6 +34,7 @@ from .models import (
     TaskStatus,
     _validate_persisted_text,
 )
+from .queries import ExecutionFilter, TaskFilter
 from .store import (
     MaterializationResult,
     ScheduledExecution,
@@ -110,6 +112,28 @@ class _WorkItem:
 class _Operation:
     input_digest: str
     result: AutomationTask | AutomationExecution | str
+
+
+def _matches_tasks(task: AutomationTask, filters: TaskFilter) -> bool:
+    return (
+        not filters.name_contains
+        or filters.name_contains.casefold() in task.name.casefold()
+    ) and (not filters.statuses or task.status in filters.statuses)
+
+
+def _matches_executions(
+    execution: AutomationExecution, filters: ExecutionFilter
+) -> bool:
+    return (
+        (
+            not filters.name_contains
+            or filters.name_contains.casefold()
+            in (execution.task_name or "").casefold()
+        )
+        and (not filters.statuses or execution.status in filters.statuses)
+        and (filters.queued_from is None or execution.queued_at >= filters.queued_from)
+        and (filters.queued_until is None or execution.queued_at < filters.queued_until)
+    )
 
 
 class MemoryAutomationStore:
@@ -290,26 +314,72 @@ class MemoryAutomationStore:
         *,
         limit: int,
         cursor: str | None,
+        filters: TaskFilter | None = None,
     ) -> TaskPage:
-        """List tasks in creation order with a keyset cursor."""
-
+        """Read matching tasks using an ownership-bound stable position."""
         _validate_scope(namespace, owner_id)
         self._validate_page_limit(limit)
+        selected = filters or TaskFilter()
+        scope = query_scope(namespace, owner_id, selected)
+        position = decode_cursor(cursor, scope)
         async with self._lock:
             self._ensure_open()
             items = sorted(
                 (
-                    task
-                    for task in self._tasks.values()
-                    if task.namespace == namespace and task.owner_id == owner_id
+                    item
+                    for item in self._tasks.values()
+                    if item.namespace == namespace
+                    and item.owner_id == owner_id
+                    and _matches_tasks(item, selected)
+                    and (position is None or (item.created_at, item.task_id) > position)
                 ),
-                key=lambda task: (task.created_at, task.task_id),
+                key=lambda item: (item.created_at, item.task_id),
+                reverse=False,
             )
-            page = self._page_after(items, cursor, limit, id_name="task_id")
             return TaskPage(
-                items=tuple(_snapshot(item) for item in page[:limit]),
-                next_cursor=page[limit - 1].task_id if len(page) > limit else None,
+                items=tuple(_snapshot(item) for item in items[:limit]),
+                next_cursor=encode_cursor(
+                    scope, items[limit - 1].created_at, items[limit - 1].task_id
+                )
+                if len(items) > limit
+                else None,
             )
+
+    async def summarize_tasks(
+        self, namespace: str, owner_id: str, *, filters: TaskFilter | None = None
+    ) -> dict[TaskStatus, int]:
+        """Count matching tasks across every page in one owner scope."""
+        _validate_scope(namespace, owner_id)
+        selected = filters or TaskFilter()
+        async with self._lock:
+            self._ensure_open()
+            counts = {status: 0 for status in TaskStatus}
+            for item in self._tasks.values():
+                if (
+                    item.namespace == namespace
+                    and item.owner_id == owner_id
+                    and _matches_tasks(item, selected)
+                ):
+                    counts[item.status] += 1
+            return counts
+
+    async def summarize_executions(
+        self, namespace: str, owner_id: str, *, filters: ExecutionFilter | None = None
+    ) -> dict[ExecutionStatus, int]:
+        """Count matching executions across every page in one owner scope."""
+        _validate_scope(namespace, owner_id)
+        selected = filters or ExecutionFilter()
+        async with self._lock:
+            self._ensure_open()
+            counts = {status: 0 for status in ExecutionStatus}
+            for item in self._executions.values():
+                if (
+                    item.namespace == namespace
+                    and item.owner_id == owner_id
+                    and _matches_executions(item, selected)
+                ):
+                    counts[item.status] += 1
+            return counts
 
     async def get_scheduled_task(self, namespace: str, task_id: str) -> AutomationTask:
         """Read one task for a trusted worker inside its namespace."""
@@ -530,30 +600,39 @@ class MemoryAutomationStore:
         task_id: str | None,
         limit: int,
         cursor: str | None,
+        filters: ExecutionFilter | None = None,
     ) -> ExecutionPage:
-        """List executions in reverse queue order with a keyset cursor."""
-
+        """Read matching executions using an ownership-bound stable position."""
         _validate_scope(namespace, owner_id)
         self._validate_page_limit(limit)
+        selected = filters or ExecutionFilter()
+        scope = query_scope(namespace, owner_id, selected, task_id)
+        position = decode_cursor(cursor, scope)
         async with self._lock:
             self._ensure_open()
             items = sorted(
                 (
-                    execution
-                    for execution in self._executions.values()
-                    if execution.namespace == namespace
-                    and execution.owner_id == owner_id
-                    and (task_id is None or execution.task_id == task_id)
+                    item
+                    for item in self._executions.values()
+                    if item.namespace == namespace
+                    and item.owner_id == owner_id
+                    and _matches_executions(item, selected)
+                    and (task_id is None or item.task_id == task_id)
+                    and (
+                        position is None
+                        or (item.queued_at, item.execution_id) < position
+                    )
                 ),
-                key=lambda execution: (execution.queued_at, execution.execution_id),
+                key=lambda item: (item.queued_at, item.execution_id),
                 reverse=True,
             )
-            page = self._page_after(items, cursor, limit, id_name="execution_id")
             return ExecutionPage(
-                items=tuple(_snapshot(item) for item in page[:limit]),
-                next_cursor=(
-                    page[limit - 1].execution_id if len(page) > limit else None
-                ),
+                items=tuple(_snapshot(item) for item in items[:limit]),
+                next_cursor=encode_cursor(
+                    scope, items[limit - 1].queued_at, items[limit - 1].execution_id
+                )
+                if len(items) > limit
+                else None,
             )
 
     async def claim_work(

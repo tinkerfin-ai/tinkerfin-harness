@@ -72,6 +72,9 @@ docker compose exec server python -c 'import asyncio, getpass; from tinkerfin_st
 UPDATE users SET password_hash = '<生成的完整哈希>' WHERE username = 'tinkerfin';
 ```
 
+对话默认使用完全访问，可通过模型旁的权限选择器改为写入需审批。
+定时任务的设置和结果查看见 [Studio 自动化](automation.md)。
+
 ## 遇到问题
 
 | 现象 | 检查 |

@@ -38,6 +38,7 @@ dependencies = [
     "tavily-python>=0.7,<1",
     "tinkerfin[agui,redis,tracing]==0.1.0",
     "tinkerfin-contracts==0.1.0",
+    "tinkerfin-automation[sqlalchemy]==0.1.0",
     "tinkerfin-langgraph-store[sqlalchemy]==0.1.0",
     "tinkerfin-messaging[agui,redis]==0.1.0",
     "tinkerfin-sandbox[sqlalchemy]==0.1.0",

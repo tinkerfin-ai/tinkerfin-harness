@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 
+import pytest
 from test_store_contract import _execution, _task
 
 from tinkerfin_automation import TaskStatus
@@ -24,14 +25,14 @@ async def test_task_pages_keep_stable_ties_and_owner_scope(
     )
     first = await store.list_tasks("app", "owner-1", limit=2, cursor=None)
     assert tuple(item.task_id for item in first.items) == ("a", "b")
-    assert first.next_cursor == "b"
+    assert first.next_cursor is not None
     second = await store.list_tasks("app", "owner-1", limit=2, cursor=first.next_cursor)
     assert tuple(item.task_id for item in second.items) == ("c",)
     assert second.next_cursor is None
-    assert not (
+    with pytest.raises(ValueError, match="cursor"):
         await store.list_tasks("app", "owner-1", limit=2, cursor="outside")
-    ).items
-    assert not (await store.list_tasks("another", "owner-1", limit=2, cursor="a")).items
+    with pytest.raises(ValueError, match="another query"):
+        await store.list_tasks("another", "owner-1", limit=2, cursor=first.next_cursor)
 
 
 async def test_scheduler_cursor_must_belong_to_the_enabled_task_selection(
@@ -79,17 +80,16 @@ async def test_execution_cursor_must_belong_to_the_selected_task(
         "app", "owner-1", task_id="task", limit=1, cursor=None
     )
     assert tuple(item.execution_id for item in first.items) == ("b",)
-    assert first.next_cursor == "b"
+    assert first.next_cursor is not None
     second = await store.list_executions(
         "app", "owner-1", task_id="task", limit=1, cursor=first.next_cursor
     )
     assert tuple(item.execution_id for item in second.items) == ("a",)
     assert second.next_cursor is None
-    assert not (
+    with pytest.raises(ValueError, match="another query"):
         await store.list_executions(
-            "app", "owner-1", task_id="task", limit=1, cursor="c"
+            "app", "owner-1", task_id="other", limit=1, cursor=first.next_cursor
         )
-    ).items
     assert tuple(
         item.execution_id
         for item in (

@@ -14,7 +14,18 @@ from typing import TypeVar
 from uuid import uuid4
 
 from pydantic import JsonValue
-from sqlalchemy import DateTime, and_, case, delete, func, insert, or_, select, update
+from sqlalchemy import (
+    ColumnElement,
+    DateTime,
+    and_,
+    case,
+    delete,
+    func,
+    insert,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -41,6 +52,7 @@ from ._codec import (
     encode_operation_result,
     encode_task,
 )
+from ._query_cursor import decode_cursor, encode_cursor, query_scope
 from ._tasks import Cancellation, TaskOutcome, capture, join_owned_task
 from .errors import (
     AutomationError,
@@ -63,6 +75,7 @@ from .models import (
     TaskStatus,
     _validate_persisted_text,
 )
+from .queries import ExecutionFilter, TaskFilter
 from .sql_schema import (
     operations,
     prepare_schema,
@@ -122,6 +135,7 @@ def _task_values(task: AutomationTask) -> dict[str, object]:
         "namespace": task.namespace,
         "owner_id": task.owner_id,
         "name": task.name,
+        "search_name": task.name.casefold(),
         "status": task.status.value,
         "revision": task.revision,
         "next_run_at": _database_datetime(task.next_run_at),
@@ -142,6 +156,8 @@ def _run_values(
         "namespace": execution.namespace,
         "owner_id": execution.owner_id,
         "task_id": execution.task_id,
+        "task_name": execution.task_name,
+        "search_name": execution.task_name.casefold() if execution.task_name else None,
         "identity_digest": _identity_digest(execution),
         "thread_id": execution.identity.thread_id,
         "run_id": execution.identity.run_id,
@@ -603,40 +619,34 @@ class SqlAlchemyAutomationStore:
         *,
         limit: int,
         cursor: str | None,
+        filters: TaskFilter | None = None,
     ) -> TaskPage:
-        """List tasks by stable creation keyset."""
-
+        """Read matching tasks with a query-bound position that survives deletions."""
         _validate_scope(namespace, owner_id)
         self._validate_page_limit(limit)
         self._ensure_open()
+        selected = filters or TaskFilter()
+        scope = query_scope(namespace, owner_id, selected)
+        position = decode_cursor(cursor, scope)
 
         async def operation(cancellation: Cancellation) -> TaskPage:
             try:
                 async with self._transaction(
                     cancellation, read_only=True
                 ) as connection:
-                    statement = select(
-                        tasks.c.payload, tasks.c.created_at, tasks.c.task_id
-                    ).where(
+                    statement = select(tasks.c.payload).where(
                         tasks.c.namespace == namespace,
                         tasks.c.owner_id == owner_id,
+                        *self._filter_tasks(selected),
                     )
-                    if cursor is not None:
-                        cursor_row = (
-                            await connection.execute(
-                                statement.with_only_columns(
-                                    tasks.c.created_at, tasks.c.task_id
-                                ).where(tasks.c.task_id == cursor)
-                            )
-                        ).first()
-                        if cursor_row is None:
-                            return TaskPage(())
+                    if position is not None:
+                        at, identity = position
                         statement = statement.where(
                             or_(
-                                tasks.c.created_at > cursor_row.created_at,
+                                tasks.c.created_at > _database_datetime(at),
                                 and_(
-                                    tasks.c.created_at == cursor_row.created_at,
-                                    tasks.c.task_id > cursor_row.task_id,
+                                    tasks.c.created_at == _database_datetime(at),
+                                    tasks.c.task_id > identity,
                                 ),
                             )
                         )
@@ -650,9 +660,13 @@ class SqlAlchemyAutomationStore:
                     decoded = [decode_task(self._text(row.payload)) for row in rows]
                     return TaskPage(
                         items=tuple(decoded[:limit]),
-                        next_cursor=(
-                            decoded[limit - 1].task_id if len(decoded) > limit else None
-                        ),
+                        next_cursor=encode_cursor(
+                            scope,
+                            decoded[limit - 1].created_at,
+                            decoded[limit - 1].task_id,
+                        )
+                        if len(decoded) > limit
+                        else None,
                     )
             except asyncio.CancelledError:
                 raise
@@ -660,6 +674,112 @@ class SqlAlchemyAutomationStore:
                 raise self._store_error("list_tasks", error) from error
 
         return await self._run_operation(operation)
+
+    async def summarize_tasks(
+        self, namespace: str, owner_id: str, *, filters: TaskFilter | None = None
+    ) -> dict[TaskStatus, int]:
+        """Aggregate matching tasks in SQL without loading record payloads."""
+        _validate_scope(namespace, owner_id)
+        self._ensure_open()
+        selected = filters or TaskFilter()
+
+        async def operation(cancellation: Cancellation) -> dict[TaskStatus, int]:
+            try:
+                async with self._transaction(
+                    cancellation, read_only=True
+                ) as connection:
+                    statement = (
+                        select(tasks.c.status, func.count())
+                        .where(
+                            tasks.c.namespace == namespace,
+                            tasks.c.owner_id == owner_id,
+                            *self._filter_tasks(selected),
+                        )
+                        .group_by(tasks.c.status)
+                    )
+                    rows = (await connection.execute(statement)).all()
+                    counts = {status: 0 for status in TaskStatus}
+                    for row in rows:
+                        counts[TaskStatus(row[0])] = row[1]
+                    return counts
+            except asyncio.CancelledError:
+                raise
+            except SQLAlchemyError as error:
+                raise self._store_error("summarize_tasks", error) from error
+
+        return await self._run_operation(operation)
+
+    def _filter_tasks(self, filters: TaskFilter) -> list[ColumnElement[bool]]:
+        conditions: list[ColumnElement[bool]] = []
+        if filters.name_contains:
+            column = tasks.c.search_name
+            if self._dialect == "mysql":
+                column = column.collate("utf8mb4_bin")
+            conditions.append(
+                column.contains(filters.name_contains.casefold(), autoescape=True)
+            )
+        if filters.statuses:
+            conditions.append(
+                tasks.c.status.in_([status.value for status in filters.statuses])
+            )
+        return conditions
+
+    async def summarize_executions(
+        self, namespace: str, owner_id: str, *, filters: ExecutionFilter | None = None
+    ) -> dict[ExecutionStatus, int]:
+        """Aggregate matching executions in SQL without loading record payloads."""
+        _validate_scope(namespace, owner_id)
+        self._ensure_open()
+        selected = filters or ExecutionFilter()
+
+        async def operation(cancellation: Cancellation) -> dict[ExecutionStatus, int]:
+            try:
+                async with self._transaction(
+                    cancellation, read_only=True
+                ) as connection:
+                    statement = (
+                        select(runs.c.status, func.count())
+                        .where(
+                            runs.c.namespace == namespace,
+                            runs.c.owner_id == owner_id,
+                            *self._filter_executions(selected),
+                        )
+                        .group_by(runs.c.status)
+                    )
+                    rows = (await connection.execute(statement)).all()
+                    counts = {status: 0 for status in ExecutionStatus}
+                    for row in rows:
+                        counts[ExecutionStatus(row[0])] = row[1]
+                    return counts
+            except asyncio.CancelledError:
+                raise
+            except SQLAlchemyError as error:
+                raise self._store_error("summarize_executions", error) from error
+
+        return await self._run_operation(operation)
+
+    def _filter_executions(self, filters: ExecutionFilter) -> list[ColumnElement[bool]]:
+        conditions: list[ColumnElement[bool]] = []
+        if filters.name_contains:
+            column = runs.c.search_name
+            if self._dialect == "mysql":
+                column = column.collate("utf8mb4_bin")
+            conditions.append(
+                column.contains(filters.name_contains.casefold(), autoescape=True)
+            )
+        if filters.statuses:
+            conditions.append(
+                runs.c.status.in_([status.value for status in filters.statuses])
+            )
+        if filters.queued_from is not None:
+            conditions.append(
+                runs.c.queued_at >= _database_datetime(filters.queued_from)
+            )
+        if filters.queued_until is not None:
+            conditions.append(
+                runs.c.queued_at < _database_datetime(filters.queued_until)
+            )
+        return conditions
 
     async def get_scheduled_task(self, namespace: str, task_id: str) -> AutomationTask:
         """Read one task for a trusted worker inside its configured namespace."""
@@ -1057,39 +1177,36 @@ class SqlAlchemyAutomationStore:
         task_id: str | None,
         limit: int,
         cursor: str | None,
+        filters: ExecutionFilter | None = None,
     ) -> ExecutionPage:
-        """List execution history in reverse queue keyset order."""
-
+        """Read matching executions with a query-bound position that survives deletions."""
         _validate_scope(namespace, owner_id)
         self._validate_page_limit(limit)
         self._ensure_open()
+        selected = filters or ExecutionFilter()
+        scope = query_scope(namespace, owner_id, selected, task_id)
+        position = decode_cursor(cursor, scope)
 
         async def operation(cancellation: Cancellation) -> ExecutionPage:
             try:
                 async with self._transaction(
                     cancellation, read_only=True
                 ) as connection:
-                    statement = select(
-                        runs.c.payload, runs.c.queued_at, runs.c.execution_id
-                    ).where(runs.c.namespace == namespace, runs.c.owner_id == owner_id)
+                    statement = select(runs.c.payload).where(
+                        runs.c.namespace == namespace,
+                        runs.c.owner_id == owner_id,
+                        *self._filter_executions(selected),
+                    )
                     if task_id is not None:
                         statement = statement.where(runs.c.task_id == task_id)
-                    if cursor is not None:
-                        cursor_row = (
-                            await connection.execute(
-                                statement.with_only_columns(
-                                    runs.c.queued_at, runs.c.execution_id
-                                ).where(runs.c.execution_id == cursor)
-                            )
-                        ).first()
-                        if cursor_row is None:
-                            return ExecutionPage(())
+                    if position is not None:
+                        at, identity = position
                         statement = statement.where(
                             or_(
-                                runs.c.queued_at < cursor_row.queued_at,
+                                runs.c.queued_at < _database_datetime(at),
                                 and_(
-                                    runs.c.queued_at == cursor_row.queued_at,
-                                    runs.c.execution_id < cursor_row.execution_id,
+                                    runs.c.queued_at == _database_datetime(at),
+                                    runs.c.execution_id < identity,
                                 ),
                             )
                         )
@@ -1105,11 +1222,13 @@ class SqlAlchemyAutomationStore:
                     ]
                     return ExecutionPage(
                         items=tuple(decoded[:limit]),
-                        next_cursor=(
-                            decoded[limit - 1].execution_id
-                            if len(decoded) > limit
-                            else None
-                        ),
+                        next_cursor=encode_cursor(
+                            scope,
+                            decoded[limit - 1].queued_at,
+                            decoded[limit - 1].execution_id,
+                        )
+                        if len(decoded) > limit
+                        else None,
                     )
             except asyncio.CancelledError:
                 raise

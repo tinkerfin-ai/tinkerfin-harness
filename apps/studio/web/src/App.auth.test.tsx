@@ -454,7 +454,7 @@ describe('App authentication boundary', () => {
         messages: [{ id: 'request-private-run', role: 'user', content: 'private prompt' }],
         tools: [],
         context: [],
-        forwardedProps: { model: 'main', command: { plan: 'off' } },
+        forwardedProps: { accessMode: 'write_approval', model: 'main', command: { plan: 'off' } },
       },
       mode: 'start',
       lastSeq: 7,

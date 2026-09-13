@@ -16,7 +16,9 @@ from .models import (
     ExecutionPage,
     ExecutionStatus,
     TaskPage,
+    TaskStatus,
 )
+from .queries import ExecutionFilter, TaskFilter
 
 
 class WorkKind(StrEnum):
@@ -139,6 +141,7 @@ class AutomationStore(Protocol):
         *,
         limit: int,
         cursor: str | None,
+        filters: TaskFilter | None = None,
     ) -> TaskPage:
         """List tasks with a stable keyset cursor."""
 
@@ -147,6 +150,18 @@ class AutomationStore(Protocol):
     async def get_scheduled_task(self, namespace: str, task_id: str) -> AutomationTask:
         """Read one task for a trusted worker inside its configured namespace."""
 
+        ...
+
+    async def summarize_tasks(
+        self, namespace: str, owner_id: str, *, filters: TaskFilter | None = None
+    ) -> dict[TaskStatus, int]:
+        """Count all matching tasks in the authorized owner scope."""
+        ...
+
+    async def summarize_executions(
+        self, namespace: str, owner_id: str, *, filters: ExecutionFilter | None = None
+    ) -> dict[ExecutionStatus, int]:
+        """Count all matching executions in the authorized owner scope."""
         ...
 
     async def list_scheduled_tasks(
@@ -227,6 +242,7 @@ class AutomationStore(Protocol):
         task_id: str | None,
         limit: int,
         cursor: str | None,
+        filters: ExecutionFilter | None = None,
     ) -> ExecutionPage:
         """List execution history with a stable keyset cursor."""
 

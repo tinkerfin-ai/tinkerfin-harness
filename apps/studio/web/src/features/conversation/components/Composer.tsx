@@ -48,6 +48,7 @@ export function Composer({
   taskTraceControl,
   backgroundInert = false,
   modelControl,
+  accessControl,
   planActive,
   planLocked = false,
   attachments,
@@ -75,6 +76,7 @@ export function Composer({
   taskTraceControl?: ReactNode
   backgroundInert?: boolean
   modelControl: ReactNode
+  accessControl?: ReactNode
   planActive: boolean
   planLocked?: boolean
   attachments: readonly DraftAttachment[]
@@ -364,6 +366,7 @@ export function Composer({
               loading={attachmentPicker.pending}
               onClick={attachmentPicker.open}
             />
+            {accessControl}
             {planActive && (
               <ComposerPlanChip locked={planLocked} onExitPlan={onExitPlan} />
             )}

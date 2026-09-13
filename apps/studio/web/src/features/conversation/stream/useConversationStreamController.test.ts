@@ -54,12 +54,12 @@ const payload: ChatRequestPayload = {
   messages: [],
   tools: [],
   context: [],
-  forwardedProps: { model: 'main', command: { plan: 'off' } },
+  forwardedProps: { accessMode: 'write_approval', model: 'main', command: { plan: 'off' } },
 }
 
 const traceDetail = (
   overrides: Partial<ConversationHistoryDetail> = {},
-): ConversationHistoryDetail => ({
+): ConversationHistoryDetail => ({ accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',
   titleSeq: 0,
@@ -103,7 +103,7 @@ const traceDetail = (
   taskTrace: overrides.taskTrace ?? { status: 'ready', todoGroups: [] },
 })
 
-const conversation = (overrides: Partial<Conversation> = {}): Conversation => ({
+const conversation = (overrides: Partial<Conversation> = {}): Conversation => ({ accessMode: 'write_approval',
   threadId: THREAD_ID,
   title: 'Controller test',
   pinned: false,

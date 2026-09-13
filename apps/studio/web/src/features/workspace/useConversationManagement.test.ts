@@ -27,7 +27,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-const summary = (pinned: boolean): ConversationHistoryListItem => ({
+const summary = (pinned: boolean): ConversationHistoryListItem => ({ accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',
   titleSeq: 0,

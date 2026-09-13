@@ -8,7 +8,7 @@ import { Sidebar } from './Sidebar'
 const workspace: WorkspaceState = {
   currentThreadId: 'recent',
   conversations: [
-    {
+    { accessMode: 'write_approval',
       threadId: 'pinned',
       title: '置顶会话',
       pinned: true,
@@ -20,7 +20,7 @@ const workspace: WorkspaceState = {
       taskTrace: { phase: 'unloaded' },
       runStatus: 'idle',
     },
-    {
+    { accessMode: 'write_approval',
       threadId: 'recent',
       title: '最近会话',
       pinned: false,
@@ -51,6 +51,8 @@ const baseProps = {
   onToggleMode: vi.fn(),
   onRequestExpanded: vi.fn(),
   onCloseOverlay: vi.fn(),
+  onOpenAutomation: vi.fn(),
+  automationActive: false,
   onNew: vi.fn(),
   onSelect: vi.fn(),
   onPin: vi.fn(),
@@ -182,19 +184,30 @@ describe('Sidebar', () => {
     expect(historyScroll).toContainElement(productNavigation)
     expect(screen.getByRole('button', { name: '技能库' }).querySelector('.lucide-book-open-check')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '智能体' }).querySelector('.lucide-workflow')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'MCP管理' }).querySelector('.lucide-cable')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '自动化' }).querySelector('.lucide-alarm-clock')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '自动化' })).toBeEnabled()
     const agentButton = screen.getByRole('button', { name: '智能体' })
     expect(agentButton).not.toHaveAttribute('aria-current')
     expect(agentButton).not.toHaveAttribute('aria-pressed')
     expect(agentButton).not.toHaveClass('is-selected')
     expect(agentButton).toBeDisabled()
     expect(screen.queryByRole('button', { name: '工作区' })).not.toBeInTheDocument()
-    for (const label of ['技能库', 'MCP管理', '更多']) {
+    for (const label of ['技能库', '更多']) {
       expect(screen.getByRole('button', { name: label })).toBeDisabled()
     }
 
     fireEvent.click(screen.getByRole('button', { name: '打开用户菜单' }))
     expect(screen.getByRole('menuitem', { name: '设置' })).toBeEnabled()
+  })
+
+  it('自动化入口可进入并体现当前页，其他入口保持原有状态', () => {
+    const onOpenAutomation = vi.fn()
+    render(<Sidebar {...baseProps} automationActive onOpenAutomation={onOpenAutomation} />)
+    const button = screen.getByRole('button', { name: '自动化' })
+    expect(button).toHaveAttribute('aria-current', 'page')
+    fireEvent.click(button)
+    expect(onOpenAutomation).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('button', { name: 'MCP管理' })).not.toBeInTheDocument()
   })
 
   it('在展开侧栏中把搜索放到收起控件左侧并使用任务抽屉图标', () => {

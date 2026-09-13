@@ -35,9 +35,13 @@ def build_sandbox_attachment_tools(
     *,
     service: AttachmentService,
     user_id: int,
-    thread_id: str,
+    thread_id: str | None = None,
+    collection_id: str | None = None,
 ) -> list[BaseTool]:
     """声明文件交付工具，执行时取得当前会话工作区，保存成功后返回附件引用"""
+
+    if (thread_id is None) == (collection_id is None):
+        raise ValueError("文件工具必须绑定一个会话或自动化附件集合")
 
     async def save_file(
         sandbox: RootedOpenSandboxBackend, path: str, name: str
@@ -49,6 +53,7 @@ def build_sandbox_attachment_tools(
             name=name,
             chunks=byte_chunks(data),
             thread_id=thread_id,
+            collection_id=collection_id,
             source="tool",
         )
         return [file.content_block()]

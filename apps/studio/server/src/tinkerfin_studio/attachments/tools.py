@@ -20,12 +20,16 @@ def build_attachment_tools(
     service: AttachmentService,
     processor: DocumentProcessor,
     user_id: int,
-    thread_id: str,
+    thread_id: str | None = None,
+    collection_id: str | None = None,
     image_model: AgentModelConfig | None,
     supports_images: bool,
     model_allowed_origins: tuple[str, ...] = (),
 ) -> list[BaseTool]:
     """把当前用户和会话权限固定到文件工具，不接受模型传入归属信息"""
+
+    if (thread_id is None) == (collection_id is None):
+        raise ValueError("文件工具必须绑定一个会话或自动化附件集合")
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
     async def list_attachments() -> str:
@@ -36,7 +40,13 @@ def build_attachment_tools(
 
         Raises:
             BusinessException: 会话不存在或当前用户无权访问"""
-        files = await service.list_thread(user_id=user_id, thread_id=thread_id)
+        if collection_id is not None:
+            files = await service.list_collection(
+                user_id=user_id, collection_id=collection_id
+            )
+        else:
+            assert thread_id is not None
+            files = await service.list_thread(user_id=user_id, thread_id=thread_id)
         return json.dumps(
             [file.model_dump(mode="json") for file in files], ensure_ascii=False
         )
@@ -61,7 +71,10 @@ def build_attachment_tools(
             ValueError: 格式、读取范围或文档内容不符合要求
             TimeoutError: 文档处理超过 30 秒"""
         file, data = await service.read(
-            attachment_id, user_id=user_id, thread_id=thread_id
+            attachment_id,
+            user_id=user_id,
+            thread_id=thread_id,
+            collection_id=collection_id,
         )
         result = await processor.run(
             {
@@ -92,7 +105,12 @@ def build_attachment_tools(
             ValueError: 当前模型不支持图片或附件不是图片"""
         if not supports_images:
             raise ValueError("当前模型不支持图片，请切换支持看图的模型")
-        file = await service.get(attachment_id, user_id=user_id, thread_id=thread_id)
+        file = await service.get(
+            attachment_id,
+            user_id=user_id,
+            thread_id=thread_id,
+            collection_id=collection_id,
+        )
         if not file.mime_type.startswith("image/"):
             raise ValueError("所选附件不是图片")
         return [file.content_block()]
@@ -143,6 +161,7 @@ def build_attachment_tools(
             name=name,
             chunks=byte_chunks(data),
             thread_id=thread_id,
+            collection_id=collection_id,
             source="tool",
         )
         return [file.content_block()]
@@ -177,6 +196,7 @@ def build_attachment_tools(
             name=f"生成图片.{extension}",
             chunks=byte_chunks(data),
             thread_id=thread_id,
+            collection_id=collection_id,
             source="tool",
         )
         return [file.content_block()]

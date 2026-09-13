@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tinkerfin import AgentRuntime, AgUiResumeRequest, RunIdentity, TinkerFin
+from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.conversation import service as service_module
@@ -67,8 +68,9 @@ def conversation_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
         thread_id: str,
         model_config: AgentModelConfig,
         image_model: AgentModelConfig | None,
+        access_mode: AccessMode,
     ) -> AgentRuntime[None]:
-        del thread_id, model_config, image_model
+        del thread_id, model_config, image_model, access_mode
         return resources.tinkerfin.with_namespace(f"ns_{user_id}").build(
             model=FakeListChatModel(responses=["unused"])
         )
@@ -225,11 +227,14 @@ async def test_resume_registration_stores_only_claim_identity(
 
 
 @pytest.mark.parametrize("continuation", ["resume", "branch"])
-async def test_continuation_rejects_a_model_different_from_the_source_run(
+@pytest.mark.parametrize("changed", ["model", "access"])
+async def test_continuation_preserves_source_model_and_file_access(
     session,
     continuation: str,
+    changed: str,
     attachments,
 ) -> None:
+    selected_model = "model-other" if changed == "model" else "model-main"
     repository = ConversationRepository(session)
     thread = await repository.create_thread(
         user_id=1,
@@ -252,15 +257,17 @@ async def test_continuation_rejects_a_model_different_from_the_source_run(
         request = _resume_request(
             thread_id=thread.thread_id,
             run_id="run-continuation",
-            model_id="model-other",
+            model_id=selected_model,
         )
     else:
         request = _ordinary_request(
             thread_id=thread.thread_id,
             run_id="run-continuation",
-            model_id="model-other",
+            model_id=selected_model,
             parent_run_id="run-source",
         )
+    if changed == "access":
+        request.forwarded_props.access_mode = "write_approval"
     thread_pk = thread.id
     await repository.commit()
     intent = classify_intent(request)
@@ -276,7 +283,7 @@ async def test_continuation_rejects_a_model_different_from_the_source_run(
         ).register(
             intent=intent,
             prepared=prepared,
-            model=_model("model-other"),
+            model=_model(selected_model),
             thread=thread,
         )
 

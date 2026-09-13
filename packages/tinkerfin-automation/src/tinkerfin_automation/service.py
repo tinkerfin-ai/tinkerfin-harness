@@ -35,6 +35,7 @@ from .models import (
     TaskStatus,
 )
 from .policies import ExecutionLimits, MisfirePolicy
+from .queries import ExecutionFilter, TaskFilter
 from .scheduler import AutomationScheduler, MemoryScheduler, _require_external_close
 from .schedules import Schedule, materialize_schedule, next_run_after, preview_schedule
 from .store import AutomationStore, ScheduledExecution
@@ -173,13 +174,64 @@ class AutomationService:
         owner_id: str,
         limit: int = 50,
         cursor: str | None = None,
+        filters: TaskFilter | None = None,
     ) -> TaskPage:
-        """List one owner's tasks with keyset pagination."""
+        """List matching tasks, newest first, within the trusted owner scope.
+
+        Args:
+            owner_id: Identity supplied by host authentication.
+            limit: Maximum page size, from 1 to 100.
+            cursor: Previous next_cursor, unchanged and for the same query.
+            filters: Literal name and status selection; None selects all tasks.
+
+        Returns:
+            A live page and an optional opaque continuation cursor. Deleting
+            the preceding row does not invalidate the cursor.
+
+        Raises:
+            ValueError: The limit or cursor does not match the query contract.
+        """
 
         await self._setup_store()
         self._validate_owner(owner_id)
         return await self._store.list_tasks(
-            self._namespace, owner_id, limit=limit, cursor=cursor
+            self._namespace, owner_id, limit=limit, cursor=cursor, filters=filters
+        )
+
+    async def summarize_tasks(
+        self, *, owner_id: str, filters: TaskFilter | None = None
+    ) -> dict[TaskStatus, int]:
+        """Count all matching tasks by status, independently of pagination.
+
+        Args:
+            owner_id: Identity supplied by host authentication.
+            filters: The same selection accepted by list_tasks.
+
+        Returns:
+            Counts for every TaskStatus, including zero counts.
+        """
+        await self._setup_store()
+        self._validate_owner(owner_id)
+        return await self._store.summarize_tasks(
+            self._namespace, owner_id, filters=filters
+        )
+
+    async def summarize_executions(
+        self, *, owner_id: str, filters: ExecutionFilter | None = None
+    ) -> dict[ExecutionStatus, int]:
+        """Count all matching executions by status, independently of pagination.
+
+        Args:
+            owner_id: Identity supplied by host authentication.
+            filters: The same selection accepted by list_executions.
+
+        Returns:
+            Counts for every ExecutionStatus, including zero counts.
+        """
+        await self._setup_store()
+        self._validate_owner(owner_id)
+        return await self._store.summarize_executions(
+            self._namespace, owner_id, filters=filters
         )
 
     async def update_task(
@@ -534,8 +586,23 @@ class AutomationService:
         task_id: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        filters: ExecutionFilter | None = None,
     ) -> ExecutionPage:
-        """List execution history for one owner and optional task."""
+        """List matching execution snapshots, newest first.
+
+        Args:
+            owner_id: Identity supplied by host authentication.
+            task_id: Restrict results to this saved task, including deleted tasks.
+            limit: Maximum page size, from 1 to 100.
+            cursor: Previous next_cursor for this owner, task and filter selection.
+            filters: Captured name, status and aware queue-time bounds.
+
+        Returns:
+            A live page and an optional opaque continuation cursor.
+
+        Raises:
+            ValueError: The limit or cursor does not match the query contract.
+        """
 
         await self._setup_store()
         self._validate_owner(owner_id)
@@ -545,6 +612,7 @@ class AutomationService:
             task_id=task_id,
             limit=limit,
             cursor=cursor,
+            filters=filters,
         )
 
     async def cancel_execution(
@@ -613,6 +681,7 @@ class AutomationService:
         )
         retry = AutomationExecution(
             execution_id=retry_id,
+            task_name=original.task_name,
             task_id=original.task_id,
             namespace=self._namespace,
             owner_id=owner_id,
@@ -875,6 +944,7 @@ class AutomationService:
         return AutomationExecution(
             execution_id=execution_id,
             task_id=task.task_id,
+            task_name=task.name,
             namespace=task.namespace,
             owner_id=task.owner_id,
             identity=identity,

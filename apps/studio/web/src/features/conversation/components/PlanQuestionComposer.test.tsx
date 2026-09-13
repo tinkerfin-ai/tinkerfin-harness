@@ -99,7 +99,7 @@ describe('PlanQuestionComposer', () => {
     const next = screen.getByRole('button', { name: /^下一题$/ })
     expect(next).toBeDisabled()
     expect(next).toHaveClass('ui-button--sm', 'ui-button--capsule', 'ui-button--primary')
-    expect(next).not.toHaveClass('approval-allow-button')
+    expect(next).not.toHaveClass('ui-button--solid')
     expect(document.querySelector('.plan-question-composer-pager .ui-tooltip')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('radio', { name: /预发布/ }))
     expect(current.questions[0]).toMatchObject({ selectedOptionId: 'staging', skipped: false })

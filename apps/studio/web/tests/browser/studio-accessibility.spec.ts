@@ -751,7 +751,7 @@ async function mockStudio(page: Page, {
       : runningActivity
         ? 'running' as const
         : 'succeeded' as const
-    return {
+    return { accessMode: 'write_approval',
       id: 1,
       threadId: THREAD_ID,
       title: '浏览器会话',
@@ -856,7 +856,7 @@ async function mockStudio(page: Page, {
       await fulfillJson(route, {
         items: emptyHistory ? [] : Array.from({ length: pageSize }, (_, offset) => {
           const index = pageStart + offset
-          return {
+          return { accessMode: 'full',
             id: index + 1,
             threadId: index === 0 ? THREAD_ID : `browser-history-${index}`,
             title: index === 0 ? '浏览器会话' : `分页验证会话 ${index}`,
@@ -3265,6 +3265,7 @@ test.describe('touch/coarse pointer', () => {
       expect(Math.round(previousBounds.width)).toBeGreaterThanOrEqual(44)
       expect(Math.round(previousBounds.height)).toBeGreaterThanOrEqual(44)
       expect(Math.round(dayBounds.height)).toBeGreaterThanOrEqual(44)
+      expect(dayBounds.width).toBeGreaterThanOrEqual(44)
       await page.keyboard.press('Escape')
       await expect(trigger).toBeFocused()
     }
@@ -3466,3 +3467,30 @@ for (const { approval, touch } of [{ approval: false, touch: false }, { approval
     }
   })
 }
+
+test('审批确认按钮在浅深主题与四尺寸保持中性色实心胶囊样式', async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await mockStudio(page, { approval: true })
+  const allow = page.getByRole('region', { name: '等待审批' }).getByRole('button', { name: '允许', exact: true })
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((value) => { document.documentElement.dataset.theme = value }, theme)
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect(allow).toBeVisible()
+      const styles = await allow.evaluate((node) => {
+        const probe = document.createElement('span')
+        probe.style.background = 'var(--color-text-primary)'
+        probe.style.color = 'var(--color-layer-1)'
+        node.append(probe)
+        const expected = { background: getComputedStyle(probe).backgroundColor, color: getComputedStyle(probe).color }
+        probe.remove()
+        const current = getComputedStyle(node)
+        return { expected, background: current.backgroundColor, color: current.color, radius: Number.parseFloat(current.borderRadius) }
+      })
+      expect(styles.background).toBe(styles.expected.background)
+      expect(styles.color).toBe(styles.expected.color)
+      expect(styles.radius).toBeGreaterThanOrEqual(999)
+    }
+    await page.screenshot({ path: testInfo.outputPath(`approval-solid-${theme}.png`) })
+  }
+})

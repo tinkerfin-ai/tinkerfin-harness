@@ -17,6 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.mysql import DATETIME
 from sqlalchemy.orm import Mapped, mapped_column
 
+from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.infrastructure.database import Base
 
 TitleSource = Literal["default", "generated", "user", "unknown"]
@@ -98,6 +99,13 @@ class ConversationThread(Base):
     last_run_id: Mapped[str | None] = mapped_column(
         String(128), nullable=True, comment="最近主 Run ID"
     )
+    last_access_mode: Mapped[AccessMode] = mapped_column(
+        String(32),
+        nullable=False,
+        default="full",
+        server_default="full",
+        comment="最近主运行文件审批模式：full 或 write_approval",
+    )
     last_model: Mapped[str | None] = mapped_column(
         String(64), nullable=True, comment="最近主 Run 使用的稳定模型 ID"
     )
@@ -163,6 +171,13 @@ class ConversationRunRegistration(Base):
     )
     parent_run_id: Mapped[str | None] = mapped_column(
         String(128), nullable=True, comment="branch 或 resume 来源 Run ID"
+    )
+    access_mode: Mapped[AccessMode] = mapped_column(
+        String(32),
+        nullable=False,
+        default="full",
+        server_default="full",
+        comment="本运行固定的文件审批模式：full 或 write_approval",
     )
     model_id: Mapped[str] = mapped_column(
         String(64), nullable=False, comment="主 Run 使用的稳定模型 ID"

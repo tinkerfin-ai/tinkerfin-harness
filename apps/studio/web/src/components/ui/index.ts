@@ -42,3 +42,6 @@ export type {
 } from './ViewTabs'
 
 export { ValidatedForm } from './ValidatedForm'
+
+export { SearchField } from './SearchField'
+export type { SearchFieldProps } from './SearchField'

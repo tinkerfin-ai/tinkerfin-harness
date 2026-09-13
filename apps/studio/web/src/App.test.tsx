@@ -68,7 +68,7 @@ const MODEL_CATALOG: AgentModelCatalog = {
 
 const historyItem = (
   overrides: Partial<ConversationHistoryListItem> = {},
-): ConversationHistoryListItem => ({
+): ConversationHistoryListItem => ({ accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',
   titleSeq: 0,
@@ -90,7 +90,7 @@ const historyItem = (
 
 const traceDetail = (
   overrides: Partial<ConversationHistoryDetail> = {},
-): ConversationHistoryDetail => ({
+): ConversationHistoryDetail => ({ accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',
   titleSeq: 0,
@@ -584,7 +584,7 @@ describe('Studio Trace history integration', () => {
     const user = userEvent.setup()
     const payload: ChatRequestPayload = {
       threadId: THREAD_ID, runId: RUN_ID, state: {}, messages: [], tools: [], context: [],
-      forwardedProps: { model: 'main', command: { plan: 'off' } },
+      forwardedProps: { accessMode: 'write_approval', model: 'main', command: { plan: 'off' } },
     }
     writeActiveRunSession({ threadId: THREAD_ID, payload, mode: 'start', lastSeq: 0 })
     let submitted = 0

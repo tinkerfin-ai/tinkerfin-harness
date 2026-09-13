@@ -151,56 +151,9 @@
   }
 
   .chain-trace-search {
+    --search-field-control-size: var(--chain-trace-action-height);
     position: absolute;
     inset: 0;
-    display: grid;
-    grid-template-columns: var(--icon-sm) minmax(0, 1fr) var(--chain-trace-action-height);
-    align-items: center;
-    gap: var(--space-1-5);
-    padding-left: var(--space-2);
-    overflow: hidden;
-    border: 0;
-    border-radius: var(--radius-lg);
-    background: transparent;
-    color: var(--color-text-tertiary);
-  }
-
-  .chain-trace-search:focus-within {
-    border: 0;
-    outline: 0;
-    box-shadow: none;
-    color: var(--color-text-primary);
-  }
-
-  .chain-trace-search input {
-    grid-row: 1;
-    grid-column: 2;
-    min-width: 0;
-    height: 100%;
-    padding: 0;
-    border: 0;
-    outline: 0;
-    background: transparent;
-    color: var(--color-text-primary);
-    font: inherit;
-    font-size: var(--type-micro-size);
-  }
-
-  .chain-trace-search input::placeholder { color: var(--color-placeholder); opacity: 1; }
-  .chain-trace-search > svg { grid-row: 1; grid-column: 1; }
-  .chain-trace-search > .ui-icon-button-wrap {
-    grid-row: 1;
-    grid-column: 3;
-    width: var(--chain-trace-action-height);
-    height: var(--chain-trace-action-height);
-  }
-
-  .chain-trace-search .ui-icon-button {
-    width: var(--chain-trace-action-height);
-    min-width: var(--chain-trace-action-height);
-    height: var(--chain-trace-action-height);
-    min-height: var(--chain-trace-action-height);
-    padding: 0;
   }
 
   .chain-trace-timeline {

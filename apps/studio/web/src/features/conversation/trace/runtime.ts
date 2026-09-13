@@ -485,6 +485,7 @@ export const restoreConversationFromTrace = (
     pinned: trace.pinned,
     updatedAt: trace.updatedAt,
     model: trace.lastModel ?? options.model,
+    accessMode: trace.accessMode,
     mode: modeFromState(trace.state.root),
     messages,
     runFailures: parseRunFailures(trace.runFailures),

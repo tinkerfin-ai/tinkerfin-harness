@@ -29,5 +29,6 @@
 ## 开发与维护
 
 - [仓库开发](development.md)
+- [Studio 自动化](studio/automation.md)：日程、权限和运行结果
 - [Studio 服务端部署与配置](../../apps/studio/server/README.md)
 - [Studio Web 开发](../../apps/studio/web/README.md)

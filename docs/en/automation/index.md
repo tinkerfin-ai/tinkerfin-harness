@@ -81,6 +81,11 @@ task = await automation.create_task(
 - `IntervalSchedule(every_seconds=..., start_at=...)` uses a fixed-rate UTC anchor.
 - `CronSchedule(expression=..., timezone=...)` uses five fields and an IANA timezone.
 
+All schedules accept optional timezone-aware `active_from` (inclusive) and
+`active_until` (exclusive). Scheduled occurrences, previews, and misfire catch-up
+stay inside this interval. `run_task_now()` remains available outside it. To clear
+a period, pass a complete replacement schedule with the corresponding bound unset.
+
 Cron weekdays use `mon` through `sun`. A nonexistent local time is skipped; a repeated
 local time runs only at the earlier UTC occurrence. `MisfirePolicy` supports `skip`,
 `latest`, and bounded `catch_up`.
@@ -96,7 +101,8 @@ and 128 Unicode characters respectively.
 `AutomationEngine.close()` stops new work, allows running targets to finish within
 `drain_timeout`, then cancels and joins the remaining tasks. Concurrent close calls
 share cleanup; cancelling a caller waits for cleanup before propagating cancellation.
-A storage or renewal failure stops supervision and is reported by the Engine. Work
+Use `await worker.check_ready()` in host readiness checks; it validates worker health
+without dispatching work. A storage or renewal failure stops supervision and is reported by the Engine. Work
 whose external completion is unconfirmed retains its concurrency reservation.
 
 
@@ -184,6 +190,27 @@ An already committed run-now command returns its original result even if the tas
 revision has changed. A business retry creates another execution identity through
 `retry_execution`, with `retry_of` pointing to the original attempt.
 
+### Filter tasks and execution history
+
+Pass `TaskFilter(name_contains=..., statuses=(... ,))` to `list_tasks(filters=...)`.
+Use `ExecutionFilter` with the same name/status options and optional `queued_from`
+and `queued_until` for execution history. Text is a literal Unicode-casefold
+substring; `%` and `_` are ordinary characters. Queue time bounds are aware instants,
+with an inclusive start and exclusive end. Empty statuses mean every status.
+Execution names are captured when queued, survive task deletion, and do not follow
+later renames. Taskless or unknown historical names may be `None`.
+
+Both list methods return `items` and `next_cursor`. Pass that opaque cursor unchanged
+with the same owner and filters (and task ID for execution queries); start without a
+cursor when changing the query. Pages are ordered by creation time and ID, newest
+first, and remain usable if the preceding row is deleted. They are live queries,
+not a frozen snapshot. `summarize_tasks()` and `summarize_executions()` accept the same
+filters and count every matching record by status, independently of pagination.
+
+The [active-period example](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/packages/tinkerfin-automation/examples/active_period.py)
+shows a complete local task, manual execution, filtering, and aggregation without
+network services or model credentials.
+
 ## Execute a TinkerFin Agent
 
 ```python
@@ -269,7 +296,7 @@ occurrence may be materialized. The callback must settle before its owner is clo
 A Clock provides `now()` and asynchronous `wait_until()`; `ManualClock.advance()` is
 useful for deterministic tests.
 
-Store implementations provide 22 async operations. Their distinct atomic boundaries
+Store implementations provide asynchronous operations for commands, queries, and status summaries. Their distinct atomic boundaries
 are part of the contract:
 
 | Operations | Required invariant |

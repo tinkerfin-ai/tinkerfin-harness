@@ -72,6 +72,9 @@ Connect to the Studio database with your database client and use the full printe
 UPDATE users SET password_hash = '<full generated hash>' WHERE username = 'tinkerfin';
 ```
 
+Conversations default to Full access. Use the permission picker beside the model
+to require write approval. For scheduled work, see [Studio automation](automation.md).
+
 ## Troubleshooting
 
 | Symptom | Check |

@@ -61,6 +61,18 @@ class GlobalErrorCode(ErrorCode):
     SERVICE_UNAVAILABLE = _ErrorCodeValue(503, 503, "服务暂不可用")
 
 
+class AutomationErrorCode(ErrorCode):
+    """自动化任务和运行接口的可恢复错误"""
+
+    NOT_FOUND = _ErrorCodeValue(1_001_007_000, 404, "任务或运行记录不存在")
+    CONFLICT = _ErrorCodeValue(1_001_007_001, 409, "任务已变化，请重新加载后再操作")
+    INVALID_CONFIGURATION = _ErrorCodeValue(
+        1_001_007_002, 422, "任务配置、日程或分页条件不正确"
+    )
+    QUEUE_FULL = _ErrorCodeValue(1_001_007_003, 409, "任务队列已满，请等待已有任务结束")
+    UNAVAILABLE = _ErrorCodeValue(1_001_007_004, 503, "自动化服务暂不可用，请稍后重试")
+
+
 class AuthErrorCode(ErrorCode):
     """认证模块错误"""
 
@@ -95,6 +107,7 @@ class ModelErrorCode(ErrorCode):
 
 
 class AttachmentErrorCode(ErrorCode):
+    REFERENCE_CONFLICT = _ErrorCodeValue(1_001_006_020, 409, "文件引用与原请求不一致")
     """附件校验、权限和交付错误"""
 
     INVALID_FILE = _ErrorCodeValue(

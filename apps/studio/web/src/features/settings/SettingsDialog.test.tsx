@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -61,7 +61,7 @@ describe('SettingsDialog', () => {
     expect(screen.getByText('云杉')).toBeInTheDocument()
   })
 
-  it('closes on Escape and restores focus to the account trigger', () => {
+  it('closes on Escape and restores focus to the account trigger', async () => {
     const trigger = document.createElement('button')
     document.body.append(trigger)
     trigger.focus()
@@ -81,7 +81,7 @@ describe('SettingsDialog', () => {
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
     expect(onClose).toHaveBeenCalledOnce()
     unmount()
-    expect(trigger).toHaveFocus()
+    await waitFor(() => expect(trigger).toHaveFocus())
     trigger.remove()
   })
 

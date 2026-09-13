@@ -159,7 +159,7 @@ export function PlanReviewCard({
                     <Button
                       size="sm"
                       shape="capsule"
-                      className="approval-allow-button"
+                      variant="solid"
                       onClick={() => onSubmit('approve')}
                     >
                       {t('批准')}

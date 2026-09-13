@@ -198,6 +198,14 @@ class AutomationEngine:
             self._started = False
             raise failure
 
+    async def check_ready(self) -> None:
+        """Require a healthy started worker without dispatching or waiting for work.
+
+        Raises:
+            AutomationLifecycleError: The worker is stopped, closing, or failed.
+        """
+        self._ensure_running()
+
     async def run_ready(self) -> int:
         """Dispatch currently ready work without waiting for the next poll."""
 

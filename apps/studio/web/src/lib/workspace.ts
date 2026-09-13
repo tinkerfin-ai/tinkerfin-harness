@@ -14,7 +14,7 @@ const sortConversations = (conversations: Conversation[]) =>
   [...conversations].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
 
 export const buildEmptyConversation = (
-  options: { threadId?: string; now: string; model?: string; mode?: Conversation['mode'] },
+  options: { threadId?: string; now: string; model?: string; mode?: Conversation['mode']; accessMode?: Conversation['accessMode'] },
 ): Conversation => ({
   threadId: options.threadId ?? TRANSIENT_THREAD_ID,
   title: '新会话',
@@ -22,6 +22,7 @@ export const buildEmptyConversation = (
   updatedAt: options.now,
   model: options.model ?? 'GPT-5.5',
   mode: options.mode ?? 'default',
+  accessMode: options.accessMode ?? 'full',
   messages: [],
   runFailures: [],
   todos: [],

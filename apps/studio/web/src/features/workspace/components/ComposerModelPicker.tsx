@@ -8,8 +8,8 @@ import type { ModelCatalogStatus } from '../useModelCatalog'
 function ModelOption({ label, selected }: { label: string; selected: boolean }) {
   return (
     <>
-      <OverflowMarquee className="model-option-label">{label}</OverflowMarquee>
-      <span className="model-option-check" aria-hidden="true">{selected && <Check size={14} />}</span>
+      <OverflowMarquee className="ui-compact-option-label">{label}</OverflowMarquee>
+      <span className="ui-compact-option-check" aria-hidden="true">{selected && <Check size={14} />}</span>
     </>
   )
 }
@@ -53,7 +53,7 @@ export function ComposerModelPicker({
     )
   }
 
-  const selectedModel = modelIds.includes(model) ? model : defaultModelId
+  const selectedModel = model || defaultModelId
   return (
     <ListboxPicker
       value={selectedModel}
@@ -64,9 +64,9 @@ export function ComposerModelPicker({
       disabled={status !== 'ready' || modelIds.length === 0}
       triggerLabel={t('选择模型')}
       listboxLabel={t('模型选项')}
-      rootClassName="composer-model-picker"
-      triggerClassName="composer-model-select"
-      listboxClassName="composer-model-options"
+      rootClassName="ui-compact-picker"
+      triggerClassName="ui-compact-picker-trigger"
+      listboxClassName="ui-compact-picker-options"
       optionClassName="overflow-marquee-trigger"
       renderTrigger={(selected) => (
         <>

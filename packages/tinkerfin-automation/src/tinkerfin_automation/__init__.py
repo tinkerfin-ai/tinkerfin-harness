@@ -106,6 +106,8 @@ from .models import (
 from .policies import ExecutionLimits as ExecutionLimits
 from .policies import MisfireMode as MisfireMode
 from .policies import MisfirePolicy as MisfirePolicy
+from .queries import ExecutionFilter as ExecutionFilter
+from .queries import TaskFilter as TaskFilter
 from .runtime_target import TinkerFinTarget as TinkerFinTarget
 from .schedules import CronSchedule as CronSchedule
 from .schedules import IntervalSchedule as IntervalSchedule
@@ -145,6 +147,7 @@ __all__ = [
     "ExecutionBusyError",
     "ExecutionFailed",
     "ExecutionFailure",
+    "ExecutionFilter",
     "ExecutionInterrupted",
     "ExecutionLimits",
     "ExecutionNotFoundError",
@@ -177,6 +180,7 @@ __all__ = [
     "TargetExecutionError",
     "TargetNotFoundError",
     "TaskConflictError",
+    "TaskFilter",
     "TaskNotFoundError",
     "TaskPage",
     "TaskStatus",

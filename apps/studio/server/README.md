@@ -1,6 +1,6 @@
 # TinkerFin Studio 后端
 
-提供用户认证、模型配置、Agent 会话、附件、会话历史和 Sandbox 工作区。
+提供用户认证、模型配置、Agent 会话、自动化任务、附件、运行历史和 Sandbox 工作区。
 首次使用见 [Studio 上手指南](../../../docs/cn/studio/quick_start.md)；HTTP 接口见 [API 参考](docs/api.md)。
 
 ## 快速部署
@@ -15,6 +15,8 @@ cd tinkerfin-harness/apps/studio/server/deploy
 
 首次执行会创建 `.env` 和随机凭据，拉取镜像并等待服务就绪。默认 API 地址为
 `http://127.0.0.1:8090/api`，健康检查地址为 `http://127.0.0.1:8090/health/ready`。
+就绪检查包含自动化工作器健康状态。自动化的日程、权限和结果查看见
+[使用指南](../../../docs/cn/studio/automation.md)。
 首次预热 Sandbox 时还需要下载运行镜像，耗时取决于网络。
 
 Docker 项目名为 `tinkerfin-studio`，包含 `server`、`mysql`、`redis-runtime` 和
@@ -125,6 +127,9 @@ docker compose down
 
 `server` 服务的 Docker 日志按 50 MiB 滚动，最多保留 3 个文件。需要独立文件日志时，在 `.env` 中启用
 `LOG_FILE_ENABLED=true`，设置绝对路径 `LOG_FILE_PATH` 并给对应目录挂载可写卷。
+
+自动化任务和运行记录保存在 MySQL，运行检查点保存在 Redis。备份恢复时须保持数据库、
+检查点和附件数据一致。任务参考文件及运行附件保留持久引用，删除任务仍保留历史文件。
 
 附件使用 `studio-attachments` 卷，容器内目录为 `/app/attachments`。Sandbox 工作区跨会话
 保留，不会因闲置自动删除；OpenSandbox 需要访问宿主机 Docker，请只在受信任的主机部署。
