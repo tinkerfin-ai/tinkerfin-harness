@@ -69,6 +69,11 @@ The Dockerfile exports locked production dependencies and builds wheels inside D
 ## Validate packaging
 
 ```bash
+mkdir -p .cache
+uv export --locked --all-packages --no-dev --group packaging --no-emit-workspace \
+  --no-header --output-file .cache/test-requirements.txt
+uv run --no-sync python -m pip download --require-hashes --no-deps --only-binary=:all: \
+  -r .cache/test-requirements.txt --dest .cache/test-wheels
 uv run --locked --no-sync python -m pytest --noconftest tests/packaging -m packaging_e2e
 ```
 
@@ -78,8 +83,11 @@ core installation cases on Python 3.11–3.14. Python 3.11 also runs every optio
 combination and the complete Studio deployment wheel set.
 
 
-Isolated wheel installations use the locked dependency versions and run offline.
-Install the workspace first to populate the uv cache, including build requirements.
+The preparation commands download wheels for the current Python and platform and
+verify their lockfile hashes. Isolated installations then run offline against
+`.cache/test-wheels`, with no package index access. Run preparation again when the
+lockfile, Python version, or platform changes. The local wheelhouse also contains
+the tools required by isolated builds.
 
 ## Validate Docker integrations
 

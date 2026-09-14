@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from dataclasses import replace
 from typing import ClassVar, Literal, cast
 
@@ -178,11 +178,13 @@ class _DiagnosticLeaseBackend(MemoryBackend):
         *,
         behavior: Literal["exception", "reject", "success"],
         timeout: float = 0.03,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         super().__init__()
         self.behavior = behavior
         self.timeout = timeout
-        self.expires_at = time.monotonic() + timeout
+        self.clock = clock
+        self.expires_at = self.clock() + timeout
         self.renew_calls = 0
 
     @property
@@ -201,15 +203,15 @@ class _DiagnosticLeaseBackend(MemoryBackend):
             self.renew_calls += 1
             if self.behavior == "exception":
                 raise RuntimeError("diagnostic backend renew failed")
-            if self.behavior == "reject" or time.monotonic() >= self.expires_at:
+            if self.behavior == "reject" or self.clock() >= self.expires_at:
                 return MessagingTransitionResult(
                     kind=transition.kind,
                     producer_ownership_confirmed=False,
                 )
-            self.expires_at = time.monotonic() + self.timeout
+            self.expires_at = self.clock() + self.timeout
         result = await super().commit_messaging_transition(transition)
         if transition.kind == "prepare_run" and result.is_producer_owner:
-            self.expires_at = time.monotonic() + self.timeout
+            self.expires_at = self.clock() + self.timeout
         return result
 
 
@@ -725,7 +727,23 @@ async def test_backend_subscription_closes_on_producer_failure() -> None:
 async def test_cooperative_source_silence_keeps_renewing_without_failure_log(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    backend = _DiagnosticLeaseBackend(behavior="success")
+    now = 0.0
+    renewed = asyncio.Event()
+
+    class CooperativeBackend(_DiagnosticLeaseBackend):
+        async def commit_messaging_transition(
+            self, transition: MessagingTransition
+        ) -> MessagingTransitionResult:
+            nonlocal now
+            if transition.kind == "renew_producer_ownership":
+                now += 0.01
+            result = await super().commit_messaging_transition(transition)
+            if self.renew_calls >= 5:
+                renewed.set()
+            return result
+
+    # Lease time follows acknowledged renewals, independent of CPU scheduling.
+    backend = CooperativeBackend(behavior="success", clock=lambda: now)
     release = asyncio.Event()
     source = _Source(release=release)
 
@@ -740,7 +758,7 @@ async def test_cooperative_source_silence_keeps_renewing_without_failure_log(
                 after=0,
             )
             await asyncio.wait_for(source.started.wait(), timeout=1)
-            await asyncio.sleep(0.08)
+            await asyncio.wait_for(renewed.wait(), timeout=1)
             release.set()
             assert await _data(subscription) == []
 

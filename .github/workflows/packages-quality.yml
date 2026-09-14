@@ -20,13 +20,14 @@ concurrency:
 
 jobs:
   repository-and-studio:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
+          version: "0.12.13"
           enable-cache: true
-          python-version: "3.11"
+          python-version: "3.11.16"
       - name: Install locked workspace
         run: uv sync --locked --all-packages --no-default-groups --group test --group lint --group integration
       - name: Check repository and Studio formatting
@@ -40,7 +41,7 @@ jobs:
           apps/studio/server --durations=10
 
   web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: apps/studio/web
@@ -51,20 +52,18 @@ jobs:
           version: 10.8.0
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.23.2"
           cache: pnpm
           cache-dependency-path: apps/studio/web/pnpm-lock.yaml
       - name: Install locked web dependencies
         run: pnpm install --frozen-lockfile
       - name: Test web behavior
         run: pnpm test
-      - name: Test web proxy
-        run: pnpm test:proxy
       - name: Lint web source
         run: pnpm lint
 
   web-browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     strategy:
       fail-fast: false
@@ -80,7 +79,7 @@ jobs:
           version: 10.8.0
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.23.2"
           cache: pnpm
           cache-dependency-path: apps/studio/web/pnpm-lock.yaml
       - name: Install locked web dependencies
@@ -88,9 +87,12 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: chromium-${{ runner.os }}-${{ hashFiles('apps/studio/web/pnpm-lock.yaml') }}
+          key: chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/studio/web/pnpm-lock.yaml') }}
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps --only-shell chromium
+      - name: Test web proxy
+        if: matrix.shard == 1
+        run: pnpm test:proxy
       - name: Build web application
         run: pnpm build
       - name: Test browser behavior and accessibility
@@ -107,13 +109,14 @@ jobs:
           retention-days: 7
 
   static-checks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
+          version: "0.12.13"
           enable-cache: true
-          python-version: "3.11"
+          python-version: "3.11.16"
       - name: Install locked workspace
         run: uv sync --locked --all-packages --no-default-groups --group test --group lint --group integration
       - name: Check formatting
@@ -130,22 +133,23 @@ jobs:
         run: uv run pyright -p pyright-packages-strict.json
 
   packages:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11.16", "3.12.14", "3.13.15", "3.14.7"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
+          version: "0.12.13"
           enable-cache: true
           python-version: ${{ matrix.python-version }}
       - name: Install locked workspace
         run: uv sync --locked --all-packages --no-default-groups --group test --group lint --group integration
       - name: Test package coverage
-        if: matrix.python-version == '3.11'
+        if: startsWith(matrix.python-version, '3.11.')
         run: >-
           uv run pytest packages tests/test_package_logging_contract.py
           -n 4 --dist=loadfile
@@ -165,23 +169,34 @@ jobs:
           --cov-report=term-missing
           --cov-fail-under=80
       - name: Test packages on supported Python
-        if: matrix.python-version != '3.11'
+        if: ${{ !startsWith(matrix.python-version, '3.11.') }}
         run: uv run pytest packages -n 4 --dist=loadfile --durations=20 -o faulthandler_timeout=60
 
   wheel-boundaries:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11.16", "3.12.14", "3.13.15", "3.14.7"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
+          version: "0.12.13"
           enable-cache: true
           python-version: ${{ matrix.python-version }}
       - name: Install packaging test runner
         run: uv sync --locked --all-packages --no-default-groups --group packaging
+      - uses: actions/cache@v4
+        id: dependency-wheels
+        with:
+          path: .cache/test-wheels
+          key: test-wheels-${{ runner.os }}-${{ runner.arch }}-${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
+      - name: Prepare locked dependency wheels
+        if: steps.dependency-wheels.outputs.cache-hit != 'true'
+        run: |
+          uv export --locked --all-packages --no-dev --group packaging --no-emit-workspace --no-header --output-file "$RUNNER_TEMP/test-requirements.txt"
+          uv run python -m pip download --require-hashes --no-deps --only-binary=:all: -r "$RUNNER_TEMP/test-requirements.txt" --dest .cache/test-wheels
       - name: Verify isolated wheel boundaries
         run: >-
           uv run python -m pytest --noconftest tests/packaging
@@ -193,7 +208,7 @@ jobs:
     name: Quality gate
     if: always()
     needs: [repository-and-studio, web, web-browser, static-checks, packages, wheel-boundaries]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every check to succeed

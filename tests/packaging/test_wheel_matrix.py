@@ -347,7 +347,12 @@ def _run(command: list[str], *, environment: dict[str, str] | None = None) -> No
     completed = subprocess.run(
         command,
         cwd=_ROOT,
-        env=environment,
+        env={
+            **(os.environ if environment is None else environment),
+            "UV_FIND_LINKS": str(_ROOT / ".cache/test-wheels"),
+            "UV_NO_INDEX": "true",
+            "UV_OFFLINE": "true",
+        },
         check=False,
         capture_output=True,
         text=True,
@@ -448,6 +453,17 @@ def test_first_party_projects_declare_every_direct_import_distribution() -> None
                 )
 
     assert violations == []
+
+
+@pytest.fixture(scope="session")
+def dependency_wheels() -> Path:
+    """Use the hash-verified wheelhouse prepared before running offline checks."""
+    wheelhouse = _ROOT / ".cache/test-wheels"
+    assert tuple(wheelhouse.glob("*.whl")), (
+        "Prepare .cache/test-wheels using the packaging setup commands in "
+        "docs/en/development.md before running isolated installation tests"
+    )
+    return wheelhouse
 
 
 @pytest.fixture(scope="session")
@@ -596,6 +612,7 @@ asyncio.run(smoke())
 def test_isolated_wheel_installation(
     case: _InstallCase,
     wheel_directory: Path,
+    dependency_wheels: Path,
     locked_requirements: Path,
     tmp_path: Path,
 ) -> None:
@@ -625,6 +642,9 @@ def test_isolated_wheel_installation(
             "--python",
             str(python),
             "--offline",
+            "--no-index",
+            "--find-links",
+            str(dependency_wheels),
             "--constraint",
             str(locked_requirements),
             "--find-links",
@@ -643,6 +663,7 @@ def test_isolated_wheel_installation(
 @pytest.mark.packaging_e2e
 def test_studio_deploy_wheel_set_is_self_contained(
     wheel_directory: Path,
+    dependency_wheels: Path,
     tmp_path: Path,
 ) -> None:
     """Install the exact deployment wheel set after external locked dependencies."""
@@ -688,6 +709,9 @@ def test_studio_deploy_wheel_set_is_self_contained(
             "--python",
             str(python),
             "--offline",
+            "--no-index",
+            "--find-links",
+            str(dependency_wheels),
             "--require-hashes",
             "-r",
             str(requirements),

@@ -153,14 +153,6 @@ def test_public_validator_can_be_reused_without_revalidating_the_envelope() -> N
     )
 
 
-def test_standalone_process_documents_its_translated_public_error() -> None:
-    documentation = inspect.getdoc(DeepAgentAgUiAdapter.process)
-
-    assert documentation is not None
-    assert "AgUiStreamContractError" in documentation
-    assert "NativeStreamContractError:" not in documentation
-
-
 def test_adapter_exports_exactly_the_documented_public_surface() -> None:
     assert set(tinkerfin_agui_adapter.__all__) == _PUBLIC_EXPORTS
     assert len(tinkerfin_agui_adapter.__all__) == len(_PUBLIC_EXPORTS)

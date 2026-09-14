@@ -247,17 +247,25 @@ async def test_sync_tool_callback_lifecycle_in_an_isolated_process(
         stderr=asyncio.subprocess.PIPE,
         env={**os.environ, "LANGSMITH_TRACING": "false"},
     )
+    assert process.stdout is not None and process.stderr is not None
+    stderr = asyncio.create_task(process.stderr.read())
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=8)
+        for scenario in _SCENARIOS:
+            # Keep each scenario's watchdog independent of imports and prior cases.
+            # A result is sent only after its Runner and executor have shut down.
+            line = await asyncio.wait_for(process.stdout.readline(), timeout=8)
+            assert line, (await stderr).decode()
+            name, result = json.loads(line)
+            assert name == scenario
+            _assert_result(scenario, result)
+        await asyncio.wait_for(process.wait(), timeout=8)
+        assert process.returncode == 0, (await stderr).decode()
+        assert await process.stdout.read() == b""
     finally:
         if process.returncode is None:
             process.kill()
             await process.wait()
-    assert process.returncode == 0, stderr.decode()
-    results = json.loads(stdout)
-    assert set(results) == set(_SCENARIOS)
-    for scenario, result in results.items():
-        _assert_result(scenario, result)
+        await stderr
 
 
 def _assert_result(scenario: str, result: dict[str, Any]) -> None:
@@ -291,7 +299,6 @@ def _assert_result(scenario: str, result: dict[str, Any]) -> None:
 
 
 if __name__ == "__main__":
-    results = {
-        scenario: asyncio.run(_case(sys.argv[1], scenario)) for scenario in _SCENARIOS
-    }
-    sys.stdout.write(json.dumps(results))
+    for scenario in _SCENARIOS:
+        result = asyncio.run(_case(sys.argv[1], scenario))
+        print(json.dumps([scenario, result]), flush=True)

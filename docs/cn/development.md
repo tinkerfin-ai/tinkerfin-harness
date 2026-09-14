@@ -61,6 +61,11 @@ Dockerfile 在容器内导出锁定的生产依赖并构建 wheel。
 ## 验证打包
 
 ```bash
+mkdir -p .cache
+uv export --locked --all-packages --no-dev --group packaging --no-emit-workspace \
+  --no-header --output-file .cache/test-requirements.txt
+uv run --no-sync python -m pip download --require-hashes --no-deps --only-binary=:all: \
+  -r .cache/test-requirements.txt --dest .cache/test-wheels
 uv run --locked --no-sync python -m pytest --noconftest tests/packaging -m packaging_e2e
 ```
 
@@ -69,8 +74,9 @@ CI 在 Python 3.11–3.14 上运行核心安装场景，另在 Python 3.11 上�
 Studio 部署所需的完整 wheel 集合。
 
 
-隔离 wheel 安装使用锁定依赖版本，并在离线模式执行。首次运行前需安装工作区，
-让 uv 缓存包含测试所需依赖和构建工具。
+准备命令下载适合当前 Python 与平台的 wheel，并校验锁文件中的哈希。隔离安装测试
+随后只使用 `.cache/test-wheels`，不访问包索引。锁文件、Python 版本或平台变化后需
+重新执行准备命令；隔离构建所需的工具也包含在本地 wheel 仓库中。
 
 ## 验证 Docker 集成
 
