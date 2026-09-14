@@ -1,3 +1,4 @@
+import { mockDownloadPermits } from './support/attachment-storage'
 import { expect, test } from '@playwright/test'
 import { resolve } from 'node:path'
 
@@ -54,7 +55,7 @@ test('生成文件使用紧凑类型卡片并沿用图片预览工具栏', async
     }))
     localStorage.setItem('tinkerfin:theme', 'system')
   }, user)
-  await page.route('**/api/**', async route => {
+  await page.route('**/{api,objects}/**', async route => {
     const url = new URL(route.request().url())
     const path = url.pathname
     let data: unknown = {}
@@ -91,13 +92,13 @@ test('生成文件使用紧凑类型卡片并沿用图片预览工具栏', async
         body: `event: trace\ndata: ${JSON.stringify({ type: 'snapshot', snapshot: documentHistory })}\n\n`,
       })
       return
-    } else if (path === '/api/attachments/readme/content') {
+    } else if (path === '/objects/readme') {
       await route.fulfill({
         body: '# TinkerFin Studio\n\n文件预览与图片预览使用同一套工具栏。\n\n## 使用\n\n点击文件卡片即可打开预览。',
         contentType: 'text/markdown',
       })
       return
-    } else if (path === '/api/attachments/preview-image/content') {
+    } else if (path === '/objects/preview-image') {
       await route.fulfill({
         path: resolve(process.cwd(), 'tests/browser/fixtures/chart.png'),
         contentType: 'image/png',
@@ -107,6 +108,7 @@ test('生成文件使用紧凑类型卡片并沿用图片预览工具栏', async
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
 
+  await mockDownloadPermits(page)
   await page.goto('/')
   await page.getByRole('button', { name: `打开会话：${documentHistory.title}`, exact: true }).click()
   const fileCards = page.locator('.attachment-card:not(.attachment-card--image)')

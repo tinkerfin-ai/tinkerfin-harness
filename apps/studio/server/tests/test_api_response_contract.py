@@ -1,4 +1,4 @@
-"""业务 JSON 包络、空结果以及文件响应的 HTTP 契约"""
+"""业务 JSON 包络、空结果以及读取许可的 HTTP 契约"""
 
 import io
 from types import SimpleNamespace
@@ -35,9 +35,9 @@ class ConversationCommands:
 
 
 async def test_empty_json_results_and_file_content_keep_their_http_contract(
-    session: AsyncSession, attachments: AttachmentService
+    session: AsyncSession, attachments: AttachmentService, attachment_storage
 ) -> None:
-    """真实模型与附件操作返回空数据包络，文件下载保留原始内容"""
+    """真实模型与附件操作返回空数据包络，读取许可返回签名地址"""
 
     application = create_application(lifespan=None)
     user = UserContext(
@@ -97,14 +97,18 @@ async def test_empty_json_results_and_file_content_keep_their_http_contract(
         deleted_thread = await client.delete("/api/conversation/idle")
         conflict = await client.delete("/api/conversation/running")
         uploaded = await client.post(
-            "/api/attachments", params={"name": "chart.png"}, content=content
+            "/api/attachments/uploads",
+            json={"name": "chart.png", "size_bytes": len(content)},
         )
         assert uploaded.status_code == 200
-        attachment_id = uploaded.json()["data"]["id"]
-        downloaded = await client.get(f"/api/attachments/{attachment_id}/content")
+        attachment_id = uploaded.json()["data"]["attachment_id"]
+        attachment_storage.objects[attachment_id + "-upload"] = content
+        completed = await client.post(f"/api/attachments/{attachment_id}/complete")
+        assert completed.json()["data"]["id"] == attachment_id
+        downloaded = await client.get(f"/api/attachments/{attachment_id}/download-url")
         deleted_attachment = await client.delete(f"/api/attachments/{attachment_id}")
         missing_attachment = await client.get(
-            f"/api/attachments/{attachment_id}/content"
+            f"/api/attachments/{attachment_id}/download-url"
         )
 
     for response in (saved, deleted_model, deleted_thread, deleted_attachment):
@@ -122,8 +126,8 @@ async def test_empty_json_results_and_file_content_keep_their_http_contract(
         "data": None,
     }
     assert downloaded.status_code == 200
-    assert downloaded.content == content
-    assert downloaded.headers["content-disposition"].startswith("attachment;")
+    assert downloaded.json()["data"]["url"].endswith(attachment_id)
+    assert downloaded.headers["cache-control"] == "private, no-store"
     assert missing_attachment.status_code == 404
     assert missing_attachment.json()["data"] is None
 
@@ -133,7 +137,6 @@ def test_business_json_openapi_responses_publish_the_envelope() -> None:
 
     schema = create_application(lifespan=None).openapi()
     native_paths = {
-        "/api/attachments/{attachment_id}/content",
         "/api/conversation/chat",
         "/api/conversation/{thread_id}/trace",
         "/api/conversation/{thread_id}/runs/{run_id}/events",

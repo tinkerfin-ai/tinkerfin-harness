@@ -140,7 +140,7 @@ describe('shared HTTP client', () => {
     vi.stubGlobal('Blob', (await fileResponse.clone().blob()).constructor)
     vi.stubGlobal('fetch', vi.fn(async () => fileResponse))
     const config: ApiAxiosRequestConfig = {
-      url: '/api/attachments/file/content',
+      url: 'https://objects.example/file',
       responseType: 'blob',
       requiresAuth: false,
     }

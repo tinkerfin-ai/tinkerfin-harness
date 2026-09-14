@@ -36,10 +36,10 @@ class AttachmentFile(Base):
         String(255), nullable=False, comment="用户可见文件名，不用于存储路径"
     )
     mime_type: Mapped[str] = mapped_column(
-        String(128), nullable=False, comment="经服务端验证的文件媒体类型"
+        String(128), nullable=False, comment="服务端验证的文件媒体类型；待确认上传为空"
     )
     size_bytes: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, comment="原件大小，单位为字节"
+        BigInteger, nullable=False, comment="原件大小，单位为字节；待确认上传为声明值"
     )
     sha256: Mapped[str] = mapped_column(
         String(64), nullable=False, default="", comment="原件完整内容的 SHA-256 校验值"
@@ -48,7 +48,7 @@ class AttachmentFile(Base):
         String(16),
         nullable=False,
         default="uploading",
-        comment="uploading、ready 或 deleting；仅 ready 可用",
+        comment="uploading、processing、ready 或 deleting；仅 ready 可用",
     )
     source: Mapped[str] = mapped_column(
         String(16),

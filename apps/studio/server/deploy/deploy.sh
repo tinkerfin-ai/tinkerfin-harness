@@ -64,15 +64,20 @@ image=ghcr.io/tinkerfin-ai/studio-server:0.1.0
 bind_address=127.0.0.1
 port=8090
 wait_timeout=600
+s3_storage_bucket=
 while IFS='=' read -r key value; do
     case "$key" in
         STUDIO_IMAGE) image=$value ;;
         STUDIO_BIND_ADDRESS) bind_address=$value ;;
         STUDIO_PORT) port=$value ;;
         DEPLOY_WAIT_TIMEOUT) wait_timeout=$value ;;
+        S3_STORAGE_BUCKET) s3_storage_bucket=$value ;;
     esac
 done <<< "$configuration"
 [[ "$wait_timeout" =~ ^[1-9][0-9]*$ ]] || fail "DEPLOY_WAIT_TIMEOUT 必须是正整数秒数"
+
+[[ -n "$s3_storage_bucket" ]] || fail "请在 $ENV_FILE 中填写 S3_STORAGE_BUCKET，桶名没有默认值"
+[[ ${#s3_storage_bucket} -ge 3 && ${#s3_storage_bucket} -le 63 && "$s3_storage_bucket" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ && "$s3_storage_bucket" != *..* && "$s3_storage_bucket" != *.-* && "$s3_storage_bucket" != *-.* && ! "$s3_storage_bucket" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "S3_STORAGE_BUCKET 不是合法的 MinIO 桶名"
 
 if ((BUILD)); then
     if [[ "$image" == ghcr.io/tinkerfin-ai/studio-server:0.1.0 ]]; then

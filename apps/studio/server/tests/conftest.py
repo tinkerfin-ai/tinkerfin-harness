@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,12 +27,11 @@ async def session(database: Database) -> AsyncIterator[AsyncSession]:
 
 
 @pytest_asyncio.fixture
-async def attachments(database, tmp_path):
-    """提供使用真实磁盘和业务仓储的附件服务"""
+async def attachments(database, attachment_storage):
+    """提供使用内存对象存储和业务仓储的附件服务"""
     from tinkerfin_studio.attachments.service import AttachmentService
-    from tinkerfin_studio.attachments.storage import DiskAttachmentStorage
 
-    return AttachmentService(database, DiskAttachmentStorage(tmp_path / "attachments"))
+    return AttachmentService(database, attachment_storage)
 
 
 @pytest_asyncio.fixture
@@ -61,3 +61,18 @@ async def model_connections(database):
                         ),
                     )
                 )
+
+
+@pytest.fixture(autouse=True)
+def attachment_settings_environment(monkeypatch):
+    """测试配置使用独立占位凭据，不读取真实存储配置"""
+    monkeypatch.setenv("S3_STORAGE_BUCKET", "test-attachments")
+    monkeypatch.setenv("S3_STORAGE_ACCESS_KEY", "test-access")
+    monkeypatch.setenv("S3_STORAGE_SECRET_KEY", "test-secret")
+
+
+@pytest.fixture
+def attachment_storage():
+    from attachment_fakes import MemoryAttachmentStorage
+
+    return MemoryAttachmentStorage()

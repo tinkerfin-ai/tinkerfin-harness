@@ -41,7 +41,7 @@ done <<< "$configuration"
 [[ "$mysql_port" =~ ^[0-9]+$ ]] && ((10#$mysql_port > 0 && 10#$mysql_port <= 65535)) \
     || fail "MYSQL_PORT 必须在 1 至 65535 之间"
 
-password_files=(mysql_root_password mysql_password redis_runtime_password opensandbox_api_key)
+password_files=(mysql_root_password mysql_password redis_runtime_password opensandbox_api_key s3_storage_access_key s3_storage_secret_key)
 if [[ ! -e "$SECRETS_DIR" ]]; then
     mkdir "$SECRETS_DIR"
     for name in "${password_files[@]}"; do
@@ -81,3 +81,4 @@ chmod 700 "$SECRETS_DIR"
 chmod 600 "$ENV_FILE"
 chmod 644 "${password_files[@]/#/$SECRETS_DIR/}" "$SECRETS_DIR/database_url"
 printf '配置已准备：%s\n' "$ENV_FILE"
+printf '请在配置中填写 S3_STORAGE_BUCKET，再运行 deploy.sh\n'

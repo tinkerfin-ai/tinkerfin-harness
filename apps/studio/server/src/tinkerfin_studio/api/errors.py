@@ -122,6 +122,7 @@ class AttachmentErrorCode(ErrorCode):
     THREAD_UNAVAILABLE = _ErrorCodeValue(1_001_006_003, 404, "附件所属会话不可用")
     INVALID_VARIANT = _ErrorCodeValue(1_001_006_004, 422, "当前附件不支持所选预览方式")
     ALREADY_SENT = _ErrorCodeValue(1_001_006_005, 409, "已发送的附件随会话保留")
+    UPLOAD_IN_PROGRESS = _ErrorCodeValue(1_001_006_007, 409, "附件正在处理，请稍后再试")
     UPLOAD_TIMEOUT = _ErrorCodeValue(1_001_006_006, 408, "附件上传超时，请重试")
 
 

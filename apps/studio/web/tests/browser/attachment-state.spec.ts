@@ -20,7 +20,7 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
       localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user }))
       localStorage.setItem('tinkerfin:theme', 'system')
     }, user)
-    await page.route('**/api/**', async route => {
+    await page.route('**/{api,objects}/**', async route => {
       const url = new URL(route.request().url())
       const path = url.pathname
       let data: unknown = {}
@@ -34,8 +34,8 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
       }
       else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
       else if (path === '/api/conversation/history') data = { items: [], nextCursor: null }
-      else if (path === '/api/attachments' && route.request().method() === 'POST') {
-        const name = url.searchParams.get('name')!
+      else if (path === '/api/attachments/uploads' && route.request().method() === 'POST') {
+        const name = route.request().postDataJSON().name as string
         if (name === imageName) {
           imageUploads += 1
           if (imageUploads === 1) {
@@ -45,7 +45,11 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
           }
           await retriedUpload
         }
-        data = { id: name === imageName ? 'stored-image' : 'stored-document', name, mime_type: name === imageName ? 'image/png' : 'application/pdf', size_bytes: 3 }
+        data = { attachment_id: name === imageName ? 'stored-image' : 'stored-document', url: new URL('/objects/upload', url).href, fields: {}, expires_in: 600 }
+      } else if (path === '/objects/upload') { await route.fulfill({ status: 204 }); return
+      } else if (path.endsWith('/complete')) {
+        const image = path.includes('stored-image')
+        data = { id: image ? 'stored-image' : 'stored-document', name: image ? imageName : '报告.pdf', mime_type: image ? 'image/png' : 'application/pdf', size_bytes: 3 }
       } else if (path === '/api/conversation/chat') {
         submissions += 1
         await route.fulfill({ status: 422, json: { code: 422, message: '发送失败，请保留草稿重试', data: null } })

@@ -21,6 +21,8 @@ PASSWORDS = (
     "mysql_password",
     "redis_runtime_password",
     "opensandbox_api_key",
+    "s3_storage_access_key",
+    "s3_storage_secret_key",
 )
 
 
@@ -40,6 +42,7 @@ def deployment(tmp_path):
             environment.pop(line.split("=", 1)[0], None)
     for key in ("SECRETS_DIR", "STUDIO_ENV_FILE", "COMPOSE_PROJECT_NAME"):
         environment.pop(key, None)
+    environment["S3_STORAGE_BUCKET"] = "deployment-test"
     return root, deploy, environment
 
 
@@ -216,7 +219,7 @@ def test_compose_groups_backend_and_supports_base_and_external_services(deployme
     _, deploy, environment = deployment
     assert setup(deploy, environment).returncode == 0
     full = compose_config(deploy, environment)
-    dependencies = {"mysql", "redis-runtime", "opensandbox"}
+    dependencies = {"mysql", "redis-runtime", "opensandbox", "minio"}
     assert full["name"] == "tinkerfin-studio"
     assert set(full["services"]) == dependencies | {"server"}
     assert (
@@ -242,7 +245,7 @@ def test_compose_groups_backend_and_supports_base_and_external_services(deployme
         "driver": "local",
         "options": {"max-size": "50m", "max-file": "3"},
     }
-    assert all(volume["target"] != "/app/logs" for volume in server["volumes"])
+    assert all(volume["target"] != "/app/logs" for volume in server.get("volumes", []))
     assert (
         full["services"]["mysql"]["environment"]["MYSQL_PASSWORD_FILE"]
         == "/run/secrets/mysql_password"
@@ -251,10 +254,7 @@ def test_compose_groups_backend_and_supports_base_and_external_services(deployme
         volume["target"] == "/docker-entrypoint-initdb.d/10-studio-business.sql"
         for volume in full["services"]["mysql"]["volumes"]
     )
-    assert (
-        full["volumes"]["studio-attachments"]["name"]
-        == "tinkerfin-studio_studio-attachments"
-    )
+    assert full["volumes"]["minio-data"]["name"] == "tinkerfin-studio_minio-data"
     assert any(
         volume["target"] == "/root/.opensandbox/metadata"
         for volume in full["services"]["opensandbox"]["volumes"]
@@ -401,3 +401,23 @@ def test_first_setup_can_retry_after_invalid_configuration(deployment):
     assert not (deploy / ".env").exists()
     assert not (deploy / "secrets").exists()
     assert setup(deploy, environment).returncode == 0
+
+
+@pytest.mark.parametrize("bucket", ["", "A-Bucket", "a..b", "127.0.0.1"])
+def test_deploy_rejects_missing_or_invalid_bucket_before_starting_services(
+    deployment, tmp_path, bucket
+):
+    _, deploy, environment = deployment
+    environment, calls = fake_docker(tmp_path, environment)
+    environment["S3_STORAGE_BUCKET"] = bucket
+    result = subprocess.run(
+        ["bash", str(deploy / "deploy.sh")],
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "S3_STORAGE_BUCKET" in result.stderr
+    assert not any(
+        "up" in item["args"] or "pull" in item["args"] for item in read_calls(calls)
+    )

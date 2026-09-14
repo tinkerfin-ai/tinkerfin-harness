@@ -52,6 +52,8 @@ dependencies = [
     "concurrent-log-handler==0.9.29",
     "langchain-ollama==1.1.0",
     "ollama==0.6.2",
+    "aiobotocore>=3,<4",
+    "types-aiobotocore[s3]>=3,<4",
 ]
 
 [project.scripts]

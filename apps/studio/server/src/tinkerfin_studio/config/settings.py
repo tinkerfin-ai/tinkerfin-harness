@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
 from pydantic import (
@@ -23,9 +25,10 @@ from sqlalchemy.engine import make_url
 from tinkerfin_studio.models.transport import normalize_model_origin
 
 _DEFAULT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
-_DEFAULT_ATTACHMENT_DIRECTORY = Path(".data/attachments")
 _DEFAULT_LOG_FILE_PATH = Path("logs/studio.log")
 _SECRET_FILE_TARGETS = {
+    "s3_storage_access_key_file": "s3_storage_access_key",
+    "s3_storage_secret_key_file": "s3_storage_secret_key",
     "database_url_file": "database_url",
     "redis_runtime_password_file": "redis_runtime_password",
     "open_sandbox_api_key_file": "open_sandbox_api_key",
@@ -33,14 +36,14 @@ _SECRET_FILE_TARGETS = {
 }
 
 
-def _apply_secret_files(values: dict[str, str]) -> None:
+def _apply_secret_files(values: dict[str, str], directory: Path) -> None:
     """用容器 Secret 文件覆盖对应的普通配置值"""
 
     for file_key, target_key in _SECRET_FILE_TARGETS.items():
         raw_path = values.pop(file_key, None)
-        if raw_path is None:
+        if not raw_path:
             continue
-        path = Path(raw_path)
+        path = directory / raw_path
         try:
             value = path.read_text(encoding="utf-8").strip()
         except OSError as error:
@@ -122,6 +125,17 @@ class SandboxSettings(BaseModel):
     )
 
 
+class S3StorageSettings(BaseModel):
+    """应用存储桶及后端、浏览器各自可达的地址"""
+
+    model_config = ConfigDict(frozen=True)
+    bucket: str
+    endpoint: str
+    public_endpoint: str
+    access_key: SecretStr
+    secret_key: SecretStr
+
+
 class Settings(BaseSettings):
     """Studio 服务进程配置"""
 
@@ -144,16 +158,61 @@ class Settings(BaseSettings):
         """固定日志位置，避免启动工作目录改变输出文件"""
         return (_DEFAULT_ENV_FILE.parent / value).resolve()
 
-    attachment_directory: Path = Field(
-        default=_DEFAULT_ATTACHMENT_DIRECTORY,
-        description="附件持久化目录；相对路径以配置文件所在目录为基准，不依赖启动工作目录",
+    s3_storage_bucket: str = Field(
+        min_length=3, max_length=63, description="用户指定的应用存储桶，无默认值"
     )
+    s3_storage_endpoint: str = "http://127.0.0.1:9000"
+    s3_storage_public_endpoint: str = "http://127.0.0.1:9000"
+    s3_storage_access_key: SecretStr
+    s3_storage_secret_key: SecretStr
 
-    @field_validator("attachment_directory")
+    @field_validator("s3_storage_bucket")
     @classmethod
-    def resolve_attachment_directory(cls, value: Path) -> Path:
-        """固定附件存储位置，避免从不同目录启动时读写不同的数据卷"""
-        return (_DEFAULT_ENV_FILE.parent / value).resolve()
+    def validate_s3_storage_bucket(cls, value: str) -> str:
+        """校验 MinIO 桶名，不修改用户输入或推导默认值"""
+        if (
+            not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", value)
+            or ".." in value
+            or ".-" in value
+            or "-." in value
+            or re.fullmatch(r"[0-9]+(?:\.[0-9]+){3}", value)
+        ):
+            raise ValueError("S3_STORAGE_BUCKET 必须是合法的 MinIO 桶名")
+        return value
+
+    @field_validator("s3_storage_endpoint", "s3_storage_public_endpoint")
+    @classmethod
+    def validate_s3_storage_endpoint(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ValueError("附件存储地址必须是 HTTP/HTTPS 服务地址，不含路径或凭据")
+        return value.rstrip("/")
+
+    @field_validator("s3_storage_access_key", "s3_storage_secret_key")
+    @classmethod
+    def validate_attachment_credential(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("附件存储凭据不能为空")
+        return value
+
+    @property
+    def s3_storage(self) -> S3StorageSettings:
+        """提供附件存储连接配置，密钥不进入公开接口"""
+        return S3StorageSettings(
+            bucket=self.s3_storage_bucket,
+            endpoint=self.s3_storage_endpoint,
+            public_endpoint=self.s3_storage_public_endpoint,
+            access_key=self.s3_storage_access_key,
+            secret_key=self.s3_storage_secret_key,
+        )
 
     model_allowed_origins: tuple[str, ...] = Field(
         default=(),
@@ -331,11 +390,7 @@ def load_settings(*, env_file: str | Path | None = _DEFAULT_ENV_FILE) -> Setting
             or key.lower() in _SECRET_FILE_TARGETS
         }
     )
-    _apply_secret_files(values)
-    directory = Path(
-        values.get("attachment_directory", str(_DEFAULT_ATTACHMENT_DIRECTORY))
-    )
-    values["attachment_directory"] = str((config_directory / directory).resolve())
+    _apply_secret_files(values, config_directory)
     log_path = Path(values.get("log_file_path", str(_DEFAULT_LOG_FILE_PATH)))
     values["log_file_path"] = str((config_directory / log_path).resolve())
     return Settings.model_validate(values)

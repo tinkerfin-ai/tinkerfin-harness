@@ -1,3 +1,4 @@
+import { mockDownloadPermits } from './support/attachment-storage'
 import { test, expect } from '@playwright/test'
 import { resolve } from 'node:path'
 import history from './fixtures/multimodal-history.json' with { type: 'json' }
@@ -45,7 +46,7 @@ test('附件发送失败保留输入与待发送图片', async ({ page }) => {
       ),
     user,
   )
-  await page.route('**/api/**', async (route) => {
+  await page.route('**/{api,objects}/**', async (route) => {
     const path = new URL(route.request().url()).pathname
     let data: unknown = {}
     if (path === '/api/auth/me')
@@ -64,14 +65,12 @@ test('附件发送失败保留输入与待发送图片', async ({ page }) => {
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history')
       data = { items: [], nextCursor: null }
-    else if (path === '/api/attachments' && route.request().method() === 'POST')
-      data = {
-        id: 'test-image',
-        name: 'multimodal.png',
-        mime_type: 'image/png',
-        size_bytes: 1494354,
-      }
-    else if (path === '/api/attachments/test-image/content') {
+    else if (path === '/api/attachments/uploads')
+      data = { attachment_id: 'test-image', url: new URL('/objects/upload', route.request().url()).href, fields: {}, expires_in: 600 }
+    else if (path === '/objects/upload') { await route.fulfill({ status: 204 }); return }
+    else if (path === '/api/attachments/test-image/complete')
+      data = { id: 'test-image', name: 'multimodal.png', mime_type: 'image/png', size_bytes: 1494354 }
+    else if (path === '/objects/test-image') {
       await route.fulfill({ path: sample, contentType: 'image/png' })
       return
     } else if (path === '/api/conversation/chat') {
@@ -86,6 +85,7 @@ test('附件发送失败保留输入与待发送图片', async ({ page }) => {
     }
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
+  await mockDownloadPermits(page)
   await page.goto('/')
   await page.locator('input[type=file]').setInputFiles(sample)
   await expect(page.getByLabel('待发送附件').getByRole('img', { name: 'multimodal.png', exact: true })).toBeVisible()
@@ -103,7 +103,7 @@ test('附件发送失败保留输入与待发送图片', async ({ page }) => {
 
 test('真实图表历史中的图片预览、下载与引用', async ({ page }, testInfo) => {
   await page.addInitScript(user => localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user })), user)
-  await page.route('**/api/**', async route => {
+  await page.route('**/{api,objects}/**', async route => {
     const url = new URL(route.request().url())
     const path = url.pathname
     let data: unknown = {}
@@ -114,11 +114,12 @@ test('真实图表历史中的图片预览、下载与引用', async ({ page }, 
     else if (path === `/api/conversation/${history.threadId}/history`) data = history
     else if (path === `/api/conversation/${history.threadId}/trace`) {
       await route.fulfill({ contentType: 'text/event-stream', body: `event: trace\ndata: ${JSON.stringify({ type: 'snapshot', snapshot: history })}\n\n` }); return
-    } else if (path.startsWith('/api/attachments/') && path.endsWith('/content')) {
+    } else if (path.startsWith('/objects/')) {
       await route.fulfill({ path: resolve(process.cwd(), 'tests/browser/fixtures/chart.png'), contentType: 'image/png' }); return
     }
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
+  await mockDownloadPermits(page)
   await page.goto('/')
   await page.getByRole('button', { name: `打开会话：${history.title}`, exact: true }).click()
   const preview = page.getByRole('button', { name: '放大图片：验收图表.png', exact: true })

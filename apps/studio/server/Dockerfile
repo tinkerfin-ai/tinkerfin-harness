@@ -38,7 +38,6 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
 RUN groupadd --gid 10001 tinkerfin \
     && useradd --uid 10001 --gid 10001 --create-home tinkerfin \
-    && mkdir -p /app/attachments \
     && chown -R 10001:10001 /app
 COPY --from=dependencies /opt/python/ /usr/local/
 COPY --from=artifacts /wheels/ /tmp/wheels/

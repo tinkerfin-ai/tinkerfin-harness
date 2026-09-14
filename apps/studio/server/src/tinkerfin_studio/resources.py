@@ -34,8 +34,8 @@ from tinkerfin_sandbox.lifecycle.sqlalchemy import SQLAlchemyOpenSandboxState
 from tinkerfin_sandbox.models import OpenSandboxConfig
 from tinkerfin_studio.agent.persistence import AgentPersistence
 from tinkerfin_studio.agent.subagents import SubagentSettings, load_subagents
+from tinkerfin_studio.attachments.minio import MinioAttachmentStorage
 from tinkerfin_studio.attachments.service import AttachmentService
-from tinkerfin_studio.attachments.storage import DiskAttachmentStorage
 from tinkerfin_studio.automation.target import (
     StudioAutomationTarget,
     fail_interactive_execution,
@@ -204,6 +204,10 @@ def build_lifespan():
                     connection_budget.configured_budget,
                     connection_budget.management_reserve,
                 )
+                attachment_storage = await _enter_lifespan_context(
+                    stack, outcome, MinioAttachmentStorage.open(settings.s3_storage)
+                )
+                await attachment_storage.initialize()
                 redis_runtime_settings = settings.redis_runtime
                 redis_runtime = create_redis_client(redis_runtime_settings)
                 stack.push_async_callback(redis_runtime.aclose)
@@ -322,9 +326,7 @@ def build_lifespan():
                     automation=automation,
                     model_http_client=model_http_client,
                     model_http_transport=model_http_transport,
-                    attachments=AttachmentService(
-                        database, DiskAttachmentStorage(settings.attachment_directory)
-                    ),
+                    attachments=AttachmentService(database, attachment_storage),
                     database=database,
                     redis_runtime=redis_runtime,
                     agent_persistence=persistence,
@@ -342,6 +344,7 @@ def build_lifespan():
                         sandbox=settings.sandbox,
                         sandbox_ready=sandbox_manager.check_ready,
                         automation_ready=check_automation,
+                        attachment_ready=attachment_storage.check_ready,
                         http_client=http_client,
                     ),
                 )

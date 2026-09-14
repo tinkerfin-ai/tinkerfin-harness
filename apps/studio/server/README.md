@@ -10,17 +10,19 @@
 ```bash
 git clone https://github.com/tinkerfin-ai/tinkerfin-harness.git
 cd tinkerfin-harness/apps/studio/server/deploy
+./setup.sh
+# 在 .env 中填写 S3_STORAGE_BUCKET
 ./deploy.sh
 ```
 
-首次执行会创建 `.env` 和随机凭据，拉取镜像并等待服务就绪。默认 API 地址为
+`setup.sh` 创建 `.env` 和随机凭据；桶名必填且无默认值，填写后由 `deploy.sh` 拉取镜像并等待服务就绪。默认 API 地址为
 `http://127.0.0.1:8090/api`，健康检查地址为 `http://127.0.0.1:8090/health/ready`。
-就绪检查包含自动化工作器健康状态。自动化的日程、权限和结果查看见
+就绪检查包含对象存储和自动化工作器健康状态。自动化的日程、权限和结果查看见
 [使用指南](../../../docs/cn/studio/automation.md)。
 默认不预热沙箱；首次使用工作区时创建沙箱，缺少运行镜像时还需下载，耗时取决于网络。
 
 Docker 项目名为 `tinkerfin-studio`，包含 `server`、`mysql`、`redis-runtime` 和
-`opensandbox`。只部署后端，不包含 Web 页面。
+`opensandbox`、`minio`。只部署后端，不包含 Web 页面。
 全新数据库初始化时预置账号 `tinkerfin`，密码 `123456`。已有数据卷不重新初始化或覆盖账号。
 当前没有公开注册接口；对外开放前按[上手指南](../../../docs/cn/studio/quick_start.md#修改初始密码)修改初始密码。
 
@@ -48,6 +50,8 @@ Docker 项目名为 `tinkerfin-studio`，包含 `server`、`mysql`、`redis-runt
 
 | 配置 | 默认值 | 用途 |
 | --- | --- | --- |
+| `S3_STORAGE_BUCKET` | 必填，无默认值 | 应用存储桶，不存在时自动创建 |
+| `S3_STORAGE_PUBLIC_ENDPOINT` | `http://127.0.0.1:9000` | 浏览器上传和下载的存储地址 |
 | `STUDIO_IMAGE` | `ghcr.io/tinkerfin-ai/studio-server:0.1.0` | 后端镜像 |
 | `STUDIO_BIND_ADDRESS` | `127.0.0.1` | 后端监听地址；允许远程访问时设为 `0.0.0.0` |
 | `STUDIO_PORT` | `8090` | 后端对外端口 |
@@ -62,7 +66,12 @@ Docker 项目名为 `tinkerfin-studio`，包含 `server`、`mysql`、`redis-runt
 | `OPEN_SANDBOX_WARM_POOL_SIZE` | `0` | 全局预热沙箱数量；设为 `1` 可提前准备一个工作区 |
 | `LOG_LEVEL` | `INFO` | 后端日志等级 |
 
-中间件端口仅绑定宿主机的 `127.0.0.1`。修改 `MYSQL_PUBLISHED_PORT` 不改变容器内部的
+中间件端口默认仅绑定宿主机的 `127.0.0.1`。远程使用附件时，将
+`S3_STORAGE_PUBLIC_ENDPOINT` 设置为浏览器可达的地址，并通过反向代理公开 MinIO API，
+或设置 `S3_STORAGE_BIND_ADDRESS=0.0.0.0` 开放配置的端口。HTTPS 页面应使用 HTTPS 存储地址。
+浏览器上传与下载直接访问该地址，容器内部连接使用 `S3_STORAGE_ENDPOINT`。
+
+修改 `MYSQL_PUBLISHED_PORT` 不改变容器内部的
 数据库连接。MySQL 密码保存在 `secrets/mysql_password`，Redis 与 OpenSandbox 密钥分别
 保存在同名 Secret 文件中；`secrets/database_url` 由脚本根据 MySQL 配置自动生成，不要手动编辑。
 
@@ -102,25 +111,28 @@ docker compose -f docker-compose-base.yaml up -d --wait
 ```
 
 随后可在 PyCharm 或命令行启动 Studio。宿主机连接 MySQL 使用 `127.0.0.1:13306`，
-Redis 使用 `127.0.0.1:6379`，OpenSandbox 使用 `127.0.0.1:8091`。
+Redis 使用 `127.0.0.1:6379`，OpenSandbox 使用 `127.0.0.1:8091`，MinIO 使用 `127.0.0.1:9000`。
 本地后端配置中的密码应与 `deploy/secrets/` 中对应文件一致。
 
 ## 使用外部依赖
 
-执行 `./setup.sh`，编辑 `.env` 中的 MySQL、Redis 和 OpenSandbox 地址，并把已有服务的
+执行 `./setup.sh`，编辑 `.env` 中的 MySQL、Redis、OpenSandbox 和 MinIO 地址，并把已有服务的
 密码填入 `secrets/` 对应文件，然后执行：
 
 ```bash
 ./deploy.sh --external
 ```
 
-此模式只启动 `server`。
+此模式只启动 `server`。S3 凭据分别填写 `secrets/s3_storage_access_key` 和
+`secrets/s3_storage_secret_key`；配置 `S3_STORAGE_ENDPOINT`、`S3_STORAGE_PUBLIC_ENDPOINT`
+和 `S3_STORAGE_BUCKET`，账号须能创建桶、管理生命周期及读写对象。桶内 `attachments/`
+用于附件，应保持私有，不要配置匿名访问；其他前缀可供应用的其他文件用途使用。
 外部 MySQL 需要事先创建数据库，并在新库中导入 `database/mysql/schema.sql`。
 
 只替换 MySQL 时，在 `.env` 中设置外部 MySQL 参数和：
 
 ```dotenv
-COMPOSE_PROFILES=redis-runtime,opensandbox
+COMPOSE_PROFILES=redis-runtime,opensandbox,minio
 ```
 
 然后执行普通的 `./deploy.sh`。容器访问宿主机服务时可使用 `host.docker.internal`。
@@ -136,7 +148,7 @@ docker compose down
 ```
 
 重新部署会重新创建服务容器并短暂中断服务，数据卷会保留。`docker compose down` 也会保留
-数据；`docker compose down -v` 会永久删除本项目的数据库、Redis、OpenSandbox 和附件卷。
+数据；`docker compose down -v` 会永久删除本项目的数据库、Redis、OpenSandbox 和 MinIO 数据卷。
 删除前应完成备份。
 
 `server` 服务的 Docker 日志按 50 MiB 滚动，最多保留 3 个文件。需要独立文件日志时，在 `.env` 中启用
@@ -145,7 +157,7 @@ docker compose down
 自动化任务和运行记录保存在 MySQL，运行检查点保存在 Redis。备份恢复时须保持数据库、
 检查点和附件数据一致。任务参考文件及运行附件保留持久引用，删除任务仍保留历史文件。
 
-附件使用 `studio-attachments` 卷，容器内目录为 `/app/attachments`。Sandbox 工作区跨会话
+附件保存在所配置桶的 `attachments/` 下，内置 MinIO 使用 `minio-data` 卷。Sandbox 工作区跨会话
 保留，不会因闲置自动删除；OpenSandbox 需要访问宿主机 Docker，请只在受信任的主机部署。
 
 ## 本地开发
@@ -162,7 +174,7 @@ uv run python -m tinkerfin_studio --host 127.0.0.1 --port 8090 --reload
 使用 IDE 启动服务时，将运行工作目录设为仓库根目录，使 `--reload` 同时覆盖 Studio 与
 `packages/` 的 Python 源码。
 
-本地配置来自 `server/.env`。附件默认位于 `server/.data/attachments`，可选文件日志默认
+本地配置来自 `server/.env`。填写 `S3_STORAGE_BUCKET`；示例配置通过文件读取 `deploy/secrets/` 的 S3 凭据，相对路径以 `.env` 所在目录为准。可选文件日志默认
 位于 `server/logs/studio.log`。相对路径以配置文件所在目录为基准。
 
 ```bash

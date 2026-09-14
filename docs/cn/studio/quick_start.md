@@ -8,7 +8,7 @@
 - Node.js 20.19+（20.x）或 22.12+，pnpm 10.8.0
 - 可用的模型服务地址、模型名称与 API 密钥
 
-后端、数据库、Redis 和 OpenSandbox 通过 Docker 启动；Web 客户端单独运行。
+后端、数据库、Redis、OpenSandbox 和 MinIO 通过 Docker 启动；Web 客户端单独运行。
 
 ## 启动后端
 
@@ -17,6 +17,8 @@
 ```bash
 git clone https://github.com/tinkerfin-ai/tinkerfin-harness.git
 cd tinkerfin-harness/apps/studio/server/deploy
+./setup.sh
+# 在 .env 中填写 S3_STORAGE_BUCKET，桶名没有默认值
 ./deploy.sh --build
 ```
 

@@ -1,3 +1,4 @@
+import { mockDownloadPermits } from './support/attachment-storage'
 import { test, expect } from '@playwright/test'
 import { resolve } from 'node:path'
 import source from './fixtures/multimodal-history.json' with { type: 'json' }
@@ -17,7 +18,7 @@ test('图片失败态、恢复与多图连续键盘浏览保持无边框布局',
   let previewAvailable = false
   let originalAvailable = false
   await page.addInitScript(user => localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user })), user)
-  await page.route('**/api/**', async route => {
+  await page.route('**/{api,objects}/**', async route => {
     const url = new URL(route.request().url())
     let data: unknown = {}
     if (url.pathname === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00.000Z', user }
@@ -27,13 +28,14 @@ test('图片失败态、恢复与多图连续键盘浏览保持无边框布局',
     else if (url.pathname === `/api/conversation/${history.threadId}/history`) data = history
     else if (url.pathname.endsWith('/trace')) {
       await route.fulfill({ contentType: 'text/event-stream', body: `event: trace\ndata: ${JSON.stringify({ type: 'snapshot', snapshot: history })}\n\n` }); return
-    } else if (url.pathname.startsWith('/api/attachments/') && url.pathname.endsWith('/content')) {
+    } else if (url.pathname.startsWith('/objects/')) {
       if (url.searchParams.get('variant') === 'preview' && !previewAvailable) { await route.fulfill({ status: 404, body: '' }); return }
       if (url.searchParams.get('variant') === 'original' && !originalAvailable) { await route.fulfill({ status: 503, body: 'unavailable' }); return }
       await route.fulfill({ path: resolve(process.cwd(), 'tests/browser/fixtures/chart.png'), contentType: 'image/png' }); return
     }
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
+  await mockDownloadPermits(page)
   await page.goto('/')
   await page.getByRole('button', { name: '打开会话：多图预览回归', exact: true }).click()
   const preview = page.getByRole('button', { name: '放大图片：第一张.png', exact: true })

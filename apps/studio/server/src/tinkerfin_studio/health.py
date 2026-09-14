@@ -28,6 +28,7 @@ class ReadinessService:
         sandbox: SandboxSettings,
         sandbox_ready: Callable[[], Awaitable[None]],
         automation_ready: Callable[[], Awaitable[None]],
+        attachment_ready: Callable[[], Awaitable[None]],
         http_client: httpx.AsyncClient,
         timeout_seconds: float = 3,
     ) -> None:
@@ -36,6 +37,7 @@ class ReadinessService:
         self._sandbox = sandbox
         self._sandbox_ready = sandbox_ready
         self._automation_ready = automation_ready
+        self._attachment_ready = attachment_ready
         self._http_client = http_client
         self._timeout_seconds = timeout_seconds
 
@@ -77,13 +79,15 @@ class ReadinessService:
     async def check(self) -> dict[str, bool]:
         """返回不含异常和凭据的稳定组件状态"""
 
-        mysql, redis, opensandbox, automation = await asyncio.gather(
+        mysql, redis, opensandbox, automation, attachments = await asyncio.gather(
             self._safe(self._check_mysql),
             self._safe(self._check_redis),
             self._safe(self._check_opensandbox),
             self._safe(self._automation_ready),
+            self._safe(self._attachment_ready),
         )
         return {
+            "attachments": attachments,
             "mysql": mysql,
             "redis": redis,
             "opensandbox": opensandbox,

@@ -7,7 +7,7 @@
 `/api` 下普通业务 JSON 接口成功时统一返回 HTTP 200 和
 `{ "code": 0, "message": "success", "data": ... }`。保存、删除和登出等不返回业务数据的操作使用 `data: null`。
 错误使用相同包络并保留对应的 HTTP 状态码，客户端应同时读取 HTTP 状态和业务 `code`。
-附件原件与预览返回文件内容，会话与 Trace 订阅返回原生 SSE；`/health/live` 和 `/health/ready` 使用独立的健康检查响应。
+附件上传和读取许可使用相同 JSON 包络，会话与 Trace 订阅返回原生 SSE；`/health/live` 和 `/health/ready` 使用独立的健康检查响应。
 
 ## 认证会话
 
@@ -71,7 +71,15 @@ MODEL_ALLOWED_ORIGINS=["http://127.0.0.1:11434","http://localhost:11434"]
 
 本机地址指 Studio 后端所在的网络空间。Docker 部署访问宿主机 Ollama 时，在 `deploy/.env` 中填写 `MODEL_ALLOWED_ORIGINS=["http://host.docker.internal:11434"]`，模型 Base URL 使用 `http://host.docker.internal:11434`；Ollama 需监听容器可达的地址。连接另一台服务器时，使用该服务器可达的主机名或 IP 并添加对应来源。
 
-附件使用 `POST /api/attachments?name=...` 上传原始文件流，`GET /api/attachments/{id}/content` 读取原件，`variant=preview` 获取图片预览，`DELETE /api/attachments/{id}` 删除本人未发送草稿。图片及文档输入使用 AG-UI 内容块，`source.value` 为 `attachment:<id>`；附件必须属于当前用户，metadata 以已保存的附件描述为准。消息文本仍受 UTF-8 大小限制。
+附件上传和读取流程：
+
+1. `POST /api/attachments/uploads` 提交 `{"name":"report.md","size_bytes":128}`，取得 `data` 中的 `attachment_id`、`url`、`fields` 和 `expires_in`。
+2. 浏览器向 `url` 提交 `multipart/form-data`：先原样添加全部 `fields`，最后添加名为 `file` 的文件字段；不携带 Studio 令牌或 Cookie。上传许可默认有效 600 秒，仅允许指定文件大小。
+3. 直传成功后调用 `POST /api/attachments/{attachment_id}/complete`，后端校验内容并返回 `Attachment`。取得此结果后才能发送消息或保存任务；文件传输完成不等于附件已就绪。处理中的重复请求返回 409，已完成请求返回同一附件。
+4. `GET /api/attachments/{id}/download-url?variant=original` 返回 `data.url` 和 `data.expires_in`，浏览器直接读取文件；图片预览使用 `variant=preview`。链接默认有效 300 秒，过期后重新申请，不保存到消息或公开分享。
+5. `DELETE /api/attachments/{id}` 删除本人未发送草稿；已发送或被任务引用的附件随所属记录保留。
+
+图片及文档输入使用 AG-UI 内容块，`source.value` 为 `attachment:<id>`；附件必须属于当前用户，metadata 以已保存的附件描述为准。消息文本仍受 UTF-8 大小限制。
 
 附件存储配置见[服务端部署说明](../README.md)。未发送附件保留至少 24 小时；需要长期使用的文件应随消息发送或保存到自动化任务。
 

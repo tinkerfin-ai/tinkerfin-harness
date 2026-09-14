@@ -128,10 +128,10 @@ CREATE TABLE conversation_attachments (
 	thread_id VARCHAR(128) COMMENT '附件绑定的会话 ID；空值表示未发送草稿',
 	message_id VARCHAR(128) COMMENT '首次使用或生成附件的权威消息 ID',
 	name VARCHAR(255) NOT NULL COMMENT '用户可见文件名，不用于存储路径',
-	mime_type VARCHAR(128) NOT NULL COMMENT '经服务端验证的文件媒体类型',
-	size_bytes BIGINT NOT NULL COMMENT '原件大小，单位为字节',
+	mime_type VARCHAR(128) NOT NULL COMMENT '服务端验证的文件媒体类型；待确认上传为空',
+	size_bytes BIGINT NOT NULL COMMENT '原件大小，单位为字节；待确认上传为声明值',
 	sha256 VARCHAR(64) NOT NULL COMMENT '原件完整内容的 SHA-256 校验值',
-	status VARCHAR(16) NOT NULL COMMENT 'uploading、ready 或 deleting；仅 ready 可用',
+	status VARCHAR(16) NOT NULL COMMENT 'uploading、processing、ready 或 deleting；仅 ready 可用',
 	source VARCHAR(16) NOT NULL COMMENT 'user 表示用户上传，tool 表示工具生成',
 	created_at DATETIME NOT NULL COMMENT 'UTC 创建时间，用于未发送附件的清理',
 	PRIMARY KEY (id)

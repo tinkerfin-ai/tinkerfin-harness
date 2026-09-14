@@ -8,7 +8,7 @@
 - Node.js 20.19+ (20.x) or 22.12+, and pnpm 10.8.0
 - A model provider endpoint, model name, and API key
 
-Docker runs the backend, database, Redis, and OpenSandbox. Start the Web client separately.
+Docker runs the backend, database, Redis, OpenSandbox, and MinIO. Start the Web client separately.
 
 ## Start the backend
 
@@ -17,6 +17,8 @@ Build and run from the repository:
 ```bash
 git clone https://github.com/tinkerfin-ai/tinkerfin-harness.git
 cd tinkerfin-harness/apps/studio/server/deploy
+./setup.sh
+# Set S3_STORAGE_BUCKET in .env; the bucket name has no default
 ./deploy.sh --build
 ```
 

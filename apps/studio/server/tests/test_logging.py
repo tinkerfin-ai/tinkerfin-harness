@@ -32,7 +32,12 @@ asyncio.run(main())
     result = subprocess.run(
         [sys.executable, "-c", program],
         cwd=tmp_path,
-        env={"PATH": str(Path(sys.executable).parent)},
+        env={
+            "PATH": str(Path(sys.executable).parent),
+            "S3_STORAGE_BUCKET": "test-attachments",
+            "S3_STORAGE_ACCESS_KEY": "test-access",
+            "S3_STORAGE_SECRET_KEY": "test-secret",
+        },
         capture_output=True,
         text=True,
         timeout=20,
@@ -118,7 +123,12 @@ print(json.dumps({"executed": executed, "values": values, "failures": failures})
             level,
         ],
         cwd=tmp_path,
-        env={"PATH": str(Path(sys.executable).parent)},
+        env={
+            "PATH": str(Path(sys.executable).parent),
+            "S3_STORAGE_BUCKET": "test-attachments",
+            "S3_STORAGE_ACCESS_KEY": "test-access",
+            "S3_STORAGE_SECRET_KEY": "test-secret",
+        },
         check=False,
         capture_output=True,
         text=True,
@@ -184,7 +194,12 @@ logging.warning('console-after-cleanup')
     result = subprocess.run(
         [sys.executable, "-c", program],
         cwd=tmp_path,
-        env={"PATH": str(Path(sys.executable).parent)},
+        env={
+            "PATH": str(Path(sys.executable).parent),
+            "S3_STORAGE_BUCKET": "test-attachments",
+            "S3_STORAGE_ACCESS_KEY": "test-access",
+            "S3_STORAGE_SECRET_KEY": "test-secret",
+        },
         capture_output=True,
         text=True,
         timeout=20,
@@ -225,7 +240,12 @@ assert not any(t.name.endswith('(_monitor)') for t in threading.enumerate())
     result = subprocess.run(
         [sys.executable, "-c", program],
         cwd=tmp_path,
-        env={"PATH": str(Path(sys.executable).parent)},
+        env={
+            "PATH": str(Path(sys.executable).parent),
+            "S3_STORAGE_BUCKET": "test-attachments",
+            "S3_STORAGE_ACCESS_KEY": "test-access",
+            "S3_STORAGE_SECRET_KEY": "test-secret",
+        },
         capture_output=True,
         text=True,
         timeout=20,
@@ -296,7 +316,12 @@ print('pressure-and-cancellation-ok')
     result = subprocess.run(
         [sys.executable, "-c", program],
         cwd=tmp_path,
-        env={"PATH": str(Path(sys.executable).parent)},
+        env={
+            "PATH": str(Path(sys.executable).parent),
+            "S3_STORAGE_BUCKET": "test-attachments",
+            "S3_STORAGE_ACCESS_KEY": "test-access",
+            "S3_STORAGE_SECRET_KEY": "test-secret",
+        },
         capture_output=True,
         text=True,
         timeout=20,
@@ -336,7 +361,12 @@ asyncio.run(main())
                 subprocess.Popen(
                     [sys.executable, "-c", program, str(i)],
                     cwd=tmp_path,
-                    env={"PATH": os.defpath},
+                    env={
+                        "PATH": os.defpath,
+                        "S3_STORAGE_BUCKET": "test-attachments",
+                        "S3_STORAGE_ACCESS_KEY": "test-access",
+                        "S3_STORAGE_SECRET_KEY": "test-secret",
+                    },
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -435,7 +465,12 @@ if phase == 'draining':
     result = subprocess.run(
         [sys.executable, "-c", program, phase, str(close_fails).lower()],
         cwd=tmp_path,
-        env={"PATH": str(Path(sys.executable).parent)},
+        env={
+            "PATH": str(Path(sys.executable).parent),
+            "S3_STORAGE_BUCKET": "test-attachments",
+            "S3_STORAGE_ACCESS_KEY": "test-access",
+            "S3_STORAGE_SECRET_KEY": "test-secret",
+        },
         capture_output=True,
         text=True,
         timeout=20,

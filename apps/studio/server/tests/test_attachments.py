@@ -5,6 +5,7 @@ import io
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from attachment_fakes import MemoryAttachmentStorage
 from PIL import Image
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -12,7 +13,6 @@ from sqlalchemy import select
 from tinkerfin_studio.api.errors import BusinessException
 from tinkerfin_studio.attachments.entity import AttachmentFile
 from tinkerfin_studio.attachments.service import AttachmentService, byte_chunks
-from tinkerfin_studio.attachments.storage import DiskAttachmentStorage
 from tinkerfin_studio.conversation.models import ConversationThread
 
 
@@ -23,8 +23,8 @@ def png():
 
 
 @pytest.fixture
-async def attachments(database, tmp_path):
-    return AttachmentService(database, DiskAttachmentStorage(tmp_path / "attachments"))
+async def attachments(database, attachment_storage):
+    return AttachmentService(database, attachment_storage)
 
 
 async def test_upload_keeps_original_and_rejects_other_users(attachments):
@@ -133,7 +133,7 @@ async def test_cancelled_storage_write_removes_staging_record_and_bytes(
     """取消不得留下可见附件或无法按记录清理的文件"""
     import asyncio
 
-    class InterruptedStorage(DiskAttachmentStorage):
+    class InterruptedStorage(MemoryAttachmentStorage):
         async def put(self, key, chunks):
             async def interrupted():
                 async for chunk in chunks:
@@ -142,13 +142,13 @@ async def test_cancelled_storage_write_removes_staging_record_and_bytes(
 
             await super().put(key, interrupted())
 
-    root = tmp_path / "cancelled"
-    service = AttachmentService(database, InterruptedStorage(root))
+    storage = InterruptedStorage()
+    service = AttachmentService(database, storage)
     with pytest.raises(asyncio.CancelledError):
         await service.upload(user_id=1, name="cancelled.png", chunks=byte_chunks(png()))
     async with database.session() as session:
         assert await session.scalar(select(AttachmentFile.id)) is None
-    assert not list(root.iterdir())
+    assert not storage.objects
 
 
 async def test_docx_paragraphs_and_tables_are_read(attachments):
@@ -192,7 +192,7 @@ async def test_workbook_preserves_numbers_and_treats_formula_like_text_as_text(
 
 
 async def test_same_name_attachments_remain_distinct_after_service_restart(
-    attachments, database, tmp_path
+    attachments, database, attachment_storage
 ):
     """同名报告按 ID 区分，重新创建服务后原件和会话引用仍可读取"""
     from docx import Document
@@ -229,9 +229,7 @@ async def test_same_name_attachments_remain_distinct_after_service_restart(
             message_id="question",
         )
         await session.commit()
-    restored = AttachmentService(
-        database, DiskAttachmentStorage(tmp_path / "attachments")
-    )
+    restored = AttachmentService(database, attachment_storage)
     assert len(await restored.list_thread(user_id=1, thread_id="reports")) == 2
     results = []
     for file in files:
@@ -403,7 +401,7 @@ async def test_invalid_markdown_is_not_published(attachments, database, data):
 
 @pytest.mark.parametrize("extension", ["md", "markdown"])
 async def test_markdown_tools_generate_deliver_read_and_reopen(
-    attachments, database, tmp_path, extension
+    attachments, database, attachment_storage, extension
 ):
     """真实生成和读取工具交付同一 Markdown，服务重建后保留正文与会话权限"""
     import json
@@ -451,9 +449,7 @@ async def test_markdown_tools_generate_deliver_read_and_reopen(
     assert file is not None and file.mime_type == "text/markdown"
     read = await tools["read_attachment"].ainvoke({"attachment_id": file.id})
     assert json.loads(read)["lines"] == text.splitlines()
-    restored = AttachmentService(
-        database, DiskAttachmentStorage(tmp_path / "attachments")
-    )
+    restored = AttachmentService(database, attachment_storage)
     _, original = await restored.read(file.id, user_id=1, thread_id="markdown-report")
     assert original == text.encode()
     assert [

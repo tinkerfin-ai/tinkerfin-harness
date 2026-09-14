@@ -144,7 +144,12 @@ asyncio.run(main())
     result = subprocess.run(
         [sys.executable, "-c", program, level, json.dumps(file_enabled)],
         cwd=tmp_path,
-        env={"PATH": os.defpath},
+        env={
+            "PATH": os.defpath,
+            "S3_STORAGE_BUCKET": "test-attachments",
+            "S3_STORAGE_ACCESS_KEY": "test-access",
+            "S3_STORAGE_SECRET_KEY": "test-secret",
+        },
         capture_output=True,
         text=True,
         timeout=20,

@@ -21,14 +21,13 @@ services:
       DATABASE_URL_FILE: /run/secrets/database_url
       REDIS_RUNTIME_PASSWORD_FILE: /run/secrets/redis_runtime_password
       OPEN_SANDBOX_API_KEY_FILE: /run/secrets/opensandbox_api_key
-      ATTACHMENT_DIRECTORY: /app/attachments
+      S3_STORAGE_ACCESS_KEY_FILE: /run/secrets/s3_storage_access_key
+      S3_STORAGE_SECRET_KEY_FILE: /run/secrets/s3_storage_secret_key
     extra_hosts:
       - host.docker.internal:host-gateway
-    secrets: [database_url, redis_runtime_password, opensandbox_api_key]
+    secrets: [database_url, redis_runtime_password, opensandbox_api_key, s3_storage_access_key, s3_storage_secret_key]
     ports:
       - "${STUDIO_BIND_ADDRESS:-127.0.0.1}:${STUDIO_PORT:-8090}:8090"
-    volumes:
-      - studio-attachments:/app/attachments
     read_only: true
     tmpfs:
       - /tmp
@@ -38,6 +37,9 @@ services:
     init: true
     restart: unless-stopped
     depends_on:
+      minio:
+        condition: service_healthy
+        required: false
       mysql:
         condition: service_healthy
         required: false
@@ -53,6 +55,3 @@ services:
       timeout: 5s
       retries: 60
       start_period: 30s
-
-volumes:
-  studio-attachments:

@@ -1,6 +1,27 @@
 name: tinkerfin-studio
 
 services:
+  minio:
+    profiles: [bundled, minio]
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    command: [server, /data, --console-address, ':9001']
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/s3_storage_access_key
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/s3_storage_secret_key
+      # 浏览器使用签名许可，不依赖 Cookie；跨域放行不授予匿名对象权限
+      MINIO_API_CORS_ALLOW_ORIGIN: '*'
+    secrets: [s3_storage_access_key, s3_storage_secret_key]
+    ports:
+      - "${S3_STORAGE_BIND_ADDRESS:-127.0.0.1}:${S3_STORAGE_PUBLISHED_PORT:-9000}:9000"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: [CMD, curl, -f, http://127.0.0.1:9000/minio/health/live]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
   mysql:
     profiles: [bundled, mysql]
     image: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
@@ -68,6 +89,10 @@ services:
 
 
 secrets:
+  s3_storage_access_key:
+    file: ${SECRETS_DIR:-./secrets}/s3_storage_access_key
+  s3_storage_secret_key:
+    file: ${SECRETS_DIR:-./secrets}/s3_storage_secret_key
   mysql_root_password:
     file: ${SECRETS_DIR:-./secrets}/mysql_root_password
   mysql_password:
@@ -80,6 +105,7 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/database_url
 
 volumes:
+  minio-data:
   mysql-data:
   redis-runtime-data:
   opensandbox-data:

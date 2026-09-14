@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -11,7 +12,7 @@ from uuid import uuid4
 import anyio
 from anyio import to_thread
 from pydantic import JsonValue
-from sqlalchemy import delete, exists, or_, select
+from sqlalchemy import delete, exists, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,12 +28,19 @@ from tinkerfin_studio.attachments.entity import (
 from tinkerfin_studio.attachments.processing import (
     MAX_FILE_BYTES,
     MAX_TOTAL_BYTES,
+    MIME_TYPES,
     image_variant,
     validate_file,
 )
-from tinkerfin_studio.attachments.storage import DiskAttachmentStorage
+from tinkerfin_studio.attachments.storage import (
+    AttachmentStorage,
+    DownloadLink,
+    UploadForm,
+)
 from tinkerfin_studio.conversation.models import ConversationThread
 from tinkerfin_studio.infrastructure.database import Database
+
+logger = logging.getLogger(__name__)
 
 
 async def byte_chunks(data: bytes) -> AsyncIterator[bytes]:
@@ -48,9 +56,9 @@ def descriptor(row: AttachmentFile) -> Attachment:
 
 
 class AttachmentService:
-    """管理附件数据卷与业务数据库，数据库事务不跨文件或解析 I/O"""
+    """管理附件对象与业务数据库，数据库事务不跨文件或解析 I/O"""
 
-    def __init__(self, database: Database, storage: DiskAttachmentStorage) -> None:
+    def __init__(self, database: Database, storage: AttachmentStorage) -> None:
         self.documents = DocumentProcessor()
         self._database = database
         self._storage = storage
@@ -75,12 +83,7 @@ class AttachmentService:
         if thread_id is not None and collection_id is not None:
             raise ValueError("附件只能属于会话或集合中的一种范围")
         async with self._uploads:
-            if (
-                not name
-                or len(name) > 255
-                or any(c in name for c in ("/", "\\", "\0", "\r", "\n"))
-            ):
-                raise BusinessException(AttachmentErrorCode.INVALID_FILE)
+            self._validate_name(name)
             content = bytearray()
             try:
                 with anyio.fail_after(60):
@@ -105,7 +108,7 @@ class AttachmentService:
                 mime_type=mime,
                 size_bytes=len(data),
                 sha256=hashlib.sha256(data).hexdigest(),
-                status="uploading",
+                status="processing",
                 source=source,
             )
             async with self._database.session() as session:
@@ -118,33 +121,161 @@ class AttachmentService:
                 session.add(row)
                 await session.commit()
             try:
-                await self._storage.put(row.id, byte_chunks(data))
-                if mime.startswith("image/"):
-                    for suffix, size in (("-preview", 480), ("-model", 2048)):
-                        variant = await to_thread.run_sync(
-                            image_variant, data, size, limiter=self._processing
-                        )
-                        await self._storage.put(row.id + suffix, byte_chunks(variant))
-                async with self._database.session() as session:
-                    saved = await session.get(AttachmentFile, row.id)
-                    if saved is None:
-                        raise RuntimeError("附件上传记录不可用")
-                    if collection_id is not None:
-                        await self._require_collection(
-                            session, user_id, collection_id, writable=True
-                        )
-                        session.add(
-                            AttachmentReference(
-                                collection_id=collection_id, attachment_id=row.id
-                            )
-                        )
-                    saved.status = "ready"
-                    await session.commit()
-                return descriptor(row)
+                return await self._publish(row, data, mime, collection_id=collection_id)
             except BaseException:
-                with anyio.CancelScope(shield=True):
-                    await self._delete(row.id)
+                await self._discard(row.id)
                 raise
+
+    @staticmethod
+    def _validate_name(name: str) -> None:
+        if (
+            not name
+            or len(name) > 255
+            or any(c in name for c in ("/", "\\", "\0", "\r", "\n"))
+            or name.rsplit(".", 1)[-1].lower() not in MIME_TYPES
+        ):
+            raise BusinessException(AttachmentErrorCode.INVALID_FILE)
+
+    async def request_upload(
+        self, *, user_id: int, name: str, size_bytes: int
+    ) -> tuple[str, UploadForm]:
+        """登记用户待上传文件，只签发该附件的临时写入许可"""
+        self._validate_name(name)
+        if not 0 < size_bytes <= MAX_FILE_BYTES:
+            raise BusinessException(AttachmentErrorCode.TOO_LARGE)
+        row = AttachmentFile(
+            id=uuid4().hex,
+            user_id=user_id,
+            name=name,
+            size_bytes=size_bytes,
+            mime_type="",
+            status="uploading",
+            source="user",
+        )
+        async with self._database.session() as session:
+            session.add(row)
+            await session.commit()
+        try:
+            return row.id, await self._storage.upload_form(row.id, size_bytes)
+        except BaseException:
+            await self._discard(row.id)
+            raise
+
+    async def complete_upload(self, attachment_id: str, *, user_id: int) -> Attachment:
+        """校验直传文件并发布；已完成的重复请求返回同一附件
+
+        条件更新保证同一附件只有一个处理者，外部 I/O 不持数据库锁。
+        仅已读取并验证的字节进入正式对象，晚到的临时上传不能覆盖发布结果。
+        """
+        async with self._uploads:
+            async with self._database.session() as session:
+                row = await session.get(AttachmentFile, attachment_id)
+                if row is None or row.user_id != user_id:
+                    raise BusinessException(AttachmentErrorCode.NOT_FOUND)
+                if row.status == "ready":
+                    return await self.get(attachment_id, user_id=user_id)
+                connection = await session.connection()
+                claimed = await connection.execute(
+                    update(AttachmentFile)
+                    .where(
+                        AttachmentFile.id == attachment_id,
+                        AttachmentFile.user_id == user_id,
+                        AttachmentFile.status == "uploading",
+                    )
+                    .values(status="processing")
+                )
+                if claimed.rowcount != 1:
+                    raise BusinessException(AttachmentErrorCode.UPLOAD_IN_PROGRESS)
+                await session.commit()
+            try:
+                data = await self._storage.read(attachment_id + "-upload")
+                if len(data) != row.size_bytes:
+                    raise BusinessException(AttachmentErrorCode.INVALID_FILE)
+                try:
+                    mime = await to_thread.run_sync(
+                        validate_file, row.name, data, limiter=self._processing
+                    )
+                except (ValueError, OSError, Warning) as error:
+                    raise BusinessException(AttachmentErrorCode.INVALID_FILE) from error
+                return await self._publish(row, data, mime)
+            except FileNotFoundError as error:
+                await self._discard(attachment_id)
+                raise BusinessException(AttachmentErrorCode.NOT_FOUND) from error
+            except BaseException:
+                await self._discard(attachment_id)
+                raise
+
+    async def _publish(
+        self,
+        row: AttachmentFile,
+        data: bytes,
+        mime: str,
+        *,
+        collection_id: str | None = None,
+    ) -> Attachment:
+        await self._storage.put(row.id, byte_chunks(data))
+        if mime.startswith("image/"):
+            for suffix, size in (("-preview", 480), ("-model", 2048)):
+                variant = await to_thread.run_sync(
+                    image_variant, data, size, limiter=self._processing
+                )
+                await self._storage.put(row.id + suffix, byte_chunks(variant))
+        await self._storage.delete(row.id + "-upload")
+        async with self._database.session() as session:
+            saved = await session.scalar(
+                select(AttachmentFile)
+                .where(AttachmentFile.id == row.id)
+                .with_for_update()
+            )
+            if saved is None or saved.status != "processing":
+                raise BusinessException(AttachmentErrorCode.NOT_FOUND)
+            if collection_id is not None:
+                await self._require_collection(
+                    session, row.user_id, collection_id, writable=True
+                )
+                session.add(
+                    AttachmentReference(
+                        collection_id=collection_id, attachment_id=row.id
+                    )
+                )
+            saved.mime_type = mime
+            saved.sha256 = hashlib.sha256(data).hexdigest()
+            saved.status = "ready"
+            await session.commit()
+            return descriptor(saved)
+
+    async def _discard(self, attachment_id: str) -> None:
+        # 原错误或取消必须保留；删除失败的记录交给已有清理入口回收
+        with anyio.CancelScope(shield=True):
+            try:
+                with anyio.fail_after(30):
+                    async with self._database.session() as session:
+                        row = await session.get(AttachmentFile, attachment_id)
+                        if row is None or row.status == "ready":
+                            return
+                        row.status = "deleting"
+                        await session.commit()
+                    await self._delete(attachment_id)
+            except Exception:
+                logger.exception("附件清理失败，等待后续回收：%s", attachment_id)
+
+    async def download_url(
+        self,
+        attachment_id: str,
+        *,
+        user_id: int,
+        variant: Literal["original", "preview"] = "original",
+    ) -> DownloadLink:
+        """鉴权后签发原件或图片预览的短期地址，不持久化读取许可"""
+        attachment = await self.get(attachment_id, user_id=user_id)
+        if variant == "preview" and not attachment.mime_type.startswith("image/"):
+            raise BusinessException(AttachmentErrorCode.INVALID_VARIANT)
+        return await self._storage.download_link(
+            attachment_id + ("-preview" if variant == "preview" else ""),
+            name=attachment.name,
+            mime_type="image/jpeg" if variant == "preview" else attachment.mime_type,
+            inline=variant == "preview",
+        )
 
     async def _require_collection(
         self,
@@ -477,12 +608,14 @@ class AttachmentService:
             )
             if row.thread_id is not None or retained:
                 raise BusinessException(AttachmentErrorCode.ALREADY_SENT)
+            if row.status == "processing":
+                raise BusinessException(AttachmentErrorCode.UPLOAD_IN_PROGRESS)
             row.status = "deleting"
             await session.commit()
         await self._delete(attachment_id)
 
     async def _delete(self, attachment_id: str) -> None:
-        for suffix in ("", "-preview", "-model"):
+        for suffix in ("", "-preview", "-model", "-upload"):
             await self._storage.delete(attachment_id + suffix)
         async with self._database.session() as session:
             row = await session.get(AttachmentFile, attachment_id)
