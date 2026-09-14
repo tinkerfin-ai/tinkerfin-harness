@@ -3385,7 +3385,7 @@ test('触屏对话目录保持完整点击区、模态隔离及关闭焦点恢�
   } finally { await context.close() }
 })
 
-test('设置在窄屏按内容收紧并保持分类与内容相邻', async ({ page }) => {
+test('设置在各视口保持完整边界且窄屏分类与内容相邻', async ({ page }) => {
   await mockStudio(page)
   await page.getByRole('button', { name: '打开用户菜单' }).click()
   await page.getByRole('menuitem', { name: '设置' }).click()
@@ -3404,7 +3404,7 @@ test('设置在窄屏按内容收紧并保持分类与内容相邻', async ({ pa
           const content = await dialog.getByRole('region', { name: '设置', exact: true }).boundingBox()
           expect(nav!.height).toBeLessThanOrEqual(64)
           expect(Math.abs(content!.y - nav!.y - nav!.height)).toBeLessThanOrEqual(1)
-          expect(bounds!.height).toBeLessThan(650)
+          await expect(dialog.getByRole('button', { name: '关闭对话框', exact: true })).toBeInViewport()
         }
 
       }

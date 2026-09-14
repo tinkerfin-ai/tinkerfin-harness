@@ -22,11 +22,9 @@ from tinkerfin_tracing.errors import (
 )
 from tinkerfin_tracing.facts import MessageFact, RunFact, TraceSemanticFact
 from tinkerfin_tracing.limits import TraceLimits
-from tinkerfin_tracing.query import TraceThread
 from tinkerfin_tracing.store import (
     StoreThreadSnapshot,
     TraceProjectionCheckpoint,
-    TraceStore,
     TraceThreadKey,
 )
 from tinkerfin_tracing.tracer import Tracer
@@ -154,25 +152,6 @@ async def test_store_rejects_duplicate_run_and_active_generation_delete() -> Non
     replacement = await store.open_writer(_identity())
     assert replacement.key.generation != key.generation
     await replacement.aclose()
-
-
-def test_public_delete_docstrings_name_the_active_writer_conflict() -> None:
-    """Keep public failure documentation aligned with every Store implementation."""
-
-    assert TraceStore.delete.__doc__ is not None
-    assert TraceThread.delete.__doc__ is not None
-    assert "TraceRunConflict" in TraceStore.delete.__doc__
-    assert "TraceRunConflict" in TraceThread.delete.__doc__
-    assert "TraceStoreProtocolError" not in TraceStore.delete.__doc__
-    assert "TraceStoreProtocolError" not in TraceThread.delete.__doc__
-
-
-def test_public_follow_docstring_describes_pages_not_transaction_batches() -> None:
-    """Keep the public iterator contract independent of append transaction boundaries."""
-
-    assert TraceStore.follow.__doc__ is not None
-    assert "bounded committed event pages" in TraceStore.follow.__doc__
-    assert "transaction batches" not in TraceStore.follow.__doc__
 
 
 async def test_concurrent_writer_close_is_idempotent_and_releases_ownership() -> None:

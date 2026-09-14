@@ -131,8 +131,22 @@ _FIELDS = [
 ]
 
 
-@pytest.mark.parametrize(("model", "field"), _FIELDS)
-@pytest.mark.parametrize("number", (float("nan"), float("inf"), float("-inf")))
+# Every field must retain the shared validator. Its non-finite categories need
+# only one representative field, rather than repeating all three at every field.
+@pytest.mark.parametrize(
+    ("model", "field", "number"),
+    [
+        pytest.param(
+            model, field, float("nan"), id=f"{type(model).__name__}-{field}-nan"
+        )
+        for model, fields in _CASES
+        for field in fields
+    ]
+    + [
+        pytest.param(_MESSAGE, "content", float("inf"), id="content-inf"),
+        pytest.param(_MESSAGE, "content", float("-inf"), id="content-negative-inf"),
+    ],
+)
 def test_non_finite_json_is_rejected_before_serialization(
     model: BaseModel, field: str, number: float
 ) -> None:

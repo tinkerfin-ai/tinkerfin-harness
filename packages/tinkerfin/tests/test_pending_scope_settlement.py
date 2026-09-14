@@ -7,8 +7,10 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 import pytest
+from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatResult
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool, tool
 from langgraph.checkpoint.memory import InMemorySaver
@@ -40,6 +42,7 @@ async def test_checkpoint_pending_child_is_not_cancelled_by_its_sibling(
     cancel: bool,
 ) -> None:
     waiting = asyncio.Event()
+    unavailable_started = asyncio.Event()
     suspended = asyncio.Event()
     attempts = 0
     executed: list[str] = []
@@ -50,6 +53,7 @@ async def test_checkpoint_pending_child_is_not_cancelled_by_its_sibling(
         nonlocal attempts
         attempts += 1
         if attempts == 1:
+            unavailable_started.set()
             await waiting.wait()
             if cancel:
                 await suspended.wait()
@@ -61,6 +65,19 @@ async def test_checkpoint_pending_child_is_not_cancelled_by_its_sibling(
         """Perform the separately reviewed action."""
         executed.append("reviewed")
         return "Reviewed"
+
+    class ReviewedModel(_Model):
+        async def _agenerate(
+            self,
+            messages: list[BaseMessage],
+            stop: list[str] | None = None,
+            run_manager: AsyncCallbackManagerForLLMRun | None = None,
+            **kwargs: Any,
+        ) -> ChatResult:
+            # The scenario cancels an executing sibling. A faster review model
+            # must not trigger cancellation before that sibling's first attempt.
+            await unavailable_started.wait()
+            return await super()._agenerate(messages, stop, run_manager, **kwargs)
 
     tracer = Tracer()
     runtime = (
@@ -105,7 +122,7 @@ async def test_checkpoint_pending_child_is_not_cancelled_by_its_sibling(
                     "name": "review",
                     "description": "Reviewed operation",
                     "system_prompt": "Perform the reviewed operation.",
-                    "model": _Model(
+                    "model": ReviewedModel(
                         responses=[
                             _call("reviewed"),
                             AIMessage(id="reviewed-answer", content="Approved"),
@@ -164,10 +181,6 @@ async def test_checkpoint_pending_child_is_not_cancelled_by_its_sibling(
 async def test_repaired_parent_closes_only_its_old_checkpoint_request(
     followup: str,
 ) -> None:
-    from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
-    from langchain_core.messages import BaseMessage
-    from langchain_core.outputs import ChatResult
-
     class RootModel(_Model):
         async def _agenerate(
             self,

@@ -221,40 +221,54 @@ async def _case(profile_name: str, scenario: str) -> dict[str, object]:
     }
 
 
-@pytest.mark.parametrize("profile", ("v2", "v3"))
-@pytest.mark.parametrize(
-    "scenario",
-    (
-        "sync",
-        "async",
-        "no_observer",
-        "failure",
-        "cancel",
-        "parallel",
-        "subagent",
-        "scope",
-    ),
+_SCENARIOS = (
+    "sync",
+    "async",
+    "no_observer",
+    "failure",
+    "cancel",
+    "parallel",
+    "subagent",
+    "scope",
 )
+
+
+@pytest.mark.parametrize("profile", ("v2", "v3"))
 async def test_sync_tool_callback_lifecycle_in_an_isolated_process(
-    profile: str, scenario: str
+    profile: str,
 ) -> None:
+    # Each scenario gets a fresh Runner, including executor shutdown. Sharing only
+    # imports also verifies that completed runs leave subsequent runs usable.
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         str(Path(__file__).resolve()),
         profile,
-        scenario,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env={**os.environ, "LANGSMITH_TRACING": "false"},
     )
+    assert process.stdout is not None and process.stderr is not None
+    stderr = asyncio.create_task(process.stderr.read())
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=8)
+        for scenario in _SCENARIOS:
+            # Keep each scenario's watchdog independent of imports and prior cases.
+            # A result is sent only after its Runner and executor have shut down.
+            line = await asyncio.wait_for(process.stdout.readline(), timeout=8)
+            assert line, (await stderr).decode()
+            name, result = json.loads(line)
+            assert name == scenario
+            _assert_result(scenario, result)
+        await asyncio.wait_for(process.wait(), timeout=8)
+        assert process.returncode == 0, (await stderr).decode()
+        assert await process.stdout.read() == b""
     finally:
         if process.returncode is None:
             process.kill()
             await process.wait()
-    assert process.returncode == 0, stderr.decode()
-    result = json.loads(stdout)
+        await stderr
+
+
+def _assert_result(scenario: str, result: dict[str, Any]) -> None:
     if scenario == "failure":
         assert result["outcome"] == "observer_failed"
         assert result["calls"] == []
@@ -285,5 +299,6 @@ async def test_sync_tool_callback_lifecycle_in_an_isolated_process(
 
 
 if __name__ == "__main__":
-    result = asyncio.run(_case(sys.argv[1], sys.argv[2]))
-    sys.stdout.write(json.dumps(result))
+    for scenario in _SCENARIOS:
+        result = asyncio.run(_case(sys.argv[1], scenario))
+        print(json.dumps([scenario, result]), flush=True)

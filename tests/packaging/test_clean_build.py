@@ -38,11 +38,18 @@ def _build(root: Path, *projects: str) -> subprocess.CompletedProcess[str]:
         [
             sys.executable,
             str(root / "scripts/build_wheels.py"),
+            "--offline",
             "--out-dir",
             str(root / "dist"),
             *(f"packages/{project}" for project in projects),
         ],
         cwd=root,
+        env={
+            **os.environ,
+            "UV_FIND_LINKS": str(_ROOT / ".cache/test-wheels"),
+            "UV_NO_INDEX": "true",
+            "UV_OFFLINE": "true",
+        },
         check=False,
         capture_output=True,
         text=True,

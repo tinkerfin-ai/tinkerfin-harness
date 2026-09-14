@@ -519,7 +519,7 @@ test('触控环境的会话与自动化权限按钮及选项达到44像素', asy
   } finally { await context.close() }
 })
 
-test('自动化刷新保留页面，新会话的 Logo 与输入框独立居中', async ({ page }) => {
+test('自动化刷新保留页面，新会话的标志、输入框和提示整体居中', async ({ page }) => {
   await prepare(page)
   await expect(page).toHaveURL(/\/\?page=automation$/)
   await page.reload()
@@ -536,8 +536,8 @@ test('自动化刷新保留页面，新会话的 Logo 与输入框独立居中',
         const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect()
         const area = box('.workspace-main')
         const logo = box('.composer-hero')
-        const input = box('.composer')
-        return Math.abs((logo.top + input.bottom - area.top - area.bottom) / 2)
+        const note = box('.composer-note')
+        return Math.abs((logo.top + note.bottom - area.top - area.bottom) / 2)
       })).toBeLessThanOrEqual(1)
     }
   }
@@ -557,7 +557,7 @@ test('功能菜单常规字重，日期范围两端完整显示且适应浅深�
         await page.getByRole('button', { name: '打开侧边栏', exact: true }).click()
       }
       const menu = page.getByRole('navigation', { name: '工作区功能' })
-      for (const name of ['智能体', '技能库', '自动化', '更多']) {
+      for (const name of ['记忆管理', '技能库', '自动化', '更多']) {
         await expect(menu.getByRole('button', { name, exact: true })).toHaveCSS('font-weight', '400')
       }
       await expect(menu.getByRole('button', { name: '自动化', exact: true })).toHaveAttribute('aria-current', 'page')

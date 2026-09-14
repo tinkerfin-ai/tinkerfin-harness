@@ -32,11 +32,28 @@ class NamedDelegation(AgentMiddleware):
         return self._name
 
 
+# Both roles share middleware validation; filesystem configuration does not
+# change it. Cover each kind/role and each boundary/role without their full product.
 @pytest.mark.parametrize(
-    "kind", ["native", "subclass", "remote", "remote_subclass", "name", "remote_name"]
+    ("kind", "role", "boundary"),
+    [
+        (kind, role, "plain")
+        for kind in (
+            "native",
+            "subclass",
+            "remote",
+            "remote_subclass",
+            "name",
+            "remote_name",
+        )
+        for role in ("main", "child")
+    ]
+    + [
+        ("subclass", role, boundary)
+        for role in ("main", "child")
+        for boundary in ("permissions", "workspace")
+    ],
 )
-@pytest.mark.parametrize("role", ["main", "child"])
-@pytest.mark.parametrize("boundary", ["plain", "permissions", "workspace"])
 def test_delegation_middleware_conflicts_are_rejected_before_execution(
     kind: str, role: str, boundary: str
 ) -> None:

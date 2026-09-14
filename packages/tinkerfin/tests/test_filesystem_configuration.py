@@ -71,19 +71,28 @@ def _conflict(
     return [], [tool(read_file)]
 
 
+# Input normalization is shared across roles. Exercise all forms at the main
+# boundary and permission inheritance/overrides with a representative conflict.
 @pytest.mark.parametrize(
-    "kind",
+    ("kind", "role", "workspace_owned"),
     [
-        "filesystem",
-        "subclass",
-        "named_replacement",
-        "middleware_tool",
-        "callable",
-        "tool",
+        (kind, "main", workspace_owned)
+        for kind in (
+            "filesystem",
+            "subclass",
+            "named_replacement",
+            "middleware_tool",
+            "callable",
+            "tool",
+        )
+        for workspace_owned in (False, True)
+    ]
+    + [
+        ("subclass", role, workspace_owned)
+        for role in ("inherited_child", "explicit_child")
+        for workspace_owned in (False, True)
     ],
 )
-@pytest.mark.parametrize("role", ["main", "inherited_child", "explicit_child"])
-@pytest.mark.parametrize("workspace_owned", [False, True])
 def test_conflicting_filesystem_configuration_is_rejected_before_resource_use(
     kind: str, role: str, workspace_owned: bool
 ) -> None:

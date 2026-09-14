@@ -132,31 +132,6 @@ async def test_control_operations_validate_owner_before_store_access() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("owner_id", [b"owner", " owner", "owner\x00id", "owner\ud800"])
-async def test_memory_store_rejects_invalid_direct_scope(owner_id: Any) -> None:
-    store = MemoryAutomationStore()
-    try:
-        with pytest.raises((TypeError, ValueError)):
-            await store.get_task("app", owner_id, "task")
-        with pytest.raises((TypeError, ValueError)):
-            await store.get_execution(
-                "app",
-                owner_id,
-                "execution",
-            )
-        with pytest.raises((TypeError, ValueError)):
-            await store.cancel_execution(
-                "app",
-                owner_id,
-                "execution",
-                request_id=None,
-                input_digest="cancel",
-            )
-    finally:
-        await store.close()
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("value", [b"owner", " owner", "owner\x00id", "owner\ud800"])
 async def test_store_implementations_reject_invalid_direct_scope(
     store_with_clock: tuple[AutomationStore, ManualClock], value: Any

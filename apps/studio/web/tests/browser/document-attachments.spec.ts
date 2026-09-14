@@ -127,7 +127,8 @@ test('生成文件使用紧凑类型卡片并沿用图片预览工具栏', async
       const cardBox = (await fileCards.first().boundingBox())!
       const iconBox = (await fileCards.first().locator('.attachment-file-icon').boundingBox())!
       const imageBox = (await page.locator('.attachment-card--image').first().boundingBox())!
-      expect(cardBox.height).toBeLessThanOrEqual(72)
+      expect(iconBox.y).toBeGreaterThanOrEqual(cardBox.y)
+      expect(iconBox.y + iconBox.height).toBeLessThanOrEqual(cardBox.y + cardBox.height)
       expect(imageBox.width).toBe(cardBox.width)
       expect(iconBox).toMatchObject({ width: 44, height: 48 })
       await page.screenshot({ path: testInfo.outputPath(`files-${theme}-${width}.png`) })

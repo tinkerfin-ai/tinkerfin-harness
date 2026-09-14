@@ -9,6 +9,7 @@ from contextlib import ExitStack
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event as ThreadEvent
+from types import SimpleNamespace
 from typing import Any, Literal, TypeVar
 
 import pytest
@@ -2453,6 +2454,16 @@ async def test_sqlite_proven_append_survives_peer_takeover_during_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    async def paused_heartbeat(_delay: float) -> None:
+        # Model an owner that cannot renew while its committed append is pending.
+        # Database time advances explicitly; wall-clock heartbeats must not race
+        # takeover, the committed-result retry, or stale-owner closure.
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(
+        "tinkerfin_tracing.durable_store.asyncio",
+        SimpleNamespace(**{**vars(asyncio), "sleep": paused_heartbeat}),
+    )
     database = tmp_path / "append-takeover.db"
     first_engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
     peer_engine = create_async_engine(f"sqlite+aiosqlite:///{database}")

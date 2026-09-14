@@ -62,6 +62,10 @@ def test_package_comments_and_docstrings_use_english() -> None:
 
     violations: list[str] = []
     for path in _python_files():
+        # Most files contain no CJK text. Parse only candidates so this repository
+        # policy does not repeatedly tokenize the entire suite under coverage.
+        if _CJK.search(path.read_text(encoding="utf-8")) is None:
+            continue
         relative = path.relative_to(_PACKAGES_ROOT.parent)
         for kind, records in (
             ("docstring", _docstrings(path)),
