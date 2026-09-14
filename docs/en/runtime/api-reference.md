@@ -112,7 +112,7 @@ The host implements `send_snapshot` and `send_bytes`. An active run returns hist
 before its output, followed by committed deltas and new events. A completed run returns
 full history with `body=None`. For a connection loss with the entire view retained,
 pass `last_event_id` and consume only subsequent bytes; omit it after a page reload.
-SSE frames marked `event: replay` restore text immediately; animate only subsequent new text.
+SSE frames marked `event: replay` contain previously committed events; subsequent events use `message`.
 History cursors and message SSE IDs are different positions and cannot be mixed.
 Closing `live` detaches the reader without cancelling the producer. Expired or
 unavailable delivery raises an error and never re-executes the agent.

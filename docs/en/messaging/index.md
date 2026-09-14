@@ -30,7 +30,9 @@ from tinkerfin_messaging import Messaging
 
 runtime = TinkerFin().with_namespace("customer-1").build(model=model, tools=tools)
 source = runtime.open_agui_run(
-    thread_id="thread-42", run_id="run-7", input=graph_input,
+    thread_id="thread-42",
+    run_id="run-7",
+    input=graph_input,
 )
 
 async with Messaging() as messaging:
@@ -95,8 +97,7 @@ async with Messaging(backend=backend) as messaging:
     await serve_application(channel)
 ```
 
-Closing signals current producers before waiting for cancellation preflights, then waits
-for owned producer settlement and cleanup.
+Closing waits for producers and their cleanup. Close Messaging before releasing its borrowed storage resources.
 
 ## Next steps
 

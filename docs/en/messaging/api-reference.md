@@ -103,8 +103,7 @@ Combine history and delivery with [AgUiHistory.open_live](../runtime/api-referen
 
 In replay SSE, events already committed when the subscription binds carry `event: replay`;
 later events use the default `message` name. IDs and AG-UI data are unchanged.
-Restore replayed text immediately and animate only new text. Browser `EventSource`
-consumers must listen for both `replay` and `message`.
+Browser `EventSource` consumers must listen for both `replay` and `message`.
 
 ## Advanced source helpers
 

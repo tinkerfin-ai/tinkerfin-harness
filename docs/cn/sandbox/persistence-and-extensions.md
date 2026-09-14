@@ -29,7 +29,7 @@ finally:
 ```
 
 PostgreSQL 使用 `postgresql+asyncpg://...`，MySQL 使用 `mysql+asyncmy://...`，三种数据库共用同一套 State API。
-MySQL 5.7 使用有时限的领取等待；MySQL 8 和 PostgreSQL 可跳过已锁定的预热、清理记录。不支持 MariaDB。
+不支持 MariaDB。
 
 | 参数 | 默认值 | 用途 |
 | --- | --- | --- |
@@ -41,12 +41,10 @@ MySQL 5.7 使用有时限的领取等待；MySQL 8 和 PostgreSQL 可跳过已�
 
 同一部署域中的进程必须使用一致的预热容量。这个部署域与选择具体 Sandbox 的 Runtime namespace、业务 Key 各自独立，详见[使用指南](index.md)。
 
-State 不关闭借用的 Engine。启动和关闭会先等待已接受的数据库操作结束，再传播取消。
-提交前观察到取消会回滚；已发出提交时，先确认其结果或报告结果不确定。连接和语句超时由 Engine 配置，必要清理可能延长等待时间。
-提交结果不确定或连接清理失败时，不会重放写入。
+释放借用的 Engine 前先关闭 State。连接和语句超时由 Engine 配置；已接受的操作和必要清理可能延长等待。
 
-SQLite 要求连接被独占借用。内存数据库使用 `AsyncAdaptedQueuePool`，配置 `pool_size=1, max_overflow=0`；不能使用 `StaticPool`。
-锁重试受 `sqlite_retry_timeout` 限制。提交遇到 BUSY 时只重试同一事务的提交，不重复写入。
+SQLite 内存数据库使用 `AsyncAdaptedQueuePool`，配置 `pool_size=1, max_overflow=0`；
+不接受 `StaticPool`。`sqlite_retry_timeout` 限制 SQLite 锁重试的等待时间。
 
 ## 生成数据库结构
 
@@ -73,7 +71,7 @@ manager = OpenSandboxManager(
 )
 ```
 
-预热实例尚未属于具体 key。`get()` 消费 ready slot 时会原子地绑定它，不会先暴露无主实例。
+预热实例由 `get()` 分配给具体工作区。
 
 ## 准备工作区
 
@@ -81,9 +79,7 @@ manager = OpenSandboxManager(
 
 ```python
 async def prepare_project(backend) -> None:
-    result = await backend.aexecute(
-        "mkdir -p /workspace/project /workspace/output"
-    )
+    result = await backend.aexecute("mkdir -p /workspace/project /workspace/output")
     if result.exit_code != 0:
         raise RuntimeError("Could not prepare workspace directories")
 

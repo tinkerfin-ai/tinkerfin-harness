@@ -69,23 +69,15 @@ await manager.pause(project_key, timeout=30.0)
 backend = await manager.resume(project_key, timeout=30.0)
 ```
 
-`pause()` 保留绑定、远端 ID、文件和稳定 handle 对象。共享同一 State 的 Manager 会协调各自
-已登记的 handle：每个持有者先停止接收新操作，等待已有操作及其远端命令或传输收尾结束，再确认
-当前暂停意图。只有全部登记的持有者都确认排空，才会发送远端暂停请求。
+`pause()` 保留远端 ID、文件和已有 handle，并等待共享同一 State 的各 Manager 中的工作结束。
+失联的工作进程或结果未确认的远端操作可能使暂停无法完成。
 
-其他进程异步读取共享意图，因此旧 handle 在本地 Manager 看到该意图前仍可能接收工作；暂停也会
-等待这些工作结束。持有者登记与暂停意图在 State 中原子竞争。已开放的 handle 通过本地准入检查
-执行普通操作，不会每次调用都查询 State。worker 到期或心跳丢失不能替代工作已结束的证据；失联的
-持有者或结果未确认的远端操作可能阻止暂停完成。
-
-默认工作预算为 30 秒。`timeout` 必须是正有限数值，覆盖协调和远端确认。排空阶段超时或被取消时，
-只有 State 确认意图仍未提交远端请求并将其撤销，才会重新开放访问。请求发出后结果不明确时，访问
-保持关闭，直到控制面证据确认结果；不能自动重放请求。必要的请求与资源收尾可能使总耗时超过工作预算。
+`timeout` 默认为 30 秒，必须为正有限数值；必要清理可能延长总等待时间。
+远端结果未确认时保持关闭访问，不能根据超时判断实例已暂停。
 
 通过 Manager 暂停的实例必须显式调用 `resume()`；`get()`、`reconnect()` 和 `reset()` 不会唤醒它。
-恢复可以撤销已确认尚未发出请求的排空意图。对于已暂停实例，恢复保留原远端 ID，并在调用方 Manager
-刷新连接后返回可用 backend。其他登记的 Manager 各自刷新连接，再重新开放已有 handle。
-连接初始化函数仍会执行；刷新失败的 handle 不接收新工作。
+恢复返回原实例的可用 backend，并重新执行连接初始化函数，因此初始化必须幂等。
+连接刷新失败的 handle 暂时不可用。
 
 官方 OpenSandbox Server 0.2.3 使用 Docker pause/unpause。`resume()` 不能启动通过 Docker 停止的
 容器，也不能恢复已到期的实例。暂停不会冻结或延长远端 TTL；采用有限生存时间的暂停实例仍可能到期。
@@ -114,8 +106,7 @@ Docker 事件诊断描述当前运行状态，不构成完整历史事件流。
 config = OpenSandboxConfig(ttl=None)
 ```
 
-使用 `ttl=None` 创建的实例没有预定到期时间。Manager 跳过远端续期，但健康检查、预热维护、
-State 租约和失败清理继续生效。重连不会移除已有实例的到期时间。未设置到期时间的实例会持续
+使用 `ttl=None` 创建的实例没有预定到期时间。重连不会移除已有实例的到期时间。未设置到期时间的实例会持续
 占用资源；不再需要时，应调用 `destroy(key)`。
 
 绑定需要在 Manager 正常关闭后继续使用时，应选择持久 State。默认内存 State 仍在关闭时
@@ -136,17 +127,9 @@ finally:
 
 `start()` 可以重复调用；manager 关闭后不能重新启动。
 
-启动时通过重连、健康检查、有限生存期续期及替换缺失实例来验证预热容量。
-启用 `fail_on_startup_warmup_error=True` 后，任一步失败或容量验证不完整都会导致启动失败。
-
-Manager 首次报告就绪前必须验证全部配置容量。其他 worker 的检查可能使验证延迟；
-普通启动会保持未就绪，直到验证完成。常规检查不会使此前已验证的容量失效。
-
-Manager 运行期间会周期检查预热实例的健康状态，为有限生存时间的实例续期，并替换不可用容量。
-`ttl=None` 时仍会继续健康维护。后台补充失败不会推翻已经交给当前请求的 owner
-backend，但 `check_ready()` 会持续抛出 `OpenSandboxWarmPoolUnavailableError`，直到容量恢复。宿主应把
-该方法纳入 readiness 检查。正常健康核验期间会保留此前已验证的容量；检查会读取共享 State，
-及时识别其他 worker 已消耗的容量。核验发现实际失败后才会降级。
+宿主就绪检查应调用 `await manager.check_ready()`；配置的预热容量不可用时会抛出
+`OpenSandboxWarmPoolUnavailableError`。需要预热失败即阻止启动时，设置
+`fail_on_startup_warmup_error=True`。后台预热容量故障不会使请求正在使用的实例失效。
 
 关闭会等待正在进行的创建、替换、重置、暂停/恢复协调和清理安全结束。有限的 `settlement_timeout` 只限制当前调用方等待，不会取消 manager 已经接管的清理任务。超时会抛出 `OpenSandboxSettlementTimeoutError`，稍后可以再次调用 `aclose()` 继续等待。
 

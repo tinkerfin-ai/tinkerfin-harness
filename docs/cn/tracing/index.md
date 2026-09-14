@@ -13,7 +13,9 @@ from tinkerfin_tracing import Tracer
 
 tracer = Tracer()
 runtime = (
-    TinkerFin().with_observer(tracer).with_namespace("company-a")
+    TinkerFin()
+    .with_observer(tracer)
+    .with_namespace("company-a")
     .build(model="openai:gpt-5.4")
 )
 result = await runtime.ainvoke(
@@ -69,7 +71,7 @@ async with history.follow() as updates:
         await handle(update)
 ```
 
-订阅等待期间释放数据库连接。其他 Store 实例提交的变化默认每 0.5 秒检查一次，可通过
+其他 Store 实例提交的变化默认每 0.5 秒检查一次，可通过
 `TraceStoreOptions.follow_poll_seconds` 调整。Writer 关闭或租约到期，但缺少已记录终态时，
 运行显示 `unknown` 与 `missing_tail=True`，不能据此判断 Agent 成功。有效接管可以在相同
 事件序号恢复为 `running`。
@@ -98,7 +100,7 @@ PostgreSQL、MySQL 或 SQLite Engine。安装 `"tinkerfin-tracing[sqlalchemy]"` 
 租约使用数据库 UTC 时间；MySQL 图查询需要 MySQL 8 或更新版本。
 `max_tracer_threads` 和 `max_tracer_bytes` 分别限制每个 namespace。
 
-事件、写入归属、检查点与图变化原子提交。可用 `await tracer.rebuild_graph(thread)` 重建
+可用 `await tracer.rebuild_graph(thread)` 重建
 图索引，不改写已记录事件。Codec 可以加密事件与检查点；直接调用 writer 时应传入已采集
 事实，需要框架及业务脱敏时使用 Tracer。
 

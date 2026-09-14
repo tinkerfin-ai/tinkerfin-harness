@@ -99,8 +99,7 @@ Ledger 尾序号变化后，旧 cursor 会明确失效，因此每个实时 Delt
 
 `Tracer.get()` 返回的 `TraceThread.graph` 是与 messages、state 相同固定前缀及已加载 Turn
 窗口对应的完整 `TraceGraph`。`TraceThread.follow()` 通过 `TraceUpdate.graph` 发布
-`TraceGraphDelta`；历史与查询入口共用这套平级且仅按 Subagent 分域的时间线模型。当前尾部历史
-读取可丢弃的 Graph 索引；固定旧前缀则从 Ledger fact 重放同一个 reducer。
+`TraceGraphDelta`；历史与查询入口共用这套平级且仅按 Subagent 分域的时间线模型。
 
 `TraceGraphCompleteness` 分别表达调用历史无法确认、关系依据缺失和详情被采集或响应上限省略。
 `call_tracking_missing` 不包含有明确 `runtime_initialization_error` 终态证据的执行前初始化失败；

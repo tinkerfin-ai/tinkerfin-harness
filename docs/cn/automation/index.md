@@ -94,7 +94,8 @@ pip install "tinkerfin-automation[sqlalchemy]" aiosqlite
 
 `SqlAlchemyAutomationStore(engine)` 使用宿主提供的异步 Engine，支持 SQLite、MySQL 和 PostgreSQL。SQL extra 不包含驱动；按需安装 aiosqlite、asyncmy 或 asyncpg。关闭 Store 会等待已接受的操作完成，Engine 由宿主关闭。首次 Service 操作或 `AutomationEngine.start()` 会在执行工作或启动 Scheduler 前自动准备 Store。只有部署就绪检查或直接使用 Store 时，才需要显式调用 `await store.setup()`。
 
-数据库中没有任何 Automation 自有表时，setup 会一次创建完整的五张表。只要存在任一 `tinkerfin_automation_*` 表，setup 就会校验完整的当前 Schema；部分结构或不兼容结构会被拒绝且不会被修改。因此，空库自动初始化需要 DDL 权限，预创建数据库必须与当前 Schema 完全一致。多个 worker 使用同一 SQL Store 时，共享任务领取和并发额度；Scheduler 负责按时唤醒任务。
+空库自动初始化需要 DDL 权限；预创建数据库必须符合当前结构，部分或不兼容结构会被拒绝。
+多个 worker 使用同一 SQL Store 时，共享任务领取和并发额度。
 
 ```python
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -205,7 +206,7 @@ execution = await automation.execute_once(
 
 TinkerFin 结果的 `__interrupt__` 集合非空时，执行进入 `interrupted`。Automation 不批准、不拒绝，也不恢复 graph。可选 `on_interrupt` 回调返回 `None` 表示在原执行期限内保持未完成，返回 `ExecutionFailure` 表示立即失败；回调异常记为失败，回调超时使用原执行期限。
 
-中断期间不保留空闲协程或数据库连接，但仍占用所属任务或无任务 owner 的逻辑并发位。如果取消或超时不能证明外部工作已经停止，执行进入 `needs_attention` 并保留保护性容量。只有经过独立授权和审计的 `resolve_execution` 才能结算这种不确定状态。
+中断期间仍占用所属任务或无任务 owner 的并发额度。如果取消或超时不能证明外部工作已经停止，执行进入 `needs_attention` 并保留保护性容量。只有经过独立授权和审计的 `resolve_execution` 才能结算这种不确定状态。
 
 ## Agent 创建任务
 

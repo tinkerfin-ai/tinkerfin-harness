@@ -53,10 +53,6 @@ RUN_FINISHED
 `subagentInvocationId` 跨 resume 稳定，`requestRunId` 表示当前主请求，子事件 source 重复该
 invocation ID，父 task Result 使用 `relatedSubagentInvocationId`。
 
-descriptor 只从 Deep Agents `task` 的有效字段读取 Agent 名称和任务描述。经过安全处理的 RAW
-task 数据仍保留原生校验前输入；模型额外生成的参数既不会改变子 Agent 身份，也不会让 Deep
-Agents 原本可执行的 task 在转换阶段失败。
-
 ## 推理事件
 
 如果界面需要显示支持的推理过程：
@@ -67,12 +63,14 @@ from contextlib import aclosing
 from tinkerfin import TinkerFin
 
 runtime = TinkerFin().with_namespace(namespace).build(model=model)
-async with aclosing(runtime.open_agui_run(
-    thread_id=thread_id,
-    run_id=run_id,
-    input=graph_input,
-    include_reasoning_events=True,
-)) as events:
+async with aclosing(
+    runtime.open_agui_run(
+        thread_id=thread_id,
+        run_id=run_id,
+        input=graph_input,
+        include_reasoning_events=True,
+    )
+) as events:
     async for event in events:
         await send_event(event)
 ```
@@ -80,12 +78,8 @@ async with aclosing(runtime.open_agui_run(
 你可能收到 `REASONING_START`、`REASONING_MESSAGE_*` 和 `REASONING_END`。不是所有模型都会产生可公开的推理事件，也不能假设内容为空的模型 chunk 就是心跳。
 
 无论开关是否启用，provider 私有推理元数据都不会作为普通状态、消息或 raw payload 直接公开。
-该规则也覆盖公开中断元数据的每一份副本，包括持久化的恢复关联信息。无关的业务字段仍会保留，
-用于响应校验。
 
 ## `messages`、`tasks`、`values` 分别做什么
-
-这是服务端集成时最容易混淆的地方。
 
 | 原生模式 | 转换时提供的信息 |
 | --- | --- |
@@ -117,12 +111,14 @@ from contextlib import aclosing
 from tinkerfin import TinkerFin
 
 runtime = TinkerFin().with_namespace(namespace).build(model=model)
-async with aclosing(runtime.open_agui_run(
-    thread_id=thread_id,
-    run_id=run_id,
-    input=graph_input,
-    on_agui_event=audit_event,
-)) as events:
+async with aclosing(
+    runtime.open_agui_run(
+        thread_id=thread_id,
+        run_id=run_id,
+        input=graph_input,
+        on_agui_event=audit_event,
+    )
+) as events:
     async for event in events:
         await send_event(event)
 ```

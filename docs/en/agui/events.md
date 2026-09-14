@@ -55,11 +55,6 @@ RAW descriptor. `subagentInvocationId` stays stable across resume, `requestRunId
 identifies the current main request, child event sources repeat the invocation ID, and
 the parent task Result carries `relatedSubagentInvocationId`.
 
-The descriptor derives its agent name and description from the effective Deep Agents
-`task` fields. The sanitized RAW task data still preserves the complete native
-pre-validation input; additional model-produced arguments neither change subagent
-identity nor invalidate a task that Deep Agents accepts.
-
 ## Reasoning events
 
 ```python
@@ -68,12 +63,14 @@ from contextlib import aclosing
 from tinkerfin import TinkerFin
 
 runtime = TinkerFin().with_namespace(namespace).build(model=model)
-async with aclosing(runtime.open_agui_run(
-    thread_id=thread_id,
-    run_id=run_id,
-    input=graph_input,
-    include_reasoning_events=True,
-)) as events:
+async with aclosing(
+    runtime.open_agui_run(
+        thread_id=thread_id,
+        run_id=run_id,
+        input=graph_input,
+        include_reasoning_events=True,
+    )
+) as events:
     async for event in events:
         await send_event(event)
 ```
@@ -81,8 +78,6 @@ async with aclosing(runtime.open_agui_run(
 Supported providers may produce `REASONING_START`, `REASONING_MESSAGE_*`, and `REASONING_END`. Not every model emits public reasoning, and an empty text chunk is not automatically a heartbeat.
 
 Provider-private reasoning metadata is removed from normal messages, state, and raw payloads regardless of this setting.
-The same rule applies to every public interrupt metadata copy, including persisted
-resume correlation. Unrelated business fields remain available for response validation.
 
 ## What `messages`, `tasks`, and `values` contribute
 
@@ -116,12 +111,14 @@ from contextlib import aclosing
 from tinkerfin import TinkerFin
 
 runtime = TinkerFin().with_namespace(namespace).build(model=model)
-async with aclosing(runtime.open_agui_run(
-    thread_id=thread_id,
-    run_id=run_id,
-    input=graph_input,
-    on_agui_event=audit_event,
-)) as events:
+async with aclosing(
+    runtime.open_agui_run(
+        thread_id=thread_id,
+        run_id=run_id,
+        input=graph_input,
+        on_agui_event=audit_event,
+    )
+) as events:
     async for event in events:
         await send_event(event)
 ```

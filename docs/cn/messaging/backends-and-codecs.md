@@ -32,9 +32,7 @@ SQLite 内存数据库须保证连接独占借用，使用 `AsyncAdaptedQueuePoo
 
 `SqlAlchemyBackend` 可选参数为 `producer_lease_seconds=15`、`poll_interval_seconds=0.1`、
 `limits=MessagingLimits()` 和 `retention_policy=MessagingRetentionPolicy()`。
-同一数据库中的所有消息通道共享这些设置和总容量；完整 namespace 与线程身份隔离消息和
-生产者控制。轮询间隔不占用数据库连接。连接与语句超时由 Engine 配置，建表锁最多等待
-30 秒。总容量检查会串行化各通道的写入。提交确认失败时直接报错，不自动重放操作。
+同一数据库中的所有消息通道共享这些设置和总容量。连接和语句超时由 Engine 配置。
 
 ## 使用 Redis
 
@@ -80,8 +78,7 @@ Redis client 是调用方提供的资源，应用关闭时自行关闭。连接�
 
 启用 retention 后，从终态结算时开始计时。active producer 不会过期，截止前的新 Run 会清除
 计时。过期 generation 抛出 `StreamExpired`，显式 `after=0` 启动会创建下一个空 generation。
-Redis 使用服务器时钟，在 Backend 操作第一次观察到截止点时执行可恢复的物理清理。
-`delete_stream()` 仍是独立的显式 `StreamDeleted` 生命周期。
+`delete_stream()` 显式删除历史，并向旧读取方报告 `StreamDeleted`。
 
 ## 显式使用内置 codec
 
@@ -114,11 +111,8 @@ channel = messaging.channel(
 TinkerFin 事件流自带消息格式和完整 RunIdentity。接入这类流时，消息通道只需填写名称，
 无需重复配置消息格式和运行身份。自定义事件源需要明确提供 codec 和 RunIdentity。
 
-RedisBackend 保存限额、每个 generation 的 Payload 计数，以及当前和上一个 owner 的成功
-续租次数与 UTC 时间，用于可信故障取证。共享同一 channel 的 worker 必须使用相同的全部
-限额和保留策略；共享同一 `key_prefix` 的 worker 必须使用相同的总限额。同一前缀下的所有
-channel 位于一个 Redis Cluster hash slot，容量准入、写入和计数在同一事务中完成。
-这些字段不会进入 `MessageEnvelope`。
+共享同一 channel 的 worker 必须使用相同的全部限额和保留策略；共享同一 `key_prefix` 的
+worker 必须使用相同的总限额。同一前缀下的所有 channel 位于一个 Redis Cluster hash slot。
 
 默认上限为单条编码消息 16 MiB、checkpoint position 1 MiB、每个 thread generation
 100,000 条消息与 1 GiB Payload，以及每个 MemoryBackend 实例、SQL 数据库或 Redis 前缀合计
@@ -133,8 +127,7 @@ checkpoint 按 position 和 UTF-8 消息 ID 的字节数计费；替换 Run 最�
 
 已提交消息的幂等重试不会重复计费。`MessagingQuotaExceeded` 标明耗尽的资源；满额时仍可
 取消、结算和删除。清理释放消息和 Run 占用，并将 generation 记录转为墓碑；channel、thread
-和墓碑仍占用记录配额。自动过期默认关闭，显式开启后，新写入会通过有界到期索引回收其他
-已到期线程，无需再次访问原线程或启动后台任务；不会为腾出空间驱逐活跃或未到期历史。
+和墓碑仍占用记录配额。自动过期默认关闭，显式开启后新写入可回收已到期历史；不会为腾出空间驱逐活跃或未到期历史。
 
 ## 自定义消息格式
 

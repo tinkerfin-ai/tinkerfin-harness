@@ -185,9 +185,8 @@ including events returned by the generic `AgUiCodec`, and returns these public t
 
 The packaged `contracts/message-attachments.schema.json`, `tool-call-result.schema.json`,
 `assistant-message.schema.json`, `tool-message.schema.json`, and
-`messages-snapshot.schema.json` describe the corresponding wire contracts. Their shared
-fixture includes actual LangChain tool output, balanced assistant events, and matching
-checkpoint snapshots. Native messages use standard `image` or `file` blocks with
+`messages-snapshot.schema.json` describe the corresponding wire contracts.
+Native messages use standard `image` or `file` blocks with
 `file_id`, `mime_type`, and `extras.attachment`; hosts resolve these IDs with
 `AttachmentMiddleware` before the model request.
 

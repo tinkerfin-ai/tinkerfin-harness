@@ -46,12 +46,7 @@ async with lock:
 构建前可以添加完整 Runtime observer 或单个终态回调：
 
 ```python
-runtime = (
-    TinkerFin()
-    .with_namespace(namespace)
-    .with_observer(tracer)
-    .build(model=model)
-)
+runtime = TinkerFin().with_namespace(namespace).with_observer(tracer).build(model=model)
 ```
 
 ```python

@@ -161,20 +161,11 @@ idempotent result is returned even if the task has since changed.
 
 ### Filter tasks and execution history
 
-Pass `TaskFilter(name_contains=..., statuses=(... ,))` to `list_tasks(filters=...)`.
-Use `ExecutionFilter` with the same name/status options and optional `queued_from`
-and `queued_until` for execution history. Text is a literal Unicode-casefold
-substring; `%` and `_` are ordinary characters. Queue time bounds are aware instants,
-with an inclusive start and exclusive end. Empty statuses mean every status.
-Execution names are captured when queued, survive task deletion, and do not follow
-later renames. Taskless or unknown historical names may be `None`.
-
-Both list methods return `items` and `next_cursor`. Pass that opaque cursor unchanged
-with the same owner and filters (and task ID for execution queries); start without a
-cursor when changing the query. Pages are ordered by creation time and ID, newest
-first, and remain usable if the preceding row is deleted. They are live queries,
-not a frozen snapshot. `summarize_tasks()` and `summarize_executions()` accept the same
-filters and count every matching record by status, independently of pagination.
+Use `TaskFilter` to filter tasks by name and status, and `ExecutionFilter` to filter
+history by name, status, and queue time. Both lists return `items` and `next_cursor`.
+`summarize_tasks()` and `summarize_executions()` count matching records by status.
+See the [query guide](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/automation/index.md#filter-tasks-and-execution-history)
+for matching and pagination contracts.
 
 The [active-period example](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/packages/tinkerfin-automation/examples/active_period.py)
 shows a complete local task, manual execution, filtering, and aggregation without
@@ -247,17 +238,9 @@ using it. Deployment readiness checks and direct Store users may call
 current structure, rejecting partial or incompatible storage without changing it.
 
 `SqlAlchemyAutomationStore(engine)` borrows the Engine; close the Store before
-calling `await engine.dispose()`. `close()` rejects new work and waits for accepted
-operations, including when the close waiter is cancelled. Cancelling a write before
-COMMIT rolls it back after its current statement finishes; a lost commit
-acknowledgement is never replayed automatically. Repeat the same command ID and input
-to read its committed result.
-
-Each operation uses a separate connection and transaction. Pass an AsyncEngine with
-exclusive pool checkouts, not a Session or active transaction. Empty databases need
-DDL permission; pre-provisioned tables must match the schema. Schema setup uses a
-30-second lock wait. The Engine owner sets other connection, statement, and lock-wait
-timeouts.
+calling `await engine.dispose()`. Use an AsyncEngine with exclusive pool checkouts.
+Empty databases need DDL permission; pre-provisioned tables must match the schema.
+Configure connection and statement timeouts on the Engine.
 
 The default Store belongs to the Service; an explicitly supplied Store remains
 borrowed. A supplied Scheduler gives its wakeup lifecycle to the Service and Engine.

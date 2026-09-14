@@ -92,8 +92,7 @@ snapshot arrays replace the prior descriptors. Use `rawEvent.source` to place
 subagent output with its owning invocation.
 
 `MessageAttachments` in `tinkerfin_agui_adapter.media` validates this CUSTOM
-payload. The package includes `contracts/message-attachments.schema.json` and a
-matching fixture captured through real LangChain tool invocation. Descriptors
+payload. The package includes `contracts/message-attachments.schema.json`. Descriptors
 contain no bytes, credentials, or temporary download URLs.
 
 `AttachmentToolCallResultEvent`, `AttachmentAssistantMessage`, and
@@ -102,8 +101,7 @@ contain no bytes, credentials, or temporary download URLs.
 After generic AG-UI replay, call `parse_attachment_output_event(event)` to validate a
 tool result or snapshot and obtain its public attachment types. The package also ships
 `tool-call-result.schema.json`, `assistant-message.schema.json`, `tool-message.schema.json`,
-and `messages-snapshot.schema.json` under `contracts/`; the shared fixture covers live
-output and matching history.
+and `messages-snapshot.schema.json` under `contracts/`.
 
 ## Encode events as SSE
 

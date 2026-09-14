@@ -31,8 +31,7 @@ finally:
 ```
 
 PostgreSQL URLs use `postgresql+asyncpg://...`; MySQL URLs use `mysql+asyncmy://...`.
-The same State API covers all three databases. MySQL 5.7 uses bounded claim waits;
-MySQL 8 and PostgreSQL can skip locked warm and cleanup rows. MariaDB is not supported.
+The same State API covers all three databases. MariaDB is not supported.
 
 | Parameter | Default | Purpose |
 | --- | --- | --- |
@@ -46,16 +45,11 @@ All workers in one deployment namespace must agree on warm capacity. This deploy
 domain is separate from the Runtime namespace and application key used to select each
 Sandbox. See [keys and workspace use](index.md).
 
-The State never disposes the borrowed Engine. Startup and close wait for accepted
-work to settle before delivering cancellation. A write cancelled before COMMIT rolls
-back; an issued COMMIT retains its confirmed or uncertain result. Driver connection
-and statement timeouts belong to the Engine owner, and cleanup can extend elapsed time.
-An uncertain COMMIT or a failed cleanup never replays the write.
+Close State before disposing the borrowed Engine. Configure connection and statement
+timeouts on the Engine; accepted work and cleanup may extend the caller's wait.
 
-SQLite uses exclusive checkouts. For an in-memory database, configure
-`AsyncAdaptedQueuePool` with `pool_size=1, max_overflow=0`; `StaticPool` is rejected.
-SQLite lock retries are bounded by `sqlite_retry_timeout`. A busy COMMIT retries within
-the same transaction, without repeating its writes.
+For in-memory SQLite, use `AsyncAdaptedQueuePool` with `pool_size=1, max_overflow=0`;
+`StaticPool` is rejected. `sqlite_retry_timeout` bounds SQLite lock retries.
 
 ## Generate the database schema
 
@@ -84,15 +78,13 @@ manager = OpenSandboxManager(
 )
 ```
 
-Warm instances are not bound to an application key until `get()` atomically consumes a ready slot.
+`get()` assigns a warm instance to an application workspace.
 
 ## Prepare workspaces
 
 ```python
 async def prepare_project(backend) -> None:
-    result = await backend.aexecute(
-        "mkdir -p /workspace/project /workspace/output"
-    )
+    result = await backend.aexecute("mkdir -p /workspace/project /workspace/output")
     if result.exit_code != 0:
         raise RuntimeError("Could not prepare workspace directories")
 

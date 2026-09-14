@@ -109,8 +109,7 @@ changes, so every live Delta replaces the previous cursor atomically.
 `Tracer.get()` returns a `TraceThread` whose `graph` is a complete `TraceGraph` for the
 same fixed prefix and loaded Turn window as its messages and state. `TraceThread.follow()`
 publishes `TraceUpdate.graph` as a `TraceGraphDelta`; history and query paths share this
-flat, Subagent-scoped timeline model. Current-tail history reads the disposable Graph
-index, while an older fixed prefix replays the same reducer from Ledger facts.
+flat, Subagent-scoped timeline model.
 
 `TraceGraphCompleteness` distinguishes unknown call history, missing relationship
 evidence, and details omitted by capture or response limits. `call_tracking_missing`

@@ -62,10 +62,7 @@ asyncio.run(main())
 `AgentRuntime` with a fixed namespace and agent configuration. `build()` performs
 no execution I/O. Deriving a builder leaves existing builders and Runtimes unchanged.
 
-Applications choose the namespace and its business meaning. Namespace is opaque,
-case-sensitive text of 1–128 Unicode characters, with no surrounding whitespace.
-Thread and run IDs follow the same text rules, with a 1024-character limit.
-All identifiers must be UTF-8 encodable.
+Applications choose the namespace and authorize access within it.
 
 Use `ainvoke()` for the final state, `open_run()` for native objects, or
 `open_agui_run()` for AG-UI events. Execution takes `thread_id` and `run_id`.
@@ -130,9 +127,7 @@ Checkpointed built-in Graphs wait for each asynchronous checkpoint write by defa
 Tool review, Plan, and resume require `durability="sync"`; this setting waits for
 asynchronous persistence and does not select a synchronous database driver.
 
-Checkpoint threads are isolated by the Runtime namespace. Runs in the same
-thread share conversation history. Custom savers
-must preserve checkpoint metadata, pending writes, and parent references.
+Runs in the same Runtime namespace and thread share conversation history.
 
 After stopping a conversation's runs, remove its checkpoints without building an agent:
 
@@ -147,17 +142,9 @@ root while tools see relative memory paths. Use asynchronous Store methods.
 `StoreBackend` obtains this scoped Store from the running Graph; omit its `store`
 constructor argument. The host retains ownership of the underlying Store.
 
-Resume with `AgUiResumeRequest` entries covering every pending interrupt. Resolved
-entries contain an allowed decision; cancelled entries abandon the corresponding
-action. Cancelling the whole batch runs no tools. Mixed cancellation requires
-TinkerFin tool review support in every interrupted Graph receiving cancellation.
-Changing the pending tool batch or its review policy prevents execution.
-For AG-UI resume, custom Graphs must save a new checkpoint between review rounds;
-place successive interrupts in separate nodes.
-
-`on_resume_saved` and `on_resume_not_saved` are optional asynchronous callbacks on
-the `resume` branch. The former confirms a durable resume checkpoint; the latter
-releases a claim when no resume intent was saved. Their failures remain observable.
+Resume with `AgUiResumeRequest` entries covering every pending interrupt. See the
+[approval guide](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/agui/interrupts-and-resume.md)
+for decisions, cancellation, and custom Graph requirements.
 
 ### Plan review
 

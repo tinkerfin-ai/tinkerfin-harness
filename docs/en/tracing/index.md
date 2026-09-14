@@ -13,7 +13,9 @@ from tinkerfin_tracing import Tracer
 
 tracer = Tracer()
 runtime = (
-    TinkerFin().with_observer(tracer).with_namespace("company-a")
+    TinkerFin()
+    .with_observer(tracer)
+    .with_namespace("company-a")
     .build(model="openai:gpt-5.4")
 )
 result = await runtime.ainvoke(
@@ -76,9 +78,8 @@ async with history.follow() as updates:
         await handle(update)
 ```
 
-Following releases database connections while waiting. Changes from another Store
-instance are checked every 0.5 seconds by default, configurable through
-`TraceStoreOptions.follow_poll_seconds`. Writer closure or lease expiry without a
+`TraceStoreOptions.follow_poll_seconds` controls how often to check changes from other
+Store instances; the default is 0.5 seconds. Writer closure or lease expiry without a
 recorded terminal reports `unknown` with `missing_tail=True`; it does not claim that
 the Agent succeeded. A valid takeover can restore `running` at the same event sequence.
 
@@ -111,8 +112,7 @@ SQLite requires `AsyncAdaptedQueuePool` with `pool_size=1, max_overflow=0`; `Sta
 is rejected. Lease times use the database's UTC clock. MySQL Graph queries require
 MySQL 8 or newer. `max_tracer_threads` and `max_tracer_bytes` apply per namespace.
 
-Events, writer ownership, checkpoints, and graph changes commit atomically. Rebuild
-graph indexes with `await tracer.rebuild_graph(thread)` without rewriting events.
+Rebuild graph indexes with `await tracer.rebuild_graph(thread)` without rewriting events.
 Codecs can encrypt stored event and checkpoint bytes. Direct writers accept already
 captured facts; use `Tracer` for framework and business redaction.
 

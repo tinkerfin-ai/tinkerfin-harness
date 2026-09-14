@@ -30,7 +30,9 @@ from tinkerfin_messaging import Messaging
 
 runtime = TinkerFin().with_namespace("customer-1").build(model=model, tools=tools)
 source = runtime.open_agui_run(
-    thread_id="thread-42", run_id="run-7", input=graph_input,
+    thread_id="thread-42",
+    run_id="run-7",
+    input=graph_input,
 )
 
 async with Messaging() as messaging:
@@ -99,7 +101,7 @@ async with Messaging(backend=backend) as messaging:
     await serve_application(channel)
 ```
 
-关闭时会先通知当前生产者，再等待取消 preflight、producer settlement 和清理完成。
+关闭会等待生产者及其资源清理完成。释放借用的存储资源前，应先关闭 Messaging。
 
 ## 下一步
 

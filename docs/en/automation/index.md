@@ -122,12 +122,9 @@ Engine. The first Service operation, or
 startup. Call `await store.setup()` only for an explicit deployment readiness check or
 when using the Store directly.
 
-Setup creates all five tables when no Automation-owned table exists. If it finds any
-`tinkerfin_automation_*` table, it validates the complete current Schema and rejects a
-partial or incompatible shape without modifying it. Empty databases therefore require
-DDL permission; pre-provisioned databases must already match the current Schema.
-Workers using the same SQL Store share task ownership and concurrency capacity. The
-Scheduler supplies scheduled wakeups.
+Empty databases require DDL permission. Pre-provisioned databases must match the
+current schema; incomplete or incompatible schemas are rejected. Workers sharing
+the SQL Store share task ownership and concurrency capacity.
 
 ```python
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -251,8 +248,7 @@ returns `None` to keep waiting under the original execution deadline, or returns
 `ExecutionFailure` to fail immediately. Callback failure fails the execution; callback
 timeout uses the original execution deadline.
 
-An interrupted run holds its task or taskless-owner concurrency slot without retaining
-a coroutine or database connection. If cancellation or timeout cannot prove external
+An interrupted run continues to occupy its task or taskless-owner concurrency slot. If cancellation or timeout cannot prove external
 work stopped, the execution enters `needs_attention` and keeps protective capacity.
 Only a separately authorized and audited `resolve_execution` releases that uncertainty.
 

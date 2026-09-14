@@ -50,12 +50,7 @@ reject a stale holder.
 Attach a full Runtime observer or one terminal callback before building:
 
 ```python
-runtime = (
-    TinkerFin()
-    .with_namespace(namespace)
-    .with_observer(tracer)
-    .build(model=model)
-)
+runtime = TinkerFin().with_namespace(namespace).with_observer(tracer).build(model=model)
 ```
 
 ```python

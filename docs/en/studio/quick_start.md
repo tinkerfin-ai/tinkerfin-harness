@@ -50,19 +50,11 @@ Initializing a new database creates this account:
 
 Existing data volumes do not rerun the initialization SQL or overwrite accounts. There is no public registration endpoint.
 
-Open the user menu at the bottom left, select Models, and choose Add provider. Select a preset such as Qwen, DeepSeek, OpenAI, or Ollama, or configure a custom service. Save its URL and authentication first. Models under one connection share its key; you can create multiple connections for the same provider.
+Open the user menu at the bottom left, select Models, and choose Add provider. Select a provider or custom service, enter its URL and authentication, and save the connection.
 
-Select a connection and use Fetch models to add the models you need, or enter the provider’s Model ID manually. A failed listing does not prove that generation is unavailable: you can still add a model and test it. Enable a model and make it the default as needed. Chat and image generation have separate defaults. Keys are saved through the form for the current user’s connection and are never returned in settings responses.
+Select that connection and use Fetch models, or enter the provider's Model ID manually. Enable a chat model, make it the default, and send “Hello” to check the connection.
 
-Chat supports OpenAI Chat Completions compatible endpoints and the native Ollama API. Leave generation parameters blank to use model defaults. DeepSeek and Ollama support the reasoning toggle; reasoning effort for other compatible services must match the selected model. Set image input support according to the model’s actual capabilities; unknown capability blocks image input.
-
-Ollama defaults to `http://localhost:11434` and requires no placeholder key. Start the service and install models before connecting. For container deployments, use an address reachable from the container. Local, private-network, and HTTP endpoints must be included in the administrator’s `MODEL_ALLOWED_ORIGINS`; see the [server guide](../../../apps/studio/server/README.md). Download and delete models through Ollama.
-Capability tests in model settings call the selected provider and may incur usage charges; review your configuration before testing.
-Send “Hello” to check the connection, then try attachments or plan mode. Image inputs require a model with image support; image generation requires a separately configured provider.
-
-Attachments support images, Markdown, PDF, DOCX, and XLSX. Markdown files use UTF-8 with a `.md` or `.markdown` extension. Upload them for the agent to read by line, or ask it to generate and deliver a Markdown file. Click the filename to preview headings, tables, and code blocks, then download the original. Long previews show the first 100,000 characters; downloads retain the complete file.
-
-DOCX previews show text and tables; download the original for images and layout. PDF uses your browser’s viewer. XLSX previews show saved values from the first sheet, up to 100 rows and 20 columns, without recalculating formulas. Files too large to preview remain downloadable.
+For Ollama, start the service and install a model first. Select the native Ollama API; no placeholder key is needed. Container deployments need an address reachable from the container. An administrator must add local, private-network, and HTTP origins to `MODEL_ALLOWED_ORIGINS`; see the [server guide](../../../apps/studio/server/README.md).
 
 ## Change the initial password
 

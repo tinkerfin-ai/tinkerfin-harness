@@ -167,10 +167,8 @@ comments. The first startup needs DDL permissions. Generate the complete schema 
 
 SQLite requires exclusive connection checkouts. For an in-memory database, use
 `AsyncAdaptedQueuePool(pool_size=1, max_overflow=0)` instead of `StaticPool`.
-`sqlite_retry_timeout` bounds lock retries; a busy COMMIT retries in its existing
-transaction. An uncertain COMMIT or failed connection cleanup never replays the write.
-Start and close settle accepted database work before delivering cancellation. Driver
-connection and statement timeouts remain Engine settings.
+Configure database connection and statement timeouts on the Engine. State options are
+described in the [persistence guide](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/sandbox/persistence-and-extensions.md).
 
 ## Documentation
 

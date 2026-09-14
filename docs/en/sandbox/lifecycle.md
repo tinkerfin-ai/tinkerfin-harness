@@ -69,32 +69,18 @@ await manager.pause(project_key, timeout=30.0)
 backend = await manager.resume(project_key, timeout=30.0)
 ```
 
-`pause()` preserves the binding, remote ID, files, and stable handle objects. Managers
-sharing the same State coordinate the pause across their registered handles. Each
-holder stops accepting new operations and acknowledges the current pause intent only
-after admitted operations and their remote command or transfer settlement finish.
-The remote pause request is sent only after all registered holders acknowledge.
+`pause()` preserves the remote ID, files, and existing handles. It waits for work
+across managers sharing the same State to finish before pausing the instance.
+A lost worker or an unresolved remote operation can prevent pause from completing.
 
-Other processes observe the shared intent asynchronously, so an existing handle can
-accept work until its manager observes that intent. The pause waits for that work as
-well. Holder registration and pause intent compete atomically in State. Ordinary
-operations on an admitted handle use local admission and do not add a State query per
-call. Worker expiry or missing heartbeats cannot substitute for settled work; a lost
-holder or an unresolved remote operation can prevent pause from completing.
+The default `timeout` is 30 seconds and must be finite and positive. Cleanup may
+extend the total wait. An unconfirmed remote result keeps access closed until the
+outcome can be established; do not assume that a timeout means the instance paused.
 
-The default work budget is 30 seconds. `timeout` must be finite and positive and covers
-coordination plus remote confirmation. If draining times out or is cancelled, access
-reopens only when State confirms the intent is still undispatched and cancels it.
-An uncertain result after dispatch keeps access closed until control-plane evidence
-resolves the request; it does not authorize automatic replay. Necessary request and
-resource settlement can extend elapsed time beyond the work budget.
-
-Instances paused through the manager require explicit `resume()`. `get()`,
-`reconnect()`, and `reset()` do not wake them. Resume can cancel a confirmed undispatched
-drain; for a paused instance, it resumes the original remote ID and refreshes the calling
-manager's connection before returning a ready backend. Other registered managers each
-refresh their connection before reopening their existing handle. Connection initializers
-still run, and a failed refresh leaves that handle closed to new work.
+Instances paused through the manager require explicit `resume()`; `get()`,
+`reconnect()`, and `reset()` do not wake them. Resume returns a ready backend for
+the original instance. Connection initializers run again, so they must be idempotent.
+A failed connection refresh leaves the affected handle unavailable.
 
 Official OpenSandbox Server 0.2.3 uses Docker pause/unpause. `resume()` cannot start a
 container stopped through Docker or recover an expired instance. Pause does not freeze
@@ -128,9 +114,8 @@ until explicit cleanup:
 config = OpenSandboxConfig(ttl=None)
 ```
 
-New instances created with `ttl=None` have no scheduled expiry. The manager skips
-remote renewal, while health checks, warm maintenance, State leases, and failure
-cleanup remain active. Connecting to an existing instance does not remove its
+New instances created with `ttl=None` have no scheduled expiry.
+Connecting to an existing instance does not remove its
 scheduled expiry. Non-expiring instances keep consuming resources until destroyed;
 use `destroy(key)` when they are no longer needed.
 
@@ -153,22 +138,11 @@ finally:
 
 `start()` is idempotent. A closed manager cannot be restarted.
 
-Startup verifies warm capacity by reconnecting instances, checking health, renewing
-finite expiry, and replacing missing instances. With `fail_on_startup_warmup_error=True`,
-any failure or incomplete capacity verification fails startup.
-
-Before first reporting ready, the manager must verify all configured capacity.
-Checks by another worker can delay this: ordinary startup remains degraded until
-verification completes. Routine checks do not invalidate previously verified capacity.
-
-While open, the manager periodically checks warm health, renews finite expiry, and
-replaces unusable capacity. Health maintenance continues with `ttl=None`. A failed
-background refill does not invalidate an owner backend already handed to a request,
-but `check_ready()` raises `OpenSandboxWarmPoolUnavailableError` until capacity is
-restored. Hosts should include that method in their readiness check. Routine health
-verification retains previously published capacity. The check reads shared State,
-so consumption by another worker is visible immediately; only a confirmed failure
-withdraws capacity during verification.
+Include `await manager.check_ready()` in application readiness checks. It raises
+`OpenSandboxWarmPoolUnavailableError` when configured warm capacity is unavailable.
+Set `fail_on_startup_warmup_error=True` to fail startup when that capacity cannot be
+verified. Background warm-capacity failures do not invalidate an instance already
+in use by a request.
 
 Close waits for active creation, replacement, reset, pause/resume coordination, and cleanup to settle safely. A finite `settlement_timeout` only limits this caller's wait. It raises `OpenSandboxSettlementTimeoutError` without cancelling owned cleanup; call `aclose()` later to continue waiting.
 

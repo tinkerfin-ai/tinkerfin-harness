@@ -121,16 +121,22 @@ from langchain_core.tools import tool
 from tinkerfin.tools import ToolRuntime
 from tinkerfin_sandbox import RootedOpenSandboxBackend
 
+
 @tool
 async def read_report(runtime: ToolRuntime[None, RootedOpenSandboxBackend]) -> str:
     """Read the report in this run's workspace."""
     content = await runtime.workspace.aread_bytes("/report.txt", max_bytes=64 * 1024)
     return content.decode("utf-8")
 
-runtime = TinkerFin().with_namespace(namespace).build(
-    model=model,
-    tools=[read_report],
-    backend=sandboxes.workspace(workspace_key),
+
+runtime = (
+    TinkerFin()
+    .with_namespace(namespace)
+    .build(
+        model=model,
+        tools=[read_report],
+        backend=sandboxes.workspace(workspace_key),
+    )
 )
 ```
 

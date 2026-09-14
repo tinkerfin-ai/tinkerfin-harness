@@ -48,7 +48,9 @@ Messaging 开始关闭后不再接受新的取消请求。关闭时先通知当�
 
 ```python
 source = runtime.open_agui_run(
-    thread_id="thread-42", run_id="run-7", input=graph_input,
+    thread_id="thread-42",
+    run_id="run-7",
+    input=graph_input,
 )
 ```
 
@@ -161,8 +163,7 @@ mapped = map_source(source, enrich)
 
 转换后类型可能改变，因此 `map_source()` 的结果不会继续声明原来的内置 codec；使用它时给 channel 显式配置 codec。
 
-mapped source 或 subscription 关闭时，即使调用方被取消，底层 close task 仍由对象持有。后续
-`aclose()` 会等待同一 task；backend iterator 不会在 close 尚未完成时丢失。
+关闭调用被取消后，释放借用资源前应再次等待 `aclose()` 完成。
 
 一个订阅只允许一次正在进行的拉取。调用 `subscription.aclose()` 会先取消并结算该次拉取，再关闭
 解码与后端迭代器；等待下一条消息的消费方会收到 `CancelledError`。生产者继续独立运行，后续订阅

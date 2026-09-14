@@ -139,11 +139,9 @@ and comments for offline setup.
 SQLite file databases work with the default pool. In-memory SQLite requires
 `AsyncAdaptedQueuePool` with `pool_size=1, max_overflow=0`; `StaticPool` does not isolate
 concurrent borrowers. The Store never disposes the Engine or changes its pool size.
-Reads use one consistent snapshot and all lease timestamps use the database's UTC
-clock. MySQL Graph queries require MySQL 8 or newer.
+MySQL Graph queries require MySQL 8 or newer.
 
 The `max_tracer_threads` and `max_tracer_bytes` limits apply separately to each namespace.
-Events, writer ownership, projection checkpoints, and Graph changes commit atomically.
 Graph indexes can be rebuilt with `await tracer.rebuild_graph(thread)` without
 rewriting recorded events. A codec can encrypt stored event and checkpoint bytes.
 

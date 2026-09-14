@@ -55,11 +55,13 @@ runtime = (
 from contextlib import aclosing
 from tinkerfin import AgUiResumeRequest
 
-async with aclosing(runtime.open_agui_run(
-    thread_id="conversation-1",
-    run_id="approval-1",
-    resume=AgUiResumeRequest(entries=tuple(resume_entries)),
-)) as events:
+async with aclosing(
+    runtime.open_agui_run(
+        thread_id="conversation-1",
+        run_id="approval-1",
+        resume=AgUiResumeRequest(entries=tuple(resume_entries)),
+    )
+) as events:
     async for event in events:
         await send_event(event)
 ```

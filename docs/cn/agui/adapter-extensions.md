@@ -85,8 +85,7 @@ TEXT_MESSAGE_START 与 TEXT_MESSAGE_END 之间。增量按附件 ID 合并，快
 已有描述。子 Agent 输出依据 `rawEvent.source` 归入对应调用。
 
 `tinkerfin_agui_adapter.media` 的 `MessageAttachments` 校验该 CUSTOM 载荷。
-包内提供 `contracts/message-attachments.schema.json`，以及经过真实 LangChain
-工具调用的 Fixture。附件描述不包含文件字节、密钥或临时下载地址。
+包内提供 `contracts/message-attachments.schema.json`。附件描述不包含文件字节、密钥或临时下载地址。
 
 `AttachmentToolCallResultEvent`、`AttachmentAssistantMessage` 和
 `AttachmentToolMessage` 正式声明 `attachments` 字段；
@@ -94,8 +93,7 @@ TEXT_MESSAGE_START 与 TEXT_MESSAGE_END 之间。增量按附件 ID 合并，快
 从通用 AG-UI 回放取得事件后，可调用 `parse_attachment_output_event(event)`，
 将工具结果或消息快照校验为公开的附件类型。包内 `contracts/` 同时提供
 `tool-call-result.schema.json`、`assistant-message.schema.json`、
-`tool-message.schema.json` 和 `messages-snapshot.schema.json`，共享 Fixture
-覆盖实时输出及其对应历史快照。
+`tool-message.schema.json` 和 `messages-snapshot.schema.json`。
 
 ## 编码成 SSE
 

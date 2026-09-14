@@ -97,8 +97,7 @@ HTTP 服务发送 `body`，并在完成或断连时调用 `await body.aclose()`�
 历史与续播的组合使用 [AgUiHistory.open_live](../runtime/api-reference.md#读取-ag-ui-对话历史)。
 
 续播 SSE 中，订阅建立时已提交的事件带 `event: replay`，此后生成的事件使用默认 `message`。
-两者的 `id` 和 AG-UI 数据不变。界面应直接恢复 `replay` 正文，只对新增正文播放动画；
-使用浏览器 `EventSource` 时需要同时监听 `replay` 和 `message`。
+两者的 `id` 和 AG-UI 数据不变。使用浏览器 `EventSource` 时需要同时监听 `replay` 和 `message`。
 
 ## 高级 source 工具
 

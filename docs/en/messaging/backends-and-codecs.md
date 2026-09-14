@@ -33,11 +33,7 @@ use `AsyncAdaptedQueuePool` with `pool_size=1, max_overflow=0`.
 `SqlAlchemyBackend` accepts `producer_lease_seconds=15`, `poll_interval_seconds=0.1`,
 `limits=MessagingLimits()` and `retention_policy=MessagingRetentionPolicy()`.
 All channels in the database share these settings and the total capacity budget.
-Complete namespace and thread identities isolate messages and producer control.
-Polling holds no connection between queries. Configure connection and statement
-timeouts on the Engine; table setup has a 30-second lock wait. Total capacity checks
-serialize writes across channels. Failed commit acknowledgements are reported without
-automatically replaying the transition.
+Configure connection and statement timeouts on the Engine.
 
 ## Use Redis
 
@@ -83,11 +79,7 @@ The caller owns the Redis client and closes it during application shutdown. Size
 
 An enabled retention policy starts at terminal settlement. Active producers do not
 expire, and a new Run before the deadline clears the timer. An expired generation raises
-`StreamExpired`; an explicit `after=0` start creates the next empty generation. Redis
-uses its server clock and performs resumable physical cleanup when a backend operation
-first observes the deadline. New Run and message writes also reclaim a bounded
-page of expired threads across channels through the prefix-wide expiry index. `delete_stream()` remains an explicit, distinct
-`StreamDeleted` lifecycle.
+`StreamExpired`; an explicit `after=0` start creates the next empty generation. `delete_stream()` explicitly deletes history and reports `StreamDeleted` to old readers.
 
 ## Select a built-in codec explicitly
 
@@ -121,12 +113,9 @@ TinkerFin streams carry their codec and complete RunIdentity. When wrapping one,
 a channel needs only its name; identity and codec do not need to be repeated.
 Custom sources require an explicit codec and RunIdentity.
 
-RedisBackend stores the limits, per-generation payload counters, and the current and
-immediately previous owner's successful lease-renewal counts and UTC timestamps for
-trusted diagnostics. Workers sharing a channel must agree on all limits and retention;
-workers sharing a prefix must agree on total limits. All channels in that prefix use
-one Redis Cluster hash slot so capacity admission and counters commit atomically.
-These fields never enter `MessageEnvelope`.
+Workers sharing a channel must agree on all limits and retention; workers sharing a
+Redis prefix must agree on total limits. All channels in that prefix use one Redis
+Cluster hash slot.
 
 Default limits are 16 MiB per encoded message, 1 MiB per checkpoint position, 100,000
 messages and 1 GiB of payload per thread generation, and 1 GiB / 100,000 retained records
@@ -143,9 +132,7 @@ through `messaging_settings` and reject quota overflow before mutation.
 An idempotent message retry consumes no additional quota. `MessagingQuotaExceeded`
 identifies the exhausted resource. Cancellation, settlement, and deletion remain
 available when full. Cleanup releases messages and Runs and converts the generation
-record to a tombstone. Channel, thread, and tombstone records remain charged. Retention
-is opt-in; the bounded expiry index lets new writes reclaim other expired threads,
-without a background worker or eviction of active or unexpired history.
+record to a tombstone. Channel, thread, and tombstone records remain charged. Retention is opt-in. New writes can reclaim expired history; active or unexpired history is not evicted.
 
 ## Define a custom message format
 

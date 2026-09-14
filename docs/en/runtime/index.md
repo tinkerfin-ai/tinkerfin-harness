@@ -23,9 +23,7 @@ from contextlib import aclosing
 from tinkerfin import TinkerFin
 
 runtime = (
-    TinkerFin()
-    .with_namespace("company-a")
-    .build(model="openai:gpt-5.4", tools=[])
+    TinkerFin().with_namespace("company-a").build(model="openai:gpt-5.4", tools=[])
 )
 
 stream = runtime.open_run(

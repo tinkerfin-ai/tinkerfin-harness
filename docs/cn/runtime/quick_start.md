@@ -18,22 +18,14 @@ import asyncio
 from tinkerfin import TinkerFin
 
 
-runtime = (
-    TinkerFin()
-    .with_namespace("example")
-    .build(model="openai:gpt-5.4")
-)
+runtime = TinkerFin().with_namespace("example").build(model="openai:gpt-5.4")
 
 
 async def main() -> None:
     result = await runtime.ainvoke(
         thread_id="hello",
         run_id="hello-1",
-        input={
-            "messages": [
-                {"role": "user", "content": "请用一句话问好。"}
-            ]
-        },
+        input={"messages": [{"role": "user", "content": "请用一句话问好。"}]},
     )
     print(result["messages"][-1].content)
 

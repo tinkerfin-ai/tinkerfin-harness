@@ -49,7 +49,9 @@ Pass the lazy Runtime stream directly to Messaging:
 
 ```python
 source = runtime.open_agui_run(
-    thread_id="thread-42", run_id="run-7", input=graph_input,
+    thread_id="thread-42",
+    run_id="run-7",
+    input=graph_input,
 )
 ```
 
@@ -163,9 +165,7 @@ mapped = map_source(source, enrich)
 
 `map_source()` accepts a synchronous or asynchronous transform and preserves order, backpressure, cancellation tails, and close behavior.
 
-Closing a mapped source or subscription retains the underlying close task across caller
-cancellation. A later `aclose()` joins the same task; the backend iterator is not dropped
-while its close is incomplete.
+If cancellation interrupts a close call, await `aclose()` again before releasing borrowed resources.
 
 A subscription allows one active pull. Calling `subscription.aclose()` cancels and
 settles that pull before closing its decoder and backend iterator; a consumer waiting

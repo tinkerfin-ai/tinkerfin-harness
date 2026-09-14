@@ -139,17 +139,14 @@ still require application-level idempotency.
 100,000 messages and 1 GiB of payload per thread generation, and 1 GiB / 100,000 records
 across one MemoryBackend instance, SQL database, or Redis prefix.
 
-Total bytes count message payloads, every message's checkpoint evidence, and each run's
-latest checkpoint. A checkpoint counts its position plus its UTF-8 message ID. Channels,
-threads, generations, runs, messages and tombstones each count as one logical record.
-Idempotent retries consume no additional quota. `MessagingQuotaExceeded` identifies
-the exhausted resource; cancellation, settlement and deletion remain available.
+These are logical storage limits, including control records, rather than process memory
+limits. `MessagingQuotaExceeded` identifies the exhausted resource; cancellation,
+settlement and deletion remain available. See the [storage guide](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/messaging/backends-and-codecs.md)
+for accounting and shared-worker configuration.
 
 Retention is disabled by default. `MessagingRetentionPolicy.expire_after(seconds)`
-keeps terminal generations for that replay window. A new run before expiry continues
-the same generation. Later activity reclaims expired generations in bounded transactions;
-active or unexpired history is never evicted to admit new data. Cleanup releases message
-and run capacity while retaining charged channel, thread and tombstone records.
+sets the replay window after a thread becomes terminal. A new run before expiry
+continues that history. Active or unexpired history is not evicted to admit new data.
 
 An expired generation raises `StreamExpired`; starting with `after=0` can create its
 replacement. Explicit deletion requires no live producer lease and records
