@@ -234,6 +234,36 @@ def test_v2_driver_keeps_idless_followup_tool_data_as_a_chunk() -> None:
     )
 
 
+def test_v2_driver_preserves_unindexed_tool_calls_from_ollama() -> None:
+    # langchain-ollama 1.1.0 supplies complete calls; langchain-core 1.6.1
+    # AIMessageChunk.init_tool_calls gives those calls index=None.
+    message = AIMessageChunk(
+        id="message-ollama",
+        content="",
+        tool_calls=[
+            {"id": "call-echo", "name": "diagnostic_echo", "args": {"value": "hello"}},
+            {"id": "call-other", "name": "diagnostic_echo", "args": {"value": "other"}},
+        ],
+    )
+    frame = DeepAgentsV2StreamDriver().normalize(
+        _message_part(message, provider="ollama"), context=_context()
+    )
+    observation = frame.observations[0]
+    assert isinstance(observation, NativeMessageObservation)
+    assert [chunk.index for chunk in observation.message.tool_call_chunks] == [
+        None,
+        None,
+    ]
+    assert [chunk.id for chunk in observation.message.tool_call_chunks] == [
+        "call-echo",
+        "call-other",
+    ]
+    assert (
+        NativeMessageObservation.model_validate_json(observation.model_dump_json())
+        == observation
+    )
+
+
 def test_v2_driver_still_rejects_a_complete_tool_call_without_an_id() -> None:
     with pytest.raises(ValueError, match="complete Tool calls require a stable ID"):
         DeepAgentsV2StreamDriver().normalize(

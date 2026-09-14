@@ -2214,3 +2214,60 @@ async def test_child_input_equality_requires_complete_unmodified_ancestor_and_ch
         node.source_id == "same-source" and node.graph_namespace == ("child:1",)
         for node in graph.nodes
     )
+
+
+async def test_unindexed_calls_and_indexed_fragments_keep_separate_trace_arguments() -> (
+    None
+):
+    tracer = Tracer(
+        capture_policy=CapturePolicy.public_safe(
+            tool_rules=(ToolCaptureRule(tool_name="echo", argument_paths=("/value",)),)
+        )
+    )
+    context = _context(run_id="mixed-tool-indices")
+    session = await _start(tracer, context)
+    chunks = [
+        NativeToolCallChunk(index=0, id="indexed", name="echo", arguments='{"value":'),
+        NativeToolCallChunk(
+            index=None, id="first", name="echo", arguments='{"value":"one"}'
+        ),
+        NativeToolCallChunk(
+            index=None, id="second", name="echo", arguments='{"value":"two"}'
+        ),
+        NativeToolCallChunk(index=0, arguments='"indexed"}'),
+    ]
+    for sequence, chunk in enumerate(chunks, start=3):
+        await session.observe(
+            NativeMessageObservation(
+                identity=context.identity,
+                graph_namespace=(),
+                message=NativeMessageRecord(
+                    message_type="assistant_chunk",
+                    id="mixed-message",
+                    content="",
+                    tool_call_chunks=(chunk,),
+                ),
+                observed_at=datetime.now(UTC),
+                monotonic_ns=sequence,
+            )
+        )
+    await _finish(session, context)
+    events = (
+        await (
+            await tracer.get(
+                ThreadIdentity(namespace="test", thread_id="thread-semantic")
+            )
+        ).events(limit=100)
+    ).items
+    arguments = {
+        event.fact.source_tool_call_id: event.fact.content.value
+        for event in events
+        if isinstance(event.fact, ToolFact)
+        and event.fact.phase == "arguments"
+        and event.fact.content is not None
+    }
+    assert arguments == {
+        "first": {"/value": "one"},
+        "second": {"/value": "two"},
+        "indexed": {"/value": "indexed"},
+    }

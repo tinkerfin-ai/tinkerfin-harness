@@ -272,10 +272,14 @@ export function WorkspaceScreen({
   }, [conversation, notifyConversation])
 
   useEffect(() => {
+    if (activePage === 'automation') {
+      document.title = `TinkerFin - ${t('自动化')}`
+      return
+    }
     document.title = conversation.threadId && conversation.title.trim()
       ? conversation.title.trim()
       : 'TinkerFin'
-  }, [conversation.threadId, conversation.title])
+  }, [activePage, conversation.threadId, conversation.title, t])
 
   useEffect(() => () => {
     document.title = 'TinkerFin'

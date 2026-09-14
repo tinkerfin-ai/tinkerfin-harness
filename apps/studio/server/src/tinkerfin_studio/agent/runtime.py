@@ -14,6 +14,7 @@ from tinkerfin.subagents import SubAgent
 from tinkerfin_studio.agent.access import AccessMode, file_review_policy
 from tinkerfin_studio.agent.plan_clarification import StudioPlanClarificationForm
 from tinkerfin_studio.agent.plan_content import StudioMarkdownPlanContent
+from tinkerfin_studio.agent.tool_policy import tool_execution_policy
 from tinkerfin_studio.agent.tools import build_web_search_tool
 from tinkerfin_studio.attachments.sandbox_tools import build_sandbox_attachment_tools
 from tinkerfin_studio.attachments.tools import build_attachment_tools
@@ -25,13 +26,11 @@ if TYPE_CHECKING:
 
 _SYSTEM_PROMPT = """你是 TinkerFin Studio 的主 Agent。
 
-处理复杂任务时使用 write_todos 维护清单，
-使用 task 委派适合的独立研究任务，
-使用文件工具在用户 Sandbox 中读写结果。
-附件引用中的 ID 可用于 read_attachment 或 view_image。
-历史内容压缩后，先用 list_attachments 重新查找附件，不要假装已读原文件。
-使用 create_file 或 generate_image 交付可下载结果，工具成功才表示文件存在。
-工作区内已有文件用 deliver_file 交付；网页截图用 capture_browser。
+复杂任务用 write_todos 跟踪，独立研究可用 task 委派。
+附件用 read_attachment 读取或 import_attachment 导入工作区；引用丢失时用 list_attachments 查找。
+生成工具只保存工作文件，按需读取、检查和修改；仅用 deliver_file 交付选定结果。
+工具成功后再确认结果，并简短回复；不交付无须给用户的中间文件。
+工具失败先核实原因、调整方案，不原样重复调用。
 """
 
 
@@ -98,7 +97,6 @@ def _build_runtime(
             thread_id=None if collection_id is not None else thread_id,
             collection_id=collection_id,
             image_model=image_model,
-            supports_images=model_config.image_support == "supported",
             model_allowed_origins=resources.settings.model_allowed_origins,
         ),
         *build_sandbox_attachment_tools(
@@ -123,12 +121,18 @@ def _build_runtime(
         ),
     )
     tool_registry = {web_search.name: web_search}
+    image_instructions = (
+        "\n看图优先读取 preview_file_path，交付使用 file_path 原图。\n"
+        if model_config.image_support == "supported"
+        else "\n当前模型未启用视觉，不读取图片；仍可生成并交付图片。\n"
+    )
     subagents: list[SubAgent] = [
         {
             "name": name,
             "description": definition.description,
-            "system_prompt": definition.system_prompt,
+            "system_prompt": definition.system_prompt + image_instructions,
             "interrupt_on": file_review_policy(access_mode),
+            "middleware": tool_execution_policy(),
             "tools": [
                 *(tool_registry[tool] for tool in definition.tools),
                 *attachment_tools,
@@ -156,8 +160,8 @@ def _build_runtime(
     return configured.build(
         model=model,
         tools=[web_search, *attachment_tools],
-        system_prompt=_SYSTEM_PROMPT,
-        middleware=(TodoListMiddleware(),),
+        system_prompt=_SYSTEM_PROMPT + image_instructions,
+        middleware=(TodoListMiddleware(), *tool_execution_policy()),
         subagents=subagents,
         backend=resources.sandbox_manager.workspace(
             f"users/{user_id}",

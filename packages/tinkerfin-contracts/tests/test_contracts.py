@@ -15,6 +15,7 @@ from tinkerfin_contracts import (
     NativeMessageObservation,
     NativeMessageRecord,
     NativeReasoningObservation,
+    NativeToolCallChunk,
     ObservationBoundary,
     RunIdentity,
     RunInputObservation,
@@ -26,6 +27,16 @@ from tinkerfin_contracts import (
     ThreadIdentity,
     ToolExecutionObservation,
 )
+
+
+@pytest.mark.parametrize(
+    ("call_id", "name"), [(None, None), ("call", None), (None, "echo")]
+)
+def test_unindexed_tool_calls_require_their_own_identity(
+    call_id: str | None, name: str | None
+) -> None:
+    with pytest.raises(ValidationError, match="both id and name"):
+        NativeToolCallChunk(index=None, id=call_id, name=name, arguments="{}")
 
 
 def _context() -> RunSourceContext:

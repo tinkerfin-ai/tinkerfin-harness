@@ -208,9 +208,9 @@ class DeepAgentAgUiAdapter:
         self._native_tool_calls: dict[
             tuple[tuple[str, ...], str], list[NativeToolCall]
         ] = {}
-        self._tool_ids_by_index: dict[tuple[tuple[str, ...], str, int | None], str] = {}
-        self._tool_id_history_by_index: dict[
-            tuple[tuple[str, ...], str, int | None], str
+        self._tool_ids_by_slot: dict[tuple[tuple[str, ...], str, int | str], str] = {}
+        self._tool_id_history_by_slot: dict[
+            tuple[tuple[str, ...], str, int | str], str
         ] = {}
         self._tool_names_by_id: dict[str, str] = {}
         self._prior_tool_call_ids: set[str] = set()
@@ -375,7 +375,7 @@ class DeepAgentAgUiAdapter:
             if isinstance(message, AIMessageChunk)
             else _complete_ai_message_to_chunk(message)
         )
-        available_slots = dict(self._tool_id_history_by_index)
+        available_slots = dict(self._tool_id_history_by_slot)
         slot_by_tool_id = {
             tool_call_id: index_key
             for index_key, tool_call_id in available_slots.items()
@@ -395,11 +395,21 @@ class DeepAgentAgUiAdapter:
                     )
         for tool_chunk in chunk.tool_call_chunks:
             index = tool_chunk.get("index")
-            if type(index) is not int:
+            if index is not None and type(index) is not int:
                 raise ValueError("tool-call fragments require an integer index")
-            index_key = (part.ns, parent_message_id, index)
             raw_tool_call_id = tool_chunk.get("id")
             tool_name = tool_chunk.get("name")
+            if index is None and (not raw_tool_call_id or not tool_name):
+                raise ValueError("unindexed tool calls require both id and name")
+            # LangChain permits self-identifying calls without a fragment index.
+            # Keep their IDs separate from numeric slots, including in mixed streams.
+            index_key = (
+                part.ns,
+                parent_message_id,
+                index
+                if index is not None
+                else self._tool_call_id(part.ns, str(raw_tool_call_id)),
+            )
             if raw_tool_call_id is not None or tool_name is not None:
                 if (
                     not isinstance(raw_tool_call_id, str)

@@ -76,3 +76,65 @@ def attachment_storage():
     from attachment_fakes import MemoryAttachmentStorage
 
     return MemoryAttachmentStorage()
+
+
+@pytest.fixture
+def work_file_runtime():
+    """以隔离内存文件验证工作区读写和工具交付，不连接共享沙箱"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from deepagents.backends.protocol import FileUploadResponse
+
+    from tinkerfin.tools import ToolRuntime
+    from tinkerfin_sandbox import OpenSandboxFileTooLargeError, RootedOpenSandboxBackend
+
+    files: dict[str, bytes] = {}
+    workspace = MagicMock(spec=RootedOpenSandboxBackend)
+
+    async def upload(items):
+        for path, data in items:
+            files[path] = data
+        return [FileUploadResponse(path=path, error=None) for path, _ in items]
+
+    async def read(path, *, max_bytes):
+        data = files[path]
+        if len(data) > max_bytes:
+            raise OpenSandboxFileTooLargeError("too large")
+        return data
+
+    workspace.aupload_files = AsyncMock(side_effect=upload)
+    workspace.aread_bytes = AsyncMock(side_effect=read)
+
+    class WorkspaceRuntime(ToolRuntime[None, RootedOpenSandboxBackend]):
+        @property
+        def workspace(self) -> RootedOpenSandboxBackend:
+            return workspace
+
+    runtime = WorkspaceRuntime(
+        state={"messages": []},
+        context=None,
+        config={},
+        stream_writer=lambda value: None,
+        tool_call_id=None,
+        store=None,
+    )
+    return runtime, workspace, files
+
+
+@pytest.fixture(scope="module")
+def large_image():
+    import io
+    import random
+
+    from deepagents.backends.sandbox import MAX_BINARY_BYTES
+    from PIL import Image
+
+    from tinkerfin_studio.attachments.processing import MAX_FILE_BYTES
+
+    output = io.BytesIO()
+    Image.frombytes(
+        "RGB", (1024, 1024), random.Random(0).randbytes(1024 * 1024 * 3)
+    ).save(output, "PNG")
+    data = output.getvalue()
+    assert MAX_BINARY_BYTES < len(data) <= MAX_FILE_BYTES
+    return data

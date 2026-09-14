@@ -251,13 +251,20 @@ async def test_same_name_attachments_remain_distinct_after_service_restart(
     [("PNG", "image/png"), ("JPEG", "image/jpeg"), ("WEBP", "image/webp")],
 )
 async def test_generated_image_tool_preserves_actual_format_and_typed_result(
-    attachments, database, monkeypatch, format_name, mime
+    attachments, database, monkeypatch, format_name, mime, work_file_runtime
 ):
-    """供应商返回不同图片格式时仍可保存，真实工具调用保持结构化附件"""
+    """生成工作图片不发布附件，显式交付后保留实际格式和原始字节"""
+    import json
+
     from langchain_core.messages import ToolMessage
 
     from tinkerfin_agui_adapter import DeepAgentAgUiAdapter, RunIdentity
     from tinkerfin_studio.attachments import tools as media_tools
+    from tinkerfin_studio.attachments.sandbox_tools import (
+        build_sandbox_attachment_tools,
+    )
+
+    runtime, _, files = work_file_runtime
 
     output = io.BytesIO()
     Image.new("RGB", (32, 24), "blue").save(output, format_name)
@@ -286,7 +293,6 @@ async def test_generated_image_tool_preserves_actual_format_and_typed_result(
         user_id=1,
         thread_id="generated",
         image_model=None,
-        supports_images=True,
         model_allowed_origins=("http://localhost:11434",),
     )
     generator = next(item for item in tools if item.name == "generate_image")
@@ -295,10 +301,15 @@ async def test_generated_image_tool_preserves_actual_format_and_typed_result(
             "type": "tool_call",
             "id": "generate",
             "name": "generate_image",
-            "args": {"prompt": "blue square"},
+            "args": {"prompt": "blue square", "runtime": runtime},
         }
     )
     assert isinstance(result, ToolMessage)
+    assert isinstance(result.content, str)
+    work_file = json.loads(result.content)
+    assert work_file["mime_type"] == mime
+    assert files[work_file["file_path"]] == data
+    assert await attachments.list_thread(user_id=1, thread_id="generated") == []
     adapter = DeepAgentAgUiAdapter(
         identity=RunIdentity(namespace="test", thread_id="generated", run_id="run")
     )
@@ -307,6 +318,35 @@ async def test_generated_image_tool_preserves_actual_format_and_typed_result(
             "type": "messages",
             "ns": (),
             "data": (result, {"lc_agent_name": None, "langgraph_node": "tools"}),
+        }
+    )
+    wire = next(
+        item.model_dump(mode="json", by_alias=True)
+        for item in events
+        if item.type == "TOOL_CALL_RESULT"
+    )
+    assert json.loads(wire["content"]) == work_file
+    assert wire["attachments"] == []
+    deliver = build_sandbox_attachment_tools(
+        service=attachments, user_id=1, thread_id="generated"
+    )[0]
+    delivered = await deliver.ainvoke(
+        {
+            "type": "tool_call",
+            "id": "deliver",
+            "name": "deliver_file",
+            "args": {
+                "runtime": runtime,
+                "file_path": work_file["file_path"],
+                "name": work_file["name"],
+            },
+        }
+    )
+    events = adapter.process(
+        {
+            "type": "messages",
+            "ns": (),
+            "data": (delivered, {"lc_agent_name": None, "langgraph_node": "tools"}),
         }
     )
     wire = next(
@@ -346,10 +386,10 @@ def test_attachment_tools_describe_all_model_visible_parameters(attachments):
         user_id=1,
         thread_id="schema-only",
         image_model=None,
-        supports_images=True,
     )
     for tool in tools:
-        schema_type = tool.get_input_schema()
+        schema_type = tool.tool_call_schema
+        assert isinstance(schema_type, type)
         assert issubclass(schema_type, BaseModel)
         schema = schema_type.model_json_schema()
         assert all(
@@ -401,7 +441,7 @@ async def test_invalid_markdown_is_not_published(attachments, database, data):
 
 @pytest.mark.parametrize("extension", ["md", "markdown"])
 async def test_markdown_tools_generate_deliver_read_and_reopen(
-    attachments, database, attachment_storage, extension
+    attachments, database, attachment_storage, extension, work_file_runtime
 ):
     """真实生成和读取工具交付同一 Markdown，服务重建后保留正文与会话权限"""
     import json
@@ -409,7 +449,12 @@ async def test_markdown_tools_generate_deliver_read_and_reopen(
     from langchain_core.messages import ToolMessage
 
     from tinkerfin_contracts.media import attachment_from_block
+    from tinkerfin_studio.attachments.sandbox_tools import (
+        build_sandbox_attachment_tools,
+    )
     from tinkerfin_studio.attachments.tools import build_attachment_tools
+
+    runtime, _, files = work_file_runtime
 
     async with database.session() as session:
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -431,7 +476,6 @@ async def test_markdown_tools_generate_deliver_read_and_reopen(
             user_id=1,
             thread_id="markdown-report",
             image_model=None,
-            supports_images=False,
         )
     }
     text = "# 门店月报\n\n- 营收：128 万元\n- 下月安排：优化排班\n"
@@ -440,7 +484,32 @@ async def test_markdown_tools_generate_deliver_read_and_reopen(
             "type": "tool_call",
             "id": "create-report",
             "name": "create_file",
-            "args": {"name": f"月报.{extension}", "kind": "md", "text": text},
+            "args": {
+                "name": f"月报.{extension}",
+                "kind": "md",
+                "text": text,
+                "runtime": runtime,
+            },
+        }
+    )
+    assert isinstance(result, ToolMessage)
+    assert isinstance(result.content, str)
+    work_file = json.loads(result.content)
+    assert files[work_file["file_path"]] == text.encode()
+    assert await attachments.list_thread(user_id=1, thread_id="markdown-report") == []
+    deliver = build_sandbox_attachment_tools(
+        service=attachments, user_id=1, thread_id="markdown-report"
+    )[0]
+    result = await deliver.ainvoke(
+        {
+            "type": "tool_call",
+            "id": "deliver-report",
+            "name": "deliver_file",
+            "args": {
+                "runtime": runtime,
+                "file_path": work_file["file_path"],
+                "name": work_file["name"],
+            },
         }
     )
     assert isinstance(result, ToolMessage)
@@ -452,6 +521,17 @@ async def test_markdown_tools_generate_deliver_read_and_reopen(
     restored = AttachmentService(database, attachment_storage)
     _, original = await restored.read(file.id, user_id=1, thread_id="markdown-report")
     assert original == text.encode()
+    imported = json.loads(
+        await tools["import_attachment"].ainvoke(
+            {"attachment_id": file.id, "runtime": runtime}
+        )
+    )
+    assert imported["file_path"] != work_file["file_path"]
+    assert files[imported["file_path"]] == original
+    files[imported["file_path"]] = b"# edited"
+    assert (await restored.read(file.id, user_id=1, thread_id="markdown-report"))[
+        1
+    ] == original
     assert [
         item.id
         for item in await restored.list_thread(user_id=1, thread_id="markdown-report")

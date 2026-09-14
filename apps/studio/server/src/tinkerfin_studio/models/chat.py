@@ -50,7 +50,7 @@ def create_chat_model(
     Raises:
         TypeError: 配置未创建受支持的聊天模型
     """
-    return _MODEL_PROVIDERS[config.provider](
+    model = _MODEL_PROVIDERS[config.provider](
         ChatModelOptions(
             config=config,
             reasoning_enabled=config.reasoning_enabled
@@ -65,3 +65,9 @@ def create_chat_model(
             max_retries=max_retries,
         )
     )
+    # 将用户声明的图片能力提供给文件读取工具，避免向纯文本模型传入图片
+    model.profile = {
+        **(model.profile or {}),
+        "image_inputs": config.image_support == "supported",
+    }
+    return model

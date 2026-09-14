@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from ag_ui.core.types import Interrupt as AgUiInterrupt
 from ag_ui.core.types import ResumeEntry
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from pydantic import JsonValue
 
 from tinkerfin_agui_adapter import AgUiAdapterErrorCode, ResumeTranslation
@@ -588,6 +588,46 @@ def test_resume_translation_carries_verified_prior_tool_call_ids() -> None:
         codec.encode("tool", ("execute_step:task-1",), "call-a"),
         codec.encode("tool", ("execute_step:task-1",), "call-b"),
     )
+
+
+@pytest.mark.parametrize("same_namespace", [False, True])
+def test_completed_checkpoint_calls_are_excluded_only_in_their_graph(
+    same_namespace: bool,
+) -> None:
+    pending = _main_checkpoint_message()
+    previous = pending.model_copy(deep=True)
+    previous.id = "previous-message"
+    if same_namespace:
+        for call in previous.tool_calls:
+            identifier = call["id"]
+            assert identifier is not None
+            call["id"] = "previous-" + identifier
+    completed = [
+        ToolMessage(content="saved", tool_call_id=call["id"])
+        for call in previous.tool_calls
+    ]
+    before = [message.model_dump() for message in (pending, previous, *completed)]
+    namespace = ("task:current",)
+    messages: dict[tuple[str, ...], tuple[BaseMessage, ...]] = (
+        {namespace: (previous, *completed, pending)}
+        if same_namespace
+        else {("task:previous",): (previous, *completed), namespace: (pending,)}
+    )
+    translation = ResumeMapper().map(
+        entries=(
+            _entry("interrupt-main#0", payload={"type": "approve"}),
+            _entry("interrupt-main#1", payload={"type": "approve"}),
+        ),
+        interrupts=_interrupts(),
+        messages_by_graph_namespace=messages,
+    )
+    assert translation.prior_tool_call_ids == tuple(
+        ScopedIdCodec().encode("tool", namespace, identifier)
+        for identifier in ("call-main-a", "call-main-b")
+    )
+    assert [
+        message.model_dump() for message in (pending, previous, *completed)
+    ] == before
 
 
 def test_resume_mapper_rejects_reused_tool_call_ids_within_one_group() -> None:

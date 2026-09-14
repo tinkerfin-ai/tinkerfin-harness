@@ -493,7 +493,7 @@ def _process_tool_chunk(
     source: AgentSource,
     raw_event: dict[str, JsonValue],
 ) -> list[BaseEvent]:
-    """Correlate one Tool fragment by full scope, message ID, and chunk index.
+    """Correlate arguments by full scope, message ID, and provider index or Tool ID.
 
     Later provider fragments may omit both Tool name and ID, so the previously opened
     scoped slot is authoritative. Every non-empty argument fragment, including the
@@ -506,12 +506,18 @@ def _process_tool_chunk(
         source.graph_namespace,
         raw_source_message_id,
     )
-    index_key = (source.graph_namespace, source_message_id, index)
     chunk_id = tool_chunk.get("id")
+    index_key = (
+        source.graph_namespace,
+        source_message_id,
+        index
+        if index is not None
+        else self._tool_call_id(source.graph_namespace, str(chunk_id)),
+    )
     tool_call_id = (
         self._tool_call_id(source.graph_namespace, str(chunk_id))
         if chunk_id
-        else self._tool_ids_by_index.get(index_key)
+        else self._tool_ids_by_slot.get(index_key)
     )
     name_value = tool_chunk.get("name")
     tool_name = name_value if name_value else None
@@ -520,8 +526,8 @@ def _process_tool_chunk(
     if tool_call_id is None:
         raise RuntimeError("validated tool fragment lost its scoped start")
 
-    if index_key in self._tool_ids_by_index:
-        previous_id = self._tool_ids_by_index[index_key]
+    if index_key in self._tool_ids_by_slot:
+        previous_id = self._tool_ids_by_slot[index_key]
         if previous_id and previous_id != tool_call_id:
             events.extend(self._close_tool(str(previous_id), raw_event))
 
@@ -535,14 +541,15 @@ def _process_tool_chunk(
             parent_message_id=source_message_id,
             namespace=source.graph_namespace,
             index=index,
+            order=len(self._started_tool_ids),
         )
         self._active_tools[tool_call_id] = active
         self._tool_names_by_id[tool_call_id] = tool_name
         self._tool_history.setdefault((source.graph_namespace, tool_name), []).append(
             active
         )
-        self._tool_ids_by_index[index_key] = tool_call_id
-        self._tool_id_history_by_index[index_key] = tool_call_id
+        self._tool_ids_by_slot[index_key] = tool_call_id
+        self._tool_id_history_by_slot[index_key] = tool_call_id
         self._started_tool_ids.add(tool_call_id)
         events.append(
             ToolCallStartEvent(
@@ -806,8 +813,12 @@ def _close_tool(
     if active is None or tool_call_id in self._ended_tool_ids:
         return []
     if active.parent_message_id is not None:
-        self._tool_ids_by_index.pop(
-            (active.namespace, active.parent_message_id, active.index),
+        self._tool_ids_by_slot.pop(
+            (
+                active.namespace,
+                active.parent_message_id,
+                active.index if active.index is not None else active.tool_call_id,
+            ),
             None,
         )
     self._ended_tool_ids.add(tool_call_id)

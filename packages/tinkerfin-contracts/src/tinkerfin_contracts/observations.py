@@ -109,12 +109,28 @@ class NativeToolCall(ContractModel):
 
 
 class NativeToolCallChunk(ContractModel):
-    """Describe one Tool argument fragment in its provider-defined slot."""
+    """Describe Tool arguments identified by a provider index or an explicit ID.
 
-    index: int = Field(ge=0)
+    LangChain ToolCallChunk permits a missing index, including complete calls from
+    langchain-ollama. Such calls must carry their own ID and name; they cannot use
+    another call's positional binding. Indexed continuations may omit both fields.
+    """
+
+    index: int | None = Field(
+        ge=0,
+        description="Provider fragment index; None when the call identifies itself",
+    )
     id: str | None = Field(default=None, min_length=1, max_length=1024)
     name: str | None = Field(default=None, min_length=1, max_length=1024)
     arguments: str = ""
+
+    @model_validator(mode="after")
+    def unindexed_calls_identify_themselves(self) -> NativeToolCallChunk:
+        """Reject argument fragments that have no reliable correlation identity."""
+
+        if self.index is None and (self.id is None or self.name is None):
+            raise ValueError("unindexed tool calls require both id and name")
+        return self
 
 
 class NativeMessageRecord(ContractModel):

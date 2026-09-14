@@ -210,7 +210,9 @@ class _TracingSession:
         self._message_model_names: dict[tuple[tuple[str, ...], str], str] = {}
         self._reasoning_completed: set[tuple[tuple[str, ...], str]] = set()
         self._active_reasoning: dict[tuple[tuple[str, ...], str], None] = {}
-        self._tool_slots: dict[tuple[tuple[str, ...], str, int], tuple[str, str]] = {}
+        self._tool_slots: dict[
+            tuple[tuple[str, ...], str, int | str], tuple[str, str]
+        ] = {}
         self._tool_names: dict[tuple[tuple[str, ...], str], str] = {}
         self._tool_started: set[tuple[tuple[str, ...], str]] = set()
         self._tool_argument_fragments: dict[tuple[tuple[str, ...], str], str] = {}
@@ -1692,7 +1694,13 @@ class _TracingSession:
     ) -> list[TraceSemanticFact]:
         facts: list[TraceSemanticFact] = []
         for chunk in message.tool_call_chunks:
-            slot = (namespace, parent_message_id, chunk.index)
+            # Unindexed calls carry their own identity (NativeToolCallChunk's
+            # contract); sharing a None slot would mix independent Tool arguments.
+            slot = (
+                namespace,
+                parent_message_id,
+                chunk.index if chunk.index is not None else str(chunk.id),
+            )
             if chunk.id is not None and chunk.name is not None:
                 self._tool_slots[slot] = (chunk.id, chunk.name)
                 key = (namespace, chunk.id)

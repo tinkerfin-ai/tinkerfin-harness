@@ -6,13 +6,14 @@ import shlex
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from langchain_core.tools import BaseTool, tool
+from langchain_core.tools import BaseTool, ToolException, tool
 from pydantic import JsonValue
 
 from tinkerfin.tools import ToolRuntime
 from tinkerfin_sandbox import RootedOpenSandboxBackend
 from tinkerfin_studio.attachments.processing import MAX_FILE_BYTES
 from tinkerfin_studio.attachments.service import AttachmentService, byte_chunks
+from tinkerfin_studio.attachments.work_files import describe_work_file
 
 _BROWSER_SCRIPT = """import asyncio,os,sys
 from playwright.async_api import async_playwright
@@ -38,7 +39,7 @@ def build_sandbox_attachment_tools(
     thread_id: str | None = None,
     collection_id: str | None = None,
 ) -> list[BaseTool]:
-    """声明文件交付工具，执行时取得当前会话工作区，保存成功后返回附件引用"""
+    """声明工作区截图与显式交付工具，固定当前会话或自动化附件归属"""
 
     if (thread_id is None) == (collection_id is None):
         raise ValueError("文件工具必须绑定一个会话或自动化附件集合")
@@ -47,7 +48,12 @@ def build_sandbox_attachment_tools(
         sandbox: RootedOpenSandboxBackend, path: str, name: str
     ) -> list[dict[str, JsonValue]]:
         # 框架负责工作区路径校验、有界读取和取消时的资源释放
-        data = await sandbox.aread_bytes(path, max_bytes=MAX_FILE_BYTES)
+        try:
+            data = await sandbox.aread_bytes(path, max_bytes=MAX_FILE_BYTES)
+        except FileNotFoundError as error:
+            raise ToolException(
+                "工作文件不存在，未交付附件。请使用生成工具返回的 file_path，或先查找实际文件"
+            ) from error
         file = await service.upload(
             user_id=user_id,
             name=name,
@@ -64,39 +70,43 @@ def build_sandbox_attachment_tools(
     ) -> list[dict[str, JsonValue]]:
         """把用户工作区中的文件保存为会话附件
 
+        仅在决定向用户交付时调用。复制文件当前内容，原工作文件继续保留；
+        后续编辑不会改变已交付附件，附件保存成功后才返回可展示的引用。
+
         Args:
             file_path: 用户工作区内的图片、Markdown、PDF、DOCX 或 XLSX 路径
             name: 下载文件名，扩展名须与内容一致
 
         Returns:
-            已验证并保存的附件引用
+            已保存的附件引用；源文件不存在时返回工具失败结果，不创建附件
 
         Raises:
             BusinessException: 会话不可用或文件不符合附件要求
             ValueError: 文件路径或参数无效
             OpenSandboxError: 工作区读取失败或文件超过大小限制
-            OSError: 文件不存在、不可读或不是普通文件"""
+            OSError: 文件不可读或不是普通文件"""
         return await save_file(runtime.workspace, file_path, name)
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
     async def capture_browser(
         url: str, runtime: ToolRuntime[None, RootedOpenSandboxBackend]
-    ) -> list[dict[str, JsonValue]]:
-        """在用户 Sandbox 打开网页并交付视口截图
+    ) -> str:
+        """在用户工作区生成网页视口截图，不自动交付
 
-        截图作为独立文件保留在工作区，便于后续读取；会话附件单独保存。
-        运行取消或连接失败时不会报告交付成功，工作区仍保留已生成的产物。
+        仅视觉模型可看图，优先用 read_file 读取 preview_file_path，否则读取 file_path。
+        决定交给用户时再调用 deliver_file；截图始终作为独立工作文件保留。
+        运行取消或连接失败时不报告成功，工作区可能保留已生成的产物。
 
         Args:
             url: 不含账户信息的 HTTP 或 HTTPS 网页地址
 
         Returns:
-            已保存的 PNG 视口截图引用
+            工作文件描述；大图片另含 preview_file_path，交付使用 file_path 原图
 
         Raises:
-            BusinessException: 会话不可用或截图不符合附件要求
             ValueError: 地址不合法、截图失败或大小超限
-            OpenSandboxError: 工作区不可用或浏览器依赖缺失"""
+            OpenSandboxError: 工作区不可用、读取失败或文件超过大小限制
+            OSError: 截图不存在、不可读或不是普通文件"""
         parsed = urlsplit(url)
         if (
             parsed.scheme not in {"https", "http"}
@@ -119,7 +129,13 @@ def build_sandbox_attachment_tools(
         result = await sandbox.aexecute(command, timeout=45)
         if result.exit_code != 0:
             raise ValueError("网页截图失败，请检查浏览器依赖和网页是否可用")
-        attachments = await save_file(sandbox, path, "浏览器截图.png")
-        return [{"type": "text", "text": f"截图保留在工作区：{path}"}, *attachments]
+        data = await sandbox.aread_bytes(path, max_bytes=MAX_FILE_BYTES)
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValueError("网页截图未生成有效的 PNG 文件")
+        saved = await describe_work_file(
+            sandbox, service.documents, path=path, name="浏览器截图.png", data=data
+        )
+        return saved.tool_result()
 
+    deliver_file.handle_tool_error = True
     return [deliver_file, capture_browser]

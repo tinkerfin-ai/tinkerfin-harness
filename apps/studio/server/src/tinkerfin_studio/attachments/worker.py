@@ -22,7 +22,11 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
-from tinkerfin_studio.attachments.processing import markdown_text
+from tinkerfin_studio.attachments.processing import (
+    MAX_FILE_BYTES,
+    image_variant,
+    markdown_text,
+)
 
 
 class _ReadDocument(BaseModel):
@@ -55,9 +59,33 @@ class _GenerateDocument(BaseModel):
     )
 
 
+class _ImagePreview(BaseModel):
+    """为工作图片生成不超过模型读取限制的首帧预览"""
+
+    model_config = ConfigDict(extra="forbid")
+    operation: Literal["preview_image"]
+    data: str = Field(max_length=14_000_000, description="原图片的 Base64 内容")
+    max_bytes: int = Field(
+        gt=0, le=MAX_FILE_BYTES, strict=True, description="预览允许的最大字节数"
+    )
+
+
 _DOCUMENT_REQUEST = TypeAdapter(
-    Annotated[_ReadDocument | _GenerateDocument, Field(discriminator="operation")]
+    Annotated[
+        _ReadDocument | _GenerateDocument | _ImagePreview,
+        Field(discriminator="operation"),
+    ]
 )
+
+
+def preview_image(payload: _ImagePreview) -> dict[str, JsonValue]:
+    """生成有界 JPEG 缩略图，不修改原图"""
+    data = base64.b64decode(payload.data, validate=True)
+    for max_side in (1280, 960, 640, 320):
+        preview = image_variant(data, max_side)
+        if len(preview) <= payload.max_bytes:
+            return {"data": base64.b64encode(preview).decode("ascii")}
+    raise ValueError("图片预览超过读取限制")
 
 
 def read_document(payload: _ReadDocument) -> dict[str, JsonValue]:
@@ -211,14 +239,15 @@ def main() -> None:
         payload = _DOCUMENT_REQUEST.validate_json(
             sys.stdin.buffer.read(20 * 1024 * 1024)
         )
-        result = (
-            read_document(payload)
-            if isinstance(payload, _ReadDocument)
-            else generate(payload)
-        )
+        if isinstance(payload, _ReadDocument):
+            result = read_document(payload)
+        elif isinstance(payload, _ImagePreview):
+            result = preview_image(payload)
+        else:
+            result = generate(payload)
         encoded = json.dumps(result, ensure_ascii=False)
         if len(encoded) > (
-            15_000_000 if isinstance(payload, _GenerateDocument) else 100_000
+            100_000 if isinstance(payload, _ReadDocument) else 15_000_000
         ):
             raise ValueError("输出超过限制，请缩小读取范围")
         print(encoded)

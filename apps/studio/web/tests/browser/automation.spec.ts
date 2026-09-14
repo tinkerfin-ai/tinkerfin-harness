@@ -77,6 +77,7 @@ async function prepare(page: Page, language = 'zh-CN') {
   }
   await page.getByRole('button', { name: language === 'en' ? 'Automation' : '自动化', exact: true }).click()
   await expect(page.getByRole('tab', { name: language === 'en' ? 'History' : '历史', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page).toHaveTitle(language === 'en' ? 'TinkerFin - Automation' : 'TinkerFin - 自动化')
   return requests
 }
 

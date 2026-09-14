@@ -177,13 +177,18 @@ class EventContext(_ProtocolModel):
 
 @dataclass(slots=True)
 class ActiveToolCall:
-    """Correlation state for one streamed model Tool call."""
+    """Track Tool identity and proposal order independently of provider indices.
+
+    Unindexed calls retain first-seen proposal order for checkpoint-free approval
+    matching. Their identities always come from Tool IDs, never this ordering.
+    """
 
     tool_call_id: str
     tool_name: str
     parent_message_id: str | None
     namespace: tuple[str, ...]
     index: int | None
+    order: int
     arguments: str = ""
 
 
@@ -654,15 +659,25 @@ def _tool_call_id_groups_for_actions(
             calls_by_message.setdefault(call.parent_message_id, []).append(call)
     candidate_messages: list[list[HitlToolCallCandidate]] = []
     for calls in calls_by_message.values():
-        candidates: list[HitlToolCallCandidate] = []
-        for call in sorted(
-            calls,
-            key=lambda item: (
-                item.index is None,
-                item.index if item.index is not None else 0,
-            ),
+        if any(call.index is None for call in calls) and any(
+            call.index is not None for call in calls
         ):
-            if call.index is None or call.parent_message_id is None:
+            # Provider positions cannot locate unindexed calls among indexed ones.
+            # A complete checkpoint message (handled above) supplies that ordering.
+            raise HitlCorrelationError(
+                "mixed indexed and unindexed Tool history requires checkpoint message order"
+            )
+        candidates: list[HitlToolCallCandidate] = []
+        for position, call in enumerate(
+            sorted(
+                calls,
+                key=lambda item: (
+                    item.index is None,
+                    item.index if item.index is not None else item.order,
+                ),
+            )
+        ):
+            if call.parent_message_id is None:
                 raise HitlCorrelationError(
                     "streamed Tool call history requires message positions"
                 )
@@ -683,7 +698,7 @@ def _tool_call_id_groups_for_actions(
                     tool_call_id=call.tool_call_id,
                     tool_name=call.tool_name,
                     parent_message_id=call.parent_message_id,
-                    position=call.index,
+                    position=position,
                     arguments=arguments,
                     arguments_error=arguments_error,
                 )

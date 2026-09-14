@@ -111,6 +111,92 @@ async def test_ollama_preserves_tool_calls_and_uses_only_configured_key():
     assert reply.tool_calls[0]["id"]
 
 
+@pytest.mark.parametrize("image_support", ["supported", "unsupported"])
+async def test_workspace_image_read_respects_declared_model_capability(
+    tmp_path, image_support, large_image, work_file_runtime
+):
+    """工作图片按配置进入模型请求，读取过程不产生前端附件"""
+    from deepagents.backends import FilesystemBackend
+
+    from tinkerfin import TinkerFin
+    from tinkerfin_studio.attachments.documents import DocumentProcessor
+    from tinkerfin_studio.attachments.work_files import save_work_file
+
+    _, workspace, files = work_file_runtime
+    saved = await save_work_file(
+        workspace, DocumentProcessor(), name="image.png", data=large_image
+    )
+    assert saved.preview_file_path is not None
+    for path, data in files.items():
+        (tmp_path / path.lstrip("/")).write_bytes(data)
+    requests = []
+
+    async def respond(request):
+        requests.append(json.loads(request.content))
+        message = {"role": "assistant", "content": "done"}
+        if len(requests) == 1:
+            message = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "read_file",
+                            "arguments": {"file_path": saved.preview_file_path},
+                        }
+                    }
+                ],
+            }
+        return httpx.Response(
+            200,
+            content=json.dumps(
+                {
+                    "model": "qwen3:14b",
+                    "message": message,
+                    "done": True,
+                    "done_reason": "stop",
+                }
+            )
+            + "\n",
+            request=request,
+        )
+
+    async with httpx.MockTransport(respond) as transport:
+        config = configuration().model_copy(update={"image_support": image_support})
+        model = create_chat_model(config, http_async_transport=transport)
+        runtime = (
+            TinkerFin()
+            .with_namespace("workspace-read")
+            .build(
+                model=model,
+                backend=FilesystemBackend(root_dir=tmp_path, virtual_mode=True),
+            )
+        )
+        stream = runtime.open_agui_run(
+            thread_id="thread",
+            run_id="run",
+            messages=[{"id": "input", "role": "user", "content": "Read /image.png"}],
+        )
+        try:
+            events = [event async for event in stream]
+            assert stream.error is None, repr(stream.error)
+        finally:
+            await stream.aclose()
+    assert len(requests) == 2, [event.model_dump(mode="json") for event in events]
+    images = [
+        image
+        for message in requests[1]["messages"]
+        for image in message.get("images", [])
+    ]
+    assert bool(images) == (image_support == "supported")
+    assert files[saved.file_path] == large_image
+    assert "Binary file exceeds" not in str(requests[1]["messages"])
+    wire = [event.model_dump(mode="json", by_alias=True) for event in events]
+    results = [event for event in wire if event["type"] == "TOOL_CALL_RESULT"]
+    assert len(results) == 1 and results[0]["attachments"] == []
+    assert sum(event["type"] == "RUN_FINISHED" for event in wire) == 1
+
+
 @pytest.mark.parametrize(
     ("provider", "body", "path"),
     [

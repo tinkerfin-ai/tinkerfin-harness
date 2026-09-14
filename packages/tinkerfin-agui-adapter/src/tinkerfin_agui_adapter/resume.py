@@ -8,7 +8,7 @@ from typing import Literal, Never, cast
 
 from ag_ui.core.types import Interrupt as AgUiInterrupt
 from ag_ui.core.types import ResumeEntry
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from pydantic import JsonValue, ValidationError
 
 from ._json_schema import (
@@ -595,6 +595,17 @@ class ResumeMapper:
                         raise TypeError(
                             "checkpoint messages must contain LangChain messages"
                         )
+                    if isinstance(message, ToolMessage):
+                        scoped_messages.append(
+                            message.model_copy(
+                                update={
+                                    "tool_call_id": codec.encode(
+                                        "tool", namespace, message.tool_call_id
+                                    )
+                                }
+                            )
+                        )
+                        continue
                     if not isinstance(message, AIMessage):
                         scoped_messages.append(message)
                         continue

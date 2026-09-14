@@ -368,3 +368,98 @@ async def test_file_access_choice_controls_root_and_subagent_review(
     )
     assert bool(result.get("__interrupt__")) is (access_mode == "write_approval")
     assert workspace.opened == workspace.closed
+
+
+@pytest.mark.parametrize("delegated", [False, True])
+async def test_product_tool_failure_allows_root_and_researcher_to_reply(
+    monkeypatch, attachments, model_http_client, delegated
+):
+    """文件工具校验失败返回对应角色，委派本身可以正常完成"""
+    from langchain_core.language_models.fake_chat_models import (
+        FakeMessagesListChatModel,
+    )
+
+    from tinkerfin_tracing import Tracer
+
+    class Model(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    responses: list[BaseMessage] = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "invalid-file",
+                    "name": "create_file",
+                    "args": {"name": "wrong.txt", "kind": "md", "text": "hello"},
+                }
+            ],
+        ),
+        AIMessage(content="文件名格式无效，未生成文件"),
+    ]
+    if delegated:
+        responses.insert(
+            0,
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "delegate",
+                        "name": "task",
+                        "args": {
+                            "subagent_type": "researcher",
+                            "description": "准备报告",
+                        },
+                    }
+                ],
+            ),
+        )
+        responses.append(AIMessage(content="已确认报告未生成"))
+    model = Model(responses=responses)
+    monkeypatch.setattr(
+        runtime_module, "create_chat_model", lambda *args, **kwargs: model
+    )
+    workspace = _Workspace()
+
+    class Sandboxes:
+        def workspace(self, key, *, routes):
+            return workspace
+
+    tracer = Tracer()
+    resources = cast(
+        ApplicationResources,
+        SimpleNamespace(
+            attachments=attachments,
+            model_http_transport=None,
+            model_http_client=model_http_client,
+            agent_subagents=await load_subagents(),
+            tinkerfin=TinkerFin(checkpointer=InMemorySaver()).with_observer(tracer),
+            sandbox_manager=Sandboxes(),
+            settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
+        ),
+    )
+    runtime = build_conversation_runtime(
+        resources=resources,
+        user_id=7,
+        thread_id="tool-error",
+        model_config=_model_config(),
+        image_model=None,
+    )
+    result = await runtime.ainvoke(
+        thread_id="tool-error",
+        run_id="run",
+        input={"messages": [{"role": "user", "content": "准备报告"}]},
+    )
+    messages = result["messages"]
+    assert isinstance(messages, list)
+    assert "未生成" in str(messages[-1])
+    graph = await tracer.query(runtime.thread_identity("tool-error"))
+    tools = [node for node in graph.nodes if node.kind == "tool"]
+    assert sum(node.status == "failed" for node in tools) == 1
+    if delegated:
+        assert any(
+            node.kind == "subagent" and node.status == "succeeded"
+            for node in graph.nodes
+        )
+    assert workspace.opened == workspace.closed

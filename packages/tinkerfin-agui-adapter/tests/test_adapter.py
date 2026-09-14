@@ -2805,11 +2805,11 @@ def test_ai_message_without_stable_id_is_rejected_before_stream_state_changes() 
             {
                 "name": "search",
                 "args": "{}",
-                "id": "call-search",
+                "id": None,
                 "index": None,
                 "type": "tool_call_chunk",
             },
-            "integer index",
+            "both id and name",
         ),
     ],
 )
@@ -3071,3 +3071,154 @@ def test_failed_tool_snapshot_preserves_error_status_for_history_consumers() -> 
     assert isinstance(result, AgUiToolMessage)
     assert result.error == "file missing"
     assert result.content == "file missing"
+
+
+@pytest.mark.parametrize("namespace", [(), ("tools:child",)])
+def test_unindexed_parallel_tool_calls_keep_independent_arguments_and_results(
+    namespace: tuple[str, ...],
+) -> None:
+    adapter = _adapter()
+    if namespace:
+        adapter.process(
+            _task_start(
+                graph_task_id="child", tool_call_id="delegate", description="Inspect"
+            )
+        )
+    events: list[BaseEvent] = []
+    for call_id, value in [("call-one", "one"), ("call-two", "two")]:
+        events.extend(
+            adapter.process(
+                {
+                    "type": "messages",
+                    "ns": namespace,
+                    "data": (
+                        AIMessageChunk(
+                            id="ollama-message",
+                            content="",
+                            tool_calls=[
+                                {
+                                    "id": call_id,
+                                    "name": "diagnostic_echo",
+                                    "args": {"value": value},
+                                },
+                            ],
+                        ),
+                        {"langgraph_node": "model"},
+                    ),
+                }
+            )
+        )
+    for call_id in ["call-two", "call-one"]:
+        events.extend(
+            adapter.process(
+                {
+                    "type": "messages",
+                    "ns": namespace,
+                    "data": (
+                        ToolMessage(
+                            id=f"result-{call_id}",
+                            content="ok",
+                            tool_call_id=call_id,
+                            name="diagnostic_echo",
+                        ),
+                        {"langgraph_node": "tools"},
+                    ),
+                }
+            )
+        )
+    events.extend(adapter.finish())
+    for call_id, value in [("call-one", "one"), ("call-two", "two")]:
+        call_events = [
+            event
+            for event in events
+            if getattr(event, "tool_call_id", None) == _tool_id(namespace, call_id)
+        ]
+        assert [event.type.value for event in call_events] == [
+            "TOOL_CALL_START",
+            "TOOL_CALL_ARGS",
+            "TOOL_CALL_END",
+            "TOOL_CALL_RESULT",
+        ]
+        args = [
+            event.delta for event in call_events if isinstance(event, ToolCallArgsEvent)
+        ]
+        assert json.loads("".join(args)) == {"value": value}
+    assert adapter.finish() == []
+
+
+def test_unindexed_hitl_history_preserves_proposal_order_across_tool_names() -> None:
+    adapter = _adapter()
+    calls: list[ToolCallChunk] = [
+        {"id": "first", "name": "write_file", "args": '{"path":"one"}', "index": None},
+        {"id": "middle", "name": "read_file", "args": '{"path":"two"}', "index": None},
+        {"id": "last", "name": "write_file", "args": '{"path":"three"}', "index": None},
+    ]
+    adapter.process(
+        {
+            "type": "messages",
+            "ns": (),
+            "data": (
+                AIMessageChunk(id="review-message", content="", tool_call_chunks=calls),
+                {"langgraph_node": "model"},
+            ),
+        }
+    )
+    adapter.process(
+        _hitl_history_interrupt_part(
+            action_groups=(
+                (
+                    ("write_file", {"path": "one"}),
+                    ("read_file", {"path": "two"}),
+                    ("write_file", {"path": "three"}),
+                ),
+            )
+        )
+    )
+    assert [item.tool_call_id for item in adapter.main_outcome().interrupts] == [
+        _tool_id((), call_id) for call_id in ["first", "middle", "last"]
+    ]
+
+
+def test_indexed_fragments_and_unindexed_calls_do_not_share_a_slot() -> None:
+    adapter = _adapter()
+    chunks: list[ToolCallChunk] = [
+        {"id": "indexed", "name": "echo", "args": '{"value":', "index": 0},
+        {"id": "unindexed", "name": "echo", "args": '{"value":"other"}', "index": None},
+        {"id": None, "name": None, "args": '"original"}', "index": 0},
+    ]
+    events: list[BaseEvent] = []
+    for chunk in chunks:
+        events.extend(
+            adapter.process(
+                {
+                    "type": "messages",
+                    "ns": (),
+                    "data": (
+                        AIMessageChunk(
+                            id="mixed-message", content="", tool_call_chunks=[chunk]
+                        ),
+                        {"langgraph_node": "model"},
+                    ),
+                }
+            )
+        )
+    events.extend(adapter.finish())
+    for call_id, expected in [("indexed", "original"), ("unindexed", "other")]:
+        deltas = [
+            event.delta
+            for event in events
+            if isinstance(event, ToolCallArgsEvent)
+            and event.tool_call_id == _tool_id((), call_id)
+        ]
+        assert json.loads("".join(deltas)) == {"value": expected}
+    with pytest.raises(HitlCorrelationError, match="checkpoint message order"):
+        adapter.process(
+            _hitl_history_interrupt_part(
+                action_groups=(
+                    (
+                        ("echo", {"value": "original"}),
+                        ("echo", {"value": "other"}),
+                    ),
+                )
+            )
+        )

@@ -9,9 +9,12 @@ from typing import Literal
 from langchain_core.tools import BaseTool, tool
 from pydantic import JsonValue, TypeAdapter
 
+from tinkerfin.tools import ToolRuntime
+from tinkerfin_sandbox import RootedOpenSandboxBackend
 from tinkerfin_studio.attachments.documents import DocumentProcessor
 from tinkerfin_studio.attachments.generation import generate_image_bytes
-from tinkerfin_studio.attachments.service import AttachmentService, byte_chunks
+from tinkerfin_studio.attachments.service import AttachmentService
+from tinkerfin_studio.attachments.work_files import save_work_file
 from tinkerfin_studio.models.schemas import AgentModelConfig
 
 
@@ -23,7 +26,6 @@ def build_attachment_tools(
     thread_id: str | None = None,
     collection_id: str | None = None,
     image_model: AgentModelConfig | None,
-    supports_images: bool,
     model_allowed_origins: tuple[str, ...] = (),
 ) -> list[BaseTool]:
     """把当前用户和会话权限固定到文件工具，不接受模型传入归属信息"""
@@ -91,53 +93,63 @@ def build_attachment_tools(
         return json.dumps(result, ensure_ascii=False)
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
-    async def view_image(attachment_id: str) -> list[dict[str, JsonValue]]:
-        """重新查看会话中保存的图片
+    async def import_attachment(
+        attachment_id: str, runtime: ToolRuntime[None, RootedOpenSandboxBackend]
+    ) -> str:
+        """把已有附件复制到工作区，供读取、检查或编辑，不交付新附件
+
+        视觉模型看图时优先用 read_file 读取 preview_file_path，否则读取 file_path。
+        修改工作文件不会改变原附件，需要交付修改结果时调用 deliver_file。
 
         Args:
-            attachment_id: 当前会话图片附件标识
+            attachment_id: 当前会话或自动化附件集合中的文件标识
 
         Returns:
-            供当前视觉模型读取的持久化图片引用
+            工作文件描述；大图片另含 preview_file_path，交付使用 file_path 原图
 
         Raises:
             BusinessException: 附件不可用或当前用户无权访问
-            ValueError: 当前模型不支持图片或附件不是图片"""
-        if not supports_images:
-            raise ValueError("当前模型不支持图片，请切换支持看图的模型")
-        file = await service.get(
+            ValueError: 文件名或文件大小不符合要求
+            OSError: 工作文件保存失败
+            OpenSandboxError: 工作区不可用或传输失败"""
+        file, data = await service.read(
             attachment_id,
             user_id=user_id,
             thread_id=thread_id,
             collection_id=collection_id,
         )
-        if not file.mime_type.startswith("image/"):
-            raise ValueError("所选附件不是图片")
-        return [file.content_block()]
+        saved = await save_work_file(
+            runtime.workspace, processor, name=file.name, data=data
+        )
+        return saved.tool_result()
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
     async def create_file(
         name: str,
         kind: Literal["xlsx", "pdf", "png", "md"],
+        runtime: ToolRuntime[None, RootedOpenSandboxBackend],
         text: str = "",
         rows: list[list[str | int | float | bool | None]] | None = None,
         values: list[float] | None = None,
-    ) -> list[dict[str, JsonValue]]:
-        """生成并交付 Markdown、Excel、中文 PDF 或柱状图
+    ) -> str:
+        """在工作区生成 Markdown、Excel、中文 PDF 或柱状图，不自动交付
+
+        可以先读取或修改工作文件；决定交给用户时调用 deliver_file。
 
         Args:
-            name: 下载文件名，扩展名须与 kind 一致
+            name: 工作文件名称，扩展名须与 kind 一致
             kind: 生成格式，支持 md、xlsx、pdf 或 png
             text: Markdown 或 PDF 正文，最多 50000 字符；Markdown 保留原文换行
             rows: Excel 单元格，最多 1000 行、每行 50 列
             values: PNG 柱状图的 1 到 30 个非负数，顺序对应横轴编号
 
         Returns:
-            已保存且可下载的附件引用
+            工作文件描述；大图片另含 preview_file_path，交付使用 file_path 原图
 
         Raises:
-            BusinessException: 会话不可用或文件不符合附件要求
             ValueError: 文件名、生成参数或文件内容不符合要求
+            OSError: 工作文件保存失败
+            OpenSandboxError: 工作区不可用或传输失败
             TimeoutError: 文件生成超过 30 秒"""
         extension = name.rsplit(".", 1)[-1].lower()
         if extension not in ({"md", "markdown"} if kind == "md" else {kind}):
@@ -156,29 +168,27 @@ def build_attachment_tools(
         if not isinstance(encoded, str):
             raise TypeError("生成服务没有返回文件")
         data = base64.b64decode(encoded, validate=True)
-        file = await service.upload(
-            user_id=user_id,
-            name=name,
-            chunks=byte_chunks(data),
-            thread_id=thread_id,
-            collection_id=collection_id,
-            source="tool",
-        )
-        return [file.content_block()]
+        saved = await save_work_file(runtime.workspace, processor, name=name, data=data)
+        return saved.tool_result()
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
-    async def generate_image(prompt: str) -> list[dict[str, JsonValue]]:
-        """使用本人默认生图服务生成并保存图片，不自动重复收费请求
+    async def generate_image(
+        prompt: str, runtime: ToolRuntime[None, RootedOpenSandboxBackend]
+    ) -> str:
+        """使用本人默认生图服务生成工作图片，不自动交付或重复收费请求
+
+        仅视觉模型可看图，优先读取 preview_file_path；交付时用 file_path 原图。
 
         Args:
             prompt: 图片描述，长度为 1 到 4000 字符
 
         Returns:
-            已保存且可预览的图片附件引用
+            工作文件描述；大图片另含 preview_file_path，交付使用 file_path 原图
 
         Raises:
-            BusinessException: 会话不可用或文件不符合附件要求
             ValueError: 未设置默认生图服务、描述或供应商响应不合法
+            OSError: 工作文件保存失败
+            OpenSandboxError: 工作区不可用或传输失败
             httpx.HTTPError: 生图或下载发生网络错误"""
         data = await generate_image_bytes(
             image_model, prompt, allowed_origins=model_allowed_origins
@@ -191,16 +201,17 @@ def build_attachment_tools(
             extension = "webp"
         else:
             raise ValueError("生图服务须返回 PNG、JPEG 或 WebP 图片")
-        file = await service.upload(
-            user_id=user_id,
-            name=f"生成图片.{extension}",
-            chunks=byte_chunks(data),
-            thread_id=thread_id,
-            collection_id=collection_id,
-            source="tool",
+        saved = await save_work_file(
+            runtime.workspace, processor, name=f"生成图片.{extension}", data=data
         )
-        return [file.content_block()]
+        return saved.tool_result()
 
-    for read_tool in (list_attachments, read_attachment, view_image):
+    for read_tool in (list_attachments, read_attachment):
         read_tool.metadata = {"read_only": True}
-    return [list_attachments, read_attachment, view_image, create_file, generate_image]
+    return [
+        list_attachments,
+        read_attachment,
+        import_attachment,
+        create_file,
+        generate_image,
+    ]

@@ -135,7 +135,7 @@ def _message_record(message: BaseMessage) -> NativeMessageRecord:
 
     tool_calls: tuple[NativeToolCall, ...] = ()
     tool_chunks: tuple[NativeToolCallChunk, ...] = ()
-    # AIMessageChunk subclasses AIMessage in LangChain Core 1.5.3. Its derived
+    # AIMessageChunk subclasses AIMessage in LangChain Core 1.6.1. Its derived
     # ``tool_calls`` view can contain an intentionally ID-less entry while a later
     # provider fragment contributes arguments to an existing index. Only complete
     # AIMessage snapshots may populate the complete-call contract; the locked stream
@@ -144,7 +144,7 @@ def _message_record(message: BaseMessage) -> NativeMessageRecord:
     if isinstance(message, AIMessageChunk):
         tool_chunks = tuple(
             NativeToolCallChunk(
-                index=cast(int, chunk["index"]),
+                index=chunk["index"],
                 id=chunk.get("id"),
                 name=chunk.get("name"),
                 arguments=chunk.get("args") or "",
