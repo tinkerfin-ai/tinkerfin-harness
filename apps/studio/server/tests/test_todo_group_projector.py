@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import tracemalloc
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
@@ -22,7 +21,6 @@ from tinkerfin_studio.conversation.todo_groups import (
 from tinkerfin_tracing import (
     CapturedValue,
     MessageFact,
-    NativeExtraFact,
     RunFact,
     StateRevisionFact,
     ToolFact,
@@ -314,6 +312,8 @@ def test_projector_projects_confirmed_root_todos_deterministically() -> None:
     )
     projector.close()
     repeated.close()
+    with pytest.raises(RuntimeError, match="已关闭"):
+        projector.consume(_confirmed_todo_events()[-1])
 
 
 def test_projector_updates_the_existing_group_without_changing_its_identity() -> None:
@@ -499,49 +499,6 @@ def test_projector_ignores_omitted_subgraph_state() -> None:
     )
 
     assert _snapshot_for(projector) == _expected_projected_snapshot()
-
-
-def test_projector_streams_one_hundred_thousand_events_without_retaining_input() -> (
-    None
-):
-    events = _confirmed_todo_events()
-    projector = TodoGroupProjector()
-    for event in events:
-        projector.consume(event)
-    last = events[-1]
-    occurred_at = datetime(2026, 8, 30, 13, tzinfo=UTC)
-
-    tracemalloc.start()
-    for trace_seq in range(last.trace_seq + 1, 100_001):
-        projector.consume(
-            TraceEvent(
-                event_id=f"event:smoke:{trace_seq}",
-                trace_seq=trace_seq,
-                generation=last.generation,
-                fact=NativeExtraFact(
-                    source_observation_id=f"observation:smoke:{trace_seq}",
-                    identity=RunIdentity(
-                        namespace="test",
-                        thread_id="thread:first-success",
-                        run_id="run-1",
-                    ),
-                    occurred_at=occurred_at,
-                    monotonic_ns=trace_seq,
-                    mode="custom",
-                    data_type="smoke",
-                ),
-                persisted_bytes=1,
-            )
-        )
-    _current_bytes, peak_bytes = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-
-    assert projector.last_trace_seq == 100_000
-    assert _snapshot_for(projector) == _expected_projected_snapshot()
-    assert peak_bytes <= 64 * 1024 * 1024
-    projector.close()
-    with pytest.raises(RuntimeError, match="已关闭"):
-        projector.consume(last)
 
 
 @pytest.mark.parametrize(

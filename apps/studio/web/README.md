@@ -36,15 +36,14 @@ pnpm test             # 单元测试
 ```bash
 pnpm exec playwright install chromium
 pnpm test:proxy       # HTTP 代理与附件上传测试
-pnpm test:browser     # 自动构建，运行交互与性能测试
+pnpm test:browser     # 自动构建，运行交互与无障碍测试
 ```
 
-单独运行浏览器用例前先构建；性能用例使用一个工作进程：
+单独运行浏览器用例前先构建：
 
 ```bash
 pnpm build
 pnpm exec playwright test tests/browser/conversation-failure.spec.ts
-pnpm exec playwright test --grep @performance --workers=1
 ```
 
 浏览器测试独占本地预览端口，默认使用 4173。端口被占用时可指定其他端口：

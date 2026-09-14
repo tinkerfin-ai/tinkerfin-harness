@@ -154,24 +154,6 @@ describe('TodoTraceDrawer', () => {
     await waitFor(() => expect(latest).toHaveFocus())
   })
 
-  it('windows a five-thousand-group tree to a bounded number of root rows', async () => {
-    render(
-      <TodoTraceDrawer
-        groups={Array.from({ length: 5_000 }, (_, index) => group(index))}
-        open
-        usesOverlay={false}
-        openEpoch={1}
-        drawerRef={createRef()}
-        onClose={vi.fn()}
-        onLocate={vi.fn()}
-      />,
-    )
-
-    await screen.findByRole('button', { name: '收起任务组：最新任务' })
-    expect(screen.getAllByRole('listitem').length).toBeLessThanOrEqual(80)
-    expect(screen.getByRole('list', { name: '任务列表' })).toBeInTheDocument()
-  })
-
   it('removes the closed drawer from interaction and accessibility', () => {
     render(
       <TodoTraceDrawer

@@ -38,7 +38,7 @@ pnpm test:browser
 
 浏览器测试会先构建应用并启动专用预览服务，请确保 `4173` 端口空闲。Docker 集成与独立 wheel 检查见[仓库开发说明](cn/development.md)。未执行的检查请说明原因。
 
-直接使用 `pnpm exec playwright test` 运行指定测试前，先执行 `pnpm build`。运行带 `@performance` 标签的测试时，使用 `--workers=1`。
+直接使用 `pnpm exec playwright test` 运行指定测试前，先执行 `pnpm build`。
 
 ## 许可证
 

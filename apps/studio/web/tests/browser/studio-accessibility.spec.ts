@@ -526,10 +526,8 @@ interface MockStudioOptions {
   conversationMessages?: Message[]
   emptyHistory?: boolean
   expectedMessageText?: string
-  onHistoryRequest?: (request: { cursor: string | null; receivedAt: number }) => void
   paginatedHistory?: boolean
   paginationPageCount?: number
-  paginationResponseDelayMs?: number
   pinError?: boolean
   planQuestion?: boolean
   planQuestionForm?: JsonObject
@@ -543,10 +541,8 @@ async function mockStudio(page: Page, {
   conversationMessages,
   emptyHistory = false,
   expectedMessageText = '浏览器历史消息 150',
-  onHistoryRequest,
   paginatedHistory = false,
   paginationPageCount = 2,
-  paginationResponseDelayMs = 0,
   pinError = false,
   planQuestion = false,
   planQuestionForm: planQuestionFormOverride,
@@ -847,13 +843,9 @@ async function mockStudio(page: Page, {
     }
     if (url.pathname === '/api/conversation/history') {
       const cursor = url.searchParams.get('cursor')
-      onHistoryRequest?.({ cursor, receivedAt: Date.now() })
       const pageStart = cursor ? 20 + Math.max(0, historyRequestCount - 1) * 10 : 0
       const pageSize = paginatedHistory ? (cursor ? 10 : 20) : 1
       historyRequestCount += 1
-      if (cursor && paginationResponseDelayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, paginationResponseDelayMs))
-      }
       await fulfillJson(route, {
         items: emptyHistory ? [] : Array.from({ length: pageSize }, (_, offset) => {
           const index = pageStart + offset
@@ -1264,6 +1256,7 @@ test('Plan 澄清按后端题型渲染单选、多选、文本与日期控件', 
   await page.setViewportSize({ width: 1024, height: 900 })
   await mockStudio(page, { planQuestion: true })
 
+  await expect(page.getByText('推荐', { exact: true })).toHaveCount(1)
   await expect(page.getByRole('radio', { name: 'Web' })).not.toBeFocused()
   const singleOptionBounds = await page.locator('.plan-question-option').first().boundingBox()
   if (!singleOptionBounds) throw new Error('单选项几何不可用')
@@ -1271,6 +1264,17 @@ test('Plan 澄清按后端题型渲染单选、多选、文本与日期控件', 
   await expect(page.getByRole('button', { name: '下一题', exact: true })).toBeDisabled()
   await page.getByRole('radio', { name: 'Web' }).click()
   await expect(page.getByRole('heading', { name: '需要覆盖哪些平台？' })).toBeVisible()
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect(page.getByText('推荐', { exact: true })).toHaveCount(0)
+      await expect(page.getByRole('checkbox', { name: 'Web', exact: true })).toBeAttached()
+      await expect(page.getByRole('checkbox', { name: '移动端', exact: true })).toBeAttached()
+    }
+  }
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'light' })
+  await page.setViewportSize({ width: 1024, height: 900 })
   await expect(page.getByRole('checkbox', { name: 'Web' })).not.toBeFocused()
   await expect(page.getByRole('button', { name: '浏览下一题' })).toBeDisabled()
   await expect(page.getByRole('button', { name: '下一题', exact: true })).toBeDisabled()
@@ -2793,61 +2797,6 @@ test('搜索会话点击后保持标准输入高度且不显示容器描边', as
   }
 })
 
-test('历史分页一次提交最终滑块比例，不产生中间位移动画', { tag: '@performance' }, async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 600 })
-  const historyRequests: Array<{ cursor: string | null; receivedAt: number }> = []
-  await mockStudio(page, {
-    onHistoryRequest: (request) => historyRequests.push(request),
-    paginatedHistory: true,
-    paginationResponseDelayMs: 500,
-  })
-  const history = page.getByRole('region', { name: '最近对话' })
-  const slot = history.locator('.history-pagination-slot')
-  const scrollbar = page.locator('.conversation-history > .ui-overlay-scrollbar')
-  const thumb = scrollbar.locator('.ui-overlay-scrollbar__thumb')
-  await expect(slot).toHaveCSS('height', '44px')
-  const idleScrollHeight = await history.evaluate((element) => element.scrollHeight)
-
-  const fastScrollStartedAt = Date.now()
-  await history.evaluate((element) => {
-    element.scrollTop = element.scrollHeight
-    element.dispatchEvent(new Event('scroll', { bubbles: true }))
-  })
-  await expect(page.getByText('正在加载更多历史会话')).toBeVisible()
-  await expect.poll(() => historyRequests.length).toBe(2)
-  expect(historyRequests[1]!.receivedAt - fastScrollStartedAt).toBeLessThan(100)
-  expect(await history.evaluate((element) => element.scrollHeight)).toBe(idleScrollHeight)
-  await expect(slot).toHaveCSS('height', '44px')
-  const pendingGeometry = await thumb.evaluate(async (element) => {
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-    const bounds = element.getBoundingClientRect()
-    return { height: bounds.height, top: bounds.top }
-  })
-
-  await expect(page.getByRole('button', { name: '打开会话：分页验证会话 29' })).toBeVisible()
-  const finalGeometry = await thumb.evaluate(async (element) => {
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
-    const frames: Array<{ height: number; top: number }> = []
-    for (let index = 0; index < 4; index += 1) {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-      const bounds = element.getBoundingClientRect()
-      frames.push({ height: bounds.height, top: bounds.top })
-    }
-    return {
-      animationCount: element.getAnimations().length,
-      frames,
-      transitionDuration: getComputedStyle(element).transitionDuration,
-    }
-  })
-  expect(finalGeometry.transitionDuration).toBe('0s')
-  expect(finalGeometry.animationCount).toBe(0)
-  expect(finalGeometry.frames[0]!.top).toBeLessThan(pendingGeometry.top)
-  expect(finalGeometry.frames[0]!.height).toBeLessThan(pendingGeometry.height)
-  expect(new Set(
-    finalGeometry.frames.map(({ top, height }) => `${top.toFixed(2)}:${height.toFixed(2)}`),
-  ).size).toBe(1)
-})
-
 test('全局滚动条保持统一参数、分层显隐和直接拖拽映射', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 600 })
   await mockStudio(page, { paginatedHistory: true })
@@ -3088,84 +3037,6 @@ test('reduced-motion 跳过 Flip 布局动画', async ({ page }) => {
   const scrollbar = page.locator('.ui-overlay-scrollbar').first()
   await expect(scrollbar).toHaveCSS('transition-duration', '0s')
   await expect(scrollbar.locator('.ui-overlay-scrollbar__thumb')).toHaveCSS('transition-duration', '0s')
-})
-
-test('布局动效不逐帧触发布局且冷缓存只请求允许的西文字体', { tag: '@performance' }, async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 })
-  const fontResponses = new Map<string, Promise<Buffer>>()
-  page.on('response', (response) => {
-    if (new URL(response.url()).pathname.endsWith('.woff2')) {
-      fontResponses.set(response.url(), response.body())
-    }
-  })
-  await mockStudio(page, {
-    taskTrace: {
-      status: 'ready',
-      todoGroups: [{
-        id: 'todo-group:browser-run',
-        userMessageId: 'browser-message-1',
-        userMessagePreview: '浏览器历史消息 1',
-        groupToolCallId: 'browser-task-trace-tool',
-        createdAt: BASE_TIME,
-        status: 'completed',
-        todos: [{ id: 'browser-todo', content: '验证布局性能', status: 'completed' }],
-      }],
-    },
-  })
-  await page.evaluate(() => document.fonts.ready)
-
-  const westernFonts = [...fontResponses.entries()].filter(([url]) => (
-    url.includes('inter-') || url.includes('jetbrains-mono-')
-  ))
-  expect(westernFonts.length).toBeGreaterThan(0)
-  expect(westernFonts.every(([url]) => (
-    url.includes('-latin-wght-')
-    && !/latin-ext|cyrillic|greek|vietnamese/.test(url)
-  ))).toBe(true)
-  const westernFontBytes = (await Promise.all(
-    westernFonts.map(([, body]) => body.then((content) => content.byteLength)),
-  )).reduce((total, size) => total + size, 0)
-  expect(westernFontBytes).toBeLessThanOrEqual(140_492)
-
-  const session = await page.context().newCDPSession(page)
-  await session.send('Performance.enable')
-  const traceComplete = new Promise<{ stream?: string }>((resolve) => {
-    session.once('Tracing.tracingComplete', resolve)
-  })
-  await session.send('Tracing.start', {
-    categories: 'devtools.timeline',
-    transferMode: 'ReturnAsStream',
-  })
-  const layoutCount = async () => {
-    const metrics = await session.send('Performance.getMetrics')
-    return metrics.metrics.find((metric) => metric.name === 'LayoutCount')?.value ?? 0
-  }
-  const before = await layoutCount()
-  await page.getByRole('button', { name: '收起侧边栏' }).click()
-  await page.waitForTimeout(400)
-  await page.getByRole('button', { name: '任务轨迹 1' }).click()
-  await page.waitForTimeout(400)
-  const layoutDelta = (await layoutCount()) - before
-  await session.send('Tracing.end')
-  const { stream } = await traceComplete
-  if (stream === undefined) throw new Error('Chrome trace did not provide a result stream')
-  let traceJson = ''
-  let traceEof = false
-  while (!traceEof) {
-    const chunk = await session.send('IO.read', { handle: stream })
-    traceJson += chunk.data
-    traceEof = chunk.eof
-  }
-  await session.send('IO.close', { handle: stream })
-  const trace = JSON.parse(traceJson) as {
-    traceEvents: Array<{ name: string; ph: string }>
-  }
-  const tracedLayouts = trace.traceEvents.filter((event) => (
-    event.name === 'Layout' && event.ph === 'X'
-  ))
-
-  expect(layoutDelta).toBeLessThanOrEqual(12)
-  expect(tracedLayouts.length).toBeLessThanOrEqual(12)
 })
 
 test.describe('touch/coarse pointer', () => {

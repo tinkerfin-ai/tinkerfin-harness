@@ -13,7 +13,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:proxy": "node --test tests/server/*.test.mjs",
-    "test:browser": "pnpm build && playwright test --grep-invert @performance && playwright test --grep @performance --workers=1",
+    "test:browser": "pnpm build && playwright test",
     "test:watch": "vitest",
     "preview": "vite preview",
     "test:licenses": "pnpm build && node --test tests/packaging/document-preview-licenses.test.mjs"

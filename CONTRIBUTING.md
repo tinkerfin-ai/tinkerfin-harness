@@ -38,7 +38,7 @@ pnpm test:browser
 
 Browser tests build the application and start their own preview server. Keep port `4173` available. Docker integration and isolated wheel checks are described in [repository development](docs/en/development.md). Report any checks you could not run and why.
 
-When running selected tests with `pnpm exec playwright test` directly, run `pnpm build` first. Use `--workers=1` for tests tagged `@performance`.
+When running selected tests with `pnpm exec playwright test` directly, run `pnpm build` first.
 
 ## License
 

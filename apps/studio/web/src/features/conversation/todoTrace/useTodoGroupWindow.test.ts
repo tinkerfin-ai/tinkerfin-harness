@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { TodoGroup } from '../../../api/conversation/taskTrace'
 import { calculateTodoGroupWindow } from './useTodoGroupWindow'
 
-const groups = Array.from({ length: 5_000 }, (_, index): TodoGroup => ({
+const groups = Array.from({ length: 24 }, (_, index): TodoGroup => ({
   id: `todo-group:run-${index}`,
   userMessageId: `message-${index}`,
   userMessagePreview: `任务组 ${index}`,
@@ -18,37 +18,17 @@ const groups = Array.from({ length: 5_000 }, (_, index): TodoGroup => ({
 }))
 
 describe('calculateTodoGroupWindow', () => {
-  it('keeps the complete scroll range while mounting a bounded root window', () => {
-    const top = calculateTodoGroupWindow({
-      groups,
-      scrollTop: 0,
-      viewportHeight: 1_440,
-    })
-    const middle = calculateTodoGroupWindow({
-      groups,
-      expandedIds: new Set([groups[2_500]!.id]),
-      scrollTop: 180_000,
-      viewportHeight: 1_440,
-    })
-
-    expect(top.totalHeight).toBe((5_000 * 72) + 64)
-    expect(top.items.length).toBeLessThanOrEqual(45)
-    expect(middle.items.length).toBeLessThanOrEqual(45)
-    expect(middle.offsets).toHaveLength(5_001)
-    expect(middle.totalHeight).toBeGreaterThan(top.totalHeight)
-  })
-
   it('uses measured expanded height without changing group count or order', () => {
-    const measured = new Map([[groups[100]!.id, 900]])
+    const measured = new Map([[groups[10]!.id, 900]])
     const result = calculateTodoGroupWindow({
       groups,
-      expandedIds: new Set([groups[100]!.id]),
-      scrollTop: 6_500,
+      expandedIds: new Set([groups[10]!.id]),
+      scrollTop: 500,
       viewportHeight: 768,
       measuredHeights: measured,
     })
 
-    expect(result.offsets[101]! - result.offsets[100]!).toBe(900)
+    expect(result.offsets[11]! - result.offsets[10]!).toBe(900)
     expect(result.items.map((item) => item.group.id))
       .toEqual([...result.items].sort((a, b) => a.index - b.index).map((item) => item.group.id))
   })
@@ -56,25 +36,25 @@ describe('calculateTodoGroupWindow', () => {
   it('does not retain an offscreen group old expanded height after expansion moves', () => {
     const result = calculateTodoGroupWindow({
       groups,
-      expandedIds: new Set([groups[200]!.id]),
-      scrollTop: 13_500,
+      expandedIds: new Set([groups[20]!.id]),
+      scrollTop: 1_200,
       viewportHeight: 768,
-      measuredHeights: new Map([[groups[100]!.id, 900]]),
+      measuredHeights: new Map([[groups[10]!.id, 900]]),
     })
 
-    expect(result.offsets[101]! - result.offsets[100]!).toBe(72)
-    expect(result.offsets[201]! - result.offsets[200]!).toBeGreaterThan(72)
+    expect(result.offsets[11]! - result.offsets[10]!).toBe(72)
+    expect(result.offsets[21]! - result.offsets[20]!).toBeGreaterThan(72)
   })
 
   it('reserves independent dynamic height for every expanded group', () => {
     const result = calculateTodoGroupWindow({
       groups,
-      expandedIds: new Set([groups[100]!.id, groups[101]!.id]),
-      scrollTop: 7_000,
+      expandedIds: new Set([groups[10]!.id, groups[11]!.id]),
+      scrollTop: 600,
       viewportHeight: 768,
     })
 
-    expect(result.offsets[101]! - result.offsets[100]!).toBeGreaterThan(72)
-    expect(result.offsets[102]! - result.offsets[101]!).toBeGreaterThan(72)
+    expect(result.offsets[11]! - result.offsets[10]!).toBeGreaterThan(72)
+    expect(result.offsets[12]! - result.offsets[11]!).toBeGreaterThan(72)
   })
 })

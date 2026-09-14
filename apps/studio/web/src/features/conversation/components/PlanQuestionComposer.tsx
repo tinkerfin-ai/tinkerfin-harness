@@ -658,9 +658,6 @@ export function PlanQuestionComposer({
                         <span className="plan-question-option-copy">
                           <strong>{option.label}</strong>
                           {option.description && <small>{option.description}</small>}
-                          {option.recommended && (
-                            <span className="plan-question-option-recommended">{t('推荐')}</span>
-                          )}
                         </span>
                       </label>
                     )

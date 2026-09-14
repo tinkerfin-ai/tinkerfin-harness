@@ -58,6 +58,7 @@ describe('PlanQuestionComposer', () => {
     const change = (updater: (value: PlanQuestionState) => PlanQuestionState) => { current = updater(current) }
     const view = render(<PlanQuestionComposer threadId="business-actions" interaction={current} onChange={change} onSubmit={vi.fn()} />)
     const role = answerType === 'single_choice' ? 'radio' : 'checkbox'
+    expect(screen.queryAllByText('推荐', { exact: true })).toHaveLength(answerType === 'single_choice' ? 1 : 0)
     for (const option of options) {
       expect(screen.getByRole(role, { name: new RegExp(option.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) })).toBeVisible()
       if ('description' in option) expect(screen.getByText(option.description!)).toBeVisible()
@@ -380,6 +381,8 @@ describe('PlanQuestionComposer', () => {
     const view = render(
       <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
     )
+
+    expect(screen.queryByText('推荐', { exact: true })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('checkbox', { name: /Chrome/ }))
     view.rerender(
