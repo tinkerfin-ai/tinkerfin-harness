@@ -115,6 +115,7 @@ export function TodoTraceDrawer({
   const labels: Record<TodoGroup['status'], string> = {
     running: t('执行中'),
     completed: t('已完成'),
+    incomplete: t('未确认完成'),
     failed: t('失败'),
     cancelled: t('已取消'),
   }

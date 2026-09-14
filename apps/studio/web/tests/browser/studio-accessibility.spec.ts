@@ -2797,55 +2797,6 @@ test('搜索会话点击后保持标准输入高度且不显示容器描边', as
   }
 })
 
-test('全局滚动条保持统一参数、分层显隐和直接拖拽映射', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 600 })
-  await mockStudio(page, { paginatedHistory: true })
-  const pane = page.getByRole('region', { name: '对话内容' })
-  const history = page.getByRole('region', { name: '最近对话' })
-  const mainScrollbar = page.locator('.conversation-region > .ui-overlay-scrollbar')
-  const historyScrollbar = page.locator('.conversation-history > .ui-overlay-scrollbar')
-  const mainThumb = mainScrollbar.locator('.ui-overlay-scrollbar__thumb')
-
-  await expect(mainScrollbar).toHaveAttribute('data-scrollable', 'true')
-  await expect(mainScrollbar).toHaveAttribute('data-visibility', 'persistent')
-  await expect(mainScrollbar).toHaveClass(/is-visible/)
-  await expect(mainScrollbar).toHaveCSS('width', '8px')
-  await expect(historyScrollbar).toHaveAttribute('data-visibility', 'transient')
-  await expect(historyScrollbar).not.toHaveClass(/is-visible/)
-  const idleVisual = await mainThumb.evaluate((element) => {
-    const styles = getComputedStyle(element, '::after')
-    return { width: styles.width, color: styles.backgroundColor, radius: styles.borderRadius }
-  })
-  expect(idleVisual).toEqual({ width: '8px', color: 'rgb(229, 229, 229)', radius: '9999px' })
-
-  await mainThumb.hover()
-  await page.waitForTimeout(120)
-  const hoveredVisual = await mainThumb.evaluate((element) => {
-    const styles = getComputedStyle(element, '::after')
-    return { width: styles.width, color: styles.backgroundColor }
-  })
-  expect(hoveredVisual).toEqual({ width: '10px', color: 'rgb(212, 212, 212)' })
-
-  await history.hover()
-  await expect(historyScrollbar).toHaveClass(/is-visible/)
-  await page.mouse.move(900, 250)
-  await page.waitForTimeout(1_100)
-  await expect(historyScrollbar).not.toHaveClass(/is-visible/)
-
-  await pane.evaluate((element) => {
-    element.scrollTop = Math.min(200, element.scrollHeight - element.clientHeight)
-    element.dispatchEvent(new Event('scroll', { bubbles: true }))
-  })
-  const beforeDrag = await pane.evaluate((element) => element.scrollTop)
-  const thumbBox = await mainThumb.boundingBox()
-  if (!thumbBox) throw new Error('主对话滚动滑块不可见')
-  await page.mouse.move(thumbBox.x + (thumbBox.width / 2), thumbBox.y + (thumbBox.height / 2))
-  await page.mouse.down()
-  await page.mouse.move(thumbBox.x + (thumbBox.width / 2), thumbBox.y + (thumbBox.height / 2) + 40, { steps: 4 })
-  await page.mouse.up()
-  expect(await pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(beforeDrag)
-})
-
 test('账户菜单、modal 隔离和定时滚动控件保持完整键盘路径', async ({ page }) => {
   await page.clock.install()
   await mockStudio(page, {

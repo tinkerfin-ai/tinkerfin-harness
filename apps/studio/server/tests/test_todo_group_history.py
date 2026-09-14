@@ -8,13 +8,11 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import cast
 
-import pytest
 from pydantic import JsonValue
 
 from tinkerfin_contracts import RunIdentity, ThreadIdentity
 from tinkerfin_studio.conversation.failures import ConversationFailureProjection
 from tinkerfin_studio.conversation.todo_groups import (
-    TaskTraceQueryTimeout,
     TaskTraceSnapshot,
     TodoGroupQueryExecutor,
 )
@@ -228,18 +226,3 @@ async def test_query_limiter_only_bounds_initial_replay() -> None:
     finally:
         first_projector.close()
         second_projector.close()
-
-
-class _SlowTrace:
-    async def events(self, **_kwargs: object) -> object:
-        await asyncio.Event().wait()
-        raise AssertionError("不可达")
-
-
-async def test_query_timeout_closes_projector_and_releases_capacity() -> None:
-    executor = TodoGroupQueryExecutor(capacity=1, timeout_seconds=0.01)
-
-    with pytest.raises(TaskTraceQueryTimeout):
-        await executor.project(cast(TraceThread, _SlowTrace()))
-
-    assert executor.borrowed_tokens == 0

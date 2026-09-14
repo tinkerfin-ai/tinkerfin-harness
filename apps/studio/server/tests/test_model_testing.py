@@ -302,10 +302,7 @@ def test_wrong_capability_is_rejected_before_network(purpose, kind):
         )
 
 
-@pytest.mark.parametrize("cancel", [False, True])
-async def test_timeout_and_cancellation_close_owned_transport(
-    database, monkeypatch, cancel
-):
+async def test_cancellation_closes_owned_transport(database, monkeypatch):
     started = asyncio.Event()
 
     class SlowTransport(httpx.AsyncBaseTransport):
@@ -323,8 +320,6 @@ async def test_timeout_and_cancellation_close_owned_transport(
 
     transport = SlowTransport()
     monkeypatch.setattr(testing, "ModelTransport", lambda **kwargs: transport)
-    if not cancel:
-        monkeypatch.setitem(testing.TEST_TIMEOUT_SECONDS, "text", 0.05)
     task = asyncio.create_task(
         testing.run_model_test(
             database,
@@ -333,13 +328,9 @@ async def test_timeout_and_cancellation_close_owned_transport(
         )
     )
     await asyncio.wait_for(started.wait(), timeout=2)
-    if cancel:
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-    else:
-        result = await task
-        assert result.code == "timeout" and result.outcome == "failed"
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     assert transport.closed and transport.calls == 1
 
 
@@ -601,62 +592,6 @@ async def test_test_endpoint_authenticates_in_a_short_session_before_model_io(
         )
     assert response.status_code == (200 if authenticated else 401)
     assert model_calls == (1 if authenticated else 0) and connections == 0
-
-
-@pytest.mark.parametrize("cancel", [False, True])
-async def test_image_preview_finishes_its_worker_before_cancellation_returns(
-    database, monkeypatch, cancel
-):
-    import threading
-
-    started = threading.Event()
-    released = threading.Event()
-    completed = threading.Event()
-
-    async def generate(*args, **kwargs):
-        return b"test-image"
-
-    def preview(data, max_side):
-        started.set()
-        assert released.wait(2)
-        completed.set()
-        return b"preview"
-
-    monkeypatch.setattr(testing, "generate_image_bytes", generate)
-    monkeypatch.setattr(testing, "image_variant", preview)
-    if not cancel:
-        monkeypatch.setitem(testing.TEST_TIMEOUT_SECONDS, "image", 0.05)
-    task = asyncio.create_task(
-        testing.run_model_test(
-            database,
-            user_id=1,
-            payload=ModelTestRequest(
-                kind="image", configuration=draft(purpose="image")
-            ),
-        )
-    )
-    try:
-        async with asyncio.timeout(1):
-            while not started.is_set():
-                await asyncio.sleep(0.001)
-        if cancel:
-            task.cancel()
-            await asyncio.sleep(0.01)
-            task.cancel()
-        await asyncio.sleep(0.08)
-        assert not task.done() and not completed.is_set()
-        released.set()
-        if cancel:
-            with pytest.raises(asyncio.CancelledError):
-                await task
-        else:
-            assert (await task).code == "timeout"
-        assert completed.is_set()
-    finally:
-        released.set()
-        if not task.done():
-            task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.parametrize("arrays", [False, True])

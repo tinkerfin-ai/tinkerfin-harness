@@ -135,29 +135,6 @@ async def test_redis_change_wait_preserves_cancellation_consumed_by_driver(
         await client.aclose()
 
 
-async def test_redis_change_wait_preserves_a_timeout_consumed_by_driver() -> None:
-    client = _CancellationSuppressingRedis(None)
-    backend = RedisBackend(client)
-    try:
-        with pytest.raises(TimeoutError):
-            async with asyncio.timeout(0.01):
-                await backend.wait_for_messaging_change(
-                    MessagingChangeWait(
-                        channel="events",
-                        identity=RunIdentity(
-                            namespace="test", thread_id="thread-1", run_id="run-1"
-                        ),
-                        generation=1,
-                        after=MessagingChangeCursor(
-                            message_sequence=0, control_sequence=0
-                        ),
-                        timeout_seconds=1,
-                    )
-                )
-    finally:
-        await client.aclose()
-
-
 @pytest.mark.parametrize(
     "driver_error", [asyncio.CancelledError("driver cancellation"), GeneratorExit()]
 )

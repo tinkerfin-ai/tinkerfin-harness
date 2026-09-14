@@ -240,9 +240,17 @@ export function useConversationMessageWindow({
         }
 
         const index = entriesRef.current.findIndex(
-          (entry) => entryMessageId(entry) === messageId,
+          (entry) => entryMessageId(entry) === messageId
+            || (entry.type !== 'tools' && entry.message.meta?.traceMessageId === messageId),
         )
         if (index >= 0) {
+          const renderedId = entryMessageId(entriesRef.current[index]!)
+          if (!renderedId) return 'not-found'
+          const mappedElement = document.getElementById(renderedId)
+          if (mappedElement) {
+            highlight(mappedElement, alignment)
+            return 'found'
+          }
           const start = Math.max(0, index - LOCATE_CONTEXT_BEFORE)
           setWindowState({
             threadId,
@@ -250,7 +258,7 @@ export function useConversationMessageWindow({
             end: Math.min(entriesRef.current.length, start + MESSAGE_RENDER_BATCH_SIZE),
             followsTail: false,
           })
-          const target = await waitForElement(messageId, signal)
+          const target = await waitForElement(renderedId, signal)
           if (!target) return signal.aborted ? 'cancelled' : 'failed'
           highlight(target, alignment)
           return 'found'

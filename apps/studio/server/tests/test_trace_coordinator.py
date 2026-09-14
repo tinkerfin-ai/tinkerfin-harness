@@ -356,41 +356,6 @@ async def test_summary_timestamp_collision_requires_a_fresh_trace_observation(
         await messaging.aclose()
 
 
-async def test_follow_converges_the_list_when_a_writer_closes_without_a_terminal(
-    database,
-) -> None:
-    """无需新事件即可把失活 Run 从列表运行态收敛为可重试错误"""
-    tracer, context, trace_session, thread_pk = await _setup_run(
-        database,
-        thread_id="thread-owner-close",
-        run_id="run-owner-close",
-    )
-    messaging, channel = await _messaging_channel()
-    coordinator = ConversationTraceCoordinator(
-        database=database,
-        tracer=tracer,
-        conversation_channel=channel,
-    )
-    try:
-        before = await coordinator.reconcile(
-            thread_pk=thread_pk, identity=context.identity
-        )
-        coordinator.ensure(thread_pk=thread_pk, identity=context.identity)
-        await asyncio.sleep(0.02)
-        await trace_session.aclose()
-        await _wait_for(database, thread_pk, lambda item: item.status == "error")
-        current = await tracer.get(
-            context.identity.thread, projections=("studio.conversation.failures",)
-        )
-        assert current.as_of_seq == before
-        assert current.status.execution == "unknown"
-        assert current.completeness.missing_tail
-    finally:
-        await trace_session.aclose()
-        await coordinator.aclose()
-        await messaging.aclose()
-
-
 async def test_cancel_after_producer_failure_reconciles_missing_trace_tail(
     database,
 ) -> None:

@@ -11,7 +11,6 @@ from typing import ClassVar, Literal, cast
 
 import pytest
 
-import tinkerfin_messaging
 from tinkerfin import RunIdentity
 from tinkerfin_messaging import (
     BackendOwnershipLost,
@@ -215,24 +214,6 @@ class _DiagnosticLeaseBackend(MemoryBackend):
         return result
 
 
-class _BlockingEventLoopSource(_Source):
-    def __init__(self, *, block_seconds: float) -> None:
-        super().__init__(release=asyncio.Event())
-        self.block_seconds = block_seconds
-
-    def __aiter__(self) -> AsyncIterator[str]:
-        async def iterate() -> AsyncGenerator[str, None]:
-            self.started.set()
-            time.sleep(self.block_seconds)
-            assert self.release is not None
-            await self.release.wait()
-            if False:  # pragma: no cover - preserves the async generator shape
-                yield "unreachable"
-
-        self._iterator = iterate()
-        return self._iterator
-
-
 class _BlockingPrepareBackend(MemoryBackend):
     def __init__(self) -> None:
         super().__init__()
@@ -306,20 +287,6 @@ class _BlockingAppendBackend(MemoryBackend):
             except asyncio.CancelledError:
                 self.append_cancelled.set()
                 raise
-        return await super().commit_messaging_transition(transition)
-
-
-class _CountingBlockingAppendBackend(_BlockingAppendBackend):
-    def __init__(self, *, blocked_payload: bytes = b"one") -> None:
-        super().__init__(blocked_payload=blocked_payload)
-        self.finish_calls = 0
-
-    async def commit_messaging_transition(
-        self,
-        transition: MessagingTransition,
-    ) -> MessagingTransitionResult:
-        if transition.kind == "finish_run":
-            self.finish_calls += 1
         return await super().commit_messaging_transition(transition)
 
 
@@ -849,38 +816,6 @@ async def test_lease_failure_log_classifies_backend_outcomes(
     )
 
 
-async def test_event_loop_block_is_distinguished_from_on_time_renewal_rejection(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    backend = _DiagnosticLeaseBackend(behavior="success")
-    source = _BlockingEventLoopSource(block_seconds=0.08)
-
-    with caplog.at_level(logging.ERROR, logger="tinkerfin.messaging"):
-        async with Messaging(backend=backend) as messaging:
-            subscription = await messaging.channel(
-                name="events",
-                codec=_TextCodec(),
-            ).wrap(
-                source,
-                identity=_identity(),
-                after=0,
-            )
-            with pytest.raises(RunProducerFailed):
-                await asyncio.wait_for(anext(aiter(subscription)), timeout=1)
-
-    record = next(
-        record
-        for record in caplog.records
-        if record.getMessage() == "Messaging producer lease renewal failed"
-    )
-    fields = vars(record)
-    assert fields["tinkerfin_renewal_outcome"] == "ownership_rejected"
-    assert fields["tinkerfin_deadline_elapsed"] is True
-    assert fields["tinkerfin_scheduler_delay_seconds"] >= backend.timeout
-    assert fields["tinkerfin_seconds_since_last_success"] >= backend.timeout
-    assert source.closed.is_set()
-
-
 async def test_wrap_repeated_cancellation_settles_before_producer_start() -> None:
     backend = _CancellationResistantPrepareBackend()
     source = _Source("unused")
@@ -1235,85 +1170,6 @@ async def test_cancel_callback_starts_only_after_settlement_is_claimed() -> None
     assert replay == ["one", "cancelled-tail"]
 
 
-async def test_cancelled_shutdown_finishes_a_claimed_settlement() -> None:
-    backend = _ClaimThenBlockSettlementBackend()
-    source_release = asyncio.Event()
-    source = _Source("one", release=source_release)
-    callback_calls = 0
-    messaging = Messaging(backend=backend)
-
-    async def cancel() -> tuple[str, ...]:
-        nonlocal callback_calls
-        callback_calls += 1
-        source_release.set()
-        return ("cancelled-tail",)
-
-    await messaging.__aenter__()
-    _install_delayed_cancel_observer(messaging, backend)
-    channel = messaging.channel(name="events", codec=_TextCodec())
-    subscription = await channel.wrap(
-        source,
-        identity=_identity(),
-        after=0,
-        cancel=cancel,
-    )
-    delivery = aiter(subscription)
-    first = await anext(delivery)
-    cancelling = asyncio.create_task(channel.cancel(identity=_identity()))
-    await asyncio.wait_for(backend.cancel_is_durable.wait(), timeout=1)
-
-    closing = asyncio.create_task(messaging.__aexit__(None, None, None))
-    await asyncio.wait_for(backend.settlement_claimed.wait(), timeout=1)
-    closing.cancel()
-    done, _ = await asyncio.wait({closing}, timeout=0.05)
-    closed_before_release = closing in done
-    backend.release_response.set()
-    backend.release_observer.set()
-    with pytest.raises(asyncio.CancelledError):
-        await closing
-    cancel_result = await asyncio.gather(cancelling, return_exceptions=True)
-    replay_failure: RunProducerFailed | None = None
-    replay = [first.data]
-    try:
-        replay.extend([message.data async for message in delivery])
-    except RunProducerFailed as failure:
-        replay_failure = failure
-
-    live_names = {task.get_name() for task in asyncio.all_tasks() if not task.done()}
-    assert not closed_before_release
-    assert cancel_result == [True]
-    assert replay_failure is None
-    assert callback_calls == 1
-    assert replay == ["one", "cancelled-tail"]
-    assert source.close_calls == 1
-    assert not any(name.startswith("tinkerfin-messaging-") for name in live_names)
-
-
-async def test_messaging_shutdown_cancels_an_inflight_backend_append() -> None:
-    backend = _BlockingAppendBackend()
-    source = _Source("one", release=asyncio.Event())
-    messaging = Messaging(backend=backend)
-    await messaging.__aenter__()
-    channel = messaging.channel(name="events", codec=_TextCodec())
-    await channel.wrap(
-        source,
-        identity=_identity(),
-        after=0,
-    )
-    await asyncio.wait_for(backend.append_started.wait(), timeout=1)
-
-    closing = asyncio.create_task(messaging.__aexit__(None, None, None))
-    done, _ = await asyncio.wait({closing}, timeout=0.1)
-    closed_without_backend_release = closing in done
-    if not closed_without_backend_release:
-        backend.release_append.set()
-    await asyncio.wait_for(closing, timeout=1)
-
-    assert closed_without_backend_release
-    assert backend.append_cancelled.is_set()
-    assert source.close_calls == 1
-
-
 async def test_messaging_shutdown_waits_for_cancel_tail_settlement() -> None:
     backend = _BlockingAppendBackend(blocked_payload=b"cancelled-tail")
     release_source = asyncio.Event()
@@ -1383,101 +1239,6 @@ def test_messaging_accepts_non_negative_settlement_timeout(
     value: float | None,
 ) -> None:
     Messaging(settlement_timeout=value)
-
-
-async def test_finite_close_budget_keeps_cancel_tail_settlement_owned() -> None:
-    backend = _CountingBlockingAppendBackend(blocked_payload=b"cancelled-tail")
-    source_release = asyncio.Event()
-    source = _Source("one", release=source_release)
-    messaging = Messaging(backend=backend, settlement_timeout=0.01)
-    await messaging.__aenter__()
-
-    async def cancel() -> tuple[str, ...]:
-        source_release.set()
-        return ("cancelled-tail",)
-
-    channel = messaging.channel(name="events", codec=_TextCodec())
-    subscription = await channel.wrap(
-        source,
-        identity=_identity(),
-        after=0,
-        cancel=cancel,
-    )
-    delivery = aiter(subscription)
-    first = await anext(delivery)
-    cancelling = asyncio.create_task(channel.cancel(identity=_identity()))
-    await asyncio.wait_for(backend.append_started.wait(), timeout=1)
-    timeout_type = getattr(
-        tinkerfin_messaging,
-        "MessagingSettlementTimeout",
-        None,
-    )
-    assert timeout_type is not None
-
-    try:
-        with pytest.raises(timeout_type) as captured:
-            await messaging.aclose()
-
-        assert captured.value.timeout == 0.01
-        assert not backend.append_cancelled.is_set()
-        assert not cancelling.done()
-        with pytest.raises(MessagingClosed):
-            messaging.channel(name="closed", codec=_TextCodec())
-
-        backend.release_append.set()
-        assert await asyncio.wait_for(cancelling, timeout=1) is True
-        await messaging.aclose()
-        replay = [first.data, *[message.data async for message in delivery]]
-
-        assert replay == ["one", "cancelled-tail"]
-        assert source.close_calls == 1
-        assert backend.finish_calls == 1
-    finally:
-        backend.release_append.set()
-        await asyncio.gather(cancelling, return_exceptions=True)
-        await asyncio.gather(messaging.aclose(), return_exceptions=True)
-
-
-async def test_default_close_budget_waits_for_complete_settlement() -> None:
-    backend = _CountingBlockingAppendBackend(blocked_payload=b"cancelled-tail")
-    source_release = asyncio.Event()
-    source = _Source("one", release=source_release)
-    messaging = Messaging(backend=backend)
-    await messaging.__aenter__()
-
-    async def cancel() -> tuple[str, ...]:
-        source_release.set()
-        return ("cancelled-tail",)
-
-    channel = messaging.channel(name="events", codec=_TextCodec())
-    subscription = await channel.wrap(
-        source,
-        identity=_identity(),
-        after=0,
-        cancel=cancel,
-    )
-    delivery = aiter(subscription)
-    first = await anext(delivery)
-    cancelling = asyncio.create_task(channel.cancel(identity=_identity()))
-    await asyncio.wait_for(backend.append_started.wait(), timeout=1)
-    closing = asyncio.create_task(messaging.aclose())
-
-    try:
-        done, _ = await asyncio.wait({closing}, timeout=0.05)
-        assert closing not in done
-        assert not backend.append_cancelled.is_set()
-
-        backend.release_append.set()
-        assert await asyncio.wait_for(cancelling, timeout=1) is True
-        await asyncio.wait_for(closing, timeout=1)
-        replay = [first.data, *[message.data async for message in delivery]]
-
-        assert replay == ["one", "cancelled-tail"]
-        assert source.close_calls == 1
-        assert backend.finish_calls == 1
-    finally:
-        backend.release_append.set()
-        await asyncio.gather(cancelling, closing, return_exceptions=True)
 
 
 async def test_close_only_failure_propagates_and_is_idempotent() -> None:

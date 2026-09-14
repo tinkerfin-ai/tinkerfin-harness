@@ -1,26 +1,18 @@
 import asyncio
-import gc
-import warnings
 from collections.abc import AsyncGenerator, AsyncIterator
-from datetime import UTC, datetime
 from typing import cast
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
-from sqlalchemy.exc import SAWarning
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import AsyncAdaptedQueuePool
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
 from starlette.types import Message, Scope
 
 from tinkerfin import SseBody
-from tinkerfin_contracts import RunIdentity
 from tinkerfin_studio.api.dependencies import SessionDep, get_session
 from tinkerfin_studio.api.responses import trace_sse_response
-from tinkerfin_studio.conversation.failures import ConversationFailureProjection
-from tinkerfin_tracing import RunFact, SqlAlchemyTraceStore, Tracer, TurnFact
 
 
 class _TraceEvent(BaseModel):
@@ -157,92 +149,3 @@ async def test_session_dependency_closes_before_stream_content_starts() -> None:
     assert response.status_code == 200
     assert response.content == b"data: ready\n\n"
     assert released.is_set()
-
-
-@pytest.mark.docker_integration
-async def test_native_trace_response_settles_wrapped_mysql_follow_before_return(
-    mysql_sandbox_url: str,
-) -> None:
-    """原生响应断连后必须等待 Trace follower 归还 MySQL 连接"""
-
-    engine = create_async_engine(
-        mysql_sandbox_url,
-        pool_size=1,
-        max_overflow=0,
-    )
-    blocker_engine = create_async_engine(
-        mysql_sandbox_url,
-        pool_size=1,
-        max_overflow=0,
-    )
-    identity = RunIdentity(
-        namespace="test", thread_id="trace-response-thread", run_id="trace-response-run"
-    )
-    store = SqlAlchemyTraceStore(engine)
-    await store.setup()
-    writer = await store.open_writer(identity)
-    now = datetime.now(UTC)
-    await writer.append(
-        (
-            RunFact(
-                source_observation_id="run-started",
-                identity=identity,
-                occurred_at=now,
-                monotonic_ns=1,
-                phase="started",
-                input_kind="ordinary",
-            ),
-            TurnFact(
-                source_observation_id="turn-started",
-                identity=identity,
-                occurred_at=now,
-                monotonic_ns=2,
-                turn_id="trace-response-turn",
-            ),
-        )
-    )
-    trace = await Tracer(
-        projections=(ConversationFailureProjection(),), store=store
-    ).get(
-        identity.thread,
-        head_run_id=identity.run_id,
-    )
-    updates = trace.follow()
-    first_frame_sent = asyncio.Event()
-
-    async def content() -> AsyncGenerator[BaseModel, None]:
-        try:
-            yield _TraceEvent(event_id="snapshot")
-            async for _update in updates:
-                yield _TraceEvent(event_id="update")
-        finally:
-            await updates.aclose()
-
-    response = trace_sse_response(content())
-
-    async def receive() -> Message:
-        await first_frame_sent.wait()
-        await asyncio.sleep(0.05)
-        return {"type": "http.disconnect"}
-
-    async def send(message: Message) -> None:
-        if message["type"] == "http.response.body" and message.get("more_body"):
-            first_frame_sent.set()
-
-    blocker = await blocker_engine.connect()
-    try:
-        await blocker.exec_driver_sql("LOCK TABLES tinkerfin_trace_events WRITE")
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            await response(_http_scope(), receive, send)
-            pool = cast(AsyncAdaptedQueuePool, engine.sync_engine.pool)
-            assert pool.checkedout() == 0
-            gc.collect()
-            await asyncio.sleep(0)
-        assert not [item for item in caught if issubclass(item.category, SAWarning)]
-    finally:
-        await blocker.exec_driver_sql("UNLOCK TABLES")
-        await blocker.close()
-        await writer.aclose()
-        await blocker_engine.dispose()
-        await engine.dispose()

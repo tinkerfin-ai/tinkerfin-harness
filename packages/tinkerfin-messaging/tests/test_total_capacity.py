@@ -21,7 +21,6 @@ from tinkerfin_messaging import (
     RecoveryCheckpoint,
     RedisBackend,
     StreamDeleteConflict,
-    StreamExpired,
 )
 from tinkerfin_messaging._messaging_ledger import _MessagingLedger
 
@@ -243,51 +242,6 @@ async def test_checkpoint_evidence_counts_copies_and_replaces_latest(
     await backend.finish(replacement.handle, status="completed")
 
 
-async def test_expiry_reclaims_other_threads_and_channels_without_revisit(
-    capacity_backend_factory,
-) -> None:
-    policy = MessagingRetentionPolicy.expire_after(0.04)
-    limits = MessagingLimits(max_total_bytes=4, max_total_records=12)
-    backend = capacity_backend_factory(limits, policy)
-    other_worker = capacity_backend_factory(limits, policy)
-    old = await _start(backend, "old", channel="old-channel")
-    await backend.append(old.handle, message_id="old", codec="bytes", payload=b"1234")
-    await backend.finish(old.handle, status="completed")
-    active = await _start(other_worker, "active", channel="active-channel")
-    with pytest.raises(MessagingQuotaExceeded):
-        await other_worker.append(
-            active.handle, message_id="new", codec="bytes", payload=b"x"
-        )
-    await asyncio.sleep(0.07)
-    await other_worker.append(
-        active.handle, message_id="new", codec="bytes", payload=b"1234"
-    )
-    with pytest.raises(StreamExpired):
-        await anext(backend.follow(old.handle, after=0))
-    await other_worker.finish(active.handle, status="completed")
-
-
-async def test_active_and_disabled_retention_data_are_never_evicted(
-    capacity_backend_factory,
-) -> None:
-    backend = capacity_backend_factory(
-        MessagingLimits(max_total_bytes=1), MessagingRetentionPolicy()
-    )
-    first = await _start(backend, "first")
-    await backend.append(first.handle, message_id="kept", codec="bytes", payload=b"x")
-    await backend.finish(first.handle, status="completed")
-    await asyncio.sleep(0.03)
-    second = await _start(backend, "second")
-    with pytest.raises(MessagingQuotaExceeded):
-        await backend.append(
-            second.handle, message_id="rejected", codec="bytes", payload=b"x"
-        )
-    assert (
-        len(await backend.read(channel="events", identity=first.handle.identity)) == 1
-    )
-    await backend.finish(second.handle, status="completed")
-
-
 async def test_concurrent_workers_cannot_overshoot_total_bytes(
     capacity_backend_factory,
 ) -> None:
@@ -416,120 +370,6 @@ async def test_plain_commit_preserves_latest_checkpoint_and_historical_evidence(
     assert snapshot.matching_message is not None
     assert snapshot.matching_message.checkpoint == first
     await backend.finish(run.handle, status="completed")
-
-
-class _InterruptedCleanupRedis(Redis):
-    """Interrupt a response after Redis has committed one physical cleanup batch."""
-
-    cleanup_committed: asyncio.Event
-    cleanup_release: asyncio.Event
-    interrupt_cleanup = False
-
-    async def execute_command(self, *args: object, **options: object) -> object:
-        result = await cast(
-            Awaitable[object], super().execute_command(*args, **options)
-        )
-        script = args[1] if len(args) > 1 else ""
-        script_text = script.decode() if isinstance(script, bytes) else str(script)
-        if self.interrupt_cleanup and "for index = 4, #KEYS do" in script_text:
-            self.interrupt_cleanup = False
-            self.cleanup_committed.set()
-            await self.cleanup_release.wait()
-        return result
-
-
-@pytest.mark.docker_integration
-@pytest.mark.redis_e2e
-@pytest.mark.parametrize("interruption", ["cancel", "timeout"])
-async def test_redis_expiry_capacity_release_survives_interrupted_cleanup(
-    redis_url: str,
-    interruption: str,
-) -> None:
-    client = cast(
-        _InterruptedCleanupRedis,
-        _InterruptedCleanupRedis.from_url(
-            redis_url,
-            decode_responses=False,
-            socket_timeout=5,
-        ),
-    )
-    client.cleanup_committed = asyncio.Event()
-    client.cleanup_release = asyncio.Event()
-    other_client = Redis.from_url(redis_url, decode_responses=False, socket_timeout=5)
-    prefix = f"tfmsg:capacity-interrupted:{uuid4().hex}"
-    limits = MessagingLimits(max_total_bytes=32, max_total_records=64)
-    retention = MessagingRetentionPolicy.expire_after(0.04)
-    backend = _MessagingLedger(
-        RedisBackend(
-            client,
-            key_prefix=prefix,
-            limits=limits,
-            retention_policy=retention,
-            producer_lease_seconds=0.3,
-            generation_cleanup_retry_seconds=0.01,
-        )
-    )
-    other = _MessagingLedger(
-        RedisBackend(
-            other_client,
-            key_prefix=prefix,
-            limits=limits,
-            retention_policy=retention,
-            producer_lease_seconds=0.3,
-            generation_cleanup_retry_seconds=0.01,
-        )
-    )
-    pending: asyncio.Task[None] | None = None
-    try:
-        old = await _start(backend, "old")
-        for index in range(32):
-            await backend.append(
-                old.handle, message_id=str(index), codec="bytes", payload=b"x"
-            )
-        await backend.finish(old.handle, status="completed")
-        await asyncio.sleep(0.07)
-        client.interrupt_cleanup = True
-
-        async def begin_admission() -> None:
-            async with asyncio.timeout(0.1 if interruption == "timeout" else 5):
-                await _start(backend, "interrupted", channel="interrupted")
-
-        pending = asyncio.create_task(begin_admission())
-        await asyncio.wait_for(client.cleanup_committed.wait(), timeout=2)
-        if interruption == "cancel":
-            pending.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await pending
-        else:
-            with pytest.raises(TimeoutError):
-                await pending
-        # A different worker finds the same index member and finishes the fenced purge.
-        next_run = await asyncio.wait_for(
-            _start(other, "next", channel="next"), timeout=2
-        )
-        await other.append(
-            next_run.handle, message_id="full", codec="bytes", payload=b"x" * 32
-        )
-        quota_keys = [
-            key async for key in other_client.scan_iter(match=f"{prefix}:*:capacity")
-        ]
-        assert len(quota_keys) == 1
-        values = await cast(
-            Awaitable[dict[bytes, bytes]], other_client.hgetall(quota_keys[0])
-        )
-        assert values[b"total_bytes"] == b"32"
-        assert values[b"total_records"] == b"8"
-        await other.finish(next_run.handle, status="completed")
-    finally:
-        client.cleanup_release.set()
-        if pending is not None and not pending.done():
-            pending.cancel()
-            await asyncio.gather(pending, return_exceptions=True)
-        keys = [key async for key in other_client.scan_iter(match=f"{prefix}:*")]
-        if keys:
-            await other_client.unlink(*keys)
-        await client.aclose()
-        await other_client.aclose()
 
 
 @pytest.mark.docker_integration

@@ -69,8 +69,19 @@ const outputStatus = (
   if (status === 'pending') return 'pending'
   if (groupStatus === 'failed') return 'failed'
   if (groupStatus === 'cancelled') return 'cancelled'
+  if (groupStatus === 'incomplete' || groupStatus === 'completed') return 'incomplete'
   return 'running'
 }
+
+/** 运行结束不代表模型已确认清单中的每一项完成 */
+export const resolveTodoGroupStatus = (
+  todos: readonly RootTodoValue[],
+  status: TodoGroup['status'],
+): TodoGroup['status'] => (
+  status === 'completed' || status === 'incomplete'
+    ? todos.every(todo => todo.status === 'completed') ? 'completed' : 'incomplete'
+    : status
+)
 
 export const projectTodoItems = (
   todos: readonly RootTodoValue[],

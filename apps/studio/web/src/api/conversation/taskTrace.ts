@@ -1,9 +1,10 @@
-export type TodoGroupStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+export type TodoGroupStatus = 'running' | 'completed' | 'incomplete' | 'failed' | 'cancelled'
 
 export type TodoTraceItemStatus =
   | 'pending'
   | 'running'
   | 'completed'
+  | 'incomplete'
   | 'failed'
   | 'cancelled'
 
@@ -58,6 +59,7 @@ const TODO_KEYS = new Set(['id', 'content', 'status'])
 const GROUP_STATUSES = new Set<TodoGroupStatus>([
   'running',
   'completed',
+  'incomplete',
   'failed',
   'cancelled',
 ])
@@ -65,6 +67,7 @@ const TODO_STATUSES = new Set<TodoTraceItemStatus>([
   'pending',
   'running',
   'completed',
+  'incomplete',
   'failed',
   'cancelled',
 ])

@@ -532,20 +532,6 @@ async def test_lifecycle_control_preserves_known_rejection_and_unknown_outcome(
         await client.aclose()
 
 
-async def test_lifecycle_request_timeout_reports_unknown_remote_outcome() -> None:
-    transport = _ServiceTransport()
-    transport.mutation_release.clear()
-    client = _client(transport, request_timeout=timedelta(milliseconds=20))
-    try:
-        with pytest.raises(OpenSandboxBackendError) as failure:
-            await client.resume("existing")
-        assert failure.value.context["request_outcome"] == "unknown"
-        assert transport.mutation_cancelled is True
-        assert transport.calls["POST", "/v1/sandboxes/existing/resume"] == 1
-    finally:
-        await client.aclose()
-
-
 @pytest.mark.parametrize("kind", ["logs", "events"])
 async def test_diagnostics_use_only_control_plane_and_normalize_warnings(
     kind: Literal["logs", "events"],

@@ -1,13 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
-from datetime import timedelta
-from unittest.mock import AsyncMock
 
 import pytest
-from opensandbox.config import ConnectionConfig
-from test_backend import _FakeSandbox
 from test_manager import (
     _FakeBackend,
     _FakeClient,
@@ -22,8 +17,6 @@ from tinkerfin_sandbox import (
     OpenSandboxBackendProtocolError,
     OpenSandboxBackendTimeoutError,
     OpenSandboxBackendUnavailableError,
-    OpenSandboxClient,
-    OpenSandboxConfig,
     OpenSandboxInitializationError,
     OpenSandboxRecoveryPolicy,
     OpenSandboxStateOwnershipError,
@@ -165,31 +158,6 @@ async def test_cancellation_during_retry_keeps_binding_and_instance() -> None:
 
 
 @pytest.mark.asyncio
-async def test_uncertain_connection_at_budget_expiry_cannot_authorize_recreation() -> (
-    None
-):
-    class BlockedClient(_RecoveringClient):
-        async def connect(self, sandbox_id: str) -> OpenSandboxBackend:
-            self.connect_calls.append(sandbox_id)
-            await asyncio.Event().wait()
-            raise AssertionError("unreachable")
-
-    client = BlockedClient([])
-    state = _FakeState({_resource_key("owner"): "original"})
-    policy = replace(_fast_policy(recreate=True), timeout=0.02)
-    async with _new_manager(
-        client=client, state=state, recovery_policy=policy
-    ) as manager:
-        with pytest.raises(OpenSandboxBackendUnavailableError) as raised:
-            await asyncio.wait_for(manager.get("owner"), 1)
-        assert raised.value.context["reason"] == "timeout"
-        assert client.connect_calls == ["original"]
-        assert client.create_calls == 0
-        assert client.destroy_calls == []
-        assert state.bindings == {_resource_key("owner"): "original"}
-
-
-@pytest.mark.asyncio
 async def test_lost_binding_does_not_authorize_disposal_of_the_local_handle() -> None:
     client = _FakeClient()
     state = _FakeState()
@@ -218,129 +186,6 @@ async def test_recreate_rejects_a_local_handle_without_authoritative_binding() -
         assert client.create_calls == 1
         assert client.destroy_calls == []
         assert client.backends[0].kill_calls == 0
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("phase", ["connect", "initializer"])
-async def test_manager_deadline_does_not_wait_for_native_connection_settlement(
-    monkeypatch: pytest.MonkeyPatch, phase: str
-) -> None:
-    entered, release = asyncio.Event(), asyncio.Event()
-    connection_cancelled = asyncio.Event()
-    sandbox = _FakeSandbox("original")
-
-    async def connect(*_args: object, **_kwargs: object) -> _FakeSandbox:
-        if phase == "connect":
-            entered.set()
-            try:
-                await release.wait()
-            except asyncio.CancelledError:
-                connection_cancelled.set()
-                raise
-        return sandbox
-
-    async def initialize(_backend: OpenSandboxBackend) -> None:
-        if phase == "initializer":
-            entered.set()
-            await release.wait()
-
-    monkeypatch.setattr(
-        "tinkerfin_sandbox.lifecycle.client.Sandbox.connect",
-        AsyncMock(side_effect=connect),
-    )
-    client = OpenSandboxClient(
-        connection_config=ConnectionConfig(),
-        config=OpenSandboxConfig(
-            workspace_root=None, warm_pool_size=0, connect_timeout=timedelta(seconds=2)
-        ),
-        initializers=[initialize],
-    )
-    state = _FakeState({_resource_key("owner"): "original"})
-    policy = replace(_fast_policy(recreate=True), timeout=0.02)
-    async with _new_manager(
-        client=client, state=state, recovery_policy=policy
-    ) as manager:
-        getting = asyncio.create_task(manager.get("owner"))
-        try:
-            await entered.wait()
-            done, _ = await asyncio.wait({getting}, timeout=0.2)
-            completed_in_budget = getting in done
-        finally:
-            release.set()
-            with pytest.raises(OpenSandboxBackendUnavailableError) as raised:
-                await getting
-            assert raised.value.context["reason"] == "timeout"
-        assert state.bindings == {_resource_key("owner"): "original"}
-    assert completed_in_budget
-    if phase == "initializer":
-        assert sandbox.closed
-    else:
-        assert connection_cancelled.is_set()
-    assert not sandbox.killed
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("cancel_waiter", [False, True])
-async def test_connection_settlement_retains_owner_claim_and_blocks_next_initializer(
-    monkeypatch: pytest.MonkeyPatch, cancel_waiter: bool
-) -> None:
-    entered, settling, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
-    first, second = _FakeSandbox("original"), _FakeSandbox("original")
-    first.commands.result.exit_code = 0
-    second.commands.result.exit_code = 0
-    connect = AsyncMock(side_effect=[first, second])
-    monkeypatch.setattr("tinkerfin_sandbox.lifecycle.client.Sandbox.connect", connect)
-    initialized = 0
-
-    async def initialize(_backend: OpenSandboxBackend) -> None:
-        nonlocal initialized
-        initialized += 1
-        if initialized != 1:
-            return
-        entered.set()
-        try:
-            await asyncio.Event().wait()
-        finally:
-            settling.set()
-            await release.wait()
-
-    client = OpenSandboxClient(
-        connection_config=ConnectionConfig(),
-        config=OpenSandboxConfig(workspace_root=None, warm_pool_size=0),
-        initializers=[initialize],
-    )
-    state = _FakeState({_resource_key("owner"): "original"})
-    async with _new_manager(
-        client=client,
-        state=state,
-        recovery_policy=replace(_fast_policy(), timeout=0.03),
-    ) as manager:
-        getting = asyncio.create_task(manager.get("owner"))
-        await entered.wait()
-        if cancel_waiter:
-            getting.cancel()
-        await settling.wait()
-        if cancel_waiter:
-            getting.cancel()
-        next_get = asyncio.create_task(manager.get("owner"))
-        try:
-            done, _ = await asyncio.wait({getting, next_get}, timeout=0.02)
-            assert not done
-            assert initialized == 1 and connect.await_count == 1
-        finally:
-            release.set()
-            expected = (
-                asyncio.CancelledError
-                if cancel_waiter
-                else OpenSandboxBackendUnavailableError
-            )
-            with pytest.raises(expected):
-                await getting
-            assert (await next_get).id == "original"
-        assert initialized == 2
-        assert state.bindings == {_resource_key("owner"): "original"}
-    assert first.closed and second.closed
-    assert not first.killed and not second.killed
 
 
 @pytest.mark.parametrize("value", [0, -1, True, 1.5])

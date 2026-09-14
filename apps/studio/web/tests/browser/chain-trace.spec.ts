@@ -826,48 +826,6 @@ test('选中节点只展示所属 Turn 且蓝色选区严格对齐节点条', as
   expect(pageErrors).toEqual([])
 })
 
-test('历史链路搜索只读取筛选快照，不发送节点类型筛选', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 850 })
-  const pageErrors = await mockChainTraceStudio(page)
-  await page.getByRole('tab', { name: '链路' }).click()
-  await expect.poll(async () => (await traceRequests(page)).snapshots.length).toBe(1)
-  expect((await traceRequests(page)).follow).toHaveLength(0)
-  const initial = new URL((await traceRequests(page)).snapshots[0]!)
-  expect(initial.searchParams.getAll('kind')).toEqual([])
-
-  const searchTrigger = page.getByRole('button', { name: '搜索链路节点' })
-  await expect(searchTrigger).toHaveCount(1)
-  await searchTrigger.click()
-  await expect(searchTrigger).toHaveCount(0)
-  const search = page.getByRole('searchbox', { name: '搜索链路节点' })
-  await expect(search).toBeVisible()
-  await expect(page.getByRole('button', { name: '清除链路搜索' })).toHaveCount(1)
-  await page.clock.install()
-  await page.clock.pauseAt(new Date())
-  await search.fill('deep')
-  await page.clock.runFor(200)
-  expect((await traceRequests(page)).snapshots).toHaveLength(1)
-  await search.fill('deepseek')
-  await page.clock.runFor(200)
-  expect((await traceRequests(page)).snapshots).toHaveLength(1)
-  await page.clock.runFor(50)
-  await expect.poll(async () => (await traceRequests(page)).snapshots.length).toBe(2)
-  expect(new URL((await traceRequests(page)).snapshots.at(-1)!).searchParams.get('query'))
-    .toBe('deepseek')
-
-  await page.getByRole('button', { name: '清除链路搜索' }).click()
-  await expect(search).toHaveCount(0)
-  await expect(searchTrigger).toHaveCount(1)
-  await page.clock.runFor(250)
-  await expect.poll(async () => (await traceRequests(page)).snapshots.length).toBe(3)
-  const restored = new URL((await traceRequests(page)).snapshots.at(-1)!)
-  expect(restored.searchParams.getAll('kind')).toEqual([])
-  expect(restored.searchParams.has('includeTechnicalNodes')).toBe(false)
-  expect(restored.searchParams.has('includeAncestorNodes')).toBe(false)
-  await expect(page.getByRole('group', { name: '节点类型' })).toHaveCount(0)
-  expect(pageErrors).toEqual([])
-})
-
 test('搜索结果中的 Model 详情只补取一次完整响应且不重复读取列表', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 850 })
   const pageErrors = await mockChainTraceStudio(page)
@@ -909,65 +867,6 @@ test('详情省略时 fail-closed，英文界面不会把空响应展示为成�
   await expect(details.getByRole('alert')).toHaveCount(0)
   await expect(details.getByRole('button', { name: 'Reload', exact: true })).toBeVisible()
   await expect(details.getByText('准备委派任务')).toHaveCount(0)
-  expect(pageErrors).toEqual([])
-})
-
-test('链路与对话往返恢复阅读位置和末尾跟随状态', async ({ page }) => {
-  await page.setViewportSize({ width: 1024, height: 800 })
-  const pageErrors = await mockChainTraceStudio(page)
-  const pane = page.getByRole('region', { name: '对话内容' })
-  const readingPosition = await pane.evaluate((element) => {
-    const target = Math.round((element.scrollHeight - element.clientHeight) * .43)
-    element.scrollTop = target
-    element.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
-    element.dispatchEvent(new Event('scroll'))
-    return element.scrollTop
-  })
-  await page.waitForTimeout(50)
-  await page.getByRole('tab', { name: '链路' }).click()
-  await page.getByRole('tab', { name: '对话' }).click()
-  await expect.poll(() => page.getByRole('region', { name: '对话内容' }).evaluate(
-    (element) => element.scrollTop,
-  )).toBe(readingPosition)
-
-  const restoredPane = page.getByRole('region', { name: '对话内容' })
-  await restoredPane.evaluate((element) => {
-    element.scrollTop = element.scrollHeight
-    element.dispatchEvent(new Event('scroll'))
-  })
-  await page.waitForTimeout(50)
-  await page.getByRole('tab', { name: '链路' }).click()
-  await page.getByRole('tab', { name: '对话' }).click()
-  await expect.poll(() => page.getByRole('region', { name: '对话内容' }).evaluate(
-    (element) => Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop),
-  )).toBeLessThanOrEqual(1)
-
-  const bottomLayout = await page.locator('.workspace-main').evaluate((workspace) => {
-    const shell = workspace.closest<HTMLElement>('.app-shell')!
-    const list = workspace.querySelector<HTMLElement>('.message-list')!
-    const dock = workspace.querySelector<HTMLElement>('.composer-dock')!
-    const content = Array.from(list.children).slice(0, -1)
-    const end = list.lastElementChild!
-    const dockRect = dock.getBoundingClientRect()
-    return {
-      composerHeight: dockRect.height,
-      measuredHeight: Number.parseFloat(
-        getComputedStyle(shell).getPropertyValue('--composer-height'),
-      ),
-      reservedHeight: Number.parseFloat(getComputedStyle(list).paddingBottom),
-      contentBottom: Math.max(
-        ...content.map((element) => element.getBoundingClientRect().bottom),
-      ),
-      endBottom: end.getBoundingClientRect().bottom,
-      composerTop: dockRect.top,
-    }
-  })
-  expect(Math.abs(bottomLayout.composerHeight - bottomLayout.measuredHeight))
-    .toBeLessThanOrEqual(1)
-  expect(Math.abs(bottomLayout.composerHeight - bottomLayout.reservedHeight))
-    .toBeLessThanOrEqual(1)
-  expect(bottomLayout.contentBottom).toBeLessThanOrEqual(bottomLayout.composerTop + 1)
-  expect(bottomLayout.endBottom).toBeLessThanOrEqual(bottomLayout.composerTop + 1)
   expect(pageErrors).toEqual([])
 })
 

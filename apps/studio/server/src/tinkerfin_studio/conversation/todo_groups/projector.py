@@ -243,6 +243,10 @@ class TodoGroupProjector:
                 and calibrated_status is not None
             ):
                 group_status = calibrated_status
+            if group_status == "completed" and any(
+                todo.status != "completed" for todo in group_state.todos
+            ):
+                group_status = "incomplete"
             groups.append(
                 TodoGroup(
                     id=self._group_id(turn),
@@ -702,6 +706,8 @@ class TodoGroupProjector:
                 status = "failed"
             elif status == "running" and terminal_status == "cancelled":
                 status = "cancelled"
+            elif status == "running" and terminal_status == "incomplete":
+                status = "incomplete"
             result.append(
                 TodoTraceItem(
                     id=todo.id or f"{group_id}:todo:{index}",

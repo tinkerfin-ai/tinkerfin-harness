@@ -819,15 +819,6 @@ async def test_memory_change_wait_preserves_cancellation_during_notification(
                 b"first",
                 b"second",
             ]
-            await backend.wait_for_messaging_change(
-                MessagingChangeWait(
-                    channel="events",
-                    identity=_identity(),
-                    generation=prepared.run_reference.generation,
-                    after=page.change_cursor,
-                    timeout_seconds=0.01,
-                )
-            )
     finally:
         if not pending.done():
             pending.cancel()

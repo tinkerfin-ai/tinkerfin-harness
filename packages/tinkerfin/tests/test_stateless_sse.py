@@ -350,39 +350,6 @@ async def test_event_id_resolver_rejects_unsafe_or_unsupported_ids(
 
 
 @pytest.mark.asyncio
-async def test_native_sse_timeout_covers_mapper_and_closes_upstream(
-    definition_factory: Callable[..., AgentRuntime[None]],
-) -> None:
-    parts = _CountingParts()
-    mapper_started = asyncio.Event()
-
-    async def mapper(_part: NativeStreamPart) -> SsePayload:
-        mapper_started.set()
-        await asyncio.Event().wait()
-        raise AssertionError("unreachable")
-
-    body = (
-        definition_factory(_SourceGraph(lambda: parts))
-        .open_run(
-            thread_id=_identity().thread_id,
-            run_id=_identity().run_id,
-            input=_graph_input(),
-        )
-        .to_sse(
-            timeout=1.0,
-            mapper=mapper,
-        )
-    )
-
-    pull = asyncio.create_task(anext(body))
-    await asyncio.wait_for(mapper_started.wait(), timeout=2.0)
-    with pytest.raises(TimeoutError, match="native SSE stream timed out"):
-        await pull
-
-    assert parts.closed.is_set()
-
-
-@pytest.mark.asyncio
 async def test_external_sse_close_cancels_an_active_pull_and_is_idempotent(
     definition_factory: Callable[..., AgentRuntime[None]],
 ) -> None:

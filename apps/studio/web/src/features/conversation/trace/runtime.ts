@@ -252,7 +252,7 @@ const traceMessages = (trace: ConversationHistoryCoreDetail): Message[] => {
               completedAt: item.completedAt ?? undefined,
               durationMs: elapsedMs(item.createdAt, item.completedAt),
             }
-          : { runId: item.runId, contentOmitted: item.contentOmitted },
+          : { runId: item.runId, contentOmitted: item.contentOmitted, traceMessageId: item.id },
       },
     }]
   })

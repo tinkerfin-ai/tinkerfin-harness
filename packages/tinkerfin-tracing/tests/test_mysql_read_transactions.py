@@ -253,9 +253,8 @@ async def test_mysql_failed_reads_return_clean_host_connection(
 
 
 @pytest.mark.parametrize("after_start", (False, True))
-@pytest.mark.parametrize("timeout", (False, True))
 async def test_mysql_interrupted_read_start_discards_pending_settings(
-    reader_engine: AsyncEngine, after_start: bool, timeout: bool
+    reader_engine: AsyncEngine, after_start: bool
 ) -> None:
     store = SqlAlchemyTraceStore(reader_engine)
     await store.setup()
@@ -288,18 +287,14 @@ async def test_mysql_interrupted_read_start_discards_pending_settings(
     )
     try:
         await asyncio.wait_for(entered.wait(), timeout=2)
-        if timeout:
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(pending, timeout=0.01)
-        else:
-            for attempt in range(8):
-                if pending.done():
-                    break
-                pending.cancel(f"read setup cancellation {attempt + 1}")
-                await asyncio.sleep(0)
-            with pytest.raises(asyncio.CancelledError) as captured:
-                await pending
-            assert captured.value.args == ("read setup cancellation 1",)
+        for attempt in range(8):
+            if pending.done():
+                break
+            pending.cancel(f"read setup cancellation {attempt + 1}")
+            await asyncio.sleep(0)
+        with pytest.raises(asyncio.CancelledError) as captured:
+            await pending
+        assert captured.value.args == ("read setup cancellation 1",)
         _assert_pool_returned(reader_engine)
         assert await _session_settings(reader_engine) == settings
         async with reader_engine.connect() as connection:

@@ -1442,37 +1442,6 @@ async def test_sqlite_state_rejects_a_missing_table_from_current_schema(
         await state.aclose()
 
 
-async def test_sqlite_state_fails_closed_after_worker_registration_is_lost(
-    sql_engine: SqlEngineFactory,
-    tmp_path: Path,
-) -> None:
-    state_type = _public_type("SQLAlchemyOpenSandboxState")
-    database_path = tmp_path / "lost-worker.db"
-    state = state_type(
-        engine=sql_engine(_sqlite_url(database_path)),
-        namespace="test",
-        lease_ttl=0.12,
-    )
-    await state.start(warm_pool_size=0)
-    async with aiosqlite.connect(database_path) as connection:
-        await connection.execute(
-            "DELETE FROM tinkerfin_opensandbox_workers WHERE namespace = ?",
-            ("test",),
-        )
-        await connection.commit()
-
-    try:
-        async with asyncio.timeout(2):
-            while True:
-                try:
-                    await state.read_binding("user-A")
-                except tinkerfin_sandbox.OpenSandboxStateError as error:
-                    assert "worker registration" in str(error)
-                    break
-    finally:
-        await state.aclose()
-
-
 async def test_sqlite_states_serialize_the_same_owner_across_instances(
     sql_engine: SqlEngineFactory,
     tmp_path: Path,

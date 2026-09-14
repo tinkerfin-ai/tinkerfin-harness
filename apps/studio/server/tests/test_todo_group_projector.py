@@ -360,7 +360,7 @@ def test_projector_updates_the_existing_group_without_changing_its_identity() ->
 @pytest.mark.parametrize(
     ("outcome", "execution", "group_status", "running_todo_status"),
     [
-        ("succeeded", "succeeded", "completed", "running"),
+        ("succeeded", "succeeded", "incomplete", "incomplete"),
         ("failed", "failed", "failed", "failed"),
         ("cancelled", "cancelled", "cancelled", "cancelled"),
         ("abandoned", "abandoned", "cancelled", "cancelled"),
@@ -370,8 +370,8 @@ def test_projector_updates_the_existing_group_without_changing_its_identity() ->
 def test_projector_maps_run_outcomes_without_losing_pending_todos(
     outcome: Literal["succeeded", "failed", "cancelled", "abandoned", "interrupted"],
     execution: Literal["succeeded", "failed", "cancelled", "abandoned", "waiting"],
-    group_status: Literal["running", "completed", "failed", "cancelled"],
-    running_todo_status: Literal["running", "completed", "failed", "cancelled"],
+    group_status: Literal["running", "incomplete", "failed", "cancelled"],
+    running_todo_status: Literal["running", "incomplete", "failed", "cancelled"],
 ) -> None:
     projector = TodoGroupProjector()
     for event in _confirmed_todo_events():
@@ -504,7 +504,7 @@ def test_projector_ignores_omitted_subgraph_state() -> None:
 @pytest.mark.parametrize(
     "outcome,execution,expected",
     [
-        ("succeeded", "succeeded", "completed"),
+        ("succeeded", "succeeded", "incomplete"),
         ("failed", "failed", "failed"),
         ("cancelled", "cancelled", "cancelled"),
         ("interrupted", "waiting", "running"),
@@ -513,7 +513,7 @@ def test_projector_ignores_omitted_subgraph_state() -> None:
 def test_continuation_preserves_todo_group_and_applies_execution_outcome(
     outcome: Literal["succeeded", "failed", "cancelled", "interrupted"],
     execution: Literal["succeeded", "failed", "cancelled", "waiting"],
-    expected: Literal["completed", "failed", "cancelled", "running"],
+    expected: Literal["incomplete", "failed", "cancelled", "running"],
 ) -> None:
     """无新提问的续跑沿用原任务组，失败也不能被误当审批初始化失败忽略"""
     projector = TodoGroupProjector()

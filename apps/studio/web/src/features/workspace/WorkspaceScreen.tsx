@@ -958,6 +958,7 @@ export function WorkspaceScreen({
     const locate = async () => {
       const result = await messageWindow.revealMessage(group.userMessageId)
       if (result === 'failed') pushToast('error', t('定位消息失败，请重试'))
+      else if (result === 'not-found') pushToast('info', t('未找到任务对应的用户消息'))
     }
     if (taskDrawer.modalActive) {
       taskDrawer.close(false)

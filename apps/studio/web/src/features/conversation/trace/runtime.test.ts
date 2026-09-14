@@ -282,6 +282,7 @@ describe('Trace conversation projection', () => {
 
     expect(restored.runStatus).toBe('idle')
     expect(restored.mode).toBe('plan')
+    expect(restored.messages[0]?.meta?.traceMessageId).toBe(detail().messages[0]?.id)
     expect(restored.todos).toEqual([
       { id: 'trace-todo-0', content: '验证结果', status: 'completed' },
     ])

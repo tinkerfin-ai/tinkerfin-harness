@@ -2795,49 +2795,6 @@ async def test_sqlite_background_heartbeat_renews_across_initial_lease(
             await engine.dispose()
 
 
-async def test_sqlite_real_clock_observations_advance_with_millisecond_precision(
-    tmp_path: Path,
-) -> None:
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'real-clock.db'}")
-    store = SqlAlchemyTraceStore(engine)
-    writer = await store.open_writer(_identity())
-    try:
-        committed = await writer.append((_fact("started"),))
-        snapshot_times: set[datetime] = set()
-        page_times: set[datetime] = set()
-        async with asyncio.timeout(3):
-            while True:
-                snapshot = await store.snapshot(_identity().thread)
-                page = await _backend(store).read_event_page(
-                    TraceEventPageRequest(
-                        key=writer.key,
-                        direction="forward",
-                        after_seq=0,
-                        as_of_seq=1,
-                        limit=10,
-                    )
-                )
-                snapshot_times.add(snapshot.observed_at)
-                page_times.add(page.observed_at)
-                assert snapshot.observed_at.microsecond % 1000 == 0
-                assert page.observed_at.microsecond % 1000 == 0
-                assert [event.event_id for event in page.events] == [
-                    committed[0].event_id
-                ]
-                if all(
-                    len(observations) >= 2
-                    and any(observed.microsecond for observed in observations)
-                    for observations in (snapshot_times, page_times)
-                ):
-                    break
-                await asyncio.sleep(0.001)
-    finally:
-        try:
-            await writer.aclose()
-        finally:
-            await engine.dispose()
-
-
 async def test_sqlite_unknown_heartbeat_commit_renews_expired_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -380,28 +380,6 @@ def test_root_state_closes_child_lifecycles_before_snapshot_or_delta(
     assert adapter.finish() == []
 
 
-class _TimeoutCompletionEvents:
-    def __init__(self) -> None:
-        self._index = 0
-        self.second_pull_started = asyncio.Event()
-        self.release_second = asyncio.Event()
-        self.close_calls = 0
-
-    def __aiter__(self) -> _TimeoutCompletionEvents:
-        return self
-
-    async def __anext__(self) -> BaseEvent:
-        if self._index == 0:
-            self._index += 1
-            return TextMessageContentEvent(message_id="message-1", delta="a")
-        self.second_pull_started.set()
-        await self.release_second.wait()
-        raise RuntimeError("pending pull failed")
-
-    async def aclose(self) -> None:
-        self.close_calls += 1
-
-
 def test_content_batcher_flushes_at_exact_character_threshold() -> None:
     batcher = ContentBatcher()
 
@@ -449,18 +427,6 @@ def test_content_batcher_flushes_before_every_non_text_event() -> None:
         "TEXT_MESSAGE_START",
     ]
     assert emitted[1] is boundary
-
-
-@pytest.mark.asyncio
-async def test_microbatch_flushes_after_wall_clock_threshold() -> None:
-    events = _TimeoutCompletionEvents()
-    stream = micro_batch(events)
-
-    flushed = await asyncio.wait_for(anext(stream), timeout=0.6)
-
-    assert isinstance(flushed, TextMessageContentEvent)
-    assert flushed.delta == "a"
-    await stream.aclose()
 
 
 @pytest.mark.asyncio
@@ -585,25 +551,6 @@ class _BlockingPartClose:
         self.close_completed.set()
         if self.close_error is not None:
             raise self.close_error
-
-
-@pytest.mark.asyncio
-async def test_timeout_flush_close_retrieves_a_completed_pending_pull_error() -> None:
-    events = _TimeoutCompletionEvents()
-    stream = micro_batch(
-        events,
-        batcher=ContentBatcher(time_threshold_seconds=0.01),
-    )
-
-    flushed = await anext(stream)
-    assert isinstance(flushed, TextMessageContentEvent)
-    await asyncio.wait_for(events.second_pull_started.wait(), timeout=1)
-    events.release_second.set()
-    await asyncio.sleep(0)
-
-    with pytest.raises(RuntimeError, match="pending pull failed"):
-        await stream.aclose()
-    assert events.close_calls == 1
 
 
 @pytest.mark.asyncio

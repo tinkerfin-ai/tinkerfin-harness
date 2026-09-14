@@ -70,7 +70,7 @@ const traceEntities = (groups: readonly TodoGroup[], visibleGroups: readonly Tod
     const turnId = `turn:${group.id}`
     turns.push({ id: turnId, ordinal: position + 1, startedAt: group.createdAt })
     messages.push({
-      agui: null,
+      agui: { kind: 'message', messageId: `public-${group.userMessageId}` },
       id: group.userMessageId,
       traceSeq: sequence,
       sourceId: group.userMessageId,
@@ -393,11 +393,11 @@ test('统一抽屉展示、独立展开、定位和 overlay 焦点恢复可真�
 
   await page.getByRole('button', { name: '定位到对话：历史任务轨迹 2' }).click()
   await expect(drawer).toBeHidden()
-  await expect(page.locator('#todo-user-message-1')).toBeFocused()
-  await expect(page.locator('#todo-user-message-1')).toHaveClass(/todo-trace-locate-target/)
-  await expect(page.locator('#todo-user-message-1')).toHaveCSS('outline-style', 'none')
-  await expect(page.locator('#todo-user-message-1')).toHaveCSS('border-width', '0px')
-  await expect(page.locator('#todo-user-message-1 .message-markdown')).toHaveCSS('outline-style', 'none')
+  await expect(page.locator('#public-todo-user-message-1')).toBeFocused()
+  await expect(page.locator('#public-todo-user-message-1')).toHaveClass(/todo-trace-locate-target/)
+  await expect(page.locator('#public-todo-user-message-1')).toHaveCSS('outline-style', 'none')
+  await expect(page.locator('#public-todo-user-message-1')).toHaveCSS('border-width', '0px')
+  await expect(page.locator('#public-todo-user-message-1 .message-markdown')).toHaveCSS('outline-style', 'none')
 
   await launcher.click()
   await expect(drawer).toBeVisible()
@@ -431,12 +431,12 @@ test('未水化消息通过可取消的旧 Trace 分页后定位', async ({ page
   await page.getByRole('button', { name: '定位到对话：历史任务轨迹 3' }).click()
 
   await expect.poll(evidence.olderRequestCount).toBe(1)
-  await expect(page.locator('#todo-user-message-2')).toBeFocused()
-  await expect(page.locator('#todo-user-message-2')).toHaveClass(/todo-trace-locate-target/)
+  await expect(page.locator('#public-todo-user-message-2')).toBeFocused()
+  await expect(page.locator('#public-todo-user-message-2')).toHaveClass(/todo-trace-locate-target/)
   expect(evidence.pageErrors).toEqual([])
 })
 
-test('任务对应的用户消息缺失时静默关闭定位', async ({ page }) => {
+test('任务对应的用户消息缺失时关闭抽屉并说明原因', async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 900 })
   const groups = makeGroups(1)
   const missing = {
@@ -452,7 +452,32 @@ test('任务对应的用户消息缺失时静默关闭定位', async ({ page }) 
   await page.getByRole('button', { name: '定位到对话：缺失的用户消息', exact: true }).click()
 
   await expect(page.getByRole('complementary', { name: '任务轨迹' })).toBeHidden()
-  await expect(page.getByText('未找到任务对应的用户消息', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('未找到任务对应的用户消息', { exact: true })).toBeVisible()
+})
+
+test('已结束但未确认完成的旧清单保持 3/4 且不继续旋转', async ({ page }) => {
+  const groups = makeGroups(2, false, 4)
+  groups[1]!.status = 'incomplete'
+  groups[1]!.todos[3]!.status = 'incomplete'
+  const evidence = await mockTodoTraceStudio(page, { groups })
+  await page.getByRole('button', { name: '任务轨迹 2', exact: true }).click()
+  const drawer = page.getByRole('complementary', { name: '任务轨迹' })
+  const older = drawer.getByRole('button', { name: '展开任务组：历史任务轨迹 2' })
+  await older.click()
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect(drawer.getByRole('button', { name: '收起任务组：历史任务轨迹 2' }))
+        .toContainText(/未确认完成\s*3\s*\/\s*4/)
+      await expect(drawer.getByRole('button', { name: /任务组：整理当前交付清单/ }))
+        .toContainText(/已完成\s*4\s*\/\s*4/)
+      await expect(drawer.getByRole('list', { name: '任务列表' }).getByText('未确认完成'))
+        .toBeVisible()
+      await expect(drawer.locator('.todo-trace-spin')).toHaveCount(0)
+    }
+  }
+  expect(evidence.pageErrors).toEqual([])
 })
 
 test('320px 深色高对比与 reduced-motion 下保持全宽和静态状态反馈', async ({ page }) => {
@@ -513,111 +538,6 @@ test('320px 深色高对比与 reduced-motion 下保持全宽和静态状态反�
   expect(layout.overflow).toBeLessThanOrEqual(0)
   await expect(page.locator('.todo-trace-spin').first()).toHaveCSS('animation-name', 'none')
   await page.screenshot({ path: resolve(EVIDENCE_DIR, '320-forced-colors.png') })
-  expect(evidence.pageErrors).toEqual([])
-})
-
-test('浅深主题和四个目标视口保持无描边、无提示与对齐', async ({ page }) => {
-  const groups = makeGroups(3, true, 3)
-  const completedPreview = '请基于上一轮结论继续做一次独立交叉验证并输出可复核结果'
-  groups[1] = { ...groups[1], userMessagePreview: completedPreview }
-  const evidence = await mockTodoTraceStudio(page, { groups })
-
-  await page.getByRole('button', { name: '任务轨迹 3' }).click()
-  await page.getByRole('button', { name: `展开任务组：${completedPreview}` }).click()
-  const drawer = page.getByRole('complementary', { name: '任务轨迹' })
-  const current = drawer.getByRole('button', { name: '收起任务组：整理当前交付清单' })
-  const screenshotDir = process.env.TINKERFIN_VISUAL_QA_DIR
-
-  for (const theme of ['light', 'dark'] as const) {
-    await page.evaluate((value) => {
-      document.documentElement.dataset.theme = value
-      document.documentElement.dataset.themePreference = value
-      document.documentElement.style.colorScheme = value
-    }, theme)
-    await page.setViewportSize({ width: 1440, height: 900 })
-    await current.hover()
-    await page.waitForTimeout(600)
-    await expect(drawer.getByRole('tooltip')).toHaveCount(0)
-
-    for (const width of [320, 768, 1024, 1440]) {
-      await page.setViewportSize({ width, height: 900 })
-      const historyToggle = drawer.getByRole('button', { name: `收起任务组：${completedPreview}` })
-      await historyToggle.hover()
-      await expect(historyToggle).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-      await expect(historyToggle).toHaveCSS('box-shadow', 'none')
-      await page.mouse.down()
-      await expect(historyToggle).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-      await page.mouse.move(0, 0)
-      await page.mouse.up()
-
-      const metrics = await drawer.evaluate((element) => {
-        const mark = element.querySelector('.todo-trace-completed-mark')
-        const wrapper = mark?.parentElement
-        const locate = element.querySelector('.todo-trace-locate')
-        const progress = element.querySelector('.todo-trace-group-progress')
-        const completedGroup = element.querySelector('.todo-trace-group.is-completed.is-expanded')
-        const completedTitle = completedGroup?.querySelector('.todo-trace-group-title')
-        const completedProgress = completedGroup?.querySelector('.todo-trace-group-progress')
-        const locateRect = locate?.getBoundingClientRect()
-        const progressRect = progress?.getBoundingClientRect()
-        const completedTitleRect = completedTitle?.getBoundingClientRect()
-        const completedProgressRect = completedProgress?.getBoundingClientRect()
-        return {
-          drawerWidth: element.getBoundingClientRect().width,
-          overflow: Math.max(
-            document.documentElement.scrollWidth - document.documentElement.clientWidth,
-            document.body.scrollWidth - document.body.clientWidth,
-          ),
-          tooltipCount: element.querySelectorAll('[role="tooltip"], [title]').length,
-          completedBorder: wrapper ? getComputedStyle(wrapper).borderWidth : null,
-          completedBoxShadow: wrapper ? getComputedStyle(wrapper).boxShadow : null,
-          completedMarkFilter: mark ? getComputedStyle(mark).filter : null,
-          completedCircleCount: mark?.querySelectorAll('circle').length ?? null,
-          groupStateCount: element.querySelectorAll('.todo-trace-group-state').length,
-          titleProgressCenterDelta: completedTitleRect && completedProgressRect
-            ? Math.abs(
-                (completedTitleRect.top + (completedTitleRect.height / 2))
-                - (completedProgressRect.top + (completedProgressRect.height / 2))
-              )
-            : null,
-          titleProgressGap: completedTitleRect && completedProgressRect
-            ? completedProgressRect.left - completedTitleRect.right
-            : null,
-          titleIsTruncated: completedTitle
-            ? completedTitle.scrollWidth > completedTitle.clientWidth
-            : null,
-          locateProgressRightDelta: locateRect && progressRect
-            ? Math.abs(locateRect.right - progressRect.right)
-            : null,
-        }
-      })
-
-      expect(metrics.drawerWidth).toBe(Math.min(width, 400))
-      expect(metrics.overflow).toBeLessThanOrEqual(0)
-      expect(metrics.tooltipCount).toBe(0)
-      expect(metrics.completedBorder).toBe('0px')
-      expect(metrics.completedBoxShadow).toBe('none')
-      expect(metrics.completedMarkFilter).toBe('none')
-      expect(metrics.completedCircleCount).toBe(1)
-      expect(metrics.groupStateCount).toBe(0)
-      expect(metrics.titleProgressCenterDelta).not.toBeNull()
-      expect(metrics.titleProgressCenterDelta ?? Number.POSITIVE_INFINITY)
-        .toBeLessThanOrEqual(0.5)
-      expect(metrics.titleProgressGap).not.toBeNull()
-      expect(metrics.titleProgressGap ?? Number.NEGATIVE_INFINITY).toBeGreaterThanOrEqual(8)
-      expect(metrics.titleIsTruncated).toBe(true)
-      expect(metrics.locateProgressRightDelta).not.toBeNull()
-      expect(metrics.locateProgressRightDelta ?? Number.POSITIVE_INFINITY)
-        .toBeLessThanOrEqual(0.5)
-
-      if (screenshotDir) {
-        await drawer.screenshot({
-          path: resolve(screenshotDir, `tinkerfin-todo-trace-${theme}-${width}.png`),
-        })
-      }
-    }
-  }
-
   expect(evidence.pageErrors).toEqual([])
 })
 

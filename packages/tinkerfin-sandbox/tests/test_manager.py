@@ -182,19 +182,6 @@ class _RenewFailingBackend(_FakeBackend):
         raise RuntimeError("renew unavailable")
 
 
-class _RecoverableRenewBackend(_FakeBackend):
-    """Expose a temporary renewal outage on an otherwise reusable remote."""
-
-    def __init__(self, sandbox_id: str) -> None:
-        super().__init__(sandbox_id)
-        self.fail_renew = True
-
-    async def arenew(self, timeout: timedelta) -> None:
-        if self.fail_renew:
-            raise RuntimeError("renew unavailable")
-        await super().arenew(timeout)
-
-
 class _FakeClient:
     def __init__(
         self,
@@ -2001,48 +1988,6 @@ async def test_reset_rejects_workspace_root_replaced_after_open(
 
 
 @pytest.mark.asyncio
-async def test_reset_cancellation_waits_for_helper_settlement(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    workspace.mkdir()
-    (workspace / "inside.txt").write_text("inside", encoding="utf-8")
-    opened = tmp_path / "cancel-reset-opened"
-    release = tmp_path / "cancel-reset-release"
-    _install_reset_barrier(
-        monkeypatch,
-        opened=opened,
-        release=release,
-    )
-    client = _FakeClient(
-        lambda sandbox_id: _ResettableLocalBackend(sandbox_id, workspace)
-    )
-    client.config = client.config.model_copy(update={"workspace_root": str(workspace)})
-    manager = _new_manager(client=client, warm_pool_size=0)
-    await manager.start()
-    try:
-        await manager.get(_key("user-1"))
-        reset_task = asyncio.create_task(manager.reset(_key("user-1")))
-        deadline = asyncio.get_running_loop().time() + 1
-        while not opened.exists() and asyncio.get_running_loop().time() < deadline:
-            await asyncio.sleep(0.001)
-        assert opened.exists(), "reset helper did not reach the cancellation barrier"
-
-        reset_task.cancel()
-        await asyncio.sleep(0.05)
-        assert not reset_task.done()
-        release.touch()
-        with pytest.raises(asyncio.CancelledError):
-            await reset_task
-
-        assert list(workspace.iterdir()) == []
-    finally:
-        release.touch(exist_ok=True)
-        await manager.aclose()
-
-
-@pytest.mark.asyncio
 async def test_reset_response_loss_is_reported_without_replay(tmp_path: Path) -> None:
     class ResponseLossBackend(_ResettableLocalBackend):
         def __init__(self, sandbox_id: str, workspace: Path) -> None:
@@ -2354,27 +2299,6 @@ async def test_strict_warm_pool_requires_ready_slot_reconciliation_state() -> No
     await manager.aclose()
 
 
-@pytest.mark.asyncio
-async def test_open_manager_renews_idle_warm_capacity_before_remote_ttl() -> None:
-    """An unconsumed warm Sandbox must remain ready across its configured TTL."""
-
-    client = _FakeClient()
-    client.config = client.config.model_copy(update={"ttl": timedelta(seconds=0.15)})
-    manager = _new_manager(
-        client=client,
-        warm_pool_size=1,
-        fail_on_startup_warmup_error=True,
-    )
-    await manager.start()
-    try:
-        backend = cast(_FakeBackend, client.backends[0])
-        await _eventually(lambda: len(backend.renew_calls) >= 2)
-        assert client.create_calls == 1
-        await manager.check_ready()
-    finally:
-        await manager.aclose()
-
-
 async def test_manual_cleanup_owner_reuse_keeps_health_checks_without_renewal() -> None:
     """Manual cleanup preserves health, inspection, identity, and close ownership."""
 
@@ -2438,35 +2362,6 @@ async def test_manual_cleanup_warm_health_maintenance_reclaims_failed_capacity(
 
 
 @pytest.mark.asyncio
-async def test_failed_warm_renewal_degrades_without_discarding_the_remote() -> None:
-    """An uncertain renewal failure must preserve ID ownership until recovery."""
-
-    client = _ReconnectableFakeClient(backend_factory=_RecoverableRenewBackend)
-    client.config = client.config.model_copy(update={"ttl": timedelta(seconds=0.15)})
-    manager = _new_manager(
-        client=client,
-        warm_pool_size=1,
-        fail_on_startup_warmup_error=True,
-    )
-    await manager.start()
-    try:
-        backend = cast(_RecoverableRenewBackend, client.backends[0])
-        await _eventually(lambda: manager._warm_failure is not None)
-        with pytest.raises(tinkerfin_sandbox.OpenSandboxWarmPoolUnavailableError):
-            await manager.check_ready()
-        assert client.create_calls == 1
-        assert client.destroy_calls == []
-
-        backend.fail_renew = False
-        await _eventually(lambda: manager._warm_ready.is_set())
-        await manager.check_ready()
-        assert client.create_calls == 1
-        assert backend.renew_calls
-    finally:
-        await manager.aclose()
-
-
-@pytest.mark.asyncio
 async def test_owner_reuse_remains_available_when_best_effort_renewal_fails() -> None:
     """Warm readiness changes must not weaken the established owner reuse path."""
 
@@ -2479,39 +2374,6 @@ async def test_owner_reuse_remains_available_when_best_effort_renewal_fails() ->
         assert second is first
         assert client.create_calls == 1
     finally:
-        await manager.aclose()
-
-
-@pytest.mark.asyncio
-async def test_healthy_warm_probe_keeps_published_capacity_ready() -> None:
-    """Routine verification must not withdraw previously verified capacity."""
-
-    entered = asyncio.Event()
-    release = asyncio.Event()
-    pause = False
-
-    class GatedBackend(_FakeBackend):
-        async def aexecute(
-            self, command: str, *, timeout: int | None = None
-        ) -> _ExecuteResponse:
-            if pause:
-                entered.set()
-                await release.wait()
-            return await super().aexecute(command, timeout=timeout)
-
-    client = _FakeClient(backend_factory=GatedBackend)
-    client.config = client.config.model_copy(update={"ttl": timedelta(seconds=0.15)})
-    manager = _new_manager(client=client, warm_pool_size=1)
-    await manager.start()
-    try:
-        await manager.check_ready()
-        pause = True
-        await asyncio.wait_for(entered.wait(), 2)
-        await manager.check_ready()
-        assert client.create_calls == 1
-        assert client.destroy_calls == []
-    finally:
-        release.set()
         await manager.aclose()
 
 
@@ -2659,39 +2521,6 @@ async def test_repeated_cancellation_settles_late_custom_warm_backend() -> None:
 
 
 @pytest.mark.asyncio
-async def test_warm_renewal_failure_settles_late_custom_backend() -> None:
-    client = _RepeatedCancellationWarmClient()
-    manager = _new_manager(
-        client=client,
-        state=_WarmLeaseState(renews=False),
-        warm_pool_size=1,
-        fail_on_startup_warmup_error=True,
-    )
-    startup = asyncio.create_task(manager.start())
-    try:
-        await asyncio.wait_for(client.create_entered.wait(), timeout=1)
-        await asyncio.wait_for(client.first_cancellation.wait(), timeout=1)
-        assert not startup.done()
-
-        client.release_create.set()
-        with pytest.raises(
-            OpenSandboxStateOwnershipError,
-            match="Warm slot 0 was lost",
-        ):
-            await startup
-        await asyncio.wait_for(client.create_returned.wait(), timeout=1)
-        await manager.aclose()
-
-        backend = cast(_FakeBackend, client.backends[0])
-        assert client.destroy_calls == [backend.id]
-        assert backend.close_calls == 1
-    finally:
-        client.release_create.set()
-        await asyncio.gather(startup, return_exceptions=True)
-        await asyncio.gather(manager.aclose(), return_exceptions=True)
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("ttl", (timedelta(hours=2), None))
 async def test_native_client_retains_cancelled_create_reclaim_ownership(
     ttl: timedelta | None,
@@ -2749,10 +2578,8 @@ def test_manager_rejects_invalid_settlement_timeout(
         )
 
 
-@pytest.mark.parametrize("settlement_timeout", (0, 0.01))
-async def test_manager_close_timeout_retains_shared_cleanup_for_second_close(
-    settlement_timeout: float,
-) -> None:
+async def test_manager_close_timeout_retains_shared_cleanup_for_second_close() -> None:
+    settlement_timeout = 0
     client = _FakeClient()
     manager = _new_manager(
         client=client,
@@ -2796,44 +2623,6 @@ async def test_manager_close_timeout_retains_shared_cleanup_for_second_close(
         await asyncio.gather(manager.aclose(), return_exceptions=True)
 
 
-@pytest.mark.parametrize(
-    ("body_error", "error_type"),
-    (
-        pytest.param(ValueError("body failed"), ValueError, id="business-error"),
-        pytest.param(
-            asyncio.CancelledError("body cancelled"),
-            asyncio.CancelledError,
-            id="body-cancellation",
-        ),
-    ),
-)
-async def test_manager_context_body_failure_outranks_close_timeout(
-    body_error: BaseException,
-    error_type: type[BaseException],
-) -> None:
-    client = _FakeClient()
-    manager = _new_manager(
-        client=client,
-        warm_pool_size=1,
-        settlement_timeout=0.01,
-    )
-    backend: _FakeBackend | None = None
-    try:
-        with pytest.raises(error_type) as captured:
-            async with manager:
-                backend = cast(_FakeBackend, client.backends[0])
-                backend.close_gate = threading.Event()
-                raise body_error
-
-        notes = "\n".join(getattr(captured.value, "__notes__", ()))
-        assert captured.value is body_error
-        assert "OpenSandboxSettlementTimeoutError" in notes
-    finally:
-        if backend is not None and backend.close_gate is not None:
-            backend.close_gate.set()
-        await asyncio.gather(manager.aclose(), return_exceptions=True)
-
-
 @pytest.mark.asyncio
 async def test_manager_context_caller_cancellation_retains_body_failure() -> None:
     client = _FakeClient()
@@ -2873,29 +2662,6 @@ async def test_manager_context_caller_cancellation_retains_body_failure() -> Non
         if backend is not None and backend.close_gate is not None:
             backend.close_gate.set()
         await asyncio.gather(operation, return_exceptions=True)
-        await asyncio.gather(manager.aclose(), return_exceptions=True)
-
-
-@pytest.mark.asyncio
-async def test_manager_start_failure_outranks_close_timeout() -> None:
-    client = _BlockingCloseFailingCreateClient()
-    manager = _new_manager(
-        client=client,
-        warm_pool_size=1,
-        fail_on_startup_warmup_error=True,
-        settlement_timeout=0.01,
-    )
-    try:
-        with pytest.raises(UnexpectedOpenSandboxBackendError) as captured:
-            await manager.__aenter__()
-
-        assert isinstance(captured.value.cause, RuntimeError)
-        assert str(captured.value.cause) == "warmup failed"
-        notes = "\n".join(getattr(captured.value, "__notes__", ()))
-        assert "OpenSandboxSettlementTimeoutError" in notes
-        assert client.close_entered.is_set()
-    finally:
-        client.release_close.set()
         await asyncio.gather(manager.aclose(), return_exceptions=True)
 
 

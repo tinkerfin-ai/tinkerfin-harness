@@ -793,6 +793,7 @@ export const englishMessages = {
   '展开任务组：{preview}': 'Expand task group: {preview}',
   '收起任务组：{preview}': 'Collapse task group: {preview}',
   '任务组状态：{status}': 'Task group status: {status}',
+  '未确认完成': 'Completion unconfirmed',
   '没有已确认的任务轨迹': 'No confirmed task trace',
   '等待审批后执行': 'Runs after approval',
   '消息已复制': 'Message copied',

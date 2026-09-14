@@ -67,8 +67,8 @@ const consumeConfirmedGroup = ({
 }
 
 describe('todo group contracts', () => {
-  it('projects a confirmed root Todo through the production event parser', () => {
-    const projector = new LiveTodoTraceProjector()
+  it('成功结束保留未确认完成，恢复后只接受模型明确完成的清单', () => {
+    let projector = new LiveTodoTraceProjector()
     consumeConfirmedGroup({
       projector,
       runId: 'run-1',
@@ -91,6 +91,26 @@ describe('todo group contracts', () => {
         todos: [{ id: 'todo-1', content: '实现任务轨迹', status: 'running' }],
       }],
     })
+    const consume = (raw: unknown, rootState: JsonObject = {}) => projector.consume(
+      parseConversationAgUiEvent(raw),
+      { receivedAt: '2026-08-30T12:00:05.000Z', rootState },
+    )
+    consume({ type: 'RUN_FINISHED', threadId: 'thread-1', runId: 'run-1' })
+    const ended = parseTaskTraceSnapshot(projector.snapshot)
+    expect(ended.todoGroups[0]).toMatchObject({
+      status: 'incomplete', todos: [{ status: 'incomplete' }],
+    })
+    if (ended.status !== 'ready') throw new Error('已结束任务轨迹不可用')
+    projector.close()
+    projector = new LiveTodoTraceProjector()
+    projector.hydrate(ended, { headRunId: 'run-1', isRunning: false })
+    projector.startRun({ runId: 'resume-1', inputKind: 'resume', parentRunId: 'run-1' })
+    const rootState = { todos: [{ id: 'todo-1', content: '实现任务轨迹', status: 'completed' }] }
+    consume({ type: 'STATE_SNAPSHOT', snapshot: rootState }, rootState)
+    consume({ type: 'RUN_FINISHED', threadId: 'thread-1', runId: 'resume-1' }, rootState)
+    expect(projector.snapshot.todoGroups).toMatchObject([{
+      id: 'todo-group:run-1', status: 'completed', todos: [{ status: 'completed' }],
+    }])
     projector.close()
   })
 

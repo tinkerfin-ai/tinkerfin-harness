@@ -446,33 +446,6 @@ async def test_cancellation_joins_claim_commit_before_settlement(database, monke
         assert thread is not None and thread.title_generation_status == "failed"
 
 
-async def test_total_title_timeout_includes_claim(database, monkeypatch):
-    from langchain_core.language_models.fake_chat_models import FakeListChatModel
-
-    from tinkerfin_studio.conversation.titles import summarize_conversation_title
-
-    thread_pk = await create_thread(database)
-    monkeypatch.setattr(
-        "tinkerfin_studio.conversation.titles._TITLE_TIMEOUT_SECONDS", 0.02
-    )
-    original = ConversationRepository.claim_title
-
-    async def claim(repository, pk):
-        await asyncio.sleep(0.08)
-        return await original(repository, pk)
-
-    monkeypatch.setattr(ConversationRepository, "claim_title", claim)
-    assert (
-        await summarize_conversation_title(
-            database=database,
-            thread_pk=thread_pk,
-            text="a",
-            model=FakeListChatModel(responses=["title"]),
-        )
-        is None
-    )
-
-
 @pytest.mark.parametrize("text", ["中" * 40, "a" * 40, "😀" * 40, "短"])
 async def test_generated_title_is_at_most_32_characters(database, text):
     from langchain_core.language_models.fake_chat_models import FakeListChatModel

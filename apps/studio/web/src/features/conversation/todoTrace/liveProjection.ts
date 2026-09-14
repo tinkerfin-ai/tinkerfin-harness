@@ -9,6 +9,7 @@ import {
   normalizeUserMessagePreview,
   parseRootTodos,
   projectTodoItems,
+  resolveTodoGroupStatus,
   todoGroupId,
   type RootTodoValue,
 } from './domain'
@@ -380,9 +381,11 @@ export class LiveTodoTraceProjector {
   }
 
   private updateGroupTodos(groupId: string, todos: RootTodoValue[]) {
-    this.groups = this.groups.map((group) => group.id === groupId
-      ? { ...group, todos: projectTodoItems(todos, group.id, group.status) }
-      : group)
+    this.groups = this.groups.map((group) => {
+      if (group.id !== groupId) return group
+      const status = resolveTodoGroupStatus(todos, group.status)
+      return { ...group, status, todos: projectTodoItems(todos, group.id, status) }
+    })
     this.publish()
   }
 
@@ -391,6 +394,7 @@ export class LiveTodoTraceProjector {
     status: TodoGroup['status'],
   ) {
     if (!groupId) return
+    status = resolveTodoGroupStatus(this.latestRootTodos, status)
     this.groups = this.groups.map((group) => group.id === groupId
       ? { ...group, status, todos: projectTodoItems(this.latestRootTodos, group.id, status) }
       : group)

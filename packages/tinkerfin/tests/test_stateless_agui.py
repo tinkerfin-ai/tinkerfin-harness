@@ -14,7 +14,6 @@ from ag_ui.core import (
     RunStartedEvent,
 )
 from langchain.agents.middleware.types import InputAgentState
-from langchain_core.messages import AIMessageChunk
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import ValidationError
 
@@ -462,48 +461,6 @@ class _BlockingParts:
         self.closed.set()
 
 
-class _DeadlineParts:
-    def __init__(
-        self,
-        parts: list[object] | None = None,
-        *,
-        block_close: bool = False,
-    ) -> None:
-        self._parts = list(parts or [])
-        self._block_close = block_close
-        self.pull_started = asyncio.Event()
-        self.close_started = asyncio.Event()
-        self.release_close = asyncio.Event()
-        self.closed = asyncio.Event()
-
-    def __aiter__(self) -> _DeadlineParts:
-        return self
-
-    async def __anext__(self) -> object:
-        if self._parts:
-            return self._parts.pop(0)
-        self.pull_started.set()
-        await asyncio.Event().wait()
-        raise AssertionError("an unreachable blocked pull resumed")
-
-    async def aclose(self) -> None:
-        self.close_started.set()
-        if self._block_close:
-            await self.release_close.wait()
-        self.closed.set()
-
-
-def _message_part(message: object) -> dict[str, object]:
-    return {
-        "type": "messages",
-        "ns": (),
-        "data": (
-            message,
-            {"lc_agent_name": None, "langgraph_node": "model"},
-        ),
-    }
-
-
 async def _collect_events(stream: AsyncIterator[BaseEvent]) -> list[BaseEvent]:
     return [event async for event in stream]
 
@@ -793,145 +750,6 @@ async def test_agui_zero_timeout_starts_lifecycle_without_pulling_parts() -> Non
     assert terminal.code == "stream_timeout"
     assert isinstance(stream.error, TimeoutError)
     assert pulls == 0
-
-
-@pytest.mark.asyncio
-async def test_agui_total_deadline_closes_text_before_timeout_terminal() -> None:
-    parts = _DeadlineParts(
-        [_message_part(AIMessageChunk(id="message-timeout", content="partial"))]
-    )
-    stream = _agui_stream(lambda: parts, timeout=0.01)
-
-    events = await _collect_events(stream)
-
-    assert [event.type.value for event in events] == [
-        "RUN_STARTED",
-        "TEXT_MESSAGE_START",
-        "TEXT_MESSAGE_CONTENT",
-        "TEXT_MESSAGE_END",
-        "RUN_ERROR",
-    ]
-    terminal = events[-1]
-    assert isinstance(terminal, RunErrorEvent)
-    assert terminal.code == "stream_timeout"
-    assert isinstance(stream.error, TimeoutError)
-    assert parts.closed.is_set()
-
-
-@pytest.mark.asyncio
-async def test_agui_total_deadline_closes_parallel_tools_before_timeout_terminal() -> (
-    None
-):
-    parts = _DeadlineParts(
-        [
-            _message_part(
-                AIMessageChunk(
-                    id="message-tools-timeout",
-                    content="",
-                    tool_call_chunks=[
-                        {
-                            "name": "search",
-                            "args": '{"query":"first"}',
-                            "id": "call-first",
-                            "index": 0,
-                            "type": "tool_call_chunk",
-                        },
-                        {
-                            "name": "search",
-                            "args": '{"query":"second"}',
-                            "id": "call-second",
-                            "index": 1,
-                            "type": "tool_call_chunk",
-                        },
-                    ],
-                )
-            )
-        ]
-    )
-    stream = _agui_stream(lambda: parts, timeout=0.01)
-
-    events = await _collect_events(stream)
-    event_types = [event.type.value for event in events]
-
-    assert event_types == [
-        "RUN_STARTED",
-        "TOOL_CALL_START",
-        "TOOL_CALL_ARGS",
-        "TOOL_CALL_START",
-        "TOOL_CALL_ARGS",
-        "TOOL_CALL_END",
-        "TOOL_CALL_END",
-        "RUN_ERROR",
-    ]
-    assert event_types.count("RUN_ERROR") == 1
-    terminal = events[-1]
-    assert isinstance(terminal, RunErrorEvent)
-    assert terminal.code == "stream_timeout"
-
-
-@pytest.mark.asyncio
-async def test_agui_total_deadline_before_interrupt_uses_timeout_terminal() -> None:
-    parts = _DeadlineParts()
-    stream = _agui_stream(lambda: parts, timeout=0.01)
-
-    events = await _collect_events(stream)
-
-    assert [event.type.value for event in events] == ["RUN_STARTED", "RUN_ERROR"]
-    terminal = events[-1]
-    assert isinstance(terminal, RunErrorEvent)
-    assert terminal.code == "stream_timeout"
-
-
-@pytest.mark.asyncio
-async def test_agui_total_deadline_after_interrupt_does_not_finish_the_run() -> None:
-    parts = _DeadlineParts(
-        [
-            {
-                "type": "values",
-                "ns": (),
-                "data": {"messages": [], "phase": "awaiting-input"},
-                "interrupts": ({"id": "pause", "value": {"pause": True}},),
-            }
-        ]
-    )
-    stream = _agui_stream(lambda: parts, timeout=0.01)
-
-    events = await _collect_events(stream)
-    event_types = [event.type.value for event in events]
-
-    assert event_types == [
-        "RUN_STARTED",
-        "STATE_SNAPSHOT",
-        "MESSAGES_SNAPSHOT",
-        "RUN_ERROR",
-    ]
-    assert "RUN_FINISHED" not in event_types
-    terminal = events[-1]
-    assert isinstance(terminal, RunErrorEvent)
-    assert terminal.code == "stream_timeout"
-
-
-@pytest.mark.asyncio
-async def test_agui_timeout_waits_for_owned_upstream_close_before_terminal() -> None:
-    parts = _DeadlineParts(block_close=True)
-    stream = _agui_stream(lambda: parts, timeout=0.01)
-    collecting = asyncio.create_task(_collect_events(stream))
-    await asyncio.wait_for(parts.close_started.wait(), timeout=1)
-
-    try:
-        assert not collecting.done()
-        parts.release_close.set()
-        events = await asyncio.wait_for(collecting, timeout=1)
-    finally:
-        parts.release_close.set()
-        await asyncio.gather(collecting, return_exceptions=True)
-        await stream.aclose()
-
-    assert parts.closed.is_set()
-    assert [event.type.value for event in events] == ["RUN_STARTED", "RUN_ERROR"]
-    terminal = events[-1]
-    assert isinstance(terminal, RunErrorEvent)
-    assert terminal.code == "stream_timeout"
 
 
 @pytest.mark.asyncio

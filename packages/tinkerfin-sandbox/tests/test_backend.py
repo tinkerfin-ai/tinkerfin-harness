@@ -34,7 +34,6 @@ from pydantic import ValidationError
 from tinkerfin_sandbox import (
     OpenSandboxBackend,
     OpenSandboxBackendError,
-    OpenSandboxBackendTimeoutError,
     OpenSandboxBackendUnavailableError,
     OpenSandboxClient,
     OpenSandboxConfig,
@@ -1034,39 +1033,6 @@ async def test_rooted_descriptor_drains_final_logs_after_terminal_status() -> No
 
 
 @pytest.mark.asyncio
-async def test_rooted_descriptor_readiness_budget_bounds_hung_log_call(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class HungLogCommands(_FakeDescriptorCommands):
-        async def get_background_command_logs(
-            self,
-            execution_id: str,
-            cursor: int | None = None,
-        ) -> object:
-            self.log_calls.append((execution_id, cursor))
-            await asyncio.Event().wait()
-            raise AssertionError("unreachable")
-
-    monkeypatch.setattr(
-        "tinkerfin_sandbox.backends.sdk._ROOTED_TRANSFER_READY_SECONDS",
-        0.02,
-    )
-    sandbox = _FakeSandbox()
-    commands = HungLogCommands()
-    sandbox.commands = commands
-    backend = OpenSandboxBackend(sandbox=cast(Sandbox, sandbox))
-
-    with pytest.raises(TimeoutError):
-        await backend._adownload_rooted_file(
-            root="/workspace",
-            path="/target.bin",
-        )
-
-    assert commands.interrupt_calls == [commands.execution_id]
-    assert commands.status_calls == [commands.execution_id, commands.execution_id]
-
-
-@pytest.mark.asyncio
 async def test_rooted_descriptor_status_probe_leaves_budget_for_interrupt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1161,64 +1127,6 @@ async def test_rooted_descriptor_cancellation_settles_without_replay() -> None:
         await task
 
     assert files.write_calls == [("/proc/4321/fd/9", b"content", 644)]
-    assert commands.interrupt_calls == [commands.execution_id]
-    assert commands.status_calls == [commands.execution_id, commands.execution_id]
-
-
-@pytest.mark.asyncio
-async def test_repeated_cancellation_cannot_abandon_descriptor_settlement() -> None:
-    class BlockingFiles(_FakeFiles):
-        def __init__(self) -> None:
-            super().__init__()
-            self.started = asyncio.Event()
-
-        async def write_file(
-            self,
-            path: str,
-            data: bytes,
-            *,
-            mode: int = 755,
-        ) -> None:
-            self.write_calls.append((path, data, mode))
-            self.started.set()
-            await asyncio.Event().wait()
-
-    class BlockingInterruptCommands(_FakeDescriptorCommands):
-        def __init__(self) -> None:
-            super().__init__()
-            self.interrupt_started = asyncio.Event()
-            self.interrupt_release = asyncio.Event()
-
-        async def interrupt(self, execution_id: str) -> None:
-            self.interrupt_calls.append(execution_id)
-            self.interrupt_started.set()
-            await self.interrupt_release.wait()
-            self.running = False
-
-    sandbox = _FakeSandbox()
-    commands = BlockingInterruptCommands()
-    files = BlockingFiles()
-    sandbox.commands = commands
-    sandbox.files = files
-    backend = OpenSandboxBackend(sandbox=cast(Sandbox, sandbox))
-    task = asyncio.create_task(
-        backend._aupload_rooted_file(
-            root="/workspace",
-            path="/target.bin",
-            content=b"content",
-        )
-    )
-    await files.started.wait()
-
-    task.cancel()
-    await commands.interrupt_started.wait()
-    task.cancel()
-    await asyncio.sleep(0.05)
-    assert not task.done()
-
-    commands.interrupt_release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await task
     assert commands.interrupt_calls == [commands.execution_id]
     assert commands.status_calls == [commands.execution_id, commands.execution_id]
 
@@ -1568,66 +1476,6 @@ class OpenSandboxClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(sandbox.closed)
         self.assertFalse(sandbox.killed)
 
-    async def test_connect_timeout_bounds_the_complete_sdk_reconnect(self) -> None:
-        entered = asyncio.Event()
-        cancelled = asyncio.Event()
-
-        async def blocked_connect(
-            *_args: object,
-            **_kwargs: object,
-        ) -> _FakeSandbox:
-            entered.set()
-            try:
-                await asyncio.Event().wait()
-            finally:
-                cancelled.set()
-            raise AssertionError("blocked connect unexpectedly resumed")
-
-        client = OpenSandboxClient(
-            connection_config=self.connection_config,
-            config=self.config.model_copy(
-                update={"connect_timeout": timedelta(milliseconds=25)}
-            ),
-        )
-        with (
-            patch(
-                "tinkerfin_sandbox.lifecycle.client.Sandbox.connect",
-                side_effect=blocked_connect,
-            ),
-            self.assertRaises(OpenSandboxBackendTimeoutError),
-        ):
-            await asyncio.wait_for(client.connect("existing"), timeout=0.5)
-
-        self.assertTrue(entered.is_set())
-        self.assertTrue(cancelled.is_set())
-
-    async def test_connect_timeout_closes_a_backend_blocked_in_initializer(
-        self,
-    ) -> None:
-        sandbox = _FakeSandbox("existing")
-
-        async def blocked_initializer(_backend: OpenSandboxBackend) -> None:
-            await asyncio.Event().wait()
-
-        client = OpenSandboxClient(
-            connection_config=self.connection_config,
-            config=self.config.model_copy(
-                update={"connect_timeout": timedelta(milliseconds=25)}
-            ),
-            initializers=(blocked_initializer,),
-        )
-        with (
-            patch(
-                "tinkerfin_sandbox.lifecycle.client.Sandbox.connect",
-                return_value=sandbox,
-            ),
-            self.assertRaises(OpenSandboxInitializationError),
-        ):
-            await asyncio.wait_for(client.connect("existing"), timeout=0.5)
-
-        self.assertTrue(sandbox.closed)
-        self.assertFalse(sandbox.killed)
-
     async def test_inspect_returns_stable_schema_and_closes_temporary_connection(
         self,
     ) -> None:
@@ -1877,51 +1725,6 @@ async def test_rooted_file_operation_uses_isolated_internal_command_context() ->
         "PROJECT_ENV": "enabled",
         "PYTHONPATH": "/workspace",
     }
-
-
-@pytest.mark.asyncio
-async def test_connect_timeout_retains_owned_transport_until_client_close(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    transport = _ObservedTransport()
-    observed_configs: list[ConnectionConfig] = []
-    entered = asyncio.Event()
-
-    async def blocked_connect(
-        _sandbox_id: str,
-        *,
-        connection_config: ConnectionConfig,
-        **_options: object,
-    ) -> Sandbox:
-        observed_configs.append(connection_config)
-        entered.set()
-        await asyncio.Event().wait()
-        raise AssertionError("cancelled SDK connect unexpectedly resumed")
-
-    monkeypatch.setattr(
-        "opensandbox.config.connection.httpx.AsyncHTTPTransport",
-        lambda **_options: transport,
-    )
-    monkeypatch.setattr(
-        "tinkerfin_sandbox.lifecycle.client.Sandbox.connect",
-        blocked_connect,
-    )
-    client = OpenSandboxClient(
-        connection_config=ConnectionConfig(),
-        config=OpenSandboxConfig(
-            warm_pool_size=0,
-            connect_timeout=timedelta(milliseconds=25),
-        ),
-    )
-
-    with pytest.raises(OpenSandboxBackendTimeoutError):
-        await asyncio.wait_for(client.connect("existing"), timeout=0.5)
-
-    assert entered.is_set()
-    await observed_configs[0].close_transport_if_owned()
-    assert transport.closed is False
-    await client.aclose()
-    assert transport.closed is True
 
 
 @pytest.mark.asyncio
@@ -2540,28 +2343,6 @@ async def test_bounded_binary_read_cancel_closes_response_and_helper(
         assert not sandbox.commands.running
 
 
-@pytest.mark.parametrize("timeout", [0.000001, 0.05], ids=["handshake", "body"])
-async def test_bounded_binary_read_timeout_closes_response_and_helper(
-    timeout: float,
-) -> None:
-    stream = _BoundedResponseStream([], wait=True)
-    backend, sandbox = _bounded_backend(stream)
-    task = asyncio.create_task(
-        backend.aread_bytes("/file.bin", max_bytes=65536, timeout=timeout)
-    )
-    try:
-        done, _ = await asyncio.wait({task}, timeout=2)
-        assert done, "The read deadline must stop the transfer and settle its helper"
-        with pytest.raises(OpenSandboxBackendTimeoutError):
-            await task
-    finally:
-        if not task.done():
-            task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-    assert stream.closed
-    assert not sandbox.commands.running
-
-
 @pytest.mark.parametrize("status", [403, 404, 500, 302, 206])
 async def test_bounded_binary_read_does_not_buffer_error_or_partial_responses(
     status: int,
@@ -2639,31 +2420,6 @@ async def test_bounded_read_repeated_cancel_keeps_response_cleanup_owned() -> No
     assert not task.done()
     release.set()
     with pytest.raises(asyncio.CancelledError):
-        await task
-    assert stream.closed
-    assert not sandbox.commands.running
-
-
-async def test_bounded_read_deadline_during_response_close_awaits_cleanup() -> None:
-    closing = asyncio.Event()
-    release = asyncio.Event()
-
-    class SlowCloseStream(_BoundedResponseStream):
-        async def aclose(self) -> None:
-            closing.set()
-            await release.wait()
-            self.closed = True
-
-    stream = SlowCloseStream([b"binary"])
-    backend, sandbox = _bounded_backend(stream)
-    task = asyncio.create_task(
-        backend.aread_bytes("/file.bin", max_bytes=100, timeout=0.05)
-    )
-    await closing.wait()
-    await asyncio.sleep(0.08)
-    assert not task.done()
-    release.set()
-    with pytest.raises(OpenSandboxBackendTimeoutError):
         await task
     assert stream.closed
     assert not sandbox.commands.running

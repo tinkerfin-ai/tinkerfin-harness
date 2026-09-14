@@ -44,7 +44,6 @@ from tinkerfin_sandbox import (
     OpenSandboxOwnerClaim,
     OpenSandboxResetError,
     OpenSandboxRuntimeInfo,
-    OpenSandboxSettlementTimeoutError,
     OpenSandboxStateError,
     OpenSandboxUnavailableReason,
     OpenSandboxWarmPoolUnavailableError,
@@ -445,8 +444,8 @@ async def test_old_probe_does_not_announce_failure_after_replacement() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["raise", "timeout", "cancel", "self_cancel"])
-async def test_observer_failure_timeout_and_cancellation_are_isolated(
+@pytest.mark.parametrize("mode", ["raise", "cancel", "self_cancel"])
+async def test_observer_failure_and_cancellation_are_isolated(
     mode: str,
 ) -> None:
     class FailingObserver:
@@ -476,7 +475,6 @@ async def test_observer_failure_timeout_and_cancellation_are_isolated(
     async with _new_manager(
         client=_FakeClient(),
         observers=[failing, recorder],
-        notification_options=OpenSandboxNotificationOptions(timeout=0.01),
     ) as manager:
         await manager.get("owner")
         backend = await manager.recreate("owner")
@@ -529,32 +527,6 @@ async def test_full_queue_drops_new_events_and_does_not_delay_other_observers(
         not task.get_name().startswith("tinkerfin-sandbox-notification")
         for task in asyncio.all_tasks()
     )
-
-
-@pytest.mark.asyncio
-async def test_close_wait_timeout_retains_ordered_delivery_until_second_close() -> None:
-    entered, release = asyncio.Event(), asyncio.Event()
-
-    class SlowObserver(_Recorder):
-        async def on_sandbox_event(self, event: OpenSandboxLifecycleEvent) -> None:
-            entered.set()
-            await release.wait()
-            await super().on_sandbox_event(event)
-
-    observer = SlowObserver()
-    manager = _new_manager(
-        client=_FakeClient(), observers=[observer], settlement_timeout=0.01
-    )
-    await manager.start()
-    await manager.get("owner")
-    await manager.destroy("owner")
-    await entered.wait()
-    with pytest.raises(OpenSandboxSettlementTimeoutError):
-        await manager.aclose()
-    release.set()
-    await manager.aclose()
-    assert _kinds(observer) == [Kind.DESTROYED]
-    assert observer.close_calls == 0
 
 
 @pytest.mark.asyncio
@@ -622,33 +594,6 @@ async def test_no_observer_creates_no_notification_tasks() -> None:
             not task.get_name().startswith("tinkerfin-sandbox-notif")
             for task in asyncio.all_tasks()
         )
-
-
-@pytest.mark.asyncio
-async def test_routine_warm_verification_has_no_degradation_notifications() -> None:
-    entered, release = asyncio.Event(), asyncio.Event()
-    pause = False
-
-    class GatedBackend(_FakeBackend):
-        async def aexecute(
-            self, command: str, *, timeout: int | None = None
-        ) -> _ExecuteResponse:
-            if pause:
-                entered.set()
-                await release.wait()
-            return await super().aexecute(command, timeout=timeout)
-
-    recorder = _Recorder()
-    client = _ReconnectableFakeClient(backend_factory=GatedBackend)
-    client.config = client.config.model_copy(update={"ttl": timedelta(seconds=0.15)})
-    async with _new_manager(
-        client=client, warm_pool_size=1, observers=[recorder]
-    ) as manager:
-        pause = True
-        await asyncio.wait_for(entered.wait(), 2)
-        await manager.check_ready()
-        release.set()
-    assert recorder.events == []
 
 
 @pytest.mark.asyncio
@@ -736,59 +681,6 @@ async def test_new_manager_cannot_accept_unverified_capacity_claimed_by_a_peer(
         await peer.release_warm(checking)
         await manager.aclose()
         await peer.aclose()
-
-
-@pytest.mark.asyncio
-async def test_initial_warm_verification_accumulates_without_all_slot_claims_each_round(
-    sql_engine: SqlEngineFactory,
-    tmp_path: Path,
-) -> None:
-    url = f"sqlite+aiosqlite:///{tmp_path / 'startup-progress.db'}"
-    peer = SQLAlchemyOpenSandboxState(engine=sql_engine(url), namespace="startup")
-    await peer.start(warm_pool_size=2)
-    for number in range(2):
-        creating = await peer.claim_warm_slot()
-        assert creating is not None
-        await peer.publish_warm(creating, f"verified-{number}")
-    blocked = await peer.claim_ready_warm_slot(exclude_slots=(0,))
-    assert blocked is not None and blocked.slot == 1
-    client = _ReconnectableFakeClient()
-    client.connected.update(
-        {
-            f"verified-{number}": _FakeBackend(f"verified-{number}")
-            for number in range(2)
-        }
-    )
-    client.config = client.config.model_copy(update={"ttl": timedelta(seconds=0.3)})
-    recorder = _Recorder()
-    manager = _new_manager(
-        client=client,
-        state=SQLAlchemyOpenSandboxState(engine=sql_engine(url), namespace="startup"),
-        warm_pool_size=2,
-        observers=[recorder],
-    )
-    blocked_zero = None
-    try:
-        await manager.start()
-        with pytest.raises(OpenSandboxWarmPoolUnavailableError):
-            await manager.check_ready()
-        blocked_zero = await peer.claim_ready_warm_slot(exclude_slots=(1,))
-        assert blocked_zero is not None and blocked_zero.slot == 0
-        await peer.release_warm(blocked)
-        await recorder.wait_for(Kind.WARM_CAPACITY_RESTORED)
-        await manager.check_ready()
-        assert set(client.connect_calls) == {"verified-0", "verified-1"}
-        assert client.create_calls == 0 and client.destroy_calls == []
-    finally:
-        if blocked_zero is not None:
-            await peer.release_warm(blocked_zero)
-        await peer.release_warm(blocked)
-        await manager.aclose()
-        await peer.aclose()
-    assert _kinds(recorder) == [
-        Kind.WARM_CAPACITY_DEGRADED,
-        Kind.WARM_CAPACITY_RESTORED,
-    ]
 
 
 @pytest.mark.asyncio

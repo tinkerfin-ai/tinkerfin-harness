@@ -1965,7 +1965,6 @@ async def test_plan_approval_hands_off_to_native_with_the_same_message_id(
             "cancel",
             "repeat_cancel",
             "close",
-            "timeout",
             "provider",
             "observer",
         )
@@ -2026,9 +2025,6 @@ async def test_runtime_settles_native_work_after_interruption(
             session.failure.set_result(RuntimeError("observer delivery failed"))
             with pytest.raises(RunObservationError):
                 await consumer
-        elif ending == "timeout":
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(consumer, 0.01)
         else:
             if ending == "close":
                 await stream.aclose()

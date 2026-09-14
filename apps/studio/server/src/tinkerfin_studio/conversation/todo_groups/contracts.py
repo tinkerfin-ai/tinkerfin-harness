@@ -11,6 +11,7 @@ from pydantic.alias_generators import to_camel
 TodoGroupStatus: TypeAlias = Literal[
     "running",
     "completed",
+    "incomplete",
     "failed",
     "cancelled",
 ]
@@ -18,6 +19,7 @@ TodoTraceItemStatus: TypeAlias = Literal[
     "pending",
     "running",
     "completed",
+    "incomplete",
     "failed",
     "cancelled",
 ]
@@ -41,7 +43,7 @@ class _TaskTraceModel(BaseModel):
 
 
 class TodoTraceItem(_TaskTraceModel):
-    """展示一个来自根 Agent 权威状态的任务项"""
+    """展示根任务清单；incomplete 表示本轮已结束但未确认该项完成"""
 
     id: str = Field(min_length=1, max_length=2048)
     content: str = Field(min_length=1)

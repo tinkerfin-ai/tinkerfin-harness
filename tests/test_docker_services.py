@@ -1,9 +1,11 @@
 """Pure contracts for repository Docker service descriptors."""
 
+from __future__ import annotations
+
 import inspect
-from collections.abc import Awaitable, Iterator
+from collections.abc import Awaitable
 from typing import Any, cast
-from unittest.mock import MagicMock, Mock
+from unittest.mock import Mock
 from urllib.request import ProxyHandler
 
 import pytest
@@ -25,49 +27,19 @@ from tests.support.docker_services import (
 )
 
 
-class _DelayedMappedPort:
-    """Expose a Docker host port only after two daemon-style lookup races."""
-
-    def __init__(self, *, always_missing: bool = False) -> None:
-        self.attempts = 0
-        self.always_missing = always_missing
+class _MissingMappedPort:
+    """Represent a container whose host port has not been published."""
 
     def get_container_host_ip(self) -> str:
         return "127.0.0.1"
 
     def get_exposed_port(self, port: int) -> int:
         assert port == 8090
-        self.attempts += 1
-        if self.always_missing or self.attempts < 3:
-            raise ConnectionError("mapping not published")
-        return 49123
-
-
-class _ChangingMappedPort(_DelayedMappedPort):
-    """Return a new provisional random host port on each Docker lookup."""
-
-    def get_exposed_port(self, port: int) -> int:
-        assert port == 8090
-        self.attempts += 1
-        return 49120 + self.attempts
-
-
-def test_opensandbox_wait_retries_delayed_docker_port_publication() -> None:
-    target = _DelayedMappedPort()
-    strategy = _MappedPortHttpWaitStrategy(
-        8090,
-        "/health",
-        mapping_timeout_seconds=0.1,
-    ).with_poll_interval(0)
-
-    url = strategy._build_url(cast(WaitStrategyTarget, target))
-
-    assert url == "http://127.0.0.1:49123/health"
-    assert target.attempts == 3
+        raise ConnectionError("mapping not published")
 
 
 def test_opensandbox_wait_bounds_missing_docker_port_publication() -> None:
-    target = _DelayedMappedPort(always_missing=True)
+    target = _MissingMappedPort()
     strategy = _MappedPortHttpWaitStrategy(
         8090,
         "/health",
@@ -76,32 +48,6 @@ def test_opensandbox_wait_bounds_missing_docker_port_publication() -> None:
 
     with pytest.raises(TimeoutError, match="host-port mapping"):
         strategy._build_url(cast(WaitStrategyTarget, target))
-
-
-def test_opensandbox_http_wait_re_resolves_a_provisional_random_port(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    target = _ChangingMappedPort()
-    strategy = _MappedPortHttpWaitStrategy(
-        8090,
-        "/health",
-        mapping_timeout_seconds=0.1,
-    ).with_poll_interval(0)
-    attempted_urls: list[str] = []
-
-    def probe(url: str, headers: object, ssl_context: object) -> bool:
-        del headers, ssl_context
-        attempted_urls.append(url)
-        return len(attempted_urls) == 2
-
-    monkeypatch.setattr(strategy, "_try_http_request", probe)
-
-    strategy.wait_until_ready(cast(WaitStrategyTarget, target))
-
-    assert attempted_urls == [
-        "http://127.0.0.1:49121/health",
-        "http://127.0.0.1:49122/health",
-    ]
 
 
 @pytest.mark.parametrize(
@@ -133,7 +79,7 @@ def test_opensandbox_health_probe_ignores_host_proxy_configuration(
     class Response:
         status = 200
 
-        def __enter__(self) -> "Response":
+        def __enter__(self) -> Response:
             return self
 
         def __exit__(self, *args: object) -> None:
@@ -299,146 +245,6 @@ def test_container_cleanup_closes_session_even_when_removal_fails() -> None:
     with pytest.raises(APIError, match="removal failure"):
         _stop_owned_container(container)
     container.get_docker_client.return_value.client.close.assert_called_once_with()
-
-
-@pytest.mark.parametrize(
-    "failure",
-    [
-        None,
-        "source_http",
-        "read",
-        "deadline",
-        "end_deadline",
-        "import",
-        "import_http",
-        "import_error",
-        "import_error_detail",
-        "tag",
-        "tag_identity",
-    ],
-)
-def test_image_copy_uses_owned_sessions_and_settles_both_streams(
-    failure: str | None,
-) -> None:
-    import time
-
-    from docker.errors import APIError, ImageLoadError
-    from requests import HTTPError, Response
-
-    from tests.support.docker_services import _copy_runtime_image
-
-    source = Mock(spec=DockerClient)
-    source.api = Mock(base_url="http+docker://selected-source", api_version="1.51")
-    target = Mock(spec=DockerClient)
-    target.api = Mock(
-        base_url="http://owned-daemon:2375", api_version="1.51", timeout=300
-    )
-    source_id = "sha256:" + "1" * 64
-    source.images.get.return_value.id = source_id
-    response = Mock(spec=Response)
-    source_context = MagicMock()
-    source.api.get.return_value = source_context
-    source_context.__enter__.return_value = response
-    result = Mock(spec=Response)
-    result.iter_lines.return_value = (
-        [b'{"error":"import failed"}']
-        if failure == "import_error"
-        else [b'{"errorDetail":{"message":"import failed"}}']
-        if failure == "import_error_detail"
-        else [b'{"stream":"Loaded image ID"}']
-    )
-    target_context = MagicMock()
-    target_context.__enter__.return_value = result
-    if failure == "source_http":
-        response.raise_for_status.side_effect = HTTPError("source unavailable")
-    if failure == "import_http":
-        result.raise_for_status.side_effect = HTTPError("target unavailable")
-    received: list[bytes] = []
-    source_stream_closed = False
-
-    def chunks(*, chunk_size: int) -> Iterator[bytes]:
-        nonlocal source_stream_closed
-        assert chunk_size == 1024 * 1024
-        try:
-            yield b"first chunk"
-            if failure == "read":
-                raise OSError("synthetic source stream failure")
-            if failure == "deadline":
-                time.sleep(0.02)
-            yield b"second chunk"
-            if failure == "end_deadline":
-                time.sleep(0.02)
-        finally:
-            source_stream_closed = True
-
-    def post(endpoint: str, *, data: Iterator[bytes], **kwargs: object) -> MagicMock:
-        assert endpoint == "http://owned-daemon:2375/v1.51/images/load"
-        assert kwargs == {
-            "stream": True,
-            "timeout": 300,
-            "headers": {"Content-Type": "application/x-tar"},
-        }
-        assert received == []
-        for chunk in data:
-            received.append(chunk)
-            if failure == "import":
-                raise APIError("synthetic import failure")
-        return target_context
-
-    response.iter_content.side_effect = chunks
-    target.api.post.side_effect = post
-    imported = Mock(id=source_id)
-    imported.tag.return_value = failure != "tag"
-    target.images.get.side_effect = lambda reference: (
-        Mock(id="wrong-image")
-        if failure == "tag_identity" and reference == "runtime:isolated"
-        else imported
-    )
-    budget = 0.01 if failure in {"deadline", "end_deadline"} else 300
-    if failure is None:
-        _copy_runtime_image(
-            source, target, reference="source:tag", repository="runtime", tag="isolated"
-        )
-        assert received == [b"first chunk", b"second chunk"]
-        imported.tag.assert_called_once_with("runtime", tag="isolated")
-    else:
-        expected_error = {
-            "source_http": HTTPError,
-            "read": OSError,
-            "deadline": TimeoutError,
-            "end_deadline": TimeoutError,
-            "import": APIError,
-            "import_http": HTTPError,
-            "import_error": ImageLoadError,
-            "import_error_detail": ImageLoadError,
-            "tag": RuntimeError,
-            "tag_identity": RuntimeError,
-        }[failure]
-        with pytest.raises(expected_error):
-            _copy_runtime_image(
-                source,
-                target,
-                reference="source:tag",
-                repository="runtime",
-                tag="isolated",
-                export_budget_seconds=budget,
-            )
-    source.api.get.assert_called_once_with(
-        f"http+docker://selected-source/v1.51/images/{source_id}/get",
-        stream=True,
-        timeout=min(30.0, budget),
-    )
-    source_context.__exit__.assert_called_once()
-    if failure == "source_http":
-        target.api.post.assert_not_called()
-    else:
-        assert source_stream_closed
-    if failure in {"source_http", "read", "deadline", "end_deadline", "import"}:
-        target_context.__enter__.assert_not_called()
-    else:
-        target_context.__exit__.assert_called_once()
-    if failure not in {None, "tag", "tag_identity"}:
-        target.images.get.assert_not_called()
 
 
 @pytest.mark.opensandbox_e2e

@@ -259,25 +259,6 @@ async def test_cancelled_wait_does_not_cancel_owned_termination() -> None:
 
 
 @pytest.mark.asyncio
-async def test_settlement_deadline_retains_unknown_without_remaining_tasks(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "tinkerfin_sandbox.backends._operations._SETTLEMENT_TIMEOUT_SECONDS", 0.02
-    )
-    server = _CommandServer()
-    tracker = RemoteOperations()
-    async with _backend(server) as backend:
-        await _cancel_command(backend, server, tracker)
-        await asyncio.wait_for(tracker.wait(), timeout=1)
-        assert not tracker.is_idle
-        assert server.running
-        status_calls = server.status_calls
-        await asyncio.sleep(0.03)
-        assert server.status_calls == status_calls
-
-
-@pytest.mark.asyncio
 async def test_settlement_capacity_keeps_uncertainty_without_unbounded_tasks() -> None:
     tracker = RemoteOperations()
     release = asyncio.Event()

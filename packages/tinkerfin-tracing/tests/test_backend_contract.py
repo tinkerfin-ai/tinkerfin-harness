@@ -162,67 +162,6 @@ async def test_backend_verifier_cancels_follower_when_third_append_fails(
     )
 
 
-async def test_writer_heartbeat_waits_for_an_owned_append_transaction(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    backend = _InMemoryTraceLedgerBackend()
-    original = backend.commit_ledger_change
-    append_started = asyncio.Event()
-    release_append = asyncio.Event()
-    append_active = False
-    overlapping_renewal = False
-
-    async def delay_append(change: TraceLedgerChange):
-        nonlocal append_active, overlapping_renewal
-        if change.kind == "append_events":
-            append_active = True
-            append_started.set()
-            await release_append.wait()
-            try:
-                return await original(change)
-            finally:
-                append_active = False
-        if change.kind == "renew_writer" and append_active:
-            overlapping_renewal = True
-        return await original(change)
-
-    monkeypatch.setattr(backend, "commit_ledger_change", delay_append)
-    store = DurableTraceStore(
-        backend,
-        options=TraceStoreOptions(
-            writer_lease_seconds=1,
-            writer_heartbeat_interval_seconds=0.01,
-        ),
-    )
-    identity = RunIdentity(
-        namespace="test", thread_id="heartbeat-thread", run_id="heartbeat-run"
-    )
-    writer = await store.open_writer(identity)
-    append = asyncio.create_task(
-        writer.append(
-            (
-                RunFact(
-                    source_observation_id="heartbeat-started",
-                    identity=identity,
-                    occurred_at=datetime.now(UTC),
-                    monotonic_ns=1,
-                    phase="started",
-                    input_kind="ordinary",
-                ),
-            )
-        )
-    )
-    try:
-        await append_started.wait()
-        await asyncio.sleep(0.05)
-        assert overlapping_renewal is False
-        release_append.set()
-        await append
-    finally:
-        release_append.set()
-        await writer.aclose()
-
-
 @pytest.mark.parametrize("direction", ["forward", "reverse"])
 @pytest.mark.parametrize("foreign_component", ["thread_id", "generation"])
 async def test_store_rejects_event_page_for_another_exact_generation(

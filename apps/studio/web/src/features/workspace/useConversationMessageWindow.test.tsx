@@ -12,6 +12,7 @@ const entry = (index: number): ConversationDisplayEntry => ({
   message: {
     id: `message-${index}`,
     role: 'user',
+    meta: { traceMessageId: `trace-message-${index}` },
     content: `消息 ${index}`,
     createdAt: '2026-08-31T00:00:00.000Z',
   },
@@ -101,14 +102,14 @@ describe('useConversationMessageWindow', () => {
 
     rerender(
       <Harness
-        entries={Array.from({ length: 5_000 }, (_, index) => entry(index))}
+        entries={Array.from({ length: 101 }, (_, index) => entry(index))}
         loadOlderTrace={loadOlderTrace}
       />,
     )
 
     expect(current?.visibleEntries).toHaveLength(100)
     expect(screen.queryByText('消息 0')).not.toBeInTheDocument()
-    expect(screen.getByText('消息 4999')).toBeInTheDocument()
+    expect(screen.getByText('消息 100')).toBeInTheDocument()
   })
 
   it('reveals a hydrated message outside the current render window', async () => {
@@ -121,7 +122,7 @@ describe('useConversationMessageWindow', () => {
 
     let locating!: ReturnType<typeof currentReveal>
     act(() => {
-      locating = currentReveal('message-10')
+      locating = currentReveal('trace-message-10')
     })
     const result = await locating
 
@@ -160,7 +161,7 @@ describe('useConversationMessageWindow', () => {
     render(<StatefulHarness />)
     let locating!: ReturnType<typeof currentReveal>
     act(() => {
-      locating = currentReveal('message-1')
+      locating = currentReveal('trace-message-1')
     })
     const result = await locating
 

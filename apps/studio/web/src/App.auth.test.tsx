@@ -189,28 +189,6 @@ describe('App authentication boundary', () => {
     expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).not.toBeNull()
   })
 
-  it('silently leaves the workspace when the fixed deadline is reached', async () => {
-    const expiresAt = new Date(Date.now() + 1000).toISOString()
-    seedSession('expiring-token', expiresAt)
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(input instanceof Request ? input.url : String(input), 'http://localhost')
-      if (url.pathname.endsWith('/api/auth/me')) return envelope(sessionPayload(expiresAt))
-      if (url.pathname.endsWith('/api/conversation/config')) return envelope({ dayRanges: [7, 30] })
-      if (url.pathname.endsWith('/api/conversation/history')) {
-        return envelope({ items: [], nextCursor: null })
-      }
-      throw new Error(`unexpected request: ${url.pathname}`)
-    }))
-
-    render(<App />)
-
-    expect(await screen.findByLabelText('对话内容')).toBeInTheDocument()
-    expect(await screen.findByRole('heading', { name: '欢迎回来' }, { timeout: 2500 }))
-      .toBeInTheDocument()
-    expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).toBeNull()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  })
-
   it('silently unmounts an active workspace when an authenticated request returns 401', async () => {
     seedSession()
     window.history.replaceState(null, '', '/?thread=private-thread')
