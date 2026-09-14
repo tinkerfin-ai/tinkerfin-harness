@@ -24,10 +24,10 @@ jobs:
           enable-cache: true
           python-version: "3.11"
       - name: Install locked workspace
-        run: uv sync --locked --all-packages --group dev
+        run: uv sync --locked --all-packages --no-default-groups --group test --group integration
       - name: Verify Docker daemon
         run: docker info
       - name: Test disposable Docker integrations
         run: >-
-          uv run pytest -m docker_integration
+          uv run --no-sync pytest -m docker_integration
           --durations=20 -o faulthandler_timeout=60 -v

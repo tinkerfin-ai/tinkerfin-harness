@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import zipfile
 from pathlib import Path
 
 
@@ -109,47 +108,3 @@ assert not (blocked & set(sys.modules))
     )
 
     assert completed.returncode == 0, completed.stderr
-
-
-def test_built_wheel_contains_only_current_contract_artifacts(tmp_path: Path) -> None:
-    """A local incremental build must not publish deleted contract generations."""
-
-    package_root = Path(__file__).parents[1]
-    repository_root = package_root.parents[1]
-    output = tmp_path / "dist"
-    subprocess.run(
-        [
-            "uv",
-            "build",
-            "--offline",
-            "--quiet",
-            "--wheel",
-            "--out-dir",
-            str(output),
-            "--no-create-gitignore",
-            str(package_root),
-        ],
-        cwd=repository_root,
-        check=True,
-    )
-    wheel = next(output.glob("tinkerfin_agui_adapter-*.whl"))
-
-    with zipfile.ZipFile(wheel) as archive:
-        names = set(archive.namelist())
-
-    contract_names = {
-        name for name in names if name.startswith("tinkerfin_agui_adapter/contracts/")
-    }
-    assert contract_names == {
-        "tinkerfin_agui_adapter/contracts/tool-call-result.schema.json",
-        "tinkerfin_agui_adapter/contracts/tool-message.schema.json",
-        "tinkerfin_agui_adapter/contracts/assistant-message.schema.json",
-        "tinkerfin_agui_adapter/contracts/messages-snapshot.schema.json",
-        "tinkerfin_agui_adapter/contracts/message-attachments.fixture.json",
-        "tinkerfin_agui_adapter/contracts/message-attachments.schema.json",
-        "tinkerfin_agui_adapter/contracts/subagent-provenance.fixture.json",
-        "tinkerfin_agui_adapter/contracts/subagent-provenance.schema.json",
-        "tinkerfin_agui_adapter/contracts/tool-review.fixture.json",
-        "tinkerfin_agui_adapter/contracts/tool-review.schema.json",
-    }
-    assert not any("-v1" in name for name in names)

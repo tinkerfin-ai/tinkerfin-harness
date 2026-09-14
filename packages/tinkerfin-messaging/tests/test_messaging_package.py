@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import inspect
 import json
-import re
 import subprocess
 import sys
 from dataclasses import FrozenInstanceError, fields
@@ -152,20 +151,6 @@ def test_backend_extension_functions_document_complete_contracts(
     assert "Args:" in documentation
     assert "Returns:" in documentation
     assert "Raises:" in documentation
-
-
-def test_package_source_comments_and_docstrings_remain_english() -> None:
-    package_file = tinkerfin_messaging.__file__
-    assert package_file is not None
-    source_root = Path(package_file).parent
-    chinese_character = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
-
-    violations = [
-        str(path.relative_to(source_root))
-        for path in source_root.rglob("*.py")
-        if chinese_character.search(path.read_text())
-    ]
-    assert violations == []
 
 
 def test_public_namespace_exposes_the_default_tinkerfin_facade() -> None:

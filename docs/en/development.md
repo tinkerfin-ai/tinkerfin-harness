@@ -12,6 +12,19 @@ See [Contributing](../../CONTRIBUTING.md) for pull requests and routine Python a
 uv sync --locked --all-packages --group dev
 ```
 
+Development dependencies are grouped by task: `test` provides the test runner and
+contract fixtures, `lint` provides Ruff and Pyright, `integration` provides Docker
+and database clients, and `packaging` provides wheel verification tools. `dev`
+includes all four groups. These groups are not published as package dependencies.
+
+Use `--no-default-groups --group NAME` to install selected groups. The current
+package/Studio suites need `test`, `lint`, and `integration`: type-contract tests
+invoke Pyright, and shared fixture collection imports the integration clients.
+Installing those clients does not start Docker services. The packaging suite can
+run independently with `--noconftest` after installing the `packaging` group and
+all workspace packages. Use `uv run --no-sync` after a selective installation to
+keep the selected environment.
+
 ## Validate Studio Web
 
 Run `pnpm test:browser` from `apps/studio/web` to build and run the browser suite.
@@ -56,13 +69,17 @@ The Dockerfile exports locked production dependencies and builds wheels inside D
 ## Validate packaging
 
 ```bash
-uv run --locked --no-sync pytest tests/packaging -m packaging_e2e
+uv run --locked --no-sync pytest --noconftest tests/packaging -m packaging_e2e
 ```
 
 The suite checks contaminated build directories, current source contents, wheel metadata,
 licenses, declared dependencies, and installation into isolated environments. CI runs the
 core installation cases on Python 3.11–3.14. Python 3.11 also runs every optional dependency
 combination and the complete Studio deployment wheel set.
+
+
+Isolated wheel installations use the locked dependency versions and run offline.
+Install the workspace first to populate the uv cache, including build requirements.
 
 ## Validate Docker integrations
 
@@ -71,3 +88,7 @@ Start Docker, then run tests that create and clean up their own disposable servi
 ```bash
 uv run pytest -m docker_integration
 ```
+
+The main quality workflow runs on pushes and pull requests. The complete Docker
+suite runs separately each day and can be started from the `Docker integrations`
+workflow's **Run workflow** action. Its result does not block the main quality gate.

@@ -2671,6 +2671,15 @@ wheels = [
 ]
 
 [[package]]
+name = "setuptools"
+version = "84.0.0"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/6d/44/f5da03a8ef95d369145c5bb53050e7877c9f3d312e128605fd9504829143/setuptools-84.0.0.tar.gz", hash = "sha256:f4695c21257f0d9b537ec2692c941d02ee143b7cc1276941349a546573b2ef73", size = 1168449, upload-time = "2026-08-08T18:27:58.365Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/95/9c/c510029fc6ef33a6275cd2c5d3cecd6613dfd6aa401d57c54f1c18852ccf/setuptools-84.0.0-py3-none-any.whl", hash = "sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670", size = 818216, upload-time = "2026-08-08T18:27:56.719Z" },
+]
+
+[[package]]
 name = "six"
 version = "1.17.0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -2995,15 +3004,47 @@ dev = [
     { name = "docker" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint" },
+    { name = "packaging" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-xdist" },
     { name = "ruff" },
+    { name = "setuptools" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "sse-starlette" },
     { name = "testcontainers" },
+    { name = "tinkerfin-sqlalchemy" },
+]
+integration = [
+    { name = "asyncmy" },
+    { name = "asyncpg" },
+    { name = "docker" },
+    { name = "testcontainers" },
+]
+lint = [
+    { name = "pyright" },
+    { name = "ruff" },
+]
+packaging = [
+    { name = "packaging" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "setuptools" },
+]
+test = [
+    { name = "ag-ui-protocol" },
+    { name = "aiosqlite" },
+    { name = "deepagents" },
+    { name = "langgraph" },
+    { name = "langgraph-checkpoint" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-xdist" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "sse-starlette" },
     { name = "tinkerfin-sqlalchemy" },
 ]
 
@@ -3019,15 +3060,47 @@ dev = [
     { name = "docker", specifier = ">=7.2,<8" },
     { name = "langgraph", specifier = ">=1.2.10,<2" },
     { name = "langgraph-checkpoint", specifier = ">=4.1,<5" },
+    { name = "packaging", specifier = ">=26,<27" },
     { name = "pyright", specifier = ">=1.1.411,<2.0.0" },
     { name = "pytest", specifier = ">=8.3.5,<10.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.25.3,<2.0.0" },
     { name = "pytest-cov", specifier = ">=7,<8" },
     { name = "pytest-xdist", specifier = ">=3.8,<4" },
     { name = "ruff", specifier = ">=0.16.1,<0.17.0" },
+    { name = "setuptools", specifier = ">=77" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.48,<3" },
     { name = "sse-starlette", specifier = "==3.4.11" },
     { name = "testcontainers", specifier = ">=4.15,<5" },
+    { name = "tinkerfin-sqlalchemy", editable = "packages/tinkerfin-sqlalchemy" },
+]
+integration = [
+    { name = "asyncmy", specifier = ">=0.2.11,<1" },
+    { name = "asyncpg", specifier = ">=0.30,<1" },
+    { name = "docker", specifier = ">=7.2,<8" },
+    { name = "testcontainers", specifier = ">=4.15,<5" },
+]
+lint = [
+    { name = "pyright", specifier = ">=1.1.411,<2.0.0" },
+    { name = "ruff", specifier = ">=0.16.1,<0.17.0" },
+]
+packaging = [
+    { name = "packaging", specifier = ">=26,<27" },
+    { name = "pytest", specifier = ">=8.3.5,<10.0.0" },
+    { name = "pytest-asyncio", specifier = ">=0.25.3,<2.0.0" },
+    { name = "setuptools", specifier = ">=77" },
+]
+test = [
+    { name = "ag-ui-protocol", specifier = "==0.1.19" },
+    { name = "aiosqlite", specifier = ">=0.22,<1" },
+    { name = "deepagents", specifier = "==0.7.13" },
+    { name = "langgraph", specifier = ">=1.2.10,<2" },
+    { name = "langgraph-checkpoint", specifier = ">=4.1,<5" },
+    { name = "pytest", specifier = ">=8.3.5,<10.0.0" },
+    { name = "pytest-asyncio", specifier = ">=0.25.3,<2.0.0" },
+    { name = "pytest-cov", specifier = ">=7,<8" },
+    { name = "pytest-xdist", specifier = ">=3.8,<4" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.48,<3" },
+    { name = "sse-starlette", specifier = "==3.4.11" },
     { name = "tinkerfin-sqlalchemy", editable = "packages/tinkerfin-sqlalchemy" },
 ]
 

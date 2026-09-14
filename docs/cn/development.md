@@ -12,6 +12,15 @@
 uv sync --locked --all-packages --group dev
 ```
 
+开发依赖按任务分组：`test` 提供测试运行器与契约 Fixture，`lint` 提供 Ruff 和 Pyright，
+`integration` 提供 Docker 与数据库客户端，`packaging` 提供 wheel 验证工具。
+`dev` 聚合四组；这些开发依赖不会作为包依赖发布。
+
+使用 `--no-default-groups --group NAME` 可选择安装的组。当前包与 Studio 测试需要
+`test`、`lint` 和 `integration`：类型契约测试会调用 Pyright，共享 Fixture 的收集会导入
+集成客户端。安装这些客户端不会启动 Docker 服务。安装 `packaging` 组及全部工作区包后，
+打包套件可通过 `--noconftest` 独立运行。选择性安装后使用 `uv run --no-sync`，保持已选择的环境。
+
 ## 验证 Studio Web
 
 在 `apps/studio/web` 执行 `pnpm test:browser`，构建应用并运行浏览器测试。
@@ -52,12 +61,16 @@ Dockerfile 在容器内导出锁定的生产依赖并构建 wheel。
 ## 验证打包
 
 ```bash
-uv run --locked --no-sync pytest tests/packaging -m packaging_e2e
+uv run --locked --no-sync pytest --noconftest tests/packaging -m packaging_e2e
 ```
 
 测试覆盖构建残留、当前源码内容、wheel 元数据、许可证、依赖声明和隔离环境安装。
 CI 在 Python 3.11–3.14 上运行核心安装场景，另在 Python 3.11 上运行全部可选依赖组合和
 Studio 部署所需的完整 wheel 集合。
+
+
+隔离 wheel 安装使用锁定依赖版本，并在离线模式执行。首次运行前需安装工作区，
+让 uv 缓存包含测试所需依赖和构建工具。
 
 ## 验证 Docker 集成
 
@@ -66,3 +79,6 @@ Studio 部署所需的完整 wheel 集合。
 ```bash
 uv run pytest -m docker_integration
 ```
+
+主质量工作流在 push 和 PR 时执行。完整 Docker 套件由独立工作流每日运行，也可在
+`Docker integrations` 工作流中通过 **Run workflow** 手动启动；其结果不阻塞主质量门禁。

@@ -6,7 +6,6 @@ import json
 import shutil
 import subprocess
 import sys
-import zipfile
 from pathlib import Path
 
 from tinkerfin import AgentRuntime, TinkerFin
@@ -61,41 +60,6 @@ def test_removed_and_third_party_exports_are_not_advertised(tmp_path: Path) -> N
         item["rule"] == "reportAttributeAccessIssue"
         for item in report["generalDiagnostics"]
     )
-
-
-def test_built_wheel_contains_the_public_types(tmp_path: Path) -> None:
-    output = tmp_path / "dist"
-    source = tmp_path / "source"
-    shutil.copytree(
-        _PACKAGE_ROOT,
-        source,
-        ignore=shutil.ignore_patterns("build", "dist", "*.egg-info", "__pycache__"),
-    )
-    subprocess.run(
-        [
-            "uv",
-            "build",
-            "--offline",
-            "--quiet",
-            "--wheel",
-            "--out-dir",
-            str(output),
-            "--no-create-gitignore",
-            str(source),
-        ],
-        cwd=_REPOSITORY_ROOT,
-        check=True,
-    )
-    with zipfile.ZipFile(next(output.glob("tinkerfin-*.whl"))) as archive:
-        names = set(archive.namelist())
-    assert {
-        "tinkerfin/py.typed",
-        "tinkerfin/runtime.py",
-        "tinkerfin/deep_agent.py",
-        "tinkerfin/_lazy_run.py",
-        "tinkerfin/tools.py",
-    } <= names
-    assert "tinkerfin/deep_agent.pyi" not in names
 
 
 def test_workspace_build_types_are_complete_for_strict_callers(tmp_path: Path) -> None:
