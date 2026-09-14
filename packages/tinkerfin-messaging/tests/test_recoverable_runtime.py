@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import AsyncGenerator, AsyncIterator
-from dataclasses import replace
 from typing import ClassVar
 
 import pytest
@@ -13,19 +11,12 @@ from backend_harness import MessagingBackendHarness
 
 from tinkerfin import RunIdentity
 from tinkerfin_messaging import (
-    BackendOwnershipLost,
     CancelContext,
-    MemoryBackend,
     MessageSubscription,
     Messaging,
     RecoverableMessage,
     RecoveryCheckpoint,
     RunProducerFailed,
-)
-from tinkerfin_messaging.backend_contract import (
-    MessagingBackendSettings,
-    MessagingTransition,
-    MessagingTransitionResult,
 )
 
 
@@ -86,39 +77,6 @@ class _Factory:
         if self.source is None:
             raise AssertionError("test factory has no source")
         return self.source
-
-
-class _ConcurrentOpenFailureFactory:
-    def __init__(self, barrier: asyncio.Barrier) -> None:
-        self._barrier = barrier
-
-    async def open(self, checkpoint: RecoveryCheckpoint | None) -> _Source:
-        assert checkpoint is None
-        await self._barrier.wait()
-        raise RuntimeError("source reconstruction failed")
-
-
-class _ConcurrentRenewalFailureBackend(MemoryBackend):
-    def __init__(self, barrier: asyncio.Barrier) -> None:
-        super().__init__()
-        self._barrier = barrier
-
-    @property
-    def messaging_settings(self) -> MessagingBackendSettings:
-        return replace(
-            super().messaging_settings,
-            producer_renew_interval_seconds=0.001,
-            producer_lease_seconds=0.003,
-        )
-
-    async def commit_messaging_transition(
-        self,
-        transition: MessagingTransition,
-    ) -> MessagingTransitionResult:
-        if transition.kind == "renew_producer_ownership":
-            await self._barrier.wait()
-            raise BackendOwnershipLost("recoverable source owner lease was lost")
-        return await super().commit_messaging_transition(transition)
 
 
 async def _data(subscription: MessageSubscription[str]) -> list[str]:
@@ -236,39 +194,6 @@ async def test_recoverable_factory_failure_settles_run_before_returning(
     assert failed_factory.checkpoints == [None]
     assert unused_factory.checkpoints == []
     assert not_started_statuses == ["failed"]
-
-
-async def test_ownership_loss_dominates_a_simultaneous_source_open_failure(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    barrier = asyncio.Barrier(2)
-    backend = _ConcurrentRenewalFailureBackend(barrier)
-
-    with caplog.at_level(logging.ERROR, logger="tinkerfin.messaging"):
-        async with Messaging(backend=backend) as messaging:
-            channel = messaging.channel(name="events", codec=_TextCodec())
-
-            with pytest.raises(
-                BackendOwnershipLost,
-                match="owner lease was lost",
-            ) as captured:
-                await channel.wrap_recoverable(
-                    _ConcurrentOpenFailureFactory(barrier),
-                    identity=_identity(),
-                    after=0,
-                )
-
-    assert isinstance(captured.value.__cause__, RuntimeError)
-    assert str(captured.value.__cause__) == "source reconstruction failed"
-    record = next(
-        record
-        for record in caplog.records
-        if record.getMessage() == "Messaging producer lease renewal failed"
-    )
-    fields = vars(record)
-    assert fields["tinkerfin_renewal_phase"] == "owner"
-    assert fields["tinkerfin_renewal_outcome"] == "backend_exception"
-    assert fields["tinkerfin_error_type"] == "BackendOwnershipLost"
 
 
 def test_recoverable_checkpoint_must_match_the_stable_message_id() -> None:

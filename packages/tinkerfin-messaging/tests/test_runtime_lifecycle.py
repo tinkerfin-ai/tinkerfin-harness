@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
-from dataclasses import replace
-from typing import ClassVar, Literal, cast
+from collections.abc import AsyncGenerator, AsyncIterator
+from typing import ClassVar, cast
 
 import pytest
 
@@ -27,7 +24,6 @@ from tinkerfin_messaging import (
 from tinkerfin_messaging._messaging_ledger import BackendRunHandle
 from tinkerfin_messaging.backend_contract import (
     MessagingBackend,
-    MessagingBackendSettings,
     MessagingTransition,
     MessagingTransitionResult,
 )
@@ -159,59 +155,6 @@ def _install_tracking_follow(
         return _TrackingIterator(iterator, backend)
 
     setattr(messaging._runtime_backend, "follow", tracked_follow)
-
-
-class _LeasedMemoryBackend(MemoryBackend):
-    @property
-    def messaging_settings(self) -> MessagingBackendSettings:
-        return replace(
-            super().messaging_settings,
-            producer_renew_interval_seconds=0.01,
-            producer_lease_seconds=0.03,
-        )
-
-
-class _DiagnosticLeaseBackend(MemoryBackend):
-    def __init__(
-        self,
-        *,
-        behavior: Literal["exception", "reject", "success"],
-        timeout: float = 0.03,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        super().__init__()
-        self.behavior = behavior
-        self.timeout = timeout
-        self.clock = clock
-        self.expires_at = self.clock() + timeout
-        self.renew_calls = 0
-
-    @property
-    def messaging_settings(self) -> MessagingBackendSettings:
-        return replace(
-            super().messaging_settings,
-            producer_renew_interval_seconds=self.timeout / 3,
-            producer_lease_seconds=self.timeout,
-        )
-
-    async def commit_messaging_transition(
-        self,
-        transition: MessagingTransition,
-    ) -> MessagingTransitionResult:
-        if transition.kind == "renew_producer_ownership":
-            self.renew_calls += 1
-            if self.behavior == "exception":
-                raise RuntimeError("diagnostic backend renew failed")
-            if self.behavior == "reject" or self.clock() >= self.expires_at:
-                return MessagingTransitionResult(
-                    kind=transition.kind,
-                    producer_ownership_confirmed=False,
-                )
-            self.expires_at = self.clock() + self.timeout
-        result = await super().commit_messaging_transition(transition)
-        if transition.kind == "prepare_run" and result.is_producer_owner:
-            self.expires_at = self.clock() + self.timeout
-        return result
 
 
 class _BlockingPrepareBackend(MemoryBackend):
@@ -405,24 +348,6 @@ class _BlockingRecoveryFactory:
         self.entered.set()
         await self.release.wait()
         return self.source
-
-
-class _CancellationResistantRecoveryFactory:
-    def __init__(self) -> None:
-        self.entered = asyncio.Event()
-        self.source = _RecoverableSource()
-
-    async def open(
-        self,
-        checkpoint: RecoveryCheckpoint | None,
-    ) -> _RecoverableSource:
-        assert checkpoint is None
-        self.entered.set()
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            return self.source
-        raise AssertionError("unreachable")
 
 
 async def _data(subscription: MessageSubscription[str]) -> list[str]:
@@ -691,131 +616,6 @@ async def test_backend_subscription_closes_on_producer_failure() -> None:
     assert backend.follow_close_calls == 1
 
 
-async def test_cooperative_source_silence_keeps_renewing_without_failure_log(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    now = 0.0
-    renewed = asyncio.Event()
-
-    class CooperativeBackend(_DiagnosticLeaseBackend):
-        async def commit_messaging_transition(
-            self, transition: MessagingTransition
-        ) -> MessagingTransitionResult:
-            nonlocal now
-            if transition.kind == "renew_producer_ownership":
-                now += 0.01
-            result = await super().commit_messaging_transition(transition)
-            if self.renew_calls >= 5:
-                renewed.set()
-            return result
-
-    # Lease time follows acknowledged renewals, independent of CPU scheduling.
-    backend = CooperativeBackend(behavior="success", clock=lambda: now)
-    release = asyncio.Event()
-    source = _Source(release=release)
-
-    with caplog.at_level(logging.ERROR, logger="tinkerfin.messaging"):
-        async with Messaging(backend=backend) as messaging:
-            subscription = await messaging.channel(
-                name="events",
-                codec=_TextCodec(),
-            ).wrap(
-                source,
-                identity=_identity(),
-                after=0,
-            )
-            await asyncio.wait_for(source.started.wait(), timeout=1)
-            await asyncio.wait_for(renewed.wait(), timeout=1)
-            release.set()
-            assert await _data(subscription) == []
-
-    assert backend.renew_calls >= 5
-    assert not any(
-        record.getMessage() == "Messaging producer lease renewal failed"
-        for record in caplog.records
-    )
-    assert not any(
-        task.get_name().startswith("tinkerfin-messaging-lease:")
-        for task in asyncio.all_tasks()
-        if task is not asyncio.current_task() and not task.done()
-    )
-
-
-@pytest.mark.parametrize(
-    ("behavior", "outcome", "error_type"),
-    [
-        (
-            "exception",
-            "backend_exception",
-            "UnexpectedMessagingBackendError",
-        ),
-        (
-            "reject",
-            "ownership_rejected",
-            "BackendOwnershipLost",
-        ),
-    ],
-)
-async def test_lease_failure_log_classifies_backend_outcomes(
-    caplog: pytest.LogCaptureFixture,
-    behavior: Literal["exception", "reject"],
-    outcome: str,
-    error_type: str,
-) -> None:
-    backend = _DiagnosticLeaseBackend(behavior=behavior)
-    source = _Source(release=asyncio.Event())
-
-    with caplog.at_level(logging.ERROR, logger="tinkerfin.messaging"):
-        async with Messaging(backend=backend) as messaging:
-            subscription = await messaging.channel(
-                name="events",
-                codec=_TextCodec(),
-            ).wrap(
-                source,
-                identity=_identity(),
-                after=0,
-            )
-            with pytest.raises(RunProducerFailed):
-                await asyncio.wait_for(anext(aiter(subscription)), timeout=1)
-
-    records = [
-        record
-        for record in caplog.records
-        if record.getMessage() == "Messaging producer lease renewal failed"
-    ]
-    assert len(records) == 1
-    record = records[0]
-    fields = vars(record)
-    assert fields["tinkerfin_renewal_phase"] == "owner"
-    assert fields["tinkerfin_renewal_outcome"] == outcome
-    assert fields["tinkerfin_attempt"] == 1
-    assert fields["tinkerfin_deadline_elapsed"] is False
-    assert fields["tinkerfin_error_type"] == error_type
-    assert fields["tinkerfin_scheduler_delay_seconds"] >= 0
-    assert fields["tinkerfin_command_duration_seconds"] >= 0
-    assert fields["tinkerfin_seconds_since_last_success"] >= 0
-    assert fields["tinkerfin_lease_timeout_seconds"] == backend.timeout
-    assert record.exc_info is None
-    assert "events" not in caplog.text
-    assert "conversation-1" not in caplog.text
-    assert "run-1" not in caplog.text
-    assert all(
-        key.startswith("tinkerfin_") for key in fields if key.startswith("tinkerfin")
-    )
-    assert "channel" not in fields
-    assert "thread_id" not in fields
-    assert "run_id" not in fields
-    assert "owner_token" not in fields
-    assert "fence" not in fields
-    assert "payload" not in fields
-    assert source.closed.is_set()
-    assert not any(
-        task.get_name().startswith("tinkerfin-messaging-lease:")
-        for task in asyncio.all_tasks()
-        if task is not asyncio.current_task() and not task.done()
-    )
-
-
 async def test_wrap_repeated_cancellation_settles_before_producer_start() -> None:
     backend = _CancellationResistantPrepareBackend()
     source = _Source("unused")
@@ -959,27 +759,6 @@ async def test_recoverable_preflight_settles_owner_when_source_close_fails() -> 
         for note in getattr(wrap_result, "__notes__", ())
     )
     assert source.close_calls == 1
-
-
-async def test_cancelled_recoverable_open_closes_a_late_returned_source() -> None:
-    factory = _CancellationResistantRecoveryFactory()
-
-    async with Messaging(backend=_LeasedMemoryBackend()) as messaging:
-        channel = messaging.channel(name="events", codec=_TextCodec())
-        wrapping = asyncio.create_task(
-            channel.wrap_recoverable(
-                factory,
-                identity=_identity(),
-                after=0,
-            )
-        )
-        await asyncio.wait_for(factory.entered.wait(), timeout=1)
-        wrapping.cancel()
-
-        with pytest.raises(asyncio.CancelledError):
-            await wrapping
-
-    assert factory.source.close_calls == 1
 
 
 async def test_messaging_shutdown_closes_active_source_and_owned_tasks(

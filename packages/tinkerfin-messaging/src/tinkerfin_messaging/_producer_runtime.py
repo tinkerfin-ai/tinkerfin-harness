@@ -220,7 +220,7 @@ class _OwnerLease:
     The preflight owns this supervisor until it synchronously transfers it to the
     producer. A failure interrupts only the currently protected operation; settlement
     disarms that interruption and still joins the renewal task. No caller must renew
-    or coordinate a handoff. See test_preparation_lease for the stage invariants.
+    or coordinate a handoff.
     """
 
     def __init__(self, messaging: Messaging, prepared: PreparedRun) -> None:
