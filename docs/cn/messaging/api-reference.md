@@ -8,8 +8,8 @@
 | --- | --- | --- |
 | `Messaging(...)` | `backend=None`、`settlement_timeout=None` | 创建单次应用生命周期 |
 | `Messaging.channel(...)` | `name`、可选 `codec`、可选 `renderer` | 创建可并发复用的 channel |
+| `Messaging.agui_channel(name=...)` | 频道名称 | 创建支持转换、主运行通知和续播的 AG-UI 频道 |
 | `Messaging.aclose()` | 无 | 等待 preflight、producer 和清理任务完成 |
-| `create_agui_run_source(...)` | 带完整声明的 AG-UI 事件流、可选转换函数 | 转换事件内容或元数据，并保留协议身份 |
 
 默认 backend 是 `MemoryBackend`。
 
@@ -55,42 +55,50 @@ TinkerFin profile source 的 `identity` 可省略；普通自定义 source 必�
 
 | API | 用途 |
 | --- | --- |
-| `create_agui_run_source(...)` | 转换惰性 AG-UI 事件流，并保留准备、取消和关闭行为 |
 | `parse_sse_event_id(value)` | 解析 `None` 或 canonical 非负 ASCII 十进制 SSE ID |
 | `is_active_run_status(status)` | 收窄 `running` 与 `cancel_requested` 的 TypeGuard |
 | `is_final_run_status(status)` | 收窄全部 durable 终态的 TypeGuard |
 | `is_failed_run_status(status)` | 收窄 `failed` 与 `owner_lost` 的 TypeGuard |
 
-状态 helper 是纯函数，不访问 backend。
-普通 AG-UI source 的 transform 只用于补充产品 metadata 或内容；事件类型以及 Run、消息、Tool、快照或
-interrupt ID 发生变化时会被拒绝。可选 `RUN_STARTED.input` 中的消息、工具、上下文、forwarded props
-与 resume 等全部字段也保持调用方原始输入。需要主动改变输出协议时，应使用高级 `map_source()`。
+状态判断函数不访问存储。AG-UI 使用 `messaging.agui_channel(name=...)`，
+`open_sse()` 的 `transform_event` 可补充业务字段，但不能改变事件类型、运行、消息、工具或审批身份。
+`on_run_started` 与 `on_run_finished` 接收已提交的主运行事件，子运行与重放不会重复触发业务通知。
 
-使用已构建的 Runtime 和应用持有的频道，为事件添加产品字段：
+使用已有 Runtime 和处于打开状态的 Messaging：
 
 ```python
 from ag_ui.core import BaseEvent
-from tinkerfin_messaging import create_agui_run_source
 
 
 def add_label(event: BaseEvent) -> BaseEvent:
     return event.model_copy(update={"label": "Report"})
 
 
-source = create_agui_run_source(
+channel = messaging.agui_channel(name="conversations")
+body = await channel.open_sse(
     runtime.open_agui_run(
         thread_id="conversation-1",
         run_id="run-1",
-        messages=[{"id": "message-1", "role": "user", "content": "Summarize this report"}],
+        messages=[
+            {"id": "message-1", "role": "user", "content": "Summarize this report"}
+        ],
     ),
+    after=0,
     transform_event=add_label,
 )
-body = await channel.open_sse(source, after=0)
 ```
 
-HTTP 服务发送 `body`，并在完成或断连时调用 `await body.aclose()`。
-适配器构造失败时，输入流仍由调用方关闭；清理等待超时后，应再次调用 `aclose()`，
-等待资源释放完成，再关闭借用的数据库等应用资源。
+HTTP 服务发送 `body`，并在完成或断连时调用 `await body.aclose()`。关闭读取不会取消后台运行。
+`open_sse()` 接管输入流的准备和失败清理；应用继续拥有 Messaging 与数据库等借用资源。
+
+已有运行直接调用 `await channel.follow_sse(identity=identity, last_event_id=last_id)`，
+无需构造新的输入流。省略游标从该运行开头重播；传入游标必须对应同一运行且保留已应用的视图。
+`follow()` 返回可关闭的解码订阅。频道还支持 `publish()`、`get_run_status()`、`cancel()` 与 `delete_stream()`。
+历史与续播的组合使用 [AgUiHistory.open_live](../runtime/api-reference.md#读取-ag-ui-对话历史)。
+
+续播 SSE 中，订阅建立时已提交的事件带 `event: replay`，此后生成的事件使用默认 `message`。
+两者的 `id` 和 AG-UI 数据不变。界面应直接恢复 `replay` 正文，只对新增正文播放动画；
+使用浏览器 `EventSource` 时需要同时监听 `replay` 和 `message`。
 
 ## 高级 source 工具
 

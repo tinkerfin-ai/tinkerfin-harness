@@ -15,7 +15,6 @@ from types import TracebackType
 from typing import NoReturn, TypeVar, cast
 
 import httpx
-from ag_ui.core import BaseEvent
 from fastapi import FastAPI
 from opensandbox.config import ConnectionConfig
 from redis.asyncio import Redis
@@ -26,9 +25,8 @@ from tinkerfin_automation import (
     AutomationService,
     SqlAlchemyAutomationStore,
 )
-from tinkerfin_messaging import MessagingLimits, MessagingRetentionPolicy
-from tinkerfin_messaging.agui import AgUiCodec
-from tinkerfin_messaging.messaging import MessageChannel, Messaging
+from tinkerfin_messaging import AgUiChannel, MessagingLimits, MessagingRetentionPolicy
+from tinkerfin_messaging.messaging import Messaging
 from tinkerfin_messaging.redis import RedisBackend
 from tinkerfin_sandbox.lifecycle.client import OpenSandboxClient
 from tinkerfin_sandbox.lifecycle.manager import OpenSandboxManager
@@ -164,7 +162,7 @@ class ApplicationResources:
     tracer: Tracer
     todo_group_query: TodoGroupQueryExecutor
     messaging: Messaging
-    conversation_channel: MessageChannel[BaseEvent, BaseEvent]
+    conversation_channel: AgUiChannel
     sandbox_manager: OpenSandboxManager[str]
     conversation_trace: ConversationTraceCoordinator
     readiness: ReadinessService
@@ -267,6 +265,10 @@ def build_lifespan():
                             config=OpenSandboxConfig(
                                 # 用户工作区跨会话保留，由明确的清理操作结束生命周期
                                 ttl=None,
+                                resource={
+                                    "cpu": f"{sandbox_settings.cpu:g}",
+                                    "memory": f"{sandbox_settings.memory_mib}Mi",
+                                },
                                 workspace_root=sandbox_settings.workspace_root,
                                 warm_pool_size=sandbox_settings.warm_pool_size,
                             ),
@@ -293,10 +295,7 @@ def build_lifespan():
                 messaging = await _enter_lifespan_context(
                     stack, outcome, Messaging(backend=messaging_backend)
                 )
-                channel = messaging.channel(
-                    name="studio-conversation-agui",
-                    codec=AgUiCodec(),
-                )
+                channel = messaging.agui_channel(name="studio-conversation-agui")
                 conversation_trace = ConversationTraceCoordinator(
                     database=database,
                     tracer=tracer,

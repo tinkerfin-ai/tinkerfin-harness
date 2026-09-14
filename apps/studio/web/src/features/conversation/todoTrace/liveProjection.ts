@@ -91,7 +91,7 @@ export class LiveTodoTraceProjector {
 
   hydrate(
     snapshot: ReadyTaskTraceSnapshot,
-    options: { headRunId: string; latestTurn?: LiveTurnSeed },
+    options: { headRunId: string; latestTurn?: LiveTurnSeed; isRunning?: boolean },
   ) {
     if (this.runs.size > 0 || this.groups.length > 0) {
       throw new Error('实时任务轨迹只能从权威快照初始化一次')
@@ -127,7 +127,7 @@ export class LiveTodoTraceProjector {
       runId: options.headRunId,
       inputKind: 'ordinary',
       turnId,
-      terminal: true,
+      terminal: !options.isRunning,
       initializationFailed: false,
     })
     this.heads.add(options.headRunId)

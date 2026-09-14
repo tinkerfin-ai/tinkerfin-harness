@@ -59,7 +59,7 @@ await channel.publish(
 
 The message enters the same durable log as source events. Existing subscribers receive it, and reconnecting subscribers replay it using the same sequence cursor. Publication does not open a source, acquire or renew its lease, or advance its message ordinal or recovery checkpoint. The host authorizes the target identity.
 
-The codec must be bound, including on a separate worker. Use `codec=AgUiCodec()` when that worker does not open the source. Ordinary codecs accept publication after the first source commit. AG-UI accepts only `CustomEvent` after the target main `RUN_STARTED`; the main terminal atomically closes publication. Child run events do not open or close the main run. Cancellation, settlement, or producer ownership loss reject new publications with `PublicationRejected`.
+The codec must be bound, including on a separate worker. For AG-UI, use `messaging.agui_channel(name=...)` on every worker. Ordinary codecs accept publication after the first source commit. AG-UI accepts only `CustomEvent` after the target main `RUN_STARTED`; the main terminal atomically closes publication. Child run events do not open or close the main run. Cancellation, settlement, or producer ownership loss reject new publications with `PublicationRejected`.
 
 Omitting `message_id` generates a fresh key per call. Repeating the same key and content returns the retained envelope, including after completion; different content raises `MessageIdConflict`. A rejected publication never starts a new run.
 

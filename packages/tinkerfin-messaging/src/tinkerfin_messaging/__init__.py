@@ -66,8 +66,8 @@ from .sources import map_source as map_source
 from .sse import parse_sse_event_id as parse_sse_event_id
 
 if TYPE_CHECKING:
+    from ._agui_channel import AgUiChannel as AgUiChannel
     from .agui import AgUiCodec as AgUiCodec
-    from .agui import create_agui_run_source as create_agui_run_source
     from .native import NativeStreamPart as NativeStreamPart
     from .native import NativeStreamPartCodec as NativeStreamPartCodec
     from .redis import RedisBackend as RedisBackend
@@ -75,6 +75,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ActiveRunStatus",
+    "AgUiChannel",
     "AgUiCodec",
     "BackendOwnershipLost",
     "CancelCallback",
@@ -134,7 +135,6 @@ __all__ = [
     "StreamDeleted",
     "StreamExpired",
     "UnexpectedMessagingBackendError",
-    "create_agui_run_source",
     "is_active_run_status",
     "is_failed_run_status",
     "is_final_run_status",
@@ -164,9 +164,16 @@ def _raise_missing_extra(
 def __getattr__(name: str) -> object:
     """Load optional integrations only when their public symbol is requested."""
 
-    if name in {"AgUiCodec", "create_agui_run_source"}:
+    if name == "AgUiChannel":
         try:
-            from .agui import AgUiCodec, create_agui_run_source
+            from ._agui_channel import AgUiChannel
+        except ModuleNotFoundError as error:
+            _raise_missing_extra(error, symbol=name, extra="agui", packages=("ag_ui",))
+        globals()[name] = AgUiChannel
+        return AgUiChannel
+    if name == "AgUiCodec":
+        try:
+            from .agui import AgUiCodec
         except ModuleNotFoundError as error:
             _raise_missing_extra(
                 error,
@@ -176,7 +183,6 @@ def __getattr__(name: str) -> object:
             )
 
         globals()["AgUiCodec"] = AgUiCodec
-        globals()["create_agui_run_source"] = create_agui_run_source
         return globals()[name]
     if name in {"NativeStreamPart", "NativeStreamPartCodec"}:
         try:

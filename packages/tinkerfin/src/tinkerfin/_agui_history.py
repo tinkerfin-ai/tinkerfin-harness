@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from types import TracebackType
-from typing import Generic, TypeVar
+from typing import Generic, Protocol, TypeVar
 
-from tinkerfin_contracts import ThreadIdentity
+from tinkerfin_contracts import RunIdentity, ThreadIdentity
 from tinkerfin_contracts.identity import validate_namespace
 from tinkerfin_tracing import (
     TraceFollow,
@@ -14,6 +14,7 @@ from tinkerfin_tracing import (
     TraceGraphQuery,
     Tracer,
     TraceThread,
+    TraceThreadNotFound,
 )
 
 from ._agui_history_models import (
@@ -28,6 +29,42 @@ from ._agui_history_projection import (
     _project_history,
     _project_update,
 )
+from .sse import SseBody
+
+
+class AgUiReplayChannel(Protocol):
+    """Read existing AG-UI delivery without depending on its storage implementation."""
+
+    async def follow_sse(
+        self, *, identity: RunIdentity, last_event_id: str | None = None
+    ) -> AsyncGenerator[bytes, None]:
+        """Return a generation-bound replay, marking committed SSE frames as ``replay``.
+
+        Omission starts at the run boundary. Events committed after binding use
+        the default ``message`` name; event IDs and AG-UI data remain unchanged.
+        """
+        ...
+
+
+class AgUiLiveView:
+    """Own a consistent recorded baseline and its resumable live delivery.
+
+    The caller owns the returned body and must close this view if the body is not
+    consumed. The borrowed Tracer, Store, channel and producer remain open.
+    """
+
+    def __init__(
+        self, *, history: AgUiHistoryView, body: SseBody[bytes] | None
+    ) -> None:
+        """Retain the framework-selected baseline and owned reader."""
+        self.history = history
+        self.body = body
+
+    async def aclose(self) -> None:
+        """Detach and settle any active pull without cancelling the producer."""
+        if self.body is not None:
+            await self.body.aclose()
+
 
 _InputT = TypeVar("_InputT")
 _OutputT = TypeVar("_OutputT")
@@ -249,6 +286,67 @@ class AgUiHistory:
             projections=projections,
         )
         return AgUiHistoryView(trace)
+
+    async def open_live(
+        self,
+        thread_id: str,
+        *,
+        channel: AgUiReplayChannel,
+        head_run_id: str | None = None,
+        last_event_id: str | None = None,
+        projections: tuple[str, ...] = (),
+    ) -> AgUiLiveView:
+        """Read a conversation and attach to its existing run without executing it.
+
+        Args:
+            thread_id: Application-authorized thread within this reader's namespace.
+            channel: Borrowed AG-UI replay channel sharing the run's identity.
+            head_run_id: Exact run to recover; omission selects the current history head.
+            last_event_id: Last applied SSE ID when the caller retains its entire view.
+                Omit after a page reload or when no corresponding view survives.
+            projections: Registered business projections needed in the history view.
+
+        Returns:
+            Completed history, or a baseline before the selected run's output and
+            its already committed replay followed by live events. When resuming a
+            retained view, the caller keeps that view and consumes only the body.
+
+        Raises:
+            TracingError: A consistent historical baseline cannot be loaded.
+            ValueError: The supplied identity or cursor is invalid.
+            Exception: The channel cannot replay the retained run; no agent is started.
+        """
+        history = await self.get(
+            thread_id, head_run_id=head_run_id, projections=projections
+        )
+        trace = history.trace
+        if trace.status.execution != "running" and last_event_id is None:
+            return AgUiLiveView(history=history, body=None)
+        identity = RunIdentity(
+            namespace=self._namespace, thread_id=thread_id, run_id=trace.head_run_id
+        )
+        source = await channel.follow_sse(
+            identity=identity, last_event_id=last_event_id
+        )
+        body = SseBody(source_factory=lambda: source, close=source.aclose)
+
+        async def prepare_baseline() -> None:
+            nonlocal history
+            if last_event_id is None:
+                baseline = await self._tracer.get(
+                    identity.thread,
+                    head_run_id=identity.run_id,
+                    projections=projections,
+                    at_run_start=True,
+                )
+                if baseline.key != trace.key:
+                    raise TraceThreadNotFound(
+                        "Conversation generation changed during replay preparation"
+                    )
+                history = AgUiHistoryView(baseline)
+
+        await body.prepare(preflight=prepare_baseline)
+        return AgUiLiveView(history=history, body=body)
 
     async def query(
         self,

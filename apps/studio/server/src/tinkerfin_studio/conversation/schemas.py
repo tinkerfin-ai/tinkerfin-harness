@@ -135,6 +135,14 @@ class ConversationTraceSnapshotEvent(BaseModel):
     snapshot: ConversationHistoryDetail
 
 
+class ConversationRunSnapshotEvent(BaseModel):
+    """已有运行续播前的历史基线，以及后续是否还有运行事件"""
+
+    type: Literal["snapshot"] = "snapshot"
+    snapshot: ConversationHistoryDetail
+    replay: bool = Field(description="是否继续发送该运行已提交及后续产生的事件")
+
+
 class ConversationTraceUpdateEvent(BaseModel):
     """Trace SSE 在快照之后发送的语义增量"""
 

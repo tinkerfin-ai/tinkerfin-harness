@@ -8,8 +8,8 @@
 | --- | --- | --- |
 | `Messaging(...)` | `backend=None`, `settlement_timeout=None` | Create one application lifecycle |
 | `Messaging.channel(...)` | name, optional codec and renderer | Create a reusable channel |
+| `Messaging.agui_channel(name=...)` | channel name | Create an AG-UI channel with transforms, main-run notifications, and replay |
 | `Messaging.aclose()` | none | Settle preflight, producers, and cleanup |
-| `create_agui_run_source(...)` | profiled AG-UI source, optional transform | Transform event content or metadata while preserving protocol identity |
 
 The default backend is `MemoryBackend`.
 
@@ -55,44 +55,56 @@ RunIdentity is optional only when the source advertises an immutable profile.
 
 | API | Purpose |
 | --- | --- |
-| `create_agui_run_source(...)` | Transform a lazy AG-UI source while preserving preparation, cancellation, and cleanup |
 | `parse_sse_event_id(value)` | Parse `None` or canonical non-negative ASCII decimal SSE IDs |
 | `is_active_run_status(status)` | TypeGuard for `running` and `cancel_requested` |
 | `is_final_run_status(status)` | TypeGuard for all terminal durable statuses |
 | `is_failed_run_status(status)` | TypeGuard for `failed` and `owner_lost` |
 
-The status helpers are pure and perform no backend I/O.
-The common AG-UI source transform can enrich product metadata or content only. It rejects
-event-type substitutions and changes to Run, message, Tool, snapshot, or interrupt IDs.
-It also preserves every field of an optional `RUN_STARTED.input`, including messages,
-tools, context, forwarded props, and resume entries. Use advanced `map_source()` when
-changing the output protocol is intentional.
+Status helpers perform no backend I/O. For AG-UI use `messaging.agui_channel(name=...)`.
+Its `open_sse()` accepts `transform_event` for business fields while preserving event
+types and run, message, tool, and approval identities. `on_run_started` and
+`on_run_finished` receive committed main-run events; child runs and replay do not
+repeat those business notifications.
 
-Use a built Runtime and an application-owned channel to add product fields:
+With an existing Runtime and an open Messaging lifecycle:
 
 ```python
 from ag_ui.core import BaseEvent
-from tinkerfin_messaging import create_agui_run_source
 
 
 def add_label(event: BaseEvent) -> BaseEvent:
     return event.model_copy(update={"label": "Report"})
 
 
-source = create_agui_run_source(
+channel = messaging.agui_channel(name="conversations")
+body = await channel.open_sse(
     runtime.open_agui_run(
         thread_id="conversation-1",
         run_id="run-1",
-        messages=[{"id": "message-1", "role": "user", "content": "Summarize this report"}],
+        messages=[
+            {"id": "message-1", "role": "user", "content": "Summarize this report"}
+        ],
     ),
+    after=0,
     transform_event=add_label,
 )
-body = await channel.open_sse(source, after=0)
 ```
 
 The HTTP host sends `body` and calls `await body.aclose()` on completion or disconnect.
-A failed adapter construction leaves source cleanup with the caller. After a cleanup
-waiting limit is exceeded, call `aclose()` again before disposing borrowed resources.
+Closing the reader leaves the producer running. `open_sse()` owns source preparation
+and failed-start cleanup; the application retains Messaging and borrowed databases.
+
+For an existing run, call `await channel.follow_sse(identity=identity, last_event_id=last_id)`
+without constructing another source. Omitting the cursor replays that run from its
+beginning. A supplied cursor must belong to the same run and its already applied view.
+`follow()` returns a closeable decoded subscription. The channel also supports
+`publish()`, `get_run_status()`, `cancel()`, and `delete_stream()`.
+Combine history and delivery with [AgUiHistory.open_live](../runtime/api-reference.md#recorded-ag-ui-conversations).
+
+In replay SSE, events already committed when the subscription binds carry `event: replay`;
+later events use the default `message` name. IDs and AG-UI data are unchanged.
+Restore replayed text immediately and animate only new text. Browser `EventSource`
+consumers must listen for both `replay` and `message`.
 
 ## Advanced source helpers
 

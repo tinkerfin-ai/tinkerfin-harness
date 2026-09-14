@@ -85,6 +85,8 @@ def test_load_settings_groups_external_resource_configuration(
                 "REDIS_RUNTIME_CHECKPOINT_DB=0",
                 "OPEN_SANDBOX_DOMAIN=127.0.0.1:8091",
                 "OPEN_SANDBOX_PROTOCOL=http",
+                "OPEN_SANDBOX_CPU=2",
+                "OPEN_SANDBOX_MEMORY_MIB=2048",
                 "OPEN_SANDBOX_WARM_POOL_SIZE=3",
                 "AUTH_TOKEN_EXPIRE_SECONDS=86400",
                 "TAVILY_API_KEY=tavily-secret",
@@ -101,6 +103,8 @@ def test_load_settings_groups_external_resource_configuration(
     assert settings.redis_runtime.database == 3
     assert settings.redis_runtime.checkpoint_database == 0
     assert settings.sandbox.domain == "127.0.0.1:8091"
+    assert settings.sandbox.cpu == 2
+    assert settings.sandbox.memory_mib == 2048
     assert settings.sandbox.warm_pool_size == 3
     assert settings.auth_token_expire_seconds == 86400
     assert settings.database.connection_budget == 20
@@ -108,6 +112,21 @@ def test_load_settings_groups_external_resource_configuration(
     assert settings.tavily_api_key is not None
     assert "runtime-secret" not in repr(settings)
     assert "tavily-secret" not in repr(settings)
+    monkeypatch.setenv("OPEN_SANDBOX_CPU", "0.5")
+    monkeypatch.setenv("OPEN_SANDBOX_MEMORY_MIB", "512")
+    overridden = load_settings(env_file=env_file).sandbox
+    assert overridden.cpu == 0.5
+    assert overridden.memory_mib == 512
+    monkeypatch.setenv("OPEN_SANDBOX_CPU", "nan")
+    with pytest.raises(ValueError, match="open_sandbox_cpu"):
+        load_settings(env_file=env_file)
+    monkeypatch.setenv("OPEN_SANDBOX_CPU", "0")
+    with pytest.raises(ValueError, match="open_sandbox_cpu"):
+        load_settings(env_file=env_file)
+    monkeypatch.setenv("OPEN_SANDBOX_CPU", "1")
+    monkeypatch.setenv("OPEN_SANDBOX_MEMORY_MIB", "0")
+    with pytest.raises(ValueError, match="open_sandbox_memory_mib"):
+        load_settings(env_file=env_file)
 
 
 def test_load_settings_rejects_non_async_mysql_url(
@@ -312,6 +331,9 @@ def test_selected_env_file_uses_defaults_for_omitted_settings(tmp_path, monkeypa
     assert not settings.log_file_enabled
     assert settings.log_level == "INFO"
     assert settings.attachment_directory == tmp_path / ".data/attachments"
+    assert settings.sandbox.cpu == 1
+    assert settings.sandbox.memory_mib == 1024
+    assert settings.sandbox.warm_pool_size == 0
 
 
 def test_dotenv_sources_are_isolated_from_an_existing_default_file(tmp_path):

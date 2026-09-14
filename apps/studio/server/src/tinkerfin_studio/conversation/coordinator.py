@@ -13,7 +13,7 @@ from ag_ui.core import BaseEvent
 from ag_ui.core.types import ResumeEntry
 
 from tinkerfin import AgUiResumeCheckpoint, RunIdentity
-from tinkerfin_messaging import RunNotFound, is_active_run_status
+from tinkerfin_messaging import AgUiChannel, RunNotFound, is_active_run_status
 from tinkerfin_messaging.messaging import MessageChannel
 from tinkerfin_studio.api.errors import ConversationErrorCode, SystemException
 from tinkerfin_studio.infrastructure._failures import _cleanup_failure_priority
@@ -54,7 +54,7 @@ class ConversationTraceCoordinator:
         *,
         database: Database,
         tracer: Tracer,
-        conversation_channel: MessageChannel[BaseEvent, BaseEvent],
+        conversation_channel: MessageChannel[BaseEvent, BaseEvent] | AgUiChannel,
     ) -> None:
         self._database = database
         self._tracer = tracer

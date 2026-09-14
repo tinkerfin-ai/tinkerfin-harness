@@ -1,3 +1,4 @@
+import { installLiveRun } from './fixtures/liveRun'
 import { expect, test, type Page, type Route } from '@playwright/test'
 import { resolve } from 'node:path'
 
@@ -297,6 +298,7 @@ async function mockTodoTraceStudio(page: Page, {
     }
     await route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
   })
+  await installLiveRun(page, detail({ groups, answer, taskTraceGroups, visibleGroups, includeTaskTrace: true, historyCursor }))
   await page.goto(`/?thread=${THREAD_ID}`)
   if (taskTraceGroups.length > 0) {
     await expect(page.getByRole('button', { name: `任务轨迹 ${taskTraceGroups.length}`, exact: true }))

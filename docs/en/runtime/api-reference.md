@@ -94,6 +94,29 @@ to the same filter and graph tail; query again if that tail changes. Use `async 
 for followers when stopping early. Cancellation and query errors propagate, and
 closing a follower leaves the caller's history source open.
 
+Use `open_live()` to resume a running conversation after a reload or on a new device:
+
+```python
+channel = messaging.agui_channel(name="conversations")
+live = await history.open_live(thread_id, channel=channel, head_run_id=run_id)
+try:
+    await send_snapshot(live.history.snapshot, replay=live.body is not None)
+    if live.body is not None:
+        async for frame in live.body:
+            await send_bytes(frame)
+finally:
+    await live.aclose()
+```
+
+The host implements `send_snapshot` and `send_bytes`. An active run returns history
+before its output, followed by committed deltas and new events. A completed run returns
+full history with `body=None`. For a connection loss with the entire view retained,
+pass `last_event_id` and consume only subsequent bytes; omit it after a page reload.
+SSE frames marked `event: replay` restore text immediately; animate only subsequent new text.
+History cursors and message SSE IDs are different positions and cannot be mixed.
+Closing `live` detaches the reader without cancelling the producer. Expired or
+unavailable delivery raises an error and never re-executes the agent.
+
 ## Streams
 
 | API | Purpose |

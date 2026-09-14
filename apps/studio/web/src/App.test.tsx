@@ -15,7 +15,7 @@ import { clearAuthSession, saveAuthSession } from './auth/session'
 import { ToastViewport } from './components/ui/ToastViewport'
 import type { ToastItem, ToastKind } from './components/ui/ToastViewport'
 import { WorkspaceScreen } from './features/workspace/WorkspaceScreen'
-import { readActiveRunSessions, writeActiveRunSession } from './features/conversation/stream/activeRunSession'
+import { readActiveRunSessions } from './features/conversation/stream/activeRunSession'
 import {
   emptyTraceGraph,
   traceGraphNode,
@@ -580,41 +580,6 @@ describe('Studio Trace history integration', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('刷新后已受理的运行只跟随历史，断连和主动恢复都不重新提交', async () => {
-    const user = userEvent.setup()
-    const payload: ChatRequestPayload = {
-      threadId: THREAD_ID, runId: RUN_ID, state: {}, messages: [], tools: [], context: [],
-      forwardedProps: { accessMode: 'write_approval', model: 'main', command: { plan: 'off' } },
-    }
-    writeActiveRunSession({ threadId: THREAD_ID, payload, mode: 'start', lastSeq: 0 })
-    let submitted = 0
-    const fetchMock = installFetch({
-      list: [historyItem({ status: 'running' })],
-      details: { [THREAD_ID]: traceDetail({ status: { execution: 'running', headRunId: RUN_ID } }) },
-      onChat: () => { submitted += 1; throw new TypeError('offline') },
-    })
-    const originalFetch = fetchMock.getMockImplementation()!
-    let followed = 0
-    fetchMock.mockImplementation(async (input, init) => {
-      const path = new URL(input instanceof Request ? input.url : String(input), window.location.origin).pathname
-      if (path === `/api/conversation/${THREAD_ID}/trace`) {
-        followed += 1
-        throw new TypeError('offline')
-      }
-      return originalFetch(input, init)
-    })
-    const view = render(<App />)
-    const reconnect = await screen.findByRole('button', { name: '恢复连接' })
-    expect(followed).toBe(1)
-    expect(submitted).toBe(0)
-    expect(readActiveRunSessions()).toEqual([])
-    view.rerender(<App />)
-    expect(followed).toBe(1)
-    await user.click(reconnect)
-    await waitFor(() => expect(followed).toBe(2))
-    expect(submitted).toBe(0)
-  })
-
   it('returns to chat when selecting another conversation from the Trace view', async () => {
     const user = userEvent.setup()
     const secondThreadId = 'thread-second'
@@ -669,19 +634,23 @@ describe('Studio Trace history integration', () => {
       const defaultFetch = fetch.getMockImplementation()!
       let traceController: ReadableStreamDefaultController<Uint8Array> | undefined
       const graphClosed = vi.fn()
+      const encodeEvent = (seq: number, event: object) => new TextEncoder().encode(
+        `id: ${seq}\ndata: ${JSON.stringify(event)}\n\n`,
+      )
       const requests: Request[] = []
       fetch.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = input instanceof Request
           ? input : new Request(new URL(String(input), window.location.origin), init)
         requests.push(request)
         const path = new URL(request.url).pathname
-        if (path === `/api/conversation/${THREAD_ID}/trace`) {
+        if (path === `/api/conversation/${THREAD_ID}/runs/${RUN_ID}/events`) {
           return new Response(new ReadableStream<Uint8Array>({
             start(controller) {
               traceController = controller
               controller.enqueue(new TextEncoder().encode(
-                `event: trace\ndata: ${JSON.stringify({ type: 'snapshot', snapshot: initial })}\n\n`,
+                `event: trace\ndata: ${JSON.stringify({ type: 'snapshot', snapshot: initial, replay: true })}\n\n`,
               ))
+              controller.enqueue(encodeEvent(40, { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID }))
             },
           }), { headers: { 'Content-Type': 'text/event-stream' } })
         }
@@ -715,24 +684,15 @@ describe('Studio Trace history integration', () => {
         status: { execution, headRunId: RUN_ID },
         completeness: { missingPrefix: false, missingTail: execution === 'unknown', payloadOmitted: false },
       })
-      await act(async () => traceController!.enqueue(new TextEncoder().encode(
-        `event: trace\ndata: ${JSON.stringify({
-          type: 'update', runFailures: [],
-          update: {
-            asOfSeq: 6, generation: initial.generation, observedAt: '2026-09-05T00:00:01.000000Z',
-            events: [], facts: [], messages: { upserts: [], removes: [] },
-            reasoning: { upserts: [], removes: [] }, interactions: { upserts: [], removes: [] },
-            graph: {
-              asOfSeq: 6, nextCursor: null, turnUpserts: [], turnRemoves: [], nodeUpserts: [],
-              nodeRemoves: [], orderedNodeIds: [], matchedNodeIds: [], completeness: initial.graph.completeness,
-            },
-            state: initial.state, status: { execution, headRunId: RUN_ID },
-            completeness: details[THREAD_ID].completeness,
-            messageCount: initial.messageCount, toolCallCount: 0, projections: {}, runFailures: [],
-          },
-          taskTrace: null,
-        })}\n\n`,
-      )))
+      const terminal = execution === 'succeeded' || execution === 'waiting'
+        ? { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID, outcome: execution === 'waiting'
+          ? { type: 'interrupt', interrupts: toolReviewInterrupts('review', [{ toolCallId: 'save', args: {} }]) }
+          : { type: 'success' } }
+        : { type: 'RUN_ERROR', message: 'Run stopped', code: execution === 'cancelled' ? 'cancelled' : 'runtime_error' }
+      await act(async () => {
+        traceController!.enqueue(encodeEvent(41, terminal))
+        traceController!.close()
+      })
       await waitFor(() => expect(graphClosed).toHaveBeenCalledTimes(1))
       expect(graphRequests()[0]!.signal.aborted).toBe(true)
       expect(await screen.findAllByText('最终链路内容')).not.toHaveLength(0)

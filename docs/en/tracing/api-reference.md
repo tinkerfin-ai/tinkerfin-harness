@@ -25,7 +25,7 @@ Tracer(
 | `redactor` | Optional additional business `TraceRedactor` |
 | `graph_query_limits` | Direct-node, Subagent-expanded total-node, and serialized Graph byte limits |
 | `open_run(context)` | `RuntimeObserver` entry used by TinkerFin Runtime |
-| `get(identity, head_run_id=None, limit=100, history_cursor=None, projections=())` | Fixed-prefix conversation history |
+| `get(identity, head_run_id=None, limit=100, history_cursor=None, projections=(), at_run_start=False)` | Fixed-prefix conversation history |
 | `query(identity, where=None, head_run_id=None, cursor=None, limit=100)` | Current indexed `TraceGraphQuery` |
 | `rebuild_graph(identity)` | Reconstruct the disposable Graph index from Ledger facts |
 
@@ -39,6 +39,8 @@ identity, and `snapshot(identity)` uses the complete thread identity. Generation
 cursors, checkpoints, and deletion retain that namespace. `max_tracer_threads` and
 `max_tracer_bytes` apply separately to each namespace.
 
+
+`at_run_start=True` reads history before the selected run produces output, retaining admitted user input and earlier runs. It cannot be combined with `history_cursor`.
 
 ## Graph values
 

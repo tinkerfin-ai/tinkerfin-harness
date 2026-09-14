@@ -1,6 +1,6 @@
 import type { AccessMode } from "../../types"
-import { isInterrupt } from './eventParser'
-import type { InterruptEvent } from './types'
+import { isInterrupt, parseConversationAgUiEvent } from './eventParser'
+import type { InterruptEvent, ConversationAgUiEvent } from './types'
 import type { ConversationTitleSnapshot } from "./titles"
 import type { PendingInteractionKind, JsonObject, JsonValue } from '../../types'
 import { requestEventStream, requestJson } from '../shared/http'
@@ -408,4 +408,40 @@ export const deleteConversation = async (threadId: string): Promise<void> => {
     method: 'DELETE',
     suppressGlobalError: true,
   })
+}
+
+
+/** 从服务端基线恢复已有运行；游标仅用于仍保留完整视图的同页重连 */
+export async function* followConversationRun(
+  threadId: string,
+  runId: string,
+  options: { includeTaskTrace: boolean; signal: AbortSignal; afterSeq?: number },
+): AsyncGenerator<
+  | { type: 'snapshot'; snapshot: ConversationHistoryDetail; replay: boolean }
+  | { type: 'event'; event: ConversationAgUiEvent; seq: number; replayed: boolean }
+> {
+  const response = await requestEventStream(
+    `/api/conversation/${encodeURIComponent(threadId)}/runs/${encodeURIComponent(runId)}/events?includeTaskTrace=${options.includeTaskTrace}`,
+    {
+      signal: options.signal,
+      headers: options.afterSeq == null ? undefined : { 'Last-Event-ID': String(options.afterSeq) },
+      suppressGlobalError: true,
+    },
+  )
+  if (!response.body) throw new ConversationError('stream_body_missing')
+  let needsSnapshot = options.afterSeq == null
+  for await (const frame of parseJsonSseStream(response.body, options.signal)) {
+    if (isRecord(frame.data) && frame.data.type === 'snapshot') {
+      if (!needsSnapshot || typeof frame.data.replay !== 'boolean') throw new ConversationError('stream_event_invalid')
+      needsSnapshot = false
+      yield { type: 'snapshot', snapshot: parseHistoryDetail(frame.data.snapshot, options.includeTaskTrace), replay: frame.data.replay }
+      continue
+    }
+    if (needsSnapshot) throw new ConversationError('stream_event_invalid')
+    const seq = frame.id !== null && /^[1-9]\d*$/.test(frame.id) ? Number(frame.id) : NaN
+    if (!Number.isSafeInteger(seq)) throw new ConversationError('stream_sequence_invalid')
+    if (frame.event !== null && frame.event !== 'message' && frame.event !== 'replay') throw new ConversationError('stream_event_invalid')
+    yield { type: 'event', event: parseConversationAgUiEvent(frame.data), seq, replayed: frame.event === 'replay' }
+  }
+  if (needsSnapshot) throw new ConversationError('stream_disconnected')
 }

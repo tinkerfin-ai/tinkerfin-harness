@@ -26,7 +26,7 @@ from .errors import (
     TraceStoreProtocolError,
     TraceThreadNotFound,
 )
-from .facts import TraceEvent, TraceSemanticFact
+from .facts import MessageFact, TraceEvent, TraceSemanticFact
 from .follow import TraceFollow, _close_trace_source, create_trace_follow
 from .graph import (
     TraceGraph,
@@ -594,6 +594,7 @@ async def build_trace_thread(
     graph_query_limits: TraceGraphQueryLimits,
     projections: Mapping[str, RegisteredTraceProjection],
     projection_names: tuple[str, ...],
+    at_run_start: bool = False,
 ) -> TraceThread:
     """Validate a Store snapshot and construct one fixed-as-of Trace handle."""
 
@@ -606,6 +607,64 @@ async def build_trace_thread(
         snapshot.key,
         as_of_seq=snapshot.as_of_seq,
     )
+    if at_run_start:
+        selected = project_core_checkpoint(
+            core_state,
+            head_run_id=head_run_id,
+            turn_limit=limit,
+            active_run_ids=snapshot.active_run_ids,
+        ).selected_head
+        first_seq = core_state.runs[selected].first_seq
+        cursor = first_seq - 1
+        cutoff = first_seq
+        output_started = False
+        removed_bytes = 0
+        output_kinds = {
+            "tool",
+            "tool.execution",
+            "reasoning",
+            "interaction",
+            "plan.revision",
+            "subagent",
+        }
+        while cursor < snapshot.as_of_seq:
+            page = await store.read_events(
+                snapshot.key,
+                after_seq=cursor,
+                as_of_seq=snapshot.as_of_seq,
+                limit=1000,
+            )
+            if not page:
+                raise TraceStoreProtocolError("Run history prefix is incomplete")
+            for event in page:
+                if event.trace_seq != cursor + 1:
+                    raise TraceStoreProtocolError(
+                        "Run history sequence is not contiguous"
+                    )
+                cursor = event.trace_seq
+                fact = event.fact
+                if fact.identity.run_id == selected and (
+                    isinstance(fact, MessageFact)
+                    and fact.role != "user"
+                    or fact.kind in output_kinds
+                ):
+                    output_started = True
+                if output_started:
+                    removed_bytes += event.persisted_bytes
+                else:
+                    cutoff = event.trace_seq
+        snapshot = snapshot.model_copy(
+            update={
+                "as_of_seq": cutoff,
+                "persisted_bytes": snapshot.persisted_bytes - removed_bytes,
+            }
+        )
+        core_state = await load_core_projection_state(
+            store,
+            snapshot.key,
+            as_of_seq=cutoff,
+        )
+        head_run_id = selected
     core = project_core_checkpoint(
         core_state,
         head_run_id=head_run_id,

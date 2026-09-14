@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from ._agui_history import AgUiGraphQuery as AgUiGraphQuery
     from ._agui_history import AgUiHistory as AgUiHistory
     from ._agui_history import AgUiHistoryView as AgUiHistoryView
+    from ._agui_history import AgUiLiveView as AgUiLiveView
+    from ._agui_history import AgUiReplayChannel as AgUiReplayChannel
     from ._agui_history_models import (
         AgUiMessageReference as AgUiMessageReference,
     )
@@ -109,7 +111,15 @@ _HISTORY_TYPES = frozenset(
         "AgUiTraceHistory",
     ]
 )
-_HISTORY_READERS = frozenset({"AgUiHistory", "AgUiHistoryView", "AgUiGraphQuery"})
+_HISTORY_READERS = frozenset(
+    {
+        "AgUiHistory",
+        "AgUiHistoryView",
+        "AgUiGraphQuery",
+        "AgUiLiveView",
+        "AgUiReplayChannel",
+    }
+)
 
 if not TYPE_CHECKING:
 
@@ -131,7 +141,9 @@ __all__ = [
     "AgUiGraphQuery",
     "AgUiHistory",
     "AgUiHistoryView",
+    "AgUiLiveView",
     "AgUiMessageReference",
+    "AgUiReplayChannel",
     "AgUiSubagentReference",
     "AgUiToolMessageReference",
     "AgUiToolReference",

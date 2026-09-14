@@ -41,6 +41,8 @@ services:
     restart: unless-stopped
 
   opensandbox:
+    cpus: 0.5
+    mem_limit: 512m
     profiles: [bundled, opensandbox]
     image: opensandbox/server:v0.2.3@sha256:ae8dfbb277f40a39ff01ef35e5e1c10675acfe0fa9db15259b8f323e5efab778
     entrypoint: [/bin/sh, -ec]

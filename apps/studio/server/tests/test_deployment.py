@@ -233,7 +233,11 @@ def test_compose_groups_backend_and_supports_base_and_external_services(deployme
         "redis-runtime",
         "opensandbox",
     }
+    control = full["services"]["opensandbox"]
+    assert float(control["cpus"]) == 0.5
+    assert int(control["mem_limit"]) == 512 * 1024 * 1024
     server = full["services"]["server"]
+    assert server["environment"]["OPEN_SANDBOX_WARM_POOL_SIZE"] == "0"
     assert server["logging"] == {
         "driver": "local",
         "options": {"max-size": "50m", "max-file": "3"},

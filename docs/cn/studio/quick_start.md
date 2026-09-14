@@ -20,7 +20,7 @@ cd tinkerfin-harness/apps/studio/server/deploy
 ./deploy.sh --build
 ```
 
-首次执行生成配置和依赖凭据、构建后端镜像并等待服务就绪。首次准备隔离工作区需要下载运行镜像。
+首次执行生成配置和依赖凭据、构建后端镜像并等待服务就绪。默认按需创建工作区，不预热沙箱；每个新沙箱上限为 1 CPU、1 GiB 内存。首次使用时，缺少运行镜像还需下载。
 启动后可查看[健康状态](http://127.0.0.1:8090/health/ready)和 [Swagger 接口文档](http://127.0.0.1:8090/docs)。
 
 已有可用的发布镜像时也可使用 `./deploy.sh`。外部数据库、配置参数和日志命令见[服务端部署说明](../../../apps/studio/server/README.md)。

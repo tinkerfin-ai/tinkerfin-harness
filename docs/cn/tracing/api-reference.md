@@ -25,7 +25,7 @@ Tracer(
 | `redactor` | 可选的额外业务 `TraceRedactor` |
 | `graph_query_limits` | Graph 直接节点、补齐 Subagent 后的总节点与序列化字节上限 |
 | `open_run(context)` | TinkerFin Runtime 使用的 `RuntimeObserver` 入口 |
-| `get(identity, head_run_id=None, limit=100, history_cursor=None, projections=())` | 固定前缀的会话历史 |
+| `get(identity, head_run_id=None, limit=100, history_cursor=None, projections=(), at_run_start=False)` | 固定前缀的会话历史 |
 | `query(identity, where=None, head_run_id=None, cursor=None, limit=100)` | 当前索引上的 `TraceGraphQuery` |
 | `rebuild_graph(identity)` | 从 Ledger fact 重建可丢弃的 Graph 索引 |
 
@@ -38,6 +38,8 @@ Store 可被多个 namespace 共用：`open_writer(identity)` 使用完整运行
 `snapshot(identity)` 使用完整会话身份。存储代、游标、检查点与删除均保留所属 namespace。
 `max_tracer_threads` 和 `max_tracer_bytes` 分别限制每个 namespace。
 
+
+`at_run_start=True` 读取所选运行开始输出之前的历史，保留已受理的用户输入和先前运行内容；不能与 `history_cursor` 同时使用。
 
 ## Graph 数据
 

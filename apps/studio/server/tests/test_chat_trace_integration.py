@@ -371,6 +371,9 @@ class _Channel:
         after: int | None = None,
         on_source_ready=None,
         on_committed=None,
+        transform_event=None,
+        on_run_started=None,
+        on_run_finished=None,
         on_delivery_not_started=None,
     ):
         del on_delivery_not_started, on_committed
@@ -724,7 +727,7 @@ async def test_title_notification_shares_chat_stream_and_response_lifetime(
                 sandbox_manager=object(),
                 tinkerfin=TinkerFin(),
                 settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
-                conversation_channel=messaging.channel(name="conversation"),
+                conversation_channel=messaging.agui_channel(name="conversation"),
                 conversation_trace=_TraceCoordinator(),
             ),
         )
@@ -1036,7 +1039,7 @@ async def test_initialization_error_is_logged_once_and_replay_does_not_log_again
                 model_http_client=None,
                 tinkerfin=TinkerFin(),
                 settings=SimpleNamespace(model_allowed_origins=()),
-                conversation_channel=messaging.channel(name="failure-logging"),
+                conversation_channel=messaging.agui_channel(name="failure-logging"),
                 conversation_trace=_TraceCoordinator(),
             ),
         )

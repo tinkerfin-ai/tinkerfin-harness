@@ -317,84 +317,86 @@ class _AgUiRunSource(_MappedMessageSource[BaseEvent, BaseEvent]):
     def messaging_replay_type(self) -> type[BaseEvent]:
         return BaseEvent
 
+    @staticmethod
+    def prepare(
+        source: ProfiledMessageSource[BaseEvent, BaseEvent],
+        *,
+        transform_event: (
+            Callable[[BaseEvent], BaseEvent | Awaitable[BaseEvent]] | None
+        ) = None,
+    ) -> ProfiledMessageSource[BaseEvent, BaseEvent]:
+        """Prepare an AG-UI event source for durable delivery and optional transformation.
 
-def create_agui_run_source(
-    source: ProfiledMessageSource[BaseEvent, BaseEvent],
-    *,
-    transform_event: (
-        Callable[[BaseEvent], BaseEvent | Awaitable[BaseEvent]] | None
-    ) = None,
-) -> ProfiledMessageSource[BaseEvent, BaseEvent]:
-    """Prepare an AG-UI event source for durable delivery and optional transformation.
+        Creating the adapter does not prepare or consume the source. Messaging prepares
+        only the selected producer before announcing readiness; replay closes an unused
+        candidate without preparing it. Cancellation waits for the first transformed
+        event or failed pull, then transforms the source's finite cancellation tail.
 
-    Creating the adapter does not prepare or consume the source. Messaging prepares
-    only the selected producer before announcing readiness; replay closes an unused
-    candidate without preparing it. Cancellation waits for the first transformed
-    event or failed pull, then transforms the source's finite cancellation tail.
+        Args:
+            source: Unconsumed, closeable AG-UI source with a complete ``agui.event``
+                profile, immutable run identity, and first-event cancellation support.
+                The returned adapter owns its cleanup only after construction succeeds.
+            transform_event: Optional synchronous or asynchronous content or metadata
+                transform. It must preserve the event type, protocol identities,
+                complete Run input, and existing interrupt metadata.
 
-    Args:
-        source: Unconsumed, closeable AG-UI source with a complete ``agui.event``
-            profile, immutable run identity, and first-event cancellation support.
-            The returned adapter owns its cleanup only after construction succeeds.
-        transform_event: Optional synchronous or asynchronous content or metadata
-            transform. It must preserve the event type, protocol identities,
-            complete Run input, and existing interrupt metadata.
+        Returns:
+            A single-use source for an inferred AG-UI Messaging channel. Closing it
+            settles active work and closes the input source. If cleanup fails, a later
+            explicit ``aclose()`` can finish it; successful close is idempotent.
 
-    Returns:
-        A single-use source for an inferred AG-UI Messaging channel. Closing it
-        settles active work and closes the input source. If cleanup fails, a later
-        explicit ``aclose()`` can finish it; successful close is idempotent.
+        Raises:
+            TypeError: The source profile, cancellation capability, or transform is
+                invalid. A synchronous construction failure leaves source cleanup to
+                the caller.
+            ValueError: An identity is invalid or a transformed event changes an
+                established protocol contract.
+            RuntimeError: A transform tries to close its own active adapter. Close it
+                after the pull returns or from the consuming context's cleanup.
+            BaseException: Source preparation, transformation, cancellation, or cleanup
+                fails during use; cancellation and process control remain unchanged.
+        """
 
-    Raises:
-        TypeError: The source profile, cancellation capability, or transform is
-            invalid. A synchronous construction failure leaves source cleanup to
-            the caller.
-        ValueError: An identity is invalid or a transformed event changes an
-            established protocol contract.
-        RuntimeError: A transform tries to close its own active adapter. Close it
-            after the pull returns or from the consuming context's cleanup.
-        BaseException: Source preparation, transformation, cancellation, or cleanup
-            fails during use; cancellation and process control remain unchanged.
-    """
+        if not isinstance(source, ProfiledMessageSource):
+            raise TypeError("source must be a profiled AG-UI MessageSource")
+        if (
+            source.messaging_codec_profile != "agui.event"
+            or source.messaging_source_type is not BaseEvent
+            or source.messaging_replay_type is not BaseEvent
+        ):
+            raise TypeError("source must publish the agui.event BaseEvent profile")
+        identity = required_identity(source.messaging_identity)
+        if getattr(source, "messaging_cancel_waits_for_first_item", None) is not True:
+            raise TypeError(
+                "AG-UI source must wait for its first item before cancellation"
+            )
+        if not callable(getattr(source, "messaging_cancel_callback", None)):
+            raise TypeError("AG-UI source must publish cancellation")
+        if transform_event is not None and not callable(transform_event):
+            raise TypeError("transform_event must be a callable or None")
 
-    if not isinstance(source, ProfiledMessageSource):
-        raise TypeError("source must be a profiled AG-UI MessageSource")
-    if (
-        source.messaging_codec_profile != "agui.event"
-        or source.messaging_source_type is not BaseEvent
-        or source.messaging_replay_type is not BaseEvent
-    ):
-        raise TypeError("source must publish the agui.event BaseEvent profile")
-    identity = required_identity(source.messaging_identity)
-    if getattr(source, "messaging_cancel_waits_for_first_item", None) is not True:
-        raise TypeError("AG-UI source must wait for its first item before cancellation")
-    if not callable(getattr(source, "messaging_cancel_callback", None)):
-        raise TypeError("AG-UI source must publish cancellation")
-    if transform_event is not None and not callable(transform_event):
-        raise TypeError("transform_event must be a callable or None")
+        async def transform(event: BaseEvent) -> BaseEvent:
+            expected_type = _protocol_model_type(event)
+            expected_identity = _event_protocol_identity(event)
+            expected_metadata = _interrupt_metadata(event)
+            value = event if transform_event is None else transform_event(event)
+            if inspect.isawaitable(value):
+                value = await value
+            validated = _EVENT_ADAPTER.validate_python(value)
+            if _protocol_model_type(validated) is not expected_type:
+                raise TypeError("transform_event must preserve the AG-UI event type")
+            # Canonical aliases protect correlation fields even when a product adds
+            # typed extension fields to an AG-UI event. See the run-source contracts.
+            transformed = _canonical_event(
+                validated,
+                expected_type=expected_type,
+                expected_identity=expected_identity,
+                expected_interrupt_metadata=expected_metadata,
+            )
+            _validate_event_run_identity(transformed, identity)
+            return transformed
 
-    async def transform(event: BaseEvent) -> BaseEvent:
-        expected_type = _protocol_model_type(event)
-        expected_identity = _event_protocol_identity(event)
-        expected_metadata = _interrupt_metadata(event)
-        value = event if transform_event is None else transform_event(event)
-        if inspect.isawaitable(value):
-            value = await value
-        validated = _EVENT_ADAPTER.validate_python(value)
-        if _protocol_model_type(validated) is not expected_type:
-            raise TypeError("transform_event must preserve the AG-UI event type")
-        # Canonical aliases protect correlation fields even when a product adds
-        # typed extension fields to an AG-UI event. See the run-source contracts.
-        transformed = _canonical_event(
-            validated,
-            expected_type=expected_type,
-            expected_identity=expected_identity,
-            expected_interrupt_metadata=expected_metadata,
-        )
-        _validate_event_run_identity(transformed, identity)
-        return transformed
-
-    return _AgUiRunSource(source, transform)
+        return _AgUiRunSource(source, transform)
 
 
 class AgUiCodec(

@@ -20,7 +20,7 @@ import {
 } from '../../../api/conversation/errors'
 import {
   fetchConversationHistoryDetail,
-  followConversationTrace,
+  followConversationRun,
 } from '../../../api/conversation/history'
 import type { ChatRequestPayload } from '../../../api/conversation/types'
 import type { TaskTraceSnapshot } from '../../../api/conversation/taskTrace'
@@ -35,7 +35,6 @@ import {
   markConversationDetached,
 } from '../agui'
 import {
-  applyConversationTraceUpdate,
   restoreConversationFromTrace,
 } from '../trace/runtime'
 import { LiveTodoTraceProjector } from '../todoTrace/liveProjection'
@@ -305,76 +304,88 @@ export function useConversationStreamController({
     if (recoveryRequests.current.get(threadId)?.receivedEvent === false) return
     const target = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
     if (!target?.isHydrated || (target.runStatus !== 'detached' && target.runStatus !== 'streaming')) return
+    const runId = target.activeRunId ?? target.trace?.headRunId
+    if (!runId) return
     await taskTraceFollowOwnership.current.follow(threadId, async ({ includeTaskTrace, signal }) => {
-      let projectedConversation = target
-      const showTrace = (projectConversation: (item: Conversation) => Conversation) => {
-        // 流内按顺序校验完整内容；错误必须在这里被捕获，不能延迟到 React 渲染
-        const projected = projectConversation(projectedConversation)
-        const next: Conversation = {
-          ...projected,
-          lastSeq: undefined,
-          runStatus: projected.runStatus === 'detached' ? 'streaming' : projected.runStatus,
-        }
-        projectedConversation = next
-        setWorkspace((state) => updateConversation(state, threadId, (item) => {
-          if (signal.aborted || !isMounted.current || isActiveThread(threadId)) return item
-          return {
-            ...next,
-            ...mergeConversationTitle(item, next),
-          }
-        }))
-      }
-      const showSnapshot = (detail: Parameters<typeof restoreConversationFromTrace>[0]) => {
-        showTrace((item) => restoreConversationFromTrace(detail, {
-          previous: item, model: item.model, includeTaskTrace, taskTrace: item.taskTrace,
-        }))
-      }
+      let projected = target
+      let lastSeq: number | undefined
+      let completed = false
+      let projector: LiveTodoTraceProjector | null = null
+      const publish = () => setWorkspace((state) => updateConversation(state, threadId, (item) => (
+        signal.aborted || !isMounted.current || isActiveThread(threadId)
+          ? item : { ...projected, ...mergeConversationTitle(item, projected) }
+      )))
       try {
-        let reconnectAttempts = 0
+        let attempts = 0
         while (!signal.aborted) {
-          for await (const event of followConversationTrace(threadId, { includeTaskTrace, signal })) {
-            if (signal.aborted || !isMounted.current || isActiveThread(threadId)) return
-            if (event.type === 'error') throw new ConversationError('stream_recovery_failed')
-            if (event.type === 'snapshot') {
-              showSnapshot(event.snapshot)
-              clearActiveRunPersistence(event.snapshot.headRunId)
-              if (recoveryRequests.current.get(threadId)?.payload.runId === event.snapshot.headRunId) {
-                recoveryRequests.current.delete(threadId)
+          try {
+            for await (const item of followConversationRun(threadId, runId, { includeTaskTrace, signal, afterSeq: lastSeq })) {
+              if (signal.aborted || !isMounted.current || isActiveThread(threadId)) return
+              if (item.type === 'snapshot') {
+                if (item.snapshot.threadId !== threadId || item.snapshot.headRunId !== runId) throw new ConversationError('stream_event_invalid')
+                // 该基线与运行重放起点对应，不能用刷新前的投影或游标拼接
+                projected = restoreConversationFromTrace(item.snapshot, { model: target.model, includeTaskTrace })
+                completed = !item.replay
+                if (!completed) projected = { ...projected, runStatus: 'streaming' }
+                projector?.close()
+                if (projected.taskTrace.phase === 'ready') {
+                  projector = new LiveTodoTraceProjector()
+                  projector.hydrate(projected.taskTrace.snapshot, {
+                    headRunId: runId, latestTurn: latestUserTurn(projected), isRunning: !completed,
+                  })
+                }
+                publish()
+                continue
               }
-            } else {
-              showTrace((item) => applyConversationTraceUpdate(item, event.update, event.taskTrace, includeTaskTrace))
+              if (lastSeq == null && (item.event.type !== 'RUN_STARTED' || item.event.runId !== runId || item.event.threadId !== threadId)) throw new ConversationError('stream_sequence_invalid')
+              if (lastSeq != null && item.seq <= lastSeq) continue
+              if (lastSeq != null && item.seq !== lastSeq + 1) throw new ConversationError('stream_sequence_invalid')
+              projected = applyConversationEvent(projected, item.event)
+              if (item.replayed) {
+                // 已提交正文直接恢复；后续新增量以完整正文作为逐字显示起点
+                projected = { ...projected, messages: projected.messages.map(message => (
+                  message.liveText ? { ...message, liveText: undefined } : message
+                )) }
+              }
+              if (projector) {
+                const snapshot = projector.consume(item.event, { receivedAt: new Date().toISOString(), rootState: projected.serverState })
+                projected = { ...projected, taskTrace: taskTraceView(snapshot) }
+              }
+              lastSeq = item.seq
+              projected = { ...projected, lastSeq }
+              completed = (item.event.type === 'RUN_FINISHED' && item.event.runId === runId)
+                || (item.event.type === 'RUN_ERROR' && item.event.rawEvent?.source?.agentType !== 'subagent')
+              publish()
             }
-            const status = event.type === 'snapshot' ? event.snapshot.status : event.update.status
-            if (status.execution !== 'running') {
-              clearCancelPending(status.headRunId)
-              const detail = await fetchConversationHistoryDetail(threadId, { includeTaskTrace, signal, suppressGlobalError: true })
-              if (!signal.aborted) showSnapshot(detail)
-              return
-            }
+            if (completed) break
+            throw new ConversationError('stream_disconnected')
+          } catch (error) {
+            if (signal.aborted) return
+            if (!(isTransportFailure(error) || hasConversationErrorCode(error, 'stream_disconnected') || hasConversationErrorCode(error, 'stream_sequence_invalid'))
+              || attempts >= DETACHED_TRACE_RECONNECT_LIMIT) throw error
+            attempts += 1
+            await waitForReconnect(Math.min(250 * (2 ** (attempts - 1)), RECONNECT_MAX_DELAY_MS), signal)
           }
-          if (signal.aborted || !isMounted.current || isActiveThread(threadId)) return
-          // 网络 EOF 不是终态；先读取权威状态，再决定是否继续跟随
-          const detail = await fetchConversationHistoryDetail(threadId, { includeTaskTrace, signal, suppressGlobalError: true })
-          if (signal.aborted || !isMounted.current) return
-          showSnapshot(detail)
-          if (detail.status.execution !== 'running') {
-            clearCancelPending(detail.headRunId)
-            return
-          }
-          reconnectAttempts += 1
-          if (reconnectAttempts > DETACHED_TRACE_RECONNECT_LIMIT) throw new ConversationError('stream_recovery_failed')
         }
+        if (signal.aborted) return
+        clearActiveRunPersistence(runId)
+        clearCancelPending(runId)
+        const detail = await fetchConversationHistoryDetail(threadId, { includeTaskTrace, signal, suppressGlobalError: true })
+        projected = restoreConversationFromTrace(detail, { previous: projected, model: projected.model, includeTaskTrace })
+        publish()
       } catch (error) {
         if (signal.aborted || !isMounted.current || isActiveThread(threadId)) return
-        const message = conversationErrorMessage(error, 'stream_recovery_failed')
-        setWorkspace((state) => updateConversation(state, threadId, (item) => {
-          if (signal.aborted || isActiveThread(threadId)) return item
-          return {
-            ...item,
-            runStatus: item.runStatus === 'streaming' ? 'detached' : item.runStatus,
-            notice: { kind: 'error', content: message },
+        const notice: NonNullable<Conversation['notice']> = completed ? historySyncNotice(`${runId}:history`) : {
+          kind: 'error', content: conversationErrorMessage(error, 'stream_recovery_failed'),
+        }
+        // 恢复尚未收到基线时，旧闭包不能覆盖页面已显示的内容或游标
+        setWorkspace((state) => updateConversation(state, threadId, (item) => (
+          signal.aborted || !isMounted.current || isActiveThread(threadId) ? item : {
+            ...item, runStatus: completed ? item.runStatus : 'detached', notice,
           }
-        }))
+        )))
+      } finally {
+        projector?.close()
       }
     })
   }, [clearActiveRunPersistence, clearCancelPending, isActiveThread, setWorkspace])

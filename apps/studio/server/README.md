@@ -17,7 +17,7 @@ cd tinkerfin-harness/apps/studio/server/deploy
 `http://127.0.0.1:8090/api`，健康检查地址为 `http://127.0.0.1:8090/health/ready`。
 就绪检查包含自动化工作器健康状态。自动化的日程、权限和结果查看见
 [使用指南](../../../docs/cn/studio/automation.md)。
-首次预热 Sandbox 时还需要下载运行镜像，耗时取决于网络。
+默认不预热沙箱；首次使用工作区时创建沙箱，缺少运行镜像时还需下载，耗时取决于网络。
 
 Docker 项目名为 `tinkerfin-studio`，包含 `server`、`mysql`、`redis-runtime` 和
 `opensandbox`。只部署后端，不包含 Web 页面。
@@ -57,11 +57,25 @@ Docker 项目名为 `tinkerfin-studio`，包含 `server`、`mysql`、`redis-runt
 | `MYSQL_PUBLISHED_PORT` | `13306` | 从本机连接内置 MySQL 的端口 |
 | `REDIS_RUNTIME_PUBLISHED_PORT` | `6379` | 本机访问 Redis 的端口 |
 | `OPEN_SANDBOX_PUBLISHED_PORT` | `8091` | 本机访问 OpenSandbox 的端口 |
+| `OPEN_SANDBOX_CPU` | `1` | 每个新建执行沙箱的 CPU 核数上限，可填 `0.5` 等正数 |
+| `OPEN_SANDBOX_MEMORY_MIB` | `1024` | 每个新建执行沙箱的内存上限，单位为 MiB，必须为正整数 |
+| `OPEN_SANDBOX_WARM_POOL_SIZE` | `0` | 全局预热沙箱数量；设为 `1` 可提前准备一个工作区 |
 | `LOG_LEVEL` | `INFO` | 后端日志等级 |
 
 中间件端口仅绑定宿主机的 `127.0.0.1`。修改 `MYSQL_PUBLISHED_PORT` 不改变容器内部的
 数据库连接。MySQL 密码保存在 `secrets/mysql_password`，Redis 与 OpenSandbox 密钥分别
 保存在同名 Secret 文件中；`secrets/database_url` 由脚本根据 MySQL 配置自动生成，不要手动编辑。
+
+执行沙箱与控制服务的资源限制相互独立；控制服务的限制不包含它创建的沙箱。
+这些值是上限，不是启动时预留的占用，也不代表整套部署的最低主机规格。
+默认额度适合低并发试用；较大的数据分析、文档处理任务可调高 `OPEN_SANDBOX_MEMORY_MIB`，
+内置控制服务在 `docker-compose-base.yaml` 中限制为 0.5 CPU、512 MiB，需要时修改该文件。
+执行沙箱额度使用应用默认值，只有需要覆盖时才在 `.env` 中添加对应配置。
+超过内存上限可能导致对应容器被终止。
+
+沙箱 CPU 和内存设置只影响新建沙箱，已有工作区继续使用创建时的额度；重新部署后端不会
+调整已有沙箱。预热数量为 `0` 时仍保留已有工作区，只在需要新的工作区时创建。
+多个后端实例共用同一沙箱命名空间时，必须配置相同的预热数量。
 
 内置 MySQL 只在新数据卷首次启动时创建账号、数据库并导入业务表。已有数据库的账号、密码
 或库名必须先由管理员调整，再同步 `.env` 和密码文件；更改配置不会修改现有数据库账号。
@@ -144,6 +158,9 @@ cp apps/studio/server/.env.example apps/studio/server/.env
 # 编辑 server/.env，填写可从宿主机访问的依赖地址和密码
 uv run python -m tinkerfin_studio --host 127.0.0.1 --port 8090 --reload
 ```
+
+使用 IDE 启动服务时，将运行工作目录设为仓库根目录，使 `--reload` 同时覆盖 Studio 与
+`packages/` 的 Python 源码。
 
 本地配置来自 `server/.env`。附件默认位于 `server/.data/attachments`，可选文件日志默认
 位于 `server/logs/studio.log`。相对路径以配置文件所在目录为基准。

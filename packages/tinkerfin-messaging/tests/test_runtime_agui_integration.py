@@ -51,8 +51,8 @@ from tinkerfin_messaging import (
     MessageSubscription,
     Messaging,
     NativeStreamPart,
-    create_agui_run_source,
 )
+from tinkerfin_messaging.agui import _AgUiRunSource
 
 
 def _identity(
@@ -292,7 +292,7 @@ async def test_agui_run_source_prepares_only_the_selected_owner() -> None:
         transformed.append(event.type.value)
         return event
 
-    source = create_agui_run_source(
+    source = _AgUiRunSource.prepare(
         definition.open_agui_run(
             thread_id=identity.thread_id,
             run_id=identity.run_id,
@@ -300,7 +300,7 @@ async def test_agui_run_source_prepares_only_the_selected_owner() -> None:
         ),
         transform_event=transform_event,
     )
-    candidate = create_agui_run_source(
+    candidate = _AgUiRunSource.prepare(
         definition.open_agui_run(
             thread_id=identity.thread_id,
             run_id=identity.run_id,
@@ -494,7 +494,7 @@ async def test_agui_run_source_rejects_protocol_identity_mutation(
     identity = _identity()
     opened = _StaticAgUiSource(identity, event)
 
-    source = create_agui_run_source(
+    source = _AgUiRunSource.prepare(
         opened,
         transform_event=transform,
     )
@@ -577,7 +577,7 @@ async def test_agui_run_source_preserves_the_complete_run_input(
         assert source.input is not None
         return source.model_copy(update={"input": mutate_input(source.input)})
 
-    source = create_agui_run_source(
+    source = _AgUiRunSource.prepare(
         opened,
         transform_event=change_input,
     )
@@ -601,7 +601,7 @@ async def test_agui_run_source_allows_product_metadata_without_identity_changes(
     def add_title(event: BaseEvent) -> BaseEvent:
         return event.model_copy(update={"title": "Product title"})
 
-    source = create_agui_run_source(
+    source = _AgUiRunSource.prepare(
         opened,
         transform_event=add_title,
     )
@@ -632,7 +632,7 @@ async def test_agui_run_source_allows_activity_content_without_replace_changes()
     def update_content(event: BaseEvent) -> BaseEvent:
         return event.model_copy(update={"content": {"status": "running"}})
 
-    source = create_agui_run_source(
+    source = _AgUiRunSource.prepare(
         opened,
         transform_event=update_content,
     )
@@ -682,7 +682,7 @@ async def test_agui_run_source_allows_additive_interrupt_product_metadata() -> N
             }
         )
 
-    source = create_agui_run_source(
+    source = _AgUiRunSource.prepare(
         opened,
         transform_event=add_product_metadata,
     )
@@ -727,7 +727,7 @@ async def test_agui_run_source_rejects_events_from_another_run_without_transform
     identity = _identity()
     opened = _StaticAgUiSource(identity, event)
 
-    source = create_agui_run_source(opened)
+    source = _AgUiRunSource.prepare(opened)
 
     with pytest.raises(ValueError, match="RunIdentity"):
         await anext(aiter(source))
@@ -748,7 +748,7 @@ async def test_agui_run_source_compares_complete_identity_values(
     )
     opened = _StaticAgUiSource(reconstructed, event)
 
-    source = create_agui_run_source(opened)
+    source = _AgUiRunSource.prepare(opened)
     assert source.messaging_identity == reconstructed
     async with Messaging() as messaging:
         channel = messaging.channel(name="identity-agui")
@@ -772,7 +772,7 @@ async def test_agui_run_source_preserves_original_cleanup_failure(
     error = error_type("cleanup stopped")
     cause = LookupError("provider cleanup cause")
     error.__cause__ = cause
-    source = create_agui_run_source(_RejectedAgUiSource(close_error=error))
+    source = _AgUiRunSource.prepare(_RejectedAgUiSource(close_error=error))
     with pytest.raises(error_type) as captured:
         await source.aclose()
     assert captured.value is error
@@ -861,7 +861,7 @@ async def test_agui_run_source_accepts_typed_product_fields_and_rejects_changed_
                 update={"runId": "other"} if change_identity else {"label": "Chart"}
             )
 
-        source = create_agui_run_source(opened, transform_event=transform)
+        source = _AgUiRunSource.prepare(opened, transform_event=transform)
         try:
             if change_identity:
                 with pytest.raises(ValueError, match="protocol identity"):

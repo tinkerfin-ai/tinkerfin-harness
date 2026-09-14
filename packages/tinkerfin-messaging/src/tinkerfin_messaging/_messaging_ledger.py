@@ -419,6 +419,41 @@ class _MessagingLedger:
         )
         return page.messages
 
+    async def bind_replay(
+        self, *, channel: str, identity: RunIdentity, after: int | None
+    ) -> tuple[PreparedRun, int]:
+        """Bind an existing run and its start cursor from the same state snapshot."""
+        if after is not None:
+            self._validate_page(after=after, limit=1)
+        required_identifier("channel", channel)
+        required_identity(identity)
+        state = await self._load_current_state(channel=channel, identity=identity)
+        self._raise_tombstone(state, channel=channel, identity=identity)
+        stream, run = state.stream, state.target_run
+        if stream is None or run is None:
+            raise RunNotFound(identity=identity)
+        self._raise_stream_disposition(state, channel=channel, identity=identity)
+        cursor = run.start_sequence if after is None else after
+        upper = (
+            run.end_sequence
+            if is_final_run_status(run.status)
+            else stream.latest_sequence
+        )
+        if not run.start_sequence <= cursor <= upper:
+            raise InvalidCursor(after=cursor, latest=upper)
+        prepared = PreparedRun(
+            handle=BackendRunHandle(
+                channel=channel,
+                identity=identity,
+                owner_token=None,
+                fence=None,
+                generation=stream.generation,
+            ),
+            after=cursor,
+            is_owner=False,
+        )
+        return prepared, upper
+
     async def bind_follow(
         self,
         *,

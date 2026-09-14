@@ -8,12 +8,11 @@ import { readActiveRunSession, writeActiveRunSession } from './activeRunSession'
 import type {
   ConversationHistoryDetail,
   ConversationTraceEvent,
+  followConversationRun,
 } from '../../../api/conversation/history'
 import type { ChatRequestPayload } from '../../../api/conversation/types'
-import { emptyTraceGraph, emptyTraceGraphDelta, traceGraphNode, traceGraphWithNodes } from '../../../test/traceFixtures'
+import { emptyTraceGraph, traceGraphNode, traceGraphWithNodes } from '../../../test/traceFixtures'
 import { restoreConversationFromTrace } from '../trace/runtime'
-import { toolReviewInterrupts } from '../../../test/aguiFixtures'
-import { prepareResumeSubmission } from '../agui'
 import { attachmentInput, messageAttachments, messageText } from '../attachments/content'
 import { parseTaskTraceSnapshot } from '../../../api/conversation/taskTrace'
 import todoMessagesFixture from '../../../../../server/tests/fixtures/todo-multimodal.json'
@@ -40,7 +39,7 @@ vi.mock('../../../api/conversation/client', () => ({
 vi.mock(import('../../../api/conversation/history'), async (importOriginal) => ({
   ...await importOriginal(),
   fetchConversationHistoryDetail: traceMocks.detail,
-  followConversationTrace: traceMocks.follow,
+  followConversationRun: traceMocks.follow,
 }))
 
 const THREAD_ID = 'thread-controller'
@@ -384,164 +383,6 @@ describe('useConversationStreamController', () => {
     expect(traceMocks.detail).toHaveBeenCalledOnce()
   })
 
-  it('hydrates and follows a detached run only through Trace events', async () => {
-    const snapshot = traceDetail({
-      status: { execution: 'running', headRunId: RUN_ID },
-      messages: [],
-      asOfSeq: 2,
-    })
-    traceMocks.detail.mockResolvedValue(traceDetail({
-      asOfSeq: 3,
-      messages: [{ ...traceDetail().messages[0]!, content: 'detached update' }],
-    }))
-    traceMocks.follow.mockImplementation(() => traceItems([
-      { type: 'snapshot', snapshot },
-      {
-        type: 'update',
-        taskTrace: null,
-        update: {
-          asOfSeq: 3,
-          generation: 'generation-test',
-          observedAt: '2026-09-05T00:00:00.000001Z',
-          events: [],
-          facts: [],
-          messages: {
-            upserts: [{
-              ...traceDetail().messages[0]!,
-              content: 'detached update',
-            }],
-            removes: [],
-          },
-          reasoning: { upserts: [], removes: [] },
-          graph: emptyTraceGraphDelta(3),
-          interactions: { upserts: [], removes: [] },
-          state: { root: {}, subgraphs: {} },
-          status: { execution: 'succeeded', headRunId: RUN_ID },
-          completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false },
-          messageCount: 1,
-          toolCallCount: 0,
-          projections: {}, runFailures: [],
-        },
-      },
-    ]))
-    const { result } = renderHook(() => useControllerHarness(
-      conversation({ runStatus: 'detached', trace: snapshot }),
-    ))
-
-    await act(async () => {
-      await result.current.controller.followDetachedConversation(THREAD_ID)
-    })
-
-    await waitFor(() => {
-      const current = result.current.workspace.conversations[0]
-      expect(current?.messages[0]?.content).toBe('detached update')
-      expect(current?.runStatus).toBe('idle')
-      expect(current?.trace?.asOfSeq).toBe(3)
-    })
-    expect(clientMocks.start).not.toHaveBeenCalled()
-  })
-
-  it('refreshes authority and reconnects after a non-terminal Trace EOF', async () => {
-    const initial = traceDetail({
-      status: { execution: 'running', headRunId: RUN_ID },
-      messages: [],
-      asOfSeq: 2,
-    })
-    const refreshed = traceDetail({
-      status: { execution: 'running', headRunId: RUN_ID },
-      messages: [],
-      asOfSeq: 3,
-    })
-    const terminal = traceDetail({
-      asOfSeq: 4,
-      messages: [{ ...traceDetail().messages[0]!, content: 'EOF 后终态' }],
-    })
-    let followCalls = 0
-    traceMocks.follow.mockImplementation(() => {
-      followCalls += 1
-      return followCalls === 1
-        ? traceItems([{ type: 'snapshot', snapshot: initial }])
-        : traceItems([{
-            type: 'update',
-            taskTrace: null,
-            update: {
-              asOfSeq: 4,
-              generation: 'generation-test',
-              observedAt: '2026-09-05T00:00:00.000001Z',
-              events: [],
-              facts: [],
-              messages: { upserts: terminal.messages, removes: [] },
-              reasoning: { upserts: [], removes: [] },
-              graph: emptyTraceGraphDelta(4),
-              interactions: { upserts: [], removes: [] },
-              state: terminal.state,
-              status: terminal.status,
-              completeness: terminal.completeness,
-              messageCount: terminal.messageCount,
-              toolCallCount: terminal.toolCallCount,
-              projections: {}, runFailures: [],
-            },
-          }])
-    })
-    traceMocks.detail
-      .mockResolvedValueOnce(refreshed)
-      .mockResolvedValueOnce(terminal)
-    const { result } = renderHook(() => useControllerHarness(
-      conversation({ runStatus: 'detached', trace: initial }),
-    ))
-
-    await act(async () => {
-      await result.current.controller.followDetachedConversation(THREAD_ID)
-    })
-
-    expect(traceMocks.follow).toHaveBeenCalledTimes(2)
-    expect(traceMocks.detail).toHaveBeenCalledTimes(2)
-    expect(result.current.workspace.conversations[0]?.trace?.asOfSeq).toBe(4)
-    expect(result.current.workspace.conversations[0]?.messages[0]?.content).toBe('EOF 后终态')
-    expect(result.current.workspace.conversations[0]?.runStatus).toBe('idle')
-  })
-
-  it('aborts an existing Trace follower before starting an owned AG-UI run', async () => {
-    let traceAborted = false
-    traceMocks.follow.mockImplementation(async function* (
-      _threadId: string,
-      options: { signal: AbortSignal },
-    ) {
-      await new Promise<void>((resolve) => {
-        options.signal.addEventListener('abort', () => {
-          traceAborted = true
-          resolve()
-        }, { once: true })
-      })
-      if (options.signal.aborted) yield { type: 'error', code: 'trace_unavailable' }
-    })
-    clientMocks.start.mockImplementation(() => streamItems([
-      { seq: 1, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } },
-      {
-        seq: 2,
-        event: {
-          type: 'RUN_FINISHED',
-          threadId: THREAD_ID,
-          runId: RUN_ID,
-          outcome: { type: 'success' },
-        },
-      },
-    ]))
-    const { result } = renderHook(() => useControllerHarness(
-      conversation({ runStatus: 'detached', trace: traceDetail() }),
-    ))
-
-    let follower: Promise<void> = Promise.resolve()
-    await act(async () => {
-      follower = result.current.controller.followDetachedConversation(THREAD_ID)
-      await Promise.resolve()
-      await result.current.controller.streamRun(THREAD_ID, payload, 'start')
-    })
-    await follower
-
-    expect(traceAborted).toBe(true)
-  })
-
   it('deduplicates backend cancellation while the owned stream is active', async () => {
     let release: (() => void) | undefined
     clientMocks.start.mockImplementation(async function* () {
@@ -792,8 +633,10 @@ it('旧Run历史失败保留新Run首响应丢失的恢复状态', async () => {
 })
 
 
+type LiveEvent = ReturnType<typeof followConversationRun> extends AsyncGenerator<infer T> ? T : never
+
 function traceFeed() {
-  const pending: Array<{ event: ConversationTraceEvent; consumed: () => void }> = []
+  const pending: Array<{ event: LiveEvent; consumed: () => void }> = []
   let wake: (() => void) | undefined
   let markOpened!: () => void
   const opened = new Promise<void>((resolve) => { markOpened = resolve })
@@ -801,7 +644,7 @@ function traceFeed() {
   return {
     opened,
     get signal() { return signal },
-    push(event: ConversationTraceEvent) {
+    push(event: LiveEvent) {
       const consumed = new Promise<void>((resolve) => { pending.push({ event, consumed: resolve }) })
       wake?.()
       return consumed
@@ -819,6 +662,7 @@ function traceFeed() {
             continue
           }
           try { yield next.event } finally { next.consumed() }
+          if (next.event.type === 'event' && next.event.event.type === 'RUN_FINISHED') return
         }
       } finally {
         signal.removeEventListener('abort', onAbort)
@@ -843,25 +687,6 @@ const runningTrace = (asOfSeq = 10): ConversationHistoryDetail => traceDetail({
     status: 'running', completedAt: null, request: { path: '/月报.md' },
   })], asOfSeq),
   state: { root: { section: 'revenue', totals: [10] }, subgraphs: {} },
-})
-
-const traceUpdate = (snapshot: ConversationHistoryDetail): ConversationTraceEvent => ({
-  type: 'update', taskTrace: snapshot.taskTrace,
-  update: {
-    asOfSeq: snapshot.asOfSeq, generation: snapshot.generation, observedAt: snapshot.observedAt,
-    events: [], facts: [],
-    messages: { upserts: snapshot.messages, removes: [] },
-    reasoning: { upserts: snapshot.reasoning, removes: [] },
-    interactions: { upserts: snapshot.interactions, removes: [] },
-    graph: {
-      ...emptyTraceGraphDelta(snapshot.asOfSeq),
-      turnUpserts: snapshot.graph.turns, nodeUpserts: snapshot.graph.nodes,
-      orderedNodeIds: snapshot.graph.orderedNodeIds, matchedNodeIds: snapshot.graph.matchedNodeIds,
-    },
-    state: snapshot.state, status: snapshot.status, completeness: snapshot.completeness,
-    messageCount: snapshot.messageCount, toolCallCount: snapshot.toolCallCount,
-    projections: {}, runFailures: snapshot.runFailures,
-  },
 })
 
 const restored = (snapshot: ConversationHistoryDetail) => restoreConversationFromTrace(snapshot, {
@@ -898,103 +723,6 @@ describe('已受理运行的历史恢复', () => {
     expect(clientMocks.start).not.toHaveBeenCalled()
   })
 
-  it('以同一运行的快照和实体更新恢复正文、工具参数和状态，不重放旧投递游标', async () => {
-    const snapshot = runningTrace()
-    cacheRun()
-    const feed = traceFeed()
-    traceMocks.follow.mockImplementation((_thread: string, options: { signal: AbortSignal }) => feed.read(options.signal))
-    const { result, unmount } = renderHook(() => useControllerHarness({ ...restored(snapshot), lastSeq: 4 }))
-    let recovering!: Promise<void>
-    try {
-      await act(async () => {
-        recovering = result.current.controller.recoverConversation(THREAD_ID)
-        await feed.opened
-      })
-      expect(readActiveRunSession(THREAD_ID)).toBeNull()
-      expect(result.current.workspace.conversations[0]?.lastSeq).toBeUndefined()
-      await act(async () => { await feed.push({ type: 'snapshot', snapshot }) })
-      const next = runningTrace(11)
-      next.messages[0]!.content = '本月门店营收增长 10%'
-      next.graph.nodes[0]!.request = { path: '/月报.md', content: '营收增长 10%' }
-      next.graph.nodes[0]!.updatedSeq = 11
-      next.state.root = { section: 'summary', totals: [10, 20] }
-      await act(async () => { await feed.push(traceUpdate(next)) })
-      const current = result.current.workspace.conversations[0]!
-      expect(current.messages.filter((message) => message.role === 'assistant').map((message) => message.content)).toEqual(['本月门店营收增长 10%'])
-      const tools = current.messages.filter((message) => message.role === 'tool')
-      expect(tools).toHaveLength(1)
-      expect(JSON.parse(tools[0]!.meta!.params!)).toEqual(next.graph.nodes[0]!.request)
-      expect(current.serverState).toEqual({ section: 'summary', totals: [10, 20] })
-      expect(current).toMatchObject({ runStatus: 'streaming', activeRunId: RUN_ID })
-      expect(current.lastSeq).toBeUndefined()
-      expect(clientMocks.start).not.toHaveBeenCalled()
-      expect(clientMocks.resume).not.toHaveBeenCalled()
-    } finally { unmount(); await recovering }
-    expect(feed.signal?.aborted).toBe(true)
-    expect(readActiveRunSession(THREAD_ID)).toBeNull()
-  })
-
-  it.each(['succeeded', 'cancelled', 'failed', 'unknown', 'waiting'] as const)(
-    '停止指向历史已确认的原运行，%s 状态释放停止与恢复记录', async (execution) => {
-      const snapshot = runningTrace()
-      cacheRun()
-      const feed = traceFeed()
-      traceMocks.follow.mockImplementation((_thread: string, options: { signal: AbortSignal }) => feed.read(options.signal))
-      const terminal = runningTrace(11)
-      terminal.status = { execution, headRunId: RUN_ID }
-      traceMocks.detail.mockResolvedValue(terminal)
-      const { result, unmount } = renderHook(() => useControllerHarness(restored(snapshot)))
-      let recovering!: Promise<void>
-      try {
-        await act(async () => {
-          recovering = result.current.controller.recoverConversation(THREAD_ID)
-          await feed.opened
-        })
-        await act(async () => { await feed.push({ type: 'snapshot', snapshot }) })
-        await act(async () => {
-          expect(await result.current.controller.cancelRun(THREAD_ID)).toBe(true)
-          expect(await result.current.controller.cancelRun(THREAD_ID)).toBe(true)
-        })
-        expect(clientMocks.cancel).toHaveBeenCalledExactlyOnceWith(THREAD_ID, RUN_ID)
-        expect(result.current.controller.cancelPendingRunId).toBe(RUN_ID)
-        await act(async () => { await feed.push(traceUpdate(terminal)); await recovering })
-        expect(result.current.controller.cancelPendingRunId).toBeNull()
-        expect(result.current.workspace.conversations[0]?.activeRunId).toBeUndefined()
-        expect(readActiveRunSession(THREAD_ID)).toBeNull()
-        expect(clientMocks.start).not.toHaveBeenCalled()
-        expect(clientMocks.resume).not.toHaveBeenCalled()
-        expect(await result.current.controller.cancelRun(THREAD_ID)).toBe(false)
-      } finally { unmount(); await recovering }
-    },
-  )
-
-  it.each(['eof', 'transport', 'protocol'] as const)('Trace %s 保留权威内容并允许重新跟随，不重新提交任务', async (failure) => {
-    const snapshot = runningTrace()
-    cacheRun()
-    traceMocks.detail.mockResolvedValue(snapshot)
-    traceMocks.follow.mockImplementation(async function* () {
-      yield { type: 'snapshot', snapshot }
-      if (failure === 'transport') throw new TypeError('offline')
-      if (failure === 'protocol') yield { type: 'error', code: 'trace_unavailable' }
-    })
-    const { result, unmount } = renderHook(() => useControllerHarness(restored(snapshot)))
-    try {
-      await act(async () => { await result.current.controller.recoverConversation(THREAD_ID) })
-      expect(result.current.workspace.conversations[0]).toMatchObject({ runStatus: 'detached', activeRunId: RUN_ID, notice: { kind: 'error' } })
-      expect(result.current.workspace.conversations[0]?.messages[0]?.content).toBe(snapshot.messages[0]!.content)
-      expect(traceMocks.follow).toHaveBeenCalledTimes(failure === 'eof' ? 4 : 1)
-      expect(readActiveRunSession(THREAD_ID)).toBeNull()
-      const terminal = runningTrace(11)
-      terminal.status = { execution: 'succeeded', headRunId: RUN_ID }
-      traceMocks.follow.mockImplementation(() => traceItems([{ type: 'snapshot', snapshot: terminal }]))
-      traceMocks.detail.mockResolvedValue(terminal)
-      await act(async () => { await result.current.controller.recoverConversation(THREAD_ID) })
-      expect(result.current.workspace.conversations[0]?.runStatus).toBe('idle')
-      expect(clientMocks.start).not.toHaveBeenCalled()
-      expect(clientMocks.resume).not.toHaveBeenCalled()
-    } finally { unmount() }
-  })
-
   it('其他运行的 Trace 不代表当前提交已受理，保留相同请求与游标重连', async () => {
     const old = runningTrace()
     const nextPayload = { ...payload, runId: 'next-run' }
@@ -1013,227 +741,95 @@ describe('已受理运行的历史恢复', () => {
     } finally { unmount() }
   })
 
-  it.each(['start', 'resume'] as const)('新的 %s 运行终止旧 Trace 跟随并重新使用实时事件', async (mode) => {
-    const snapshot = runningTrace()
-    cacheRun()
+  it.each([false, true])('刷新恢复不依赖本地缓存，暂停时首段可见且续流不重复（缓存=%s）', async (cached) => {
+    if (cached) cacheRun(payload, 999)
+    const base = traceDetail({ asOfSeq: 2, graph: emptyTraceGraph(2), messages: [], messageCount: 0, status: { execution: 'running', headRunId: RUN_ID } })
     const feed = traceFeed()
-    traceMocks.follow.mockImplementation((_thread: string, options: { signal: AbortSignal }) => feed.read(options.signal))
-    const events = eventFeed()
-    const nextPayload = { ...payload, runId: 'next-run' }
-    clientMocks[mode].mockImplementation((_request: ChatRequestPayload, signal: AbortSignal) => events.read(signal))
-    const { result, unmount } = renderHook(() => useControllerHarness(restored(snapshot)))
+    traceMocks.follow.mockImplementation((_thread, _run, { signal }) => feed.read(signal))
+    const final = traceDetail({ messages: [{ ...traceDetail().messages[0]!, agui: { kind: 'message', messageId: 'answer' }, content: '第一段第二段' }] })
+    traceMocks.detail.mockResolvedValue(final)
+    const { result, unmount } = renderHook(() => useControllerHarness(restored(runningTrace())))
     let recovering!: Promise<void>
-    let streaming: Promise<void> = Promise.resolve()
+    await act(async () => { recovering = result.current.controller.recoverConversation(THREAD_ID) })
     try {
+      await feed.opened
+      await act(async () => { await feed.push({ type: 'snapshot', snapshot: base, replay: true }) })
       await act(async () => {
-        recovering = result.current.controller.recoverConversation(THREAD_ID)
-        await feed.opened
+        await feed.push({ type: 'event', replayed: true, seq: 279, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } })
+        await feed.push({ type: 'event', replayed: true, seq: 280, event: { type: 'TEXT_MESSAGE_START', messageId: 'answer', role: 'assistant' } })
+        await feed.push({ type: 'event', replayed: true, seq: 281, event: { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '第一段' } })
       })
-      await act(async () => { await feed.push({ type: 'snapshot', snapshot }) })
+      expect(result.current.workspace.conversations[0]?.messages.find(item => item.id === 'answer')?.content).toBe('第一段')
+      expect(result.current.workspace.conversations[0]?.messages.find(item => item.id === 'answer')?.liveText).toBeUndefined()
+      expect(result.current.workspace.conversations[0]?.runStatus).toBe('streaming')
+      expect(clientMocks.start).not.toHaveBeenCalled()
+      expect(clientMocks.resume).not.toHaveBeenCalled()
+      expect(traceMocks.follow.mock.calls[0]?.[2].afterSeq).toBeUndefined()
       await act(async () => {
-        streaming = result.current.controller.streamRun(THREAD_ID, nextPayload, mode)
-        await recovering
+        await feed.push({ type: 'event', replayed: true, seq: 281, event: { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '第一段' } })
+        await feed.push({ type: 'event', replayed: false, seq: 282, event: { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '第二段' } })
       })
-      expect(feed.signal?.aborted).toBe(true)
-      await act(async () => {
-        events.push({ type: 'RUN_STARTED', threadId: THREAD_ID, runId: nextPayload.runId })
-        events.push({ type: 'TEXT_MESSAGE_START', messageId: 'next-answer', role: 'assistant' })
-        events.push({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'next-answer', delta: '接下来分析成本' })
-        events.push({ type: 'TEXT_MESSAGE_END', messageId: 'next-answer' })
-      })
-      expect(result.current.workspace.conversations[0]).toMatchObject({ runStatus: 'streaming', activeRunId: nextPayload.runId, lastSeq: 4 })
-      expect(result.current.workspace.conversations[0]?.messages.find((message) => message.id === 'next-answer')?.content).toBe('接下来分析成本')
-      expect(clientMocks[mode]).toHaveBeenCalledExactlyOnceWith(nextPayload, expect.any(AbortSignal), undefined)
-      expect(readActiveRunSession(THREAD_ID)?.payload.runId).toBe(nextPayload.runId)
-      expect(traceMocks.follow).toHaveBeenCalledOnce()
-    } finally { unmount(); await recovering; await streaming }
-  })
-
-  it('切换会话后 A 的历史更新不覆盖 B，停止只影响所选运行', async () => {
-    const snapshotA = runningTrace()
-    const snapshotB = traceDetail({ threadId: 'thread-b', headRunId: 'run-b', status: { execution: 'running', headRunId: 'run-b' } })
-    cacheRun()
-    const feed = traceFeed()
-    traceMocks.follow.mockImplementation((_thread: string, options: { signal: AbortSignal }) => feed.read(options.signal))
-    const { result, unmount } = renderHook(() => useControllerHarness(restored(snapshotA)))
-    let recovering!: Promise<void>
-    try {
-      await act(async () => {
-        recovering = result.current.controller.recoverConversation(THREAD_ID)
-        await feed.opened
-      })
-      await act(async () => { await feed.push({ type: 'snapshot', snapshot: snapshotA }) })
-      act(() => result.current.setWorkspace((state) => ({ ...state, currentThreadId: 'thread-b', conversations: [...state.conversations, restored(snapshotB)] })))
-      const next = runningTrace(11)
-      next.messages[0]!.content = 'A 的营收分析已更新'
-      await act(async () => { await feed.push(traceUpdate(next)) })
-      expect(result.current.workspace.currentThreadId).toBe('thread-b')
-      expect(result.current.workspace.conversations.find((item) => item.threadId === 'thread-b')?.messages[0]?.content).toBe('Trace 最终内容')
-      expect(result.current.workspace.conversations.find((item) => item.threadId === THREAD_ID)?.messages[0]?.content).toBe('A 的营收分析已更新')
-      await act(async () => { await result.current.controller.cancelRun('thread-b') })
-      expect(clientMocks.cancel).toHaveBeenCalledExactlyOnceWith('thread-b', 'run-b')
-      expect(feed.signal?.aborted).toBe(false)
-      expect(result.current.controller.cancelPendingRunId).toBe('run-b')
-      act(() => result.current.setWorkspace((state) => ({ ...state, currentThreadId: THREAD_ID })))
-      expect(result.current.controller.cancelPendingRunId).toBeNull()
+      expect(result.current.workspace.conversations[0]?.messages.find(item => item.id === 'answer')?.liveText?.initialContent).toBe('第一段')
+      expect(result.current.workspace.conversations[0]?.messages.find(item => item.id === 'answer')?.content).toBe('第一段第二段')
+      await act(async () => { await feed.push({ type: 'event', replayed: false, seq: 283, event: { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID, outcome: { type: 'success' } } }); await recovering })
+      expect(result.current.workspace.conversations[0]?.runStatus).toBe('idle')
+      expect(readActiveRunSession(THREAD_ID)).toBeNull()
     } finally { unmount(); await recovering }
   })
-  it.each(['snapshot', 'update'] as const)('Trace %s 关联错误保留已展示内容并报告恢复失败', async (eventType) => {
-    const snapshot = runningTrace()
-    cacheRun()
-    const conflicting = { ...runningTrace(11), generation: 'unrelated-generation' }
-    traceMocks.follow.mockImplementation(() => traceItems([eventType === 'snapshot' ? { type: 'snapshot', snapshot: conflicting } : traceUpdate(conflicting)]))
-    const { result, unmount } = renderHook(() => useControllerHarness(restored(snapshot)))
-    try {
-      await act(async () => { await result.current.controller.recoverConversation(THREAD_ID) })
-      expect(result.current.workspace.conversations[0]).toMatchObject({ runStatus: 'detached', notice: { kind: 'error' } })
-      expect(result.current.workspace.conversations[0]?.messages[0]?.content).toBe(snapshot.messages[0]!.content)
-      expect(clientMocks.start).not.toHaveBeenCalled()
-    } finally { unmount() }
-  })
 
-  it('历史审批结束跟随后，以新的运行和原审批内容继续实时执行', async () => {
-    const snapshot = runningTrace()
-    const waiting = runningTrace(11)
-    waiting.status = { execution: 'waiting', headRunId: RUN_ID }
-    waiting.interactions = [{
-      id: 'review', sourceId: 'native-review', runId: RUN_ID, traceSeq: 11,
-      kind: 'tool_review', graphNamespace: [], toolCallIds: ['native-write'],
-      status: 'pending', payloadOmitted: false, openedAt: BASE_TIME,
-      agui: toolReviewInterrupts('native-review', [{ toolCallId: 'write-report', args: { path: '/月报.md' } }]),
-    }]
-    cacheRun()
-    traceMocks.follow.mockImplementation(() => traceItems([{ type: 'snapshot', snapshot: waiting }]))
-    traceMocks.detail.mockResolvedValue(waiting)
-    const events = eventFeed()
-    clientMocks.resume.mockImplementation((_request: ChatRequestPayload, signal: AbortSignal) => events.read(signal))
-    const { result, unmount } = renderHook(() => useControllerHarness(restored(snapshot)))
-    let streaming: Promise<void> = Promise.resolve()
-    try {
-      await act(async () => { await result.current.controller.recoverConversation(THREAD_ID) })
-      expect(result.current.workspace.conversations[0]).toMatchObject({
-        runStatus: 'waiting_approval', pendingInteractionKind: 'tool_approval',
-        approval: { items: [{ interruptId: 'native-review', toolCallId: 'write-report' }] },
-      })
-      const nextPayload: ChatRequestPayload = {
-        ...payload, runId: 'approved-run', parentRunId: RUN_ID,
-        resume: [{ interruptId: 'native-review', status: 'resolved', payload: { type: 'approve' } }],
+  it('续播序号缺口从最后已应用游标重连，保留正文且不重复执行', async () => {
+    vi.useFakeTimers()
+    const base = traceDetail({ asOfSeq: 2, graph: emptyTraceGraph(2), messages: [], messageCount: 0, status: { execution: 'running', headRunId: RUN_ID } })
+    traceMocks.follow.mockImplementation(async function* (_thread, _run, options) {
+      if (options.afterSeq == null) {
+        yield { type: 'snapshot', snapshot: base, replay: true }
+        yield { type: 'event', replayed: true, seq: 279, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } }
+        yield { type: 'event', replayed: true, seq: 280, event: { type: 'TEXT_MESSAGE_START', messageId: 'answer', role: 'assistant' } }
+        yield { type: 'event', replayed: true, seq: 281, event: { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '第一段' } }
+        yield { type: 'event', replayed: false, seq: 283, event: { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '不应应用' } }
+      } else {
+        expect(options.afterSeq).toBe(281)
+        yield { type: 'event', replayed: false, seq: 282, event: { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '第二段' } }
+        yield { type: 'event', replayed: false, seq: 283, event: { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID, outcome: { type: 'success' } } }
       }
-      act(() => result.current.setWorkspace((state) => ({
-        ...state, conversations: state.conversations.map((item) => prepareResumeSubmission(item)),
-      })))
-      await act(async () => { streaming = result.current.controller.streamRun(THREAD_ID, nextPayload, 'resume') })
-      await act(async () => {
-        events.push({ type: 'RUN_STARTED', threadId: THREAD_ID, runId: nextPayload.runId })
-        events.push({ type: 'TOOL_CALL_RESULT', toolCallId: 'write-report', messageId: 'written-result', content: '月报已保存', role: 'tool' })
-        events.push({ type: 'STATE_SNAPSHOT', snapshot: { report: '/月报.md', delivered: true } })
-      })
-      const current = result.current.workspace.conversations[0]!
-      expect(current).toMatchObject({ runStatus: 'streaming', activeRunId: 'approved-run', serverState: { report: '/月报.md', delivered: true } })
-      const tools = current.messages.filter((message) => message.meta?.toolCallId === 'write-report')
-      expect(tools).toHaveLength(1)
-      expect(tools[0]?.meta).toMatchObject({ result: '月报已保存', status: 'completed' })
-      expect(clientMocks.resume).toHaveBeenCalledExactlyOnceWith(nextPayload, expect.any(AbortSignal), undefined)
-      expect(clientMocks.start).not.toHaveBeenCalled()
-      expect(traceMocks.follow).toHaveBeenCalledOnce()
-    } finally { unmount(); await streaming }
-  })
-
-  it('旧跟随的历史读取在新运行接管时失效，晚到结果不覆盖当前内容', async () => {
-    const snapshot = runningTrace()
-    const terminal = runningTrace(11)
-    terminal.status = { execution: 'succeeded', headRunId: RUN_ID }
-    traceMocks.follow.mockImplementation(() => traceItems([{ type: 'snapshot', snapshot: terminal }]))
-    let releaseHistory!: (detail: ConversationHistoryDetail) => void
-    const lateHistory = new Promise<ConversationHistoryDetail>((resolve) => { releaseHistory = resolve })
-    let markRequested!: () => void
-    const requested = new Promise<void>((resolve) => { markRequested = resolve })
-    let markAborted!: () => void
-    const aborted = new Promise<void>((resolve) => { markAborted = resolve })
-    traceMocks.detail.mockImplementation((_thread: string, options: { signal: AbortSignal }) => {
-      options.signal.addEventListener('abort', markAborted, { once: true })
-      markRequested()
-      return lateHistory
     })
-    const events = eventFeed()
-    clientMocks.start.mockImplementation((_request: ChatRequestPayload, signal: AbortSignal) => events.read(signal))
-    const nextPayload = { ...payload, runId: 'next-run' }
-    const { result, unmount } = renderHook(() => useControllerHarness(restored(snapshot)))
-    let recovering: Promise<void> = Promise.resolve()
-    let streaming: Promise<void> = Promise.resolve()
-    try {
-      await act(async () => {
-        recovering = result.current.controller.recoverConversation(THREAD_ID)
-        await requested
-      })
-      await act(async () => {
-        streaming = result.current.controller.streamRun(THREAD_ID, nextPayload, 'start')
-        await aborted
-        const stale = runningTrace(12)
-        stale.messages[0]!.content = '已失效的响应内容'
-        releaseHistory(stale)
-        await recovering
-      })
-      await act(async () => {
-        events.push({ type: 'RUN_STARTED', threadId: THREAD_ID, runId: nextPayload.runId })
-        events.push({ type: 'TEXT_MESSAGE_START', messageId: 'current-answer', role: 'assistant' })
-        events.push({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'current-answer', delta: '新的营收问题' })
-        events.push({ type: 'TEXT_MESSAGE_END', messageId: 'current-answer' })
-      })
-      const current = result.current.workspace.conversations[0]!
-      expect(current).toMatchObject({ activeRunId: nextPayload.runId, runStatus: 'streaming' })
-      expect(current.messages.map((message) => message.content)).toContain('新的营收问题')
-      expect(current.messages.map((message) => message.content)).not.toContain('已失效的响应内容')
-      expect(current.notice).toBeUndefined()
-      expect(clientMocks.start).toHaveBeenCalledExactlyOnceWith(nextPayload, expect.any(AbortSignal), undefined)
-    } finally {
-      releaseHistory(terminal)
-      unmount()
-      await recovering
-      await streaming
-    }
-  })
-
-  it('连续实体更新按完整顺序合并，保留其他消息和用户较新的标题', async () => {
-    const snapshot = runningTrace()
-    const first = runningTrace(11)
-    first.messages.push({ ...first.messages[0]!, id: 'second-message', sourceId: 'second-native', agui: { kind: 'message', messageId: 'second-answer' }, content: '门店成本分析', traceSeq: 11 })
-    first.messageCount = 2
-    const second = runningTrace(12)
-    second.messages[0]!.content = '门店营收分析已完成'
-    second.messageCount = 2
-    const feed = traceFeed()
-    traceMocks.follow.mockImplementation((_thread: string, options: { signal: AbortSignal }) => feed.read(options.signal))
-    const { result, unmount } = renderHook(() => useControllerHarness(restored(snapshot)))
+    traceMocks.detail.mockResolvedValue(traceDetail({ messages: [{ ...traceDetail().messages[0]!, agui: { kind: 'message', messageId: 'answer' }, content: '第一段第二段' }] }))
+    const { result, unmount } = renderHook(() => useControllerHarness(restored(runningTrace())))
     let recovering!: Promise<void>
     try {
-      await act(async () => {
-        recovering = result.current.controller.recoverConversation(THREAD_ID)
-        await feed.opened
-      })
-      act(() => result.current.setWorkspace((state) => ({
-        ...state,
-        conversations: state.conversations.map((item) => ({ ...item, title: '九月门店经营复盘', titleSource: 'user', titleSeq: 99 })),
-      })))
-      await act(async () => {
-        await Promise.all([
-          feed.push({ type: 'snapshot', snapshot }),
-          feed.push(traceUpdate(first)),
-          feed.push(traceUpdate(second)),
-        ])
-      })
-      const current = result.current.workspace.conversations[0]!
-      expect(current.messages.filter((message) => message.role === 'assistant').map((message) => message.content)).toEqual(['门店营收分析已完成', '门店成本分析'])
-      expect(current.trace?.messageCount).toBe(2)
-      expect(current.trace?.asOfSeq).toBe(12)
-      expect(current.title).toBe('九月门店经营复盘')
-      expect(current.titleSeq).toBe(99)
-      expect(current.notice).toBeUndefined()
+      await act(async () => { recovering = result.current.controller.recoverConversation(THREAD_ID) })
+      expect(result.current.workspace.conversations[0]?.messages.find(item => item.id === 'answer')?.content).toBe('第一段')
+      await act(async () => { await vi.advanceTimersByTimeAsync(250); await recovering })
+      expect(result.current.workspace.conversations[0]?.messages.find(item => item.id === 'answer')?.content).toBe('第一段第二段')
+      expect(traceMocks.follow).toHaveBeenCalledTimes(2)
+      expect(clientMocks.start).not.toHaveBeenCalled()
+      expect(clientMocks.resume).not.toHaveBeenCalled()
     } finally { unmount(); await recovering }
   })
 
-})
+  it('恢复连接卸载只关闭读取，不取消后台运行', async () => {
+    const feed = traceFeed()
+    traceMocks.follow.mockImplementation((_thread, _run, { signal }) => feed.read(signal))
+    const { result, unmount } = renderHook(() => useControllerHarness(restored(runningTrace())))
+    let recovering!: Promise<void>
+    await act(async () => { recovering = result.current.controller.recoverConversation(THREAD_ID) })
+    await feed.opened
+    unmount()
+    await recovering
+    expect(feed.signal?.aborted).toBe(true)
+    expect(clientMocks.cancel).not.toHaveBeenCalled()
+  })
 
+  it('其他线程的恢复快照被拒绝，保留当前显示内容', async () => {
+    traceMocks.follow.mockImplementation(async function* () { yield { type: 'snapshot', snapshot: { ...runningTrace(), threadId: 'other' }, replay: true } })
+    const initial = restored(runningTrace())
+    const { result } = renderHook(() => useControllerHarness(initial))
+    await act(async () => { await result.current.controller.recoverConversation(THREAD_ID) })
+    expect(result.current.workspace.conversations[0]?.messages).toEqual(initial.messages)
+    expect(result.current.workspace.conversations[0]?.notice?.kind).toBe('error')
+    expect(clientMocks.start).not.toHaveBeenCalled()
+  })
+})
 
 describe('多模态提问的任务组标题', () => {
   beforeEach(() => { vi.resetAllMocks(); window.sessionStorage.clear(); vi.useFakeTimers({ toFake: ['Date'] }) })

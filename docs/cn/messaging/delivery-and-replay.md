@@ -61,7 +61,7 @@ await channel.publish(
 
 消息与源事件进入同一份持久化日志，已有订阅者实时接收，重连沿用同一个序号游标回放。发布不会打开事件源、取得或续租生产者所有权，也不会推进源消息编号或恢复 checkpoint。目标身份的业务授权由宿主负责。
 
-发布前 channel 必须已绑定 codec。其他 worker 没有打开事件源时，可显式使用 `codec=AgUiCodec()` 创建同名 channel。普通 codec 在首条源消息提交后接受发布；AG-UI 仅在目标主 `RUN_STARTED` 提交后接受 `CustomEvent`，主终态与关闭发布在同一提交中完成。子运行事件不改变主运行的发布状态。取消、结算或生产者所有权失效后，新发布抛出 `PublicationRejected`。
+发布前 channel 必须已绑定 codec。AG-UI 在各 worker 上均使用 `messaging.agui_channel(name=...)` 创建同名频道。普通 codec 在首条源消息提交后接受发布；AG-UI 仅在目标主 `RUN_STARTED` 提交后接受 `CustomEvent`，主终态与关闭发布在同一提交中完成。子运行事件不改变主运行的发布状态。取消、结算或生产者所有权失效后，新发布抛出 `PublicationRejected`。
 
 省略 `message_id` 时每次调用生成新 ID。相同 ID、相同内容返回仍在保留期内的原消息，包括运行已经结束的情况；内容不同抛出 `MessageIdConflict`。发布被拒绝不会启动新运行。
 

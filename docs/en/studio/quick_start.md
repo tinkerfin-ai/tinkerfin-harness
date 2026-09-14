@@ -20,7 +20,7 @@ cd tinkerfin-harness/apps/studio/server/deploy
 ./deploy.sh --build
 ```
 
-The first run creates configuration and service credentials, builds the backend image, and waits for readiness. Preparing an isolated workspace also requires downloading its runtime image.
+The first run creates configuration and service credentials, builds the backend image, and waits for readiness. Workspaces are created on demand without a warm pool; each new sandbox is limited to 1 CPU and 1 GiB of memory. The runtime image is downloaded on first use if it is not already available.
 After startup: [readiness](http://127.0.0.1:8090/health/ready) · [API docs (Swagger)](http://127.0.0.1:8090/docs).
 
 Use `./deploy.sh` when a published image is available to you. See [server deployment](../../../apps/studio/server/README.md) for external databases, configuration, and log commands.

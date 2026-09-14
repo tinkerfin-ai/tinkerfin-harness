@@ -40,9 +40,22 @@ for (const theme of ['light','dark']) test(`输入框及菜单滚动不移动会
   await expect.poll(() => pane.evaluate(element => element.scrollHeight-element.clientHeight)).toBeGreaterThan(1000)
   await expect.poll(() => pane.evaluate(element => element.scrollTop)).toBeGreaterThan(1000)
   await pane.hover({position:{x:80,y:80}})
-  const settled = pane.evaluate(element => new Promise<void>(resolve => element.addEventListener('scrollend', () => resolve(), {once:true})))
-  await page.mouse.wheel(0,-600)
-  await settled
+  // 先确认监听已注册，再触发用户滚动；向上滚动同时解除会话的自动跟随
+  const scroll = await pane.evaluateHandle(element => {
+    const initialTop = element.scrollTop
+    return { settled: new Promise<void>(resolve => {
+      const onEnd = () => {
+        if (element.scrollTop >= initialTop) return
+        element.removeEventListener('scrollend', onEnd)
+        resolve()
+      }
+      element.addEventListener('scrollend', onEnd)
+    }) }
+  })
+  try {
+    await page.mouse.wheel(0,-600)
+    await scroll.evaluate(async state => { await state.settled })
+  } finally { await scroll.dispose() }
   const initialScroll = await pane.evaluate(element=>element.scrollTop)
   const assertConversationUnchanged = async () => expect(await pane.evaluate(element=>element.scrollTop)).toBe(initialScroll)
   const select = page.getByRole('button',{name:'选择模型',exact:true})

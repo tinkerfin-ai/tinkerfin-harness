@@ -1,3 +1,4 @@
+import { installLiveRun } from './fixtures/liveRun'
 import { toolReviewInterrupts, planInterrupt } from '../../src/test/aguiFixtures'
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
 import { resolve } from 'node:path'
@@ -905,6 +906,7 @@ async function mockStudio(page: Page, {
     await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({}) })
   })
 
+  if (runningActivity) await installLiveRun(page, buildTraceDetail())
   await page.goto('/')
   if (approval) await expect(page.getByRole('region', { name: '等待审批' })).toBeVisible()
   else if (planQuestion) await expect(page.getByRole('region', { name: 'Plan 澄清问题' })).toBeVisible()

@@ -157,6 +157,28 @@ describe('实时正文逐字展示', () => {
     unmount()
   })
 
+  it('恢复前缀立即显示并覆盖旧动画进度，只对新增正文逐字呈现', () => {
+    const key = 'thread/run/answer'
+    progress.set(key, '已')
+    const prefix = '已经收到的完整正文'
+    const { result, rerender, unmount } = renderHook(
+      ({ content, source }) => useTypewriterText(content, source, true),
+      { initialProps: { content: prefix + '新增', source: { key, initialContent: '' } }, wrapper: ProgressScope },
+    )
+    expect(result.current).toBe('已')
+    rerender({ content: prefix + '新增', source: { key, initialContent: prefix } })
+    expect(result.current).toBe(prefix)
+    expect(progress.get(key)).toBe(prefix)
+    frame()
+    expect(result.current).toBe(prefix + '新')
+    rerender({ content: '替换后的内容', source: { key, initialContent: prefix } })
+    expect(result.current).toBe('')
+    frame()
+    expect(result.current).toBe('替')
+    unmount()
+    expect(frames.size).toBe(0)
+  })
+
   it('工作台之间不共享相同消息身份的显示进度', () => {
     const source = { key: 'thread/run/answer', initialContent: '' }
     const first = renderHook(() => useTypewriterText('回复内容', source, true), { wrapper: ProgressScope })

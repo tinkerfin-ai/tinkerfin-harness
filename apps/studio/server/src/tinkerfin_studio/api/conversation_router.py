@@ -166,6 +166,24 @@ async def get_history(
     return Response(content=content, media_type="application/json")
 
 
+@router.get("/{thread_id}/runs/{run_id}/events", response_class=StreamingResponse)
+async def follow_run_events(
+    thread_id: ThreadIdPath,
+    run_id: Annotated[str, Path(min_length=1, max_length=255)],
+    service: ConversationHistoryDep,
+    last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+    include_task_trace: Annotated[bool, Query(alias="includeTaskTrace")] = True,
+) -> StreamingResponse:
+    """恢复已有运行的可见内容并继续接收后续输出"""
+    body = await service.follow_live(
+        thread_id,
+        run_id=run_id,
+        last_event_id=last_event_id,
+        include_task_trace=include_task_trace,
+    )
+    return sse_response(body)
+
+
 @router.get("/{thread_id}/trace", response_class=StreamingResponse)
 async def follow_trace(
     thread_id: ThreadIdPath,

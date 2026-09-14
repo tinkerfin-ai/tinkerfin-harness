@@ -136,6 +136,7 @@ def test_business_json_openapi_responses_publish_the_envelope() -> None:
         "/api/attachments/{attachment_id}/content",
         "/api/conversation/chat",
         "/api/conversation/{thread_id}/trace",
+        "/api/conversation/{thread_id}/runs/{run_id}/events",
         "/api/conversation/{thread_id}/trace/graph/follow",
     }
     null_results = {

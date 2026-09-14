@@ -10,6 +10,7 @@ import {
   fetchConversationHistoryGroupConfig,
   fetchConversationHistoryList,
   followConversationTrace,
+  followConversationRun,
   patchConversation,
   type ConversationHistoryDetail,
 } from './history'
@@ -149,6 +150,30 @@ describe('conversation Trace client', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([undefined, 281])('运行续播游标 %s 与历史基线分开解析', async (afterSeq) => {
+    const snapshot = { type: 'snapshot', snapshot: detail(), replay: true }
+    const event = { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '下一段' }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(new URL(String(input), window.location.origin), init)
+      expect(request.method).toBe('GET')
+      expect(new URL(request.url).pathname).toBe('/api/conversation/thread-trace/runs/run-1/events')
+      expect(request.headers.get('Last-Event-ID')).toBe(afterSeq == null ? null : '281')
+      return new Response((afterSeq == null ? `event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n` : '')
+        + `id: 282\n${afterSeq == null ? 'event: replay\n' : ''}data: ${JSON.stringify(event)}\n\n`, { headers: { 'Content-Type': 'text/event-stream' } })
+    }))
+    const result = []
+    for await (const item of followConversationRun('thread-trace', 'run-1', { includeTaskTrace: true, signal: new AbortController().signal, afterSeq })) result.push(item)
+    expect(result.at(-1)).toMatchObject({ type: 'event', seq: 282, event, replayed: afterSeq == null })
+    expect(result).toHaveLength(afterSeq == null ? 2 : 1)
+    if (afterSeq == null) expect(result[0]).toMatchObject({ type: 'snapshot', replay: true })
+  })
+
+  it('续播缺失基线不能把完整旧视图与增量混合', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => streamResponse({ type: 'RUN_STARTED', threadId: 'thread-trace', runId: 'run-1' })))
+    const stream = followConversationRun('thread-trace', 'run-1', { includeTaskTrace: true, signal: new AbortController().signal })
+    await expect(stream.next()).rejects.toMatchObject({ code: 'stream_event_invalid' })
   })
 
   it('parses the mandatory snapshot before semantic Trace updates', async () => {

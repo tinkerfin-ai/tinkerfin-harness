@@ -13,7 +13,16 @@ from collections.abc import (
 )
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Generic, Never, Self, TypeAlias, TypeVar, cast, overload
+from typing import (
+    TYPE_CHECKING,
+    Generic,
+    Never,
+    Self,
+    TypeAlias,
+    TypeVar,
+    cast,
+    overload,
+)
 
 from tinkerfin_contracts import RunIdentity
 
@@ -96,6 +105,10 @@ _ContextCancelCallback: TypeAlias = Callable[
 CancelCallback: TypeAlias = (
     Callable[[], _CancelResult[ProducedT]] | _ContextCancelCallback[ProducedT]
 )
+if TYPE_CHECKING:
+    from ._agui_channel import AgUiChannel
+
+
 CommittedCallback: TypeAlias = Callable[[MessageEnvelope], Awaitable[None]]
 
 
@@ -1005,6 +1018,25 @@ class Messaging:
         if not registration.settled.done():
             registration.settled.set_result(None)
         self._preflight_tasks.discard(registration)
+
+    def agui_channel(self, *, name: str) -> AgUiChannel:
+        """Create a durable AG-UI channel with automatic protocol handling.
+
+        Args:
+            name: Canonical channel name shared by publishing and reading workers.
+
+        Returns:
+            Typed AG-UI delivery channel borrowing this Messaging lifecycle.
+
+        Raises:
+            MessagingClosed: The parent lifecycle is not open.
+            ImportError: The AG-UI optional dependency is not installed.
+            ValueError: The channel name is invalid.
+        """
+        self._require_open()
+        from . import AgUiChannel
+
+        return AgUiChannel(messaging=self, name=name)
 
     @overload
     def channel(

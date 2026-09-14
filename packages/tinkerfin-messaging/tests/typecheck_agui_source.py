@@ -1,19 +1,18 @@
-"""Static contracts for a directly supplied AG-UI event source."""
+"""Static contracts for the recommended typed AG-UI delivery path."""
+
+from collections.abc import AsyncGenerator
 
 from ag_ui.core import BaseEvent
 
-from tinkerfin_messaging import (
-    MessageSource,
-    ProfiledMessageSource,
-    create_agui_run_source,
-)
+from tinkerfin_messaging import AgUiChannel, MessageSource, ProfiledMessageSource
 
 
-def check_source_types(
+async def check_source_types(
+    channel: AgUiChannel,
     events: ProfiledMessageSource[BaseEvent, BaseEvent],
     unprofiled: MessageSource[BaseEvent],
     wrong_replay: ProfiledMessageSource[BaseEvent, str],
-) -> ProfiledMessageSource[BaseEvent, BaseEvent]:
-    create_agui_run_source(unprofiled)  # pyright: ignore[reportArgumentType]
-    create_agui_run_source(wrong_replay)  # pyright: ignore[reportArgumentType]
-    return create_agui_run_source(events)
+) -> AsyncGenerator[bytes, None]:
+    await channel.open_sse(unprofiled)  # pyright: ignore[reportArgumentType]
+    await channel.open_sse(wrong_replay)  # pyright: ignore[reportArgumentType]
+    return await channel.open_sse(events)

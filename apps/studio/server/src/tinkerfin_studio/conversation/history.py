@@ -18,12 +18,16 @@ from pydantic import (
     field_validator,
 )
 
+from tinkerfin import SseBody
 from tinkerfin.agui import (
     AgUiGraphQuery,
     AgUiHistory,
     AgUiHistoryView,
+    AgUiReplayChannel,
     AgUiTraceGraphPage,
 )
+from tinkerfin_messaging import InvalidCursor as InvalidDeliveryCursor
+from tinkerfin_messaging import MessagingError, RunNotFound, StreamExpired
 from tinkerfin_studio.api.errors import (
     BusinessException,
     ConversationErrorCode,
@@ -40,6 +44,7 @@ from tinkerfin_studio.conversation.schemas import (
     ConversationHistoryGroupConfig,
     ConversationHistoryListItem,
     ConversationHistoryListResponse,
+    ConversationRunSnapshotEvent,
     ConversationTraceErrorEvent,
     ConversationTraceGraphErrorEvent,
     ConversationTraceGraphSnapshotEvent,
@@ -129,12 +134,14 @@ class ConversationHistoryService:
         user_id: int,
         tracer: Tracer,
         todo_group_query: TodoGroupQueryExecutor,
+        conversation_channel: AgUiReplayChannel | None = None,
     ) -> None:
         self._repository = repository
         self._user_id = user_id
         # 读取源与用户作用域在此绑定，快照、分页和跟随均使用同一会话身份
         self._history = AgUiHistory(tracer, namespace=f"ns_{user_id}")
         self._todo_group_query = todo_group_query
+        self._conversation_channel = conversation_channel
 
     async def list_history(
         self,
@@ -207,6 +214,100 @@ class ConversationHistoryService:
         finally:
             if projector is not None:
                 projector.close()
+
+    async def follow_live(
+        self,
+        thread_id: str,
+        *,
+        run_id: str,
+        last_event_id: str | None,
+        include_task_trace: bool = True,
+    ) -> SseBody[bytes]:
+        """读取已授权运行的历史基线并续播，不重新执行模型或业务登记"""
+        thread = await self._require_thread(thread_id)
+        registration = await self._repository.get_run(
+            thread_pk=thread.id, run_id=run_id
+        )
+        if registration is None:
+            raise BusinessException(ConversationErrorCode.RUN_NOT_FOUND)
+        await self._repository.commit()
+        if self._conversation_channel is None:
+            raise RuntimeError("未配置会话续播通道")
+        try:
+            live = await self._history.open_live(
+                thread_id,
+                head_run_id=run_id,
+                channel=self._conversation_channel,
+                last_event_id=last_event_id,
+                projections=(FAILURE_PROJECTION,),
+            )
+        except InvalidDeliveryCursor as error:
+            raise BusinessException(
+                ConversationErrorCode.INVALID_LAST_EVENT_ID
+            ) from error
+        except RunNotFound as error:
+            raise BusinessException(ConversationErrorCode.RUN_NOT_FOUND) from error
+        except StreamExpired as error:
+            raise BusinessException(
+                ConversationErrorCode.MESSAGING_STREAM_EXPIRED
+            ) from error
+        except MessagingError as error:
+            raise SystemException(
+                ConversationErrorCode.MESSAGING_UNAVAILABLE
+            ) from error
+        except ValueError as error:
+            raise BusinessException(
+                ConversationErrorCode.INVALID_LAST_EVENT_ID
+            ) from error
+        except TracingError as error:
+            raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE) from error
+
+        snapshot: ConversationRunSnapshotEvent | None = None
+        body: SseBody[bytes]
+
+        async def prepare_snapshot() -> None:
+            nonlocal snapshot
+            if last_event_id is not None:
+                return
+            projector = (
+                await self._project_task_trace(live.history.trace)
+                if include_task_trace
+                else None
+            )
+            try:
+                task_trace = (
+                    projector.snapshot(
+                        status=live.history.trace.status,
+                        completeness=live.history.trace.completeness,
+                    )
+                    if projector is not None
+                    else None
+                )
+                detail = await self._detail(
+                    thread=thread, history=live.history, task_trace=task_trace
+                )
+                snapshot = ConversationRunSnapshotEvent(
+                    snapshot=detail, replay=live.body is not None
+                )
+                await self._repository.commit()
+            finally:
+                if projector is not None:
+                    projector.close()
+
+        async def iterate() -> AsyncGenerator[bytes, None]:
+            if snapshot is not None:
+                yield (
+                    b"event: snapshot\ndata: "
+                    + snapshot.model_dump_json(by_alias=True).encode()
+                    + b"\n\n"
+                )
+            if live.body is not None:
+                async for chunk in live.body:
+                    yield chunk
+
+        body = SseBody(source_factory=iterate, close=live.aclose)
+        await body.prepare(preflight=prepare_snapshot)
+        return body
 
     async def follow_trace(
         self,

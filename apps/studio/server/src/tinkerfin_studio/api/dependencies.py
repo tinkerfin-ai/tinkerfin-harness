@@ -122,6 +122,7 @@ async def get_conversation_history_service(
         user_id=user.user_id,
         tracer=get_resources(request.app).tracer,
         todo_group_query=get_resources(request.app).todo_group_query,
+        conversation_channel=get_resources(request.app).conversation_channel,
     )
 
 

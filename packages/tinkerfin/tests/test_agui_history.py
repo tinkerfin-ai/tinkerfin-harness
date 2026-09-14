@@ -174,6 +174,12 @@ async def test_history_and_updates_keep_live_tool_identity_after_resume(
     after_view = await reader.get("report")
     after = after_view.trace
     final = after_view.snapshot
+    baseline = await tracer.get(before.key, head_run_id="resume", at_run_start=True)
+    from tinkerfin.agui import AgUiHistoryView
+
+    replay_baseline = AgUiHistoryView(baseline).snapshot
+    assert replay_baseline.messages == exported.messages
+    assert replay_baseline.interactions == exported.interactions
     final_node = next(
         item for item in final.graph.nodes if item.source_id == "save-call"
     )

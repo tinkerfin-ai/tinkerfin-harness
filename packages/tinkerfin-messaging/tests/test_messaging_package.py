@@ -10,10 +10,8 @@ from dataclasses import FrozenInstanceError
 from importlib.metadata import PackageNotFoundError, distribution
 from importlib.resources import files
 from pathlib import Path
-from typing import get_args, get_origin, get_type_hints
 
 import pytest
-from ag_ui.core import BaseEvent
 
 import tinkerfin_messaging
 import tinkerfin_messaging.backend as backend_module
@@ -50,6 +48,7 @@ def test_removed_backend_handle_shapes_are_not_importable() -> None:
 def test_public_namespace_exposes_the_default_tinkerfin_facade() -> None:
     expected = {
         "AgUiCodec",
+        "AgUiChannel",
         "ActiveRunStatus",
         "BackendOwnershipLost",
         "CancelCallback",
@@ -109,7 +108,6 @@ def test_public_namespace_exposes_the_default_tinkerfin_facade() -> None:
         "StreamDeleted",
         "StreamExpired",
         "UnexpectedMessagingBackendError",
-        "create_agui_run_source",
         "is_active_run_status",
         "is_failed_run_status",
         "is_final_run_status",
@@ -129,22 +127,6 @@ def test_backend_extension_contract_is_exposed_only_from_its_module() -> None:
     assert extension_names.isdisjoint(tinkerfin_messaging.__all__)
     assert all(not hasattr(tinkerfin_messaging, name) for name in extension_names)
     assert all(hasattr(backend_contract, name) for name in extension_names)
-
-
-def test_agui_run_source_returns_the_public_profiled_source_contract() -> None:
-    from tinkerfin_messaging.agui import create_agui_run_source
-
-    return_type = get_type_hints(create_agui_run_source)["return"]
-
-    assert get_origin(return_type) is tinkerfin_messaging.ProfiledMessageSource
-
-
-def test_agui_run_source_requires_a_profiled_event_source() -> None:
-    from tinkerfin_messaging.agui import create_agui_run_source
-
-    source_type = get_type_hints(create_agui_run_source)["source"]
-    assert get_origin(source_type) is tinkerfin_messaging.ProfiledMessageSource
-    assert get_args(source_type) == (BaseEvent, BaseEvent)
 
 
 def test_cancel_context_is_an_immutable_public_value() -> None:
@@ -231,7 +213,7 @@ def test_distribution_declares_redis_agui_and_native_extras() -> None:
     ("symbol", "blocked_packages", "extra"),
     (
         ("AgUiCodec", ("ag_ui",), "agui"),
-        ("create_agui_run_source", ("ag_ui",), "agui"),
+        ("AgUiChannel", ("ag_ui",), "agui"),
         ("NativeStreamPartCodec", ("tinkerfin_native_stream",), "native"),
         ("RedisBackend", ("redis",), "redis"),
         ("SqlAlchemyBackend", ("sqlalchemy",), "sqlalchemy"),

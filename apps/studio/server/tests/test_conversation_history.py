@@ -1175,3 +1175,111 @@ async def test_tool_review_uses_same_reference_in_history_graph_and_follow(
             )
         finally:
             await events.aclose()
+
+
+async def test_live_replay_authorizes_run_and_keeps_sse_cursor_separate(
+    session,
+) -> None:
+    from ag_ui.core import (
+        RunFinishedEvent,
+        RunStartedEvent,
+        TextMessageContentEvent,
+        TextMessageStartEvent,
+    )
+
+    from tinkerfin_messaging import AgUiCodec, Messaging
+
+    tracer = Tracer(projections=(ConversationFailureProjection(),))
+    repository = ConversationRepository(session)
+    thread = await _register(
+        repository, user_id=1, thread_id="live-thread", run_id="live-run"
+    )
+    context, trace_session = await _open_trace(
+        tracer, thread_id=thread.thread_id, run_id="live-run"
+    )
+    release = asyncio.Event()
+
+    async def events():
+        yield RunStartedEvent(thread_id=thread.thread_id, run_id="live-run")
+        yield TextMessageStartEvent(message_id="answer", role="assistant")
+        yield TextMessageContentEvent(message_id="answer", delta="首段")
+        await release.wait()
+        yield TextMessageContentEvent(message_id="answer", delta="后续")
+        yield RunFinishedEvent(thread_id=thread.thread_id, run_id="live-run")
+
+    async with Messaging() as messaging:
+        channel = messaging.agui_channel(name="live")
+        owner = await messaging.channel(name="live", codec=AgUiCodec()).open_sse(
+            events(), identity=context.identity, after=0
+        )
+        service = ConversationHistoryService(
+            repository,
+            user_id=1,
+            tracer=tracer,
+            todo_group_query=TodoGroupQueryExecutor(),
+            conversation_channel=channel,
+        )
+        try:
+            # 未授权的会话和未登记运行均不得打开订阅
+            other_user = ConversationHistoryService(
+                repository,
+                user_id=2,
+                tracer=tracer,
+                todo_group_query=TodoGroupQueryExecutor(),
+                conversation_channel=channel,
+            )
+            with pytest.raises(BusinessException) as missing_thread:
+                await other_user.follow_live(
+                    thread.thread_id, run_id="live-run", last_event_id=None
+                )
+            assert missing_thread.value.error_code == ConversationErrorCode.NOT_FOUND
+            with pytest.raises(BusinessException) as missing_run:
+                await service.follow_live(
+                    thread.thread_id, run_id="other", last_event_id=None
+                )
+            assert missing_run.value.error_code == ConversationErrorCode.RUN_NOT_FOUND
+            body = await service.follow_live(
+                thread.thread_id, run_id="live-run", last_event_id=None
+            )
+            try:
+                snapshot = json.loads(
+                    (await anext(body)).decode().split("data: ", 1)[1]
+                )
+                assert snapshot["type"] == "snapshot" and snapshot["replay"] is True
+                assert (
+                    snapshot["snapshot"]["messages"][0]["content"] == "request live-run"
+                )
+                frames = [await anext(body) for _ in range(3)]
+                assert [frame.splitlines()[0] for frame in frames] == [
+                    b"id: 1",
+                    b"id: 2",
+                    b"id: 3",
+                ]
+                assert "首段" in frames[-1].decode()
+                assert not release.is_set()
+            finally:
+                await body.aclose()
+            with pytest.raises(BusinessException) as invalid:
+                await service.follow_live(
+                    thread.thread_id, run_id="live-run", last_event_id="999"
+                )
+            assert (
+                invalid.value.error_code == ConversationErrorCode.INVALID_LAST_EVENT_ID
+            )
+            tail = await service.follow_live(
+                thread.thread_id, run_id="live-run", last_event_id="3"
+            )
+            try:
+                release.set()
+                frames = [frame async for frame in tail]
+                assert [frame.splitlines()[0] for frame in frames] == [
+                    b"id: 4",
+                    b"id: 5",
+                ]
+                assert "后续" in frames[0].decode()
+            finally:
+                await tail.aclose()
+        finally:
+            release.set()
+            await owner.aclose()
+            await _finish_trace(context, trace_session)

@@ -89,6 +89,27 @@ async with view.follow() as updates:
 可能提前结束跟随时使用 `async with`；取消和查询异常会继续传播，关闭跟随不会关闭
 调用方的历史来源。
 
+刷新页面或新设备接续正在运行的会话时，使用 `open_live()`：
+
+```python
+channel = messaging.agui_channel(name="conversations")
+live = await history.open_live(thread_id, channel=channel, head_run_id=run_id)
+try:
+    await send_snapshot(live.history.snapshot, replay=live.body is not None)
+    if live.body is not None:
+        async for frame in live.body:
+            await send_bytes(frame)
+finally:
+    await live.aclose()
+```
+
+`send_snapshot` 与 `send_bytes` 由宿主传输层实现。运行中返回输出前的历史基线，
+随后重播已提交增量并继续接收实时事件；已结束时返回完整历史且 `body=None`。
+同页断网且完整视图仍在时，可传 `last_event_id` 并只消费后续字节；浏览器刷新时应省略。
+历史帧带 SSE `event: replay`，界面应直接恢复其正文，新增正文再逐字显示。
+历史游标与消息 SSE ID 属于不同记录，不能混用。关闭 `live` 只停止读取，不取消后台运行；
+消息已过期或无法读取时显式报错，不重新执行智能体。
+
 ## 流
 
 | API | 用途 |

@@ -107,6 +107,12 @@ class SandboxSettings(BaseModel):
     api_key: SecretStr | None = Field(
         default=None, repr=False, description="OpenSandbox API 密钥"
     )
+    cpu: float = Field(
+        default=1, gt=0, allow_inf_nan=False, description="每个新建沙箱的 CPU 核数上限"
+    )
+    memory_mib: int = Field(
+        default=1024, gt=0, description="每个新建沙箱的内存上限，单位为 MiB"
+    )
     warm_pool_size: int = Field(ge=0, description="全局预热 Sandbox 数量")
     workspace_root: str = Field(
         default="/workspace", description="Agent 文件系统虚拟根目录"
@@ -210,8 +216,14 @@ class Settings(BaseSettings):
     open_sandbox_api_key: SecretStr | None = Field(
         default=None, repr=False, description="OpenSandbox API 密钥"
     )
+    open_sandbox_cpu: float = Field(
+        default=1, gt=0, allow_inf_nan=False, description="每个新建沙箱的 CPU 核数上限"
+    )
+    open_sandbox_memory_mib: int = Field(
+        default=1024, gt=0, description="每个新建沙箱的内存上限，单位为 MiB"
+    )
     open_sandbox_warm_pool_size: int = Field(
-        default=1, ge=0, description="全局预热 Sandbox 数量"
+        default=0, ge=0, description="全局预热沙箱数量；0 表示首次使用时创建"
     )
     open_sandbox_workspace_root: str = Field(
         default="/workspace", min_length=1, description="Agent 文件系统虚拟根目录"
@@ -279,6 +291,8 @@ class Settings(BaseSettings):
             domain=self.open_sandbox_domain,
             protocol=self.open_sandbox_protocol,
             api_key=self.open_sandbox_api_key,
+            cpu=self.open_sandbox_cpu,
+            memory_mib=self.open_sandbox_memory_mib,
             warm_pool_size=self.open_sandbox_warm_pool_size,
             workspace_root=self.open_sandbox_workspace_root,
             state_namespace=self.open_sandbox_state_namespace,

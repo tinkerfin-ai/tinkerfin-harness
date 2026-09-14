@@ -7,16 +7,18 @@ import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 
-from ag_ui.core import BaseEvent, CustomEvent, RunErrorEvent, RunStartedEvent
+from ag_ui.core import (
+    BaseEvent,
+    CustomEvent,
+    RunErrorEvent,
+    RunFinishedEvent,
+    RunStartedEvent,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tinkerfin import AgUiResumeCheckpoint, RunIdentity, SseBody
+from tinkerfin import AgUiResumeCheckpoint, AgUiRunStream, RunIdentity, SseBody
 from tinkerfin_messaging import (
-    AgUiCodec,
-    MessageEnvelope,
-    ProfiledMessageSource,
     PublicationRejected,
-    create_agui_run_source,
     parse_sse_event_id,
 )
 from tinkerfin_messaging.errors import (
@@ -240,6 +242,7 @@ class ConversationChatService:
             if isinstance(intent, StartChatIntent)
             else "",
             model=model,
+            image_model=image_model,
         )
         return PreparedChat(body=body, thread_id=execution.thread.thread_id)
 
@@ -362,7 +365,7 @@ class ConversationChatService:
         prepared: PreparedRunRequest,
         model: AgentModelConfig,
         image_model: AgentModelConfig | None,
-    ) -> ProfiledMessageSource[BaseEvent, BaseEvent]:
+    ) -> AgUiRunStream:
         """创建会话事件流，在执行开始时准备运行资源"""
 
         resume_request = None
@@ -400,31 +403,6 @@ class ConversationChatService:
                 )
                 await repository.commit()
 
-        async def observe_conversation_event(event: BaseEvent) -> BaseEvent:
-            """记录主运行错误并补充标题，重放不会重复执行此回调"""
-
-            if (
-                isinstance(event, RunErrorEvent)
-                and event.code != "cancelled"
-                and AgUiCodec().ends_publication(event, identity=prepared.identity)
-            ):
-                await log_conversation_error(
-                    identity=prepared.identity,
-                    model=model,
-                    image_model=image_model,
-                    code=event.code,
-                    error=events.error,
-                )
-
-            return decorate_main_event(
-                event,
-                prepared=prepared,
-                title=execution.thread.title,
-                title_source=execution.thread.title_source,
-                title_seq=execution.thread.title_seq,
-                title_generation_status=execution.thread.title_generation_status,
-            )
-
         if resume_request is None:
             assert messages is not None
             events = runtime.open_agui_run(
@@ -446,13 +424,11 @@ class ConversationChatService:
                 on_resume_saved=record_resume_checkpoint,
                 on_resume_not_saved=release_resume_claims,
             )
-        return create_agui_run_source(
-            events, transform_event=observe_conversation_event
-        )
+        return events
 
     async def _start_delivery(
         self,
-        events: ProfiledMessageSource[BaseEvent, BaseEvent],
+        events: AgUiRunStream,
         *,
         after: int | None,
         prepared: PreparedRunRequest,
@@ -460,25 +436,38 @@ class ConversationChatService:
         run_preparer: ConversationRunPreparer,
         title_text: str,
         model: AgentModelConfig,
+        image_model: AgentModelConfig | None,
     ) -> AsyncGenerator[bytes, None] | SseBody[bytes]:
         """接入会话事件持久化与重连回放，并返回 SSE 内容"""
 
         title_ready = asyncio.Event()
         owner = False
         title_finished = False
-        codec = AgUiCodec()
 
-        async def title_run_committed(envelope: MessageEnvelope) -> None:
-            """只在当前主运行开始提交后启动标题，附着和重放不会调用"""
+        async def decorate_event(event: BaseEvent) -> BaseEvent:
+            return decorate_main_event(
+                event,
+                prepared=prepared,
+                title=execution.thread.title,
+                title_source=execution.thread.title_source,
+                title_seq=execution.thread.title_seq,
+                title_generation_status=execution.thread.title_generation_status,
+            )
+
+        async def run_started(_event: RunStartedEvent) -> None:
+            title_ready.set()
+
+        async def run_finished(event: RunFinishedEvent | RunErrorEvent) -> None:
             nonlocal title_finished
-            event = codec.decode(envelope.payload)
-            if (
-                isinstance(event, RunStartedEvent)
-                and event.run_id == prepared.identity.run_id
-            ):
-                title_ready.set()
-            if codec.ends_publication(event, identity=prepared.identity):
-                title_finished = True
+            title_finished = True
+            if isinstance(event, RunErrorEvent) and event.code != "cancelled":
+                await log_conversation_error(
+                    identity=prepared.identity,
+                    model=model,
+                    image_model=image_model,
+                    code=event.code,
+                    error=events.error,
+                )
 
         async def activate_ready_source() -> None:
             """在框架 Run 可查询后发布业务 head"""
@@ -506,7 +495,9 @@ class ConversationChatService:
                 events,
                 after=after,
                 on_source_ready=activate_ready_source,
-                on_committed=title_run_committed,
+                transform_event=decorate_event,
+                on_run_started=run_started,
+                on_run_finished=run_finished,
                 on_delivery_not_started=cleanup_not_started,
             )
         except MessagingError as error:

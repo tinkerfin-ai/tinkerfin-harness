@@ -20,12 +20,16 @@ export function useTypewriterText(content: string, source: LiveText | undefined,
   const previous = display.key === key
     ? display.text
     : key ? progress?.get(key) ?? initialContent : content
-  const text = !key ? content : content.startsWith(previous) ? previous : ''
+  const restoredPrefix = content.startsWith(initialContent) ? initialContent : ''
+  const text = !key ? content : content.startsWith(previous) && previous.length >= restoredPrefix.length
+    ? previous : restoredPrefix
 
   useLayoutEffect(() => {
     if (!key || !progress) return
     const saved = progress.get(key) ?? initialContent
-    let offset = content.startsWith(saved) ? saved.length : 0
+    // 服务端恢复的已显示前缀优先于同页尚未播完的旧动画进度
+    let offset = content.startsWith(saved) ? Math.max(saved.length, restoredPrefix.length) : restoredPrefix.length
+    progress.set(key, content.slice(0, offset))
     const remaining = segmenter.segment(content.slice(offset))[Symbol.iterator]()
     let frame: number | undefined
     setDisplay({ key, text: content.slice(0, offset) })
@@ -46,7 +50,7 @@ export function useTypewriterText(content: string, source: LiveText | undefined,
     return () => {
       if (frame !== undefined) window.cancelAnimationFrame(frame)
     }
-  }, [content, key, initialContent, progress, complete])
+  }, [content, key, initialContent, restoredPrefix, progress, complete])
 
   return text
 }
