@@ -184,7 +184,7 @@ jobs:
         run: uv sync --locked --all-packages --no-default-groups --group packaging
       - name: Verify isolated wheel boundaries
         run: >-
-          uv run pytest --noconftest tests/packaging
+          uv run python -m pytest --noconftest tests/packaging
           -m packaging_e2e --durations=10
         env:
           UV_OFFLINE: "true"

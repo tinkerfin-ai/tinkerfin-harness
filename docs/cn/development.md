@@ -61,7 +61,7 @@ Dockerfile 在容器内导出锁定的生产依赖并构建 wheel。
 ## 验证打包
 
 ```bash
-uv run --locked --no-sync pytest --noconftest tests/packaging -m packaging_e2e
+uv run --locked --no-sync python -m pytest --noconftest tests/packaging -m packaging_e2e
 ```
 
 测试覆盖构建残留、当前源码内容、wheel 元数据、许可证、依赖声明和隔离环境安装。

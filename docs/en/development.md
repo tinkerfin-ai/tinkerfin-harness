@@ -69,7 +69,7 @@ The Dockerfile exports locked production dependencies and builds wheels inside D
 ## Validate packaging
 
 ```bash
-uv run --locked --no-sync pytest --noconftest tests/packaging -m packaging_e2e
+uv run --locked --no-sync python -m pytest --noconftest tests/packaging -m packaging_e2e
 ```
 
 The suite checks contaminated build directories, current source contents, wheel metadata,
