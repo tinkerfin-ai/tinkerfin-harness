@@ -3824,6 +3824,7 @@ dependencies = [
     { name = "aiobotocore" },
     { name = "anyio" },
     { name = "asyncmy" },
+    { name = "botocore" },
     { name = "concurrent-log-handler" },
     { name = "deepagents" },
     { name = "fastapi" },
@@ -3858,6 +3859,7 @@ dependencies = [
     { name = "tinkerfin-sandbox", extra = ["sqlalchemy"] },
     { name = "tinkerfin-tracing", extra = ["sqlalchemy"] },
     { name = "types-aiobotocore", extra = ["s3"] },
+    { name = "types-aiobotocore-s3" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -3867,6 +3869,7 @@ requires-dist = [
     { name = "aiobotocore", specifier = ">=3,<4" },
     { name = "anyio", specifier = ">=4,<5" },
     { name = "asyncmy", specifier = "==0.2.14" },
+    { name = "botocore", specifier = ">=1.43.75,<1.44" },
     { name = "concurrent-log-handler", specifier = "==0.9.29" },
     { name = "deepagents", specifier = "==0.7.13" },
     { name = "fastapi", specifier = ">=0.141,<1" },
@@ -3901,6 +3904,7 @@ requires-dist = [
     { name = "tinkerfin-sandbox", extras = ["sqlalchemy"], editable = "packages/tinkerfin-sandbox" },
     { name = "tinkerfin-tracing", extras = ["sqlalchemy"], editable = "packages/tinkerfin-tracing" },
     { name = "types-aiobotocore", extras = ["s3"], specifier = ">=3,<4" },
+    { name = "types-aiobotocore-s3", specifier = ">=3,<4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52,<1" },
 ]
 

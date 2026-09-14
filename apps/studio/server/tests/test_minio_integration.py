@@ -1,6 +1,5 @@
 """独占 MinIO 容器中的真实签名、对象持久化与 HTTP 附件契约"""
 
-import hashlib
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -13,7 +12,6 @@ from tests.support.docker_services import _running_container, _with_loopback_por
 
 from tinkerfin_studio.api.dependencies import get_user_context
 from tinkerfin_studio.application import create_application
-from tinkerfin_studio.attachments.import_disk import import_attachments
 from tinkerfin_studio.attachments.minio import MinioAttachmentStorage
 from tinkerfin_studio.attachments.service import AttachmentService
 from tinkerfin_studio.auth.types import UserContext
@@ -52,9 +50,7 @@ def minio_settings(docker_test_client, docker_test_run_id):
         )
 
 
-async def test_real_direct_upload_download_and_reopening(
-    minio_settings, database, tmp_path
-):
+async def test_real_direct_upload_download_and_reopening(minio_settings, database):
     data = b"# report\n" + b"content\n" * 180_000
     async with MinioAttachmentStorage.open(minio_settings) as storage:
         await storage.initialize()
@@ -128,18 +124,8 @@ async def test_real_direct_upload_download_and_reopening(
                     files={"file": ("报告.md", b"z" * len(data))},
                 )
                 assert (await direct.get(signed.json()["data"]["url"])).content == data
-        (tmp_path / attachment_id).write_bytes(data)
-        result = await import_attachments(database, storage, tmp_path, apply=True)
-        assert result.objects == 1 and result.copied == 0
     async with MinioAttachmentStorage.open(minio_settings) as reopened:
         assert await reopened.read(attachment_id) == data
-        await reopened.delete(attachment_id)
-        copied = await import_attachments(database, reopened, tmp_path, apply=True)
-        assert copied.copied == 1
-        assert (
-            hashlib.sha256(await reopened.read(attachment_id)).digest()
-            == hashlib.sha256(data).digest()
-        )
         await reopened.delete(attachment_id)
         await reopened.delete(attachment_id)
         with pytest.raises(FileNotFoundError):

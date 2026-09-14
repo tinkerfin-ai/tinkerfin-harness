@@ -31,9 +31,9 @@ jobs:
       - name: Install locked workspace
         run: uv sync --locked --all-packages --no-default-groups --group test --group lint --group integration
       - name: Check repository and Studio formatting
-        run: uv run ruff format --check apps/studio/server scripts tests
+        run: uv run ruff format --no-cache --check apps/studio/server scripts tests
       - name: Lint repository and Studio contracts
-        run: uv run ruff check apps/studio/server scripts tests
+        run: uv run ruff check --no-cache apps/studio/server scripts tests
       - name: Test latest-only and Studio behavior
         run: >-
           uv run pytest tests/test_latest_only_contracts.py
@@ -117,12 +117,12 @@ jobs:
       - name: Install locked workspace
         run: uv sync --locked --all-packages --no-default-groups --group test --group lint --group integration
       - name: Check formatting
-        run: uv run ruff format --check packages
+        run: uv run ruff format --no-cache --check packages
       - name: Lint packages
-        run: uv run ruff check packages
+        run: uv run ruff check --no-cache packages
       - name: Check public API docstrings
         run: >-
-          uv run ruff check packages/*/src
+          uv run ruff check --no-cache packages/*/src
           --select D100,D101,D102,D103,D104,D105,D106,D107
       - name: Check repository types
         run: uv run pyright
