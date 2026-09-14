@@ -451,6 +451,27 @@ def test_first_party_projects_declare_every_direct_import_distribution() -> None
 
 
 @pytest.fixture(scope="session")
+def locked_requirements(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Constrain isolated installations to the workspace's verified dependencies."""
+    requirements = tmp_path_factory.mktemp("wheel-constraints") / "requirements.txt"
+    _run(
+        [
+            "uv",
+            "export",
+            "--locked",
+            "--all-packages",
+            "--all-groups",
+            "--no-emit-workspace",
+            "--no-hashes",
+            "--no-header",
+            "--output-file",
+            str(requirements),
+        ]
+    )
+    return requirements
+
+
+@pytest.fixture(scope="session")
 def wheel_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Build current wheels once and verify package metadata and stale-file absence."""
 
@@ -459,6 +480,7 @@ def wheel_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
         [
             sys.executable,
             str(_ROOT / "scripts/build_wheels.py"),
+            "--offline",
             "--out-dir",
             str(output),
         ]
@@ -574,6 +596,7 @@ asyncio.run(smoke())
 def test_isolated_wheel_installation(
     case: _InstallCase,
     wheel_directory: Path,
+    locked_requirements: Path,
     tmp_path: Path,
 ) -> None:
     """Resolve, import, and smoke-test one public installation combination."""
@@ -601,6 +624,9 @@ def test_isolated_wheel_installation(
             "install",
             "--python",
             str(python),
+            "--offline",
+            "--constraint",
+            str(locked_requirements),
             "--find-links",
             str(wheel_directory),
             case.spec,
@@ -661,6 +687,7 @@ def test_studio_deploy_wheel_set_is_self_contained(
             "install",
             "--python",
             str(python),
+            "--offline",
             "--require-hashes",
             "-r",
             str(requirements),

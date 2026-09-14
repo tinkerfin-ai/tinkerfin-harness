@@ -46,3 +46,9 @@ pnpm build
 pnpm exec playwright test tests/browser/conversation-failure.spec.ts
 pnpm exec playwright test --grep @performance --workers=1
 ```
+
+浏览器测试独占本地预览端口，默认使用 4173。端口被占用时可指定其他端口：
+
+```bash
+PLAYWRIGHT_PORT=4273 pnpm test:browser
+```

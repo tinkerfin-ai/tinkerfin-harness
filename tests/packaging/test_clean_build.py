@@ -38,6 +38,7 @@ def _build(root: Path, *projects: str) -> subprocess.CompletedProcess[str]:
         [
             sys.executable,
             str(root / "scripts/build_wheels.py"),
+            "--offline",
             "--out-dir",
             str(root / "dist"),
             *(f"packages/{project}" for project in projects),

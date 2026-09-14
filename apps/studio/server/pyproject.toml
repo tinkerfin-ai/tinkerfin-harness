@@ -51,6 +51,7 @@ dependencies = [
     "reportlab>=4.4,<5",
     "concurrent-log-handler==0.9.29",
     "langchain-ollama==1.1.0",
+    "ollama==0.6.2",
 ]
 
 [project.scripts]

@@ -1,0 +1,33 @@
+name: Docker integrations
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 20 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-integrations-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+
+  docker-integrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.11"
+      - name: Install locked workspace
+        run: uv sync --locked --all-packages --group dev
+      - name: Verify Docker daemon
+        run: docker info
+      - name: Test disposable Docker integrations
+        run: >-
+          uv run pytest -m docker_integration
+          --durations=20 -o faulthandler_timeout=60 -v

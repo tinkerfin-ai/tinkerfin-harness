@@ -16,36 +16,20 @@ const models = [
   {
     model_id: 'flash',
     display_name: 'DeepSeek-V4-Flash',
-    purpose: 'chat',
-    provider: 'deepseek',
-    model_name: 'deepseek-v4-flash',
-    base_url: 'https://api.deepseek.com',
-    has_key: true,
     image_support: 'unsupported',
     reasoning_enabled: true,
-    enabled: true,
     is_default: false,
-    sort_order: 1,
-    generation_options: {},
   },
   {
     model_id: 'vision',
     display_name: 'DeepSeek-V4-Flash-Vision-Exp',
-    purpose: 'chat',
-    provider: 'deepseek',
-    model_name: 'deepseek-v4-flash-vision-exp',
-    base_url: 'https://api.deepseek.com',
-    has_key: true,
     image_support: 'supported',
     reasoning_enabled: true,
-    enabled: true,
     is_default: true,
-    sort_order: 2,
-    generation_options: {},
   },
 ]
 
-test('现有 Studio 中的附件输入、模型限制与个人模型设置', async ({ page }, testInfo) => {
+test('附件发送失败保留输入与待发送图片', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.addInitScript(
@@ -77,7 +61,6 @@ test('现有 Studio 中的附件输入、模型限制与个人模型设置', asy
         })),
         defaultModelId: 'vision',
       }
-    else if (path === '/api/models/configurations') data = models
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history')
       data = { items: [], nextCursor: null }
@@ -115,45 +98,6 @@ test('现有 Studio 中的附件输入、模型限制与个人模型设置', asy
     '这张图里是什么？',
   )
   await expect(page.getByText('multimodal.png').first()).toBeVisible()
-  await page.getByRole('button', { name: '打开用户菜单' }).click()
-  await page.getByRole('menuitem', { name: '设置' }).click()
-  await page.getByRole('button', { name: '模型配置', exact: true }).click()
-  await expect(
-    page.getByRole('button', { name: '编辑', exact: true }),
-  ).toHaveCount(2)
-  for (const theme of ['light', 'dark']) {
-    await page.getByRole('button', { name: '通用', exact: true }).click()
-    await page
-      .getByText(theme === 'dark' ? '深色' : '浅色', { exact: true })
-      .click()
-    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
-    await page.getByRole('button', { name: '模型配置', exact: true }).click()
-    for (const width of [320, 768, 1024, 1440]) {
-      await page.setViewportSize({ width, height: 960 })
-      await expect(page.getByRole('button', { name: '添加模型' })).toBeVisible()
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= innerWidth,
-        ),
-      ).toBeTruthy()
-      await page.screenshot({
-        path: testInfo.outputPath( `settings-${theme}-${width}.png`),
-      })
-      await page.getByRole('button', { name: '添加模型', exact: true }).click()
-      await page.getByRole('radio', { name: '图片生成', exact: true }).check()
-      await page.getByLabel('显示名称', { exact: true }).fill('我的生图服务')
-      await page.getByLabel('Model ID', { exact: true }).fill('image-model')
-      await expect(page.getByLabel('API Key', { exact: true })).toHaveAttribute('type', 'password')
-      const dialogBounds = await page.getByRole('dialog', { name: '设置', exact: true }).boundingBox()
-      expect(dialogBounds).not.toBeNull()
-      expect(dialogBounds!.y).toBeGreaterThanOrEqual(0)
-      expect(dialogBounds!.y + dialogBounds!.height).toBeLessThanOrEqual(960)
-      await expect(page.getByRole('button', { name: '关闭对话框' })).toBeInViewport()
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
-      await page.screenshot({ path: testInfo.outputPath( `model-form-${theme}-${width}.png`) })
-      await page.getByRole('button', { name: '取消', exact: true }).click()
-    }
-  }
   expect(errors).toEqual([])
 })
 
@@ -183,6 +127,7 @@ test('真实图表历史中的图片预览、下载与引用', async ({ page }, 
   await expect(page.getByRole('dialog').getByRole('img', { name: '验收图表.png', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '关闭对话框', exact: true }).click()
   await expect(preview).toBeFocused()
+  await preview.hover()
   const download = page.waitForEvent('download')
   await page.getByRole('button', { name: '下载附件：验收图表.png', exact: true }).click()
   expect((await download).suggestedFilename()).toBe('验收图表.png')

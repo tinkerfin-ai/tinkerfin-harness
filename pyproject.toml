@@ -24,6 +24,7 @@ dev = [
     "ruff>=0.16.1,<0.17.0",
     "sqlalchemy[asyncio]>=2.0.48,<3",
     "testcontainers>=4.15,<5",
+    "pytest-xdist>=3.8,<4",
 ]
 [tool.uv]
 package = false
