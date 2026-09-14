@@ -25,6 +25,17 @@ run independently with `--noconftest` after installing the `packaging` group and
 all workspace packages. Use `uv run --no-sync` after a selective installation to
 keep the selected environment.
 
+### Use the Tsinghua mirror locally
+
+The default installation uses official PyPI. To use the mirror locally, run these commands from the repository root. For a first installation, create `.venv` with `uv venv` first:
+
+```bash
+uv export --locked --all-packages --group dev --output-file /tmp/tinkerfin-dev-requirements.txt > /dev/null
+uv pip sync --default-index https://pypi.tuna.tsinghua.edu.cn/simple /tmp/tinkerfin-dev-requirements.txt
+```
+
+This installs locked versions and verifies the recorded package hashes without changing `uv.lock` or the global index configuration.
+
 ## Validate Studio Web
 
 Run `pnpm test:browser` from `apps/studio/web` to build and run the browser suite.

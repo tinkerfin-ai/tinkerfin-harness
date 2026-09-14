@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -115,7 +114,8 @@ async def test_one_store_accepts_identical_runs_in_distinct_runtime_namespaces()
         assert [writer.key.namespace for writer in writers] == ["user-a", "user-b"]
         assert writers[0].key != writers[1].key
     finally:
-        await asyncio.gather(*(writer.aclose() for writer in writers))
+        for writer in writers:
+            await writer.aclose()
 
 
 async def test_sql_writer_preserves_opaque_utf8_run_and_thread_ids(
@@ -144,11 +144,8 @@ async def test_shared_store_namespaces_keep_writers_quotas_and_deletion_independ
         identities = (_identity(), _identity("beta"))
         writers: list[TraceWriter] = []
         try:
-            writers.extend(
-                await asyncio.gather(
-                    *(store.open_writer(value) for value in identities)
-                )
-            )
+            for identity in identities:
+                writers.append(await store.open_writer(identity))
             for writer, identity in zip(writers, identities, strict=True):
                 assert writer.key.thread == identity.thread
                 assert (await writer.append((_fact(identity),)))[0].trace_seq == 1
@@ -164,7 +161,8 @@ async def test_shared_store_namespaces_keep_writers_quotas_and_deletion_independ
             assert (await store.snapshot(identities[0].thread)).as_of_seq == 1
             assert (await store.snapshot(identities[1].thread)).as_of_seq == 1
         finally:
-            await asyncio.gather(*(writer.aclose() for writer in writers))
+            for writer in writers:
+                await writer.aclose()
         alpha, beta = writers
         await store.delete(alpha.key)
         with pytest.raises(TraceThreadNotFound):
@@ -220,7 +218,8 @@ async def test_sql_opaque_text_roundtrip_preserves_original_writer_order_and_che
                     == checkpoint
                 )
         finally:
-            await asyncio.gather(*(writer.aclose() for writer in writers))
+            for writer in writers:
+                await writer.aclose()
 
 
 async def test_shared_tracer_queries_and_rebuilds_only_the_requested_namespace(
@@ -229,7 +228,8 @@ async def test_shared_tracer_queries_and_rebuilds_only_the_requested_namespace(
     for store in (InMemoryTraceStore(), SqlAlchemyTraceStore(trace_sql_engine)):
         tracer = Tracer(store=store)
         alpha, beta = _identity(), _identity("beta")
-        await asyncio.gather(_record(tracer, alpha), _record(tracer, beta))
+        await _record(tracer, alpha)
+        await _record(tracer, beta)
         for identity in (alpha, beta):
             history = await tracer.get(identity.thread)
             assert history.key.thread == identity.thread

@@ -21,6 +21,17 @@ uv sync --locked --all-packages --group dev
 集成客户端。安装这些客户端不会启动 Docker 服务。安装 `packaging` 组及全部工作区包后，
 打包套件可通过 `--noconftest` 独立运行。选择性安装后使用 `uv run --no-sync`，保持已选择的环境。
 
+### 本地按需使用清华源
+
+默认安装使用官方 PyPI。本地需要镜像时，在仓库根目录执行以下命令；首次安装先运行 `uv venv` 创建 `.venv`：
+
+```bash
+uv export --locked --all-packages --group dev --output-file /tmp/tinkerfin-dev-requirements.txt > /dev/null
+uv pip sync --default-index https://pypi.tuna.tsinghua.edu.cn/simple /tmp/tinkerfin-dev-requirements.txt
+```
+
+该命令按锁定版本安装并校验已记录的包哈希，不修改 `uv.lock` 或全局源配置。
+
 ## 验证 Studio Web
 
 在 `apps/studio/web` 执行 `pnpm test:browser`，构建应用并运行浏览器测试。
