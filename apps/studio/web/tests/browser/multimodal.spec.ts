@@ -101,7 +101,17 @@ test('附件发送失败保留输入与待发送图片', async ({ page }) => {
   expect(errors).toEqual([])
 })
 
-test('真实图表历史中的图片预览、下载与引用', async ({ page }, testInfo) => {
+test('历史消息中用户图片在提示词前、工具图片在工具行后，支持预览下载与引用', async ({ page }, testInfo) => {
+  const inputText = '参考这张图片，生成一张柱状图'
+  const inputContent = [
+    { type: 'text', text: inputText },
+    { type: 'image', file_id: 'input-chart', mime_type: 'image/png', extras: { attachment: { id: 'input-chart', name: '参考图.png', mime_type: 'image/png', size_bytes: 100 } } },
+  ]
+  const displayHistory = {
+    ...history,
+    messages: history.messages.map(message => message.role === 'user' ? { ...message, content: inputContent } : message),
+    graph: { ...history.graph, nodes: history.graph.nodes.map(node => node.kind === 'human_message' ? { ...node, content: inputContent } : node) },
+  }
   await page.addInitScript(user => localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user })), user)
   await page.route('**/{api,objects}/**', async route => {
     const url = new URL(route.request().url())
@@ -111,9 +121,9 @@ test('真实图表历史中的图片预览、下载与引用', async ({ page }, 
     else if (path === '/api/models') data = { items: [{ modelId: history.lastModel, displayName: 'DeepSeek Vision', imageSupport: 'supported', reasoningEnabled: true, isDefault: true }], defaultModelId: history.lastModel }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history') data = { items: [{ ...history, status: 'idle', hasPendingInterrupt: false, updatedAt: new Date().toISOString() }], nextCursor: null }
-    else if (path === `/api/conversation/${history.threadId}/history`) data = history
+    else if (path === `/api/conversation/${history.threadId}/history`) data = displayHistory
     else if (path === `/api/conversation/${history.threadId}/trace`) {
-      await route.fulfill({ contentType: 'text/event-stream', body: `event: trace\ndata: ${JSON.stringify({ type: 'snapshot', snapshot: history })}\n\n` }); return
+      await route.fulfill({ contentType: 'text/event-stream', body: `event: trace\ndata: ${JSON.stringify({ type: 'snapshot', snapshot: displayHistory })}\n\n` }); return
     } else if (path.startsWith('/objects/')) {
       await route.fulfill({ path: resolve(process.cwd(), 'tests/browser/fixtures/chart.png'), contentType: 'image/png' }); return
     }
@@ -124,6 +134,18 @@ test('真实图表历史中的图片预览、下载与引用', async ({ page }, 
   await page.getByRole('button', { name: `打开会话：${history.title}`, exact: true }).click()
   const preview = page.getByRole('button', { name: '放大图片：验收图表.png', exact: true })
   await expect(preview).toBeEnabled()
+  const inputPreview = page.getByRole('button', { name: '放大图片：参考图.png', exact: true })
+  await expect(inputPreview).toBeEnabled()
+  const toolSummary = page.locator('details[data-tool-name="create_file"] > summary')
+  await expect(toolSummary).toBeVisible()
+  const toolImage = preview.getByRole('img')
+  const originalSource = await toolImage.getAttribute('src')
+  await toolSummary.click()
+  await expect(preview).toBeVisible()
+  expect(await toolImage.getAttribute('src')).toBe(originalSource)
+  await toolSummary.click()
+  await expect(preview).toBeVisible()
+  expect(await toolImage.getAttribute('src')).toBe(originalSource)
   await preview.click()
   await expect(page.getByRole('dialog').getByRole('img', { name: '验收图表.png', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '关闭对话框', exact: true }).click()
@@ -143,8 +165,18 @@ test('真实图表历史中的图片预览、下载与引用', async ({ page }, 
     await page.emulateMedia({ reducedMotion: 'reduce' })
     for (const width of [320, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: 960 })
-      await expect(preview).toBeVisible()
+      await inputPreview.scrollIntoViewIfNeeded()
+      const inputBounds = (await inputPreview.boundingBox())!
+      const promptBounds = (await page.getByText(inputText, { exact: true }).boundingBox())!
+      expect(inputBounds.y + inputBounds.height).toBeLessThanOrEqual(promptBounds.y)
+      const userBounds = (await page.getByRole('article').filter({ has: inputPreview }).boundingBox())!
+      expect(inputBounds.x + inputBounds.width).toBeCloseTo(userBounds.x + userBounds.width, 0)
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
+      await page.screenshot({ path: testInfo.outputPath(`input-${theme}-${width}.png`) })
+      await preview.scrollIntoViewIfNeeded()
+      const toolBounds = (await toolSummary.boundingBox())!
+      const imageBounds = (await preview.boundingBox())!
+      expect(toolBounds.y + toolBounds.height).toBeLessThanOrEqual(imageBounds.y)
       await page.screenshot({ path: testInfo.outputPath( `media-${theme}-${width}.png`) })
     }
   }

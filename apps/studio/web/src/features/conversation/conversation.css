@@ -33,6 +33,10 @@
     align-items: flex-end;
   }
 
+  .user-message .message-attachments {
+    justify-content: flex-end;
+  }
+
   .user-message .message-markdown {
     max-width: min(76%, 680px);
     padding: 10px var(--space-4);

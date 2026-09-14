@@ -23,7 +23,7 @@ beforeEach(() => {
   vi.mocked(requestJson).mockImplementation(async (path, options) => {
     if (!options?.method) return { models, connections, providers: presets }
     if (failWrite) throw new Error('保存失败')
-    if (path.endsWith('/models')) return { outcome: 'success', code: 'models_received', items: [{ model_name: 'provider-model', display_name: 'provider-model', image_support: 'unknown' }, { model_name: 'new-model', display_name: 'new-model', image_support: 'unknown' }] }
+    if (path.endsWith('/models')) return { outcome: 'success', code: 'models_received', items: [{ model_name: 'provider-model', display_name: 'provider-model', image_support: 'unknown' }, { model_name: 'new-model', display_name: '新模型', image_support: 'unknown' }] }
     if (path.endsWith('/default')) models = models.map(model => ({ ...model, is_default: true, enabled: true }))
     else if (path.includes('/connections/')) {
       const value = options.body as ConnectionWrite
@@ -37,6 +37,57 @@ beforeEach(() => {
 })
 
 describe('提供方与模型设置', () => {
+  it('搜索名称或 Model ID 同步定位提供方与模型，清空后恢复选择', async () => {
+    connections.push({ ...connection, connection_id: 'local', display_name: '本地服务' })
+    models.push(
+      { ...newModel('local'), model_id: 'qwen', display_name: '中文助手', model_name: 'qwen3:4b' },
+      { ...newModel('local'), model_id: 'other', display_name: '其他模型', model_name: 'other-model' },
+    )
+    render(<ModelSettingsPanel onToast={vi.fn()} />)
+    const search = await screen.findByRole('textbox', { name: '搜索提供方或模型' })
+    for (const query of [' QWEN3:4B ', '中文助手']) {
+      fireEvent.change(search, { target: { value: query } })
+      expect(screen.getByRole('heading', { name: '本地服务' })).toBeVisible()
+      const list = screen.getByRole('region', { name: '模型列表' })
+      expect(within(list).getByText('中文助手')).toBeVisible()
+      expect(within(list).queryByText('其他模型')).not.toBeInTheDocument()
+      expect(within(list).queryByText('我的模型')).not.toBeInTheDocument()
+    }
+    fireEvent.click(screen.getByRole('button', { name: '连接设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '删除提供方' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('删除提供方及其 2 个模型配置')
+    fireEvent.click(within(screen.getByRole('navigation', { name: '模型配置导航' })).getByRole('button', { name: '模型配置' }))
+    const restoredSearch = screen.getByRole('textbox', { name: '搜索提供方或模型' })
+    fireEvent.change(restoredSearch, { target: { value: '本地服务' } })
+    expect(within(screen.getByRole('region', { name: '模型列表' })).getByText('其他模型')).toBeVisible()
+    fireEvent.change(restoredSearch, { target: { value: 'missing' } })
+    expect(screen.getByText('没有匹配的提供方或模型')).toBeVisible()
+    expect(screen.queryByRole('region', { name: '模型列表' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '清除搜索' }))
+    expect(screen.getByRole('heading', { name: '我的服务' })).toBeVisible()
+    expect(writes()).toHaveLength(0)
+  })
+  it('获取模型时按名称或 ID 搜索，隐藏的勾选项仍计数并一并添加', async () => {
+    render(<ModelSettingsPanel onToast={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: '获取模型' }))
+    await screen.findByRole('checkbox', { name: 'new-model' })
+    const search = screen.getByRole('textbox', { name: '搜索模型名称或 Model ID' })
+    fireEvent.change(search, { target: { value: ' NEW-MODEL ' } })
+    expect(screen.queryByRole('checkbox', { name: /provider-model/ })).not.toBeInTheDocument()
+    fireEvent.change(search, { target: { value: '新模型' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'new-model' }))
+    fireEvent.change(search, { target: { value: 'provider-model' } })
+    expect(screen.getByRole('checkbox', { name: /provider-model/ })).toBeDisabled()
+    expect(screen.getByText('已选 1 项')).toBeVisible()
+    fireEvent.change(search, { target: { value: 'missing' } })
+    expect(screen.getByText('没有匹配的模型')).toBeVisible()
+    expect(screen.queryByText('服务没有返回模型，可手动添加')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '清除搜索' }))
+    expect(screen.getByRole('checkbox', { name: 'new-model' })).toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: '添加所选模型' }))
+    await waitFor(() => expect(writes()).toHaveLength(2))
+    expect(writes()[1][1]?.body).toEqual([expect.objectContaining({ model_name: 'new-model', connection_id: 'shared' })])
+  })
   it('面包屑展示提供方和当前模型，上级入口返回提供方模型列表', async () => {
     render(<ModelSettingsPanel onToast={vi.fn()} />)
     fireEvent.click(await screen.findByRole('button', { name: '配置模型 我的模型' }))

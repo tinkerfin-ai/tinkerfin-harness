@@ -143,7 +143,6 @@ function SubagentToolTraceRow({
 }) {
   return (
     <>
-    <AttachmentList attachments={message.attachments} />
     <ToolCallRow
       message={message}
       className="subagent-tool-row"
@@ -152,6 +151,7 @@ function SubagentToolTraceRow({
     >
       <ToolDetails message={message} />
     </ToolCallRow>
+    <AttachmentList attachments={message.attachments} />
     </>
   )
 }
@@ -305,8 +305,8 @@ function MessageBlockView({
   if (message.role === 'user') {
     return (
       <article id={message.id} className="message user-message">
-        <MarkdownContent content={message.content} className="message-markdown" />
         <AttachmentList attachments={message.attachments} />
+        <MarkdownContent content={message.content} className="message-markdown" />
         <MessageActionRow content={message.content} kind="user" />
       </article>
     )
@@ -361,12 +361,12 @@ export function ToolCallCard({ message, className }: { message: Message; classNa
         : t('未生成任务清单')
   return (
     <>
-    <AttachmentList attachments={message.attachments} />
     <ToolCallRow message={message} open={open} onOpenChange={setOpen} className={`tool-card${className ? ` ${className}` : ''}`}>
       {isTodoUpdate
         ? <div className="todo-trace-tool-status">{todoStatus}</div>
         : <ToolDetails message={message} />}
     </ToolCallRow>
+    <AttachmentList attachments={message.attachments} />
     </>
   )
 }

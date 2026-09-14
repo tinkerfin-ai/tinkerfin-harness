@@ -51,6 +51,8 @@ export const englishMessages = {
   "默认对话模型": "Default chat model",
   "未设置": "Not set",
   "搜索提供方或模型": "Search providers or models",
+  "搜索模型名称或 Model ID": "Search model names or Model IDs",
+  "没有匹配的模型": "No matching models",
   "{count} 个模型": "{count} models",
   "没有匹配的提供方或模型": "No matching providers or models",
   "配置模型 {name}": "Configure {name}",

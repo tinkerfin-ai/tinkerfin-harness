@@ -248,6 +248,25 @@ const tool: Message = {
   },
 }
 describe('生成结果布局', () => {
+  it('用户附件位于提示词之前，复制操作仍位于消息末尾', async () => {
+    render(<MessageBlock message={{ id: 'user', role: 'user', content: '参考这张图片', createdAt: '', attachments: [cat, chart] }} />)
+    const prompt = screen.getByText('参考这张图片')
+    for (const attachment of [cat, chart]) {
+      const image = await screen.findByRole('img', { name: attachment.name })
+      expect(image.compareDocumentPosition(prompt) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    }
+    expect(prompt.compareDocumentPosition(screen.getByRole('group', { name: '消息操作' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+  it('工具返回图片时保留原工具行，图片位于工具之后且不等待最终文字', async () => {
+    const { rerender } = render(<MessageBlock message={{ ...tool, attachments: [], meta: { ...tool.meta, status: 'running' } }} />)
+    const row = screen.getByText('generate_image · cat')
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    rerender(<MessageBlock message={tool} />)
+    const image = await screen.findByRole('img', { name: cat.name })
+    expect(screen.getByText('generate_image · cat')).toBe(row)
+    expect(row.compareDocumentPosition(image) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(attachmentBlob).toHaveBeenCalledOnce()
+  })
   it('主工具及连续工具展开收起时保留同一图片，不显示空输出', async () => {
     const user = userEvent.setup()
     render(
@@ -257,11 +276,17 @@ describe('生成结果布局', () => {
     )
     const img = await screen.findByRole('img', { name: cat.name })
     const details = screen.getAllByText('generate_image · cat')[0]
+    const secondDetails = screen.getAllByText('generate_image · cat')[1]
+    const secondImage = await screen.findByRole('img', { name: chart.name })
+    expect(details.compareDocumentPosition(img) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(img.compareDocumentPosition(secondDetails) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(secondDetails.compareDocumentPosition(secondImage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     await user.click(details)
     expect(screen.queryByText('输出')).not.toBeInTheDocument()
     expect(screen.getByRole('img', { name: cat.name })).toBe(img)
     await user.click(details)
     expect(screen.getByRole('img', { name: cat.name })).toBe(img)
+    expect(attachmentBlob).toHaveBeenCalledTimes(2)
   })
   it('子Agent工具及最终输出图片与文字详情保持独立', async () => {
     const user = userEvent.setup()
@@ -280,6 +305,7 @@ describe('生成结果布局', () => {
     )
     await user.click(screen.getByText('Task'))
     const img = await screen.findByRole('img', { name: cat.name })
+    expect(screen.getByText('generate_image · cat').compareDocumentPosition(img) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     await user.click(screen.getByText('generate_image · cat'))
     expect(screen.getByRole('img', { name: cat.name })).toBe(img)
     expect(screen.getByRole('img', { name: chart.name })).toBeVisible()
