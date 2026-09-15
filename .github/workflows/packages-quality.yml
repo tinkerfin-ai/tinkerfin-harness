@@ -40,6 +40,9 @@ jobs:
         working-directory: apps/studio/web
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.16"
       - uses: pnpm/action-setup@v4
         with:
           version: 10.8.0
@@ -51,7 +54,7 @@ jobs:
       - name: Install locked web dependencies
         run: pnpm install --frozen-lockfile
       - name: Test web behavior
-        run: bash ../../../scripts/verify-studio-web.sh --skip-browser
+        run: python "${{ github.workspace }}/scripts/studio_checks.py" web-no-browser
 
   web-browser:
     runs-on: ubuntu-24.04
