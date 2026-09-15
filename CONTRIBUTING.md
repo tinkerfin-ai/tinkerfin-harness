@@ -40,6 +40,37 @@ Browser tests build the application and start their own preview server. Keep por
 
 When running selected tests with `pnpm exec playwright test` directly, run `pnpm build` first.
 
+## Local Git checks
+
+Enable the repository hooks once after cloning:
+
+```bash
+./scripts/install-git-hooks.sh
+```
+
+On Windows PowerShell, use:
+
+```powershell
+.\scripts\install-git-hooks.ps1
+```
+
+`git commit` then runs staged-file formatting, lint checks and directly related unit tests.
+`git push` runs the complete Studio server and web verification, including the web build and
+browser tests. The complete check can also be run manually from the repository root:
+
+```bash
+./scripts/verify-studio.sh
+```
+
+The equivalent PowerShell command is:
+
+```powershell
+.\scripts\verify-studio.ps1
+```
+
+The hooks are local convenience checks and can be bypassed with Git's `--no-verify` option;
+the repository's required CI checks remain authoritative for changes sent to the remote.
+
 ## License
 
 Contributions use the license of the affected package or directory. Preserve third-party license and notice files; see [LICENSE](LICENSE).

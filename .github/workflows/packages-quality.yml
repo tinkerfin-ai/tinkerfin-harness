@@ -31,14 +31,7 @@ jobs:
       - name: Install locked workspace
         run: uv sync --locked --all-packages --no-default-groups --group test --group lint --group integration
       - name: Check repository and Studio formatting
-        run: uv run ruff format --no-cache --check apps/studio/server scripts tests
-      - name: Lint repository and Studio contracts
-        run: uv run ruff check --no-cache apps/studio/server scripts tests
-      - name: Test latest-only and Studio behavior
-        run: >-
-          uv run pytest tests/test_latest_only_contracts.py
-          tests/test_docker_services.py
-          apps/studio/server --durations=10
+        run: ./scripts/verify-studio-server.sh
 
   web:
     runs-on: ubuntu-24.04
@@ -58,9 +51,7 @@ jobs:
       - name: Install locked web dependencies
         run: pnpm install --frozen-lockfile
       - name: Test web behavior
-        run: pnpm test
-      - name: Lint web source
-        run: pnpm lint
+        run: bash ../../scripts/verify-studio-web.sh --skip-browser
 
   web-browser:
     runs-on: ubuntu-24.04

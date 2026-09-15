@@ -14,8 +14,8 @@ from tinkerfin.tools import ToolRuntime
 from tinkerfin_sandbox import OpenSandboxFileTooLargeError, RootedOpenSandboxBackend
 from tinkerfin_studio.attachments.documents import DocumentProcessor
 from tinkerfin_studio.attachments.processing import MAX_FILE_BYTES
-from tinkerfin_studio.attachments.sandbox_tools import build_sandbox_attachment_tools
 from tinkerfin_studio.attachments.service import AttachmentService
+from tinkerfin_studio.attachments.workspace_tools import build_sandbox_attachment_tools
 
 
 @pytest.fixture

@@ -24,6 +24,8 @@ type Preview =
   | { phase: 'failed'; reason?: PreviewFailure }
   | { phase: 'ready'; content: Content }
 
+const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+
 export function DocumentAttachmentPreview({
   attachment,
   attachments = [attachment],
@@ -50,7 +52,7 @@ export function DocumentAttachmentPreview({
     let objectUrl: string | undefined
     async function load() {
       const format = documentFormat(attachment.mime_type)
-      if (!format) {
+      if (!format || format === 'pptx') {
         setPreview({ phase: 'unsupported' })
         return
       }
@@ -87,6 +89,7 @@ export function DocumentAttachmentPreview({
     }
   }, [attachment.id, attachment.mime_type, attachment.size_bytes, attempt, tableLabelId])
   const content = preview.phase === 'ready' ? preview.content : undefined
+  const isPptx = attachment.mime_type === PPTX_MIME
   const failure = preview.phase === 'failed' && preview.reason === 'size'
     ? t('文档超出预览限制，请下载查看')
     : preview.phase === 'failed' && preview.reason === 'timeout'
@@ -101,6 +104,8 @@ export function DocumentAttachmentPreview({
         ? 'Markdown'
         : format === 'pdf'
           ? 'PDF'
+          : isPptx
+            ? 'PPTX'
           : t('未知文件')
   return (
     <Dialog
@@ -162,8 +167,8 @@ export function DocumentAttachmentPreview({
           {preview.phase === 'loading' && <p role="status">{t('正在加载文档…')}</p>}
           {preview.phase === 'unsupported' && <div className="attachment-document-unavailable">
             <AttachmentFileIcon attachment={attachment} />
-            <h3>{t('此格式无法在线预览')}</h3>
-            <p>{t('文件本身没有损坏，请下载后使用对应应用打开')}</p>
+            <h3>{isPptx ? t('PPTX 暂不支持在线预览') : t('此格式无法在线预览')}</h3>
+            <p>{isPptx ? t('请下载后使用 PowerPoint 或 WPS 打开') : t('文件本身没有损坏，请下载后使用对应应用打开')}</p>
             <Button type="button" variant="primary" leadingIcon={<Download size={16} />} loading={download.pending} onClick={() => void download.download()}>
               {t('下载文件')}
             </Button>

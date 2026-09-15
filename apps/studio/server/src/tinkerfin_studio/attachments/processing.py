@@ -21,6 +21,7 @@ MIME_TYPES = {
     "pdf": "application/pdf",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "md": "text/markdown",
     "markdown": "text/markdown",
 }
@@ -56,7 +57,7 @@ def validate_file(name: str, data: bytes) -> str:
     extension = name.rsplit(".", 1)[-1].lower()
     mime = MIME_TYPES.get(extension)
     if mime is None:
-        raise ValueError("仅支持图片、Markdown、PDF、DOCX 和 XLSX")
+        raise ValueError("仅支持图片、Markdown、PDF、DOCX、XLSX 和 PPTX")
     if mime.startswith("image/"):
         with Image.open(io.BytesIO(data)) as image:
             actual = Image.MIME.get(image.format or "")
@@ -77,9 +78,11 @@ def validate_file(name: str, data: bytes) -> str:
                     or sum(m.file_size for m in members) > 50 * 1024 * 1024
                 ):
                     raise ValueError("文档解压后过大，请拆分文件")
-                expected = (
-                    "word/document.xml" if extension == "docx" else "xl/workbook.xml"
-                )
+                expected = {
+                    "docx": "word/document.xml",
+                    "xlsx": "xl/workbook.xml",
+                    "pptx": "ppt/presentation.xml",
+                }[extension]
                 if expected not in archive.namelist() or any(
                     m.flag_bits & 1 for m in members
                 ):

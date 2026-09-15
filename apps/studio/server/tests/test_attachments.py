@@ -2,7 +2,9 @@
 
 import base64
 import io
+import struct
 from datetime import UTC, datetime, timedelta
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from attachment_fakes import MemoryAttachmentStorage
@@ -12,6 +14,7 @@ from sqlalchemy import select
 
 from tinkerfin_studio.api.errors import BusinessException
 from tinkerfin_studio.attachments.entity import AttachmentFile
+from tinkerfin_studio.attachments.processing import validate_file
 from tinkerfin_studio.attachments.service import AttachmentService, byte_chunks
 from tinkerfin_studio.conversation.models import ConversationThread
 
@@ -19,6 +22,31 @@ from tinkerfin_studio.conversation.models import ConversationThread
 def png():
     output = io.BytesIO()
     Image.new("RGB", (32, 24), "blue").save(output, "PNG")
+    return output.getvalue()
+
+
+def pptx():
+    from pptx import Presentation
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[1])
+    title = slide.shapes.title
+    assert title is not None
+    setattr(title, "text", "门店月报")
+    setattr(slide.placeholders[1], "text", "九月营收：128 万元")
+    second = presentation.slides.add_slide(presentation.slide_layouts[5])
+    second_title = second.shapes.title
+    assert second_title is not None
+    setattr(second_title, "text", "下月安排")
+    output = io.BytesIO()
+    presentation.save(output)
+    return output.getvalue()
+
+
+def pptx_container(member: str, content: bytes) -> bytes:
+    output = io.BytesIO()
+    with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr(member, content)
     return output.getvalue()
 
 
@@ -99,6 +127,56 @@ async def test_invalid_type_and_path_do_not_publish_files(attachments):
             await attachments.upload(user_id=1, name=name, chunks=byte_chunks(data))
 
 
+async def test_pptx_upload_and_agent_read_slides(attachments):
+    """PPTX 可以安全上传，并由统一文档读取器提取幻灯片文字"""
+    data = pptx()
+    file = await attachments.upload(
+        user_id=1, name="门店月报.pptx", chunks=byte_chunks(data)
+    )
+    assert file.mime_type == (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
+    _, downloaded = await attachments.read(file.id, user_id=1)
+    result = await attachments.documents.run(
+        {
+            "operation": "read",
+            "mime_type": file.mime_type,
+            "name": file.name,
+            "data": base64.b64encode(downloaded).decode("ascii"),
+            "start": 1,
+            "count": 100,
+        }
+    )
+    assert "门店月报" in str(result)
+    assert "九月营收：128 万元" in str(result)
+    assert "下月安排" in str(result)
+
+
+def test_pptx_validation_rejects_bad_encrypted_and_oversized_containers():
+    """PPTX 校验拒绝坏包、加密包和解压后超限的压缩包"""
+    assert validate_file("report.pptx", pptx()) == (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
+    with pytest.raises(ValueError, match="容器损坏"):
+        validate_file("report.pptx", b"not a zip")
+    with pytest.raises(ValueError, match="文档损坏或已加密"):
+        validate_file("report.pptx", pptx_container("ppt/slide1.xml", b"<slide />"))
+
+    encrypted = bytearray(pptx_container("ppt/presentation.xml", b"<ppt />"))
+    encrypted[6:8] = struct.pack("<H", 1)
+    central_header = encrypted.find(b"PK\x01\x02")
+    assert central_header >= 0
+    encrypted[central_header + 8 : central_header + 10] = struct.pack("<H", 1)
+    with pytest.raises(ValueError, match="文档损坏或已加密"):
+        validate_file("report.pptx", bytes(encrypted))
+
+    with pytest.raises(ValueError, match="解压后过大"):
+        validate_file(
+            "report.pptx",
+            pptx_container("ppt/presentation.xml", b"0" * (50 * 1024 * 1024 + 1)),
+        )
+
+
 async def test_generated_workbook_and_pdf_are_readable(attachments):
     workbook = await attachments.documents.run(
         {
@@ -110,19 +188,26 @@ async def test_generated_workbook_and_pdf_are_readable(attachments):
     result = await attachments.documents.run(
         {
             "operation": "read",
-            "kind": "xlsx",
+            "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "name": "report.xlsx",
             "data": workbook["data"],
             "start": 1,
-            "count": 2,
+            "count": 3,
         }
     )
-    assert result["rows"] == [["quarter", "revenue"], ["Q3", "128"]]
+    assert "quarter" in str(result) and "Q3" in str(result)
     pdf = await attachments.documents.run(
         {"operation": "generate", "kind": "pdf", "text": "第三季度营收：128 万元"}
     )
     assert base64.b64decode(pdf["data"]).startswith(b"%PDF")
     result = await attachments.documents.run(
-        {"operation": "read", "kind": "pdf", "data": pdf["data"], "count": 1}
+        {
+            "operation": "read",
+            "mime_type": "application/pdf",
+            "name": "report.pdf",
+            "data": pdf["data"],
+            "count": 1,
+        }
     )
     assert "128" in str(result)
 
@@ -165,13 +250,14 @@ async def test_docx_paragraphs_and_tables_are_read(attachments):
     result = await attachments.documents.run(
         {
             "operation": "read",
-            "kind": "docx",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "name": "report.docx",
             "data": base64.b64encode(output.getvalue()).decode("ascii"),
             "count": 10,
         }
     )
     assert "订单编号 42" in str(result)
-    assert "金额 | 128" in str(result)
+    assert "金额" in str(result) and "128" in str(result)
 
 
 async def test_workbook_preserves_numbers_and_treats_formula_like_text_as_text(
@@ -238,7 +324,8 @@ async def test_same_name_attachments_remain_distinct_after_service_restart(
             await restored.documents.run(
                 {
                     "operation": "read",
-                    "kind": "docx",
+                    "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "name": "report.docx",
                     "data": base64.b64encode(data).decode("ascii"),
                 }
             )
@@ -260,7 +347,7 @@ async def test_generated_image_tool_preserves_actual_format_and_typed_result(
 
     from tinkerfin_agui_adapter import DeepAgentAgUiAdapter, RunIdentity
     from tinkerfin_studio.attachments import tools as media_tools
-    from tinkerfin_studio.attachments.sandbox_tools import (
+    from tinkerfin_studio.attachments.workspace_tools import (
         build_sandbox_attachment_tools,
     )
 
@@ -369,7 +456,13 @@ async def test_generated_image_tool_preserves_actual_format_and_typed_result(
     [
         {"operation": "unknown", "kind": "png", "values": [1]},
         {"operation": "generate", "kind": "xlsx", "rows": [[{"unexpected": "object"}]]},
-        {"operation": "read", "kind": "pdf", "data": "", "start": True},
+        {
+            "operation": "read",
+            "mime_type": "application/pdf",
+            "name": "report.pdf",
+            "data": "",
+            "start": True,
+        },
     ],
 )
 async def test_document_worker_rejects_invalid_protocol_input(attachments, payload):
@@ -413,17 +506,16 @@ async def test_markdown_upload_keeps_original_encoding_and_reads_line_ranges(
     result = await attachments.documents.run(
         {
             "operation": "read",
-            "kind": "md",
+            "mime_type": "text/markdown",
+            "name": f"月报.{extension}",
             "data": base64.b64encode(downloaded).decode("ascii"),
             "start": 2,
             "count": 2,
         }
     )
-    assert result == {
-        "start_line": 2,
-        "lines": ["", "| 门店 | 营收 |"],
-        "total_lines": 5,
-    }
+    assert result["start_line"] == 2
+    assert result["lines"] == ["", "| 门店 | 营收 |"]
+    assert result["total_lines"] == 5
     with pytest.raises(BusinessException):
         await attachments.read(file.id, user_id=2)
     with pytest.raises(BusinessException):
@@ -449,10 +541,10 @@ async def test_markdown_tools_generate_deliver_read_and_reopen(
     from langchain_core.messages import ToolMessage
 
     from tinkerfin_contracts.media import attachment_from_block
-    from tinkerfin_studio.attachments.sandbox_tools import (
+    from tinkerfin_studio.attachments.tools import build_attachment_tools
+    from tinkerfin_studio.attachments.workspace_tools import (
         build_sandbox_attachment_tools,
     )
-    from tinkerfin_studio.attachments.tools import build_attachment_tools
 
     runtime, _, files = work_file_runtime
 

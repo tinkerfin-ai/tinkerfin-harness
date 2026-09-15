@@ -15,10 +15,12 @@ from PIL import Image
 from tinkerfin_studio.api.errors import BusinessException
 from tinkerfin_studio.attachments.documents import DocumentProcessor
 from tinkerfin_studio.attachments.processing import MAX_FILE_BYTES
-from tinkerfin_studio.attachments.sandbox_tools import build_sandbox_attachment_tools
 from tinkerfin_studio.attachments.service import AttachmentService, byte_chunks
 from tinkerfin_studio.attachments.tools import build_attachment_tools
-from tinkerfin_studio.attachments.work_files import save_work_file
+from tinkerfin_studio.attachments.workspace_tools import (
+    build_sandbox_attachment_tools,
+    save_work_file,
+)
 
 
 @pytest.mark.parametrize("source", ["generate", "capture", "import"])

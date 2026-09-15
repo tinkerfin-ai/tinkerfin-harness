@@ -120,7 +120,7 @@ async def test_workspace_image_read_respects_declared_model_capability(
 
     from tinkerfin import TinkerFin
     from tinkerfin_studio.attachments.documents import DocumentProcessor
-    from tinkerfin_studio.attachments.work_files import save_work_file
+    from tinkerfin_studio.attachments.workspace_tools import save_work_file
 
     _, workspace, files = work_file_runtime
     saved = await save_work_file(

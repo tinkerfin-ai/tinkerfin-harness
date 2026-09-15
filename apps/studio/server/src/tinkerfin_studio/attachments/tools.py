@@ -14,7 +14,7 @@ from tinkerfin_sandbox import RootedOpenSandboxBackend
 from tinkerfin_studio.attachments.documents import DocumentProcessor
 from tinkerfin_studio.attachments.generation import generate_image_bytes
 from tinkerfin_studio.attachments.service import AttachmentService
-from tinkerfin_studio.attachments.work_files import save_work_file
+from tinkerfin_studio.attachments.workspace_tools import save_work_file
 from tinkerfin_studio.models.schemas import AgentModelConfig
 
 
@@ -55,15 +55,14 @@ def build_attachment_tools(
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
     async def read_attachment(
-        attachment_id: str, start: int = 1, count: int = 20, sheet: str | None = None
+        attachment_id: str, start: int = 1, count: int = 20
     ) -> str:
-        """读取附件中的 Markdown 行、PDF 页、Word 段落或 Excel 行
+        """读取附件经统一解析器转换后的文档内容片段
 
         Args:
             attachment_id: 当前会话附件标识
-            start: 从 1 开始的页、段落或行号，Markdown 按原文行号读取
-            count: 读取数量，最多 100 项，PDF 单次最多 10 页
-            sheet: Excel 工作表名称，留空读取首张表
+            start: 从 1 开始的内容行号
+            count: 读取数量，最多 100 行
 
         Returns:
             包含读取内容及位置的 JSON 对象
@@ -81,13 +80,11 @@ def build_attachment_tools(
         result = await processor.run(
             {
                 "operation": "read",
-                "kind": "md"
-                if file.mime_type == "text/markdown"
-                else file.name.rsplit(".", 1)[-1].lower(),
+                "mime_type": file.mime_type,
+                "name": file.name,
                 "data": base64.b64encode(data).decode("ascii"),
                 "start": start,
                 "count": count,
-                "sheet": sheet,
             }
         )
         return json.dumps(result, ensure_ascii=False)

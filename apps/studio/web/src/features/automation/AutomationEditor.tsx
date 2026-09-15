@@ -124,7 +124,7 @@ export function AutomationEditor({ task, trigger, onSave, onClose, defaultModelI
           </div>}
           <div className="automation-prompt-tools">
             <IconButton size="sm" label={t('添加参考文件')} loading={uploading} icon={<Paperclip size={18} />} onClick={() => fileRef.current?.click()} />
-            <input ref={fileRef} type="file" multiple hidden accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.md,.markdown" onChange={event => {
+            <input ref={fileRef} type="file" multiple hidden accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.md,.markdown" onChange={event => {
               void upload(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ''
             }} />
             {renderModelChoice(draft.modelId, value => update('modelId', value))}

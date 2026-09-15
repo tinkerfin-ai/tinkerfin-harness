@@ -11,36 +11,32 @@ import sys
 from typing import Annotated, Literal
 from xml.sax.saxutils import escape
 
-from docx import Document
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
-from pypdf import PdfReader
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
+from tinkerfin_studio.attachments.documents import DOCUMENT_READERS, ReadContext
 from tinkerfin_studio.attachments.processing import (
     MAX_FILE_BYTES,
     image_variant,
-    markdown_text,
 )
 
 
 class _ReadDocument(BaseModel):
-    """子进程读取请求，限制文件类型和一次读取的范围"""
+    """子进程读取请求，使用服务端确认的 MIME 类型选择解析器"""
 
     model_config = ConfigDict(extra="forbid")
     operation: Literal["read"]
-    kind: Literal["pdf", "docx", "xlsx", "md"]
+    mime_type: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=255)
     data: str = Field(max_length=14_000_000, description="原文件的Base64内容")
-    start: int = Field(
-        default=1, ge=1, strict=True, description="从1开始的页、段落或行号"
-    )
-    count: int = Field(default=20, ge=1, le=100, strict=True)
-    sheet: str | None = Field(default=None, max_length=255)
+    start: int = Field(default=1, ge=1, strict=True, description="从1开始的内容行号")
+    count: int = Field(default=20, ge=1, le=100, strict=True, description="读取行数")
 
 
 class _GenerateDocument(BaseModel):
@@ -89,76 +85,17 @@ def preview_image(payload: _ImagePreview) -> dict[str, JsonValue]:
 
 
 def read_document(payload: _ReadDocument) -> dict[str, JsonValue]:
-    """只提取指定页或单元格范围，最终输出受子进程总量限制"""
-    stream = io.BytesIO(base64.b64decode(payload.data, validate=True))
-    kind = payload.kind
-    start = payload.start
-    count = payload.count
-    if (
-        not isinstance(start, int)
-        or not isinstance(count, int)
-        or start < 1
-        or count < 1
-        or count > 100
-    ):
-        raise ValueError("读取起点和数量不合法，最多读取 100 项")
-    if kind == "pdf":
-        reader = PdfReader(stream)
-        if reader.is_encrypted:
-            raise ValueError("暂不支持加密 PDF")
-        if len(reader.pages) > 500:
-            raise ValueError("PDF 超过 500 页，请拆分文件")
-        pages: list[JsonValue] = []
-        for i in range(start - 1, min(start - 1 + min(count, 10), len(reader.pages))):
-            text = reader.pages[i].extract_text() or ""
-            if not text.strip():
-                raise ValueError(f"第 {i + 1} 页没有可提取文字，扫描版 PDF 暂不支持")
-            pages.append({"page": i + 1, "text": text[:5000]})
-        return {"pages": pages, "total_pages": len(reader.pages)}
-    if kind == "docx":
-        doc = Document(stream)
-        lines = [p.text for p in doc.paragraphs]
-        for table in doc.tables:
-            lines.extend(" | ".join(c.text for c in row.cells) for row in table.rows)
-        return {
-            "paragraphs": [
-                text[:1000] for text in lines[start - 1 : start - 1 + count]
-            ],
-            "total_paragraphs": len(lines),
-        }
-    if kind == "md":
-        lines = markdown_text(stream.getvalue()).splitlines()
-        return {
-            "start_line": start,
-            "lines": [line for line in lines[start - 1 : start - 1 + count]],
-            "total_lines": len(lines),
-        }
-    if kind == "xlsx":
-        workbook = load_workbook(stream, read_only=True, data_only=True)
-        try:
-            sheet = workbook[payload.sheet or workbook.sheetnames[0]]
-            rows: list[JsonValue] = [
-                [str(v)[:1000] if v is not None else "" for v in row]
-                for row in sheet.iter_rows(
-                    min_row=start,
-                    max_row=start + count - 1,
-                    max_col=20,
-                    values_only=True,
-                )
-            ]
-            for row in rows:
-                while isinstance(row, list) and row and row[-1] == "":
-                    row.pop()
-            return {
-                "sheet": sheet.title,
-                "sheets": [name for name in workbook.sheetnames],
-                "start_row": start,
-                "rows": rows,
-                "note": "公式使用文件保存时的缓存值，不执行重算；最多返回 20 列",
-            }
-        finally:
-            workbook.close()
-    raise ValueError("当前文件不支持文档读取")
+    """通过 MIME 注册表读取有界内容，最终输出受子进程总量限制"""
+    reader = DOCUMENT_READERS.create(payload.mime_type)
+    return reader.read(
+        ReadContext(
+            name=payload.name,
+            mime_type=payload.mime_type,
+            data=base64.b64decode(payload.data, validate=True),
+            start=payload.start,
+            count=payload.count,
+        )
+    )
 
 
 def generate(payload: _GenerateDocument) -> dict[str, JsonValue]:

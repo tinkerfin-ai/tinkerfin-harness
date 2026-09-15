@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+exec "$ROOT_DIR/scripts/check-staged.sh"

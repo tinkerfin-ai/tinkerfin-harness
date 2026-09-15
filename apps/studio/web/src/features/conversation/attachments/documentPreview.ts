@@ -5,7 +5,7 @@ export const DOCUMENT_PREVIEW_COLUMNS = 20
 export const DOCUMENT_PREVIEW_CELL_CHARACTERS = 500
 export const DOCUMENT_PREVIEW_TIMEOUT = 15_000
 
-export type DocumentFormat = 'markdown' | 'pdf' | 'docx' | 'xlsx'
+export type DocumentFormat = 'markdown' | 'pdf' | 'docx' | 'xlsx' | 'pptx'
 export type OfficeFormat = Extract<DocumentFormat, 'docx' | 'xlsx'>
 export type OfficePreview =
   | { kind: 'docx'; html: string }
@@ -23,7 +23,7 @@ export function documentFormat(mime: string): DocumentFormat | undefined {
     case 'application/pdf': return 'pdf'
     case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': return 'docx'
     case 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': return 'xlsx'
+    case 'application/vnd.openxmlformats-officedocument.presentationml.presentation': return 'pptx'
     default: return undefined
   }
 }
-

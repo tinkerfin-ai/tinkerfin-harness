@@ -16,8 +16,8 @@ from tinkerfin_studio.agent.plan_clarification import StudioPlanClarificationFor
 from tinkerfin_studio.agent.plan_content import StudioMarkdownPlanContent
 from tinkerfin_studio.agent.tool_policy import tool_execution_policy
 from tinkerfin_studio.agent.tools import build_web_search_tool
-from tinkerfin_studio.attachments.sandbox_tools import build_sandbox_attachment_tools
 from tinkerfin_studio.attachments.tools import build_attachment_tools
+from tinkerfin_studio.attachments.workspace_tools import build_sandbox_attachment_tools
 from tinkerfin_studio.models.chat import create_chat_model
 from tinkerfin_studio.models.schemas import AgentModelConfig
 

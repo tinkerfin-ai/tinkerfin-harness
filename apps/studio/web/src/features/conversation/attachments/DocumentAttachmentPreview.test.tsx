@@ -18,6 +18,7 @@ const document = (mime = 'text/markdown', name = '门店月报.md'): Attachment 
 })
 const docxMime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 const xlsxMime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+const pptxMime = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 
 beforeEach(() => {
   vi.mocked(attachmentBlob).mockReset().mockResolvedValue(new Blob(['# 九月营收\n\n增长 **10%**']))
@@ -93,6 +94,14 @@ describe('文档预览', () => {
     expect(readOfficePreview).not.toHaveBeenCalled()
     await user.click(within(dialog).getByRole('button', { name: '关闭对话框' }))
     expect(URL.revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:document')
+  })
+  it('PPTX 使用当前弹窗样式提示下载，不启动前端解析', async () => {
+    const { dialog } = await openDocument(document(pptxMime, '季度汇报.pptx'))
+    expect(await within(dialog).findByRole('heading', { name: 'PPTX 暂不支持在线预览' })).toBeVisible()
+    expect(within(dialog).getByText('请下载后使用 PowerPoint 或 WPS 打开')).toBeVisible()
+    expect(within(dialog).getByRole('button', { name: '下载附件：季度汇报.pptx' })).toBeEnabled()
+    expect(attachmentBlob).not.toHaveBeenCalled()
+    expect(readOfficePreview).not.toHaveBeenCalled()
   })
   it('声明为 PDF 的 HTML 文件不会获得可导航的预览 URL', async () => {
     vi.mocked(attachmentBlob).mockResolvedValue(new Blob(['<html><script>alert(1)</script></html>']))
