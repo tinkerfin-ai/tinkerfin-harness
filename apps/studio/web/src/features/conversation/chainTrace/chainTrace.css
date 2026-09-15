@@ -980,7 +980,6 @@
     padding-block: 0;
     place-content: start center;
   }
-  .chain-trace-state.is-warning { color: var(--color-warning-text); }
   .chain-trace-empty { grid-row: 1 / -1; }
   .chain-trace-content-grid.uses-overlay { grid-template-columns: minmax(0, 1fr); }
   .chain-trace-details-backdrop {

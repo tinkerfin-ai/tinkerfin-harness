@@ -108,7 +108,7 @@ describe('App authentication boundary', () => {
 
     expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument()
     expect(screen.queryByLabelText('对话内容')).not.toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument()
     expect(window.location.search).toBe('')
     expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).toBeNull()
   })
@@ -156,7 +156,7 @@ describe('App authentication boundary', () => {
     expect(await screen.findByLabelText('正在重新验证登录状态')).toBeInTheDocument()
     expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).not.toBeNull()
     expect(screen.queryByLabelText('对话内容')).not.toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByLabelText('对话内容')).toBeInTheDocument(), {
       timeout: 2500,
     })
@@ -207,7 +207,7 @@ describe('App authentication boundary', () => {
 
     expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument()
     expect(screen.queryByLabelText('对话内容')).not.toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument()
     expect(window.location.search).toBe('')
     expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).toBeNull()
   })
@@ -250,8 +250,8 @@ describe('App authentication boundary', () => {
     await browserUser.type(screen.getByLabelText('密码'), 'password')
     await browserUser.click(screen.getByRole('button', { name: '登录' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/^服务暂不可用，请稍后重试$/)
-    expect(screen.getByRole('alert').closest('.toast-card')).not.toBeNull()
+    expect(await screen.findByRole('status')).toHaveTextContent(/^服务暂不可用，请稍后重试$/)
+    expect(screen.getByRole('status').closest('.toast-card')).not.toBeNull()
     expect(document.querySelector('.auth-form-error')).toBeNull()
     expect(screen.getByRole('heading', { name: '欢迎回来' })).toBeInTheDocument()
   })
@@ -271,9 +271,9 @@ describe('App authentication boundary', () => {
     await browserUser.type(screen.getByLabelText('密码'), 'wrong-password')
     await browserUser.click(screen.getByRole('button', { name: '登录' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('用户名或密码错误')
-    expect(screen.getAllByRole('alert')).toHaveLength(1)
-    expect(screen.getByRole('alert').closest('.toast-card')).not.toBeNull()
+    expect(await screen.findByRole('status')).toHaveTextContent('用户名或密码错误')
+    expect(screen.getAllByRole('status')).toHaveLength(1)
+    expect(screen.getByRole('status').closest('.toast-card')).not.toBeNull()
     expect(document.querySelector('.auth-form-error')).toBeNull()
   })
 
@@ -315,11 +315,11 @@ describe('App authentication boundary', () => {
     await browserUser.type(screen.getByLabelText('密码'), 'password')
     await browserUser.click(screen.getByRole('button', { name: '登录' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
+    expect(await screen.findByRole('status')).toHaveTextContent(
       '浏览器无法保存登录状态，请检查隐私或存储设置后重试',
     )
-    expect(screen.getAllByRole('alert')).toHaveLength(1)
-    expect(screen.getByRole('alert').closest('.toast-card')).not.toBeNull()
+    expect(screen.getAllByRole('status')).toHaveLength(1)
+    expect(screen.getByRole('status').closest('.toast-card')).not.toBeNull()
     expect(screen.queryByLabelText('正在检查登录状态')).not.toBeInTheDocument()
     expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).toBeNull()
   })

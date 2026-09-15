@@ -173,7 +173,7 @@ describe('useConversationStreamController', () => {
     await act(async () => { await result.current.controller.streamRun(THREAD_ID, payload, 'start') })
     expect(result.current.workspace.conversations[0]).toMatchObject({
       runStatus: 'detached', activeRunId: RUN_ID,
-      notice: { kind: 'error', content: '连接已中断，尚无法确认任务状态，请恢复连接' },
+      notice: { kind: 'warning', content: '连接已中断，尚无法确认任务状态，请恢复连接' },
     })
     expect(result.current.controller.hasActiveStream()).toBe(false)
     expect(readActiveRunSession(THREAD_ID)?.payload).toEqual(payload)

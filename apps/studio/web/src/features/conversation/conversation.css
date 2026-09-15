@@ -1769,7 +1769,6 @@
   .send-button:disabled { background: var(--color-active); color: var(--color-text-tertiary); }
   .send-button.stop { background: var(--color-danger-soft); color: var(--color-danger-text); }
 
-  .composer-attachment-error { margin: 0; padding: 0 var(--space-3); color: var(--color-danger-text); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
 
   .composer-model-error { display: flex; align-items: center; gap: var(--space-1); color: var(--color-danger-text); font-size: var(--type-caption-size); white-space: nowrap; }
   .composer-model-error .ui-button { min-height: var(--control-composer); }

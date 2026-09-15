@@ -104,6 +104,7 @@ describe('前端视觉契约', () => {
         ['--color-brand-text', '--color-brand-soft'],
         ['--color-on-selection', '--color-selection'],
         ['--color-danger-text', '--color-danger-soft'],
+        ['--color-danger-text', '--color-layer-1'],
         ['--color-success-text', '--color-success-soft'],
         ['--color-warning-text', '--color-warning-soft'],
         ['--color-text-caption-on-layer', '--color-layer-1'],
@@ -207,7 +208,11 @@ describe('前端视觉契约', () => {
   it('共享控件覆盖焦点、禁用、触控、forced-colors 与 reduced-motion', () => {
     const uiStyles = cssFiles['../components/ui/ui.css']
     expect(tokensStyles).toContain('--motion-tooltip-hide-delay: 0ms;')
+    expect(tokensStyles).toContain('--layout-toast-width: 380px;')
+    expect(tokensStyles).toContain('--layout-toast-standard-width: 340px;')
     expect(uiStyles).toMatch(/\.ui-tooltip\s*\{[^}]*opacity:\s*0;[^}]*opacity var\(--motion-instant\) linear var\(--motion-tooltip-hide-delay\)/s)
+    expect(uiStyles).toMatch(/\.toast-card__title\s*\{[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s)
+    expect(uiStyles).toMatch(/\.toast-card\s*>\s*button\s*\{[^}]*place-self:\s*center end;/s)
     expect(uiStyles).toMatch(/\.ui-button:focus-visible[\s\S]*outline:/)
     expect(uiStyles).toMatch(/\.ui-button:disabled[\s\S]*opacity:/)
     expect(uiStyles).toMatch(/@media \(any-hover: none\), \(any-pointer: coarse\)[\s\S]*--control-lg/)

@@ -472,7 +472,7 @@ test('紧凑搜索和状态菜单按查询与当前周计数，关闭恢复搜�
 
 test('会话与自动化默认完全访问，权限选择沿用模型样式', async ({ page }, testInfo) => {
   await prepare(page)
-  await page.getByRole('button', { name: '新会话', exact: true }).click()
+  await page.locator('.new-chat').click()
   const access = page.getByRole('button', { name: '选择访问权限' })
   await expect(access).toContainText('完全访问')
   await access.click()
@@ -500,7 +500,7 @@ test('触控环境的会话与自动化权限按钮及选项达到44像素', asy
     for (const location of ['conversation', 'automation']) {
       await page.getByRole('button', { name: '打开导航', exact: true }).click()
       if (location === 'conversation') {
-        await page.getByRole('button', { name: '新会话', exact: true }).click()
+        await page.locator('.new-chat').click()
         await page.getByRole('button', { name: '关闭导航', exact: true }).click()
       } else {
         await page.getByRole('button', { name: '自动化', exact: true }).click()
@@ -526,7 +526,7 @@ test('自动化刷新保留页面，新会话的标志、输入框和提示整�
   await page.reload()
   await expect(page).toHaveURL(/\/\?page=automation$/)
   await expect(page.getByRole('tab', { name: '历史', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '新会话', exact: true }).click()
+  await page.locator('.new-chat').click()
   await expect(page.locator('.composer-dock.is-hero')).toBeVisible()
   await expect(page).not.toHaveURL(/page=automation/)
   for (const theme of ['light', 'dark']) {

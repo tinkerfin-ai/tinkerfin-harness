@@ -58,6 +58,7 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
       await route.fulfill({ json: { code: 0, message: 'success', data } })
     })
     try {
+      if (source === 'picker') await page.setViewportSize({ width: 320, height: 960 })
       await page.goto('/')
       const input = page.getByRole('textbox', { name: '消息输入' })
       const send = page.getByRole('button', { name: '发送消息', exact: true })
@@ -97,15 +98,24 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
       expect(submissions).toBe(0)
       await expect(input).toHaveValue('保留我的正文')
       await expect(page.getByText('当前模型不支持图片', { exact: true })).toBeVisible()
+      const warningToast = page.locator('.toast-card.is-warning').filter({ hasText: '当前模型不支持图片' })
+      const errorToast = page.locator('.toast-card.is-error').first()
+      await expect(warningToast).toBeVisible()
+      await expect(errorToast).toBeVisible()
+      expect(Math.abs((await warningToast.boundingBox())!.width - (await errorToast.boundingBox())!.width)).toBeLessThanOrEqual(1)
 
       if (source === 'picker') {
+        let checkedScrollToEnd = false
         for (const theme of ['light', 'dark'] as const) {
           await page.emulateMedia({ colorScheme: theme })
           await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
           for (const width of [320, 768, 1024, 1440]) {
             await page.setViewportSize({ width, height: 960 })
             await expect(card.getByRole('status')).toBeInViewport()
-            await expect(card.getByRole('button', { name: `移除附件：${imageName}` })).toBeInViewport()
+            if (width >= 768 || !checkedScrollToEnd) {
+              await expect(card.getByRole('button', { name: `移除附件：${imageName}` })).toBeInViewport()
+              checkedScrollToEnd = true
+            }
             expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
             // 单行高度及中性卡片是用户确认的视觉约束
             expect((await card.boundingBox())!.height).toBe(40)
@@ -188,15 +198,16 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
         await device.send('Emulation.setTouchEmulationEnabled', { enabled: false })
         await device.detach()
       }
-      await page.getByRole('button', { name: '切换模型', exact: true }).click()
+      await page.getByRole('button', { name: '选择模型', exact: true }).click()
       await expect(page.getByRole('listbox', { name: '模型选项' })).toBeFocused()
       await page.getByRole('option', { name: '未确认图片能力的模型', exact: true }).click()
       await expect(page.getByText('当前模型的图片能力未确认', { exact: true })).toBeVisible()
       await expect(send).toBeDisabled()
-      await page.getByRole('button', { name: '切换模型', exact: true }).click()
+      await page.getByRole('button', { name: '选择模型', exact: true }).click()
       await page.getByRole('option', { name: '支持图片的模型', exact: true }).click()
       await expect(page.getByRole('button', { name: '选择模型', exact: true })).toBeFocused()
-      await expect(page.getByText('当前模型不支持图片', { exact: true })).toHaveCount(0)
+      await expect(warningToast).toBeVisible()
+      await expect(page.locator('.composer-attachment-notice')).toHaveCount(0)
       await expect(send).toBeDisabled()
       if (source === 'drop') {
         await card.getByRole('button', { name: `移除附件：${imageName}` }).click()

@@ -3,10 +3,18 @@ import { createPortal } from 'react-dom'
 import { Button, MOTION_DURATION_MS } from '../../../components/ui'
 
 /** 文件名被截断时显示完整名称；提示位于滚动区域外，支持悬浮、键盘和触控 */
-export function AttachmentFilename({ name }: { name: string }) {
+export type AttachmentFilenameVariant = 'composer' | 'card'
+
+export function AttachmentFilename({
+  name,
+  variant = 'composer',
+}: {
+  name: string
+  variant?: AttachmentFilenameVariant
+}) {
   const id = useId()
-  const trigger = useRef<HTMLButtonElement>(null)
-  const text = useRef<HTMLSpanElement>(null)
+  const trigger = useRef<HTMLElement>(null)
+  const text = useRef<HTMLElement>(null)
   const tooltip = useRef<HTMLSpanElement>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [open, setOpen] = useState(false)
@@ -25,6 +33,15 @@ export function AttachmentFilename({ name }: { name: string }) {
     if (document.activeElement === trigger.current) return
     closeTimer.current = setTimeout(() => setOpen(false), MOTION_DURATION_MS.normal)
   }
+
+  const setComposerTrigger = (node: HTMLButtonElement | null) => {
+    trigger.current = node
+  }
+  const setCardTitle = (node: HTMLElement | null) => {
+    trigger.current = node
+    text.current = node
+  }
+  const tooltipClassName = `ui-tooltip ${variant === 'card' ? 'attachment-name-tooltip' : 'composer-attachment-name-tooltip'}`
 
   useEffect(() => () => clearTimeout(closeTimer.current), [])
   useLayoutEffect(() => {
@@ -66,26 +83,37 @@ export function AttachmentFilename({ name }: { name: string }) {
 
   return (
     <>
-      <Button
-        ref={trigger}
-        type="button"
-        variant="text"
-        className="composer-attachment-name"
-        aria-describedby={open ? id : undefined}
-        onPointerEnter={reveal}
-        onPointerLeave={leave}
-        onFocus={reveal}
-        onBlur={() => setOpen(false)}
-        onClick={reveal}
-      >
-        <span ref={text} className="composer-attachment-name-text">{name}</span>
-      </Button>
+      {variant === 'card' ? (
+        <strong
+          ref={setCardTitle}
+          className="attachment-description__title"
+          onPointerEnter={reveal}
+          onPointerLeave={leave}
+        >
+          {name}
+        </strong>
+      ) : (
+        <Button
+          ref={setComposerTrigger}
+          type="button"
+          variant="text"
+          className="composer-attachment-name"
+          aria-describedby={open ? id : undefined}
+          onPointerEnter={reveal}
+          onPointerLeave={leave}
+          onFocus={reveal}
+          onBlur={() => setOpen(false)}
+          onClick={reveal}
+        >
+          <span ref={node => { text.current = node }} className="composer-attachment-name-text">{name}</span>
+        </Button>
+      )}
       {open && createPortal(
         <span
           ref={tooltip}
           id={id}
           role="tooltip"
-          className="ui-tooltip composer-attachment-name-tooltip"
+          className={tooltipClassName}
           style={position}
           onPointerEnter={keepOpen}
           onPointerLeave={leave}

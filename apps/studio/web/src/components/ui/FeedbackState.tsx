@@ -1,10 +1,10 @@
-import { Check, Info, LoaderCircle, RotateCcw } from 'lucide-react'
+import { Check, Info, LoaderCircle, RotateCcw, TriangleAlert } from 'lucide-react'
 
 import { useI18n } from '../../i18n'
 import { IconButton } from './IconButton'
 import { Surface } from './Surface'
 
-type FeedbackIconKind = 'loading' | 'success' | 'info' | 'error'
+type FeedbackIconKind = 'loading' | 'success' | 'info' | 'error' | 'warning'
 
 export function FeedbackIcon({ kind }: { kind: FeedbackIconKind }) {
   return (
@@ -13,6 +13,7 @@ export function FeedbackIcon({ kind }: { kind: FeedbackIconKind }) {
       {kind === 'success' && <Check size={17} />}
       {kind === 'info' && <Info size={16} />}
       {kind === 'error' && <span className="ui-feedback-icon__mark">!</span>}
+      {kind === 'warning' && <TriangleAlert size={17} />}
     </span>
   )
 }

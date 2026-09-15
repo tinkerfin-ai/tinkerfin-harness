@@ -72,7 +72,7 @@ export interface Message {
 }
 
 export interface ConversationNotice {
-  kind: 'error' | 'info'
+  kind: 'error' | 'info' | 'warning'
   content: string
   /** 同一次请求或连接恢复提示的去重标识 */
   id?: string

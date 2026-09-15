@@ -117,7 +117,7 @@ test('A和B同时接收，停止B后A标题仍更新且不抢导航', async ({ p
   await setup(page, 'light')
   await send(page, '会话A')
   await expect(page).toHaveTitle(/会话A/)
-  await page.getByRole('button', { name: '新会话', exact: true }).click()
+  await page.locator('.new-chat').click()
   await send(page, '会话B')
   await expect(page).toHaveTitle(/会话B/)
   await titleEvent(page, 0, '后台会话A')

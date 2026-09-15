@@ -1,11 +1,11 @@
-import { ArrowUp, Info, Plus, Square } from 'lucide-react'
+import { ArrowUp, Plus, Square } from 'lucide-react'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 
 import { DraftAttachmentCard } from '../attachments/DraftAttachmentCard'
 import { useAttachmentPicker } from '../attachments/useAttachmentPicker'
 import { IconButton } from '../../../components/ui'
-import { isTranslationKey, useI18n } from '../../../i18n'
+import { useI18n } from '../../../i18n'
 import {
   applyAtomicPlanDeletion,
   cancelComposerSuggestion,
@@ -52,8 +52,6 @@ export function Composer({
   planActive,
   planLocked = false,
   attachments,
-  attachmentError,
-  attachmentNotice,
   onChange,
   onSend,
   onStop,
@@ -62,6 +60,7 @@ export function Composer({
   onRemoveAttachment,
   onRetryAttachment,
   attachmentBlocked = false,
+  onAttachmentError,
 }: {
   value: string
   isRunning: boolean
@@ -79,8 +78,6 @@ export function Composer({
   planActive: boolean
   planLocked?: boolean
   attachments: readonly DraftAttachment[]
-  attachmentError?: string
-  attachmentNotice?: ReactNode
   onChange: (value: string) => void
   onSend: () => void
   onStop: () => void
@@ -89,12 +86,14 @@ export function Composer({
   onRemoveAttachment: (id: string) => void
   onRetryAttachment?: (id: string) => void
   attachmentBlocked?: boolean
+  onAttachmentError?: () => void
 }) {
   const { t } = useI18n()
-  const errorText = (message: string) => isTranslationKey(message) ? t(message) : message
   const input = useRef<HTMLTextAreaElement>(null)
   const inputScroll = useRef<HTMLDivElement>(null)
-  const attachmentPicker = useAttachmentPicker()
+  const attachmentScroll = useRef<HTMLDivElement>(null)
+  const previousAttachmentIds = useRef(new Set(attachments.map(attachment => attachment.id)))
+  const attachmentPicker = useAttachmentPicker(onAttachmentError)
   const previousAttachments = useRef(attachments)
   const pendingCaret = useRef<number | null>(null)
   const acceptedCaret = useRef(value.length)
@@ -154,6 +153,20 @@ export function Composer({
     const frame = window.requestAnimationFrame(() => input.current?.focus())
     return () => window.cancelAnimationFrame(frame)
   }, [attachments, backgroundInert, isDisabled, takeover])
+
+  useEffect(() => {
+    const previousIds = previousAttachmentIds.current
+    const hasAddedAttachment = attachments.some(attachment => !previousIds.has(attachment.id))
+    previousAttachmentIds.current = new Set(attachments.map(attachment => attachment.id))
+    if (!hasAddedAttachment) return
+    const frame = window.requestAnimationFrame(() => {
+      const element = attachmentScroll.current
+      const lastAttachment = element?.lastElementChild
+      if (lastAttachment instanceof HTMLElement && typeof lastAttachment.scrollIntoView === 'function')
+        lastAttachment.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'end' })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [attachments])
 
   const pickSuggestion = (id: string) => {
     if (id !== 'command-plan' || !slashHit) return
@@ -261,15 +274,13 @@ export function Composer({
           />
         )}
         {attachments.length > 0 && (
-          <div className="composer-attachments" aria-label={t('待发送附件')}>
+          <div ref={attachmentScroll} className="composer-attachments" aria-label={t('待发送附件')}>
 
             {attachments.map((attachment) => (
               <DraftAttachmentCard key={attachment.id} attachment={attachment} onRemove={onRemoveAttachment} onRetry={onRetryAttachment} />
             ))}
           </div>
         )}
-        {attachmentError && <p className="composer-attachment-error" role="status" aria-live="polite">{errorText(attachmentError)}</p>}
-        {attachmentPicker.failed && <p className="composer-attachment-error" role="status">{t('无法打开文件选择器，请重试')}</p>}
         <div ref={inputScroll} className="composer-input-scroll">
           <div className="composer-input-grow">
             <div className={`composer-input-backdrop${isDisabled ? ' is-disabled' : ''}`} aria-hidden="true">
@@ -329,12 +340,6 @@ export function Composer({
             <div className="composer-input-mirror" aria-hidden="true">{`${value}\n`}</div>
           </div>
         </div>
-        {attachmentNotice && (
-          <div className="composer-attachment-notice" role="status">
-            <Info size={14} aria-hidden="true" />
-            {attachmentNotice}
-          </div>
-        )}
         <div className="composer-toolbar">
           <div className="composer-toolbar-leading">
             <input

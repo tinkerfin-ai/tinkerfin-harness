@@ -414,10 +414,15 @@ describe('ChainTraceView', () => {
       },
       retry: vi.fn(),
     })
-    render(<ChainTraceView threadId="thread-1" active live={false} />)
-    expect(screen.getByRole('status')).toHaveTextContent(
+    const onWarning = vi.fn()
+    const incomplete = render(<ChainTraceView threadId="thread-1" active live={false} onWarning={onWarning} />)
+    expect(onWarning).toHaveBeenCalledExactlyOnceWith(
       '链路超过完整视图上限，请使用搜索缩小范围',
     )
+    incomplete.rerender(<ChainTraceView threadId="thread-1" active={false} live={false} onWarning={onWarning} />)
+    incomplete.rerender(<ChainTraceView threadId="thread-1" active live={false} onWarning={onWarning} />)
+    expect(onWarning).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('链路超过完整视图上限，请使用搜索缩小范围')).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: '调用时间线' }))
       .not.toBeInTheDocument()
   })

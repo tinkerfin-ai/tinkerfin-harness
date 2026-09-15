@@ -45,7 +45,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
     })
     await page.goto('/?thread=' + threadId)
     await expect(page.getByRole('region', { name: '会话异常' })).toHaveCount(3)
-    await expect(page.getByRole('alert')).toHaveCount(0)
+    await expect(page.getByRole('list', { name: '系统提示' })).toHaveCount(0)
     const geometry = await page.locator('.message-list').evaluate(list => {
       const measure = (element: Element) => {
         const rect = element.getBoundingClientRect()
@@ -85,7 +85,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
 
     await page.reload()
     await expect(page.getByRole('region', { name: '会话异常' })).toHaveCount(3)
-    await expect(page.getByRole('alert')).toHaveCount(0)
+    await expect(page.getByRole('list', { name: '系统提示' })).toHaveCount(0)
     expect(posts).toHaveLength(0)
     if (width === 320) await page.emulateMedia({ reducedMotion: 'reduce' })
     const draft = page.getByRole('textbox', { name: '消息输入' })

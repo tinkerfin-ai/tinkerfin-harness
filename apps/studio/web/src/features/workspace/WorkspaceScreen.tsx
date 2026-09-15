@@ -15,7 +15,7 @@ import {
   useThemePreference,
   ViewTabs,
 } from '../../components/ui'
-import type { ToastKind } from '../../components/ui/ToastViewport'
+import type { ToastHandler } from '../../components/ui/ToastViewport'
 import { isTranslationKey, useI18n } from '../../i18n'
 import {
   ApprovalCard,
@@ -137,7 +137,7 @@ export function WorkspaceScreen({
 }: {
   user: AuthUser
   onLogout: () => void
-  onToast: (kind: ToastKind, message: string) => void
+  onToast: ToastHandler
 }) {
   const { t } = useI18n()
   const [workspace, setWorkspace] = useState<WorkspaceState>(createEmptyWorkspace)
@@ -179,13 +179,18 @@ export function WorkspaceScreen({
     displayName: modelDisplayName,
     retry: retryModelCatalog,
   } = useModelCatalog()
-  const localAttachments = useAttachments((message) => onToast('error', isTranslationKey(message) ? t(message) : message))
+  const localAttachments = useAttachments((message) => onToast(
+    'error',
+    isTranslationKey(message) ? t(message) : message,
+  ))
   const appShell = useRef<HTMLDivElement>(null)
   const latestWorkspace = useRef(workspace)
   const startedResumeRunIds = useRef(new Set<string>())
   const [initialActiveSessions] = useState(readActiveRunSessions)
   const autoRecoveredRunIds = useRef(new Set<string>())
   const notifiedConversationEvents = useRef(new Set<string>())
+  const notifiedImageSupportWarnings = useRef(new Set<string>())
+  const notifiedChainWarnings = useRef(new Set<string>())
   latestWorkspace.current = workspace
   const pushToast = onToast
   const notifyConversation = useCallback((notice: NonNullable<Conversation['notice']>) => {
@@ -265,6 +270,37 @@ export function WorkspaceScreen({
     }
     return draftConversation ?? buildEmptyConversation({ now: new Date().toISOString(), model: draftModel, accessMode: draftAccessMode })
   }, [draftConversation, draftModel, draftAccessMode, selectedConversation, workspace.currentThreadId])
+
+  const notifyChainWarning = useCallback((message: string) => {
+    const key = `${conversation.threadId}:${message}`
+    if (notifiedChainWarnings.current.has(key)) return
+    notifiedChainWarnings.current.add(key)
+    if (notifiedChainWarnings.current.size > 256) {
+      const oldest = notifiedChainWarnings.current.values().next().value
+      if (oldest) notifiedChainWarnings.current.delete(oldest)
+    }
+    pushToast('warning', message)
+  }, [conversation.threadId, pushToast])
+
+  useEffect(() => {
+    const imageAttachmentIds = localAttachments.attachments
+      .filter((item) => item.kind === 'image')
+      .map((item) => item.id)
+      .join(',')
+    const support = imageSupport(conversation.model)
+    if (!imageAttachmentIds || modelCatalogStatus !== 'ready' || support === 'supported') return
+    const key = `${conversation.threadId || 'draft'}:${conversation.model}:${support}:${imageAttachmentIds}`
+    if (notifiedImageSupportWarnings.current.has(key)) return
+    notifiedImageSupportWarnings.current.add(key)
+    if (notifiedImageSupportWarnings.current.size > 256) {
+      const oldest = notifiedImageSupportWarnings.current.values().next().value
+      if (oldest) notifiedImageSupportWarnings.current.delete(oldest)
+    }
+    pushToast(
+      'warning',
+      support === 'unsupported' ? t('当前模型不支持图片') : t('当前模型的图片能力未确认'),
+    )
+  }, [conversation.model, conversation.threadId, imageSupport, localAttachments.attachments, modelCatalogStatus, pushToast, t])
 
   useEffect(() => {
     const notification = conversation.notice
@@ -497,7 +533,13 @@ export function WorkspaceScreen({
     if ((!trimmed && !readyAttachments.length) || isRunning || !conversation.model || (!resubmission && localAttachments.attachments.some(item => item.state !== 'ready'))) return
     if (resubmission && (conversation.runStatus === 'detached' || conversation.pendingInteractionKind || conversation.approval || conversation.planInteraction)) return
     if (readyAttachments.some(item => item.mime_type.startsWith('image/')) && imageSupport(conversation.model) !== 'supported') {
-      if (resubmission) pushToast('error', t('当前模型不支持图片或能力未确认，请切换模型'))
+      if (resubmission) {
+        const support = imageSupport(conversation.model)
+        pushToast(
+          'warning',
+          support === 'unsupported' ? t('当前模型不支持图片') : t('当前模型的图片能力未确认'),
+        )
+      }
       return
     }
     const submittedIds = localAttachments.attachments.map(item => item.id)
@@ -1207,14 +1249,8 @@ export function WorkspaceScreen({
               planLocked={isRunning}
               attachments={localAttachments.attachments}
               attachmentBlocked={localAttachments.attachments.some(item => item.kind === 'image') && imageSupport(conversation.model) !== 'supported'}
-              attachmentError={localAttachments.error}
-              attachmentNotice={localAttachments.attachments.some(item => item.kind === 'image') && imageSupport(conversation.model) !== 'supported' ? (
-                <>
-                  <span>{imageSupport(conversation.model) === 'unsupported' ? t('当前模型不支持图片') : t('当前模型的图片能力未确认')}</span>
-                  <Button type="button" variant="text" disabled={modelCatalogStatus !== 'ready'} onClick={() => setModelPickerOpen(true)}>{t('切换模型')}</Button>
-                </>
-              ) : undefined}
               onRetryAttachment={localAttachments.retryAttachment}
+              onAttachmentError={() => onToast('error', t('无法打开文件选择器，请重试'))}
               disabledReason={isConversationHydrationFailed
                 ? t('会话加载失败，请先重试')
                 : modelCatalogStatus === 'loading'
@@ -1248,6 +1284,7 @@ export function WorkspaceScreen({
           >
             <ChainTraceView
               onError={(message) => pushToast('error', message)}
+              onWarning={notifyChainWarning}
               threadId={conversation.threadId}
               active={workspaceView === 'trace'}
               live={conversation.runStatus === 'streaming' || conversation.runStatus === 'detached'}

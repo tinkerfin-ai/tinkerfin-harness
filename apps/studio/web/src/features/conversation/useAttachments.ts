@@ -19,7 +19,6 @@ export function useAttachments(onError?: (message: string) => void) {
   const latestErrorHandler = useRef(onError)
   latestErrorHandler.current = onError
   const [attachments, setAttachments] = useState<DraftAttachment[]>([])
-  const [error, setError] = useState<string>()
   const latest = useRef(attachments)
   const controllers = useRef(new Map<string, AbortController>())
   const alive = useRef(true)
@@ -147,7 +146,7 @@ export function useAttachments(onError?: (message: string) => void) {
           progress: 0,
         })
       }
-      setError(failure)
+      if (failure) latestErrorHandler.current?.(failure)
       update(items)
       pump()
     },
@@ -164,7 +163,6 @@ export function useAttachments(onError?: (message: string) => void) {
           if (alive.current && epoch === draftEpoch.current)
             latestErrorHandler.current?.('附件已移出草稿，服务端会清理未发送文件')
         })
-      setError(undefined)
     },
     [update],
   )
@@ -185,7 +183,6 @@ export function useAttachments(onError?: (message: string) => void) {
     draftEpoch.current += 1
     for (const controller of controllers.current.values()) controller.abort()
     update([])
-    setError(undefined)
   }, [update])
   const completeSend = useCallback(
     (ids: readonly string[]) => {
@@ -204,7 +201,7 @@ export function useAttachments(onError?: (message: string) => void) {
           attachment.size_bytes >
           25 * 1024 ** 2
       ) {
-        setError('附件数量或总大小超过限制')
+        latestErrorHandler.current?.('附件数量或总大小超过限制')
         return
       }
       update([
@@ -227,7 +224,6 @@ export function useAttachments(onError?: (message: string) => void) {
   )
   return {
     attachments,
-    error,
     addFiles,
     removeAttachment,
     retryAttachment,

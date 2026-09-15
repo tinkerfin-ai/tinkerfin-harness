@@ -233,6 +233,32 @@ describe('文件附件类型', () => {
     await user.click(within(dialog).getByRole('button', { name: '关闭对话框' }))
     expect(opener).toHaveFocus()
   })
+
+  it('仅在文件标题区域提供完整名称提示', async () => {
+    const name = '这是一个很长的文件标题.pdf'
+    const user = userEvent.setup()
+    render(
+      <AttachmentList
+        attachments={[{ ...cat, id: 'document', name, mime_type: 'application/pdf' }]}
+      />,
+    )
+
+    const opener = screen.getByRole('button', { name: `预览文档：${name}` })
+    const title = screen.getByText(name, { selector: 'strong' })
+    Object.defineProperties(title, {
+      clientWidth: { configurable: true, value: 100 },
+      scrollWidth: { configurable: true, value: 200 },
+    })
+
+    fireEvent.pointerEnter(opener)
+    expect(screen.queryByRole('tooltip', { name })).not.toBeInTheDocument()
+    document.documentElement.style.setProperty('--space-3', '12px')
+    document.documentElement.style.setProperty('--space-1', '4px')
+    await user.hover(title)
+    expect(screen.getByRole('tooltip', { name })).toHaveTextContent(name)
+    document.documentElement.style.removeProperty('--space-3')
+    document.documentElement.style.removeProperty('--space-1')
+  })
 })
 
 const tool: Message = {

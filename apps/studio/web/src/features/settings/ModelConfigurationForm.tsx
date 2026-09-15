@@ -1,7 +1,7 @@
 import { lazy, Suspense, useId, useMemo, useState } from 'react'
 import { ChevronDown, Trash2 } from 'lucide-react'
 import { Button, ErrorBoundary, TextField, ValidatedForm } from '../../components/ui'
-import type { ToastKind } from '../../components/ui/ToastViewport'
+import type { ToastHandler } from '../../components/ui/ToastViewport'
 import { useI18n } from '../../i18n'
 import { ModelChoice } from './ModelChoice'
 import { ModelSettingsLayout } from './ModelSettingsLayout'
@@ -13,7 +13,7 @@ const ModelOptionsEditor = lazy(() => import('./ModelOptionsEditor'))
 
 export function ModelConfigurationForm({ model, connection, saving, existing, onSave, onRemove, onCancel, onToast }: {
   model: ModelSettings; connection: ModelConnection; saving: boolean; existing: boolean
-  onSave: (model: ModelSettings) => Promise<boolean>; onRemove: (id: string) => Promise<boolean>; onCancel: () => void; onToast: (kind: ToastKind, message: string) => void
+  onSave: (model: ModelSettings) => Promise<boolean>; onRemove: (id: string) => Promise<boolean>; onCancel: () => void; onToast: ToastHandler
 }) {
   const { t } = useI18n()
   const descriptionId = useId()
@@ -73,7 +73,7 @@ export function ModelConfigurationForm({ model, connection, saving, existing, on
           <TextField rootClassName="settings-models__wide" shape="standard" fieldSize="md" name="stop" error={attempt ? errors.stop : undefined} label={t('停止序列')} helperText={t('用逗号分隔，最多四项')} value={draft.chat_options.stop?.join(',') ?? ''} onChange={event => changeOption('stop', event.target.value ? event.target.value.split(',') : null)} />
         </div></details>
       </> : <><div className="settings-models__grid"><TextField shape="standard" fieldSize="md" label={t('图片尺寸')} value={size} onChange={event => { test.invalidate(); setSize(event.target.value) }} placeholder={t('使用模型默认值')} /><TextField shape="standard" fieldSize="md" label={t('输出格式')} value={format} onChange={event => { test.invalidate(); setFormat(event.target.value) }} placeholder="png / jpeg / webp" /></div><details className="settings-models__advanced"><summary>{t('高级参数')}<ChevronDown size={15} aria-hidden="true" /></summary><div className="settings-models__advanced-body"><p className="settings-models__hint" id={descriptionId}>{t('高级参数必须是 JSON 对象')}</p><ErrorBoundary fallback={({ reset }) => <Button type="button" onClick={reset}>{t('重试')}</Button>}><Suspense fallback={<p>{t('加载中')}</p>}><ModelOptionsEditor value={options} onChange={value => { test.invalidate(); setOptions(value) }} issues={parsed.issues} issueMessage={() => t('JSON 语法不正确，请检查引号、逗号和括号')} descriptionId={descriptionId} disabled={saving} /></Suspense></ErrorBoundary>{errors.options && <p className="settings-models__error" role="alert">{errors.options}</p>}</div></details></>}
-      <ModelTestPanel purpose={draft.purpose} disabled={saving} running={test.running} result={test.result} stale={test.stale} cancelled={test.cancelled} onRun={kind => { if (validate()) void test.run(kind, write()) }} onCancel={test.cancel} />
+      <ModelTestPanel purpose={draft.purpose} disabled={saving} running={test.running} result={test.result} stale={test.stale} onRun={kind => { if (validate()) void test.run(kind, write()) }} onCancel={() => { test.cancel(); onToast('warning', t('已取消等待，服务商可能仍在处理并计费')) }} />
       <label className="settings-models__check"><input type="checkbox" checked={draft.enabled} disabled={draft.is_default} onChange={event => update({ enabled: event.target.checked })} />{t('启用模型')}</label>
     </fieldset>
     </ModelSettingsLayout>

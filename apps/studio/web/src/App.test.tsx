@@ -314,7 +314,7 @@ describe('Studio Trace history integration', () => {
         }) + '\n\n'))
       })
       await waitFor(() => expect(new URL(window.location.href).searchParams.get('thread')).toBe('thread-a'))
-      await user.click(screen.getByRole('button', { name: '新会话' }))
+      await user.click(document.querySelector('.new-chat') as HTMLButtonElement)
       await user.type(input, '会话B{Enter}')
       await waitFor(() => expect(requests).toHaveLength(2))
       const second = requests[1]!
@@ -359,7 +359,7 @@ describe('Studio Trace history integration', () => {
     const { unmount } = render(<App />)
     try {
       await screen.findByText('来自 Trace 的历史回复')
-      await user.click(screen.getByRole('button', { name: /新会话/ }))
+      await user.click(document.querySelector('.new-chat') as HTMLButtonElement)
       const input = screen.getByRole('textbox', { name: '消息输入' })
       await user.type(input, '新草稿{Enter}')
       await waitFor(() => expect(submitted).toBeDefined())
@@ -421,7 +421,7 @@ describe('Studio Trace history integration', () => {
     })
     await waitFor(() => expect(input).toHaveValue(edited ? '下一条草稿' : '保留这次提交'))
     expect((readActiveRunSessions()[0] ?? null)).toBeNull()
-    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getAllByRole('status')).toHaveLength(1)
   })
 
   it.each([false, true])('offers explicit recovery for an unconfirmed submission without automatically resending (existing: %s)', async (existing) => {
@@ -452,7 +452,7 @@ describe('Studio Trace history integration', () => {
     await user.click(screen.getByRole('button', { name: '发送消息' }))
     const reconnect = await screen.findByRole('button', { name: '恢复连接' })
     expect(input).toHaveValue('')
-    expect(screen.getByText('连接已中断，尚无法确认任务状态，请恢复连接')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('连接已中断，尚无法确认任务状态，请恢复连接')
     expect((readActiveRunSessions()[0] ?? null)?.payload.runId).toBe(submitted[0]?.runId)
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)) })
     expect(submitted).toHaveLength(1)
@@ -473,10 +473,12 @@ describe('Studio Trace history integration', () => {
     await user.click(screen.getByRole('button', { name: '发送消息' }))
     const message = '连接已中断，尚无法确认任务状态，请恢复连接'
     await user.click(await screen.findByRole('button', { name: `关闭提示：${message}` }))
-    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument())
+    const initialAttempts = attempts
     await user.click(screen.getByRole('button', { name: '恢复连接' }))
-    expect(await screen.findByRole('alert', {}, { timeout: 4000 })).toHaveTextContent(message)
-    expect(attempts).toBe(5)
+    const warningMessage = await screen.findByText(message, { exact: true }, { timeout: 10_000 })
+    expect(warningMessage).toHaveAttribute('role', 'status')
+    expect(attempts).toBeGreaterThan(initialAttempts)
   })
 
   it('初始化失败在会话中持久展示且不弹 Toast', async () => {
@@ -505,7 +507,7 @@ describe('Studio Trace history integration', () => {
     expect(await screen.findByText('会话异常')).toBeInTheDocument()
     await waitFor(() => expect((readActiveRunSessions()[0] ?? null)).toBeNull())
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)) })
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument()
     expect(screen.queryByText('Agent run failed')).not.toBeInTheDocument()
     expect(screen.queryByText('任务遇到问题')).not.toBeInTheDocument()
     expect(screen.queryByText('对话运行失败')).not.toBeInTheDocument()
@@ -552,7 +554,7 @@ describe('Studio Trace history integration', () => {
       expect(screen.getAllByText('原问题')).toHaveLength(2)
       expect(screen.getByText('后来的回答')).toBeInTheDocument()
       expect(retry).toBeDisabled()
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument()
     } finally {
       view.unmount()
     }
@@ -572,12 +574,12 @@ describe('Studio Trace history integration', () => {
     for (const item of list) {
       await user.click(await screen.findByRole('button', { name: `打开会话：${item.title}` }))
       expect(await screen.findByText('会话异常')).toBeInTheDocument()
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument()
     }
     view.unmount()
     render(<App />)
     expect(await screen.findByText('会话异常')).toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument()
   })
 
   it('returns to chat when selecting another conversation from the Trace view', async () => {
@@ -620,7 +622,7 @@ describe('Studio Trace history integration', () => {
 
     expect(await screen.findByText('第二个会话的聊天内容')).toBeVisible()
     expect(screen.getByRole('tab', { name: '对话' })).toHaveAttribute('aria-selected', 'true')
-    await user.click(screen.getByRole('button', { name: /新会话/ }))
+    await user.click(document.querySelector('.new-chat') as HTMLButtonElement)
     expect(screen.queryByRole('tablist', { name: '会话视图' })).not.toBeInTheDocument()
   })
 

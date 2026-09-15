@@ -11,13 +11,12 @@ export interface ModelTestPanelProps {
   running?: ModelTestKind
   result?: ModelTestResult
   stale: boolean
-  cancelled: boolean
   onRun: (kind: ModelTestKind) => void
   onCancel: () => void
 }
 
 /** 将基础连通性与真实模型能力分开展示，不把接口返回等同于识别正确 */
-export function ModelTestPanel({ purpose, disabled, running, result, stale, cancelled, onRun, onCancel }: ModelTestPanelProps) {
+export function ModelTestPanel({ purpose, disabled, running, result, stale, onRun, onCancel }: ModelTestPanelProps) {
   const { t } = useI18n()
   const Status = result?.outcome === 'success' ? CheckCircle2 : result?.outcome === 'failed' ? XCircle : CircleAlert
   return <section className="settings-models__test" aria-label={t('模型测试')}>
@@ -35,7 +34,6 @@ export function ModelTestPanel({ purpose, disabled, running, result, stale, canc
       </div>
     </div>
     {running && <div className="settings-models__test-pending" role="status"><span>{t('测试进行中…')}</span><Button type="button" variant="text" onClick={onCancel}>{t('取消等待')}</Button></div>}
-    {cancelled && <p className="settings-models__hint" role="status">{t('已取消等待，服务商可能仍在处理并计费')}</p>}
     {result && <div className={`settings-models__test-result${stale ? ' is-stale' : ''}`} role="status" data-outcome={result.outcome}>
       <div className="settings-models__result-heading"><Status size={16} aria-hidden="true" /><strong>{t(modelTestMessages[result.code] ?? '测试已完成，请查看结果')}</strong><span><Clock3 size={12} aria-hidden="true" />{t('{seconds} 秒', { seconds: (result.elapsed_ms / 1000).toFixed(1) })}</span></div>
       {['models_unavailable', 'model_not_listed'].includes(result.code) && <p className="settings-models__hint">{t(purpose === 'image' ? '请点击“生成测试图片”，看看能否成功生成' : '请点击“文字回复”，看看能否收到回答')}</p>}

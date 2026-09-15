@@ -24,7 +24,6 @@ export function useModelTest(onToast: (kind: ToastKind, message: string) => void
   const [running, setRunning] = useState<ModelTestKind>()
   const [result, setResult] = useState<ModelTestResult>()
   const [stale, setStale] = useState(false)
-  const [cancelled, setCancelled] = useState(false)
   useEffect(() => () => { generation.current += 1; active.current?.abort(); active.current = null }, [])
   const invalidate = () => {
     generation.current += 1
@@ -32,16 +31,15 @@ export function useModelTest(onToast: (kind: ToastKind, message: string) => void
     active.current = null
     setRunning(undefined)
     setStale(true)
-    setCancelled(false)
   }
   const reset = () => { invalidate(); setResult(undefined); setStale(false) }
-  const cancel = () => { invalidate(); setCancelled(true); setResult(undefined) }
+  const cancel = () => { invalidate(); setResult(undefined) }
   const run = async (kind: ModelTestKind, configuration: ModelTestConfiguration) => {
     if (active.current) return
     const sequence = ++generation.current
     const controller = new AbortController()
     active.current = controller
-    setRunning(kind); setResult(undefined); setStale(false); setCancelled(false)
+    setRunning(kind); setResult(undefined); setStale(false)
     try {
       const response = await requestJson<ModelTestResult>('/api/models/configurations/test', {
         method: 'POST', body: { kind, configuration }, signal: controller.signal,
@@ -58,5 +56,5 @@ export function useModelTest(onToast: (kind: ToastKind, message: string) => void
       if (active.current === controller) { active.current = null; setRunning(undefined) }
     }
   }
-  return { running, result, stale, cancelled, run, invalidate, reset, cancel }
+  return { running, result, stale, run, invalidate, reset, cancel }
 }

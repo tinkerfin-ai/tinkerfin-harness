@@ -1,10 +1,11 @@
-import { FileImage, FileText, RotateCcw, X } from 'lucide-react'
+import { FileImage, RotateCcw, X } from 'lucide-react'
 import { IconButton } from '../../../components/ui'
 import { FeedbackIcon } from '../../../components/ui/FeedbackState'
 import { isTranslationKey, useI18n } from '../../../i18n'
 import type { DraftAttachment } from '../useAttachments'
 import { useAttachmentImage } from './useAttachmentImage'
 import { AttachmentFilename } from './AttachmentFilename'
+import { AttachmentFileIcon } from './AttachmentFileIcon'
 import './attachments.css'
 
 export function DraftAttachmentCard({
@@ -25,6 +26,12 @@ export function DraftAttachmentCard({
     'preview',
     attachment.kind === 'image' ? attachment.file : undefined,
   )
+  const fileIconAttachment = attachment.attachment ?? {
+    id: attachment.id,
+    name: attachment.name,
+    mime_type: attachment.file?.type ?? '',
+    size_bytes: attachment.size,
+  }
   return (
     <div
       className={`composer-attachment${attachment.kind === 'image' ? ' composer-attachment--image' : ''}`}
@@ -45,7 +52,7 @@ export function DraftAttachmentCard({
           {attachment.kind === 'image' ? (
             <FileImage size={16} />
           ) : (
-            <FileText size={16} />
+            <AttachmentFileIcon attachment={fileIconAttachment} compact />
           )}
         </span>
       )}

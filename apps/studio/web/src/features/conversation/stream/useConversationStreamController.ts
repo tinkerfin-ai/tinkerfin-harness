@@ -728,7 +728,7 @@ export function useConversationStreamController({
           ...draftTarget,
           runStatus: acceptanceUnknown ? 'detached' : 'error',
           activeRunId: acceptanceUnknown ? payload.runId : undefined,
-          notice: { kind: 'error', content: message, id: `${payload.runId}:connection:${streamEpoch}` },
+          notice: { kind: acceptanceUnknown ? 'warning' : 'error', content: message, id: `${payload.runId}:connection:${streamEpoch}` },
           isHydrated: true,
         }
         draftTarget = erroredConversation
@@ -742,7 +742,7 @@ export function useConversationStreamController({
             ...markConversationDetached(item, message),
             runStatus: 'detached',
             activeRunId: item.activeRunId ?? payload.runId,
-            notice: { kind: 'error', content: message, id: `${payload.runId}:connection:${streamEpoch}` },
+            notice: { kind: acceptanceUnknown ? 'warning' : 'error', content: message, id: `${payload.runId}:connection:${streamEpoch}` },
           }),
         ))
       } else {

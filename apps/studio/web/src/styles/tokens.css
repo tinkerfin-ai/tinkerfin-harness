@@ -157,6 +157,8 @@
     --layout-composer-width: 780px;
     --layout-feedback-card: 288px;
     --layout-composer-surface-height: 118px;
+    --layout-toast-width: 380px;
+    --layout-toast-standard-width: 340px;
     --layout-interaction-card-min-height: clamp(260px, 32dvh, 320px);
     --layout-interaction-card-context-reserve: 120px;
     --layout-interaction-card-max-cap: 680px;

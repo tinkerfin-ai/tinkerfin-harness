@@ -475,20 +475,25 @@ export function ChainTraceView({
   live,
   observedAt,
   onError,
+  onWarning,
 }: {
   threadId: string
   active: boolean
   live: boolean
   observedAt?: string
   onError?: (message: string) => void
+  onWarning?: (message: string) => void
 }) {
   const { locale, t } = useI18n()
   const latestErrorHandler = useRef(onError)
   latestErrorHandler.current = onError
+  const latestWarningHandler = useRef(onWarning)
+  latestWarningHandler.current = onWarning
   const [isSearchOpen, setSearchOpen] = useState(false)
   const [searchInput, setSearchInput] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string>()
+  const warnedIncompleteThreads = useRef(new Set<string>())
   const detailTrigger = useRef<HTMLButtonElement | null>(null)
   const manualClose = useRef(false)
   const scrollLatestIntoView = useRef(false)
@@ -635,6 +640,12 @@ export function ChainTraceView({
       : page?.completeness.detailsOmitted
         ? t('部分链路内容未保留')
         : undefined
+
+  useEffect(() => {
+    if (!active || !incomplete || warnedIncompleteThreads.current.has(threadId)) return
+    warnedIncompleteThreads.current.add(threadId)
+    latestWarningHandler.current?.(t('链路超过完整视图上限，请使用搜索缩小范围'))
+  }, [active, incomplete, t, threadId])
 
   useEffect(() => {
     manualClose.current = false
@@ -814,11 +825,6 @@ export function ChainTraceView({
       {trace.state.phase === 'error' && (
         <div className="chain-trace-state is-feedback">
           <Button type="button" variant="text" onClick={trace.retry}>{t('重新加载')}</Button>
-        </div>
-      )}
-      {incomplete && (
-        <div className="chain-trace-state is-warning" role="status">
-          <p>{t('链路超过完整视图上限，请使用搜索缩小范围')}</p>
         </div>
       )}
       {trace.state.phase === 'ready' && !incomplete && nodes.length === 0 && (

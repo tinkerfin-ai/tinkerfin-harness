@@ -577,9 +577,9 @@ export function Sidebar({
           inert={!wideInteractive || undefined}
         >
           <div className={`sidebar-head${isSearchOpen ? ' is-search-open' : ''}`}>
-            <a className="brand" href="#top" aria-label={t('TinkerFin 首页')}>
+            <button type="button" className="brand" aria-label={t('新会话')} onClick={onNew}>
               <BrandLogo size="md" />
-            </a>
+            </button>
             <div className="sidebar-head-actions">
               <IconButton
                 ref={searchTriggerRef}

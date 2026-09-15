@@ -37,7 +37,8 @@ describe('attachment uploads', () => {
   })
   it('rejects unsupported files and oversized images without uploading', () => {
     vi.mocked(uploadAttachment).mockClear()
-    const { result } = renderHook(() => useAttachments())
+    const onError = vi.fn()
+    const { result } = renderHook(() => useAttachments(onError))
     act(() =>
       result.current.addFiles([
         new File(['x'], 'macro.exe'),
@@ -45,8 +46,19 @@ describe('attachment uploads', () => {
       ]),
     )
     expect(result.current.attachments).toEqual([])
-    expect(result.current.error).toBeTruthy()
+    expect(onError).toHaveBeenCalledExactlyOnceWith('最多 5 个附件，单个 10 MiB，合计 25 MiB')
     expect(uploadAttachment).not.toHaveBeenCalled()
+  })
+  it('limits a draft to five attachments', () => {
+    vi.mocked(uploadAttachment).mockImplementation(() => new Promise(() => {}))
+    const onError = vi.fn()
+    const { result } = renderHook(() => useAttachments(onError))
+    const files = Array.from({ length: 6 }, (_, index) => new File(['x'], `file-${index}.pdf`, { type: 'application/pdf' }))
+
+    act(() => result.current.addFiles(files))
+
+    expect(result.current.attachments).toHaveLength(5)
+    expect(onError).toHaveBeenCalledExactlyOnceWith('最多 5 个附件，单个 10 MiB，合计 25 MiB')
   })
   it('does not put an old deletion error into a new conversation draft', async () => {
     let rejectDelete: (error: Error) => void = () => undefined
@@ -59,7 +71,6 @@ describe('attachment uploads', () => {
     act(() => result.current.removeAttachment(result.current.attachments[0].id))
     act(() => result.current.clearAttachments())
     await act(async () => rejectDelete(new Error('old deletion failed')))
-    expect(result.current.error).toBeUndefined()
     expect(onError).not.toHaveBeenCalled()
   })
 

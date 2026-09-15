@@ -169,6 +169,29 @@ test('展开生成参数保留字段与边框之间的内边距', async ({page})
   expect(box!.y + box!.height - helper!.y - helper!.height).toBeGreaterThanOrEqual(12)
 })
 
+test('取消模型测试显示全局 warning Toast', async ({page}) => {
+  let release!: () => void
+  const responseGate = new Promise<void>(resolve => { release = resolve })
+  await setup(page)
+  await page.route('**/api/models/configurations/test', async route => {
+    await responseGate
+    try {
+      await route.fulfill({json:{code:0,message:'success',data:{kind:'text',outcome:'success',elapsed_ms:125,code:'text_received',text:'OK',image:null}}})
+    } catch {
+      // 取消测试会中止浏览器请求，路由可能已经无法返回响应
+    }
+  })
+  await openSettings(page, 'zh-CN', 'light')
+  const dialog = page.getByRole('dialog', {name:'设置', exact:true})
+  await dialog.getByRole('button', {name:'配置模型 DeepSeek V4 Pro', exact:true}).click()
+  await dialog.getByRole('button', {name:'文字回复', exact:true}).click()
+  const pending = dialog.getByRole('status').filter({hasText:'测试进行中'})
+  await expect(pending).toBeVisible()
+  await pending.getByRole('button', {name:'取消等待', exact:true}).click()
+  await expect(page.locator('.toast-card.is-warning')).toContainText('已取消等待，服务商可能仍在处理并计费')
+  release()
+})
+
 for (const language of ['zh-CN', 'en'] as const) for (const theme of ['light', 'dark'] as const) {
   test(`参数、错误和固定操作样式 ${language} ${theme}`, async ({page}, testInfo) => {
     await setup(page)

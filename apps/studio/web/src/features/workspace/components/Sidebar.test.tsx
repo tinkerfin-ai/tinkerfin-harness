@@ -210,16 +210,20 @@ describe('Sidebar', () => {
     expect(screen.queryByRole('button', { name: 'MCP管理' })).not.toBeInTheDocument()
   })
 
-  it('在展开侧栏中把搜索放到收起控件左侧并使用任务抽屉图标', () => {
-    render(<Sidebar {...baseProps} />)
+  it('在展开侧栏中点击 Logo 创建新会话，搜索位于收起控件左侧', () => {
+    const onNew = vi.fn()
+    render(<Sidebar {...baseProps} onNew={onNew} />)
 
-    const brand = screen.getByRole('link', { name: 'TinkerFin 首页' })
+    const brand = within(screen.getByRole('button', { name: '收起侧边栏' }).closest('.sidebar-head') as HTMLElement)
+      .getByRole('button', { name: '新会话' })
     const collapse = screen.getByRole('button', { name: '收起侧边栏' })
     const actions = collapse.closest('.sidebar-head-actions')
     expect(brand.querySelector('.brand-logo')).toHaveClass('brand-logo--md')
     expect(brand.querySelector('.brand-logo__mark')).toHaveAttribute('alt', '')
     expect(brand.querySelector('.brand-logo__wordmark')).toHaveAttribute('alt', '')
     expect(brand).not.toHaveTextContent('Plus')
+    fireEvent.click(brand)
+    expect(onNew).toHaveBeenCalledOnce()
     expect(collapse.querySelector('.lucide-panel-right')).toBeInTheDocument()
     expect(within(actions as HTMLElement).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
       .toEqual(['搜索会话', '收起侧边栏'])
@@ -229,7 +233,7 @@ describe('Sidebar', () => {
     const onNew = vi.fn()
     render(<Sidebar {...baseProps} onNew={onNew} />)
 
-    const newChat = screen.getByRole('button', { name: '新会话' })
+    const newChat = document.querySelector('.new-chat') as HTMLButtonElement
     const historyScroll = screen.getByRole('region', { name: '最近对话' })
     expect(newChat.parentElement).toHaveClass('new-chat-wrap')
     expect(historyScroll).not.toContainElement(newChat)
@@ -254,13 +258,13 @@ describe('Sidebar', () => {
   it('新会话入口始终保持动作按钮语义，不显示选中态', () => {
     const { rerender } = render(<Sidebar {...baseProps} />)
 
-    expect(screen.getByRole('button', { name: '新会话' })).not.toHaveClass('is-selected')
-    expect(screen.getByRole('button', { name: '新会话' })).not.toHaveAttribute('aria-pressed')
+    expect(document.querySelector('.new-chat')).not.toHaveClass('is-selected')
+    expect(document.querySelector('.new-chat')).not.toHaveAttribute('aria-pressed')
 
     rerender(<Sidebar {...baseProps} workspace={{ ...workspace, currentThreadId: '' }} />)
 
-    expect(screen.getByRole('button', { name: '新会话' })).not.toHaveClass('is-selected')
-    expect(screen.getByRole('button', { name: '新会话' })).not.toHaveAttribute('aria-pressed')
+    expect(document.querySelector('.new-chat')).not.toHaveClass('is-selected')
+    expect(document.querySelector('.new-chat')).not.toHaveAttribute('aria-pressed')
     expect(screen.queryByRole('tooltip', { name: '新会话' })).not.toBeInTheDocument()
   })
 

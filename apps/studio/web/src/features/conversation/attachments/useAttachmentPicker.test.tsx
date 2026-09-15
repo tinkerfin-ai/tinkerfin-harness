@@ -3,13 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { IconButton } from '../../../components/ui'
 import { useAttachmentPicker } from './useAttachmentPicker'
 
-function Picker() {
-  const picker = useAttachmentPicker()
+function Picker({ onError = vi.fn() }: { onError?: () => void }) {
+  const picker = useAttachmentPicker(onError)
   return (
     <>
       <input ref={picker.inputRef} type="file" aria-label="选择附件" />
       <IconButton ref={picker.buttonRef} label="添加附件" icon={null} loading={picker.pending} onClick={picker.open} />
-      {picker.failed && <p role="status">无法打开文件选择器，请重试</p>}
     </>
   )
 }
@@ -43,15 +42,15 @@ describe('附件选择等待反馈', () => {
 
   it('打开失败时清除等待并允许重试', () => {
     const open = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => { throw new Error('unavailable') })
-    render(<Picker />)
+    const onError = vi.fn()
+    render(<Picker onError={onError} />)
     const button = screen.getByRole('button', { name: '添加附件' })
     fireEvent.click(button)
     act(() => vi.advanceTimersByTime(40))
     expect(button).toBeEnabled()
-    expect(screen.getByRole('status')).toHaveTextContent('无法打开文件选择器，请重试')
+    expect(onError).toHaveBeenCalledOnce()
     open.mockImplementation(() => undefined)
     fireEvent.click(button)
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
     act(() => vi.advanceTimersByTime(40))
     expect(open).toHaveBeenCalledTimes(2)
   })

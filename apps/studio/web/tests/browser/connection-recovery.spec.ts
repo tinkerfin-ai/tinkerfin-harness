@@ -37,7 +37,7 @@ for (const theme of ['light', 'dark']) {
       await page.getByRole('button', { name: '发送消息' }).click()
       const recovery = page.getByRole('button', { name: '恢复连接', exact: true })
       await expect(recovery).toBeVisible()
-      await expect(page.getByRole('alert')).toContainText('尚无法确认任务状态')
+      await expect(page.getByRole('status')).toContainText('尚无法确认任务状态')
       await expect(page.getByLabel('任务仍在继续')).toHaveCount(0)
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
       expect(submitted).toHaveLength(1)

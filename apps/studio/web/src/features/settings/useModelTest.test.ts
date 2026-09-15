@@ -40,7 +40,7 @@ describe('草稿模型测试生命周期', () => {
     expect(requestJson).toHaveBeenCalledTimes(1)
     act(() => hook.result.current.cancel())
     await act(async () => { finish(result); await pending })
-    expect(hook.result.current.cancelled).toBe(true)
+    expect(hook.result.current.stale).toBe(true)
     expect(hook.result.current.result).toBeUndefined()
   })
   it('失败测试仅提示一次并恢复测试入口，重新渲染不重复通知', async () => {

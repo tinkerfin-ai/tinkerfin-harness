@@ -5,11 +5,12 @@ import { useCallback, useEffect, useRef } from 'react'
 
 import { MOTION_DURATION_SECONDS } from './motion'
 import { useI18n } from '../../i18n'
+import type { TranslationKey } from '../../i18n'
 import { FeedbackIcon } from './FeedbackState'
 
 gsap.registerPlugin(useGSAP)
 
-export type ToastKind = 'success' | 'info' | 'error'
+export type ToastKind = 'success' | 'info' | 'error' | 'warning'
 
 export interface ToastItem {
   id: string
@@ -17,10 +18,15 @@ export interface ToastItem {
   message: string
 }
 
+export type ToastHandler = (kind: ToastKind, message: string) => void
+
+const TOAST_TITLE: TranslationKey = '提示'
+
 const TOAST_DURATION_MS: Record<ToastItem['kind'], number> = {
-  success: 3000,
-  info: 4000,
+  success: 6000,
+  info: 6000,
   error: 6000,
+  warning: 6000,
 }
 
 function ToastCard({
@@ -32,6 +38,7 @@ function ToastCard({
 }) {
   const { t } = useI18n()
   const duration = TOAST_DURATION_MS[toast.kind]
+  const title = t(TOAST_TITLE)
   const cardRef = useRef<HTMLLIElement>(null)
   const timerRef = useRef<number | null>(null)
   const startedAtRef = useRef(0)
@@ -59,17 +66,19 @@ function ToastCard({
       reduceMotion: '(prefers-reduced-motion: reduce)',
     }, (context) => {
       if (context.conditions?.reduceMotion) {
-        gsap.set(card, { autoAlpha: 1, y: 0, scale: 1 })
+        gsap.set(card, { autoAlpha: 1, x: 0, scale: 1 })
         return
       }
 
       gsap.fromTo(card, {
         autoAlpha: 0,
-        y: -8,
+        xPercent: 100,
+        x: 12,
         scale: 0.985,
       }, {
         autoAlpha: 1,
-        y: 0,
+        xPercent: 0,
+        x: 0,
         scale: 1,
         duration: MOTION_DURATION_SECONDS.normal,
         ease: 'power3.out',
@@ -170,7 +179,10 @@ function ToastCard({
       }}
     >
       <FeedbackIcon kind={toast.kind} />
-      <p role={toast.kind === 'error' ? 'alert' : 'status'}>{message}</p>
+      <div className="toast-card__copy">
+        <p className="toast-card__title">{title}</p>
+        <p className="toast-card__message" role="status">{message}</p>
+      </div>
       <button type="button" aria-label={t('关闭提示：{message}', { message })} onClick={() => requestDismissRef.current()}>
         <X size={16} />
       </button>

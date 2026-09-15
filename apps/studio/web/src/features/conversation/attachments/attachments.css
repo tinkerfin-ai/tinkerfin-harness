@@ -156,7 +156,7 @@
     flex: 1;
     min-width: 0;
   }
-  .attachment-description strong {
+  .attachment-description__title {
     display: block;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -737,14 +737,19 @@
 
   .composer-attachments {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
     gap: var(--space-1-5);
     min-width: 0;
+    height: var(--control-md);
     max-height: var(--layout-image-min-width);
     padding: 0 var(--space-3);
-    overflow: auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior: none;
+    scrollbar-width: none;
   }
+  .composer-attachments::-webkit-scrollbar { display: none; }
   .composer-attachment {
     display: flex;
     align-items: center;
@@ -773,6 +778,11 @@
     flex: 0 0 auto;
     place-items: center;
     color: var(--color-text-secondary);
+  }
+  .composer-attachment-icon .attachment-file-icon--compact {
+    width: var(--control-plan-chip);
+    height: calc(var(--control-plan-chip) + var(--space-1));
+    padding-bottom: var(--space-1);
   }
   .composer-attachment-copy {
     display: flex;
@@ -812,6 +822,7 @@
   .composer-attachment-name .ui-button__label {
     min-width: 0;
   }
+  .ui-tooltip.attachment-name-tooltip,
   .ui-tooltip.composer-attachment-name-tooltip {
     display: block;
     position: fixed;
@@ -842,25 +853,6 @@
   .composer-attachment-state svg {
     flex: 0 0 auto;
   }
-  .composer-attachment-notice {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--space-1);
-    padding: 0 var(--space-3);
-    color: var(--color-text-secondary);
-    font-size: var(--type-caption-size);
-    line-height: var(--type-caption-line);
-  }
-  .composer-attachment-notice > svg {
-    flex: 0 0 auto;
-    color: var(--color-warning-text);
-  }
-  .composer-attachment-notice .ui-button {
-    color: var(--color-brand-text);
-    font-size: inherit;
-  }
-
   @media (max-width: 767px) {
     .attachment-document-layout,
     .attachment-document-layout.is-info-open { grid-template-columns: minmax(0, 1fr); }

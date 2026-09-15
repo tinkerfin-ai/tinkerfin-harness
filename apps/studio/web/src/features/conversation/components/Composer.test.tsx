@@ -55,6 +55,7 @@ describe('Composer', () => {
     }
     const { rerender } = render(<Composer {...props} attachments={[failed]} />)
     const card = screen.getByRole('group', { name: '报告.pdf' })
+    expect(within(card).getByText('PDF')).toBeInTheDocument()
     expect(within(card).getByRole('status')).toHaveTextContent('上传失败')
     expect(within(card).getByRole('status')).toHaveAttribute('title', failed.error)
     fireEvent.click(within(card).getByRole('button', { name: '重试附件：报告.pdf' }))
@@ -256,7 +257,6 @@ describe('Composer', () => {
       <Composer
         {...composerChromeProps()}
         attachments={[attachment]}
-        attachmentError="附件总大小不能超过 25MB"
         onAddAttachments={onAddAttachments}
         onRemoveAttachment={onRemoveAttachment}
         value="正文"
@@ -274,7 +274,6 @@ describe('Composer', () => {
     expect(inputScroll).not.toBeNull()
     expect(attachmentRow?.compareDocumentPosition(inputScroll as Node)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(container.querySelector('.composer-attachment')).toHaveTextContent('brief.pdf')
-    expect(screen.getByText('附件总大小不能超过 25MB')).toHaveAttribute('aria-live', 'polite')
     fireEvent.click(screen.getByRole('button', { name: '移除附件：brief.pdf' }))
     expect(onRemoveAttachment).toHaveBeenCalledWith('attachment-1')
 
@@ -284,6 +283,47 @@ describe('Composer', () => {
     fireEvent.change(fileInput, { target: { files: [image] } })
     expect(onAddAttachments).toHaveBeenCalledWith([image])
     expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
+  })
+
+  it('新增附件后平滑滚动到列表末尾', async () => {
+    const attachment = {
+      id: 'attachment-1',
+      file: new File(['pdf'], 'brief.pdf', { type: 'application/pdf' }),
+      kind: 'document' as const, name: 'brief.pdf', size: 3, state: 'ready' as const, progress: 100,
+    }
+    const { container, rerender } = render(
+      <Composer
+        {...composerChromeProps()}
+        attachments={[]}
+        value=""
+        isRunning={false}
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    )
+    const attachmentRow = container.querySelector('.composer-attachments')
+    expect(attachmentRow).toBeNull()
+
+    rerender(
+      <Composer
+        {...composerChromeProps()}
+        attachments={[attachment]}
+        value=""
+        isRunning={false}
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    )
+    const scrollContainer = container.querySelector('.composer-attachments')
+    if (!(scrollContainer instanceof HTMLElement)) throw new Error('missing attachment scroll container')
+    const lastAttachment = scrollContainer.lastElementChild
+    if (!(lastAttachment instanceof HTMLElement)) throw new Error('missing last attachment')
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(lastAttachment, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'nearest', inline: 'end' }))
   })
 
   it('focuses the input from the full composer card hit area', () => {

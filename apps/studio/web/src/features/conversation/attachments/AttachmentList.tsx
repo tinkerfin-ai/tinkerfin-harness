@@ -10,6 +10,7 @@ import { useAttachmentImage } from './useAttachmentImage'
 import { useAttachmentDownload } from './useAttachmentDownload'
 import { documentFormat } from './documentPreview'
 import { AttachmentFileIcon } from './AttachmentFileIcon'
+import { AttachmentFilename } from './AttachmentFilename'
 import { formatAttachmentSize } from './attachmentPresentation'
 import './attachments.css'
 
@@ -122,7 +123,7 @@ function AttachmentCard({
           >
             <AttachmentFileIcon attachment={attachment} />
             <span className="attachment-description__text">
-              <strong>{attachment.name}</strong>
+              <AttachmentFilename name={attachment.name} variant="card" />
               <small>{formatAttachmentSize(attachment.size_bytes)}</small>
             </span>
           </button>

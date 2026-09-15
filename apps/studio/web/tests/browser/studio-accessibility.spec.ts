@@ -970,12 +970,14 @@ test('新会话点击后在浅深主题和四个视口都不显示品牌蓝选�
       }
       const newChat = width === 768
         ? page.locator('.sidebar-rail').getByRole('button', { name: '新会话' })
-        : page.locator('.sidebar-wide').getByRole('button', { name: '新会话' })
+        : page.locator('.sidebar-wide .new-chat')
       await expect(newChat).toBeVisible()
       await expect(newChat).not.toHaveAttribute('title')
       await newChat.hover()
       await expect(page.getByRole('tooltip', { name: '新会话' })).toHaveCount(0)
-      await newChat.click()
+      const logo = page.locator('.sidebar-wide .brand')
+      if (colorScheme === 'light' && width === 1024) await logo.click()
+      else await newChat.click()
       await expect(newChat).not.toHaveClass(/is-selected/)
       await expect(newChat).not.toHaveAttribute('aria-pressed')
       const colors = await newChat.evaluate((element) => {
@@ -1034,7 +1036,7 @@ test('侧栏切换控件共享纵向锚点且 tooltip 避开相邻操作区', as
   const searchButton = sidebar.getByRole('button', { name: '搜索会话' }).first()
   const conversationTab = page.getByRole('tab', { name: '对话' })
   const traceTab = page.getByRole('tab', { name: '链路' })
-  const newChat = page.getByRole('button', { name: '新会话' }).first()
+  const newChat = page.locator('.sidebar-wide .new-chat')
   const collapseButton = page.getByRole('button', { name: '收起侧边栏' })
   const collapseTooltip = sidebar.getByRole('tooltip').filter({ hasText: '收起侧边栏' })
 
@@ -1119,15 +1121,15 @@ test('操作与读取异常只显示一条全局 Toast，并保留独立恢复�
   await page.getByRole('button', { name: '管理会话：浏览器会话' }).click()
   await page.getByRole('button', { name: '置顶', exact: true }).click()
   const notifications = page.getByRole('list', { name: '系统提示' })
-  await expect(notifications.getByRole('alert')).toHaveText('置顶状态更新失败，请重试')
+  await expect(notifications.getByRole('status')).toHaveText('置顶状态更新失败，请重试')
   await expect(page.getByText('置顶状态更新失败，请重试', { exact: true })).toHaveCount(1)
   await notifications.getByRole('button', { name: '关闭提示：置顶状态更新失败，请重试' }).click()
-  await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect(notifications.getByRole('status')).toHaveCount(0)
   await page.getByRole('tab', { name: '链路' }).click()
 
   const trace = page.getByRole('tabpanel', { name: '链路', exact: true })
   const retry = trace.getByRole('button', { name: '重新加载', exact: true })
-  await expect(notifications.getByRole('alert')).toHaveText('链路加载失败')
+  await expect(notifications.getByRole('status')).toHaveText('链路加载失败')
   await expect(page.getByText('链路加载失败', { exact: true })).toHaveCount(1)
   await expect(trace.getByRole('alert')).toHaveCount(0)
   await expect(retry).toBeEnabled()
@@ -1143,8 +1145,25 @@ test('操作与读取异常只显示一条全局 Toast，并保留独立恢复�
       await expect(toast).toBeInViewport()
       await expect(retry).toBeInViewport()
       const toastBounds = (await toast.boundingBox())!
-      expect(toastBounds.width).toBe(288)
-      expect(toastBounds.height).toBe(48)
+      expect(toastBounds.width).toBeLessThanOrEqual(Math.min(width - 24, 380))
+      expect(toastBounds.height).toBeGreaterThanOrEqual(64)
+      expect(toastBounds.x + toastBounds.width).toBeCloseTo(width - 12, 0)
+      const headerBounds = (await page.locator('.chat-header').boundingBox())!
+      expect(toastBounds.y - (headerBounds.y + headerBounds.height)).toBe(12)
+      await expect(toast.locator('.toast-card__title')).toHaveCSS('white-space', 'nowrap')
+      await expect(toast.locator('.toast-card__message')).toHaveCSS('text-align', 'start')
+      await expect(toast).toHaveCSS('border-top-width', '1px')
+      const titleSize = await toast.locator('.toast-card__title').evaluate(element => Number.parseFloat(getComputedStyle(element).fontSize))
+      const messageSize = await toast.locator('.toast-card__message').evaluate(element => Number.parseFloat(getComputedStyle(element).fontSize))
+      expect(titleSize).toBeGreaterThan(messageSize)
+      const close = toast.getByRole('button')
+      const closeBounds = (await close.boundingBox())!
+      const closeIconBounds = (await close.locator('svg').boundingBox())!
+      expect(closeIconBounds.x - closeBounds.x).toBeCloseTo(
+        closeBounds.x + closeBounds.width - closeIconBounds.x - closeIconBounds.width,
+        0,
+      )
+      expect(toastBounds.x + toastBounds.width - closeBounds.x - closeBounds.width).toBe(8)
       expect(await page.evaluate(() => Math.max(
         document.documentElement.scrollWidth - document.documentElement.clientWidth,
         document.body.scrollWidth - document.body.clientWidth,
@@ -1158,10 +1177,10 @@ test('操作与读取异常只显示一条全局 Toast，并保留独立恢复�
     }
   }
   await toast.getByRole('button').click()
-  await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect(notifications.getByRole('status')).toHaveCount(0)
   await retry.focus()
   await retry.press('Enter')
-  await expect(notifications.getByRole('alert')).toHaveText('链路加载失败')
+  await expect(notifications.getByRole('status')).toHaveText('链路加载失败')
   await expect(page.getByText('链路加载失败', { exact: true })).toHaveCount(1)
 })
 

@@ -541,6 +541,8 @@ export const englishMessages = {
   '当前模型的图片能力未确认': 'Image support for this model is unverified',
   '切换模型': 'Switch model',
   '上传失败，请重试': 'Upload failed. Please retry',
+  '提示': 'Notice',
+  '操作失败': 'Action failed',
   '仅支持图片、Markdown、PDF、DOCX、XLSX 和 PPTX': 'Only images, Markdown, PDF, DOCX, XLSX and PPTX are supported',
   '预览文档：{name}': 'Preview document: {name}',
   '文档预览': 'Document preview',

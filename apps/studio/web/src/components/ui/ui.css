@@ -746,6 +746,7 @@
   .ui-feedback-icon.is-info { background: var(--color-brand-soft); color: var(--color-brand-text); }
   .ui-feedback-icon.is-success { background: var(--color-success-soft); color: var(--color-success-text); }
   .ui-feedback-icon.is-error { background: var(--color-danger-soft); color: var(--color-danger-text); }
+  .ui-feedback-icon.is-warning { background: var(--color-warning-soft); color: var(--color-warning-text); }
   .ui-feedback-icon__spinner { animation: ui-spin var(--motion-slow) linear infinite; }
   .ui-feedback-icon__mark {
     font-size: var(--type-h3-size);
@@ -1200,58 +1201,83 @@
   .toast-viewport {
     position: fixed;
     z-index: var(--layer-toast);
-    top: max(var(--space-3), env(safe-area-inset-top));
-    left: 50%;
+    top: calc(var(--layout-header-height) + max(var(--space-3), env(safe-area-inset-top)));
+    right: max(var(--space-3), env(safe-area-inset-right));
     display: grid;
-    justify-items: center;
+    justify-items: end;
     gap: var(--space-2);
-    width: min(calc(100vw - var(--space-6)), var(--layout-feedback-card));
+    width: min(calc(100vw - var(--space-6)), var(--layout-toast-width));
     margin: 0;
     padding: 0;
-    transform: translateX(-50%);
     list-style: none;
     pointer-events: none;
   }
 
   .toast-card {
     display: grid;
-    grid-template-columns: var(--control-lg) minmax(0, 1fr) var(--control-lg);
+    grid-template-columns: var(--control-xs) minmax(0, 1fr) var(--control-lg);
     align-items: center;
     gap: var(--space-2);
-    width: 100%;
+    width: max-content;
+    min-width: min(100%, var(--layout-toast-standard-width));
     max-width: 100%;
-    min-height: var(--control-xl);
-    padding: 0 var(--space-2);
+    min-height: var(--space-16);
+    padding: var(--space-3) calc(var(--space-2) - 1px) var(--space-3) var(--space-2);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     background: var(--color-layer-1);
-    box-shadow: var(--shadow-2);
+    box-shadow: var(--shadow-3);
     color: var(--color-text-primary);
     pointer-events: auto;
   }
 
-  .toast-card p {
+  .toast-card__copy {
+    display: grid;
+    min-width: 0;
+    gap: var(--space-0-5);
+  }
+
+  .toast-card__title,
+  .toast-card__message {
     min-width: 0;
     margin: 0;
     overflow-wrap: anywhere;
+  }
+
+  .toast-card__title {
+    overflow: hidden;
+    color: var(--color-text-primary);
     font-size: var(--type-meta-size);
+    font-weight: var(--weight-semibold);
     line-height: var(--type-meta-line);
-    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .toast-card.is-error .toast-card__title { color: var(--color-danger-text); }
+  .toast-card.is-warning .toast-card__title { color: var(--color-warning-text); }
+
+  .toast-card__message {
+    color: var(--color-text-secondary);
+    font-size: var(--type-caption-size);
+    line-height: var(--type-caption-line);
+    text-align: start;
   }
 
   .toast-card > button {
     display: grid;
     width: var(--control-lg);
     height: var(--control-lg);
-    margin: 0;
+    margin-inline: 0;
     padding: 0;
     place-items: center;
+    place-self: center end;
     border: 0;
     border-radius: var(--radius-md);
     background: transparent;
     color: var(--color-text-tertiary);
     cursor: pointer;
-    translate: var(--space-2) 0;
+    translate: 0;
   }
 
   .toast-card > button:hover { background: var(--color-hover); color: var(--color-text-primary); }
