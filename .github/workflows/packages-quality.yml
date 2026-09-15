@@ -51,7 +51,7 @@ jobs:
       - name: Install locked web dependencies
         run: pnpm install --frozen-lockfile
       - name: Test web behavior
-        run: bash ../../scripts/verify-studio-web.sh --skip-browser
+        run: bash ../../../scripts/verify-studio-web.sh --skip-browser
 
   web-browser:
     runs-on: ubuntu-24.04
