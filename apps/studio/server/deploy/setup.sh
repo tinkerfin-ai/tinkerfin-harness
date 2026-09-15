@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${1:-$SCRIPT_DIR/.env}"
 [[ $ENV_FILE = /* ]] || ENV_FILE="$PWD/$ENV_FILE"
 SECRETS_DIR="$(dirname -- "$ENV_FILE")/secrets"
@@ -38,8 +38,9 @@ while IFS='=' read -r key value; do
     esac
 done <<< "$configuration"
 [[ -n "$mysql_host" && -n "$mysql_database" && -n "$mysql_user" ]] || fail "MySQL 地址、库名和用户名不能为空"
-[[ "$mysql_port" =~ ^[0-9]+$ ]] && ((10#$mysql_port > 0 && 10#$mysql_port <= 65535)) \
-    || fail "MYSQL_PORT 必须在 1 至 65535 之间"
+if [[ ! "$mysql_port" =~ ^[0-9]+$ ]] || ! ((10#$mysql_port > 0 && 10#$mysql_port <= 65535)); then
+    fail "MYSQL_PORT 必须在 1 至 65535 之间"
+fi
 
 password_files=(mysql_root_password mysql_password redis_runtime_password opensandbox_api_key s3_storage_access_key s3_storage_secret_key)
 if [[ ! -e "$SECRETS_DIR" ]]; then

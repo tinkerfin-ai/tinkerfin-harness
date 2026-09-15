@@ -19,6 +19,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  script-checks:
+    name: Script checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.16"
+      - name: Install script test runner
+        run: python -m pip install pytest==9.1.1
+      - name: Test script entry points and Git boundaries
+        run: python -m pytest -c .github/pytest-scripts.ini tests/test_studio_checks.py
+
   repository-and-studio:
     runs-on: ubuntu-24.04
     steps:
@@ -53,7 +70,7 @@ jobs:
           cache-dependency-path: apps/studio/web/pnpm-lock.yaml
       - name: Install locked web dependencies
         run: pnpm install --frozen-lockfile
-      - name: Test web behavior
+      - name: Test, lint, build and check web packaging without Chromium
         run: python "${{ github.workspace }}/scripts/studio_checks.py" web-no-browser
 
   web-browser:
@@ -84,7 +101,7 @@ jobs:
           key: chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/studio/web/pnpm-lock.yaml') }}
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps --only-shell chromium
-      - name: Test web proxy
+      - name: Test web proxy and browser uploads
         if: matrix.shard == 1
         run: pnpm test:proxy
       - name: Build web application
@@ -198,7 +215,7 @@ jobs:
   quality-gate:
     name: Quality gate
     if: always()
-    needs: [repository-and-studio, web, web-browser, static-checks, packages, wheel-boundaries]
+    needs: [script-checks, repository-and-studio, web, web-browser, static-checks, packages, wheel-boundaries]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

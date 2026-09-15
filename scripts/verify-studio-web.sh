@@ -2,13 +2,16 @@
 
 set -eu
 
-ROOT_DIR=$(git rev-parse --show-toplevel)
+ROOT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 MODE=web
 
-if [ "${1:-}" = "--skip-browser" ]; then
+if [ "$#" -gt 1 ]; then
+  echo "Usage: $0 [--skip-browser]" >&2
+  exit 2
+elif [ "${1:-}" = "--skip-browser" ]; then
   MODE=web-no-browser
 elif [ "${1:-}" != "" ]; then
   echo "Unknown argument: $1" >&2
   exit 2
 fi
-exec uv run python "$ROOT_DIR/scripts/studio_checks.py" "$MODE"
+exec uv run --project "$ROOT_DIR" python "$ROOT_DIR/scripts/studio_checks.py" "$MODE"

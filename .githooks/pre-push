@@ -3,4 +3,4 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"
-exec "$ROOT_DIR/scripts/verify-studio.sh"
+exec uv run --project "$ROOT_DIR" python "$ROOT_DIR/scripts/studio_checks.py" pushed

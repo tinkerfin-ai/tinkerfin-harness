@@ -2,7 +2,6 @@
 
 set -eu
 
-ROOT_DIR="$(git rev-parse --show-toplevel)"
-cd "$ROOT_DIR"
-git config --local core.hooksPath .githooks
+ROOT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+git -C "$ROOT_DIR" config --local core.hooksPath .githooks
 echo "Enabled repository Git hooks: $ROOT_DIR/.githooks"

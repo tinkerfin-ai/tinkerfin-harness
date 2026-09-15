@@ -19,8 +19,8 @@ From the repository root:
 
 ```bash
 uv sync --locked --all-packages --group dev
-uv run ruff check .
-uv run ruff format --check packages apps/studio/server scripts tests
+uv run ruff check --no-cache .
+uv run ruff format --no-cache --check packages apps/studio/server scripts tests
 uv run pyright
 uv run pytest
 ```
@@ -48,7 +48,9 @@ Enable the repository hooks once after cloning:
 ./scripts/install-git-hooks.sh
 ```
 
-On Windows PowerShell, use:
+Install Git, uv, Node.js and pnpm first, and install the workspace and web dependencies
+as shown above. The complete check also needs Chromium. On Windows, install Git for
+Windows for Git's hook shell; use PowerShell to enable the hooks:
 
 ```powershell
 .\scripts\install-git-hooks.ps1
@@ -67,6 +69,18 @@ The equivalent PowerShell command is:
 ```powershell
 .\scripts\verify-studio.ps1
 ```
+
+Commit checks require the working tree to match the index, including files imported by
+tests: stage or save any unstaged and untracked files first. Push checks require a clean
+working tree and every non-deleted ref being pushed to point to the checked-out commit.
+Ignored dependencies and local configuration remain available. The hooks do not stash
+or rewrite files; manual verification scripts can check work in progress.
+
+CI's `web` job runs unit tests, lint, build and packaging checks through the shared
+Python checker. `web-browser` installs Chromium and splits UI tests across two jobs;
+the first also runs `test:proxy`, which includes a real browser upload test.
+`verify-studio-web.sh --skip-browser` (PowerShell: `verify-studio-web.ps1 -SkipBrowser`)
+omits both proxy and UI browser tests.
 
 The hooks are local convenience checks and can be bypassed with Git's `--no-verify` option;
 the repository's required CI checks remain authoritative for changes sent to the remote.

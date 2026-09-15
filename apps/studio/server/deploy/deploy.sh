@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
 BUILD=0
 EXTERNAL=0
@@ -26,7 +26,8 @@ while (($#)); do
 done
 [[ $ENV_FILE = /* ]] || ENV_FILE="$PWD/$ENV_FILE"
 export STUDIO_ENV_FILE="$ENV_FILE"
-export SECRETS_DIR="$(dirname -- "$ENV_FILE")/secrets"
+SECRETS_DIR="$(dirname -- "$ENV_FILE")/secrets"
+export SECRETS_DIR
 if ((EXTERNAL)); then
     [[ -f "$ENV_FILE" ]] || fail "请先执行 setup.sh，并配置外部依赖地址和密码"
     export COMPOSE_PROFILES=""

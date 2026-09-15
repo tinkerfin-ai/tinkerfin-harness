@@ -19,8 +19,8 @@
 
 ```bash
 uv sync --locked --all-packages --group dev
-uv run ruff check .
-uv run ruff format --check packages apps/studio/server scripts tests
+uv run ruff check --no-cache .
+uv run ruff format --no-cache --check packages apps/studio/server scripts tests
 uv run pyright
 uv run pytest
 ```
@@ -39,6 +39,45 @@ pnpm test:browser
 浏览器测试会先构建应用并启动专用预览服务，请确保 `4173` 端口空闲。Docker 集成与独立 wheel 检查见[仓库开发说明](cn/development.md)。未执行的检查请说明原因。
 
 直接使用 `pnpm exec playwright test` 运行指定测试前，先执行 `pnpm build`。
+
+## 本地 Git 检查
+
+克隆后启用仓库钩子：
+
+```bash
+./scripts/install-git-hooks.sh
+```
+
+先安装 Git、uv、Node.js 和 pnpm，并按上文安装工作区和前端依赖。完整检查还需要
+Chromium。Windows 需安装 Git for Windows，供 Git 执行钩子；在 PowerShell 中启用：
+
+```powershell
+.\scripts\install-git-hooks.ps1
+```
+
+`git commit` 检查暂存文件的格式、Lint 和直接相关的单元测试。`git push` 执行后端与前端
+完整验证，包括前端构建和浏览器测试。也可在仓库根目录手动执行：
+
+```bash
+./scripts/verify-studio.sh
+```
+
+PowerShell 对应命令：
+
+```powershell
+.\scripts\verify-studio.ps1
+```
+
+提交检查要求工作区与暂存区一致，包括测试引用的文件；请先暂存或另行保存未暂存、未跟踪文件。
+推送检查要求工作区干净，且所有非删除的推送目标都指向当前检出的提交。被 Git 忽略的依赖
+和本地配置仍可使用。钩子不会自动暂存、隐藏或重写文件；手动验证脚本可检查尚未提交的工作。
+
+CI 的 `web` 通过共用 Python 检查器执行单元测试、Lint、构建和打包检查。
+`web-browser` 安装 Chromium 并将界面测试分为两个任务；第一分片还执行包含真实浏览器
+上传测试的 `test:proxy`。`verify-studio-web.sh --skip-browser`（PowerShell：
+`verify-studio-web.ps1 -SkipBrowser`）跳过代理测试和界面浏览器测试。
+
+本地钩子可通过 Git 的 `--no-verify` 绕过；提交到远程的改动仍以仓库要求的 CI 检查为准。
 
 ## 许可证
 

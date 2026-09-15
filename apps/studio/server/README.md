@@ -5,7 +5,10 @@
 
 ## 快速部署
 
-需要 Docker、Docker Compose 2.24 或更高版本，以及 Bash。Windows 请在 WSL 中执行。
+需要 Docker、Docker Compose 2.24 或更高版本，以及 Bash。Windows 使用 Docker Desktop
+的 WSL 2 后端，并为所用发行版开启 WSL 集成。在 WSL 终端中克隆和执行以下命令；
+仓库及凭据应保存在 WSL 的 Linux 文件系统中，以保证 `secrets/` 的目录权限生效。
+这两个 Bash 脚本不能直接在 PowerShell 中执行。
 
 ```bash
 git clone https://github.com/tinkerfin-ai/tinkerfin-harness.git
