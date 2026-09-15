@@ -254,8 +254,9 @@ test('列表未溢出时保持静止且不产生滚动回弹', async ({page}) =>
 })
 
 test.describe('模型配置触控', () => {
-  test.use({hasTouch:true,reducedMotion:'reduce',viewport:{width:320,height:960}})
+  test.use({hasTouch:true,viewport:{width:320,height:960}})
   test('表单和操作保持可触控尺寸',async ({page},testInfo) => {
+    await page.emulateMedia({reducedMotion:'reduce'})
     await setup(page)
     await openSettings(page,'zh-CN','light')
     const dialog = page.getByRole('dialog',{name:'设置',exact:true})
