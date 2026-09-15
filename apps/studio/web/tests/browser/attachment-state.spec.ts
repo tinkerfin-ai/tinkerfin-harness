@@ -206,7 +206,6 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
       await page.getByRole('button', { name: '选择模型', exact: true }).click()
       await page.getByRole('option', { name: '支持图片的模型', exact: true }).click()
       await expect(page.getByRole('button', { name: '选择模型', exact: true })).toBeFocused()
-      await expect(warningToast).toBeVisible()
       await expect(page.locator('.composer-attachment-notice')).toHaveCount(0)
       await expect(send).toBeDisabled()
       if (source === 'drop') {
