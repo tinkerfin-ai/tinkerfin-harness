@@ -1445,6 +1445,33 @@ export const applyConversationEvent = (
       {
         const rawEvent = rawEventOrMain(conversation, event.rawEvent)
         const completedAt = nowIso()
+        const relatedSubagentInvocationId = rawEvent.relatedSubagentInvocationId
+        const relatedSubagent = relatedSubagentInvocationId
+          ? conversation.messages.find((message) => message.role === "subagent"
+            && message.meta?.subRunId === relatedSubagentInvocationId
+            && message.meta?.toolCallId === event.toolCallId)
+          : undefined
+        // 历史已将委派工具合并为子 Agent 卡，结果按公开身份更新现有卡片
+        if (relatedSubagent) {
+          return updateMessage(
+            conversation,
+            (message) => message.id === relatedSubagent.id
+              || (message.role === "tool" && message.meta?.toolCallId === event.toolCallId),
+            (message) => ({
+              ...message,
+              attachments: event.attachments,
+              meta: {
+                ...message.meta,
+                result: event.content,
+                status: rawEvent.toolResultStatus === "error" ? "failed" : "completed",
+                subRunId: relatedSubagentInvocationId,
+                graphTaskId: relatedSubagent.meta?.graphTaskId,
+                completedAt: message.meta?.completedAt ?? completedAt,
+                durationMs: message.meta?.durationMs ?? elapsedMs(message.createdAt, completedAt),
+              },
+            }),
+          )
+        }
         let next = upsertToolMessage(conversation, event.toolCallId, (message) => {
           const createdAt = message?.createdAt ?? completedAt
           return {
@@ -1455,6 +1482,7 @@ export const applyConversationEvent = (
             createdAt,
             meta: {
               ...message?.meta,
+              toolCallId: event.toolCallId,
               result: event.content,
               status: rawEvent.toolResultStatus === "error" ? "failed" : "completed",
               completedAt,
@@ -1473,54 +1501,7 @@ export const applyConversationEvent = (
             },
           }
         })
-        const taskMessage = next.messages.find(
-          (message) =>
-            message.role === "tool"
-            && message.meta?.toolCallId === event.toolCallId
-            && message.meta?.toolName === "task",
-        )
-        const relatedSubagentInvocationId = rawEvent.relatedSubagentInvocationId
-        if (taskMessage && relatedSubagentInvocationId) {
-          const relatedSubagent = next.messages.find(
-            (message) => message.role === "subagent"
-              && message.meta?.subRunId === relatedSubagentInvocationId,
-          )
-          const graphTaskId = relatedSubagent?.meta?.graphTaskId
-          next = updateMessage(
-            next,
-            (message) => message.id === taskMessage.id,
-            (message) => ({
-              ...message,
-              meta: {
-                ...message.meta,
-                subRunId: relatedSubagentInvocationId,
-                graphTaskId,
-              },
-            }),
-          )
-          next = updateMessage(
-            next,
-            (message) => message.role === "subagent"
-              && message.meta?.subRunId === relatedSubagentInvocationId,
-            (message) => ({
-              ...message,
-              content: taskMessage.content,
-              meta: {
-                ...message.meta,
-                agentName: taskMessage.meta?.agentName ?? message.meta?.agentName,
-                input: taskMessage.meta?.input ?? message.meta?.input,
-                result: event.content,
-                status: rawEvent.toolResultStatus === "error" ? "failed" : "completed",
-                toolCallId: event.toolCallId,
-                graphTaskId,
-                completedAt: message.meta?.completedAt ?? completedAt,
-                durationMs:
-                  message.meta?.durationMs
-                  ?? elapsedMs(message.createdAt, completedAt),
-              },
-            }),
-          )
-        } else if (rawEvent.source.agentType === "subagent") {
+        if (rawEvent.source.agentType === "subagent") {
           next = updateSubagentRun(next, rawEvent, (message) => ({
             ...message,
             meta: {

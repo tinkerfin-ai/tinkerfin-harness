@@ -1859,3 +1859,25 @@ it('旧运行错误到达时只记录原运行失败，不停止当前新运行'
   expect(updated.runFailures).toMatchObject([{ runId: 'old-run', retryable: true }])
   expect(updated.notice).toBeUndefined()
 })
+
+
+it.each(['success', 'error'] as const)('历史子 Agent 卡接收 %s 结果，无需独立委派工具卡', (toolResultStatus) => {
+  const subagent: Conversation['messages'][number] = {
+    id: 'history-subagent', role: 'subagent', content: 'general-purpose',
+    createdAt: '2026-09-15T07:21:32Z',
+    meta: { status: 'running', subRunId: 'subagent-invocation', toolCallId: 'parent-task', input: '写入文件' },
+  }
+  const unrelated = { ...subagent, id: 'other-subagent', meta: { ...subagent.meta, subRunId: 'other-invocation', toolCallId: 'other-task' } }
+  const initial = { ...buildEmptyConversation({ now: subagent.createdAt }), messages: [subagent, unrelated] }
+  const event: ConversationAgUiEvent = {
+    type: 'TOOL_CALL_RESULT', messageId: 'task-result', toolCallId: 'parent-task', role: 'tool', content: '工具结果',
+    rawEvent: { streamMode: 'messages', runId: 'resume-run', toolResultStatus,
+      source: { kind: 'root', agentType: 'main', agentName: 'main', graphNamespace: [] },
+      relatedSubagentInvocationId: 'subagent-invocation' },
+  }
+  const result = applyConversationEvent(initial, event)
+  expect(result.messages).toHaveLength(2)
+  expect(result.messages[0]?.meta).toMatchObject({ status: toolResultStatus === 'error' ? 'failed' : 'completed', result: '工具结果', input: '写入文件' })
+  expect(result.messages[1]).toBe(unrelated)
+  expect(applyConversationEvent(result, event).messages).toEqual(result.messages)
+})

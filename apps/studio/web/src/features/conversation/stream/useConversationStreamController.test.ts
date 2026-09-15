@@ -311,6 +311,21 @@ describe('useConversationStreamController', () => {
     })
   })
 
+  it('审批恢复结束后同步权威历史，用户消息仍归属首次运行', async () => {
+    const original = traceDetail({ headRunId: 'original-run', asOfSeq: 2, messages: [{
+      ...traceDetail().messages[0]!, id: 'original-user', role: 'user', runId: 'original-run', content: '写入文件',
+    }] })
+    const initial = restoreConversationFromTrace(original, { model: 'main', includeTaskTrace: true })
+    clientMocks.resume.mockImplementation(() => streamItems([
+      { seq: 3, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } },
+      { seq: 4, event: { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID, outcome: { type: 'success' } } },
+    ]))
+    const { result } = renderHook(() => useControllerHarness(initial))
+    await act(async () => { await result.current.controller.streamRun(THREAD_ID, payload, 'resume') })
+    expect(result.current.workspace.conversations[0]?.trace?.headRunId).toBe(RUN_ID)
+    expect(result.current.workspace.conversations[0]?.messages.map(message => message.content)).toEqual(['Trace 最终内容'])
+  })
+
   it('accepts the first thread-wide sequence as the baseline when history has no cursor', async () => {
     clientMocks.resume.mockImplementation(() => streamItems([
       { seq: 185, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } },
@@ -591,6 +606,42 @@ it.each(['success', 'failure'])('旧Run历史收尾不影响新Run：%s', async 
     unmount()
     if (oldRun) await oldRun
     if (newRun) await newRun
+  }
+})
+
+it('新恢复运行已经结束后，旧运行延迟返回的历史仍不可覆盖页面', async () => {
+  const first = eventFeed()
+  let resolveHistory!: (detail: ConversationHistoryDetail) => void
+  let historyRequested!: () => void
+  const requested = new Promise<void>(resolve => { historyRequested = resolve })
+  const delayedHistory = new Promise<ConversationHistoryDetail>(resolve => { resolveHistory = resolve })
+  traceMocks.detail.mockReset()
+  traceMocks.detail.mockImplementationOnce(() => { historyRequested(); return delayedHistory })
+    .mockResolvedValue(traceDetail({ headRunId: 'new-run', title: '新运行结果', titleSeq: 2 }))
+  clientMocks.resume.mockImplementation((request: ChatRequestPayload, signal: AbortSignal) => request.runId === RUN_ID
+    ? first.read(signal)
+    : streamItems([
+      { seq: 3, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: 'new-run' } },
+      { seq: 4, event: { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: 'new-run' } },
+    ]))
+  const { result, unmount } = renderHook(() => useControllerHarness(conversation()))
+  let oldRun!: Promise<void>
+  try {
+    await act(async () => {
+      oldRun = result.current.controller.streamRun(THREAD_ID, payload, 'resume')
+      first.push({ type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID })
+      first.push({ type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID })
+      await requested
+    })
+    await act(async () => { await result.current.controller.streamRun(THREAD_ID, { ...payload, runId: 'new-run' }, 'resume') })
+    const completed = result.current.workspace.conversations[0]
+    expect(completed).toMatchObject({ runStatus: 'idle', title: '新运行结果' })
+    await act(async () => { resolveHistory(traceDetail()); await oldRun })
+    expect(result.current.workspace.conversations[0]).toBe(completed)
+  } finally {
+    resolveHistory(traceDetail())
+    unmount()
+    if (oldRun) await oldRun
   }
 })
 

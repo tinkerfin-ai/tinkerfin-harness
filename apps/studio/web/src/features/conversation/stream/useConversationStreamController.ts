@@ -165,6 +165,7 @@ export function useConversationStreamController({
     runId: string
     controller: AbortController
     receiving: boolean
+    superseded: boolean
     todoProjector: LiveTodoTraceProjector | null
   }>())
   const isActiveThread = useCallback((threadId: string) => (
@@ -408,7 +409,11 @@ export function useConversationStreamController({
     if (threadIdToStream && isActiveThread(threadIdToStream)) return
     const streamEpoch = ++activeStreamEpoch.current
     const controller = new AbortController()
-    const owner = { threadId: threadIdToStream, runId: payload.runId, controller, receiving: true, todoProjector: null as LiveTodoTraceProjector | null }
+    // 同会话的新请求取得所有权后，旧请求的异步收尾永久失效
+    for (const previous of streams.current.values()) {
+      if (previous.threadId === threadIdToStream) previous.superseded = true
+    }
+    const owner = { threadId: threadIdToStream, runId: payload.runId, controller, receiving: true, superseded: false, todoProjector: null as LiveTodoTraceProjector | null }
     streams.current.set(streamEpoch, owner)
     liveEpochs.current.add(streamEpoch)
     if (options.target === 'draft') draftStreamEpoch.current = streamEpoch
@@ -471,8 +476,8 @@ export function useConversationStreamController({
         : { ...current, taskTrace: projectedTaskTrace }
     }
     const belongsToRun = (item: Conversation) => {
-      const currentRunId = item.activeRunId ?? latestUserTurn(item)?.runId ?? item.trace?.headRunId
-      return currentRunId === undefined || currentRunId === payload.runId
+      return !owner.superseded
+        && (item.activeRunId === undefined || item.activeRunId === payload.runId)
     }
     let inputAccepted = false
     let receivedEvent = false
