@@ -58,6 +58,8 @@ export interface Message {
     batchId?: string
     agentName?: string
     sourceAgentName?: string
+    /** 工具所属的图作用域，用于区分根任务与子图任务清单 */
+    graphNamespace?: string[]
     toolCallId?: string
     parentMessageId?: string
     subRunId?: string

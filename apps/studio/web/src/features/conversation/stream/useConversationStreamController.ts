@@ -332,6 +332,7 @@ export function useConversationStreamController({
                 if (projected.taskTrace.phase === 'ready') {
                   projector = new LiveTodoTraceProjector()
                   projector.hydrate(projected.taskTrace.snapshot, {
+                    messages: projected.messages,
                     headRunId: runId, latestTurn: latestUserTurn(projected), isRunning: !completed,
                   })
                 }
@@ -440,6 +441,7 @@ export function useConversationStreamController({
         && priorHead
       ) {
         todoProjector.hydrate(validationTarget.taskTrace.snapshot, {
+          messages: validationTarget.messages,
           headRunId: priorHead,
           latestTurn: latestUserTurn(validationTarget),
         })

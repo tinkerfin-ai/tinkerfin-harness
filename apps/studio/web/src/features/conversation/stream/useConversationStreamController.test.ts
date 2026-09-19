@@ -941,3 +941,73 @@ describe('多模态提问的任务组标题', () => {
     } finally { finishHistory(ready); unmount(); await streaming }
   })
 })
+
+it.each(['resume', 'follow'] as const)('审批工具跨运行返回时保持 Todo 清单：%s', async (mode) => {
+  const group = {
+    id: 'todo-group:original', userMessageId: 'question', userMessagePreview: '生成报告',
+    groupToolCallId: 'trace:todos', createdAt: BASE_TIME, status: 'running' as const,
+    todos: [{ id: 'todo', content: '生成报告', status: 'running' as const }],
+  }
+  const headRunId = mode === 'resume' ? 'previous-resume' : RUN_ID
+  const base = traceDetail({
+    headRunId, availableHeads: [headRunId],
+    status: { execution: mode === 'resume' ? 'waiting' : 'running', headRunId },
+    messages: [{
+      ...traceDetail().messages[0]!, id: 'question', sourceId: 'question',
+      role: 'user', runId: 'original', content: '生成报告',
+    }],
+    taskTrace: { status: 'ready', todoGroups: [group] },
+    graph: traceGraphWithNodes([
+      traceGraphNode({ id: 'trace:todos', agui: { kind: 'tool', toolCallId: 'todos' }, name: 'write_todos', runId: 'previous-resume', startedSeq: 2 }),
+      traceGraphNode({ id: 'trace:write', agui: { kind: 'tool', toolCallId: 'write' }, name: 'write_file', runId: 'previous-resume', status: 'waiting', startedSeq: 3 }),
+    ], 5),
+  })
+  let processed!: () => void
+  const received = new Promise<void>(resolve => { processed = resolve })
+  let finish!: () => void
+  const finishing = new Promise<void>(resolve => { finish = resolve })
+  const events: StreamedAgUiEvent[] = [
+    { seq: 1, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } },
+    { seq: 2, event: { type: 'TOOL_CALL_RESULT', toolCallId: 'write', messageId: 'write-result', content: 'written', role: 'tool' } },
+  ]
+  const terminal: StreamedAgUiEvent = { seq: 3, event: { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID } }
+  clientMocks.resume.mockImplementation(async function* () {
+    yield* streamItems(events)
+    processed()
+    await finishing
+    yield terminal
+  })
+  traceMocks.follow.mockImplementation(async function* () {
+    yield { type: 'snapshot', snapshot: base, replay: true }
+    for (const item of events) yield { type: 'event', replayed: true, ...item }
+    processed()
+    await finishing
+    yield { type: 'event', replayed: false, ...terminal }
+  })
+  const final = traceDetail({
+    ...base, asOfSeq: 6, headRunId: RUN_ID, availableHeads: [RUN_ID],
+    status: { execution: 'succeeded', headRunId: RUN_ID },
+    graph: traceGraphWithNodes(base.graph.nodes.map(node => ({ ...node, status: 'succeeded' })), 6),
+    taskTrace: { status: 'ready', todoGroups: [{ ...group, status: 'incomplete', todos: [{ ...group.todos[0]!, status: 'incomplete' }] }] },
+  })
+  traceMocks.detail.mockResolvedValue(final)
+  const initial = restoreConversationFromTrace(base, { model: 'main', includeTaskTrace: true })
+  const { result, unmount } = renderHook(() => useControllerHarness(initial))
+  let streaming!: Promise<void>
+  try {
+    await act(async () => {
+      await result.current.controller.handoffTaskTraceFollow(THREAD_ID)
+      streaming = mode === 'resume'
+        ? result.current.controller.streamRun(THREAD_ID, payload, 'resume')
+        : result.current.controller.followDetachedConversation(THREAD_ID)
+      await received
+    })
+    expect(result.current.workspace.conversations[0]?.taskTrace).toEqual({ phase: 'ready', snapshot: { status: 'ready', todoGroups: [group] } })
+    await act(async () => { finish(); await streaming })
+    expect(result.current.workspace.conversations[0]?.taskTrace).toEqual({ phase: 'ready', snapshot: final.taskTrace })
+  } finally {
+    finish()
+    unmount()
+    await streaming
+  }
+})

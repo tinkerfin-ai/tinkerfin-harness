@@ -4,7 +4,7 @@ import type {
   TodoGroup,
 } from '../../../api/conversation/taskTrace'
 import type { ConversationAgUiEvent } from '../../../api/conversation/types'
-import type { JsonObject } from '../../../types'
+import type { JsonObject, Message } from '../../../types'
 import {
   normalizeUserMessagePreview,
   parseRootTodos,
@@ -92,7 +92,7 @@ export class LiveTodoTraceProjector {
 
   hydrate(
     snapshot: ReadyTaskTraceSnapshot,
-    options: { headRunId: string; latestTurn?: LiveTurnSeed; isRunning?: boolean },
+    options: { headRunId: string; messages: readonly Message[]; latestTurn?: LiveTurnSeed; isRunning?: boolean },
   ) {
     if (this.runs.size > 0 || this.groups.length > 0) {
       throw new Error('实时任务轨迹只能从权威快照初始化一次')
@@ -144,6 +144,30 @@ export class LiveTodoTraceProjector {
       }))
       this.latestRootTodosAt = latestGroup.createdAt
     }
+    // 审批后的结果可属于上次运行；恢复同一提问中的工具，保留 Todo 候选顺序
+    const turn = this.turns.get(turnId)
+    let questionIndex = options.messages.length - 1
+    while (questionIndex >= 0 && options.messages[questionIndex]?.role !== 'user') questionIndex -= 1
+    for (const message of options.messages.slice(questionIndex + 1)) {
+      const meta = message.meta
+      if (message.role !== 'tool' || meta?.graphNamespace?.length !== 0 || !meta.toolCallId) continue
+      if (meta.toolName !== 'write_todos') {
+        this.ignoredCalls.add(meta.toolCallId)
+        continue
+      }
+      if (!turn) continue
+      const call: ToolCallState = {
+        id: meta.toolCallId,
+        turnId,
+        runId: meta.runId ?? options.headRunId,
+        startedAt: message.createdAt,
+        result: meta.status === 'completed' ? 'succeeded'
+          : meta.status === 'failed' || meta.status === 'cancelled' ? 'failed' : 'pending',
+      }
+      this.calls.set(call.id, call)
+      turn.calls.push(call)
+    }
+    this.selectCandidate(turn)
   }
 
   startRun({
@@ -340,7 +364,7 @@ export class LiveTodoTraceProjector {
   }
 
   private selectCandidate(turn: TurnState | undefined) {
-    if (!turn || turn.selectedCallId) return
+    if (!turn || turn.groupId || turn.selectedCallId) return
     for (const call of turn.calls) {
       if (call.result === 'failed') continue
       if (call.result === 'pending') return

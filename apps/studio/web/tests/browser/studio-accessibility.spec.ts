@@ -1271,6 +1271,44 @@ test('Composer 在已有文本前插入 Slash 时保持光标并安全取消建�
   await expectCaret(0)
 })
 
+for (const required of [false, true]) {
+  test(`Plan 最后一题按钮状态与跳过入口（必填=${required}）`, async ({ page }) => {
+    await mockStudio(page, { planQuestion: true, planQuestionForm: {
+      title: '确认计划', description: '补充计划所需信息', questions: [
+        { id: 'first', answerType: 'text', prompt: '任务目标', required: true },
+        required
+          ? { id: 'last', answerType: 'text', prompt: '补充约束', required: true }
+          : { id: 'last', answerType: 'date', prompt: '复盘日期', required: false },
+      ],
+    } })
+    await page.getByRole('textbox', { name: '自定义回答：任务目标' }).fill('生成报告')
+    await page.getByRole('button', { name: '下一题', exact: true }).click()
+    const submit = page.getByRole('button', { name: '提交', exact: true })
+    const skip = page.getByRole('button', { name: '跳过本题', exact: true })
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme })
+      await page.evaluate(theme => { document.documentElement.dataset.theme = theme }, colorScheme)
+      for (const width of [320, 768, 1024, 1440]) {
+        await page.setViewportSize({ width, height: 900 })
+        await expect(submit).toBeInViewport()
+        await expect(skip).toHaveCount(0)
+        if (required) {
+          await expect(submit).toBeDisabled()
+        } else {
+          await expect(submit).toBeEnabled()
+        }
+      }
+    }
+    if (required) {
+      const answer = page.getByRole('textbox', { name: '自定义回答：补充约束' })
+      await answer.fill('只使用公开资料')
+      await expect(submit).toBeEnabled()
+      await answer.fill('  ')
+      await expect(submit).toBeDisabled()
+    }
+  })
+}
+
 test('Plan 澄清按后端题型渲染单选、多选、文本与日期控件', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 900 })
   await mockStudio(page, { planQuestion: true })

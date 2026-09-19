@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { parseConversationAgUiEvent } from '../../../api/conversation/eventParser'
 import { parseTaskTraceSnapshot } from '../../../api/conversation/taskTrace'
-import type { JsonObject } from '../../../types'
+import type { JsonObject, Message } from '../../../types'
 import { LiveTodoTraceProjector } from './liveProjection'
 
 const consumeConfirmedGroup = ({
@@ -103,7 +103,7 @@ describe('todo group contracts', () => {
     if (ended.status !== 'ready') throw new Error('已结束任务轨迹不可用')
     projector.close()
     projector = new LiveTodoTraceProjector()
-    projector.hydrate(ended, { headRunId: 'run-1', isRunning: false })
+    projector.hydrate(ended, { headRunId: 'run-1', messages: [], isRunning: false })
     projector.startRun({ runId: 'resume-1', inputKind: 'resume', parentRunId: 'run-1' })
     const rootState = { todos: [{ id: 'todo-1', content: '实现任务轨迹', status: 'completed' }] }
     consume({ type: 'STATE_SNAPSHOT', snapshot: rootState }, rootState)
@@ -147,6 +147,7 @@ describe('todo group contracts', () => {
       }],
     }, {
       headRunId: 'run-2',
+      messages: [],
       latestTurn: {
         runId: 'run-2',
         userMessageId: 'message-2',
@@ -274,6 +275,7 @@ describe('todo group contracts', () => {
       ],
     }, {
       headRunId: 'run-2',
+      messages: [],
       latestTurn: {
         runId: 'run-2',
         userMessageId: 'message-2',
@@ -302,4 +304,66 @@ describe('todo group contracts', () => {
     }
     projector.close()
   })
+})
+
+
+const pausedTool = (name: string, id: string): Message => ({
+  id: `trace:${id}`, role: 'tool', content: name, createdAt: '2026-09-15T07:56:00Z',
+  meta: { toolName: name, toolCallId: id, runId: 'run-1', status: 'paused', graphNamespace: [] },
+})
+const pendingResult = (id: string, status: 'success' | 'error' = 'success') => parseConversationAgUiEvent({
+  type: 'TOOL_CALL_RESULT', toolCallId: id, messageId: `result:${id}`, content: 'result', role: 'tool',
+  rawEvent: { runId: 'resume-1', toolResultStatus: status },
+})
+
+it('审批恢复后的普通工具结果与重复结果不清除已有任务清单', () => {
+  const projector = new LiveTodoTraceProjector()
+  const group = {
+    id: 'todo-group:run-1', userMessageId: 'question', userMessagePreview: '报告',
+    groupToolCallId: 'trace:todos', createdAt: '2026-09-15T07:55:00Z', status: 'running' as const,
+    todos: [{ id: 'todo', content: '生成报告', status: 'running' as const }],
+  }
+  projector.hydrate({ status: 'ready', todoGroups: [group] }, {
+    headRunId: 'run-1', messages: [pausedTool('write_file', 'write')],
+  })
+  projector.startRun({ runId: 'resume-1', inputKind: 'resume' })
+  const receivedAt = '2026-09-15T07:57:00Z'
+  projector.consume(pendingResult('write'), { receivedAt })
+  projector.consume(pendingResult('write'), { receivedAt })
+  expect(projector.snapshot).toEqual({ status: 'ready', todoGroups: [group] })
+  projector.consume(parseConversationAgUiEvent({
+    type: 'TOOL_CALL_START', toolCallId: 'todos-next', toolCallName: 'write_todos',
+  }), { receivedAt })
+  const rootState = { todos: [{ id: 'todo', content: '生成报告', status: 'completed' }] }
+  projector.consume(parseConversationAgUiEvent({ type: 'STATE_SNAPSHOT', snapshot: rootState }), {
+    receivedAt: '2026-09-15T07:57:01Z', rootState,
+  })
+  projector.consume(pendingResult('todos-next'), { receivedAt: '2026-09-15T07:57:02Z' })
+  expect(projector.snapshot.todoGroups).toEqual([{ ...group, status: 'running', todos: [{ ...group.todos[0], status: 'completed' }] }])
+  projector.consume(pendingResult('unknown'), { receivedAt })
+  expect(projector.snapshot).toMatchObject({ status: 'unavailable', errorCode: 'trace_incomplete' })
+  projector.close()
+})
+
+it('审批恢复后的待执行 Todo 按原调用顺序选择成功结果，排除其他轮次与子图', () => {
+  const projector = new LiveTodoTraceProjector()
+  projector.hydrate({ status: 'ready', todoGroups: [] }, {
+    headRunId: 'run-1',
+    latestTurn: { runId: 'run-1', userMessageId: 'question', userMessagePreview: '报告' },
+    messages: [
+      pausedTool('write_todos', 'previous-turn'),
+      { id: 'question', role: 'user', content: '报告', createdAt: '2026-09-15T07:55:00Z' },
+      { ...pausedTool('write_todos', 'planner'), meta: { ...pausedTool('write_todos', 'planner').meta, graphNamespace: ['create_plan:planner'] } },
+      pausedTool('write_todos', 'first'), pausedTool('write_todos', 'second'),
+    ],
+  })
+  projector.startRun({ runId: 'resume-1', inputKind: 'resume' })
+  const receivedAt = '2026-09-15T07:57:00Z'
+  const rootState = { todos: [{ id: 'todo', content: '生成报告', status: 'in_progress' }] }
+  projector.consume(pendingResult('second'), { receivedAt })
+  projector.consume(parseConversationAgUiEvent({ type: 'STATE_SNAPSHOT', snapshot: rootState }), { receivedAt, rootState })
+  expect(projector.snapshot.todoGroups).toEqual([])
+  projector.consume(pendingResult('first', 'error'), { receivedAt })
+  expect(projector.snapshot.todoGroups).toMatchObject([{ groupToolCallId: 'second', todos: [{ content: '生成报告' }] }])
+  projector.close()
 })

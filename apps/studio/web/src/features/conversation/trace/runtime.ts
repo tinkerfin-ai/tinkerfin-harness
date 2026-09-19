@@ -276,7 +276,6 @@ const traceMessages = (trace: ConversationHistoryCoreDetail): Message[] => {
     const retainedInput = node.requestOmitted ? undefined : node.request
     const retainedResult = node.resultOmitted ? undefined : node.result
     const subagent = node.kind === 'tool' ? owningSubagent(node) : undefined
-    if (node.kind === 'tool' && node.graphNamespace.length > 0 && !subagent) return
     const subagentInput = isObject(retainedInput)
       && typeof retainedInput.description === 'string'
       ? retainedInput.description
@@ -300,6 +299,7 @@ const traceMessages = (trace: ConversationHistoryCoreDetail): Message[] => {
         meta: {
           title: node.name,
           toolName: node.kind === 'tool' ? node.name : undefined,
+          graphNamespace: node.graphNamespace,
           agentName: node.kind === 'subagent' ? node.name : undefined,
           sourceAgentName: subagent?.name,
           params: node.kind === 'tool' ? text(retainedInput) : undefined,

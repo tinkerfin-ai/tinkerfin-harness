@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { PlanQuestionState } from '../../../types'
+import type { PlanQuestionItem, PlanQuestionState } from '../../../types'
 import { PlanQuestionComposer, PlanQuestionStatusRow } from './PlanQuestionComposer'
 import conversationStyles from '../conversation.css?raw'
 
@@ -181,41 +181,22 @@ describe('PlanQuestionComposer', () => {
     expect(selected.querySelector('.plan-question-option-index svg')).toBeInTheDocument()
   })
 
-  it('returns focus to the invalid answer when current-question submission fails', async () => {
+  it('最后一道必选题完成前禁用提交，选择答案后才允许提交', async () => {
     const user = userEvent.setup()
-    const unanswered = {
-      ...interaction(),
-      questions: [interaction().questions[0]],
-    }
-    let current = unanswered
-    const change = (updater: (value: PlanQuestionState) => PlanQuestionState) => {
-      current = updater(current)
-    }
-    const view = render(
-      <PlanQuestionComposer
-        threadId="thread-a"
-        interaction={current}
-        onChange={change}
-        onSubmit={vi.fn()}
-      />,
-    )
-
-    const firstAnswer = screen.getByRole('radio', { name: /预发布/ })
-    expect(firstAnswer).not.toHaveFocus()
-    const submit = screen.getByRole('button', { name: '提交' })
-    await user.click(submit)
-    await waitFor(() => expect(firstAnswer).toHaveFocus())
-    view.rerender(
-      <PlanQuestionComposer
-        threadId="thread-a"
-        interaction={current}
-        onChange={change}
-        onSubmit={vi.fn()}
-      />,
-    )
-
-    expect(current.error).toBe('请回答所有必填的 Plan 澄清问题')
-    await waitFor(() => expect(firstAnswer).toHaveFocus())
+    let current = { ...interaction(), questions: [interaction().questions[0]!] }
+    const submit = vi.fn()
+    const change = (updater: (value: PlanQuestionState) => PlanQuestionState) => { current = updater(current) }
+    const view = render(<PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />)
+    expect(screen.queryByRole('button', { name: '跳过本题' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '提交' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '提交' }))
+    expect(submit).not.toHaveBeenCalled()
+    expect(current.error).toBeUndefined()
+    await user.click(screen.getByRole('radio', { name: /预发布/ }))
+    view.rerender(<PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />)
+    expect(screen.getByRole('button', { name: '提交' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: '提交' }))
+    expect(submit).toHaveBeenCalledOnce()
   })
 
   it('uses keyboard confirmation, supports optional skip and reports status', () => {
@@ -328,7 +309,7 @@ describe('PlanQuestionComposer', () => {
     expect(outerWheel).not.toHaveBeenCalled()
   })
 
-  it('submits all-optional batches and returns to the first missing required question', () => {
+  it('所有可选题可直接提交，之前存在未答必选题时禁用提交', () => {
     let current = { ...interaction(), activeQuestionIndex: 2 }
     const submit = vi.fn()
     const change = (updater: (value: PlanQuestionState) => PlanQuestionState) => {
@@ -341,8 +322,9 @@ describe('PlanQuestionComposer', () => {
       .toHaveClass('ui-button--sm', 'ui-button--capsule', 'ui-button--primary')
     fireEvent.click(screen.getByRole('button', { name: '提交' }))
     expect(submit).not.toHaveBeenCalled()
-    expect(current.activeQuestionIndex).toBe(0)
-    expect(current.error).toBe('请回答所有必填的 Plan 澄清问题')
+    expect(screen.getByRole('button', { name: '提交' })).toBeDisabled()
+    expect(current.activeQuestionIndex).toBe(2)
+    expect(current.error).toBeUndefined()
 
     current = {
       ...interaction(),
@@ -490,7 +472,8 @@ describe('PlanQuestionComposer', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: '提交' }))
     expect(submit).not.toHaveBeenCalled()
-    expect(current.error).toBe('Plan 澄清答案超出允许的选择数量')
+    expect(screen.getByRole('button', { name: '提交' })).toBeDisabled()
+    expect(current.error).toBeUndefined()
   })
 
   it('uses the shared controlled date picker', async () => {
@@ -583,7 +566,8 @@ describe('PlanQuestionComposer', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: '提交' }))
     expect(submit).not.toHaveBeenCalled()
-    expect(current.error).toBe('Plan 时间答案超出允许范围')
+    expect(screen.getByRole('button', { name: '提交' })).toBeDisabled()
+    expect(current.error).toBeUndefined()
   })
 
   it('composes bounded date and time selectors without exposing the configured time zone', async () => {
@@ -651,7 +635,8 @@ describe('PlanQuestionComposer', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: '提交' }))
     expect(submit).not.toHaveBeenCalled()
-    expect(current.error).toBe('Plan 日期时间答案超出允许范围')
+    expect(screen.getByRole('button', { name: '提交' })).toBeDisabled()
+    expect(current.error).toBeUndefined()
   })
 
   it('keeps answer controls accessible in touch, forced-colors and reduced-motion modes', () => {
@@ -735,4 +720,50 @@ describe('PlanQuestionComposer', () => {
       screen.getByRole('textbox', { name: '自定义回答：还有其他补充吗？' }),
     ).toHaveFocus())
   })
+})
+
+
+const lastQuestionCases: PlanQuestionItem[] = [
+  { id: 'single', prompt: '单选', required: true, answerType: 'single_choice', options: [{ id: 'a', label: 'A', recommended: false }], allowFreeText: true, selectedOptionId: 'a' },
+  { id: 'multiple', prompt: '多选', required: true, answerType: 'multiple_choice', options: [{ id: 'a', label: 'A', recommended: false }], allowFreeText: false, minSelections: 1, maxSelections: 1, selectedOptionIds: ['a'] },
+  { id: 'text', prompt: '文本', required: true, answerType: 'text', answer: '已回答' },
+  { id: 'date', prompt: '日期', required: true, answerType: 'date', date: '2026-09-19' },
+  { id: 'time', prompt: '时间', required: true, answerType: 'time', timeZone: 'Asia/Shanghai', time: '09:30' },
+  { id: 'datetime', prompt: '日期时间', required: true, answerType: 'datetime', timeZone: 'Asia/Shanghai', dateTime: '2026-09-19T09:30' },
+]
+
+const unansweredQuestion = (question: PlanQuestionItem): PlanQuestionItem => (
+  question.answerType === 'single_choice' ? { ...question, selectedOptionId: undefined, customAnswer: '' }
+    : question.answerType === 'multiple_choice' ? { ...question, selectedOptionIds: [], customAnswer: '' }
+      : question.answerType === 'text' ? { ...question, answer: '  ' }
+        : question.answerType === 'date' ? { ...question, date: '' }
+          : question.answerType === 'time' ? { ...question, time: '' } : { ...question, dateTime: '' }
+)
+
+it.each(lastQuestionCases)('最后一道可选题隐藏跳过按钮，留空可直接提交：$answerType', (question) => {
+  const current: PlanQuestionState = {
+    ...interaction(), activeQuestionIndex: 1,
+    questions: [
+      { id: 'first', prompt: '第一题', required: true, answerType: 'text', answer: '已回答' },
+      { ...unansweredQuestion(question), required: false },
+    ],
+  }
+  const submit = vi.fn()
+  render(<PlanQuestionComposer threadId={`optional-${question.id}`} interaction={current} onChange={vi.fn()} onSubmit={submit} />)
+  expect(screen.queryByRole('button', { name: '跳过本题' })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '提交' })).toBeEnabled()
+  fireEvent.click(screen.getByRole('button', { name: '提交' }))
+  expect(submit).toHaveBeenCalledOnce()
+})
+
+it.each(lastQuestionCases)('最后一道必选题仅有效回答时可提交，清空后再次禁用：$answerType', (question) => {
+  const empty = unansweredQuestion(question)
+  const current = { ...interaction(), questions: [empty], activeQuestionIndex: 0 }
+  const props = { threadId: `required-${question.id}`, onChange: vi.fn(), onSubmit: vi.fn() }
+  const view = render(<PlanQuestionComposer {...props} interaction={current} />)
+  expect(screen.getByRole('button', { name: '提交' })).toBeDisabled()
+  view.rerender(<PlanQuestionComposer {...props} interaction={{ ...current, questions: [question] }} />)
+  expect(screen.getByRole('button', { name: '提交' })).toBeEnabled()
+  view.rerender(<PlanQuestionComposer {...props} interaction={current} />)
+  expect(screen.getByRole('button', { name: '提交' })).toBeDisabled()
 })

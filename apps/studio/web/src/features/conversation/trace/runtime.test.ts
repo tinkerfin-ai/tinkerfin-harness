@@ -1,4 +1,5 @@
 import { applyConversationEvent, prepareResumeSubmission } from '../agui'
+import { buildConversationDisplayEntries } from '../todoTrace/displayEntries'
 import type { JsonValue } from '../../../types'
 import type { ConversationAgUiEvent } from '../../../api/conversation/types'
 import { toolReviewInterrupts, planInterrupt } from '../../../test/aguiFixtures'
@@ -1017,4 +1018,32 @@ it.each(['runtime_error', 'cancelled'])('恢复的父委派工具与子智能体
   const executions = conversation.messages.filter(message => message.role === 'tool' || message.role === 'subagent')
   expect(executions).toHaveLength(2)
   expect(executions.every(message => message.meta?.status === (code === 'cancelled' ? 'cancelled' : 'failed'))).toBe(true)
+})
+
+
+it('澄清和计划审阅后的历史保留各次计划子图工具，内部结果不生成卡片', () => {
+  const source = detail()
+  source.graph.nodes = ['clarify-first', 'clarify-second', 'review'].flatMap((runId, index) => (
+    ['ls', 'read_file', 'PlannerOutcome'].map((name, toolIndex) => ({
+      ...source.graph.nodes[0]!,
+      id: `${runId}:${name}`,
+      agui: { kind: 'tool' as const, toolCallId: `public:${runId}:${name}` },
+      name,
+      runId,
+      graphNamespace: [`create_plan:${runId}`],
+      startedSeq: 3 + index * 3 + toolIndex,
+      sourceId: `call:${name}`,
+    }))
+  ))
+  source.graph.orderedNodeIds = source.graph.nodes.map(node => node.id)
+  source.graph.matchedNodeIds = source.graph.orderedNodeIds
+  const restored = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: true })
+  const tools = buildConversationDisplayEntries(restored).flatMap(entry => (
+    entry.type === 'tools' ? entry.messages : []
+  ))
+  expect(tools.map(message => message.id)).toEqual([
+    'clarify-first:ls', 'clarify-first:read_file',
+    'clarify-second:ls', 'clarify-second:read_file',
+    'review:ls', 'review:read_file',
+  ])
 })

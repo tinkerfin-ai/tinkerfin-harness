@@ -40,8 +40,10 @@ export const buildConversationDisplayEntries = (
     pendingApproval?.items.flatMap((item) => item.toolCallId ? [item.toolCallId] : []) ?? [],
   )
   const shownUnconfirmedRuns = new Set<string>()
+  let turnRunId: string | undefined
 
   const classify = (message: Message): Classified => {
+    if (message.role === 'user') turnRunId = message.meta?.runId
     if (message.role !== 'tool') return { type: 'message', message }
     if (message.meta?.sourceAgentName) return null
     if (
@@ -69,7 +71,7 @@ export const buildConversationDisplayEntries = (
       || message.meta.status === 'running'
       || message.meta.status === 'paused'
     ) return { type: 'message', message }
-    const runId = message.meta.runId ?? ''
+    const runId = turnRunId ?? message.meta.runId ?? ''
     if (groupedRuns.has(runId) || shownUnconfirmedRuns.has(runId)) return null
     shownUnconfirmedRuns.add(runId)
     return { type: 'message', message }

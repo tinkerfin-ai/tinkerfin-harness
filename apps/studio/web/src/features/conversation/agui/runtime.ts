@@ -1401,6 +1401,7 @@ export const applyConversationEvent = (
           meta: {
             ...message?.meta,
             toolName: event.toolCallName,
+            graphNamespace: rawEvent.source.graphNamespace,
             params: message?.meta?.params ?? "",
             result: message?.meta?.result ?? "",
             status: message?.meta?.status === "paused" ? "paused" : "running",

@@ -323,6 +323,10 @@ export function PlanQuestionComposer({
 
   const hasNextQuestion = activeIndex < interaction.questions.length - 1
   const canAdvance = hasNextQuestion && (!question.required || questionAnswered(question))
+  const canSubmit = interaction.questions.every((item) => {
+    const state = questionAnswerState(item)
+    return state === 'answered' || (!item.required && state === 'missing')
+  })
 
   const setActiveQuestion = (index: number) => {
     onChange((current) => ({
@@ -790,7 +794,7 @@ export function PlanQuestionComposer({
             {interaction.error ?? ''}
           </p>
           <div className="plan-question-composer-actions">
-            {!question.required && (
+            {!question.required && hasNextQuestion && (
               <Button size="sm" shape="capsule" variant="secondary" onClick={skipQuestion}>
                 {t('跳过本题')}
               </Button>
@@ -806,7 +810,7 @@ export function PlanQuestionComposer({
                 {t('下一题')}
               </Button>
             ) : (
-              <Button size="sm" shape="capsule" variant="primary" onClick={submit}>
+              <Button size="sm" shape="capsule" variant="primary" disabled={!canSubmit} onClick={submit}>
                 {t('提交')}
               </Button>
             )}
