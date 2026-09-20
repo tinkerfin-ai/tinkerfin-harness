@@ -93,6 +93,40 @@ def test_clean_staged_changes_and_deletions(repository: Path) -> None:
     checks.verify_staged()
 
 
+@pytest.mark.parametrize(
+    "exit_code",
+    [
+        pytest.ExitCode.NO_TESTS_COLLECTED,
+        pytest.ExitCode.TESTS_FAILED,
+        pytest.ExitCode.INTERRUPTED,
+        pytest.ExitCode.USAGE_ERROR,
+    ],
+)
+def test_staged_test_selection_distinguishes_empty_from_failed(
+    repository: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    exit_code: pytest.ExitCode,
+) -> None:
+    test_file = repository / "apps/studio/server/tests/test_external.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("# Selected test module\n", encoding="utf-8")
+    git(repository, "add", ".")
+
+    def run(*command: str) -> None:
+        if command[:3] == ("uv", "run", "pytest"):
+            raise subprocess.CalledProcessError(exit_code, command)
+
+    monkeypatch.setattr(checks, "run", run)
+    if exit_code == pytest.ExitCode.NO_TESTS_COLLECTED:
+        checks.verify_staged()
+        assert "excluded integration tests were not run" in capsys.readouterr().out
+    else:
+        with pytest.raises(subprocess.CalledProcessError) as error:
+            checks.verify_staged()
+        assert error.value.returncode == exit_code
+
+
 @pytest.mark.parametrize("dirty", ["clean", "staged", "unstaged", "untracked"])
 def test_push_checks_head_content(
     repository: Path, monkeypatch: pytest.MonkeyPatch, dirty: str

@@ -79,14 +79,14 @@ async def test_real_direct_upload_download_and_reopening(minio_settings, databas
                 preflight = await direct.options(
                     permit["url"],
                     headers={
-                        "Origin": "http://localhost:5173",
+                        "Origin": "http://localhost:5190",
                         "Access-Control-Request-Method": "POST",
                     },
                 )
                 assert preflight.status_code in {200, 204}
                 assert preflight.headers["access-control-allow-origin"] in {
                     "*",
-                    "http://localhost:5173",
+                    "http://localhost:5190",
                 }
                 oversized = await direct.post(
                     permit["url"],

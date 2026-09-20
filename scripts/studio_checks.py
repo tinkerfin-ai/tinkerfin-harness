@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from pytest import ExitCode
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 WEB_DIR = ROOT_DIR / "apps" / "studio" / "web"
 SERVER_ATTACHMENT_TESTS = [
@@ -231,7 +233,16 @@ def verify_staged() -> None:
     if any(path.startswith(("scripts/", ".githooks/")) for path in paths):
         server_tests.append("tests/test_studio_checks.py")
     if server_tests:
-        run("uv", "run", "pytest", "-q", *dict.fromkeys(server_tests))
+        try:
+            run("uv", "run", "pytest", "-q", *dict.fromkeys(server_tests))
+        except subprocess.CalledProcessError as error:
+            if error.returncode != ExitCode.NO_TESTS_COLLECTED:
+                raise
+            print(
+                "No runnable tests matched the staged files under the repository's "
+                "test selection; excluded integration tests were not run.",
+                flush=True,
+            )
     if web_tests:
         run("pnpm", "--dir", str(WEB_DIR), "test", "--run", *dict.fromkeys(web_tests))
 
