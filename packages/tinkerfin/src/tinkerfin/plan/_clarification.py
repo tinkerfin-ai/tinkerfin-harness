@@ -921,9 +921,12 @@ def validate_clarification_response(
     | ClarificationDismissResponse
 ):
     """Validate either a complete answer batch or an explicit discussion request."""
-    if isinstance(value, Mapping) and value.get("type") in {"discuss", "dismiss"}:
+    if not isinstance(value, Mapping):
+        return validate_and_normalize_response(binding, form, response_schema, value)
+    response = cast(Mapping[object, object], value)
+    if response.get("type") in {"discuss", "dismiss"}:
         try:
-            payload = _JSON_OBJECT.validate_python(value)
+            payload = _JSON_OBJECT.validate_python(response)
             validate_json_schema_instance(payload, response_schema)
             return (
                 ClarificationDismissResponse.model_validate(payload)
@@ -935,7 +938,7 @@ def validate_clarification_response(
                 "discussion response does not match the pending form",
                 cause=error,
             ) from error
-    return validate_and_normalize_response(binding, form, response_schema, value)
+    return validate_and_normalize_response(binding, form, response_schema, response)
 
 
 def validate_and_normalize_response(

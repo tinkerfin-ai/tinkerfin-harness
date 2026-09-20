@@ -10,8 +10,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from pytest import ExitCode
-
 ROOT_DIR = Path(__file__).resolve().parents[1]
 WEB_DIR = ROOT_DIR / "apps" / "studio" / "web"
 SERVER_ATTACHMENT_TESTS = [
@@ -106,6 +104,7 @@ def verify_web(*, skip_browser: bool = False) -> None:
 def verify_all() -> None:
     """Run the complete Studio server and web verification."""
     verify_server()
+    run("uv", "run", "pyright", "-p", "pyright-packages-strict.json")
     verify_web()
 
 
@@ -236,7 +235,9 @@ def verify_staged() -> None:
         try:
             run("uv", "run", "pytest", "-q", *dict.fromkeys(server_tests))
         except subprocess.CalledProcessError as error:
-            if error.returncode != ExitCode.NO_TESTS_COLLECTED:
+            # Pytest defines 5 as NO_TESTS_COLLECTED. Keep this entry point usable
+            # in web-only environments that do not install the Python test runner.
+            if error.returncode != 5:
                 raise
             print(
                 "No runnable tests matched the staged files under the repository's "

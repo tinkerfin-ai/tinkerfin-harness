@@ -13,6 +13,18 @@ from scripts import studio_checks as checks
 SOURCE_ROOT = checks.ROOT_DIR
 
 
+def test_entry_point_starts_without_python_test_dependencies(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, "-S", str(SOURCE_ROOT / "scripts/studio_checks.py")],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert "Usage:" in result.stderr
+    assert "ModuleNotFoundError" not in result.stderr
+
+
 def git(root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(root), *args],
@@ -84,6 +96,19 @@ def test_web_check_browser_dependency_boundary(
     )
     assert any("test:proxy" in command for command in commands) is not skip_browser
     assert any("playwright" in command for command in commands) is not skip_browser
+
+
+def test_complete_checks_include_strict_package_types(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[tuple[str, ...]] = []
+    checks_run: set[str] = set()
+    monkeypatch.setattr(checks, "run", lambda *args: commands.append(args))
+    monkeypatch.setattr(checks, "verify_server", lambda: checks_run.add("server"))
+    monkeypatch.setattr(checks, "verify_web", lambda: checks_run.add("web"))
+    checks.verify_all()
+    assert checks_run == {"server", "web"}
+    assert ("uv", "run", "pyright", "-p", "pyright-packages-strict.json") in commands
 
 
 def test_clean_staged_changes_and_deletions(repository: Path) -> None:

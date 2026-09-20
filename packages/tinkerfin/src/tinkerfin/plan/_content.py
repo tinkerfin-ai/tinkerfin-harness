@@ -93,7 +93,7 @@ def create_plan_content_binding(content_schema: object) -> PlanContentBinding:
     )
     discussion_type = create_model(
         "PlanDiscussionContext",
-        __base__=PlanDiscussionContext,
+        __base__=PlanDiscussionContext[PlanContentModel],
         draft=(draft_type | None, None),
         submitted_edit=(content_type | None, None),
     )
@@ -111,9 +111,7 @@ def create_plan_content_binding(content_schema: object) -> PlanContentBinding:
         draft_type=cast(type[PlanDraft[PlanContentModel]], draft_type),
         confirmed_type=cast(type[ConfirmedPlan[PlanContentModel]], confirmed_type),
         state_type=cast(type[PlanState[PlanContentModel]], state_type),
-        discussion_type=cast(
-            type[PlanDiscussionContext[PlanContentModel]], discussion_type
-        ),
+        discussion_type=discussion_type,
     )
 
 
