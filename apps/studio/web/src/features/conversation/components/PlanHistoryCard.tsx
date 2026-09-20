@@ -3,9 +3,9 @@ import { useI18n } from '../../../i18n'
 import { MarkdownContent } from './MarkdownContent'
 
 /** 展示已结束的计划交互，历史内容不再提供提交或执行入口 */
-export function PlanHistoryCard({ interaction }: { interaction: PlanInteraction }) {
+export function PlanHistoryCard({ interaction, id }: { interaction: PlanInteraction; id?: string }) {
   const { t } = useI18n()
-  return <details className="plan-history-card">
+  return <details id={id} className="plan-history-card">
     <summary>{interaction.kind === 'questions' ? interaction.title : interaction.draft.content.description} · {t('已结束')}</summary>
     <div className="plan-history-card__body">
       {interaction.kind === 'review'

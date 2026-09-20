@@ -18,6 +18,7 @@ import { ConversationError } from '../../../api/conversation/errors'
 import type {
   ApprovalState,
   Conversation,
+  DeepReadonly,
   JsonObject,
   JsonValue,
   Message,
@@ -27,11 +28,14 @@ import type {
 } from '../../../types'
 import { approvalItemsFromInterrupts, planInteractionFromInterrupts } from '../agui'
 
-const isObject = (value: unknown): value is JsonObject => (
+type TraceSnapshot = DeepReadonly<ConversationHistoryCoreDetail>
+type TraceNode = DeepReadonly<TraceGraphNode>
+
+const isObject = (value: unknown): value is DeepReadonly<JsonObject> => (
   value != null && typeof value === 'object' && !Array.isArray(value)
 )
 
-const text = (value: JsonValue | null | undefined): string => {
+const text = (value: DeepReadonly<JsonValue> | null | undefined): string => {
   if (typeof value === 'string') return value
   if (value == null) return ''
   return JSON.stringify(value, null, 2)
@@ -56,7 +60,7 @@ const nodeMessageStatus = (
   }
 }
 
-const todosFromState = (root: JsonObject): TodoItem[] => {
+const todosFromState = (root: DeepReadonly<JsonObject>): TodoItem[] => {
   if (!Array.isArray(root.todos)) return []
   return root.todos.flatMap((value, index) => {
     if (!isObject(value) || typeof value.content !== 'string') return []
@@ -78,16 +82,17 @@ const todosFromState = (root: JsonObject): TodoItem[] => {
   })
 }
 
-const modeFromState = (root: JsonObject): Conversation['mode'] => {
+const modeFromState = (root: DeepReadonly<JsonObject>): Conversation['mode'] => {
   const plan = root.tinkerfin_plan
   return isObject(plan) && plan.effectiveMode === 'plan' ? 'plan' : 'default'
 }
 
 const applyEntityDelta = <T extends { id: string }>(
-  current: T[],
-  upserts: T[],
-  removes: string[],
-): T[] => {
+  current: readonly T[],
+  upserts: readonly T[],
+  removes: readonly string[],
+): readonly T[] => {
+  if (!upserts.length && !removes.length) return current
   const values = new Map(current.map((item) => [item.id, item]))
   for (const id of removes) values.delete(id)
   for (const item of upserts) values.set(item.id, structuredClone(item))
@@ -95,9 +100,9 @@ const applyEntityDelta = <T extends { id: string }>(
 }
 
 const applyTraceGraphDelta = (
-  current: TraceGraph,
+  current: DeepReadonly<TraceGraph>,
   delta: TraceGraphDelta,
-): TraceGraph => {
+): DeepReadonly<TraceGraph> => {
   if (delta.asOfSeq < current.asOfSeq) throw new ConversationError('stream_event_invalid')
   if (delta.asOfSeq === current.asOfSeq && (
     delta.turnUpserts.length || delta.turnRemoves.length
@@ -137,27 +142,27 @@ const applyTraceGraphDelta = (
     || delta.orderedNodeIds.some((id) => !nodesById.has(id))
     || delta.matchedNodeIds.some((id) => !nodesById.has(id))
   ) throw new ConversationError('stream_event_invalid')
-  const turns = applyEntityDelta(
+  const turns = [...applyEntityDelta(
     current.turns,
     delta.turnUpserts,
     delta.turnRemoves,
-  ).sort((left, right) => left.ordinal - right.ordinal || left.id.localeCompare(right.id))
+  )].sort((left, right) => left.ordinal - right.ordinal || left.id.localeCompare(right.id))
   return parseTraceGraph({
     turns,
-    nodes: delta.orderedNodeIds.map((id) => nodesById.get(id) as TraceGraphNode),
+    nodes: delta.orderedNodeIds.map((id) => nodesById.get(id)),
     orderedNodeIds: [...delta.orderedNodeIds],
     matchedNodeIds: [...delta.matchedNodeIds],
     asOfSeq: delta.asOfSeq,
-    completeness: structuredClone(delta.completeness),
+    completeness: { ...delta.completeness },
   })
 }
 
-const scopedSourceKey = (graphNamespace: string[], sourceId: string): string => (
+const scopedSourceKey = (graphNamespace: readonly string[], sourceId: string): string => (
   JSON.stringify([graphNamespace, sourceId])
 )
 
 const interactionState = (
-  interactions: TraceInteraction[],
+  interactions: readonly DeepReadonly<TraceInteraction>[],
 ): {
   approval?: ApprovalState
   planInteraction?: Conversation['planInteraction']
@@ -193,7 +198,7 @@ const interactionState = (
   return { pendingInteractionKind: 'input_required' }
 }
 
-const traceMessages = (trace: ConversationHistoryCoreDetail): Message[] => {
+const traceMessages = (trace: TraceSnapshot): Message[] => {
   const reasoning = new Map(
     trace.reasoning
       .filter((item) => !item.contentOmitted && item.content != null)
@@ -228,7 +233,7 @@ const traceMessages = (trace: ConversationHistoryCoreDetail): Message[] => {
     existing.push({ sequence: message.traceSeq, content, attachments })
     subagentPartialOutput.set(owner.id, existing)
   })
-  const owningSubagent = (node: TraceGraphNode): TraceGraphNode | undefined => {
+  const owningSubagent = (node: TraceNode): TraceNode | undefined => {
     if (!node.parentSubagentId) return undefined
     const parent = nodesById.get(node.parentSubagentId)
     return parent?.kind === 'subagent' ? parent : undefined
@@ -299,7 +304,7 @@ const traceMessages = (trace: ConversationHistoryCoreDetail): Message[] => {
         meta: {
           title: node.name,
           toolName: node.kind === 'tool' ? node.name : undefined,
-          graphNamespace: node.graphNamespace,
+          graphNamespace: [...node.graphNamespace],
           agentName: node.kind === 'subagent' ? node.name : undefined,
           sourceAgentName: subagent?.name,
           params: node.kind === 'tool' ? text(retainedInput) : undefined,
@@ -350,7 +355,7 @@ const traceMessages = (trace: ConversationHistoryCoreDetail): Message[] => {
   )).map((item) => item.value)
 }
 
-const runStatus = (trace: ConversationHistoryCoreDetail): Conversation['runStatus'] => {
+const runStatus = (trace: TraceSnapshot): Conversation['runStatus'] => {
   switch (trace.status.execution) {
     case 'running': return 'detached'
     case 'waiting': return 'waiting_approval'
@@ -360,7 +365,7 @@ const runStatus = (trace: ConversationHistoryCoreDetail): Conversation['runStatu
   }
 }
 
-const assertTraceDetail = (trace: ConversationHistoryCoreDetail) => {
+const assertTraceDetail = (trace: TraceSnapshot) => {
   if (
     !trace.threadId
     || !trace.generation
@@ -377,8 +382,8 @@ const assertTraceDetail = (trace: ConversationHistoryCoreDetail) => {
 }
 
 const compareTraceObservation = (
-  current: ConversationHistoryCoreDetail,
-  incoming: Pick<ConversationHistoryCoreDetail,
+  current: TraceSnapshot,
+  incoming: Pick<TraceSnapshot,
     'generation' | 'asOfSeq' | 'observedAt' | 'status' | 'completeness' | 'messageCount' | 'toolCallCount' | 'state'>,
 ): number => {
   if (incoming.generation !== current.generation) throw new ConversationError('stream_event_invalid')
@@ -407,7 +412,7 @@ const sameTraceValue = (left: unknown, right: unknown): boolean => {
     && keys.every((key) => Object.hasOwn(right, key) && sameTraceValue(left[key], right[key]))
 }
 
-const assertMatchingTraceEntities = <T extends { id: string }>(current: T[], incoming: T[]) => {
+const assertMatchingTraceEntities = <T extends { id: string }>(current: readonly T[], incoming: readonly T[]) => {
   const previous = new Map(current.map((item) => [item.id, item]))
   for (const item of incoming) {
     const known = previous.get(item.id)
@@ -421,14 +426,17 @@ const taskTraceView = (snapshot: TaskTraceSnapshot): WebTaskTraceViewState => (
     : { phase: 'unavailable', snapshot }
 )
 
+interface TraceViewOptions {
+  model: string
+  lastDeliveredSeq?: number
+  previous?: Conversation
+}
+
 export const restoreConversationFromTrace = (
   detail: ConversationHistoryDetail,
-  options: {
-    model: string
-    lastDeliveredSeq?: number
+  options: TraceViewOptions & {
     includeTaskTrace: boolean
     taskTrace?: WebTaskTraceViewState
-    previous?: Conversation
     expandHistory?: boolean
     preserveHistory?: boolean
   },
@@ -446,18 +454,6 @@ export const restoreConversationFromTrace = (
     assertMatchingTraceEntities(current.graph.turns, detail.graph.turns)
     assertMatchingTraceEntities(current.graph.nodes, detail.graph.nodes)
   }
-  if (current && preserveHistory && order >= 0) {
-    // 同一持久化前缀只重验运行观测，保留用户已经展开的历史窗口
-    detail = {
-      ...detail,
-      messages: current.messages,
-      runFailures: current.runFailures,
-      reasoning: current.reasoning,
-      graph: current.graph,
-      interactions: current.interactions,
-      historyCursor: current.historyCursor,
-    }
-  }
   if (current && order < 0) {
     if (!options.expandHistory || detail.asOfSeq !== current.asOfSeq
       || detail.headRunId !== current.headRunId) {
@@ -465,33 +461,60 @@ export const restoreConversationFromTrace = (
       const title = mergeConversationTitle(previous, detail)
       return title.titleSeq === previous.titleSeq ? previous : { ...previous, ...title }
     }
+  }
+  const { taskTrace: wireTaskTrace, ...wireCore } = detail
+  // 新输入只复制一次；同前缀刷新仅复制新观测，已展开的只读实体继续共享
+  let trace: TraceSnapshot = current && preserveHistory && order >= 0
+    ? {
+        ...wireCore,
+        availableHeads: [...wireCore.availableHeads],
+        state: structuredClone(wireCore.state),
+        status: { ...wireCore.status },
+        completeness: { ...wireCore.completeness },
+        messages: current.messages,
+        runFailures: current.runFailures,
+        reasoning: current.reasoning,
+        graph: current.graph,
+        interactions: current.interactions,
+        historyCursor: current.historyCursor,
+      }
+    : structuredClone(wireCore)
+  if (current && order < 0) {
     // 固定前缀的旧分页补充历史实体，运行状态仍使用更新的存储观测
-    detail = {
-      ...detail,
+    trace = {
+      ...trace,
       observedAt: current.observedAt,
       status: current.status,
       completeness: current.completeness,
     }
   }
-  const { taskTrace: wireTaskTrace, ...wireCore } = detail
-  const trace = structuredClone(wireCore)
-  assertTraceDetail(trace)
   if (options.includeTaskTrace && wireTaskTrace == null) {
     throw new ConversationError('stream_event_invalid')
   }
   const taskTrace = options.includeTaskTrace && wireTaskTrace != null
     ? taskTraceView(wireTaskTrace)
     : options.taskTrace ?? { phase: 'unloaded' as const }
+  return projectTraceConversation(trace, taskTrace, options)
+}
+
+/** 快照已归属会话且只读；消息和交互表单另建可编辑视图 */
+const projectTraceConversation = (
+  trace: TraceSnapshot,
+  taskTrace: WebTaskTraceViewState,
+  options: TraceViewOptions,
+): Conversation => {
+  assertTraceDetail(trace)
   const interaction = interactionState(trace.interactions)
   const projectedStatus = runStatus(trace)
   const status = interaction.pendingInteractionKind && projectedStatus !== 'error'
     ? 'waiting_approval'
     : projectedStatus
-  // 权威历史更新正文和终态时，保留当前页面尚未显示完的实时文字进度
+  // 取消的当前轮直接显示完整正文，其他轮次保留尚未显示完的实时文字进度
   const liveTextById = new Map(options.previous?.messages
     .filter(message => message.role === 'assistant' && message.liveText)
     .map(message => [message.id, message.liveText]))
   const messages = traceMessages(trace).map(message => {
+    if (trace.status.execution === 'cancelled' && message.meta?.runId === trace.headRunId) return message
     const liveText = message.role === 'assistant' ? liveTextById.get(message.id) : undefined
     return liveText ? { ...message, liveText } : message
   })
@@ -513,11 +536,12 @@ export const restoreConversationFromTrace = (
     pendingInteractionKind: interaction.pendingInteractionKind,
     runStatus: status,
     activeRunId: status === 'detached' ? trace.headRunId : undefined,
-    serverState: structuredClone(trace.state.root),
+    serverState: trace.state.root,
     // Trace 序号与 Messaging 投递序号相互独立；实时调用方保留已知游标，纯历史水化保持未知
     lastSeq: options.lastDeliveredSeq,
     trace,
     isHydrated: true,
+    historySynchronized: true,
   }
 }
 
@@ -546,8 +570,8 @@ export const applyConversationTraceUpdate = (
   if (update.graph.asOfSeq !== update.asOfSeq) {
     throw new ConversationError('stream_event_invalid')
   }
-  const next: ConversationHistoryCoreDetail = {
-    ...structuredClone(previous),
+  const next: TraceSnapshot = {
+    ...previous,
     asOfSeq: update.asOfSeq,
     generation: update.generation,
     observedAt: update.observedAt,
@@ -562,8 +586,8 @@ export const applyConversationTraceUpdate = (
       update.interactions.removes,
     ),
     state: structuredClone(update.state),
-    status: structuredClone(update.status),
-    completeness: structuredClone(update.completeness),
+    status: { ...update.status },
+    completeness: { ...update.completeness },
     messageCount: update.messageCount,
     toolCallCount: update.toolCallCount,
     historyCursor: update.asOfSeq === previous.asOfSeq ? previous.historyCursor : null,
@@ -573,10 +597,8 @@ export const applyConversationTraceUpdate = (
     : includeTaskTrace
       ? conversation.taskTrace
       : { phase: 'unloaded' as const }
-  return restoreConversationFromTrace({ ...next, taskTrace: null }, {
+  return projectTraceConversation(next, taskTrace, {
     model: conversation.model,
     lastDeliveredSeq: conversation.lastSeq,
-    includeTaskTrace: false,
-    taskTrace,
   })
 }

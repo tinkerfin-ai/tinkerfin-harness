@@ -8,6 +8,8 @@ describe('文件审批选择', () => {
     const change = vi.fn()
     render(<AccessModePicker value="write_approval" onChange={change} />)
     const trigger = screen.getByRole('button', { name: '选择访问权限' })
+    expect(trigger).toHaveAccessibleDescription('写入需审批')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('写入需审批')
     expect(trigger.querySelector('.ui-compact-picker-chevron')).not.toBeNull()
     fireEvent.click(trigger)
     const menu = screen.getByRole('listbox', { name: '访问权限选项' })

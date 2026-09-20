@@ -46,10 +46,47 @@ async function geometry(page: Page) {
     const list = document.querySelector('.message-list')!.getBoundingClientRect()
     const composer = document.querySelector('.composer')!.getBoundingClientRect()
     const parent = main.getBoundingClientRect()
-    const gutter = parseFloat(getComputedStyle(main).getPropertyValue('--layout-page-gutter'))
+    const gutter = parseFloat(getComputedStyle(main).getPropertyValue('--layout-conversation-gutter'))
     return { width: list.width, input: composer.width, center: list.x + list.width / 2 - parent.x - parent.width / 2,
+      leftInset: composer.x - parent.x, rightInset: parent.right - composer.right,
       max: Math.floor(parent.width - gutter * 2 - 32), auto: Math.min(Math.floor(parent.width - gutter * 2 - 32), Math.round(Math.max(680, Math.min(parent.width * .64, 920)))),
       overflow: document.documentElement.scrollWidth > innerWidth, gutter }
+  })
+}
+
+for (const theme of ['light', 'dark']) {
+  test(`新对话可从输入框两侧调宽并沿用宽度偏好 ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 960 })
+    await openConversation(page, theme)
+    await page.getByRole('button', { name: '新会话', exact: true }).last().click()
+    await expect(page.getByRole('heading', { name: '暂无消息' })).toBeAttached()
+    const composer = page.locator('.composer')
+    for (const side of ['左', '右']) {
+      const handle = page.getByRole('separator', { name: `调整会话${side}侧宽度` })
+      await expect(handle).toBeVisible()
+      const before = (await composer.boundingBox())!
+      const bounds = (await handle.boundingBox())!
+      const x = bounds.x + bounds.width / 2
+      const y = before.y + before.height / 2
+      await page.mouse.move(x, y)
+      await page.mouse.down()
+      await page.mouse.move(x + (side === '左' ? -24 : 24), y)
+      await page.mouse.up()
+      await expect.poll(async () => (await composer.boundingBox())!.width - before.width).toBeCloseTo(48, 0)
+    }
+    const savedWidth = (await composer.boundingBox())!.width
+    await page.reload()
+    await expect(page.getByRole('region', { name: '对话内容', exact: true })).toContainText('问题 0')
+    await expect.poll(async () => (await geometry(page)).input).toBeCloseTo(savedWidth, 0)
+    await page.getByRole('button', { name: '新会话', exact: true }).last().click()
+    await expect(page.getByRole('heading', { name: '暂无消息' })).toBeAttached()
+    await expect.poll(async () => (await composer.boundingBox())?.width).toBeCloseTo(savedWidth, 0)
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 960 })
+      await expect(composer).toBeInViewport()
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await page.screenshot({ path: testInfo.outputPath(`new-conversation-${theme}-${width}.png`) })
+    }
   })
 }
 
@@ -65,6 +102,25 @@ for (const theme of ['light', 'dark']) {
       expect(size.input - size.width).toBeCloseTo(32, 0)
       await expect(page.getByRole('button', { name: '会话宽度', exact: true })).toHaveCount(0)
       if ([320, 1440, 2560].includes(width)) await page.screenshot({ path: testInfo.outputPath(`conversation-${theme}-${width}.png`) })
+    }
+    await page.setViewportSize({ width: 1440, height: 960 })
+    await expect(page.locator('.app-shell')).toHaveAttribute('data-sidebar-mode', 'expanded')
+    await expect.poll(async () => { const size = await geometry(page); return Math.abs(size.width - size.auto) }).toBeLessThan(1)
+    const handle = page.getByRole('separator', { name: '调整会话右侧宽度' })
+    const bounds = (await handle.boundingBox())!
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(1438, bounds.y + bounds.height / 2)
+    await page.mouse.up()
+    await expect.poll(async () => { const size = await geometry(page); return Math.abs(size.width - size.max) }).toBeLessThan(1)
+    for (const [width, gutter] of [[320, 12], [768, 16], [1024, 16], [1440, 64]]) {
+      await page.setViewportSize({ width, height: 960 })
+      await expect.poll(async () => (await geometry(page)).leftInset).toBeCloseTo(gutter, 0)
+      const size = await geometry(page)
+      expect(size.rightInset).toBeCloseTo(gutter, 0)
+      expect(size.input - size.width).toBeCloseTo(32, 0)
+      expect(size.overflow).toBe(false)
+      await page.screenshot({ path: testInfo.outputPath(`max-conversation-${theme}-${width}.png`) })
     }
   })
 }
@@ -171,6 +227,7 @@ for (const theme of ['light', 'dark']) {
     await expect(indicator).toHaveCSS('opacity', '0')
     for (const width of [1024, 1440, 2560]) {
       await page.setViewportSize({ width, height: 960 })
+      const handleOffset = width === 1024 ? 4 : 16
       for (const [handle, edge] of [[left, 'left'], [right, 'right']] as const) {
         const box = (await handle.boundingBox())!
         for (const fraction of [.3, .7]) {
@@ -184,7 +241,7 @@ for (const theme of ['light', 'dark']) {
           expect(Math.abs(pairedBox.y + pairedBox.height / 2 - y)).toBeLessThanOrEqual(1)
           const markBox = (await mark.boundingBox())!
           const composer = (await page.locator('.composer').boundingBox())!
-          expect(Math.abs(markBox.x + markBox.width / 2 - (edge === 'left' ? composer.x - 16 : composer.x + composer.width + 16))).toBeLessThanOrEqual(1)
+          expect(Math.abs(markBox.x + markBox.width / 2 - (edge === 'left' ? composer.x - handleOffset : composer.x + composer.width + handleOffset))).toBeLessThanOrEqual(1)
           expect(Math.abs(markBox.y + markBox.height / 2 - y)).toBeLessThanOrEqual(1)
         }
       }

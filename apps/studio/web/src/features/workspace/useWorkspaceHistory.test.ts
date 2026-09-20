@@ -1,12 +1,13 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { useRef, useState } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConversationHistoryDetail } from '../../api/conversation/history'
 import { upsertConversation } from '../../lib/workspace'
 import { emptyTraceGraph } from '../../test/traceFixtures'
-import type { Conversation, WorkspaceState } from '../../types'
+import type { Conversation } from '../../types'
 import { restoreConversationFromTrace } from '../conversation/trace/runtime'
+import { useWorkspaceState } from './useWorkspaceState'
 import {
   historyItemFromDetail,
   mergeHistoryConversations,
@@ -114,16 +115,19 @@ function useHarness(
 ) {
   const followDetachedConversation = useRef(vi.fn()).current
   const defaultPrepareTaskTraceOwner = useRef(vi.fn(async () => undefined)).current
-  const [workspace, setWorkspace] = useState<WorkspaceState>({
+  const { workspace, setWorkspace, retainConversationDetails } = useWorkspaceState()
+  const initialWorkspace = useRef({
     conversations: [{
       ...restoreConversationFromTrace(initial, { model: 'main', includeTaskTrace: true }),
       isHydrated: options.initiallyHydrated ?? true,
     }],
     currentThreadId: initial.threadId,
-  })
+  }).current
+  useLayoutEffect(() => { setWorkspace(initialWorkspace) }, [initialWorkspace, setWorkspace])
   const history = useWorkspaceHistory({
     workspace,
     setWorkspace,
+    retainConversationDetails,
     defaultModelId: 'main',
     modelCatalogStatus: 'loading',
     followDetachedConversation,
@@ -188,6 +192,7 @@ function useHarness(
     startOwnedRun,
     switchThread,
     workspace,
+    setWorkspace,
   }
 }
 
@@ -196,6 +201,28 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
     vi.clearAllMocks()
     historyMocks.list.mockResolvedValue({ items: [], nextCursor: null })
     historyMocks.groupConfig.mockResolvedValue({ dayRanges: [] })
+  })
+
+  it.each(['hydrate', 'refresh', 'taskTrace', 'older'] as const)('%s 删除后迟到的详情不会重建会话', async (operation) => {
+    const response = deferred<ConversationHistoryDetail>()
+    const requested = deferred<void>()
+    const initial = detail({
+      historyCursor: 'older-page',
+      taskTrace: { status: 'unavailable', todoGroups: [], errorCode: 'trace_incomplete' },
+    })
+    historyMocks.detail.mockImplementation(() => { requested.resolve(); return response.promise })
+    const { result } = renderHook(() => useHarness(initial, { initiallyHydrated: operation !== 'hydrate' }))
+    let loading: Promise<unknown> | undefined
+    await act(async () => {
+      if (operation === 'refresh') loading = result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+      if (operation === 'taskTrace') loading = result.current.history.hydrateTaskTrace(THREAD_ID, true)
+      if (operation === 'older') loading = result.current.history.loadOlderTrace(THREAD_ID)
+      await requested.promise
+    })
+    act(() => result.current.setWorkspace({ conversations: [], currentThreadId: '' }))
+    await act(async () => { response.resolve(initial); await loading })
+    expect(result.current.workspace.conversations).toEqual([])
+    expect(result.current.history.hydrationState).toBeNull()
   })
 
   it.each(['refresh', 'taskTrace', 'older'] as const)('%s 接口遇到同一观测的矛盾正文时保留已有内容并报告失败', async (operation) => {
@@ -488,8 +515,10 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
       | AbortSignal
       | undefined
 
-    controller.abort()
-    await expect(loading).resolves.toBe(false)
+    await act(async () => {
+      controller.abort()
+      await expect(loading).resolves.toBe(false)
+    })
     expect(requestSignal?.aborted).toBe(true)
   })
 

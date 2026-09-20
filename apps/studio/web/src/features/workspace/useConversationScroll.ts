@@ -474,7 +474,10 @@ export function useConversationScroll({
     resizedScroll.current = { pane, top: pane.scrollTop }
   }, [])
 
+  const isFollowingLatest = useCallback(() => followLatest.current && !readingHistory.current, [])
+
   return {
+    isFollowingLatest,
     resizeContent,
     paneRef,
     messageEndRef,

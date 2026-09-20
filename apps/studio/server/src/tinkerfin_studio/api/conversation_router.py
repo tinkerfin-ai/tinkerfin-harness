@@ -16,11 +16,13 @@ from tinkerfin_studio.api.dependencies import (
     SessionDep,
     UserContextDep,
 )
+from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
 from tinkerfin_studio.api.responses import (
     ApiResponse,
     sse_response,
     trace_sse_response,
 )
+from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.request import ChatRequest
 from tinkerfin_studio.conversation.schemas import (
     CancelRunResponse,
@@ -29,6 +31,7 @@ from tinkerfin_studio.conversation.schemas import (
     ConversationHistoryListItem,
     ConversationHistoryListResponse,
     ConversationThreadUpdate,
+    ConversationTitle,
 )
 from tinkerfin_studio.conversation.service import ConversationChatService
 from tinkerfin_studio.resources import get_resources
@@ -138,6 +141,22 @@ async def get_conversation_config(
     """返回历史会话分组等前端查询配置"""
 
     return ApiResponse.success(service.group_config())
+
+
+@router.get("/{thread_id}/title", response_model=ApiResponse[ConversationTitle])
+async def get_title(
+    thread_id: ThreadIdPath,
+    session: SessionDep,
+    user: UserContextDep,
+) -> ApiResponse[ConversationTitle]:
+    """读取当前用户的标题快照，聊天结束后仍可查询总结结果"""
+    thread = await ConversationRepository(session).get_thread(
+        user_id=user.user_id,
+        thread_id=thread_id,
+    )
+    if thread is None:
+        raise BusinessException(ConversationErrorCode.NOT_FOUND)
+    return ApiResponse.success(ConversationTitle.model_validate(thread))
 
 
 @router.get(

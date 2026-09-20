@@ -1,5 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ComponentProps } from 'react'
+import { useDrawerLayout } from '../../../components/ui/useDrawerLayout'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
   TraceGraphFilter,
@@ -7,7 +9,12 @@ import type {
   TraceGraphPage,
 } from '../../../api/conversation/traceGraph'
 import { LocaleProvider } from '../../../i18n'
-import { ChainTraceView } from './ChainTraceView'
+import { ChainTraceView as TraceView } from './ChainTraceView'
+
+function ChainTraceView(props: Omit<ComponentProps<typeof TraceView>, 'drawerLayout'>) {
+  const drawerLayout = useDrawerLayout(520)
+  return <TraceView {...props} drawerLayout={drawerLayout} />
+}
 
 const useChainTrace = vi.hoisted(() => vi.fn())
 const queryTraceGraph = vi.hoisted(() => vi.fn())
@@ -167,7 +174,9 @@ const filteredPage = (filter: TraceGraphFilter): TraceGraphPage => {
 const row = (name: string | RegExp) => screen.getByRole('button', { name })
 
 describe('ChainTraceView', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
   beforeEach(() => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
     useChainTrace.mockReset()
     queryTraceGraph.mockReset()
     window.localStorage.clear()
@@ -177,9 +186,55 @@ describe('ChainTraceView', () => {
     }))
   })
 
+  it('移动端点击节点进入详情并聚焦返回入口，不要求展开窗口', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320)
+    const unavailable = vi.fn()
+    render(<ChainTraceView threadId="thread-1" active live={false} mobile onDetailsUnavailable={unavailable} />)
+    expect(screen.queryByRole('complementary', { name: '链路详情' })).not.toBeInTheDocument()
+    const trigger = row('模型，deepseek-chat，已完成，查看详情')
+    fireEvent.click(trigger)
+    const back = screen.getByRole('button', { name: '返回链路' })
+    expect(back).toHaveFocus()
+    expect(screen.getByRole('complementary', { name: '链路详情' })).toBeVisible()
+    expect(screen.queryByRole('separator')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '请求' }))
+    expect(screen.getByRole('tab', { name: '请求' })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(back)
+    expect(screen.queryByRole('complementary', { name: '链路详情' })).not.toBeInTheDocument()
+    await waitFor(() => expect(trigger).toHaveFocus())
+    expect(unavailable).not.toHaveBeenCalled()
+  })
+
+  it('宿主收窄保留选中详情与分类，主动关闭后不自动打开', () => {
+    let width = 1200
+    const callbacks: Array<() => void> = []
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width)
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { callbacks.push(callback) }
+      observe() {}
+      disconnect() {}
+    })
+    const unavailable = vi.fn()
+    render(<ChainTraceView threadId="thread-1" active live={false} onDetailsUnavailable={unavailable} />)
+    fireEvent.click(row('模型，deepseek-chat，已完成，查看详情'))
+    fireEvent.click(screen.getByRole('tab', { name: '请求' }))
+    act(() => { width = 819; callbacks.forEach(callback => callback()) })
+    expect(screen.queryByRole('complementary', { name: '链路详情' })).not.toBeInTheDocument()
+    fireEvent.click(row('模型，deepseek-chat，已完成，查看详情'))
+    expect(unavailable).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    act(() => { width = 1200; callbacks.forEach(callback => callback()) })
+    expect(screen.getByRole('tab', { name: '请求' })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '关闭链路详情' }))
+    act(() => { width = 819; callbacks.forEach(callback => callback()) })
+    act(() => { width = 1200; callbacks.forEach(callback => callback()) })
+    expect(screen.queryByRole('complementary', { name: '链路详情' })).not.toBeInTheDocument()
+  })
+
   it('renders the six product lanes and complete Model details', async () => {
     render(<ChainTraceView threadId="thread-1" active live={false} />)
 
+    fireEvent.click(screen.getByRole('button', { name: '关闭链路详情' }))
     expect([...document.querySelectorAll('.chain-trace-lane-label')].map(
       (element) => element.textContent,
     )).toEqual(['用户', '上下文', '模型', '工具', '子智能体', '助手'])
@@ -471,6 +526,7 @@ describe('ChainTraceView', () => {
       </LocaleProvider>,
     )
 
+    fireEvent.click(screen.getByRole('button', { name: 'Close trace details' }))
     const summary = document.querySelector('.chain-trace-range-summary')
     expect(summary).toHaveTextContent('Total 1 turn')
     expect(summary?.querySelector('strong')).toHaveTextContent('1')

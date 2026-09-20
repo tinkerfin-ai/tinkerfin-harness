@@ -1,3 +1,6 @@
+import { requestJson } from '../shared/http'
+import { ConversationError } from './errors'
+
 export interface ConversationTitleSnapshot {
   threadId: string
   title: string
@@ -14,4 +17,10 @@ export function isConversationTitle(value: unknown): value is ConversationTitleS
     && typeof item.titleSource === 'string' && ['default', 'generated', 'user', 'unknown'].includes(item.titleSource)
     && typeof item.titleGenerationStatus === 'string' && ['idle', 'running', 'succeeded', 'failed', 'skipped'].includes(item.titleGenerationStatus)
     && typeof item.titleSeq === 'number' && Number.isSafeInteger(item.titleSeq) && item.titleSeq >= 0
+}
+
+export async function fetchConversationTitle(threadId: string, signal: AbortSignal): Promise<ConversationTitleSnapshot> {
+  const value = await requestJson<unknown>(`/api/conversation/${encodeURIComponent(threadId)}/title`, { signal, suppressGlobalError: true })
+  if (!isConversationTitle(value) || value.threadId !== threadId) throw new ConversationError('stream_event_invalid', '标题快照无效')
+  return value
 }

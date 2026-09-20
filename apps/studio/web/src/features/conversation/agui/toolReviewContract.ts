@@ -1,4 +1,4 @@
-import type { JsonObject, JsonValue } from "../../../types"
+import type { DeepReadonly, JsonObject, JsonValue } from "../../../types"
 
 export const TOOL_REVIEW_SCHEMA = "tinkerfin.deepagents.tool-review" as const
 
@@ -10,14 +10,14 @@ export interface ToolReviewInterruptMetadata {
   readonly actionIndex: number
   readonly toolName: string
   readonly allowedDecisions: readonly ToolReviewDecision[]
-  readonly originalArgs: JsonObject
+  readonly originalArgs: DeepReadonly<JsonObject>
 }
 
 interface ToolReviewInterruptLike {
   id: string
   reason: string
   toolCallId?: string | null
-  metadata?: JsonObject | null
+  metadata?: DeepReadonly<JsonObject> | null
 }
 
 const DECISIONS = new Set<ToolReviewDecision>(["approve", "edit", "reject", "respond"])
@@ -37,7 +37,7 @@ export class ToolReviewContractError extends Error {
   }
 }
 
-const isJsonValue = (value: unknown): value is JsonValue => {
+const isJsonValue = (value: unknown): value is DeepReadonly<JsonValue> => {
   if (value === null || typeof value === "string" || typeof value === "boolean") return true
   if (typeof value === "number") return Number.isFinite(value)
   if (Array.isArray(value)) return value.every(isJsonValue)
@@ -45,31 +45,31 @@ const isJsonValue = (value: unknown): value is JsonValue => {
   return Object.values(value).every(isJsonValue)
 }
 
-const isJsonObject = (value: unknown): value is JsonObject =>
+const isJsonObject = (value: unknown): value is DeepReadonly<JsonObject> =>
   Boolean(value && typeof value === "object" && !Array.isArray(value) && isJsonValue(value))
 
-const hasOnlyKeys = (value: JsonObject, keys: readonly string[]) => {
+const hasOnlyKeys = (value: DeepReadonly<JsonObject>, keys: readonly string[]) => {
   const actual = Object.keys(value).sort()
   const expected = [...keys].sort()
   return actual.length === expected.length && actual.every((key, index) => key === expected[index])
 }
 
-const jsonValuesEqual = (left: JsonValue, right: JsonValue): boolean => {
+const jsonValuesEqual = (left: DeepReadonly<JsonValue>, right: DeepReadonly<JsonValue>): boolean => {
   if (left === null || right === null) return left === right
   if (Array.isArray(left) || Array.isArray(right)) {
     return Array.isArray(left)
       && Array.isArray(right)
       && left.length === right.length
-      && left.every((item, index) => jsonValuesEqual(item, right[index] as JsonValue))
+      && left.every((item, index) => jsonValuesEqual(item, right[index]))
   }
   if (typeof left === "object" || typeof right === "object") {
-    if (typeof left !== "object" || typeof right !== "object") return false
+    if (!isJsonObject(left) || !isJsonObject(right)) return false
     const leftKeys = Object.keys(left).sort()
     const rightKeys = Object.keys(right).sort()
     return leftKeys.length === rightKeys.length
       && leftKeys.every((key, index) => (
         key === rightKeys[index]
-        && jsonValuesEqual(left[key] as JsonValue, right[key] as JsonValue)
+        && jsonValuesEqual(left[key], right[key])
       ))
   }
   return typeof left === typeof right && left === right

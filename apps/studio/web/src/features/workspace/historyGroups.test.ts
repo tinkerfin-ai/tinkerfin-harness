@@ -8,6 +8,7 @@ const conversation = (
   updatedAt: string,
   pinned = false,
 ): Conversation => ({ accessMode: 'write_approval',
+  historySynchronized: false,
   threadId,
   title: threadId,
   pinned,

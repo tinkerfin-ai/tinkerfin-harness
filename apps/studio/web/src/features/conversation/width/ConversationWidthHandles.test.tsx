@@ -7,7 +7,7 @@ import { CONVERSATION_WIDTH_KEY } from './widthPreference'
 
 function Consumer() {
   const control = useConversationWidth(apply => apply())
-  return <main ref={control.rootRef} style={{ '--layout-page-gutter': '32px' } as React.CSSProperties}>
+  return <main ref={control.rootRef} style={{ '--layout-conversation-gutter': '64px' } as React.CSSProperties}>
     <ConversationWidthHandles control={control} />
     <output aria-label="会话宽度">{control.width}</output>
   </main>
@@ -58,5 +58,5 @@ it('两侧鼠标对称调宽，取消或无移动不覆盖保存值', () => {
   expect(localStorage.getItem(CONVERSATION_WIDTH_KEY)).toBe('640')
   pointer(right, 'pointerdown', 100)
   pointer(right, 'pointerup', 1100)
-  expect(localStorage.getItem(CONVERSATION_WIDTH_KEY)).toBe('1504')
+  expect(localStorage.getItem(CONVERSATION_WIDTH_KEY)).toBe('1440')
 })

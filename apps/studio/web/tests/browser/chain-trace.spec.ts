@@ -511,6 +511,70 @@ const traceRow = (page: Page, nodeId: string) => (
   page.locator(`[data-trace-node-id="${nodeId}"]`)
 )
 
+for (const theme of ['light', 'dark'] as const) {
+  for (const width of [320, 768, 1024, 1440]) {
+    test(`抽屉打开后主区滚动条自动隐藏 ${theme} ${width}`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 700 })
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      const errors = await mockChainTraceStudio(page, { theme })
+      await page.clock.install()
+      const conversationBar = page.locator('.conversation-region > .ui-overlay-scrollbar')
+      await page.getByRole('region', { name: '对话内容', exact: true }).hover()
+      await expect(conversationBar).toHaveCSS('opacity', '1')
+      if (width === 1440) {
+        const thumb = (await conversationBar.locator('.ui-overlay-scrollbar__thumb').boundingBox())!
+        await page.mouse.move(thumb.x + thumb.width / 2, thumb.y + thumb.height / 2)
+        await page.mouse.down()
+        await page.mouse.move(1, 1)
+        await page.mouse.up()
+        await page.clock.runFor(1_200)
+        await expect(conversationBar).toHaveCSS('opacity', '0')
+      }
+      await page.getByRole('button', { name: '任务轨迹 1', exact: true }).click()
+      await expect(page.getByRole('complementary', { name: '任务轨迹' })).toBeVisible({ visible: width === 320 || width === 1440 })
+      await page.mouse.move(1, 1)
+      await page.clock.runFor(1_200)
+      await expect(conversationBar).toHaveCSS('opacity', '0')
+      await page.screenshot({ path: testInfo.outputPath(`scrollbar-todo-${theme}-${width}.png`) })
+      if (width === 1440) await page.getByRole('button', { name: '关闭任务轨迹' }).click()
+      if (width === 320) await page.getByRole('button', { name: '返回对话' }).click()
+      await page.getByRole('tab', { name: '链路', exact: true }).click()
+      const close = page.getByRole('button', { name: '关闭链路详情' })
+      // 并排布局会自动选择节点，先关闭以覆盖用户主动打开详情的路径
+      if (width === 1440) await close.click()
+      const node = traceRow(page, 'model-current')
+      await node.click()
+      await expect(close).toBeVisible({ visible: width === 1440 })
+      await page.mouse.move(1, 1)
+      await page.clock.runFor(1_200)
+      const ledgerBar = page.locator('.chain-trace-ledger-scroll-host > .ui-overlay-scrollbar')
+      await expect(ledgerBar).toHaveAttribute('data-scrollable', 'true')
+      await expect(ledgerBar).toHaveCSS('opacity', '0')
+      if (width === 1440) {
+        await expect(node).toBeFocused()
+        await page.keyboard.press('ArrowDown')
+        await page.clock.runFor(1_200)
+        await expect(ledgerBar).toHaveCSS('opacity', '1')
+        await close.click()
+        await page.clock.runFor(32)
+        await expect(node).toBeFocused()
+        await page.mouse.move(1, 1)
+        await page.clock.runFor(1_200)
+        await expect(ledgerBar).toHaveCSS('opacity', '0')
+        await node.press('Enter')
+        await page.clock.runFor(1_200)
+        await expect(ledgerBar).toHaveCSS('opacity', '1')
+      } else if (width === 320) {
+        await expect(page.getByRole('button', { name: '返回链路' })).toBeFocused()
+      } else {
+        await expect(node).toBeFocused()
+      }
+      await page.screenshot({ path: testInfo.outputPath(`scrollbar-chain-${theme}-${width}.png`) })
+      expect(errors).toEqual([])
+    })
+  }
+}
+
 test('六类时间线、平级台账、Subagent 作用域和详情保持同一权威顺序', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const pageErrors = await mockChainTraceStudio(page)
@@ -989,6 +1053,7 @@ async function verifyViewports(
     await page.setViewportSize({ width, height: 900 })
     await expect(page.locator('#chain-trace-panel')).toBeVisible()
     const details = page.locator('.chain-trace-details')
+    if (width === 1440) {
     await expect(details).toBeVisible()
     const box = await details.boundingBox()
     expect(Math.round(box?.width ?? 0)).toBe(Math.min(width, 400))
@@ -1016,13 +1081,18 @@ async function verifyViewports(
     expect(actionAlignment.center).toBeLessThanOrEqual(1)
     expect(actionAlignment.left).toBeLessThanOrEqual(0.5)
     expect(actionAlignment.right).toBeLessThanOrEqual(0.5)
+    } else if (width === 320) {
+      await expect(details).toBeVisible()
+      expect(await details.boundingBox()).toEqual({ x: 0, y: 0, width, height: 900 })
+      await expect(page.getByRole('button', { name: '返回链路' })).toBeFocused()
+    } else {
+      await expect(details).toBeHidden()
+      await expect(page.getByRole('dialog', { name: '链路详情' })).toHaveCount(0)
+    }
     const overflow = await page.evaluate(() => (
       document.documentElement.scrollWidth - window.innerWidth
     ))
     expect(overflow).toBeLessThanOrEqual(0)
-    if (width === 320) {
-      await expect(page.getByRole('region', { name: '调用时间线' })).toBeHidden()
-    }
     if (process.env.TINKERFIN_VISUAL_QA_DIR) {
       await page.screenshot({
         path: resolve(
@@ -1035,91 +1105,42 @@ async function verifyViewports(
   }
 }
 
-test('浅色与深色四视口、overlay 焦点和 reduced-motion 保持可用', async ({ page }) => {
+test('链路详情随宿主自动隐藏并恢复，不隔离主区焦点', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   const pageErrors = await mockChainTraceStudio(page, { theme: 'dark' })
   await page.getByRole('tab', { name: '链路' }).click()
-  await verifyViewports(page, 'dark')
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-
-  await page.setViewportSize({ width: 768, height: 900 })
-  const dialog = page.getByRole('dialog', { name: '链路详情' })
-  await expect(dialog).toBeVisible()
-  const close = dialog.getByRole('button', { name: '关闭链路详情' })
-  await expect(close).toBeFocused()
-  const overlayGeometry = await dialog.evaluate((element) => {
-    const header = element.querySelector<HTMLElement>('.chain-trace-details-header')!
-    const tabs = element.querySelector<HTMLElement>('.chain-trace-detail-tabs')!
-    const style = getComputedStyle(element)
-    return {
-      margin: style.margin,
-      padding: style.padding,
-      maxWidth: style.maxWidth,
-      maxHeight: style.maxHeight,
-      gridTemplateRows: style.gridTemplateRows,
-      headerTabGap: tabs.getBoundingClientRect().top
-        - header.getBoundingClientRect().bottom,
-    }
-  })
-  expect(overlayGeometry).toMatchObject({
-    margin: '0px',
-    padding: '0px',
-    maxWidth: 'none',
-    maxHeight: 'none',
-  })
-  expect(overlayGeometry.gridTemplateRows).toMatch(/^64px 44px /)
-  expect(Math.abs(overlayGeometry.headerTabGap)).toBeLessThanOrEqual(1)
-  await expect(page.locator('.chain-trace-toolbar-host')).toHaveAttribute('inert', '')
-  await expect(page.locator('#root')).toHaveAttribute('aria-hidden', 'true')
-  await page.keyboard.press('Shift+Tab')
-  await expect(dialog.locator(':focus')).toHaveCount(1)
-  await page.keyboard.press('Escape')
-  await expect(dialog).toBeHidden()
-  await expect(traceRow(page, 'failed-tool')).toBeFocused()
-
-  await page.emulateMedia({ reducedMotion: 'reduce' })
-  await page.evaluate(() => {
-    const traceWindow = window as typeof window & {
-      __traceScrollBehaviors: ScrollBehavior[]
-    }
-    traceWindow.__traceScrollBehaviors = []
-    const original = Element.prototype.scrollIntoView
-    Element.prototype.scrollIntoView = function scrollIntoView(
-      options?: boolean | ScrollIntoViewOptions,
-    ) {
-      if (typeof options === 'object' && options.behavior) {
-        traceWindow.__traceScrollBehaviors.push(options.behavior)
-      }
-      original.call(this, options)
-    }
-  })
-  await page.locator('.chain-trace-sequence-block').first().click()
-  await expect.poll(() => page.evaluate(() => (
-    (window as typeof window & { __traceScrollBehaviors: ScrollBehavior[] })
-      .__traceScrollBehaviors.at(-1)
-  ))).toBe('auto')
-  await page.keyboard.press('Escape')
-
-  const cdp = await page.context().newCDPSession(page)
-  await cdp.send('Emulation.setTouchEmulationEnabled', {
-    enabled: true,
-    maxTouchPoints: 1,
-  })
-  await page.setViewportSize({ width: 320, height: 800 })
   await traceRow(page, 'failed-tool').click()
-  const mobileDialog = page.getByRole('dialog', { name: '链路详情' })
-  const closeTarget = await mobileDialog
-    .getByRole('button', { name: '关闭链路详情' })
-    .boundingBox()
-  expect(closeTarget?.width).toBeGreaterThanOrEqual(44)
-  expect(closeTarget?.height).toBeGreaterThanOrEqual(44)
-  await page.keyboard.press('Escape')
-  const searchTarget = await page.getByRole('button', { name: '搜索链路节点' })
-    .boundingBox()
-  expect(searchTarget?.width).toBeGreaterThanOrEqual(44)
-  expect(searchTarget?.height).toBeGreaterThanOrEqual(44)
-  const rowTarget = await traceRow(page, 'failed-tool').boundingBox()
-  expect(rowTarget?.height).toBeGreaterThanOrEqual(44)
+  await verifyViewports(page, 'dark')
+  const details = page.getByRole('complementary', { name: '链路详情' })
+  const handle = page.getByRole('separator', { name: '调整链路详情宽度' })
+  await handle.press('End')
+  await expect(handle).toHaveAttribute('aria-valuenow', '520')
+  const host = page.locator('.chain-trace-content-grid')
+  for (const [width, expected] of [[900, 380], [820, 300], [819, 0], [1179, 520]]) {
+    await host.evaluate((element, width) => { (element as HTMLElement).style.width = `${width}px` }, width)
+    if (expected) await expect(handle).toHaveAttribute('aria-valuenow', String(expected))
+    else await expect(details).toBeHidden()
+  }
+  await host.evaluate(element => { (element as HTMLElement).style.removeProperty('width') })
+  await page.setViewportSize({ width: 768, height: 900 })
+  await expect(details).toBeHidden()
+  await traceRow(page, 'failed-tool').click()
+  await expect(page.getByText('展开窗口后可查看', { exact: true })).toBeVisible()
+  await expect(page.locator('#root')).not.toHaveAttribute('aria-hidden')
+  await expect(page.getByRole('dialog', { name: '链路详情' })).toHaveCount(0)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect(handle).toHaveAttribute('aria-valuenow', '520')
+  await expect(details).toContainText('builtins.TimeoutError')
+  await handle.press('Home')
+  await expect(handle).toHaveAttribute('aria-valuenow', '300')
+  await page.getByRole('tab', { name: '对话', exact: true }).click()
+  await page.getByRole('tab', { name: '链路', exact: true }).click()
+  await expect(handle).toHaveAttribute('aria-valuenow', '300')
+  await page.getByRole('button', { name: '关闭链路详情' }).click()
+  await page.setViewportSize({ width: 320, height: 900 })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect(details).toBeHidden()
   expect(pageErrors).toEqual([])
 })
 
@@ -1148,6 +1169,14 @@ test('窄屏首次进入滚到底，触控搜索与详情关闭图标同轴', as
   for (const width of [320, 768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 })
     await traceRow(page, 'failed-tool').click()
+    if (width === 320) {
+      await page.getByRole('button', { name: '返回链路' }).click()
+      continue
+    }
+    if (width !== 1440) {
+      await expect(page.getByRole('complementary', { name: '链路详情' })).toBeHidden()
+      continue
+    }
     const geometry = await page.evaluate(() => {
       const search = document.querySelector<SVGElement>(
         '.chain-trace-search-trigger .ui-icon-button__icon svg',
@@ -1188,9 +1217,13 @@ test('错误详情将请求入口与错误摘要紧凑并排', async ({ page }) 
     await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
     for (const width of [320, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: 900 })
-      const close = page.getByRole('button', { name: '关闭链路详情' })
+      const close = page.getByRole('button', { name: width === 320 ? '返回链路' : '关闭链路详情' })
       if (await close.isVisible()) await close.click()
       await traceRow(page, 'failed-tool').click()
+      if (width !== 320 && width !== 1440) {
+        await expect(page.getByRole('complementary', { name: '链路详情' })).toBeHidden()
+        continue
+      }
       const panel = page.getByRole('region', { name: '错误详情' })
       await expect(panel).toContainText('搜索服务在期限内未响应')
       const request = panel.getByRole('button', { name: '查看请求' })
@@ -1200,7 +1233,60 @@ test('错误详情将请求入口与错误摘要紧凑并排', async ({ page }) 
 
       await request.click()
       await expect(page.getByRole('tab', { name: '请求', exact: true })).toHaveAttribute('aria-selected', 'true')
-      await page.getByRole('button', { name: '关闭链路详情' }).click()
+      await close.click()
     }
   }
 })
+
+for (const theme of ['light', 'dark'] as const) {
+  for (const language of ['zh-CN', 'en'] as const) {
+    test(`移动链路全屏详情返回列表并保留滚动 ${theme} ${language}`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width: 320, height: 800 })
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      const cdp = await page.context().newCDPSession(page)
+      await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+      const errors = await mockChainTraceStudio(page, { theme, language })
+      const english = language === 'en'
+      await page.getByRole('tab', { name: english ? 'Trace' : '链路', exact: true }).click()
+      const detail = page.getByRole('complementary', { name: english ? 'Trace details' : '链路详情' })
+      const ledger = page.getByLabel(english ? 'Trace nodes' : '链路节点', { exact: true })
+      await expect(detail).toBeHidden()
+      const node = traceRow(page, 'model-current')
+      await node.scrollIntoViewIfNeeded()
+      const top = await ledger.evaluate(element => element.scrollTop)
+      await node.click()
+      const back = page.getByRole('button', { name: english ? 'Back to trace' : '返回链路' })
+      await expect(back).toBeFocused()
+      expect(await detail.boundingBox()).toEqual({ x: 0, y: 0, width: 320, height: 800 })
+      await expect(ledger).toBeHidden()
+      await expect(page.getByRole('tab', { name: english ? 'Conversation' : '对话', exact: true })).toBeHidden()
+      await expect(page.getByRole('separator')).toHaveCount(0)
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await detail.getByRole('tab', { name: english ? 'Request' : '请求', exact: true }).click()
+      await expect(detail).toContainText('浏览器系统提示词')
+      await page.screenshot({ path: testInfo.outputPath(`mobile-trace-${theme}-${language}-320.png`) })
+      await back.click()
+      await expect(node).toBeFocused()
+      await expect.poll(() => ledger.evaluate(element => element.scrollTop)).toBe(top)
+      await node.press('Enter')
+      await detail.getByRole('tab', { name: english ? 'Request' : '请求', exact: true }).click()
+      await page.setViewportSize({ width: 767, height: 800 })
+      expect(await detail.boundingBox()).toEqual({ x: 0, y: 0, width: 767, height: 800 })
+      await page.setViewportSize({ width: 768, height: 800 })
+      await expect(detail).toBeHidden()
+      await expect(ledger).toBeVisible()
+      await page.setViewportSize({ width: 1440, height: 800 })
+      await expect(detail.getByRole('tab', { name: english ? 'Request' : '请求', exact: true })).toHaveAttribute('aria-selected', 'true')
+      await expect(page.getByRole('separator')).toHaveAttribute('aria-valuenow', '400')
+      await page.setViewportSize({ width: 320, height: 800 })
+      await back.click()
+      await traceRow(page, 'failed-tool').click()
+      await expect(detail).toContainText('builtins.TimeoutError')
+      await page.keyboard.press('Escape')
+      await expect(traceRow(page, 'failed-tool')).toBeFocused()
+      await expect(page.getByText(/展开窗口后可查看|Expand the window to view/)).toHaveCount(0)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      expect(errors).toEqual([])
+    })
+  }
+}

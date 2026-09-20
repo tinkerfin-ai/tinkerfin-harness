@@ -1,6 +1,7 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import gsap from 'gsap'
 
 import App from './App'
 import {
@@ -133,6 +134,7 @@ describe('App authentication boundary', () => {
   })
 
   it('keeps the session blocked and retries when /me is temporarily unavailable', async () => {
+    vi.useFakeTimers()
     seedSession('retry-token')
     let sessionRequests = 0
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -151,15 +153,15 @@ describe('App authentication boundary', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    render(<App />)
+    await act(async () => { render(<App />) })
 
-    expect(await screen.findByLabelText('正在重新验证登录状态')).toBeInTheDocument()
+    expect(screen.getByLabelText('正在重新验证登录状态')).toBeInTheDocument()
     expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).not.toBeNull()
     expect(screen.queryByLabelText('对话内容')).not.toBeInTheDocument()
     expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument()
-    await waitFor(() => expect(screen.getByLabelText('对话内容')).toBeInTheDocument(), {
-      timeout: 2500,
-    })
+    expect(sessionRequests).toBe(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+    expect(screen.getByLabelText('对话内容')).toBeInTheDocument()
     expect(sessionRequests).toBe(2)
   })
 
@@ -212,7 +214,19 @@ describe('App authentication boundary', () => {
     expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).toBeNull()
   })
 
-  it('shows the global 300ms transition only after a manual login succeeds', async () => {
+  it('手动登录验证通过后，过渡结束才挂载工作区', async () => {
+    const matchMedia = window.matchMedia
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      ...matchMedia(query),
+      matches: query === '(prefers-reduced-motion: reduce)' ? false : matchMedia(query).matches,
+    }))
+    const createTimeline = gsap.timeline
+    const timelines: gsap.core.Timeline[] = []
+    vi.spyOn(gsap, 'timeline').mockImplementation(vars => {
+      const timeline = createTimeline({ ...vars, paused: true })
+      timelines.push(timeline)
+      return timeline
+    })
     const browserUser = userEvent.setup()
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const request = input instanceof Request ? input : new Request(input)
@@ -230,9 +244,13 @@ describe('App authentication boundary', () => {
     await browserUser.type(screen.getByLabelText('密码'), 'password')
     await browserUser.click(screen.getByRole('button', { name: '登录' }))
 
-    expect(await screen.findByLabelText('正在进入工作区')).toBeInTheDocument()
+    const transition = await screen.findByLabelText('正在进入工作区')
+    const timeline = timelines.find(item => item.getTweensOf(transition).length > 0)!
+    act(() => { timeline.progress(0.5) })
+    expect(transition).toBeVisible()
     expect(screen.queryByLabelText('对话内容')).not.toBeInTheDocument()
-    await waitFor(() => expect(screen.getByLabelText('对话内容')).toBeInTheDocument(), { timeout: 1500 })
+    await act(async () => { timeline.progress(1) })
+    expect(screen.getByLabelText('对话内容')).toBeInTheDocument()
   })
 
   it('shows login service failures only through the global toast', async () => {
@@ -293,7 +311,7 @@ describe('App authentication boundary', () => {
     await waitFor(() => expect(signal).toBeDefined())
     view.unmount()
     expect(signal?.aborted).toBe(true)
-    await act(async () => { respond(envelope(loginPayload())); await new Promise(resolve => setTimeout(resolve, 10)) })
+    await act(async () => { respond(envelope(loginPayload())) })
     expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).toBeNull()
   })
 

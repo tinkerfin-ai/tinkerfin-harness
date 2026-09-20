@@ -7,7 +7,7 @@ type LiveText = NonNullable<Message['liveText']>
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
-/** 每帧只显示一个完整字素，运行结束后继续显示已收到的正文 */
+/** 每帧只显示一个完整字素，正常结束后继续显示已收到的正文 */
 export function useTypewriterText(content: string, source: LiveText | undefined, complete: boolean) {
   const progress = useContext(TextRevealProgressContext)
   const key = source?.key

@@ -63,7 +63,7 @@ export default defineConfig(({ mode }) => {
       globals: true,
       setupFiles: './src/test/setup.ts',
       css: true,
-      // 大型真实计时交互用例需要限制并发，避免共享开发机过度抢占浏览器帧回调
+      // 限制同时运行的测试文件，控制共享开发机上的 DOM 环境数量
       maxWorkers: 2,
     },
   }

@@ -15,7 +15,7 @@ import type { Attachment } from './content'
 import { AttachmentReferenceContext } from './context'
 import { useAttachmentImage } from './useAttachmentImage'
 import { useAttachmentDownload } from './useAttachmentDownload'
-import { useImageViewport } from './useImageViewport'
+import { useMediaViewport } from '../../../components/ui/useMediaViewport'
 import { DocumentAttachmentPreview } from './DocumentAttachmentPreview'
 import { AttachmentViewerTitle } from './AttachmentViewerTitle'
 
@@ -125,7 +125,7 @@ function ViewerImage({
   const preview = useAttachmentImage(previewUrl ? undefined : attachment.id)
   const original = useAttachmentImage(attachment.id, 'original')
   const download = useAttachmentDownload(attachment)
-  const viewport = useImageViewport(attachment.id)
+  const viewport = useMediaViewport(attachment.id)
   const [infoOpen, setInfoOpen] = useState(false)
   const infoButton = useRef<HTMLButtonElement>(null)
   const src = original.url || previewUrl || preview.url
@@ -205,7 +205,7 @@ function ViewerImage({
     >
       <div className="attachment-viewer-body">
         <div
-          className="attachment-viewer-stage"
+          className="attachment-viewer-stage ui-media-viewport"
           ref={viewport.stage}
           data-pannable={viewport.canPan}
           onPointerDown={viewport.pointerDown}
@@ -214,15 +214,16 @@ function ViewerImage({
           onPointerCancel={viewport.pointerEnd}
           onLostPointerCapture={viewport.pointerEnd}
         >
+          <div className="ui-media-viewport__content" style={viewport.frameStyle}>
           {src ? (
             <img
               className="attachment-viewer-image"
               src={src}
               alt={attachment.name}
-              style={viewport.imageStyle}
+              style={viewport.mediaStyle}
               draggable={false}
               onLoad={(event) =>
-                viewport.setImage({
+                viewport.setMedia({
                   width: event.currentTarget.naturalWidth,
                   height: event.currentTarget.naturalHeight,
                 })
@@ -239,6 +240,7 @@ function ViewerImage({
                 : t('正在加载图片…')}
             </p>
           )}
+          </div>
         </div>
         {(!original.url || download.failed) && (
           <div className="attachment-viewer-status" role="status">
@@ -281,8 +283,8 @@ function ViewerImage({
               <dd>{attachment.name}</dd>
               <dt>{t('图片尺寸')}</dt>
               <dd>
-                {viewport.image.width
-                  ? `${viewport.image.width} × ${viewport.image.height}`
+                {viewport.media.width
+                  ? `${viewport.media.width} × ${viewport.media.height}`
                   : '—'}
               </dd>
               <dt>{t('文件格式')}</dt>

@@ -49,6 +49,7 @@ function conversation(
     taskTrace: { phase: 'unloaded' as const },
     runStatus: 'idle' as const,
     isHydrated: true,
+    historySynchronized: false,
   }
 }
 

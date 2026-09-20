@@ -28,6 +28,7 @@ test('主页面与文档解析线程均包含实际依赖的许可证材料', as
   const worker = await readFile('dist/document-preview-licenses.md', 'utf8')
   const purifier = require('dompurify').version
   assert.ok(main.includes(`## dompurify - ${purifier} `))
+  for (const name of ['mermaid', 'prismjs']) assert.ok(main.includes(heading(await packageMetadata(name))), name)
   for (const name of ['mammoth', 'xlsx', 'fflate']) assert.ok(worker.includes(heading(await packageMetadata(name))), name)
   const mammothRequire = createRequire(require.resolve('mammoth'))
   for (const name of ['@xmldom/xmldom', 'jszip']) {

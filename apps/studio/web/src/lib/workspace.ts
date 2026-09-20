@@ -29,6 +29,7 @@ export const buildEmptyConversation = (
   taskTrace: unloadedTaskTrace(),
   runStatus: 'idle',
   isHydrated: true,
+  historySynchronized: false,
 })
 
 export const createEmptyWorkspace = (): WorkspaceState => ({
@@ -123,4 +124,11 @@ export function mergeConversationTitle(current: TitleFields | undefined, incomin
   const value = current?.titleSeq !== undefined && (incoming.titleSeq === undefined || incoming.titleSeq < current.titleSeq)
     ? current : incoming
   return { title: value.title, titleSource: value.titleSource, titleGenerationStatus: value.titleGenerationStatus, titleSeq: value.titleSeq }
+}
+
+/** 连接中断时，已确认仍在运行的当前任务继续显示加载状态 */
+export function isConversationRunning(conversation: Conversation): boolean {
+  return conversation.runStatus === 'streaming'
+    || (conversation.runStatus === 'detached' && conversation.trace?.status.execution === 'running'
+      && conversation.trace.headRunId === conversation.activeRunId)
 }

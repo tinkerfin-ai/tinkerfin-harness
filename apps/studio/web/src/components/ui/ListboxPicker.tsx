@@ -25,6 +25,7 @@ export interface ListboxPickerProps<T extends string> {
   onOpenChange: (open: boolean) => void
   onChange: (value: T) => void
   triggerLabel: string
+  triggerTooltip?: string
   listboxLabel: string
   rootClassName: string
   triggerClassName: string
@@ -47,6 +48,7 @@ export function ListboxPicker<T extends string>({
   onOpenChange,
   onChange,
   triggerLabel,
+  triggerTooltip,
   listboxLabel,
   rootClassName,
   triggerClassName,
@@ -249,6 +251,7 @@ export function ListboxPicker<T extends string>({
         type="button"
         className={triggerClassName}
         aria-label={triggerLabel}
+        aria-describedby={triggerTooltip ? `${listboxId}-tooltip` : undefined}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
@@ -257,6 +260,7 @@ export function ListboxPicker<T extends string>({
       >
         {renderTrigger(value)}
       </button>
+      {triggerTooltip && <span id={`${listboxId}-tooltip`} className="ui-tooltip" role="tooltip">{triggerTooltip}</span>}
       {listboxPortalTarget && listbox
         ? createPortal(listbox, listboxPortalTarget)
         : listbox}

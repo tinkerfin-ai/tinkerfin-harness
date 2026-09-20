@@ -38,7 +38,7 @@
 执行关联或持久化身份；服务端会分配实际使用的消息 ID。
 `RUN_STARTED` 返回 服务端确认的 `threadId`、`runId`、标题及其来源、生成状态和递增 `titleSeq`，不携带 input。
 
-会话标题最多 32 个 Unicode 字符，临时标题截取用户输入前 16 个字符。自动标题保存后通过原会话 SSE 发送 `CUSTOM` 事件 `studio.conversation.title.updated`，值包含 `threadId`、`title`、`titleSource`、`titleGenerationStatus`、`titleSeq`。客户端按 `titleSeq` 应用较新的标题；历史查询也返回已保存的标题。手动保存标题后，自动生成不能覆盖。
+会话标题最多 32 个 Unicode 字符，临时标题截取用户输入前 16 个字符。自动总结独立于聊天响应，主回复结束或客户端断连后继续生成。`GET /conversation/{threadId}/title` 返回当前用户会话的标题快照，包含 `threadId`、`title`、`titleSource`、`titleGenerationStatus`、`titleSeq`。客户端按 `titleSeq` 应用较新的标题；历史查询也返回已保存的标题。手动保存标题后，自动生成不能覆盖。
 
 `forwardedProps.command.plan` 必须为 `on` 或 `off`，用于开启或关闭计划模式。
 不接受 `forwardedProps.mode`；`command` 中的其他字段会保留，但当前服务端只处理 `plan`。

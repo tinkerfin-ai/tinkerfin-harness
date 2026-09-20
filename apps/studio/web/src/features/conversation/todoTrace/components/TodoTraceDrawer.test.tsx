@@ -21,13 +21,26 @@ const group = (index: number): TodoGroup => ({
 })
 
 describe('TodoTraceDrawer', () => {
+  it('全屏任务页聚焦返回按钮，保留任务操作且不显示调宽手柄', () => {
+    const onClose = vi.fn()
+    render(<TodoTraceDrawer groups={[group(0)]} open fullPage openEpoch={1}
+      drawerRef={createRef()} onClose={onClose} onLocate={vi.fn()}
+      resizeHandle={<span role="separator" />} />)
+    const back = screen.getByRole('button', { name: '返回对话' })
+    expect(back).toHaveFocus()
+    expect(screen.queryByRole('button', { name: '关闭任务轨迹' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('separator')).not.toBeInTheDocument()
+    expect(screen.getByText('任务内容 0')).toBeVisible()
+    fireEvent.click(back)
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
   it('defaults to the latest group, allows independent expansion, and locates', async () => {
     const locate = vi.fn()
     render(
       <TodoTraceDrawer
         groups={[group(0), group(1)]}
         open
-        usesOverlay={false}
         openEpoch={1}
         drawerRef={createRef()}
         onClose={vi.fn()}
@@ -77,7 +90,6 @@ describe('TodoTraceDrawer', () => {
       <TodoTraceDrawer
         groups={[group(0)]}
         open
-        usesOverlay={false}
         openEpoch={1}
         drawerRef={createRef()}
         onClose={vi.fn()}
@@ -94,7 +106,6 @@ describe('TodoTraceDrawer', () => {
       <TodoTraceDrawer
         groups={[group(1), group(2)]}
         open
-        usesOverlay={false}
         openEpoch={1}
         drawerRef={createRef()}
         onClose={vi.fn()}
@@ -135,7 +146,6 @@ describe('TodoTraceDrawer', () => {
       <TodoTraceDrawer
         groups={[group(0), group(1), group(2)]}
         open
-        usesOverlay={false}
         openEpoch={1}
         drawerRef={createRef()}
         onClose={vi.fn()}
@@ -159,7 +169,6 @@ describe('TodoTraceDrawer', () => {
       <TodoTraceDrawer
         groups={[group(0)]}
         open={false}
-        usesOverlay
         openEpoch={0}
         drawerRef={createRef()}
         onClose={vi.fn()}

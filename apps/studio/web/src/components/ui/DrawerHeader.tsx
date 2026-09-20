@@ -1,4 +1,4 @@
-import { X } from 'lucide-react'
+import { ArrowLeft, X } from 'lucide-react'
 import { forwardRef } from 'react'
 import type { ReactNode } from 'react'
 
@@ -9,6 +9,8 @@ export interface DrawerHeaderProps {
   description?: ReactNode
   closeLabel?: string
   onClose?: () => void
+  backLabel?: string
+  onBack?: () => void
   className?: string
   density?: 'regular' | 'compact'
 }
@@ -18,6 +20,8 @@ export const DrawerHeader = forwardRef<HTMLButtonElement, DrawerHeaderProps>(fun
   description,
   closeLabel,
   onClose,
+  backLabel,
+  onBack,
   className,
   density = 'regular',
 }, ref) {
@@ -25,16 +29,20 @@ export const DrawerHeader = forwardRef<HTMLButtonElement, DrawerHeaderProps>(fun
     'ui-drawer-header',
     `ui-drawer-header--${density}`,
     description ? 'has-description' : '',
+    onBack ? 'has-back' : '',
     className,
   ].filter(Boolean).join(' ')
 
   return (
     <header className={classes}>
+      {onBack && backLabel && (
+        <IconButton ref={ref} label={backLabel} icon={<ArrowLeft size={18} />} onClick={onBack} />
+      )}
       <span className="ui-drawer-header__heading">
         <h2>{title}</h2>
         {description && <span>{description}</span>}
       </span>
-      {onClose && closeLabel && (
+      {!onBack && onClose && closeLabel && (
         <IconButton ref={ref} label={closeLabel} icon={<X size={18} />} onClick={onClose} />
       )}
     </header>

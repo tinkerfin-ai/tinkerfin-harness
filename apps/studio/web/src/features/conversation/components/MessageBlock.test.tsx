@@ -259,7 +259,7 @@ describe('MessageBlock subagent card', () => {
     expect(conversationStyles).toMatch(/\.tool-code-field,[\s\S]*\.tool-rich-field\s*\{[^}]*font-family:\s*var\(--font-code\);[^}]*font-size:\s*var\(--type-caption-size\);/s)
     expect(conversationStyles).toMatch(/\.tool-field-label\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0;[^}]*align-self:\s*baseline;/s)
     expect(conversationStyles).toMatch(/\.tool-field-pending > i\s*\{[^}]*animation:\s*conversation-tool-result-pulse var\(--motion-tool-result-cycle\)/s)
-    expect(conversationStyles).toMatch(/@media \(max-width:\s*440px\)[\s\S]*\.tool-detail-card\s*\{[^}]*margin-left:\s*0;[^}]*\}[\s\S]*\.tool-detail-section\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[^}]*row-gap:\s*var\(--space-1-5\);/s)
+    expect(conversationStyles).toMatch(/@container conversation \(max-width:\s*440px\)[\s\S]*\.tool-detail-card\s*\{[^}]*margin-left:\s*0;[^}]*\}[\s\S]*\.tool-detail-section\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[^}]*row-gap:\s*var\(--space-1-5\);/s)
 
     rerender(<MessageBlock message={{
       ...running,

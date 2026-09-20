@@ -27,6 +27,8 @@
   }
 
   .sidebar-wide {
+    --sidebar-row-padding: calc(var(--space-1) + var(--space-1-5));
+    --sidebar-label-inset: calc(var(--space-3) + var(--sidebar-row-padding) + var(--icon-sm) + var(--space-1));
     position: absolute;
     inset: 0 auto 0 0;
     display: grid;
@@ -373,7 +375,7 @@
     width: 100%;
     min-width: 0;
     min-height: var(--control-md);
-    padding: 0 10px;
+    padding: 0 var(--sidebar-row-padding);
     overflow: hidden;
     border: 0;
     border-radius: inherit;
@@ -392,20 +394,45 @@
   .conversation-item:has(.conversation-more.is-selected) .conversation-main,
   .conversation-item.is-active .conversation-main { padding-right: var(--control-sm); }
   .conversation-status-slot {
+    /* 状态点居中于浏览器左边缘与标题首字之间 */
     display: inline-flex;
-    width: var(--icon-sm);
+    width: var(--sidebar-label-inset);
     height: var(--icon-sm);
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    margin-right: var(--space-1);
+    margin-left: calc(-1 * (var(--space-3) + var(--sidebar-row-padding)));
   }
+  .conversation-loading,
   .conversation-attention-dot {
     position: relative;
     display: inline-block;
-    width: 10px;
-    height: 10px;
+    width: calc(var(--space-1) + var(--space-1-5));
+    height: calc(var(--space-1) + var(--space-1-5));
     flex: 0 0 auto;
+  }
+  .conversation-loading { color: var(--color-brand); }
+  .conversation-loading i {
+    position: absolute;
+    width: var(--space-0-5);
+    height: var(--space-0-5);
+    border-radius: var(--radius-pill);
+    background: currentColor;
+    animation: workspace-loading-dot var(--motion-conversation-loading-cycle) var(--ease-in-out) infinite;
+  }
+  .conversation-loading i:nth-child(1) { top: 0; left: calc(50% - var(--space-0-5) / 2); }
+  .conversation-loading i:nth-child(2) { right: 0; top: calc(50% - var(--space-0-5) / 2); animation-delay: calc(var(--motion-conversation-loading-cycle) / -4 * 3); }
+  .conversation-loading i:nth-child(3) { bottom: 0; left: calc(50% - var(--space-0-5) / 2); animation-delay: calc(var(--motion-conversation-loading-cycle) / -2); }
+  .conversation-loading i:nth-child(4) { left: 0; top: calc(50% - var(--space-0-5) / 2); animation-delay: calc(var(--motion-conversation-loading-cycle) / -4); }
+  @keyframes workspace-loading-dot {
+    0%, 100% { opacity: 1; }
+    65% { opacity: .22; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .conversation-loading i { animation: none; opacity: .45; }
+    .conversation-loading i:first-child { opacity: 1; }
+  }
+  .conversation-attention-dot {
     transform-origin: center;
     animation: workspace-attention-breathe var(--motion-attention-cycle) var(--ease-in-out) infinite;
   }
@@ -533,17 +560,45 @@
     cursor: default;
   }
 
+  .workspace-content {
+    display: flex;
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
   .workspace-main {
+    container: conversation / inline-size;
+    --layout-page-gutter: var(--space-8);
+    --layout-conversation-gutter: var(--space-16);
     position: relative;
     z-index: var(--layer-base);
     display: grid;
-    grid-column: 2;
-    grid-row: 1;
+    flex: 1;
     grid-template-rows: var(--layout-header-height) minmax(0, 1fr);
     min-width: 0;
     height: 100dvh;
     overflow: hidden;
     background: var(--color-canvas);
+  }
+
+  /* 全屏任务页保留会话的尺寸与挂载，返回时继续原来的阅读位置 */
+  .workspace-content.has-task-detail-page { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .workspace-content.has-task-detail-page > .workspace-main { grid-area: 1 / 1; visibility: hidden; }
+  .workspace-main:has(.chain-trace.is-detail-page) > .chat-header { grid-area: 1 / 1; visibility: hidden; }
+
+  .workspace-main[data-conversation-size='medium'] {
+    --layout-page-gutter: var(--space-6);
+    --layout-conversation-gutter: var(--space-12);
+  }
+  .workspace-main[data-conversation-size='small'] {
+    --layout-page-gutter: var(--space-4);
+    --layout-conversation-gutter: var(--space-4);
+  }
+  .workspace-main[data-conversation-size='compact'] {
+    --layout-page-gutter: var(--space-3);
+    --layout-conversation-gutter: var(--space-3);
   }
 
   .workspace-main:has(.composer-dock.is-taken-over) {
@@ -651,7 +706,7 @@
   .conversation-pane {
     height: 100%;
     min-height: 0;
-    padding-inline: calc(var(--layout-page-gutter) + var(--space-4));
+    padding-inline: calc(var(--layout-conversation-gutter) + var(--space-4));
     overflow-y: auto;
     overflow-x: hidden;
     overscroll-behavior-y: none;
@@ -776,7 +831,7 @@
     .app-shell,
     .app-shell[data-sidebar-mode='rail'],
     .app-shell[data-sidebar-mode='expanded'] { grid-template-columns: minmax(0, 1fr); }
-    .workspace-main { grid-column: 1; }
+    .workspace-content { grid-column: 1; }
     .workspace-sidebar { position: fixed; z-index: var(--layer-drawer); top: 0; bottom: 0; left: 0; width: min(var(--layout-sidebar-expanded), calc(100vw - var(--space-4))); overflow: hidden; transform: translateX(-102%); box-shadow: var(--shadow-3); transition: transform var(--motion-normal) var(--ease-out), visibility var(--motion-instant) linear var(--motion-normal); visibility: hidden; }
     .workspace-sidebar.is-overlay.is-overlay-open { transform: translateX(0); visibility: visible; transition-delay: var(--motion-instant); }
     .workspace-sidebar.is-overlay .sidebar-wide { width: 100%; min-width: 0; }
@@ -819,9 +874,11 @@
     }
     .drawer-count { font-size: var(--type-caption-size); }
 
-    .message-list { padding-top: var(--space-6); }
   }
 
+  @container conversation (max-width: 767px) {
+    .message-list { padding-top: var(--space-6); }
+  }
   @media (max-width: 440px) {
     .header-actions { gap: var(--space-1); }
 

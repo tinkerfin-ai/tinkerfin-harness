@@ -1,6 +1,6 @@
 import { toolReviewInterrupts } from './test/aguiFixtures'
 import { StrictMode, useCallback, useEffect, useState } from 'react'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -168,6 +168,7 @@ function installFetch(options: {
   details?: Record<string, ConversationHistoryDetail>
   stream?: ConversationAgUiEvent[]
   streamStartSeq?: number
+  historyReady?: Promise<void>
   onChat?: (payload: ChatRequestPayload) => void
 } = {}) {
   const details = options.details ?? {}
@@ -185,6 +186,7 @@ function installFetch(options: {
     }
     const history = url.pathname.match(/\/api\/conversation\/([^/]+)\/history$/)
     if (history) {
+      await options.historyReady
       const threadId = decodeURIComponent(history[1] ?? '')
       const detail = details[threadId]
       if (!detail) throw new Error('missing Trace detail for ' + threadId)
@@ -219,6 +221,14 @@ function installFetch(options: {
 
 describe('Studio Trace history integration', () => {
   beforeEach(() => {
+    // 业务集成验证使用减少动态效果，提示关闭不依赖真实动画帧
+    const matchMedia = window.matchMedia
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      ...matchMedia(query),
+      matches: query.includes('prefers-reduced-motion')
+        ? query === '(prefers-reduced-motion: reduce)'
+        : matchMedia(query).matches,
+    }))
     saveAuthSession({
       token: 'app-token',
       tokenType: 'Bearer',
@@ -229,10 +239,12 @@ describe('Studio Trace history integration', () => {
   })
 
   afterEach(() => {
+    cleanup()
     clearAuthSession()
     window.localStorage.clear()
     window.sessionStorage.clear()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
   it('新会话首页不显示会话视图切换', async () => {
@@ -281,7 +293,7 @@ describe('Studio Trace history integration', () => {
     }
   })
 
-  it('会话受理后可独立提交新会话，旧流结束不会重复提交仍待受理的草稿', async () => {
+  it.each([false, true])('独立提交新会话并保留后台占位（A已受理：%s）', async (acceptedBeforeB) => {
     const user = userEvent.setup()
     const details: Record<string, ConversationHistoryDetail> = {}
     const requests: { payload: ChatRequestPayload; events: ReadableStreamDefaultController<Uint8Array> }[] = []
@@ -308,17 +320,32 @@ describe('Studio Trace history integration', () => {
         availableHeads: [first.payload.runId],
         status: { execution: 'succeeded', headRunId: first.payload.runId },
       })
+      expect(screen.getByRole('button', { name: '打开会话：会话A，正在生成' })).toHaveAttribute('aria-busy', 'true')
+      if (acceptedBeforeB) {
       await act(async () => {
         first.events.enqueue(new TextEncoder().encode('id: 1\ndata: ' + JSON.stringify({
           type: 'RUN_STARTED', threadId: 'thread-a', runId: first.payload.runId,
         }) + '\n\n'))
       })
       await waitFor(() => expect(new URL(window.location.href).searchParams.get('thread')).toBe('thread-a'))
+      }
       await user.click(document.querySelector('.new-chat') as HTMLButtonElement)
       await user.type(input, '会话B{Enter}')
       await waitFor(() => expect(requests).toHaveLength(2))
       const second = requests[1]!
       expect(second.payload.runId).not.toBe(first.payload.runId)
+      expect(screen.getByRole('button', { name: '打开会话：会话B，正在生成' })).toBeVisible()
+      if (!acceptedBeforeB) {
+        await user.click(screen.getByRole('button', { name: '打开会话：会话A，正在生成' }))
+        expect(within(screen.getByRole('region', { name: '对话内容' })).getByText('会话A')).toBeVisible()
+        await user.click(screen.getByRole('button', { name: '打开会话：会话B，正在生成' }))
+        await act(async () => {
+          first.events.enqueue(new TextEncoder().encode('id: 1\ndata: ' + JSON.stringify({
+            type: 'RUN_STARTED', threadId: 'thread-a', runId: first.payload.runId,
+          }) + '\n\n'))
+        })
+        expect(new URL(window.location.href).searchParams.get('thread')).toBeNull()
+      }
       await act(async () => {
         first.events.enqueue(new TextEncoder().encode('id: 2\ndata: ' + JSON.stringify({
           type: 'RUN_FINISHED', threadId: 'thread-a', runId: first.payload.runId,
@@ -338,6 +365,74 @@ describe('Studio Trace history integration', () => {
       await waitFor(() => expect(new URL(window.location.href).searchParams.get('thread')).toBe('thread-b'))
       expect(requests).toHaveLength(2)
       expect(input).toHaveValue('下一条草稿')
+    } finally {
+      view.unmount()
+    }
+  })
+
+  it('切回运行中的会话加载轨迹不会断开原流，离开后终态清除列表 loading', async () => {
+    const user = userEvent.setup()
+    const details: Record<string, ConversationHistoryDetail> = { [THREAD_ID]: traceDetail() }
+    const fetch = installFetch({ list: [historyItem()], details })
+    const defaultFetch = fetch.getMockImplementation()!
+    let events: ReadableStreamDefaultController<Uint8Array>
+    let submitted: ChatRequestPayload
+    let seq = 0
+    const emit = async (...items: ConversationAgUiEvent[]) => act(async () => {
+      for (const event of items) events.enqueue(new TextEncoder().encode(`id: ${++seq}\ndata: ${JSON.stringify(event)}\n\n`))
+    })
+    fetch.mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/api/conversation/chat')) {
+        submitted = JSON.parse(String(init?.body)) as ChatRequestPayload
+        return new Response(new ReadableStream<Uint8Array>({ start(controller) { events = controller } }), { headers: { 'Content-Type': 'text/event-stream' } })
+      }
+      return defaultFetch(input, init)
+    })
+    const view = render(<App />)
+    try {
+      await screen.findByText('来自 Trace 的历史回复')
+      await user.click(document.querySelector('.new-chat') as HTMLButtonElement)
+      await user.type(screen.getByRole('textbox', { name: '消息输入' }), '后台会话{Enter}')
+      await waitFor(() => expect(submitted).toBeDefined())
+      const running = traceDetail({
+        id: 2, threadId: 'thread-live', title: '后台会话', headRunId: submitted!.runId,
+        availableHeads: [submitted!.runId],
+        status: { execution: 'running', headRunId: submitted!.runId },
+        messages: [{ ...traceDetail().messages[0]!, id: 'live-answer', sourceId: 'live-answer', runId: submitted!.runId, content: '历史中的部分正文' }],
+      })
+      details['thread-live'] = running
+      await emit(
+        { type: 'RUN_STARTED', threadId: 'thread-live', runId: submitted!.runId },
+        { type: 'TEXT_MESSAGE_START', messageId: 'live-answer', role: 'assistant' },
+        { type: 'TEXT_MESSAGE_CONTENT', messageId: 'live-answer', delta: '正在生成正文' },
+      )
+      await waitFor(() => expect(screen.queryByRole('button', { name: '恢复连接' })).not.toBeInTheDocument())
+      expect(screen.getByRole('status', { name: '任务仍在继续' })).toBeVisible()
+      await user.click(screen.getByRole('button', { name: '打开会话：Trace 会话' }))
+      await user.click(screen.getByRole('button', { name: '打开会话：后台会话，正在生成' }))
+      await waitFor(() => expect(fetch.mock.calls.some(([url]) => (url instanceof Request ? url.url : String(url)).includes('/thread-live/history'))).toBe(true))
+      expect(screen.queryByRole('button', { name: '恢复连接' })).not.toBeInTheDocument()
+      expect(screen.getByRole('status', { name: '任务仍在继续' })).toBeVisible()
+      await user.click(screen.getByRole('button', { name: '打开会话：Trace 会话' }))
+      details['thread-live'] = traceDetail({
+        ...running, asOfSeq: 8, graph: emptyTraceGraph(8),
+        title: '后台会话完成', titleSource: 'generated', titleGenerationStatus: 'succeeded', titleSeq: 2,
+        status: { execution: 'succeeded', headRunId: submitted!.runId },
+        messages: [{ ...running.messages[0]!, content: '后台完成的正文' }],
+        messageCount: 1,
+      })
+      await emit(
+        { type: 'TEXT_MESSAGE_END', messageId: 'live-answer' },
+        { type: 'RUN_FINISHED', threadId: 'thread-live', runId: submitted!.runId },
+      )
+      events!.close()
+      await waitFor(() => expect(screen.getByRole('button', { name: '打开会话：后台会话完成' })).not.toHaveAttribute('aria-busy', 'true'))
+      expect(new URL(window.location.href).searchParams.get('thread')).toBe(THREAD_ID)
+      await user.click(screen.getByRole('button', { name: '打开会话：后台会话完成' }))
+      expect(new URL(window.location.href).searchParams.get('thread')).toBe('thread-live')
+      await waitFor(() => expect(screen.getByRole('region', { name: '对话内容' })).toHaveTextContent('后台完成的正文'))
+      expect(screen.queryByRole('status', { name: '任务仍在继续' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: '恢复连接' })).not.toBeInTheDocument()
     } finally {
       view.unmount()
     }
@@ -454,7 +549,6 @@ describe('Studio Trace history integration', () => {
     expect(input).toHaveValue('')
     expect(screen.getByRole('status')).toHaveTextContent('连接已中断，尚无法确认任务状态，请恢复连接')
     expect((readActiveRunSessions()[0] ?? null)?.payload.runId).toBe(submitted[0]?.runId)
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)) })
     expect(submitted).toHaveLength(1)
     await user.click(reconnect)
     await waitFor(() => expect(submitted).toHaveLength(2))
@@ -463,22 +557,44 @@ describe('Studio Trace history integration', () => {
   })
 
   it('notifies again when an explicit recovery fails after the previous toast was dismissed', async () => {
-    const user = userEvent.setup()
+    vi.useFakeTimers()
     let attempts = 0
-    installFetch({ onChat: () => { attempts += 1; throw new TypeError('offline') } })
-    render(<App />)
-    const input = await screen.findByRole('textbox', { name: '消息输入' })
-    await waitFor(() => expect(input).toBeEnabled())
-    await user.type(input, '恢复同一提交')
-    await user.click(screen.getByRole('button', { name: '发送消息' }))
+    let requestArrived!: () => void
+    const nextRequest = () => new Promise<void>(resolve => { requestArrived = resolve })
+    installFetch({ onChat: () => {
+      attempts += 1
+      requestArrived()
+      throw new TypeError('offline')
+    } })
+    await act(async () => { render(<App />) })
+    const input = screen.getByRole('textbox', { name: '消息输入' })
+    expect(input).toBeEnabled()
+    fireEvent.change(input, { target: { value: '恢复同一提交' } })
+    await act(async () => {
+      const requested = nextRequest()
+      fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+      await requested
+    })
     const message = '连接已中断，尚无法确认任务状态，请恢复连接'
-    await user.click(await screen.findByRole('button', { name: `关闭提示：${message}` }))
-    await waitFor(() => expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument())
-    const initialAttempts = attempts
-    await user.click(screen.getByRole('button', { name: '恢复连接' }))
-    const warningMessage = await screen.findByText(message, { exact: true }, { timeout: 10_000 })
-    expect(warningMessage).toHaveAttribute('role', 'status')
-    expect(attempts).toBeGreaterThan(initialAttempts)
+    expect(attempts).toBe(1)
+    fireEvent.click(screen.getByRole('button', { name: `关闭提示：${message}` }))
+    expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument()
+    await act(async () => {
+      const requested = nextRequest()
+      fireEvent.click(screen.getByRole('button', { name: '恢复连接' }))
+      await requested
+    })
+    expect(attempts).toBe(2)
+    expect(screen.queryByText(message, { exact: true })).not.toBeInTheDocument()
+    for (const delay of [250, 500, 1000]) {
+      await act(async () => {
+        const requested = nextRequest()
+        await vi.advanceTimersByTimeAsync(delay)
+        await requested
+      })
+    }
+    expect(screen.getByText(message, { exact: true })).toHaveAttribute('role', 'status')
+    expect(attempts).toBe(5)
   })
 
   it('初始化失败在会话中持久展示且不弹 Toast', async () => {
@@ -506,7 +622,7 @@ describe('Studio Trace history integration', () => {
     await user.click(screen.getByRole('button', { name: '发送消息' }))
     expect(await screen.findByText('会话异常')).toBeInTheDocument()
     await waitFor(() => expect((readActiveRunSessions()[0] ?? null)).toBeNull())
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)) })
+    expect(screen.getByRole('textbox', { name: '消息输入' })).toBeEnabled()
     expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument()
     expect(screen.queryByText('Agent run failed')).not.toBeInTheDocument()
     expect(screen.queryByText('任务遇到问题')).not.toBeInTheDocument()
@@ -909,6 +1025,8 @@ describe('Studio Trace history integration', () => {
 
   it('submits one resume request after the final decision in a multi-action approval', async () => {
     const user = userEvent.setup()
+    let releaseHistory!: () => void
+    const historyReady = new Promise<void>(resolve => { releaseHistory = resolve })
     const waiting = traceDetail({
       status: { execution: 'waiting', headRunId: RUN_ID },
       interactions: [{
@@ -979,6 +1097,7 @@ describe('Studio Trace history integration', () => {
     const details: Record<string, ConversationHistoryDetail> = { [THREAD_ID]: waiting }
     const chatPayloads: ChatRequestPayload[] = []
     installFetch({
+      historyReady,
       list: [historyItem({
         status: 'waiting_approval',
         hasPendingInterrupt: true,
@@ -1007,19 +1126,18 @@ describe('Studio Trace history integration', () => {
         })
       },
     })
-    render(
-      <StrictMode>
-        <App />
-      </StrictMode>,
-    )
+    await act(async () => {
+      render(<StrictMode><App /></StrictMode>)
+    })
+    expect(screen.queryByRole('button', { name: '允许' })).not.toBeInTheDocument()
+    await act(async () => { releaseHistory() })
 
-    await user.click(await screen.findByRole('button', { name: '允许' }))
+    await user.click(screen.getByRole('button', { name: '允许' }))
     await waitFor(() => expect(screen.getAllByText('/b.txt').length).toBeGreaterThan(0))
     await user.click(screen.getByRole('button', { name: '允许' }))
     await waitFor(() => expect(chatPayloads).toHaveLength(1))
-    await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 100))
-    })
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '消息输入' })).toBeEnabled())
+    expect(screen.queryByRole('region', { name: '等待审批' })).not.toBeInTheDocument()
 
     expect(chatPayloads).toHaveLength(1)
     expect(chatPayloads[0]?.resume).toHaveLength(2)

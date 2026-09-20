@@ -2,8 +2,8 @@ import {
   ArrowUpRight,
   ChevronDown,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
-import type { RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { ReactNode, RefObject } from 'react'
 
 import type { TodoGroup } from '../../../../api/conversation/taskTrace'
 import { DrawerHeader, OverlayScrollbar } from '../../../../components/ui'
@@ -23,7 +23,8 @@ const relativeTime = (createdAt: string, now: number, locale: string) => {
 export function TodoTraceDrawer({
   groups,
   open,
-  usesOverlay,
+  fullPage = false,
+  resizeHandle,
   openEpoch,
   drawerRef,
   onClose,
@@ -31,7 +32,8 @@ export function TodoTraceDrawer({
 }: {
   groups: readonly TodoGroup[]
   open: boolean
-  usesOverlay: boolean
+  fullPage?: boolean
+  resizeHandle?: ReactNode
   openEpoch: number
   drawerRef: RefObject<HTMLElement | null>
   onClose: () => void
@@ -42,6 +44,7 @@ export function TodoTraceDrawer({
   const [now, setNow] = useState(Date.now())
   const viewportRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
+  const expandedEpoch = useRef(-1)
   const groupsRef = useRef(groups)
   const currentGroupId = groups[0]?.status === 'running' ? groups[0].id : undefined
   const firstHistoryId = groups.find((group) => group.id !== currentGroupId)?.id
@@ -50,37 +53,35 @@ export function TodoTraceDrawer({
   groupsRef.current = groups
   const windowed = useTodoGroupWindow({ groups, expandedIds, viewportRef })
 
+  useLayoutEffect(() => {
+    if (open && fullPage) closeRef.current?.focus({ preventScroll: true })
+  }, [fullPage, open])
+
   useEffect(() => {
-    if (!open) return
+    if (!open || expandedEpoch.current === openEpoch) return
+    expandedEpoch.current = openEpoch
     const latest = groupsRef.current[0]
     setExpandedIds(latest?.status === 'running' ? new Set([latest.id]) : new Set())
+  }, [open, openEpoch])
+
+  useEffect(() => {
+    if (!open) return
     setNow(Date.now())
     const timer = window.setInterval(() => setNow(Date.now()), 60_000)
     return () => window.clearInterval(timer)
-  }, [open, openEpoch])
+  }, [open])
 
   useEffect(() => {
     const previousCurrentId = previousCurrentIdRef.current
     previousCurrentIdRef.current = currentGroupId
-    if (!open || previousCurrentId === currentGroupId) return
+    if (previousCurrentId === currentGroupId) return
     setExpandedIds((current) => {
       const next = new Set(current)
       if (previousCurrentId) next.delete(previousCurrentId)
       if (currentGroupId) next.add(currentGroupId)
       return next
     })
-  }, [currentGroupId, open])
-
-  useEffect(() => {
-    if (!open || currentGroupId) return
-    setExpandedIds(new Set())
-  }, [currentGroupId, open])
-
-  useEffect(() => {
-    if (!open || !usesOverlay) return
-    const frame = window.requestAnimationFrame(() => closeRef.current?.focus())
-    return () => window.cancelAnimationFrame(frame)
-  }, [open, openEpoch, usesOverlay])
+  }, [currentGroupId])
 
   useEffect(() => {
     const availableIds = new Set(groups.map((group) => group.id))
@@ -127,11 +128,12 @@ export function TodoTraceDrawer({
       ref={drawerRef}
       data-workspace-layout-target="todo-trace-drawer"
       id="todo-trace-drawer"
-      className={`todo-trace-drawer${open ? ' is-open' : ''}`}
+      className={`todo-trace-drawer${open ? ' is-open' : ''}${fullPage ? ' is-full-page' : ''}`}
       aria-label={t('任务轨迹')}
       aria-hidden={!open || undefined}
       inert={!open || undefined}
     >
+      {open && !fullPage && resizeHandle}
       <p className="visually-hidden" aria-live="polite" aria-atomic="true">
         {announcedGroup && announcedProgress
           ? t('任务组状态：{status}', {
@@ -145,6 +147,8 @@ export function TodoTraceDrawer({
         description={t('当前会话 · {count} 组', { count: groups.length })}
         closeLabel={t('关闭任务轨迹')}
         onClose={onClose}
+        backLabel={t('返回对话')}
+        onBack={fullPage ? onClose : undefined}
       />
       <div className="todo-trace-drawer-region">
         <div

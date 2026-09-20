@@ -29,9 +29,11 @@ import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent } from 'react'
 import type { AuthUser } from '../../../api/auth/types'
 import { BrandLogo, Button, IconButton, OverlayScrollbar, UserAvatar } from '../../../components/ui'
 import { useI18n } from '../../../i18n'
+import { isConversationRunning } from '../../../lib/workspace'
 import type { Conversation, WorkspaceState } from '../../../types'
 import { groupConversationHistory } from '../historyGroups'
 import type { SidebarMode } from '../useWorkspaceNavigation'
+import type { PendingConversation } from '../usePendingConversations'
 import { OverflowMarquee } from './OverflowMarquee'
 
 // 提前一段可滚动距离发起分页，让 300ms 防刷等待尽量落在用户持续浏览期间
@@ -45,11 +47,15 @@ export function ConversationItem({
   isMenuOpen,
   onSelect,
   onToggleMenu,
+  onRemove,
+  pendingRunId,
 }: {
   conversation: Conversation
   isActive: boolean
   isMenuOpen: boolean
   onSelect: () => void
+  pendingRunId?: string
+  onRemove?: () => void
   onToggleMenu?: (event: MouseEvent<HTMLButtonElement>) => void
 }) {
   const { t } = useI18n()
@@ -65,23 +71,29 @@ export function ConversationItem({
       : conversation.pendingInteractionKind === 'plan_clarification'
         ? 'plan'
         : 'approval'
+  const generating = !requiresAttention && isConversationRunning(conversation)
   const openLabel = t('打开会话：{title}', { title: conversation.title })
   return (
     <div
       className={`conversation-item overflow-marquee-trigger ${conversation.pinned ? 'is-pinned' : 'is-recent'} ${isActive ? 'is-active' : ''}`}
-      data-history-thread-id={conversation.threadId}
+      data-history-thread-id={pendingRunId ? `pending:${pendingRunId}` : conversation.threadId}
     >
       <button
         type="button"
         className="conversation-main"
-        aria-label={requiresAttention ? `${openLabel}，${t('等待处理')}` : openLabel}
+        aria-label={requiresAttention ? `${openLabel}，${t('等待处理')}` : generating ? `${openLabel}，${t('正在生成')}` : openLabel}
+        aria-busy={generating || undefined}
         onClick={onSelect}
       >
         <span className="conversation-status-slot" aria-hidden="true">
+          {generating && <span className="conversation-loading"><i /><i /><i /><i /></span>}
           {requiresAttention && <span className={`conversation-attention-dot is-${attentionTone}`} />}
         </span>
         <OverflowMarquee className="conversation-title-marquee" endRevealInset={12}>{`${conversation.title}\u200b`}</OverflowMarquee>
       </button>
+      {onRemove && <IconButton className="conversation-more" size="sm"
+        label={t('移除未发送会话：{title}', { title: conversation.title })}
+        icon={<Trash2 size={16} />} onClick={onRemove} />}
       {onToggleMenu && (
         <IconButton
           className="conversation-more"
@@ -97,7 +109,14 @@ export function ConversationItem({
   )
 }
 
+const NO_PENDING_CONVERSATIONS: PendingConversation[] = []
+
 export interface SidebarProps {
+  pendingConversations?: PendingConversation[]
+  selectedPendingRunId?: string | null
+  onSelectPending?: (runId: string) => void
+  onRemovePending?: (runId: string) => void
+  newSubmission?: string | null
   workspace: WorkspaceState
   historyConversations: Conversation[]
   historyDayRanges: number[]
@@ -133,6 +152,11 @@ export interface SidebarProps {
 }
 
 export function Sidebar({
+  pendingConversations = NO_PENDING_CONVERSATIONS,
+  selectedPendingRunId,
+  onSelectPending,
+  onRemovePending,
+  newSubmission,
   workspace,
   historyConversations,
   historyDayRanges,
@@ -167,6 +191,8 @@ export function Sidebar({
   backgroundInert = false,
 }: SidebarProps) {
   const { locale, t } = useI18n()
+  const locatedSubmission = useRef<string | null>(null)
+  const programmaticScroll = useRef(false)
   const [isSearchOpen, setSearchOpen] = useState(false)
   const [userMenu, setUserMenu] = useState(false)
   const [stickyHistoryTitle, setStickyHistoryTitle] = useState('')
@@ -211,8 +237,8 @@ export function Sidebar({
     onRetryLoadMore,
   }
   const groups = useMemo(
-    () => groupConversationHistory(historyConversations, historyDayRanges, new Date(), locale),
-    [historyConversations, historyDayRanges, locale],
+    () => groupConversationHistory([...historyConversations, ...pendingConversations.filter(item => !isHistorySearchActive || item.conversation.title.toLocaleLowerCase().includes(historyQuery.toLocaleLowerCase())).map(item => item.conversation)], historyDayRanges, new Date(), locale),
+    [historyConversations, pendingConversations, historyDayRanges, locale, isHistorySearchActive, historyQuery],
   )
   const menuConversation = openMenu
     ? workspace.conversations.find((item) => item.threadId === openMenu.threadId)
@@ -423,6 +449,18 @@ export function Sidebar({
     updateStickyHistoryTitle(root)
   }, [groups, updateStickyHistoryTitle])
 
+  useLayoutEffect(() => {
+    if (!newSubmission || locatedSubmission.current === newSubmission || !wideInteractive || isHistorySearchActive) return
+    const root = historyScrollRef.current
+    const heading = root?.querySelector<HTMLElement>('#conversation-group-today')
+    if (!root || !heading) return
+    locatedSubmission.current = newSubmission
+    paginationAnchorRef.current = null
+    programmaticScroll.current = true
+    root.scrollTop += heading.getBoundingClientRect().top - root.getBoundingClientRect().top
+    updateStickyHistoryTitle(root)
+  }, [newSubmission, groups, wideInteractive, isHistorySearchActive, updateStickyHistoryTitle])
+
   useEffect(() => {
     paginationArmedRef.current = true
     paginationAnchorRef.current = null
@@ -543,18 +581,30 @@ export function Sidebar({
     if (mode === 'overlay') onCloseOverlay(false)
   }
 
-  const renderItems = (items: Conversation[]) => items.map((conversation) => (
-    <ConversationItem
-      key={conversation.threadId}
+  const renderItems = (items: Conversation[]) => items.map((conversation) => {
+    const pending = pendingConversations.find(item => item.conversation === conversation)
+    return <ConversationItem
+      key={pending ? `pending:${pending.runId}` : conversation.threadId}
       conversation={conversation}
-      isActive={!automationActive && conversation.threadId === workspace.currentThreadId}
-      isMenuOpen={openMenu?.threadId === conversation.threadId}
-      onSelect={() => selectConversation(conversation.threadId)}
-      onToggleMenu={conversation.threadId
+      pendingRunId={pending?.runId}
+      isActive={!automationActive && (pending
+        ? selectedPendingRunId === pending.runId
+        : conversation.threadId === workspace.currentThreadId)}
+      isMenuOpen={!pending && openMenu?.threadId === conversation.threadId}
+      onSelect={() => {
+        if (pending) {
+          closeMenu()
+          onSelectPending?.(pending.runId)
+          if (mode === 'overlay') onCloseOverlay(false)
+        } else selectConversation(conversation.threadId)
+      }}
+      onRemove={pending && conversation.runStatus === 'error'
+        ? () => onRemovePending?.(pending.runId) : undefined}
+      onToggleMenu={!pending && conversation.threadId
         ? (event) => toggleMenu(conversation, event.currentTarget)
         : undefined}
     />
-  ))
+  })
 
   return (
     <>
@@ -655,6 +705,10 @@ export function Sidebar({
               onScroll={(event) => {
                 const element = event.currentTarget
                 updateStickyHistoryTitle(element)
+                if (programmaticScroll.current) {
+                  programmaticScroll.current = false
+                  return
+                }
                 if (paginationAnchorRef.current) capturePaginationAnchor()
                 sustainPaginationScrollBurst()
                 if (openMenu) {
@@ -664,6 +718,7 @@ export function Sidebar({
                 requestHistoryPageFromViewport(element)
               }}
               onWheel={(event) => {
+                programmaticScroll.current = false
                 sustainPaginationScrollBurst()
                 if (openMenu || event.deltaY <= 0) return
                 requestHistoryPageFromViewport(event.currentTarget)

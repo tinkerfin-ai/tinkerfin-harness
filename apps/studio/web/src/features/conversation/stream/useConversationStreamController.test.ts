@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { StreamedAgUiEvent } from '../../../api/conversation/client'
@@ -17,7 +17,8 @@ import { attachmentInput, messageAttachments, messageText } from '../attachments
 import { parseTaskTraceSnapshot } from '../../../api/conversation/taskTrace'
 import todoMessagesFixture from '../../../../../server/tests/fixtures/todo-multimodal.json'
 import todoSnapshotFixture from '../../../../../server/tests/fixtures/todo-multimodal-expected.json'
-import type { Conversation, WorkspaceState } from '../../../types'
+import type { Conversation } from '../../../types'
+import { useWorkspaceState } from '../../workspace/useWorkspaceState'
 import { useConversationStreamController } from './useConversationStreamController'
 
 const clientMocks = vi.hoisted(() => ({
@@ -116,6 +117,7 @@ const conversation = (overrides: Partial<Conversation> = {}): Conversation => ({
   serverState: {},
   lastSeq: 0,
   isHydrated: true,
+  historySynchronized: false,
   ...overrides,
   taskTrace: overrides.taskTrace ?? {
     phase: 'ready',
@@ -136,17 +138,20 @@ async function* traceItems(
 }
 
 function useControllerHarness(initialConversation: Conversation) {
-  const [workspace, setWorkspace] = useState<WorkspaceState>({
-    conversations: [initialConversation],
-    currentThreadId: initialConversation.threadId,
-  })
+  const { workspace, setWorkspace, retainConversationDetails, acknowledgeComposerPreferences, setComposerPreference } = useWorkspaceState()
+  const initial = useRef(initialConversation).current
+  useLayoutEffect(() => {
+    setWorkspace({ conversations: [initial], currentThreadId: initial.threadId })
+  }, [initial, setWorkspace])
   const [draftConversation, setDraftConversation] = useState<Conversation | null>(null)
   const controller = useConversationStreamController({
     workspace,
     setWorkspace,
     setDraftConversation,
+    retainConversationDetails,
+    acknowledgeComposerPreferences,
   })
-  return { controller, workspace, draftConversation, setWorkspace }
+  return { controller, workspace, draftConversation, setWorkspace, setComposerPreference }
 }
 
 describe('useConversationStreamController', () => {
@@ -165,6 +170,7 @@ describe('useConversationStreamController', () => {
   })
 
   it('preserves an unconfirmed submission and retries the same run only on explicit recovery', async () => {
+    vi.useFakeTimers()
     clientMocks.start.mockImplementation(async function* () {
       throw new ApiError('network unavailable', { status: 0 })
       yield* streamItems([])
@@ -178,6 +184,7 @@ describe('useConversationStreamController', () => {
     expect(result.current.controller.hasActiveStream()).toBe(false)
     expect(readActiveRunSession(THREAD_ID)?.payload).toEqual(payload)
     await act(async () => { await result.current.controller.followDetachedConversation(THREAD_ID) })
+    await act(async () => { await vi.runOnlyPendingTimersAsync() })
     expect(traceMocks.follow).not.toHaveBeenCalled()
     expect(clientMocks.cancel).not.toHaveBeenCalled()
     expect(clientMocks.start).toHaveBeenCalledOnce()
@@ -570,6 +577,60 @@ it('新草稿首帧晚到只登记原会话，不抢回当前页面', async () =
     feed.push({ type: 'RUN_FINISHED', threadId: 'server-draft', runId: RUN_ID })
     await running
   })
+})
+
+it.each([false, true])('RUN_STARTED 只消费对应提交的设置，保留之后的新选择：%s', async changedAfterSubmission => {
+  const feed = eventFeed()
+  traceMocks.detail.mockResolvedValue(traceDetail({ lastModel: 'authoritative-model', accessMode: 'full' }))
+  clientMocks.start.mockImplementation((_request: ChatRequestPayload, signal: AbortSignal) => feed.read(signal))
+  const { result } = renderHook(() => useControllerHarness(conversation()))
+  act(() => result.current.setComposerPreference(THREAD_ID, { model: 'main', accessMode: 'write_approval' }))
+  let running!: Promise<void>
+  await act(async () => { running = result.current.controller.streamRun(THREAD_ID, payload, 'start') })
+  if (changedAfterSubmission) act(() => result.current.setComposerPreference(THREAD_ID, { model: 'next-model' }))
+  await act(async () => {
+    feed.push({ type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID })
+    feed.push({ type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID })
+    await running
+  })
+  expect(result.current.workspace.conversations[0]).toMatchObject({
+    model: changedAfterSubmission ? 'next-model' : 'authoritative-model', accessMode: 'full',
+  })
+})
+
+it('终态后的历史同步仍保护详情，完成后释放超额缓存', async () => {
+  const feed = eventFeed()
+  let resolveHistory!: (detail: ConversationHistoryDetail) => void
+  let markRequested!: () => void
+  const requested = new Promise<void>(resolve => { markRequested = resolve })
+  const history = new Promise<ConversationHistoryDetail>(resolve => { resolveHistory = resolve })
+  traceMocks.detail.mockImplementationOnce(() => { markRequested(); return history })
+  clientMocks.start.mockImplementation((_request: ChatRequestPayload, signal: AbortSignal) => feed.read(signal))
+  const { result } = renderHook(() => useControllerHarness(conversation()))
+  let running!: Promise<void>
+  await act(async () => {
+    running = result.current.controller.streamRun(THREAD_ID, payload, 'start')
+    feed.push({ type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID })
+    feed.push({ type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID })
+    await requested
+  })
+  expect(result.current.controller.isActiveThread(THREAD_ID)).toBe(false)
+  const completed = ['b', 'c', 'd'].map(threadId => ({
+    ...restoreConversationFromTrace(traceDetail({ threadId }), { model: 'main', includeTaskTrace: false }), isHydrated: true,
+  }))
+  for (const item of completed) {
+    act(() => result.current.setWorkspace(state => ({
+      conversations: [...state.conversations, item], currentThreadId: item.threadId,
+    })))
+  }
+  expect(result.current.workspace.conversations.find(item => item.threadId === THREAD_ID)).toMatchObject({
+    isHydrated: true, historySynchronized: false,
+  })
+  await act(async () => { resolveHistory(traceDetail()); await running })
+  expect(result.current.workspace.conversations.find(item => item.threadId === THREAD_ID)).toMatchObject({
+    isHydrated: false, messages: [], taskTrace: { phase: 'unloaded' },
+  })
+  expect(result.current.workspace.conversations.filter(item => item.trace)).toHaveLength(3)
 })
 
 it.each(['success', 'failure'])('旧Run历史收尾不影响新Run：%s', async (outcome) => {
@@ -1016,4 +1077,31 @@ it.each(['resume', 'follow'] as const)('审批工具跨运行返回时保持 Tod
     unmount()
     await streaming
   }
+})
+
+it.each([false, true])('未受理占位保留独立恢复请求（受理未知：%s）', async (unknown) => {
+  vi.clearAllMocks()
+  window.sessionStorage.clear()
+  const changed = vi.fn()
+  const registered = vi.fn()
+  clientMocks.start.mockImplementationOnce(() => {
+    throw unknown ? new TypeError('network') : new ApiError('拒绝', { status: 400 })
+  }).mockImplementationOnce(() => streamItems([
+    { event: { type: 'RUN_STARTED', threadId: 'accepted', runId: RUN_ID }, seq: 1 },
+    { event: { type: 'RUN_FINISHED', threadId: 'accepted', runId: RUN_ID }, seq: 2 },
+  ]))
+  traceMocks.detail.mockResolvedValue(traceDetail({ threadId: 'accepted' }))
+  const { result } = renderHook(() => useControllerHarness(conversation()))
+  await act(async () => {
+    await result.current.controller.streamRun('', { ...payload, threadId: '' }, 'start', {
+      target: 'draft', initialConversation: conversation({ threadId: '' }),
+      onDraftChange: changed, onRegistered: registered,
+    })
+  })
+  expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ runStatus: unknown ? 'detached' : 'error' }))
+  await act(async () => { await result.current.controller.recoverConversation('', RUN_ID) })
+  expect(clientMocks.start).toHaveBeenCalledTimes(2)
+  expect(clientMocks.start.mock.calls[1]?.[0]).toMatchObject({ threadId: '', runId: RUN_ID })
+  expect(registered).toHaveBeenCalledOnce()
+  expect(result.current.workspace.conversations.some(item => item.threadId === 'accepted')).toBe(true)
 })

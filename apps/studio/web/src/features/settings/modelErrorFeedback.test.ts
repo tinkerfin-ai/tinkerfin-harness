@@ -58,7 +58,7 @@ describe('模型异常全局通知', () => {
     const hook = renderHook(() => useModelSettings())
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
     hook.unmount()
-    await act(async () => { respond(jsonResponse(null, 503)); await new Promise(resolve => setTimeout(resolve, 10)) })
+    await act(async () => { respond(jsonResponse(null, 503)) })
     expect(apiError).not.toHaveBeenCalled()
   })
 })

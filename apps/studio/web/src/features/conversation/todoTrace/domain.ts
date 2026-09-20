@@ -4,7 +4,7 @@ import type {
   TodoTraceItem,
   TodoTraceItemStatus,
 } from '../../../api/conversation/taskTrace'
-import type { JsonValue } from '../../../types'
+import type { DeepReadonly, JsonValue } from '../../../types'
 
 export interface RootTodoValue {
   id?: string
@@ -28,7 +28,7 @@ export const normalizeUserMessagePreview = (content: string) => {
     : `${characters.slice(0, 160).join('')}…`
 }
 
-export const parseRootTodos = (value: JsonValue): RootTodoValue[] | null => {
+export const parseRootTodos = (value: DeepReadonly<JsonValue>): RootTodoValue[] | null => {
   if (!Array.isArray(value)) return null
   const result: RootTodoValue[] = []
   const identifiers = new Set<string>()

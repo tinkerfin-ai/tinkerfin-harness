@@ -1,20 +1,18 @@
-import { Check, Copy, TriangleAlert } from 'lucide-react'
 import {
   Children,
   isValidElement,
   memo,
-  useEffect,
+  useContext,
   useMemo,
-  useRef,
-  useState,
 } from 'react'
 import type { ReactNode } from 'react'
 import type { ComponentPropsWithoutRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-import { Button } from '../../../components/ui'
-import { COPY_FEEDBACK_DURATION_MS } from './copyFeedback'
+import { SourceCodeBlock } from './SourceCodeBlock'
+import { MarkdownStreamingContext } from './MarkdownStreamingContext'
+import { MermaidBlock } from '../diagrams/MermaidBlock'
 import { useI18n } from '../../../i18n'
 
 export type MarkdownVariant = 'article' | 'compact'
@@ -62,57 +60,14 @@ function textFromNode(node: ReactNode): string {
   return ''
 }
 
-type CopyState = 'idle' | 'copied' | 'failed'
-
-function CodeBlock({ children }: { children: ReactNode }) {
-  const { t } = useI18n()
-  const child = Children.count(children) === 1
-    ? Children.only(children)
-    : children
-  const className = isValidElement<{ className?: string }>(child)
-    ? child.props.className
-    : undefined
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const isStreaming = useContext(MarkdownStreamingContext)
+  const child = Children.count(children) === 1 ? Children.only(children) : children
+  const className = isValidElement<{ className?: string }>(child) ? child.props.className : undefined
   const language = className?.match(/language-([^\s]+)/)?.[1]
   const code = textFromNode(child).replace(/\n$/, '')
-  const [copyState, setCopyState] = useState<CopyState>('idle')
-  const resetTimer = useRef<number | null>(null)
-
-  useEffect(() => () => {
-    if (resetTimer.current != null) window.clearTimeout(resetTimer.current)
-  }, [])
-
-  const copyCode = async () => {
-    if (resetTimer.current != null) window.clearTimeout(resetTimer.current)
-    try {
-      await navigator.clipboard.writeText(code)
-      setCopyState('copied')
-    } catch {
-      setCopyState('failed')
-    }
-    resetTimer.current = window.setTimeout(() => setCopyState('idle'), COPY_FEEDBACK_DURATION_MS)
-  }
-
-  return (
-    <figure className="markdown-code-block">
-      <figcaption className="markdown-code-block__head">
-        <span>{language || t('文本')}</span>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="markdown-copy-button"
-          leadingIcon={copyState === 'copied'
-            ? <Check size={14} />
-            : copyState === 'failed'
-              ? <TriangleAlert size={14} />
-              : <Copy size={14} />}
-          onClick={() => void copyCode()}
-        >
-          {copyState === 'copied' ? t('已复制') : copyState === 'failed' ? t('复制失败') : t('复制')}
-        </Button>
-      </figcaption>
-      <pre>{children}</pre>
-    </figure>
-  )
+  if (language?.toLowerCase() === 'mermaid') return <MermaidBlock source={code} isStreaming={isStreaming} />
+  return <SourceCodeBlock source={code} language={language} isStreaming={isStreaming} />
 }
 
 function MarkdownContentView({
@@ -120,11 +75,13 @@ function MarkdownContentView({
   className,
   variant = 'article',
   allowRemoteImages = true,
+  isStreaming = false,
 }: {
   content: string
   className?: string
   variant?: MarkdownVariant
   allowRemoteImages?: boolean
+  isStreaming?: boolean
 }) {
   const { t } = useI18n()
   const components = useMemo(() => ({
@@ -156,9 +113,7 @@ function MarkdownContentView({
         </div>
       )
     },
-    pre({ children }: { children?: ReactNode }) {
-      return <CodeBlock>{children}</CodeBlock>
-    },
+    pre: CodeBlock,
     input({ type, ...props }: ComponentPropsWithoutRef<'input'>) {
       return type === 'checkbox'
         ? <input {...props} type={type} aria-hidden="true" tabIndex={-1} />
@@ -173,9 +128,11 @@ function MarkdownContentView({
 
   return (
     <div className={classes}>
+      <MarkdownStreamingContext.Provider value={isStreaming}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {content}
       </ReactMarkdown>
+      </MarkdownStreamingContext.Provider>
     </div>
   )
 }

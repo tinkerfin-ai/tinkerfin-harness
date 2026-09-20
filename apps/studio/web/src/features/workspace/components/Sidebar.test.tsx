@@ -10,6 +10,7 @@ const workspace: WorkspaceState = {
   conversations: [
     { accessMode: 'write_approval',
       threadId: 'pinned',
+      historySynchronized: false,
       title: '置顶会话',
       pinned: true,
       updatedAt: '2026-08-08T08:00:00Z',
@@ -22,6 +23,7 @@ const workspace: WorkspaceState = {
     },
     { accessMode: 'write_approval',
       threadId: 'recent',
+      historySynchronized: false,
       title: '最近会话',
       pinned: false,
       updatedAt: '2026-08-08T09:00:00Z',
@@ -843,4 +845,23 @@ describe('Sidebar rail and inline search', () => {
     rerender(<Sidebar {...baseProps} />)
     await waitFor(() => expect(input).toHaveFocus())
   })
+})
+
+it('每次新提交只定位一次今天，受理与标题变化不会抢走滚动位置', () => {
+  const today = { ...workspace.conversations[1]!, updatedAt: new Date().toISOString(), runStatus: 'streaming' as const }
+  const props = { ...baseProps, historyConversations: [workspace.conversations[0]!, today], hasMore: false }
+  const view = render(<Sidebar {...props} />)
+  const heading = screen.getByRole('heading', { name: '今天' })
+  const root = screen.getByRole('region', { name: '最近对话' })
+  vi.spyOn(root, 'getBoundingClientRect').mockReturnValue({ top: 20, bottom: 420 } as DOMRect)
+  vi.spyOn(heading, 'getBoundingClientRect').mockReturnValue({ top: 180, bottom: 200 } as DOMRect)
+  root.scrollTop = 500
+  view.rerender(<Sidebar {...props} newSubmission="one" />)
+  expect(root.scrollTop).toBe(660)
+  root.scrollTop = 900
+  view.rerender(<Sidebar {...props} newSubmission="one" historyConversations={[{ ...today, title: '总结标题' }]} />)
+  expect(root.scrollTop).toBe(900)
+  expect(screen.getByRole('button', { name: '打开会话：总结标题，正在生成' })).toHaveAttribute('aria-busy', 'true')
+  view.rerender(<Sidebar {...props} newSubmission="one" historyConversations={[{ ...today, title: '总结标题', runStatus: 'idle' }]} />)
+  expect(screen.getByRole('button', { name: '打开会话：总结标题' })).not.toHaveAttribute('aria-busy')
 })

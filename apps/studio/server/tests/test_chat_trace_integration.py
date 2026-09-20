@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import AsyncMock
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
@@ -29,6 +30,7 @@ from tinkerfin_studio.conversation.run_preparation import (
 )
 from tinkerfin_studio.conversation.run_registration import ConversationRunPreparer
 from tinkerfin_studio.conversation.service import ConversationChatService
+from tinkerfin_studio.conversation.titles import ConversationTitles
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import (
     AgentModelConfig,
@@ -459,6 +461,7 @@ async def test_chat_service_uses_messaging_only_for_delivery(
             settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
             conversation_channel=channel,
             conversation_trace=trace,
+            conversation_titles=AsyncMock(spec=ConversationTitles),
         ),
     )
     service = ConversationChatService(
@@ -532,6 +535,7 @@ async def test_chat_service_closes_sse_body_when_trace_follow_cannot_start(
             settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
             conversation_channel=channel,
             conversation_trace=trace,
+            conversation_titles=AsyncMock(spec=ConversationTitles),
         ),
     )
     service = ConversationChatService(
@@ -610,6 +614,7 @@ async def test_previous_head_reconcile_releases_the_request_transaction(
             settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
             conversation_channel=channel,
             conversation_trace=trace,
+            conversation_titles=AsyncMock(spec=ConversationTitles),
         ),
     )
     service = ConversationChatService(
@@ -634,14 +639,14 @@ async def test_previous_head_reconcile_releases_the_request_transaction(
 
 
 @pytest.mark.parametrize("ending", ["title", "finish", "disconnect"])
-async def test_title_notification_shares_chat_stream_and_response_lifetime(
+async def test_title_survives_main_finish_and_response_disconnect(
     database,
     session,
     attachments,
     monkeypatch,
     ending,
 ):
-    """真实Messaging与模型HTTP边界覆盖同流标题、结束不等待及断连清理"""
+    """真实聊天传输与模型请求验证标题独立完成，主回复不等待标题"""
     import json
     from collections.abc import AsyncGenerator
 
@@ -716,6 +721,21 @@ async def test_title_notification_shares_chat_stream_and_response_lifetime(
         Messaging() as messaging,
         httpx.AsyncClient(transport=httpx.MockTransport(model_http)) as client,
     ):
+        titles = ConversationTitles(
+            database=database, http_client=client, http_transport=None
+        )
+        title_finished = asyncio.Event()
+        from tinkerfin_studio.conversation import titles as titles_module
+
+        original_summary = titles_module.summarize_conversation_title
+
+        async def summarize(**kwargs):
+            try:
+                return await original_summary(**kwargs)
+            finally:
+                title_finished.set()
+
+        monkeypatch.setattr(titles_module, "summarize_conversation_title", summarize)
         resources = cast(
             ApplicationResources,
             SimpleNamespace(
@@ -729,6 +749,7 @@ async def test_title_notification_shares_chat_stream_and_response_lifetime(
                 settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
                 conversation_channel=messaging.agui_channel(name="conversation"),
                 conversation_trace=_TraceCoordinator(),
+                conversation_titles=titles,
             ),
         )
         service = ConversationChatService(
@@ -746,7 +767,7 @@ async def test_title_notification_shares_chat_stream_and_response_lifetime(
         try:
             first = await anext(prepared.body)
             assert b'"type":"RUN_STARTED"' in first
-            await asyncio.wait_for(model_requested.wait(), 2)
+            await model_requested.wait()
             # 同Run重连只附着原源；新的响应不拥有标题生成任务
             attached = await service.start(
                 _ordinary_request(thread_id=prepared.thread_id), last_event_id="1"
@@ -755,20 +776,18 @@ async def test_title_notification_shares_chat_stream_and_response_lifetime(
             assert source_prepares == 1 and model_calls == 1
             if ending == "title":
                 model_release.set()
-                frame = await asyncio.wait_for(anext(prepared.body), 2)
-                assert b'"name":"studio.conversation.title.updated"' in frame
-                assert frame.startswith(b"id: 2\n")
-                value = json.loads(frame.split(b"data: ", 1)[1])["value"]
-                assert value["title"] == "任务标题" and value["titleSeq"] == 2
+                await title_finished.wait()
                 main_release.set()
-                tail = [frame async for frame in prepared.body]
+                tail = await _collect_body(prepared.body)
                 assert len(tail) == 1 and b'"type":"RUN_FINISHED"' in tail[0]
             elif ending == "finish":
                 main_release.set()
-                tail = await asyncio.wait_for(_collect_body(prepared.body), 2)
+                tail = await _collect_body(prepared.body)
                 assert len(tail) == 1 and b'"type":"RUN_FINISHED"' in tail[0]
+                assert not title_finished.is_set()
             else:
-                await asyncio.wait_for(prepared.body.aclose(), 2)
+                await prepared.body.aclose()
+                assert not title_finished.is_set()
                 assert (
                     await resources.conversation_channel.get_run_status(
                         identity=RunIdentity(
@@ -779,18 +798,20 @@ async def test_title_notification_shares_chat_stream_and_response_lifetime(
                     )
                     == "running"
                 )
+            model_release.set()
+            await title_finished.wait()
             async with database.session() as check:
                 thread = await ConversationRepository(check).get_thread(
                     user_id=1, thread_id=prepared.thread_id
                 )
                 assert thread is not None
-                assert thread.title_generation_status == (
-                    "succeeded" if ending == "title" else "failed"
-                )
+                assert thread.title_generation_status == "succeeded"
+                assert thread.title == "任务标题" and thread.title_seq == 2
         finally:
             main_release.set()
             model_release.set()
             await prepared.body.aclose()
+            await titles.aclose()
 
 
 async def _collect_body(body):
@@ -858,6 +879,7 @@ async def test_pre_delivery_failure_keeps_only_preexisting_business_registration
             database=database,
             attachments=attachments,
             conversation_trace=_TraceCoordinator(),
+            conversation_titles=AsyncMock(spec=ConversationTitles),
         ),
     )
     service = ConversationChatService(
@@ -937,6 +959,7 @@ async def test_business_registration_cleanup_settles_before_request_cancellation
                 database=database,
                 attachments=attachments,
                 conversation_trace=_TraceCoordinator(),
+                conversation_titles=AsyncMock(spec=ConversationTitles),
             ),
         ),
     )
@@ -1041,6 +1064,7 @@ async def test_initialization_error_is_logged_once_and_replay_does_not_log_again
                 settings=SimpleNamespace(model_allowed_origins=()),
                 conversation_channel=messaging.agui_channel(name="failure-logging"),
                 conversation_trace=_TraceCoordinator(),
+                conversation_titles=AsyncMock(spec=ConversationTitles),
             ),
         )
         service = ConversationChatService(

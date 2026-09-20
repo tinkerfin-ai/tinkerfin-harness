@@ -9,15 +9,17 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react'
-import { memo, useEffect, useId, useRef, useState } from 'react'
+import { memo, useEffect, useId, useRef, useState, type Ref } from 'react'
 
 import { IconButton } from '../../../components/ui'
 import type { Message } from '../../../types'
 import { MarkdownContent } from './MarkdownContent'
+import { CodeText } from '../../../components/ui/CodeText'
 import { useTypewriterText } from './useTypewriterText'
 import { ToolCallRow } from './ToolCallRow'
 import { COPY_FEEDBACK_DURATION_MS } from './copyFeedback'
 import { useI18n } from '../../../i18n'
+import { useStreamingContentScroll } from './useStreamingContentScroll'
 
 type MessageStatus = NonNullable<Message['meta']>['status']
 
@@ -42,30 +44,38 @@ function PlaceholderField({ status }: { status?: MessageStatus }) {
     : <span className="tool-field-placeholder">—</span>
 }
 
-function CodeField({ value, status }: { value?: string; status?: MessageStatus }) {
+function CodeField({ value, status, contentRef }: { value?: string; status?: MessageStatus; contentRef?: Ref<HTMLPreElement> }) {
   return value
-    ? <pre className="tool-code-field"><code>{value}</code></pre>
+    ? <pre ref={contentRef} className="tool-code-field"><CodeText language="json" isStreaming={status === 'running'}>{value}</CodeText></pre>
     : <PlaceholderField status={status} />
 }
 
-function RichField({ value, status, className = 'tool-rich-field' }: { value?: string; status?: MessageStatus; className?: string }) {
+function RichField({ value, status, className = 'tool-rich-field', contentRef }: { value?: string; status?: MessageStatus; className?: string; contentRef?: Ref<HTMLDivElement> }) {
   return value
-    ? <div className={className}><MarkdownContent content={value} variant="compact" /></div>
+    ? <div ref={contentRef} className={className}><MarkdownContent content={value} variant="compact" isStreaming={status === 'running'} /></div>
     : <PlaceholderField status={status} />
 }
 
-function ToolDetails({ message }: { message: Message }) {
+function ToolDetails({ message, visible }: { message: Message; visible: boolean }) {
   const { t } = useI18n()
+  const inputLabelId = useId()
+  const outputLabelId = useId()
+  const { viewportRef, contentRef } = useStreamingContentScroll({
+    identity: message.id,
+    value: message.meta?.params,
+    running: message.meta?.status === 'running',
+    visible,
+  })
   return (
     <div className="tool-detail-card">
-      <div className="tool-detail-section tool-detail-section--params">
-        <span className="tool-field-label">{t('输入')}</span>
-        <CodeField value={message.meta?.params} status={message.meta?.status} />
+      <div ref={viewportRef} className="tool-detail-section tool-detail-section--params" role="region" aria-labelledby={inputLabelId} tabIndex={0}>
+        <span id={inputLabelId} className="tool-field-label">{t('输入')}</span>
+        <CodeField contentRef={contentRef} value={message.meta?.params} status={message.meta?.status} />
       </div>
       {(message.meta?.result || !message.attachments?.length) && <>
         <span className="tool-detail-divider" aria-hidden="true" />
-        <div className="tool-detail-section tool-detail-section--result">
-          <span className="tool-field-label">{t('输出')}</span>
+        <div className="tool-detail-section tool-detail-section--result" role="region" aria-labelledby={outputLabelId} tabIndex={0}>
+          <span id={outputLabelId} className="tool-field-label">{t('输出')}</span>
           <RichField value={message.meta?.result} status={message.meta?.status} />
         </div>
       </>}
@@ -136,10 +146,12 @@ function MessageActionRow({ content, kind }: { content: string; kind: MessageAct
 function SubagentToolTraceRow({
   message,
   open,
+  parentOpen,
   onOpenChange,
 }: {
   message: Message
   open: boolean
+  parentOpen: boolean
   onOpenChange: (open: boolean) => void
 }) {
   return (
@@ -150,17 +162,23 @@ function SubagentToolTraceRow({
       open={open}
       onOpenChange={onOpenChange}
     >
-      <ToolDetails message={message} />
+      <ToolDetails message={message} visible={parentOpen && open} />
     </ToolCallRow>
     <AttachmentList attachments={message.attachments} />
     </>
   )
 }
 
-function SubagentOutputNode({ message }: { message: Message }) {
+function SubagentOutputNode({ message, visible }: { message: Message; visible: boolean }) {
   const { t } = useI18n()
   const status = message.meta?.status ?? 'completed'
   const result = message.meta?.result
+  const { viewportRef, contentRef } = useStreamingContentScroll({
+    identity: message.id,
+    value: result,
+    running: status === 'running',
+    visible,
+  })
   const label = status === 'running'
     ? t('执行中')
     : status === 'failed'
@@ -185,7 +203,11 @@ function SubagentOutputNode({ message }: { message: Message }) {
       </span>
       <div className="subagent-output-copy">
         <strong>{label}</strong>
-        {result ? <RichField value={result} status={status} className="subagent-trace-output" /> : null}
+        {result ? (
+          <div ref={viewportRef} className="subagent-trace-output" role="region" aria-label={t('输出')} tabIndex={0}>
+            <RichField contentRef={contentRef} value={result} status={status} className="subagent-trace-content" />
+          </div>
+        ) : null}
         <AttachmentList attachments={message.attachments} />
       </div>
     </li>
@@ -194,6 +216,7 @@ function SubagentOutputNode({ message }: { message: Message }) {
 
 function SubagentCard({ message, childTools }: { message: Message; childTools: Message[] }) {
   const { t } = useI18n()
+  const [open, setOpen] = useState(false)
   const [openToolIds, setOpenToolIds] = useState<Set<string>>(() => new Set())
   const [inputHovered, setInputHovered] = useState(false)
   const [inputFocused, setInputFocused] = useState(false)
@@ -223,7 +246,7 @@ function SubagentCard({ message, childTools }: { message: Message; childTools: M
   }
 
   return (
-    <details id={message.id} className={`subagent-card ${status}`}>
+    <details id={message.id} className={`subagent-card ${status}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="subagent-card-head">
         <span className="tool-row-leading" aria-hidden="true">
           <span className="tool-row-icon">
@@ -283,11 +306,12 @@ function SubagentCard({ message, childTools }: { message: Message; childTools: M
               <SubagentToolTraceRow
                 message={tool}
                 open={openToolIds.has(tool.id)}
+                parentOpen={open}
                 onOpenChange={(open) => setToolOpen(tool.id, open)}
               />
             </li>
           ))}
-          <SubagentOutputNode message={message} />
+          <SubagentOutputNode message={message} visible={open} />
         </ol>
       </div>
     </details>
@@ -313,7 +337,7 @@ function MessageBlockView({
     )
   }
   if (message.role === 'process') {
-    return message.meta?.planHistory ? <PlanHistoryCard interaction={message.meta.planHistory} /> : null
+    return message.meta?.planHistory ? <PlanHistoryCard id={message.id} interaction={message.meta.planHistory} /> : null
   }
   if (message.role === 'subagent') {
     return <SubagentCard message={message} childTools={childTools} />
@@ -332,7 +356,7 @@ function AssistantMessage({ message, showActions }: { message: Message; showActi
   if (!message.content && !message.attachments?.length) return null
   return (
     <article id={message.id} className="message assistant-message">
-      <MarkdownContent content={content} className="message-markdown" />
+      <MarkdownContent content={content} className="message-markdown" isStreaming={message.meta?.status === 'running' || content !== message.content} />
       <AttachmentList attachments={message.attachments} />
       {showActions && content === message.content && message.meta?.status !== 'running' && <MessageActionRow content={message.content} kind="assistant" />}
     </article>
@@ -365,7 +389,7 @@ export function ToolCallCard({ message, className }: { message: Message; classNa
     <ToolCallRow message={message} open={open} onOpenChange={setOpen} className={`tool-card${className ? ` ${className}` : ''}`}>
       {isTodoUpdate
         ? <div className="todo-trace-tool-status">{todoStatus}</div>
-        : <ToolDetails message={message} />}
+        : <ToolDetails message={message} visible={open} />}
     </ToolCallRow>
     <AttachmentList attachments={message.attachments} />
     </>
@@ -374,7 +398,6 @@ export function ToolCallCard({ message, className }: { message: Message; classNa
 
 function ToolCallBatchView({ messages }: { messages: Message[] }) {
   const { t } = useI18n()
-  if (messages.length === 1) return <ToolCallCard message={messages[0]} />
   return (
     <section className="tool-batch" aria-label={t('工具调用批次')}>
       {messages.map((message) => <ToolCallCard key={message.id} message={message} />)}

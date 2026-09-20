@@ -28,6 +28,7 @@ import {
 } from '../../lib/workspace'
 import type { Conversation, WorkspaceState } from '../../types'
 import { useI18n } from '../../i18n'
+import type { RetainConversationDetails } from './useWorkspaceState'
 import type { ModelCatalogStatus } from './useModelCatalog'
 import { pruneSearchOnlyConversations } from './workspaceHistoryCache'
 
@@ -230,6 +231,7 @@ const conversationFromHistoryItem = (
   activeRunId: item.lastRunId ?? undefined,
   serverState: {},
   isHydrated: false,
+  historySynchronized: false,
 })
 
 export const mergeHistoryConversations = (
@@ -285,6 +287,7 @@ export const mergeHistoryConversations = (
 export function useWorkspaceHistory({
   workspace,
   setWorkspace,
+  retainConversationDetails,
   defaultModelId,
   modelCatalogStatus,
   refreshOnActivation = false,
@@ -294,6 +297,7 @@ export function useWorkspaceHistory({
 }: {
   workspace: WorkspaceState
   setWorkspace: Dispatch<SetStateAction<WorkspaceState>>
+  retainConversationDetails: RetainConversationDetails
   defaultModelId: string
   modelCatalogStatus: ModelCatalogStatus
   /** 当前页面重新显示或获得焦点时，重验所选会话的运行状态 */
@@ -367,8 +371,9 @@ export function useWorkspaceHistory({
   const refreshHistoryList = useCallback(async (
     options: { preferredThreadId?: string; signal?: AbortSignal } = {},
   ) => {
+    const preferredThreadId = options.preferredThreadId ?? ''
+    const retention = preferredThreadId ? retainConversationDetails(preferredThreadId) : undefined
     try {
-      const preferredThreadId = options.preferredThreadId ?? ''
       const [response, preferredDetail, groupConfig] = await Promise.all([
         fetchConversationHistoryList({
           pageSize: HISTORY_PAGE_SIZE,
@@ -429,8 +434,10 @@ export function useWorkspaceHistory({
       return true
     } catch {
       return false
+    } finally {
+      retention?.release()
     }
-  }, [defaultModelId, prepareTaskTraceOwner, setWorkspace])
+  }, [defaultModelId, prepareTaskTraceOwner, retainConversationDetails, setWorkspace])
 
   useEffect(() => {
     const known = new Set(historyThreadIdsRef.current)
@@ -735,8 +742,13 @@ export function useWorkspaceHistory({
       target.taskTrace.phase === 'ready'
       || (target.taskTrace.phase === 'unavailable' && !isRetry)
     ) {
-      await prepareTaskTraceOwner(threadId)
-      return true
+      const retention = retainConversationDetails(threadId)
+      try {
+        await prepareTaskTraceOwner(threadId)
+        return true
+      } finally {
+        retention.release()
+      }
     }
     const priorFailure = taskTraceLoadFailures.get(threadId)
     if (
@@ -747,6 +759,7 @@ export function useWorkspaceHistory({
     const existing = taskTraceRequests.current.get(threadId)
     if (existing && !existing.signal.aborted) return false
     if (existing) taskTraceRequests.current.delete(threadId)
+    const retention = retainConversationDetails(threadId)
     const requestIdentity = taskTraceRequestIdentity(target)
     const requestId = taskTraceRequestSequence.current + 1
     taskTraceRequestSequence.current = requestId
@@ -787,8 +800,9 @@ export function useWorkspaceHistory({
           : updateConversation(
               state,
               threadId,
-              (item) => ownsTaskTraceRequest(item, requestIdentity)
-                ? { ...restored, ...mergeConversationTitle(item, restored) }
+              (item) => !controller.signal.aborted && ownsTaskTraceRequest(item, requestIdentity)
+                // 这里只补任务轨迹；正文和连接状态仍由会话流管理
+                ? { ...item, taskTrace: restored.taskTrace }
                 : item,
             )
       ))
@@ -818,11 +832,12 @@ export function useWorkspaceHistory({
       }
       return false
     } finally {
+      retention.release()
       if (taskTraceRequests.current.get(threadId) === controller) {
         taskTraceRequests.current.delete(threadId)
       }
     }
-  }, [prepareTaskTraceOwner, setWorkspace, taskTraceLoadFailures])
+  }, [prepareTaskTraceOwner, retainConversationDetails, setWorkspace, taskTraceLoadFailures])
 
   const retryTaskTrace = useCallback((threadId: string) => {
     setTaskTraceLoadFailures((current) => (
@@ -846,6 +861,7 @@ export function useWorkspaceHistory({
     if (existingRequest && !existingRequest.signal.aborted) return
     if (existingRequest) hydrationRequests.current.delete(threadId)
 
+    const retention = retainConversationDetails(threadId)
     const requestIdentity = target.isHydrated ? taskTraceRequestIdentity(target) : undefined
     const controller = new AbortController()
     const abortFromCaller = () => controller.abort()
@@ -855,7 +871,9 @@ export function useWorkspaceHistory({
     try {
       await prepareTaskTraceOwner(threadId)
       if (controller.signal.aborted) return
-      const detail = (options.refresh ? undefined : prefetchedHistoryDetails.current.get(threadId))
+      const prefetched = prefetchedHistoryDetails.current.get(threadId)
+      prefetchedHistoryDetails.current.delete(threadId)
+      const detail = (options.refresh ? undefined : prefetched)
         ?? await fetchConversationHistoryDetail(threadId, {
           includeTaskTrace: true,
           signal: controller.signal,
@@ -866,7 +884,8 @@ export function useWorkspaceHistory({
         || hydrationRequests.current.get(threadId) !== controller
       ) return
       const current = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
-      if (requestIdentity && !matchesTaskTraceRequestIdentity(current, requestIdentity)) return
+      if (!current || latestWorkspace.current.currentThreadId !== threadId
+        || (requestIdentity && !matchesTaskTraceRequestIdentity(current, requestIdentity))) return
       prefetchedHistoryDetails.current.delete(threadId)
       const restored = restoreConversationFromTrace(detail, {
         previous: current,
@@ -878,7 +897,8 @@ export function useWorkspaceHistory({
       setHydrationState((current) => current?.threadId === threadId ? null : current)
       setWorkspace((state) => {
         const previous = state.conversations.find((item) => item.threadId === threadId)
-        if (requestIdentity && !matchesTaskTraceRequestIdentity(previous, requestIdentity)) return state
+        if (controller.signal.aborted || !previous || state.currentThreadId !== threadId
+          || (requestIdentity && !matchesTaskTraceRequestIdentity(previous, requestIdentity))) return state
         return upsertConversation(state, {
           ...restored,
           ...mergeConversationTitle(previous, restored),
@@ -887,12 +907,14 @@ export function useWorkspaceHistory({
       })
     } catch {
       const current = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
-      if (!controller.signal.aborted && hydrationRequests.current.get(threadId) === controller
+      if (current && latestWorkspace.current.currentThreadId === threadId
+        && !controller.signal.aborted && hydrationRequests.current.get(threadId) === controller
         && (!requestIdentity || matchesTaskTraceRequestIdentity(current, requestIdentity))) {
         setHydrationState({ threadId, status: 'failed' })
         onToast('error', t('会话加载失败，请重试'))
       }
     } finally {
+      retention.release()
       options.signal?.removeEventListener('abort', abortFromCaller)
       if (hydrationRequests.current.get(threadId) === controller) {
         hydrationRequests.current.delete(threadId)
@@ -906,6 +928,7 @@ export function useWorkspaceHistory({
     hydrateTaskTrace,
     onToast,
     prepareTaskTraceOwner,
+    retainConversationDetails,
     setWorkspace,
     t,
   ])
@@ -959,6 +982,7 @@ export function useWorkspaceHistory({
       if (!options.signal) return false
       existingRequest.abort()
     }
+    const retention = retainConversationDetails(threadId)
     const requestIdentity: TracePageRequestIdentity = {
       asOfSeq: trace.asOfSeq,
       generation: trace.generation,
@@ -1003,7 +1027,7 @@ export function useWorkspaceHistory({
       setWorkspace((state) => {
         const current = state.conversations.find((item) => item.threadId === threadId)
         // follow 已推进权威前缀时丢弃旧分页，不能让 fixed-as-of 响应回退新状态
-        if (!ownsTracePageRequest(current, requestIdentity)) return state
+        if (controller.signal.aborted || !ownsTracePageRequest(current, requestIdentity)) return state
         return upsertConversation(state, { ...restored, ...mergeConversationTitle(current, restored) })
       })
       return true
@@ -1011,12 +1035,13 @@ export function useWorkspaceHistory({
       if (!controller.signal.aborted) onToast('error', t('会话加载失败，请重试'))
       return false
     } finally {
+      retention.release()
       options.signal?.removeEventListener('abort', abortFromCaller)
       if (olderTraceRequests.current.get(threadId) === controller) {
         olderTraceRequests.current.delete(threadId)
       }
     }
-  }, [onToast, setWorkspace, t])
+  }, [onToast, retainConversationDetails, setWorkspace, t])
 
   const activeHistoryThreadIds = normalizedHistoryQuery
     ? searchThreadIds
@@ -1122,20 +1147,31 @@ export function useWorkspaceHistory({
 
   useEffect(() => {
     const currentThreadId = workspace.currentThreadId
+    const threadIds = new Set(workspace.conversations.map((item) => item.threadId))
+    for (const threadId of prefetchedHistoryDetails.current.keys()) {
+      if (threadId !== currentThreadId || !threadIds.has(threadId)) {
+        prefetchedHistoryDetails.current.delete(threadId)
+      }
+    }
+    for (const [threadId, controller] of olderTraceRequests.current) {
+      if (threadId === currentThreadId && threadIds.has(threadId)) continue
+      controller.abort()
+      olderTraceRequests.current.delete(threadId)
+    }
     for (const [threadId, controller] of hydrationRequests.current) {
-      if (threadId === currentThreadId) continue
+      if (threadId === currentThreadId && threadIds.has(threadId)) continue
       controller.abort()
       hydrationRequests.current.delete(threadId)
     }
     for (const [threadId, controller] of taskTraceRequests.current) {
-      if (threadId === currentThreadId) continue
+      if (threadId === currentThreadId && threadIds.has(threadId)) continue
       controller.abort()
       taskTraceRequests.current.delete(threadId)
     }
     setHydrationState((current) => (
       current && current.threadId !== currentThreadId ? null : current
     ))
-  }, [workspace.currentThreadId])
+  }, [workspace.currentThreadId, workspace.conversations])
 
   useEffect(() => () => {
     if (historySearchDebounceTimer.current != null) window.clearTimeout(historySearchDebounceTimer.current)
@@ -1144,6 +1180,7 @@ export function useWorkspaceHistory({
     historyBootstrapAbortController.current?.abort()
     for (const controller of hydrationRequests.current.values()) controller.abort()
     hydrationRequests.current.clear()
+    prefetchedHistoryDetails.current.clear()
     for (const controller of olderTraceRequests.current.values()) controller.abort()
     olderTraceRequests.current.clear()
     for (const controller of taskTraceRequests.current.values()) controller.abort()

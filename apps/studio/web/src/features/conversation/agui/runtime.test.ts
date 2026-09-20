@@ -22,6 +22,32 @@ import {
 const THREAD_ID = 'thread-order-check'
 const RUN_ID = 'run-order-check'
 
+it('忽略的协议事件保留历史确认标记，正文或状态变更使其失效', () => {
+  const current = {
+    ...buildEmptyConversation({ threadId: THREAD_ID, now: '2026-09-07T00:00:00Z' }),
+    historySynchronized: true,
+    activeRunId: RUN_ID,
+  }
+  const ignored: ConversationAgUiEvent[] = [
+    { type: 'TOOL_CALL_END', toolCallId: 'unknown-tool' },
+    { type: 'REASONING_START', messageId: 'reasoning' },
+    { type: 'CUSTOM', name: 'host.unknown', value: {} },
+    { type: 'RAW', source: 'host.unknown', event: {} },
+    { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: 'other-run', outcome: { type: 'success' } },
+  ]
+  for (const event of ignored) {
+    expect(applyConversationEvent(current, event)).toBe(current)
+  }
+  for (const event of [
+    { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '新的正文' },
+    { type: 'STATE_SNAPSHOT', snapshot: { todos: [] } },
+  ] satisfies ConversationAgUiEvent[]) {
+    const changed = applyConversationEvent(current, event)
+    expect(changed.historySynchronized).toBe(false)
+    expect(current.historySynchronized).toBe(true)
+  }
+})
+
 it('失败后新提问使用真实框架流，历史消息修复不重复追加旧正文', () => {
   const initial = buildEmptyConversation({ threadId: 'thread', now: '2026-09-13T00:00:00Z' })
   const failed = checkpointReplay.before.map(parseConversationAgUiEvent).reduce(applyConversationEvent, initial)
@@ -1832,21 +1858,34 @@ describe('AG-UI runtime reducer', () => {
 })
 
 
-it('标题通知仅更新目标会话且不被旧事件覆盖', () => {
-  const initial = buildEmptyConversation({ threadId: 'title-thread', now: '2026-09-08T00:00:00Z' })
-  const event = { type: 'CUSTOM', name: 'studio.conversation.title.updated', value: {
-    threadId: 'title-thread', title: '自动标题', titleSource: 'generated', titleGenerationStatus: 'succeeded', titleSeq: 2,
-  } }
-  const parsed = parseConversationAgUiEvent(event)
-  const updated = applyConversationEvent(initial, parsed)
-  expect(updated.title).toBe('自动标题')
-  expect(updated.messages).toBe(initial.messages)
-  expect(updated.runStatus).toBe(initial.runStatus)
-  const manual = { ...updated, title: '用户标题', titleSource: 'user' as const, titleGenerationStatus: 'skipped' as const, titleSeq: 3 }
-  expect(applyConversationEvent(manual, parsed).title).toBe('用户标题')
-  expect(applyConversationEvent(updated, parsed)).toEqual(updated)
-  expect(applyConversationEvent(initial, parseConversationAgUiEvent({ ...event, value: { ...event.value, threadId: 'other' } }))).toBe(initial)
-  expect(() => parseConversationAgUiEvent({ ...event, value: { ...event.value, title: '中'.repeat(33) } })).toThrow()
+it.each(['cancelled', 'resume_cancelled'])('取消 %s 只结束所属轮次的逐字展示，重复终态不影响下一轮', (code) => {
+  const events: ConversationAgUiEvent[] = [
+    { type: 'RUN_STARTED', threadId: THREAD_ID, runId: 'prior-run' },
+    { type: 'TEXT_MESSAGE_START', messageId: 'prior-answer', role: 'assistant' },
+    { type: 'TEXT_MESSAGE_CONTENT', messageId: 'prior-answer', delta: '上一轮正常完成的正文' },
+    { type: 'TEXT_MESSAGE_END', messageId: 'prior-answer' },
+    { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: 'prior-run' },
+    { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID },
+    { type: 'TEXT_MESSAGE_START', messageId: 'answer', role: 'assistant' },
+    { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '这一轮已经收到的正文' },
+  ]
+  const running = events.reduce(applyConversationEvent, buildEmptyConversation({ threadId: THREAD_ID, now: '2026-09-20T00:00:00Z' }))
+  const cancel: ConversationAgUiEvent = { type: 'RUN_ERROR', code, message: '已停止', rawEvent: { runId: RUN_ID } }
+  const stopped = applyConversationEvent(running, cancel)
+  expect(stopped.runStatus).toBe('idle')
+  expect(stopped.messages[0]).toBe(running.messages[0])
+  expect(stopped.messages[1]).toMatchObject({ id: 'answer', content: '这一轮已经收到的正文', meta: { status: 'cancelled' } })
+  expect(stopped.messages[1].liveText).toBeUndefined()
+  expect(applyConversationEvent(stopped, cancel)).toEqual(stopped)
+
+  const nextEvents: ConversationAgUiEvent[] = [
+    { type: 'RUN_STARTED', threadId: THREAD_ID, runId: 'next-run' },
+    { type: 'TEXT_MESSAGE_START', messageId: 'next-answer', role: 'assistant' },
+    { type: 'TEXT_MESSAGE_CONTENT', messageId: 'next-answer', delta: '下一轮的正文' },
+  ]
+  const next = nextEvents.reduce(applyConversationEvent, stopped)
+  expect(next.messages[2].liveText).toBeDefined()
+  expect(applyConversationEvent(next, cancel)).toEqual(next)
 })
 
 it('旧运行错误到达时只记录原运行失败，不停止当前新运行', () => {

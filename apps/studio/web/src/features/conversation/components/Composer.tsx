@@ -346,6 +346,7 @@ export function Composer({
             <div className="composer-input-mirror" aria-hidden="true">{`${value}\n`}</div>
           </div>
         </div>
+        <div className="composer-toolbar-container">
         <div className="composer-toolbar">
           <div className="composer-toolbar-leading">
             <input
@@ -389,6 +390,7 @@ export function Composer({
               <IconButton className="send-button" label={t('发送消息')} icon={<ArrowUp size={18} />} disabled={isDisabled || !canSubmitDraft} onClick={onSend} />
             )}
           </div>
+        </div>
         </div>
         </div>
       </div>

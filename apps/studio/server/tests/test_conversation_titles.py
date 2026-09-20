@@ -263,7 +263,7 @@ async def test_title_uses_one_bounded_nonreasoning_request(database):
             config,
             reasoning_enabled=False,
             max_retries=0,
-            max_tokens=64,
+            max_tokens=256,
             http_async_client=client,
         )
         result = await summarize_conversation_title(
@@ -285,15 +285,13 @@ async def test_title_uses_one_bounded_nonreasoning_request(database):
         )
     assert len(bodies) == 1
     body = bodies[0]
-    assert body["model"] == "chosen-model" and body["max_tokens"] == 64
+    assert body["model"] == "chosen-model" and body["max_tokens"] == 256
     assert body["thinking"] == {"type": "disabled"}
     assert len(body["messages"][1]["content"].encode()) <= 4096
 
 
 @pytest.mark.parametrize("outcome", ["error", "timeout", "manual", "cancel"])
-async def test_title_failures_and_manual_rename_never_retry(
-    database, outcome, monkeypatch
-):
+async def test_title_failures_and_manual_rename_never_retry(database, outcome):
     import httpx
     from pydantic import SecretStr
 
@@ -301,11 +299,9 @@ async def test_title_failures_and_manual_rename_never_retry(
     from tinkerfin_studio.models.chat import create_chat_model
     from tinkerfin_studio.models.schemas import AgentModelConfig
 
-    monkeypatch.setattr(
-        "tinkerfin_studio.conversation.titles._TITLE_TIMEOUT_SECONDS", 0.15
-    )
     thread_pk = await create_thread(database)
     requested = asyncio.Event()
+    release = asyncio.Event()
     calls = 0
 
     async def handle(request):
@@ -314,8 +310,8 @@ async def test_title_failures_and_manual_rename_never_retry(
         requested.set()
         if outcome == "error":
             return httpx.Response(500, json={"error": "private-provider-error"})
-        await asyncio.Event().wait()
-        raise AssertionError("等待只能被取消")
+        await release.wait()
+        raise httpx.ReadTimeout("受控超时", request=request)
 
     config = AgentModelConfig(
         model_id="chosen",
@@ -337,7 +333,7 @@ async def test_title_failures_and_manual_rename_never_retry(
             )
         )
         try:
-            await asyncio.wait_for(requested.wait(), 3)
+            await requested.wait()
             if outcome == "manual":
                 async with database.session() as session:
                     repository = ConversationRepository(session)
@@ -352,6 +348,7 @@ async def test_title_failures_and_manual_rename_never_retry(
                 with pytest.raises(asyncio.CancelledError):
                     await task
             else:
+                release.set()
                 assert await task is None
             assert (
                 await summarize_conversation_title(
@@ -432,7 +429,7 @@ async def test_cancellation_joins_claim_commit_before_settlement(database, monke
         )
     )
     try:
-        await asyncio.wait_for(committed.wait(), 2)
+        await committed.wait()
         task.cancel()
         release.set()
         with pytest.raises(asyncio.CancelledError):
@@ -460,3 +457,112 @@ async def test_generated_title_is_at_most_32_characters(database, text):
         model=FakeListChatModel(responses=[text]),
     )
     assert result is not None and result.title == text[:32]
+
+
+@pytest.mark.parametrize("started", [False, True])
+async def test_application_close_settles_queued_and_running_titles(
+    database, monkeypatch, started
+):
+    import httpx
+    from pydantic import SecretStr
+
+    from tinkerfin_studio.conversation import titles as module
+    from tinkerfin_studio.models.schemas import AgentModelConfig
+
+    thread_pk = await create_thread(database)
+    entered = asyncio.Event()
+
+    async def invoke(*args, **kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+
+    model = create_autospec(BaseChatModel, instance=True)
+    model.ainvoke.side_effect = invoke
+    monkeypatch.setattr(module, "create_chat_model", lambda *args, **kwargs: model)
+    config = AgentModelConfig(
+        model_id="main",
+        display_name="主模型",
+        provider="deepseek",
+        model_name="deepseek-chat",
+        base_url="https://example.invalid",
+        api_key=SecretStr("test"),
+        reasoning_enabled=False,
+    )
+    async with httpx.AsyncClient() as client:
+        titles = module.ConversationTitles(
+            database=database, http_client=client, http_transport=None
+        )
+        await titles.start(thread_pk=thread_pk, text="标题", model=config)
+        await titles.start(thread_pk=thread_pk, text="重复请求", model=config)
+        if started:
+            await entered.wait()
+        await titles.aclose()
+        await titles.aclose()
+    async with database.session() as session:
+        thread = await ConversationRepository(session).get_thread_by_pk(thread_pk)
+        assert thread is not None and thread.title_generation_status == "failed"
+    assert model.ainvoke.call_count == (1 if started else 0)
+
+
+async def test_title_queue_overflow_settles(database, monkeypatch):
+    import httpx
+    from pydantic import SecretStr
+
+    from tinkerfin_studio.conversation import titles as module
+    from tinkerfin_studio.models.schemas import AgentModelConfig
+
+    thread_pk = await create_thread(database)
+    config = AgentModelConfig(
+        model_id="main",
+        display_name="主模型",
+        provider="deepseek",
+        model_name="deepseek-chat",
+        base_url="https://example.invalid",
+        api_key=SecretStr("test"),
+        reasoning_enabled=False,
+    )
+    monkeypatch.setattr(module, "_TITLE_MAX_PENDING", 0)
+    async with httpx.AsyncClient() as client:
+        titles = module.ConversationTitles(
+            database=database, http_client=client, http_transport=None
+        )
+        await titles.start(thread_pk=thread_pk, text="标题", model=config)
+        await titles.aclose()
+    async with database.session() as session:
+        thread = await ConversationRepository(session).get_thread_by_pk(thread_pk)
+        assert thread is not None and thread.title_generation_status == "failed"
+        assert thread.title == "临时标题"
+
+
+@pytest.mark.parametrize("user_id", [1, 2])
+async def test_title_query_checks_owner_and_returns_current_snapshot(
+    database, session, user_id
+):
+    from httpx import ASGITransport, AsyncClient
+
+    from tinkerfin_studio.api.dependencies import get_session, get_user_context
+    from tinkerfin_studio.application import create_application
+    from tinkerfin_studio.auth.types import UserContext
+
+    await create_thread(database)
+    app = create_application(lifespan=None)
+    app.dependency_overrides[get_user_context] = lambda: UserContext(
+        user_id=user_id, username="user", display_name="用户", roles=(), disabled=False
+    )
+    app.dependency_overrides[get_session] = lambda: session
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/api/conversation/title-thread/title")
+    if user_id == 1:
+        assert response.status_code == 200
+        assert response.json()["data"] == {
+            "threadId": "title-thread",
+            "title": "临时标题",
+            "titleSource": "default",
+            "titleGenerationStatus": "idle",
+            "titleSeq": 0,
+        }
+    else:
+        assert response.json()["code"] != 0
+        assert response.json()["data"] is None

@@ -36,7 +36,6 @@ interface SequenceItemStyle extends CSSProperties {
 }
 
 type TraceTimelineProps = {
-  backgroundInert: boolean
   onSelect: (nodeId: string, trigger: HTMLButtonElement) => void
 } & (
   | {
@@ -86,8 +85,6 @@ export function TraceTimeline(props: TraceTimelineProps) {
     <section
       className={`chain-trace-timeline${props.mode === 'sequence' ? ' is-sequence' : ''}`}
       aria-label={props.mode === 'sequence' ? t('执行序列') : t('调用时间线')}
-      aria-hidden={props.backgroundInert || undefined}
-      inert={props.backgroundInert || undefined}
     >
       <div className="chain-trace-timeline-labels" style={{ gridTemplateRows: rowTemplate }}>
         {props.mode === 'timeline' && <span aria-hidden="true" />}

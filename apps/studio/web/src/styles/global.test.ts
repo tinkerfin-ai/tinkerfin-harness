@@ -110,6 +110,7 @@ describe('前端视觉契约', () => {
         ['--color-text-caption-on-layer', '--color-layer-1'],
         ['--color-text-caption-on-layer', '--color-layer-2'],
         ['--color-text-caption-on-layer', '--color-code-surface'],
+        ...['comment', 'keyword', 'string', 'number', 'property', 'function'].map(kind => [`--color-code-${kind}`, '--color-code-surface']),
       ]) {
         const foregroundColor = resolveToken(tokens, foreground)
         const backgroundColor = resolveToken(tokens, background)
@@ -171,7 +172,7 @@ describe('前端视觉契约', () => {
       .map((match) => match[1].trim())
       .filter((value) => !value.includes('var(--layer-'))
     const breakpointValues = [...new Set(
-      [...componentStyles.matchAll(/@media \((?:min|max)-width:\s*(\d+)px\)/g)]
+      [...componentStyles.matchAll(/@(?:media|container(?: [\w-]+)?) \((?:min|max)-width:\s*(\d+)px\)/g)]
         .map((match) => match[1]),
     )].sort((left, right) => Number(left) - Number(right))
     const ownerLocalMotionValues = [...new Set(
@@ -182,7 +183,7 @@ describe('前端视觉契约', () => {
     expect(unregisteredRadii).toEqual([])
     expect(unregisteredShadows).toEqual([])
     expect(unregisteredLayers).toEqual([])
-    expect(breakpointValues).toEqual(['440', '767', '920', '1023', '1281'])
+    expect(breakpointValues).toEqual(['440', '460', '767', '920', '1023', '1024'])
     expect(ownerLocalMotionValues).toEqual([])
   })
 

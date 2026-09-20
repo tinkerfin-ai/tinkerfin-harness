@@ -46,6 +46,7 @@ from tinkerfin_studio.conversation.coordinator import (
     ConversationTraceCoordinator,
 )
 from tinkerfin_studio.conversation.failures import ConversationFailureProjection
+from tinkerfin_studio.conversation.titles import ConversationTitles
 from tinkerfin_studio.conversation.todo_groups import TodoGroupQueryExecutor
 from tinkerfin_studio.health import ReadinessService
 from tinkerfin_studio.infrastructure.database import Database
@@ -165,6 +166,7 @@ class ApplicationResources:
     conversation_channel: AgUiChannel
     sandbox_manager: OpenSandboxManager[str]
     conversation_trace: ConversationTraceCoordinator
+    conversation_titles: ConversationTitles
     readiness: ReadinessService
     automation: AutomationService
 
@@ -289,6 +291,13 @@ def build_lifespan():
                         observers=(SandboxEventLogger(),),
                     ),
                 )
+                conversation_titles = ConversationTitles(
+                    database=database,
+                    http_client=model_http_client,
+                    http_transport=model_http_transport,
+                )
+                # 先关闭聊天生产者，再结算标题，最后释放模型客户端与数据库
+                stack.push_async_callback(conversation_titles.aclose)
                 messaging_backend = RedisBackend(
                     redis_runtime,
                     key_prefix=MESSAGING_KEY_PREFIX,
@@ -338,6 +347,7 @@ def build_lifespan():
                     conversation_channel=channel,
                     sandbox_manager=sandbox_manager,
                     conversation_trace=conversation_trace,
+                    conversation_titles=conversation_titles,
                     readiness=ReadinessService(
                         database=database,
                         redis=redis_runtime,

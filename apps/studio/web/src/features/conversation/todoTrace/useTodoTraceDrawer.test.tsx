@@ -18,8 +18,8 @@ const taskTrace = {
   },
 }
 
-function Harness({ threadId = 'thread-1', blocked = false }) {
-  const drawer = useTodoTraceDrawer({ threadId, taskTrace, blocked })
+function Harness({ threadId = 'thread-1', blocked = false, available = true }) {
+  const drawer = useTodoTraceDrawer({ threadId, taskTrace, blocked, available })
   return (
     <>
       <button ref={drawer.launcherRef} type="button" onClick={drawer.toggle}>
@@ -33,7 +33,6 @@ function Harness({ threadId = 'thread-1', blocked = false }) {
         {JSON.stringify({
           open: drawer.open,
           desiredOpen: drawer.desiredOpen,
-          modalActive: drawer.modalActive,
         })}
       </output>
     </>
@@ -43,7 +42,6 @@ function Harness({ threadId = 'thread-1', blocked = false }) {
 const state = () => JSON.parse(screen.getByTestId('drawer-state').textContent ?? '{}') as {
   open: boolean
   desiredOpen: boolean
-  modalActive: boolean
 }
 
 describe('useTodoTraceDrawer', () => {
@@ -52,30 +50,28 @@ describe('useTodoTraceDrawer', () => {
   it('separates a user open preference from temporary interaction blocking', () => {
     const { rerender } = render(<Harness />)
     fireEvent.click(screen.getByRole('button', { name: 'launcher' }))
-    expect(state()).toMatchObject({ open: true, desiredOpen: true, modalActive: true })
+    expect(state()).toMatchObject({ open: true, desiredOpen: true })
 
     rerender(<Harness blocked />)
-    expect(state()).toMatchObject({ open: false, desiredOpen: true, modalActive: false })
+    expect(state()).toMatchObject({ open: false, desiredOpen: true })
 
     rerender(<Harness />)
-    expect(state()).toMatchObject({ open: true, desiredOpen: true, modalActive: true })
+    expect(state()).toMatchObject({ open: true, desiredOpen: true })
   })
 
-  it('keeps overlay focus inside launcher and drawer and restores it on Escape', async () => {
-    render(<Harness />)
+  it('临时隐藏保留打开意图，窄区重复点击不会关闭，主动关闭后不恢复', () => {
+    const { rerender } = render(<Harness />)
     const launcher = screen.getByRole('button', { name: 'launcher' })
     fireEvent.click(launcher)
-    const last = screen.getByRole('button', { name: 'last' })
-    last.focus()
-
-    fireEvent.keyDown(document, { key: 'Tab' })
-    expect(launcher).toHaveFocus()
-    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
-    expect(last).toHaveFocus()
-
-    fireEvent.keyDown(document, { key: 'Escape' })
-    expect(state().open).toBe(false)
-    await waitFor(() => expect(launcher).toHaveFocus())
+    rerender(<Harness available={false} />)
+    expect(state()).toMatchObject({ open: false, desiredOpen: true })
+    fireEvent.click(launcher)
+    rerender(<Harness />)
+    expect(state()).toMatchObject({ open: true, desiredOpen: true })
+    fireEvent.click(launcher)
+    rerender(<Harness available={false} />)
+    rerender(<Harness />)
+    expect(state()).toMatchObject({ open: false, desiredOpen: false })
   })
 
   it('stores the explicit preference per conversation', async () => {
@@ -95,7 +91,7 @@ describe('useTodoTraceDrawer', () => {
     render(<Harness />)
     const launcher = screen.getByRole('button', { name: 'launcher' })
     fireEvent.click(launcher)
-    expect(state()).toMatchObject({ open: true, modalActive: false })
+    expect(state()).toMatchObject({ open: true })
 
     const last = screen.getByRole('button', { name: 'last' })
     last.focus()

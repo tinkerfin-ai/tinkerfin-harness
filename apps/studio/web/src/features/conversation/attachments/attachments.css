@@ -593,13 +593,11 @@
   }
   .attachment-viewer-stage {
     position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: block;
     flex: 1;
     min-width: 0;
     min-height: 0;
-    overflow: hidden;
+    overflow: auto;
     touch-action: none;
     user-select: none;
   }

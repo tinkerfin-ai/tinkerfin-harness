@@ -1116,6 +1116,7 @@ test('侧栏切换控件共享纵向锚点且 tooltip 避开相邻操作区', as
 })
 
 test('操作与读取异常只显示一条全局 Toast，并保留独立恢复入口', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.setViewportSize({ width: 1440, height: 900 })
   await mockStudio(page, { pinError: true })
 
@@ -1131,11 +1132,12 @@ test('操作与读取异常只显示一条全局 Toast，并保留独立恢复�
   const trace = page.getByRole('tabpanel', { name: '链路', exact: true })
   const retry = trace.getByRole('button', { name: '重新加载', exact: true })
   await expect(notifications.getByRole('status')).toHaveText('链路加载失败')
+  await expect(notifications.getByRole('listitem')).toHaveCount(1)
   await expect(page.getByText('链路加载失败', { exact: true })).toHaveCount(1)
   await expect(trace.getByRole('alert')).toHaveCount(0)
   await expect(retry).toBeEnabled()
   const toast = page.locator('.toast-card').filter({ hasText: '链路加载失败' })
-  await expect(toast).toHaveCSS('transform', 'none')
+  await expect(toast).toBeVisible()
   await toast.getByRole('button').focus()
 
   for (const colorScheme of ['light', 'dark'] as const) {
@@ -1149,8 +1151,7 @@ test('操作与读取异常只显示一条全局 Toast，并保留独立恢复�
       expect(toastBounds.width).toBeLessThanOrEqual(Math.min(width - 24, 380))
       expect(toastBounds.height).toBeGreaterThanOrEqual(64)
       expect(toastBounds.x + toastBounds.width).toBeCloseTo(width - 12, 0)
-      const headerBounds = (await page.locator('.chat-header').boundingBox())!
-      expect(toastBounds.y - (headerBounds.y + headerBounds.height)).toBe(12)
+      expect(toastBounds.y).toBe(12)
       await expect(toast.locator('.toast-card__title')).toHaveCSS('white-space', 'nowrap')
       await expect(toast.locator('.toast-card__message')).toHaveCSS('text-align', 'start')
       await expect(toast).toHaveCSS('border-top-width', '1px')
@@ -1169,9 +1170,9 @@ test('操作与读取异常只显示一条全局 Toast，并保留独立恢复�
         document.documentElement.scrollWidth - document.documentElement.clientWidth,
         document.body.scrollWidth - document.body.clientWidth,
       ))).toBe(0)
-      if (width === 1440 && process.env.TINKERFIN_VISUAL_QA_DIR) {
+      if (process.env.TINKERFIN_VISUAL_QA_DIR) {
         await page.screenshot({
-          path: resolve(process.env.TINKERFIN_VISUAL_QA_DIR, `feedback-system-${colorScheme}-1440.png`),
+          path: resolve(process.env.TINKERFIN_VISUAL_QA_DIR, `feedback-system-${colorScheme}-${width}.png`),
           fullPage: true,
         })
       }

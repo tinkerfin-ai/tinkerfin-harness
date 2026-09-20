@@ -1,0 +1,14 @@
+@layer ui {
+  .ui-code-text { font-family: var(--font-code); }
+  .ui-code-text :is(.ui-code-token--comment, .ui-code-token--prolog, .ui-code-token--doctype) { color: var(--color-code-comment); }
+  .ui-code-text :is(.ui-code-token--keyword, .ui-code-token--boolean, .ui-code-token--atrule) { color: var(--color-code-keyword); }
+  .ui-code-text :is(.ui-code-token--string, .ui-code-token--char, .ui-code-token--attr-value, .ui-code-token--inserted) { color: var(--color-code-string); }
+  .ui-code-text :is(.ui-code-token--number, .ui-code-token--constant) { color: var(--color-code-number); }
+  .ui-code-text :is(.ui-code-token--property, .ui-code-token--attr-name, .ui-code-token--label) { color: var(--color-code-property); }
+  .ui-code-text :is(.ui-code-token--function, .ui-code-token--class-name, .ui-code-token--tag, .ui-code-token--selector) { color: var(--color-code-function); }
+  .ui-code-text :is(.ui-code-token--operator, .ui-code-token--punctuation) { color: var(--color-text-secondary); }
+  .ui-code-text .ui-code-token--deleted { color: var(--color-danger-text); }
+  @media (forced-colors: active) {
+    .ui-code-text span { color: CanvasText; }
+  }
+}

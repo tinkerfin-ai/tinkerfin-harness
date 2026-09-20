@@ -29,14 +29,12 @@ export function TraceLedger({
   groups,
   directNodeIds,
   selectedId,
-  backgroundInert,
   onSelect,
   onHideSelection,
 }: {
   groups: TraceTurnRows[]
   directNodeIds: ReadonlySet<string>
   selectedId?: string
-  backgroundInert: boolean
   onSelect: (nodeId: string, trigger: HTMLButtonElement) => void
   onHideSelection: (fallback: HTMLButtonElement) => void
 }) {
@@ -172,8 +170,6 @@ export function TraceLedger({
           ref={scrollRef}
           className="chain-trace-ledger"
           aria-label={t('链路节点')}
-          aria-hidden={backgroundInert || undefined}
-          inert={backgroundInert || undefined}
           tabIndex={-1}
           onScroll={(event) => {
             const headerViewport = headerViewportRef.current

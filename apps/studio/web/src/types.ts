@@ -18,6 +18,11 @@ export type ApprovalMode = 'options' | 'reject'
 export type ApprovalAllowedDecision = 'approve' | 'edit' | 'reject' | 'respond'
 export type AgentMode = 'default' | 'plan'
 
+/** 会话保留的权威快照可共享嵌套数据，消费方不得原地修改 */
+export type DeepReadonly<T> = T extends readonly (infer Item)[]
+  ? readonly DeepReadonly<Item>[]
+  : T extends object ? { readonly [Key in keyof T]: DeepReadonly<T[Key]> } : T
+
 export type WebTaskTraceViewState =
   | { phase: 'unloaded' }
   | { phase: 'loading' }
@@ -243,11 +248,13 @@ export interface Conversation extends Partial<Pick<ConversationTitleSnapshot, "t
   pendingInteractionKind?: PendingInteractionKind
   runStatus: ConversationRunStatus
   activeRunId?: string
-  serverState?: JsonObject
+  serverState?: DeepReadonly<JsonObject>
   /** 最后一条已持久化 AG-UI 事件序号，用于 afterSeq 续传 */
   lastSeq?: number
   /** Trace 历史或 detached follow 使用的唯一权威语义视图 */
-  trace?: ConversationHistoryCoreDetail
+  trace?: DeepReadonly<ConversationHistoryCoreDetail>
+  /** 当前正文与业务状态已由完整历史确认，可在重新加载后恢复 */
+  historySynchronized: boolean
   /** 完整会话详情是否已从后端历史恢复 */
   isHydrated?: boolean
 }

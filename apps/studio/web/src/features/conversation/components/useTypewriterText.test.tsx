@@ -123,7 +123,7 @@ describe('实时正文逐字展示', () => {
       { type: 'TEXT_MESSAGE_END', messageId: 'answer' },
       terminal === 'RUN_FINISHED'
         ? { type: 'RUN_FINISHED', threadId: 'thread', runId: 'run' }
-        : { type: 'RUN_ERROR', code: 'cancelled', message: '已停止' },
+        : { type: 'RUN_ERROR', code: 'model_error', message: '模型调用失败' },
     ]
     const conversation = events.reduce(applyConversationEvent, buildEmptyConversation({ now: '' }))
     const message = conversation.messages.find(message => message.id === 'answer')!
@@ -138,6 +138,28 @@ describe('实时正文逐字展示', () => {
     expect(article.textContent).toBe('你好')
     frame()
     expect(screen.getByText('你好吗', { exact: true })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: '回答操作' })).toBeInTheDocument()
+    unmount()
+  })
+
+  it.each([false, true])('取消确认立即结束逐字展示并保留收到的正文（消息已结束：%s）', (messageEnded) => {
+    const content = '已经收到但尚未显示的完整正文'
+    const events: ConversationAgUiEvent[] = [
+      { type: 'RUN_STARTED', threadId: 'thread', runId: 'run' },
+      { type: 'TEXT_MESSAGE_START', messageId: 'answer', role: 'assistant' },
+      { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: content },
+    ]
+    let conversation = events.reduce(applyConversationEvent, buildEmptyConversation({ now: '' }))
+    const { rerender, unmount } = render(<MessageBlock message={conversation.messages[0]} />, { wrapper: ProgressScope })
+    frame()
+    expect(screen.queryByText(content, { exact: true })).not.toBeInTheDocument()
+    if (messageEnded) conversation = applyConversationEvent(conversation, { type: 'TEXT_MESSAGE_END', messageId: 'answer' })
+    conversation = applyConversationEvent(conversation, { type: 'RUN_ERROR', code: 'cancelled', message: '已停止' })
+    rerender(<MessageBlock message={conversation.messages[0]} />)
+
+    expect(screen.getByText(content, { exact: true })).toBeVisible()
+    expect(conversation.messages[0].content).toBe(content)
+    expect(frames.size).toBe(0)
     expect(screen.getByRole('group', { name: '回答操作' })).toBeInTheDocument()
     unmount()
   })

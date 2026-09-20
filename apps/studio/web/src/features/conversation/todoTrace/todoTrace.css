@@ -10,46 +10,29 @@
 
   .composer-auxiliary-control.todo-trace-launcher.is-selected { box-shadow: var(--shadow-1); }
 
-  .todo-trace-scrim {
-    position: fixed;
-    z-index: calc(var(--layer-drawer) - 1);
-    inset: 0;
-    padding: 0;
-    border: 0;
-    background: var(--color-scrim);
-    cursor: default;
-  }
-
   .todo-trace-drawer {
-    position: fixed;
-    z-index: var(--layer-drawer);
-    top: 0;
-    right: 0;
-    display: grid;
+    position: relative;
+    flex: 0 0 var(--layout-drawer-width);
+    display: none;
     grid-template-rows: var(--layout-drawer-header-height) minmax(0, 1fr);
-    width: min(var(--layout-drawer-width), 100vw);
+    width: var(--layout-drawer-width);
+    min-width: 0;
     height: 100dvh;
     padding: 0 var(--layout-panel-inset) max(var(--layout-panel-inset), env(safe-area-inset-bottom));
-    transform: translateX(100%);
     border: 0;
+    border-left: 1px solid var(--color-border);
     background: var(--color-canvas);
-    box-shadow: var(--shadow-3);
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    transition:
-      transform var(--motion-normal) var(--ease-out),
-      opacity var(--motion-normal) var(--ease-out),
-      visibility var(--motion-instant) linear var(--motion-normal);
   }
 
-  .todo-trace-drawer.is-open {
-    transform: translateX(0);
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-    transition-delay: var(--motion-instant);
+  .todo-trace-drawer.is-open { display: grid; }
+
+  .todo-trace-drawer.is-full-page {
+    grid-area: 1 / 1;
+    width: 100%;
+    border-left: 0;
+    padding-top: env(safe-area-inset-top);
   }
+  .todo-trace-drawer.is-full-page .todo-trace-scroll { padding-inline-end: var(--space-3); }
 
   .todo-trace-drawer-region {
     position: relative;
@@ -367,22 +350,7 @@
 
   @keyframes todo-trace-spin { to { transform: rotate(360deg); } }
 
-  @media (min-width: 1281px) {
-    .app-shell.has-todo-trace .workspace-main {
-      margin-right: var(--layout-drawer-width);
-    }
-
-    .todo-trace-scrim { display: none; }
-
-  }
-
   @media (max-width: 440px) {
-    .todo-trace-drawer {
-      width: 100vw;
-      padding-right: var(--layout-panel-inset);
-      padding-left: var(--layout-panel-inset);
-    }
-
     .todo-trace-group-meta { gap: var(--space-1); }
     .todo-trace-group-meta > span::before { margin-right: var(--space-1); }
   }
@@ -400,7 +368,6 @@
       color: CanvasText;
     }
 
-    .todo-trace-scrim { background: Canvas; opacity: .68; }
     .todo-trace-todo-list::before,
     .todo-trace-todo::before { background: ButtonText; }
     .todo-trace-group-toggle:focus-visible,
@@ -409,7 +376,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .todo-trace-drawer,
     .todo-trace-group-surface,
     .todo-trace-group-chevron { transition: none; }
 

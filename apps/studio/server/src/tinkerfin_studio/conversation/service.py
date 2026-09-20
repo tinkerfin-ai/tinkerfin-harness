@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
-import logging
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 
 from ag_ui.core import (
     BaseEvent,
-    CustomEvent,
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
@@ -18,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tinkerfin import AgUiResumeCheckpoint, AgUiRunStream, RunIdentity, SseBody
 from tinkerfin_messaging import (
-    PublicationRejected,
     parse_sse_event_id,
 )
 from tinkerfin_messaging.errors import (
@@ -54,15 +50,11 @@ from tinkerfin_studio.conversation.run_registration import (
 from tinkerfin_studio.conversation.schemas import (
     CancelRunResponse,
 )
-from tinkerfin_studio.conversation.titles import summarize_conversation_title
-from tinkerfin_studio.models.chat import create_chat_model
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import AgentModelConfig
 from tinkerfin_studio.models.service import AgentModelService
 from tinkerfin_studio.resources import ApplicationResources
 from tinkerfin_tracing import TraceThreadNotFound, TracingError
-
-logger = logging.getLogger(__name__)
 
 _MESSAGING_ERRORS: dict[
     MessagingErrorCode,
@@ -440,10 +432,6 @@ class ConversationChatService:
     ) -> AsyncGenerator[bytes, None] | SseBody[bytes]:
         """接入会话事件持久化与重连回放，并返回 SSE 内容"""
 
-        title_ready = asyncio.Event()
-        owner = False
-        title_finished = False
-
         async def decorate_event(event: BaseEvent) -> BaseEvent:
             return decorate_main_event(
                 event,
@@ -455,11 +443,18 @@ class ConversationChatService:
             )
 
         async def run_started(_event: RunStartedEvent) -> None:
-            title_ready.set()
+            if (
+                title_text.strip()
+                and execution.thread.title_source == "default"
+                and execution.thread.title_generation_status == "idle"
+            ):
+                await self._resources.conversation_titles.start(
+                    thread_pk=execution.thread.id,
+                    text=title_text,
+                    model=model,
+                )
 
         async def run_finished(event: RunFinishedEvent | RunErrorEvent) -> None:
-            nonlocal title_finished
-            title_finished = True
             if isinstance(event, RunErrorEvent) and event.code != "cancelled":
                 await log_conversation_error(
                     identity=prepared.identity,
@@ -472,8 +467,6 @@ class ConversationChatService:
         async def activate_ready_source() -> None:
             """在框架 Run 可查询后发布业务 head"""
 
-            nonlocal owner
-            owner = True
             await run_preparer.activate_started(
                 thread_pk=execution.thread.id,
                 identity_run_id=prepared.identity.run_id,
@@ -527,66 +520,7 @@ class ConversationChatService:
                 )
                 raise error.with_traceback(error.__traceback__) from close_error
             raise
-        if (
-            not owner
-            or not title_text.strip()
-            or execution.thread.title_source != "default"
-            or execution.thread.title_generation_status != "idle"
-        ):
-            return body
-
-        title_task: asyncio.Task[None] | None = None
-
-        async def generate_title() -> None:
-            await title_ready.wait()
-            if title_finished:
-                return
-            try:
-                title = await summarize_conversation_title(
-                    database=self._resources.database,
-                    thread_pk=execution.thread.id,
-                    text=title_text,
-                    model=create_chat_model(
-                        model,
-                        reasoning_enabled=False,
-                        max_retries=0,
-                        max_tokens=64,
-                        timeout=60,
-                        http_async_client=self._resources.model_http_client,
-                        http_async_transport=self._resources.model_http_transport,
-                    ),
-                )
-                if title is not None:
-                    await self._resources.conversation_channel.publish(
-                        CustomEvent(
-                            name="studio.conversation.title.updated",
-                            value=title.model_dump(mode="json", by_alias=True),
-                        ),
-                        identity=prepared.identity,
-                        message_id=f"conversation-title:{title.thread_id}:{title.title_seq}",
-                    )
-            except PublicationRejected:
-                pass  # 主流已结束时保留数据库标题，由历史同步读取
-            except Exception as error:  # noqa: BLE001 - 标题通知失败不影响主回复，不记录异常正文
-                logger.warning("会话标题通知失败 reason=%s", type(error).__name__)
-
-        def start_response() -> AsyncIterator[bytes]:
-            nonlocal title_task
-            title_task = asyncio.create_task(
-                generate_title(), name="conversation-title"
-            )
-            return body
-
-        async def close_response() -> None:
-            try:
-                if title_task is not None:
-                    title_task.cancel()
-                    await asyncio.gather(title_task, return_exceptions=True)
-            finally:
-                await body.aclose()
-
-        # 借用框架响应生命周期，保证未消费、正常结束和重复断连都回收标题任务
-        return SseBody(source_factory=start_response, close=close_response)
+        return body
 
     async def cancel(self, *, thread_id: str, run_id: str) -> CancelRunResponse:
         """验证用户归属后请求并等待 durable run 取消"""

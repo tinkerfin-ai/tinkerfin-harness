@@ -37,7 +37,7 @@ export const messageAttachments = (content: unknown): Attachment[] => {
   if (!Array.isArray(content)) return []
   return content.flatMap((block: unknown) => {
     const attachment = attachmentFromBlock(block)
-    return attachment ? [attachment] : []
+    return attachment ? [structuredClone(attachment)] : []
   })
 }
 

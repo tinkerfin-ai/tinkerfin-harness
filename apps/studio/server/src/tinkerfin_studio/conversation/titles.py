@@ -8,19 +8,23 @@ import logging
 import unicodedata
 
 import anyio
+import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.schemas import ConversationTitle
 from tinkerfin_studio.infrastructure.database import Database
+from tinkerfin_studio.models.chat import create_chat_model
+from tinkerfin_studio.models.schemas import AgentModelConfig
 
 logger = logging.getLogger(__name__)
 _TITLE_TIMEOUT_SECONDS = 60
 _TITLE_MAX_INPUT_BYTES = 4096
-_TITLE_MAX_OUTPUT_TOKENS = 64
+_TITLE_MAX_OUTPUT_TOKENS = 256
 _TITLE_CAPACITY = anyio.CapacityLimiter(4)
 _TITLE_CLEANUP_SECONDS = 5
+_TITLE_MAX_PENDING = 64
 
 
 def _title_prompt(text: str) -> str:
@@ -56,7 +60,7 @@ async def summarize_conversation_title(
         已提交的标题快照；无需总结、失败或已手动命名时为 None
 
     Raises:
-        asyncio.CancelledError: 所属会话任务取消，结算后继续传播
+        asyncio.CancelledError: 标题任务取消，结算后继续传播
     """
     if not text.strip():
         return None
@@ -182,3 +186,106 @@ async def summarize_conversation_title(
         if cancellation is not None:
             raise cancellation
     return None
+
+
+class ConversationTitles:
+    """应用拥有标题任务；聊天结束和断连不取消，应用关闭时取消并结算
+
+    至多保留 64 个任务，每项输入最多 4096 字符；模型并发与总超时由总结函数限制。
+    借用的数据库与模型客户端必须在本对象关闭之后释放。
+    """
+
+    def __init__(
+        self,
+        *,
+        database: Database,
+        http_client: httpx.AsyncClient,
+        http_transport: httpx.AsyncBaseTransport | None,
+    ) -> None:
+        self._database = database
+        self._http_client = http_client
+        self._http_transport = http_transport
+        self._tasks: dict[int, asyncio.Task[None]] = {}
+        self._closed = False
+
+    async def start(
+        self, *, thread_pk: int, text: str, model: AgentModelConfig
+    ) -> None:
+        """为已受理的会话安排一次总结，重复请求不重复排队"""
+        if not text.strip() or thread_pk in self._tasks:
+            return
+        if self._closed or len(self._tasks) >= _TITLE_MAX_PENDING:
+            await self._fail_unstarted(thread_pk)
+            return
+        task = asyncio.create_task(
+            self._generate(thread_pk, text[:_TITLE_MAX_INPUT_BYTES], model),
+            name=f"conversation-title:{thread_pk}",
+        )
+        self._tasks[thread_pk] = task
+
+        def finished(completed: asyncio.Task[None]) -> None:
+            self._tasks.pop(thread_pk, None)
+            if (
+                not completed.cancelled()
+                and (error := completed.exception()) is not None
+            ):
+                logger.warning(
+                    "会话标题任务失败 thread=%s reason=%s",
+                    thread_pk,
+                    type(error).__name__,
+                )
+
+        task.add_done_callback(finished)
+
+    async def _fail_unstarted(self, thread_pk: int) -> None:
+        try:
+            async with asyncio.timeout(_TITLE_CLEANUP_SECONDS):
+                async with self._database.session() as session:
+                    repository = ConversationRepository(session)
+                    if await repository.claim_title(thread_pk):
+                        await repository.finish_title(thread_pk, None)
+                    await repository.commit()
+        except Exception as error:  # noqa: BLE001 - 标题失败不影响主回复
+            logger.warning(
+                "会话标题排队失败 thread=%s reason=%s", thread_pk, type(error).__name__
+            )
+
+    async def _generate(
+        self, thread_pk: int, text: str, config: AgentModelConfig
+    ) -> None:
+        try:
+            model = create_chat_model(
+                config,
+                reasoning_enabled=False,
+                max_retries=0,
+                max_tokens=_TITLE_MAX_OUTPUT_TOKENS,
+                timeout=_TITLE_TIMEOUT_SECONDS,
+                http_async_client=self._http_client,
+                http_async_transport=self._http_transport,
+            )
+        except Exception as error:  # noqa: BLE001 - 模型配置失败保留临时标题
+            logger.warning(
+                "会话标题模型创建失败 thread=%s reason=%s",
+                thread_pk,
+                type(error).__name__,
+            )
+            await self._fail_unstarted(thread_pk)
+            return
+        await summarize_conversation_title(
+            database=self._database,
+            thread_pk=thread_pk,
+            text=text,
+            model=model,
+        )
+
+    async def aclose(self) -> None:
+        """停止接收任务，并等待所有标题取消后的数据库结算"""
+        self._closed = True
+        pending = tuple(self._tasks.items())
+        tasks = tuple(task for _, task in pending)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        # 尚未取得执行机会的任务也必须结算，不能把 idle 留给客户端无限查询
+        for thread_pk, _ in pending:
+            await self._fail_unstarted(thread_pk)

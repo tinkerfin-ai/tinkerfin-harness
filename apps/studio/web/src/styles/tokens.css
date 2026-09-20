@@ -86,6 +86,12 @@
     --color-focus: var(--primitive-blue-600);
     --color-focus-soft: rgb(57 100 254 / 18%);
     --color-code-surface: #f3f4f6;
+    --color-code-comment: #61666b;
+    --color-code-keyword: #7040b8;
+    --color-code-string: #166534;
+    --color-code-number: #8a4b00;
+    --color-code-property: #284bc4;
+    --color-code-function: #b52235;
     --color-scroll-thumb: #e5e5e5;
     --color-scroll-thumb-hover: #d4d4d4;
 
@@ -153,6 +159,7 @@
     --layout-sidebar-expanded: 261px;
     --layout-sidebar-rail: 56px;
     --layout-page-gutter: 32px;
+    --layout-conversation-gutter: var(--space-16);
     --layout-panel-inset: 20px;
     --layout-form-width: 712px;
     --layout-dialog-width: 440px;
@@ -190,6 +197,7 @@
     --motion-normal: 200ms;
     --motion-slow: 300ms;
     --motion-loading-cycle: 1000ms;
+    --motion-conversation-loading-cycle: 1200ms;
     --motion-tool-result-cycle: 1450ms;
     --motion-tool-sweep-cycle: 2600ms;
     --motion-attention-cycle: 1800ms;
@@ -257,6 +265,12 @@
     --color-focus: #8ab4ff;
     --color-focus-soft: rgb(103 158 254 / 24%);
     --color-code-surface: #23262b;
+    --color-code-comment: #adb2b8;
+    --color-code-keyword: #c2a2f2;
+    --color-code-string: #6fe097;
+    --color-code-number: #f7ad31;
+    --color-code-property: #8ab4ff;
+    --color-code-function: #ff8fa3;
     --color-scroll-thumb: #3c3c3d;
     --color-scroll-thumb-hover: #545557;
     --color-file-icon-ink: var(--primitive-white);
@@ -279,10 +293,10 @@
     --shadow-trace-node-error: 0 0 0 3px rgb(242 90 90 / 18%);
   }
   @media (max-width: 1023px) {
-    :root { --layout-page-gutter: 24px; }
+    :root { --layout-page-gutter: 24px; --layout-conversation-gutter: var(--space-12); }
   }
   @media (max-width: 767px) {
-    :root { --layout-page-gutter: 16px; --layout-panel-inset: 16px; }
+    :root { --layout-page-gutter: 16px; --layout-conversation-gutter: var(--layout-page-gutter); --layout-panel-inset: 16px; }
   }
   @media (max-width: 440px) {
     :root { --layout-page-gutter: 12px; --layout-panel-inset: 12px; }

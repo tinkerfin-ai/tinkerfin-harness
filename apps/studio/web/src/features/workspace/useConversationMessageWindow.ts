@@ -10,9 +10,27 @@ export type MessageLocateResult = 'found' | 'not-found' | 'failed' | 'cancelled'
 
 const entryMessageId = (entry: ConversationDisplayEntry) => (
   entry.type === 'run-failure' ? `failure:${entry.failure.runId}` : entry.type === 'tools'
-    ? entry.messages.find((message) => message.role === 'user')?.id
+    ? entry.messages[0]?.id
     : entry.message.id
 )
+
+// 任务卡与工具批次共用底层消息标识，任务详情晚于正文加载也能恢复位置
+const entryKey = (entry: ConversationDisplayEntry) => entry.type === 'run-failure'
+  ? `failure:${entry.failure.runId}`
+  : `message:${entryMessageId(entry)}`
+
+/** 页面内只保留阅读锚点，不持有消息、快照或 DOM 引用 */
+type ReadingBookmark = { entryKey: string | null; offset: number; followLatest: boolean }
+
+type ReadingPositionOptions = {
+  isHydrated: boolean
+  threadIds: readonly string[]
+  isFollowingLatest: () => boolean
+  pauseFollowing: () => void
+  scrollToBottom: () => void
+  onMissing: () => void
+}
+
 
 const waitForFrame = (signal: AbortSignal) => new Promise<boolean>((resolve) => {
   if (signal.aborted) {
@@ -37,9 +55,11 @@ export function useConversationMessageWindow({
   paneRef,
   loadOlderTrace,
   active = true,
+  readingPosition,
 }: {
   threadId: string
   active?: boolean
+  readingPosition?: ReadingPositionOptions
   entries: ConversationDisplayEntry[]
   historyCursor?: string | null
   paneRef: RefObject<HTMLElement | null>
@@ -67,6 +87,14 @@ export function useConversationMessageWindow({
   } | null>(null)
   const locateController = useRef<AbortController | null>(null)
   const highlightCleanup = useRef<(() => void) | null>(null)
+  const bookmarks = useRef(new Map<string, ReadingBookmark>())
+  const readingOptions = useRef(readingPosition)
+  readingOptions.current = readingPosition
+  const pendingBookmark = useRef<ReadingBookmark | null>(null)
+  const restoringBookmark = useRef(false)
+  const restoreGeneration = useRef(0)
+  const [readingPositionFailed, setReadingPositionFailed] = useState(false)
+
 
   entriesRef.current = entries
   historyCursorRef.current = historyCursor
@@ -150,6 +178,11 @@ export function useConversationMessageWindow({
   }, [entries.length, paneRef, resolvedWindow.start, threadId])
 
   const loadEarlierMessages = useCallback(async (trigger: HTMLButtonElement) => {
+    restoreGeneration.current += 1
+    locateController.current?.abort()
+    pendingBookmark.current = null
+    restoringBookmark.current = false
+    setReadingPositionFailed(false)
     const pane = paneRef.current
     if (pane) {
       earlierAnchor.current = {
@@ -223,9 +256,10 @@ export function useConversationMessageWindow({
     }
   }, [])
 
-  const revealMessage = useCallback(async (
+  const locateEntry = useCallback(async (
     messageId: string,
     alignment: ScrollLogicalPosition = 'center',
+    bookmark?: ReadingBookmark,
   ): Promise<MessageLocateResult> => {
     locateController.current?.abort()
     const controller = new AbortController()
@@ -233,22 +267,28 @@ export function useConversationMessageWindow({
     const { signal } = controller
     try {
       while (!signal.aborted) {
-        const rendered = document.getElementById(messageId)
+        const rendered = bookmark ? null : document.getElementById(messageId)
         if (rendered) {
           highlight(rendered, alignment)
           return 'found'
         }
 
         const index = entriesRef.current.findIndex(
-          (entry) => entryMessageId(entry) === messageId
-            || (entry.type !== 'tools' && entry.message.meta?.traceMessageId === messageId),
+          (entry) => bookmark
+            ? entryKey(entry) === bookmark.entryKey
+            : entryMessageId(entry) === messageId
+              || (entry.type !== 'tools' && entry.message.meta?.traceMessageId === messageId),
         )
         if (index >= 0) {
           const renderedId = entryMessageId(entriesRef.current[index]!)
           if (!renderedId) return 'not-found'
           const mappedElement = document.getElementById(renderedId)
           if (mappedElement) {
-            highlight(mappedElement, alignment)
+            if (bookmark) {
+              const pane = paneRef.current
+              if (pane) pane.scrollTop += mappedElement.getBoundingClientRect().top
+                - pane.getBoundingClientRect().top - bookmark.offset
+            } else highlight(mappedElement, alignment)
             return 'found'
           }
           const start = Math.max(0, index - LOCATE_CONTEXT_BEFORE)
@@ -260,7 +300,11 @@ export function useConversationMessageWindow({
           })
           const target = await waitForElement(renderedId, signal)
           if (!target) return signal.aborted ? 'cancelled' : 'failed'
-          highlight(target, alignment)
+          if (bookmark) {
+            const pane = paneRef.current
+            if (pane) pane.scrollTop += target.getBoundingClientRect().top
+              - pane.getBoundingClientRect().top - bookmark.offset
+          } else highlight(target, alignment)
           return 'found'
         }
 
@@ -279,9 +323,12 @@ export function useConversationMessageWindow({
     } finally {
       if (locateController.current === controller) locateController.current = null
     }
-  }, [highlight, loadOlderTrace, threadId, waitForElement, waitForRevision])
+  }, [highlight, loadOlderTrace, paneRef, threadId, waitForElement, waitForRevision])
 
   const restoreTail = useCallback(() => {
+    pendingBookmark.current = null
+    restoringBookmark.current = false
+    setReadingPositionFailed(false)
     locateController.current?.abort()
     const currentEntries = entriesRef.current
     setWindowState({
@@ -292,18 +339,123 @@ export function useConversationMessageWindow({
     })
   }, [threadId])
 
-  useEffect(() => {
+  const captureReadingPosition = useCallback(() => {
+    const options = readingOptions.current
+    const pane = paneRef.current
+    // 分页或水化失败时保留原锚点，不能用临时展示的末页覆盖它
+    if (!threadId || !active || !options?.isHydrated || !pane
+      || restoringBookmark.current || pendingBookmark.current) return
+    const following = options.isFollowingLatest()
+    const paneTop = pane.getBoundingClientRect().top
+    const anchor = visibleEntries.map(entry => ({
+      entry,
+      element: document.getElementById(entryMessageId(entry) ?? ''),
+    })).find(({ element }) => element && pane.contains(element)
+      && element.getBoundingClientRect().bottom > paneTop)
+    if (!following && !anchor) return
+    bookmarks.current.set(threadId, {
+      entryKey: anchor ? entryKey(anchor.entry) : null,
+      offset: anchor?.element ? anchor.element.getBoundingClientRect().top - paneTop : 0,
+      followLatest: following,
+    })
+  }, [active, paneRef, threadId, visibleEntries])
+
+  const cancelReadingRestore = useCallback(() => {
+    restoreGeneration.current += 1
+    locateController.current?.abort()
+    pendingBookmark.current = null
+    restoringBookmark.current = false
+    setReadingPositionFailed(false)
+  }, [])
+
+  const revealMessage = useCallback((
+    messageId: string,
+    alignment: ScrollLogicalPosition = 'center',
+  ) => {
+    cancelReadingRestore()
+    return locateEntry(messageId, alignment)
+  }, [cancelReadingRestore, locateEntry])
+
+  const retryReadingPosition = useCallback(async () => {
+    const bookmark = pendingBookmark.current
+    const options = readingOptions.current
+    if (!bookmark || !options?.isHydrated || !active || restoringBookmark.current) return
+    setReadingPositionFailed(false)
+    if (bookmark.followLatest || !bookmark.entryKey) {
+      pendingBookmark.current = null
+      restoreTail()
+      options.scrollToBottom()
+      return
+    }
+    options.pauseFollowing()
+    restoringBookmark.current = true
+    const generation = ++restoreGeneration.current
+    try {
+      const result = await locateEntry('', 'start', bookmark)
+      if (restoreGeneration.current !== generation || pendingBookmark.current !== bookmark) return
+      if (result === 'found') pendingBookmark.current = null
+      else if (result === 'not-found') {
+        pendingBookmark.current = null
+        bookmarks.current.delete(threadId)
+        restoreTail()
+        options.scrollToBottom()
+        options.onMissing()
+      } else if (result === 'failed') setReadingPositionFailed(true)
+    } catch {
+      if (restoreGeneration.current === generation && pendingBookmark.current === bookmark) setReadingPositionFailed(true)
+    } finally {
+      if (restoreGeneration.current === generation) {
+        restoringBookmark.current = false
+      }
+    }
+  }, [active, locateEntry, restoreTail, threadId])
+
+  useLayoutEffect(() => {
+    restoreGeneration.current += 1
     locateController.current?.abort()
     highlightCleanup.current?.()
+    restoringBookmark.current = false
+    setReadingPositionFailed(false)
+    pendingBookmark.current = active ? bookmarks.current.get(threadId) ?? null : null
+    return () => {
+      locateController.current?.abort()
+      pendingBookmark.current = null
+      restoringBookmark.current = false
+    }
   }, [threadId, active])
+
+  const retryReadingPositionRef = useRef(retryReadingPosition)
+  retryReadingPositionRef.current = retryReadingPosition
+  useEffect(() => {
+    void retryReadingPositionRef.current()
+  }, [threadId, active, readingPosition?.isHydrated])
+
+  const knownThreadIds = readingPosition?.threadIds
+  useEffect(() => {
+    if (!knownThreadIds) return
+    const existing = new Set(knownThreadIds)
+    for (const savedThreadId of bookmarks.current.keys()) {
+      if (!existing.has(savedThreadId)) bookmarks.current.delete(savedThreadId)
+    }
+  }, [knownThreadIds])
+
+  useEffect(() => {
+    window.addEventListener('popstate', captureReadingPosition)
+    return () => window.removeEventListener('popstate', captureReadingPosition)
+  }, [captureReadingPosition])
 
   useEffect(() => () => {
     locateController.current?.abort()
     highlightCleanup.current?.()
+    bookmarks.current.clear()
   }, [])
 
   return {
     visibleEntries,
+    captureReadingPosition,
+    cancelReadingRestore,
+    retryReadingPosition,
+    readingPositionFailed,
     hasEarlierMessages: resolvedWindow.start > 0 || historyCursor != null,
     followsTail: windowState.threadId !== threadId || windowState.followsTail,
     loadEarlierMessages,

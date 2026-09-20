@@ -171,6 +171,7 @@ const detail = ({
 
 async function mockTodoTraceStudio(page: Page, {
   groups,
+  language = 'zh-CN',
   answer,
   taskTraceGroups = groups,
   visibleGroups = groups,
@@ -178,6 +179,7 @@ async function mockTodoTraceStudio(page: Page, {
   historyCursor = null,
 }: {
   groups: TodoGroup[]
+  language?: 'zh-CN' | 'en'
   answer?: string
   taskTraceGroups?: TodoGroup[]
   visibleGroups?: TodoGroup[]
@@ -190,9 +192,11 @@ async function mockTodoTraceStudio(page: Page, {
   page.on('console', (message) => {
     if (message.type() === 'error') pageErrors.push(message.text())
   })
-  await page.addInitScript(({ session }) => {
+  await page.addInitScript(({ session, language }) => {
     window.localStorage.setItem('tinkerfin.auth.session', JSON.stringify(session))
+    window.localStorage.setItem('tinkerfin:language', language)
   }, {
+    language,
     session: {
       token: 'todo-browser-token',
       tokenType: 'Bearer',
@@ -204,6 +208,10 @@ async function mockTodoTraceStudio(page: Page, {
     const url = new URL(route.request().url())
     if (url.pathname === '/api/auth/me') {
       await fulfillJson(route, { expires_at: '2099-01-01T00:00:00.000Z', user })
+      return
+    }
+    if (url.pathname === `/api/conversation/${THREAD_ID}/title`) {
+      await fulfillJson(route, { threadId: THREAD_ID, title: '任务轨迹浏览器会话', titleSource: 'default', titleGenerationStatus: 'idle', titleSeq: 0 })
       return
     }
     if (url.pathname === '/api/models') {
@@ -289,19 +297,19 @@ async function mockTodoTraceStudio(page: Page, {
     }
     await route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
   })
-  await installLiveRun(page, detail({ groups, answer, taskTraceGroups, visibleGroups, includeTaskTrace: true, historyCursor }))
+  const liveRun = await installLiveRun(page, detail({ groups, answer, taskTraceGroups, visibleGroups, includeTaskTrace: true, historyCursor }))
   await page.goto(`/?thread=${THREAD_ID}`)
   if (taskTraceGroups.length > 0) {
-    await expect(page.getByRole('button', { name: `任务轨迹 ${taskTraceGroups.length}`, exact: true }))
+    await expect(page.getByRole('button', { name: `${language === 'en' ? 'Task trace' : '任务轨迹'} ${taskTraceGroups.length}`, exact: true }))
       .toBeVisible()
   } else {
     await expect(page.getByRole('textbox', { name: '消息输入' })).toBeVisible()
   }
-  return { olderRequestCount: () => olderRequests, pageErrors }
+  return { olderRequestCount: () => olderRequests, pageErrors, liveRun, setAnswer: (value: string) => { answer = value } }
 }
 
-test('统一抽屉展示、独立展开、定位和 overlay 焦点恢复可真实交互', async ({ page }) => {
-  await page.setViewportSize({ width: 768, height: 900 })
+test('并排抽屉支持独立展开、定位与关闭焦点恢复', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
   const groups = makeGroups(3, true)
   const evidence = await mockTodoTraceStudio(page, { groups })
   const launcher = page.getByRole('button', { name: '任务轨迹 3', exact: true })
@@ -392,15 +400,13 @@ test('统一抽屉展示、独立展开、定位和 overlay 焦点恢复可真�
   expect(historyHeadingAlignment?.gap).toBeGreaterThanOrEqual(8)
 
   await page.getByRole('button', { name: '定位到对话：历史任务轨迹 2' }).click()
-  await expect(drawer).toBeHidden()
+  await expect(drawer).toBeVisible()
   await expect(page.locator('#public-todo-user-message-1')).toBeFocused()
   await expect(page.locator('#public-todo-user-message-1')).toHaveClass(/todo-trace-locate-target/)
   await expect(page.locator('#public-todo-user-message-1')).toHaveCSS('outline-style', 'none')
   await expect(page.locator('#public-todo-user-message-1')).toHaveCSS('border-width', '0px')
   await expect(page.locator('#public-todo-user-message-1 .message-markdown')).toHaveCSS('outline-style', 'none')
 
-  await launcher.click()
-  await expect(drawer).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(drawer).toBeHidden()
   await expect(launcher).toBeFocused()
@@ -436,8 +442,8 @@ test('未水化消息通过可取消的旧 Trace 分页后定位', async ({ page
   expect(evidence.pageErrors).toEqual([])
 })
 
-test('任务对应的用户消息缺失时关闭抽屉并说明原因', async ({ page }) => {
-  await page.setViewportSize({ width: 768, height: 900 })
+test('任务对应的用户消息缺失时保留抽屉并说明原因', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
   const groups = makeGroups(1)
   const missing = {
     ...makeGroups(1)[0]!,
@@ -451,7 +457,7 @@ test('任务对应的用户消息缺失时关闭抽屉并说明原因', async ({
   await page.getByRole('button', { name: '展开任务组：缺失的用户消息', exact: true }).click()
   await page.getByRole('button', { name: '定位到对话：缺失的用户消息', exact: true }).click()
 
-  await expect(page.getByRole('complementary', { name: '任务轨迹' })).toBeHidden()
+  await expect(page.getByRole('complementary', { name: '任务轨迹' })).toBeVisible()
   await expect(page.getByText('未找到任务对应的用户消息', { exact: true })).toBeVisible()
 })
 
@@ -468,6 +474,10 @@ test('已结束但未确认完成的旧清单保持 3/4 且不继续旋转', asy
     await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
     for (const width of [320, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: 900 })
+      if (width !== 320 && width !== 1440) {
+        await expect(drawer).toBeHidden()
+        continue
+      }
       await expect(drawer.getByRole('button', { name: '收起任务组：历史任务轨迹 2' }))
         .toContainText(/未确认完成\s*3\s*\/\s*4/)
       await expect(drawer.getByRole('button', { name: /任务组：整理当前交付清单/ }))
@@ -480,7 +490,7 @@ test('已结束但未确认完成的旧清单保持 3/4 且不继续旋转', asy
   expect(evidence.pageErrors).toEqual([])
 })
 
-test('320px 深色高对比与 reduced-motion 下保持全宽和静态状态反馈', async ({ page }) => {
+test('手机全屏任务页与桌面抽屉支持高对比和静态状态反馈', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 800 })
   await page.emulateMedia({
     colorScheme: 'dark',
@@ -493,6 +503,11 @@ test('320px 深色高对比与 reduced-motion 下保持全宽和静态状态反�
   const launcher = page.getByRole('button', { name: '任务轨迹 1', exact: true })
   await launcher.click()
   const drawer = page.getByRole('complementary', { name: '任务轨迹' })
+  await expect(drawer).toBeVisible()
+  await expect(page.getByRole('button', { name: '返回对话' })).toBeFocused()
+  await expect(page.getByText('展开窗口后可查看', { exact: true })).toHaveCount(0)
+  await page.screenshot({ path: resolve(EVIDENCE_DIR, '320-forced-colors.png') })
+  await page.setViewportSize({ width: 1440, height: 800 })
   await expect(drawer).toBeVisible()
   await expect(drawer.getByRole('heading', { name: '任务轨迹' })).toBeVisible()
   await expect(page.locator('.todo-trace-floating-launcher')).toHaveCount(0)
@@ -533,11 +548,10 @@ test('320px 深色高对比与 reduced-motion 下保持全宽和静态状态反�
       ),
     }
   })
-  expect(layout.width).toBe(320)
+  expect(layout.width).toBe(400)
   expect(layout.transitionDuration.split(',').every((value) => value.trim() === '0s')).toBe(true)
   expect(layout.overflow).toBeLessThanOrEqual(0)
   await expect(page.locator('.todo-trace-spin').first()).toHaveCSS('animation-name', 'none')
-  await page.screenshot({ path: resolve(EVIDENCE_DIR, '320-forced-colors.png') })
   expect(evidence.pageErrors).toEqual([])
 })
 
@@ -654,4 +668,167 @@ for (const hasTouch of [false, true]) {
       }
     } finally { await context.close() }
   })
+}
+
+
+for (const theme of ['light', 'dark']) {
+  test(`任务抽屉调宽、宿主边界与关闭恢复 ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.addInitScript(theme => localStorage.setItem('tinkerfin:theme', theme), theme)
+    const evidence = await mockTodoTraceStudio(page, { groups: makeGroups(3, true) })
+    const drawer = page.getByRole('complementary', { name: '任务轨迹' })
+    const launcher = page.getByRole('button', { name: '任务轨迹 3', exact: true })
+    const handle = page.getByRole('separator', { name: '调整任务抽屉宽度' })
+    await launcher.click()
+    await expect(handle).toHaveAttribute('aria-valuenow', '400')
+    const border = await drawer.evaluate(element => {
+      const style = getComputedStyle(element)
+      return { width: style.borderLeftWidth, color: style.borderLeftColor }
+    })
+    const bounds = (await handle.boundingBox())!
+    await page.mouse.move(bounds.x + 3, bounds.y + 300)
+    await page.mouse.down()
+    await page.mouse.move(bounds.x - 200, bounds.y + 300)
+    await expect(handle).toHaveAttribute('aria-valuenow', '520')
+    expect(await drawer.evaluate(element => {
+      const style = getComputedStyle(element)
+      return { width: style.borderLeftWidth, color: style.borderLeftColor }
+    })).toEqual(border)
+    await expect(handle).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    await page.mouse.up()
+    await page.getByRole('button', { name: '关闭任务轨迹' }).click()
+    await launcher.click()
+    await expect(handle).toHaveAttribute('aria-valuenow', '520')
+    const host = page.locator('.workspace-content')
+    for (const [width, expected] of [[1000, 360], [940, 300], [939, 0], [1179, 520]]) {
+      await host.evaluate((element, width) => { (element as HTMLElement).style.width = `${width}px` }, width)
+      if (expected) await expect(handle).toHaveAttribute('aria-valuenow', String(expected))
+      else {
+        await expect(drawer).toBeHidden()
+        await launcher.click()
+        await expect(page.getByText('展开窗口后可查看', { exact: true })).toBeVisible()
+      }
+    }
+    await host.evaluate(element => { (element as HTMLElement).style.removeProperty('width') })
+    await handle.press('Home')
+    await expect(handle).toHaveAttribute('aria-valuenow', '300')
+    await handle.press('ArrowLeft')
+    await expect(handle).toHaveAttribute('aria-valuenow', '316')
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect(drawer).toBeVisible({ visible: width === 320 || width === 1440 })
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await page.screenshot({ path: testInfo.outputPath(`drawer-${theme}-${width}.png`) })
+    }
+    await page.getByRole('button', { name: '关闭任务轨迹' }).click()
+    await page.setViewportSize({ width: 768, height: 900 })
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect(drawer).toBeHidden()
+    await launcher.click()
+    await page.reload()
+    await expect(handle).toHaveAttribute('aria-valuenow', '400')
+    expect(evidence.pageErrors).toEqual([])
+  })
+}
+
+test('回复中调宽保持阅读位置，切换会话后回复继续', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const groups = makeGroups(8, true)
+  const evidence = await mockTodoTraceStudio(page, { groups })
+  await evidence.liveRun.emit(
+    { type: 'TEXT_MESSAGE_START', messageId: 'spacing-answer', role: 'assistant' },
+    { type: 'TEXT_MESSAGE_CONTENT', messageId: 'spacing-answer', delta: '回复开始' },
+  )
+  await page.getByRole('button', { name: '任务轨迹 8', exact: true }).click()
+  const pane = page.getByRole('region', { name: '对话内容', exact: true })
+  await pane.evaluate(element => {
+    element.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -1 }))
+    element.scrollTop = 400
+    element.dispatchEvent(new Event('scroll', { bubbles: true }))
+  })
+  const anchor = await pane.evaluate(element => {
+    const top = element.getBoundingClientRect().top
+    const message = [...element.querySelectorAll('article[id]')].find(item => item.getBoundingClientRect().bottom > top)!
+    return { id: message.id, offset: message.getBoundingClientRect().top - top }
+  })
+  const handle = page.getByRole('separator', { name: '调整任务抽屉宽度' })
+  await handle.press('End')
+  await expect.poll(() => pane.evaluate((element, id) => document.getElementById(id)!.getBoundingClientRect().top - element.getBoundingClientRect().top, anchor.id)).toBeCloseTo(anchor.offset, 0)
+  await page.getByRole('button', { name: '新会话', exact: true }).last().click()
+  await evidence.liveRun.emit({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'spacing-answer', delta: '，切换期间继续回复' })
+  await page.getByRole('button', { name: /打开会话：任务轨迹浏览器会话/ }).click()
+  await expect(pane).toContainText('切换期间')
+  evidence.setAnswer('回复开始，切换期间继续回复')
+  groups[0].status = 'completed'
+  await evidence.liveRun.emit(
+    { type: 'TEXT_MESSAGE_END', messageId: 'spacing-answer' },
+    { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID },
+  )
+  await evidence.liveRun.finish()
+  await expect(pane).toContainText('切换期间继续回复')
+  await expect(page.getByRole('button', { name: '发送消息', exact: true })).toBeVisible()
+  expect(evidence.pageErrors).toEqual([])
+})
+
+for (const theme of ['light', 'dark'] as const) {
+  for (const language of ['zh-CN', 'en'] as const) {
+    test(`移动任务全屏页返回保留阅读位置且回复继续 ${theme} ${language}`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width: 320, height: 800 })
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      const cdp = await page.context().newCDPSession(page)
+      await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+      await page.addInitScript(theme => localStorage.setItem('tinkerfin:theme', theme), theme)
+      const groups = makeGroups(8, true)
+      const evidence = await mockTodoTraceStudio(page, { groups, language })
+      const english = language === 'en'
+      const pane = page.getByRole('region', { name: english ? 'Conversation' : '对话内容', exact: true })
+      await pane.evaluate(element => {
+        element.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -1 }))
+        element.scrollTop = 200
+        element.dispatchEvent(new Event('scroll', { bubbles: true }))
+      })
+      const top = await pane.evaluate(element => element.scrollTop)
+      const launcher = page.getByRole('button', { name: english ? 'Task trace 8' : '任务轨迹 8', exact: true })
+      await launcher.click()
+      const detail = page.getByRole('complementary', { name: english ? 'Task trace' : '任务轨迹' })
+      const back = page.getByRole('button', { name: english ? 'Back to conversation' : '返回对话' })
+      await expect(back).toBeFocused()
+      expect(await detail.boundingBox()).toEqual({ x: 0, y: 0, width: 320, height: 800 })
+      await expect(pane).toBeHidden()
+      await expect(page.getByRole('separator')).toHaveCount(0)
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await expect(page.getByText(/展开窗口后可查看|Expand the window to view/)).toHaveCount(0)
+      await page.screenshot({ path: testInfo.outputPath(`mobile-task-${theme}-${language}-320.png`) })
+      await evidence.liveRun.emit(
+        { type: 'TEXT_MESSAGE_START', messageId: 'spacing-answer', role: 'assistant' },
+        { type: 'TEXT_MESSAGE_CONTENT', messageId: 'spacing-answer', delta: '详情打开期间继续回复' },
+        { type: 'TEXT_MESSAGE_END', messageId: 'spacing-answer' },
+      )
+      await back.click()
+      await expect(launcher).toBeFocused()
+      await expect.poll(() => pane.evaluate(element => element.scrollTop)).toBe(top)
+      await expect(pane).toContainText('详情打开期间继续回复')
+      for (let index = 0; index < 2; index += 1) {
+        await launcher.click()
+        await back.click()
+      }
+      await expect(page.getByText(/展开窗口后可查看|Expand the window to view/)).toHaveCount(0)
+      await launcher.click()
+      await page.setViewportSize({ width: 767, height: 800 })
+      expect(await detail.boundingBox()).toEqual({ x: 0, y: 0, width: 767, height: 800 })
+      await page.setViewportSize({ width: 768, height: 800 })
+      await expect(detail).toBeHidden()
+      await expect(pane).toBeVisible()
+      await page.setViewportSize({ width: 1440, height: 800 })
+      await expect(page.getByRole('separator')).toHaveAttribute('aria-valuenow', '400')
+      await page.setViewportSize({ width: 320, height: 800 })
+      await detail.getByRole('button', { name: english ? /Locate in conversation:/ : /定位到对话：/ }).first().click()
+      await expect(detail).toBeHidden()
+      await expect(pane).toBeVisible()
+      expect(evidence.pageErrors).toEqual([])
+    })
+  }
 }

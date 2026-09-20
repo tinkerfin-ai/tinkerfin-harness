@@ -23,7 +23,7 @@ function ScrollbarHarness({
   const viewportRef = useRef<HTMLDivElement>(null)
   return (
     <div className="scrollbar-host">
-      <div ref={viewportRef} className="ui-scrollbar"><div /></div>
+      <div ref={viewportRef} className="ui-scrollbar"><button type="button">查看详情</button></div>
       <OverlayScrollbar
         viewportRef={viewportRef}
         axis={axis}
@@ -77,6 +77,7 @@ afterEach(() => {
 
 describe('OverlayScrollbar', () => {
   it('measures a persistent vertical thumb with the global proportional contract', () => {
+    vi.useFakeTimers()
     const flushFrames = installFrames()
     const { container } = render(<ScrollbarHarness visibility="persistent" />)
     const host = container.querySelector<HTMLElement>('.scrollbar-host')!
@@ -97,6 +98,9 @@ describe('OverlayScrollbar', () => {
     expect(Number.parseFloat(overlay.style.height)).toBeCloseTo(194)
     expect(Number.parseFloat(thumb.style.height)).toBeCloseTo(48.5)
     expect(thumb.style.transform).toBe('translate3d(0, 72.75px, 0)')
+    fireEvent.pointerLeave(viewport, { pointerType: 'mouse' })
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(overlay).toHaveClass('is-visible')
   })
 
   it('stays visible while hovered and hides one second after leaving', () => {
@@ -155,6 +159,113 @@ describe('OverlayScrollbar', () => {
     dispatchPointer('pointermove', 150)
     expect(viewport.scrollTop).toBeCloseTo(506.19, 1)
     dispatchPointer('pointerup', 150)
+  })
+
+  it('鼠标点击保留焦点，离开后仍自动隐藏，键盘操作重新显示', () => {
+    vi.useFakeTimers()
+    const { container, getByRole } = render(<ScrollbarHarness />)
+    const viewport = container.querySelector<HTMLElement>('.ui-scrollbar')!
+    const overlay = container.querySelector<HTMLElement>('.ui-overlay-scrollbar')!
+    const button = getByRole('button', { name: '查看详情' })
+    defineVerticalGeometry(viewport)
+
+    fireEvent.pointerEnter(viewport, { pointerType: 'mouse' })
+    fireEvent.pointerDown(button)
+    act(() => button.focus())
+    fireEvent.pointerLeave(viewport, { pointerType: 'mouse' })
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(button).toHaveFocus()
+    expect(overlay).not.toHaveClass('is-visible')
+
+    fireEvent.keyDown(button, { key: 'ArrowDown' })
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(overlay).toHaveClass('is-visible')
+    act(() => button.blur())
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(overlay).not.toHaveClass('is-visible')
+  })
+
+  it('键盘进入时保持可见，改用鼠标后不再由焦点阻止隐藏', () => {
+    vi.useFakeTimers()
+    const { container, getByRole } = render(<ScrollbarHarness />)
+    const viewport = container.querySelector<HTMLElement>('.ui-scrollbar')!
+    const overlay = container.querySelector<HTMLElement>('.ui-overlay-scrollbar')!
+    const button = getByRole('button', { name: '查看详情' })
+    defineVerticalGeometry(viewport)
+
+    fireEvent.keyDown(document, { key: 'Tab' })
+    act(() => button.focus())
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(overlay).toHaveClass('is-visible')
+    fireEvent.pointerDown(document.body)
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(button).toHaveFocus()
+    expect(overlay).not.toHaveClass('is-visible')
+  })
+
+  it('无悬停和键盘焦点时，滚动显示并在停止后隐藏', () => {
+    vi.useFakeTimers()
+    const flushFrames = installFrames()
+    const { container, unmount } = render(<ScrollbarHarness />)
+    const viewport = container.querySelector<HTMLElement>('.ui-scrollbar')!
+    const overlay = container.querySelector<HTMLElement>('.ui-overlay-scrollbar')!
+    defineVerticalGeometry(viewport)
+    fireEvent.scroll(viewport)
+    act(() => flushFrames())
+    expect(overlay).toHaveClass('is-visible')
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(overlay).not.toHaveClass('is-visible')
+    fireEvent.scroll(viewport)
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
+    act(() => flushFrames())
+    fireEvent.keyDown(document, { key: 'Tab' })
+    fireEvent.pointerDown(document.body)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('触控进入不产生悬停，滚动结束后自动隐藏', () => {
+    vi.useFakeTimers()
+    const flushFrames = installFrames()
+    const { container } = render(<ScrollbarHarness />)
+    const viewport = container.querySelector<HTMLElement>('.ui-scrollbar')!
+    const overlay = container.querySelector<HTMLElement>('.ui-overlay-scrollbar')!
+    defineVerticalGeometry(viewport)
+    const enter = new Event('pointerenter')
+    Object.defineProperty(enter, 'pointerType', { value: 'touch' })
+    fireEvent(viewport, enter)
+    expect(overlay).not.toHaveClass('is-visible')
+    fireEvent.scroll(viewport)
+    act(() => flushFrames())
+    expect(overlay).toHaveClass('is-visible')
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(overlay).not.toHaveClass('is-visible')
+  })
+
+  it.each(['pointerup', 'pointercancel', 'lostpointercapture'])('拖拽以 %s 结束后在区域外自动隐藏', (endEvent) => {
+    vi.useFakeTimers()
+    const flushFrames = installFrames()
+    const { container } = render(<ScrollbarHarness />)
+    const viewport = container.querySelector<HTMLElement>('.ui-scrollbar')!
+    const overlay = container.querySelector<HTMLElement>('.ui-overlay-scrollbar')!
+    const thumb = container.querySelector<HTMLElement>('.ui-overlay-scrollbar__thumb')!
+    defineVerticalGeometry(viewport)
+    fireEvent.scroll(viewport)
+    act(() => flushFrames())
+    const pointer = (type: string) => {
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperties(event, {
+        button: { value: 0 }, pointerId: { value: 7 },
+        clientY: { value: 100 }, pointerType: { value: 'mouse' },
+      })
+      fireEvent(thumb, event)
+    }
+    pointer('pointerdown')
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(overlay).toHaveClass('is-visible')
+    pointer(endEvent)
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(overlay).not.toHaveClass('is-visible')
   })
 
   it('supports a compact horizontal variant and hides when no overflow exists', () => {

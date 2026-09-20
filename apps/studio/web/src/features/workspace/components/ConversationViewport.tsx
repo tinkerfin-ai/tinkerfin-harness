@@ -78,6 +78,7 @@ export function ConversationViewport({
   retryDisabled = false,
   onError,
   onLoadEarlierMessages,
+  onRetryReadingPosition,
 }: {
   widthHandles?: ReactNode
   conversation: Conversation
@@ -102,6 +103,7 @@ export function ConversationViewport({
   onRetryRun?: (message: Message) => void
   retryDisabled?: boolean
   onError?: (message: string) => void
+  onRetryReadingPosition?: () => void
   onLoadEarlierMessages: (trigger: HTMLButtonElement) => void
 }) {
   const { t } = useI18n()
@@ -127,8 +129,8 @@ export function ConversationViewport({
         aria-hidden={backgroundInert || undefined}
         inert={backgroundInert || undefined}
       >
-        {/* 命名 section 是主对话滚动区，必须可由键盘直接进入 */}
-        {/* eslint-disable jsx-a11y/no-noninteractive-tabindex */}
+        {/* 命名 section 是主对话滚动区，键盘滚动需要取消自动定位 */}
+        {/* eslint-disable jsx-a11y/no-noninteractive-tabindex, jsx-a11y/no-noninteractive-element-interactions */}
         <section
           ref={paneRef}
           className={`conversation-pane ui-scrollbar${isEmpty ? ' is-empty' : ''}`}
@@ -137,6 +139,17 @@ export function ConversationViewport({
           onScroll={(event) => onScroll(event.currentTarget)}
           onWheel={onUserScrollIntent}
           onTouchStart={onUserScrollIntent}
+          onKeyDown={(event) => {
+            if (event.defaultPrevented) return
+            // 控件上的空格用于激活操作，不能先清除其重试所需的阅读位置
+            if (event.key === ' ' && event.target instanceof Element
+              && event.target.closest('button, summary, [role="button"]')) return
+            if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)
+              && event.target instanceof Element
+              && !event.target.closest('input, textarea, select, [contenteditable="true"]')) {
+              onUserScrollIntent()
+            }
+          }}
         >
         {!isHistoryBootstrapped || historyStatus === 'loading' ? (
           <FeedbackState kind="loading" title={t('正在加载历史会话')} />
@@ -150,6 +163,11 @@ export function ConversationViewport({
           <EmptyConversation />
         ) : (
           <div className="message-list">
+            {onRetryReadingPosition && (
+              <Button type="button" variant="text" onClick={onRetryReadingPosition}>
+                {t('重试恢复阅读位置')}
+              </Button>
+            )}
             {hasEarlierMessages && (
               <div className="message-history-loader">
                 <Button
@@ -161,7 +179,7 @@ export function ConversationViewport({
               </div>
             )}
             {entries.map((entry) => entry.type === 'run-failure'
-              ? <ConversationRunFailure key={`failure:${entry.failure.runId}`} retryable={entry.failure.retryable && !entry.message.meta?.contentOmitted && Boolean(entry.message.content || entry.message.attachments?.length)} disabled={retryDisabled} onRetry={onRetryRun ? () => onRetryRun(entry.message) : undefined} />
+              ? <ConversationRunFailure id={`failure:${entry.failure.runId}`} key={`failure:${entry.failure.runId}`} retryable={entry.failure.retryable && !entry.message.meta?.contentOmitted && Boolean(entry.message.content || entry.message.attachments?.length)} disabled={retryDisabled} onRetry={onRetryRun ? () => onRetryRun(entry.message) : undefined} />
               : entry.type === 'tools'
               ? <ToolCallBatch key={`batch-${entry.messages[0].id}`} messages={entry.messages} />
               : entry.type === 'todo-group'
@@ -181,9 +199,9 @@ export function ConversationViewport({
             {conversation.planInteraction?.kind === 'review' && (
               <PlanReviewStatusRow interaction={conversation.planInteraction} />
             )}
-            {(conversation.runStatus === 'detached' || conversation.notice?.recovery === 'history') && onRecoverConversation && (
+            {(conversation.runStatus === 'detached' || (!conversation.threadId && conversation.runStatus === 'error') || conversation.notice?.recovery === 'history') && onRecoverConversation && (
               <Button type="button" variant="text" onClick={onRecoverConversation}>
-                {t(conversation.notice?.recovery === 'history' ? '重新加载' : '恢复连接')}
+                {t(conversation.notice?.recovery === 'history' ? '重新加载' : conversation.runStatus === 'error' ? '重试' : '恢复连接')}
               </Button>
             )}
             {isRunning && <p className="message-stream-tail stream-pending-tail"><ActivityDots label={t('任务仍在继续')} /></p>}
@@ -191,12 +209,11 @@ export function ConversationViewport({
           </div>
         )}
         </section>
-        {/* eslint-enable jsx-a11y/no-noninteractive-tabindex */}
+        {/* eslint-enable jsx-a11y/no-noninteractive-tabindex, jsx-a11y/no-noninteractive-element-interactions */}
         {widthHandles}
         {navigation}
         <OverlayScrollbar
           viewportRef={paneRef}
-          visibility="persistent"
           onUserScrollIntent={onUserScrollIntent}
         />
       </div>

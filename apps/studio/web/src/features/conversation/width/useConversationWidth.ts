@@ -16,14 +16,18 @@ export function useConversationWidth(resizeContent: (apply: () => void) => void)
   const publish = useCallback(() => {
     const root = rootRef.current
     if (!root) return
-    const gutter = parseFloat(getComputedStyle(root).getPropertyValue('--layout-page-gutter'))
-    const next = resolveConversationWidth(root.clientWidth, gutter, preview.current ?? saved.current)
-    if (root.style.getPropertyValue('--layout-conversation-width') !== `${next.width}px`) {
-      resize.current(() => {
+    const next = { width: 0, max: 0 }
+    resize.current(() => {
+      // 会话间距也会改变消息位置，与正文宽度一起保留阅读锚点
+      root.dataset.conversationSize = root.clientWidth <= 440 ? 'compact'
+        : root.clientWidth <= 767 ? 'small' : root.clientWidth <= 1023 ? 'medium' : 'wide'
+      const gutter = parseFloat(getComputedStyle(root).getPropertyValue('--layout-conversation-gutter'))
+      Object.assign(next, resolveConversationWidth(root.clientWidth, gutter, preview.current ?? saved.current))
+      if (root.style.getPropertyValue('--layout-conversation-width') !== `${next.width}px`) {
         root.style.setProperty('--layout-conversation-width', `${next.width}px`)
         root.style.setProperty('--layout-composer-width', `${next.width + COMPOSER_WIDTH_EXTRA}px`)
-      })
-    }
+      }
+    })
     setDimensions(current => current.width === next.width && current.max === next.max ? current : next)
     return next
   }, [])

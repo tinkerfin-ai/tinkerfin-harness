@@ -5,7 +5,7 @@ import { CONVERSATION_WIDTH_KEY } from './widthPreference'
 
 function Consumer() {
   const width = useConversationWidth(apply => apply())
-  return <main ref={width.rootRef} style={{ '--layout-page-gutter': '32px' } as React.CSSProperties}>
+  return <main ref={width.rootRef} style={{ '--layout-conversation-gutter': '64px' } as React.CSSProperties}>
     <output>{width.width}</output>
     <button onClick={() => width.commit(1200)}>选择</button>
     <button onClick={() => width.previewWidth(1000)}>预览</button>
@@ -31,7 +31,7 @@ it('响应容器变化、取消预览和其他标签页选择', () => {
   expect(screen.getByRole('status')).toHaveTextContent('1200')
   column = 900
   act(() => resize())
-  expect(screen.getByRole('status')).toHaveTextContent('804')
+  expect(screen.getByRole('status')).toHaveTextContent('740')
   expect(localStorage.getItem(CONVERSATION_WIDTH_KEY)).toBe('1200')
   column = 1600
   act(() => resize())

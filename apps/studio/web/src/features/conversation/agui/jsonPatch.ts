@@ -1,5 +1,5 @@
 import type { StateDeltaOperation } from '../../../api/conversation/types'
-import type { JsonObject, JsonValue } from '../../../types'
+import type { DeepReadonly, JsonObject, JsonValue } from '../../../types'
 
 const ARRAY_INDEX = /^(?:0|[1-9]\d*)$/
 
@@ -94,10 +94,11 @@ const defineOwnValue = (target: JsonObject, key: string, value: JsonValue) => {
  *   InvalidStateDeltaError: Pointer、目标或结果不符合 Studio 状态契约
  */
 export function applyStateDelta(
-  current: JsonObject | undefined,
+  current: DeepReadonly<JsonObject> | undefined,
   delta: readonly StateDeltaOperation[],
 ): JsonObject {
-  let next: JsonValue = structuredClone(current ?? {})
+  // 共享的历史状态只读；整个批次仅修改本次复制出的工作对象
+  let next: JsonValue = requireContainer(structuredClone(current ?? {}))
 
   for (const operation of delta) {
     const tokens = decodePointer(operation.path)

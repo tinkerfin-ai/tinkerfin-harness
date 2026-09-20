@@ -9,8 +9,16 @@ import mediaFixture from '../agui/contracts/message-attachments.fixture.json'
 import type { ConversationHistoryDetail, ConversationTraceUpdate } from '../../../api/conversation/history'
 import { applyConversationTraceUpdate, restoreConversationFromTrace } from './runtime'
 
-it('运行结束后的权威历史保留实时正文的展示来源，首次打开历史不创建逐字播放', () => {
+it.each(['succeeded', 'cancelled'] as const)('历史终态 %s 保留正文，取消时立即停止逐字播放', (execution) => {
   const history = detail()
+  history.status = { ...history.status, execution }
+  history.messages.unshift({
+    ...history.messages[1],
+    id: 'message:prior-answer', sourceId: 'prior-answer', traceSeq: 0,
+    agui: { kind: 'message', messageId: 'prior-answer' },
+    runId: 'prior-run', content: '上一轮正常完成的正文',
+  })
+  history.messageCount += 1
   const initial = restoreConversationFromTrace(history, { model: 'main', includeTaskTrace: false })
   expect(initial.messages.every(message => !message.liveText)).toBe(true)
   const source = { key: 'thread-trace/run-1/public-assistant-1', initialContent: '' }
@@ -21,8 +29,10 @@ it('运行结束后的权威历史保留实时正文的展示来源，首次打�
       : message),
   }
   const restored = restoreConversationFromTrace(history, { previous, model: 'main', includeTaskTrace: false })
-  expect(restored.messages.find(message => message.role === 'assistant')?.liveText).toBe(source)
-  expect(restored.messages.find(message => message.role === 'assistant')?.content).toBe('完成')
+  const answer = restored.messages.find(message => message.id === 'public-assistant-1')
+  expect(answer?.liveText).toBe(execution === 'cancelled' ? undefined : source)
+  expect(answer?.content).toBe('完成')
+  expect(restored.messages.find(message => message.id === 'prior-answer')?.liveText).toBe(source)
 })
 
 const detail = (): ConversationHistoryDetail => ({ accessMode: 'write_approval',
@@ -156,6 +166,247 @@ const detail = (): ConversationHistoryDetail => ({ accessMode: 'write_approval',
   taskTrace: { status: 'ready', todoGroups: [] },
   createdAt: '2026-08-28T00:00:00',
   updatedAt: '2026-08-28T00:00:03',
+})
+
+const freezeSnapshot = (value: unknown): void => {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return
+  Object.values(value).forEach(freezeSnapshot)
+  Object.freeze(value)
+}
+
+describe('权威快照的共享与隔离', () => {
+  it('历史输入与会话隔离，实时状态共享已接收快照的只读根', () => {
+    const source = detail()
+    const root = { todos: [{ content: '历史任务', status: 'completed' }], nested: { values: [1] } }
+    source.state.root = root
+    const restored = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+
+    expect(restored.serverState).toBe(restored.trace?.state.root)
+    expect(restored.trace?.state.root).not.toBe(root)
+    expect(restored.trace?.messages).not.toBe(source.messages)
+    expect(restored.historySynchronized).toBe(true)
+    root.todos[0].content = '外部修改'
+    root.nested.values.push(2)
+    source.messages[1].content = '外部回答'
+    source.graph.nodes[0].graphNamespace.push('外部作用域')
+    expect(restored.serverState).toEqual({
+      todos: [{ content: '历史任务', status: 'completed' }], nested: { values: [1] },
+    })
+    expect(restored.messages.find(message => message.role === 'assistant')?.content).toBe('完成')
+    expect(restored.trace?.messages[1].content).toBe('完成')
+    expect(restored.trace?.graph.nodes[0].graphNamespace).toEqual([])
+  })
+
+  it('冻结的历史根支持嵌套增量，失败批次和根替换不修改已有快照', () => {
+    const restored = restoreConversationFromTrace(detail(), { model: 'main', includeTaskTrace: false })
+    freezeSnapshot(restored.trace)
+    const addition = { values: [{ count: 1 }] }
+    const changed = applyConversationEvent(restored, {
+      type: 'STATE_DELTA', delta: [
+        { op: 'replace', path: '/todos/0/content', value: '实时任务' },
+        { op: 'add', path: '/extra', value: addition },
+      ],
+    })
+    addition.values[0].count = 2
+    expect(changed.historySynchronized).toBe(false)
+    expect(changed.trace).toBe(restored.trace)
+    expect(changed.serverState).not.toBe(restored.serverState)
+    expect(changed.serverState?.extra).toEqual({ values: [{ count: 1 }] })
+    expect(changed.todos[0].content).toBe('实时任务')
+    expect(restored.todos[0].content).toBe('验证结果')
+    expect(restored.serverState?.todos).toEqual([{ content: '验证结果', status: 'completed' }])
+
+    freezeSnapshot(changed.serverState)
+    expect(() => applyConversationEvent(changed, {
+      type: 'STATE_DELTA', delta: [
+        { op: 'replace', path: '/todos/0/content', value: '不能提交' },
+        { op: 'remove', path: '/missing' },
+      ],
+    })).toThrow()
+    expect(changed.serverState?.todos).toEqual([{ content: '实时任务', status: 'completed' }])
+    const replacement = { todos: [] }
+    const replaced = applyConversationEvent(changed, {
+      type: 'STATE_DELTA', delta: [{ op: 'replace', path: '', value: replacement }],
+    })
+    expect(replaced.serverState).toEqual(replacement)
+    expect(replaced.serverState).not.toBe(replacement)
+    expect(changed.serverState?.todos).toEqual([{ content: '实时任务', status: 'completed' }])
+    expect(restored.serverState).toBe(restored.trace?.state.root)
+  })
+
+  it('同前缀刷新保留已展开实体与游标，只接收新的观测和状态', () => {
+    const source = detail()
+    source.historyCursor = 'expanded-cursor'
+    const initial = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+    freezeSnapshot(initial.trace)
+    const refresh: ConversationHistoryDetail = {
+      ...detail(),
+      observedAt: '2026-09-05T00:00:00.000001Z',
+      historyCursor: 'latest-page-cursor',
+      messages: source.messages.slice(-1),
+      status: { execution: 'unknown', headRunId: source.headRunId },
+      completeness: { ...source.completeness, missingTail: true },
+    }
+    const restored = restoreConversationFromTrace(refresh, {
+      previous: initial, model: 'main', includeTaskTrace: false, preserveHistory: true,
+    })
+    expect(restored.trace).not.toBe(initial.trace)
+    expect(restored.trace?.messages).toBe(initial.trace?.messages)
+    expect(restored.trace?.reasoning).toBe(initial.trace?.reasoning)
+    expect(restored.trace?.graph).toBe(initial.trace?.graph)
+    expect(restored.trace?.interactions).toBe(initial.trace?.interactions)
+    expect(restored.trace?.historyCursor).toBe('expanded-cursor')
+    expect(restored.trace?.observedAt).toBe(refresh.observedAt)
+    expect(restored.runStatus).toBe('error')
+    expect(restored.serverState).toBe(restored.trace?.state.root)
+    refresh.availableHeads.push('external-run')
+    refresh.status.execution = 'succeeded'
+    refresh.completeness.missingTail = false
+    expect(restored.trace?.availableHeads).toEqual(['run-1'])
+    expect(restored.trace?.status.execution).toBe('unknown')
+    expect(restored.trace?.completeness.missingTail).toBe(true)
+
+    const expanded = restoreConversationFromTrace(source, {
+      previous: restored, model: 'main', includeTaskTrace: false, expandHistory: true,
+    })
+    expect(expanded.trace?.observedAt).toBe(restored.trace?.observedAt)
+    expect(expanded.trace?.status).toBe(restored.trace?.status)
+    expect(expanded.trace?.completeness).toBe(restored.trace?.completeness)
+    expect(expanded.runStatus).toBe('error')
+  })
+
+  it('增量只替换受影响实体，新增输入与保留实体均不会被投影修改', () => {
+    const source = detail()
+    const initial = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+    freezeSnapshot(initial.trace)
+    const update: ConversationTraceUpdate = {
+      asOfSeq: 9, generation: source.generation, observedAt: '2026-09-05T00:00:00.000001Z',
+      events: [], facts: [],
+      messages: { upserts: [{ ...source.messages[1], content: '追加结果' }], removes: [] },
+      reasoning: { upserts: [], removes: [] },
+      interactions: { upserts: [], removes: [] },
+      graph: {
+        asOfSeq: 9, nextCursor: null, turnUpserts: [], turnRemoves: [], nodeUpserts: [], nodeRemoves: [],
+        orderedNodeIds: [...source.graph.orderedNodeIds], matchedNodeIds: [...source.graph.matchedNodeIds],
+        completeness: { ...source.graph.completeness },
+      },
+      state: { root: { todos: [{ content: '新任务', status: 'completed' }] }, subgraphs: {} },
+      status: { ...source.status }, completeness: { ...source.completeness },
+      messageCount: source.messageCount, toolCallCount: source.toolCallCount, projections: {}, runFailures: [],
+    }
+    const updated = applyConversationTraceUpdate(initial, update, null, false)
+    expect(updated.trace).not.toBe(initial.trace)
+    expect(updated.trace?.messages[0]).toBe(initial.trace?.messages[0])
+    expect(updated.trace?.messages[1]).not.toBe(initial.trace?.messages[1])
+    expect(updated.trace?.messages[1]).not.toBe(update.messages.upserts[0])
+    expect(updated.trace?.reasoning).toBe(initial.trace?.reasoning)
+    expect(updated.trace?.interactions).toBe(initial.trace?.interactions)
+    expect(updated.trace?.graph.nodes[0]).toBe(initial.trace?.graph.nodes[0])
+    expect(updated.trace?.graph.turns[0]).toBe(initial.trace?.graph.turns[0])
+    expect(updated.serverState).toBe(updated.trace?.state.root)
+    expect(updated.serverState).not.toBe(update.state.root)
+    expect(updated.messages.find(message => message.role === 'assistant')?.content).toBe('追加结果')
+    update.messages.upserts[0].content = '外部更改'
+    update.state.root.todos = []
+    expect(updated.trace?.messages[1].content).toBe('追加结果')
+    expect(updated.todos[0].content).toBe('新任务')
+    expect(initial.trace?.messages[1].content).toBe('完成')
+  })
+
+  it('较旧历史只能合并标题，不能把未同步正文标记为可重新加载', () => {
+    const source = detail()
+    source.observedAt = '2026-09-05T00:00:00.000002Z'
+    const initial = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+    const live = applyConversationEvent(initial, {
+      type: 'TEXT_MESSAGE_CONTENT', messageId: 'public-assistant-1', delta: '实时补充',
+    })
+    const restored = restoreConversationFromTrace({
+      ...source, observedAt: '2026-09-05T00:00:00.000001Z', title: '新标题', titleSeq: 1,
+    }, { previous: live, model: 'main', includeTaskTrace: false })
+    expect(restored.title).toBe('新标题')
+    expect(restored.messages).toBe(live.messages)
+    expect(restored.historySynchronized).toBe(false)
+  })
+
+  it('附件和工具展示字段可编辑且不会形成快照的可写别名', () => {
+    const source = detail()
+    source.messages[0].content = structuredClone(mediaFixture.toolContent)
+    freezeSnapshot(source)
+    const restored = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+    freezeSnapshot(restored.trace)
+    restored.messages[0].attachments![0].name = '本地附件名'
+    const tool = restored.messages.find(message => message.role === 'tool')!
+    tool.meta!.graphNamespace!.push('本地作用域')
+    expect(restored.trace?.messages[0].content).toEqual(mediaFixture.toolContent)
+    expect(restored.trace?.graph.nodes[0].graphNamespace).toEqual([])
+  })
+
+  it('审批参数可编辑，嵌套参数与冻结的权威记录隔离', () => {
+    const source = detail()
+    const args = { file_path: '/result.txt', options: { enabled: true } }
+    source.interactions = [{
+      id: 'review', traceSeq: 5, sourceId: 'native-review', graphNamespace: [], runId: 'run-1',
+      kind: 'tool_approval', toolCallIds: ['call-write'], status: 'pending', payloadOmitted: true,
+      openedAt: '2026-08-28T00:00:04Z',
+      agui: toolReviewInterrupts('native-review', [{ toolCallId: 'public-call-write', args }]),
+    }]
+    freezeSnapshot(source)
+    const restored = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+    freezeSnapshot(restored.trace)
+    const approval = restored.approval!.items[0]
+    approval.originalArgs.file_path = '/edited.txt'
+    const options = approval.originalArgs.options
+    if (options === null || typeof options !== 'object' || Array.isArray(options)) throw new Error('缺少参数样本')
+    options.enabled = false
+    expect(restored.trace?.interactions).toEqual(source.interactions)
+    expect(args).toEqual({ file_path: '/result.txt', options: { enabled: true } })
+    expect(approval.originalArgs).toEqual({ file_path: '/edited.txt', options: { enabled: false } })
+  })
+
+  it.each(['questions', 'review'] as const)('Plan %s 表单与冻结的权威记录隔离', kind => {
+    const source = detail()
+    const interrupt = planInterrupt('plan-interrupt', {
+      schema: 'tinkerfin.runtime-interrupt',
+      kind: kind === 'questions' ? 'tinkerfin:plan_clarification' : 'tinkerfin:plan_review',
+      responseSchema: kind === 'questions' ? {} : {
+        discriminator: { propertyName: 'type', mapping: { approve: '#/approve', reject: '#/reject' } },
+      },
+      metadata: {
+        origin: 'plan',
+        ...(kind === 'questions' ? { clarification: { form: {
+          title: '确认范围', description: '选择执行范围', questions: [{
+            id: 'scope', answerType: 'single_choice', prompt: '请选择范围', required: true,
+            attributes: { label: '原始属性' }, allowFreeText: true,
+            options: [{ id: 'all', label: '全部', attributes: { recommended: true } }],
+          }],
+        } } } : { review: { draft: {
+          revision: 1, contentSchema: { mediaType: 'text/markdown', fingerprint: 'a'.repeat(64) },
+          content: { description: '任务计划', markdown: '- 原始计划' },
+        } } }),
+      },
+    })
+    source.interactions = [{
+      id: 'plan', traceSeq: 5, sourceId: interrupt.id, graphNamespace: [], runId: 'run-1',
+      kind: interrupt.reason, toolCallIds: [], status: 'pending', payloadOmitted: true,
+      openedAt: '2026-08-28T00:00:04Z', agui: [interrupt],
+    }]
+    freezeSnapshot(source)
+    const restored = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+    freezeSnapshot(restored.trace)
+    const plan = restored.planInteraction!
+    if (plan.kind === 'review') {
+      plan.draft.content.markdown = '- 编辑计划'
+    } else {
+      plan.form.title = '编辑表单'
+      const question = plan.questions[0]
+      if (question.answerType !== 'single_choice') throw new Error('缺少选择题样本')
+      question.selectedOptionId = 'all'
+      question.attributes!.label = '编辑属性'
+      question.options[0].attributes!.recommended = false
+    }
+    expect(restored.trace?.interactions).toEqual(source.interactions)
+    expect(restored.planInteraction?.kind).toBe(kind)
+  })
 })
 
 describe('Trace conversation projection', () => {

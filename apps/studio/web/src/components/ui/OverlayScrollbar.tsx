@@ -28,6 +28,7 @@ const geometryForSize = (size: OverlayScrollbarSize) => (
     : { crossSize: 8, inset: 3 }
 )
 
+/** 镜像内容区滚动位置；自动模式在悬停、拖拽或键盘操作时保持可见 */
 export function OverlayScrollbar({
   viewportRef,
   axis = 'vertical',
@@ -41,7 +42,8 @@ export function OverlayScrollbar({
   const measureFrameRef = useRef<number | null>(null)
   const scrollableRef = useRef(false)
   const hoveredRef = useRef(false)
-  const focusedRef = useRef(false)
+  const keyboardInputRef = useRef(true)
+  const keyboardFocusRef = useRef(false)
   const revealAfterMeasureRef = useRef(false)
   const geometryRef = useRef<ScrollbarGeometry>({ contentLength: 0, maxScroll: 0, travel: 0 })
   const dragRef = useRef<{
@@ -139,7 +141,7 @@ export function OverlayScrollbar({
     if (visibility === 'persistent') return
     clearHideTimer()
     hideTimerRef.current = window.setTimeout(() => {
-      if (!hoveredRef.current && !focusedRef.current && !dragRef.current) setVisible(false)
+      if (!hoveredRef.current && !keyboardFocusRef.current && !dragRef.current) setVisible(false)
       hideTimerRef.current = null
     }, HIDE_DELAY_MS)
   }, [clearHideTimer, visibility])
@@ -179,9 +181,10 @@ export function OverlayScrollbar({
 
   const finishThumbDrag = (event: ReactPointerEvent<HTMLSpanElement>) => {
     if (dragRef.current?.pointerId !== event.pointerId) return
-    event.currentTarget.releasePointerCapture?.(event.pointerId)
     dragRef.current = null
-    if (!hoveredRef.current && !focusedRef.current) scheduleHide()
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    hoveredRef.current = Boolean(viewportRef.current?.matches(':hover') || thumbRef.current?.matches(':hover'))
+    if (!hoveredRef.current && !keyboardFocusRef.current) scheduleHide()
   }
 
   useLayoutEffect(() => {
@@ -197,24 +200,42 @@ export function OverlayScrollbar({
     const handlePointerLeave = (event: PointerEvent) => {
       if (event.pointerType === 'touch') return
       hoveredRef.current = false
-      if (!dragRef.current && !focusedRef.current) scheduleHide()
+      if (!dragRef.current && !keyboardFocusRef.current) scheduleHide()
     }
     const handleFocusIn = () => {
-      focusedRef.current = true
+      keyboardFocusRef.current = keyboardInputRef.current
       reveal()
+      if (!keyboardFocusRef.current && !hoveredRef.current && !dragRef.current) scheduleHide()
     }
     const handleFocusOut = (event: FocusEvent) => {
       if (event.relatedTarget instanceof Node && viewport.contains(event.relatedTarget)) return
-      focusedRef.current = false
+      keyboardFocusRef.current = false
       if (!dragRef.current && !hoveredRef.current) scheduleHide()
+    }
+    // 鼠标点击保留原控件焦点，但不据此常显；再次使用键盘时恢复可见反馈
+    const handlePointerDown = () => {
+      keyboardInputRef.current = false
+      if (!keyboardFocusRef.current) return
+      keyboardFocusRef.current = false
+      if (!dragRef.current && !hoveredRef.current) scheduleHide()
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey || event.ctrlKey || event.metaKey
+        || ['Alt', 'Control', 'Meta', 'Shift'].includes(event.key)) return
+      keyboardInputRef.current = true
+      if (!viewport.contains(document.activeElement)) return
+      keyboardFocusRef.current = true
+      reveal()
     }
     const handleScroll = () => {
       clearHideTimer()
       revealAfterMeasureRef.current = true
       scheduleMeasure()
-      if (!hoveredRef.current && !focusedRef.current) scheduleHide()
+      if (!hoveredRef.current && !keyboardFocusRef.current) scheduleHide()
     }
 
+    document.addEventListener('pointerdown', handlePointerDown, true)
+    document.addEventListener('keydown', handleKeyDown, true)
     viewport.addEventListener('pointerenter', handlePointerEnter)
     viewport.addEventListener('pointerleave', handlePointerLeave)
     viewport.addEventListener('focusin', handleFocusIn)
@@ -242,6 +263,8 @@ export function OverlayScrollbar({
       measureFrameRef.current = null
       resizeObserver?.disconnect()
       mutationObserver?.disconnect()
+      document.removeEventListener('pointerdown', handlePointerDown, true)
+      document.removeEventListener('keydown', handleKeyDown, true)
       viewport.removeEventListener('pointerenter', handlePointerEnter)
       viewport.removeEventListener('pointerleave', handlePointerLeave)
       viewport.removeEventListener('focusin', handleFocusIn)
@@ -275,12 +298,13 @@ export function OverlayScrollbar({
         }}
         onPointerLeave={() => {
           hoveredRef.current = false
-          if (!dragRef.current && !focusedRef.current) scheduleHide()
+          if (!dragRef.current && !keyboardFocusRef.current) scheduleHide()
         }}
         onPointerDown={handleThumbPointerDown}
         onPointerMove={handleThumbPointerMove}
         onPointerUp={finishThumbDrag}
         onPointerCancel={finishThumbDrag}
+        onLostPointerCapture={finishThumbDrag}
       />
     </div>
   )

@@ -4,7 +4,7 @@ import type {
   TodoGroup,
 } from '../../../api/conversation/taskTrace'
 import type { ConversationAgUiEvent } from '../../../api/conversation/types'
-import type { JsonObject, Message } from '../../../types'
+import type { DeepReadonly, JsonObject, Message } from '../../../types'
 import {
   normalizeUserMessagePreview,
   parseRootTodos,
@@ -250,7 +250,7 @@ export class LiveTodoTraceProjector {
 
   consume(
     event: ConversationAgUiEvent,
-    options: { receivedAt: string; rootState?: JsonObject },
+    options: { receivedAt: string; rootState?: DeepReadonly<JsonObject> },
   ): TaskTraceSnapshot {
     if (this.failed) return this.currentSnapshot
     if (event.type === 'RUN_STARTED') {

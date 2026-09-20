@@ -1,4 +1,3 @@
-import { isConversationTitle } from '../../../api/conversation/titles'
 import { mergeConversationTitle } from "../../../lib/workspace"
 import { attachmentInput, isAttachment, messageText, messageAttachments, type Attachment } from '../attachments/content'
 import type {
@@ -21,6 +20,7 @@ import type {
   ApprovalState,
   Conversation,
   ConversationNotice,
+  DeepReadonly,
   JsonObject,
   JsonValue,
   MarkdownPlanDraft,
@@ -59,7 +59,7 @@ const parseJsonObject = (value: string) => {
   }
 }
 
-const isStateTodo = (value: JsonValue): value is { content: string; status: "pending" | "in_progress" | "completed" } =>
+const isStateTodo = (value: DeepReadonly<JsonValue>): value is { content: string; status: "pending" | "in_progress" | "completed" } =>
   Boolean(
     value
     && typeof value === "object"
@@ -123,16 +123,17 @@ const markInterruptedToolCards = (
   }),
 })
 
-const approvalInputFromArgs = (args: JsonObject, fallback: string | undefined) => {
+const approvalInputFromArgs = (args: DeepReadonly<JsonObject>, fallback: string | undefined) => {
   const filePath = args.file_path
   if (typeof filePath === "string" && filePath) return filePath
   return fallback ?? ""
 }
 
-export const approvalItemsFromInterrupts = (interrupts: InterruptEvent[]): ApprovalItem[] =>
+export const approvalItemsFromInterrupts = (interrupts: readonly DeepReadonly<InterruptEvent>[]): ApprovalItem[] =>
   interrupts.map((interrupt) => {
     const review = parseToolReviewInterrupt(interrupt)
-    const originalArgs = review.originalArgs
+    // 审批表单可编辑，其参数副本不能修改共享的权威历史
+    const originalArgs = structuredClone(review.originalArgs) as JsonObject
     const allowedDecisions: ApprovalAllowedDecision[] = [...review.allowedDecisions]
     const toolName = review.toolName
 
@@ -153,8 +154,8 @@ interface PlanInterruptLike {
   id: string
   reason: string
   message?: string | null
-  responseSchema?: JsonObject | null
-  metadata?: JsonObject | null
+  responseSchema?: DeepReadonly<JsonObject> | null
+  metadata?: DeepReadonly<JsonObject> | null
 }
 
 const jsonValuesEqual = (left: unknown, right: unknown): boolean => {
@@ -176,7 +177,7 @@ const jsonValuesEqual = (left: unknown, right: unknown): boolean => {
       && jsonValuesEqual(leftObject[key], rightObject[key]))
 }
 
-const runtimeEnvelopeMetadata = (interrupt: PlanInterruptLike): JsonObject | null => {
+const runtimeEnvelopeMetadata = (interrupt: PlanInterruptLike): DeepReadonly<JsonObject> | null => {
   const runtimeInterrupt = interrupt.metadata?.runtimeInterrupt
   if (!isJsonObject(runtimeInterrupt)) return null
   if (
@@ -206,11 +207,11 @@ const invalidPlanInteraction = (): never => {
   throw new Error('Plan interrupt 载荷不符合 Studio 契约')
 }
 
-const isJsonObject = (value: unknown): value is JsonObject => (
+const isJsonObject = (value: unknown): value is DeepReadonly<JsonObject> => (
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 )
 
-const hasOnlyKeys = (value: JsonObject, keys: readonly string[]) => {
+const hasOnlyKeys = (value: DeepReadonly<JsonObject>, keys: readonly string[]) => {
   const actual = Object.keys(value).sort()
   const expected = [...keys].sort()
   return actual.length === expected.length
@@ -242,7 +243,7 @@ const parsePlanQuestionOptions = (value: unknown) => {
       label: rawOption.label,
       description: typeof rawOption.description === 'string' ? rawOption.description : null,
       recommended: attributes.recommended,
-      attributes,
+      attributes: structuredClone(attributes) as JsonObject,
     }]
   })
   return options.length === value.length
@@ -281,7 +282,7 @@ const parsePlanQuestions = (value: unknown): PlanQuestionItem[] | null => {
       id: rawQuestion.id,
       prompt: rawQuestion.prompt,
       required: rawQuestion.required,
-      attributes: attributes as JsonObject | null | undefined,
+      attributes: structuredClone(attributes) as JsonObject | null | undefined,
     }
     if (rawQuestion.answerType === 'single_choice') {
       const options = parsePlanQuestionOptions(rawQuestion.options)
@@ -400,7 +401,7 @@ const isIsoCalendarDate = (value: string) => {
 const PLAN_REVIEW_ACTIONS = ['approve', 'reject', 'cancel', 'respond'] as const
 
 const parsePlanReviewActions = (
-  responseSchema: JsonValue | undefined,
+  responseSchema: DeepReadonly<JsonValue> | undefined,
 ): PlanReviewState['allowedActions'] | null => {
   if (!isJsonObject(responseSchema)) return null
   const discriminator = responseSchema.discriminator
@@ -438,12 +439,12 @@ export const planInteractionFromInterrupts = (
 
   if (interrupt.reason === 'tinkerfin:plan_clarification') {
     const clarification = metadata.clarification
-    if (!clarification || typeof clarification !== 'object' || Array.isArray(clarification)) return invalidPlanInteraction()
-    if (!hasOnlyKeys(clarification as JsonObject, ['form'])) return invalidPlanInteraction()
+    if (!isJsonObject(clarification)) return invalidPlanInteraction()
+    if (!hasOnlyKeys(clarification, ['form'])) return invalidPlanInteraction()
     const form = clarification.form
-    if (!form || typeof form !== 'object' || Array.isArray(form)) return invalidPlanInteraction()
+    if (!isJsonObject(form)) return invalidPlanInteraction()
     if (
-      !hasOnlyKeys(form as JsonObject, ['description', 'questions', 'title'])
+      !hasOnlyKeys(form, ['description', 'questions', 'title'])
       || !isStringWithinLength(form.title, 20)
       || !isStringWithinLength(form.description, 60)
     ) return invalidPlanInteraction()
@@ -455,7 +456,7 @@ export const planInteractionFromInterrupts = (
       title: form.title,
       description: form.description,
       activeQuestionIndex: 0,
-      form: structuredClone(form as JsonObject),
+      form: structuredClone(form) as JsonObject,
       questions,
       submitted: false,
     }
@@ -466,35 +467,27 @@ export const planInteractionFromInterrupts = (
     if (!allowedActions) return invalidPlanInteraction()
     const review = metadata.review
     if (
-      !review
-      || typeof review !== 'object'
-      || Array.isArray(review)
-      || !hasOnlyKeys(review as JsonObject, ['draft'])
+      !isJsonObject(review)
+      || !hasOnlyKeys(review, ['draft'])
     ) return invalidPlanInteraction()
     const draft = review.draft
     if (
-      !draft
-      || typeof draft !== 'object'
-      || Array.isArray(draft)
+      !isJsonObject(draft)
     ) return invalidPlanInteraction()
     const contentSchema = draft.contentSchema
     const content = draft.content
     if (
-      !hasOnlyKeys(draft as JsonObject, ['content', 'contentSchema', 'revision'])
+      !hasOnlyKeys(draft, ['content', 'contentSchema', 'revision'])
       || typeof draft.revision !== 'number'
       || !Number.isInteger(draft.revision)
       || draft.revision < 1
-      || !contentSchema
-      || typeof contentSchema !== 'object'
-      || Array.isArray(contentSchema)
-      || !hasOnlyKeys(contentSchema as JsonObject, ['fingerprint', 'mediaType'])
+      || !isJsonObject(contentSchema)
+      || !hasOnlyKeys(contentSchema, ['fingerprint', 'mediaType'])
       || contentSchema.mediaType !== 'text/markdown'
       || typeof contentSchema.fingerprint !== 'string'
       || !/^[0-9a-f]{64}$/.test(contentSchema.fingerprint)
-      || !content
-      || typeof content !== 'object'
-      || Array.isArray(content)
-      || !hasOnlyKeys(content as JsonObject, ['description', 'markdown'])
+      || !isJsonObject(content)
+      || !hasOnlyKeys(content, ['description', 'markdown'])
       || !isStringWithinLength(content.description, 80)
       || typeof content.markdown !== 'string'
       || !content.markdown.trim()
@@ -729,7 +722,7 @@ const updateSubagentRun = (
 
 const syncTodosFromState = (
   conversation: Conversation,
-  state: JsonObject | undefined,
+  state: DeepReadonly<JsonObject> | undefined,
 ): Conversation => {
   const rawTodos = state?.todos
   if (!Array.isArray(rawTodos)) return conversation
@@ -767,10 +760,10 @@ const forwardedPropsFor = (
 
 const syncEffectiveModeFromState = (
   conversation: Conversation,
-  state: JsonObject,
+  state: DeepReadonly<JsonObject>,
 ): Conversation => {
   const plan = state.tinkerfin_plan
-  if (!plan || typeof plan !== "object" || Array.isArray(plan)) return conversation
+  if (!isJsonObject(plan)) return conversation
   const mode = plan.effectiveMode
   return isAgentMode(mode) ? { ...conversation, mode } : conversation
 }
@@ -1168,7 +1161,7 @@ const restorePendingInteraction = (conversation: Conversation): Conversation => 
   }
 }
 
-export const applyConversationEvent = (
+const reduceConversationEvent = (
   conversation: Conversation,
   event: ConversationAgUiEvent,
 ): Conversation => {
@@ -1238,10 +1231,6 @@ export const applyConversationEvent = (
     }
 
     case "CUSTOM": {
-      if (event.name === 'studio.conversation.title.updated') {
-        if (!isConversationTitle(event.value) || event.value.threadId !== conversation.threadId) return conversation
-        return { ...conversation, ...mergeConversationTitle(conversation, event.value) }
-      }
       if (event.name !== 'tinkerfin.message.attachments' || !isJsonObject(event.value)) return conversation
       const messageId = event.value.messageId
       const attachments = event.value.attachments
@@ -1631,8 +1620,21 @@ export const applyConversationEvent = (
             activeRunId: undefined,
             approval: undefined,
             planInteraction: undefined,
-            messages: conversation.messages.map((message) => (
-              (message.role === "tool" || message.role === "subagent")
+            messages: conversation.messages.map((message) => {
+              // 停止确认后立即显示已收到的正文，不再播放该轮剩余的逐字动画
+              if (isCancelled && errorRunId && message.role === "assistant" && message.meta?.runId === errorRunId) {
+                return {
+                  ...message,
+                  liveText: undefined,
+                  meta: message.meta.status === "running" ? {
+                    ...message.meta,
+                    status: "cancelled" as const,
+                    completedAt,
+                    durationMs: elapsedMs(message.createdAt, completedAt),
+                  } : message.meta,
+                }
+              }
+              return (message.role === "tool" || message.role === "subagent")
                 && (message.meta?.status === "running" || message.meta?.status === "paused")
                 && (
                   message.meta?.subRunId == null
@@ -1651,7 +1653,7 @@ export const applyConversationEvent = (
                     },
                   }
                 : message
-            )),
+            }),
             todos: conversation.todos.map((todo) => (
               isCancelled && todo.status === "running"
                 ? { ...todo, status: "cancelled" as const }
@@ -1663,4 +1665,15 @@ export const applyConversationEvent = (
     default:
       return conversation
   }
+}
+
+/** 实时业务变更需要等待完整历史确认；忽略的事件不改变可重新加载状态 */
+export const applyConversationEvent = (
+  conversation: Conversation,
+  event: ConversationAgUiEvent,
+): Conversation => {
+  const next = reduceConversationEvent(conversation, event)
+  return next === conversation || !next.historySynchronized
+    ? next
+    : { ...next, historySynchronized: false }
 }

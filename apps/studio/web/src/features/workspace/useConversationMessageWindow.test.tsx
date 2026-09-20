@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react'
 import { useRef, useState } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConversationDisplayEntry } from '../conversation/todoTrace/displayEntries'
 import {
@@ -24,8 +24,12 @@ function Harness({
   entries,
   historyCursor,
   loadOlderTrace,
+  threadId = 'thread-1',
+  readingPosition,
 }: {
   entries: ConversationDisplayEntry[]
+  threadId?: string
+  readingPosition?: Parameters<typeof useConversationMessageWindow>[0]['readingPosition']
   historyCursor?: string | null
   loadOlderTrace: (
     threadId: string,
@@ -34,7 +38,8 @@ function Harness({
 }) {
   const paneRef = useRef<HTMLElement>(null)
   current = useConversationMessageWindow({
-    threadId: 'thread-1',
+    threadId,
+    readingPosition,
     entries,
     historyCursor,
     paneRef,
@@ -227,3 +232,135 @@ const currentReveal = (messageId: string) => {
   if (!current) throw new Error('消息窗口尚未挂载')
   return current.revealMessage(messageId)
 }
+
+
+describe('页面内阅读锚点恢复', () => {
+  let frames: Map<number, FrameRequestCallback>
+  let nextFrame: number
+  const flushFrames = async () => {
+    while (frames.size) {
+      const pending = [...frames.values()]
+      frames.clear()
+      await act(async () => pending.forEach(callback => callback(0)))
+    }
+  }
+  beforeEach(() => {
+    frames = new Map()
+    nextFrame = 0
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.set(++nextFrame, callback)
+      return nextFrame
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const readingOptions = () => ({
+    isHydrated: true,
+    threadIds: ['thread-1', 'thread-2'],
+    isFollowingLatest: vi.fn(() => false),
+    pauseFollowing: vi.fn(),
+    scrollToBottom: vi.fn(),
+    onMissing: vi.fn(),
+  })
+  const saveAnchor = () => {
+    const anchor = screen.getByText('消息 1')
+    anchor.getBoundingClientRect = () => ({ top: -25, bottom: 75 }) as DOMRect
+    act(() => current?.captureReadingPosition())
+  }
+
+  it('重新水化后恢复稳定消息偏移，不移动焦点或突出消息', async () => {
+    const options = readingOptions()
+    const loadOlderTrace = vi.fn(async () => false)
+    const view = render(<Harness entries={[entry(1), entry(2)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    saveAnchor()
+    view.rerender(<Harness threadId="thread-2" entries={[entry(2)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    view.rerender(<Harness entries={[]} readingPosition={{ ...options, isHydrated: false }} loadOlderTrace={loadOlderTrace} />)
+    expect(options.pauseFollowing).not.toHaveBeenCalled()
+    view.rerender(<Harness entries={[entry(1), entry(2)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    await act(async () => {})
+    expect(screen.getByText('消息 1').parentElement?.scrollTop).toBe(25)
+    expect(screen.getByText('消息 1')).not.toHaveFocus()
+    expect(screen.getByText('消息 1')).not.toHaveClass('todo-trace-locate-target')
+    expect(options.pauseFollowing).toHaveBeenCalledOnce()
+    expect(loadOlderTrace).not.toHaveBeenCalled()
+  })
+
+  it('窗口外锚点通过同一定位窗口恢复，仍只展示一批消息', async () => {
+    const options = readingOptions()
+    const loadOlderTrace = vi.fn(async () => false)
+    const view = render(<Harness entries={[entry(1)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    saveAnchor()
+    view.rerender(<Harness threadId="thread-2" entries={[entry(2)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    view.rerender(<Harness entries={Array.from({ length: 250 }, (_, index) => entry(index))} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    await flushFrames()
+    expect(screen.getByText('消息 1')).toBeInTheDocument()
+    expect(screen.getByText('消息 1')).not.toHaveFocus()
+    expect(current?.visibleEntries).toHaveLength(100)
+    expect(options.onMissing).not.toHaveBeenCalled()
+  })
+
+  it('淘汰重开通过更早历史页恢复锚点，加载失败保留原位置供重试', async () => {
+    const options = readingOptions()
+    const loadOlderTrace = vi.fn(async () => false)
+    const view = render(<Harness entries={[entry(1)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    saveAnchor()
+    view.rerender(<Harness threadId="thread-2" entries={[entry(2)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    view.rerender(<Harness entries={[entry(100)]} historyCursor="older" readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    await act(async () => {})
+    expect(current?.readingPositionFailed).toBe(true)
+    expect(options.onMissing).not.toHaveBeenCalled()
+    act(() => current?.captureReadingPosition())
+    loadOlderTrace.mockImplementationOnce(async () => {
+      view.rerender(<Harness entries={[entry(1), entry(100)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+      return true
+    })
+    let restoring: Promise<void> | undefined
+    act(() => { restoring = current?.retryReadingPosition() })
+    await flushFrames()
+    await restoring
+    expect(current?.readingPositionFailed).toBe(false)
+    expect(screen.getByText('消息 1').parentElement?.scrollTop).toBe(25)
+    expect(loadOlderTrace).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['user', 'navigation'])('%s 取消恢复并阻止迟到分页移动视口', async reason => {
+    const options = readingOptions()
+    let signal: AbortSignal | undefined
+    let finish: ((value: boolean) => void) | undefined
+    const loadOlderTrace = vi.fn((_threadId: string, request?: { signal?: AbortSignal }) => {
+      signal = request?.signal
+      return new Promise<boolean>(resolve => { finish = resolve })
+    })
+    const view = render(<Harness entries={[entry(1)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    saveAnchor()
+    view.rerender(<Harness threadId="thread-2" entries={[entry(2)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    view.rerender(<Harness entries={[entry(100)]} historyCursor="older" readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    if (reason === 'user') act(() => current?.cancelReadingRestore())
+    else view.rerender(<Harness threadId="thread-2" entries={[entry(2)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    expect(signal?.aborted).toBe(true)
+    await act(async () => finish?.(true))
+    expect(options.scrollToBottom).not.toHaveBeenCalled()
+    expect(options.onMissing).not.toHaveBeenCalled()
+    expect(current?.readingPositionFailed).toBe(false)
+  })
+
+  it('历史已无锚点时回到最新消息并通知，跟随尾部直接恢复', async () => {
+    const options = readingOptions()
+    const loadOlderTrace = vi.fn(async () => false)
+    const view = render(<Harness entries={[entry(1)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    saveAnchor()
+    view.rerender(<Harness threadId="thread-2" entries={[entry(2)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    view.rerender(<Harness entries={[entry(100)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    await act(async () => {})
+    expect(options.onMissing).toHaveBeenCalledOnce()
+    expect(options.scrollToBottom).toHaveBeenCalledOnce()
+    options.isFollowingLatest.mockReturnValue(true)
+    act(() => current?.captureReadingPosition())
+    view.rerender(<Harness threadId="thread-2" entries={[entry(2)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    view.rerender(<Harness entries={[entry(101)]} readingPosition={options} loadOlderTrace={loadOlderTrace} />)
+    expect(options.scrollToBottom).toHaveBeenCalledTimes(2)
+    expect(options.onMissing).toHaveBeenCalledOnce()
+    expect(loadOlderTrace).not.toHaveBeenCalled()
+  })
+})

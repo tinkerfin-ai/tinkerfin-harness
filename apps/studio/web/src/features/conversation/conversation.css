@@ -148,14 +148,12 @@
     justify-content: space-between;
     min-height: var(--control-lg);
     padding-left: var(--space-4);
+    padding-right: var(--space-2);
     border-bottom: 1px solid var(--color-border);
+    background: var(--color-canvas);
     color: var(--color-text-tertiary);
     font-size: var(--type-caption-size);
     line-height: var(--type-caption-line);
-  }
-
-  .markdown-copy-button {
-    margin-right: var(--space-1);
   }
 
   .markdown-code-block pre {
@@ -675,6 +673,15 @@
   .tool-detail-section--params { background: var(--color-layer-2); }
   .tool-detail-section--result { background: var(--color-layer-1); }
 
+  .tool-detail-section,
+  .subagent-trace-output { overflow-anchor: none; }
+
+  .tool-detail-section:focus-visible,
+  .subagent-trace-output:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: -2px;
+  }
+
   .tool-detail-section::-webkit-scrollbar { width: var(--space-2); height: var(--space-2); }
 
   .tool-detail-section::-webkit-scrollbar-thumb {
@@ -977,6 +984,8 @@
     font-size: var(--type-ui-size);
     line-height: var(--type-title-line);
   }
+
+  .subagent-trace-content { display: flow-root; }
 
   .subagent-trace-output .markdown-content :is(p, ul, ol, blockquote, .markdown-code-block, .markdown-table-wrap) {
     margin-bottom: var(--space-2);
@@ -1753,11 +1762,12 @@
   .composer-input-mirror,
   .composer-input-backdrop { box-sizing: border-box; padding: 4px 12px 0 16px; font-family: var(--font-ui); font-size: var(--type-body-size); line-height: var(--type-composer-line); white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
 
-  .composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-width: 0; min-height: 42px; padding: 2px var(--space-2) 6px; container-type: inline-size; }
+  .composer-toolbar-container { container: composer-tools / inline-size; min-width: 0; }
+  .composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-width: 0; min-height: 42px; padding: 2px var(--space-2) 6px; }
   .composer-toolbar-leading,
   .composer-toolbar-trailing { display: flex; align-items: center; min-width: 0; }
-  .composer-toolbar-leading { gap: var(--space-1); }
-  .composer-toolbar-trailing { flex: 0 1 auto; justify-content: flex-end; gap: var(--space-2); }
+  .composer-toolbar-leading { flex: 0 0 auto; gap: var(--space-1); }
+  .composer-toolbar-trailing { flex: 1 1 auto; justify-content: flex-end; gap: var(--space-2); }
   .composer-add-button,
   .send-button { width: var(--control-composer); min-width: var(--control-composer); height: var(--control-composer); min-height: var(--control-composer); padding: 0; }
   .composer-add-button { border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--color-text-primary); box-shadow: none; }
@@ -1779,6 +1789,10 @@
   .send-button:disabled { background: var(--color-active); color: var(--color-text-tertiary); }
   .send-button.stop { background: var(--color-danger-soft); color: var(--color-danger-text); }
 
+
+  @container composer-tools (max-width: 460px) {
+    .ui-compact-picker--access-mode .ui-compact-picker-trigger > span { display: none; }
+  }
 
   .composer-model-error { display: flex; align-items: center; gap: var(--space-1); color: var(--color-danger-text); font-size: var(--type-caption-size); white-space: nowrap; }
   .composer-model-error .ui-button { min-height: var(--control-composer); }
@@ -1824,7 +1838,7 @@
   }
 
 
-  @media (max-width: 767px) {
+  @container conversation (max-width: 767px) {
     .user-message .message-markdown { max-width: 88%; }
     .composer-dock { --composer-inline-inset: var(--layout-page-gutter); }
     .composer textarea { font-size: var(--type-body-size); }
@@ -1855,7 +1869,7 @@
     .plan-question-datetime-controls .ui-temporal-picker__trigger { width: 100%; min-width: 0; }
   }
 
-  @media (max-width: 440px) {
+  @container conversation (max-width: 440px) {
     .composer-dock { --composer-inline-inset: var(--layout-page-gutter); }
     .composer-auxiliary-controls { gap: var(--space-4); }
     .composer-auxiliary-control { padding-inline: var(--space-1-5); }
@@ -1882,7 +1896,6 @@
     .composer-add-button,
     .composer-plan-chip,
     .send-button { min-width: var(--control-lg); min-height: var(--control-lg); height: var(--control-lg); }
-    .markdown-copy-button { min-height: var(--control-lg); }
     .message-action-row { --message-action-control-size: var(--control-lg); }
     .message-action-row--assistant { min-height: calc(var(--control-lg) + 14px); }
     .message-action-row--user {
@@ -1932,6 +1945,8 @@
     .plan-review-composer-footer::before { background: Canvas; }
     .subagent-card-head:focus-visible,
     .tool-row > summary:focus-visible,
+    .tool-detail-section:focus-visible,
+    .subagent-trace-output:focus-visible,
     .plan-interaction-toggle-surface:focus-visible,
     .plan-question-progress-step:focus-visible,
     :is(.approval-composer, .plan-question-composer, .plan-review-composer)

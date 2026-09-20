@@ -148,16 +148,12 @@ describe('conversation stream client', () => {
     ))
     streamController?.enqueue(encoder.encode('"runId":"run-conflict"}\r'))
     streamController?.enqueue(encoder.encode('\n\r\n'))
-    const result = await Promise.race([
-      pending,
-      new Promise<'timeout'>((resolve) => window.setTimeout(() => resolve('timeout'), 50)),
-    ])
-    streamController?.close()
-    if (result === 'timeout') await pending
-
-    expect(result).not.toBe('timeout')
-    if (result !== 'timeout') {
+    try {
+      const result = await pending
       expect(result.value).toMatchObject({ seq: 7, event: { type: 'RUN_STARTED' } })
+    } finally {
+      streamController?.close()
+      await iterator.return?.(undefined)
     }
   })
 
