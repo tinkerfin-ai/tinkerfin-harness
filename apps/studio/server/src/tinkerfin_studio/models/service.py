@@ -84,10 +84,29 @@ class AgentModelService:
 
     async def list_catalog(self) -> AgentModelCatalog:
         rows = await self._repository.list_enabled()
+        connections = await self._repository.connections()
+        by_connection: dict[str, list[AgentModel]] = {
+            connection.connection_id: [] for connection in connections
+        }
+        for row in rows:
+            if row.connection_id not in by_connection:
+                raise SystemException(ModelErrorCode.CATALOG_UNAVAILABLE)
+            by_connection[row.connection_id].append(row)
         try:
             items = [
-                AgentModelCatalogItem.model_validate(row, from_attributes=True)
-                for row in rows
+                AgentModelCatalogItem.model_validate(
+                    {
+                        "model_id": row.model_id,
+                        "display_name": row.display_name,
+                        "connection_id": connection.connection_id,
+                        "connection_display_name": connection.display_name,
+                        "image_support": row.image_support,
+                        "reasoning_enabled": row.reasoning_enabled,
+                        "is_default": row.is_default,
+                    }
+                )
+                for connection in connections
+                for row in by_connection[connection.connection_id]
             ]
         except ValidationError as error:
             raise SystemException(ModelErrorCode.CATALOG_UNAVAILABLE) from error

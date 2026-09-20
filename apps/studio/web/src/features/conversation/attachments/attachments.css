@@ -330,7 +330,7 @@
     gap: var(--space-2);
     height: 64px;
     min-height: 64px;
-    padding: var(--space-3) var(--space-5);
+    padding: var(--space-3) var(--layout-page-gutter);
   }
   .attachment-document-viewer .modal-dialog-head h2 {
     flex: 1;
@@ -416,12 +416,12 @@
   .attachment-document-body {
     min-height: 0;
     overflow: auto;
-    padding: var(--space-8);
+    padding: var(--layout-page-gutter);
     background: var(--color-layer-2);
   }
   .attachment-document-pdf {
     display: block;
-    width: min(100%, 1040px);
+    width: min(100%, var(--layout-document-width));
     height: calc(100dvh - 160px);
     min-height: 480px;
     margin: 0 auto;
@@ -433,7 +433,7 @@
     overflow-wrap: anywhere;
   }
   .attachment-document-page {
-    width: min(100%, var(--layout-content-medium));
+    width: min(100%, var(--layout-form-width));
     min-height: calc(100dvh - 160px);
     margin: 0 auto;
     padding: var(--space-10);
@@ -441,7 +441,7 @@
     box-shadow: var(--shadow-2);
   }
   .attachment-document-page--sheet {
-    width: min(100%, 1040px);
+    width: min(100%, var(--layout-document-width));
   }
   .attachment-document-unavailable {
     display: flex;
@@ -461,7 +461,7 @@
     font-size: var(--type-caption-size);
   }
   .attachment-preview-note--pdf {
-    width: min(100%, 1040px);
+    width: min(100%, var(--layout-document-width));
     margin-inline: auto;
   }
   .attachment-document-content.markdown-content--article .markdown-table-wrap {
@@ -547,7 +547,7 @@
     gap: var(--space-2);
     height: 64px;
     min-height: 64px;
-    padding: var(--space-3) var(--space-5);
+    padding: var(--space-3) var(--layout-page-gutter);
   }
   .attachment-viewer .modal-dialog-head > div:first-child {
     flex: 1;
@@ -589,7 +589,7 @@
     display: flex;
     min-height: 0;
     min-width: 0;
-    margin: 0 var(--space-5);
+    margin: 0 var(--layout-page-gutter);
   }
   .attachment-viewer-stage {
     position: relative;
@@ -668,7 +668,7 @@
     flex-direction: column;
     align-items: center;
     gap: var(--space-2);
-    padding: var(--space-3) var(--space-5);
+    padding: var(--space-3) var(--layout-page-gutter);
     min-width: 0;
   }
   .attachment-viewer-gallery {
@@ -857,20 +857,20 @@
     .attachment-document-layout,
     .attachment-document-layout.is-info-open { grid-template-columns: minmax(0, 1fr); }
     .attachment-document-rail { display: none; }
-    .attachment-document-body { padding: var(--space-2); }
+    .attachment-document-body { padding: var(--layout-page-gutter); }
     .attachment-document-page { padding: var(--space-5); }
     .attachment-document-pdf { height: calc(100dvh - 120px); min-height: 0; }
-    .attachment-document-viewer .modal-dialog-head { padding: var(--space-2); gap: var(--space-1); }
+    .attachment-document-viewer .modal-dialog-head { padding: var(--space-2) var(--layout-page-gutter); gap: var(--space-1); }
 
     .attachment-viewer .modal-dialog-head {
-      padding: var(--space-2);
+      padding: var(--space-2) var(--layout-page-gutter);
       gap: var(--space-1);
     }
     .attachment-viewer-body {
-      margin-inline: var(--space-2);
+      margin-inline: var(--layout-page-gutter);
     }
     .attachment-viewer-footer {
-      padding: var(--space-2);
+      padding: var(--space-2) var(--layout-page-gutter);
     }
     .attachment-viewer-info {
       position: absolute;

@@ -765,3 +765,17 @@ it('引用附件后保留草稿并聚焦输入框', async () => {
   expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('继续说明图中的内容')
   expect(props.onSend).not.toHaveBeenCalled()
 })
+
+
+it('卡片关闭结算后显示输入框并恢复焦点', async () => {
+  const props = { ...composerChromeProps(), value: '继续讨论', isRunning: false,
+    onChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn() }
+  const { rerender } = render(<Composer {...props} takeover={<section aria-label="计划卡片">等待审阅</section>} />)
+  expect(screen.getByRole('region', { name: '计划卡片' })).toBeVisible()
+  expect(screen.queryByRole('textbox', { name: '消息输入' })).not.toBeInTheDocument()
+  rerender(<Composer {...props} isRunning />)
+  rerender(<Composer {...props} />)
+  await waitFor(() => expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveFocus())
+  expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('继续讨论')
+  expect(props.onSend).not.toHaveBeenCalled()
+})

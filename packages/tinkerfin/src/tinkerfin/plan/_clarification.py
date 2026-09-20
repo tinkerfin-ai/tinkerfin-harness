@@ -8,10 +8,9 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from types import MappingProxyType, NoneType
-from typing import Annotated, Any, cast, get_args, get_origin
+from typing import Annotated, Any, Literal, cast, get_args, get_origin
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, create_model
 
 from ._json_schema import require_valid_schema, validate_json_schema_instance
@@ -46,7 +45,6 @@ _JSON_OBJECT = TypeAdapter(
     dict[str, JsonValue],
     config=ConfigDict(allow_inf_nan=False),
 )
-_LANGGRAPH_DURABILITY_CONFIG_KEY = "__pregel_durability"
 _NON_BLANK_PATTERN = r"\S"
 _BUILTIN_IDS = frozenset(item.type_id for item in BUILTIN_CLARIFICATION_TYPES)
 _BUILTIN_QUESTION_BASES: dict[str, type[ClarificationQuestionBase]] = {
@@ -102,18 +100,6 @@ def _response_answer_type(response: BaseModel) -> str:
     if not isinstance(value, str) or not value:
         raise TypeError("clarification response must have one answer_type")
     return value
-
-
-def stateless_child_config(config: RunnableConfig) -> RunnableConfig:
-    """Keep parent runtime resources without inheriting synchronous durability."""
-
-    child = cast(RunnableConfig, dict(config))
-    configurable = config.get("configurable")
-    if isinstance(configurable, Mapping):
-        child_configurable = dict(configurable)
-        child_configurable.pop(_LANGGRAPH_DURABILITY_CONFIG_KEY, None)
-        child["configurable"] = child_configurable
-    return child
 
 
 def _annotation_leaves(annotation: object) -> tuple[object, ...]:
@@ -754,6 +740,23 @@ def _scope_custom_schema(
     return cast(dict[str, JsonValue], _rewrite_schema_refs(schema, renames=renames))
 
 
+class ClarificationDismissResponse(ClarificationModel):
+    """Close a questionnaire without answering it or invoking the model."""
+
+    type: Literal["dismiss"]
+
+
+class ClarificationDiscussionResponse(ClarificationModel):
+    """End the pending questionnaire and discuss it without submitting answers."""
+
+    type: Literal["discuss"]
+    message: str = Field(
+        min_length=1,
+        pattern=_NON_BLANK_PATTERN,
+        description="User message about the pending clarification",
+    )
+
+
 def build_response_schema(
     binding: ClarificationSchemaBinding,
     form: ClarificationFormBase,
@@ -807,9 +810,33 @@ def build_response_schema(
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "additionalProperties": False,
-        "required": ["type", "answers"],
+        "required": ["type"],
+        "oneOf": [
+            {
+                "properties": {"type": {"const": "respond"}},
+                "required": ["answers"],
+                "not": {"required": ["message"]},
+            },
+            {
+                "properties": {"type": {"const": "discuss"}},
+                "required": ["message"],
+                "not": {"required": ["answers"]},
+            },
+            {
+                "properties": {"type": {"const": "dismiss"}},
+                "not": {
+                    "anyOf": [{"required": ["answers"]}, {"required": ["message"]}]
+                },
+            },
+        ],
         "properties": {
-            "type": {"const": "respond"},
+            "type": {"enum": ["respond", "discuss", "dismiss"]},
+            # Resume validation must reject blank discussion before saving acceptance.
+            "message": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": _NON_BLANK_PATTERN,
+            },
             "answers": {
                 "type": "object",
                 "additionalProperties": False,
@@ -883,6 +910,34 @@ def _validate_builtin_response(
             raise ValueError("multiple-choice response violates selection bounds")
 
 
+def validate_clarification_response(
+    binding: ClarificationSchemaBinding,
+    form: ClarificationFormBase,
+    response_schema: dict[str, JsonValue],
+    value: object,
+) -> (
+    tuple[RequirementAnswer, ...]
+    | ClarificationDiscussionResponse
+    | ClarificationDismissResponse
+):
+    """Validate either a complete answer batch or an explicit discussion request."""
+    if isinstance(value, Mapping) and value.get("type") in {"discuss", "dismiss"}:
+        try:
+            payload = _JSON_OBJECT.validate_python(value)
+            validate_json_schema_instance(payload, response_schema)
+            return (
+                ClarificationDismissResponse.model_validate(payload)
+                if payload["type"] == "dismiss"
+                else ClarificationDiscussionResponse.model_validate(payload)
+            )
+        except Exception as error:
+            raise PlanClarificationResponseError(
+                "discussion response does not match the pending form",
+                cause=error,
+            ) from error
+    return validate_and_normalize_response(binding, form, response_schema, value)
+
+
 def validate_and_normalize_response(
     binding: ClarificationSchemaBinding,
     form: ClarificationFormBase,
@@ -952,6 +1007,6 @@ __all__ = [
     "pending_contract_digest",
     "restore_form",
     "serialize_form",
-    "stateless_child_config",
     "validate_and_normalize_response",
+    "validate_clarification_response",
 ]

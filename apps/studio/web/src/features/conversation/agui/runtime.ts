@@ -397,7 +397,7 @@ const isIsoCalendarDate = (value: string) => {
   return day >= 1 && day <= (daysInMonth[month - 1] ?? 0)
 }
 
-const PLAN_REVIEW_ACTIONS = ['approve', 'reject', 'cancel'] as const
+const PLAN_REVIEW_ACTIONS = ['approve', 'reject', 'cancel', 'respond'] as const
 
 const parsePlanReviewActions = (
   responseSchema: JsonValue | undefined,
@@ -415,11 +415,11 @@ const parsePlanReviewActions = (
   if (
     actions.length === 0
     || actions.some((action) => (
-      !PLAN_REVIEW_ACTIONS.includes(action as typeof PLAN_REVIEW_ACTIONS[number])
+      (action !== 'dismiss' && !PLAN_REVIEW_ACTIONS.includes(action as typeof PLAN_REVIEW_ACTIONS[number]))
       || typeof mapping[action] !== 'string'
     ))
   ) return null
-  return actions as PlanReviewState['allowedActions']
+  return actions.filter(action => action !== 'dismiss') as PlanReviewState['allowedActions']
 }
 
 export const planInteractionFromInterrupts = (
@@ -872,6 +872,22 @@ export const buildResumePayload = (
   }
 }
 
+/** 结束当前卡片并等待下一条用户消息，关闭本身不生成模型回复 */
+export const buildPlanDismissPayload = (conversation: Conversation): ChatRequestPayload => {
+  const interaction = conversation.planInteraction
+  if (!interaction || interaction.submitted) throw new ConversationError('plan_stale')
+  return {
+    threadId: conversation.threadId, runId: createRunId(),
+    state: {}, messages: [], tools: [], context: [],
+    forwardedProps: forwardedPropsFor(conversation.model, 'plan', conversation.accessMode),
+    resume: [{ interruptId: interaction.interruptId, status: 'resolved',
+      payload: interaction.kind === 'questions'
+        ? { type: 'dismiss' }
+        : { type: 'dismiss', baseRevision: interaction.revision },
+    }],
+  }
+}
+
 export const buildPlanResumePayload = (
   conversation: Conversation,
 ): ChatRequestPayload => {
@@ -1188,6 +1204,15 @@ export const applyConversationEvent = (
       const pending = preservePending
         ? restorePendingInteraction(conversation)
         : conversation
+      const messages = [...pending.messages]
+      if (isResume && !preservePending && pending.planInteraction) {
+        const closed: Message = {
+          id: `plan-history:${pending.planInteraction.interruptId}`, role: 'process', content: '', createdAt: nowIso(),
+          meta: { planHistory: pending.planInteraction, status: 'completed' },
+        }
+        const questionIndex = messages.findIndex(message => message.role === 'user' && message.meta?.runId === event.runId)
+        messages.splice(questionIndex < 0 ? messages.length : questionIndex, 0, closed)
+      }
       return {
         ...pending,
         threadId: event.threadId,
@@ -1197,7 +1222,7 @@ export const applyConversationEvent = (
         notice: undefined,
         approval: isResume && !preservePending ? undefined : pending.approval,
         planInteraction: preservePending ? pending.planInteraction : undefined,
-        messages: pending.messages.map((message) => (
+        messages: messages.map((message) => (
           isResume && !preservePending && message.meta?.status === "paused"
             ? {
                 ...message,

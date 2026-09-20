@@ -621,10 +621,7 @@ def graph_node_mutations(
                 )
             continue
         if isinstance(fact, PlanRevisionFact):
-            waiting = bool(
-                fact.status
-                and fact.status in {"awaiting_input", "awaiting_review", "draft"}
-            )
+            waiting = bool(fact.status and fact.status in {"awaiting_review", "draft"})
             status = (
                 TraceGraphNodeStatus.WAITING
                 if waiting

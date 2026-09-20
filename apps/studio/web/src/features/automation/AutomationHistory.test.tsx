@@ -18,11 +18,9 @@ function HistoryExample() {
 }
 
 describe('自动化运行历史', () => {
-  it('桌面顶栏与内容使用一致的宽松水平边距', () => {
-    expect(automationStyles).toMatch(/\.automation-content\s*\{[^}]*padding:\s*var\(--space-6\) var\(--space-8\);/s)
-    expect(automationStyles).toMatch(/\.chat-header:has\(\.header-navigation\):has\(\.automation-header-actions\)\s*\{[^}]*padding-inline:\s*var\(--space-8\);/s)
-    expect(automationStyles).toMatch(/@media \(max-width: 767px\)[\s\S]*\.automation-content\s*\{[^}]*padding:\s*var\(--space-4\);/s)
-    expect(automationStyles).toMatch(/@media \(max-width: 767px\)[\s\S]*\.chat-header:has\(\.header-navigation\):has\(\.automation-header-actions\)\s*\{[^}]*padding-inline:\s*var\(--space-2\);/s)
+  it('顶栏与内容消费相同的页面边距令牌', () => {
+    expect(automationStyles).toMatch(/\.automation-content\s*\{[^}]*padding:\s*var\(--space-6\) var\(--layout-page-gutter\);/s)
+    expect(automationStyles).toMatch(/\.chat-header:has\(\.header-navigation\):has\(\.automation-header-actions\)\s*\{[^}]*padding-inline:\s*var\(--layout-page-gutter\);/s)
   })
 
   it('每天具有独立滚动区域，列表不提供再次执行操作', () => {

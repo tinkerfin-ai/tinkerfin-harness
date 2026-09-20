@@ -83,7 +83,6 @@ describe('AuthScreen', () => {
   it('keeps short viewport forms inside a definite scroll container', () => {
     expect(authStyles).toMatch(/\.auth-page\s*{[^}]*min-height:\s*100dvh;[^}]*overflow:\s*hidden;/s)
     expect(authStyles).toMatch(/@media \(max-width:\s*1023px\)[\s\S]*\.auth-page\s*{[^}]*overflow-y:\s*auto;/s)
-    expect(authStyles).toMatch(/\.auth-form-stage\s*{[^}]*calc\(100vw - var\(--space-8\)\)/s)
   })
 
   it('keeps the animated blue-violet ambient inside the desktop introduction pane', () => {

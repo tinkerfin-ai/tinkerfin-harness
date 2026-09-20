@@ -54,6 +54,7 @@ function collectCopyableAssistantIds(entries: ConversationDisplayEntry[], curren
 }
 
 export function ConversationViewport({
+  widthHandles,
   conversation,
   entries,
   hasEarlierMessages,
@@ -78,6 +79,7 @@ export function ConversationViewport({
   onError,
   onLoadEarlierMessages,
 }: {
+  widthHandles?: ReactNode
   conversation: Conversation
   entries: ConversationDisplayEntry[]
   hasEarlierMessages: boolean
@@ -190,6 +192,7 @@ export function ConversationViewport({
         )}
         </section>
         {/* eslint-enable jsx-a11y/no-noninteractive-tabindex */}
+        {widthHandles}
         {navigation}
         <OverlayScrollbar
           viewportRef={paneRef}

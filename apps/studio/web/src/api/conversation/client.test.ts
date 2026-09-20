@@ -322,7 +322,7 @@ describe('conversation stream client', () => {
       {
         type: 'TOOL_CALL_START',
         toolCallId: 'planner-outcome-1',
-        toolCallName: 'PlannerOutcome',
+        toolCallName: 'submit_plan',
         parentMessageId: 'planner-message-1',
       },
       {

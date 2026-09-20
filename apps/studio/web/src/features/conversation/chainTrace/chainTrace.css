@@ -1,7 +1,7 @@
 @layer conversation {
   .chain-trace,
   .chain-trace-details {
-    --chain-trace-inline-inset: calc(var(--space-6) + var(--space-1));
+    --chain-trace-inline-inset: var(--layout-page-gutter);
     --chain-trace-user: var(--color-trace-user);
     --chain-trace-context: var(--color-trace-context);
     --chain-trace-model: var(--color-trace-model);
@@ -9,6 +9,8 @@
     --chain-trace-subagent: var(--color-trace-subagent);
     --chain-trace-assistant: var(--color-trace-assistant);
   }
+
+  .chain-trace-details { --chain-trace-inline-inset: var(--layout-panel-inset); }
 
   .chain-trace {
     --chain-trace-row-height: var(--control-md);
@@ -174,7 +176,7 @@
   }
 
   .chain-trace-timeline-labels {
-    padding: 3px 0 3px calc(var(--space-6) + var(--space-1));
+    padding: 3px 0 3px var(--chain-trace-inline-inset);
     border-right: 1px solid var(--color-border);
   }
 
@@ -439,7 +441,7 @@
 
   .chain-trace-ledger-row-shell .chain-trace-ledger-row {
     padding-left: calc(
-      var(--space-6) + var(--space-1)
+      var(--chain-trace-inline-inset)
       + var(--chain-trace-scope-depth) * var(--chain-trace-level-indent)
     );
   }
@@ -449,7 +451,7 @@
     z-index: var(--layer-local-raised);
     top: 0;
     left: calc(
-      var(--space-0-5)
+      var(--chain-trace-inline-inset) - var(--space-6) - var(--space-0-5)
       + var(--chain-trace-scope-depth) * var(--chain-trace-level-indent)
     );
     display: grid;
@@ -484,7 +486,7 @@
 
   .chain-trace-ledger-header {
     height: var(--chain-trace-ledger-header-height);
-    padding: 0 calc(var(--space-6) + var(--space-1));
+    padding: 0 var(--chain-trace-inline-inset);
     border-bottom: 1px solid var(--color-border);
     background: color-mix(in srgb, var(--color-layer-1) 94%, transparent);
     backdrop-filter: blur(var(--space-3));
@@ -510,7 +512,7 @@
     height: var(--chain-trace-turn-height);
     align-items: center;
     gap: var(--space-1-5);
-    padding: 0 calc(var(--space-6) + var(--space-1));
+    padding: 0 var(--chain-trace-inline-inset);
     border: 0;
     border-bottom: 1px solid var(--color-border-subtle);
     background: var(--color-layer-2);
@@ -543,7 +545,7 @@
     position: relative;
     width: 100%;
     min-height: var(--chain-trace-row-height);
-    padding: 0 calc(var(--space-6) + var(--space-1));
+    padding: 0 var(--chain-trace-inline-inset);
     border: 0;
     border-bottom: 1px solid var(--color-border-subtle);
     background: transparent;
@@ -790,11 +792,8 @@
 
   .chain-trace-details-header {
     column-gap: calc(var(--space-2) + var(--space-0-5));
-    padding:
-      calc(var(--space-3) - 1px)
-      calc(var(--chain-trace-inline-inset) - var(--space-1))
-      calc(var(--space-3) - 1px)
-      calc(var(--space-4) + var(--space-0-5));
+    /* 关闭与外层搜索图标同轴，右侧补偿两种按钮的尺寸差 */
+    padding: calc(var(--space-3) - 1px) calc(var(--layout-page-gutter) - var(--space-1)) calc(var(--space-3) - 1px) var(--layout-panel-inset);
     border: 0;
   }
 
@@ -847,7 +846,7 @@
   .chain-trace-detail-body {
     height: 100%;
     min-height: 0;
-    padding: calc(var(--space-3) + var(--space-0-5)) calc(var(--space-4) + var(--space-0-5)) calc(var(--space-6) + var(--space-1));
+    padding: calc(var(--space-3) + var(--space-0-5)) var(--layout-panel-inset) calc(var(--space-6) + var(--space-1));
     overflow: auto;
     overscroll-behavior-y: none;
     overscroll-behavior-x: auto;
@@ -990,7 +989,7 @@
   .chain-trace-details-backdrop .chain-trace-details {
     position: relative;
     z-index: var(--layer-local);
-    width: min(var(--layout-drawer-width), calc(100vw - var(--space-8)));
+    width: min(var(--layout-drawer-width), calc(100vw - var(--layout-page-gutter)));
     max-width: none;
     height: 100dvh;
     max-height: none;
@@ -1006,8 +1005,7 @@
   }
 
   @media (max-width: 440px) {
-    .chain-trace,
-    .chain-trace-details { --chain-trace-inline-inset: var(--space-3); }
+
     .chain-trace-toolbar {
       grid-template-columns: minmax(0, 1fr) auto;
       height: max(var(--control-md), calc(var(--chain-trace-action-height) + var(--space-2)));
@@ -1053,7 +1051,7 @@
       height: var(--control-lg);
       min-height: var(--control-lg);
     }
-    .chain-trace-details-header { padding-right: var(--chain-trace-inline-inset); }
+    .chain-trace-details-header { padding-right: var(--layout-page-gutter); }
     .chain-trace-timeline { display: none; }
     .chain-trace-turn-heading { min-height: var(--control-lg); }
     .chain-trace-ledger-row:hover { background: transparent; }

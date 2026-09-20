@@ -101,6 +101,7 @@ export function Composer({
   const [caret, setCaret] = useState(value.length)
   const [activeSuggestionId, setActiveSuggestionId] = useState<string>()
   const takeoverWasActive = useRef(Boolean(takeover))
+  const focusAfterTakeover = useRef(false)
   const isDisabled = isHydrating || Boolean(disabledReason)
   const slashHit = useMemo(
     () => isDisabled ? null : detectLeadingSlashToken(value, caret),
@@ -141,8 +142,13 @@ export function Composer({
   useEffect(() => {
     const wasActive = takeoverWasActive.current
     takeoverWasActive.current = Boolean(takeover)
-    if (!wasActive || takeover || isDisabled) return
-    const frame = window.requestAnimationFrame(() => input.current?.focus())
+    if (wasActive && !takeover) focusAfterTakeover.current = true
+    if (takeover) focusAfterTakeover.current = false
+    if (!focusAfterTakeover.current || isDisabled) return
+    const frame = window.requestAnimationFrame(() => {
+      input.current?.focus()
+      focusAfterTakeover.current = false
+    })
     return () => window.cancelAnimationFrame(frame)
   }, [isDisabled, takeover])
 

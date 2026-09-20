@@ -1,12 +1,11 @@
 @layer settings {
   .settings-dialog {
-    --layout-settings-dialog: calc((var(--layout-settings-nav) + var(--layout-content-wide)) * .95);
     --layout-settings-height: calc(var(--space-16) * 9.5);
-    --settings-content-inset: var(--space-5);
+    --settings-content-inset: var(--layout-panel-inset);
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    width: min(var(--layout-settings-dialog), calc(100vw - var(--space-8)));
-    height: min(var(--layout-settings-height), calc(100dvh - var(--space-8)));
+    width: min(100%, var(--layout-settings-dialog));
+    height: min(var(--layout-settings-height), calc(100dvh - 2 * var(--layout-page-gutter)));
   }
 
   .settings-dialog .modal-dialog-head { padding-inline: var(--settings-content-inset); }
@@ -109,12 +108,11 @@
   .settings-choice-check { display: grid; width: var(--icon-md); height: var(--icon-md); flex: 0 0 auto; place-items: center; color: var(--color-brand-text); }
 
   @media (max-width: 767px) {
-    .settings-dialog { height: calc(100dvh - var(--space-8)); }
+    .settings-dialog { height: calc(100dvh - 2 * var(--layout-page-gutter)); }
     .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-    .settings-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: var(--space-2) var(--space-4); border-right: 0; border-bottom: 1px solid var(--color-border-subtle); }
+    .settings-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: var(--space-2) var(--layout-panel-inset); border-right: 0; border-bottom: 1px solid var(--color-border-subtle); }
     .settings-nav__item { justify-content:center; padding-inline:var(--space-1); gap:var(--space-1); font-size:var(--type-caption-size); white-space:nowrap; }
     .settings-nav__item svg { flex-shrink:0; }
-    .settings-dialog { --settings-content-inset: var(--space-4); }
     .settings-theme-options { grid-template-columns:minmax(0,1fr); }
     .settings-choice-picker, .settings-choice-picker.settings-preference-picker { width: 100%; }
   }

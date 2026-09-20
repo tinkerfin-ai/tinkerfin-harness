@@ -23,7 +23,7 @@ for (const theme of ['light','dark']) test(`输入框及菜单滚动不移动会
     const path = new URL(route.request().url()).pathname
     let data:unknown = {}
     if (path === '/api/auth/me') data = {expires_at:'2099-01-01T00:00:00Z',user}
-    else if (path === '/api/models') data = {defaultModelId:'model-0',items:Array.from({length:35},(_,i)=>({modelId:`model-${i}`,displayName:`Model ${i}`,imageSupport:'unknown',reasoningEnabled:false,isDefault:i===0}))}
+    else if (path === '/api/models') data = {defaultModelId:'model-0',items:Array.from({length:35},(_,i)=>({modelId:`model-${i}`,displayName:`Model ${i}`,imageSupport:'unknown',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled:false,isDefault:i===0}))}
     else if (path === '/api/conversation/config') data = {dayRanges:[7,30]}
     else if (path === '/api/conversation/history') data = {items:[{...history,status:'idle',hasPendingInterrupt:false,updatedAt:'2026-09-14T00:00:00Z'}],nextCursor:null}
     else if (path.endsWith(`/${history.threadId}/history`)) data = history

@@ -26,6 +26,7 @@ from tinkerfin_contracts import (
     RunInputObservation,
     RunObserverFailedObservation,
     RunResumeCheckpointedObservation,
+    RunResumeSummary,
     RunSourceContext,
     RunStartedObservation,
     RunTerminalObservation,
@@ -761,67 +762,10 @@ class _TracingSession:
                         content=captured_user_content,
                     )
                 )
-            for summary in source.resume:
-                (
-                    interaction_namespace,
-                    pending_interaction,
-                ) = self._resolve_pending_interaction(
-                    summary.interrupt_id,
-                )
-                facts.append(
-                    make_fact(
-                        InteractionFact,
-                        common,
-                        phase="resolved",
-                        interaction_id=_scope_id(
-                            "interaction",
-                            interaction_namespace,
-                            summary.interrupt_id,
-                        ),
-                        source_interaction_id=summary.interrupt_id,
-                        graph_namespace=interaction_namespace,
-                        in_subagent_scope=self._in_subagent_scope(
-                            interaction_namespace
-                        ),
-                        interaction_kind=pending_interaction.kind,
-                        tool_call_ids=pending_interaction.tool_call_ids,
-                        status=summary.status,
-                        payload=(
-                            None
-                            if summary.decision is None
-                            else self._capture(
-                                {"decision": summary.decision},
-                                content_kind="interaction",
-                                component_name=pending_interaction.kind,
-                            )
-                        ),
-                    )
-                )
-            for interrupt_id in implicit_resume_ids:
-                (
-                    interaction_namespace,
-                    pending_interaction,
-                ) = self._resolve_pending_interaction(interrupt_id)
-                facts.append(
-                    make_fact(
-                        InteractionFact,
-                        common,
-                        phase="resolved",
-                        interaction_id=_scope_id(
-                            "interaction",
-                            interaction_namespace,
-                            interrupt_id,
-                        ),
-                        source_interaction_id=interrupt_id,
-                        graph_namespace=interaction_namespace,
-                        in_subagent_scope=self._in_subagent_scope(
-                            interaction_namespace
-                        ),
-                        interaction_kind=pending_interaction.kind,
-                        tool_call_ids=pending_interaction.tool_call_ids,
-                        status="resolved",
-                    )
-                )
+            if source.input_kind == "abandon":
+                facts.extend(self._resolved_interaction_facts(source.resume, common))
+            # An unbound request is not proof of native resume either. Native
+            # snapshots close an implicit interrupt after it actually disappears.
             return facts
         if isinstance(observation, ModelCallObservation):
             if observation.failure_origin:
@@ -1123,13 +1067,22 @@ class _TracingSession:
                 )
             ]
         if isinstance(observation, RunResumeCheckpointedObservation):
+            # A resume request can fail validation before the Runtime accepts it.
+            # Only saver-readable acceptance may close its pending cards; see
+            # test_blank_discussion_is_rejected_before_accepting_the_card.
+            accepted = tuple(
+                summary
+                for summary in self._context.resume
+                if summary.interrupt_id in observation.native_interrupt_ids
+            )
             return [
                 make_fact(
                     RunFact,
                     common,
                     phase="resume_checkpointed",
                     interrupt_ids=observation.native_interrupt_ids,
-                )
+                ),
+                *self._resolved_interaction_facts(accepted, common),
             ]
         if isinstance(observation, RunObserverFailedObservation):
             return [
@@ -2486,6 +2439,48 @@ class _TracingSession:
                     )
                 self._tool_results.add(tool_key)
                 self._tool_completed.add(tool_key)
+        return facts
+
+    def _resolved_interaction_facts(
+        self,
+        summaries: tuple[RunResumeSummary, ...],
+        common: Mapping[str, object],
+    ) -> list[TraceSemanticFact]:
+        facts: list[TraceSemanticFact] = []
+        for summary in summaries:
+            (
+                interaction_namespace,
+                pending_interaction,
+            ) = self._resolve_pending_interaction(
+                summary.interrupt_id,
+            )
+            facts.append(
+                make_fact(
+                    InteractionFact,
+                    common,
+                    phase="resolved",
+                    interaction_id=_scope_id(
+                        "interaction",
+                        interaction_namespace,
+                        summary.interrupt_id,
+                    ),
+                    source_interaction_id=summary.interrupt_id,
+                    graph_namespace=interaction_namespace,
+                    in_subagent_scope=self._in_subagent_scope(interaction_namespace),
+                    interaction_kind=pending_interaction.kind,
+                    tool_call_ids=pending_interaction.tool_call_ids,
+                    status=summary.status,
+                    payload=(
+                        None
+                        if summary.decision is None
+                        else self._capture(
+                            {"decision": summary.decision},
+                            content_kind="interaction",
+                            component_name=pending_interaction.kind,
+                        )
+                    ),
+                )
+            )
         return facts
 
     def _resolve_pending_interaction(

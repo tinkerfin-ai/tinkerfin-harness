@@ -30,7 +30,7 @@ describe('PlanReviewCard', () => {
     window.sessionStorage.clear()
   })
 
-  it('shows only approve, reject, and the header cancel action', async () => {
+  it('shows approve, reject, and the independent close action', async () => {
     const user = userEvent.setup()
     const submit = vi.fn()
     const cancel = vi.fn()
@@ -40,7 +40,7 @@ describe('PlanReviewCard', () => {
         interaction={interaction()}
         onChange={vi.fn()}
         onSubmit={submit}
-        onCancel={cancel}
+        onClose={cancel}
       />,
     )
 
@@ -67,7 +67,7 @@ describe('PlanReviewCard', () => {
 
     await user.click(approve)
     expect(submit).toHaveBeenCalledExactlyOnceWith('approve')
-    await user.click(screen.getByRole('button', { name: '取消当前 Plan 草稿' }))
+    await user.click(screen.getByRole('button', { name: '关闭卡片，继续对话' }))
     expect(cancel).toHaveBeenCalledOnce()
   })
 
@@ -82,7 +82,7 @@ describe('PlanReviewCard', () => {
           interaction={current}
           onChange={setCurrent}
           onSubmit={submit}
-          onCancel={vi.fn()}
+          onClose={vi.fn()}
         />
       )
     }
@@ -109,13 +109,13 @@ describe('PlanReviewCard', () => {
         interaction={{ ...interaction(), allowedActions: ['reject'] }}
         onChange={vi.fn()}
         onSubmit={vi.fn()}
-        onCancel={vi.fn()}
+        onClose={vi.fn()}
       />,
     )
 
     expect(screen.getByRole('button', { name: '拒绝' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '批准' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '取消当前 Plan 草稿' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '关闭卡片，继续对话' })).toBeInTheDocument()
   })
 
   it('stays expanded while retaining the review header cancel affordance', () => {
@@ -125,7 +125,7 @@ describe('PlanReviewCard', () => {
         interaction={interaction()}
         onChange={vi.fn()}
         onSubmit={vi.fn()}
-        onCancel={vi.fn()}
+        onClose={vi.fn()}
       />,
     )
 
@@ -134,7 +134,7 @@ describe('PlanReviewCard', () => {
     const card = screen.getByRole('region', { name: 'Plan 审阅' })
     expect(card).not.toHaveClass('is-minimized')
     expect(card.querySelector('.plan-review-toggle-surface')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '取消当前 Plan 草稿' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '关闭卡片，继续对话' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /展开计划草稿|收起计划草稿/ })).not.toBeInTheDocument()
   })
 
@@ -155,7 +155,7 @@ describe('PlanReviewCard', () => {
         interaction={{ ...interaction(), error: '计划版本已经更新' }}
         onChange={vi.fn()}
         onSubmit={vi.fn()}
-        onCancel={vi.fn()}
+        onClose={vi.fn()}
       />,
     )
 

@@ -56,7 +56,7 @@ describe('PlanQuestionComposer', () => {
       ? { ...base, answerType }
       : { ...base, answerType, minSelections: 1, maxSelections: 3, selectedOptionIds: [] }] }
     const change = (updater: (value: PlanQuestionState) => PlanQuestionState) => { current = updater(current) }
-    const view = render(<PlanQuestionComposer threadId="business-actions" interaction={current} onChange={change} onSubmit={vi.fn()} />)
+    const view = render(<PlanQuestionComposer onClose={vi.fn()} threadId="business-actions" interaction={current} onChange={change} onSubmit={vi.fn()} />)
     const role = answerType === 'single_choice' ? 'radio' : 'checkbox'
     expect(screen.queryAllByText('推荐', { exact: true })).toHaveLength(answerType === 'single_choice' ? 1 : 0)
     for (const option of options) {
@@ -64,7 +64,7 @@ describe('PlanQuestionComposer', () => {
       if ('description' in option) expect(screen.getByText(option.description!)).toBeVisible()
     }
     fireEvent.click(screen.getByRole(role, { name: /^Fixed entrance greeter/ }))
-    view.rerender(<PlanQuestionComposer threadId="business-actions" interaction={current} onChange={change} onSubmit={vi.fn()} />)
+    view.rerender(<PlanQuestionComposer onClose={vi.fn()} threadId="business-actions" interaction={current} onChange={change} onSubmit={vi.fn()} />)
     expect(current.questions[0]).toMatchObject(answerType === 'single_choice'
       ? { selectedOptionId: 'greeter' } : { selectedOptionIds: ['greeter'] })
     expect(screen.getByRole(role, { name: /^Fixed entrance greeter/ })).toBeChecked()
@@ -76,7 +76,7 @@ describe('PlanQuestionComposer', () => {
       current = updater(current)
     }
     const view = render(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
     )
 
     expect(screen.getByRole('heading', {
@@ -107,7 +107,7 @@ describe('PlanQuestionComposer', () => {
     expect(current.activeQuestionIndex).toBe(1)
 
     view.rerender(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
     )
     expect(screen.getByRole('heading', { name: /交付时间有什么偏好/ })).toBeInTheDocument()
     expect(screen.getByText('可选')).toBeInTheDocument()
@@ -124,7 +124,7 @@ describe('PlanQuestionComposer', () => {
       current = updater(current)
     }
     const view = render(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
     )
     const browseNext = () => screen.getByRole('button', { name: '浏览下一题' })
     const next = () => screen.getByRole('button', { name: /^下一题$/ })
@@ -135,7 +135,7 @@ describe('PlanQuestionComposer', () => {
       target: { value: '仅部署生产环境' },
     })
     view.rerender(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
     )
     expect(browseNext()).toBeEnabled()
     expect(next()).toBeEnabled()
@@ -143,12 +143,12 @@ describe('PlanQuestionComposer', () => {
     fireEvent.click(browseNext())
     expect(current.activeQuestionIndex).toBe(1)
     view.rerender(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
     )
     fireEvent.click(screen.getByRole('button', { name: '浏览上一题' }))
     expect(current.activeQuestionIndex).toBe(0)
     view.rerender(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
     )
     fireEvent.click(next())
     expect(current.activeQuestionIndex).toBe(1)
@@ -166,7 +166,7 @@ describe('PlanQuestionComposer', () => {
     }
 
     render(
-      <PlanQuestionComposer
+      <PlanQuestionComposer onClose={vi.fn()}
         threadId="thread-a"
         interaction={answered}
         onChange={vi.fn()}
@@ -186,14 +186,14 @@ describe('PlanQuestionComposer', () => {
     let current = { ...interaction(), questions: [interaction().questions[0]!] }
     const submit = vi.fn()
     const change = (updater: (value: PlanQuestionState) => PlanQuestionState) => { current = updater(current) }
-    const view = render(<PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />)
+    const view = render(<PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />)
     expect(screen.queryByRole('button', { name: '跳过本题' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '提交' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: '提交' }))
     expect(submit).not.toHaveBeenCalled()
     expect(current.error).toBeUndefined()
     await user.click(screen.getByRole('radio', { name: /预发布/ }))
-    view.rerender(<PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />)
+    view.rerender(<PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />)
     expect(screen.getByRole('button', { name: '提交' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: '提交' }))
     expect(submit).toHaveBeenCalledOnce()
@@ -205,7 +205,7 @@ describe('PlanQuestionComposer', () => {
       current = updater(current)
     }
     const view = render(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
     )
 
     const first = screen.getByRole('radio', { name: /预发布/ })
@@ -215,7 +215,7 @@ describe('PlanQuestionComposer', () => {
     expect(current.questions[0]).toMatchObject({ selectedOptionId: 'production' })
     fireEvent.keyDown(screen.getByRole('radio', { name: '生产' }), { key: 'Enter' })
     view.rerender(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
     )
     fireEvent.click(screen.getByRole('button', { name: '跳过本题' }))
     expect(current.questions[1]).toMatchObject({ skipped: true })
@@ -240,7 +240,7 @@ describe('PlanQuestionComposer', () => {
       current = updater(current)
     }
     const view = render(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
     )
 
     expect(screen.getByRole('separator', { name: '调整交互卡片高度' })).toBeInTheDocument()
@@ -255,7 +255,7 @@ describe('PlanQuestionComposer', () => {
     expect(current.activeQuestionIndex).toBe(2)
     expect(current.questions[0]).toMatchObject({ customAnswer: '保留这个草稿' })
     view.rerender(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
     )
     fireEvent.click(screen.getByRole('button', { name: '点击标题区域展开问题卡片' }))
     expect(screen.getByRole('separator', { name: '调整交互卡片高度' })).toBeInTheDocument()
@@ -269,19 +269,19 @@ describe('PlanQuestionComposer', () => {
       onChange: vi.fn(),
       onSubmit: vi.fn(),
     }
-    const firstView = render(<PlanQuestionComposer threadId="thread-a" {...props} />)
+    const firstView = render(<PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" {...props} />)
     fireEvent.click(screen.getByRole('button', { name: '点击标题区域收起问题卡片' }))
     expect(window.sessionStorage.getItem('tinkerfin:plan-question-collapse:thread-a'))
       .toBe('collapsed')
     firstView.unmount()
 
-    const restoredView = render(<PlanQuestionComposer threadId="thread-a" {...props} />)
+    const restoredView = render(<PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" {...props} />)
     expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument()
 
-    restoredView.rerender(<PlanQuestionComposer threadId="thread-b" {...props} />)
+    restoredView.rerender(<PlanQuestionComposer onClose={vi.fn()} threadId="thread-b" {...props} />)
     await waitFor(() => expect(screen.getByRole('radiogroup')).toBeInTheDocument())
 
-    restoredView.rerender(<PlanQuestionComposer threadId="thread-a" {...props} />)
+    restoredView.rerender(<PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" {...props} />)
     await waitFor(() => expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument())
   })
 
@@ -289,7 +289,7 @@ describe('PlanQuestionComposer', () => {
     const outerWheel = vi.fn()
     const { container } = render(
       <div onWheel={outerWheel}>
-        <PlanQuestionComposer
+        <PlanQuestionComposer onClose={vi.fn()}
           threadId="thread-a"
           interaction={interaction()}
           onChange={vi.fn()}
@@ -316,7 +316,7 @@ describe('PlanQuestionComposer', () => {
       current = updater(current)
     }
     const view = render(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
     )
     expect(screen.getByRole('button', { name: '提交' }))
       .toHaveClass('ui-button--sm', 'ui-button--capsule', 'ui-button--primary')
@@ -332,7 +332,7 @@ describe('PlanQuestionComposer', () => {
       questions: interaction().questions.map((question) => ({ ...question, required: false })),
     }
     view.rerender(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
     )
     fireEvent.click(screen.getByRole('button', { name: '提交' }))
     expect(submit).toHaveBeenCalledOnce()
@@ -361,14 +361,14 @@ describe('PlanQuestionComposer', () => {
       current = updater(current)
     }
     const view = render(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
     )
 
     expect(screen.queryByText('推荐', { exact: true })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('checkbox', { name: /Chrome/ }))
     view.rerender(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
     )
     fireEvent.change(screen.getByRole('textbox', { name: /自定义回答/ }), {
       target: { value: 'Firefox' },
@@ -405,7 +405,7 @@ describe('PlanQuestionComposer', () => {
     }
 
     render(
-      <PlanQuestionComposer
+      <PlanQuestionComposer onClose={vi.fn()}
         threadId="thread-a"
         interaction={current}
         onChange={vi.fn()}
@@ -446,17 +446,17 @@ describe('PlanQuestionComposer', () => {
     }
     const submit = vi.fn()
     const view = render(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
     )
 
     expect(screen.getByText('选择 1 至 2 项，自定义回答计作一项')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('checkbox', { name: /Web/ }))
     view.rerender(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
     )
     fireEvent.click(screen.getByRole('checkbox', { name: /移动端/ }))
     view.rerender(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
     )
     expect(screen.getByRole('checkbox', { name: /桌面端/ })).toBeDisabled()
     expect(screen.getByRole('textbox', { name: /自定义回答/ })).toBeDisabled()
@@ -468,7 +468,7 @@ describe('PlanQuestionComposer', () => {
         : question),
     }
     view.rerender(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
     )
     fireEvent.click(screen.getByRole('button', { name: '提交' }))
     expect(submit).not.toHaveBeenCalled()
@@ -492,7 +492,7 @@ describe('PlanQuestionComposer', () => {
       current = updater(current)
     }
     render(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={vi.fn()} />,
     )
 
     const trigger = screen.getByRole('button', { name: '日期回答：交付时间有什么偏好？' })
@@ -531,7 +531,7 @@ describe('PlanQuestionComposer', () => {
       current = updater(current)
     }
     const view = render(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
     )
 
     expect(screen.queryByText('时区：Asia/Shanghai')).not.toBeInTheDocument()
@@ -562,7 +562,7 @@ describe('PlanQuestionComposer', () => {
         : question),
     }
     view.rerender(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
     )
     fireEvent.click(screen.getByRole('button', { name: '提交' }))
     expect(submit).not.toHaveBeenCalled()
@@ -593,7 +593,7 @@ describe('PlanQuestionComposer', () => {
       current = updater(current)
     }
     const view = render(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
     )
 
     expect(screen.queryByText('时区：Asia/Shanghai')).not.toBeInTheDocument()
@@ -611,7 +611,7 @@ describe('PlanQuestionComposer', () => {
     await user.click(date)
     expect(current.questions[0]).toMatchObject({ dateTime: '2026-08-30T09:00' })
     view.rerender(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
     )
     await user.click(screen.getByRole('button', { name: '时间回答：何时执行？' }))
     await user.click(within(screen.getByRole('listbox', { name: '小时' }))
@@ -631,7 +631,7 @@ describe('PlanQuestionComposer', () => {
         : question),
     }
     view.rerender(
-      <PlanQuestionComposer threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
+      <PlanQuestionComposer onClose={vi.fn()} threadId="thread-a" interaction={current} onChange={change} onSubmit={submit} />,
     )
     fireEvent.click(screen.getByRole('button', { name: '提交' }))
     expect(submit).not.toHaveBeenCalled()
@@ -650,7 +650,7 @@ describe('PlanQuestionComposer', () => {
 
   it('grows the custom answer from one line to three lines before scrolling', () => {
     const { container } = render(
-      <PlanQuestionComposer
+      <PlanQuestionComposer onClose={vi.fn()}
         threadId="thread-a"
         interaction={interaction()}
         onChange={vi.fn()}
@@ -673,7 +673,7 @@ describe('PlanQuestionComposer', () => {
 
   it('does not auto-focus untouched answer controls on entry', async () => {
     const firstView = render(
-      <PlanQuestionComposer
+      <PlanQuestionComposer onClose={vi.fn()}
         threadId="thread-a"
         interaction={interaction()}
         onChange={vi.fn()}
@@ -686,7 +686,7 @@ describe('PlanQuestionComposer', () => {
     firstView.unmount()
 
     render(
-      <PlanQuestionComposer
+      <PlanQuestionComposer onClose={vi.fn()}
         threadId="thread-a"
         interaction={{ ...interaction(), activeQuestionIndex: 2 }}
         onChange={vi.fn()}
@@ -708,7 +708,7 @@ describe('PlanQuestionComposer', () => {
     answered.questions[2] = { ...question, answer: '已有补充' }
 
     render(
-      <PlanQuestionComposer
+      <PlanQuestionComposer onClose={vi.fn()}
         threadId="thread-a"
         interaction={answered}
         onChange={vi.fn()}
@@ -749,7 +749,7 @@ it.each(lastQuestionCases)('最后一道可选题隐藏跳过按钮，留空可�
     ],
   }
   const submit = vi.fn()
-  render(<PlanQuestionComposer threadId={`optional-${question.id}`} interaction={current} onChange={vi.fn()} onSubmit={submit} />)
+  render(<PlanQuestionComposer onClose={vi.fn()} threadId={`optional-${question.id}`} interaction={current} onChange={vi.fn()} onSubmit={submit} />)
   expect(screen.queryByRole('button', { name: '跳过本题' })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: '提交' })).toBeEnabled()
   fireEvent.click(screen.getByRole('button', { name: '提交' }))
@@ -760,10 +760,10 @@ it.each(lastQuestionCases)('最后一道必选题仅有效回答时可提交，�
   const empty = unansweredQuestion(question)
   const current = { ...interaction(), questions: [empty], activeQuestionIndex: 0 }
   const props = { threadId: `required-${question.id}`, onChange: vi.fn(), onSubmit: vi.fn() }
-  const view = render(<PlanQuestionComposer {...props} interaction={current} />)
+  const view = render(<PlanQuestionComposer onClose={vi.fn()} {...props} interaction={current} />)
   expect(screen.getByRole('button', { name: '提交' })).toBeDisabled()
-  view.rerender(<PlanQuestionComposer {...props} interaction={{ ...current, questions: [question] }} />)
+  view.rerender(<PlanQuestionComposer onClose={vi.fn()} {...props} interaction={{ ...current, questions: [question] }} />)
   expect(screen.getByRole('button', { name: '提交' })).toBeEnabled()
-  view.rerender(<PlanQuestionComposer {...props} interaction={current} />)
+  view.rerender(<PlanQuestionComposer onClose={vi.fn()} {...props} interaction={current} />)
   expect(screen.getByRole('button', { name: '提交' })).toBeDisabled()
 })

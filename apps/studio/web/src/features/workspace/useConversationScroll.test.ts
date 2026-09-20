@@ -62,6 +62,79 @@ describe('useConversationScroll', () => {
     vi.unstubAllGlobals()
   })
 
+  it('调宽保持历史消息位置，跟随输出时保持底部', () => {
+    const { result, unmount } = renderHook(() => useConversationScroll({ conversation, isRunning: false }))
+    const pane = document.createElement('section')
+    const content = document.createElement('div')
+    const message = document.createElement('article')
+    const end = document.createElement('div')
+    content.append(message, end)
+    pane.append(content)
+    document.body.append(pane)
+    Object.defineProperties(pane, {
+      clientHeight: { value: 400 }, scrollHeight: { value: 1200 },
+      scrollTop: { writable: true, value: 100 },
+    })
+    let messageTop = -20
+    message.getBoundingClientRect = () => ({ top: messageTop, bottom: messageTop + 200 }) as DOMRect
+    result.current.paneRef.current = pane
+    result.current.messageEndRef.current = end
+    act(() => result.current.pauseFollowing())
+    act(() => result.current.resizeContent(() => { messageTop = 60 }))
+    expect(pane.scrollTop).toBe(180)
+    act(() => result.current.scrollToBottomImmediately())
+    act(() => result.current.resizeContent(() => { messageTop = 80 }))
+    expect(pane.scrollTop).toBe(1200)
+    unmount()
+    pane.remove()
+  })
+
+  it.each([0, 1500, 1800])('闲置%s毫秒后调宽保持按钮显隐和计时，用户再次滚动仍可显示', (idle) => {
+    const { result, unmount } = renderHook(() => useConversationScroll({ conversation, isRunning: false }))
+    const pane = document.createElement('section')
+    const content = document.createElement('div')
+    const message = document.createElement('article')
+    const end = document.createElement('div')
+    content.append(message, end)
+    pane.append(content)
+    document.body.append(pane)
+    Object.defineProperties(pane, {
+      clientHeight: { value: 400 }, scrollHeight: { value: 2000 },
+      scrollTop: { writable: true, value: 100 },
+    })
+    let messageTop = -20
+    message.getBoundingClientRect = () => ({ top: messageTop, bottom: messageTop + 200 }) as DOMRect
+    result.current.paneRef.current = pane
+    result.current.messageEndRef.current = end
+    act(() => {
+      result.current.markUserScrollIntent()
+      result.current.handleScroll(pane)
+    })
+    act(() => vi.advanceTimersByTime(0))
+    expect(result.current.showScrollToBottom).toBe(true)
+    act(() => vi.advanceTimersByTime(idle))
+    const before = { show: result.current.showScrollToBottom, fade: result.current.fadeScrollToBottom }
+    act(() => {
+      result.current.resizeContent(() => { messageTop = 60 })
+      result.current.handleScroll(pane)
+    })
+    act(() => vi.advanceTimersByTime(0))
+    expect(pane.scrollTop).toBe(180)
+    expect(result.current.showScrollToBottom).toBe(before.show)
+    expect(result.current.fadeScrollToBottom).toBe(before.fade)
+    act(() => vi.advanceTimersByTime(1800 - idle))
+    expect(result.current.showScrollToBottom).toBe(false)
+    act(() => {
+      result.current.markUserScrollIntent()
+      pane.scrollTop = 220
+      result.current.handleScroll(pane)
+    })
+    act(() => vi.advanceTimersByTime(0))
+    expect(result.current.showScrollToBottom).toBe(true)
+    unmount()
+    pane.remove()
+  })
+
   it('接收结束后正文增长仍跟随，用户阅读历史时不抢滚动，卸载后释放观察', () => {
     let resized = () => {}
     const disconnect = vi.fn()

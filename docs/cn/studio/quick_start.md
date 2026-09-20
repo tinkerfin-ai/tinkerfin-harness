@@ -39,7 +39,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-打开终端显示的地址，默认 `http://localhost:5173`。
+打开终端显示的地址，默认 `http://localhost:5190`。
 
 ## 登录并配置模型
 

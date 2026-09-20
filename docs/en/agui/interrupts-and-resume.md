@@ -101,10 +101,39 @@ Build the Runtime with `.with_plan(enabled=True)` and select `mode="plan"` for e
 
 | Reason | Response requirements |
 | --- | --- |
-| `tinkerfin:plan_clarification` | `type="respond"` with `answers` covering every question ID and following each response Schema |
-| `tinkerfin:plan_review` | An allowed action with the current `baseRevision` |
+| `tinkerfin:plan_clarification` | Submit answers with `type="respond"` and `answers` covering every question ID; start discussion with `type="discuss"` and a non-empty `message`, without `answers` |
+| `tinkerfin:plan_review` | An allowed action with the current `baseRevision`; when `respond` is allowed, that action and a non-empty `message` start discussion |
 
 Plan interrupts have no `toolCallId`. Clients must not return Forms, labels, or other trusted form content; the framework restores them from the checkpoint. Unknown options, skipped required questions, and stale `baseRevision` values fail validation. After abandoning a Plan, a later ordinary input can use `mode="default"`.
+
+A discussion request ends the pending card. That card can no longer be submitted or approved. The framework preserves its trusted form or draft as conversation context without treating unsubmitted form content as answers. The model may then reply, ask new questions, or produce a new draft; a new draft still requires approval.
+
+The planning model generates ordinary replies directly through the normal message stream, with no separate action-selection call. Replies persist in history; completion waits for a new user message rather than automatically starting another planning turn.
+
+To close a card without sending a discussion message, use `type="dismiss"` for clarification, or `type="dismiss"` with the current `baseRevision` for draft review. Dismissal does not submit unfinished answers, invoke the model, or authorize execution. Planning mode remains active and waits for a new message; the trusted form or draft remains available as context.
+
+Discussing a clarification still requires only one resume call. Here, `runtime` has Plan enabled and `interrupt_id` comes from the current server-issued card:
+
+```python
+from ag_ui.core.types import ResumeEntry
+
+async with aclosing(
+    runtime.open_agui_run(
+        thread_id="conversation-1",
+        run_id="discussion-1",
+        mode="plan",
+        resume=AgUiResumeRequest(entries=(ResumeEntry(
+            interrupt_id=interrupt_id,
+            status="resolved",
+            payload={"type": "discuss", "message": "What does the third question mean?"},
+        ),)),
+    )
+) as events:
+    async for event in events:
+        await send_event(event)
+```
+
+The host still owns authentication and transport. The framework owns card validation, discussion message identity, context persistence, resume deduplication, and cleanup. Do not cancel the card and start a second run to emulate discussion.
 
 ## Use the Adapter independently
 

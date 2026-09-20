@@ -84,7 +84,7 @@ result = await runtime.ainvoke(
 )
 ```
 
-Plan 可以澄清需求，并在执行前请求用户审阅计划。其内置文件访问只读。
+Plan 根据对话选择普通回复、澄清需求或生成计划草稿。普通回复完成后仍保留 Plan 模式；只有用户批准当前草稿才进入执行。其内置文件访问只读。
 `mode="default"` 直接执行智能体。Plan 数据模型和审阅动作由 `tinkerfin.plan` 导出。
 
 ## 惰性 workspace 与工具

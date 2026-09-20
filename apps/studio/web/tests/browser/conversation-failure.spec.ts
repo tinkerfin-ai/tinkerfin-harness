@@ -36,7 +36,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
       const path = url.pathname
       let data: unknown = {}
       if (path === '/api/auth/me') data = { user, expires_at: '2099-01-01T00:00:00Z' }
-      else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main', imageSupport: 'supported', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
+      else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main', imageSupport: 'supported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
       else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
       else if (path === '/api/conversation/history') data = { items: [{ ...detail, status: 'error', lastRunId: 'run-3', hasPendingInterrupt: false, pendingInteractionKind: null }], nextCursor: null }
       else if (path.endsWith('/history')) data = { ...detail, taskTrace: url.searchParams.get('includeTaskTrace') === 'false' ? null : detail.taskTrace }

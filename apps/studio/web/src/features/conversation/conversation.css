@@ -1018,6 +1018,16 @@
 
   .composer-default { display: contents; }
   .composer-default.is-taken-over { display: none; }
+
+  .plan-history-card {
+    margin-block: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-layer-1);
+  }
+  .plan-history-card > summary { cursor: pointer; }
+  .plan-history-card__body { padding-top: var(--space-3); }
   .composer-takeover { display: flex; width: 100%; justify-content: center; pointer-events: auto; }
 
   .approval-composer,
@@ -1563,7 +1573,7 @@
   }
 
   .composer-dock {
-    --composer-inline-inset: var(--space-4);
+    --composer-inline-inset: var(--layout-page-gutter);
     --composer-top-inset: var(--space-2);
     grid-row: 2;
     grid-column: 1;
@@ -1693,7 +1703,7 @@
   .composer-dock.is-hero .composer-note {
     position: static;
     transform: none;
-    width: min(calc(100% - 2 * var(--composer-inline-inset)), var(--layout-content-wide));
+    width: min(calc(100% - 2 * var(--composer-inline-inset)), var(--layout-composer-width));
     margin-top: var(--space-3);
   }
 
@@ -1785,7 +1795,7 @@
   .composer-suggestion-item:disabled { color: var(--color-text-tertiary); cursor: not-allowed; opacity: .48; }
   .composer-suggestion-name { flex: 0 1 40%; overflow: hidden; font-size: var(--type-meta-size); line-height: 22px; text-overflow: ellipsis; white-space: nowrap; }
   .composer-suggestion-description { flex: 1; min-width: 0; overflow: hidden; color: var(--color-text-tertiary); font-size: var(--type-meta-size); line-height: 22px; text-overflow: ellipsis; white-space: nowrap; }
-  .composer-note { width: min(100%, var(--layout-content-wide)); margin: var(--space-3) auto 0; color: var(--color-text-caption); text-align: center; font-size: var(--type-micro-size); line-height: var(--type-micro-line); }
+  .composer-note { width: min(100%, var(--layout-composer-width)); margin: var(--space-3) auto 0; color: var(--color-text-caption); text-align: center; font-size: var(--type-micro-size); line-height: var(--type-micro-line); }
 
   @keyframes conversation-dot {
     from { transform: translateY(1px); opacity: .38; }
@@ -1813,15 +1823,10 @@
     to { opacity: 1; }
   }
 
-  @media (max-width: 1023px) {
-    .composer-auxiliary-controls,
-    .composer,
-    .composer-note { max-width: var(--layout-content-medium); }
-  }
 
   @media (max-width: 767px) {
     .user-message .message-markdown { max-width: 88%; }
-    .composer-dock { --composer-inline-inset: var(--space-4); }
+    .composer-dock { --composer-inline-inset: var(--layout-page-gutter); }
     .composer textarea { font-size: var(--type-body-size); }
     .approval-composer,
     .plan-question-composer,
@@ -1851,7 +1856,7 @@
   }
 
   @media (max-width: 440px) {
-    .composer-dock { --composer-inline-inset: var(--space-3); }
+    .composer-dock { --composer-inline-inset: var(--layout-page-gutter); }
     .composer-auxiliary-controls { gap: var(--space-4); }
     .composer-auxiliary-control { padding-inline: var(--space-1-5); }
     .composer-task-trace-control { gap: var(--space-1); }

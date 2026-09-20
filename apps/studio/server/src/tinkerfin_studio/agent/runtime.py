@@ -72,18 +72,6 @@ def _build_runtime(
         http_async_transport=resources.model_http_transport,
         http_async_client=resources.model_http_client,
     )
-    plan_model = (
-        create_chat_model(
-            model_config,
-            reasoning_enabled=False,
-            http_async_transport=resources.model_http_transport,
-            http_async_client=resources.model_http_client,
-        )
-        if plan_enabled
-        and model_config.provider == "deepseek"
-        and model_config.reasoning_enabled
-        else model
-    )
     api_key = resources.settings.tavily_api_key
     web_search = build_web_search_tool(
         None if api_key is None else api_key.get_secret_value()
@@ -116,7 +104,7 @@ def _build_runtime(
         ),
         supports_content=lambda candidate, mime_type: (
             mime_type.startswith("image/")
-            and (candidate is model or candidate is plan_model)
+            and candidate is model
             and model_config.image_support == "supported"
         ),
     )
@@ -146,13 +134,14 @@ def _build_runtime(
     if plan_enabled:
         configured = configured.with_plan(
             enabled=True,
-            planner_model=plan_model,
+            planner_model=model,
             clarification_schema=StudioPlanClarificationForm,
             content_schema=StudioMarkdownPlanContent,
             allowed_review_actions=(
                 PlanReviewAction.APPROVE,
                 PlanReviewAction.REJECT,
                 PlanReviewAction.CANCEL,
+                PlanReviewAction.RESPOND,
             ),
         )
     else:

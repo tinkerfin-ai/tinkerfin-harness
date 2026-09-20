@@ -75,7 +75,33 @@ const taskTraceView = (snapshot: TaskTraceSnapshot): WebTaskTraceViewState => (
     : { phase: 'unavailable', snapshot }
 )
 
-const latestUserTurn = (conversation: Conversation | undefined) => {
+const latestUserTurn = (conversation: Conversation | undefined, resumeTurn = false) => {
+  if (resumeTurn && conversation?.trace) {
+    // 讨论可以新增用户消息，恢复任务的来源仍由服务端确认的轮次决定
+    const trace = conversation.trace
+    const lastTurn = trace.graph.turns.reduce<typeof trace.graph.turns[number] | undefined>(
+      (latest, turn) => !latest || turn.ordinal > latest.ordinal ? turn : latest,
+      undefined,
+    )
+    const firstUser = trace.graph.nodes
+      .filter(node => node.turnId === lastTurn?.id
+        && node.kind === 'human_message' && node.graphNamespace.length === 0)
+      .sort((left, right) => left.startedSeq - right.startedSeq)[0]
+    const original = firstUser && trace.messages.find(message => (
+      message.role === 'user' && message.sourceId === firstUser.sourceId
+      && message.graphNamespace.length === 0
+    ))
+    const visible = original && conversation.messages.find(message => (
+      message.id === original.agui?.messageId || message.meta?.traceMessageId === original.id
+    ))
+    if (original && visible) return {
+      runId: original.runId,
+      userMessageId: visible.id,
+      userMessagePreview: visible.content.trim()
+        ? visible.content
+        : (visible.attachments ?? []).map(attachment => attachment.name).join(', '),
+    }
+  }
   let message: Conversation['messages'][number] | undefined
   for (let index = (conversation?.messages.length ?? 0) - 1; index >= 0; index -= 1) {
     const candidate = conversation?.messages[index]
@@ -333,7 +359,7 @@ export function useConversationStreamController({
                   projector = new LiveTodoTraceProjector()
                   projector.hydrate(projected.taskTrace.snapshot, {
                     messages: projected.messages,
-                    headRunId: runId, latestTurn: latestUserTurn(projected), isRunning: !completed,
+                    headRunId: runId, latestTurn: latestUserTurn(projected, true), isRunning: !completed,
                   })
                 }
                 publish()
@@ -443,7 +469,7 @@ export function useConversationStreamController({
         todoProjector.hydrate(validationTarget.taskTrace.snapshot, {
           messages: validationTarget.messages,
           headRunId: priorHead,
-          latestTurn: latestUserTurn(validationTarget),
+          latestTurn: latestUserTurn(validationTarget, mode === 'resume'),
         })
       }
       const turn = mode === 'start'

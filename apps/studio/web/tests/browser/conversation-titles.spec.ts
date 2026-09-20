@@ -28,7 +28,7 @@ async function setup(page: Page, theme: string) {
       if (!url.pathname.startsWith('/api/')) return original(input, init)
       const json = (data: unknown) => new Response(JSON.stringify({ code: 0, message: 'success', data }), { headers: { 'Content-Type': 'application/json' } })
       if (url.pathname === '/api/auth/me') return json({ expires_at: '2099-01-01T00:00:00Z', user })
-      if (url.pathname === '/api/models') return json({ items: [{ modelId: 'main', displayName: 'Main', imageSupport: 'supported', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' })
+      if (url.pathname === '/api/models') return json({ items: [{ modelId: 'main', displayName: 'Main', imageSupport: 'supported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' })
       if (url.pathname === '/api/conversation/config') return json({ dayRanges: [7, 30] })
       if (url.pathname === '/api/conversation/history') return json({ items: [], nextCursor: null })
       if (url.pathname === '/api/conversation/chat') {

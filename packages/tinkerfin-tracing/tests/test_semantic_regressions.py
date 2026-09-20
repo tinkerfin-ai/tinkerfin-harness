@@ -1106,6 +1106,10 @@ async def test_interaction_resolves_across_resume_and_keeps_one_turn() -> None:
         ),
     )
     second = await _start(tracer, resumed)
+    awaiting_acceptance = await tracer.get(
+        ThreadIdentity(namespace="test", thread_id="thread-semantic")
+    )
+    assert awaiting_acceptance.interactions[0].status == "pending"
     await second.observe(
         RunResumeCheckpointedObservation(
             identity=resumed.identity,
@@ -1144,7 +1148,7 @@ async def test_interaction_resolves_across_resume_and_keeps_one_turn() -> None:
     )
 
     assert [fact.phase for fact in interaction_facts] == ["opened", "resolved"]
-    assert resolved_seq < checkpoint_seq
+    assert checkpoint_seq < resolved_seq
     assert "secret-derived-checkpoint-marker" not in "".join(
         event.model_dump_json(by_alias=True) for event in events
     )
@@ -1760,6 +1764,15 @@ async def test_resume_resolves_the_original_subgraph_interaction_scope() -> None
         ),
     )
     second = await _start(tracer, resumed)
+    await second.observe(
+        RunResumeCheckpointedObservation(
+            identity=resumed.identity,
+            marker_id="accepted-subgraph-resume",
+            native_interrupt_ids=("subgraph-interrupt-id",),
+            observed_at=datetime.now(UTC),
+            monotonic_ns=3,
+        )
+    )
     await _finish(second, resumed)
     interactions = (
         await tracer.get(ThreadIdentity(namespace="test", thread_id="thread-semantic"))
@@ -1797,6 +1810,19 @@ async def test_native_resume_resolves_one_unambiguous_pending_interrupt() -> Non
         parent_run_id="native-interrupt",
     )
     second = await _start(tracer, resumed)
+    before_snapshot = await tracer.get(
+        ThreadIdentity(namespace="test", thread_id="thread-semantic")
+    )
+    assert before_snapshot.interactions[0].status == "pending"
+    await second.observe(
+        NativeStateObservation(
+            identity=resumed.identity,
+            graph_namespace=(),
+            state={},
+            observed_at=datetime.now(UTC),
+            monotonic_ns=3,
+        )
+    )
     await _finish(second, resumed)
     thread = await tracer.get(
         ThreadIdentity(namespace="test", thread_id="thread-semantic")

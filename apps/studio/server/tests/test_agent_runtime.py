@@ -183,7 +183,6 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
     """构建只绑定配置，执行才借用用户工作区且始终结束本轮借用"""
 
     root_model = _ToolModel(responses=["root"])
-    plan_model = _ToolModel(responses=["plan"])
     reasoning_overrides: list[bool | None] = []
     failure = OpenSandboxBackendUnavailableError("Sandbox control plane unavailable")
     workspace = _Workspace(failure if workspace_failure else None)
@@ -196,7 +195,7 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
         http_async_transport=None,
     ) -> BaseChatModel:
         reasoning_overrides.append(reasoning_enabled)
-        return root_model if reasoning_enabled is None else plan_model
+        return root_model
 
     class Sandboxes:
         def workspace(
@@ -236,7 +235,7 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
     )
     assert isinstance(runtime, AgentRuntime)
     assert runtime.namespace == "ns_7"
-    assert reasoning_overrides == [None, False]
+    assert reasoning_overrides == [None]
     assert workspace.opened == []
     stream = runtime.open_agui_run(
         thread_id="thread-1",

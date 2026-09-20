@@ -46,6 +46,7 @@ export interface Message {
   createdAt: string
   meta?: {
     /** 历史消息的 Trace 关联键，用于将任务定位到对应的会话消息 */
+    planHistory?: PlanInteraction
     traceMessageId?: string
     contentOmitted?: boolean
     title?: string
@@ -212,7 +213,7 @@ export interface PlanReviewState {
   interruptId: string
   revision: number
   draft: MarkdownPlanDraft
-  allowedActions: Array<'approve' | 'reject' | 'cancel'>
+  allowedActions: Array<'approve' | 'reject' | 'cancel' | 'respond'>
   action?: 'approve' | 'reject' | 'cancel'
   message?: string
   submitted: boolean

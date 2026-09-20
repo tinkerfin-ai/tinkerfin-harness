@@ -968,3 +968,26 @@ def test_link_issue_cannot_be_removed_from_standalone_assistant() -> None:
             relationship_missing=False,
             allowed_run_ids=frozenset({"run"}),
         )
+
+
+@pytest.mark.parametrize(
+    "phase, expected", [("awaiting_input", "succeeded"), ("awaiting_review", "waiting")]
+)
+def test_plan_waiting_for_a_new_message_is_not_a_pending_review(
+    phase: str, expected: str
+) -> None:
+    event = _event(
+        1,
+        PlanRevisionFact(
+            **_common(1),
+            revision_id="plan-state",
+            revision=0,
+            status=phase,
+            plan=_captured({"status": phase}),
+        ),
+    )
+    records = reduce_trace_graph_records(
+        (event,), run_ids=frozenset({event.fact.identity.run_id})
+    )
+    assert len(records) == 1
+    assert records[0].status == expected

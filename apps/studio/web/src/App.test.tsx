@@ -60,7 +60,7 @@ const MODEL_CATALOG: AgentModelCatalog = {
   items: [{
     modelId: 'main',
     displayName: 'Main Model',
-    reasoningEnabled: false, imageSupport: 'unknown',
+    connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, imageSupport: 'unknown',
     isDefault: true,
   }],
   defaultModelId: 'main',

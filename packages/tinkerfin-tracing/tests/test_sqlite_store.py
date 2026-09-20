@@ -2336,9 +2336,24 @@ async def test_sqlite_controlled_clock_is_shared_by_reads_writes_and_peers(
                     await peer_engine.dispose()
 
 
+@pytest.fixture
+def paused_writer_heartbeats(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep lease-recovery tests driven by explicit database time and operations."""
+
+    async def paused_heartbeat(_delay: float) -> None:
+        # The writer owns and cancels this wait on close. These cases verify
+        # committed-result recovery while no background renewal occurs.
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(
+        "tinkerfin_tracing.durable_store.asyncio",
+        SimpleNamespace(**{**vars(asyncio), "sleep": paused_heartbeat}),
+    )
+
+
+@pytest.mark.usefixtures("paused_writer_heartbeats")
 async def test_sqlite_unknown_writer_open_commit_reuses_owner_token(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'unknown-open.db'}")
     clock = _SqliteClock()
@@ -2396,9 +2411,9 @@ async def test_sqlite_unknown_writer_open_commit_reuses_owner_token(
             await engine.dispose()
 
 
+@pytest.mark.usefixtures("paused_writer_heartbeats")
 async def test_sqlite_unknown_append_commit_renews_expired_writer_lease(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'append-lease.db'}")
     clock = _SqliteClock()
@@ -2450,20 +2465,10 @@ async def test_sqlite_unknown_append_commit_renews_expired_writer_lease(
             await engine.dispose()
 
 
+@pytest.mark.usefixtures("paused_writer_heartbeats")
 async def test_sqlite_proven_append_survives_peer_takeover_during_retry(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def paused_heartbeat(_delay: float) -> None:
-        # Model an owner that cannot renew while its committed append is pending.
-        # Database time advances explicitly; wall-clock heartbeats must not race
-        # takeover, the committed-result retry, or stale-owner closure.
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr(
-        "tinkerfin_tracing.durable_store.asyncio",
-        SimpleNamespace(**{**vars(asyncio), "sleep": paused_heartbeat}),
-    )
     database = tmp_path / "append-takeover.db"
     first_engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
     peer_engine = create_async_engine(f"sqlite+aiosqlite:///{database}")

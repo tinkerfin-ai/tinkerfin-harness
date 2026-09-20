@@ -1364,7 +1364,7 @@ class _AgentDefinition:
         require_agui()
         from tinkerfin_agui_adapter import AgUiLifecycleEventFactory
 
-        from ._agui_lineage import resolve_agui_resume_context
+        from ._agui_lineage import _require_checkpointer, resolve_agui_resume_context
         from .agui_resume import AgUiResumeBinding as AgUiResumeBindingType
         from .agui_resume import AgUiResumeRequest as AgUiResumeRequestType
 
@@ -1393,6 +1393,32 @@ class _AgentDefinition:
                 "mixed tool cancellation requires TinkerFin tool review support "
                 "in each interrupted Graph receiving a cancellation"
             )
+        if self._plan_options is not None and binding.mode == "resume":
+            from .plan._resume import validate_plan_resume_response
+
+            responses = binding._native_decisions()
+            for pending in context.interrupts:
+                value = pending.value
+                if not isinstance(value, dict) or value.get("kind") not in {
+                    "tinkerfin:plan_clarification",
+                    "tinkerfin:plan_review",
+                }:
+                    continue
+                # Preserve the original card on semantic validation failure.
+                # source() must not stage a durable intent until this completes.
+                source = context.sources[pending.id]
+                checkpoint = await _require_checkpointer(astream).aget_tuple(
+                    source.config
+                )
+                if checkpoint is None:
+                    raise TinkerFinLifecycleError(
+                        "Plan response source checkpoint is missing"
+                    )
+                validate_plan_resume_response(
+                    checkpoint.checkpoint["channel_values"],
+                    self._plan_options,
+                    responses[pending.id],
+                )
         return binding
 
 

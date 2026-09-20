@@ -58,7 +58,7 @@
 .settings-models__switch.is-enabled::after { transform:translateX(var(--space-3)); }
 .settings-models__empty { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:var(--space-3); min-height:calc(var(--space-16) * 3); padding-block:var(--space-4); color:var(--color-text-secondary); font-size:var(--type-meta-size); }
 .settings-models__empty h4 { color:var(--color-text-primary); font-size:var(--type-title-size); margin:0; }
-.settings-models__editor { display:flex; flex-direction:column; gap:var(--space-4); max-width:var(--layout-content-medium); margin-inline:auto; }
+.settings-models__editor { display:flex; flex-direction:column; gap:var(--space-4); max-width:var(--layout-form-width); margin-inline:auto; }
 .settings-models__editor>.ui-button { align-self:flex-start; }
 .settings-models__editor h3 { font-size:var(--type-title-size); margin:0; }
 .settings-models__editor .settings-models__check { justify-content:flex-start; gap:var(--space-2); }

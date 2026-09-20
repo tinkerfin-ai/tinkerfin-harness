@@ -198,6 +198,12 @@ class AgentModelCatalogItem(BaseModel):
 
     model_id: str = Field(alias="modelId", description="稳定模型 ID")
     display_name: str = Field(alias="displayName", description="前端展示名称")
+    connection_id: str = Field(
+        alias="connectionId", description="所属提供方的稳定连接 ID"
+    )
+    connection_display_name: str = Field(
+        alias="connectionDisplayName", description="模型配置页中的提供方名称"
+    )
     image_support: Literal["supported", "unsupported", "unknown"] = Field(
         default="unknown", alias="imageSupport", description="图片输入能力"
     )

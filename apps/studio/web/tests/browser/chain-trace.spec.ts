@@ -418,7 +418,7 @@ async function mockChainTraceStudio(
         items: [{
           modelId: 'deepseek-v4-pro',
           displayName: 'DeepSeek V4 Pro',
-          reasoningEnabled: false,
+          connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false,
           isDefault: true,
         }],
         defaultModelId: 'deepseek-v4-pro',

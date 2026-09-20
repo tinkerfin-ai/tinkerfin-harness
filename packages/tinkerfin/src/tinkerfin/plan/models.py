@@ -270,6 +270,37 @@ class ClarificationExchange(_PlanModel):
     )
 
 
+class PlanDiscussionContext(_PlanModel, Generic[PlanContentT]):
+    """Retain the closed card that gives a discussion message its meaning.
+
+    Exactly one card is recorded. This context is never an answer or execution grant.
+    """
+
+    message_id: NonBlankText | None = Field(
+        default=None,
+        description="Discussion message ID; absent when the card was closed without a message",
+    )
+    clarification: dict[str, JsonValue] | None = Field(
+        default=None,
+        description="Trusted closed clarification form, without unsubmitted answers",
+    )
+    draft: PlanDraft[PlanContentT] | None = Field(
+        default=None,
+        description="Trusted draft whose review ended when discussion began",
+    )
+    submitted_edit: PlanContentT | None = Field(
+        default=None,
+        description="Previously submitted edit retained as context when its clarification ends",
+    )
+
+    @model_validator(mode="after")
+    def one_card(self) -> Self:
+        """Require one unambiguous source card."""
+        if (self.clarification is None) == (self.draft is None):
+            raise ValueError("discussion context requires exactly one source card")
+        return self
+
+
 class PlanState(_PlanModel, Generic[PlanContentT]):
     """Complete standalone Planning state projected through the AG-UI channel."""
 
@@ -278,6 +309,7 @@ class PlanState(_PlanModel, Generic[PlanContentT]):
     request_message_id: NonBlankText | None = None
     pending_clarification: PendingClarification | None = None
     clarification_history: tuple[ClarificationExchange, ...] = ()
+    discussion_history: tuple[PlanDiscussionContext[PlanContentT], ...] = ()
     draft: PlanDraft[PlanContentT] | None = None
     pending_edit: PlanContentT | None = None
     confirmed_plan: ConfirmedPlan[PlanContentT] | None = None
@@ -295,6 +327,7 @@ __all__ = [
     "PendingClarification",
     "PlanContentModel",
     "PlanContentT",
+    "PlanDiscussionContext",
     "PlanDraft",
     "PlanHandoff",
     "PlanHandoffPhase",

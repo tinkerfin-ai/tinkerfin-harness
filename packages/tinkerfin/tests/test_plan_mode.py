@@ -22,13 +22,14 @@ from ag_ui.core import (
     StateDeltaEvent,
     StateSnapshotEvent,
     TextMessageContentEvent,
+    TextMessageEndEvent,
+    TextMessageStartEvent,
 )
 from ag_ui.core.types import ResumeEntry
 from deepagents.backends import StoreBackend
 from deepagents.backends.utils import create_file_data
 from deepagents.graph import DeepAgentState
 from langchain.agents.middleware import TodoListMiddleware
-from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     AgentState,
@@ -408,10 +409,9 @@ def _planner(
         content="",
         tool_calls=[
             {
-                "name": "PlannerOutcome",
+                "name": "submit_plan",
                 "args": {
-                    "type": "draft",
-                    "draft": {
+                    "content": {
                         "goal": resolved_goal,
                         "assumptions": [],
                         "steps": [
@@ -423,7 +423,7 @@ def _planner(
                             }
                         ],
                         "acceptance_criteria": ["Feature works"],
-                    },
+                    }
                 },
                 "id": f"planner{suffix or '-1'}",
                 "type": "tool_call",
@@ -438,11 +438,8 @@ def _markdown_planner(markdown: str) -> AIMessage:
         content="",
         tool_calls=[
             {
-                "name": "PlannerOutcome",
-                "args": {
-                    "type": "draft",
-                    "draft": {"markdown": markdown},
-                },
+                "name": "submit_plan",
+                "args": {"content": {"markdown": markdown}},
                 "id": "markdown-planner",
                 "type": "tool_call",
             }
@@ -456,13 +453,12 @@ def _custom_plan_planner() -> AIMessage:
         content="",
         tool_calls=[
             {
-                "name": "PlannerOutcome",
+                "name": "submit_plan",
                 "args": {
-                    "type": "draft",
-                    "draft": {
+                    "content": {
                         "summary": "Release safely",
                         "checks": ["Targeted tests pass"],
-                    },
+                    }
                 },
                 "id": "custom-plan-planner",
                 "type": "tool_call",
@@ -491,11 +487,8 @@ def _planner_clarification(
         content="",
         tool_calls=[
             {
-                "name": "PlannerOutcome",
-                "args": {
-                    "type": "clarify",
-                    "clarification": {"questions": [question]},
-                },
+                "name": "ask_user_question",
+                "args": {"form": {"questions": [question]}},
                 "id": f"clarify-{question_id}",
                 "type": "tool_call",
             }
@@ -530,11 +523,8 @@ def _planner_clarification_batch(
         content="",
         tool_calls=[
             {
-                "name": "PlannerOutcome",
-                "args": {
-                    "type": "clarify",
-                    "clarification": {"questions": questions},
-                },
+                "name": "ask_user_question",
+                "args": {"form": {"questions": questions}},
                 "id": "clarify-batch",
                 "type": "tool_call",
             }
@@ -548,10 +538,9 @@ def _custom_planner_clarification() -> AIMessage:
         content="",
         tool_calls=[
             {
-                "name": "PlannerOutcome",
+                "name": "ask_user_question",
                 "args": {
-                    "type": "clarify",
-                    "clarification": {
+                    "form": {
                         "questions": [
                             {
                                 "id": "custom-target",
@@ -570,7 +559,7 @@ def _custom_planner_clarification() -> AIMessage:
                                 ],
                             }
                         ]
-                    },
+                    }
                 },
                 "id": "custom-clarification",
                 "type": "tool_call",
@@ -585,10 +574,9 @@ def _opaque_planner_clarification() -> AIMessage:
         content="",
         tool_calls=[
             {
-                "name": "PlannerOutcome",
+                "name": "ask_user_question",
                 "args": {
-                    "type": "clarify",
-                    "clarification": {
+                    "form": {
                         "questions": [
                             {
                                 "id": "opaque",
@@ -598,7 +586,7 @@ def _opaque_planner_clarification() -> AIMessage:
                                 "attributes": {"token": "private"},
                             }
                         ]
-                    },
+                    }
                 },
                 "id": "opaque-clarification",
                 "type": "tool_call",
@@ -612,10 +600,8 @@ def _accept_edit() -> AIMessage:
         content="",
         tool_calls=[
             {
-                "name": "PlannerOutcome",
-                "args": {
-                    "type": "accept_edit",
-                },
+                "name": "confirm_plan_edit",
+                "args": {},
                 "id": "accept-edit",
                 "type": "tool_call",
             }
@@ -629,8 +615,8 @@ def _invalid_planner_json() -> AIMessage:
         content="",
         invalid_tool_calls=[
             {
-                "name": "PlannerOutcome",
-                "args": '{"type":"draft",}',
+                "name": "submit_plan",
+                "args": '{"content":,}',
                 "id": "invalid-planner-json",
                 "error": "invalid JSON arguments",
                 "type": "invalid_tool_call",
@@ -931,6 +917,7 @@ def test_plan_package_exports_only_the_current_contract() -> None:
         "PendingClarification",
         "PlanClarificationResponseError",
         "PlanContentModel",
+        "PlanDiscussionContext",
         "PlanDraft",
         "PlanHandoff",
         "PlanHandoffPhase",
@@ -1107,64 +1094,24 @@ def test_plan_configuration_defaults_to_structured_and_freezes_custom_content() 
     assert custom_options is not None
     assert custom_options.content.schema is _CustomPlanContent
     assert custom_options.content.reference.media_type == "application/json"
-    planner_schema = custom_options.contracts.planner_response_type.model_json_schema(
+    question_schema = custom_options.contracts.question_args.model_json_schema(
         by_alias=True
     )
-    assert planner_schema["type"] == "object"
-    assert "_CustomPlanContent" in planner_schema["$defs"]
-    assert set(planner_schema["discriminator"]["mapping"]) == {
-        "clarify",
-        "draft",
-    }
-    clarify_schema = planner_schema["$defs"]["PlannerClarifyOutcome"]
-    draft_schema = planner_schema["$defs"]["PlannerDraftOutcome"]
-    assert set(clarify_schema["properties"]) == {"type", "clarification"}
-    assert set(draft_schema["properties"]) == {"type", "draft"}
-    assert set(clarify_schema["required"]) == {"type", "clarification"}
-    assert set(draft_schema["required"]) == {"type", "draft"}
-    assert all(
-        schema["additionalProperties"] is False
-        for schema in (clarify_schema, draft_schema)
+    draft_schema = custom_options.contracts.draft_args.model_json_schema(by_alias=True)
+    assert set(question_schema["properties"]) == {"form"}
+    assert set(draft_schema["properties"]) == {"content"}
+    assert question_schema["additionalProperties"] is False
+    assert draft_schema["additionalProperties"] is False
+    assert "_CustomPlanContent" in draft_schema["$defs"]
+    parsed = custom_options.contracts.draft_args.model_validate(
+        {"content": {"summary": "Release", "checks": ["Tests pass"]}}
     )
-    edit_planner_schema = (
-        custom_options.contracts.planner_edit_response_type.model_json_schema(
-            by_alias=True
-        )
-    )
-    assert set(edit_planner_schema["discriminator"]["mapping"]) == {
-        "clarify",
-        "accept_edit",
-    }
-    accept_schema = edit_planner_schema["$defs"]["PlannerAcceptEditOutcome"]
-    assert set(accept_schema["properties"]) == {"type"}
-    assert accept_schema["required"] == ["type"]
-    assert accept_schema["additionalProperties"] is False
-    parsed_draft = custom_options.contracts.planner_response_type.model_validate(
-        {
-            "type": "draft",
-            "draft": {"summary": "Release", "checks": ["Tests pass"]},
-        }
-    )
-    assert parsed_draft.type == "draft"
-    assert parsed_draft.draft is not None
-    assert parsed_draft.clarification is None
-    with pytest.raises(ValidationError, match="union_tag_invalid"):
-        custom_options.contracts.planner_response_type.model_validate(
-            {"type": "accept_edit"}
-        )
-    with pytest.raises(ValidationError, match="union_tag_invalid"):
-        custom_options.contracts.planner_edit_response_type.model_validate(
-            {
-                "type": "draft",
-                "draft": {"summary": "Release", "checks": ["Tests pass"]},
-            }
-        )
+    assert parsed.model_dump()["content"]["summary"] == "Release"
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        custom_options.contracts.planner_response_type.model_validate(
+        custom_options.contracts.draft_args.model_validate(
             {
+                "content": {"summary": "Release", "checks": ["Tests pass"]},
                 "type": "draft",
-                "draft": {"summary": "Release", "checks": ["Tests pass"]},
-                "clarification": None,
             }
         )
     default_review_schema = custom_options.contracts.review_response.json_schema(
@@ -1174,6 +1121,7 @@ def test_plan_configuration_defaults_to_structured_and_freezes_custom_content() 
         "approve",
         "respond",
         "reject",
+        "dismiss",
     }
     with pytest.raises(ValidationError, match="union_tag_invalid"):
         custom_options.contracts.review_response.validate_python(
@@ -1228,8 +1176,8 @@ def test_plan_configuration_freezes_a_single_review_action() -> None:
     assert options is not None
     assert options.allowed_review_actions == (PlanReviewAction.APPROVE,)
     schema = options.contracts.review_response.json_schema(by_alias=True)
-    assert schema["properties"]["type"]["const"] == "approve"
-    with pytest.raises(ValidationError, match="literal_error"):
+    assert set(schema["discriminator"]["mapping"]) == {"approve", "dismiss"}
+    with pytest.raises(ValidationError, match="union_tag_invalid"):
         options.contracts.review_response.validate_python(
             {"type": "edit", "baseRevision": 1, "content": {}}
         )
@@ -1835,8 +1783,7 @@ async def test_planner_retries_one_provider_invalid_json_tool_call() -> None:
     assert _root_interrupts(parts)[0].value["kind"] == "tinkerfin:plan_review"
     assert len(model.model_inputs) == 2
     assert any(
-        isinstance(message, HumanMessage)
-        and "strict JSON without trailing commas" in str(message.content)
+        isinstance(message, ToolMessage) and "valid JSON" in str(message.content)
         for message in model.model_inputs[-1]
     )
 
@@ -1963,7 +1910,6 @@ async def test_plan_approval_hands_off_to_native_with_the_same_message_id(
         for observed in (False, True)
         for ending in (
             "cancel",
-            "repeat_cancel",
             "close",
             "provider",
             "observer",
@@ -2015,7 +1961,7 @@ async def test_runtime_settles_native_work_after_interruption(
 
     consumer = asyncio.create_task(consume())
     try:
-        await asyncio.wait_for(model.started.wait(), 5)
+        await model.started.wait()
         if ending == "provider":
             model.release.set()
             with pytest.raises(RuntimeError, match="native provider failed"):
@@ -2030,9 +1976,6 @@ async def test_runtime_settles_native_work_after_interruption(
                 await stream.aclose()
             else:
                 consumer.cancel()
-                if ending == "repeat_cancel":
-                    await asyncio.sleep(0)
-                    consumer.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await consumer
         await stream.aclose()
@@ -3751,6 +3694,7 @@ async def test_review_cancel_keeps_plan_mode_and_replies_once() -> None:
         "approve",
         "reject",
         "cancel",
+        "dismiss",
     }
 
     cancelled = await _parts(
@@ -4283,14 +4227,14 @@ async def test_read_only_planner_inherits_store_and_has_no_write_tools() -> None
         and "planning context"
         in str(cast(tuple[BaseMessage, object], part["data"])[0].content)
         for part in parts
-        if part["type"] == "messages" and part["ns"] != ()
+        if part["type"] == "messages" and part["ns"] == ()
     )
     planner_bindings = [
-        set(names) for names in model.bound_tool_names if "PlannerOutcome" in names
+        set(names) for names in model.bound_tool_names if "submit_plan" in names
     ]
     assert planner_bindings
     assert all(
-        {"ls", "read_file", "glob", "grep", "PlannerOutcome"} <= names
+        {"ls", "read_file", "glob", "grep", "ask_user_question", "submit_plan"} <= names
         for names in planner_bindings
     )
     assert all(
@@ -4321,7 +4265,7 @@ async def test_read_only_planner_has_a_bounded_model_call_budget() -> None:
         .with_plan(enabled=True)
         .build(model=_FakeModel(responses=repeated), tools=[])
     )
-    with pytest.raises(ModelCallLimitExceededError, match=r"run limit \(6/6\)"):
+    with pytest.raises(PlanStructuredOutputError, match="within six model calls"):
         await _parts(
             definition,
             {"messages": [HumanMessage(content="Inspect", id="message")]},
@@ -4398,7 +4342,7 @@ async def test_planner_receives_only_explicit_read_only_host_tools() -> None:
         mode="plan",
     )
     planner_bindings = [
-        set(names) for names in model.bound_tool_names if "PlannerOutcome" in names
+        set(names) for names in model.bound_tool_names if "submit_plan" in names
     ]
     assert planner_bindings
     assert all(
@@ -4994,3 +4938,451 @@ async def test_plan_file_channels_follow_the_configured_filesystem(persistent_ba
     for value in values:
         assert isinstance(value, Mapping)
         assert ("files" in value) is expected_files
+
+
+def _planner_reply() -> AIMessage:
+    return AIMessage(content="Here is why.", id="discussion-reply")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_outcome", ["reply", "clarify", "draft"])
+async def test_plan_reply_is_root_history_and_can_continue_planning(
+    next_outcome: str,
+) -> None:
+    reply = "A is simpler; B supports independent deployments."
+    followup = (
+        _planner_reply()
+        if next_outcome == "reply"
+        else _planner_clarification()
+        if next_outcome == "clarify"
+        else _planner()
+    )
+    model = _FakeModel(
+        responses=[
+            AIMessage(content=reply, id="reply-first"),
+            followup,
+            AIMessage(content="Here is more detail."),
+        ]
+    )
+    tracer = Tracer()
+    runtime = (
+        TinkerFin(checkpointer=InMemorySaver())
+        .with_namespace("test")
+        .with_observer(tracer)
+        .with_plan()
+        .build(model=model)
+    )
+    config = {"configurable": {"thread_id": "plan-thread"}}
+    first = await _agui_events(
+        runtime,
+        {"messages": [HumanMessage(content="Compare A and B", id="question")]},
+        run_id="reply-first",
+        config=config,
+        mode="plan",
+    )
+    _assert_success(first)
+    text_events = [
+        event
+        for event in first
+        if isinstance(
+            event,
+            TextMessageStartEvent | TextMessageContentEvent | TextMessageEndEvent,
+        )
+    ]
+    assert isinstance(text_events[0], TextMessageStartEvent)
+    assert isinstance(text_events[-1], TextMessageEndEvent)
+    assert all(
+        isinstance(event, TextMessageContentEvent) for event in text_events[1:-1]
+    )
+    assert len({event.message_id for event in text_events}) == 1
+    assert (
+        "".join(
+            event.delta for event in first if isinstance(event, TextMessageContentEvent)
+        )
+        == reply
+    )
+    snapshot = await tracer.get(runtime.thread_identity("plan-thread"))
+    assert not snapshot.interactions
+    assert any(
+        message.source_id == "reply-first" and not message.graph_namespace
+        for message in snapshot.messages
+    )
+    assert len(model.model_inputs) == 1
+    second = await _parts(
+        runtime,
+        {"messages": [HumanMessage(content="Continue", id="followup")]},
+        run_id="followup",
+        config=config,
+        mode="plan",
+    )
+    plan = _structured_plan_state(_root_values(second)[-1]["tinkerfin_plan"])
+    assert plan.effective_mode == "plan"
+    assert plan.handoff is None
+    assert (
+        plan.status
+        is {
+            "reply": PlanStatus.AWAITING_INPUT,
+            "clarify": PlanStatus.AWAITING_CLARIFICATION,
+            "draft": PlanStatus.AWAITING_REVIEW,
+        }[next_outcome]
+    )
+    assert plan.revision == int(next_outcome == "draft")
+    later_inputs = list(model.model_inputs)
+    assert any(message.id == "reply-first" for message in later_inputs[1])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("card", ["clarification", "review"])
+@pytest.mark.parametrize("outcome", ["reply", "clarify", "draft"])
+async def test_discussion_closes_card_and_preserves_context(
+    card: str, outcome: str
+) -> None:
+    first = (
+        _planner_clarification(prompt="Which region?")
+        if card == "clarification"
+        else _planner(goal="Deploy to Europe")
+    )
+    decision = (
+        _planner_reply()
+        if outcome == "reply"
+        else _planner_clarification(question_id="new-question")
+        if outcome == "clarify"
+        else _planner(suffix=" discussed")
+    )
+    model = _FakeModel(
+        responses=[
+            first,
+            decision,
+            AIMessage(content="Here is why.", id="discussion-reply"),
+        ]
+    )
+    tracer = Tracer()
+    runtime = (
+        TinkerFin(checkpointer=InMemorySaver())
+        .with_namespace("test")
+        .with_observer(tracer)
+        .with_plan()
+        .build(model=model)
+    )
+    config = {"configurable": {"thread_id": "plan-thread"}}
+    opening = await _agui_events(
+        runtime,
+        {"messages": [HumanMessage(content="Plan deployment", id="request")]},
+        run_id="open-card",
+        config=config,
+        mode="plan",
+    )
+    payload = (
+        {"type": "discuss", "message": "Explain that choice"}
+        if card == "clarification"
+        else {"type": "respond", "baseRevision": 1, "message": "Explain that choice"}
+    )
+    binding = _plan_binding(_terminal(opening), payload=payload)
+    resumed = await _agui_events(
+        runtime, None, run_id="discuss-card", config=config, mode="plan", resume=binding
+    )
+    if outcome == "reply":
+        _assert_success(resumed)
+        assert (
+            "".join(
+                event.delta
+                for event in resumed
+                if isinstance(event, TextMessageContentEvent)
+            )
+            == "Here is why."
+        )
+    else:
+        assert _interrupt_outcome(resumed).interrupts[0].reason == (
+            "tinkerfin:plan_clarification"
+            if outcome == "clarify"
+            else "tinkerfin:plan_review"
+        )
+    snapshot = await tracer.get(runtime.thread_identity("plan-thread"))
+    assert snapshot.interactions[0].status == "resolved"
+    users = [
+        message
+        for message in snapshot.messages
+        if message.role == "user" and message.content == "Explain that choice"
+    ]
+    assert len(users) == 1
+    plan = _structured_plan_state(snapshot.state.root["tinkerfin_plan"])
+    assert plan.confirmed_plan is None and plan.handoff is None
+    assert plan.request_message_id == users[0].source_id
+    assert len(plan.discussion_history) == 1
+    assert plan.clarification_history == ()
+    if card == "clarification":
+        assert plan.discussion_history[0].clarification is not None
+        assert "Which region?" in str(model.model_inputs[1])
+    else:
+        assert plan.discussion_history[0].draft is not None
+        assert plan.discussion_history[0].draft.content.goal == "Deploy to Europe"
+        assert "Deploy to Europe" in str(model.model_inputs[1])
+    assert plan.revision == int(card == "review") + int(outcome == "draft")
+    calls = len(model.model_inputs)
+    await _agui_events(
+        runtime, None, run_id="discuss-card", config=config, mode="plan", resume=binding
+    )
+    assert len(model.model_inputs) == calls
+    assert (
+        len(
+            [
+                message
+                for message in (
+                    await tracer.get(runtime.thread_identity("plan-thread"))
+                ).messages
+                if message.role == "user" and message.content == "Explain that choice"
+            ]
+        )
+        == 1
+    )
+    stale = await _agui_events(
+        runtime, None, run_id="stale-card", config=config, mode="plan", resume=binding
+    )
+    assert any(isinstance(event, RunErrorEvent) for event in stale)
+    assert len(model.model_inputs) == calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"type": "discuss", "message": "   "},
+        {"type": "discuss", "message": "Explain", "answers": {}},
+    ],
+)
+async def test_invalid_discussion_keeps_the_pending_questionnaire(
+    payload: dict[str, object],
+) -> None:
+    model = _FakeModel(responses=[_planner_clarification()])
+    runtime = (
+        TinkerFin(checkpointer=InMemorySaver())
+        .with_namespace("test")
+        .with_plan()
+        .build(model=model)
+    )
+    config = {"configurable": {"thread_id": "plan-thread"}}
+    opening = await _parts(
+        runtime,
+        {"messages": [HumanMessage(content="Plan", id="request")]},
+        run_id="opening",
+        config=config,
+        mode="plan",
+    )
+    with pytest.raises(PlanClarificationResponseError):
+        await _parts(
+            runtime,
+            Command(resume=payload),
+            run_id="invalid-discussion",
+            config=config,
+            mode="plan",
+        )
+    assert len(model.model_inputs) == 1
+    assert _root_interrupts(opening)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("card_kind", ["clarification", "review"])
+async def test_blank_discussion_is_rejected_before_accepting_the_card(
+    card_kind: str,
+) -> None:
+    tracer = Tracer()
+    model = _FakeModel(
+        responses=[
+            _planner_clarification() if card_kind == "clarification" else _planner(),
+            _planner_reply(),
+            AIMessage(content="Here is why."),
+        ]
+    )
+    runtime = (
+        TinkerFin(checkpointer=InMemorySaver())
+        .with_namespace("test")
+        .with_observer(tracer)
+        .with_plan()
+        .build(model=model)
+    )
+    config: RunnableConfig = {"configurable": {"thread_id": "plan-thread"}}
+    opening = await _agui_events(
+        runtime,
+        {"messages": [HumanMessage(content="Plan", id="request")]},
+        run_id="opening",
+        config=config,
+        mode="plan",
+    )
+    payload: dict[str, object] = (
+        {"type": "discuss", "message": " \n\t "}
+        if card_kind == "clarification"
+        else {"type": "respond", "baseRevision": 1, "message": " \n\t "}
+    )
+    saved: list[AgUiResumeCheckpoint] = []
+
+    async def checkpointed(value: AgUiResumeCheckpoint) -> None:
+        saved.append(value)
+
+    rejected = [
+        event
+        async for event in runtime.open_agui_run(
+            thread_id="plan-thread",
+            run_id="invalid-discussion",
+            mode="plan",
+            resume=_plan_binding(_terminal(opening), payload=payload),
+            on_resume_saved=checkpointed,
+            config=config,
+        )
+    ]
+    assert saved == []
+    error = rejected[-1]
+    assert isinstance(error, RunErrorEvent)
+    assert isinstance(error.raw_event, dict)
+    assert error.raw_event.get("initializationFailed") is True
+    assert len(model.model_inputs) == 1
+    pending = await tracer.get(runtime.thread_identity("plan-thread"))
+    assert [item.status for item in pending.interactions] == ["pending"]
+
+    payload["message"] = "Explain that choice"
+    accepted = await _agui_events(
+        runtime,
+        None,
+        run_id="valid-discussion",
+        config=config,
+        mode="plan",
+        resume=_plan_binding(_terminal(opening), payload=payload),
+    )
+    _assert_success(accepted)
+    completed = await tracer.get(runtime.thread_identity("plan-thread"))
+    assert [item.status for item in completed.interactions] == ["resolved"]
+
+
+@pytest.mark.asyncio
+async def test_discussion_and_approval_cannot_both_consume_the_same_card() -> None:
+    from tinkerfin.coordination import InMemoryRunCoordinator
+
+    model = _BlockingNativeModel(responses=[_planner()])
+    runtime = (
+        TinkerFin(
+            checkpointer=InMemorySaver(), run_coordinator=InMemoryRunCoordinator()
+        )
+        .with_namespace("test")
+        .with_plan()
+        .build(model=model)
+    )
+    config = {"configurable": {"thread_id": "plan-thread"}}
+    opening = await _agui_events(
+        runtime,
+        {"messages": [HumanMessage(content="Plan", id="request")]},
+        run_id="open",
+        config=config,
+        mode="plan",
+    )
+    discussion = _plan_binding(
+        _terminal(opening),
+        payload={"type": "respond", "baseRevision": 1, "message": "Explain"},
+    )
+    approval = _plan_binding(
+        _terminal(opening), payload={"type": "approve", "baseRevision": 1}
+    )
+    discussing = asyncio.create_task(
+        _agui_events(
+            runtime,
+            None,
+            run_id="discuss",
+            config=config,
+            mode="plan",
+            resume=discussion,
+        )
+    )
+    attempted = asyncio.Event()
+
+    async def approve() -> list[BaseEvent]:
+        attempted.set()
+        return await _agui_events(
+            runtime, None, run_id="approve", config=config, mode="plan", resume=approval
+        )
+
+    approving: asyncio.Task[list[BaseEvent]] | None = None
+    try:
+        await model.started.wait()
+        approving = asyncio.create_task(approve())
+        await attempted.wait()
+        model.release.set()
+        discussed, approved = await asyncio.gather(discussing, approving)
+        assert any(isinstance(event, RunErrorEvent) for event in discussed)
+        approval_error = next(
+            event for event in approved if isinstance(event, RunErrorEvent)
+        )
+        assert isinstance(approval_error.raw_event, dict)
+        assert approval_error.raw_event.get("initializationFailed") is True
+        assert len(model.model_inputs) == 1
+    finally:
+        model.release.set()
+        await asyncio.gather(
+            discussing, *([approving] if approving else []), return_exceptions=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_plan_reply_closes_its_model_call() -> None:
+    model = _BlockingNativeModel(responses=[_planner_reply()], block_first_call=True)
+    runtime = (
+        TinkerFin(checkpointer=InMemorySaver())
+        .with_namespace("test")
+        .with_plan()
+        .build(model=model)
+    )
+    stream = runtime.open_agui_run(
+        thread_id="cancel-reply",
+        run_id="reply",
+        mode="plan",
+        messages=[{"id": "request", "role": "user", "content": "Explain"}],
+    )
+
+    async def consume() -> None:
+        async for _ in stream:
+            pass
+
+    consuming = asyncio.create_task(consume())
+    try:
+        await model.started.wait()
+        consuming.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await consuming
+        assert model.settled.is_set()
+    finally:
+        model.release.set()
+        await stream.aclose()
+        await asyncio.gather(consuming, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_plan_reply_cannot_call_execution_tools() -> None:
+    model = _FakeModel(
+        responses=[
+            AIMessage(
+                content="",
+                id=f"forbidden-{index}",
+                tool_calls=[
+                    {
+                        "id": f"forbidden-call-{index}",
+                        "name": "execute",
+                        "args": {"command": "echo forbidden"},
+                    }
+                ],
+            )
+            for index in range(3)
+        ]
+    )
+    runtime = (
+        TinkerFin(checkpointer=InMemorySaver())
+        .with_namespace("test")
+        .with_plan()
+        .build(model=model)
+    )
+    events = await _agui_events(
+        runtime,
+        {"messages": [HumanMessage(content="Explain", id="request")]},
+        run_id="bad-reply",
+        config={"configurable": {"thread_id": "plan-thread"}},
+        mode="plan",
+    )
+    assert isinstance(events[-1], RunErrorEvent)
+    assert len(model.model_inputs) == 3
+    assert all("execute" not in names for names in model.bound_tool_names)

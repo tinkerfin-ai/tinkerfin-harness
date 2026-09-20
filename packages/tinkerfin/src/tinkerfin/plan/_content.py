@@ -13,6 +13,7 @@ from .models import (
     ConfirmedPlan,
     MarkdownPlanContent,
     PlanContentModel,
+    PlanDiscussionContext,
     PlanDraft,
     PlanSchemaReference,
     PlanState,
@@ -34,6 +35,7 @@ class PlanContentBinding:
     draft_type: type[PlanDraft[PlanContentModel]]
     confirmed_type: type[ConfirmedPlan[PlanContentModel]]
     state_type: type[PlanState[PlanContentModel]]
+    discussion_type: type[PlanDiscussionContext[PlanContentModel]]
 
 
 def _validate_content_schema(value: object) -> type[PlanContentModel]:
@@ -89,11 +91,18 @@ def create_plan_content_binding(content_schema: object) -> PlanContentBinding:
         __base__=ConfirmedPlan,
         content=(content_type, ...),
     )
+    discussion_type = create_model(
+        "PlanDiscussionContext",
+        __base__=PlanDiscussionContext,
+        draft=(draft_type | None, None),
+        submitted_edit=(content_type | None, None),
+    )
     state_type = create_model(
         "PlanState",
         __base__=PlanState,
         draft=(draft_type | None, None),
         pending_edit=(content_type | None, None),
+        discussion_history=(tuple[discussion_type, ...], ()),
         confirmed_plan=(confirmed_type | None, None),
     )
     return PlanContentBinding(
@@ -102,6 +111,9 @@ def create_plan_content_binding(content_schema: object) -> PlanContentBinding:
         draft_type=cast(type[PlanDraft[PlanContentModel]], draft_type),
         confirmed_type=cast(type[ConfirmedPlan[PlanContentModel]], confirmed_type),
         state_type=cast(type[PlanState[PlanContentModel]], state_type),
+        discussion_type=cast(
+            type[PlanDiscussionContext[PlanContentModel]], discussion_type
+        ),
     )
 
 

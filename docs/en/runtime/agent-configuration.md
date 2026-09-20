@@ -90,8 +90,9 @@ result = await runtime.ainvoke(
 )
 ```
 
-Plan can clarify requirements and ask the user to approve a draft before agent
-execution. Its built-in filesystem access is read-only. `mode="default"` executes the
+Plan chooses an ordinary reply, a clarification, or a draft based on the conversation.
+An ordinary reply keeps Planning mode active; execution starts only after the user
+approves the current draft. Its built-in filesystem access is read-only. `mode="default"` executes the
 agent directly. Plan models and review actions are exported from `tinkerfin.plan`.
 
 ## Lazy workspaces and tools

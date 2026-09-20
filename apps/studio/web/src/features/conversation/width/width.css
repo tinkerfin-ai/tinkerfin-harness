@@ -1,0 +1,42 @@
+@layer conversation {
+  .conversation-width-handles { position: absolute; inset: 0; z-index: calc(var(--layer-sticky) + var(--layer-local)); pointer-events: none; }
+  .conversation-width-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    --conversation-width-offset: min(var(--space-4), calc(var(--layout-page-gutter) - var(--space-3)));
+    width: var(--space-6);
+    z-index: var(--layer-local);
+    pointer-events: auto;
+    cursor: col-resize;
+    touch-action: none;
+    outline: none;
+  }
+  /* 两侧留白同时服务正文和输入框调宽，窄边距时保留完整命中区域 */
+  .conversation-width-handle[data-side='left'] { left: calc(50% - var(--layout-composer-width) / 2 - var(--conversation-width-offset) - var(--space-3)); }
+  .conversation-width-handle[data-side='right'] { left: calc(50% + var(--layout-composer-width) / 2 + var(--conversation-width-offset) - var(--space-3)); }
+  .conversation-width-indicator {
+    --width-indicator-height: 96px;
+    position: absolute;
+    width: 2px;
+    height: var(--width-indicator-height);
+    top: clamp(calc(var(--width-indicator-height) / 2 + var(--space-1)), var(--width-pointer-y, 50%), calc(100% - var(--width-indicator-height) / 2 - var(--space-1)));
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--color-scroll-thumb-hover);
+    background: linear-gradient(to bottom, transparent, currentColor 40%, currentColor 60%, transparent);
+    border-radius: var(--radius-pill);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+  }
+  .conversation-width-handles:has(.conversation-width-handle:is(:hover, [data-dragging])) .conversation-width-indicator { opacity: 1; }
+  .conversation-width-handles:has(.conversation-width-handle[data-dragging]) .conversation-width-indicator { color: var(--color-text-tertiary); }
+  @media (any-pointer: coarse) {
+    .conversation-width-handle { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { .conversation-width-indicator { transition: none; } }
+  @media (forced-colors: active) {
+    .conversation-width-indicator { color: ButtonText; background: ButtonText; }
+  }
+}

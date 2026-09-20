@@ -11,7 +11,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-打开终端显示的地址，默认 `http://127.0.0.1:5173`，也可使用 `http://localhost:5173`。开发服务器将 `/api` 代理到 `http://127.0.0.1:8090`。连接其他后端时：
+打开终端显示的地址，默认 `http://127.0.0.1:5190`，也可使用 `http://localhost:5190`。开发服务器将 `/api` 代理到 `http://127.0.0.1:8090`。连接其他后端时：
 
 ```bash
 VITE_API_PROXY_TARGET=http://127.0.0.1:8092 pnpm dev

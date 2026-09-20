@@ -39,7 +39,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Open the address printed in the terminal, normally `http://localhost:5173`.
+Open the address printed in the terminal, normally `http://localhost:5190`.
 
 ## Sign in and configure a model
 

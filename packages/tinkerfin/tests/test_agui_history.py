@@ -430,7 +430,15 @@ async def test_plan_human_input_exports_the_same_live_request_and_response_schem
                     AIMessage(
                         content="",
                         tool_calls=[
-                            {"id": "planner", "name": "PlannerOutcome", "args": outcome}
+                            {
+                                "id": "planner",
+                                "name": "submit_plan"
+                                if kind == "draft"
+                                else "ask_user_question",
+                                "args": {"content": outcome["draft"]}
+                                if kind == "draft"
+                                else {"form": outcome["clarification"]},
+                            }
                         ],
                     ),
                     AIMessage(content="Report complete"),

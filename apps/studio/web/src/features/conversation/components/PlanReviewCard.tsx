@@ -25,12 +25,12 @@ export function PlanReviewCard({
   interaction,
   onChange,
   onSubmit,
-  onCancel,
+  onClose,
 }: {
   interaction: PlanReviewState
   onChange: (updater: (current: PlanReviewState) => PlanReviewState) => void
   onSubmit: (action: 'approve' | 'reject') => void
-  onCancel: () => void
+  onClose: () => void
 }) {
   const { t } = useI18n()
   const bodyRef = useRef<HTMLDivElement | null>(null)
@@ -68,6 +68,7 @@ export function PlanReviewCard({
 
   return (
     <PlanInteractionCard
+      disabled={interaction.submitted}
       kind="review"
       ariaLabel={t('Plan 审阅')}
       minimized={false}
@@ -75,16 +76,17 @@ export function PlanReviewCard({
       icon={<Route size={16} aria-hidden="true" />}
       title={interaction.draft.content.description}
       bodyRef={bodyRef}
-      headerAction={actionAllowed('cancel') ? (
+      headerAction={(
         <IconButton
           size="sm"
           className="plan-interaction-card-head-button plan-review-composer-head-button"
-          label={t('取消当前 Plan 草稿')}
-          tooltip={t('取消当前 Plan 草稿')}
+          label={t('关闭卡片，继续对话')}
+          tooltip={t('关闭卡片，继续对话')}
           icon={<X size={15} />}
-          onClick={onCancel}
+          onClick={onClose}
+          disabled={interaction.submitted}
         />
-      ) : undefined}
+      )}
     >
       <>
         <div

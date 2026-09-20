@@ -67,7 +67,7 @@ test('生成文件使用紧凑类型卡片并沿用图片预览工具栏', async
           modelId: documentHistory.lastModel,
           displayName: 'DeepSeek',
           imageSupport: 'supported',
-          reasoningEnabled: true,
+          connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true,
           isDefault: true,
         }],
         defaultModelId: documentHistory.lastModel,

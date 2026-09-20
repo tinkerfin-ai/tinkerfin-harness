@@ -29,7 +29,7 @@
     grid-template-rows: var(--layout-drawer-header-height) minmax(0, 1fr);
     width: min(var(--layout-drawer-width), 100vw);
     height: 100dvh;
-    padding: 0 var(--space-4) max(var(--space-4), env(safe-area-inset-bottom));
+    padding: 0 var(--layout-panel-inset) max(var(--layout-panel-inset), env(safe-area-inset-bottom));
     transform: translateX(100%);
     border: 0;
     background: var(--color-canvas);
@@ -379,8 +379,8 @@
   @media (max-width: 440px) {
     .todo-trace-drawer {
       width: 100vw;
-      padding-right: var(--space-2);
-      padding-left: var(--space-2);
+      padding-right: var(--layout-panel-inset);
+      padding-left: var(--layout-panel-inset);
     }
 
     .todo-trace-group-meta { gap: var(--space-1); }

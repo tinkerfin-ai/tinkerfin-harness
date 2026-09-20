@@ -867,6 +867,12 @@ describe('Trace conversation projection', () => {
     })
     expect(restored.pendingInteractionKind).toBe('plan_clarification')
     expect(restored.runStatus).toBe('waiting_approval')
+    source.interactions[0]!.status = 'resolved'
+    source.status.execution = 'succeeded'
+    const closed = restoreConversationFromTrace(source, { model: 'fallback', includeTaskTrace: true })
+    expect(closed.planInteraction).toBeUndefined()
+    expect(closed.messages.find(message => message.meta?.planHistory)?.id).toBe('plan-history:plan-interrupt')
+    expect(closed.messages.find(message => message.meta?.planHistory)?.meta?.planHistory).toMatchObject({ kind: 'questions', title: '确认范围' })
   })
 })
 
@@ -1021,16 +1027,16 @@ it.each(['runtime_error', 'cancelled'])('恢复的父委派工具与子智能体
 })
 
 
-it('澄清和计划审阅后的历史保留各次计划子图工具，内部结果不生成卡片', () => {
+it('澄清和计划审阅后的历史保留只读工具及计划业务工具', () => {
   const source = detail()
   source.graph.nodes = ['clarify-first', 'clarify-second', 'review'].flatMap((runId, index) => (
-    ['ls', 'read_file', 'PlannerOutcome'].map((name, toolIndex) => ({
+    ['ls', 'read_file', runId === 'review' ? 'submit_plan' : 'ask_user_question'].map((name, toolIndex) => ({
       ...source.graph.nodes[0]!,
       id: `${runId}:${name}`,
       agui: { kind: 'tool' as const, toolCallId: `public:${runId}:${name}` },
       name,
       runId,
-      graphNamespace: [`create_plan:${runId}`],
+      graphNamespace: [],
       startedSeq: 3 + index * 3 + toolIndex,
       sourceId: `call:${name}`,
     }))
@@ -1042,8 +1048,8 @@ it('澄清和计划审阅后的历史保留各次计划子图工具，内部结�
     entry.type === 'tools' ? entry.messages : []
   ))
   expect(tools.map(message => message.id)).toEqual([
-    'clarify-first:ls', 'clarify-first:read_file',
-    'clarify-second:ls', 'clarify-second:read_file',
-    'review:ls', 'review:read_file',
+    'clarify-first:ls', 'clarify-first:read_file', 'clarify-first:ask_user_question',
+    'clarify-second:ls', 'clarify-second:read_file', 'clarify-second:ask_user_question',
+    'review:ls', 'review:read_file', 'review:submit_plan',
   ])
 })

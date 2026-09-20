@@ -27,7 +27,12 @@ export const buildConversationDisplayEntries = (
   const groupedRuns = new Set<string>()
   for (const group of groups) {
     groupsByTool.set(group.groupToolCallId, group)
-    groupedRuns.add(originRunId(group))
+    const origin = originRunId(group)
+    groupedRuns.add(origin)
+    // 讨论会增加用户消息，但恢复运行仍属于 Trace 中原来的任务轮次
+    const nodes = conversation.trace?.graph.nodes ?? []
+    const turns = new Set(nodes.filter(node => node.runId === origin).map(node => node.turnId))
+    for (const node of nodes) if (turns.has(node.turnId)) groupedRuns.add(node.runId)
   }
   const pendingApproval = conversation.approval?.submitted === false
     ? conversation.approval
@@ -54,7 +59,6 @@ export const buildConversationDisplayEntries = (
       message.meta?.toolCallId
       && approvalToolCallIds.has(message.meta.toolCallId)
     ) return null
-    if (message.meta?.toolName === 'PlannerOutcome') return null
     if (message.meta?.toolName === 'task') {
       return message.meta.status !== 'running' && !message.meta.subRunId
         ? { type: 'message', message }

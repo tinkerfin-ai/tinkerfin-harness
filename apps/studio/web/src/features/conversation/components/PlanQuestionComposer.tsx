@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CircleHelp,
   Clock3,
+  X,
   MessageSquareText,
 } from 'lucide-react'
 import {
@@ -246,11 +247,13 @@ export function PlanQuestionComposer({
   interaction,
   onChange,
   onSubmit,
+  onClose,
 }: {
   threadId: string
   interaction: PlanQuestionState
   onChange: (updater: (current: PlanQuestionState) => PlanQuestionState) => void
   onSubmit: () => void
+  onClose: () => void
 }) {
   const { t } = useI18n()
   const [minimized, setMinimized] = useState(() => readPlanQuestionCollapsed(threadId))
@@ -546,6 +549,7 @@ export function PlanQuestionComposer({
 
   return (
     <PlanInteractionCard
+      disabled={interaction.submitted}
       kind="question"
       ariaLabel={t('Plan 澄清问题')}
       minimized={minimized}
@@ -560,6 +564,11 @@ export function PlanQuestionComposer({
         ? t('点击标题区域展开问题卡片')
         : t('点击标题区域收起问题卡片')}
       toggleLabel={minimized ? t('展开问题卡片') : t('收起问题卡片')}
+      headerAction={<IconButton
+        size="sm" className="plan-interaction-card-head-button"
+        label={t('关闭卡片，继续对话')} tooltip={t('关闭卡片，继续对话')}
+        icon={<X size={15} />} onClick={onClose} disabled={interaction.submitted}
+      />}
       onToggle={toggleMinimized}
       bodyRef={bodyRef}
       minimizedContent={(

@@ -29,6 +29,7 @@ from .models import ConfirmedPlan as ConfirmedPlan
 from .models import MarkdownPlanContent as MarkdownPlanContent
 from .models import PendingClarification as PendingClarification
 from .models import PlanContentModel as PlanContentModel
+from .models import PlanDiscussionContext as PlanDiscussionContext
 from .models import PlanDraft as PlanDraft
 from .models import PlanHandoff as PlanHandoff
 from .models import PlanHandoffPhase as PlanHandoffPhase
@@ -61,6 +62,7 @@ __all__ = [
     "PendingClarification",
     "PlanClarificationResponseError",
     "PlanContentModel",
+    "PlanDiscussionContext",
     "PlanDraft",
     "PlanHandoff",
     "PlanHandoffPhase",

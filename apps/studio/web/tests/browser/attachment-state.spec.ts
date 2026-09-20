@@ -27,9 +27,9 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
       if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00.000Z', user }
       else if (path === '/api/models') data = {
         items: [
-          { modelId: 'flash', displayName: 'DeepSeek-V4-Flash', imageSupport: 'unsupported', reasoningEnabled: true, isDefault: true },
-          { modelId: 'vision', displayName: '支持图片的模型', imageSupport: 'supported', reasoningEnabled: true, isDefault: false },
-          { modelId: 'unknown', displayName: '未确认图片能力的模型', imageSupport: 'unknown', reasoningEnabled: true, isDefault: false },
+          { modelId: 'flash', displayName: 'DeepSeek-V4-Flash', imageSupport: 'unsupported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true },
+          { modelId: 'vision', displayName: '支持图片的模型', imageSupport: 'supported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: false },
+          { modelId: 'unknown', displayName: '未确认图片能力的模型', imageSupport: 'unknown', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: false },
         ], defaultModelId: 'flash',
       }
       else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }

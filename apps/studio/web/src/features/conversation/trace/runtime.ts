@@ -335,6 +335,16 @@ const traceMessages = (trace: ConversationHistoryCoreDetail): Message[] => {
       },
     })
   })
+  for (const interaction of trace.interactions) {
+    if (interaction.status === 'pending' || !interaction.agui) continue
+    const plan = planInteractionFromInterrupts(interaction.agui)
+    if (!plan) continue
+    ordered.push({ sequence: interaction.traceSeq, value: {
+      id: `plan-history:${plan.interruptId}`, role: 'process', content: '',
+      createdAt: interaction.openedAt,
+      meta: { planHistory: plan, status: 'completed', runId: interaction.runId },
+    } })
+  }
   return ordered.sort((left, right) => (
     left.sequence - right.sequence
   )).map((item) => item.value)

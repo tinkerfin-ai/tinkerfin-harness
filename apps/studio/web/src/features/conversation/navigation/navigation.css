@@ -1,8 +1,5 @@
 @layer workspace {
   .conversation-region:has(.conversation-navigation) { container-type: inline-size; }
-  .conversation-region:has(.conversation-navigation) .conversation-pane {
-    padding-inline: var(--space-6);
-  }
   .conversation-region:has(.conversation-navigation) .user-message { scroll-margin-top: var(--space-6); }
   .conversation-navigation {
     position: absolute;
@@ -30,7 +27,7 @@
     color: var(--color-brand-text);
   }
   .conversation-navigation-rail { display: none; }
-  .conversation-navigation-dialog { max-width: var(--layout-content-medium); }
+  .conversation-navigation-dialog { max-width: var(--layout-form-width); }
   .conversation-navigation-list {
     display: grid;
     gap: var(--space-1);
@@ -84,9 +81,6 @@
   }
   @container (min-width: 1024px) {
     @media (hover: hover) and (pointer: fine) {
-      .conversation-region:has(.conversation-navigation) .conversation-pane {
-        padding-inline: calc(var(--control-lg) + var(--space-5));
-      }
       .conversation-navigation-mobile { display: none; }
       .conversation-navigation-rail {
         position: relative;

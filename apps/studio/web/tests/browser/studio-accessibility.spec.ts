@@ -481,6 +481,7 @@ const planReviewPayload: JsonObject = {
         approve: '#/$defs/ApprovePlan',
         reject: '#/$defs/RejectPlan',
         cancel: '#/$defs/CancelPlan',
+        respond: '#/$defs/RespondToPlan',
       },
     },
   },
@@ -821,8 +822,8 @@ async function mockStudio(page: Page, {
     if (url.pathname === '/api/models') {
       await fulfillJson(route, {
         items: [
-          { modelId: 'GPT-5.5', displayName: 'GPT-5.5', reasoningEnabled: false, isDefault: true },
-          { modelId: 'Qwen-3.7', displayName: 'Qwen-3.7', reasoningEnabled: false, isDefault: false },
+          { modelId: 'GPT-5.5', displayName: 'GPT-5.5', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true },
+          { modelId: 'Qwen-3.7', displayName: 'Qwen-3.7', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: false },
         ],
         defaultModelId: 'GPT-5.5',
       })
@@ -1306,6 +1307,63 @@ for (const required of [false, true]) {
       await answer.fill('  ')
       await expect(submit).toBeDisabled()
     }
+  })
+}
+
+for (const card of ['question', 'review'] as const) {
+  test(`Plan 卡片关闭后才显示对话输入（${card}）`, async ({ page }, testInfo) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await mockStudio(page, { planQuestion: card === 'question', planReview: card === 'review' })
+    const input = page.getByRole('textbox', { name: '消息输入' })
+    const close = page.getByRole('button', { name: '关闭卡片，继续对话', exact: true })
+    await expect(input).toHaveCount(0)
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+      await page.evaluate(theme => { document.documentElement.dataset.theme = theme }, colorScheme)
+      for (const width of [320, 768, 1024, 1440]) {
+        await page.setViewportSize({ width, height: 900 })
+        if (width === 320) {
+          const closeNavigation = page.getByRole('button', { name: '关闭导航' })
+          if (await closeNavigation.isVisible()) await closeNavigation.click()
+          await expect(closeNavigation).toBeHidden()
+        }
+        await expect(close).toBeInViewport()
+        await expect(input).toHaveCount(0)
+        await page.screenshot({ path: testInfo.outputPath(`plan-${card}-${colorScheme}-${width}.png`) })
+      }
+    }
+    let release!: () => void
+    const allowed = new Promise<void>(resolve => { release = resolve })
+    let received!: () => void
+    const requested = new Promise<void>(resolve => { received = resolve })
+    await page.route('**/api/conversation/chat', async route => {
+      const payload = route.request().postDataJSON()
+      expect(payload.messages).toEqual([])
+      expect(payload.resume).toEqual([{
+        interruptId: card === 'question' ? 'browser-plan-question' : 'browser-plan-review', status: 'resolved',
+        payload: card === 'question' ? { type: 'dismiss' } : { type: 'dismiss', baseRevision: 3 },
+      }])
+      received()
+      await allowed
+      const events = [
+        { type: 'RUN_STARTED', threadId: THREAD_ID, runId: payload.runId },
+        { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: payload.runId, outcome: { type: 'success' } },
+      ]
+      // 终态历史暂时不可用时，关闭仍应由实时结果正确结算
+      await page.route(`**/api/conversation/${THREAD_ID}/history*`, pending => pending.fulfill({ status: 503, contentType: 'application/json', body: '{}' }))
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', body: events.map((event, index) => `id: ${index + 1}\ndata: ${JSON.stringify(event)}\n\n`).join('') })
+    })
+    await close.click()
+    await requested
+    await expect(input).toHaveCount(0)
+    release()
+    await expect(input).toBeVisible()
+    await expect(input).toBeFocused()
+    await expect(page.getByText(/ · 已结束$/)).toBeVisible()
+    await expect(page.getByRole('button', { name: '提交回答', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '批准', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Plan 已开启，点击关闭' })).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath(`plan-${card}-closed.png`) })
   })
 }
 
@@ -2482,7 +2540,7 @@ test('提问等待状态与上一条气泡使用公共顶层间距', async ({ pa
   }
 })
 
-test('计划草稿以描述标题和三动作卡片接管输入区', async ({ page }) => {
+test('计划草稿接管输入区并保留审阅动作', async ({ page }) => {
   await mockStudio(page, {
     planReview: true,
     conversationMessages: [{
@@ -2502,7 +2560,7 @@ test('计划草稿以描述标题和三动作卡片接管输入区', async ({ pa
   const waitDots = waitState.locator('.activity-dots')
   const messageList = page.locator('.message-list')
 
-  await expect(page.locator('.composer-takeover .plan-review-composer')).toHaveCount(1)
+  await expect(page.getByRole('textbox', { name: '消息输入' })).toHaveCount(0)
   await expect(page.locator('.message-list .plan-review-composer')).toHaveCount(0)
   await expect(card.locator('.plan-review-composer-heading h2'))
     .toHaveText('保持现有会话行为并完成响应式验证')
@@ -2512,7 +2570,7 @@ test('计划草稿以描述标题和三动作卡片接管输入区', async ({ pa
   await expect(card).not.toContainText('第 3 版')
   await expect(card.locator('.plan-review-toggle-surface')).toHaveCount(0)
   await expect(card.locator('.plan-review-composer-head-button')).toHaveCount(1)
-  await expect(card.getByRole('button', { name: '取消当前 Plan 草稿' })).toBeVisible()
+  await expect(card.getByRole('button', { name: '关闭卡片，继续对话' })).toBeVisible()
   await expect(page.getByRole('separator', { name: '调整交互卡片高度' })).toBeVisible()
   await expect(waitState).toContainText('Plan')
   await expect(waitState).toContainText('等待审阅')
@@ -2521,7 +2579,7 @@ test('计划草稿以描述标题和三动作卡片接管输入区', async ({ pa
   await expect(card.getByRole('button', { name: '反馈' })).toHaveCount(0)
   await expect(card.getByRole('button', { name: '批准' })).toBeVisible()
   await expect(card.getByRole('button', { name: '编辑' })).toHaveCount(0)
-  await expect(card.getByRole('button', { name: /关闭|放弃/ })).toHaveCount(0)
+  await expect(card.getByRole('button', { name: '放弃' })).toHaveCount(0)
 
   const title = card.locator('.plan-review-composer-heading h2 > span')
   const icon = card.locator('.plan-review-composer-heading h2 > svg')
@@ -2577,7 +2635,7 @@ test('计划草稿以描述标题和三动作卡片接管输入区', async ({ pa
         .toBeLessThanOrEqual(bodyBounds.y + bodyBounds.height + .5)
       expect(finalItemBounds.y + finalItemBounds.height).toBeLessThanOrEqual(footerBounds.y + .5)
       const actionBounds = await Promise.all([
-        card.getByRole('button', { name: '取消当前 Plan 草稿' }).boundingBox(),
+        card.getByRole('button', { name: '关闭卡片，继续对话' }).boundingBox(),
         card.getByRole('button', { name: '拒绝' }).boundingBox(),
         card.getByRole('button', { name: '批准' }).boundingBox(),
       ])

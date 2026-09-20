@@ -1,4 +1,9 @@
 export const englishMessages = {
+  "关闭卡片，继续对话": "Close card and continue chatting",
+  "已结束": "Closed",
+  "调整会话宽度": "Adjust conversation width",
+  "调整会话右侧宽度": "Adjust conversation width from the right",
+  "调整会话左侧宽度": "Adjust conversation width from the left",
   "参数超出允许范围": "Parameter is outside the allowed range",
   "停止序列最多四项": "Use up to four stop sequences",
   "DeepSeek 连接需要 API 密钥": "An API key is required for a DeepSeek connection",
@@ -643,7 +648,6 @@ export const englishMessages = {
   '拒绝': 'Reject',
   '批准': 'Approve',
   '说明为什么不执行这份计划…': 'Explain why this plan should not run…',
-  '取消当前 Plan 草稿': 'Cancel the current Plan draft',
   'Plan 澄清问题': 'Plan clarification questions',
   '输入会影响方案的具体要求…': 'Enter requirements that affect the plan…',
   '自定义回答：{question}': 'Custom answer: {question}',

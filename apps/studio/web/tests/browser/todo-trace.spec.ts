@@ -211,7 +211,7 @@ async function mockTodoTraceStudio(page: Page, {
         items: [{
           modelId: 'GPT-5.5',
           displayName: 'GPT-5.5',
-          reasoningEnabled: false,
+          connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false,
           isDefault: true,
         }],
         defaultModelId: 'GPT-5.5',

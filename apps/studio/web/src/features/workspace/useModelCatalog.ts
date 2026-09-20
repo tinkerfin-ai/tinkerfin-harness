@@ -32,17 +32,14 @@ export function useModelCatalog() {
       ? catalogDefaultModelId
       : models.find((model) => model.isDefault)?.modelId ?? models[0]?.modelId ?? ''
   ), [catalogDefaultModelId, models])
-  const displayName = useCallback((modelId: string) => (
-    models.find((model) => model.modelId === modelId)?.displayName ?? modelId
-  ), [models])
   const retry = useCallback(() => setVersion((current) => current + 1), [])
 
   return {
     imageSupport: (id: string) => models.find(item => item.modelId === id)?.imageSupport ?? 'unknown',
     status,
     modelIds,
+    models,
     defaultModelId,
-    displayName,
     retry,
   }
 }

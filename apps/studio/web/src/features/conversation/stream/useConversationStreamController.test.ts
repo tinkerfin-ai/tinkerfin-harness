@@ -955,9 +955,14 @@ it.each(['resume', 'follow'] as const)('审批工具跨运行返回时保持 Tod
     messages: [{
       ...traceDetail().messages[0]!, id: 'question', sourceId: 'question',
       role: 'user', runId: 'original', content: '生成报告',
+    }, {
+      ...traceDetail().messages[0]!, id: 'discussion', sourceId: 'discussion', traceSeq: 2,
+      role: 'user', runId: 'previous-resume', content: '为什么这样安排？',
     }],
     taskTrace: { status: 'ready', todoGroups: [group] },
     graph: traceGraphWithNodes([
+      traceGraphNode({ id: 'question-node', kind: 'human_message', sourceId: 'question', runId: 'original', startedSeq: 1 }),
+      traceGraphNode({ id: 'discussion-node', kind: 'human_message', sourceId: 'discussion', runId: 'previous-resume', startedSeq: 2 }),
       traceGraphNode({ id: 'trace:todos', agui: { kind: 'tool', toolCallId: 'todos' }, name: 'write_todos', runId: 'previous-resume', startedSeq: 2 }),
       traceGraphNode({ id: 'trace:write', agui: { kind: 'tool', toolCallId: 'write' }, name: 'write_file', runId: 'previous-resume', status: 'waiting', startedSeq: 3 }),
     ], 5),
@@ -969,8 +974,9 @@ it.each(['resume', 'follow'] as const)('审批工具跨运行返回时保持 Tod
   const events: StreamedAgUiEvent[] = [
     { seq: 1, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } },
     { seq: 2, event: { type: 'TOOL_CALL_RESULT', toolCallId: 'write', messageId: 'write-result', content: 'written', role: 'tool' } },
+    { seq: 3, event: { type: 'STATE_SNAPSHOT', snapshot: { todos: [{ id: 'todo', content: '生成报告', status: 'completed' }] } } },
   ]
-  const terminal: StreamedAgUiEvent = { seq: 3, event: { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID } }
+  const terminal: StreamedAgUiEvent = { seq: 4, event: { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID } }
   clientMocks.resume.mockImplementation(async function* () {
     yield* streamItems(events)
     processed()
@@ -988,7 +994,7 @@ it.each(['resume', 'follow'] as const)('审批工具跨运行返回时保持 Tod
     ...base, asOfSeq: 6, headRunId: RUN_ID, availableHeads: [RUN_ID],
     status: { execution: 'succeeded', headRunId: RUN_ID },
     graph: traceGraphWithNodes(base.graph.nodes.map(node => ({ ...node, status: 'succeeded' })), 6),
-    taskTrace: { status: 'ready', todoGroups: [{ ...group, status: 'incomplete', todos: [{ ...group.todos[0]!, status: 'incomplete' }] }] },
+    taskTrace: { status: 'ready', todoGroups: [{ ...group, status: 'completed', todos: [{ ...group.todos[0]!, status: 'completed' }] }] },
   })
   traceMocks.detail.mockResolvedValue(final)
   const initial = restoreConversationFromTrace(base, { model: 'main', includeTaskTrace: true })
@@ -1002,7 +1008,7 @@ it.each(['resume', 'follow'] as const)('审批工具跨运行返回时保持 Tod
         : result.current.controller.followDetachedConversation(THREAD_ID)
       await received
     })
-    expect(result.current.workspace.conversations[0]?.taskTrace).toEqual({ phase: 'ready', snapshot: { status: 'ready', todoGroups: [group] } })
+    expect(result.current.workspace.conversations[0]?.taskTrace).toEqual({ phase: 'ready', snapshot: { status: 'ready', todoGroups: [{ ...group, todos: [{ ...group.todos[0]!, status: 'completed' }] }] } })
     await act(async () => { finish(); await streaming })
     expect(result.current.workspace.conversations[0]?.taskTrace).toEqual({ phase: 'ready', snapshot: final.taskTrace })
   } finally {

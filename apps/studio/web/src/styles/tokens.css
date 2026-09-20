@@ -152,9 +152,13 @@
     --optical-activity-dots-inset: 1px;
     --layout-sidebar-expanded: 261px;
     --layout-sidebar-rail: 56px;
-    --layout-content-wide: 840px;
-    --layout-conversation-width: 748px;
-    --layout-composer-width: 780px;
+    --layout-page-gutter: 32px;
+    --layout-panel-inset: 20px;
+    --layout-form-width: 712px;
+    --layout-dialog-width: 440px;
+    --layout-action-width: 400px;
+    --layout-document-width: 1040px;
+    --layout-auth-width: 336px;
     --layout-feedback-card: 288px;
     --layout-composer-surface-height: 118px;
     --layout-toast-width: 380px;
@@ -164,11 +168,10 @@
     --layout-interaction-card-max-cap: 680px;
     --layout-interaction-card-max-height: clamp(var(--layout-interaction-card-min-height), calc(100dvh - var(--layout-header-height) - var(--layout-interaction-card-context-reserve) - var(--space-10)), var(--layout-interaction-card-max-cap));
     --layout-interaction-card-gap: var(--space-6);
-    --layout-content-medium: 712px;
     --layout-drawer-width: 400px;
     --layout-header-height: var(--space-16);
     --layout-drawer-header-height: calc(var(--layout-header-height) + var(--space-3));
-    --layout-settings-dialog: 760px;
+    --layout-settings-dialog: 960px;
     --layout-settings-nav: 180px;
     --layout-settings-height: 540px;
 
@@ -274,5 +277,14 @@
     --shadow-drawer-inline: -12px 0 34px rgb(0 0 0 / 38%);
     --shadow-trace-node-selected: 0 0 0 4px rgb(103 158 254 / 18%);
     --shadow-trace-node-error: 0 0 0 3px rgb(242 90 90 / 18%);
+  }
+  @media (max-width: 1023px) {
+    :root { --layout-page-gutter: 24px; }
+  }
+  @media (max-width: 767px) {
+    :root { --layout-page-gutter: 16px; --layout-panel-inset: 16px; }
+  }
+  @media (max-width: 440px) {
+    :root { --layout-page-gutter: 12px; --layout-panel-inset: 12px; }
   }
 }

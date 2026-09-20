@@ -86,7 +86,7 @@ describe('AG-UI 事件边界解析', () => {
     ['TOOL_CALL_START', {
       type: 'TOOL_CALL_START',
       toolCallId: 'planner-outcome-1',
-      toolCallName: 'PlannerOutcome',
+      toolCallName: 'submit_plan',
       parentMessageId: 'planner-message-1',
     }],
     ['TOOL_CALL_ARGS', {
@@ -188,7 +188,7 @@ describe('AG-UI 事件边界解析', () => {
     ['compiled subgraph 伪造主 Agent 身份', {
       type: 'TOOL_CALL_START',
       toolCallId: 'tool-compiled-main',
-      toolCallName: 'PlannerOutcome',
+      toolCallName: 'submit_plan',
       rawEvent: {
         source: {
           kind: 'compiled_subgraph',

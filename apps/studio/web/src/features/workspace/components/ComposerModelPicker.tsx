@@ -4,6 +4,7 @@ import { Button, ListboxPicker } from '../../../components/ui'
 import { OverflowMarquee } from './OverflowMarquee'
 import { useI18n } from '../../../i18n'
 import type { ModelCatalogStatus } from '../useModelCatalog'
+import type { AgentModelCatalogItem } from '../../../api/models/types'
 
 function ModelOption({ label, selected }: { label: string; selected: boolean }) {
   return (
@@ -16,9 +17,8 @@ function ModelOption({ label, selected }: { label: string; selected: boolean }) 
 
 export function ComposerModelPicker({
   model,
-  modelIds,
+  models,
   defaultModelId,
-  modelDisplayName,
   status,
   open,
   onOpenChange,
@@ -26,9 +26,8 @@ export function ComposerModelPicker({
   onRetry,
 }: {
   model: string
-  modelIds: string[]
+  models: readonly AgentModelCatalogItem[]
   defaultModelId: string
-  modelDisplayName: (modelId: string) => string
   status: ModelCatalogStatus
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -54,10 +53,17 @@ export function ComposerModelPicker({
   }
 
   const selectedModel = model || defaultModelId
+  const byId = new Map(models.map(item => [item.modelId, item]))
+  const modelIds = models.map(item => item.modelId)
+  const modelDisplayName = (id: string) => byId.get(id)?.displayName ?? id
   return (
     <ListboxPicker
       value={selectedModel}
       options={modelIds}
+      getOptionGroup={id => {
+        const item = byId.get(id)!
+        return { id: item.connectionId, label: item.connectionDisplayName }
+      }}
       open={open}
       onOpenChange={onOpenChange}
       onChange={onSelectModel}

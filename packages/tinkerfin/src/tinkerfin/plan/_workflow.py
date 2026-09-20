@@ -5,22 +5,28 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from typing import Generic, Protocol, TypeAlias, TypeVar, cast
+from collections.abc import AsyncIterator, Mapping, Sequence
+from typing import Any, Generic, Protocol, TypeAlias, cast
+from uuid import uuid4
 
 from deepagents.backends import StateBackend
 from deepagents.backends.protocol import BackendProtocol
+from langchain.agents import create_agent  # pyright: ignore[reportUnknownVariableType]
+from langchain.tools import ToolRuntime
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage, HumanMessage
-from langchain_core.runnables import Runnable, RunnableConfig
-from langchain_core.tools import BaseTool
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage,
+    ToolMessage,
+)
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.store.base import BaseStore
-from langgraph.types import StateSnapshot, interrupt
+from langgraph.types import Command, StateSnapshot, interrupt
 from langgraph.typing import ContextT
-from pydantic import ConfigDict, JsonValue, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, create_model
 
 from tinkerfin_contracts import PreparedWorkspace
 from tinkerfin_native_stream import RuntimeInterruptEnvelope
@@ -33,33 +39,39 @@ from .._agui_lineage_state import (
     RUN_ID_METADATA_KEY,
     LineageMarker,
 )
+from .._attachment_agents import _AttachmentMiddleware, attachment_filesystem
 from .._hitl import _as_permissions
+from .._tool_runtime import _ToolRuntimeMiddleware
 from ._clarification import (
+    ClarificationDiscussionResponse,
+    ClarificationDismissResponse,
     build_response_schema,
     pending_contract_digest,
     restore_form,
     serialize_form,
-    validate_and_normalize_response,
+    validate_clarification_response,
 )
 from ._config import PlanOptions
 from ._content import serialize_plan_content
 from ._contracts import (
     ApprovePlan,
     CancelPlan,
+    DismissPlanReview,
     EditPlanBase,
     PlanClarificationMetadata,
     PlanClarificationPayload,
     RejectPlan,
     RespondToPlan,
+    review_response_schema,
+    validate_review_response,
 )
 from ._json_schema import require_valid_schema
+from ._lifecycle import PlanLifecycle
 from ._planner import (
-    create_planner_agent,
     create_planner_filesystem,
-    invoke_plan_review_reply,
-    invoke_planner,
     resolve_planner_model,
 )
+from ._resume import require_plan_schemas
 from ._state import (
     PLAN_CHECKPOINT_RUN_ID,
     PLAN_CONTENT_SCHEMA_FINGERPRINT_KEY,
@@ -70,6 +82,7 @@ from ._state import (
     plan_state_update,
     read_plan_state,
 )
+from .clarification import ClarificationFormBase
 from .errors import PlanModeConfigurationError, PlanStructuredOutputError
 from .models import (
     ClarificationExchange,
@@ -83,11 +96,9 @@ from .models import (
     PlanStatus,
 )
 
-_PlanningFactory = Callable[..., object]
 _CheckpointSaver: TypeAlias = (
     BaseCheckpointSaver[int] | BaseCheckpointSaver[float] | BaseCheckpointSaver[str]
 )
-_SchemaT = TypeVar("_SchemaT")
 _JSON_OBJECT = TypeAdapter(
     dict[str, JsonValue],
     config=ConfigDict(allow_inf_nan=False),
@@ -120,51 +131,6 @@ class _CompiledPlanningRuntime(Protocol):
         *,
         subgraphs: bool = False,
     ) -> StateSnapshot: ...
-
-
-_SyncPlanNode: TypeAlias = Callable[
-    [PlanningWorkflowNodeState],
-    dict[str, object],
-]
-_ConfigPlanNode: TypeAlias = Callable[
-    [PlanningWorkflowNodeState, RunnableConfig],
-    dict[str, object],
-]
-_AsyncConfigPlanNode: TypeAlias = Callable[
-    [PlanningWorkflowNodeState, RunnableConfig],
-    Awaitable[dict[str, object]],
-]
-_PlanNode: TypeAlias = (
-    _SyncPlanNode
-    | _ConfigPlanNode
-    | _AsyncConfigPlanNode
-    | _CompiledPlanningRuntime
-    | Runnable[object, object]
-)
-_PlanPath: TypeAlias = Callable[[PlanningWorkflowNodeState], str]
-
-
-class _PlanningGraphBuilder(Protocol):
-    """Typed subset of StateGraph isolated from third-party unknown generics."""
-
-    def add_node(self, node: str, action: _PlanNode) -> object: ...
-
-    def add_edge(self, start_key: str, end_key: str) -> object: ...
-
-    def add_conditional_edges(
-        self,
-        source: str,
-        path: _PlanPath,
-        path_map: Mapping[str, str],
-    ) -> object: ...
-
-    def compile(
-        self,
-        *,
-        checkpointer: _CheckpointSaver,
-        store: BaseStore | None,
-        name: str,
-    ) -> _CompiledPlanningRuntime: ...
 
 
 class _SignatureCallable(Protocol):
@@ -225,27 +191,6 @@ def _clarification_context(
     return tuple(context)
 
 
-def _require_schema_fingerprints(
-    state: Mapping[str, object],
-    options: PlanOptions,
-) -> None:
-    if state.get(PLAN_SCHEMA_FINGERPRINT_KEY) != options.clarification.fingerprint:
-        raise PlanModeConfigurationError(
-            "checkpoint clarification schema does not match this Runtime"
-        )
-    if (
-        state.get(PLAN_CONTENT_SCHEMA_FINGERPRINT_KEY)
-        != options.content.reference.fingerprint
-    ):
-        raise PlanModeConfigurationError(
-            "checkpoint Plan content schema does not match this Runtime"
-        )
-
-
-def _json_schema(adapter: TypeAdapter[_SchemaT]) -> dict[str, JsonValue]:
-    return _JSON_OBJECT.validate_python(adapter.json_schema(by_alias=True))
-
-
 def _runtime_interrupt_value(
     envelope: RuntimeInterruptEnvelope,
 ) -> dict[str, JsonValue]:
@@ -300,6 +245,8 @@ def _planning_config(value: object) -> RunnableConfig:
         raise PlanModeConfigurationError(
             "Plan Mode requires a canonical AG-UI semantic run ID"
         )
+    invocation_id = config.setdefault("run_id", uuid4())
+    configurable["_plan_invocation_id"] = semantic_run_id or str(invocation_id)
     configurable["run_id"] = PLAN_CHECKPOINT_RUN_ID
     configurable[CHECKPOINT_ROLE_METADATA_KEY] = PLANNING_CHECKPOINT_ROLE
     lineage = configurable.get(LINEAGE_CONFIG_KEY)
@@ -448,7 +395,7 @@ class PlanningWorkflowGraph(Generic[ContextT]):
         await self._graph.aupdate_state(
             head_config,
             plan_state_update(updated),
-            as_node="review_plan",
+            as_node="plan_lifecycle.after_agent",
         )
         return updated
 
@@ -518,28 +465,6 @@ class _PlanningGraphFactory(Generic[ContextT]):
             base_state_schema,
             middleware=(*caller_middleware, filesystem),
         )
-        planner = create_planner_agent(
-            resolved_model,
-            filesystem=filesystem,
-            attachments=spec.attachments,
-            read_only_tools=read_only_tools,
-            tool_scope=spec.tool_scope,
-            clarification=self._options.clarification,
-            content=self._options.content,
-            response_type=self._options.contracts.planner_response_type,
-            context_schema=context_schema,
-        )
-        edit_planner = create_planner_agent(
-            resolved_model,
-            filesystem=filesystem,
-            attachments=spec.attachments,
-            read_only_tools=read_only_tools,
-            tool_scope=spec.tool_scope,
-            clarification=self._options.clarification,
-            content=self._options.content,
-            response_type=self._options.contracts.planner_edit_response_type,
-            context_schema=context_schema,
-        )
 
         def initialize_node(state: PlanningWorkflowNodeState) -> dict[str, object]:
             mapped = cast(Mapping[str, object], state)
@@ -547,7 +472,7 @@ class _PlanningGraphFactory(Generic[ContextT]):
             if PLAN_STATE_KEY in mapped:
                 current = read_plan_state(mapped, self._options.content)
                 if current.status is PlanStatus.AWAITING_INPUT:
-                    _require_schema_fingerprints(mapped, self._options)
+                    require_plan_schemas(mapped, self._options)
                     continued = current.model_copy(
                         update={
                             "status": PlanStatus.PLANNING,
@@ -573,41 +498,14 @@ class _PlanningGraphFactory(Generic[ContextT]):
                 ),
             }
 
-        async def planner_node(
-            state: PlanningWorkflowNodeState,
-            config: RunnableConfig,
+        def open_question(
+            current: PlanState[PlanContentModel],
+            raw_form: ClarificationFormBase,
         ) -> dict[str, object]:
-            mapped = cast(Mapping[str, object], state)
-            _require_schema_fingerprints(mapped, self._options)
-            current = read_plan_state(mapped, self._options.content)
-            has_authoritative_edit = current.pending_edit is not None
-            response_type = (
-                self._options.contracts.planner_edit_response_type
-                if has_authoritative_edit
-                else self._options.contracts.planner_response_type
-            )
-            outcome = await invoke_planner(
-                edit_planner if has_authoritative_edit else planner,
-                _messages(mapped),
-                current,
-                response_type=response_type,
-                clarification_history=_clarification_context(
-                    current,
-                    self._options,
-                ),
-                config=config,
-                files=mapped.get("files"),
-            )
-            if outcome.type == "clarify":
-                form, form_payload = serialize_form(
-                    self._options.clarification,
-                    outcome.clarification,
-                )
-                response_schema = build_response_schema(
-                    self._options.clarification,
-                    form,
-                )
-                updated = current.model_copy(
+            form, form_payload = serialize_form(self._options.clarification, raw_form)
+            response_schema = build_response_schema(self._options.clarification, form)
+            return plan_state_update(
+                current.model_copy(
                     update={
                         "status": PlanStatus.AWAITING_CLARIFICATION,
                         "effective_mode": "plan",
@@ -615,61 +513,99 @@ class _PlanningGraphFactory(Generic[ContextT]):
                             form=form_payload,
                             response_schema=response_schema,
                             contract_digest=pending_contract_digest(
-                                form_payload,
-                                response_schema,
+                                form_payload, response_schema
                             ),
                         ),
                         "review_action": None,
                         "review_reason": None,
                     }
                 )
-                return plan_state_update(updated)
-
-            if current.pending_edit is not None:
-                if outcome.type != "accept_edit":
-                    raise PlanStructuredOutputError(
-                        "Planner must clarify or accept the authoritative edited draft"
-                    )
-                raw_content = current.pending_edit
-            else:
-                if outcome.type != "draft" or outcome.draft is None:
-                    raise PlanStructuredOutputError(
-                        "Planner cannot accept an edit when no edited draft exists"
-                    )
-                raw_content = outcome.draft
-
-            content, _ = serialize_plan_content(
-                self._options.content,
-                raw_content,
             )
 
+        def open_review(
+            current: PlanState[PlanContentModel],
+            raw_content: PlanContentModel,
+        ) -> dict[str, object]:
+            content, _ = serialize_plan_content(self._options.content, raw_content)
             revision = current.revision + 1
             draft = self._options.content.draft_type(
                 revision=revision,
                 content_schema=self._options.content.reference,
                 content=content,
             )
+            return plan_state_update(
+                current.model_copy(
+                    update={
+                        "status": PlanStatus.AWAITING_REVIEW,
+                        "effective_mode": "plan",
+                        "pending_clarification": None,
+                        "draft": draft,
+                        "pending_edit": None,
+                        "confirmed_plan": None,
+                        "handoff": None,
+                        "revision": revision,
+                        "review_action": None,
+                        "review_reason": None,
+                    }
+                )
+            )
+
+        def discuss_card(
+            current: PlanState[PlanContentModel],
+            message: str | None,
+            config: RunnableConfig,
+        ) -> dict[str, object]:
+            # One accepted run owns the user message; a replay uses the same ID.
+            run_id = config.get("configurable", {}).get("_plan_invocation_id")
+            if not isinstance(run_id, str) or not run_id:
+                raise PlanModeConfigurationError(
+                    "Plan discussion requires a run identity"
+                )
+            message_id = (
+                None
+                if message is None
+                else "plan-discussion-" + hashlib.sha256(run_id.encode()).hexdigest()
+            )
+            context = self._options.content.discussion_type(
+                message_id=message_id,
+                clarification=current.pending_clarification.form
+                if current.pending_clarification
+                else None,
+                draft=None if current.pending_clarification else current.draft,
+                submitted_edit=current.pending_edit,
+            )
             updated = current.model_copy(
                 update={
-                    "status": PlanStatus.AWAITING_REVIEW,
-                    "effective_mode": "plan",
+                    "status": PlanStatus.AWAITING_INPUT
+                    if message is None
+                    else PlanStatus.PLANNING,
+                    "request_message_id": current.request_message_id
+                    if message_id is None
+                    else message_id,
                     "pending_clarification": None,
-                    "draft": draft,
                     "pending_edit": None,
                     "confirmed_plan": None,
                     "handoff": None,
-                    "revision": revision,
-                    "review_action": None,
+                    "review_action": None
+                    if message is None
+                    else PlanReviewAction.RESPOND,
                     "review_reason": None,
+                    "discussion_history": (*current.discussion_history, context),
                 }
             )
-            return plan_state_update(updated)
+            return {
+                **plan_state_update(updated),
+                "messages": []
+                if message is None
+                else [HumanMessage(content=message, id=message_id)],
+            }
 
         def answer_clarification(
             state: PlanningWorkflowNodeState,
+            config: RunnableConfig,
         ) -> dict[str, object]:
             mapped = cast(Mapping[str, object], state)
-            _require_schema_fingerprints(mapped, self._options)
+            require_plan_schemas(mapped, self._options)
             current = read_plan_state(mapped, self._options.content)
             pending = current.pending_clarification
             if pending is None:
@@ -697,15 +633,19 @@ class _PlanningGraphFactory(Generic[ContextT]):
                     )
                 ),
             )
-            ordered_answers = validate_and_normalize_response(
+            response = validate_clarification_response(
                 self._options.clarification,
                 form,
                 pending.response_schema,
                 interrupt(_runtime_interrupt_value(envelope)),
             )
+            if isinstance(response, ClarificationDismissResponse):
+                return discuss_card(current, None, config)
+            if isinstance(response, ClarificationDiscussionResponse):
+                return discuss_card(current, response.message, config)
             exchange = ClarificationExchange(
                 form=pending.form,
-                answers=ordered_answers,
+                answers=response,
             )
             updated = current.model_copy(
                 update={
@@ -721,9 +661,11 @@ class _PlanningGraphFactory(Generic[ContextT]):
             )
             return plan_state_update(updated)
 
-        def review_node(state: PlanningWorkflowNodeState) -> dict[str, object]:
+        def review_node(
+            state: PlanningWorkflowNodeState, config: RunnableConfig
+        ) -> dict[str, object]:
             mapped = cast(Mapping[str, object], state)
-            _require_schema_fingerprints(mapped, self._options)
+            require_plan_schemas(mapped, self._options)
             current = read_plan_state(mapped, self._options.content)
             draft = current.draft
             if draft is None:
@@ -739,7 +681,9 @@ class _PlanningGraphFactory(Generic[ContextT]):
             envelope = RuntimeInterruptEnvelope(
                 kind="tinkerfin:plan_review",
                 message="Review the proposed Plan before execution begins.",
-                response_schema=_json_schema(self._options.contracts.review_response),
+                response_schema=review_response_schema(
+                    self._options.contracts, revision=draft.revision
+                ),
                 metadata=_JSON_OBJECT.validate_python(
                     review_metadata.model_dump(
                         mode="json",
@@ -748,15 +692,14 @@ class _PlanningGraphFactory(Generic[ContextT]):
                     )
                 ),
             )
-            response = cast(
-                ApprovePlan | CancelPlan | EditPlanBase | RespondToPlan | RejectPlan,
-                self._options.contracts.review_response.validate_python(
-                    interrupt(_runtime_interrupt_value(envelope))
-                ),
+            response = validate_review_response(
+                self._options.contracts,
+                interrupt(_runtime_interrupt_value(envelope)),
+                revision=draft.revision,
             )
-            if response.base_revision != draft.revision:
-                raise ValueError("Plan review baseRevision is stale")
 
+            if isinstance(response, DismissPlanReview):
+                return discuss_card(current, None, config)
             if isinstance(response, ApprovePlan):
                 message_id = current.request_message_id
                 if message_id is None:
@@ -801,16 +744,10 @@ class _PlanningGraphFactory(Generic[ContextT]):
                     }
                 )
             elif isinstance(response, RespondToPlan):
-                updated = current.model_copy(
-                    update={
-                        "status": PlanStatus.PLANNING,
-                        "effective_mode": "plan",
-                        "pending_edit": None,
-                        "feedback": (*current.feedback, response.message),
-                        "review_action": PlanReviewAction.RESPOND,
-                        "review_reason": None,
-                    }
+                discussed = current.model_copy(
+                    update={"feedback": (*current.feedback, response.message)}
                 )
+                return discuss_card(discussed, response.message, config)
             elif isinstance(response, RejectPlan):
                 feedback = (
                     current.feedback
@@ -834,77 +771,142 @@ class _PlanningGraphFactory(Generic[ContextT]):
                 raise TypeError("unsupported Plan review response")
             return plan_state_update(updated)
 
-        async def respond_to_review(
-            state: PlanningWorkflowNodeState,
-            config: RunnableConfig,
-        ) -> dict[str, object]:
-            mapped = cast(Mapping[str, object], state)
-            _require_schema_fingerprints(mapped, self._options)
-            current = read_plan_state(mapped, self._options.content)
-            if current.status is not PlanStatus.AWAITING_INPUT:
-                raise RuntimeError("Plan review reply requires awaiting input state")
-            reply_messages = _messages(mapped)
-            reply = await invoke_plan_review_reply(
-                resolved_model,
-                reply_messages,
-                current,
-                config=config,
-                attachments=spec.attachments,
+        async def ask_user_question(
+            form: ClarificationFormBase,
+            runtime: ToolRuntime[ContextT, PlanningWorkflowNodeState],
+        ) -> Command[Any]:
+            """Submit a clarification form; the workflow waits for the user next."""
+            current = read_plan_state(runtime.state, self._options.content)
+            return Command(
+                update={
+                    **open_question(current, form),
+                    "messages": [
+                        ToolMessage(
+                            content="Questions submitted; awaiting the user.",
+                            name="ask_user_question",
+                            tool_call_id=runtime.tool_call_id,
+                        )
+                    ],
+                }
             )
-            return {"messages": [reply]}
 
-        def planner_path(state: PlanningWorkflowNodeState) -> str:
-            current = read_plan_state(
-                cast(Mapping[str, object], state),
-                self._options.content,
+        async def submit_plan(
+            content: PlanContentModel,
+            runtime: ToolRuntime[ContextT, PlanningWorkflowNodeState],
+        ) -> Command[Any]:
+            """Submit a complete draft for review without granting execution."""
+            current = read_plan_state(runtime.state, self._options.content)
+            if current.pending_edit is not None:
+                raise PlanStructuredOutputError(
+                    "An authoritative edit cannot be replaced"
+                )
+            return Command(
+                update={
+                    **open_review(current, content),
+                    "messages": [
+                        ToolMessage(
+                            content="Draft submitted; awaiting user approval.",
+                            name="submit_plan",
+                            tool_call_id=runtime.tool_call_id,
+                        )
+                    ],
+                }
             )
-            return "clarify" if current.pending_clarification is not None else "review"
 
-        def review_path(state: PlanningWorkflowNodeState) -> str:
-            action = read_plan_state(
-                cast(Mapping[str, object], state),
-                self._options.content,
-            ).review_action
-            if action is None:
-                raise RuntimeError("Plan review did not record an action")
-            return action.value
+        async def confirm_plan_edit(
+            runtime: ToolRuntime[ContextT, PlanningWorkflowNodeState],
+        ) -> Command[Any]:
+            """Confirm the saved user edit without replacing its content."""
+            current = read_plan_state(runtime.state, self._options.content)
+            if current.pending_edit is None:
+                raise PlanStructuredOutputError("No authoritative edit is pending")
+            return Command(
+                update={
+                    **open_review(current, current.pending_edit),
+                    "messages": [
+                        ToolMessage(
+                            content="Edited draft submitted for review.",
+                            name="confirm_plan_edit",
+                            tool_call_id=runtime.tool_call_id,
+                        )
+                    ],
+                }
+            )
 
-        builder = cast(
-            _PlanningGraphBuilder,
-            StateGraph(state_schema, context_schema=context_schema),
-        )
-        builder.add_node("initialize_plan", initialize_node)
-        builder.add_node("create_plan", planner_node)
-        builder.add_node("clarify_plan", answer_clarification)
-        builder.add_node("review_plan", review_node)
-        builder.add_node("respond_to_review", respond_to_review)
-        builder.add_edge(START, "initialize_plan")
-        builder.add_edge("initialize_plan", "create_plan")
-        builder.add_conditional_edges(
-            "create_plan",
-            planner_path,
-            {"clarify": "clarify_plan", "review": "review_plan"},
-        )
-        builder.add_edge("clarify_plan", "create_plan")
-        builder.add_conditional_edges(
-            "review_plan",
-            review_path,
-            {
-                "approve": END,
-                "cancel": "respond_to_review",
-                "edit": "create_plan",
-                "respond": "create_plan",
-                "reject": "respond_to_review",
-            },
-        )
-        builder.add_edge("respond_to_review", END)
+        class ConfirmArguments(BaseModel):
+            model_config = ConfigDict(extra="forbid")
 
-        parent = builder.compile(
+        def tool_arguments(base: type[BaseModel]) -> type[BaseModel]:
+            # BaseTool validates injected arguments too. Exclude the runtime from
+            # serialization and the model-facing Tool schema, not from validation.
+            return create_model(
+                base.__name__ + "WithRuntime",
+                __base__=base,
+                __config__=ConfigDict(arbitrary_types_allowed=True),
+                runtime=(
+                    ToolRuntime[Any, PlanningWorkflowNodeState],
+                    Field(exclude=True),
+                ),
+            )
+
+        plan_tools = [
+            StructuredTool.from_function(
+                coroutine=ask_user_question,
+                name="ask_user_question",
+                description="Ask for missing planning requirements using the complete configured form.",
+                args_schema=tool_arguments(self._options.contracts.question_args),
+            ),
+            StructuredTool.from_function(
+                coroutine=submit_plan,
+                name="submit_plan",
+                description="Present a complete plan draft for human approval. This does not execute the plan.",
+                args_schema=tool_arguments(self._options.contracts.draft_args),
+            ),
+            StructuredTool.from_function(
+                coroutine=confirm_plan_edit,
+                name="confirm_plan_edit",
+                description="Confirm that the saved authoritative user edit is complete. Do not provide replacement content.",
+                args_schema=tool_arguments(ConfirmArguments),
+            ),
+        ]
+        argument_schemas = {
+            "ask_user_question": self._options.contracts.question_args,
+            "submit_plan": self._options.contracts.draft_args,
+            "confirm_plan_edit": ConfirmArguments,
+        }
+        options = self._options
+        known_tools = {
+            tool.name for tool in (*plan_tools, *read_only_tools, *filesystem.tools)
+        }
+
+        middleware = [
+            PlanLifecycle[ContextT](
+                options,
+                initialize=initialize_node,
+                answer=answer_clarification,
+                review=review_node,
+                validate_state=lambda state: require_plan_schemas(state, options),
+                clarifications=lambda plan: _clarification_context(plan, options),
+                argument_schemas=argument_schemas,
+                known_tools=known_tools,
+            ),
+            attachment_filesystem(filesystem, spec.attachments)
+            if spec.attachments
+            else filesystem,
+            _ToolRuntimeMiddleware(spec.tool_scope),
+            *([_AttachmentMiddleware(spec.attachments)] if spec.attachments else []),
+        ]
+        parent = create_agent(
+            model=resolved_model,
+            tools=[*read_only_tools, *plan_tools],
+            middleware=middleware,
+            state_schema=state_schema,
+            context_schema=context_schema,
             checkpointer=_checkpoint_saver(spec.checkpointer),
             store=spec.store,
             name="tinkerfin_planning_workflow",
         )
-        return PlanningWorkflowGraph[ContextT](parent)
+        return PlanningWorkflowGraph[ContextT](cast(_CompiledPlanningRuntime, parent))
 
 
 def create_planning_graph(

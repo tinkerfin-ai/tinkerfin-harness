@@ -3,6 +3,7 @@ export {
   buildInitialPayload,
   buildPlanAbandonPayload,
   buildPlanResumePayload,
+  buildPlanDismissPayload,
   buildResumePayload,
   createRunId,
   markConversationDetached,

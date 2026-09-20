@@ -12,6 +12,7 @@ import type { ApprovalAllowedDecision, ApprovalItem, Conversation } from '../../
 import {
   applyConversationEvent,
   buildPlanResumePayload,
+  buildPlanDismissPayload,
   buildResumePayload,
   markConversationDetached,
   planInteractionFromInterrupts,
@@ -1880,4 +1881,30 @@ it.each(['success', 'error'] as const)('历史子 Agent 卡接收 %s 结果，�
   expect(result.messages[0]?.meta).toMatchObject({ status: toolResultStatus === 'error' ? 'failed' : 'completed', result: '工具结果', input: '写入文件' })
   expect(result.messages[1]).toBe(unrelated)
   expect(applyConversationEvent(result, event).messages).toEqual(result.messages)
+})
+
+
+it.each(['questions', 'review'] as const)('关闭计划卡片不提交未完成答案：%s', (kind) => {
+  const conversation = buildEmptyConversation({ threadId: 'discussion', now: '2026-09-20T00:00:00Z' })
+  conversation.mode = 'plan'
+  conversation.planInteraction = kind === 'questions' ? {
+    kind, interruptId: 'pending-question', title: '范围', description: '确认范围', form: {},
+    activeQuestionIndex: 0, questions: [{ id: 'scope', answerType: 'text', prompt: '范围？', required: true, answer: '未提交草稿' }], submitted: false,
+  } : {
+    kind, interruptId: 'pending-review', revision: 3, submitted: false,
+    allowedActions: ['approve', 'reject', 'cancel', 'respond'],
+    draft: { revision: 3, contentSchema: { fingerprint: '0'.repeat(64), mediaType: 'text/markdown' }, content: { description: '计划', markdown: '# 计划' } },
+  }
+  const payload = buildPlanDismissPayload(conversation)
+  expect(payload.messages).toEqual([])
+  expect(payload.resume?.[0]).toEqual({ interruptId: conversation.planInteraction.interruptId, status: 'resolved', payload: kind === 'questions'
+    ? { type: 'dismiss' }
+    : { type: 'dismiss', baseRevision: 3 } })
+  const claimed = { ...conversation, planInteraction: { ...conversation.planInteraction, submitted: true } }
+  const rejected = applyConversationEvent(claimed, { type: 'RUN_STARTED', threadId: 'discussion', runId: payload.runId, rawEvent: { initializationFailed: true } })
+  expect(rejected.planInteraction?.submitted).toBe(false)
+  expect(rejected.messages.some(message => message.meta?.planHistory)).toBe(false)
+  const accepted = applyConversationEvent(claimed, { type: 'RUN_STARTED', threadId: 'discussion', runId: payload.runId })
+  expect(accepted.planInteraction).toBeUndefined()
+  expect(accepted.messages.filter(message => message.meta?.planHistory)).toHaveLength(1)
 })

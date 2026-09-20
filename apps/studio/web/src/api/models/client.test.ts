@@ -22,7 +22,7 @@ it('loads the safe backend model catalog with authentication', async () => {
       code: 0,
       message: 'success',
       data: {
-        items: [{ modelId: 'main', displayName: 'Main Model', reasoningEnabled: true, isDefault: true }],
+        items: [{ modelId: 'main', displayName: 'Main Model', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true }],
         defaultModelId: 'main',
       },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })
@@ -30,7 +30,7 @@ it('loads the safe backend model catalog with authentication', async () => {
   vi.stubGlobal('fetch', fetchMock)
 
   await expect(fetchModelCatalog()).resolves.toEqual({
-    items: [{ modelId: 'main', displayName: 'Main Model', reasoningEnabled: true, isDefault: true }],
+    items: [{ modelId: 'main', displayName: 'Main Model', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true }],
     defaultModelId: 'main',
   })
   const request = fetchMock.mock.calls[0]?.[0]

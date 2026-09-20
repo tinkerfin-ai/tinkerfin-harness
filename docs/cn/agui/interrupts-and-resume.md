@@ -101,10 +101,39 @@ async with aclosing(
 
 | `reason` | 回复要求 |
 | --- | --- |
-| `tinkerfin:plan_clarification` | `type="respond"`，`answers` 完整覆盖问题 ID；遵循每道题的响应 Schema |
-| `tinkerfin:plan_review` | 使用允许的动作，并携带当前 `baseRevision` |
+| `tinkerfin:plan_clarification` | 提交答案使用 `type="respond"`，`answers` 完整覆盖问题 ID；转为讨论使用 `type="discuss"` 和非空 `message`，不携带 `answers` |
+| `tinkerfin:plan_review` | 使用允许的动作，并携带当前 `baseRevision`；允许 `respond` 时，可用该动作和非空 `message` 转为讨论 |
 
 Plan interrupt 没有 `toolCallId`。客户端不能回传 Form、label 或其他可信表单内容；框架从 checkpoint 恢复它们。未知选项、跳过必填题和过期 `baseRevision` 都会失败。放弃 Plan 后，后续普通输入可以选择 `mode="default"`。
+
+讨论请求会结束原卡片的等待状态，旧卡片不能再次提交或批准。框架保留原表单或草稿作为对话上下文，不把未提交的表单内容当作答案。模型随后可以普通回复、提出新澄清或生成新草稿；新草稿仍需批准。
+
+普通回复由规划模型直接生成，以普通消息流输出并保存在历史中；不需要额外的行为选择调用。本轮结束后等待新的用户消息，不自动开始下一轮规划。
+
+只结束卡片而不发送讨论时，澄清使用 `type="dismiss"`，草稿使用 `type="dismiss"` 和当前 `baseRevision`。关闭不提交未完成答案、不调用模型、不授权执行；关闭后继续保持 Plan 模式，等待下一条用户消息。原表单或草稿保留为可信上下文。
+
+例如，对澄清卡片发起讨论仍只需要一次恢复调用；`runtime` 是已配置 Plan 的 Runtime，`interrupt_id` 来自当前服务端卡片：
+
+```python
+from ag_ui.core.types import ResumeEntry
+
+async with aclosing(
+    runtime.open_agui_run(
+        thread_id="conversation-1",
+        run_id="discussion-1",
+        mode="plan",
+        resume=AgUiResumeRequest(entries=(ResumeEntry(
+            interrupt_id=interrupt_id,
+            status="resolved",
+            payload={"type": "discuss", "message": "第三题是什么意思？"},
+        ),)),
+    )
+) as events:
+    async for event in events:
+        await send_event(event)
+```
+
+宿主仍负责认证和传输。卡片校验、讨论消息身份、上下文保存、恢复去重和资源关闭由框架处理；不需要先取消卡片再发起第二次运行。
 
 ## 单独使用 Adapter
 

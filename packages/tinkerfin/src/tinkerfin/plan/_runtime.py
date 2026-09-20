@@ -31,20 +31,15 @@ from .._agui_lineage_state import (
     ResumeIntent,
 )
 from .._tasks import join_task
-from ._clarification import (
-    pending_contract_digest,
-    restore_form,
-    validate_and_normalize_response,
-)
 from ._config import PlanOptions
 from ._content import PlanContentBinding
 from ._handoff import (
     PLAN_HANDOFF_STATE_KEY,
     PlanHandoffStream,
 )
+from ._resume import validate_plan_resume_response
 from ._state import (
     PLAN_CHECKPOINT_RUN_ID,
-    PLAN_SCHEMA_FINGERPRINT_KEY,
     PLAN_STATE_KEY,
     read_plan_state,
 )
@@ -606,45 +601,19 @@ class PlanCapableGraphRuntime:
                         "pending Planning checkpoint has no Plan state"
                     )
                 checkpoint_plan = read_plan_state(checkpoint_state, self._content)
-                if checkpoint_plan.status is PlanStatus.AWAITING_CLARIFICATION:
-                    if (
-                        checkpoint_state.get(PLAN_SCHEMA_FINGERPRINT_KEY)
-                        != self._options.clarification.fingerprint
-                    ):
-                        raise PlanModeConfigurationError(
-                            "checkpoint clarification schema does not match this Definition"
-                        )
-                    pending = checkpoint_plan.pending_clarification
-                    if pending is None:
-                        raise PlanStateConflictError(
-                            "clarification resume has no pending form"
-                        )
-                    if pending.contract_digest != pending_contract_digest(
-                        pending.form,
-                        pending.response_schema,
-                    ):
-                        raise PlanStateConflictError(
-                            "clarification resume has an invalid contract digest"
-                        )
-                    command = cast(Command[object], graph_input)
-                    raw_response = command.resume
-                    # Native Commands permit a scalar response or an interrupt-ID
-                    # map. AG-UI uses the latter so retry can omit consumed groups.
-                    if isinstance(raw_response, Mapping):
-                        response_map = cast(Mapping[str, object], raw_response)
-                        response: object = response_map
-                        if len(planning_snapshot.interrupts) == 1:
-                            interrupt_id = planning_snapshot.interrupts[0].id
-                            response = response_map.get(interrupt_id, response_map)
-                    else:
-                        response = raw_response
-                    form = restore_form(self._options.clarification, pending.form)
-                    validate_and_normalize_response(
-                        self._options.clarification,
-                        form,
-                        pending.response_schema,
-                        response,
-                    )
+                command = cast(Command[object], graph_input)
+                raw_response = command.resume
+                # Native Commands accept a scalar; AG-UI binds responses to the
+                # pending interrupt ID. Validate both before checkpoint acceptance.
+                if isinstance(raw_response, Mapping):
+                    response_map = cast(Mapping[str, object], raw_response)
+                    response: object = response_map
+                    if len(planning_snapshot.interrupts) == 1:
+                        interrupt_id = planning_snapshot.interrupts[0].id
+                        response = response_map.get(interrupt_id, response_map)
+                else:
+                    response = raw_response
+                validate_plan_resume_response(checkpoint_state, self._options, response)
                 use_planning = True
             elif native_pending:
                 use_planning = bool(
@@ -734,7 +703,7 @@ class PlanCapableGraphRuntime:
                 # deterministic node target rather than creating a second Plan graph.
                 planning_input = Command(
                     update=cast(Mapping[str, object], graph_input),
-                    goto="initialize_plan",
+                    goto="plan_lifecycle.before_agent",
                 )
             planning_bound.arguments["input"] = planning_input
             async for part in planning.astream(

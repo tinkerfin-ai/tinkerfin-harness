@@ -84,6 +84,7 @@ export function useConversationScroll({
   const scrollButtonPhase = useRef<ScrollButtonPhase>('hidden')
   const pendingUserScrollIntent = useRef(false)
   const userHasScrolled = useRef(false)
+  const resizedScroll = useRef<{ pane: HTMLElement; top: number } | null>(null)
   const pendingConversationScroll = useRef<{
     threadId: string
     state: ConversationScrollState | null
@@ -169,6 +170,10 @@ export function useConversationScroll({
         followLatest: followLatest.current,
       })
     }
+    // 调宽恢复阅读位置产生的滚动只保存位置，不唤醒按钮或重置闲置计时
+    const resized = resizedScroll.current
+    if (resized?.pane === pane && resized.top === pane.scrollTop) return
+    resizedScroll.current = null
     if (scrollMeasureFrame.current != null) return
     scrollMeasureFrame.current = window.requestAnimationFrame(() => {
       scrollMeasureFrame.current = null
@@ -249,6 +254,7 @@ export function useConversationScroll({
   }, [clearScrollButtonTimers, setScrollButtonPhase])
 
   const markUserScrollIntent = useCallback(() => {
+    resizedScroll.current = null
     readingHistory.current = false
     scrollingToBottom.current = false
     pendingUserScrollIntent.current = true
@@ -304,6 +310,7 @@ export function useConversationScroll({
       ? { threadId: conversation.threadId, state: savedScroll }
       : null
     lastForcedApprovalIdentity.current = null
+    resizedScroll.current = null
     readingHistory.current = false
     followLatest.current = savedScroll?.followLatest ?? true
     scrollingToBottom.current = false
@@ -451,7 +458,24 @@ export function useConversationScroll({
     flushScrollPersistence()
   }, [clearScrollButtonTimers, flushScrollPersistence])
 
+  // 调宽只调整视觉布局；阅读历史时保留可见消息的位置，不改变跟随意图
+  const resizeContent = useCallback((apply: () => void) => {
+    const pane = paneRef.current
+    const content = messageEndRef.current?.parentElement
+    if (!pane || !content) { apply(); return }
+    pendingUserScrollIntent.current = false
+    const following = followLatest.current && !readingHistory.current
+    const top = pane.getBoundingClientRect().top
+    const anchor = Array.from(content.children).find(element => element.getBoundingClientRect().bottom > top)
+    const offset = anchor?.getBoundingClientRect().top
+    apply()
+    if (following) pane.scrollTop = pane.scrollHeight
+    else if (anchor?.isConnected && offset !== undefined) pane.scrollTop += anchor.getBoundingClientRect().top - offset
+    resizedScroll.current = { pane, top: pane.scrollTop }
+  }, [])
+
   return {
+    resizeContent,
     paneRef,
     messageEndRef,
     showScrollToBottom,

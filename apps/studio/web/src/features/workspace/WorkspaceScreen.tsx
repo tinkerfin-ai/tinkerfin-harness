@@ -41,6 +41,8 @@ import { useModelCatalog } from './useModelCatalog'
 import { useWorkspaceHistory } from './useWorkspaceHistory'
 import { ConversationNavigator } from '../conversation/navigation/ConversationNavigator'
 import { conversationTurns } from '../conversation/navigation/turns'
+import { useConversationWidth } from '../conversation/width/useConversationWidth'
+import { ConversationWidthHandles } from '../conversation/width/ConversationWidthHandles'
 import { useConversationScroll } from './useConversationScroll'
 import { useConversationManagement } from './useConversationManagement'
 import { useConversationMessageWindow } from './useConversationMessageWindow'
@@ -58,6 +60,7 @@ import {
   buildInitialPayload,
   buildPlanAbandonPayload,
   buildPlanResumePayload,
+  buildPlanDismissPayload,
   buildResumePayload,
   prepareResumeSubmission,
 } from '../conversation/agui'
@@ -176,7 +179,7 @@ export function WorkspaceScreen({
     status: modelCatalogStatus,
     modelIds,
     defaultModelId,
-    displayName: modelDisplayName,
+    models,
     retry: retryModelCatalog,
   } = useModelCatalog()
   const localAttachments = useAttachments((message) => onToast(
@@ -339,6 +342,7 @@ export function WorkspaceScreen({
     || (conversation.runStatus === 'detached' && conversation.trace?.status.execution === 'running'
       && conversation.trace.headRunId === conversation.activeRunId)
   const {
+    resizeContent: resizeConversationContent,
     paneRef: conversationPane,
     messageEndRef: messageEnd,
     showScrollToBottom,
@@ -358,6 +362,7 @@ export function WorkspaceScreen({
     isRunning,
     active: workspaceView === 'conversation',
   })
+  const conversationWidth = useConversationWidth(resizeConversationContent)
   const isConversationHydrating = Boolean(
     workspace.currentThreadId
     && selectedConversation
@@ -785,13 +790,13 @@ export function WorkspaceScreen({
   }, [conversation.threadId, t, updateCurrent, workspace.currentThreadId])
 
   const submitPlanInteraction = useCallback((
-    reviewAction?: 'approve' | 'reject' | 'cancel',
+    reviewAction?: 'approve' | 'reject' | 'cancel' | 'dismiss',
   ) => {
     const authoritative = latestWorkspace.current.conversations.find(
       (item) => item.threadId === conversation.threadId,
     )
     if (!authoritative?.planInteraction || authoritative.runStatus === 'streaming') return
-    const requested = reviewAction && authoritative.planInteraction.kind === 'review'
+    const requested = reviewAction && reviewAction !== 'dismiss' && authoritative.planInteraction.kind === 'review'
       ? {
           ...authoritative,
           planInteraction: {
@@ -802,7 +807,7 @@ export function WorkspaceScreen({
       : authoritative
     let payload: ChatRequestPayload
     try {
-      payload = buildPlanResumePayload(requested)
+      payload = reviewAction === 'dismiss' ? buildPlanDismissPayload(authoritative) : buildPlanResumePayload(requested)
     } catch (error) {
       const message = conversationErrorMessage(error, 'plan_submit_failed')
       updateCurrent((item) => ({
@@ -821,7 +826,7 @@ export function WorkspaceScreen({
       planInteraction: item.planInteraction
         ? {
             ...item.planInteraction,
-            ...(reviewAction && item.planInteraction.kind === 'review'
+            ...(reviewAction && reviewAction !== 'dismiss' && item.planInteraction.kind === 'review'
               ? { action: reviewAction }
               : {}),
             submitted: true,
@@ -1096,6 +1101,7 @@ export function WorkspaceScreen({
         backgroundInert={taskDrawer.modalActive || portalModalActive}
       />
       <main
+        ref={conversationWidth.rootRef}
         data-workspace-layout-target="main"
         id="main-content"
         className="workspace-main"
@@ -1107,8 +1113,8 @@ export function WorkspaceScreen({
             fallback={({ reset }) => <div className="automation-empty"><p>{t('自动化区域无法显示')}</p><Button type="button" onClick={reset}>{t('重新加载')}</Button></div>}>
             <AutomationPage navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay}
               onModalChange={setAutomationModalOpen} onToast={pushToast} defaultModelId={defaultModelId}
-              renderModelChoice={(model, onSelect) => <ComposerModelPicker model={model} modelIds={modelIds} defaultModelId={defaultModelId}
-                modelDisplayName={modelDisplayName} status={modelCatalogStatus} open={isModelPickerOpen} onOpenChange={setModelPickerOpen}
+              renderModelChoice={(model, onSelect) => <ComposerModelPicker model={model} models={models} defaultModelId={defaultModelId}
+                status={modelCatalogStatus} open={isModelPickerOpen} onOpenChange={setModelPickerOpen}
                 onSelectModel={value => { onSelect(value); setModelPickerOpen(false) }} onRetry={retryModelCatalog} />} />
           </ErrorBoundary>
         ) : <>
@@ -1138,6 +1144,7 @@ export function WorkspaceScreen({
         {workspaceView === 'conversation' ? (
           <>
             <ConversationViewport
+              widthHandles={conversation.messages.length > 0 && !taskDrawer.modalActive ? <ConversationWidthHandles control={conversationWidth} /> : undefined}
               conversation={conversation}
               entries={messageWindow.visibleEntries}
               navigation={!taskDrawer.modalActive && !isConversationHydrating && !isConversationHydrationFailed
@@ -1184,7 +1191,6 @@ export function WorkspaceScreen({
                   />
                 )
                 : conversation.planInteraction?.kind === 'questions'
-                  && !conversation.planInteraction.submitted
                   ? (
                     <PlanQuestionComposer
                       threadId={conversation.threadId}
@@ -1196,10 +1202,10 @@ export function WorkspaceScreen({
                           : current,
                       )}
                       onSubmit={submitPlanInteraction}
+                      onClose={() => submitPlanInteraction('dismiss')}
                     />
                   )
                   : conversation.planInteraction?.kind === 'review'
-                    && !conversation.planInteraction.submitted
                     ? (
                       <PlanReviewCard
                         key={`${conversation.threadId}:${conversation.planInteraction.interruptId}`}
@@ -1211,7 +1217,7 @@ export function WorkspaceScreen({
                             : current,
                         )}
                         onSubmit={(action) => submitPlanInteraction(action)}
-                        onCancel={() => submitPlanInteraction('cancel')}
+                        onClose={() => submitPlanInteraction('dismiss')}
                       />
                     )
                     : undefined}
@@ -1235,9 +1241,8 @@ export function WorkspaceScreen({
               modelControl={(
                 <ComposerModelPicker
                   model={conversation.model}
-                  modelIds={modelIds}
+                  models={models}
                   defaultModelId={defaultModelId}
-                  modelDisplayName={modelDisplayName}
                   status={modelCatalogStatus}
                   open={isModelPickerOpen}
                   onOpenChange={setModelPickerOpen}

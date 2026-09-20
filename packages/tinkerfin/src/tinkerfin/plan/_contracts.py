@@ -1,4 +1,4 @@
-"""Internal structured-output and resume contracts for Plan Mode."""
+"""Tool argument and resume contracts for Plan Mode."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
-    RootModel,
     TypeAdapter,
     create_model,
 )
@@ -19,8 +18,7 @@ from pydantic.alias_generators import to_camel
 
 from ._clarification import ClarificationSchemaBinding
 from ._content import PlanContentBinding
-from .clarification import ClarificationFormBase
-from .models import NonBlankText, PlanContentModel, PlanReviewAction
+from .models import NonBlankText, PlanReviewAction
 
 
 class _ContractModel(BaseModel):
@@ -30,44 +28,6 @@ class _ContractModel(BaseModel):
         frozen=True,
         populate_by_name=True,
     )
-
-
-class _PlannerOutcomeMember(_ContractModel):
-    """Provide the discriminator shared by the three Planner results."""
-
-    type: Literal["clarify", "draft", "accept_edit"]
-
-
-class PlannerOutcomeBase(RootModel[_PlannerOutcomeMember]):
-    """Expose one discriminated result from the single read-only Planner call."""
-
-    # Tool providers require function parameters to declare an object at the root.
-    # Pydantic's discriminated RootModel otherwise emits only oneOf/discriminator even
-    # though every member is an extra-forbid object with the same discriminator.
-    model_config = ConfigDict(
-        frozen=True,
-        json_schema_extra={"type": "object"},
-    )
-
-    @property
-    def type(self) -> Literal["clarify", "draft", "accept_edit"]:
-        """Return the selected Planner result kind."""
-
-        return self.root.type
-
-    @property
-    def clarification(self) -> ClarificationFormBase | None:
-        """Return the clarification form only for a clarify result."""
-
-        value = getattr(self.root, "clarification", None)
-        return value if isinstance(value, ClarificationFormBase) else None
-
-    @property
-    def draft(self) -> PlanContentModel | None:
-        """Return the proposed content only for a draft result."""
-
-        value = getattr(self.root, "draft", None)
-        return value if isinstance(value, PlanContentModel) else None
 
 
 class PlanClarificationPayload(_ContractModel):
@@ -97,6 +57,13 @@ class CancelPlan(_ContractModel):
     base_revision: int = Field(ge=1, strict=True)
 
 
+class DismissPlanReview(_ContractModel):
+    """Close the current review without a model reply or execution grant."""
+
+    type: Literal["dismiss"]
+    base_revision: int = Field(ge=1, strict=True)
+
+
 class EditPlanBase(_ContractModel):
     """Identify an edit decision for one current Plan revision."""
 
@@ -109,7 +76,8 @@ class RespondToPlan(_ContractModel):
 
     type: Literal["respond"]
     base_revision: int = Field(ge=1, strict=True)
-    message: NonBlankText
+    # Publish the constraint so invalid feedback cannot consume a pending review.
+    message: NonBlankText = Field(pattern=r"\S")
 
 
 class RejectPlan(_ContractModel):
@@ -134,11 +102,54 @@ class PlanReviewMetadataBase(_ContractModel):
 class PlanContractBinding:
     """Dynamic Planner and review contracts frozen for one Definition."""
 
-    planner_response_type: type[PlannerOutcomeBase]
-    planner_edit_response_type: type[PlannerOutcomeBase]
+    question_args: type[BaseModel]
+    draft_args: type[BaseModel]
     review_response: TypeAdapter[object]
     review_payload_type: type[_ContractModel]
     review_metadata_type: type[_ContractModel]
+
+
+def validate_review_response(
+    binding: PlanContractBinding, response: object, *, revision: int
+) -> (
+    ApprovePlan
+    | CancelPlan
+    | DismissPlanReview
+    | EditPlanBase
+    | RespondToPlan
+    | RejectPlan
+):
+    """Reject invalid decisions before they consume the current review interrupt."""
+
+    decision = cast(
+        ApprovePlan
+        | CancelPlan
+        | DismissPlanReview
+        | EditPlanBase
+        | RespondToPlan
+        | RejectPlan,
+        binding.review_response.validate_python(response),
+    )
+    if decision.base_revision != revision:
+        raise ValueError("Plan review baseRevision is stale")
+    return decision
+
+
+def review_response_schema(
+    binding: PlanContractBinding, *, revision: int
+) -> dict[str, JsonValue]:
+    """Bind approval to the current revision before AG-UI persists a resume intent.
+
+    AgUiResumeBinding.from_native validates this exact interrupt schema before
+    stage_agui_resume_intent can consume the card. Native Commands additionally
+    pass validate_review_response before entering the planning graph.
+    """
+
+    schema = TypeAdapter(dict[str, JsonValue]).validate_python(
+        binding.review_response.json_schema(by_alias=True)
+    )
+    schema["properties"] = {"baseRevision": {"const": revision}}
+    return schema
 
 
 def _review_model_union(
@@ -146,29 +157,10 @@ def _review_model_union(
 ) -> type[BaseModel] | UnionType:
     """Combine configured review models into one runtime type expression."""
 
-    if len(review_types) == 1:
-        return review_types[0]
     review_union = review_types[0] | review_types[1]
     for review_type in review_types[2:]:
         review_union = review_union | review_type
     return review_union
-
-
-def _planner_response_type(
-    first: type[BaseModel],
-    second: type[BaseModel],
-) -> type[PlannerOutcomeBase]:
-    """Build one state-specific two-outcome Planner Tool contract."""
-
-    planner_annotation = Annotated[
-        first | second,
-        Field(discriminator="type"),
-    ]  # pyright: ignore[reportInvalidTypeForm]
-    return create_model(
-        "PlannerOutcome",
-        __base__=PlannerOutcomeBase,
-        root=(planner_annotation, ...),
-    )
 
 
 def create_plan_contract_binding(
@@ -179,30 +171,15 @@ def create_plan_contract_binding(
 ) -> PlanContractBinding:
     """Bind one clarification form and one Plan content schema atomically."""
 
-    clarify_type = create_model(
-        "PlannerClarifyOutcome",
-        __base__=_PlannerOutcomeMember,
-        type=(Literal["clarify"], ...),
-        clarification=(clarification.form_schema, ...),
+    question_args = create_model(
+        "PlanQuestionArguments",
+        __base__=_ContractModel,
+        form=(clarification.form_schema, ...),
     )
-    draft_type = create_model(
-        "PlannerDraftOutcome",
-        __base__=_PlannerOutcomeMember,
-        type=(Literal["draft"], ...),
-        draft=(content.schema, ...),
-    )
-    accept_edit_type = create_model(
-        "PlannerAcceptEditOutcome",
-        __base__=_PlannerOutcomeMember,
-        type=(Literal["accept_edit"], ...),
-    )
-    planner_type = _planner_response_type(
-        clarify_type,
-        draft_type,
-    )
-    planner_edit_type = _planner_response_type(
-        clarify_type,
-        accept_edit_type,
+    draft_args = create_model(
+        "PlanDraftArguments",
+        __base__=_ContractModel,
+        content=(content.schema, ...),
     )
     edit_type = create_model(
         "EditPlan",
@@ -219,14 +196,13 @@ def create_plan_contract_binding(
         }[action]
         for action in allowed_review_actions
     )
+    review_types = (*review_types, DismissPlanReview)
     review_union = _review_model_union(review_types)
     review_annotation = (
         Annotated[
             review_union,
             Field(discriminator="type"),
         ]  # pyright: ignore[reportInvalidTypeForm]
-        if len(review_types) > 1
-        else review_union
     )
     review_response = cast(
         TypeAdapter[object],
@@ -243,8 +219,8 @@ def create_plan_contract_binding(
         review=(review_payload_type, ...),
     )
     return PlanContractBinding(
-        planner_response_type=planner_type,
-        planner_edit_response_type=planner_edit_type,
+        question_args=question_args,
+        draft_args=draft_args,
         review_response=review_response,
         review_payload_type=review_payload_type,
         review_metadata_type=review_metadata_type,
@@ -260,7 +236,6 @@ __all__ = [
     "PlanContractBinding",
     "PlanReviewMetadataBase",
     "PlanReviewPayloadBase",
-    "PlannerOutcomeBase",
     "RejectPlan",
     "RespondToPlan",
     "create_plan_contract_binding",

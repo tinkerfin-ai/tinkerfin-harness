@@ -1,3 +1,4 @@
+import { PlanHistoryCard } from './PlanHistoryCard'
 import { AttachmentList } from '../attachments/AttachmentList'
 import {
   Bot,
@@ -312,7 +313,7 @@ function MessageBlockView({
     )
   }
   if (message.role === 'process') {
-    return null
+    return message.meta?.planHistory ? <PlanHistoryCard interaction={message.meta.planHistory} /> : null
   }
   if (message.role === 'subagent') {
     return <SubagentCard message={message} childTools={childTools} />

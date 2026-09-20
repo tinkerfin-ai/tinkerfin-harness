@@ -53,6 +53,7 @@ export function PlanInteractionCard({
   ariaLabel,
   minimized,
   collapsible = true,
+  disabled = false,
   icon,
   title,
   titleMeta,
@@ -69,6 +70,7 @@ export function PlanInteractionCard({
   ariaLabel: string
   minimized: boolean
   collapsible?: boolean
+  disabled?: boolean
   icon: ReactNode
   title: ReactNode
   titleMeta?: ReactNode
@@ -91,6 +93,8 @@ export function PlanInteractionCard({
       id={cardId}
       className={`plan-interaction-card ${namespace}${minimized ? ' is-minimized' : ''}`}
       aria-label={ariaLabel}
+      aria-busy={disabled || undefined}
+      inert={disabled || undefined}
       onWheel={(event) => {
         // 卡片接管输入区后，外部滚轮只驱动卡片正文，避免误滚动会话历史
         const body = bodyRef.current
@@ -129,6 +133,7 @@ export function PlanInteractionCard({
         </div>
         {(collapsible || headerAction) && (
           <div className={`plan-interaction-card-head-actions ${namespace}-head-actions`}>
+            {headerAction}
             {collapsible && toggleLabel && onToggle && (
               <IconButton
                 size="sm"
@@ -140,7 +145,6 @@ export function PlanInteractionCard({
                 onClick={onToggle}
               />
             )}
-            {headerAction}
           </div>
         )}
       </header>

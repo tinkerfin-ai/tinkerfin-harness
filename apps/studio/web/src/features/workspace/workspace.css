@@ -558,7 +558,7 @@
     align-items: center;
     min-width: 0;
     height: var(--layout-header-height);
-    padding: 0 var(--space-3);
+    padding: 0 var(--layout-page-gutter);
     background: color-mix(in srgb, var(--color-canvas) 94%, transparent);
     backdrop-filter: blur(12px);
   }
@@ -571,7 +571,7 @@
   .chat-header:has(.header-navigation) {
     grid-template-columns: auto minmax(0, 1fr) auto;
     column-gap: 0;
-    padding-left: calc(var(--space-6) + var(--space-1));
+    padding-left: var(--layout-page-gutter);
   }
 
   .header-navigation {
@@ -651,7 +651,7 @@
   .conversation-pane {
     height: 100%;
     min-height: 0;
-    padding-inline: var(--space-8);
+    padding-inline: calc(var(--layout-page-gutter) + var(--space-4));
     overflow-y: auto;
     overflow-x: hidden;
     overscroll-behavior-y: none;
@@ -771,9 +771,6 @@
   }
   @keyframes workspace-spin { to { transform: rotate(360deg); } }
 
-  @media (max-width: 1023px) {
-    .message-list { max-width: var(--layout-content-medium); }
-  }
 
   @media (max-width: 767px) {
     .app-shell,
@@ -785,11 +782,11 @@
     .workspace-sidebar.is-overlay .sidebar-wide { width: 100%; min-width: 0; }
     .sidebar-rail { display: none; }
     .menu-toggle { display: inline-flex; }
-    .chat-header { padding-right: var(--space-2); padding-left: var(--space-2); }
+    .chat-header { padding-inline: var(--layout-page-gutter); }
     .chat-header:has(.header-navigation) {
       grid-template-columns: auto minmax(0, 1fr) auto;
       column-gap: 0;
-      padding-left: var(--space-2);
+      padding-left: var(--layout-page-gutter);
     }
     .header-navigation { align-items: center; }
     .header-left { overflow: hidden; }
@@ -821,13 +818,13 @@
       border: 0;
     }
     .drawer-count { font-size: var(--type-caption-size); }
-    .conversation-pane { padding-inline: var(--space-4); }
+
     .message-list { padding-top: var(--space-6); }
   }
 
   @media (max-width: 440px) {
     .header-actions { gap: var(--space-1); }
-    .conversation-pane { padding-inline: var(--space-3); }
+
   }
 
   @media (any-hover: none), (any-pointer: coarse) {

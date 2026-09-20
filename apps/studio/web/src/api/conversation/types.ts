@@ -41,6 +41,9 @@ export type PlanClarificationAnswer =
   | { status: "answered"; answerType: "datetime"; dateTime: string }
 
 export type ChatResumePayload =
+  | { type: "dismiss"; baseRevision?: number }
+  | { type: "discuss"; message: string }
+  | { type: "respond"; baseRevision: number; message: string }
   | { type: "approve" }
   | { type: "reject"; message?: string }
   | {
