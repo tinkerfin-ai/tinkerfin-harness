@@ -13,6 +13,19 @@ from scripts import studio_checks as checks
 SOURCE_ROOT = checks.ROOT_DIR
 
 
+@pytest.fixture(autouse=True)
+def isolated_git_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep hook-inherited Git paths out of disposable test repositories."""
+    names = subprocess.run(
+        ["git", "rev-parse", "--local-env-vars"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+
+
 def test_entry_point_starts_without_python_test_dependencies(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, "-S", str(SOURCE_ROOT / "scripts/studio_checks.py")],
