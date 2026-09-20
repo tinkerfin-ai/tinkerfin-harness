@@ -97,5 +97,5 @@ Studio 部署所需的完整 wheel 集合。
 uv run pytest -m docker_integration
 ```
 
-主质量工作流在 push 和 PR 时执行。完整 Docker 套件由独立工作流每日运行，也可在
-`Docker integrations` 工作流中通过 **Run workflow** 手动启动；其结果不阻塞主质量门禁。
+主质量工作流在 push 和 PR 时执行，默认排除 Docker 集成测试。
+需要验证真实服务时，通过上面的命令在本地按需运行。

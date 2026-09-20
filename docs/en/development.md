@@ -108,6 +108,6 @@ Start Docker, then run tests that create and clean up their own disposable servi
 uv run pytest -m docker_integration
 ```
 
-The main quality workflow runs on pushes and pull requests. The complete Docker
-suite runs separately each day and can be started from the `Docker integrations`
-workflow's **Run workflow** action. Its result does not block the main quality gate.
+The main quality workflow runs on pushes and pull requests and excludes Docker
+integration tests by default. Run them locally with the command above when you need
+to validate against real services.
