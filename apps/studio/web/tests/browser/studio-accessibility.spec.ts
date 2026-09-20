@@ -1,4 +1,5 @@
 import { installLiveRun } from './fixtures/liveRun'
+import { fulfillExpectedHttpError, logBrowserDiagnostics } from './support/diagnostics'
 import { toolReviewInterrupts, planInterrupt } from '../../src/test/aguiFixtures'
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
 import { resolve } from 'node:path'
@@ -530,6 +531,7 @@ interface MockStudioOptions {
   paginatedHistory?: boolean
   paginationPageCount?: number
   pinError?: boolean
+  traceError?: boolean
   planQuestion?: boolean
   planQuestionForm?: JsonObject
   planReview?: boolean
@@ -545,6 +547,7 @@ async function mockStudio(page: Page, {
   paginatedHistory = false,
   paginationPageCount = 2,
   pinError = false,
+  traceError = false,
   planQuestion = false,
   planQuestionForm: planQuestionFormOverride,
   planReview = false,
@@ -788,15 +791,7 @@ async function mockStudio(page: Page, {
       updatedAt: BASE_TIME,
     }
   }
-  page.on('console', (message) => {
-    if (message.type() === 'error') console.error(`browser console: ${message.text()}`)
-  })
-  page.on('pageerror', (error) => console.error(`browser pageerror: ${error.message}`))
-  page.on('response', (response) => {
-    if (response.status() >= 400) {
-      console.error(`browser response: ${response.status()} ${response.url()}`)
-    }
-  })
+  logBrowserDiagnostics(page)
   await page.addInitScript(({ storageKey, session }) => {
     window.localStorage.setItem(storageKey, JSON.stringify(session))
   }, {
@@ -839,7 +834,15 @@ async function mockStudio(page: Page, {
       && route.request().method() === 'PATCH'
       && url.pathname === `/api/conversation/${THREAD_ID}`
     ) {
-      await route.fulfill({ status: 503, contentType: 'application/json', body: '{}' })
+      await fulfillExpectedHttpError(route, 503, '验证置顶失败提示')
+      return
+    }
+    if (
+      traceError
+      && route.request().method() === 'GET'
+      && url.pathname === `/api/conversation/${THREAD_ID}/trace/graph`
+    ) {
+      await fulfillExpectedHttpError(route, 404, '验证链路加载失败与重试')
       return
     }
     if (url.pathname === '/api/conversation/history') {
@@ -883,6 +886,17 @@ async function mockStudio(page: Page, {
         route,
         buildTraceDetail(url.searchParams.get('includeTaskTrace') !== 'false'),
       )
+      return
+    }
+    if (url.pathname === `/api/conversation/${THREAD_ID}/title`) {
+      // 本组用例使用固定标题，查询返回已结算快照
+      await fulfillJson(route, {
+        threadId: THREAD_ID,
+        title: '浏览器会话',
+        titleSource: 'default',
+        titleGenerationStatus: 'skipped',
+        titleSeq: 1,
+      })
       return
     }
     if (url.pathname === `/api/conversation/${THREAD_ID}/trace`) {
@@ -1118,7 +1132,7 @@ test('侧栏切换控件共享纵向锚点且 tooltip 避开相邻操作区', as
 test('操作与读取异常只显示一条全局 Toast，并保留独立恢复入口', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.setViewportSize({ width: 1440, height: 900 })
-  await mockStudio(page, { pinError: true })
+  await mockStudio(page, { pinError: true, traceError: true })
 
   await page.getByRole('button', { name: '管理会话：浏览器会话' }).click()
   await page.getByRole('button', { name: '置顶', exact: true }).click()
@@ -1351,7 +1365,7 @@ for (const card of ['question', 'review'] as const) {
         { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: payload.runId, outcome: { type: 'success' } },
       ]
       // 终态历史暂时不可用时，关闭仍应由实时结果正确结算
-      await page.route(`**/api/conversation/${THREAD_ID}/history*`, pending => pending.fulfill({ status: 503, contentType: 'application/json', body: '{}' }))
+      await page.route(`**/api/conversation/${THREAD_ID}/history*`, pending => fulfillExpectedHttpError(pending, 503, '验证关闭 Plan 后历史同步失败'))
       await route.fulfill({ status: 200, contentType: 'text/event-stream', body: events.map((event, index) => `id: ${index + 1}\ndata: ${JSON.stringify(event)}\n\n`).join('') })
     })
     await close.click()
