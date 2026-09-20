@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import http from 'node:http'
-import { createServer } from 'vite'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { build, createServer, preview } from 'vite'
 
 /** 为测试自有服务分配独立的 IPv4 回环端口 */
 export async function listenOnLoopback(server) {
@@ -59,6 +62,45 @@ export async function withViteTestServer(config, run) {
     const errors = results.filter(result => result.status === 'rejected').map(result => result.reason)
     if (errors.length) {
       throw new AggregateError(failure === undefined ? errors : [failure, ...errors], '测试代理清理失败')
+    }
+  }
+}
+
+/** 使用本轮独占的构建目录预览，避免其他构建改变正在验证的页面 */
+export async function withBuiltPreview(config, run) {
+  const directory = await mkdtemp(path.join(tmpdir(), 'studio-browser-build-'))
+  let server, failure
+  try {
+    const buildOptions = { ...config.build, outDir: directory, emptyOutDir: true, watch: null }
+    await build({ ...config, build: buildOptions })
+    server = await preview({
+      ...config,
+      build: buildOptions,
+      plugins: [...(config.plugins ?? []), {
+        name: 'own-browser-preview',
+        // 监听端口失败时 preview 不会返回，提前保存服务以释放其信号监听器
+        configurePreviewServer(previewServer) { server = previewServer },
+      }],
+    })
+    const origin = `http://127.0.0.1:${server.httpServer.address().port}`
+    return await run({ server: server.httpServer, origin, directory })
+  } catch (error) {
+    failure = error
+    throw error
+  } finally {
+    const errors = []
+    try {
+      if (server) await server.close()
+    } catch (error) {
+      errors.push(error)
+    }
+    try {
+      await rm(directory, { recursive: true, force: true })
+    } catch (error) {
+      errors.push(error)
+    }
+    if (errors.length) {
+      throw new AggregateError(failure === undefined ? errors : [failure, ...errors], '浏览器测试预览清理失败')
     }
   }
 }

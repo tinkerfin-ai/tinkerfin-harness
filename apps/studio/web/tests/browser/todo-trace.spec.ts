@@ -624,7 +624,8 @@ for (const hasTouch of [false, true]) {
           for (const withTasks of [false, true]) {
             taskTraceGroups.splice(0, taskTraceGroups.length, ...(withTasks ? groups : []))
             await page.evaluate(theme => localStorage.setItem('tinkerfin:theme', theme), theme)
-            await page.reload()
+            const response = await page.reload()
+            expect(response?.status(), '刷新必须取得完整应用页面').toBe(200)
             await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
             const copy = page.getByRole('button', { name: '复制回答', exact: true }).last()
             await expect(copy).toBeAttached()

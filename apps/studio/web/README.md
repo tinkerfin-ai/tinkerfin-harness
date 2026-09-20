@@ -39,14 +39,13 @@ pnpm test:proxy       # HTTP 代理与附件上传测试
 pnpm test:browser     # 自动构建，运行交互与无障碍测试
 ```
 
-单独运行浏览器用例前先构建：
+单独运行浏览器用例：
 
 ```bash
-pnpm build
 pnpm exec playwright test tests/browser/conversation-failure.spec.ts
 ```
 
-浏览器测试独占本地预览端口，默认使用 4173。端口被占用时可指定其他端口：
+浏览器测试会构建到独立临时目录，结束时清理预览服务和构建文件。预览端口默认使用 4173，端口被占用时可指定其他端口：
 
 ```bash
 PLAYWRIGHT_PORT=4273 pnpm test:browser
