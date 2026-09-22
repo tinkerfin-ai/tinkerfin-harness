@@ -188,16 +188,24 @@ def create_compaction_stream(
     builder = StateGraph(schema, context_schema=spec.context_schema)
     # Pass the composed input schema explicitly: inferring DeepAgentState from
     # the callback annotation would hide the prior private summary channels.
-    builder.add_node("compact_context", compact, input_schema=schema)
+    # LangGraph 1.2.11 omits cache and checkpointer generic arguments in these
+    # methods; keep their overloads and suppress only the upstream Unknowns.
+    builder.add_node("compact_context", compact, input_schema=schema)  # pyright: ignore[reportUnknownMemberType]
     builder.add_edge(START, "compact_context")
     builder.add_edge("compact_context", END)
-    graph = builder.compile(checkpointer=saver, store=spec.store)
+    graph = builder.compile(checkpointer=saver, store=spec.store)  # pyright: ignore[reportUnknownMemberType]
     graph_stream = runtime_profile.graph_stream(graph)
+    # LangGraph's astream omits Command's node-name generic. Retain the bound
+    # method for signature inspection without spreading its incomplete type.
+    native_stream = cast(
+        Callable[..., AsyncIterator[Mapping[str, object]]],
+        graph.astream,  # pyright: ignore[reportUnknownMemberType]
+    )
 
     async def execute(
         *args: object, **kwargs: object
     ) -> AsyncGenerator[Mapping[str, object], None]:
-        bound = inspect.signature(graph.astream).bind(*args, **kwargs)
+        bound = inspect.signature(native_stream).bind(*args, **kwargs)
         config = cast(RunnableConfig, bound.arguments.get("config", {}))
         thread_id = config.get("configurable", {}).get("thread_id")
         if not isinstance(thread_id, str):
@@ -208,7 +216,10 @@ def create_compaction_stream(
             if snapshot.next or snapshot.interrupts:
                 raise TinkerFinLifecycleError("conversation has pending work")
             plan = snapshot.values.get("tinkerfin_plan")
-            if isinstance(plan, dict) and plan.get("status") == "awaiting_input":
+            if (
+                isinstance(plan, dict)
+                and cast(Mapping[str, object], plan).get("status") == "awaiting_input"
+            ):
                 raise TinkerFinLifecycleError("conversation is waiting for Plan input")
         bound.arguments["input"] = {"messages": [], COMPACTION_STATE_KEY: None}
         bound.arguments["durability"] = "sync"
@@ -217,6 +228,7 @@ def create_compaction_stream(
             raise TypeError(
                 "compression graph must return a closeable asynchronous generator"
             )
+        source = cast(AsyncGenerator[Mapping[str, object], None], source)
         committed: Mapping[str, object] | None = None
         try:
             async for part in source:
@@ -227,19 +239,20 @@ def create_compaction_stream(
                 if (
                     part.get("type") == "values"
                     and isinstance(data, Mapping)
-                    and data.get(COMPACTION_STATE_KEY) is not None
+                    and cast(Mapping[str, object], data).get(COMPACTION_STATE_KEY)
+                    is not None
                 ):
                     # Native values may precede the final checkpointer await.
                     # Publish the result only after the graph closes successfully.
-                    committed = cast(Mapping[str, object], part)
+                    committed = part
                 elif part.get("type") in {"values", "custom"}:
-                    yield cast(Mapping[str, object], part)
+                    yield part
         finally:
             await source.aclose()
         if committed is not None:
             yield committed
 
-    @wraps(graph.astream)
+    @wraps(native_stream)
     async def stream(
         *args: object, **kwargs: object
     ) -> AsyncIterator[Mapping[str, object]]:
@@ -250,7 +263,7 @@ def create_compaction_stream(
             async for part in source:
                 data = part.get("data")
                 if part.get("type") == "values" and isinstance(data, Mapping):
-                    payload = data.get(COMPACTION_STATE_KEY)
+                    payload = cast(Mapping[str, object], data).get(COMPACTION_STATE_KEY)
                     if payload is not None:
                         result = CompactionResult.model_validate(payload)
                         await operation.complete(result.model_dump(mode="json"))

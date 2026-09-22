@@ -1221,7 +1221,12 @@ class _AgentDefinition:
         if not callable(native_astream):
             raise TypeError("Runtime Profile Graph must expose a callable astream")
         effective = cast(_NativeAstream, native_astream)
-        inspect_astream = native.astream
+        # LangGraph 1.2.11 omits Command's generic in astream. Keep the bound
+        # method itself so checkpoint inspection can access its graph owner.
+        inspect_astream = cast(
+            _NativeAstream,
+            native.astream,  # pyright: ignore[reportUnknownMemberType]
+        )
         if self._plan_options is not None:
             from .plan._runtime import PlanCapableGraphRuntime
             from .plan._workflow import PlanningWorkflowGraph, create_planning_graph

@@ -7,7 +7,7 @@ ownership of their hooks, just as in backend resource preparation.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Annotated, Any, NotRequired
+from typing import Annotated, Any, NotRequired, cast
 
 from deepagents.middleware.summarization import (
     SUMMARIZATION_EVENT_KEY,
@@ -58,11 +58,11 @@ class ObservedSummarization(SummarizationMiddleware):
             if (
                 isinstance(response, ExtendedModelResponse)
                 and response.command is not None
-                and isinstance(response.command.update, dict)
-                and SUMMARIZATION_EVENT_KEY in response.command.update
             ):
-                operation.mark_update(response.command.update)
-                await operation.saving()
+                update = cast(dict[str, object] | None, response.command.update)
+                if isinstance(update, dict) and SUMMARIZATION_EVENT_KEY in update:
+                    operation.mark_update(update)
+                    await operation.saving()
             return response
         except BaseException as error:
             if operation.started:
@@ -116,7 +116,7 @@ class ObservedCompactionTool(SummarizationToolMiddleware):
     def name(self) -> str:
         return "SummarizationToolMiddleware"
 
-    async def _arun_compact(self, runtime: ToolRuntime[Any, Any]) -> Command[Any]:
+    async def _arun_compact(self, runtime: ToolRuntime[Any, Any]) -> Command[object]:
         operation = CompactionOperation("tool", tool_call_id=runtime.tool_call_id)
         operation.original = self._summarization._apply_event_to_messages(
             runtime.state.get("messages", []),
@@ -124,12 +124,15 @@ class ObservedCompactionTool(SummarizationToolMiddleware):
         )
         token = _CURRENT_COMPACTION.set(operation)
         try:
-            command = await super()._arun_compact(runtime)
-            if (
-                isinstance(command.update, dict)
-                and SUMMARIZATION_EVENT_KEY in command.update
-            ):
-                operation.mark_update(command.update)
+            # Deep Agents 0.7.13 omits Command's node-name and ToolRuntime's
+            # state generics; the native result and its update stay unchanged.
+            command = cast(
+                Command[object],
+                await super()._arun_compact(runtime),  # pyright: ignore[reportUnknownMemberType]
+            )
+            update = cast(dict[str, object] | None, command.update)
+            if isinstance(update, dict) and SUMMARIZATION_EVENT_KEY in update:
+                operation.mark_update(update)
                 await operation.saving()
             elif operation.tool_error is not None:
                 await operation.fail(operation.tool_error)
@@ -143,10 +146,14 @@ class ObservedCompactionTool(SummarizationToolMiddleware):
             _CURRENT_COMPACTION.reset(token)
 
     @staticmethod
-    def _compact_error(tool_call_id: str, exc: BaseException) -> Command[Any]:
+    def _compact_error(tool_call_id: str, exc: BaseException) -> Command[object]:
         # Native tools convert errors into a regular ToolMessage. Record the error
         # as an operation fact at the async boundary, without parsing its prose.
         operation = _CURRENT_COMPACTION.get()
         if operation is not None:
             operation.tool_error = exc
-        return SummarizationToolMiddleware._compact_error(tool_call_id, exc)
+        # The upstream helper also returns an unparameterized Command.
+        return cast(
+            Command[object],
+            SummarizationToolMiddleware._compact_error(tool_call_id, exc),  # pyright: ignore[reportUnknownMemberType]
+        )

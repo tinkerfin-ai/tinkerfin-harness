@@ -15,7 +15,7 @@ from collections.abc import (
 from contextlib import AbstractAsyncContextManager
 from contextvars import ContextVar
 from functools import partial
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast, overload
 from uuid import uuid4
 
 from deepagents.graph import DeepAgentState
@@ -25,6 +25,7 @@ from langchain.agents.middleware.types import InputAgentState
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     HumanMessage,
+    MessageLikeRepresentation,
     SystemMessage,
     convert_to_messages,
     message_chunk_to_message,
@@ -2102,11 +2103,13 @@ class AgentRuntime(Generic[ContextT]):
             identity=identity,
             runtime_profile=self._runtime_profile.profile_id,
         )
-        graph_input = bound.arguments.get("input")
+        graph_input = cast(
+            InputAgentState | Command[object] | None, bound.arguments.get("input")
+        )
         if isinstance(graph_input, dict):
             raw_messages = graph_input.get("messages")
             if isinstance(raw_messages, list):
-                messages = list(raw_messages)
+                messages: list[MessageLikeRepresentation] = list(raw_messages)
                 for index, message in enumerate(convert_to_messages(raw_messages)):
                     if isinstance(message, HumanMessage):
                         message = message_chunk_to_message(message)
