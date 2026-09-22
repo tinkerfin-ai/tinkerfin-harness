@@ -3517,24 +3517,35 @@ test('工具图标、展开箭头和错误状态点共用第一行图标中心�
       await page.setViewportSize({ width, height: 900 })
       for (const prefix of ['align-main', 'align-child']) {
         const normal = page.locator(`#${prefix}-0 > summary`)
-        const icon = normal.locator('.tool-row-icon svg')
-        const center = async (target: Locator) => target.evaluate(el => {
-          const rect = el.getBoundingClientRect()
-          return rect.left + rect.width / 2
-        })
-        const baseline = await center(icon)
-        expect(await icon.evaluate(el => el.getBoundingClientRect().left))
-          .toBe(await normal.locator('.tool-row-leading').evaluate(el => el.getBoundingClientRect().left))
-        for (const index of [1, 2]) {
-          expect(await center(page.locator(`#${prefix}-${index} .tool-row-state-dot`))).toBe(baseline)
+        const expectAligned = async () => {
+          // 同一次布局中取样，避免窗口重排夹在不同图标的坐标读取之间
+          const positions = await page.evaluate(prefix => {
+            const rect = (suffix: string) => document.querySelector(`#${prefix}-${suffix}`)!.getBoundingClientRect()
+            const icon = rect('0 > summary .tool-row-icon svg')
+            const leading = rect('0 > summary .tool-row-leading')
+            const others = [
+              rect('0 > summary .tool-row-chevron'),
+              rect('1 .tool-row-state-dot'),
+              rect('2 .tool-row-state-dot'),
+            ]
+            return {
+              iconLeft: icon.left,
+              leadingLeft: leading.left,
+              iconCenter: icon.left + icon.width / 2,
+              centers: others.map(item => item.left + item.width / 2),
+            }
+          }, prefix)
+          expect(positions.iconLeft).toBe(positions.leadingLeft)
+          for (const center of positions.centers) expect(center).toBe(positions.iconCenter)
         }
+        await expectAligned()
         await normal.hover()
         const arrow = normal.locator('.tool-row-chevron')
         await expect(arrow).toHaveCSS('opacity', '1')
-        expect(await center(arrow)).toBe(baseline)
+        await expectAligned()
         await normal.click()
         await expect(page.locator(`#${prefix}-0`)).toHaveAttribute('open', '')
-        expect(await center(arrow)).toBe(baseline)
+        await expectAligned()
         await normal.click()
       }
       await page.mouse.move(0, 0)
