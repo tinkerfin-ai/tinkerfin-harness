@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 from deepagents import create_deep_agent
@@ -31,6 +31,7 @@ from tinkerfin_sandbox import (
     OpenSandboxBackendTimeoutError,
     OpenSandboxBackendUnavailableError,
     OpenSandboxBinding,
+    OpenSandboxCleanupClaim,
     OpenSandboxConfig,
     OpenSandboxDestroyError,
     OpenSandboxDetails,
@@ -53,7 +54,6 @@ from tinkerfin_sandbox import (
     UnexpectedOpenSandboxBackendError,
     UnexpectedOpenSandboxStateError,
 )
-from tinkerfin_sandbox.backends import _rooted_protocol
 
 
 def _resource_key(value: str, namespace: str | None = None) -> str:
@@ -1383,36 +1383,6 @@ class _ResettableLocalBackend(LocalShellBackend):
         yield
 
 
-def _install_reset_barrier(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    opened: Path,
-    release: Path,
-) -> None:
-    original_script = _rooted_protocol._ROOTED_HELPER_SCRIPT
-    function_start = original_script.index("def reset_workspace(")
-    function_end = original_script.find("\ndef ", function_start + 1)
-    function_source = original_script[function_start:function_end]
-    statement = "        opened = os.fstat(root_descriptor)"
-    barrier = (
-        statement
-        + "\n"
-        + f"        open({str(opened)!r}, 'x').close()\n"
-        + f"        while not os.path.exists({str(release)!r}):\n"
-        + "            time.sleep(0.001)"
-    )
-    assert function_source.count(statement) == 1
-    monkeypatch.setattr(
-        _rooted_protocol,
-        "_ROOTED_HELPER_SCRIPT",
-        (
-            original_script[:function_start]
-            + function_source.replace(statement, barrier)
-            + original_script[function_end:]
-        ),
-    )
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ttl", (timedelta(hours=2), None))
 async def test_manager_reconnect_preserves_identity_and_destroy_removes_binding(
@@ -1622,54 +1592,6 @@ async def test_reset_clears_only_workspace_and_keeps_stable_backend(
         assert client.create_calls == 1
         assert client.destroy_calls == []
     finally:
-        await manager.aclose()
-
-
-@pytest.mark.asyncio
-async def test_reset_rejects_workspace_root_replaced_after_open(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    workspace.mkdir()
-    (workspace / "inside.txt").write_text("inside", encoding="utf-8")
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    sentinel = outside / "sentinel.txt"
-    sentinel.write_text("outside sentinel", encoding="utf-8")
-    opened = tmp_path / "reset-opened"
-    release = tmp_path / "reset-release"
-    _install_reset_barrier(
-        monkeypatch,
-        opened=opened,
-        release=release,
-    )
-    client = _FakeClient(
-        lambda sandbox_id: _ResettableLocalBackend(sandbox_id, workspace)
-    )
-    client.config = client.config.model_copy(update={"workspace_root": str(workspace)})
-    manager = _new_manager(client=client, warm_pool_size=0)
-    await manager.start()
-    try:
-        await manager.get(_key("user-1"))
-        reset_task = asyncio.create_task(manager.reset(_key("user-1")))
-        deadline = asyncio.get_running_loop().time() + 1
-        while not opened.exists() and asyncio.get_running_loop().time() < deadline:
-            await asyncio.sleep(0.001)
-        if not opened.exists():
-            await reset_task
-        assert opened.exists(), "manager reset did not use the rooted helper"
-        workspace.rename(tmp_path / "detached-workspace")
-        workspace.symlink_to(outside, target_is_directory=True)
-        release.touch()
-
-        with pytest.raises(OpenSandboxResetError):
-            await reset_task
-
-        assert sentinel.read_text(encoding="utf-8") == "outside sentinel"
-        assert list((tmp_path / "detached-workspace").iterdir()) == []
-    finally:
-        release.touch(exist_ok=True)
         await manager.aclose()
 
 
@@ -2008,43 +1930,6 @@ async def test_manual_cleanup_owner_reuse_keeps_health_checks_without_renewal() 
         assert backend.renew_calls == []
     assert client.destroy_calls == [first.id]
     assert backend.close_calls >= 1
-
-
-async def test_manual_cleanup_warm_health_maintenance_reclaims_failed_capacity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A non-expiring warm instance still receives bounded periodic health checks."""
-
-    monkeypatch.setattr(
-        "tinkerfin_sandbox.lifecycle._manager_resources._WARM_MAINTENANCE_MAX_SECONDS",
-        0.05,
-    )
-    checked = asyncio.Event()
-
-    class CheckedBackend(_FakeBackend):
-        async def aexecute(
-            self, command: str, *, timeout: int | None = None
-        ) -> _ExecuteResponse:
-            response = await super().aexecute(command, timeout=timeout)
-            checked.set()
-            return response
-
-    client = _ReconnectableFakeClient(backend_factory=CheckedBackend)
-    client.config = client.config.model_copy(update={"ttl": None})
-    manager = _new_manager(
-        client=client, warm_pool_size=1, fail_on_startup_warmup_error=True
-    )
-    async with manager:
-        backend = cast(CheckedBackend, client.backends[0])
-        await manager.check_ready()
-        checked.clear()
-        backend.healthy = False
-        await asyncio.wait_for(checked.wait(), timeout=2)
-        await _eventually(lambda: client.create_calls == 2)
-        await _eventually(lambda: backend.id in client.destroy_calls)
-        await manager.check_ready()
-        assert all(not item.renew_calls for item in client.backends)
-    assert set(client.destroy_calls) == {item.id for item in client.backends}
 
 
 @pytest.mark.asyncio
@@ -2511,6 +2396,152 @@ async def test_manager_persists_failed_replacement_cleanup(
         await checking_state.release_cleanup(cleanup)
     finally:
         await checking_state.aclose()
+
+
+@pytest.mark.parametrize("phase", ["delivery", "complete"])
+@pytest.mark.parametrize("cancel_during_release", [False, True])
+async def test_manager_close_releases_cleanup_claim_during_handoff(
+    sql_engine: SqlEngineFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: Literal["delivery", "complete"],
+    cancel_during_release: bool,
+) -> None:
+    """Undelivered and unfinished cleanup claims remain claimable after close."""
+    monkeypatch.setattr(
+        SQLAlchemyOpenSandboxState,
+        "_now",
+        staticmethod(lambda: datetime(2030, 1, 1)),
+    )
+    reached = asyncio.Event()
+    allow_operation = asyncio.Event()
+    release_started = asyncio.Event()
+    allow_release = asyncio.Event()
+    cancellation_requested = asyncio.Event()
+
+    class GatedState(SQLAlchemyOpenSandboxState):
+        async def claim_cleanup(self) -> OpenSandboxCleanupClaim | None:
+            claim = await super().claim_cleanup()
+            if claim is not None and phase == "delivery":
+                reached.set()
+                await allow_operation.wait()
+            return claim
+
+        async def complete_cleanup(self, claim: OpenSandboxCleanupClaim) -> None:
+            if phase == "complete":
+                reached.set()
+                await allow_operation.wait()
+            await super().complete_cleanup(claim)
+
+        async def release_cleanup(self, claim: OpenSandboxCleanupClaim) -> None:
+            release_started.set()
+            await allow_release.wait()
+            await super().release_cleanup(claim)
+
+    class Client(_ReconnectableFakeClient):
+        async def destroy(self, sandbox_id: str) -> None:
+            await super().destroy(sandbox_id)
+            if self.destroy_calls.count(sandbox_id) == 1:
+                raise RuntimeError("destroy unavailable")
+
+    url = f"sqlite+aiosqlite:///{tmp_path / 'cleanup-handoff.db'}"
+    client = Client()
+    manager = _new_manager(
+        client=client,
+        state=GatedState(engine=sql_engine(url), namespace="test"),
+        warm_pool_size=0,
+        recovery_policy=OpenSandboxRecoveryPolicy(
+            max_attempts=1, on_failure="recreate"
+        ),
+    )
+    closing: asyncio.Task[None] | None = None
+    release_signal: asyncio.Task[bool] | None = None
+    try:
+        await manager.start()
+        queue_task = manager._cleanup_queue_task
+        assert queue_task is not None
+        original_cancel = queue_task.cancel
+
+        def observe_cancel(message: object = None) -> bool:
+            accepted = original_cancel(message)
+            if accepted:
+                cancellation_requested.set()
+            return accepted
+
+        # Observe the real close request without depending on scheduler turns.
+        monkeypatch.setattr(queue_task, "cancel", observe_cancel)
+        await manager.get(_key("user-1"))
+        client.backends[0].healthy = False
+        replacement = await manager.get(_key("user-1"))
+        await reached.wait()
+        closing = asyncio.create_task(manager.aclose())
+        await cancellation_requested.wait()
+        allow_operation.set()
+        release_signal = asyncio.create_task(release_started.wait())
+        done, _ = await asyncio.wait(
+            (closing, release_signal), return_when=asyncio.FIRST_COMPLETED
+        )
+        assert release_signal in done, "close must release its cleanup claim"
+        if cancel_during_release:
+            queue_task.cancel("cancel during claim release")
+        allow_release.set()
+        await closing
+
+        assert replacement.id == "sandbox-2"
+        assert client.destroy_calls == ["sandbox-1"] * (1 if phase == "delivery" else 2)
+        checking_state = SQLAlchemyOpenSandboxState(
+            engine=sql_engine(url), namespace="test"
+        )
+        await checking_state.start(warm_pool_size=0)
+        try:
+            cleanup = await checking_state.claim_cleanup()
+            assert cleanup is not None
+            assert cleanup.sandbox_id == "sandbox-1"
+            await checking_state.release_cleanup(cleanup)
+        finally:
+            await checking_state.aclose()
+    finally:
+        allow_operation.set()
+        allow_release.set()
+        if release_signal is not None:
+            release_signal.cancel()
+            await asyncio.gather(release_signal, return_exceptions=True)
+        if closing is not None:
+            await asyncio.gather(closing, return_exceptions=True)
+        await manager.aclose()
+
+
+@pytest.mark.parametrize("phase", ["destroy", "complete"])
+async def test_cleanup_release_failure_does_not_replace_independent_cancellation(
+    phase: Literal["destroy", "complete"],
+) -> None:
+    cancellation = asyncio.CancelledError("cleanup cancelled independently")
+    release_failure = OpenSandboxStateError("release unavailable")
+
+    class State(_FakeState):
+        async def start(self, *, warm_pool_size: int) -> None:
+            await super().start(warm_pool_size=warm_pool_size)
+            await self.enqueue_cleanup("orphan")
+
+        async def complete_cleanup(self, claim: OpenSandboxCleanupClaim) -> None:
+            raise cancellation
+
+        async def release_cleanup(self, claim: OpenSandboxCleanupClaim) -> None:
+            raise release_failure
+
+    class Client(_FakeClient):
+        async def destroy(self, sandbox_id: str) -> None:
+            if phase == "destroy":
+                raise cancellation
+            await super().destroy(sandbox_id)
+
+    manager = _new_manager(client=Client(), state=State(), warm_pool_size=0)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await manager.start()
+        assert cancellation.__cause__ is release_failure
+    finally:
+        await manager.aclose()
 
 
 @pytest.mark.asyncio

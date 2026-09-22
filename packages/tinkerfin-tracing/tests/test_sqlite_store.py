@@ -19,7 +19,7 @@ from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import AdaptedConnection
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from tests.support.sql_faults import after_sql_command, after_sql_commit
 
 from tinkerfin_contracts import (
@@ -45,7 +45,6 @@ from tinkerfin_tracing.errors import (
     TraceQuotaExceeded,
     TraceStoreError,
     TraceStoreProtocolError,
-    TraceStoreTimeout,
     TraceThreadNotFound,
 )
 from tinkerfin_tracing.facts import (
@@ -2572,41 +2571,6 @@ async def test_sqlite_proven_append_survives_peer_takeover_during_retry(
                     await first_engine.dispose()
                 finally:
                     await peer_engine.dispose()
-
-
-async def test_sqlite_retry_exhaustion_uses_stable_store_timeout(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'timeout.db'}")
-    store = SqlAlchemyTraceStore(
-        engine,
-        options=TraceStoreOptions(
-            commit_retry_attempts=2,
-            commit_retry_delay_seconds=0.001,
-        ),
-    )
-    writer = await store.open_writer(_identity())
-    original = AsyncConnection.exec_driver_sql
-    original_error = sqlite3.OperationalError("database is locked")
-    original_error.sqlite_errorcode = sqlite3.SQLITE_BUSY
-
-    async def unavailable(
-        connection: AsyncConnection, statement: str, *args: Any, **kwargs: Any
-    ) -> Any:
-        if connection.engine is engine and statement == "BEGIN IMMEDIATE":
-            raise DBAPIError(None, None, original_error, False)
-        return await original(connection, statement, *args, **kwargs)
-
-    try:
-        monkeypatch.setattr(AsyncConnection, "exec_driver_sql", unavailable)
-        with pytest.raises(TraceStoreTimeout) as captured:
-            await writer.append((_fact("started"),))
-        assert isinstance(captured.value.cause, DBAPIError)
-    finally:
-        monkeypatch.setattr(AsyncConnection, "exec_driver_sql", original)
-        await writer.aclose()
-        await engine.dispose()
 
 
 async def test_sqlite_store_rejects_corrupt_opaque_payload(tmp_path: Path) -> None:

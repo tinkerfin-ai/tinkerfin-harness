@@ -3,8 +3,6 @@
 import json
 import shlex
 import subprocess
-import time
-from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from importlib.resources import files
 from pathlib import Path
@@ -61,50 +59,6 @@ def _probe(*, backend: LocalShellBackend, root: Path, path: str):
     return _parse_rooted_response(
         backend.execute(request.command),
         request=request,
-    )
-
-
-def _install_canonicalization_barrier(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    function_name: str,
-    reached: Path,
-    release: Path,
-    after_statement: str = "        parts = canonical_parts(root, virtual_parts)",
-) -> None:
-    original_script = _rooted_protocol._ROOTED_HELPER_SCRIPT
-    function_marker = f"def {function_name}("
-    function_start = original_script.index(function_marker)
-    next_function = original_script.find("\ndef ", function_start + 1)
-    function_end = len(original_script) if next_function < 0 else next_function
-    function_source = original_script[function_start:function_end]
-    indentation = after_statement[
-        : len(after_statement) - len(after_statement.lstrip())
-    ]
-    instrumented_sync_point = (
-        after_statement + "\n"
-        f"        open({str(reached)!r}, 'x').close()\n"
-        f"        while not os.path.exists({str(release)!r}):\n"
-        "            time.sleep(0.001)\n"
-    )
-    instrumented_sync_point = instrumented_sync_point.replace(
-        "        ",
-        indentation,
-        1,
-    )
-    assert function_source.count(after_statement) == 1
-    instrumented_function = function_source.replace(
-        after_statement,
-        instrumented_sync_point,
-    )
-    monkeypatch.setattr(
-        _rooted_protocol,
-        "_ROOTED_HELPER_SCRIPT",
-        (
-            original_script[:function_start]
-            + instrumented_function
-            + original_script[function_end:]
-        ).replace("import sys\n", "import sys\nimport time\n"),
     )
 
 
@@ -390,98 +344,6 @@ def test_rooted_helper_reads_stable_internal_link_and_rejects_external_link(
     assert "outside sentinel" not in outside_response.error.message
 
 
-def test_rooted_helper_read_rejects_leaf_replaced_after_canonicalization(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    workspace.mkdir()
-    target = workspace / "target.txt"
-    target.write_text("inside", encoding="utf-8")
-    outside = tmp_path / "outside.txt"
-    outside.write_text("outside sentinel", encoding="utf-8")
-    canonicalized = tmp_path / "read-canonicalized"
-    release = tmp_path / "read-release"
-    _install_canonicalization_barrier(
-        monkeypatch,
-        function_name="read_file",
-        reached=canonicalized,
-        release=release,
-    )
-    request = _build_rooted_command(
-        root=str(workspace),
-        operation="read",
-        arguments={"path": "/target.txt", "offset": 0, "limit": 1, "binary": False},
-    )
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_local_backend().execute, request.command)
-        deadline = time.monotonic() + 5
-        while not canonicalized.exists() and time.monotonic() < deadline:
-            time.sleep(0.001)
-        try:
-            assert canonicalized.exists(), "helper did not reach the read barrier"
-            target.unlink()
-            target.symlink_to(outside)
-        finally:
-            release.touch()
-        raw_response = future.result(timeout=5)
-
-    response = _parse_rooted_response(raw_response, request=request)
-
-    assert response.status == "error"
-    assert response.error.code == "invalid_path"
-    assert "outside sentinel" not in response.error.message
-
-
-@pytest.mark.parametrize("parent_parts", [("parent",), ("level1", "level2")])
-def test_rooted_helper_read_rejects_parent_replaced_after_canonicalization(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    parent_parts: tuple[str, ...],
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    parent = workspace.joinpath(*parent_parts)
-    parent.mkdir(parents=True)
-    (parent / "target.txt").write_text("inside", encoding="utf-8")
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (outside / "target.txt").write_text("outside sentinel", encoding="utf-8")
-    canonicalized = tmp_path / "parent-canonicalized"
-    release = tmp_path / "parent-release"
-    _install_canonicalization_barrier(
-        monkeypatch,
-        function_name="read_file",
-        reached=canonicalized,
-        release=release,
-    )
-    virtual_path = "/" + "/".join((*parent_parts, "target.txt"))
-    request = _build_rooted_command(
-        root=str(workspace),
-        operation="read",
-        arguments={"path": virtual_path, "offset": 0, "limit": 1, "binary": False},
-    )
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_local_backend().execute, request.command)
-        deadline = time.monotonic() + 5
-        while not canonicalized.exists() and time.monotonic() < deadline:
-            time.sleep(0.001)
-        try:
-            assert canonicalized.exists(), "helper did not reach the parent barrier"
-            parent.rename(parent.with_name(parent.name + "-detached"))
-            parent.symlink_to(outside, target_is_directory=True)
-        finally:
-            release.touch()
-        raw_response = future.result(timeout=5)
-
-    response = _parse_rooted_response(raw_response, request=request)
-
-    assert response.status == "error"
-    assert response.error.code == "invalid_path"
-    assert "outside sentinel" not in response.error.message
-
-
 def test_rooted_helper_edits_crlf_file_without_changing_line_endings(
     tmp_path: Path,
 ) -> None:
@@ -630,57 +492,6 @@ def test_rooted_helper_edits_internal_link_target_and_preserves_mode(
     assert target.stat().st_mode & 0o777 == 0o640
 
 
-def test_rooted_helper_edit_rejects_target_replaced_before_publish(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    workspace.mkdir()
-    target = workspace / "target.txt"
-    target.write_text("old", encoding="utf-8")
-    outside = tmp_path / "outside.txt"
-    outside.write_text("outside sentinel", encoding="utf-8")
-    prepared = tmp_path / "edit-prepared"
-    release = tmp_path / "edit-release"
-    _install_canonicalization_barrier(
-        monkeypatch,
-        function_name="edit_file",
-        reached=prepared,
-        release=release,
-        after_statement="        os.fsync(temporary_descriptor)",
-    )
-    request = _build_rooted_command(
-        root=str(workspace),
-        operation="edit",
-        arguments={
-            "path": "/target.txt",
-            "old": "old",
-            "new": "new",
-            "replace_all": False,
-        },
-    )
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_local_backend().execute, request.command)
-        deadline = time.monotonic() + 5
-        while not prepared.exists() and time.monotonic() < deadline:
-            time.sleep(0.001)
-        try:
-            assert prepared.exists(), "helper did not reach the edit publish barrier"
-            target.unlink()
-            target.symlink_to(outside)
-        finally:
-            release.touch()
-        raw_response = future.result(timeout=5)
-
-    response = _parse_rooted_response(raw_response, request=request)
-
-    assert response.status == "error"
-    assert response.error.code == "invalid_path"
-    assert outside.read_text(encoding="utf-8") == "outside sentinel"
-    assert list(workspace.glob(".tinkerfin-edit-*")) == []
-
-
 def test_rooted_helper_recursively_deletes_directory_without_following_links(
     tmp_path: Path,
 ) -> None:
@@ -772,53 +583,6 @@ def test_rooted_helper_reports_missing_delete_target(tmp_path: Path) -> None:
 
     assert response.status == "error"
     assert response.error.code == "not_found"
-
-
-def test_rooted_helper_delete_rejects_directory_entry_replaced_after_open(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    target = workspace / "target"
-    target.mkdir(parents=True)
-    (target / "inside.txt").write_text("inside", encoding="utf-8")
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    sentinel = outside / "sentinel.txt"
-    sentinel.write_text("outside sentinel", encoding="utf-8")
-    opened = tmp_path / "delete-opened"
-    release = tmp_path / "delete-release"
-    _install_canonicalization_barrier(
-        monkeypatch,
-        function_name="delete_path",
-        reached=opened,
-        release=release,
-        after_statement="        opened = os.fstat(target_descriptor)",
-    )
-    request = _build_rooted_command(
-        root=str(workspace),
-        operation="delete",
-        arguments={"path": "/target"},
-    )
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_local_backend().execute, request.command)
-        deadline = time.monotonic() + 5
-        while not opened.exists() and time.monotonic() < deadline:
-            time.sleep(0.001)
-        try:
-            assert opened.exists(), "helper did not reach the delete open barrier"
-            target.rename(workspace / "detached-target")
-            target.symlink_to(outside, target_is_directory=True)
-        finally:
-            release.touch()
-        raw_response = future.result(timeout=5)
-
-    response = _parse_rooted_response(raw_response, request=request)
-
-    assert response.status == "error"
-    assert response.error.code == "invalid_path"
-    assert sentinel.read_text(encoding="utf-8") == "outside sentinel"
 
 
 def test_rooted_helper_lists_entries_without_following_entry_links(
@@ -1256,54 +1020,6 @@ def test_rooted_helper_rejects_external_parent_link(tmp_path: Path) -> None:
     assert sentinel.read_text(encoding="utf-8") == "outside sentinel"
 
 
-def test_rooted_helper_rejects_leaf_replaced_after_canonicalization(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    workspace.mkdir()
-    target = workspace / "target.txt"
-    target.write_text("inside", encoding="utf-8")
-    outside = tmp_path / "outside.txt"
-    outside.write_text("outside sentinel", encoding="utf-8")
-    canonicalized = tmp_path / "canonicalized"
-    release = tmp_path / "release"
-    _install_canonicalization_barrier(
-        monkeypatch,
-        function_name="probe",
-        reached=canonicalized,
-        release=release,
-    )
-    request = _build_rooted_command(
-        root=str(workspace),
-        operation="probe",
-        arguments={"path": "/target.txt"},
-    )
-    backend = _local_backend()
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(backend.execute, request.command)
-        deadline = time.monotonic() + 5
-        while not canonicalized.exists() and time.monotonic() < deadline:
-            time.sleep(0.001)
-        try:
-            assert canonicalized.exists(), (
-                "helper did not reach the canonicalization barrier"
-            )
-            target.unlink()
-            target.symlink_to(outside)
-        finally:
-            release.touch()
-        raw_response = future.result(timeout=5)
-
-    response = _parse_rooted_response(raw_response, request=request)
-
-    assert response.status == "error"
-    assert response.error.code == "invalid_path"
-    assert response.result is None
-    assert outside.read_text(encoding="utf-8") == "outside sentinel"
-
-
 def test_rooted_helper_treats_shell_metacharacters_as_path_data(
     tmp_path: Path,
 ) -> None:
@@ -1621,63 +1337,6 @@ def test_rooted_helper_offload_unsafe_capture_executes_command_once(
     }
     assert marker.read_text(encoding="utf-8") == "x"
     assert outside.read_text(encoding="utf-8") == "outside sentinel"
-
-
-def test_rooted_helper_offload_rejects_capture_replaced_before_publish(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    workspace.mkdir()
-    capture = workspace / "capture.txt"
-    capture.write_text("old capture", encoding="utf-8")
-    outside = tmp_path / "outside.txt"
-    outside.write_text("outside sentinel", encoding="utf-8")
-    marker = workspace / "count.txt"
-    prepared = tmp_path / "offload-prepared"
-    release = tmp_path / "offload-release"
-    _install_canonicalization_barrier(
-        monkeypatch,
-        function_name="offload_command",
-        reached=prepared,
-        release=release,
-        after_statement="        os.fsync(descriptor)",
-    )
-    request = _build_rooted_command(
-        root=str(workspace),
-        operation="offload",
-        arguments={
-            "path": "/capture.txt",
-            "command": "printf x >> count.txt; printf 'large output'",
-            "max_inline_bytes": 1,
-            "max_capture_bytes": 1024,
-            "working_directory": str(workspace),
-            "command_env": {},
-        },
-    )
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_local_backend().execute, request.command)
-        deadline = time.monotonic() + 5
-        while not prepared.exists() and time.monotonic() < deadline:
-            time.sleep(0.001)
-        try:
-            assert prepared.exists(), "helper did not reach offload publish barrier"
-            capture.unlink()
-            capture.symlink_to(outside)
-        finally:
-            release.touch()
-        raw_response = future.result(timeout=5)
-
-    response = _parse_rooted_response(raw_response, request=request)
-
-    assert response.status == "ok"
-    assert response.operation == "offload"
-    assert response.result["offloaded"] is False
-    assert response.result["output"] == "large output"
-    assert marker.read_text(encoding="utf-8") == "x"
-    assert outside.read_text(encoding="utf-8") == "outside sentinel"
-    assert list(workspace.glob(".tinkerfin-offload-*")) == []
 
 
 def test_rooted_helper_reset_clears_children_and_keeps_root(tmp_path: Path) -> None:

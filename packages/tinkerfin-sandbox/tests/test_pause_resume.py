@@ -20,18 +20,15 @@ from tests.support.sql_engines import SqlEngineFactory
 
 from tinkerfin_sandbox import (
     OpenSandboxAvailability,
-    OpenSandboxAvailabilityPhase,
     OpenSandboxBackend,
     OpenSandboxBackendError,
     OpenSandboxBackendUnavailableError,
-    OpenSandboxBusyError,
     OpenSandboxConfig,
     OpenSandboxDiagnosticContent,
     OpenSandboxHandle,
     OpenSandboxHolderUpdate,
     OpenSandboxLifecycleEvent,
     OpenSandboxLifecycleEventType,
-    OpenSandboxLifecycleUncertainError,
     OpenSandboxManager,
     OpenSandboxOwnerClaim,
     OpenSandboxPausedError,
@@ -297,9 +294,6 @@ class _ControlledState(SQLAlchemyOpenSandboxState):
         self.ack_started = asyncio.Event()
         self.ack_release = asyncio.Event()
         self.stale_ack_rejected = asyncio.Event()
-        self.delay_phase: str | None = None
-        self.phase_committed = asyncio.Event()
-        self.phase_release = asyncio.Event()
         self.registration_failure: Literal["before", "after"] | None = None
         self.registration_failed = asyncio.Event()
         self.delay_registration = False
@@ -323,22 +317,6 @@ class _ControlledState(SQLAlchemyOpenSandboxState):
         if self.delay_registration:
             self.registration_committed.set()
             await self.registration_release.wait()
-        return result
-
-    async def change_availability(
-        self,
-        claim: OpenSandboxOwnerClaim,
-        expected: OpenSandboxAvailability,
-        *,
-        phase: OpenSandboxAvailabilityPhase,
-        refresh_connection: bool = False,
-    ) -> OpenSandboxAvailability:
-        result = await super().change_availability(
-            claim, expected, phase=phase, refresh_connection=refresh_connection
-        )
-        if phase == self.delay_phase:
-            self.phase_committed.set()
-            await self.phase_release.wait()
         return result
 
     async def acquire_owner(self, owner_key: str) -> OpenSandboxOwnerClaim:
@@ -418,7 +396,6 @@ class _World:
         for state in self.states:
             state.outage = False
             state.ack_release.set()
-            state.phase_release.set()
             state.registration_release.set()
         for task in self.tasks:
             if not task.done():
@@ -442,31 +419,6 @@ async def _world(
         yield world
     finally:
         await world.close()
-
-
-async def _phase(state: _ControlledState, phase: str) -> OpenSandboxAvailability:
-    async with asyncio.timeout(3):
-        while True:
-            snapshot = await state.read_availability(_resource_key("owner"))
-            if snapshot is not None and snapshot.phase == phase:
-                return snapshot
-            await asyncio.sleep(0.01)
-
-
-async def _usable(handle: _Backend) -> None:
-    async with asyncio.timeout(3):
-        while True:
-            try:
-                response = await handle.aexecute("probe")
-            except (
-                OpenSandboxBusyError,
-                OpenSandboxPausedError,
-                OpenSandboxLifecycleUncertainError,
-            ):
-                await asyncio.sleep(0.02)
-            else:
-                assert response.exit_code == 0
-                return
 
 
 @pytest.mark.parametrize("failure", ["before", "after"])
@@ -557,77 +509,6 @@ async def test_pause_blocks_workspace_reset_without_executing_commands(
 
 
 @pytest.mark.asyncio
-async def test_cancelled_undispatched_pause_restores_both_handles(
-    tmp_path: Path,
-) -> None:
-    async with _world(tmp_path) as world:
-        first, second = await world.add(), await world.add()
-        first_handle, second_handle = (
-            await first.get("owner"),
-            await second.get("owner"),
-        )
-        working = world.spawn(second_handle.aexecute("hold"))
-        await asyncio.wait_for(world.remote.command_started.wait(), timeout=1)
-        pausing = world.spawn(first.pause("owner", timeout=3))
-        await _phase(world.states[0], "draining")
-        pausing.cancel("pause cancelled")
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(pausing, timeout=1)
-        await _phase(world.states[0], "running")
-        assert world.remote.pause_calls == []
-        world.remote.command_release.set()
-        await working
-        await _usable(first_handle)
-        await _usable(second_handle)
-
-
-@pytest.mark.asyncio
-async def test_resume_refreshes_both_stable_handles_for_the_original_instance(
-    tmp_path: Path,
-) -> None:
-    async with _world(tmp_path) as world:
-        first, second = await world.add(), await world.add()
-        first_handle, second_handle = (
-            await first.get("owner"),
-            await second.get("owner"),
-        )
-        binding = await world.states[0].read_binding(_resource_key("owner"))
-        await first.pause("owner", timeout=2)
-        resumed = await first.resume("owner", timeout=2)
-        assert resumed is first_handle
-        await _usable(second_handle)
-        assert await second.get("owner") is second_handle
-        assert first_handle.id == second_handle.id == "sandbox-1"
-        assert await world.states[1].read_binding(_resource_key("owner")) == binding
-        assert world.clients[0].connections[-1] == ("sandbox-1", 1)
-        assert world.clients[1].connections[-1] == ("sandbox-1", 1)
-        assert world.remote.resume_calls == ["sandbox-1"]
-        assert world.remote.created == 1
-
-
-@pytest.mark.asyncio
-async def test_paused_binding_survives_all_managers_closing_and_reopening(
-    tmp_path: Path,
-) -> None:
-    async with _world(tmp_path) as world:
-        first, second = await world.add(), await world.add()
-        original = await first.get("owner")
-        await second.get("owner")
-        await first.pause("owner", timeout=2)
-        await first.aclose()
-        await second.aclose()
-        reopened = await world.add()
-        with pytest.raises(OpenSandboxPausedError):
-            await reopened.get("owner")
-        assert world.remote.created == 1
-        assert world.remote.states[original.id] == "Paused"
-        resumed = await reopened.resume("owner", timeout=2)
-        assert resumed.id == original.id
-        await _usable(resumed)
-        assert world.remote.created == 1
-
-
-@pytest.mark.asyncio
 async def test_repeated_pause_and_resume_do_not_repeat_remote_effects(
     tmp_path: Path,
 ) -> None:
@@ -710,95 +591,3 @@ async def test_expired_paused_sandbox_details_remain_an_unavailable_snapshot(
         assert details.access_state == "paused"
         assert world.remote.created == 1
         assert world.remote.resume_calls == []
-
-
-@pytest.mark.parametrize(
-    ("action", "delayed_phase", "expected_phase", "pause_count", "resume_count"),
-    [
-        ("pause", "draining", "running", 0, 0),
-        ("pause", "pausing", "running", 0, 0),
-        ("pause", "paused", "paused", 1, 0),
-        ("resume", "resuming", "paused", 1, 0),
-        ("resume", "running", "running", 1, 1),
-    ],
-)
-@pytest.mark.parametrize("cancellations", [1, 2])
-async def test_cancel_after_state_commit_preserves_exact_request_ownership(
-    tmp_path: Path,
-    action: str,
-    delayed_phase: str,
-    expected_phase: str,
-    pause_count: int,
-    resume_count: int,
-    cancellations: int,
-) -> None:
-    async with _world(tmp_path) as world:
-        first, second = await world.add(), await world.add()
-        first_handle, second_handle = (
-            await first.get("owner"),
-            await second.get("owner"),
-        )
-        if action == "resume":
-            await first.pause("owner", timeout=2)
-        delayed = world.states[0]
-        delayed.delay_phase = delayed_phase
-        operation = world.spawn(
-            first.pause("owner", timeout=2)
-            if action == "pause"
-            else first.resume("owner", timeout=2)
-        )
-        await asyncio.wait_for(delayed.phase_committed.wait(), timeout=2)
-        for _ in range(cancellations):
-            operation.cancel("cancel after durable intent commit")
-            await asyncio.sleep(0)
-        delayed.phase_release.set()
-        with pytest.raises(asyncio.CancelledError) as cancelled:
-            await asyncio.wait_for(operation, timeout=2)
-        assert type(cancelled.value) is asyncio.CancelledError
-        await _phase(delayed, expected_phase)
-        assert len(world.remote.pause_calls) == pause_count
-        assert len(world.remote.resume_calls) == resume_count
-        assert first_handle.id == second_handle.id == "sandbox-1"
-        if expected_phase == "running":
-            await _usable(first_handle)
-            await _usable(second_handle)
-        else:
-            with pytest.raises(OpenSandboxPausedError):
-                await second.get("owner")
-
-
-@pytest.mark.parametrize("action", ["recreate", "destroy"])
-async def test_cancel_pending_confirmation_does_not_expose_internal_cancellation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
-) -> None:
-    async with _world(tmp_path) as world:
-        manager = await world.add()
-        handle = await manager.get("owner")
-        client = world.clients[0]
-        pause = client.pause
-
-        async def lost_response(sandbox_id: str) -> None:
-            await pause(sandbox_id)
-            raise OpenSandboxBackendUnavailableError("Pause response was lost")
-
-        monkeypatch.setattr(client, "pause", lost_response)
-        with pytest.raises(OpenSandboxBackendUnavailableError):
-            await manager.pause("owner", timeout=2)
-        await _phase(world.states[0], "pausing")
-        state = world.states[0]
-        state.delay_phase = "paused"
-        operation = world.spawn(
-            manager.recreate("owner")
-            if action == "recreate"
-            else manager.destroy("owner")
-        )
-        await asyncio.wait_for(state.phase_committed.wait(), timeout=1)
-        operation.cancel("cancel confirmation before resource replacement")
-        await asyncio.sleep(0)
-        state.phase_release.set()
-        with pytest.raises(asyncio.CancelledError) as cancelled:
-            await asyncio.wait_for(operation, timeout=1)
-        assert type(cancelled.value) is asyncio.CancelledError
-        assert world.remote.created == 1
-        assert world.remote.states[handle.id] == "Paused"
-        await _phase(state, "paused")

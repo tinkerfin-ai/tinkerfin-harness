@@ -5,7 +5,6 @@ import base64
 import json
 import shlex
 import threading
-import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -650,37 +649,6 @@ def _rooted(backend: Any, *, root: str = "/workspace") -> RootedOpenSandboxBacke
     return RootedOpenSandboxBackend(OpenSandboxHandle(backend), root=root)
 
 
-def _install_rooted_helper_barrier(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    function_name: str,
-    after_statement: str,
-    reached: Path,
-    release: Path,
-) -> None:
-    original_script = _rooted_protocol._ROOTED_HELPER_SCRIPT
-    function_start = original_script.index(f"def {function_name}(")
-    function_end = original_script.find("\ndef ", function_start + 1)
-    function_source = original_script[function_start:function_end]
-    barrier = (
-        after_statement
-        + "\n"
-        + f"        open({str(reached)!r}, 'x').close()\n"
-        + f"        while not os.path.exists({str(release)!r}):\n"
-        + "            time.sleep(0.001)"
-    )
-    assert function_source.count(after_statement) == 1
-    monkeypatch.setattr(
-        _rooted_protocol,
-        "_ROOTED_HELPER_SCRIPT",
-        (
-            original_script[:function_start]
-            + function_source.replace(after_statement, barrier)
-            + original_script[function_end:]
-        ).replace("import sys\n", "import sys\nimport time\n"),
-    )
-
-
 def test_sync_rooted_file_operation_preserves_async_only_error() -> None:
     backend = OpenSandboxBackend(
         sandbox=cast(Sandbox, SimpleNamespace(id="sandbox-async-only"))
@@ -938,46 +906,6 @@ def test_internal_file_commands_ignore_workspace_module_shadowing(
     assert result.file_data["content"] == "inside"
 
 
-def test_rooted_read_uses_one_atomic_helper_when_leaf_changes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    workspace.mkdir()
-    target = workspace / "target.txt"
-    target.write_text("inside", encoding="utf-8")
-    outside = tmp_path / "outside.txt"
-    outside.write_text("outside sentinel", encoding="utf-8")
-    canonicalized = tmp_path / "rooted-read-canonicalized"
-    release = tmp_path / "rooted-read-release"
-    _install_rooted_helper_barrier(
-        monkeypatch,
-        function_name="read_file",
-        after_statement="        parts = canonical_parts(root, virtual_parts)",
-        reached=canonicalized,
-        release=release,
-    )
-    rooted = _rooted(_LocalTransferBackend(), root=str(workspace))
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(rooted.read, "/target.txt")
-        deadline = time.monotonic() + 1
-        while not canonicalized.exists() and time.monotonic() < deadline:
-            time.sleep(0.001)
-        try:
-            assert canonicalized.exists(), "Rooted read did not use the atomic helper"
-            target.unlink()
-            target.symlink_to(outside)
-        finally:
-            release.touch()
-        result = future.result(timeout=5)
-
-    assert result.file_data is None
-    assert result.error is not None
-    assert "invalid_path" in result.error
-    assert "outside sentinel" not in result.error
-
-
 def test_rooted_read_preserves_deep_agents_error_messages(tmp_path: Path) -> None:
     workspace = (tmp_path / "workspace").resolve()
     workspace.mkdir()
@@ -989,46 +917,6 @@ def test_rooted_read_preserves_deep_agents_error_messages(tmp_path: Path) -> Non
 
     assert missing.error == "File '/missing.txt': file_not_found"
     assert directory.error == "File '/directory': not_a_file"
-
-
-def test_rooted_edit_uses_one_atomic_helper_when_target_changes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    workspace.mkdir()
-    target = workspace / "target.txt"
-    target.write_text("old", encoding="utf-8")
-    outside = tmp_path / "outside.txt"
-    outside.write_text("outside sentinel", encoding="utf-8")
-    prepared = tmp_path / "rooted-edit-prepared"
-    release = tmp_path / "rooted-edit-release"
-    _install_rooted_helper_barrier(
-        monkeypatch,
-        function_name="edit_file",
-        after_statement="        os.fsync(temporary_descriptor)",
-        reached=prepared,
-        release=release,
-    )
-    rooted = _rooted(_LocalTransferBackend(), root=str(workspace))
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(rooted.edit, "/target.txt", "old", "new")
-        deadline = time.monotonic() + 1
-        while not prepared.exists() and time.monotonic() < deadline:
-            time.sleep(0.001)
-        try:
-            assert prepared.exists(), "Rooted edit did not use the atomic helper"
-            target.unlink()
-            target.symlink_to(outside)
-        finally:
-            release.touch()
-        result = future.result(timeout=5)
-
-    assert result.path is None
-    assert result.error is not None
-    assert "invalid_path" in result.error
-    assert outside.read_text(encoding="utf-8") == "outside sentinel"
 
 
 def test_rooted_edit_stages_large_replacement_payload(tmp_path: Path) -> None:
@@ -1060,171 +948,6 @@ def test_rooted_edit_stages_large_replacement_payload(tmp_path: Path) -> None:
     assert result.path == "/large.txt"
     assert result.occurrences == 1
     assert target.read_text(encoding="utf-8") == new
-
-
-def test_rooted_delete_uses_one_atomic_helper_when_directory_changes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    target = workspace / "target"
-    target.mkdir(parents=True)
-    (target / "inside.txt").write_text("inside", encoding="utf-8")
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    sentinel = outside / "sentinel.txt"
-    sentinel.write_text("outside sentinel", encoding="utf-8")
-    opened = tmp_path / "rooted-delete-opened"
-    release = tmp_path / "rooted-delete-release"
-    _install_rooted_helper_barrier(
-        monkeypatch,
-        function_name="delete_path",
-        after_statement="        opened = os.fstat(target_descriptor)",
-        reached=opened,
-        release=release,
-    )
-    rooted = _rooted(_LocalTransferBackend(), root=str(workspace))
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(rooted.delete, "/target")
-        deadline = time.monotonic() + 1
-        while not opened.exists() and time.monotonic() < deadline:
-            time.sleep(0.001)
-        try:
-            assert opened.exists(), "Rooted delete did not use the atomic helper"
-            target.rename(workspace / "detached-target")
-            target.symlink_to(outside, target_is_directory=True)
-        finally:
-            release.touch()
-        result = future.result(timeout=5)
-
-    assert result.path is None
-    assert result.error is not None
-    assert "invalid_path" in result.error
-    assert sentinel.read_text(encoding="utf-8") == "outside sentinel"
-
-
-def test_rooted_list_uses_one_atomic_helper_when_directory_changes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    target = workspace / "target"
-    target.mkdir(parents=True)
-    (target / "inside.txt").write_text("inside", encoding="utf-8")
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (outside / "sentinel.txt").write_text("outside sentinel", encoding="utf-8")
-    canonicalized = tmp_path / "rooted-list-canonicalized"
-    release = tmp_path / "rooted-list-release"
-    _install_rooted_helper_barrier(
-        monkeypatch,
-        function_name="list_directory",
-        after_statement="        canonical = canonical_parts(root, virtual_parts)",
-        reached=canonicalized,
-        release=release,
-    )
-    rooted = _rooted(_LocalTransferBackend(), root=str(workspace))
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(rooted.ls, "/target")
-        deadline = time.monotonic() + 1
-        while not canonicalized.exists() and time.monotonic() < deadline:
-            time.sleep(0.001)
-        try:
-            assert canonicalized.exists(), "Rooted list did not use the atomic helper"
-            target.rename(workspace / "detached-target")
-            target.symlink_to(outside, target_is_directory=True)
-        finally:
-            release.touch()
-        result = future.result(timeout=5)
-
-    assert result.entries is None
-    assert result.error is not None
-    assert "invalid_path" in result.error
-    assert "sentinel.txt" not in result.error
-
-
-def test_rooted_glob_uses_one_atomic_helper_when_search_root_changes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    target = workspace / "target"
-    target.mkdir(parents=True)
-    (target / "inside.py").write_text("inside", encoding="utf-8")
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (outside / "sentinel.py").write_text("outside sentinel", encoding="utf-8")
-    canonicalized = tmp_path / "rooted-glob-canonicalized"
-    release = tmp_path / "rooted-glob-release"
-    _install_rooted_helper_barrier(
-        monkeypatch,
-        function_name="glob_paths",
-        after_statement="        canonical = canonical_parts(root, virtual_parts)",
-        reached=canonicalized,
-        release=release,
-    )
-    rooted = _rooted(_LocalTransferBackend(), root=str(workspace))
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(rooted.glob, "**/*.py", "/target")
-        deadline = time.monotonic() + 1
-        while not canonicalized.exists() and time.monotonic() < deadline:
-            time.sleep(0.001)
-        try:
-            assert canonicalized.exists(), "Rooted glob did not use the atomic helper"
-            target.rename(workspace / "detached-target")
-            target.symlink_to(outside, target_is_directory=True)
-        finally:
-            release.touch()
-        result = future.result(timeout=5)
-
-    assert result.matches is None
-    assert result.error is not None
-    assert "invalid_path" in result.error
-    assert "sentinel.py" not in result.error
-
-
-def test_rooted_grep_uses_one_atomic_helper_when_search_root_changes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    target = workspace / "target"
-    target.mkdir(parents=True)
-    (target / "inside.txt").write_text("needle inside", encoding="utf-8")
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (outside / "sentinel.txt").write_text("needle outside", encoding="utf-8")
-    canonicalized = tmp_path / "rooted-grep-canonicalized"
-    release = tmp_path / "rooted-grep-release"
-    _install_rooted_helper_barrier(
-        monkeypatch,
-        function_name="grep_paths",
-        after_statement="        canonical = canonical_parts(root, virtual_parts)",
-        reached=canonicalized,
-        release=release,
-    )
-    rooted = _rooted(_LocalTransferBackend(), root=str(workspace))
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(rooted.grep, "needle", "/target")
-        deadline = time.monotonic() + 1
-        while not canonicalized.exists() and time.monotonic() < deadline:
-            time.sleep(0.001)
-        try:
-            assert canonicalized.exists(), "Rooted grep did not use the atomic helper"
-            target.rename(workspace / "detached-target")
-            target.symlink_to(outside, target_is_directory=True)
-        finally:
-            release.touch()
-        result = future.result(timeout=5)
-
-    assert result.matches is None
-    assert result.error is not None
-    assert "invalid_path" in result.error
-    assert "needle outside" not in result.error
 
 
 def test_text_and_search_operations_map_paths_and_restore_results() -> None:

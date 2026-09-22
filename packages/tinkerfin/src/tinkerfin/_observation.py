@@ -386,6 +386,7 @@ class RuntimeObservationHub:
         self._initialization_error = initialization_error
         self._slots: list[_SessionSlot] = []
         self._failure: asyncio.Future[tuple[_SessionSlot, BaseException]] | None = None
+        self._reported_failures: list[BaseException] = []
         self._started = False
         self._terminal: RunTerminalOutcome | None = None
         self._closed = False
@@ -553,12 +554,15 @@ class RuntimeObservationHub:
         # The waiter transports a session-returned process-control exception through
         # the managed race; it must never enter the ordinary Observer error family.
         if not isinstance(error, Exception):
+            self._reported_failures.append(error)
             raise error
         if not slot.healthy:
+            self._reported_failures.append(error)
             raise self._observation_error(((slot.name, error),))
         slot.healthy = False
         failures = ((slot.name, error),)
         await self._deliver_failure_notifications(failures)
+        self._reported_failures.append(error)
         raise self._observation_error(failures)
 
     async def observe(self, observation: RuntimeObservation) -> None:
@@ -694,6 +698,14 @@ class RuntimeObservationHub:
             if not settled.done():
                 self._raise_delivery_worker_stopped(worker)
             settled.result()
+        except RunObservationError as error:
+            cause = error.cause
+            if cause is not None:
+                self._reported_failures.append(cause)
+                if isinstance(cause, BaseExceptionGroup):
+                    group = cast(BaseExceptionGroup[BaseException], cause)
+                    self._reported_failures.extend(group.exceptions)
+            raise
         except asyncio.CancelledError:
             delivery.cancel_requested = True
             operation_task = delivery.task
@@ -988,6 +1000,15 @@ class RuntimeObservationHub:
         failure = self._failure
         if failure is not None and not failure.done():
             failure.cancel()
+        elif failure is not None and not failure.cancelled():
+            # Natural Graph exhaustion can cancel a failure waiter while it is
+            # notifying other Observers. Closing still owes the caller that error.
+            slot, error = failure.result()
+            if not any(error is reported for reported in self._reported_failures):
+                if isinstance(error, Exception):
+                    failures.append((slot.name, error))
+                else:
+                    retain_process_control(error, source=slot.name)
         if process_control is not None:
             for name, error in failures:
                 retain_failure(

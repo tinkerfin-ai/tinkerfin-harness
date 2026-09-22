@@ -372,19 +372,52 @@ async def _destroy_remote(
             self._cleanup_wakeup.set()
 
 
+async def _claim_cleanup(
+    self: OpenSandboxManager[KeyT],
+) -> OpenSandboxCleanupClaim | None:
+    """Release committed cleanup claims not delivered to the manager."""
+    claiming = asyncio.create_task(
+        self._state.claim_cleanup(), name="tinkerfin-opensandbox-cleanup-claim"
+    )
+    try:
+        return await asyncio.shield(claiming)
+    except asyncio.CancelledError as cancellation:
+        # State may already have committed the lease. Keep acquisition and its
+        # compensating release owned until close can safely shut State down.
+        async def release_undelivered_claim() -> None:
+            claim = await claiming
+            if claim is not None:
+                await self._state.release_cleanup(claim)
+
+        settlement = asyncio.create_task(
+            release_undelivered_claim(),
+            name="tinkerfin-opensandbox-cleanup-claim-release",
+        )
+        try:
+            await self._await_claim_release(settlement)
+        except asyncio.CancelledError:
+            pass
+        except Exception as error:
+            raise cancellation from error
+        raise cancellation
+
+
 async def _drain_cleanup_queue(self: OpenSandboxManager[KeyT]) -> bool:
     """Consume claimable orphan work and report whether retry needs backoff."""
     while True:
-        claim = await self._state.claim_cleanup()
+        claim = await _claim_cleanup(self)
         if claim is None:
             return False
         try:
             await self._destroy_for_cleanup_claim(claim)
+            await self._state.complete_cleanup(claim)
         except asyncio.CancelledError as cancellation:
             try:
                 await self._release_cleanup_claim(claim)
             except asyncio.CancelledError:
                 pass
+            except Exception as error:
+                raise cancellation from error
             raise cancellation
         except Exception as error:  # noqa: BLE001 - cleanup claim owner classifies failure
             error_type = type(error).__name__
@@ -394,7 +427,6 @@ async def _drain_cleanup_queue(self: OpenSandboxManager[KeyT]) -> bool:
                 extra={"tinkerfin_error_type": error_type},
             )
             return True
-        await self._state.complete_cleanup(claim)
 
 
 async def _release_cleanup_claim(

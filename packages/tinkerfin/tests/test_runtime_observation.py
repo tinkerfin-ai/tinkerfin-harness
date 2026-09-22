@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import threading
 from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import aclosing
 from datetime import UTC, datetime
 from typing import cast
 
@@ -663,6 +664,59 @@ async def test_background_observer_failure_cancels_blocked_graph_pull(
 
     assert graph.closed.is_set()
     assert session.closed == 1
+
+
+async def test_background_observer_failure_survives_graph_end_during_notification(
+    definition_factory: Callable[..., AgentRuntime[None]],
+) -> None:
+    notifying = asyncio.Event()
+    failed = _Session()
+
+    class NotifiedSession(_Session):
+        async def observe(self, observation: RuntimeObservation) -> None:
+            await super().observe(observation)
+            if observation.kind == "run.observer_failed":
+                notifying.set()
+                await asyncio.Event().wait()
+
+    class Graph:
+        async def astream(
+            self, *_args: object, **_kwargs: object
+        ) -> AsyncIterator[Mapping[str, object]]:
+            yield {
+                "type": "messages",
+                "ns": (),
+                "data": (
+                    AIMessageChunk(id="message-1", content="content"),
+                    {"langgraph_node": "model"},
+                ),
+            }
+            failed.failure_waiter().set_result(RuntimeError("background writer failed"))
+            await notifying.wait()
+
+    healthy = NotifiedSession()
+    runtime = definition_factory(
+        Graph(),
+        tinkerfin=TinkerFin()
+        .with_namespace("test")
+        .with_observer(_Observer(failed))
+        .with_observer(_Observer(healthy)),
+    )
+    stream = runtime.open_run(
+        thread_id=_identity().thread_id, run_id=_identity().run_id, input=_input()
+    )
+    with pytest.raises(RunObservationError):
+        async with aclosing(stream):
+            _ = [part async for part in stream]
+
+    assert failed.closed == healthy.closed == 1
+    terminals = [
+        observation
+        for observation in healthy.observations
+        if isinstance(observation, RunTerminalObservation)
+    ]
+    assert len(terminals) == 1
+    assert terminals[0].outcome == "succeeded"
 
 
 async def test_observation_close_preserves_caller_cancellation_and_settles_sessions() -> (

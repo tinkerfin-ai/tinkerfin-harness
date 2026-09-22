@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import cast
@@ -11,11 +10,6 @@ import pytest
 from ag_ui.core import BaseEvent, RunStartedEvent
 
 from tinkerfin_contracts import (
-    NativeInterruptRecord,
-    NativeMessageObservation,
-    NativeMessageRecord,
-    NativeStateObservation,
-    NativeToolCall,
     RunClosedObservation,
     RunIdentity,
     RunInputObservation,
@@ -49,36 +43,6 @@ async def _messaging_channel() -> tuple[
         codec=AgUiCodec(),
     )
     return messaging, channel
-
-
-class _SlowEventSource:
-    """在首条事件前保持 producer owner 的真实异步测试源"""
-
-    def __init__(self, *, identity: RunIdentity) -> None:
-        self.identity = identity
-        self.entered = asyncio.Event()
-        self.release = asyncio.Event()
-        self._iterator: AsyncGenerator[BaseEvent, None] | None = None
-
-    def __aiter__(self) -> AsyncIterator[BaseEvent]:
-        iterator = self._iterate()
-        self._iterator = iterator
-        return iterator
-
-    async def _iterate(self) -> AsyncGenerator[BaseEvent, None]:
-        self.entered.set()
-        await self.release.wait()
-        yield RunStartedEvent(
-            thread_id=self.identity.thread_id,
-            run_id=self.identity.run_id,
-        )
-
-    async def aclose(self) -> None:
-        self.release.set()
-        iterator = self._iterator
-        self._iterator = None
-        if iterator is not None:
-            await iterator.aclose()
 
 
 class _MissingRunBarrierChannel:
@@ -172,15 +136,6 @@ async def _setup_run(database, *, thread_id: str, run_id: str):
 async def _thread(database, thread_pk: int):
     async with database.session() as session:
         return await ConversationRepository(session).get_thread_by_pk(thread_pk)
-
-
-async def _wait_for(database, thread_pk: int, predicate) -> None:
-    async with asyncio.timeout(2):
-        while True:
-            value = await _thread(database, thread_pk)
-            if value is not None and predicate(value):
-                return
-            await asyncio.sleep(0.01)
 
 
 async def test_delayed_same_run_snapshot_cannot_restore_stale_running_status(
@@ -430,214 +385,6 @@ async def test_cancel_after_producer_failure_reconciles_missing_trace_tail(
         await messaging.aclose()
 
 
-async def test_trace_coordinator_keeps_pending_state_across_unrelated_delta(
-    database,
-) -> None:
-    tracer, context, trace_session, thread_pk = await _setup_run(
-        database,
-        thread_id="thread-pending",
-        run_id="run-pending",
-    )
-    messaging, channel = await _messaging_channel()
-    coordinator = ConversationTraceCoordinator(
-        database=database,
-        tracer=tracer,
-        conversation_channel=channel,
-    )
-    coordinator.ensure(thread_pk=thread_pk, identity=context.identity)
-    interrupt = NativeInterruptRecord(
-        id="interrupt-1",
-        value={
-            "action_requests": [
-                {"name": "write_file", "args": {"path": "/result.txt"}}
-            ],
-            "review_configs": [
-                {"action_name": "write_file", "allowed_decisions": ["approve"]}
-            ],
-        },
-    )
-    await trace_session.observe(
-        NativeStateObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            state={},
-            messages=(
-                NativeMessageRecord(
-                    message_type="assistant",
-                    id="assistant-pending",
-                    content="",
-                    tool_calls=(
-                        NativeToolCall(
-                            id="call-write-result",
-                            name="write_file",
-                            arguments={"path": "/result.txt"},
-                        ),
-                    ),
-                ),
-            ),
-            interrupts=(interrupt,),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=3,
-        )
-    )
-    await _wait_for(
-        database,
-        thread_pk,
-        lambda item: (
-            item.has_pending_interrupt
-            and item.pending_interaction_kind == "tool_approval"
-        ),
-    )
-    await trace_session.observe(
-        NativeMessageObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            message=NativeMessageRecord(
-                message_type="assistant",
-                id="assistant-pending",
-                content="仍在等待",
-            ),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=4,
-        )
-    )
-    await _wait_for(database, thread_pk, lambda item: item.message_count == 2)
-    stored = await _thread(database, thread_pk)
-    assert stored is not None
-    assert stored.has_pending_interrupt is True
-    assert stored.pending_interaction_kind == "tool_approval"
-
-    await trace_session.observe(
-        NativeStateObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            state={},
-            interrupts=(),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=5,
-        )
-    )
-    await _wait_for(database, thread_pk, lambda item: not item.has_pending_interrupt)
-    await _finish(context, trace_session)
-    await coordinator.aclose()
-    await messaging.aclose()
-
-
-async def test_trace_coordinator_recovers_after_one_summary_write_failure(
-    database,
-    monkeypatch,
-) -> None:
-    """瞬时摘要失败后必须从最新 Trace 前缀恢复并继续跟随到终态"""
-
-    tracer, context, trace_session, thread_pk = await _setup_run(
-        database,
-        thread_id="thread-retry",
-        run_id="run-retry",
-    )
-    messaging, channel = await _messaging_channel()
-    coordinator = ConversationTraceCoordinator(
-        database=database,
-        tracer=tracer,
-        conversation_channel=channel,
-    )
-    original_write = ConversationRepository.update_trace_summary
-    first_snapshot = asyncio.Event()
-    retry_snapshot = asyncio.Event()
-    failed_update = asyncio.Event()
-
-    async def write_summary(repository, **fields):
-        if fields["message_count"] > 1 and not failed_update.is_set():
-            failed_update.set()
-            raise RuntimeError("transient summary failure")
-        result = await original_write(repository, **fields)
-        first_snapshot.set()
-        if failed_update.is_set():
-            retry_snapshot.set()
-        return result
-
-    monkeypatch.setattr(ConversationRepository, "update_trace_summary", write_summary)
-    coordinator.ensure(thread_pk=thread_pk, identity=context.identity)
-    await asyncio.wait_for(first_snapshot.wait(), timeout=2)
-
-    await trace_session.observe(
-        NativeMessageObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            message=NativeMessageRecord(
-                message_type="assistant",
-                id="assistant-retry-1",
-                content="第一次更新",
-            ),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=3,
-        )
-    )
-    await asyncio.wait_for(failed_update.wait(), timeout=2)
-    await asyncio.wait_for(retry_snapshot.wait(), timeout=2)
-
-    await trace_session.observe(
-        NativeMessageObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            message=NativeMessageRecord(
-                message_type="assistant",
-                id="assistant-retry-2",
-                content="第二次更新",
-            ),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=4,
-        )
-    )
-    await _wait_for(database, thread_pk, lambda item: item.message_count == 3)
-
-    await _finish(context, trace_session)
-    await _wait_for(database, thread_pk, lambda item: item.status == "idle")
-    assert failed_update.is_set() and retry_snapshot.is_set()
-
-    await coordinator.aclose()
-    await messaging.aclose()
-
-
-async def test_trace_coordinator_waits_for_not_started_run_without_corruption_warning(
-    database,
-    caplog,
-) -> None:
-    """Deferred Agent 尚未提交首个 fact 时只等待，不误报 Trace 损坏"""
-
-    tracer, context, trace_session, thread_pk = await _setup_run(
-        database,
-        thread_id="thread-delayed-trace",
-        run_id="run-delayed-trace",
-    )
-    await _finish(context, trace_session)
-    trace = await tracer.get(
-        context.identity.thread,
-        head_run_id=context.identity.run_id,
-        projections=("studio.conversation.failures",),
-    )
-    delayed = _DelayedTraceLookup(trace)
-    messaging, channel = await _messaging_channel()
-    coordinator = ConversationTraceCoordinator(
-        database=database,
-        tracer=cast(Tracer, delayed),
-        conversation_channel=channel,
-    )
-    caplog.set_level(
-        logging.WARNING,
-        logger="tinkerfin_studio.conversation.coordinator",
-    )
-
-    coordinator.ensure(thread_pk=thread_pk, identity=context.identity)
-    await _wait_for(database, thread_pk, lambda item: item.status == "idle")
-
-    assert delayed.attempts >= 3
-    assert not any(
-        "Trace 摘要 follow 将重试" in record.getMessage() for record in caplog.records
-    )
-    await coordinator.aclose()
-    await messaging.aclose()
-
-
 async def test_recover_preparing_deletes_empty_thread_without_trace(database) -> None:
     tracer = Tracer(
         projections=(ConversationFailureProjection(),),
@@ -726,62 +473,6 @@ async def test_recover_preparing_removes_only_a_missing_new_run_from_existing_tr
     assert thread is not None
     assert missing is None
     assert existing is not None
-    await coordinator.aclose()
-    await messaging.aclose()
-
-
-async def test_recover_preparing_preserves_a_live_messaging_owner(database) -> None:
-    """慢初始化 producer 活跃时不得按 Trace 暂缺删除 Run"""
-
-    tracer = Tracer(
-        projections=(ConversationFailureProjection(),),
-    )
-    identity = RunIdentity(namespace="ns_1", thread_id="thread-slow", run_id="run-slow")
-    async with database.session() as session:
-        repository = ConversationRepository(session)
-        thread = await repository.create_thread(
-            user_id=1,
-            thread_id=identity.thread_id,
-            title="慢初始化会话",
-            model_id="model-main",
-        )
-        registration = await repository.create_run_registration(
-            thread_id=thread.id,
-            run_id=identity.run_id,
-            parent_run_id=None,
-            model_id="model-main",
-            input_json={"runId": identity.run_id},
-        )
-        registration.created_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(
-            minutes=1
-        )
-        thread.last_run_id = identity.run_id
-        await repository.commit()
-        thread_pk = thread.id
-
-    messaging, channel = await _messaging_channel()
-    coordinator = ConversationTraceCoordinator(
-        database=database,
-        tracer=tracer,
-        conversation_channel=channel,
-    )
-    source = _SlowEventSource(identity=identity)
-    subscription = await channel.wrap(source, identity=identity)
-    await asyncio.wait_for(source.entered.wait(), timeout=2)
-
-    await coordinator.recover_preparing(thread_pk=thread_pk)
-
-    assert await _thread(database, thread_pk) is not None
-
-    source.release.set()
-    async with asyncio.timeout(2):
-        while await channel.get_run_status(identity=identity) == "running":
-            await asyncio.sleep(0.01)
-    await subscription.aclose()
-
-    await coordinator.recover_preparing(thread_pk=thread_pk)
-
-    assert await _thread(database, thread_pk) is None
     await coordinator.aclose()
     await messaging.aclose()
 

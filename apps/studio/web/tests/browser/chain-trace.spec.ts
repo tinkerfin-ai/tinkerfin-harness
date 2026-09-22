@@ -1211,6 +1211,8 @@ test('浅色四视口不产生页面溢出', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const pageErrors = await mockChainTraceStudio(page, { theme: 'light' })
   await page.getByRole('tab', { name: '链路' }).click()
+  // 先建立桌面默认选择，再验证切换视口时详情的显示规则
+  await expect(page.getByRole('complementary', { name: '链路详情' })).toBeVisible()
   await verifyViewports(page, 'light')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   expect(pageErrors).toEqual([])

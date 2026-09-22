@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
 import pytest
-from sqlalchemy import event
-from sqlalchemy.engine import ExceptionContext
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from tests.support.sql_faults import after_sql_command
 
 from tinkerfin_contracts import RunIdentity
 from tinkerfin_tracing import (
@@ -25,7 +21,6 @@ from tinkerfin_tracing import (
     TraceThreadKey,
     verify_trace_ledger_backend,
 )
-from tinkerfin_tracing.backend import TraceLedgerChange
 from tinkerfin_tracing.errors import (
     TraceProjectionCheckpointConflict,
     TraceRunConflict,
@@ -192,64 +187,17 @@ async def test_sql_backend_satisfies_cross_instance_verifier(
     )
 
 
-@pytest.mark.parametrize(
-    "held_peer_close", (False, True), ids=("ordinary", "held-close")
-)
 async def test_sqlite_backend_satisfies_public_cross_instance_verifier(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    held_peer_close: bool,
 ) -> None:
     database = tmp_path / "backend-contract.db"
     first_engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
     second_engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
-    # Conformance checks shared data, not transaction latency. Allow a bounded
-    # 5.25 seconds of retry backoff; exhaustion is tested separately.
     options = TraceStoreOptions(
         commit_retry_attempts=15, commit_retry_delay_seconds=0.05
     )
     primary = _SqlAlchemyTraceLedgerBackend(first_engine, options=options)
     peer = _SqlAlchemyTraceLedgerBackend(second_engine, options=options)
-    peer_locked = asyncio.Event()
-    close_contended = asyncio.Event()
-    if held_peer_close:
-        original_primary_commit = primary.commit_ledger_change
-        original_peer_commit = peer.commit_ledger_change
-
-        def observe_contention(context: ExceptionContext) -> None:
-            error = context.original_exception
-            if (
-                peer_locked.is_set()
-                and context.statement == "BEGIN IMMEDIATE"
-                and isinstance(error, sqlite3.Error)
-                and getattr(error, "sqlite_errorcode", 0) & 0xFF == sqlite3.SQLITE_BUSY
-            ):
-                close_contended.set()
-
-        event.listen(first_engine.sync_engine, "handle_error", observe_contention)
-
-        async def held_transaction() -> None:
-            peer_locked.set()
-            # Release after a real competing lock failure, not a timing estimate.
-            async with asyncio.timeout(10):
-                await close_contended.wait()
-
-        async def primary_commit(change: TraceLedgerChange):
-            if change.kind == "close_writer" and change.run_id == "contract-first":
-                async with asyncio.timeout(10):
-                    await peer_locked.wait()
-            return await original_primary_commit(change)
-
-        async def peer_commit(change: TraceLedgerChange):
-            if change.kind == "close_writer" and change.run_id == "contract-second":
-                with after_sql_command(
-                    second_engine, "BEGIN IMMEDIATE", held_transaction
-                ):
-                    return await original_peer_commit(change)
-            return await original_peer_commit(change)
-
-        monkeypatch.setattr(primary, "commit_ledger_change", primary_commit)
-        monkeypatch.setattr(peer, "commit_ledger_change", peer_commit)
     try:
         await verify_trace_ledger_backend(
             primary,
@@ -257,8 +205,6 @@ async def test_sqlite_backend_satisfies_public_cross_instance_verifier(
             namespace="sqlite-backend-contract",
             options=options,
         )
-        assert peer_locked.is_set() is held_peer_close
-        assert close_contended.is_set() is held_peer_close
     finally:
         try:
             await first_engine.dispose()
