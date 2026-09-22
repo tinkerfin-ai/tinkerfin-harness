@@ -43,6 +43,12 @@ redis = [
     "redisvl==0.25.1",
 ]
 
+[dependency-groups]
+dev = [
+    "tinkerfin-agui-adapter==0.1.0",
+    "tinkerfin-tracing==0.1.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/tinkerfin-ai/tinkerfin-harness"
 Repository = "https://github.com/tinkerfin-ai/tinkerfin-harness"

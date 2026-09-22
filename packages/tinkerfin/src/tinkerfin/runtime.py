@@ -24,8 +24,8 @@ from langchain.agents.middleware import InterruptOnConfig
 from langchain.agents.middleware.types import InputAgentState
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
+    BaseMessage,
     HumanMessage,
-    MessageLikeRepresentation,
     SystemMessage,
     convert_to_messages,
     message_chunk_to_message,
@@ -2109,7 +2109,7 @@ class AgentRuntime(Generic[ContextT]):
         if isinstance(graph_input, dict):
             raw_messages = graph_input.get("messages")
             if isinstance(raw_messages, list):
-                messages: list[MessageLikeRepresentation] = list(raw_messages)
+                messages: list[BaseMessage | dict[str, Any]] = list(raw_messages)
                 for index, message in enumerate(convert_to_messages(raw_messages)):
                     if isinstance(message, HumanMessage):
                         message = message_chunk_to_message(message)

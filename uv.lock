@@ -3968,6 +3968,12 @@ tracing = [
     { name = "tinkerfin-tracing" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "tinkerfin-agui-adapter" },
+    { name = "tinkerfin-tracing" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "ag-ui-protocol", marker = "extra == 'agui'", specifier = "==0.1.19" },
@@ -3990,6 +3996,12 @@ requires-dist = [
     { name = "wcmatch", specifier = ">=11,<12" },
 ]
 provides-extras = ["tracing", "agui", "redis"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "tinkerfin-agui-adapter", editable = "packages/tinkerfin-agui-adapter" },
+    { name = "tinkerfin-tracing", editable = "packages/tinkerfin-tracing" },
+]
 
 [[package]]
 name = "tinkerfin-agui-adapter"
