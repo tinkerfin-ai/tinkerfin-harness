@@ -1711,7 +1711,8 @@
     display: flex;
     width: 100%;
     padding-top: 0;
-    padding-bottom: 0;
+    /* 视觉重心略高于中线，矮视口减少偏移，为输入留出空间 */
+    padding-bottom: clamp(0px, calc(16dvh - var(--space-12)), calc(var(--space-16) * 2));
     flex-direction: column;
   }
 

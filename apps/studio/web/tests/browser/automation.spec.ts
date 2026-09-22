@@ -520,7 +520,7 @@ test('触控环境的会话与自动化权限按钮及选项达到44像素', asy
   } finally { await context.close() }
 })
 
-test('自动化刷新保留页面，新会话的标志、输入框和提示整体居中', async ({ page }) => {
+test('自动化刷新保留页面，新会话的标志、输入框和提示位于视觉中线上方', async ({ page }, testInfo) => {
   await prepare(page)
   await expect(page).toHaveURL(/\/\?page=automation$/)
   await page.reload()
@@ -538,10 +538,16 @@ test('自动化刷新保留页面，新会话的标志、输入框和提示整�
         const area = box('.workspace-main')
         const logo = box('.composer-hero')
         const note = box('.composer-note')
-        return Math.abs((logo.top + note.bottom - area.top - area.bottom) / 2)
-      })).toBeLessThanOrEqual(1)
+        const center = (logo.top + note.bottom) / 2
+        return Math.abs((center - area.top) / area.height - 0.45)
+      })).toBeLessThanOrEqual(0.01)
+      await page.screenshot({ path: testInfo.outputPath(`new-conversation-position-${theme}-${width}.png`) })
     }
   }
+  await page.setViewportSize({ width: 768, height: 400 })
+  await expect(page.locator('.composer-hero')).toBeInViewport({ ratio: 1 })
+  await expect(page.locator('.composer')).toBeInViewport({ ratio: 1 })
+  await expect(page.locator('.composer-note')).toBeInViewport({ ratio: 1 })
   await page.reload()
   await expect(page.locator('.composer-dock.is-hero')).toBeVisible()
 })
