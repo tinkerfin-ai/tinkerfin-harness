@@ -4,6 +4,7 @@ import indexHtml from '../../index.html?raw'
 import mainEntry from '../main.tsx?raw'
 import tokensStyles from './tokens.css?raw'
 import fontsStyles from './fonts.css?raw'
+import typographyStyles from './typography.css?raw'
 
 const cssFiles = import.meta.glob('../**/*.css', {
   eager: true,
@@ -98,6 +99,10 @@ describe('前端视觉契约', () => {
       for (const [foreground, background] of [
         ['--color-text-primary', '--color-canvas'],
         ['--color-text-secondary', '--color-canvas'],
+        ['--color-text-primary', '--color-hover'],
+        ['--color-text-secondary', '--color-hover'],
+        ['--color-text-primary', '--color-active'],
+        ['--color-text-secondary', '--color-active'],
         ['--color-text-tertiary', '--color-canvas'],
         ['--color-text-caption', '--color-canvas'],
         ['--color-placeholder', '--color-layer-2'],
@@ -183,7 +188,7 @@ describe('前端视觉契约', () => {
     expect(unregisteredRadii).toEqual([])
     expect(unregisteredShadows).toEqual([])
     expect(unregisteredLayers).toEqual([])
-    expect(breakpointValues).toEqual(['440', '460', '767', '920', '1023', '1024'])
+    expect(breakpointValues).toEqual(['440', '460', '767', '920', '1024'])
     expect(ownerLocalMotionValues).toEqual([])
   })
 
@@ -204,6 +209,22 @@ describe('前端视觉契约', () => {
     expect(explicitFontWeights).toEqual([])
     expect(interactiveCaptionSelectors).toEqual([])
     expect(cssFiles['./global.css']).toMatch(/button,[\s\S]*select\s*{\s*font-size:\s*inherit;/)
+  })
+
+  it('全部样式入口共用界面字体与 400 字重，内容排版使用独立语义', () => {
+    expect(declarations(typographyStyles).get('--weight-ui')).toBe('400')
+    const contentBoundary = /\.markdown-content|\.tool-(?:code|rich)-field|\.ui-code-text|\.attachment-sheet|\.model-options-plain|\.mermaid-render-host|\bcode,\s*kbd,\s*pre,\s*samp/
+    for (const [path, source] of Object.entries(cssFiles)) {
+      if (path.endsWith('/fonts.css')) continue
+      for (const [, selector, block] of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        const weight = block.match(/font-weight:\s*([^;]+);/)?.[1].trim()
+        if (weight && weight !== 'var(--weight-ui)') {
+          expect(selector, `${path}: 非界面字重只能用于语义内容`).toMatch(contentBoundary)
+        }
+        const family = block.match(/font-family:\s*([^;]+);/)?.[1].trim()
+        if (family) expect(['var(--font-ui)', 'var(--font-code)'], `${path}: 字体必须使用公共令牌`).toContain(family)
+      }
+    }
   })
 
   it('共享控件覆盖焦点、禁用、触控、forced-colors 与 reduced-motion', () => {

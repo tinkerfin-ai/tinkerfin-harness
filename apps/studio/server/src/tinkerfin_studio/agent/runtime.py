@@ -128,8 +128,10 @@ def _build_runtime(
         }
         for name, definition in resources.agent_subagents.items()
     ]
-    configured = resources.tinkerfin.with_namespace(namespace).with_attachments(
-        attachment_support
+    configured = (
+        resources.tinkerfin.with_compaction_tool()
+        .with_namespace(namespace)
+        .with_attachments(attachment_support)
     )
     if plan_enabled:
         configured = configured.with_plan(

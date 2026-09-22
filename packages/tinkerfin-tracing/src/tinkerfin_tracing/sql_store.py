@@ -543,6 +543,12 @@ class _SqlAlchemyTraceLedgerBackend:
                 source=effective_nodes,
             )
             page_criteria = list(base_criteria)
+            if request.node_ids is not None:
+                page_criteria.append(
+                    effective_nodes.c.node_hash.in_(
+                        tuple(_digest(node_id) for node_id in request.node_ids)
+                    )
+                )
             if request.before_started_at is not None:
                 assert request.before_node_id is not None
                 cursor_time = _database_naive(request.before_started_at)

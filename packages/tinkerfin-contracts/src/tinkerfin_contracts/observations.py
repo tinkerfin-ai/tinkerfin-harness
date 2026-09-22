@@ -12,7 +12,7 @@ from ._models import ContractModel, ObservationModel
 from .identity import RunIdentity
 
 RunInputKind: TypeAlias = Literal[
-    "ordinary", "branch", "continuation", "resume", "abandon"
+    "ordinary", "branch", "continuation", "resume", "abandon", "compaction"
 ]
 RunMode: TypeAlias = Literal["default", "plan"]
 RunTerminalOutcome: TypeAlias = Literal[
@@ -33,7 +33,9 @@ NativeMessageType: TypeAlias = Literal[
     "remove",
     "other",
 ]
-ContextKind: TypeAlias = Literal["memory", "guardrail", "retrieval", "custom"]
+ContextKind: TypeAlias = Literal[
+    "memory", "guardrail", "retrieval", "custom", "compaction"
+]
 
 
 class ObservationBoundary(StrEnum):
@@ -239,6 +241,9 @@ class ModelCallObservation(ObservationModel):
     ]
     call_id: str = Field(min_length=1, max_length=1024)
     parent_call_id: str | None = Field(default=None, min_length=1, max_length=1024)
+    contribution_id: str | None = Field(
+        default=None, description="Explicit context action owning this provider call"
+    )
     graph_namespace: tuple[str, ...] = ()
     agent_name: str | None = Field(default=None, min_length=1, max_length=1024)
     provider: str | None = Field(default=None, min_length=1, max_length=1024)
@@ -371,6 +376,7 @@ class ContextContributionObservation(ObservationModel):
     identity: RunIdentity
     phase: Literal[
         "started",
+        "generated",
         "completed",
         "failed",
         "cancelled",
@@ -379,6 +385,13 @@ class ContextContributionObservation(ObservationModel):
     ]
     contribution_id: str = Field(min_length=1, max_length=1024)
     parent_call_id: str | None = Field(default=None, min_length=1, max_length=1024)
+    model_call_ids: tuple[str, ...] = Field(
+        default=(),
+        exclude_if=lambda value: not value,
+        description="Provider calls explicitly owned by this action",
+    )
+    compaction_origin: Literal["manual", "automatic", "tool"] | None = None
+    parent_tool_call_id: str | None = None
     graph_namespace: tuple[str, ...] = ()
     context_kind: ContextKind
     name: str = Field(min_length=1, max_length=1024)
@@ -399,7 +412,7 @@ class ContextContributionObservation(ObservationModel):
 
         if self.phase != "started" and self.input is not None:
             raise ValueError("only started context contributions may carry input")
-        if self.phase != "completed" and self.output is not None:
+        if self.phase not in {"completed", "generated"} and self.output is not None:
             raise ValueError("only completed context contributions may carry output")
         if self.phase == "failed" and self.error_type is None:
             raise ValueError("failed contributions require an error type")

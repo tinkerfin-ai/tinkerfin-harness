@@ -94,7 +94,16 @@ export function ThemePicker() {
       allowMotion: '(prefers-reduced-motion: no-preference)',
       reduceMotion: '(prefers-reduced-motion: reduce)',
     }, (context) => {
-      const duration = context.conditions?.reduceMotion ? 0 : MOTION_DURATION_SECONDS.normal
+      // 减少动态效果时由样式直接表达展开状态，零时长 tween 无法区分首尾进度
+      if (context.conditions?.reduceMotion) {
+        if (expansionSettleTimerRef.current != null) {
+          window.clearTimeout(expansionSettleTimerRef.current)
+          expansionSettleTimerRef.current = null
+        }
+        setExpansionSettled(isExpandedRef.current)
+        return
+      }
+      const duration = MOTION_DURATION_SECONDS.normal
       const animations = [
         gsap.to(surface, {
           scaleX: 1,
@@ -107,11 +116,9 @@ export function ThemePicker() {
         gsap.to(options, {
           x: 0,
           autoAlpha: 1,
-          duration: context.conditions?.reduceMotion ? 0 : MOTION_DURATION_SECONDS.normal,
+          duration,
           ease: 'power2.out',
-          stagger: context.conditions?.reduceMotion
-            ? 0
-            : { each: MOTION_DURATION_SECONDS.fast / 2, from: 'end' },
+          stagger: { each: MOTION_DURATION_SECONDS.fast / 2, from: 'end' },
           overwrite: 'auto',
           paused: true,
         }),

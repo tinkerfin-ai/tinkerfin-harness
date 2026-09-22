@@ -9,8 +9,8 @@
     --primitive-gray-25: #f9fafb;
     --primitive-gray-sidebar: #f7f7f9;
     --primitive-gray-50: #f5f6f7;
-    --primitive-gray-75: #f1f3f5;
-    --primitive-gray-100: #ebeef2;
+    --primitive-gray-75: #eceff3;
+    --primitive-gray-100: #e5e8ed;
     --primitive-gray-500: #6d7279;
     --primitive-gray-600: #61666b;
     --primitive-gray-950: #0f1115;
@@ -138,6 +138,7 @@
     --radius-sm: 6px;
     --radius-md: 8px;
     --radius-lg: 10px;
+    --radius-button: var(--radius-xl);
     --radius-xl: 12px;
     --radius-2xl: 16px;
     --radius-3xl: 22px;
@@ -165,7 +166,7 @@
     --layout-dialog-width: 440px;
     --layout-action-width: 400px;
     --layout-document-width: 1040px;
-    --layout-auth-width: 336px;
+    --layout-auth-width: 344px;
     --layout-feedback-card: 288px;
     --layout-composer-surface-height: 118px;
     --layout-toast-width: 380px;
@@ -182,6 +183,9 @@
     --layout-settings-nav: 180px;
     --layout-settings-height: 540px;
 
+    --motion-auth-sheen: 3.6s;
+    --color-auth-blue: #eaf4ff;
+    --color-auth-violet: #f3edff;
     --layer-base: 0;
     --layer-behind: -1;
     --layer-local: 1;
@@ -221,11 +225,13 @@
     color-scheme: dark;
     --color-canvas: #151517;
     --color-sidebar: #1b1b1c;
+    --color-auth-blue: #142840;
+    --color-auth-violet: #292039;
     --color-layer-1: #232324;
     --color-layer-2: #2c2c2e;
     --color-subtle: #232324;
-    --color-hover: #2c2c2e;
-    --color-active: #353638;
+    --color-hover: #303032;
+    --color-active: #3a3b3d;
     --color-scrim: rgb(0 0 0 / 48%);
     --color-text-primary: #f9fafb;
     --color-text-secondary: #cfd3d6;

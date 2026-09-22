@@ -45,9 +45,11 @@ and borrows supplied resources.
 | `await runtime.ainvoke(...)` | Final defensive state mapping |
 | `runtime.open_run(...)` | Lazy `NativeRunStream` |
 | `runtime.open_agui_run(...)` | Lazy `AgUiRunStream` |
+| `await runtime.compact(thread_id=..., run_id=...)` | Saved `CompactionResult` without adding chat messages |
+| `runtime.agui.open_compaction(thread_id=..., run_id=...)` | Lazy AG-UI context compression stream |
 | `runtime.agui.history(tracer)` | Recorded AG-UI conversations in this Runtime's namespace |
 
-All execution methods accept `thread_id`, `run_id`, `input` or AG-UI input, optional
+Chat execution methods accept `thread_id`, `run_id`, `input` or AG-UI input, optional
 `mode`, Graph `config`, typed `context`, observation callbacks, and supported LangGraph
 stream controls.
 
@@ -61,6 +63,71 @@ stream controls.
 
 Resume-only callbacks are `on_resume_saved` and `on_resume_not_saved`. They settle host
 state around the durable resume marker and are awaited.
+
+## Compress saved context
+
+Use an existing Runtime configured with a checkpointer. Manual compression shares the
+native `compact_conversation` eligibility rules and the effective summarization middleware's
+model, retention, prompt, input trimming, and retry behavior. Eligibility begins at half the
+automatic trigger; token thresholds require matching provider-reported usage. Below that
+threshold, or without the required usage, no summary model runs. Original messages remain
+saved, and retained recent context preserves tool-call pairs. Resolve pending work, approval,
+or Plan input first.
+
+```python
+result = await runtime.compact(thread_id=thread_id, run_id=run_id)
+if result.status == "compacted":
+    print(result.summary)
+```
+
+`CompactionResult` contains `run_id`, `status`, `summary`, and `compacted_messages`.
+`nothing_to_compact` skips the model call; `not_reduced` leaves context unchanged because
+the generated summary was not shorter. Failures raise without returning a success result.
+`compact()` also accepts the Runtime's typed `context`.
+
+To let the main agent invoke compression during a conversation, enable the tool when building:
+
+```python
+runtime = (
+    TinkerFin(checkpointer=checkpointer)
+    .with_namespace("account")
+    .with_compaction_tool()
+    .build(model=model)
+)
+```
+
+The tool is off by default and does not propagate to subagents or the Plan planner.
+It runs within the current conversation run. The framework binds it to the effective
+summarization middleware and manages its native state update. Automatic and tool compression
+retain native behavior; the manual endpoint additionally rejects a summary that does not
+reduce context and requires successful archiving. Tracing groups summary model calls under
+the compression action and confirms persistence only after checkpoint saving succeeds.
+
+For replayable AG-UI delivery, use the same Messaging channel as ordinary chat:
+
+```python
+from contextlib import aclosing
+
+channel = messaging.agui_channel(name="conversations")
+source = runtime.agui.open_compaction(thread_id=thread_id, run_id=run_id)
+body = await channel.open_sse(source)
+async with aclosing(body):
+    async for frame in body:
+        await send_bytes(frame)
+```
+
+The host authorizes the conversation, assigns one `run_id` per operation, and owns
+the transport. Reconnects reuse that ID and the channel's delivery cursor. The framework
+owns execution, workspace cleanup, and persistence; it borrows the Runtime's configured
+resources. Use the same execution boundary for chat and compression. Closing the
+Messaging reader detaches it; cancel through the channel to stop the producer.
+
+Compression emits one run lifecycle and no assistant message. A saved result appears
+in the AG-UI state field `context_compaction`. When a Tracer is configured as a Runtime
+observer, the result is also recorded in the `context_compaction` history node.
+The RAW `langgraph.custom` event with `event.data.phase="saving"` indicates persistence
+has begun. Cancellation or failure at that point does not prove that context was unchanged;
+check history before requesting another operation.
 
 ## Recorded AG-UI conversations
 

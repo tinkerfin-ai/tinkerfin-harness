@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 from uuid import NAMESPACE_URL, uuid5
 
 from ag_ui.core import (
@@ -20,7 +20,7 @@ from tinkerfin_contracts.media import Attachment
 from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
 from tinkerfin_studio.conversation.models import TitleGenerationStatus, TitleSource
-from tinkerfin_studio.conversation.request import ChatRequest
+from tinkerfin_studio.conversation.request import ChatRequest, CompactRequest
 
 
 def conversation_identity(thread_id: str, run_id: str, *, user_id: int) -> RunIdentity:
@@ -44,7 +44,14 @@ class ResumeChatIntent:
     entries: tuple[ResumeEntry, ...]
 
 
-ChatIntent = StartChatIntent | ResumeChatIntent
+@dataclass(frozen=True, slots=True)
+class CompactIntent:
+    """整理已有会话的上下文，不提交新消息"""
+
+    thread_id: str
+
+
+ChatIntent = StartChatIntent | ResumeChatIntent | CompactIntent
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +66,7 @@ class PreparedRunRequest:
     message_ids: tuple[str, ...]
     mode: AgentMode
     access_mode: AccessMode = "full"
+    operation: Literal["chat", "compact"] = "chat"
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,12 +96,30 @@ def classify_intent(request: ChatRequest) -> ChatIntent:
 
 
 def prepare_run_request(
-    request: ChatRequest,
+    request: ChatRequest | CompactRequest,
     *,
     user_id: int,
     thread_id: str,
+    access_mode: AccessMode = "full",
 ) -> PreparedRunRequest:
     """分配服务端消息 ID 并构造一次权威标准请求快照"""
+
+    if isinstance(request, CompactRequest):
+        return PreparedRunRequest(
+            input_json={
+                "operation": "compact",
+                "threadId": thread_id,
+                **request.model_dump(mode="json", by_alias=True),
+            },
+            messages=(),
+            identity=conversation_identity(thread_id, request.run_id, user_id=user_id),
+            parent_run_id=None,
+            graph_config={},
+            message_ids=(),
+            mode="default",
+            access_mode=access_mode,
+            operation="compact",
+        )
 
     message_ids = tuple(
         "message-"
@@ -139,7 +165,7 @@ def decorate_main_event(
     title_generation_status: TitleGenerationStatus = "idle",
     title_seq: int = 0,
 ) -> BaseEvent:
-    """只补充 Studio 产品标题和取消文案"""
+    """只补充 Studio 标题和取消文案"""
 
     run_id = prepared.identity.run_id
     if isinstance(event, RunStartedEvent) and event.run_id == run_id:
@@ -158,12 +184,19 @@ def decorate_main_event(
         if raw_event.get("runId") != run_id:
             return event
         if event.code == "cancelled":
-            return event.model_copy(update={"message": "聊天生成已取消"})
+            return event.model_copy(
+                update={
+                    "message": "上下文压缩已停止"
+                    if prepared.operation == "compact"
+                    else "聊天生成已取消"
+                }
+            )
     return event
 
 
 __all__ = [
     "ChatIntent",
+    "CompactIntent",
     "PreparedRunRequest",
     "RegisteredRun",
     "ResumeChatIntent",

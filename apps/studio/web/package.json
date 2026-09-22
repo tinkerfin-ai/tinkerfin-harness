@@ -12,8 +12,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:proxy": "node --test tests/server/*.test.mjs",
-    "test:browser": "pnpm build && playwright test",
+    "test:http": "node --test tests/server/*.test.mjs",
+    "test:browser": "tsc -b && playwright test",
     "test:watch": "vitest",
     "preview": "vite preview",
     "test:licenses": "pnpm build && node --test tests/packaging/document-preview-licenses.test.mjs"

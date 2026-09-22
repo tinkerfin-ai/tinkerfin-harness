@@ -185,7 +185,8 @@ async def test_readiness_reports_dependency_status_without_error_details() -> No
     class FakeReadiness:
         async def check(self) -> dict[str, bool]:
             return {
-                "mysql": True,
+                "business_database": True,
+                "components_database": True,
                 "redis": True,
                 "opensandbox": False,
             }
@@ -203,7 +204,8 @@ async def test_readiness_reports_dependency_status_without_error_details() -> No
     assert response.json() == {
         "status": "not_ready",
         "components": {
-            "mysql": True,
+            "business_database": True,
+            "components_database": True,
             "redis": True,
             "opensandbox": False,
         },

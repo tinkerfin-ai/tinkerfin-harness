@@ -17,7 +17,7 @@ const history = {
 async function openConversation(page: Page, theme: string) {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.addInitScript(({ user, theme }) => {
-    localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'width-test-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
+    localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'width-test-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
     localStorage.setItem('tinkerfin:theme', theme)
     localStorage.setItem('tinkerfin:language', 'zh-CN')
   }, { user, theme })

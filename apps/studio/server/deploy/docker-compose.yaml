@@ -1,4 +1,4 @@
-name: tinkerfin-studio
+name: tinkerfin
 
 include:
   - docker-compose-base.yaml
@@ -16,16 +16,29 @@ services:
       options:
         max-size: "50m"
         max-file: "3"
-    env_file: ${STUDIO_ENV_FILE:-.env}
+    env_file: ${STUDIO_ENV_FILE:-../../.env}
     environment:
-      DATABASE_URL_FILE: /run/secrets/database_url
-      REDIS_RUNTIME_PASSWORD_FILE: /run/secrets/redis_runtime_password
-      OPEN_SANDBOX_API_KEY_FILE: /run/secrets/opensandbox_api_key
-      S3_STORAGE_ACCESS_KEY_FILE: /run/secrets/s3_storage_access_key
-      S3_STORAGE_SECRET_KEY_FILE: /run/secrets/s3_storage_secret_key
+      # 容器通过内部网络访问依赖，本机读取同一文件时使用发布端口
+      MYSQL_HOST: ${MYSQL_HOST:-mysql}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_BUSINESS_DATABASE: ${MYSQL_BUSINESS_DATABASE:-tinkerfin}
+      MYSQL_COMPONENTS_DATABASE: ${MYSQL_COMPONENTS_DATABASE:-tinkerfin_components}
+      MYSQL_BUSINESS_USER: ${MYSQL_BUSINESS_USER:-tinkerfin}
+      MYSQL_COMPONENTS_USER: ${MYSQL_COMPONENTS_USER:-tinkerfin_components}
+      MYSQL_BUSINESS_PASSWORD: ${MYSQL_BUSINESS_PASSWORD:-}
+      MYSQL_COMPONENTS_PASSWORD: ${MYSQL_COMPONENTS_PASSWORD:-}
+      REDIS_RUNTIME_HOST: ${REDIS_RUNTIME_HOST:-redis-runtime}
+      REDIS_RUNTIME_PORT: ${REDIS_RUNTIME_PORT:-6379}
+      REDIS_RUNTIME_PASSWORD: ${REDIS_RUNTIME_PASSWORD:-}
+      OPEN_SANDBOX_DOMAIN: ${OPEN_SANDBOX_DOMAIN:-opensandbox:8090}
+      OPEN_SANDBOX_API_KEY: ${OPEN_SANDBOX_API_KEY:-}
+      S3_STORAGE_ENDPOINT: ${S3_STORAGE_ENDPOINT:-http://minio:9000}
+      S3_STORAGE_ACCESS_KEY: ${S3_STORAGE_ACCESS_KEY:-}
+      S3_STORAGE_SECRET_KEY: ${S3_STORAGE_SECRET_KEY:-}
+      # 应用只使用业务与组件账号，不接收数据库管理员凭据
+      MYSQL_ROOT_PASSWORD: ''
     extra_hosts:
       - host.docker.internal:host-gateway
-    secrets: [database_url, redis_runtime_password, opensandbox_api_key, s3_storage_access_key, s3_storage_secret_key]
     ports:
       - "${STUDIO_BIND_ADDRESS:-127.0.0.1}:${STUDIO_PORT:-8090}:8090"
     read_only: true

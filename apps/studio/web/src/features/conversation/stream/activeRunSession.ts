@@ -1,5 +1,8 @@
 import type {
   ChatRequestPayload,
+  CompactRequestPayload,
+  ConversationRunMode,
+  ConversationRunPayload,
   ChatResumeEntry,
 } from '../../../api/conversation/types'
 import type { JsonObject, JsonValue } from '../../../types'
@@ -8,8 +11,8 @@ const ACTIVE_RUN_STORAGE_KEY = 'tinkerfin:active-conversation-run'
 
 export interface ActiveRunSession {
   threadId: string
-  payload: ChatRequestPayload
-  mode: 'start' | 'resume'
+  payload: ConversationRunPayload
+  mode: ConversationRunMode
   lastSeq: number
 }
 
@@ -63,16 +66,28 @@ const parseActiveRunSession = (value: unknown): ActiveRunSession | null => {
   const keys = Object.keys(value).sort()
   if (keys.join('\0') !== ['lastSeq', 'mode', 'payload', 'threadId'].join('\0')) return null
   if (typeof value.threadId !== 'string') return null
-  if (value.mode !== 'start' && value.mode !== 'resume') return null
+  if (value.mode !== 'start' && value.mode !== 'resume' && value.mode !== 'compact') return null
   if (!Number.isSafeInteger(value.lastSeq) || Number(value.lastSeq) < 0) return null
-  if (!isChatRequestPayload(value.payload) || !value.payload.runId.trim()) return null
+  let payload: ConversationRunPayload
+  if (value.mode === 'compact') {
+    if (!isCompactRequestPayload(value.payload)) return null
+    payload = value.payload
+  } else {
+    if (!isChatRequestPayload(value.payload) || !value.payload.runId.trim()) return null
+    payload = value.payload
+  }
   return {
     threadId: value.threadId,
-    payload: value.payload,
+    payload,
     mode: value.mode,
     lastSeq: Number(value.lastSeq),
   }
 }
+
+const isCompactRequestPayload = (value: unknown): value is CompactRequestPayload => isRecord(value)
+  && typeof value.threadId === 'string' && Boolean(value.threadId.trim())
+  && typeof value.runId === 'string' && Boolean(value.runId.trim())
+  && typeof value.model === 'string' && Boolean(value.model.trim())
 
 export const readActiveRunSessions = (): ActiveRunSession[] => {
   try {

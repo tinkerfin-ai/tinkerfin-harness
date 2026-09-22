@@ -164,7 +164,7 @@
     min-height: var(--control-xl);
     padding: 0;
     border: 0;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-button);
     background: transparent;
     box-shadow: none;
     color: var(--color-text-primary);
@@ -186,7 +186,7 @@
     justify-content: flex-start;
     border: 0;
     font-size: var(--type-ui-size);
-    font-weight: var(--weight-regular);
+    font-weight: var(--weight-ui);
     line-height: var(--type-ui-line);
   }
 
@@ -201,7 +201,7 @@
     margin: 0;
     justify-content: center;
     border: 1px solid transparent;
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-button);
     background: var(--color-layer-1);
     box-shadow: var(--shadow-1);
   }
@@ -215,7 +215,7 @@
     color: inherit;
     font-family: var(--font-ui);
     font-size: var(--type-caption-size);
-    font-weight: var(--weight-medium);
+    font-weight: var(--weight-ui);
     line-height: var(--type-caption-line);
     opacity: 0;
     transition: opacity var(--motion-fast) var(--ease-out);
@@ -335,7 +335,7 @@
     background: var(--color-sidebar);
     color: var(--color-text-tertiary);
     font-size: var(--type-caption-size);
-    font-weight: var(--weight-medium);
+    font-weight: var(--weight-ui);
     line-height: var(--type-caption-line);
   }
 
@@ -362,7 +362,7 @@
     align-items: center;
     min-height: var(--control-md);
     margin: 0;
-    border-radius: var(--radius-xl);
+    border-radius: var(--radius-button);
     transition: background-color var(--motion-fast) var(--ease-out);
   }
 
@@ -378,7 +378,7 @@
     padding: 0 var(--sidebar-row-padding);
     overflow: hidden;
     border: 0;
-    border-radius: inherit;
+    border-radius: var(--radius-button);
     background: transparent;
     color: var(--color-text-primary);
     text-align: left;
@@ -451,8 +451,8 @@
   }
   .conversation-attention-dot::after { inset: 20%; }
   .conversation-title-marquee { flex: 1; min-width: 0; }
-  .conversation-title-marquee .overflow-marquee-content { font-size: var(--type-meta-size); font-weight: var(--weight-regular); line-height: var(--type-meta-line); }
-  .conversation-item.is-active .conversation-title-marquee .overflow-marquee-content { font-weight: var(--weight-medium); }
+  .conversation-title-marquee .overflow-marquee-content { font-size: var(--type-meta-size); font-weight: var(--weight-ui); line-height: var(--type-meta-line); }
+  .conversation-item.is-active .conversation-title-marquee .overflow-marquee-content { font-weight: var(--weight-ui); }
   .conversation-item:hover .conversation-title-marquee.is-overflowing,
   .conversation-item:has(:focus-visible) .conversation-title-marquee.is-overflowing,
   .conversation-item:has(.conversation-more.is-selected) .conversation-title-marquee.is-overflowing,
@@ -514,7 +514,7 @@
     margin: 10px 0;
     padding: var(--space-1-5) var(--space-0-5) var(--space-1-5) var(--space-1-5);
     border: 0;
-    border-radius: var(--radius-xl);
+    border-radius: var(--radius-button);
     background: transparent;
     color: var(--color-text-primary);
     text-align: left;
@@ -525,7 +525,7 @@
   .user-card:active { background: var(--color-active); }
   .user-card:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
   .user-card:disabled { cursor: not-allowed; opacity: .48; }
-  .user-name { flex: 1; min-width: 0; overflow: hidden; font-size: var(--type-meta-size); font-weight: var(--weight-medium); text-overflow: ellipsis; white-space: nowrap; }
+  .user-name { flex: 1; min-width: 0; overflow: hidden; font-size: var(--type-meta-size); font-weight: var(--weight-ui); text-overflow: ellipsis; white-space: nowrap; }
 
   .user-menu,
   .conversation-menu {
@@ -690,7 +690,7 @@
     background: var(--color-brand-soft);
     color: var(--color-brand-text);
     font-size: var(--type-caption-size);
-    font-weight: var(--weight-semibold);
+    font-weight: var(--weight-ui);
     font-variant-numeric: tabular-nums;
     line-height: 1;
   }
@@ -856,7 +856,7 @@
       clip: auto;
       color: var(--color-text-primary);
       font-size: var(--type-title-size);
-      font-weight: var(--weight-semibold);
+      font-weight: var(--weight-ui);
       line-height: var(--type-title-line);
       text-overflow: ellipsis;
       white-space: nowrap;

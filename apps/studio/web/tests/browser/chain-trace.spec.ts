@@ -314,6 +314,7 @@ async function mockChainTraceStudio(
     language?: 'zh-CN' | 'en'
     snapshot?: TraceGraphPage
     directSnapshot?: TraceGraphPage
+    historyResponse?: (route: Route, detail: ConversationHistoryDetail) => Promise<void>
   } = {},
 ) {
   const {
@@ -323,6 +324,15 @@ async function mockChainTraceStudio(
     directSnapshot = responsePage(),
   } = options
   const pageErrors: string[] = []
+  let historyReads = 0
+  const respondHistory = (route: Route, threadId: string, includeTaskTrace: boolean) => {
+    const response = detail(threadId, includeTaskTrace)
+    historyReads += 1
+    response.observedAt = new Date(Date.parse(response.observedAt) + historyReads).toISOString()
+    return options.historyResponse
+      ? options.historyResponse(route, response)
+      : fulfillJson(route, response)
+  }
   page.on('pageerror', (error) => pageErrors.push(error.message))
   page.on('console', (message) => {
     if (message.type() === 'error') pageErrors.push(message.text())
@@ -397,7 +407,7 @@ async function mockChainTraceStudio(
   }, {
     session: {
       token: 'chain-browser-token',
-      tokenType: 'Bearer',
+      serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user,
     },
@@ -451,16 +461,18 @@ async function mockChainTraceStudio(
       return
     }
     if (url.pathname === `/api/conversation/${THREAD_ID}/history`) {
-      await fulfillJson(
+      await respondHistory(
         route,
-        detail(THREAD_ID, url.searchParams.get('includeTaskTrace') !== 'false'),
+        THREAD_ID,
+        url.searchParams.get('includeTaskTrace') !== 'false',
       )
       return
     }
     if (url.pathname === `/api/conversation/${OTHER_THREAD_ID}/history`) {
-      await fulfillJson(
+      await respondHistory(
         route,
-        detail(OTHER_THREAD_ID, url.searchParams.get('includeTaskTrace') !== 'false'),
+        OTHER_THREAD_ID,
+        url.searchParams.get('includeTaskTrace') !== 'false',
       )
       return
     }
@@ -510,6 +522,57 @@ const traceRequests = (page: Page) => page.evaluate(() => {
 const traceRow = (page: Page, nodeId: string) => (
   page.locator(`[data-trace-node-id="${nodeId}"]`)
 )
+
+test('链路等待共享历史，切回对话后刷新完成且再次进入只查询一次图', async ({ page }) => {
+  let releaseHistory!: () => void
+  let markRequested!: () => void
+  const release = new Promise<void>((resolve) => { releaseHistory = resolve })
+  const requested = new Promise<void>((resolve) => { markRequested = resolve })
+  let historyRequests = 0
+  const failures: string[] = []
+  page.on('requestfailed', (request) => {
+    if (new URL(request.url()).pathname === `/api/conversation/${THREAD_ID}/history`) {
+      failures.push(request.failure()?.errorText ?? 'history failed')
+    }
+  })
+  const errors = await mockChainTraceStudio(page, {
+    historyResponse: async (route, response) => {
+      historyRequests += 1
+      if (historyRequests >= 2) {
+        response.title = '共享刷新已应用'
+        response.titleSource = 'user'
+        response.titleSeq = 1
+      }
+      if (historyRequests === 2) {
+        markRequested()
+        await release
+      }
+      await fulfillJson(route, response)
+    },
+  })
+  try {
+    await expect(page.getByRole('button', { name: '任务轨迹 1', exact: true })).toBeVisible()
+    await page.getByRole('tab', { name: '链路', exact: true }).click()
+    await requested
+    expect((await traceRequests(page)).snapshots).toHaveLength(0)
+    await page.getByRole('tab', { name: '对话', exact: true }).click()
+    const received = page.waitForResponse((response) => (
+      new URL(response.url()).pathname === `/api/conversation/${THREAD_ID}/history`
+    ))
+    releaseHistory()
+    const response = await received
+    expect(await response.finished()).toBeNull()
+    await expect(page.getByRole('heading', { name: '共享刷新已应用', exact: true })).toBeVisible()
+    expect(failures).toEqual([])
+    await page.getByRole('tab', { name: '链路', exact: true }).click()
+    await expect(page.getByRole('region', { name: '调用时间线' })).toBeVisible()
+    expect((await traceRequests(page)).snapshots).toHaveLength(1)
+    expect(historyRequests).toBe(3)
+    expect(errors).toEqual([])
+  } finally {
+    releaseHistory()
+  }
+})
 
 for (const theme of ['light', 'dark'] as const) {
   for (const width of [320, 768, 1024, 1440]) {
@@ -759,7 +822,7 @@ test('六类时间线、平级台账、Subagent 作用域和详情保持同一�
     toolbarPadding: geometry.ledgerPadding,
     drawerWidth: 400,
     drawerHeaderHeight: 64,
-    rootHeight: 40,
+    rootHeight: 36,
   })
   expect(Math.abs(geometry.rootInset - geometry.durationInset)).toBeLessThanOrEqual(1)
   expect(Math.abs(geometry.summaryInset - geometry.searchInset)).toBeLessThanOrEqual(1)
@@ -1290,3 +1353,91 @@ for (const theme of ['light', 'dark'] as const) {
     })
   }
 }
+
+for (const theme of ['light', 'dark'] as const) {
+  for (const width of [320, 768, 1024, 1440]) {
+    test(`压缩子分支从工具节点引出 ${theme} ${width}`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 700 })
+      const errors = await mockChainTraceStudio(page, {
+        theme,
+        snapshot: tracePage([
+          graphNode('compact-tool', 'tool', 10, { name: 'compact_conversation' }),
+          graphNode('compact-context', 'context', 11, {
+            parentNodeId: 'compact-tool', contextKind: 'compaction',
+          }),
+          graphNode('after-compact', 'assistant_message', 12, { content: '压缩处理完成' }),
+        ]),
+      })
+      await page.getByRole('tab', { name: '链路', exact: true }).click()
+      await expect(traceRow(page, 'compact-context')).toBeVisible()
+      const geometry = await page.getByLabel('链路节点', { exact: true }).evaluate(ledger => {
+        const rail = (id: string) => ledger.querySelector<HTMLElement>(
+          `[data-trace-node-id="${id}"] .chain-trace-ledger-rail`,
+        )!
+        const parent = rail('compact-tool')
+        const child = rail('compact-context')
+        const branch = parent.querySelector<SVGSVGElement>('svg')!
+        const parentRect = parent.getBoundingClientRect()
+        const childRect = child.getBoundingClientRect()
+        const branchRect = branch.getBoundingClientRect()
+        const ancestorRect = child.querySelector<HTMLElement>('.chain-trace-ancestor-rail')!.getBoundingClientRect()
+        return {
+          branchStartX: branchRect.left, parentX: parentRect.left,
+          branchStartY: branchRect.top, parentCenterY: parentRect.top + parentRect.height / 2,
+          branchEndX: branchRect.right, childX: childRect.left,
+          branchEndY: branchRect.bottom, childTop: childRect.top,
+          ancestorX: ancestorRect.left,
+          childLineTop: Number.parseFloat(getComputedStyle(child, '::before').top),
+          childLineBottom: Number.parseFloat(getComputedStyle(child, '::before').bottom),
+          childHalf: childRect.height / 2,
+          rowHeight: child.closest('button')!.getBoundingClientRect().height,
+          labelLinks: [...ledger.querySelectorAll<HTMLElement>('.chain-trace-ledger-rail')].map(item => {
+            const style = getComputedStyle(item, '::after')
+            return {
+              centered: Math.abs(Number.parseFloat(style.top) - item.getBoundingClientRect().height / 2) <= 0.5,
+              height: style.height, borderLeft: style.borderLeftWidth, radius: style.borderBottomLeftRadius,
+            }
+          }),
+        }
+      })
+      expect(Math.abs(geometry.branchStartX - geometry.parentX)).toBeLessThanOrEqual(0.5)
+      expect(Math.abs(geometry.branchStartY - geometry.parentCenterY)).toBeLessThanOrEqual(0.5)
+      expect(Math.abs(geometry.branchEndX - geometry.childX)).toBeLessThanOrEqual(0.5)
+      expect(Math.abs(geometry.branchEndY - geometry.childTop)).toBeLessThanOrEqual(0.5)
+      expect(geometry.ancestorX).toBe(geometry.parentX)
+      geometry.labelLinks.forEach(link => expect(link).toEqual({
+        centered: true, height: '1px', borderLeft: '0px', radius: '0px',
+      }))
+      expect(geometry.rowHeight).toBe(36)
+      expect(geometry.childLineTop).toBe(0)
+      expect(Math.abs(geometry.childLineBottom - geometry.childHalf)).toBeLessThanOrEqual(0.5)
+      await page.screenshot({ path: testInfo.outputPath(`compaction-branch-${theme}-${width}.png`) })
+      await page.getByRole('button', { name: /收起节点 compact_conversation/ }).click()
+      await expect(traceRow(page, 'compact-context')).toBeHidden()
+      await expect(traceRow(page, 'after-compact')).toBeVisible()
+      await expect(traceRow(page, 'compact-tool').locator('svg')).toHaveCount(0)
+      expect(errors).toEqual([])
+    })
+  }
+}
+
+test.describe('触控链路树', () => {
+  test.use({ hasTouch: true })
+
+  test('紧凑列表保留节点和折叠操作的触控尺寸', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    const errors = await mockChainTraceStudio(page)
+    await page.getByRole('tab', { name: '链路', exact: true }).click()
+    const sizes = await page.getByLabel('链路节点', { exact: true }).evaluate(ledger => (
+      [...ledger.querySelectorAll<HTMLElement>('button')]
+        .filter(button => button.getClientRects().length > 0)
+        .map(button => ({ width: button.getBoundingClientRect().width, height: button.getBoundingClientRect().height }))
+    ))
+    expect(sizes.length).toBeGreaterThan(0)
+    sizes.forEach(size => {
+      expect(size.width).toBeGreaterThanOrEqual(44)
+      expect(size.height).toBeGreaterThanOrEqual(44)
+    })
+    expect(errors).toEqual([])
+  })
+})

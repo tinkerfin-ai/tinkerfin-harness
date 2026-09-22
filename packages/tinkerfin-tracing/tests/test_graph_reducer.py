@@ -137,6 +137,12 @@ def test_turn_fact_is_the_only_root_human_creator() -> None:
     assert humans[0].result_seq == 2
 
 
+def test_turn_without_user_input_does_not_create_a_human_message() -> None:
+    events = (_event(1, TurnFact(**_common(1), turn_id="maintenance")),)
+    records = reduce_trace_graph_records(events, run_ids=frozenset({"run"}))
+    assert not records
+
+
 def test_model_tool_and_assistant_are_flat_siblings_with_explicit_model_links() -> None:
     model_id = "model-call"
     context_id = scope_id("context", (), model_id)
@@ -714,7 +720,7 @@ def test_model_context_locator_cannot_reuse_another_model_request() -> None:
     assert projected.completed_at == NOW + timedelta(milliseconds=1)
     corrupted = replace(first, request_seq=2, request_event=events[1])
 
-    with pytest.raises(TraceStoreProtocolError, match="another model request"):
+    with pytest.raises(TraceStoreProtocolError, match="another action"):
         project_trace_graph_node(
             corrupted,
             turn_id="turn",

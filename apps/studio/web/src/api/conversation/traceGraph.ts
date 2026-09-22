@@ -59,6 +59,9 @@ export interface TraceGraphNode {
   agui: TraceNodeReference | null
   id: string
   turnId: string
+  parentNodeId?: string | null
+  contextKind?: 'memory' | 'guardrail' | 'retrieval' | 'custom' | 'compaction' | null
+  compactionOrigin?: 'manual' | 'automatic' | 'tool' | null
   parentSubagentId?: string | null
   modelCallId?: string | null
   kind: TraceGraphNodeKind
@@ -177,6 +180,9 @@ const NODE_KEYS = new Set([
   'agui',
   'id',
   'turnId',
+  'parentNodeId',
+  'contextKind',
+  'compactionOrigin',
   'parentSubagentId',
   'modelCallId',
   'kind',
@@ -325,6 +331,9 @@ const parseNode = (value: unknown): TraceGraphNode => {
     || Number(value.startedSeq) < 1
     || !Number.isSafeInteger(value.updatedSeq)
     || Number(value.updatedSeq) < Number(value.startedSeq)
+    || !isOptionalCanonicalString(value.parentNodeId, 2048)
+    || (value.contextKind != null && !['memory', 'guardrail', 'retrieval', 'custom', 'compaction'].includes(String(value.contextKind)))
+    || (value.compactionOrigin != null && !['manual', 'automatic', 'tool'].includes(String(value.compactionOrigin)))
     || !isOptionalCanonicalString(value.parentSubagentId, 2048)
     || !isOptionalCanonicalString(value.modelCallId, 2048)
     || !isOptionalCanonicalString(value.agentName, 1024)

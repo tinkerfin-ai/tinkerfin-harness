@@ -197,6 +197,7 @@ class TraceGraphQueryRequest:
     start belongs to those Runs; it is a subset of ``run_ids``. Apply it after
     merging logical nodes and before paging. Parent scopes still use the complete
     lineage. None leaves starts unrestricted; an empty tuple selects no matches.
+    ``node_ids`` restricts indexed matches when resolving explicit context relationships.
     """
 
     key: TraceThreadKey
@@ -206,6 +207,7 @@ class TraceGraphQueryRequest:
     total_limit: int = 4000
     before_started_at: datetime | None = None
     before_node_id: str | None = None
+    node_ids: tuple[str, ...] | None = None
     started_run_ids: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:

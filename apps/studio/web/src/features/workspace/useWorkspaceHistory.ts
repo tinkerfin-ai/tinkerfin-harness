@@ -61,6 +61,12 @@ interface TaskTraceLoadFailure {
   identity: TaskTraceRequestIdentity
 }
 
+interface HydrationRequest {
+  controller: AbortController
+  completion: Promise<void>
+  foreground: number
+}
+
 const ownsTracePageRequest = (
   conversation: Conversation | undefined,
   request: TracePageRequestIdentity,
@@ -348,7 +354,15 @@ export function useWorkspaceHistory({
   const historySearchInFlightCursor = useRef<string | null>(null)
   const loadedSearchCursors = useRef(new Set<string>())
   const prefetchedHistoryDetails = useRef(new Map<string, ConversationHistoryDetail>())
-  const hydrationRequests = useRef(new Map<string, AbortController>())
+  const hydrationRequests = useRef(new Map<string, HydrationRequest>())
+  const [foreground, setForeground] = useState(0)
+  const latestForeground = useRef(foreground)
+  const activation = useMemo(() => (
+    refreshOnActivation && workspace.currentThreadId
+      ? { threadId: workspace.currentThreadId, foreground }
+      : null
+  ), [foreground, refreshOnActivation, workspace.currentThreadId])
+  const [settledActivation, setSettledActivation] = useState<typeof activation>(null)
   const taskTraceRequests = useRef(new Map<string, AbortController>())
   const taskTraceRequestSequence = useRef(0)
   const olderTraceRequests = useRef(new Map<string, AbortController>())
@@ -846,83 +860,105 @@ export function useWorkspaceHistory({
     void hydrateTaskTrace(threadId, true)
   }, [hydrateTaskTrace])
 
-  const hydrateConversation = useCallback(async (
+  const hydrateConversation = useCallback((
     threadId: string,
-    options: { refresh?: boolean; signal?: AbortSignal } = {},
-  ) => {
+    options: { refresh?: boolean } = {},
+  ): Promise<void> => {
     const target = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
-    if (!target || options.signal?.aborted) return
-    if (options.refresh && target.runStatus === 'streaming') return
+    if (!target || (options.refresh && target.runStatus === 'streaming')) return Promise.resolve()
     if (target.isHydrated && !options.refresh) {
-      if (await hydrateTaskTrace(threadId)) void followDetachedConversation(threadId)
-      return
+      return hydrateTaskTrace(threadId).then((loaded) => {
+        if (loaded) void followDetachedConversation(threadId)
+      })
     }
     const existingRequest = hydrationRequests.current.get(threadId)
-    if (existingRequest && !existingRequest.signal.aborted) return
+    if (existingRequest && !existingRequest.controller.signal.aborted) {
+      existingRequest.foreground = latestForeground.current
+      return existingRequest.completion
+    }
     if (existingRequest) hydrationRequests.current.delete(threadId)
 
     const retention = retainConversationDetails(threadId)
     const requestIdentity = target.isHydrated ? taskTraceRequestIdentity(target) : undefined
     const controller = new AbortController()
-    const abortFromCaller = () => controller.abort()
-    options.signal?.addEventListener('abort', abortFromCaller, { once: true })
-    hydrationRequests.current.set(threadId, controller)
     setHydrationState({ threadId, status: 'loading' })
-    try {
-      await prepareTaskTraceOwner(threadId)
-      if (controller.signal.aborted) return
-      const prefetched = prefetchedHistoryDetails.current.get(threadId)
-      prefetchedHistoryDetails.current.delete(threadId)
-      const detail = (options.refresh ? undefined : prefetched)
-        ?? await fetchConversationHistoryDetail(threadId, {
-          includeTaskTrace: true,
-          signal: controller.signal,
-          suppressGlobalError: true,
-        })
-      if (
-        controller.signal.aborted
-        || hydrationRequests.current.get(threadId) !== controller
-      ) return
-      const current = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
-      if (!current || latestWorkspace.current.currentThreadId !== threadId
-        || (requestIdentity && !matchesTaskTraceRequestIdentity(current, requestIdentity))) return
-      prefetchedHistoryDetails.current.delete(threadId)
-      const restored = restoreConversationFromTrace(detail, {
-        previous: current,
-        preserveHistory: options.refresh,
-        model: detail.lastModel ?? target.model,
-        lastDeliveredSeq: target.lastSeq,
-        includeTaskTrace: true,
-      })
-      setHydrationState((current) => current?.threadId === threadId ? null : current)
-      setWorkspace((state) => {
-        const previous = state.conversations.find((item) => item.threadId === threadId)
-        if (controller.signal.aborted || !previous || state.currentThreadId !== threadId
-          || (requestIdentity && !matchesTaskTraceRequestIdentity(previous, requestIdentity))) return state
-        return upsertConversation(state, {
-          ...restored,
-          ...mergeConversationTitle(previous, restored),
-          isHydrated: true,
-        })
-      })
-    } catch {
-      const current = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
-      if (current && latestWorkspace.current.currentThreadId === threadId
-        && !controller.signal.aborted && hydrationRequests.current.get(threadId) === controller
-        && (!requestIdentity || matchesTaskTraceRequestIdentity(current, requestIdentity))) {
-        setHydrationState({ threadId, status: 'failed' })
-        onToast('error', t('会话加载失败，请重试'))
-      }
-    } finally {
-      retention.release()
-      options.signal?.removeEventListener('abort', abortFromCaller)
-      if (hydrationRequests.current.get(threadId) === controller) {
-        hydrationRequests.current.delete(threadId)
-        setHydrationState((current) => (
-          current?.threadId === threadId && current.status === 'loading' ? null : current
-        ))
-      }
+    const request: HydrationRequest = {
+      controller,
+      foreground: latestForeground.current,
+      // 请求归所选会话持有；激活消费者退出后，仍等待同一份结果
+      completion: Promise.resolve().then(async () => {
+        try {
+          if (controller.signal.aborted) return
+          await prepareTaskTraceOwner(threadId)
+          while (!controller.signal.aborted) {
+            const owner = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
+            if (!owner || latestWorkspace.current.currentThreadId !== threadId
+              || (requestIdentity && !matchesTaskTraceRequestIdentity(owner, requestIdentity))) return
+            const requestedForeground = latestForeground.current
+            const prefetched = prefetchedHistoryDetails.current.get(threadId)
+            prefetchedHistoryDetails.current.delete(threadId)
+            let detail: ConversationHistoryDetail
+            try {
+              detail = (options.refresh ? undefined : prefetched)
+                ?? await fetchConversationHistoryDetail(threadId, {
+                  includeTaskTrace: true,
+                  signal: controller.signal,
+                  suppressGlobalError: true,
+                })
+            } catch (error) {
+              if (request.foreground > requestedForeground && !controller.signal.aborted) continue
+              throw error
+            }
+            if (
+              controller.signal.aborted
+              || hydrationRequests.current.get(threadId) !== request
+            ) return
+            const current = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
+            if (!current || latestWorkspace.current.currentThreadId !== threadId
+              || (requestIdentity && !matchesTaskTraceRequestIdentity(current, requestIdentity))) return
+            // 恢复焦点后要求的新观测不能由失焦前已发出的读取替代
+            if (request.foreground > requestedForeground) continue
+            const restored = restoreConversationFromTrace(detail, {
+              previous: current,
+              preserveHistory: options.refresh,
+              model: detail.lastModel ?? target.model,
+              lastDeliveredSeq: target.lastSeq,
+              includeTaskTrace: true,
+            })
+            setHydrationState((current) => current?.threadId === threadId ? null : current)
+            setWorkspace((state) => {
+              const previous = state.conversations.find((item) => item.threadId === threadId)
+              if (controller.signal.aborted || !previous || state.currentThreadId !== threadId
+                || (requestIdentity && !matchesTaskTraceRequestIdentity(previous, requestIdentity))) return state
+              return upsertConversation(state, {
+                ...restored,
+                ...mergeConversationTitle(previous, restored),
+                isHydrated: true,
+              })
+            })
+            return
+          }
+        } catch {
+          const current = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
+          if (current && latestWorkspace.current.currentThreadId === threadId
+            && !controller.signal.aborted && hydrationRequests.current.get(threadId) === request
+            && (!requestIdentity || matchesTaskTraceRequestIdentity(current, requestIdentity))) {
+            setHydrationState({ threadId, status: 'failed' })
+            onToast('error', t('会话加载失败，请重试'))
+          }
+        } finally {
+          retention.release()
+          if (hydrationRequests.current.get(threadId) === request) {
+            hydrationRequests.current.delete(threadId)
+            setHydrationState((current) => (
+              current?.threadId === threadId && current.status === 'loading' ? null : current
+            ))
+          }
+        }
+      }),
     }
+    hydrationRequests.current.set(threadId, request)
+    return request.completion
   }, [
     followDetachedConversation,
     hydrateTaskTrace,
@@ -934,37 +970,38 @@ export function useWorkspaceHistory({
   ])
 
   useEffect(() => {
-    const threadId = workspace.currentThreadId
-    if (!refreshOnActivation || !threadId) return
-    let controller: AbortController | undefined
-    let stale = false
-    const refresh = () => {
-      if (document.visibilityState === 'hidden') return
+    let stale = document.visibilityState === 'hidden'
+    const markStale = () => { stale = true }
+    const refreshIfStale = () => {
+      if (!stale || document.visibilityState === 'hidden') return
       stale = false
-      controller?.abort()
-      controller = new AbortController()
-      void hydrateConversation(threadId, { refresh: true, signal: controller.signal })
+      latestForeground.current += 1
+      setForeground(latestForeground.current)
     }
-    const markStale = () => {
-      stale = true
-      if (document.visibilityState === 'hidden') controller?.abort()
-    }
-    const refreshIfStale = () => { if (stale) refresh() }
     const updateVisibility = () => {
       if (document.visibilityState === 'hidden') markStale()
       else refreshIfStale()
     }
-    refresh()
     window.addEventListener('blur', markStale)
     window.addEventListener('focus', refreshIfStale)
     document.addEventListener('visibilitychange', updateVisibility)
     return () => {
-      controller?.abort()
       window.removeEventListener('blur', markStale)
       window.removeEventListener('focus', refreshIfStale)
       document.removeEventListener('visibilitychange', updateVisibility)
     }
-  }, [hydrateConversation, refreshOnActivation, workspace.currentThreadId])
+  }, [])
+
+  const latestHydrateConversation = useRef(hydrateConversation)
+  latestHydrateConversation.current = hydrateConversation
+  useEffect(() => {
+    if (!activation || document.visibilityState === 'hidden') return
+    let disposed = false
+    void latestHydrateConversation.current(activation.threadId, { refresh: true }).then(() => {
+      if (!disposed) setSettledActivation(activation)
+    })
+    return () => { disposed = true }
+  }, [activation])
 
   const loadOlderTrace = useCallback(async (
     threadId: string,
@@ -1158,9 +1195,9 @@ export function useWorkspaceHistory({
       controller.abort()
       olderTraceRequests.current.delete(threadId)
     }
-    for (const [threadId, controller] of hydrationRequests.current) {
+    for (const [threadId, request] of hydrationRequests.current) {
       if (threadId === currentThreadId && threadIds.has(threadId)) continue
-      controller.abort()
+      request.controller.abort()
       hydrationRequests.current.delete(threadId)
     }
     for (const [threadId, controller] of taskTraceRequests.current) {
@@ -1178,7 +1215,7 @@ export function useWorkspaceHistory({
     historyAbortController.current?.abort()
     historySearchAbortController.current?.abort()
     historyBootstrapAbortController.current?.abort()
-    for (const controller of hydrationRequests.current.values()) controller.abort()
+    for (const request of hydrationRequests.current.values()) request.controller.abort()
     hydrationRequests.current.clear()
     prefetchedHistoryDetails.current.clear()
     for (const controller of olderTraceRequests.current.values()) controller.abort()
@@ -1200,6 +1237,7 @@ export function useWorkspaceHistory({
     isHistoryBootstrapped,
     historyBootstrapStatus,
     hydrationState,
+    isActivationRefreshing: activation !== null && settledActivation !== activation,
     taskTraceLoadFailed: selectedTaskTraceLoadFailed,
     loadMoreHistory,
     retryHistoryLoad,

@@ -19,6 +19,15 @@ async def database(tmp_path) -> AsyncIterator[Database]:
 
 
 @pytest_asyncio.fixture
+async def components_database(tmp_path) -> AsyncIterator[Database]:
+    """组件在独立的空库中通过自身入口初始化"""
+    async with Database(
+        f"sqlite+aiosqlite:///{tmp_path / 'components.db'}"
+    ) as resource:
+        yield resource
+
+
+@pytest_asyncio.fixture
 async def session(database: Database) -> AsyncIterator[AsyncSession]:
     """提供测试独占的异步 Session"""
 

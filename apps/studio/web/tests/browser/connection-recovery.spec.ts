@@ -10,7 +10,7 @@ for (const theme of ['light', 'dark']) {
       await page.addInitScript(({ user, theme }) => {
         localStorage.setItem('tinkerfin:theme', theme)
         localStorage.setItem('tinkerfin.auth.session', JSON.stringify({
-          token: 'browser-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user,
+          token: 'browser-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user,
         }))
       }, { user, theme })
       const submitted: unknown[] = []

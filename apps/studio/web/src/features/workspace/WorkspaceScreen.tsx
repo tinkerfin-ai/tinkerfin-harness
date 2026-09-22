@@ -29,6 +29,7 @@ import { Composer } from '../conversation/components/Composer'
 import { PlanQuestionComposer } from '../conversation/components/PlanQuestionComposer'
 import { PlanReviewCard } from '../conversation/components/PlanReviewCard'
 import { parseComposerSubmission } from '../conversation/composerCommand'
+import { useContextCompaction } from '../conversation/compaction/useContextCompaction'
 import { useAttachments } from '../conversation/useAttachments'
 import { ComposerModelPicker } from './components/ComposerModelPicker'
 import { Sidebar } from './components/Sidebar'
@@ -259,6 +260,7 @@ export function WorkspaceScreen({
     isHistoryBootstrapped,
     historyBootstrapStatus,
     hydrationState,
+    isActivationRefreshing,
     taskTraceLoadFailed,
     loadMoreHistory,
     retryHistoryLoad,
@@ -1040,16 +1042,31 @@ export function WorkspaceScreen({
     setModelPickerOpen(false)
   }
 
+  const compaction = useContextCompaction({
+    conversation, setWorkspace, streamRun, isActiveThread,
+    onNotice: message => pushToast('info', message),
+  })
+
+  const executeCompaction = () => {
+    if (!compaction.execute()) return false
+    messageWindow.restoreTail()
+    scrollConversationToBottomImmediately()
+    return true
+  }
+
   const send = () => {
     const submission = parseComposerSubmission(draft)
-    if (submission.kind === 'plan-off-unsupported') {
-      pushToast('info', t('请点击输入框中的 Plan 按钮关闭'))
+    if (!submission) return
+    if (submission.kind === 'compact') {
+      if (executeCompaction()) setDraft('')
       return
     }
-    if (submission.kind === 'plan-enable') {
-      setAgentMode('plan')
-      setDraft('')
-      pushToast('info', conversation.mode === 'plan' ? t('Plan 已开启') : t('已开启 Plan'))
+    if (submission.kind === 'compact-arguments-unsupported') {
+      pushToast('info', t('请单独使用 /compact，不附加其他内容'))
+      return
+    }
+    if (submission.kind === 'plan-off-unsupported') {
+      pushToast('info', t('请点击输入框中的 Plan 按钮关闭'))
       return
     }
     if (submission.kind === 'plan-message') {
@@ -1246,7 +1263,7 @@ export function WorkspaceScreen({
                 ? () => void messageWindow.retryReadingPosition()
                 : undefined}
               onRetryHistory={retryHistoryBootstrap}
-              onRetryHydration={() => void hydrateConversation(conversation.threadId)}
+              onRetryHydration={() => void hydrateConversation(conversation.threadId, { refresh: true })}
               onError={(message) => pushToast('error', message)}
               onRecoverConversation={() => void recoverConversation(conversation.threadId, pendingConversations.selectedRunId ?? undefined)}
               onRetryRun={retryRun}
@@ -1256,7 +1273,8 @@ export function WorkspaceScreen({
             <Composer
               value={draft}
               isRunning={isRunning}
-              canStop={Boolean(conversation.threadId)}
+              canStop={Boolean(conversation.threadId) && !compaction.saving}
+              stopDisabledReason={compaction.saving ? t('正在保存压缩结果') : undefined}
               stopPending={cancelPendingRunId === conversation.activeRunId}
               isHydrating={isConversationHydrating}
               hero={showConversationHero ? <EmptyConversationBrand /> : undefined}
@@ -1313,6 +1331,9 @@ export function WorkspaceScreen({
                 )
                 : undefined}
               taskTraceControl={taskTraceLauncher}
+              onChooseModel={() => setModelPickerOpen(true)}
+              onCompact={executeCompaction}
+              compactDisabledReason={compaction.disabledReason}
               accessControl={<AccessModePicker value={conversation.accessMode} onChange={selectAccessMode}
                 disabled={isRunning || Boolean(conversation.approval || conversation.planInteraction) || isConversationHydrating} />}
               modelControl={(
@@ -1374,6 +1395,7 @@ export function WorkspaceScreen({
               active={workspaceView === 'trace'}
               live={conversation.runStatus === 'streaming' || conversation.runStatus === 'detached'}
               observedAt={conversation.trace?.observedAt}
+              waitingForHistory={isActivationRefreshing}
             />
           </ErrorBoundary>
         )}

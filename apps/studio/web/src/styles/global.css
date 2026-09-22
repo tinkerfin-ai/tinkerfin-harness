@@ -17,7 +17,7 @@
   body {
     color: var(--color-text-primary);
     font-size: var(--type-ui-size);
-    font-weight: var(--weight-regular);
+    font-weight: var(--weight-ui);
     line-height: var(--type-ui-line);
     letter-spacing: 0;
     text-rendering: optimizeLegibility;
@@ -25,11 +25,25 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  strong,
+  b,
+  th,
+  button {
+    font-weight: var(--weight-ui);
+  }
+
   code,
   kbd,
   pre,
   samp {
     font-family: var(--font-code);
+    font-weight: var(--weight-regular);
     font-variant-ligatures: none;
   }
 
@@ -71,6 +85,12 @@
 
   button,
   [role='button'],
+  summary {
+    border-radius: var(--radius-button);
+  }
+
+  button,
+  [role='button'],
   [role='option'] {
     touch-action: manipulation;
   }
@@ -85,7 +105,7 @@
   input,
   textarea,
   select {
-    font-weight: var(--weight-regular);
+    font-weight: var(--weight-ui);
   }
 
   a {
@@ -120,7 +140,7 @@
     background: var(--color-layer-1);
     box-shadow: var(--shadow-2);
     color: var(--color-text-primary);
-    font-weight: var(--weight-semibold);
+    font-weight: var(--weight-ui);
     text-decoration: none;
     transition: transform var(--motion-fast) var(--ease-out);
   }

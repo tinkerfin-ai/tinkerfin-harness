@@ -16,7 +16,7 @@
   .workspace-main:has(.composer-dock.is-taken-over) .conversation-navigation { bottom: var(--space-4); }
   .conversation-navigation-mobile {
     pointer-events: auto;
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-button);
     background: var(--color-layer-1);
     box-shadow: var(--shadow-1);
   }
@@ -58,7 +58,7 @@
   .conversation-navigation-preview strong {
     font-size: var(--type-ui-size);
     line-height: var(--type-ui-line);
-    font-weight: var(--weight-medium);
+    font-weight: var(--weight-ui);
   }
   .conversation-navigation-item span:not(.ui-button__label),
   .conversation-navigation-preview p {

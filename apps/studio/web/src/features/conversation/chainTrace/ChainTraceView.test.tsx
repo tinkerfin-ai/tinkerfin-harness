@@ -186,6 +186,67 @@ describe('ChainTraceView', () => {
     }))
   })
 
+  it('压缩合并到上下文一行，详情页签各自展示输入和摘要', () => {
+    const compactNodes = [
+      node('compact', 'custom', 1, { name: 'context_compaction', contextKind: 'compaction', parentNodeId: 'input', request: { messages: [{ id: 'source', content: '原始选中消息' }] }, result: { status: 'not_reduced', generated_summary: '已生成的摘要文本', compacted_messages: 0 } }),
+      node('input', 'context', 1, { content: '实际系统提示词', contextKind: 'compaction' }),
+      node('summary-model', 'model', 3, { name: 'qwen3.8-max', parentNodeId: 'compact' }),
+    ]
+    useChainTrace.mockReturnValue({ state: { phase: 'ready', page: graphPage(compactNodes) }, retry: vi.fn() })
+    render(<ChainTraceView threadId="thread-compact" active live={false} />)
+    expect(row('上下文，压缩，已完成，查看详情')).toBeVisible()
+    expect(screen.queryByRole('button', { name: '压缩，压缩上下文，已完成，查看详情' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '模型，qwen3.8-max，已完成，查看详情' })).not.toBeInTheDocument()
+    const details = screen.getByRole('complementary', { name: '链路详情' })
+    expect(within(details).queryByText('实际系统提示词')).not.toBeInTheDocument()
+    expect(within(details).getByText('基本信息')).toBeVisible()
+    expect(within(details).queryByText('上下文未缩短，已保留原内容')).not.toBeInTheDocument()
+    expect(within(details).queryByText('生成的摘要')).not.toBeInTheDocument()
+    expect(within(details).queryByText('原始选中历史')).not.toBeInTheDocument()
+    expect(within(details).queryByText('摘要模型与用量')).not.toBeInTheDocument()
+    fireEvent.click(within(details).getByRole('tab', { name: '压缩内容' }))
+    expect(within(details).getByText('原始选中消息')).toBeVisible()
+    expect(within(details).queryByText('已生成的摘要文本')).not.toBeInTheDocument()
+    fireEvent.click(within(details).getByRole('tab', { name: '摘要' }))
+    expect(within(details).getByText('已生成的摘要文本')).toBeVisible()
+    expect(within(details).queryByText('原始选中历史')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /展开节点 input/ }))
+    expect(row('模型，qwen3.8-max，已完成，查看详情')).toBeVisible()
+  })
+
+  it.each([
+    [null, '正在整理上下文'],
+    [{ status: 'generating' }, '正在整理上下文'],
+    [{ status: 'saving', summary: '尚未采用的摘要' }, '正在保存压缩结果'],
+  ] as const)('压缩概述只显示基本信息，不展示进度或输入内容 %j', (result, expected) => {
+    const compactNodes = [
+      node('input', 'context', 1, { contextKind: 'compaction', status: 'running', completedAt: null }),
+      node('compact', 'custom', 1, { contextKind: 'compaction', parentNodeId: 'input', name: 'context_compaction', status: 'running', completedAt: null, request: { origin: 'manual', messages: [{ content: '只属于压缩内容页签' }] }, result }),
+    ]
+    useChainTrace.mockReturnValue({ state: { phase: 'ready', page: graphPage(compactNodes) }, retry: vi.fn() })
+    render(<ChainTraceView threadId="compacting" active live />)
+    const details = screen.getByRole('complementary', { name: '链路详情' })
+    expect(within(details).queryByText(expected)).not.toBeInTheDocument()
+    expect(within(details).getByText('基本信息')).toBeVisible()
+    expect(within(details).getByText('运行中')).toBeVisible()
+    expect(within(details).queryByText('本次模型请求没有最终系统提示词')).not.toBeInTheDocument()
+    expect(within(details).queryByText(/只属于压缩内容页签|generating|origin|尚未采用的摘要/)).not.toBeInTheDocument()
+  })
+
+  it.each([true, false])('筛选仅命中摘要模型时，执行图仍显示所属上下文（移动端 %s）', (mobile) => {
+    const compactNodes = [
+      node('input', 'context', 1, { contextKind: 'compaction' }),
+      node('compact', 'custom', 1, { name: 'context_compaction', contextKind: 'compaction', parentNodeId: 'input' }),
+      node('summary-model', 'model', 3, { name: 'qwen3.8-max', parentNodeId: 'compact' }),
+    ]
+    useChainTrace.mockReturnValue({ state: { phase: 'ready', page: {
+      ...graphPage(compactNodes), matchedNodeIds: ['summary-model'],
+    } }, retry: vi.fn() })
+    render(<ChainTraceView threadId="thread-compact" active live={false} mobile={mobile} />)
+    const sequence = screen.getByRole('region', { name: mobile ? '执行序列' : '调用时间线' })
+    expect(within(sequence).getByRole('button', { name: /选择 上下文/ })).toBeVisible()
+  })
+
   it('移动端点击节点进入详情并聚焦返回入口，不要求展开窗口', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320)
     const unavailable = vi.fn()
@@ -286,7 +347,7 @@ describe('ChainTraceView', () => {
     })
     render(<ChainTraceView threadId="thread-empty-context" active live={false} />)
 
-    fireEvent.click(row('上下文，不可用，已完成，查看详情'))
+    fireEvent.click(row('上下文，模型输入准备，已完成，查看详情'))
 
     expect(screen.getByText('本次模型请求没有最终系统提示词')).toBeVisible()
     expect(screen.queryByRole('tab', { name: '系统提示词' })).not.toBeInTheDocument()

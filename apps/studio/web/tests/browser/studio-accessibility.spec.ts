@@ -257,7 +257,7 @@ const markdownLayoutMessages: Message[] = [
     role: 'assistant',
     content: `# 一级标题
 
-第一段正文
+第一段正文 **重点内容**
 
 第二段正文
 
@@ -532,6 +532,7 @@ interface MockStudioOptions {
   paginationPageCount?: number
   pinError?: boolean
   traceError?: boolean
+  planActive?: boolean
   planQuestion?: boolean
   planQuestionForm?: JsonObject
   planReview?: boolean
@@ -548,6 +549,7 @@ async function mockStudio(page: Page, {
   paginationPageCount = 2,
   pinError = false,
   traceError = false,
+  planActive = false,
   planQuestion = false,
   planQuestionForm: planQuestionFormOverride,
   planReview = false,
@@ -774,7 +776,7 @@ async function mockStudio(page: Page, {
       reasoning: [],
       graph: graphNodes.length > 0 ? graph : emptyTraceGraph(traceAsOfSeq),
       state: {
-        root: planQuestion || planReview
+        root: planActive || planQuestion || planReview
           ? { tinkerfin_plan: { effectiveMode: 'plan' } }
           : {},
         subgraphs: {},
@@ -798,7 +800,7 @@ async function mockStudio(page: Page, {
     storageKey: 'tinkerfin.auth.session',
     session: {
       token: 'browser-token',
-      tokenType: 'Bearer',
+      serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user,
     },
@@ -1165,7 +1167,7 @@ test('操作与读取异常只显示一条全局 Toast，并保留独立恢复�
       expect(toastBounds.width).toBeLessThanOrEqual(Math.min(width - 24, 380))
       expect(toastBounds.height).toBeGreaterThanOrEqual(64)
       expect(toastBounds.x + toastBounds.width).toBeCloseTo(width - 12, 0)
-      expect(toastBounds.y).toBe(12)
+      expect(toastBounds.y).toBe(76)
       await expect(toast.locator('.toast-card__title')).toHaveCSS('white-space', 'nowrap')
       await expect(toast.locator('.toast-card__message')).toHaveCSS('text-align', 'start')
       await expect(toast).toHaveCSS('border-top-width', '1px')
@@ -1654,8 +1656,8 @@ test('Plan 澄清返回已作答单选题时保持选中项焦点且移出悬浮
   await expect(mobile).toBeFocused()
   await expect(mobile.locator('.plan-question-option-index svg')).toBeVisible()
   for (const [colorScheme, hoverBackground, focusBackground] of [
-    ['light', 'rgb(241, 243, 245)', 'rgb(235, 238, 242)'],
-    ['dark', 'rgb(44, 44, 46)', 'rgb(53, 54, 56)'],
+    ['light', 'rgb(236, 239, 243)', 'rgb(229, 232, 237)'],
+    ['dark', 'rgb(48, 48, 50)', 'rgb(58, 59, 61)'],
   ] as const) {
     await page.emulateMedia({ colorScheme })
     await page.evaluate((theme) => {
@@ -2218,7 +2220,7 @@ test('用户复制操作悬浮与聚焦显隐不改变消息几何', async ({ pa
   await expect(action).toHaveCSS('transition-duration', '0s')
 })
 
-test('文章型 Markdown 使用参考排版且表格保持可滚动', async ({ page }) => {
+test('界面统一字重且文章型 Markdown 保留语义排版与可滚动表格', async ({ page }, testInfo) => {
   await mockStudio(page, {
     conversationMessages: markdownLayoutMessages,
     expectedMessageText: '检查完整 Markdown 排版',
@@ -2226,9 +2228,16 @@ test('文章型 Markdown 使用参考排版且表格保持可滚动', async ({ p
   const markdown = page.locator('#markdown-layout-assistant .message-markdown')
   const userBubble = page.locator('#markdown-layout-user .message-markdown')
   const composer = page.locator('.composer-default:not(.is-taken-over) .composer')
+  const model = page.getByRole('button', { name: '选择模型', exact: true })
+  const access = page.getByRole('button', { name: '选择访问权限', exact: true })
+  const tabs = page.getByRole('tablist', { name: '会话视图' }).getByRole('tab')
+  const historyTitle = page.getByRole('button', { name: '打开会话：浏览器会话', exact: true }).getByText(/浏览器会话/)
+  const family = await model.evaluate(element => getComputedStyle(element).fontFamily)
+  await page.evaluate(() => document.fonts.ready)
 
   for (const colorScheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme })
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme }, colorScheme)
     for (const width of [320, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: 1200 })
       const layout = await markdown.evaluate((root) => {
@@ -2302,8 +2311,34 @@ test('文章型 Markdown 使用参考排版且表格保持可滚动', async ({ p
       expect(layout.th).toEqual(['14px', '16px', '600', '8px', '24px', '8px', '0px', '160px'])
       expect(layout.td).toEqual(['14px', '24px', '400', '10px', '24px', '10px', '0px', '160px'])
       expect(layout.hr).toEqual(['28px', '28px'])
+      for (const control of [model, access, ...await tabs.all(), page.getByRole('textbox', { name: '消息输入' })]) {
+        await expect(control).toHaveCSS('font-weight', '400')
+        await expect(control).toHaveCSS('font-family', family)
+      }
+      if (width >= 1024) {
+        await expect(historyTitle).toHaveCSS('font-weight', '400')
+        await expect(historyTitle).toHaveCSS('font-family', family)
+        await expect(page.locator('[data-history-thread-id="browser-thread"]')).toHaveCSS('background-color', colorScheme === 'light' ? 'rgb(229, 232, 237)' : 'rgb(58, 59, 61)')
+      }
+      await expect(markdown.getByText('重点内容', { exact: true })).toHaveCSS('font-weight', '700')
+      await expect(markdown.locator('pre code')).toHaveCSS('font-weight', '400')
+      await expect(markdown.locator('pre code')).toHaveCSS('font-family', /JetBrains Mono/)
+      await expect(markdown.getByRole('button', { name: '复制', exact: true })).toHaveCSS('font-weight', '400')
+      for (const trigger of [model, access]) {
+        await trigger.click()
+        const list = page.getByRole('listbox')
+        for (const option of await list.getByRole('option').all()) {
+          await expect(option).toHaveCSS('font-weight', '400')
+          await expect(option).toHaveCSS('font-family', family)
+        }
+        await list.press('Escape')
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await page.screenshot({ path: testInfo.outputPath(`typography-${colorScheme}-${width}.png`), animations: 'disabled' })
     }
   }
+  await page.locator('.new-chat').click()
+  await expect(historyTitle).toHaveCSS('font-weight', '400')
 })
 
 test('同批 Todos 与单个普通 Tool 保持公共中间间距', async ({ page }) => {
@@ -3099,6 +3134,8 @@ test('浅深主题的 Tool caption 对比度均达标，forced-colors 保留焦�
   const attachment = page.getByRole('button', { name: '添加本地附件' })
   await page.getByRole('textbox', { name: '消息输入' }).focus()
   await page.keyboard.press('Tab')
+  await expect(page.getByRole('button', { name: '打开命令和技能', exact: true })).toBeFocused()
+  await page.keyboard.press('Tab')
   await expect(attachment).toBeFocused()
   const outline = await attachment.evaluate((element) => getComputedStyle(element).outlineStyle)
   expect(outline).not.toBe('none')
@@ -3223,17 +3260,18 @@ test.describe('touch/coarse pointer', () => {
   })
 
   test('Plan、模型、命令和 Rail 控件满足触控目标尺寸', async ({ page }) => {
-    await mockStudio(page)
+    await mockStudio(page, { planActive: true })
     expect(await page.evaluate(() => matchMedia('(any-pointer: coarse)').matches)).toBe(true)
     await expect(page.locator('.ui-overlay-scrollbar__thumb').first()).toHaveCSS('pointer-events', 'none')
 
     const input = page.getByRole('textbox', { name: '消息输入' })
-    await input.fill('/plan')
-    await input.press('Enter')
-    await input.press('Enter')
     await expect(page.getByRole('button', { name: 'Plan 已开启，点击关闭' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '发送消息', exact: true })).toBeDisabled()
 
-    await page.getByRole('button', { name: '选择模型' }).click()
+    await page.getByRole('button', { name: '打开命令和技能', exact: true }).tap()
+    await page.getByRole('option', { name: /model 选择本会话使用的模型/ }).tap()
+    await expect(page.getByRole('listbox', { name: '命令和技能建议' })).toBeHidden()
+    await expect(page.getByRole('listbox', { name: '模型选项' })).toBeVisible()
     const modelHeights = await page.getByRole('option').evaluateAll((options) => (
       options.map((option) => option.getBoundingClientRect().height)
     ))
@@ -3246,6 +3284,9 @@ test.describe('touch/coarse pointer', () => {
     ))
     expect(commandHeights.length).toBeGreaterThan(0)
     expect(Math.min(...commandHeights)).toBeGreaterThanOrEqual(44)
+    await page.getByRole('option', { name: /plan 进入 Plan 模式/ }).tap()
+    await expect(input).toHaveValue('/plan ')
+    await expect(page.getByRole('button', { name: '发送消息', exact: true })).toBeDisabled()
 
     await page.setViewportSize({ width: 768, height: 844 })
     await expect(page.locator('.app-shell')).toHaveAttribute('data-sidebar-mode', 'rail')
@@ -3419,7 +3460,7 @@ for (const { approval, touch } of [{ approval: false, touch: false }, { approval
   })
 }
 
-test('审批确认按钮在浅深主题与四尺寸保持中性色实心胶囊样式', async ({ page }, testInfo) => {
+test('审批确认按钮在浅深主题与四尺寸保持中性色实心和统一圆角', async ({ page }, testInfo) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await mockStudio(page, { approval: true })
   const allow = page.getByRole('region', { name: '等待审批' }).getByRole('button', { name: '允许', exact: true })
@@ -3440,7 +3481,7 @@ test('审批确认按钮在浅深主题与四尺寸保持中性色实心胶囊�
       })
       expect(styles.background).toBe(styles.expected.background)
       expect(styles.color).toBe(styles.expected.color)
-      expect(styles.radius).toBeGreaterThanOrEqual(999)
+      expect(styles.radius).toBe(12)
     }
     await page.screenshot({ path: testInfo.outputPath(`approval-solid-${theme}.png`) })
   }

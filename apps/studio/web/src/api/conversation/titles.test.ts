@@ -16,7 +16,7 @@ it('标题来源和生成状态必须是字符串', () => {
 })
 
 beforeEach(() => saveAuthSession({
-  token: 'title-test', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z',
+  token: 'title-test', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z',
   user: { user_id: 1, username: 'test', display_name: '测试', avatar_url: null, roles: [], disabled: false },
 }))
 afterEach(() => { clearAuthSession(); vi.unstubAllGlobals() })

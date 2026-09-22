@@ -338,6 +338,7 @@ def _wrap_native_astream(
     mode: AgentMode,
     private_state_keys: frozenset[str],
     on_part: PartObserver[Mapping[str, object]] | None,
+    compaction: bool = False,
 ) -> AstreamT:
     """Bind one Definition stream to its Profile, identity, and Observer lifecycle.
 
@@ -362,7 +363,7 @@ def _wrap_native_astream(
         claim.claim()
         graph_input = bound.arguments.get("input")
         raw_config = bound.arguments.get("config", {})
-        input_kind = native_input_kind(graph_input)
+        input_kind = "compaction" if compaction else native_input_kind(graph_input)
         context = source_context(
             identity=identity,
             runtime_profile=tinkerfin._runtime_profile.profile_id,
@@ -424,6 +425,7 @@ def _create_graph_agui_stream(
     on_resume_checkpointed: AgUiResumeCheckpointObserver | None,
     on_resume_not_saved: (AgUiResumeNotSavedObserver | None),
     on_event: EventObserver | None,
+    compaction: bool = False,
 ) -> AgUiEventStream:
     """Create one lazy AG-UI stream from an already bound Graph call."""
 
@@ -448,7 +450,13 @@ def _create_graph_agui_stream(
     input_kind = (
         resume.mode
         if resume is not None
-        else ("branch" if parent_run_id is not None else "ordinary")
+        else (
+            "compaction"
+            if compaction
+            else "branch"
+            if parent_run_id is not None
+            else "ordinary"
+        )
     )
     context = source_context(
         identity=identity,
@@ -635,6 +643,7 @@ def _wrap_agui_astream(
     expose_subagent_events: bool,
     private_state_keys: frozenset[str],
     on_event: EventObserver | None,
+    compaction: bool = False,
 ) -> AstreamT:
     """Preserve the Graph input signature for an ordinary AG-UI run."""
 
@@ -680,6 +689,7 @@ def _wrap_agui_astream(
             on_resume_checkpointed=None,
             on_resume_not_saved=None,
             on_event=on_event,
+            compaction=compaction,
         )
 
     return cast(AstreamT, wrapped)
@@ -1180,11 +1190,19 @@ class _AgentDefinition:
         return await self._build_graph(mode=mode, spec=spec)
 
     async def _create_run_graph(
-        self, identity: RunIdentity, resources: RunResources, *, mode: AgentMode
+        self,
+        identity: RunIdentity,
+        resources: RunResources,
+        *,
+        mode: AgentMode,
+        compaction: bool = False,
     ) -> DeepAgentGraph:
         prepared = await prepare_agent_spec(self._spec.snapshot(), identity, resources)
         return await self._build_graph(
-            mode=mode, spec=prepared.spec, workspace=prepared.workspace
+            mode=mode,
+            spec=prepared.spec,
+            workspace=prepared.workspace,
+            compaction=compaction,
         )
 
     async def _build_graph(
@@ -1193,6 +1211,7 @@ class _AgentDefinition:
         mode: AgentMode | None,
         spec: AgentSpec[Any],
         workspace: PreparedWorkspace[object, BackendProtocol] | None = None,
+        compaction: bool = False,
     ) -> DeepAgentGraph:
         resolved_mode = resolve_agent_mode(mode, options=self._plan_options)
         native = await run_sync_owned(
@@ -1202,6 +1221,7 @@ class _AgentDefinition:
         if not callable(native_astream):
             raise TypeError("Runtime Profile Graph must expose a callable astream")
         effective = cast(_NativeAstream, native_astream)
+        inspect_astream = native.astream
         if self._plan_options is not None:
             from .plan._runtime import PlanCapableGraphRuntime
             from .plan._workflow import PlanningWorkflowGraph, create_planning_graph
@@ -1225,6 +1245,20 @@ class _AgentDefinition:
                 prefer_plan=resolved_mode == "plan",
             )
             effective = runtime.astream
+            inspect_astream = runtime.astream
+        if compaction:
+            from ._compaction import create_compaction_stream
+
+            effective = await run_sync_owned(
+                partial(
+                    create_compaction_stream,
+                    native=native,
+                    inspect_astream=inspect_astream,
+                    spec=spec,
+                    plan_enabled=self._plan_options is not None,
+                    runtime_profile=self._tinkerfin._runtime_profile,
+                )
+            )
         return DeepAgentGraph(
             astream=effective,
             driver=self._tinkerfin._runtime_profile.stream_driver,
@@ -1246,11 +1280,14 @@ class _AgentDefinition:
         context: object | None,
         on_part: PartObserver[Mapping[str, object]] | None,
         stream_options: Mapping[str, object],
+        compaction: bool = False,
     ) -> NativeGraphRunStream:
         """Build once and return one managed native stream for the common facade."""
 
         resolved_mode = resolve_agent_mode(mode, options=self._plan_options)
-        graph = await self._create_run_graph(identity, resources, mode=resolved_mode)
+        graph = await self._create_run_graph(
+            identity, resources, mode=resolved_mode, compaction=compaction
+        )
         astream = _wrap_native_astream(
             graph._astream,
             tinkerfin=self._tinkerfin,
@@ -1258,6 +1295,7 @@ class _AgentDefinition:
             mode=resolved_mode,
             private_state_keys=self._private_state_keys,
             on_part=on_part,
+            compaction=compaction,
         )
         return cast(
             "NativeGraphRunStream",
@@ -1289,11 +1327,14 @@ class _AgentDefinition:
         on_part: PartObserver[Mapping[str, object]] | None,
         on_event: EventObserver | None,
         stream_options: Mapping[str, object],
+        compaction: bool = False,
     ) -> AgUiEventStream:
         """Build once and return one managed AG-UI stream for the common facade."""
 
         resolved_mode = resolve_agent_mode(mode, options=self._plan_options)
-        graph = await self._create_run_graph(identity, resources, mode=resolved_mode)
+        graph = await self._create_run_graph(
+            identity, resources, mode=resolved_mode, compaction=compaction
+        )
         if resume_request is None:
             if input is None:
                 raise ValueError("ordinary AG-UI run requires input")
@@ -1310,6 +1351,7 @@ class _AgentDefinition:
                 expose_subagent_events=expose_subagent_events,
                 private_state_keys=self._private_state_keys,
                 on_event=on_event,
+                compaction=compaction,
             )
             return cast(
                 "AgUiEventStream",
@@ -1424,6 +1466,12 @@ class _AgentDefinition:
 
 def bind_agent(builder: TinkerFin, spec: AgentSpec[ContextT]) -> AgentRuntime[ContextT]:
     """Bind declared resources to one namespace without constructing a graph."""
+    from deepagents.middleware.summarization import (
+        SUMMARIZATION_EVENT_KEY,
+        SUMMARIZATION_SESSION_ID_KEY,
+    )
+
+    from ._compaction_observation import COMPACTION_MARKER
     from ._hitl_state import TOOL_REVIEW_CHANNEL
     from .runtime import AgentRuntime
 
@@ -1438,7 +1486,15 @@ def bind_agent(builder: TinkerFin, spec: AgentSpec[ContextT]) -> AgentRuntime[Co
     )
     store = None if spec.store is None else NamespaceStore(spec.store, namespace)
     state = compose_deep_agent_base_schema(spec.state_schema)
-    private_keys = frozenset({RESUME_METADATA_KEY, TOOL_REVIEW_CHANNEL})
+    private_keys = frozenset(
+        {
+            RESUME_METADATA_KEY,
+            TOOL_REVIEW_CHANNEL,
+            SUMMARIZATION_EVENT_KEY,
+            SUMMARIZATION_SESSION_ID_KEY,
+            COMPACTION_MARKER,
+        }
+    )
     middleware = tuple(spec.middleware)
     if builder._plan_options is not None:
         from .plan._handoff import create_plan_handoff_middleware

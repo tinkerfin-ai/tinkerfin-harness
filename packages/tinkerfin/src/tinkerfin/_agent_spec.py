@@ -67,6 +67,7 @@ class AgentSpec(Generic[ContextT]):
     tools: Sequence[ToolDefinition] = ()
     system_prompt: str | SystemMessage | None = None
     middleware: Sequence[AgentMiddlewareType] = ()
+    compaction_tool_enabled: bool = False
     subagents: Sequence[SubagentDefinition] = ()
     skills: Sequence[str] | None = None
     memory: Sequence[str] | None = None

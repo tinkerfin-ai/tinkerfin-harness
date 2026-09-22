@@ -5,6 +5,7 @@ from typing import cast
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
+from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 from starlette.types import ExceptionHandler, Lifespan
 
@@ -29,6 +30,15 @@ def create_application(
         title="TinkerFin Studio",
         version=__version__,
         lifespan=lifespan,
+    )
+    # 浏览器可从任意来源连接，认证仍使用显式 Bearer 令牌，不依赖 Cookie
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["Content-Disposition"],
+        allow_credentials=False,
     )
     application.add_exception_handler(
         ApplicationException,

@@ -231,7 +231,7 @@ describe('Studio Trace history integration', () => {
     }))
     saveAuthSession({
       token: 'app-token',
-      tokenType: 'Bearer',
+      serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user: TEST_USER,
     })
@@ -329,7 +329,7 @@ describe('Studio Trace history integration', () => {
       })
       await waitFor(() => expect(new URL(window.location.href).searchParams.get('thread')).toBe('thread-a'))
       }
-      await user.click(document.querySelector('.new-chat') as HTMLButtonElement)
+      await user.click(screen.getByText('新会话', { exact: true }))
       await user.type(input, '会话B{Enter}')
       await waitFor(() => expect(requests).toHaveLength(2))
       const second = requests[1]!
@@ -391,7 +391,7 @@ describe('Studio Trace history integration', () => {
     const view = render(<App />)
     try {
       await screen.findByText('来自 Trace 的历史回复')
-      await user.click(document.querySelector('.new-chat') as HTMLButtonElement)
+      await user.click(screen.getByText('新会话', { exact: true }))
       await user.type(screen.getByRole('textbox', { name: '消息输入' }), '后台会话{Enter}')
       await waitFor(() => expect(submitted).toBeDefined())
       const running = traceDetail({
@@ -454,7 +454,7 @@ describe('Studio Trace history integration', () => {
     const { unmount } = render(<App />)
     try {
       await screen.findByText('来自 Trace 的历史回复')
-      await user.click(document.querySelector('.new-chat') as HTMLButtonElement)
+      await user.click(screen.getByText('新会话', { exact: true }))
       const input = screen.getByRole('textbox', { name: '消息输入' })
       await user.type(input, '新草稿{Enter}')
       await waitFor(() => expect(submitted).toBeDefined())
@@ -738,7 +738,7 @@ describe('Studio Trace history integration', () => {
 
     expect(await screen.findByText('第二个会话的聊天内容')).toBeVisible()
     expect(screen.getByRole('tab', { name: '对话' })).toHaveAttribute('aria-selected', 'true')
-    await user.click(document.querySelector('.new-chat') as HTMLButtonElement)
+    await user.click(screen.getByText('新会话', { exact: true }))
     expect(screen.queryByRole('tablist', { name: '会话视图' })).not.toBeInTheDocument()
   })
 

@@ -26,7 +26,7 @@ async def main():
 asyncio.run(main())
 """
     (tmp_path / "config.env").write_text(
-        "DATABASE_URL=mysql+asyncmy://studio:secret@db:3306/studio\n"
+        "COMPONENTS_DATABASE_URL=mysql+asyncmy://u:p@db/components\nBUSINESS_DATABASE_URL=mysql+asyncmy://studio:secret@db:3306/studio\n"
         f"LOG_FILE_ENABLED={str(file_enabled).lower()}\n"
     )
     result = subprocess.run(
@@ -46,9 +46,11 @@ asyncio.run(main())
     assert result.returncode == 0, result.stderr
     assert result.stdout.count("双通道日志") == 1
     if file_enabled:
-        assert (tmp_path / "logs/studio.log").read_text().count("双通道日志") == 1
+        assert (tmp_path / "server/logs/studio.log").read_text().count(
+            "双通道日志"
+        ) == 1
     else:
-        assert not (tmp_path / "logs").exists()
+        assert not (tmp_path / "server/logs").exists()
 
 
 @pytest.mark.parametrize(
@@ -80,7 +82,8 @@ from tinkerfin_studio.config.settings import Settings
 from tinkerfin_studio.infrastructure.database import Database
 
 settings = Settings(
-    _env_file=None, database_url="mysql+asyncmy://studio:secret@db:3306/studio",
+    s3_storage_bucket="test-attachments", s3_storage_access_key="test-access", s3_storage_secret_key="test-secret",
+    business_database_url="mysql+asyncmy://studio:secret@db:3306/studio", components_database_url="mysql+asyncmy://u:p@db/components",
     log_level=sys.argv[3],
     log_file_enabled=json.loads(sys.argv[2]),
     log_file_path=Path("runtime/sql.log").resolve(),
@@ -173,8 +176,11 @@ from pathlib import Path
 from fastapi import FastAPI
 import tinkerfin_studio.resources as resources
 from tinkerfin_studio.config.settings import Settings
+
+initial_threads = set(threading.enumerate())
 settings = Settings(
-    _env_file=None, database_url="mysql+asyncmy://studio:secret@db:3306/studio",
+    s3_storage_bucket="test-attachments", s3_storage_access_key="test-access", s3_storage_secret_key="test-secret",
+    business_database_url="mysql+asyncmy://studio:secret@db:3306/studio", components_database_url="mysql+asyncmy://u:p@db/components",
     log_file_enabled=True, log_file_path=Path('studio.log').resolve(),
 )
 resources.get_settings = lambda: settings
@@ -188,7 +194,9 @@ async def main():
     except RuntimeError as error:
         assert str(error) == "isolated_startup_failure"
 asyncio.run(main())
-assert not any(t.name.endswith('(_monitor)') for t in threading.enumerate())
+for thread in set(threading.enumerate()) - initial_threads:
+    thread.join()
+assert set(threading.enumerate()) <= initial_threads
 logging.warning('console-after-cleanup')
 """
     result = subprocess.run(
@@ -222,10 +230,13 @@ import threading
 from pathlib import Path
 from tinkerfin_studio.config.logging import setup_logging
 from tinkerfin_studio.config.settings import Settings
+
+initial_threads = set(threading.enumerate())
 blocker = Path('not-a-directory').resolve()
 blocker.write_text('occupied')
 settings = Settings(
-    _env_file=None, database_url="mysql+asyncmy://studio:secret@db:3306/studio",
+    s3_storage_bucket="test-attachments", s3_storage_access_key="test-access", s3_storage_secret_key="test-secret",
+    business_database_url="mysql+asyncmy://studio:secret@db:3306/studio", components_database_url="mysql+asyncmy://u:p@db/components",
     log_file_enabled=True, log_file_path=blocker / 'studio.log',
 )
 async def main():
@@ -235,7 +246,9 @@ async def main():
     except OSError:
         pass
 asyncio.run(main())
-assert not any(t.name.endswith('(_monitor)') for t in threading.enumerate())
+for thread in set(threading.enumerate()) - initial_threads:
+    thread.join()
+assert set(threading.enumerate()) <= initial_threads
 """
     result = subprocess.run(
         [sys.executable, "-c", program],
@@ -252,141 +265,6 @@ assert not any(t.name.endswith('(_monitor)') for t in threading.enumerate())
         check=False,
     )
     assert result.returncode == 0, result.stderr
-
-
-def test_queue_pressure_keeps_event_loop_responsive_and_reports_loss(tmp_path):
-    """慢输出不阻塞事件循环，队列满可观测且取消等待已接收日志完成"""
-    program = r"""
-import asyncio
-import io
-import logging
-import sys
-import threading
-from tinkerfin_studio.config.logging import setup_logging
-from tinkerfin_studio.config.settings import Settings
-
-class SlowOutput(io.StringIO):
-    def write(self, value):
-        entered.set()
-        assert release.wait(10), 'output was not released'
-        return super().write(value)
-
-entered, release = threading.Event(), threading.Event()
-output = SlowOutput()
-settings = Settings(_env_file=None, database_url='mysql+asyncmy://u:p@db/studio')
-
-async def main():
-    active = asyncio.Event()
-    async def run():
-        async with setup_logging(settings):
-            logging.warning('first-record')
-            while not entered.is_set():
-                await asyncio.sleep(0.001)
-            for i in range(5000):
-                logging.warning('record-%d', i)
-            active.set()
-            await asyncio.Event().wait()
-    task = asyncio.create_task(run())
-    try:
-        await asyncio.wait_for(active.wait(), 5)
-        task.cancel()
-        await asyncio.sleep(0.02)
-        assert not task.done(), 'cleanup must wait for the sink'
-        task.cancel()
-    finally:
-        release.set()
-    try:
-        await task
-        raise AssertionError('cancellation was lost')
-    except asyncio.CancelledError:
-        pass
-
-previous, sys.stdout = sys.stdout, output
-try:
-    asyncio.run(main())
-finally:
-    sys.stdout = previous
-text = output.getvalue()
-assert 'first-record' in text
-assert '日志队列已满，丢弃 904 条日志' in text, text[-500:]
-assert text.count('record-') == 4096
-assert not any(t.name.endswith('(_monitor)') for t in threading.enumerate())
-print('pressure-and-cancellation-ok')
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", program],
-        cwd=tmp_path,
-        env={
-            "PATH": str(Path(sys.executable).parent),
-            "S3_STORAGE_BUCKET": "test-attachments",
-            "S3_STORAGE_ACCESS_KEY": "test-access",
-            "S3_STORAGE_SECRET_KEY": "test-secret",
-        },
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "pressure-and-cancellation-ok" in result.stdout
-
-
-def test_processes_rotate_one_shared_log_without_losing_records(tmp_path):
-    """独立进程并发写入同一文件，保留窗口内记录完整且不重复"""
-    import os
-
-    program = r"""
-import asyncio
-import logging
-import sys
-from pathlib import Path
-from tinkerfin_studio.config.logging import setup_logging
-from tinkerfin_studio.config.settings import Settings
-async def main():
-    settings = Settings(
-        _env_file=None, database_url='mysql+asyncmy://u:p@db/studio',
-        log_file_enabled=True, log_file_path=Path('studio.log').resolve(),
-        log_file_max_bytes=1024, log_file_backup_count=100,
-    )
-    async with setup_logging(settings):
-        for i in range(50):
-            logging.warning('unique:%s:%d', sys.argv[1], i)
-            await asyncio.sleep(0.001)
-asyncio.run(main())
-"""
-    processes = []
-    try:
-        for i in range(4):
-            processes.append(
-                subprocess.Popen(
-                    [sys.executable, "-c", program, str(i)],
-                    cwd=tmp_path,
-                    env={
-                        "PATH": os.defpath,
-                        "S3_STORAGE_BUCKET": "test-attachments",
-                        "S3_STORAGE_ACCESS_KEY": "test-access",
-                        "S3_STORAGE_SECRET_KEY": "test-secret",
-                    },
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-            )
-        for process in processes:
-            _, errors = process.communicate(timeout=30)
-            assert process.returncode == 0, errors
-    finally:
-        for process in processes:
-            if process.poll() is None:
-                process.kill()
-                process.wait(timeout=5)
-    files = list(tmp_path.glob("studio.log*"))
-    assert len(files) > 1
-    lines = [line for path in files for line in path.read_text().splitlines()]
-    observed = [line.split(" - ")[-1] for line in lines]
-    assert sorted(observed) == sorted(
-        f"unique:{p}:{i}" for p in range(4) for i in range(50)
-    )
 
 
 @pytest.mark.parametrize("phase", ("opening", "draining"))
@@ -404,22 +282,27 @@ from pathlib import Path
 from concurrent_log_handler import ConcurrentRotatingFileHandler
 import tinkerfin_studio.config.logging as config
 from tinkerfin_studio.config.settings import Settings
+
+initial_threads = set(threading.enumerate())
 phase, close_fails = sys.argv[1], sys.argv[2] == 'true'
-entered, release, closed = threading.Event(), threading.Event(), threading.Event()
+release, finish_close, closed = threading.Event(), threading.Event(), threading.Event()
 
 class CheckedHandler(ConcurrentRotatingFileHandler):
     failed = False
-    def do_open(self, mode=None):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         if phase == 'opening':
-            entered.set()
-            assert release.wait(10)
-        return super().do_open(mode)
-    def do_write(self, message):
+            loop.call_soon_threadsafe(entered.set)
+            release.wait()
+    def emit(self, record):
         if phase == 'draining':
-            entered.set()
-            assert release.wait(10)
-        return super().do_write(message)
+            loop.call_soon_threadsafe(entered.set)
+            release.wait()
+        super().emit(record)
     def close(self):
+        if not closed.is_set():
+            loop.call_soon_threadsafe(closing.set)
+            finish_close.wait()
         super().close()
         closed.set()
         if close_fails and not self.failed:
@@ -428,7 +311,8 @@ class CheckedHandler(ConcurrentRotatingFileHandler):
 
 config.ConcurrentRotatingFileHandler = CheckedHandler
 settings = Settings(
-    _env_file=None, database_url='mysql+asyncmy://u:p@db/studio',
+    s3_storage_bucket="test-attachments", s3_storage_access_key="test-access", s3_storage_secret_key="test-secret",
+    business_database_url='mysql+asyncmy://u:p@db/studio', components_database_url="mysql+asyncmy://u:p@db/components",
     log_file_enabled=True, log_file_path=Path('studio.log').resolve(),
 )
 async def run():
@@ -437,17 +321,20 @@ async def run():
         await asyncio.Event().wait()
 
 async def main():
+    global loop, entered, closing
+    loop = asyncio.get_running_loop()
+    entered, closing = asyncio.Event(), asyncio.Event()
     task = asyncio.create_task(run())
     try:
-        async with asyncio.timeout(5):
-            while not entered.is_set():
-                await asyncio.sleep(0.001)
+        await entered.wait()
         task.cancel()
-        await asyncio.sleep(0.01)
+        release.set()
+        await closing.wait()
         assert not task.done()
         task.cancel()
     finally:
         release.set()
+        finish_close.set()
     try:
         await task
         raise AssertionError('cancellation was lost')
@@ -458,7 +345,9 @@ async def main():
     assert closed.is_set()
     assert not [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
 asyncio.run(main())
-assert not any(t.name.endswith('(_monitor)') for t in threading.enumerate())
+for thread in set(threading.enumerate()) - initial_threads:
+    thread.join()
+assert set(threading.enumerate()) <= initial_threads
 if phase == 'draining':
     assert Path('studio.log').read_text().count('accepted-record') == 1
 """

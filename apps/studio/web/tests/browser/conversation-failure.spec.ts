@@ -28,7 +28,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
     await page.setViewportSize({ width, height: 960 })
     await page.addInitScript(({ user, theme }) => {
       localStorage.setItem('tinkerfin:theme', theme)
-      localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'test-only', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
+      localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'test-only', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
     }, { user, theme })
     const posts: unknown[] = []
     await page.route('**/api/**', async route => {

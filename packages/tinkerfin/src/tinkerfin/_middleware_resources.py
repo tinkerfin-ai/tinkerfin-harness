@@ -23,6 +23,7 @@ from langchain.agents.middleware import AgentMiddleware
 from ._store import validate_store_backend
 from ._store_backend import async_store_backend
 from ._subagents import validate_subagent_resources
+from ._summarization import ObservedCompactionTool, observe_summarization
 
 _Middleware = AgentMiddleware[Any, Any, Any]
 
@@ -73,7 +74,7 @@ def prepare_middleware_resources(
             # The nested automatic middleware may also occur in the public stack.
             summary = prepare(item._summarization)
             assert isinstance(summary, SummarizationMiddleware)
-            result: _Middleware = SummarizationToolMiddleware(
+            result: _Middleware = ObservedCompactionTool(
                 summary, system_prompt=item.system_prompt
             )
         elif type(item) is FilesystemMiddleware:
@@ -108,7 +109,7 @@ def prepare_middleware_resources(
             result.sources = list(item.sources)
             result.source_labels = list(item.source_labels)
         elif type(item) is SummarizationMiddleware:
-            result = copy(item)
+            result = observe_summarization(item)
             result._backend = async_store_backend(item._backend)
         else:
             result = item

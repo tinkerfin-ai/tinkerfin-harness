@@ -20,19 +20,20 @@ export function TraceNodeCopy({
   showPreview?: boolean
 }) {
   const { t } = useI18n()
-  const nodePreview = traceNodePreview(node)
+  const nodePreview = node.kind === 'context' && node.contextKind === 'compaction' ? t('压缩') : traceNodePreview(node, t)
   const previewFallback = traceNodePreviewFallback(node, t)
   const preview = nodePreview || previewFallback || ''
   const fallbackPreview = !nodePreview && Boolean(previewFallback)
   const title = node.kind.endsWith('_message') || node.kind === 'context'
+    || (node.kind === 'custom' && node.contextKind === 'compaction')
     ? ''
-    : node.kind === 'tool' ? node.name : traceNodeName(node)
+    : node.kind === 'tool' ? node.name : traceNodeName(node, t)
   return (
     <span className="chain-trace-node-copy">
       {(title || showKind) && (
         <span className="chain-trace-node-title">
           {title && <strong>{title}</strong>}
-          {showKind && <small>{traceKindCompactLabel(node.kind, t)}</small>}
+          {showKind && <small>{traceKindCompactLabel(node, t)}</small>}
         </span>
       )}
       {showPreview && preview && (
@@ -54,7 +55,7 @@ export function TraceNodeType({ node }: { node: TraceGraphNode }) {
   const category = traceVisualCategory(node.kind)
   return (
     <span className={`chain-trace-type-pill is-category-${category}`}>
-      {traceKindCompactLabel(node.kind, t)}
+      {traceKindCompactLabel(node, t)}
     </span>
   )
 }

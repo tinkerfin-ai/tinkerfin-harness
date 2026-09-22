@@ -34,7 +34,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 FROM python-base
 LABEL org.opencontainers.image.title="TinkerFin Studio Server" \
       org.opencontainers.image.source="https://github.com/tinkerfin-ai/tinkerfin-harness"
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 STUDIO_ENV_FILE=/app/.env
 WORKDIR /app
 RUN groupadd --gid 10001 tinkerfin \
     && useradd --uid 10001 --gid 10001 --create-home tinkerfin \

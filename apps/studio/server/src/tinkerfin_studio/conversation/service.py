@@ -33,8 +33,10 @@ from tinkerfin_studio.api.errors import (
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.conversation.error_logging import log_conversation_error
 from tinkerfin_studio.conversation.repository import ConversationRepository
-from tinkerfin_studio.conversation.request import ChatRequest
+from tinkerfin_studio.conversation.request import ChatRequest, CompactRequest
 from tinkerfin_studio.conversation.run_preparation import (
+    ChatIntent,
+    CompactIntent,
     PreparedRunRequest,
     ResumeChatIntent,
     StartChatIntent,
@@ -187,25 +189,33 @@ class ConversationChatService:
 
     async def start(
         self,
-        request: ChatRequest,
+        request: ChatRequest | CompactRequest,
         *,
         last_event_id: str | None,
+        thread_id: str = "",
     ) -> PreparedChat:
         """完成业务校验、Agent 事件源准备和 Messaging 预握手"""
 
         after = parse_last_event_id(last_event_id)
-        model = await AgentModelService(
+        models = AgentModelService(
             AgentModelRepository(self._session, user_id=self._user.user_id)
-        ).resolve(request.forwarded_props.model)
-        request = await self._resolve_attachments(request, model)
-        image_model = await AgentModelService(
-            AgentModelRepository(self._session, user_id=self._user.user_id)
-        ).resolve_image_model()
-        intent = classify_intent(request)
+        )
+        intent: ChatIntent
+        if isinstance(request, CompactRequest):
+            model = await models.resolve(request.model)
+            image_model = None
+            intent = CompactIntent(thread_id=thread_id)
+        else:
+            model = await models.resolve(request.forwarded_props.model)
+            request = await self._resolve_attachments(request, model)
+            image_model = await models.resolve_image_model()
+            intent = classify_intent(request)
+            thread_id = request.thread_id
         run_preparer, prepared, execution = await self._prepare_execution(
             request,
             intent=intent,
             model=model,
+            thread_id=thread_id,
         )
         try:
             events = self._create_events(
@@ -231,7 +241,7 @@ class ConversationChatService:
             execution=execution,
             run_preparer=run_preparer,
             title_text=request.user_input.text
-            if isinstance(intent, StartChatIntent)
+            if isinstance(request, ChatRequest) and isinstance(intent, StartChatIntent)
             else "",
             model=model,
             image_model=image_model,
@@ -270,10 +280,11 @@ class ConversationChatService:
 
     async def _prepare_execution(
         self,
-        request: ChatRequest,
+        request: ChatRequest | CompactRequest,
         *,
-        intent: StartChatIntent | ResumeChatIntent,
+        intent: ChatIntent,
         model: AgentModelConfig,
+        thread_id: str,
     ) -> tuple[ConversationRunPreparer, PreparedRunRequest, PreparedExecution]:
         """完成 thread 解析、权威快照和短事务 run 注册"""
 
@@ -283,7 +294,8 @@ class ConversationChatService:
             attachments=self._resources.attachments,
         )
         resolved_thread = await run_preparer.resolve_thread(
-            request,
+            thread_id=thread_id,
+            run_id=request.run_id,
             intent=intent,
         )
         thread = resolved_thread.thread
@@ -297,10 +309,11 @@ class ConversationChatService:
             thread_id=thread.thread_id,
         )
         if refreshed is None:
-            if request.thread_id:
+            if thread_id:
                 raise BusinessException(ConversationErrorCode.NOT_FOUND)
             resolved_thread = await run_preparer.resolve_thread(
-                request,
+                thread_id=thread_id,
+                run_id=request.run_id,
                 intent=intent,
             )
             thread = resolved_thread.thread
@@ -336,6 +349,7 @@ class ConversationChatService:
             request,
             user_id=self._user.user_id,
             thread_id=thread.thread_id,
+            access_mode=thread.last_access_mode,
         )
         try:
             execution = await run_preparer.register(
@@ -352,13 +366,28 @@ class ConversationChatService:
     def _create_events(
         self,
         *,
-        intent: StartChatIntent | ResumeChatIntent,
+        intent: ChatIntent,
         execution: PreparedExecution,
         prepared: PreparedRunRequest,
         model: AgentModelConfig,
         image_model: AgentModelConfig | None,
     ) -> AgUiRunStream:
         """创建会话事件流，在执行开始时准备运行资源"""
+
+        runtime = build_conversation_runtime(
+            resources=self._resources,
+            user_id=self._user.user_id,
+            thread_id=execution.thread.thread_id,
+            model_config=model,
+            image_model=image_model,
+            access_mode=prepared.access_mode,
+        )
+        if isinstance(intent, CompactIntent):
+            # 框架整理已保存的会话上下文，复用会话投递与取消，不提交草稿或业务工具调用
+            return runtime.agui.open_compaction(
+                thread_id=prepared.identity.thread_id,
+                run_id=prepared.identity.run_id,
+            )
 
         resume_request = None
         if isinstance(intent, StartChatIntent):
@@ -368,14 +397,6 @@ class ConversationChatService:
                 raise RuntimeError("恢复请求缺少 AgUiResumeRequest")
             messages = None
             resume_request = execution.resume
-        runtime = build_conversation_runtime(
-            resources=self._resources,
-            user_id=self._user.user_id,
-            thread_id=execution.thread.thread_id,
-            model_config=model,
-            image_model=image_model,
-            access_mode=prepared.access_mode,
-        )
 
         async def record_resume_checkpoint(checkpoint: AgUiResumeCheckpoint) -> None:
             if not isinstance(intent, ResumeChatIntent):

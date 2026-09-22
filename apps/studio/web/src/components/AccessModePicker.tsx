@@ -16,7 +16,7 @@ export function AccessModePicker({ value, onChange, disabled = false }: {
 }) {
   const [open, setOpen] = useState(false)
   const { t } = useI18n()
-  const icon = (option: AccessMode) => option === 'full' ? <KeyRound size={14} /> : <FilePenLine size={14} />
+  const icon = (option: AccessMode) => option === 'full' ? <KeyRound size={16} /> : <FilePenLine size={16} />
   return <ListboxPicker value={value} options={options} open={open} onOpenChange={setOpen}
     onChange={onChange} disabled={disabled} triggerLabel={t('选择访问权限')} triggerTooltip={t(labels[value])} listboxLabel={t('访问权限选项')}
     rootClassName="ui-compact-picker ui-compact-picker--access-mode" triggerClassName="ui-compact-picker-trigger" listboxClassName="ui-compact-picker-options"

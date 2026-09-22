@@ -83,8 +83,14 @@ class RunFact(TraceFactBase, frozen=True):
             raise ValueError("Run lifecycle facts require the root scope")
         if self.phase == "started" and self.input_kind is None:
             raise ValueError("started Run facts require input_kind")
-        if self.phase == "input" and self.input_kind not in {"ordinary", "branch"}:
-            raise ValueError("input Run facts require ordinary or branch input_kind")
+        if self.phase == "input" and self.input_kind not in {
+            "ordinary",
+            "branch",
+            "compaction",
+        }:
+            raise ValueError(
+                "input Run facts require ordinary, branch or compaction input_kind"
+            )
         if self.phase == "resumed" and self.input_kind not in {
             "continuation",
             "resume",
@@ -367,6 +373,11 @@ class ModelCallFact(TraceFactBase, frozen=True):
     ]
     call_id: str = Field(min_length=1, max_length=2048)
     parent_call_id: str | None = Field(default=None, min_length=1, max_length=1024)
+    contribution_id: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="Explicit context action owning this provider call",
+    )
     agent_name: str | None = Field(default=None, min_length=1, max_length=1024)
     provider: str | None = Field(default=None, min_length=1, max_length=1024)
     model: str | None = Field(default=None, min_length=1, max_length=1024)
@@ -514,6 +525,7 @@ class ContextContributionFact(TraceFactBase, frozen=True):
     kind: Literal["context.contribution"] = "context.contribution"
     phase: Literal[
         "started",
+        "generated",
         "completed",
         "failed",
         "cancelled",
@@ -522,7 +534,18 @@ class ContextContributionFact(TraceFactBase, frozen=True):
     ]
     contribution_id: str = Field(min_length=1, max_length=2048)
     parent_call_id: str | None = Field(default=None, min_length=1, max_length=1024)
-    context_kind: Literal["memory", "guardrail", "retrieval", "custom"]
+    model_call_ids: tuple[str, ...] = Field(
+        default=(),
+        exclude_if=lambda value: not value,
+        description="Provider calls explicitly owned by this action",
+    )
+    compaction_origin: Literal["manual", "automatic", "tool"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    parent_tool_call_id: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    context_kind: Literal["memory", "guardrail", "retrieval", "custom", "compaction"]
     name: str = Field(min_length=1, max_length=1024)
     input: CapturedValue | None = None
     output: CapturedValue | None = None
@@ -535,7 +558,7 @@ class ContextContributionFact(TraceFactBase, frozen=True):
 
         if self.phase != "started" and self.input is not None:
             raise ValueError("only started contribution facts may carry input")
-        if self.phase != "completed" and self.output is not None:
+        if self.phase not in {"completed", "generated"} and self.output is not None:
             raise ValueError("only completed contribution facts may carry output")
         if self.phase == "failed" and self.error_type is None:
             raise ValueError("failed contribution facts require an error type")

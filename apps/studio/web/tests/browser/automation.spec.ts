@@ -11,7 +11,7 @@ async function prepare(page: Page, language = 'zh-CN') {
   await page.clock.setFixedTime(new Date('2026-09-10T07:00:00Z'))
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.addInitScript(({ user, language }) => {
-    localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user }))
+    localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user }))
     localStorage.setItem('tinkerfin:language', language)
   }, { user, language })
   await page.route('**/api/**', async (route) => {
@@ -547,7 +547,7 @@ test('自动化刷新保留页面，新会话的标志、输入框和提示整�
 })
 
 
-test('功能菜单常规字重，日期范围两端完整显示且适应浅深主题四尺寸', async ({ page }, testInfo) => {
+test('功能菜单使用统一界面字重，日期范围两端完整显示且适应浅深主题四尺寸', async ({ page }, testInfo) => {
   await prepare(page)
   for (const theme of ['light', 'dark']) {
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme }, theme)

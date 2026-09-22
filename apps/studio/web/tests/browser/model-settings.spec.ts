@@ -30,7 +30,7 @@ async function setup(page: Page, crowded = false) {
 }
 async function openSettings(page: Page, language: 'zh-CN'|'en', theme: 'light'|'dark') {
   await page.addInitScript(({user,language,theme}) => {
-    localStorage.setItem('tinkerfin.auth.session',JSON.stringify({token:'isolated-browser-test',tokenType:'Bearer',expiresAt:'2099-01-01T00:00:00.000Z',user}))
+    localStorage.setItem('tinkerfin.auth.session',JSON.stringify({token:'isolated-browser-test',serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer',expiresAt:'2099-01-01T00:00:00.000Z',user}))
     localStorage.setItem('tinkerfin:language',language)
     localStorage.setItem('tinkerfin:theme',theme)
   }, {user,language,theme})
@@ -233,6 +233,9 @@ for (const language of ['zh-CN', 'en'] as const) for (const theme of ['light', '
     await advanced.locator('summary').click()
     const editor = dialog.getByRole('textbox', {name:en?'Advanced parameters JSON':'高级参数 JSON', exact:true})
     await expect(editor).toBeVisible()
+    await expect(editor).toHaveCSS('font-weight', '400')
+    await expect(editor).toHaveCSS('font-family', /JetBrains Mono/)
+    for (const heading of await dialog.getByRole('heading').all()) await expect(heading).toHaveCSS('font-weight', '400')
     await editor.fill('{')
     await expect(editor).toHaveAttribute('aria-invalid','true')
     for (const width of [320,1440]) {

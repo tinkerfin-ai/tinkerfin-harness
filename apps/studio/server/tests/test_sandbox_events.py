@@ -115,7 +115,8 @@ from tinkerfin_sandbox import (
 from tinkerfin_studio.config.logging import setup_logging
 from tinkerfin_studio.config.settings import Settings
 settings = Settings(
-    _env_file=None, database_url="mysql+asyncmy://studio:secret@db:3306/studio",
+    s3_storage_bucket="test-attachments", s3_storage_access_key="test-access", s3_storage_secret_key="test-secret",
+    business_database_url="mysql+asyncmy://studio:secret@db:3306/studio", components_database_url="mysql+asyncmy://u:p@db/components",
     log_level=sys.argv[1], log_file_enabled=json.loads(sys.argv[2]),
     log_file_path=Path("runtime/studio.log").resolve(),
 )

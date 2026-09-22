@@ -1,4 +1,4 @@
-import type { ChatRequestPayload, ConversationAgUiEvent } from './types'
+import type { ChatRequestPayload, CompactRequestPayload, ConversationAgUiEvent } from './types'
 import { conversationChatUrl } from './config'
 import { ConversationError } from './errors'
 import { parseConversationAgUiEvent } from './eventParser'
@@ -50,6 +50,22 @@ async function* streamConversationEvents(
 
 export const startConversationRun = streamConversationEvents
 export const resumeConversationRun = streamConversationEvents
+
+export async function* compactConversationContext(
+  payload: CompactRequestPayload,
+  signal?: AbortSignal,
+  afterSeq?: number,
+): AsyncGenerator<StreamedAgUiEvent> {
+  const response = await requestEventStream(`/api/conversation/${encodeURIComponent(payload.threadId)}/compact`, {
+    method: 'POST',
+    body: { runId: payload.runId, model: payload.model },
+    signal,
+    headers: afterSeq == null ? undefined : { 'Last-Event-ID': String(afterSeq) },
+    suppressGlobalError: true,
+  })
+  if (!response.body) throw new ConversationError('stream_body_missing')
+  yield* parseAgUiSseStream(response.body, signal)
+}
 
 export interface CancelConversationRunResult {
   cancelled: boolean

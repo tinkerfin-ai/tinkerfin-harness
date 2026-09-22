@@ -1,5 +1,5 @@
 @layer ui {
-  .ui-code-text { font-family: var(--font-code); }
+  .ui-code-text { font-family: var(--font-code); font-weight: var(--weight-regular); }
   .ui-code-text :is(.ui-code-token--comment, .ui-code-token--prolog, .ui-code-token--doctype) { color: var(--color-code-comment); }
   .ui-code-text :is(.ui-code-token--keyword, .ui-code-token--boolean, .ui-code-token--atrule) { color: var(--color-code-keyword); }
   .ui-code-text :is(.ui-code-token--string, .ui-code-token--char, .ui-code-token--attr-value, .ui-code-token--inserted) { color: var(--color-code-string); }

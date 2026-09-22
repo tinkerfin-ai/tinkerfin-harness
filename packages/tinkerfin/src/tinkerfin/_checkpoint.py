@@ -547,6 +547,9 @@ class NamespaceCheckpointer(BaseCheckpointSaver[V]):
             else merged,
             new_versions,
         )
+        from ._compaction_observation import compaction_checkpointed
+
+        await compaction_checkpointed(checkpoint["channel_values"], new_versions)
         return self._logical_config(saved, identity)
 
     async def aput_writes(

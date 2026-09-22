@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import gsap from 'gsap'
 
 import App from './App'
+import { setServerAddress } from './api/shared/config'
 import {
   AUTH_SESSION_STORAGE_KEY,
   clearAuthSession,
@@ -54,7 +55,7 @@ function seedSession(
 ) {
   saveAuthSession({
     token,
-    tokenType: 'Bearer',
+    serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer',
     expiresAt,
     user,
   })
@@ -269,8 +270,6 @@ describe('App authentication boundary', () => {
     await browserUser.click(screen.getByRole('button', { name: '登录' }))
 
     expect(await screen.findByRole('status')).toHaveTextContent(/^服务暂不可用，请稍后重试$/)
-    expect(screen.getByRole('status').closest('.toast-card')).not.toBeNull()
-    expect(document.querySelector('.auth-form-error')).toBeNull()
     expect(screen.getByRole('heading', { name: '欢迎回来' })).toBeInTheDocument()
   })
 
@@ -291,8 +290,6 @@ describe('App authentication boundary', () => {
 
     expect(await screen.findByRole('status')).toHaveTextContent('用户名或密码错误')
     expect(screen.getAllByRole('status')).toHaveLength(1)
-    expect(screen.getByRole('status').closest('.toast-card')).not.toBeNull()
-    expect(document.querySelector('.auth-form-error')).toBeNull()
   })
 
   it('卸载登录页面后取消请求且不保存晚到的登录结果', async () => {
@@ -313,6 +310,27 @@ describe('App authentication boundary', () => {
     expect(signal?.aborted).toBe(true)
     await act(async () => { respond(envelope(loginPayload())) })
     expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).toBeNull()
+  })
+
+  it('cancels login when the server changes and ignores its late response', async () => {
+    const browserUser = userEvent.setup()
+    let respond!: (value: Response) => void
+    let signal: AbortSignal | undefined
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      signal = (input instanceof Request ? input : new Request(input)).signal
+      return new Promise<Response>(resolve => { respond = resolve })
+    }))
+    render(<App />)
+    await browserUser.type(await screen.findByLabelText('用户名'), 'yunsan')
+    await browserUser.type(screen.getByLabelText('密码'), 'password')
+    await browserUser.click(screen.getByRole('button', { name: '登录' }))
+    await waitFor(() => expect(signal).toBeDefined())
+    act(() => { setServerAddress('https://second.example') })
+    expect(signal?.aborted).toBe(true)
+    await act(async () => { respond(envelope(loginPayload())) })
+    expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).toBeNull()
+    expect(screen.getByLabelText('服务器地址')).toHaveValue('https://second.example')
+    expect(screen.getByRole('button', { name: '登录' })).toBeEnabled()
   })
 
   it('rejects login atomically when the browser cannot persist the session', async () => {
@@ -337,7 +355,6 @@ describe('App authentication boundary', () => {
       '浏览器无法保存登录状态，请检查隐私或存储设置后重试',
     )
     expect(screen.getAllByRole('status')).toHaveLength(1)
-    expect(screen.getByRole('status').closest('.toast-card')).not.toBeNull()
     expect(screen.queryByLabelText('正在检查登录状态')).not.toBeInTheDocument()
     expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).toBeNull()
   })

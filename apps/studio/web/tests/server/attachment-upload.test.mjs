@@ -34,6 +34,12 @@ test('真实跨域表单直传保留文件与取消，业务凭据仅发送给�
   })
   const permits = new Map()
   const upstream = http.createServer(async (request, response) => {
+    response.setHeader('Access-Control-Allow-Origin', '*')
+    if (request.method === 'OPTIONS') {
+      response.setHeader('Access-Control-Allow-Methods', 'GET,POST')
+      response.setHeader('Access-Control-Allow-Headers', 'content-type,authorization')
+      response.end(); return
+    }
     const chunks = []
     for await (const chunk of request) chunks.push(chunk)
     apiRequests.push({ url: request.url, authorization: request.headers.authorization, bytes: Buffer.concat(chunks) })
@@ -55,17 +61,21 @@ test('真实跨域表单直传保留文件与取消，业务凭据仅发送给�
     await listenOnLoopback(objectServer)
     const target = await listenOnLoopback(upstream)
     await withViteTestServer({ root: webRoot, configFile: false, cacheDir: cache,
-      appType: 'custom', server: { proxy: { '/api': { target } } },
+      appType: 'custom',
     }, async ({ vite, origin }) => {
       vite.middlewares.use('/__upload_test__', (_, res) => { res.setHeader('Content-Type', 'text/html'); res.end('<html><body>Upload test</body></html>') })
       const browser = await chromium.launch()
       try {
         const page = await browser.newPage()
         await page.goto(`${origin}/__upload_test__`)
-        await page.evaluate(() => localStorage.setItem('tinkerfin.auth.session', JSON.stringify({
+        await page.evaluate(target => {
+          localStorage.setItem('tinkerfin.server-address', target)
+          localStorage.setItem('tinkerfin.auth.session', JSON.stringify({
+          serverAddress: target,
           token: 'isolated-upload-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z',
           user: { user_id: 1, username: 'test', display_name: '附件测试', avatar_url: null, roles: [], disabled: false },
-        })))
+          }))
+        }, target)
         const result = await page.evaluate(async () => {
           const { uploadAttachment } = await import('/src/features/conversation/attachments/client.ts')
           const progress = []

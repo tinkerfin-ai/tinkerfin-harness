@@ -199,7 +199,7 @@ async function mockTodoTraceStudio(page: Page, {
     language,
     session: {
       token: 'todo-browser-token',
-      tokenType: 'Bearer',
+      serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user,
     },

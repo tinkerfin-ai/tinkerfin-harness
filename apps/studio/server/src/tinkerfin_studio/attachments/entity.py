@@ -6,7 +6,7 @@ from pydantic import JsonValue
 from sqlalchemy import JSON, BigInteger, DateTime, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from tinkerfin_studio.infrastructure.database import Base
+from tinkerfin_studio.infrastructure.database import MYSQL_TABLE_OPTIONS, Base
 
 
 class AttachmentFile(Base):
@@ -16,7 +16,7 @@ class AttachmentFile(Base):
     __table_args__ = (
         Index("ix_conversation_attachments_owner", "user_id", "thread_id"),
         Index("ix_conversation_attachments_cleanup", "thread_id", "created_at"),
-        {"comment": "会话上传和生成附件的持久化引用"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "会话上传和生成附件的持久化引用"},
     )
     id: Mapped[str] = mapped_column(
         String(32),
@@ -70,7 +70,7 @@ class AttachmentCollection(Base):
     __tablename__ = "attachment_collections"
     __table_args__ = (
         Index("ix_attachment_collections_owner_task", "user_id", "task_id"),
-        {"comment": "自动化任务配置和运行附件的持久归属"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "自动化任务配置和运行附件的持久归属"},
     )
     id: Mapped[str] = mapped_column(
         String(36),
@@ -101,7 +101,7 @@ class AttachmentReference(Base):
     __tablename__ = "attachment_references"
     __table_args__ = (
         Index("ix_attachment_references_file", "attachment_id"),
-        {"comment": "自动化附件集合与文件引用，由服务校验归属"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "自动化附件集合与文件引用，由服务校验归属"},
     )
     collection_id: Mapped[str] = mapped_column(
         String(36), primary_key=True, comment="附件集合ID"

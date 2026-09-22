@@ -16,13 +16,19 @@ from contextlib import AbstractAsyncContextManager
 from contextvars import ContextVar
 from functools import partial
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, overload
+from uuid import uuid4
 
 from deepagents.graph import DeepAgentState
 from deepagents.middleware.filesystem import FilesystemPermission
 from langchain.agents.middleware import InterruptOnConfig
 from langchain.agents.middleware.types import InputAgentState
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import (
+    HumanMessage,
+    SystemMessage,
+    convert_to_messages,
+    message_chunk_to_message,
+)
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.pregel.main import All, Durability, RunControl, StreamMode
@@ -54,6 +60,7 @@ from ._agent_spec import (
     SubagentDefinition,
     ToolDefinition,
 )
+from ._compaction_observation import CompactionOperation
 from ._failure_evidence import select_failure
 from ._lazy_run import AgUiRunStream, NativeRunStream
 from ._observation import (
@@ -68,6 +75,7 @@ from ._run_resources import RunResources
 from ._runtime_streams import _validate_timeout
 from ._tasks import OwnedOperationFailures, join_task
 from ._terminal_observer import TerminalCallbackObserver, TerminalObserver
+from .compaction import CompactionResult
 from .coordination import RunCoordinator
 from .deep_agent import _AgentDefinition, bind_agent
 from .errors import (
@@ -781,6 +789,7 @@ class TinkerFin:
     __slots__ = (
         "_attachments",
         "_checkpointer",
+        "_compaction_tool_enabled",
         "_namespace",
         "_observers",
         "_plan_options",
@@ -846,6 +855,7 @@ class TinkerFin:
         self._observers: tuple[RuntimeObserver, ...] = ()
         self._plan_options: PlanOptions | None = None
         self._attachments: AttachmentSupport | None = None
+        self._compaction_tool_enabled = False
 
     @overload
     def build(
@@ -952,6 +962,7 @@ class TinkerFin:
             tools=tools if tools is not None else (),
             system_prompt=system_prompt,
             middleware=middleware,
+            compaction_tool_enabled=self._compaction_tool_enabled,
             subagents=subagents if subagents is not None else (),
             skills=skills,
             memory=memory,
@@ -967,6 +978,37 @@ class TinkerFin:
             attachments=self._attachments,
         )
         return bind_agent(self, spec)
+
+    def with_compaction_tool(self, *, enabled: bool = True) -> TinkerFin:
+        """Let the main agent request context compression through its native tool.
+
+        The tool shares the effective summarization middleware's model, retention,
+        backend and eligibility rules. It runs within the current conversation;
+        declared subagents and the read-only Planner do not inherit this option.
+
+        Args:
+            enabled: Whether the main agent receives ``compact_conversation``.
+
+        Returns:
+            An independent builder retaining its resources and other options.
+
+        Raises:
+            TypeError: ``enabled`` is not a boolean.
+        """
+        if type(enabled) is not bool:
+            raise TypeError("enabled must be a bool")
+        configured = TinkerFin(
+            checkpointer=self._checkpointer,
+            run_coordinator=self._run_coordinator,
+            store=self._store,
+            runtime_profile=self._runtime_profile,
+        )
+        configured._namespace = self._namespace
+        configured._observers = self._observers
+        configured._plan_options = self._plan_options
+        configured._attachments = self._attachments
+        configured._compaction_tool_enabled = enabled
+        return configured
 
     def with_attachments(self, support: AttachmentSupport) -> TinkerFin:
         """Configure authorized attachment access for the selected models.
@@ -995,6 +1037,7 @@ class TinkerFin:
         configured._plan_options = self._plan_options
         configured._namespace = self._namespace
         configured._attachments = support
+        configured._compaction_tool_enabled = self._compaction_tool_enabled
         return configured
 
     def with_observer(
@@ -1037,6 +1080,7 @@ class TinkerFin:
         )
         configured._plan_options = self._plan_options
         configured._observers = observers
+        configured._compaction_tool_enabled = self._compaction_tool_enabled
         configured._namespace = self._namespace
         configured._attachments = self._attachments
         return configured
@@ -1116,6 +1160,7 @@ class TinkerFin:
         configured._observers = self._observers
         configured._namespace = self._namespace
         configured._attachments = self._attachments
+        configured._compaction_tool_enabled = self._compaction_tool_enabled
         if enabled:
             clarification = create_clarification_binding(
                 clarification_schema,
@@ -1158,6 +1203,7 @@ class TinkerFin:
             runtime_profile=self._runtime_profile,
         )
         configured._namespace = value
+        configured._compaction_tool_enabled = self._compaction_tool_enabled
         configured._observers = self._observers
         configured._plan_options = self._plan_options
         configured._attachments = self._attachments
@@ -1207,11 +1253,69 @@ class AgentRuntime(Generic[ContextT]):
 
     @property
     def agui(self) -> RuntimeAgUi:
-        """Access AG-UI history in this Runtime's namespace with a borrowed source."""
+        """Access AG-UI operations and history in this Runtime's namespace."""
         require_agui()
         from .agui import RuntimeAgUi
 
-        return RuntimeAgUi._create(self._namespace)
+        return RuntimeAgUi._create(self)
+
+    async def compact(
+        self,
+        *,
+        thread_id: str,
+        run_id: str,
+        context: ContextT | None = None,
+    ) -> CompactionResult:
+        """Summarize older saved context without adding conversation messages.
+
+        This operation requires a checkpointer and an idle conversation. It shares
+        the configured coordinator and workspace lifecycle with ordinary runs.
+        Hosts must use the same execution boundary for chatting and compression.
+        Cancellation stops generation; after persistence starts the caller must
+        inspect the saved result before asserting that context was unchanged.
+
+        Args:
+            thread_id: Conversation to compress in this Runtime's namespace.
+            run_id: Identity of this compression operation.
+            context: Context matching the schema supplied to build().
+
+        Returns:
+            A saved summary or the reason that no compression was applied.
+
+        Raises:
+            ValueError: No checkpointer is configured.
+            TinkerFinLifecycleError: Pending work prevents compression.
+            BaseException: Generation, persistence, observation or cleanup fails.
+        """
+        from ._compaction import COMPACTION_STATE_KEY
+
+        identity = self.run_identity(thread_id, run_id)
+        stream = NativeRunStream._create(
+            identity,
+            partial(
+                self._open_native_prepared,
+                identity,
+                input={"messages": []},
+                mode="default",
+                context=context,
+                compaction=True,
+                stream_mode=["messages", "tasks", "values", "custom"],
+            ),
+            coordinator=self._run_coordinator,
+        )
+        result: CompactionResult | None = None
+        try:
+            async for part in stream:
+                canonical = stream._take_frame(part).canonical
+                if isinstance(canonical, NativeValuesStreamPart) and canonical.ns == ():
+                    payload = canonical.data.get(COMPACTION_STATE_KEY)
+                    if payload is not None:
+                        result = CompactionResult.model_validate(payload)
+        finally:
+            await stream.aclose()
+        if result is None:
+            raise TinkerFinLifecycleError("compression completed without a result")
+        return result
 
     @property
     def namespace(self) -> str:
@@ -1288,7 +1392,7 @@ class AgentRuntime(Generic[ContextT]):
         identity = self.run_identity(thread_id, run_id)
         self._validate_run_binding(identity=identity, on_part=on_native_part)
         resolve_agent_mode(mode, options=self._plan_options)
-        self._bind_native_invocation(
+        bound = self._bind_native_invocation(
             self._runtime_profile.astream_signature,
             (input, config),
             {key: value for key, value in stream_options.items() if value is not None},
@@ -1299,7 +1403,7 @@ class AgentRuntime(Generic[ContextT]):
             partial(
                 self._open_native_prepared,
                 identity,
-                input=input,
+                input=bound.arguments["input"],
                 mode=mode,
                 config=config,
                 context=context,
@@ -1583,7 +1687,7 @@ class AgentRuntime(Generic[ContextT]):
         AgUiLifecycleEventFactory.validate_parent_run_id(
             parent_run_id, identity=identity
         )
-        self._bind_native_invocation(
+        bound = self._bind_native_invocation(
             self._runtime_profile.astream_signature,
             (input, config),
             {key: value for key, value in stream_options.items() if value is not None},
@@ -1595,7 +1699,7 @@ class AgentRuntime(Generic[ContextT]):
                 self._open_agui_prepared,
                 identity,
                 messages=messages,
-                input=input,
+                input=bound.arguments["input"],
                 resume=resume,
                 parent_run_id=parent_run_id,
                 mode=mode,
@@ -1628,6 +1732,7 @@ class AgentRuntime(Generic[ContextT]):
         config: RunnableConfig | None = None,
         context: object | None = None,
         on_native_part: PartObserver[Mapping[str, object]] | None = None,
+        compaction: bool = False,
         **stream_options: object,
     ) -> NativeGraphRunStream:
         """Prepare one bound Native execution after admission."""
@@ -1654,13 +1759,14 @@ class AgentRuntime(Generic[ContextT]):
                     context=context,
                     on_part=on_native_part,
                     stream_options=stream_options,
+                    compaction=compaction,
                 )
                 stream._adopt_resources(resources)
                 await stream._ready()
                 return stream
             except Exception as error:  # noqa: BLE001 - Runtime owns failed Observation
                 setup_error = error
-                input_kind = native_input_kind(input)
+                input_kind = "compaction" if compaction else native_input_kind(input)
                 source = source_context(
                     identity=identity,
                     runtime_profile=self._runtime_profile.profile_id,
@@ -1679,6 +1785,8 @@ class AgentRuntime(Generic[ContextT]):
                 async def failed_source() -> AsyncIterator[Mapping[str, object]]:
                     if False:  # pragma: no cover - establish async iterator shape
                         yield {}
+                    if compaction:
+                        await CompactionOperation("manual").fail(setup_error)
                     raise setup_error
 
                 failed_stream = self._run_native(
@@ -1712,6 +1820,7 @@ class AgentRuntime(Generic[ContextT]):
         include_subagent_events: bool = True,
         on_native_part: PartObserver[Mapping[str, object]] | None = None,
         on_agui_event: EventObserver | None = None,
+        compaction: bool = False,
         **stream_options: object,
     ) -> AgUiEventStream:
         """Prepare one bound AG-UI execution and settle resume failures."""
@@ -1754,6 +1863,7 @@ class AgentRuntime(Generic[ContextT]):
                     on_part=on_native_part,
                     on_event=on_agui_event,
                     stream_options=stream_options,
+                    compaction=compaction,
                 )
                 stream._adopt_resources(resources)
                 await stream._ready()
@@ -1791,6 +1901,7 @@ class AgentRuntime(Generic[ContextT]):
                     input=input,
                     config=config,
                     resume_request=resume,
+                    compaction=compaction,
                 )
                 failed_stream._adopt_resources(resources)
                 await failed_stream._ready()
@@ -1843,6 +1954,7 @@ class AgentRuntime(Generic[ContextT]):
         config: object = None,
         resume: AgUiResumeBinding | None = None,
         resume_request: AgUiResumeRequest | None = None,
+        compaction: bool = False,
     ) -> AgUiEventStream:
         """Create one observed AG-UI lifecycle for a pre-Graph setup failure.
 
@@ -1861,6 +1973,7 @@ class AgentRuntime(Generic[ContextT]):
             resume_request: Untrusted framework-owned resume intent when binding
                 resolution failed. It is never converted into a native command or
                 treated as validated checkpoint evidence.
+            compaction: Whether the failed preparation belongs to context compression.
 
         Returns:
             A single-use AG-UI stream with one standard initialization error terminal.
@@ -1894,12 +2007,16 @@ class AgentRuntime(Generic[ContextT]):
         if resume is not None and resume_request is not None:
             raise ValueError("resume and resume_request are mutually exclusive")
         input_kind = (
-            resume.mode
-            if resume is not None
+            "compaction"
+            if compaction
             else (
-                "resume"
-                if resume_request is not None
-                else ("branch" if parent_run_id is not None else "ordinary")
+                resume.mode
+                if resume is not None
+                else (
+                    "resume"
+                    if resume_request is not None
+                    else ("branch" if parent_run_id is not None else "ordinary")
+                )
             )
         )
         source_input = (
@@ -1927,6 +2044,8 @@ class AgentRuntime(Generic[ContextT]):
         async def failed_parts() -> AsyncIterator[Mapping[str, object]]:
             if False:  # pragma: no cover - supplies the async iterator shape
                 yield {}
+            if compaction:
+                await CompactionOperation("manual").fail(error)
             raise error
 
         stream = self._run_agui(
@@ -1974,15 +2093,33 @@ class AgentRuntime(Generic[ContextT]):
         *,
         identity: RunIdentity,
     ) -> inspect.BoundArguments:
-        """Delegate the complete upstream call contract to the selected Profile."""
+        """Bind execution and observation to the same user message identities."""
 
-        return self._runtime_profile.stream_driver.bind_invocation(
+        bound = self._runtime_profile.stream_driver.bind_invocation(
             signature,
             args,
             options,
             identity=identity,
             runtime_profile=self._runtime_profile.profile_id,
         )
+        graph_input = bound.arguments.get("input")
+        if isinstance(graph_input, dict):
+            raw_messages = graph_input.get("messages")
+            if isinstance(raw_messages, list):
+                messages = list(raw_messages)
+                for index, message in enumerate(convert_to_messages(raw_messages)):
+                    if isinstance(message, HumanMessage):
+                        message = message_chunk_to_message(message)
+                        # LangGraph add_messages assigns IDs after RunInput capture.
+                        # Normalize user input and assign missing IDs without mutating
+                        # callers so tracing and state refer to the same message.
+                        messages[index] = (
+                            message.model_copy(update={"id": str(uuid4())})
+                            if message.id is None
+                            else message
+                        )
+                bound.arguments["input"] = {**graph_input, "messages": messages}
+        return bound
 
     def _run_native(
         self,

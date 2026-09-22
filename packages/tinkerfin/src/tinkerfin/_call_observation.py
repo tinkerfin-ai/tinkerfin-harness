@@ -244,6 +244,7 @@ class _ModelCallState:
     parent_call_id: str | None
     namespace: tuple[str, ...]
     agent_name: str | None
+    internal: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,11 +334,22 @@ class RuntimeCallHandler(AsyncCallbackHandler):
         )
         raw_options: object = kwargs.get("options")
         provider, model = _provider_and_model(metadata, invocation_map)
+        from langchain.agents.middleware.internal_call_transformer import (
+            internal_call_metadata,
+        )
+
+        internal = all(
+            (metadata or {}).get(key) == value
+            for key, value in internal_call_metadata().items()
+        )
+        from ._compaction_observation import _SUMMARY_OPERATION
+
         call_id = str(run_id)
         state = _ModelCallState(
             parent_call_id=self._call_parent(parent_run_id, metadata),
             namespace=_callback_namespace(metadata),
             agent_name=_agent_name(metadata),
+            internal=internal,
         )
         observed_at, monotonic_ns = _stamp()
         observation = ModelCallObservation(
@@ -346,6 +358,7 @@ class RuntimeCallHandler(AsyncCallbackHandler):
             monotonic_ns=monotonic_ns,
             phase="started",
             call_id=call_id,
+            contribution_id=_SUMMARY_OPERATION.get(),
             parent_call_id=state.parent_call_id,
             graph_namespace=state.namespace,
             agent_name=state.agent_name,
@@ -360,6 +373,9 @@ class RuntimeCallHandler(AsyncCallbackHandler):
             raise ValueError("model callback run ID started more than once")
         self._models[call_id] = state
         await self._hub.observe(observation)
+        operation = self._hub.compactions.get(_SUMMARY_OPERATION.get() or "")
+        if operation is not None:
+            await operation.model_started(call_id)
         await self._hub.force(ObservationBoundary.CALL_STARTED)
         if not _SYNC_CALLBACK.get():
             self._call_tokens[call_id] = _CURRENT_CALL_ID.set(call_id)
@@ -427,7 +443,7 @@ class RuntimeCallHandler(AsyncCallbackHandler):
                 parent_call_id=state.parent_call_id,
                 graph_namespace=state.namespace,
                 agent_name=state.agent_name,
-                output_message_ids=output_message_ids,
+                output_message_ids=() if state.internal else output_message_ids,
             )
         )
 
@@ -507,8 +523,10 @@ class RuntimeCallHandler(AsyncCallbackHandler):
                 agent_name=state.agent_name,
                 usage=usage,
                 response_metadata=response_metadata,
-                output_message_ids=output_message_ids,
-                tool_call_ids=tool_call_ids,
+                # LangChain marks middleware summaries as internal calls. Keep
+                # usage and failures observable without creating chat messages.
+                output_message_ids=() if state.internal else output_message_ids,
+                tool_call_ids=() if state.internal else tool_call_ids,
                 error_type=error_type,
                 error_message=error_message,
                 failure_origin=failure_origin,
@@ -771,7 +789,7 @@ async def trace_contribution(
         BaseException: The contribution body or active Observer fails.
     """
 
-    if kind not in {"memory", "guardrail", "retrieval", "custom"}:
+    if kind not in {"memory", "guardrail", "retrieval", "custom", "compaction"}:
         raise ValueError("kind must be memory, guardrail, retrieval, or custom")
     if not isinstance(name, str):
         raise TypeError("name must be text")

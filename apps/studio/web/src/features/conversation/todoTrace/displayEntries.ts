@@ -1,8 +1,10 @@
 import type { ConversationRunFailure } from '../../../api/conversation/history'
 import type { TodoGroup } from '../../../api/conversation/taskTrace'
 import type { Conversation, Message } from '../../../types'
+import type { ContextCompaction } from '../compaction/state'
 
 export type ConversationDisplayEntry =
+  | { type: 'compaction'; operation: ContextCompaction }
   | { type: 'run-failure'; message: Message; failure: ConversationRunFailure }
   | { type: 'message'; message: Message }
   | { type: 'tools'; messages: Message[] }
@@ -124,7 +126,7 @@ export const buildConversationDisplayEntries = (
   }
   const failures = new Map((conversation.runFailures ?? []).map(failure => [failure.runId, failure]))
   let question: Message | undefined
-  return entries.flatMap((entry, index): ConversationDisplayEntry[] => {
+  const visible = entries.flatMap((entry, index): ConversationDisplayEntry[] => {
     if (entry.type === 'message' && entry.message.role === 'user') question = entry.message
     const next = entries[index + 1]
     const turnEnded = !next || (next.type === 'message' && next.message.role === 'user')
@@ -133,4 +135,14 @@ export const buildConversationDisplayEntries = (
       ? [entry, { type: 'run-failure', message: question, failure }]
       : [entry]
   })
+  for (const operation of conversation.compactions ?? []) {
+    const anchor = conversation.messages.findIndex(message => message.id === operation.afterMessageId)
+    const next = visible.findIndex(entry => {
+      if (entry.type === 'compaction') return false
+      const message = entry.type === 'tools' ? entry.messages[0] : entry.message
+      return conversation.messages.indexOf(message) > anchor
+    })
+    visible.splice(next < 0 ? visible.length : next, 0, { type: 'compaction', operation })
+  }
+  return visible
 }

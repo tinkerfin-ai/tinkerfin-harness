@@ -20,7 +20,7 @@ async function openConversation(page: Page, content: string, { theme = 'light', 
   if (running) snapshot.status = { ...snapshot.status, execution: 'running' }
   await beforeOpen?.(snapshot)
   await page.addInitScript(({ user, theme, locale }) => {
-    localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user }))
+    localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user }))
     localStorage.setItem('tinkerfin:theme', theme)
     localStorage.setItem('tinkerfin:language', locale)
   }, { user, theme, locale })
@@ -234,17 +234,21 @@ for (const theme of ['light', 'dark'] as const) {
       await page.setViewportSize({ width, height: 960 })
       const metrics = []
       for (const block of await blocks.all()) {
-        const header = block.locator('figcaption')
         const button = block.getByRole('button', { name: /^复制(?:源码)?$/ })
         await expect(button).toHaveText('')
-        const headBox = (await header.boundingBox())!
-        const buttonBox = (await button.boundingBox())!
-        metrics.push({
-          background: await header.evaluate(element => getComputedStyle(element).backgroundColor),
-          height: headBox.height,
-          right: headBox.x + headBox.width - buttonBox.x - buttonBox.width / 2,
-          top: buttonBox.y + buttonBox.height / 2 - headBox.y,
-        })
+        // 相对位置在同一次页面计算中读取，避免响应式布局或滚动更新跨越两次测量
+        metrics.push(await button.evaluate(element => {
+          const header = element.closest('figcaption')
+          if (!header) throw new Error('代码复制按钮缺少表头')
+          const headBox = header.getBoundingClientRect()
+          const buttonBox = element.getBoundingClientRect()
+          return {
+            background: getComputedStyle(header).backgroundColor,
+            height: headBox.height,
+            right: headBox.right - buttonBox.x - buttonBox.width / 2,
+            top: buttonBox.y + buttonBox.height / 2 - headBox.y,
+          }
+        }))
       }
       for (const metric of metrics.slice(1)) expect(metric).toEqual(metrics[0])
       await message.screenshot({ path: testInfo.outputPath(`source-headers-${theme}-${width}.png`) })

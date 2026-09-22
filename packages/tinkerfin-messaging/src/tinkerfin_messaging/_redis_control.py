@@ -9,6 +9,7 @@ __all__ = [
     "_keys_for_handle",
     "_raise_stream_deleted",
     "_read_control",
+    "_read_notifications",
     "_reconcile_current_run_status",
     "_run_snapshot",
     "_scope",
@@ -18,7 +19,6 @@ __all__ = [
     "_snapshot_text",
     "_socket_timeout_budget",
     "_wait_block_ms",
-    "_wait_for_snapshot_change",
 ]
 
 import asyncio
@@ -35,7 +35,6 @@ from redis.exceptions import TimeoutError as RedisTimeoutError
 from tinkerfin_contracts import RunIdentity
 
 from ._identity import required_identifier, required_identity, thread_key
-from ._messaging_boundary import _join_owned_task
 from ._messaging_ledger import BackendRunHandle
 from ._redis_scripts import (
     _BEGIN_DELETE_SCRIPT,
@@ -48,6 +47,13 @@ from ._redis_scripts import (
     _READ_CONTROL_SCRIPT,
     _RENEW_SCRIPT,
     _RUN_SNAPSHOT_SCRIPT,
+)
+from ._tasks import (
+    TaskOutcome,
+    capture,
+    join_owned_task,
+    retain_failure,
+    select_failure,
 )
 from .backend import (
     FinalRunStatus,
@@ -246,7 +252,6 @@ class _RedisStreamScope:
     channel_meta: str
     control: str
     delete_lease: str
-    signals: str
     base: str
     stream_base: str
 
@@ -260,7 +265,6 @@ class _RedisKeys:
     channel_meta: str
     control: str
     delete_lease: str
-    signals: str
     meta: str
     run_key: str
     lease_key: str
@@ -401,8 +405,9 @@ async def finish(
             keys.meta,
             keys.run_key,
             keys.lease_key,
-            keys.signals,
             self._expirations_key,
+            self._notifications_key,
+            self._notification_counter_key,
         ],
         [
             str(generation),
@@ -430,7 +435,12 @@ async def request_cancel(self: RedisBackend, handle: BackendRunHandle) -> bool:
     await self._settled_run_snapshot(keys, handle.identity)
     response = await self._eval(
         _CANCEL_SCRIPT,
-        [keys.control, keys.run_key, keys.signals],
+        [
+            keys.control,
+            keys.run_key,
+            self._notifications_key,
+            self._notification_counter_key,
+        ],
         [str(keys.generation)],
     )
     code = self._text(response[0])
@@ -578,7 +588,8 @@ async def _claim_generation_cleanup(
                     keys.meta,
                     keys.delete_lease,
                     active_lease_key,
-                    keys.signals,
+                    self._notifications_key,
+                    self._notification_counter_key,
                 ],
                 [
                     str(generation),
@@ -925,7 +936,6 @@ def _scope(
         channel_meta=f"{base}:channel",
         control=f"{stream_base}:control",
         delete_lease=f"{stream_base}:delete-lease",
-        signals=f"{stream_base}:signals",
         base=base,
         stream_base=stream_base,
     )
@@ -953,7 +963,6 @@ def _keys(
         channel_meta=scope.channel_meta,
         control=scope.control,
         delete_lease=scope.delete_lease,
-        signals=scope.signals,
         meta=f"{generation_base}:meta",
         run_key=f"{generation_base}:run:{run_digest}",
         lease_key=f"{generation_base}:lease:{run_digest}",
@@ -1083,7 +1092,6 @@ async def _is_current_generation(self: RedisBackend, keys: _RedisKeys) -> bool:
             channel_meta=keys.channel_meta,
             control=keys.control,
             delete_lease=keys.delete_lease,
-            signals=keys.signals,
             base=keys.base,
             stream_base=keys.stream_base,
         )
@@ -1108,15 +1116,16 @@ async def _run_snapshot(
         "run snapshot",
         self._client.eval(
             _RUN_SNAPSHOT_SCRIPT,
-            8,
+            9,
             keys.control,
             keys.meta,
             keys.run_key,
             keys.lease_key,
             keys.messages,
-            keys.signals,
             keys.channel_meta,
             self._expirations_key,
+            self._notifications_key,
+            self._notification_counter_key,
             str(keys.generation),
             "__none__" if after is None else str(after),
             str(self._retention_ms),
@@ -1376,24 +1385,23 @@ async def _settled_run_snapshot(
     return snapshot
 
 
-async def _wait_for_snapshot_change(
+async def _read_notifications(
     self: RedisBackend,
-    keys: _RedisKeys,
-    snapshot: _RunSnapshot,
-) -> None:
-    """Block on durable data or lifecycle signals, then require a new snapshot."""
+    *,
+    after: int,
+) -> _RedisStreamRead:
+    """Read one bounded metadata batch with cancellation-safe connection ownership."""
 
     blocking_client = self._client.client()
     closing = False
-    close_error: Exception | None = None
-    read_error: BaseException | None = None
 
     # The task owns the pinned client from initialization through close. HTTP response
     # cancellation can abandon a nested async-generator await before its outer finally
     # resumes; keeping cleanup inside the loop-owned task prevents that transport race
     # from leaking the connection. The caller still cancels and joins the task normally.
-    async def read() -> None:
-        nonlocal closing, close_error, read_error
+    async def read() -> _RedisStreamRead:
+        nonlocal closing
+        read_error: BaseException | None = None
         try:
             await _redis_call(
                 "blocking client initialization",
@@ -1408,15 +1416,12 @@ async def _wait_for_snapshot_change(
             connection.socket_timeout = None
             try:
                 async with asyncio.timeout(socket_timeout):
-                    await _redis_call(
+                    return await _redis_call(
                         "stream wait",
                         blocking_client.xread(
-                            {
-                                keys.messages: f"{snapshot.end_seq}-0",
-                                keys.signals: f"{snapshot.signal_cursor}-0",
-                            },
-                            count=1,
-                            block=self._wait_block_ms(snapshot.lease_ttl_ms),
+                            {self._notifications_key: f"{after}-0"},
+                            count=128,
+                            block=self._wait_block_ms(),
                         ),
                     )
             except TimeoutError as error:
@@ -1437,16 +1442,32 @@ async def _wait_for_snapshot_change(
             closing = True
             try:
                 await _redis_call("blocking client close", blocking_client.aclose())
-            except Exception as error:
-                close_error = error
+            except BaseException as error:
                 if read_error is None:
                     raise
-                read_error.add_note(
+                current = asyncio.current_task()
+                if (
+                    isinstance(read_error, asyncio.CancelledError)
+                    and current is not None
+                    and current.cancelling()
+                ):
+                    # Only this reader's owner can stop this pinned read. Its stop
+                    # request has completed; an independent close failure still
+                    # needs to reach that owner as an ordinary or control failure.
+                    failure = error
+                    retain_failure(failure, read_error)
+                else:
+                    failure = select_failure(read_error, error)
+                failure.add_note(
                     f"Redis blocking client close also failed: {type(error).__name__}: {error}"
                 )
+                raise failure
+
+    async def captured_read() -> TaskOutcome[_RedisStreamRead]:
+        return await capture(read())
 
     read_task = asyncio.create_task(
-        read(),
+        captured_read(),
         name="tinkerfin-messaging-redis-xread",
     )
     owner_task = asyncio.current_task()
@@ -1455,7 +1476,7 @@ async def _wait_for_snapshot_change(
         if not closing and not read_task.done() and read_task.cancelling() == 0:
             read_task.cancel()
 
-    def read_finished(task: asyncio.Task[None]) -> None:
+    def read_finished(task: asyncio.Task[TaskOutcome[_RedisStreamRead]]) -> None:
         if owner_task is not None:
             owner_task.remove_done_callback(cancel_when_owner_finishes)
         if not task.cancelled():
@@ -1466,45 +1487,39 @@ async def _wait_for_snapshot_change(
     read_task.add_done_callback(read_finished)
     caller_error: BaseException | None = None
     try:
-        await asyncio.shield(read_task)
+        outcome = await asyncio.shield(read_task)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome.value
     except BaseException as error:
         caller_error = error
         raise
     finally:
-        if not read_task.done():
-            if not closing and read_task.cancelling() == 0:
-                read_task.cancel()
-            try:
-                await _join_owned_task(read_task)
-            except asyncio.CancelledError:
-                if caller_error is None:
-                    raise
-            except Exception as cleanup_error:
-                if caller_error is None:
-                    raise
-                if cleanup_error is not close_error:
-                    caller_error.add_note(
-                        "Redis blocking read cleanup also failed: "
-                        f"{type(cleanup_error).__name__}: {cleanup_error}"
-                    )
-        if (
-            caller_error is not None
-            and caller_error is not read_error
-            and caller_error is not close_error
-            and close_error is not None
-        ):
-            caller_error.add_note(
-                "Redis blocking client close also failed: "
-                f"{type(close_error).__name__}: {close_error}"
-            )
+        if not read_task.done() and not closing and not read_task.cancelling():
+            read_task.cancel()
+        try:
+            await join_owned_task(read_task)
+        except BaseException as error:  # noqa: BLE001 - retain the captured control outcome
+            outcome = None if read_task.cancelled() else read_task.result()
+            if isinstance(caller_error, asyncio.CancelledError) and isinstance(
+                outcome, BaseException
+            ):
+                # This boundary only forwards the shared reader's own stop. Keep
+                # the completed pinned operation's failure, including failed close.
+                caller_error = outcome
+            else:
+                caller_error = (
+                    error
+                    if caller_error is None
+                    else select_failure(caller_error, error)
+                )
+            raise caller_error
 
 
-def _wait_block_ms(self: RedisBackend, lease_ttl_ms: int) -> int:
-    """Bound XREAD by lease expiry, fallback progress, and socket timeout."""
+def _wait_block_ms(self: RedisBackend) -> int:
+    """Bound the shared XREAD independently of each caller's lease deadline."""
 
     candidates = [_MAX_WAIT_BLOCK_MS]
-    if lease_ttl_ms >= 0:
-        candidates.append(max(1, lease_ttl_ms))
     if self._socket_timeout_budget_ms is not None:
         candidates.append(self._socket_timeout_budget_ms)
     return max(1, min(candidates))

@@ -159,7 +159,7 @@ class AgentPersistence:
             raise RuntimeError("Agent persistence 已经启动")
         resources = _PersistenceResources()
         try:
-            # 长期记忆与业务查询共用连接池，Store 负责建表校验和本次借用
+            # 长期记忆借用组件库连接池，Store 负责建表校验
             store_resource = SqlAlchemyStore(self._engine)
             store = await resources.enter_store(store_resource)
             checkpoint_redis = create_redis_client(

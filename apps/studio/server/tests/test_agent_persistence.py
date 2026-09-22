@@ -99,6 +99,9 @@ def _redis_settings(
     port: int = 6379,
 ) -> RedisRuntimeSettings:
     return RedisRuntimeSettings(
+        password=None,
+        max_connections=80,
+        socket_timeout_seconds=10,
         host=host,
         port=port,
         database=15,

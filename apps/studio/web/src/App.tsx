@@ -5,6 +5,7 @@ import {
   login,
   logout as logoutApi,
 } from './api/auth/client'
+import { getServerAddress, subscribeServerAddress } from './api/shared/config'
 import { LoginTransition } from './features/auth/LoginTransition'
 import { useAuthVerification } from './features/auth/useAuthVerification'
 import { ApiError, AuthError, subscribeApiErrors } from './api/shared/http'
@@ -72,6 +73,16 @@ export default function App() {
     ].slice(-4))
   }, [])
 
+  useEffect(() => subscribeServerAddress(() => {
+    loginRequest.current?.abort()
+    loginRequest.current = null
+    setLoginPending(false)
+    clearAuthSession()
+    clearActiveRunSession()
+    authEntry.current = 'restore'
+    setPhase('signedOut')
+  }), [])
+
   useEffect(() => subscribeApiErrors((error) => {
     pushToast('error', error.message)
   }), [pushToast])
@@ -112,14 +123,16 @@ export default function App() {
     content = (
       <AuthScreen
         pending={isLoginPending}
+        onError={(message) => pushToast('error', message)}
         onLogin={async (credentials) => {
           if (loginRequest.current) return
+          const serverAddress = getServerAddress()
           const controller = new AbortController()
           loginRequest.current = controller
           setLoginPending(true)
           try {
             const payload = await login(credentials, controller.signal)
-            if (controller.signal.aborted) return
+            if (controller.signal.aborted || getServerAddress() !== serverAddress) return
             authEntry.current = 'manual'
             saveAuthSession(createAuthSession(payload))
             setPhase('checking')

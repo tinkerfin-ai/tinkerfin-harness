@@ -9,7 +9,7 @@ import {
   getAuthorizationHeader,
   notifyAuthFailure,
 } from '../../auth/session'
-import { API_BASE_URL, buildApiUrl } from './config'
+import { buildApiUrl, getServerAddress } from './config'
 import { GLOBAL_ERROR_CODES } from './errorCodes'
 import { translateCurrent } from '../../i18n'
 
@@ -20,6 +20,7 @@ interface ApiEnvelope<T> {
 }
 
 interface ErrorPolicy {
+  serverAddress?: string
   suppressGlobalError?: boolean
   suppressAuthFailure?: boolean
   authorization?: string | null
@@ -84,12 +85,14 @@ function isAuthFailure(status: number) {
 }
 
 function emitApiError(error: ApiError, policy: ErrorPolicy) {
+  if (policy.serverAddress && getServerAddress() !== policy.serverAddress) return
   if (error.isAuthError || policy.suppressGlobalError) return
   if (policy.authorization && getAuthorizationHeader() !== policy.authorization) return
   for (const listener of apiErrorListeners) listener(error)
 }
 
 function handleAuthFailure(error: ApiError, policy: ErrorPolicy) {
+  if (policy.serverAddress && getServerAddress() !== policy.serverAddress) return
   if (!error.isAuthError) return
   const currentAuthorization = getAuthorizationHeader()
   const isCurrentSession = policy.authorization
@@ -155,6 +158,7 @@ function readConfigAuthorization(config?: ApiAxiosRequestConfig): string | null 
 
 function requestPolicy(config?: ApiAxiosRequestConfig): ErrorPolicy {
   return {
+    serverAddress: config?.baseURL,
     suppressGlobalError: config?.suppressGlobalError,
     suppressAuthFailure: config?.suppressAuthFailure,
     authorization: readConfigAuthorization(config),
@@ -170,19 +174,14 @@ function transportErrorMessage(status: number) {
   return translateCurrent('请求失败 ({status})', { status })
 }
 
-const currentOrigin = typeof window === 'undefined' ? 'http://localhost' : window.location.origin
-const apiBaseUrl = API_BASE_URL
-  ? `${currentOrigin}${API_BASE_URL.startsWith('/') ? API_BASE_URL : `/${API_BASE_URL}`}`
-  : currentOrigin
-
 export const apiClient = axios.create({
   adapter: 'fetch',
-  baseURL: /^https?:\/\//i.test(API_BASE_URL) ? API_BASE_URL : apiBaseUrl,
   // Axios 默认缓存模块加载时的 fetch；间接调用可让测试替身和运行时补丁生效
   env: { fetch: (input, init) => globalThis.fetch(input, init) },
 })
 
 apiClient.interceptors.request.use((config) => {
+  config.baseURL ??= getServerAddress()
   const apiConfig = config as InternalApiAxiosRequestConfig
   config.headers.set('Accept', 'application/json')
   if (apiConfig.requiresAuth === false || config.headers.has('Authorization')) return config
@@ -281,6 +280,7 @@ function buildStreamHeaders(options: RequestOptions, contentType: string | null)
 }
 
 async function fetchStreamResponse(path: string, options: RequestOptions) {
+  const serverAddress = getServerAddress()
   const { body, contentType } = normalizeRequestBody(options.body)
   const headers = buildStreamHeaders(options, contentType)
   const deadline = new AbortController()
@@ -299,14 +299,14 @@ async function fetchStreamResponse(path: string, options: RequestOptions) {
       signal,
       credentials: options.credentials,
     })
-    return { response, authorization: headers.get('Authorization') }
+    return { response, serverAddress, authorization: headers.get('Authorization') }
   } catch {
     if (options.signal?.aborted) throw options.signal.reason
     throw finalizeError(
       new ApiError(translateCurrent(deadline.signal.aborted
         ? '等待实时连接响应超时，请恢复连接'
         : '网络请求失败，请稍后重试'), { status: 0 }),
-      { ...options, authorization: headers.get('Authorization') },
+      { ...options, serverAddress, authorization: headers.get('Authorization') },
     )
   } finally {
     clearTimeout(timer)
@@ -353,6 +353,7 @@ export function subscribeApiErrors(listener: ApiErrorListener) {
 export async function requestJson<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers = Object.fromEntries(new Headers(options.headers).entries())
   const config: ApiAxiosRequestConfig = {
+    baseURL: getServerAddress(),
     url: path,
     method: options.method ?? 'GET',
     data: options.body ?? undefined,
@@ -372,8 +373,8 @@ export async function requestJson<T>(path: string, options: RequestOptions = {})
 }
 
 export async function requestEventStream(path: string, options: RequestOptions = {}): Promise<Response> {
-  const { response, authorization } = await fetchStreamResponse(path, options)
-  const policy = { ...options, authorization }
+  const { response, authorization, serverAddress } = await fetchStreamResponse(path, options)
+  const policy = { ...options, authorization, serverAddress }
   const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
 
   if (contentType.includes('text/event-stream')) {

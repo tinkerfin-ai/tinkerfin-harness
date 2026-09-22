@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import NoReturn, cast
+from typing import TYPE_CHECKING, NoReturn, cast
 
 from langchain_core.callbacks import AsyncCallbackHandler, BaseCallbackHandler
 from langchain_core.messages import (
@@ -69,6 +69,9 @@ from ._failure_evidence import retain_failure, select_failure
 from ._run_callbacks import callback_scope
 from ._tasks import join_task
 from .errors import RunObservationError
+
+if TYPE_CHECKING:
+    from ._compaction_observation import CompactionOperation
 
 _CALLBACK_TIMESTAMP: ContextVar[tuple[datetime, int] | None] = ContextVar(
     "tinkerfin_callback_timestamp", default=None
@@ -377,6 +380,7 @@ class RuntimeObservationHub:
         from ._call_observation import RuntimeCallHandler
         from ._sync_call_observation import SyncRuntimeCallHandler
 
+        self.compactions: dict[str, CompactionOperation] = {}
         self.context = context
         self._observers = observers
         self._initialization_error = initialization_error
@@ -853,6 +857,12 @@ class RuntimeObservationHub:
         self._terminal = outcome
         await self._settle_thread_callbacks()
         await self._call_handler.settle(outcome, error=error)
+        for operation in tuple(self.compactions.values()):
+            if error is not None:
+                await operation.fail(error)
+            else:
+                await operation.abandon()
+        self.compactions.clear()
         observed_at, monotonic_ns = _stamp()
         await self.observe(
             RunTerminalObservation(

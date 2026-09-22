@@ -27,6 +27,22 @@ from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
 MAX_USER_MESSAGE_BYTES = 256 * 1024
 
 
+class CompactRequest(BaseModel):
+    """手动压缩请求；会话身份由路由提供，附件不随操作提交"""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    run_id: str = Field(alias="runId", min_length=1, max_length=128)
+    model: str = Field(min_length=1, max_length=64, description="生成摘要使用的模型 ID")
+
+    @field_validator("run_id", "model")
+    @classmethod
+    def canonical_identifier(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("身份字段不得包含首尾空白")
+        return value
+
+
 def _utf8_byte_length(value: str) -> int:
     try:
         return len(value.encode("utf-8"))

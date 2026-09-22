@@ -23,13 +23,10 @@ export interface ComposerDraftEdit {
 }
 
 const COMMAND_ITEMS: readonly ComposerSuggestionItem[] = [
-  { id: 'compact', name: 'compact', description: '压缩较早的会话历史', disabled: true },
-  { id: 'export', name: 'export', description: '导出本次会话日志', disabled: true },
-  { id: 'feedback', name: 'feedback', description: '记录本次会话反馈', disabled: true },
+  { id: 'compact', name: 'compact', description: '压缩较早的会话历史', disabled: false },
   { id: 'goal', name: 'goal', description: '设置或查看长期任务目标', disabled: true },
-  { id: 'permission', name: 'permission', description: '切换权限预设', disabled: true },
   { id: 'plan', name: 'plan', description: '进入 Plan 模式', disabled: false },
-  { id: 'model', name: 'model', description: '选择本会话使用的模型', disabled: true },
+  { id: 'model', name: 'model', description: '选择本会话使用的模型', disabled: false },
 ]
 
 const SKILL_ITEMS: readonly ComposerSuggestionItem[] = [
@@ -42,7 +39,7 @@ const SKILL_ITEMS: readonly ComposerSuggestionItem[] = [
 ]
 
 export const COMPOSER_SUGGESTION_GROUPS: readonly ComposerSuggestionGroup[] = [
-  { id: 'command', label: '命令', items: COMMAND_ITEMS },
+  { id: 'command', label: '指令', items: COMMAND_ITEMS },
   { id: 'skill', label: '技能', items: SKILL_ITEMS },
 ]
 
@@ -65,14 +62,15 @@ export const isAllowedComposerDraft = (value: string) => {
   const matchingNames = ENABLED_SLASH_NAMES.filter((name) => name.startsWith(command.query))
   if (matchingNames.length === 0) return false
   return command.remainder === ''
-    || (/^\s/.test(command.remainder) && ENABLED_SLASH_NAMES.includes(command.query))
+    || (/^\s/.test(command.remainder) && (command.query === 'plan' || command.query === 'compact'))
 }
 
 export const isSubmittableComposerDraft = (value: string) => {
   const command = leadingSlashCommand(value)
   if (!command) return true
-  return ENABLED_SLASH_NAMES.includes(command.query)
-    && (command.remainder === '' || /^\s/.test(command.remainder))
+  if (command.query === 'compact') return true
+  return command.query === 'plan'
+    && Boolean(command.remainder.trim())
 }
 
 export const cancelComposerSuggestion = (

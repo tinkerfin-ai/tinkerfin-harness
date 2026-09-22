@@ -310,7 +310,7 @@ class TodoGroupProjector:
         run.outcome_applied = True
         turn = self._turn_for_run(run_id)
         if turn is None:
-            if run.input_kind in {"ordinary", "branch"}:
+            if run.input_kind in {"ordinary", "branch", "compaction"}:
                 self._fail("trace_incomplete")
             return
         initialization_failed = (
@@ -396,7 +396,7 @@ class TodoGroupProjector:
             return
         run_id = fact.identity.run_id
         run = self._runs.get(run_id)
-        if run is None or run.input_kind not in {"ordinary", "branch"}:
+        if run is None or run.input_kind not in {"ordinary", "branch", "compaction"}:
             self._fail("trace_incomplete")
             return
         if run.turn_id is not None or fact.turn_id in self._turns:
@@ -405,6 +405,7 @@ class TodoGroupProjector:
         if fact.parent_run_id is not None and fact.parent_run_id != run.parent_run_id:
             self._fail("trace_incomplete")
             return
+        # 压缩有独立操作轮次；保留其状态记录，但不沿用上一轮的任务组
         turn = _TurnState(
             turn_id=fact.turn_id,
             origin_run_id=run_id,

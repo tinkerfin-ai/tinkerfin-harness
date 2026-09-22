@@ -1,12 +1,15 @@
 export type ComposerSubmission =
   | { kind: 'message'; content: string }
-  | { kind: 'plan-enable' }
   | { kind: 'plan-message'; content: string }
   | { kind: 'plan-off-unsupported' }
+  | { kind: 'compact' }
+  | { kind: 'compact-arguments-unsupported' }
 
-export const parseComposerSubmission = (value: string): ComposerSubmission => {
+export const parseComposerSubmission = (value: string): ComposerSubmission | null => {
   const input = value.trim()
-  if (input === '/plan') return { kind: 'plan-enable' }
+  if (input === '/compact') return { kind: 'compact' }
+  if (/^\/compact\s/.test(input)) return { kind: 'compact-arguments-unsupported' }
+  if (input === '/plan') return null
   if (!input.startsWith('/plan') || !/\s/.test(input[5] ?? '')) {
     return { kind: 'message', content: input }
   }
@@ -14,5 +17,5 @@ export const parseComposerSubmission = (value: string): ComposerSubmission => {
   if (content === 'off') return { kind: 'plan-off-unsupported' }
   return content
     ? { kind: 'plan-message', content }
-    : { kind: 'plan-enable' }
+    : null
 }

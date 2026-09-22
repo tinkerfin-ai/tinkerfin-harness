@@ -23,6 +23,7 @@ from ._redis_control import (
     _RunSnapshot,
     _StreamControl,
 )
+from ._redis_notifications import _RedisNotifications, _validate_wait
 from ._redis_scripts import _MESSAGING_STATE_SNAPSHOT_SCRIPT
 from .backend import (
     RunStatus,
@@ -120,6 +121,9 @@ class RedisBackend:
         self._namespace = f"{key_prefix}:{{{self._digest(key_prefix)}}}"
         self._capacity_key = f"{self._namespace}:capacity"
         self._expirations_key = f"{self._namespace}:expirations"
+        self._notifications_key = f"{self._namespace}:notifications"
+        self._notification_counter_key = f"{self._namespace}:notification-counter"
+        self._notifications = _RedisNotifications(self)
         self._lease_ttl = resolved_lease_ttl
         self._lease_ms = max(1, math.ceil(resolved_lease_ttl * 1000))
         self._poll_interval = resolved_poll_interval
@@ -408,7 +412,7 @@ class RedisBackend:
             query: Exact generation, exclusive cursor, upper bound, and page limit.
 
         Returns:
-            Ascending decoded messages and the observed messages/signals cursor.
+            Ascending decoded messages and the observed message and control cursors.
 
         Raises:
             InvalidCursor: The exclusive cursor exceeds the generation tail.
@@ -507,7 +511,7 @@ class RedisBackend:
         )
 
     async def wait_for_messaging_change(self, wait: MessagingChangeWait) -> None:
-        """Wait through the existing cancellation-safe Redis XREAD boundary.
+        """Wait until the generation may have new messages or control changes.
 
         Args:
             wait: Exact generation, observed message/control cursor, and timeout.
@@ -523,50 +527,8 @@ class RedisBackend:
 
         if not isinstance(wait, MessagingChangeWait):
             raise TypeError("wait must be a MessagingChangeWait")
-        keys = await self._keys_for_handle(
-            _BackendRunHandle(
-                channel=wait.channel,
-                identity=wait.identity,
-                owner_token=None,
-                fence=None,
-                generation=wait.generation,
-            )
-        )
-        timeout_seconds = 5.0 if wait.timeout_seconds is None else wait.timeout_seconds
-        snapshot = _RunSnapshot(
-            status="running",
-            end_seq=wait.after.message_sequence,
-            error_class="",
-            error_message="",
-            signal_cursor=wait.after.control_sequence,
-            lease_ttl_ms=max(1, math.ceil(timeout_seconds * 1000)),
-            lease_renew_count=0,
-            lease_last_success_seconds=0,
-            lease_last_success_microseconds=0,
-            messages=(),
-            observed_seconds=0,
-            observed_microseconds=0,
-            start_seq=0,
-            settling=False,
-            publication_closed=False,
-            publication_ready=False,
-            cancellable=False,
-            recoverable=False,
-            owner_token="",
-            fence=0,
-            checkpoint=None,
-            active_run_id="",
-            latest_seq=wait.after.message_sequence,
-            payload_bytes=0,
-            fence_counter=0,
-            codec_id="",
-            max_message_payload_bytes=self._limits.max_message_payload_bytes,
-            max_checkpoint_bytes=self._limits.max_checkpoint_bytes,
-            max_thread_messages=self._limits.max_thread_messages,
-            max_thread_payload_bytes=self._limits.max_thread_payload_bytes,
-            retention_ms=self._retention_ms,
-        )
-        await self._wait_for_snapshot_change(keys, snapshot)
+        _validate_wait(wait)
+        await self._notifications.wait(wait)
 
     async def purge_stream_generation(
         self,
@@ -1494,26 +1456,10 @@ class RedisBackend:
             after=after,
         )
 
-    async def _wait_for_snapshot_change(
-        self,
-        keys: _RedisKeys,
-        snapshot: _RunSnapshot,
-    ) -> None:
-        """Block on durable data or lifecycle signals, then require a new snapshot."""
+    def _wait_block_ms(self) -> int:
+        """Bound the shared XREAD independently of each caller's lease deadline."""
 
-        return await _redis_control._wait_for_snapshot_change(
-            self,
-            keys,
-            snapshot,
-        )
-
-    def _wait_block_ms(self, lease_ttl_ms: int) -> int:
-        """Bound XREAD by lease expiry, fallback progress, and socket timeout."""
-
-        return _redis_control._wait_block_ms(
-            self,
-            lease_ttl_ms,
-        )
+        return _redis_control._wait_block_ms(self)
 
     @staticmethod
     def _socket_timeout_budget(value: object) -> int | None:

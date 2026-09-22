@@ -1,4 +1,4 @@
-SET NAMES utf8mb4;
+SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 
 CREATE TABLE users (
   id INTEGER NOT NULL AUTO_INCREMENT COMMENT '用户主键',
@@ -10,7 +10,7 @@ CREATE TABLE users (
   disabled BOOL NOT NULL COMMENT '是否禁止登录',
   CONSTRAINT pk_users PRIMARY KEY (id),
   UNIQUE KEY ix_users_username (username)
-) COMMENT='TinkerFin Studio 登录用户';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='TinkerFin Studio 登录用户';
 
 CREATE TABLE model_connections (
   id INTEGER NOT NULL COMMENT '连接记录主键' AUTO_INCREMENT,
@@ -26,7 +26,7 @@ CREATE TABLE model_connections (
   updated_at DATETIME NOT NULL COMMENT 'UTC 更新时间',
   PRIMARY KEY (id),
   CONSTRAINT uq_model_connections_owner_connection UNIQUE (user_id, connection_id)
-) COMMENT='用户模型服务的地址与认证';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用户模型服务的地址与认证';
 
 CREATE TABLE agent_models (
   id INTEGER NOT NULL COMMENT '模型配置主键' AUTO_INCREMENT,
@@ -47,7 +47,7 @@ CREATE TABLE agent_models (
   updated_at DATETIME NOT NULL COMMENT '更新时间',
   PRIMARY KEY (id),
   CONSTRAINT uq_agent_models_owner_model UNIQUE (user_id, model_id)
-) COMMENT='可由前端选择的 Agent 模型与连接配置';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='可由前端选择的 Agent 模型与连接配置';
 
 CREATE INDEX ix_agent_models_connection ON agent_models (user_id, connection_id);
 
@@ -80,7 +80,7 @@ CREATE TABLE conversation_threads (
   KEY ix_conversation_threads_user_pinned_updated (user_id, deleted_at, pinned, updated_at, id),
   KEY ix_conversation_threads_user_status_updated (user_id, status, updated_at, id),
   KEY ix_conversation_threads_user_updated (user_id, deleted_at, updated_at, id)
-) COMMENT='用户会话归属、产品控制与 Trace 列表摘要';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用户会话归属、产品控制与 Trace 列表摘要';
 
 CREATE TABLE conversation_run_registrations (
   id BIGINT NOT NULL AUTO_INCREMENT COMMENT 'Run 注册主键',
@@ -104,7 +104,7 @@ CREATE TABLE conversation_run_registrations (
   CONSTRAINT uq_conversation_run_registrations_thread_run UNIQUE (conversation_thread_id, run_id),
   KEY ix_conversation_run_registrations_thread_started (conversation_thread_id, started_at, id),
   KEY ix_conversation_run_registrations_thread_status (conversation_thread_id, status, updated_at)
-) COMMENT='主 Run 请求幂等、模型与业务状态注册';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='主 Run 请求幂等、模型与业务状态注册';
 
 CREATE TABLE conversation_interrupt_claims (
   id BIGINT NOT NULL AUTO_INCREMENT COMMENT '认领主键',
@@ -120,7 +120,7 @@ CREATE TABLE conversation_interrupt_claims (
   CONSTRAINT pk_conversation_interrupt_claims PRIMARY KEY (id),
   CONSTRAINT uq_conversation_interrupt_claims_thread_interrupt UNIQUE (conversation_thread_id, interrupt_id),
   KEY ix_conversation_interrupt_claims_run_status (conversation_thread_id, claimed_run_id, status)
-) COMMENT='由框架恢复事实驱动的 interrupt 原子认领与结算';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='由框架恢复事实驱动的 interrupt 原子认领与结算';
 
 CREATE TABLE conversation_attachments (
 	id VARCHAR(32) NOT NULL COMMENT '服务端随机附件 ID，同时作为不透明存储标识',
@@ -135,7 +135,7 @@ CREATE TABLE conversation_attachments (
 	source VARCHAR(16) NOT NULL COMMENT 'user 表示用户上传，tool 表示工具生成',
 	created_at DATETIME NOT NULL COMMENT 'UTC 创建时间，用于未发送附件的清理',
 	PRIMARY KEY (id)
-)COMMENT='会话上传和生成附件的持久化引用';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='会话上传和生成附件的持久化引用';
 CREATE INDEX ix_conversation_attachments_cleanup ON conversation_attachments (thread_id, created_at);
 CREATE INDEX ix_conversation_attachments_owner ON conversation_attachments (user_id, thread_id);
 
@@ -147,7 +147,7 @@ CREATE TABLE attachment_collections (
 	configuration JSON NOT NULL COMMENT '不含凭据的不可变任务或运行输入快照',
 	created_at DATETIME NOT NULL COMMENT 'UTC创建时间',
 	PRIMARY KEY (id)
-)COMMENT='自动化任务配置和运行附件的持久归属';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='自动化任务配置和运行附件的持久归属';
 
 CREATE INDEX ix_attachment_collections_owner_task ON attachment_collections (user_id, task_id);
 
@@ -155,7 +155,7 @@ CREATE TABLE attachment_references (
 	collection_id VARCHAR(36) NOT NULL COMMENT '附件集合ID',
 	attachment_id VARCHAR(32) NOT NULL COMMENT '附件文件ID',
 	PRIMARY KEY (collection_id, attachment_id)
-)COMMENT='自动化附件集合与文件引用，由服务校验归属';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='自动化附件集合与文件引用，由服务校验归属';
 
 CREATE INDEX ix_attachment_references_file ON attachment_references (attachment_id);
 

@@ -18,7 +18,7 @@ from sqlalchemy.dialects.mysql import DATETIME
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tinkerfin_studio.agent.access import AccessMode
-from tinkerfin_studio.infrastructure.database import Base
+from tinkerfin_studio.infrastructure.database import MYSQL_TABLE_OPTIONS, Base
 
 TitleSource = Literal["default", "generated", "user", "unknown"]
 TitleGenerationStatus = Literal["idle", "running", "succeeded", "failed", "skipped"]
@@ -54,7 +54,7 @@ class ConversationThread(Base):
             "updated_at",
             "id",
         ),
-        {"comment": "用户会话归属、产品控制与 Trace 列表摘要"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "用户会话归属、产品控制与 Trace 列表摘要"},
     )
 
     id: Mapped[int] = mapped_column(
@@ -157,7 +157,7 @@ class ConversationRunRegistration(Base):
             "status",
             "updated_at",
         ),
-        {"comment": "主 Run 请求幂等、模型与业务状态注册"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "主 Run 请求幂等、模型与业务状态注册"},
     )
 
     id: Mapped[int] = mapped_column(
@@ -238,7 +238,10 @@ class ConversationInterruptClaim(Base):
             "claimed_run_id",
             "status",
         ),
-        {"comment": "由框架恢复事实驱动的 interrupt 原子认领与结算"},
+        {
+            **MYSQL_TABLE_OPTIONS,
+            "comment": "由框架恢复事实驱动的 interrupt 原子认领与结算",
+        },
     )
 
     id: Mapped[int] = mapped_column(

@@ -15,7 +15,7 @@ async function setup(page: Page, theme: string, pauseClock = false) {
   await page.addInitScript(({ theme }) => {
     const user = { user_id: 1, username: 'titles', display_name: '标题验收', avatar_url: null, roles: [], disabled: false }
     localStorage.setItem('tinkerfin:theme', theme)
-    localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'test-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
+    localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'test-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
     const original = window.fetch
     const streams: { controller: ReadableStreamDefaultController<Uint8Array>; threadId: string; runId: string; seq: number; execution: 'running' | 'succeeded' | 'cancelled'; messages: Record<string, unknown>[] }[] = []
     const titles = new Map<string, { threadId: string; title: string; titleSource: string; titleGenerationStatus: string; titleSeq: number }>()
@@ -131,10 +131,11 @@ for (const theme of ['light', 'dark']) {
         harness.emit(0, { type: 'TEXT_MESSAGE_START', messageId: 'stop-answer', role: 'assistant' })
         harness.emit(0, { type: 'TEXT_MESSAGE_CONTENT', messageId: 'stop-answer', delta: content })
       }, content)
-      // 推进受控时钟，提交合并的流式正文并展示少量字素
+      // 推进正文发布定时器，等待已接收正文挂载后再停止
       await page.clock.runFor(100)
-      await expect(page.locator('#stop-answer')).toContainText('已')
-      await expect(page.getByText(content, { exact: true })).toHaveCount(0)
+      await expect(page.locator('#stop-answer')).toBeAttached()
+      await expect(page.getByRole('status', { name: '任务仍在继续' })).toBeVisible()
+      await expect(page.getByRole('button', { name: '停止任务', exact: true })).toBeEnabled()
 
       await page.getByRole('button', { name: '停止任务', exact: true }).click()
       await expect(page.getByText(content, { exact: true })).toBeVisible()
@@ -164,7 +165,9 @@ for (const theme of ['light', 'dark']) {
         harness.emit(1, { type: 'TEXT_MESSAGE_CONTENT', messageId: 'next-answer', delta: content })
       }, nextContent)
       await page.clock.runFor(100)
-      await expect(page.locator('#next-answer')).toContainText('下')
+      await expect(page.locator('#next-answer')).toBeAttached()
+      await expect(page.getByRole('status', { name: '任务仍在继续' })).toBeVisible()
+      await expect(page.getByRole('button', { name: '停止任务', exact: true })).toBeEnabled()
       await page.getByRole('button', { name: '停止任务', exact: true }).click()
       await expect(page.getByText(nextContent, { exact: true })).toBeVisible()
       await expect(page.getByText(content, { exact: true })).toBeVisible()

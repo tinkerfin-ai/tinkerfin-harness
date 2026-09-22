@@ -6,6 +6,7 @@ from collections.abc import Awaitable
 from typing import cast
 
 import httpx
+import pytest
 from redis.asyncio import Redis
 
 from tinkerfin_studio.config.settings import SandboxSettings
@@ -42,8 +43,8 @@ async def _sandbox_ready() -> None:
     """模拟框架已验证真实预热容量"""
 
 
-async def test_readiness_checks_all_dependencies_concurrently() -> None:
-    """三项外部依赖全部可用时 readiness 必须逐项返回成功"""
+async def test_readiness_reports_all_available_dependencies() -> None:
+    """外部依赖全部可用时，就绪检查逐项返回成功"""
 
     async def sandbox(request: httpx.Request) -> httpx.Response:
         assert request.url == "http://opensandbox:8090/health"
@@ -51,9 +52,12 @@ async def test_readiness_checks_all_dependencies_concurrently() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(sandbox)) as http_client:
         service = ReadinessService(
-            database=cast(Database, _Database()),
+            business_database=cast(Database, _Database()),
+            components_database=cast(Database, _Database()),
             redis=cast(Redis, _Redis()),
             sandbox=SandboxSettings(
+                cpu=1,
+                memory_mib=1024,
                 domain="opensandbox:8090",
                 protocol="http",
                 api_key=None,
@@ -71,7 +75,8 @@ async def test_readiness_checks_all_dependencies_concurrently() -> None:
         assert await service.check() == {
             "automation": True,
             "attachments": True,
-            "mysql": True,
+            "business_database": True,
+            "components_database": True,
             "redis": True,
             "opensandbox": True,
         }
@@ -90,9 +95,12 @@ async def test_readiness_hides_redis_and_sandbox_failures() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(sandbox)) as http_client:
         service = ReadinessService(
-            database=cast(Database, _Database()),
+            business_database=cast(Database, _Database()),
+            components_database=cast(Database, _Database()),
             redis=cast(Redis, BrokenRedis()),
             sandbox=SandboxSettings(
+                cpu=1,
+                memory_mib=1024,
                 domain="opensandbox:8090",
                 protocol="http",
                 api_key=None,
@@ -109,7 +117,7 @@ async def test_readiness_hides_redis_and_sandbox_failures() -> None:
 
         result = await service.check()
 
-    assert result["mysql"] is True
+    assert result["business_database"] is True
     assert result["redis"] is False
     assert result["opensandbox"] is False
 
@@ -126,9 +134,12 @@ async def test_readiness_rejects_control_plane_health_without_warm_capacity() ->
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(sandbox)) as http_client:
         service = ReadinessService(
-            database=cast(Database, _Database()),
+            business_database=cast(Database, _Database()),
+            components_database=cast(Database, _Database()),
             redis=cast(Redis, _Redis()),
             sandbox=SandboxSettings(
+                cpu=1,
+                memory_mib=1024,
                 domain="opensandbox:8090",
                 protocol="http",
                 api_key=None,
@@ -146,3 +157,41 @@ async def test_readiness_rejects_control_plane_health_without_warm_capacity() ->
         result = await service.check()
 
     assert result["opensandbox"] is False
+
+
+@pytest.mark.parametrize("unavailable", ["business_database", "components_database"])
+async def test_readiness_reports_each_database_independently(tmp_path, unavailable):
+    """单个库不可用时，只将对应状态标为失败"""
+    databases = {
+        name: Database(f"sqlite+aiosqlite:///{tmp_path / (name + '.db')}")
+        for name in ("business_database", "components_database")
+    }
+    available = next(value for name, value in databases.items() if name != unavailable)
+    async with (
+        available,
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200))
+        ) as client,
+    ):
+        service = ReadinessService(
+            business_database=databases["business_database"],
+            components_database=databases["components_database"],
+            redis=cast(Redis, _Redis()),
+            sandbox=SandboxSettings(
+                cpu=1,
+                memory_mib=1024,
+                domain="sandbox:8090",
+                protocol="http",
+                api_key=None,
+                warm_pool_size=0,
+                state_namespace="test",
+                workspace_root="/workspace",
+            ),
+            sandbox_ready=_sandbox_ready,
+            automation_ready=_sandbox_ready,
+            attachment_ready=_sandbox_ready,
+            http_client=client,
+        )
+        result = await service.check()
+    assert result[unavailable] is False
+    assert all(value for name, value in result.items() if name != unavailable)

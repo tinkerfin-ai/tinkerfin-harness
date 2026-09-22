@@ -20,7 +20,11 @@ from deepagents.middleware.subagents import (
 from deepagents.middleware.subagents import (
     SubAgent as NativeSubAgent,
 )
-from deepagents.middleware.summarization import create_summarization_middleware
+from deepagents.middleware.summarization import (
+    SummarizationMiddleware,
+    SummarizationToolMiddleware,
+    create_summarization_middleware,
+)
 
 # LangGraph Checkpointer omits BaseCheckpointSaver's version parameter; retain
 # LangChain's complete overloads and constrain the actual saver in AgentSpec.
@@ -44,6 +48,7 @@ from ._attachment_agents import _AttachmentMiddleware, attachment_filesystem
 from ._hitl import create_tool_review
 from ._middleware_resources import prepare_middleware_resources
 from ._state_schema import private_state_fields
+from ._summarization import ObservedCompactionTool, observe_summarization
 from ._tool_runtime import _ToolRuntimeMiddleware
 from .media import AttachmentSupport
 from .tools import _ToolRunScope
@@ -125,7 +130,7 @@ def _child_stack(
 ) -> list[AgentMiddlewareType]:
     defaults: list[AgentMiddlewareType] = [
         _filesystem(backend, permissions, workspace),
-        create_summarization_middleware(model, backend),
+        observe_summarization(create_summarization_middleware(model, backend)),
         PatchToolCallsMiddleware(),
     ]
     review = create_tool_review(permissions, interrupt_on)
@@ -230,7 +235,7 @@ def create_agent_graph(
         [
             _filesystem(backend, spec.permissions, workspace),
             delegation,
-            create_summarization_middleware(model, backend),
+            observe_summarization(create_summarization_middleware(model, backend)),
             PatchToolCallsMiddleware(),
         ]
     )
@@ -240,6 +245,15 @@ def create_agent_graph(
     if remote:
         defaults.append(AsyncSubAgentMiddleware(async_subagents=remote))
     middleware = _merge_middleware(defaults, custom)
+    if spec.compaction_tool_enabled:
+        summary = next(
+            item for item in middleware if item.name == "SummarizationMiddleware"
+        )
+        if not isinstance(summary, SummarizationMiddleware):
+            raise TypeError("the compaction tool requires Deep Agents summarization")
+        if any(isinstance(item, SummarizationToolMiddleware) for item in middleware):
+            raise ValueError("configure the compaction tool through one entry point")
+        middleware.append(ObservedCompactionTool(summary))
     if spec.memory is not None:
         middleware.append(MemoryMiddleware(backend=backend, sources=list(spec.memory)))
     middleware.append(_ToolRuntimeMiddleware(spec.tool_scope))

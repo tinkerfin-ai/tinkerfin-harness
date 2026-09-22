@@ -35,14 +35,14 @@
 pip install tinkerfin langchain-openai
 ```
 
-Studio 使用 Docker 与 Docker Compose，[Studio 上手指南](docs/cn/studio/quick_start.md)
+Studio 使用 Docker Compose 启动依赖，本机后端使用 Python 和 uv，[Studio 上手指南](docs/cn/studio/quick_start.md)
 说明所需服务和配置。
 
 ## 快速开始
 
 ### 体验 Studio
 
-通过 Docker Compose 启动后端，再单独启动 Web 客户端。初始账号为 `tinkerfin`，密码为 `123456`；登录后配置自己的模型。
+执行 `./apps/studio/server/deploy/start.sh --local` 准备依赖和本机配置，再启动后端和 Web 客户端；也支持容器部署。初始账号为 `tinkerfin`，密码为 `123456`；登录后配置自己的模型。
 
 [打开 Studio 上手指南 →](docs/cn/studio/quick_start.md)
 

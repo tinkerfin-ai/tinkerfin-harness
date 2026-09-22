@@ -213,11 +213,13 @@ def test_builder_and_runtime_have_distinct_real_public_methods(
         "with_namespace",
         "with_observer",
         "with_attachments",
+        "with_compaction_tool",
         "with_plan",
         "build",
     }
     assert {name for name in dir(runtime) if not name.startswith("_")} == {
         "agui",
+        "compact",
         "namespace",
         "thread_identity",
         "run_identity",

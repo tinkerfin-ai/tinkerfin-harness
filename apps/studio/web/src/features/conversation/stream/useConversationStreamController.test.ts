@@ -1,4 +1,4 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook } from '@testing-library/react'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -23,6 +23,7 @@ import { useConversationStreamController } from './useConversationStreamControll
 
 const clientMocks = vi.hoisted(() => ({
   start: vi.fn(),
+  compact: vi.fn(),
   resume: vi.fn(),
   cancel: vi.fn(),
 }))
@@ -33,6 +34,7 @@ const traceMocks = vi.hoisted(() => ({
 
 vi.mock('../../../api/conversation/client', () => ({
   startConversationRun: clientMocks.start,
+  compactConversationContext: clientMocks.compact,
   resumeConversationRun: clientMocks.resume,
   cancelConversationRun: clientMocks.cancel,
 }))
@@ -304,13 +306,11 @@ describe('useConversationStreamController', () => {
       await result.current.controller.streamRun(THREAD_ID, payload, 'start')
     })
 
-    await waitFor(() => {
-      const current = result.current.workspace.conversations[0]
-      expect(current?.messages.map((message) => message.content)).toEqual(['Trace 最终内容'])
-      expect(current?.runStatus).toBe('idle')
-      expect(current?.lastSeq).toBe(4)
-      expect(current?.trace?.asOfSeq).toBe(5)
-    })
+    const current = result.current.workspace.conversations[0]
+    expect(current?.messages.map((message) => message.content)).toEqual(['Trace 最终内容'])
+    expect(current?.runStatus).toBe('idle')
+    expect(current?.lastSeq).toBe(4)
+    expect(current?.trace?.asOfSeq).toBe(5)
     expect(traceMocks.detail).toHaveBeenCalledWith(THREAD_ID, {
       includeTaskTrace: true,
       signal: expect.any(AbortSignal),
@@ -407,8 +407,11 @@ describe('useConversationStreamController', () => {
 
   it('deduplicates backend cancellation while the owned stream is active', async () => {
     let release: (() => void) | undefined
+    let markStarted!: () => void
+    const started = new Promise<void>(resolve => { markStarted = resolve })
     clientMocks.start.mockImplementation(async function* () {
       yield { seq: 1, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } }
+      markStarted()
       await new Promise<void>((resolve) => {
         release = resolve
       })
@@ -426,7 +429,7 @@ describe('useConversationStreamController', () => {
     let streaming: Promise<void> = Promise.resolve()
     await act(async () => {
       streaming = result.current.controller.streamRun(THREAD_ID, payload, 'start')
-      await Promise.resolve()
+      await started
     })
 
     let first: Promise<boolean> = Promise.resolve(false)
@@ -469,40 +472,46 @@ describe('useConversationStreamController', () => {
       await result.current.controller.streamRun(THREAD_ID, payload, 'start')
     })
 
-    await waitFor(() => {
-      const current = result.current.workspace.conversations[0]
-      expect(current?.messages.filter((message) => message.role === 'error')).toHaveLength(0)
-      expect(current?.runFailures).toMatchObject([{ runId: RUN_ID, retryable: false }])
-      expect(current?.notice).toBeUndefined()
-    })
+    const current = result.current.workspace.conversations[0]
+    expect(current?.messages.filter((message) => message.role === 'error')).toHaveLength(0)
+    expect(current?.runFailures).toMatchObject([{ runId: RUN_ID, retryable: false }])
+    expect(current?.notice).toBeUndefined()
   })
 })
 
 
 function eventFeed() {
-  const pending: StreamedAgUiEvent[] = []
+  const pending: Array<{ item: StreamedAgUiEvent; consumed: () => void }> = []
   let wake: (() => void) | undefined
   let seq = 0
+  let markOpened!: () => void
+  const opened = new Promise<void>(resolve => { markOpened = resolve })
   return {
+    opened,
     push(event: StreamedAgUiEvent['event']) {
-      pending.push({ event, seq: ++seq })
+      const consumed = new Promise<void>(resolve => {
+        pending.push({ item: { event, seq: ++seq }, consumed: resolve })
+      })
       wake?.()
+      return consumed
     },
     async *read(signal: AbortSignal) {
       const onAbort = () => wake?.()
       signal.addEventListener('abort', onAbort)
+      markOpened()
       try {
         while (!signal.aborted) {
           const next = pending.shift()
           if (next) {
-            yield next
-            if (next.event.type === 'RUN_FINISHED') return
+            try { yield next.item } finally { next.consumed() }
+            if (next.item.event.type === 'RUN_FINISHED') return
           } else {
             await new Promise<void>((resolve) => { wake = resolve })
           }
         }
       } finally {
         signal.removeEventListener('abort', onAbort)
+        pending.splice(0).forEach(item => item.consumed())
       }
     },
   }
@@ -524,22 +533,23 @@ it('切换与启动 B 保留 A 的原连接，停止 B 不影响 A', async () =>
   let runA: Promise<void> = Promise.resolve()
   let runB: Promise<void> = Promise.resolve()
   await act(async () => { runA = result.current.controller.streamRun(THREAD_ID, payload, 'start') })
+  await act(async () => { await a.push({ type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID }) })
+  act(() => result.current.setWorkspace((state) => ({ ...state, currentThreadId: 'thread-b', conversations: [...state.conversations, conversation({ threadId: 'thread-b', activeRunId: 'run-b' })] })))
   await act(async () => {
-    a.push({ type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID })
-    result.current.setWorkspace((state) => ({ ...state, currentThreadId: 'thread-b', conversations: [...state.conversations, conversation({ threadId: 'thread-b', activeRunId: 'run-b' })] }))
     runB = result.current.controller.streamRun('thread-b', { ...payload, threadId: 'thread-b', runId: 'run-b' }, 'start')
+    await b.opened
   })
-  await waitFor(() => expect(signals.size).toBe(2))
+  expect(signals.size).toBe(2)
   await act(async () => {
-    b.push({ type: 'RUN_STARTED', threadId: 'thread-b', runId: 'run-b' })
-    a.push({ type: 'TEXT_MESSAGE_START', messageId: 'a-text', role: 'assistant' })
-    a.push({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'a-text', delta: 'A仍在输出' })
-    a.push({ type: 'TEXT_MESSAGE_END', messageId: 'a-text' })
-    b.push({ type: 'TEXT_MESSAGE_START', messageId: 'b-text', role: 'assistant' })
-    b.push({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'b-text', delta: 'B独立输出' })
-    b.push({ type: 'TEXT_MESSAGE_END', messageId: 'b-text' })
+    await b.push({ type: 'RUN_STARTED', threadId: 'thread-b', runId: 'run-b' })
+    await a.push({ type: 'TEXT_MESSAGE_START', messageId: 'a-text', role: 'assistant' })
+    await a.push({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'a-text', delta: 'A仍在输出' })
+    await a.push({ type: 'TEXT_MESSAGE_END', messageId: 'a-text' })
+    await b.push({ type: 'TEXT_MESSAGE_START', messageId: 'b-text', role: 'assistant' })
+    await b.push({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'b-text', delta: 'B独立输出' })
+    await b.push({ type: 'TEXT_MESSAGE_END', messageId: 'b-text' })
   })
-  await waitFor(() => expect(result.current.workspace.conversations.find((item) => item.threadId === THREAD_ID)?.messages.some((item) => item.content === 'A仍在输出')).toBe(true))
+  expect(result.current.workspace.conversations.find((item) => item.threadId === THREAD_ID)?.messages.some((item) => item.content === 'A仍在输出')).toBe(true)
   expect(result.current.workspace.currentThreadId).toBe('thread-b')
   expect(signals.get(THREAD_ID)?.aborted).toBe(false)
   expect(result.current.controller.isActiveThread(THREAD_ID)).toBe(true)
@@ -570,8 +580,8 @@ it('新草稿首帧晚到只登记原会话，不抢回当前页面', async () =
     })
   })
   act(() => result.current.controller.releaseDraft())
-  await act(async () => { feed.push({ type: 'RUN_STARTED', threadId: 'server-draft', runId: RUN_ID }) })
-  await waitFor(() => expect(result.current.workspace.conversations.some((item) => item.threadId === 'server-draft')).toBe(true))
+  await act(async () => { await feed.push({ type: 'RUN_STARTED', threadId: 'server-draft', runId: RUN_ID }) })
+  expect(result.current.workspace.conversations.some((item) => item.threadId === 'server-draft')).toBe(true)
   expect(result.current.workspace.currentThreadId).toBe(THREAD_ID)
   await act(async () => {
     feed.push({ type: 'RUN_FINISHED', threadId: 'server-draft', runId: RUN_ID })
@@ -638,9 +648,11 @@ it.each(['success', 'failure'])('旧Run历史收尾不影响新Run：%s', async 
   const second = eventFeed()
   let rejectHistory: (error: Error) => void = () => undefined
   let resolveHistory!: (detail: ConversationHistoryDetail) => void
+  let markRequested!: () => void
+  const requested = new Promise<void>(resolve => { markRequested = resolve })
   const history = new Promise<ConversationHistoryDetail>((resolve, reject) => { resolveHistory = resolve; rejectHistory = reject })
   traceMocks.detail.mockReset()
-  traceMocks.detail.mockImplementationOnce(() => history).mockResolvedValue(traceDetail())
+  traceMocks.detail.mockImplementationOnce(() => { markRequested(); return history }).mockResolvedValue(traceDetail())
   clientMocks.start.mockImplementation((request: ChatRequestPayload, signal: AbortSignal) => {
     if (request.runId === RUN_ID) return first.read(signal)
     return (async function* () {
@@ -652,9 +664,12 @@ it.each(['success', 'failure'])('旧Run历史收尾不影响新Run：%s', async 
   let newRun!: Promise<void>
   try {
     await act(async () => { oldRun = result.current.controller.streamRun(THREAD_ID, payload, 'start') })
-    await act(async () => { first.push({ type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID }) })
-    await act(async () => { first.push({ type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID }) })
-    await waitFor(() => expect(traceMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await first.push({ type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID }) })
+    await act(async () => {
+      first.push({ type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID })
+      await requested
+    })
+    expect(traceMocks.detail).toHaveBeenCalledOnce()
     await act(async () => { newRun = result.current.controller.streamRun(THREAD_ID, { ...payload, runId: 'new-run' }, 'start') })
     await act(async () => { second.push({ type: 'RUN_STARTED', threadId: THREAD_ID, runId: 'new-run' }) })
     expect(result.current.workspace.conversations[0]).toMatchObject({ activeRunId: 'new-run', runStatus: 'streaming' })
@@ -854,6 +869,7 @@ describe('已受理运行的历史恢复', () => {
   })
 
   it.each([false, true])('刷新恢复不依赖本地缓存，暂停时首段可见且续流不重复（缓存=%s）', async (cached) => {
+    vi.useFakeTimers()
     if (cached) cacheRun(payload, 999)
     const base = traceDetail({ asOfSeq: 2, graph: emptyTraceGraph(2), messages: [], messageCount: 0, status: { execution: 'running', headRunId: RUN_ID } })
     const feed = traceFeed()
@@ -871,6 +887,7 @@ describe('已受理运行的历史恢复', () => {
         await feed.push({ type: 'event', replayed: true, seq: 280, event: { type: 'TEXT_MESSAGE_START', messageId: 'answer', role: 'assistant' } })
         await feed.push({ type: 'event', replayed: true, seq: 281, event: { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '第一段' } })
       })
+      await act(async () => vi.advanceTimersByTimeAsync(50))
       expect(result.current.workspace.conversations[0]?.messages.find(item => item.id === 'answer')?.content).toBe('第一段')
       expect(result.current.workspace.conversations[0]?.messages.find(item => item.id === 'answer')?.liveText).toBeUndefined()
       expect(result.current.workspace.conversations[0]?.runStatus).toBe('streaming')
@@ -881,12 +898,94 @@ describe('已受理运行的历史恢复', () => {
         await feed.push({ type: 'event', replayed: true, seq: 281, event: { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '第一段' } })
         await feed.push({ type: 'event', replayed: false, seq: 282, event: { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '第二段' } })
       })
+      await act(async () => vi.advanceTimersByTimeAsync(50))
       expect(result.current.workspace.conversations[0]?.messages.find(item => item.id === 'answer')?.liveText?.initialContent).toBe('第一段')
       expect(result.current.workspace.conversations[0]?.messages.find(item => item.id === 'answer')?.content).toBe('第一段第二段')
       await act(async () => { await feed.push({ type: 'event', replayed: false, seq: 283, event: { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID, outcome: { type: 'success' } } }); await recovering })
       expect(result.current.workspace.conversations[0]?.runStatus).toBe('idle')
       expect(readActiveRunSession(THREAD_ID)).toBeNull()
     } finally { unmount(); await recovering }
+  })
+
+  it('恢复正文合并展示，保留等待期间的标题、置顶与本地选择，卸载丢弃待显示正文', async () => {
+    vi.useFakeTimers()
+    const base = traceDetail({ asOfSeq: 2, graph: emptyTraceGraph(2), messages: [], messageCount: 0, status: { execution: 'running', headRunId: RUN_ID } })
+    const feed = traceFeed()
+    traceMocks.follow.mockImplementation((_thread, _run, { signal }) => feed.read(signal))
+    const { result, unmount } = renderHook(() => useControllerHarness(restored(runningTrace())))
+    let recovering!: Promise<void>
+    await act(async () => { recovering = result.current.controller.recoverConversation(THREAD_ID) })
+    try {
+      await feed.opened
+      await act(async () => {
+        await feed.push({ type: 'snapshot', snapshot: base, replay: true })
+        await feed.push({ type: 'event', replayed: true, seq: 10, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } })
+        await feed.push({ type: 'event', replayed: true, seq: 11, event: { type: 'TEXT_MESSAGE_START', messageId: 'answer', role: 'assistant' } })
+        await feed.push({ type: 'event', replayed: false, seq: 12, event: { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '甲' } })
+        await feed.push({ type: 'event', replayed: false, seq: 13, event: { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '乙' } })
+        await feed.push({ type: 'event', replayed: false, seq: 13, event: { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '乙' } })
+      })
+      act(() => {
+        result.current.setWorkspace(state => ({ ...state, conversations: state.conversations.map(item => ({
+          ...item, pinned: true, title: '手动标题', titleSource: 'user', titleGenerationStatus: 'skipped', titleSeq: 20,
+        })) }))
+        result.current.setComposerPreference(THREAD_ID, { model: 'next-model', mode: 'plan' })
+      })
+      await act(async () => vi.advanceTimersByTimeAsync(49))
+      expect(result.current.workspace.conversations[0]?.messages[0]?.content).toBe('')
+      expect(result.current.workspace.conversations[0]?.lastSeq).toBe(11)
+      await act(async () => vi.advanceTimersByTimeAsync(1))
+      expect(result.current.workspace.conversations[0]).toMatchObject({
+        title: '手动标题', titleSeq: 20, pinned: true, model: 'next-model', mode: 'plan', lastSeq: 13,
+        messages: [{ content: '甲乙' }],
+      })
+      await act(async () => { await feed.push({ type: 'event', replayed: false, seq: 14, event: { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '丙' } }) })
+      unmount()
+      await recovering
+      expect(feed.signal?.aborted).toBe(true)
+      expect(vi.getTimerCount()).toBe(0)
+      await vi.advanceTimersByTimeAsync(50)
+      expect(result.current.workspace.conversations[0]?.messages[0]?.content).toBe('甲乙')
+      expect(clientMocks.cancel).not.toHaveBeenCalled()
+    } finally { unmount(); await recovering }
+  })
+
+  it.each(['message_end', 'run_finished', 'invalid_event'] as const)('恢复正文在非文本边界立即发布：%s', async boundary => {
+    vi.useFakeTimers()
+    const base = traceDetail({ asOfSeq: 2, graph: emptyTraceGraph(2), messages: [], messageCount: 0, status: { execution: 'running', headRunId: RUN_ID } })
+    const feed = traceFeed()
+    traceMocks.follow.mockImplementation((_thread, _run, { signal }) => feed.read(signal))
+    let resolveHistory!: (detail: ConversationHistoryDetail) => void
+    traceMocks.detail.mockImplementation(() => new Promise(resolve => { resolveHistory = resolve }))
+    const { result, unmount } = renderHook(() => useControllerHarness(restored(runningTrace())))
+    let recovering!: Promise<void>
+    await act(async () => { recovering = result.current.controller.recoverConversation(THREAD_ID) })
+    try {
+      await feed.opened
+      await act(async () => {
+        await feed.push({ type: 'snapshot', snapshot: base, replay: true })
+        await feed.push({ type: 'event', replayed: true, seq: 10, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } })
+        await feed.push({ type: 'event', replayed: true, seq: 11, event: { type: 'TEXT_MESSAGE_START', messageId: 'answer', role: 'assistant' } })
+        await feed.push({ type: 'event', replayed: false, seq: 12, event: { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '已读取正文' } })
+      })
+      expect(result.current.workspace.conversations[0]?.messages[0]?.content).toBe('')
+      const event: StreamedAgUiEvent['event'] = boundary === 'message_end'
+        ? { type: 'TEXT_MESSAGE_END', messageId: 'answer' }
+        : boundary === 'run_finished'
+          ? { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID, outcome: { type: 'success' } }
+          : { type: 'STATE_DELTA', delta: [{ op: 'replace', path: '/missing/value', value: 1 }] }
+      await act(async () => { await feed.push({ type: 'event', replayed: false, seq: 13, event }) })
+      expect(result.current.workspace.conversations[0]?.messages[0]?.content).toBe('已读取正文')
+      if (boundary === 'invalid_event') {
+        await act(async () => { await recovering })
+        expect(result.current.workspace.conversations[0]?.notice?.kind).toBe('error')
+      }
+      if (boundary === 'run_finished') {
+        await act(async () => { resolveHistory(traceDetail()); await recovering })
+        expect(result.current.workspace.conversations[0]?.messages[0]?.content).toBe('Trace 最终内容')
+      }
+    } finally { unmount(); await recovering }
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('续播序号缺口从最后已应用游标重连，保留正文且不重复执行', async () => {
@@ -1104,4 +1203,28 @@ it.each([false, true])('未受理占位保留独立恢复请求（受理未知�
   expect(clientMocks.start.mock.calls[1]?.[0]).toMatchObject({ threadId: '', runId: RUN_ID })
   expect(registered).toHaveBeenCalledOnce()
   expect(result.current.workspace.conversations.some(item => item.threadId === 'accepted')).toBe(true)
+})
+
+
+it('压缩沿用流控制器和权威历史，不提交聊天消息或改变权限与模式', async () => {
+  vi.clearAllMocks()
+  const compactPayload = { threadId: THREAD_ID, runId: RUN_ID, model: 'main' }
+  const resultPayload = { run_id: RUN_ID, status: 'compacted', summary: '压缩摘要', compacted_messages: 3 }
+  const detail = traceDetail({ graph: traceGraphWithNodes([
+    traceGraphNode({ id: 'compaction', kind: 'custom', contextKind: 'compaction', compactionOrigin: 'manual', name: 'context_compaction', runId: RUN_ID, result: resultPayload }),
+  ], 5) })
+  traceMocks.detail.mockResolvedValue(detail)
+  clientMocks.compact.mockImplementation(() => streamItems([
+    { seq: 1, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } },
+    { seq: 2, event: { type: 'STATE_SNAPSHOT', snapshot: { context_compaction: resultPayload } } },
+    { seq: 3, event: { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID } },
+  ]))
+  const initial = conversation({ compactions: [{ runId: RUN_ID, createdAt: BASE_TIME, status: 'generating' }] })
+  const { result } = renderHook(() => useControllerHarness(initial))
+  await act(async () => { await result.current.controller.streamRun(THREAD_ID, compactPayload, 'compact') })
+  expect(clientMocks.compact).toHaveBeenCalledWith(compactPayload, expect.any(AbortSignal), undefined)
+  expect(clientMocks.start).not.toHaveBeenCalled()
+  expect(result.current.workspace.conversations[0]?.compactions?.[0]).toMatchObject({ status: 'compacted', summary: '压缩摘要' })
+  expect(result.current.workspace.conversations[0]?.messages.every(message => message.content !== '压缩摘要')).toBe(true)
+  expect(readActiveRunSession(THREAD_ID)).toBeNull()
 })

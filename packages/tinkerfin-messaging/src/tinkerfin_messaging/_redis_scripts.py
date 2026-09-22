@@ -12,6 +12,33 @@ matrix are protected by ``tests/test_retention.py`` and real Redis cases in
 changes cannot alter the deployed program bytes.
 """
 
+# Notifications are advisory, bounded metadata in the same Cluster slot. Reading the
+# integer back as text avoids converting its full Redis int64 range through Lua floats.
+_NOTIFICATION_PREAMBLE = r"""
+local function write_notification(control, generation, message_sequence, control_sequence)
+    local notifications = KEYS[#KEYS - 1]
+    local notification_counter = KEYS[#KEYS]
+    redis.call('INCR', notification_counter)
+    local notification_sequence = redis.call('GET', notification_counter)
+    redis.call('XADD', notifications,
+        'MAXLEN', '=', '4096', notification_sequence .. '-0',
+        'scope', redis.sha1hex(control),
+        'generation', generation,
+        'message', message_sequence,
+        'control', control_sequence)
+end
+"""
+
+_WAIT_CURSOR_SCRIPT = r"""
+return {
+    redis.call('GET', KEYS[3]) or '',
+    redis.call('HGET', KEYS[1], 'generation') or '0',
+    redis.call('HGET', KEYS[1], 'state') or '',
+    redis.call('HGET', KEYS[2], 'seq') or '0',
+    redis.call('HGET', KEYS[1], 'signal_seq') or '0'
+}
+"""
+
 # Read may only announce expiry by moving ``active`` to ``expiring``. Physical cleanup
 # remains owned by the fenced expiration scripts below.
 _READ_CONTROL_SCRIPT = r"""
@@ -38,16 +65,17 @@ return {'OK', generation, state}
 # Prepare atomically selects owner versus attachment, validates codec/limits, and starts
 # a fresh generation after deleted/expired tombstones. A new active owner clears any
 # prior deadline; only terminal/owner-loss paths may start retention.
-_PREPARE_SCRIPT = r"""
+_PREPARE_SCRIPT = (
+    _NOTIFICATION_PREAMBLE
+    + r"""
 local channel_meta = KEYS[1]
 local control = KEYS[2]
 local meta = KEYS[3]
 local run_key = KEYS[4]
 local lease_key = KEYS[5]
 local key_index = KEYS[6]
-local signals = KEYS[7]
-local capacity = KEYS[8]
-local expirations = KEYS[9]
+local capacity = KEYS[7]
+local expirations = KEYS[8]
 local requested_generation = tonumber(ARGV[1])
 local requested_run = ARGV[2]
 local requested_codec = ARGV[3]
@@ -80,13 +108,10 @@ local function set_retention_deadline()
     redis.call('ZADD', expirations, deadline, control)
 end
 
-local function write_signal(kind, signal_run)
-    local signal_seq = redis.call('HINCRBY', control, 'signal_seq', 1)
-    redis.call('XADD', signals,
-        'MAXLEN', '=', '256', tostring(signal_seq) .. '-0',
-        'kind', kind,
-        'generation', tostring(requested_generation),
-        'run', signal_run)
+local function write_signal()
+    redis.call('HINCRBY', control, 'signal_seq', 1)
+    write_notification(control, redis.call('HGET', control, 'generation'),
+        '0', redis.call('HGET', control, 'signal_seq'))
 end
 
 local function initialize_lease_diagnostics()
@@ -249,7 +274,7 @@ if redis.call('EXISTS', run_key) == 1 then
         if redis.call('HGET', meta, 'active_key') == run_key then
             redis.call('HDEL', meta, 'active_run', 'active_key', 'active_lease')
         end
-        write_signal('owner_lost', requested_run)
+        write_signal()
         set_retention_deadline()
         return {'ATTACH', tostring(cursor), 'owner_lost'}
     end
@@ -277,7 +302,7 @@ if redis.call('EXISTS', run_key) == 1 then
         redis.call('HDEL', control, 'retention_deadline_ms')
         redis.call('ZREM', expirations, control)
         redis.call('SET', lease_key, owner_token .. ':' .. tostring(fence), 'PX', lease_ms)
-        write_signal('recover', requested_run)
+        write_signal()
         return {
             'RECOVER', tostring(cursor), tostring(fence),
             redis.call('HGET', run_key, 'checkpoint_present') or '0',
@@ -293,7 +318,7 @@ if redis.call('EXISTS', run_key) == 1 then
     if redis.call('HGET', meta, 'active_key') == run_key then
         redis.call('HDEL', meta, 'active_run', 'active_key', 'active_lease')
     end
-    write_signal('owner_lost', requested_run)
+    write_signal()
     set_retention_deadline()
     return {'ATTACH', tostring(cursor), 'owner_lost'}
 end
@@ -304,14 +329,13 @@ if active_key then
     if active_lease and redis.call('EXISTS', active_lease) == 1 then
         return {'RUN_ACTIVE', redis.call('HGET', meta, 'active_run') or ''}
     end
-    local expired_run = redis.call('HGET', meta, 'active_run') or ''
     redis.call('HSET', active_key,
         'status', 'owner_lost',
         'end_seq', tostring(latest),
         'error_class', 'tinkerfin_messaging.OwnerLost',
         'error_message', 'producer lease expired')
     redis.call('HDEL', meta, 'active_run', 'active_key', 'active_lease')
-    write_signal('owner_lost', expired_run)
+    write_signal()
     set_retention_deadline()
 end
 
@@ -342,11 +366,14 @@ redis.call('HDEL', control, 'retention_deadline_ms')
 redis.call('SET', lease_key, owner_token .. ':' .. tostring(fence), 'PX', lease_ms)
 return {'START', tostring(cursor), tostring(fence)}
 """
+)
 
 
 # Append preserves owner token/fence, contiguous sequence, idempotent message IDs, and
 # capacity accounting in one transaction; it never changes the retention deadline.
-_APPEND_SCRIPT = r"""
+_APPEND_SCRIPT = (
+    _NOTIFICATION_PREAMBLE
+    + r"""
 local control = KEYS[1]
 local channel_meta = KEYS[2]
 local meta = KEYS[3]
@@ -491,8 +518,10 @@ if checkpoint_present == '1' then
         'checkpoint_position', checkpoint_position,
         'checkpoint_message_id', checkpoint_message_id)
 end
+write_notification(control, generation, redis.call('HGET', meta, 'seq'), '0')
 return {'APPENDED', tostring(seq), created_seconds, created_microseconds}
 """
+)
 
 
 # Settlement fences further producer writes before terminal metadata is committed.
@@ -532,13 +561,14 @@ return {'OWNERSHIP_LOST'}
 
 # Finish records the unique producer outcome, releases the lease, and starts the
 # server-time retention deadline without expiring active data early.
-_FINISH_SCRIPT = r"""
+_FINISH_SCRIPT = (
+    _NOTIFICATION_PREAMBLE
+    + r"""
 local control = KEYS[1]
 local meta = KEYS[2]
 local run_key = KEYS[3]
 local lease_key = KEYS[4]
-local signals = KEYS[5]
-local expirations = KEYS[6]
+local expirations = KEYS[5]
 local generation = ARGV[1]
 local owner_token = ARGV[2]
 local fence = ARGV[3]
@@ -548,13 +578,10 @@ local error_message = ARGV[6]
 local retention_ms = tonumber(ARGV[7])
 local expected_owner = owner_token .. ':' .. fence
 
-local function write_signal(kind, signal_run)
-    local signal_seq = redis.call('HINCRBY', control, 'signal_seq', 1)
-    redis.call('XADD', signals,
-        'MAXLEN', '=', '256', tostring(signal_seq) .. '-0',
-        'kind', kind,
-        'generation', generation,
-        'run', signal_run)
+local function write_signal()
+    redis.call('HINCRBY', control, 'signal_seq', 1)
+    write_notification(control, redis.call('HGET', control, 'generation'),
+        '0', redis.call('HGET', control, 'signal_seq'))
 end
 
 if redis.call('HGET', control, 'state') ~= 'active' or redis.call('HGET', control, 'generation') ~= generation then
@@ -594,26 +621,25 @@ else
     redis.call('HSET', control, 'retention_deadline_ms', tostring(deadline))
     redis.call('ZADD', expirations, deadline, control)
 end
-write_signal('finish', redis.call('HGET', run_key, 'run') or '')
+write_signal()
 return {'OK'}
 """
+)
 
 
 # Cancellation is generation- and run-fenced; it signals the current owner but does not
 # reinterpret abandonment as a producer failure or delete retained replay.
-_CANCEL_SCRIPT = r"""
+_CANCEL_SCRIPT = (
+    _NOTIFICATION_PREAMBLE
+    + r"""
 local control = KEYS[1]
 local run_key = KEYS[2]
-local signals = KEYS[3]
 local generation = ARGV[1]
 
-local function write_signal(kind, signal_run)
-    local signal_seq = redis.call('HINCRBY', control, 'signal_seq', 1)
-    redis.call('XADD', signals,
-        'MAXLEN', '=', '256', tostring(signal_seq) .. '-0',
-        'kind', kind,
-        'generation', generation,
-        'run', signal_run)
+local function write_signal()
+    redis.call('HINCRBY', control, 'signal_seq', 1)
+    write_notification(control, redis.call('HGET', control, 'generation'),
+        '0', redis.call('HGET', control, 'signal_seq'))
 end
 
 if redis.call('HGET', control, 'state') ~= 'active' or redis.call('HGET', control, 'generation') ~= generation then
@@ -636,22 +662,24 @@ if status == 'cancel_requested' then
     return {'DUPLICATE'}
 end
 redis.call('HSET', run_key, 'status', 'cancel_requested')
-write_signal('cancel', redis.call('HGET', run_key, 'run') or '')
+write_signal()
 return {'REQUESTED'}
 """
+)
 
 
 # Snapshot returns one atomic control/run view. It can announce ``expiring`` at the
 # Redis-time boundary but leaves physical cleanup to an explicit expiration claimant.
-_RUN_SNAPSHOT_SCRIPT = r"""
+_RUN_SNAPSHOT_SCRIPT = (
+    _NOTIFICATION_PREAMBLE
+    + r"""
 local control = KEYS[1]
 local meta = KEYS[2]
 local run_key = KEYS[3]
 local lease_key = KEYS[4]
 local messages = KEYS[5]
-local signals = KEYS[6]
-local channel_meta = KEYS[7]
-local expirations = KEYS[8]
+local channel_meta = KEYS[6]
+local expirations = KEYS[7]
 local generation = ARGV[1]
 local requested_after = ARGV[2]
 local retention_ms = tonumber(ARGV[3])
@@ -670,13 +698,10 @@ local function set_retention_deadline()
     redis.call('ZADD', expirations, deadline, control)
 end
 
-local function write_signal(kind, signal_run)
-    local signal_seq = redis.call('HINCRBY', control, 'signal_seq', 1)
-    redis.call('XADD', signals,
-        'MAXLEN', '=', '256', tostring(signal_seq) .. '-0',
-        'kind', kind,
-        'generation', generation,
-        'run', signal_run)
+local function write_signal()
+    redis.call('HINCRBY', control, 'signal_seq', 1)
+    write_notification(control, redis.call('HGET', control, 'generation'),
+        '0', redis.call('HGET', control, 'signal_seq'))
 end
 
 if redis.call('HGET', control, 'state') ~= 'active' or redis.call('HGET', control, 'generation') ~= generation then
@@ -704,7 +729,7 @@ if status ~= 'completed' and status ~= 'cancelled' and status ~= 'failed' and st
                 redis.call('HDEL', meta, 'active_run', 'active_key', 'active_lease')
             end
             status = 'owner_lost'
-            write_signal('owner_lost', redis.call('HGET', run_key, 'run') or '')
+            write_signal()
             set_retention_deadline()
         elseif redis.call('HGET', run_key, 'recoverable') ~= '1' then
             local latest = redis.call('HGET', meta, 'seq') or '0'
@@ -717,7 +742,7 @@ if status ~= 'completed' and status ~= 'cancelled' and status ~= 'failed' and st
                 redis.call('HDEL', meta, 'active_run', 'active_key', 'active_lease')
             end
             status = 'owner_lost'
-            write_signal('owner_lost', redis.call('HGET', run_key, 'run') or '')
+            write_signal()
             set_retention_deadline()
         end
     end
@@ -775,6 +800,7 @@ return {
     redis.call('HGET', run_key, 'publication_ready') or ''
 }
 """
+)
 
 
 # State loading reads every requested value and the Redis clock in one script. A
@@ -946,24 +972,22 @@ return {'OWNED'}
 
 # Explicit deletion and retention expiration share batched physical cleanup but retain
 # distinct terminal states (``deleted`` versus ``expired``).
-_BEGIN_DELETE_SCRIPT = r"""
+_BEGIN_DELETE_SCRIPT = (
+    _NOTIFICATION_PREAMBLE
+    + r"""
 local control = KEYS[1]
 local meta = KEYS[2]
 local delete_lease = KEYS[3]
 local active_lease = KEYS[4]
-local signals = KEYS[5]
 local expected_generation = tonumber(ARGV[1])
 local delete_owner = ARGV[2]
 local delete_lease_ms = ARGV[3]
 local expected_active_lease = ARGV[4]
 
-local function write_signal(kind, signal_run)
-    local signal_seq = redis.call('HINCRBY', control, 'signal_seq', 1)
-    redis.call('XADD', signals,
-        'MAXLEN', '=', '256', tostring(signal_seq) .. '-0',
-        'kind', kind,
-        'generation', tostring(expected_generation),
-        'run', signal_run)
+local function write_signal()
+    redis.call('HINCRBY', control, 'signal_seq', 1)
+    write_notification(control, redis.call('HGET', control, 'generation'),
+        '0', redis.call('HGET', control, 'signal_seq'))
 end
 
 local state = redis.call('HGET', control, 'state')
@@ -1009,9 +1033,10 @@ if stored_active_lease ~= '' and redis.call('EXISTS', active_lease) == 1 then
 end
 redis.call('HSET', control, 'state', 'deleting')
 redis.call('SET', delete_lease, delete_owner, 'PX', delete_lease_ms)
-write_signal('delete', redis.call('HGET', meta, 'active_run') or '')
+write_signal()
 return {'OWNED'}
 """
+)
 
 
 # Batched cleanup is token-fenced and bounded so Redis is never blocked by an unbounded

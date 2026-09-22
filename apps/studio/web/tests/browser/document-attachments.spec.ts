@@ -49,7 +49,7 @@ test('生成文件使用紧凑类型卡片并沿用图片预览工具栏', async
   await page.addInitScript(user => {
     localStorage.setItem('tinkerfin.auth.session', JSON.stringify({
       token: 'browser-token',
-      tokenType: 'Bearer',
+      serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user,
     }))
@@ -161,6 +161,10 @@ test('生成文件使用紧凑类型卡片并沿用图片预览工具栏', async
     const dialogBox = (await dialog.boundingBox())!
     expect(dialogBox).toMatchObject({ x: 0, y: 0, width: 1440, height: 960 })
     const title = dialog.locator('.attachment-document-title')
+    await expect(title).toHaveCSS('font-weight', '400')
+    const documentContent = dialog.getByRole('region', { name: '文档预览', exact: true })
+    await expect(documentContent.getByRole('heading', { name: 'TinkerFin Studio', exact: true })).toHaveCSS('font-weight', '600')
+    await expect(documentContent.getByText('点击文件卡片即可打开预览。', { exact: true })).toHaveCSS('font-weight', '400')
     await expect(title.locator('.attachment-file-icon')).toHaveText('MD')
     await expect(title.locator('.attachment-document-title__copy > span')).toHaveText('README.md')
     const rail = dialog.getByRole('complementary', { name: '本次交付文件', exact: true })

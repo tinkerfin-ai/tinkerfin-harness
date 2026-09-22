@@ -92,8 +92,8 @@ def verify_web(*, skip_browser: bool = False) -> None:
         cwd=WEB_DIR,
     )
     if not skip_browser:
-        # The upload proxy test launches Chromium, just like the UI tests.
-        run("pnpm", "--dir", str(WEB_DIR), "test:proxy")
+        # The HTTP upload test launches Chromium, just like the UI tests.
+        run("pnpm", "--dir", str(WEB_DIR), "test:http")
         environment = os.environ.copy()
         environment.setdefault("PLAYWRIGHT_PORT", _free_port())
         run(

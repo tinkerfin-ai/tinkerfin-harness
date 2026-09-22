@@ -130,9 +130,10 @@ async def prepare(
                 keys.run_key,
                 keys.lease_key,
                 keys.index,
-                keys.signals,
                 self._capacity_key,
                 self._expirations_key,
+                self._notifications_key,
+                self._notification_counter_key,
             ],
             [
                 str(generation),
@@ -325,6 +326,8 @@ async def append(
             dedupe,
             keys.index,
             self._capacity_key,
+            self._notifications_key,
+            self._notification_counter_key,
         ],
         [
             str(generation),

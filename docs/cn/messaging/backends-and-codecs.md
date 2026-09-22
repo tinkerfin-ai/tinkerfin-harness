@@ -74,7 +74,8 @@ messaging = Messaging(backend=backend)
 | `limits` | `MessagingLimits()` | 单条、单线程和保留数据总量上限 |
 | `retention_policy` | 关闭 | thread generation 终态后的重播窗口 |
 
-Redis client 是调用方提供的资源，应用关闭时自行关闭。连接池容量要覆盖同时等待消息、等待取消和普通命令的连接数。
+Redis client 是调用方提供的资源，应用关闭时自行关闭。每个 `RedisBackend` 在等待消息或取消时
+共用一个连接，最后一次等待结束后由框架释放。连接池还需为并发执行的普通命令预留容量。
 
 启用 retention 后，从终态结算时开始计时。active producer 不会过期，截止前的新 Run 会清除
 计时。过期 generation 抛出 `StreamExpired`，显式 `after=0` 启动会创建下一个空 generation。

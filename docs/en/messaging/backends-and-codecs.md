@@ -75,7 +75,10 @@ messaging = Messaging(backend=backend)
 | `limits` | `MessagingLimits()` | Individual, thread, and total retained-storage limits |
 | `retention_policy` | disabled | Terminal thread-generation replay window |
 
-The caller owns the Redis client and closes it during application shutdown. Size the connection pool for blocked followers, cancellation waiters, and ordinary commands.
+The caller owns the Redis client and closes it during application shutdown. Each
+`RedisBackend` uses one shared connection while waiting for messages or cancellation;
+the framework releases it when the last wait ends. Size the pool for that connection
+and concurrent ordinary commands.
 
 An enabled retention policy starts at terminal settlement. Active producers do not
 expire, and a new Run before the deadline clears the timer. An expired generation raises

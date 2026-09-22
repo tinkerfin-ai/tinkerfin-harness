@@ -1,4 +1,4 @@
-import { ArrowUp, Plus, Square } from 'lucide-react'
+import { ArrowUp, Paperclip, Plus, Square } from 'lucide-react'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 
@@ -39,6 +39,7 @@ export function Composer({
   value,
   isRunning,
   canStop = true,
+  stopDisabledReason,
   stopPending = false,
   isHydrating = false,
   disabledReason,
@@ -56,6 +57,9 @@ export function Composer({
   onSend,
   onStop,
   onExitPlan,
+  onChooseModel,
+  onCompact,
+  compactDisabledReason,
   onAddAttachments,
   onRemoveAttachment,
   onRetryAttachment,
@@ -65,6 +69,7 @@ export function Composer({
   value: string
   isRunning: boolean
   canStop?: boolean
+  stopDisabledReason?: string
   stopPending?: boolean
   isHydrating?: boolean
   disabledReason?: string
@@ -82,6 +87,10 @@ export function Composer({
   onSend: () => void
   onStop: () => void
   onExitPlan: () => void
+  /** 打开宿主持有的模型选择器，沿用当前会话的选择结果与焦点操作 */
+  onChooseModel: () => void
+  onCompact?: () => boolean
+  compactDisabledReason?: string
   onAddAttachments: (files: readonly File[]) => void
   onRemoveAttachment: (id: string) => void
   onRetryAttachment?: (id: string) => void
@@ -99,6 +108,7 @@ export function Composer({
   const acceptedCaret = useRef(value.length)
   const menuId = `composer-suggestions-${useId()}`
   const [caret, setCaret] = useState(value.length)
+  const [menuRequested, setMenuRequested] = useState(false)
   const [activeSuggestionId, setActiveSuggestionId] = useState<string>()
   const takeoverWasActive = useRef(Boolean(takeover))
   const focusAfterTakeover = useRef(false)
@@ -108,27 +118,39 @@ export function Composer({
     [caret, isDisabled, value],
   )
   const suggestionGroups = useMemo(
-    () => filterComposerSuggestionGroups(slashHit?.query ?? ''),
-    [slashHit?.query],
+    () => filterComposerSuggestionGroups(menuRequested ? '' : slashHit?.query ?? '').map(group => ({
+      ...group,
+      items: group.items.map(item => item.id === 'compact' ? {
+        ...item, disabled: !onCompact || isRunning || Boolean(compactDisabledReason),
+        description: compactDisabledReason ?? item.description,
+      } : item),
+    })),
+    [menuRequested, slashHit?.query, onCompact, isRunning, compactDisabledReason],
   )
   const enabledIds = useMemo(
     () => enabledSuggestionIds(suggestionGroups),
     [suggestionGroups],
   )
   const menuOpen = Boolean(
-    slashHit
+    !isDisabled
+    && (menuRequested || slashHit)
     && suggestionGroups.some((group) => group.items.length > 0),
   )
   const resolvedActiveId = enabledIds.includes(activeSuggestionId ?? '')
     ? activeSuggestionId
     : enabledIds[0]
   const planClaim = planClaimParts(value)
-  const canSubmitDraft = (Boolean(value.trim()) || attachments.length > 0) && (!value.trim() || isSubmittableComposerDraft(value)) && !attachmentBlocked && attachments.every(item => item.state === 'ready')
+  const isCompactCommand = /^\/compact(?:\s|$)/.test(value.trim())
+  const canSubmitDraft = (Boolean(value.trim()) || attachments.length > 0) && (!value.trim() || isSubmittableComposerDraft(value)) && (isCompactCommand ? !compactDisabledReason : !attachmentBlocked && attachments.every(item => item.state === 'ready'))
   const cancelSuggestionMenu = useCallback(() => {
+    if (menuRequested) {
+      setMenuRequested(false)
+      return
+    }
     const cancellation = cancelComposerSuggestion(value, slashHit ?? undefined)
     pendingCaret.current = cancellation.caret
     onChange(cancellation.value)
-  }, [onChange, slashHit, value])
+  }, [menuRequested, onChange, slashHit, value])
 
   useLayoutEffect(() => {
     if (pendingCaret.current == null) return
@@ -137,7 +159,7 @@ export function Composer({
     input.current?.setSelectionRange(nextCaret, nextCaret)
     acceptedCaret.current = nextCaret
     setCaret(nextCaret)
-  }, [value])
+  }, [menuRequested, value])
 
   useEffect(() => {
     const wasActive = takeoverWasActive.current
@@ -175,10 +197,33 @@ export function Composer({
   }, [attachments])
 
   const pickSuggestion = (id: string) => {
-    if (id !== 'command-plan' || !slashHit) return
-    const replacement = replaceSlashTokenWithPlan(value, slashHit)
+    if (id === 'command-compact') {
+      if (isRunning || compactDisabledReason || !onCompact?.()) return
+      setMenuRequested(false)
+      if (slashHit) {
+        const edit = cancelComposerSuggestion(value)
+        pendingCaret.current = edit.caret
+        onChange(edit.value)
+      }
+      input.current?.focus()
+      return
+    }
+    if (id === 'command-model') {
+      cancelSuggestionMenu()
+      onChooseModel()
+      return
+    }
+    if (id !== 'command-plan') return
+    const hit = slashHit ?? detectLeadingSlashToken(value, value.length) ?? {
+      start: planClaim?.leading.length ?? 0,
+      end: planClaim ? planClaim.leading.length + planClaim.token.length : 0,
+      query: '',
+    }
+    const replacement = replaceSlashTokenWithPlan(value, hit)
+    setMenuRequested(false)
     pendingCaret.current = replacement.caret
     onChange(replacement.value)
+    input.current?.focus()
   }
 
   const moveSuggestion = (direction: 1 | -1) => {
@@ -190,6 +235,7 @@ export function Composer({
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
     if (menuOpen) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
@@ -312,6 +358,7 @@ export function Composer({
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => { event.preventDefault(); onAddAttachments([...event.dataTransfer.files]) }}
               onChange={(event) => {
+                setMenuRequested(false)
                 const nextValue = event.target.value
                 const nextCaret = event.target.selectionStart
                 const nextSlashHit = detectLeadingSlashToken(nextValue, nextCaret)
@@ -340,6 +387,7 @@ export function Composer({
                 setCaret(nextCaret)
               }}
               onKeyDown={handleKeyDown}
+              onBlur={() => setMenuRequested(false)}
               rows={1}
               placeholder={isHydrating ? t('正在加载会话…') : disabledReason ?? t('给 TinkerFin 发消息')}
             />
@@ -349,6 +397,27 @@ export function Composer({
         <div className="composer-toolbar-container">
         <div className="composer-toolbar">
           <div className="composer-toolbar-leading">
+            {/* 加号内留白较多，收紧视框并补偿线宽，使可见大小与附件、权限图标一致 */}
+            <IconButton
+              type="button"
+              size="sm"
+              className="composer-toolbar-button"
+              label={t('打开命令和技能')}
+              icon={<Plus size={16} viewBox="3.6 3.6 16.8 16.8" strokeWidth={1.4} />}
+              aria-haspopup="listbox"
+              aria-expanded={menuOpen}
+              aria-controls={menuOpen ? menuId : undefined}
+              disabled={isDisabled}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                if (menuOpen) cancelSuggestionMenu()
+                else {
+                  setActiveSuggestionId(undefined)
+                  setMenuRequested(true)
+                }
+                input.current?.focus()
+              }}
+            />
             <input
               ref={attachmentPicker.inputRef}
               type="file"
@@ -362,17 +431,21 @@ export function Composer({
             />
             <IconButton
               ref={attachmentPicker.buttonRef}
+              type="button"
               size="sm"
-              className="composer-add-button"
+              className="composer-toolbar-button"
               label={t('添加本地附件')}
               tooltip={t('添加本地附件')}
-              icon={<Plus size={18} />}
+              icon={<Paperclip size={16} />}
               loading={attachmentPicker.pending}
               onClick={attachmentPicker.open}
             />
             {accessControl}
             {planActive && (
-              <ComposerPlanChip locked={planLocked} onExitPlan={onExitPlan} />
+              <ComposerPlanChip locked={planLocked} onExitPlan={() => {
+                onExitPlan()
+                input.current?.focus({ preventScroll: true })
+              }} />
             )}
           </div>
           <div className="composer-toolbar-trailing">
@@ -380,7 +453,7 @@ export function Composer({
             {isRunning ? (
               <IconButton
                 className="send-button stop"
-                label={stopPending ? t('正在停止任务') : canStop ? t('停止任务') : t('正在创建会话')}
+                label={stopPending ? t('正在停止任务') : canStop ? t('停止任务') : stopDisabledReason ?? t('正在创建会话')}
                 icon={<Square size={13} fill="currentColor" />}
                 loading={stopPending}
                 disabled={!canStop || stopPending}

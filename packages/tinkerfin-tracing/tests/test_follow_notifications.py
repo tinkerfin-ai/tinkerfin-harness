@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -20,6 +20,13 @@ from tinkerfin_tracing import (
     TraceStoreUpdate,
 )
 from tinkerfin_tracing.backend import StoredTraceEventPage, TraceEventPageRequest
+
+
+async def _wait_for_notification(
+    notification: Coroutine[None, None, bool], *, timeout: float
+) -> bool:
+    del timeout
+    return await notification
 
 
 def _fact(identity: RunIdentity, phase: Literal["started", "terminal"]) -> RunFact:
@@ -59,6 +66,10 @@ async def test_commit_between_empty_read_and_wait_is_not_lost(
     store = DurableTraceStore(
         InMemoryTraceStore().backend, options=TraceStoreOptions(follow_poll_seconds=10)
     )
+    monkeypatch.setattr(
+        "tinkerfin_tracing.durable_store._wait_for_follow_change",
+        _wait_for_notification,
+    )
     await _write_run(store, thread="followed", run="first")
     snapshot = await store.snapshot(
         ThreadIdentity(namespace="test", thread_id="followed")
@@ -82,10 +93,10 @@ async def test_commit_between_empty_read_and_wait_is_not_lost(
     follower = store.follow(snapshot.key, after_seq=snapshot.as_of_seq)
     pending = asyncio.create_task(_next_events(follower))
     try:
-        await asyncio.wait_for(empty_read.wait(), timeout=1)
+        await empty_read.wait()
         await _write_run(store, thread="followed", run="second")
         release_read.set()
-        batch = await asyncio.wait_for(pending, timeout=0.5)
+        batch = await pending
         assert [item.trace_seq for item in batch] == [3, 4]
         assert {item.fact.identity.run_id for item in batch} == {"second"}
     finally:
@@ -102,41 +113,30 @@ async def test_closing_one_follower_preserves_the_other_local_notification(
     store = DurableTraceStore(
         InMemoryTraceStore().backend, options=TraceStoreOptions(follow_poll_seconds=10)
     )
+    monkeypatch.setattr(
+        "tinkerfin_tracing.durable_store._wait_for_follow_change",
+        _wait_for_notification,
+    )
     await _write_run(store, thread="shared", run="first")
     snapshot = await store.snapshot(
         ThreadIdentity(namespace="test", thread_id="shared")
     )
-    ready = asyncio.Event()
-    original_read = store.backend.read_event_page
-    reads = 0
-
-    async def count_read(request: TraceEventPageRequest) -> StoredTraceEventPage:
-        nonlocal reads
-        page = await original_read(request)
-        reads += 1
-        if reads == 2:
-            ready.set()
-        return page
-
-    monkeypatch.setattr(store.backend, "read_event_page", count_read)
     first = store.follow(snapshot.key, after_seq=snapshot.as_of_seq)
     second = store.follow(snapshot.key, after_seq=snapshot.as_of_seq)
+    first_initial, second_initial = await asyncio.gather(anext(first), anext(second))
+    assert first_initial.events == second_initial.events == ()
     first_pull = asyncio.create_task(_next_events(first))
     second_pull = asyncio.create_task(_next_events(second))
     try:
-        await asyncio.wait_for(ready.wait(), timeout=1)
         first_pull.cancel()
         with pytest.raises(asyncio.CancelledError):
             await first_pull
         await first.aclose()
         await _write_run(store, thread="shared", run="second")
-        batch = await asyncio.wait_for(second_pull, timeout=0.5)
+        batch = await second_pull
         sequences = [item.trace_seq for item in batch]
         if sequences == [3]:
-            sequences.extend(
-                item.trace_seq
-                for item in await asyncio.wait_for(_next_events(second), 0.5)
-            )
+            sequences.extend(item.trace_seq for item in await _next_events(second))
         assert sequences == [3, 4]
     finally:
         for pending in (first_pull, second_pull):

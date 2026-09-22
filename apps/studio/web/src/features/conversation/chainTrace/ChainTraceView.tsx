@@ -28,12 +28,14 @@ import type { JsonObject, JsonValue } from '../../../types'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { CodeText } from '../../../components/ui/CodeText'
 import { TraceLedger } from './TraceLedger'
+import { CompactionDetails } from './CompactionDetails'
 import { TraceNodeType } from './TraceNodeVisual'
 import { TraceTimeline } from './TraceTimeline'
 import {
   buildTraceSequenceLayout,
   buildTraceTimelineLayout,
   groupTraceNodesByTurn,
+  foldCompactionNodes,
   preferredTraceNode,
 } from './traceLayout'
 import {
@@ -124,6 +126,7 @@ const systemPrompt = (entry: TraceGraphNode) => {
 function TraceDetails({
   entry,
   responseEntries,
+  relatedNodes,
   responseStatus,
   turnOrdinal,
   stepOrdinal,
@@ -134,6 +137,7 @@ function TraceDetails({
   onClose,
 }: {
   entry: TraceGraphNode
+  relatedNodes: TraceGraphNode[]
   responseEntries: TraceGraphNode[]
   responseStatus: 'loading' | 'ready' | 'error'
   turnOrdinal?: number
@@ -149,6 +153,11 @@ function TraceDetails({
   const closeButton = useRef<HTMLButtonElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const detailsRef = useRef<HTMLElement>(null)
+  const compaction = entry.contextKind === 'compaction'
+    ? entry.kind === 'custom' ? entry : relatedNodes.find(node => node.parentNodeId === entry.id && node.kind === 'custom')
+    : undefined
+  const detailInput = compaction ?? entry
+  const summaryModels = compaction ? relatedNodes.filter(node => node.kind === 'model' && node.parentNodeId === compaction.id) : []
   const prompt = systemPrompt(entry)
   const responseMessages = responseEntries
     .filter((item) => item.kind === 'assistant_message')
@@ -188,8 +197,8 @@ function TraceDetails({
   }
   const tabs: Array<{ id: DetailTab; label: string }> = [
     { id: 'overview', label: t('概述') },
-    ...(entry.request != null || entry.requestOmitted
-      ? [{ id: 'request' as const, label: t('请求') }]
+    ...(detailInput.request != null || detailInput.requestOmitted
+      ? [{ id: 'request' as const, label: t(compaction ? '压缩内容' : '请求') }]
       : []),
     ...(prompt ? [{ id: 'system' as const, label: t('系统提示词') }] : []),
     ...(entry.kind === 'model'
@@ -197,8 +206,8 @@ function TraceDetails({
       : []),
     ...(usageRows.length > 0 ? [{ id: 'usage' as const, label: t('用量') }] : []),
     { id: 'timing', label: t('计时') },
-    ...(entry.result != null || entry.resultOmitted || entry.failure
-      ? [{ id: 'result' as const, label: t('结果') }]
+    ...(detailInput.result != null || detailInput.resultOmitted || detailInput.failure
+      ? [{ id: 'result' as const, label: t(compaction ? '摘要' : '结果') }]
       : []),
   ]
   const activeTab = tabs.some((item) => item.id === tab) ? tab : 'overview'
@@ -257,24 +266,24 @@ function TraceDetails({
         >
           {activeTab === 'overview' && (
             <>
-              {entry.failure && (
+              {entry.contextKind !== 'compaction' && entry.failure && (
                 <section className="chain-trace-error-panel" aria-label={t('错误详情')}>
                   <ShieldAlert size={20} aria-hidden="true" />
                   <div>
                     <strong>{entry.failure.errorType}</strong>
                     {entry.failure.message && <p>{entry.failure.message}</p>}
                   </div>
-                  {(entry.request != null || entry.requestOmitted) && (
+                  {(detailInput.request != null || detailInput.requestOmitted) && (
                     <Button className="chain-trace-feedback-action" size="xs" variant="text" trailingIcon={<ChevronRight size={16} />} onClick={() => setTab('request')}>{t('查看请求')}</Button>
                   )}
                 </section>
               )}
-              {messageContent && (
+              {entry.contextKind !== 'compaction' && messageContent && (
                 <div className="chain-trace-detail-message">
                   <MarkdownContent content={messageContent} variant="compact" isStreaming={entry.status === 'running'} />
                 </div>
               )}
-              {entry.kind === 'context' && !messageContent && (
+              {entry.kind === 'context' && entry.contextKind !== 'compaction' && !messageContent && (
                 <div className="chain-trace-detail-message is-empty">
                   <p>{entry.contentOmitted
                     ? t('最终系统提示词未保留')
@@ -296,7 +305,9 @@ function TraceDetails({
               </dl>
             </>
           )}
-          {activeTab === 'request' && <pre><CodeText language="json">{entry.requestOmitted ? t('请求内容未保留') : json(entry.request)}</CodeText></pre>}
+          {activeTab === 'request' && (compaction
+            ? <CompactionDetails operation={compaction} models={summaryModels} section="request" />
+            : <pre><CodeText language="json">{entry.requestOmitted ? t('请求内容未保留') : json(entry.request)}</CodeText></pre>)}
           {activeTab === 'system' && <MarkdownContent content={prompt} variant="compact" />}
           {activeTab === 'response' && (
             <div className="chain-trace-response">
@@ -342,8 +353,9 @@ function TraceDetails({
               <div><dt>{t('首 token 延迟')}</dt><dd>{ttft == null ? t('不可用') : durationLabel(ttft, t)}</dd></div>
             </dl>
           )}
-          {activeTab === 'result' && (
-            <pre><CodeText language="json">{entry.failure
+          {activeTab === 'result' && (compaction
+            ? <CompactionDetails operation={compaction} models={summaryModels} section="result" />
+            : <pre><CodeText language="json">{entry.failure
               ? json({
                   errorType: entry.failure.errorType,
                   message: entry.failure.message ?? null,
@@ -377,6 +389,7 @@ export function ChainTraceView({
   active,
   live,
   observedAt,
+  waitingForHistory = false,
   onError,
   onWarning,
 }: {
@@ -387,6 +400,7 @@ export function ChainTraceView({
   active: boolean
   live: boolean
   observedAt?: string
+  waitingForHistory?: boolean
   onError?: (message: string) => void
   onWarning?: (message: string) => void
 }) {
@@ -432,30 +446,31 @@ export function ChainTraceView({
   const filter = useMemo(() => ({
     query: searchQuery || undefined,
   }), [searchQuery])
-  const trace = useChainTrace({ threadId, active, live, observedAt, filter, limit: 1000 })
+  const trace = useChainTrace({ threadId, active, live, observedAt, waitingForHistory, filter, limit: 1000 })
   useEffect(() => {
     if (trace.state.phase === 'error') latestErrorHandler.current?.(t('链路加载失败'))
   }, [trace.state.phase, t])
   const page = trace.state.phase === 'ready' ? trace.state.page : undefined
   const graphNodes = useMemo(() => page?.nodes ?? [], [page?.nodes])
+  const display = useMemo(() => foldCompactionNodes(graphNodes), [graphNodes])
   const matchedNodeIds = useMemo(
-    () => new Set(page?.matchedNodeIds ?? []),
-    [page?.matchedNodeIds],
+    () => new Set((page?.matchedNodeIds ?? []).map(id => display.foldedIds.get(id) ?? id)),
+    [display.foldedIds, page?.matchedNodeIds],
   )
   const nodes = useMemo(
-    () => graphNodes.filter((node) => matchedNodeIds.has(node.id)),
-    [graphNodes, matchedNodeIds],
+    () => display.nodes.filter((node) => matchedNodeIds.has(node.id)),
+    [display.nodes, matchedNodeIds],
   )
   const nodesById = useMemo(
-    () => new Map(graphNodes.map((node) => [node.id, node])),
-    [graphNodes],
+    () => new Map(display.nodes.map((node) => [node.id, node])),
+    [display.nodes],
   )
   const selected = selectedId ? nodesById.get(selectedId) : undefined
   const timelineNodes = useMemo(
     () => selected
-      ? nodes.filter((node) => node.turnId === selected.turnId)
-      : nodes,
-    [nodes, selected],
+      ? display.nodes.filter((node) => node.turnId === selected.turnId)
+      : display.nodes,
+    [display.nodes, selected],
   )
   const timelineTurns = useMemo(
     () => selected
@@ -470,12 +485,12 @@ export function ChainTraceView({
     [selected, timelineNodes, timelineTurns],
   )
   const sequence = useMemo(
-    () => buildTraceSequenceLayout(page?.turns ?? [], nodes),
-    [nodes, page?.turns],
+    () => buildTraceSequenceLayout(page?.turns ?? [], display.nodes),
+    [display.nodes, page?.turns],
   )
   const turnRows = useMemo(
-    () => groupTraceNodesByTurn(page?.turns ?? [], graphNodes),
-    [graphNodes, page?.turns],
+    () => groupTraceNodesByTurn(page?.turns ?? [], display.nodes),
+    [display.nodes, page?.turns],
   )
   const timelineTurn = selected
     ? timelineTurns.find((turn) => turn.id === selected.turnId)
@@ -575,11 +590,11 @@ export function ChainTraceView({
     if (selectedId && nodesById.has(selectedId)) return
     if (manualClose.current && !selectedId) return
     detailTrigger.current = null
-    const preferred = preferredTraceNode(nodes)
+    const preferred = preferredTraceNode(display.nodes)
     if (!preferred) return
     scrollLatestIntoView.current = true
     setSelectedId(preferred.id)
-  }, [drawerLayout.available, incomplete, mobile, nodes, nodesById, page, selectedId])
+  }, [display.nodes, drawerLayout.available, incomplete, mobile, nodes, nodesById, page, selectedId])
 
   useLayoutEffect(() => {
     if (!scrollLatestIntoView.current || !selectedId) return
@@ -767,6 +782,7 @@ export function ChainTraceView({
               <TraceDetails
                 key={selected.id}
                 entry={selected}
+                relatedNodes={graphNodes}
                 responseEntries={responseEntries}
                 responseStatus={responseStatus === 'idle' ? 'loading' : responseStatus}
                 turnOrdinal={selectedPosition?.turnOrdinal}

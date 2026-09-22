@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -6,18 +7,44 @@ from tinkerfin_studio.config.settings import Settings, load_settings
 
 
 def _clear_settings_environment(monkeypatch) -> None:
-    for field_name in Settings.model_fields:
-        monkeypatch.delenv(field_name.upper(), raising=False)
+    for name in tuple(os.environ):
+        if name.lower() in Settings.model_fields or name.upper().startswith(
+            ("MYSQL_", "REDIS_RUNTIME_", "OPEN_SANDBOX_", "S3_STORAGE_")
+        ):
+            monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("S3_STORAGE_BUCKET", "test-attachments")
     monkeypatch.setenv("S3_STORAGE_ACCESS_KEY", "test-access")
     monkeypatch.setenv("S3_STORAGE_SECRET_KEY", "test-secret")
+
+
+def test_native_settings_source_priority(tmp_path, monkeypatch):
+    """构造参数优先于环境变量，环境变量优先于文件，缺省项使用默认值"""
+    _clear_settings_environment(monkeypatch)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "BUSINESS_DATABASE_URL=mysql+asyncmy://u:p@db/business\n"
+        "COMPONENTS_DATABASE_URL=mysql+asyncmy://u:p@db/components\n"
+        "LOG_LEVEL=WARNING\n"
+    )
+    assert load_settings(env_file=env_file).log_level == "WARNING"
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    # Pyright 未识别 BaseSettings 的环境输入和 _env_file 参数
+    settings = Settings(_env_file=env_file, log_level="ERROR")  # type: ignore[reportCallIssue]
+    assert settings.log_level == "ERROR"
+    assert settings.database_pool_size == 5
+    assert load_settings(env_file=env_file).log_level == "DEBUG"
 
 
 @pytest.mark.parametrize("bucket", [None, "", "ABucket", "a", "a..b", "127.0.0.1"])
 def test_s3_storage_bucket_is_required_and_validated(monkeypatch, bucket):
     _clear_settings_environment(monkeypatch)
     monkeypatch.delenv("S3_STORAGE_BUCKET")
-    values = {"database_url": "mysql+asyncmy://u:p@db/studio"}
+    values = {
+        "s3_storage_access_key": "test-access",
+        "s3_storage_secret_key": "test-secret",
+        "business_database_url": "mysql+asyncmy://u:p@db/studio",
+        "components_database_url": "mysql+asyncmy://u:p@db/components",
+    }
     if bucket is not None:
         values["s3_storage_bucket"] = bucket
     with pytest.raises(ValueError, match="s3_storage_bucket"):
@@ -28,7 +55,10 @@ def test_attachment_settings_separate_internal_and_public_endpoints(monkeypatch)
     _clear_settings_environment(monkeypatch)
     settings = Settings.model_validate(
         {
-            "database_url": "mysql+asyncmy://u:p@db/studio",
+            "s3_storage_access_key": "test-access",
+            "s3_storage_secret_key": "test-secret",
+            "business_database_url": "mysql+asyncmy://u:p@db/studio",
+            "components_database_url": "mysql+asyncmy://u:p@db/components",
             "s3_storage_bucket": "chosen-bucket",
             "s3_storage_endpoint": "http://minio:9000/",
             "s3_storage_public_endpoint": "https://files.example.com",
@@ -51,7 +81,7 @@ def test_load_settings_groups_external_resource_configuration(
     env_file.write_text(
         "\n".join(
             (
-                "DATABASE_URL=mysql+asyncmy://studio:secret@db:3306/studio",
+                "COMPONENTS_DATABASE_URL=mysql+asyncmy://u:p@db/components\nBUSINESS_DATABASE_URL=mysql+asyncmy://studio:secret@db:3306/studio",
                 "REDIS_RUNTIME_HOST=redis-runtime.internal",
                 "REDIS_RUNTIME_PORT=6381",
                 "REDIS_RUNTIME_PASSWORD=runtime-secret",
@@ -71,7 +101,9 @@ def test_load_settings_groups_external_resource_configuration(
 
     settings = load_settings(env_file=env_file)
 
-    assert settings.database.url == ("mysql+asyncmy://studio:secret@db:3306/studio")
+    assert settings.business_database.url == (
+        "mysql+asyncmy://studio:secret@db:3306/studio"
+    )
     assert settings.redis_runtime.host == "redis-runtime.internal"
     assert settings.redis_runtime.port == 6381
     assert settings.redis_runtime.database == 3
@@ -81,8 +113,8 @@ def test_load_settings_groups_external_resource_configuration(
     assert settings.sandbox.memory_mib == 2048
     assert settings.sandbox.warm_pool_size == 3
     assert settings.auth_token_expire_seconds == 86400
-    assert settings.database.connection_budget == 20
-    assert settings.database.management_connection_reserve == 10
+    assert settings.database_connection_budget == 20
+    assert settings.database_management_connection_reserve == 10
     assert settings.tavily_api_key is not None
     assert "runtime-secret" not in repr(settings)
     assert "tavily-secret" not in repr(settings)
@@ -103,6 +135,46 @@ def test_load_settings_groups_external_resource_configuration(
         load_settings(env_file=env_file)
 
 
+def test_shared_configuration_uses_published_ports_and_explicit_addresses(
+    tmp_path, monkeypatch
+):
+    """共享配置默认连接本机发布端口，明确指定的外部地址优先"""
+    from sqlalchemy.engine import make_url
+
+    _clear_settings_environment(monkeypatch)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "MYSQL_BUSINESS_PASSWORD=business-secret\nMYSQL_COMPONENTS_PASSWORD=components-secret\n"
+        "MYSQL_PUBLISHED_PORT=23306\nREDIS_RUNTIME_PUBLISHED_PORT=26381\n"
+        "OPEN_SANDBOX_PUBLISHED_PORT=28091\nS3_STORAGE_PUBLISHED_PORT=29000\n"
+    )
+    local = load_settings(env_file=env_file)
+    assert make_url(local.business_database_url).port == 23306
+    assert make_url(local.components_database_url).port == 23306
+    assert local.redis_runtime.port == 26381
+    assert local.sandbox.domain == "127.0.0.1:28091"
+    assert local.s3_storage.endpoint == "http://127.0.0.1:29000"
+
+    for key, value in {
+        "MYSQL_HOST": "db.example.com",
+        "MYSQL_PORT": "3307",
+        "REDIS_RUNTIME_HOST": "redis.example.com",
+        "REDIS_RUNTIME_PORT": "6380",
+        "OPEN_SANDBOX_DOMAIN": "sandbox.example.com:8090",
+        "S3_STORAGE_ENDPOINT": "https://storage.example.com",
+    }.items():
+        monkeypatch.setenv(key, value)
+    external = load_settings(env_file=env_file)
+    url = make_url(external.business_database_url)
+    assert (url.host, url.port) == ("db.example.com", 3307)
+    assert (external.redis_runtime.host, external.redis_runtime.port) == (
+        "redis.example.com",
+        6380,
+    )
+    assert external.sandbox.domain == "sandbox.example.com:8090"
+    assert external.s3_storage.endpoint == "https://storage.example.com"
+
+
 def test_load_settings_rejects_non_async_mysql_url(
     tmp_path: Path,
     monkeypatch,
@@ -112,108 +184,28 @@ def test_load_settings_rejects_non_async_mysql_url(
     _clear_settings_environment(monkeypatch)
     env_file = tmp_path / ".env"
     env_file.write_text(
-        "DATABASE_URL=mysql+pymysql://studio:secret@db:3306/studio\n",
+        "COMPONENTS_DATABASE_URL=mysql+asyncmy://u:p@db/components\nBUSINESS_DATABASE_URL=mysql+pymysql://studio:secret@db:3306/studio\n",
         encoding="utf-8",
     )
 
-    try:
+    with pytest.raises(ValueError, match=r"mysql\+asyncmy"):
         load_settings(env_file=env_file)
-    except ValueError as error:
-        assert "mysql+asyncmy" in str(error)
-    else:  # pragma: no cover - 失败分支用于给断言提供清晰原因
-        raise AssertionError("同步 MySQL URL 不应通过配置校验")
 
 
-def test_secret_files_override_plain_environment_values(
+def test_database_budget_must_cover_both_pools(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    """容器 Secrets 文件必须优先于普通环境变量且不进入配置 repr"""
-
-    _clear_settings_environment(monkeypatch)
-    database_url_file = tmp_path / "database_url"
-    redis_runtime_password_file = tmp_path / "redis_runtime_password"
-    sandbox_key_file = tmp_path / "sandbox_key"
-    tavily_key_file = tmp_path / "tavily_key"
-    database_url_file.write_text(
-        "mysql+asyncmy://studio:file-secret@mysql:3306/tinkerfin\n",
-        encoding="utf-8",
-    )
-    redis_runtime_password_file.write_text("runtime-file-secret\n", encoding="utf-8")
-    sandbox_key_file.write_text("sandbox-file-secret\n", encoding="utf-8")
-    tavily_key_file.write_text("tavily-file-secret\n", encoding="utf-8")
-    env_file = tmp_path / ".env"
-    env_file.write_text(
-        "\n".join(
-            (
-                "DATABASE_URL=mysql+asyncmy://studio:plain@db:3306/tinkerfin",
-                f"DATABASE_URL_FILE={database_url_file}",
-                "REDIS_RUNTIME_PASSWORD=plain-runtime",
-                f"REDIS_RUNTIME_PASSWORD_FILE={redis_runtime_password_file}",
-                "OPEN_SANDBOX_API_KEY=plain-sandbox",
-                f"OPEN_SANDBOX_API_KEY_FILE={sandbox_key_file}",
-                "TAVILY_API_KEY=plain-tavily",
-                f"TAVILY_API_KEY_FILE={tavily_key_file}",
-            )
-        ),
-        encoding="utf-8",
-    )
-
-    settings = load_settings(env_file=env_file)
-
-    assert settings.database.url == (
-        "mysql+asyncmy://studio:file-secret@mysql:3306/tinkerfin"
-    )
-    assert settings.redis_runtime.password is not None
-    assert settings.redis_runtime.password.get_secret_value() == "runtime-file-secret"
-    assert settings.sandbox.api_key is not None
-    assert settings.sandbox.api_key.get_secret_value() == "sandbox-file-secret"
-    assert settings.tavily_api_key is not None
-    assert settings.tavily_api_key.get_secret_value() == "tavily-file-secret"
-    assert "file-secret" not in repr(settings)
-
-
-def test_secret_file_rejects_missing_or_blank_content(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """配置的 Secret 文件缺失或为空时必须拒绝启动"""
+    """总连接预算必须覆盖业务和组件两个连接池"""
 
     _clear_settings_environment(monkeypatch)
     env_file = tmp_path / ".env"
     env_file.write_text(
         "\n".join(
             (
-                "DATABASE_URL_FILE=" + str(tmp_path / "missing"),
-                "REDIS_RUNTIME_PASSWORD_FILE=" + str(tmp_path / "blank"),
-            )
-        ),
-        encoding="utf-8",
-    )
-    (tmp_path / "blank").write_text("\n", encoding="utf-8")
-
-    try:
-        load_settings(env_file=env_file)
-    except ValueError as error:
-        assert "DATABASE_URL_FILE" in str(error)
-    else:  # pragma: no cover - 失败分支用于提供清晰原因
-        raise AssertionError("缺失的 Secret 文件不应通过配置校验")
-
-
-def test_database_budget_must_cover_the_shared_pool(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """总连接预算必须覆盖所有业务共用的数据库连接池"""
-
-    _clear_settings_environment(monkeypatch)
-    env_file = tmp_path / ".env"
-    env_file.write_text(
-        "\n".join(
-            (
-                "DATABASE_URL=mysql+asyncmy://studio:secret@db:3306/studio",
-                "DATABASE_POOL_SIZE=10",
-                "DATABASE_MAX_OVERFLOW=10",
+                "COMPONENTS_DATABASE_URL=mysql+asyncmy://u:p@db/components\nBUSINESS_DATABASE_URL=mysql+asyncmy://studio:secret@db:3306/studio",
+                "DATABASE_POOL_SIZE=5",
+                "DATABASE_MAX_OVERFLOW=5",
                 "DATABASE_CONNECTION_BUDGET=19",
             )
         ),
@@ -232,7 +224,7 @@ def test_logging_settings_load_dotenv_and_resolve_paths(
     _clear_settings_environment(monkeypatch)
     env_file = tmp_path / ".env"
     content = (
-        "DATABASE_URL=mysql+asyncmy://studio:secret@db:3306/studio\n"
+        "COMPONENTS_DATABASE_URL=mysql+asyncmy://u:p@db/components\nBUSINESS_DATABASE_URL=mysql+asyncmy://studio:secret@db:3306/studio\n"
         "LOG_LEVEL=DEBUG\nLOG_FILE_ENABLED=true\n"
         "LOG_FILE_MAX_BYTES=2048\nLOG_FILE_BACKUP_COUNT=2\n"
     )
@@ -250,7 +242,7 @@ def test_logging_settings_load_dotenv_and_resolve_paths(
         assert settings.log_file_backup_count == 2
         assert (
             settings.log_file_path
-            == (tmp_path / (configured or "logs/studio.log")).resolve()
+            == (tmp_path / (configured or "server/logs/studio.log")).resolve()
         )
     monkeypatch.setenv("LOG_LEVEL", "ERROR")
     monkeypatch.setenv("LOG_FILE_ENABLED", "false")
@@ -264,7 +256,10 @@ def test_logging_settings_load_dotenv_and_resolve_paths(
 def test_logging_defaults_and_validation(tmp_path, monkeypatch):
     """文件日志默认关闭，滚动阈值为 50 MiB，错误配置阻止启动"""
     _clear_settings_environment(monkeypatch)
-    monkeypatch.setenv("DATABASE_URL", "mysql+asyncmy://studio:secret@db:3306/studio")
+    monkeypatch.setenv(
+        "BUSINESS_DATABASE_URL", "mysql+asyncmy://studio:secret@db:3306/studio"
+    )
+    monkeypatch.setenv("COMPONENTS_DATABASE_URL", "mysql+asyncmy://u:p@db/components")
     settings = load_settings(env_file=None)
     assert settings.log_level == "INFO"
     assert not settings.log_file_enabled
@@ -292,7 +287,7 @@ def test_load_settings_requires_database_from_selected_source(
     _clear_settings_environment(monkeypatch)
     env_file = tmp_path / ".env"
     env_file.write_text("LOG_LEVEL=WARNING\n")
-    with pytest.raises(ValueError, match="database_url"):
+    with pytest.raises(ValueError, match="MYSQL_BUSINESS_PASSWORD"):
         load_settings(env_file=env_file if use_file else None)
 
 
@@ -300,7 +295,9 @@ def test_selected_env_file_uses_defaults_for_omitted_settings(tmp_path, monkeypa
     """指定配置未填写的日志字段使用默认值，不混入其他环境文件"""
     _clear_settings_environment(monkeypatch)
     env_file = tmp_path / ".env"
-    env_file.write_text("DATABASE_URL=mysql+asyncmy://studio:secret@db:3306/studio\n")
+    env_file.write_text(
+        "COMPONENTS_DATABASE_URL=mysql+asyncmy://u:p@db/components\nBUSINESS_DATABASE_URL=mysql+asyncmy://studio:secret@db:3306/studio\n"
+    )
     settings = load_settings(env_file=env_file)
     assert not settings.log_file_enabled
     assert settings.log_level == "INFO"
@@ -319,16 +316,16 @@ def test_dotenv_sources_are_isolated_from_an_existing_default_file(tmp_path):
 
     import tinkerfin_studio.config.settings as settings_module
 
-    module_file = tmp_path / "src/isolated/config/settings.py"
+    module_file = tmp_path / "server/src/isolated/config/settings.py"
     module_file.parent.mkdir(parents=True)
     shutil.copyfile(settings_module.__file__, module_file)
     (tmp_path / ".env").write_text(
-        "DATABASE_URL=mysql+asyncmy://default:unused@isolated/studio\n"
+        "COMPONENTS_DATABASE_URL=mysql+asyncmy://u:p@db/components\nBUSINESS_DATABASE_URL=mysql+asyncmy://default:unused@isolated/studio\n"
         "LOG_FILE_ENABLED=true\n"
     )
     selected = tmp_path / "selected.env"
     selected.write_text(
-        "DATABASE_URL=mysql+asyncmy://selected:unused@isolated/studio\n"
+        "COMPONENTS_DATABASE_URL=mysql+asyncmy://u:p@db/components\nBUSINESS_DATABASE_URL=mysql+asyncmy://selected:unused@isolated/studio\n"
     )
     program = """
 import importlib.util
@@ -342,7 +339,7 @@ assert not module.load_settings(env_file=sys.argv[2]).log_file_enabled
 try:
     module.load_settings(env_file=None)
 except ValueError as error:
-    assert 'database_url' in str(error)
+    assert 'MYSQL_BUSINESS_PASSWORD' in str(error)
 else:
     raise AssertionError('disabled dotenv read inherited the default database')
 """
@@ -360,3 +357,38 @@ else:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "missing", ["business_database_url", "components_database_url"]
+)
+@pytest.mark.parametrize("empty", [False, True])
+def test_each_database_is_required(monkeypatch, missing, empty):
+    _clear_settings_environment(monkeypatch)
+    values = {
+        "s3_storage_bucket": "test-attachments",
+        "s3_storage_access_key": "test-access",
+        "s3_storage_secret_key": "test-secret",
+        "business_database_url": "mysql+asyncmy://u:p@db/business",
+        "components_database_url": "mysql+asyncmy://u:p@db/components",
+    }
+    if empty:
+        values[missing] = ""
+    else:
+        values.pop(missing)
+    with pytest.raises(ValueError, match=missing.upper()):
+        Settings.model_validate(values)
+
+
+def test_databases_cannot_share_a_schema(monkeypatch):
+    _clear_settings_environment(monkeypatch)
+    with pytest.raises(ValueError, match="不同数据库"):
+        Settings.model_validate(
+            {
+                "s3_storage_bucket": "test-attachments",
+                "s3_storage_access_key": "test-access",
+                "s3_storage_secret_key": "test-secret",
+                "business_database_url": "mysql+asyncmy://business:p@db/studio",
+                "components_database_url": "mysql+asyncmy://components:p@db:3306/studio",
+            }
+        )

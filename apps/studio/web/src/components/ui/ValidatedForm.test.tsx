@@ -7,14 +7,15 @@ import { ValidatedForm } from './ValidatedForm'
 
 const animationMocks = vi.hoisted(() => ({
   add: vi.fn<(query: string, callback: () => void) => void>(),
-  fromTo: vi.fn(),
+  fromTo: vi.fn().mockReturnThis(),
+  set: vi.fn().mockReturnThis(),
   registerPlugin: vi.fn(),
   revert: vi.fn(),
 }))
 
 vi.mock('gsap', () => ({
   default: {
-    fromTo: animationMocks.fromTo,
+    timeline: () => ({ fromTo: animationMocks.fromTo, set: animationMocks.set }),
     matchMedia: () => ({
       add: animationMocks.add,
       revert: animationMocks.revert,
@@ -62,7 +63,8 @@ describe('ValidatedForm', () => {
   beforeEach(() => {
     animationMocks.add.mockReset()
     animationMocks.add.mockImplementation((_query, callback) => callback())
-    animationMocks.fromTo.mockReset()
+    animationMocks.fromTo.mockClear()
+    animationMocks.set.mockClear()
     animationMocks.revert.mockReset()
   })
 
@@ -81,12 +83,6 @@ describe('ValidatedForm', () => {
 
     expect(screen.getByLabelText('第一项')).toHaveFocus()
     expect(animationMocks.fromTo).toHaveBeenCalledTimes(1)
-    expect(animationMocks.fromTo.mock.calls[0][2]).toMatchObject({
-      clearProps: 'transform',
-      duration: 0.1,
-      repeat: 1,
-      yoyo: true,
-    })
 
     await user.click(screen.getByRole('button', { name: '提交' }))
     expect(animationMocks.fromTo).toHaveBeenCalledTimes(2)

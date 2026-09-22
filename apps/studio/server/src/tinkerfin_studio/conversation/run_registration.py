@@ -21,8 +21,8 @@ from tinkerfin_studio.conversation.models import (
     ConversationThread,
 )
 from tinkerfin_studio.conversation.repository import ConversationRepository
-from tinkerfin_studio.conversation.request import ChatRequest
 from tinkerfin_studio.conversation.run_preparation import (
+    ChatIntent,
     PreparedRunRequest,
     RegisteredRun,
     ResumeChatIntent,
@@ -64,13 +64,13 @@ class ConversationRunPreparer:
 
     async def resolve_thread(
         self,
-        request: ChatRequest,
         *,
-        intent: StartChatIntent | ResumeChatIntent,
+        thread_id: str,
+        run_id: str,
+        intent: ChatIntent,
     ) -> ResolvedThread:
         """解析已有会话，或按 Run 幂等创建新会话"""
 
-        thread_id = request.thread_id.strip()
         if thread_id:
             thread = await self._repository.get_thread(
                 user_id=self._user_id,
@@ -84,7 +84,7 @@ class ConversationRunPreparer:
         generated_thread_id = "thread-" + str(
             uuid5(
                 NAMESPACE_URL,
-                f"tinkerfin-studio:{self._user_id}:run:{request.run_id}",
+                f"tinkerfin-studio:{self._user_id}:run:{run_id}",
             )
         )
         thread = await self._repository.get_thread(
@@ -117,7 +117,7 @@ class ConversationRunPreparer:
     async def register(
         self,
         *,
-        intent: StartChatIntent | ResumeChatIntent,
+        intent: ChatIntent,
         prepared: PreparedRunRequest,
         model: AgentModelConfig,
         thread: ConversationThread,
@@ -344,7 +344,7 @@ class ConversationRunPreparer:
 
     @staticmethod
     def _continuation_source_run_id(
-        intent: StartChatIntent | ResumeChatIntent,
+        intent: ChatIntent,
         *,
         prepared: PreparedRunRequest,
         thread: ConversationThread,

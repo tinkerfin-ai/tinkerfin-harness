@@ -2,6 +2,7 @@
   :root {
     --font-ui: 'Inter Variable', 'Noto Sans SC Variable', 'PingFang SC', 'Microsoft YaHei UI', system-ui, sans-serif;
     --font-code: 'JetBrains Mono Variable', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+    --weight-ui: 400;
     --weight-regular: 400;
     --weight-medium: 500;
     --weight-semibold: 600;

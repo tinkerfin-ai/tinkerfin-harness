@@ -17,7 +17,7 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
     let imageUploads = 0
     let submissions = 0
     await page.addInitScript(user => {
-      localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user }))
+      localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user }))
       localStorage.setItem('tinkerfin:theme', 'system')
     }, user)
     await page.route('**/{api,objects}/**', async route => {

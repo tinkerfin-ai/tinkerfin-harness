@@ -2,7 +2,7 @@ import type {
   TraceGraphNode,
   TraceGraphNodeKind,
 } from '../../../api/conversation/traceGraph'
-import type { useI18n } from '../../../i18n'
+import type { TranslationKey, useI18n } from '../../../i18n'
 import type { JsonValue } from '../../../types'
 import { messageAttachments } from '../attachments/content'
 
@@ -56,11 +56,20 @@ export const traceVisualCategoryLabel = (
 }[category])
 
 export const traceKindCompactLabel = (
-  kind: TraceGraphNodeKind,
+  node: TraceGraphNode,
   t: Translate,
-) => traceVisualCategoryLabel(traceVisualCategory(kind), t)
+) => node.kind === 'custom' && compactionNames[node.name]
+  ? t('压缩')
+  : traceVisualCategoryLabel(traceVisualCategory(node.kind), t)
 
-export const traceNodeName = (node: TraceGraphNode) => node.name
+const compactionNames: Partial<Record<string, TranslationKey>> = {
+  context_compaction: '压缩上下文',
+}
+
+export const traceNodeName = (node: TraceGraphNode, t: Translate) => {
+  const label = node.kind === 'custom' ? compactionNames[node.name] : undefined
+  return label ? t(label) : node.name
+}
 
 export const traceContentText = (value: JsonValue | null | undefined) => {
   if (value == null) return ''
@@ -94,8 +103,19 @@ const messagePreview = (value: JsonValue | null | undefined) => {
   return visibleText || messageAttachments(value).map(attachment => attachment.name).join(', ')
 }
 
-export const traceNodePreview = (node: TraceGraphNode) => {
+export const traceNodePreview = (node: TraceGraphNode, t: Translate) => {
   if (node.failure) return node.failure.message ?? node.failure.errorType
+  if (node.kind === 'custom' && node.contextKind === 'compaction') {
+    const result = node.result && typeof node.result === 'object' && !Array.isArray(node.result) ? node.result : undefined
+    if (result?.status === 'generated') return t('摘要已生成，等待保存')
+    if (result?.status === 'saving') return t('正在保存压缩结果')
+    if (result?.status === 'not_reduced') return t('上下文未缩短，已保留原内容')
+    if (result?.status === 'nothing_to_compact') return t('暂无可压缩的历史')
+    if (result?.status === 'compacted' && typeof result.compacted_messages === 'number') {
+      return t('已压缩 {count} 条历史消息', { count: result.compacted_messages })
+    }
+    return node.status === 'running' ? t('正在整理上下文') : ''
+  }
   if (node.kind.endsWith('_message')) return node.contentOmitted ? '' : messagePreview(node.content)
   if (node.kind === 'context') return compactContent(node.content)
   if (node.kind === 'model') return ''
@@ -106,6 +126,8 @@ export const traceNodePreview = (node: TraceGraphNode) => {
 }
 
 export const traceNodePreviewFallback = (node: TraceGraphNode, t: Translate) => {
+  if (node.kind === 'context') return t('模型输入准备')
+  if (node.kind === 'custom' && node.contextKind === 'compaction' && node.status === 'running') return t('正在整理上下文')
   if (node.contentOmitted) return ''
   if (node.kind === 'assistant_message' && node.toolCallOnly) return t('（仅工具调用）')
   if (node.kind.endsWith('_message') && Array.isArray(node.content)
@@ -120,10 +142,11 @@ export const traceNodeAccessibleLabel = (
   node: TraceGraphNode,
   t: Translate,
 ) => {
-  const category = traceVisualCategoryLabel(traceVisualCategory(node.kind), t)
-  const value = node.kind.endsWith('_message') || node.kind === 'context'
-    ? traceNodePreview(node) || traceNodePreviewFallback(node, t)
-    : node.kind === 'tool' ? node.name : traceNodeName(node)
+  const category = traceKindCompactLabel(node, t)
+  const value = node.kind === 'context' && node.contextKind === 'compaction' ? t('压缩')
+    : node.kind.endsWith('_message') || node.kind === 'context'
+    ? traceNodePreview(node, t) || traceNodePreviewFallback(node, t)
+    : node.kind === 'tool' ? node.name : traceNodeName(node, t)
   const summary = value.length > 96 ? `${value.slice(0, 95)}…` : value
   return `${category}，${summary || t('不可用')}`
 }

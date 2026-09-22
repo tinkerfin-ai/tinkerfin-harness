@@ -38,7 +38,10 @@ def test_main_keeps_file_logging_in_application_lifespan(tmp_path, monkeypatch) 
     """父进程只配置控制台，文件日志由服务应用持有"""
     from tinkerfin_studio.config.settings import load_settings
 
-    monkeypatch.setenv("DATABASE_URL", "mysql+asyncmy://studio:secret@db:3306/studio")
+    monkeypatch.setenv(
+        "BUSINESS_DATABASE_URL", "mysql+asyncmy://studio:secret@db:3306/studio"
+    )
+    monkeypatch.setenv("COMPONENTS_DATABASE_URL", "mysql+asyncmy://u:p@db/components")
     monkeypatch.setenv("LOG_LEVEL", "INFO")
     monkeypatch.setenv("LOG_FILE_ENABLED", "true")
     monkeypatch.setenv("LOG_FILE_PATH", str(tmp_path / "logs/studio.log"))
@@ -59,7 +62,10 @@ def test_main_applies_bounded_graceful_shutdown(monkeypatch) -> None:
 
     from tinkerfin_studio.config.settings import load_settings
 
-    monkeypatch.setenv("DATABASE_URL", "mysql+asyncmy://studio:secret@db:3306/studio")
+    monkeypatch.setenv(
+        "BUSINESS_DATABASE_URL", "mysql+asyncmy://studio:secret@db:3306/studio"
+    )
+    monkeypatch.setenv("COMPONENTS_DATABASE_URL", "mysql+asyncmy://u:p@db/components")
     monkeypatch.setattr(
         server_entrypoint, "get_settings", lambda: load_settings(env_file=None)
     )
@@ -78,3 +84,4 @@ def test_main_applies_bounded_graceful_shutdown(monkeypatch) -> None:
     server_entrypoint.main(["--no-reload", "--graceful-shutdown-timeout-seconds", "7"])
 
     assert captured["timeout_graceful_shutdown"] == 7
+    assert captured["factory"] is True

@@ -50,11 +50,13 @@ def _snapshot_for(
         "abandoned",
         "unknown",
     ] = "running",
+    *,
+    head_run_id: str = "run-1",
 ) -> TaskTraceSnapshot:
     return projector.snapshot(
         status=TraceStatus(
             execution=execution,
-            head_run_id="run-1",
+            head_run_id=head_run_id,
         ),
         completeness=TraceCompleteness(
             missing_prefix=False,
@@ -393,6 +395,121 @@ def test_projector_maps_run_outcomes_without_losing_pending_todos(
     group = _snapshot_for(projector, execution).todo_groups[0]
     assert group.status == group_status
     assert [todo.status for todo in group.todos] == [running_todo_status, "pending"]
+
+
+@pytest.mark.parametrize("outcome", ["succeeded", "failed", "cancelled"])
+def test_compaction_preserves_prior_todos_and_allows_the_next_chat(
+    outcome: Literal["succeeded", "failed", "cancelled"],
+) -> None:
+    projector = TodoGroupProjector()
+    events = _confirmed_todo_events()
+    for event in events:
+        projector.consume(event)
+    projector.consume(
+        _event(
+            7,
+            RunFact(
+                source_observation_id="chat-terminal",
+                identity=_IDENTITY,
+                occurred_at=_OCCURRED_AT,
+                monotonic_ns=7,
+                phase="terminal",
+                outcome="succeeded",
+            ),
+        )
+    )
+    before = _snapshot_for(projector, "succeeded")
+    compact = _IDENTITY.model_copy(update={"run_id": "compact"})
+    original_state = events[-1].fact
+    assert isinstance(original_state, StateRevisionFact)
+    compact_facts = (
+        RunFact(
+            source_observation_id="compact-started",
+            identity=compact,
+            occurred_at=_OCCURRED_AT,
+            monotonic_ns=8,
+            phase="started",
+            input_kind="compaction",
+        ),
+        TurnFact(
+            source_observation_id="compact-turn",
+            identity=compact,
+            occurred_at=_OCCURRED_AT,
+            monotonic_ns=9,
+            turn_id="turn:compact",
+        ),
+        StateRevisionFact(
+            source_observation_id="compact-state",
+            identity=compact,
+            occurred_at=_OCCURRED_AT,
+            monotonic_ns=10,
+            revision_id="revision:compact",
+            changes=original_state.changes,
+        ),
+    )
+    try:
+        for seq, fact in enumerate(compact_facts, start=8):
+            projector.consume(_event(seq, fact))
+        assert _snapshot_for(projector, head_run_id="compact") == before
+        projector.consume(
+            _event(
+                11,
+                RunFact(
+                    source_observation_id="compact-terminal",
+                    identity=compact,
+                    occurred_at=_OCCURRED_AT,
+                    monotonic_ns=11,
+                    phase="terminal",
+                    outcome=outcome,
+                ),
+            )
+        )
+        assert _snapshot_for(projector, outcome, head_run_id="compact") == before
+
+        # 下一轮普通提问仍可接在压缩操作之后，且不接管此前任务组
+        next_run = _IDENTITY.model_copy(update={"run_id": "next"})
+        next_facts = (
+            RunFact(
+                source_observation_id="next-started",
+                identity=next_run,
+                occurred_at=_OCCURRED_AT,
+                monotonic_ns=12,
+                phase="started",
+                input_kind="ordinary",
+            ),
+            TurnFact(
+                source_observation_id="next-turn",
+                identity=next_run,
+                occurred_at=_OCCURRED_AT,
+                monotonic_ns=13,
+                turn_id="turn:next",
+                user_message_id="source-user:next",
+            ),
+            MessageFact(
+                source_observation_id="next-user",
+                identity=next_run,
+                occurred_at=_OCCURRED_AT,
+                monotonic_ns=14,
+                phase="reconciled",
+                message_id="message:next",
+                source_message_id="source-user:next",
+                role="user",
+                content=_capture("继续讨论实现"),
+            ),
+            RunFact(
+                source_observation_id="next-terminal",
+                identity=next_run,
+                occurred_at=_OCCURRED_AT,
+                monotonic_ns=15,
+                phase="terminal",
+                outcome="succeeded",
+            ),
+        )
+        for seq, fact in enumerate(next_facts, start=12):
+            projector.consume(_event(seq, fact))
+        assert _snapshot_for(projector, "succeeded", head_run_id="next") == before
+    finally:
+        projector.close()
 
 
 def test_projector_fails_closed_for_root_omission_invalid_todo_and_message_gap() -> (

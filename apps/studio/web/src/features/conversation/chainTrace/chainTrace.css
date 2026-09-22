@@ -13,7 +13,7 @@
   .chain-trace-details { --chain-trace-inline-inset: var(--layout-panel-inset); }
 
   .chain-trace {
-    --chain-trace-row-height: var(--control-md);
+    --chain-trace-row-height: var(--control-sm);
     --chain-trace-ledger-header-height: var(--control-composer);
     --chain-trace-turn-height: calc(var(--control-xs) - var(--space-1));
     --chain-trace-action-height: calc(var(--control-xs) - var(--space-1));
@@ -90,7 +90,7 @@
   .chain-trace-range-summary strong {
     color: var(--color-text-primary);
     font-size: var(--type-meta-size);
-    font-weight: var(--weight-semibold);
+    font-weight: var(--weight-ui);
     font-variant-numeric: tabular-nums;
   }
 
@@ -187,7 +187,7 @@
     gap: var(--space-1-5);
     color: var(--color-text-secondary);
     font-size: var(--type-micro-size);
-    font-weight: var(--weight-medium);
+    font-weight: var(--weight-ui);
     line-height: var(--type-micro-line);
     white-space: nowrap;
   }
@@ -261,7 +261,7 @@
     padding: 0;
     align-self: center;
     border: 0;
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-button);
     background: currentColor;
     cursor: pointer;
   }
@@ -525,7 +525,7 @@
   .chain-trace-turn-heading strong {
     color: var(--color-text-primary);
     font-size: var(--type-caption-size);
-    font-weight: var(--weight-semibold);
+    font-weight: var(--weight-ui);
     line-height: var(--type-caption-line);
   }
 
@@ -577,7 +577,7 @@
 
   .chain-trace-ledger-rail::before {
     top: 0;
-    bottom: 0;
+    bottom: -1px;
     width: 1px;
     background: var(--chain-trace-rail-color);
   }
@@ -586,24 +586,41 @@
     top: 50%;
   }
 
-  .chain-trace-ledger-row.is-turn-root-start .chain-trace-ledger-rail::after {
-    top: 50%;
-    height: 0;
-    border-left: 0;
-    border-bottom-left-radius: 0;
-  }
-
   .chain-trace-ledger-row.is-turn-root-end .chain-trace-ledger-rail::before {
     bottom: 50%;
   }
 
   .chain-trace-ledger-rail::after {
-    top: calc(50% - var(--space-2) - var(--space-0-5));
+    top: 50%;
     width: calc(var(--space-6) - var(--space-0-5));
-    height: calc(var(--space-2) + var(--space-0-5));
+    height: 0;
     border-bottom: 1px solid var(--chain-trace-rail-color);
-    border-left: 1px solid var(--chain-trace-rail-color);
-    border-bottom-left-radius: var(--radius-lg);
+  }
+
+  .chain-trace-ledger-row.is-branch-end .chain-trace-ledger-rail::before {
+    bottom: 50%;
+  }
+
+  .chain-trace-ancestor-rail {
+    position: absolute;
+    top: 0;
+    bottom: -1px;
+    width: 1px;
+    background: var(--chain-trace-rail-color);
+    pointer-events: none;
+  }
+
+  .chain-trace-child-link {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: var(--chain-trace-level-indent);
+    height: calc(50% + 1px);
+    overflow: visible;
+    fill: none;
+    stroke: var(--chain-trace-rail-color);
+    stroke-width: 1px;
+    pointer-events: none;
   }
 
   .chain-trace-ledger-rail i {
@@ -642,7 +659,7 @@
     flex: 0 0 auto;
     color: var(--color-text-tertiary);
     font-size: var(--type-micro-size);
-    font-weight: var(--weight-medium);
+    font-weight: var(--weight-ui);
     line-height: var(--type-micro-line);
   }
   .chain-trace-node-copy { min-width: 0; overflow: hidden; }
@@ -665,7 +682,7 @@
   .chain-trace-node-title strong {
     color: var(--color-text-primary);
     font-size: var(--type-meta-size);
-    font-weight: var(--weight-semibold);
+    font-weight: var(--weight-ui);
     line-height: var(--type-meta-line);
   }
 
@@ -712,7 +729,7 @@
     background: var(--color-subtle);
     color: var(--color-text-secondary);
     font-size: var(--type-micro-size);
-    font-weight: var(--weight-semibold);
+    font-weight: var(--weight-ui);
     line-height: var(--type-micro-line);
     white-space: nowrap;
   }
@@ -832,7 +849,7 @@
     overflow: hidden;
     color: var(--color-text-tertiary);
     font-size: var(--type-meta-size);
-    font-weight: var(--weight-regular);
+    font-weight: var(--weight-ui);
     line-height: var(--type-meta-line);
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -894,7 +911,7 @@
     margin: 0 0 calc(var(--space-3) + var(--space-0-5));
     color: var(--color-text-primary);
     font-size: var(--type-meta-size);
-    font-weight: var(--weight-semibold);
+    font-weight: var(--weight-ui);
     line-height: var(--type-meta-line);
   }
   .chain-trace-detail-message {
@@ -925,7 +942,7 @@
   .chain-trace-response-data h3 {
     margin: 0 0 var(--space-2);
     font-size: var(--type-meta-size);
-    font-weight: var(--weight-semibold);
+    font-weight: var(--weight-ui);
     line-height: var(--type-meta-line);
   }
   .chain-trace-summary div {
@@ -953,7 +970,7 @@
   }
 
   .chain-trace-error-panel > svg { color: var(--color-danger); }
-  .chain-trace-error-panel strong { display: block; overflow-wrap: anywhere; font-size: var(--type-meta-size); font-weight: var(--weight-medium); }
+  .chain-trace-error-panel strong { display: block; overflow-wrap: anywhere; font-size: var(--type-meta-size); font-weight: var(--weight-ui); }
   .chain-trace-error-panel p { margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
   .chain-trace-error-panel .ui-button { width: fit-content; margin: 0; }
 
@@ -961,7 +978,7 @@
     padding-inline: var(--space-1);
     color: var(--color-text-secondary);
     font-size: var(--type-meta-size);
-    font-weight: var(--weight-medium);
+    font-weight: var(--weight-ui);
     border: 0;
     box-shadow: none;
     background: transparent;
@@ -979,7 +996,7 @@
     background: transparent;
   }
   :is(.chain-trace, .chain-trace-details) .ui-feedback-state.has-action { grid-template-columns: auto minmax(0, 1fr) auto; }
-  :is(.chain-trace, .chain-trace-details) .ui-feedback-state__title { text-align: left; font-size: var(--type-meta-size); font-weight: var(--weight-medium); }
+  :is(.chain-trace, .chain-trace-details) .ui-feedback-state__title { text-align: left; font-size: var(--type-meta-size); font-weight: var(--weight-ui); }
   :is(.chain-trace, .chain-trace-details) .ui-feedback-icon { width: var(--icon-lg); height: var(--icon-lg); background: transparent; }
   :is(.chain-trace, .chain-trace-details) .ui-feedback-state > .ui-icon-button-wrap { translate: none; }
 
@@ -1033,6 +1050,7 @@
   @media (any-hover: none), (any-pointer: coarse) {
     .chain-trace {
       --chain-trace-row-height: var(--control-lg);
+      --chain-trace-turn-height: var(--control-lg);
       --chain-trace-action-height: var(--control-lg);
       --chain-trace-disclosure-width: var(--control-lg);
     }
@@ -1078,8 +1096,21 @@
     .chain-trace-sequence-block,
     .chain-trace-error-panel { border: 1px solid CanvasText; }
     .chain-trace-search:focus-within { outline: 2px solid Highlight; outline-offset: -2px; }
-    .chain-trace-ledger-rail::before { background: CanvasText; }
+    .chain-trace-ledger-rail::before,
+    .chain-trace-ancestor-rail { background: CanvasText; }
+    .chain-trace-child-link { stroke: CanvasText; }
     .chain-trace-ledger-rail::after { border-color: CanvasText; }
     .chain-trace-ledger-row.is-selected { outline: 2px solid Highlight; outline-offset: -2px; }
   }
+  .chain-trace-compaction-details { display: grid; gap: var(--space-5); margin-bottom: var(--space-6); }
+  .chain-trace-compaction-details p { margin: 0; }
+  .chain-trace-compaction-note { color: var(--color-text-secondary); }
+  .chain-trace-compaction-details details { border-top: 1px solid var(--color-border-subtle); }
+  .chain-trace-compaction-details summary { min-height: var(--control-lg); display: flex; align-items: center; gap: var(--space-2); cursor: pointer; color: var(--color-text-secondary); font-size: var(--type-caption-size); }
+  .chain-trace-compaction-details summary svg { flex-shrink: 0; transform: rotate(-90deg); }
+  .chain-trace-compaction-details details[open] > summary svg { transform: none; }
+  .chain-trace-compaction-details summary:hover { color: var(--color-text-primary); }
+  .chain-trace-compaction-details summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: var(--space-0-5); }
+  .chain-trace-compaction-details summary span { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .chain-trace-compaction-history { padding-block: var(--space-3); border-top: 1px solid var(--color-border-subtle); overflow-wrap: anywhere; }
 }

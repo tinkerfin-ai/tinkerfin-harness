@@ -35,15 +35,16 @@ export function ValidatedForm<FieldName extends string>({
 
     const media = gsap.matchMedia()
     media.add('(prefers-reduced-motion: no-preference)', () => {
-      gsap.fromTo(invalidFeedbackTargets, { x: -5 }, {
-        x: 5,
-        duration: MOTION_DURATION_SECONDS.fast,
-        ease: 'sine.inOut',
-        repeat: 1,
-        yoyo: true,
+      // 连续换向并逐次收幅，让错误反馈呈现短促抖动，最后自然回到原位
+      gsap.timeline().fromTo(invalidFeedbackTargets, { x: 0 }, {
+        keyframes: {
+          x: [0, -6, 6, -4, 4, -2, 2, 0],
+          easeEach: 'none',
+        },
+        duration: MOTION_DURATION_SECONDS.slow,
+        ease: 'none',
         overwrite: 'auto',
-        clearProps: 'transform',
-      })
+      }).set(invalidFeedbackTargets, { clearProps: 'transform' })
     })
     return () => media.revert()
   }, {

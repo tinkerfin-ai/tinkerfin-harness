@@ -515,13 +515,13 @@ class ConversationHistoryService:
         history_cursor: str | None,
         limit: int,
     ) -> tuple[ConversationThread, AgUiHistoryView]:
-        """释放业务事务后读取借用 Engine 上的框架 Trace Store"""
+        """释放业务事务后读取组件库中的运行轨迹"""
 
         thread = await self._require_thread(thread_id)
         head_run_id = thread.last_run_id
         if head_run_id is None:
             raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
-        # Trace Store 使用独立事务；先结束归属查询，避免一个请求同时占用两条共享池连接
+        # 先结束归属查询，避免读取轨迹期间继续占用业务库连接
         await self._repository.commit()
         try:
             history = await self._history.get(

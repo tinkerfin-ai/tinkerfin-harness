@@ -107,7 +107,7 @@ def test_web_check_browser_dependency_boundary(
         "tests/packaging/document-preview-licenses.test.mjs" in command
         for command in commands
     )
-    assert any("test:proxy" in command for command in commands) is not skip_browser
+    assert any("test:http" in command for command in commands) is not skip_browser
     assert any("playwright" in command for command in commands) is not skip_browser
 
 

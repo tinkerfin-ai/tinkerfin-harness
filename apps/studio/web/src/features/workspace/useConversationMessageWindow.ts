@@ -9,7 +9,7 @@ const LOCATE_CONTEXT_BEFORE = 20
 export type MessageLocateResult = 'found' | 'not-found' | 'failed' | 'cancelled'
 
 const entryMessageId = (entry: ConversationDisplayEntry) => (
-  entry.type === 'run-failure' ? `failure:${entry.failure.runId}` : entry.type === 'tools'
+  entry.type === 'compaction' ? `compaction:${entry.operation.runId}` : entry.type === 'run-failure' ? `failure:${entry.failure.runId}` : entry.type === 'tools'
     ? entry.messages[0]?.id
     : entry.message.id
 )
@@ -277,7 +277,7 @@ export function useConversationMessageWindow({
           (entry) => bookmark
             ? entryKey(entry) === bookmark.entryKey
             : entryMessageId(entry) === messageId
-              || (entry.type !== 'tools' && entry.message.meta?.traceMessageId === messageId),
+              || (entry.type !== 'tools' && entry.type !== 'compaction' && entry.message.meta?.traceMessageId === messageId),
         )
         if (index >= 0) {
           const renderedId = entryMessageId(entriesRef.current[index]!)

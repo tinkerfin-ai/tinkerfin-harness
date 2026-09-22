@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections import Counter
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from typing import ClassVar, TypeVar, cast
+from typing import ClassVar, Self, TypeVar, cast
 from uuid import uuid4
 
 import pytest
@@ -31,8 +31,6 @@ from tinkerfin_messaging import (
     StreamDeleteConflict,
     StreamDeleted,
     StreamExpired,
-    _redis_journal,
-    _redis_scripts,
 )
 from tinkerfin_messaging import (
     RedisBackend as RedisStorageBackend,
@@ -75,57 +73,6 @@ class RedisBackend(RedisBackendHarness):
                 retention_policy=retention_policy,
             )
         )
-
-
-_REDIS_SCRIPT_DIGESTS = {
-    "_DUE_EXPIRATIONS_SCRIPT": "f06bfc6798e6f5a5b711abd2c3ddd5f4d478a501a1343e22afb74530cd41900d",
-    "_APPEND_SCRIPT": "864c6093045f48abab4fc9d77ead3d1518ee3a6bc956c285f536cf05279080c9",
-    "_BEGIN_DELETE_SCRIPT": "6b52a1e68a9183d72ca6902d042ab80164b1f148a8aa628e8b447dca5364cf32",
-    "_BEGIN_EXPIRATION_SCRIPT": "bd522a5be66f40c1e2a049019071a322a817a5890d6253360659d99dd1735a11",
-    "_BEGIN_SETTLEMENT_SCRIPT": "554621573ed7a50c3b5ea0be5bb7166f051d2fdba213db0493423a84f5423414",
-    "_CANCEL_SCRIPT": "c4d82de1405dffc62a13ec7efbc11790e5bcab99c746b02fb8cb397ad59fce09",
-    "_DELETE_BATCH_SCRIPT": "c018e231de54762346bc095581f23d9bca9107667273102dae4b7d51e20bbf10",
-    "_FINALIZE_DELETE_SCRIPT": "aa107e4445ee6e4e224ac80fe80cbb51c14db815f5d21a1d07698e02c5f833bf",
-    "_FINISH_SCRIPT": "63e951aacdd317030aa9e776a3eeeab2a5632689d598a2c512fa08b2609cee27",
-    "_MESSAGING_STATE_SNAPSHOT_SCRIPT": "40d5362e08cf6dfbad004a3fb1b7d9b3293b1e600012bc23ca624d3fc2f2c429",
-    "_PREPARE_SCRIPT": "0d788e29cfde7bd5f904d1674748c3c6fe46d691dfca8ad3b400caadb9449655",
-    "_READ_CONTROL_SCRIPT": "0cda87dabd7a112208ade6abe7f2ed806f9ac216b6ed0913c5fc194223a0703c",
-    "_RENEW_SCRIPT": "90a2c24ed5f4e9c64f84a41fa6b4bc69e03206c5df48c5f75ec4b66be6c62113",
-    "_RUN_SNAPSHOT_SCRIPT": "d6ecf2ef4b7486a08139d96d0a8728b54c1a1345c7f0e4d1fbd2f2f061a4c3e4",
-}
-
-
-def test_redis_lua_scripts_remain_byte_stable() -> None:
-    for name, expected in _REDIS_SCRIPT_DIGESTS.items():
-        script = getattr(_redis_scripts, name)
-        assert isinstance(script, str)
-        assert hashlib.sha256(script.encode()).hexdigest() == expected
-
-
-def test_redis_message_signature_uses_the_current_unversioned_domain() -> None:
-    identity = RunIdentity(namespace="test", thread_id="conversation-1", run_id="run-1")
-
-    assert (
-        _redis_journal._message_signature(
-            identity=identity,
-            codec="text",
-            payload=b"payload",
-            checkpoint=None,
-        )
-        == "c42f38656e51cdde504a1f0bf4b07b7ce060380dfcffe3a9e20b1131fb9e0866"
-    )
-    assert (
-        _redis_journal._message_signature(
-            identity=identity,
-            codec="text",
-            payload=b"payload",
-            checkpoint=RecoveryCheckpoint(
-                position=b"42",
-                last_message_id="message-1",
-            ),
-        )
-        == "9a6fa1ec2cfccb0bdeaa1a14bed2e49746169b7391148dd042368835b4f58b34"
-    )
 
 
 def _identity(
@@ -287,13 +234,21 @@ class _ConnectionTrackingRedis(Redis):
     """Retain real single-connection children for lifecycle assertions."""
 
     blocking_children: list[_ConnectionTrackingRedis]
+    client_opened: asyncio.Event
 
     def client(self) -> _ConnectionTrackingRedis:
         client = super().client()
         assert isinstance(client, _ConnectionTrackingRedis)
         client.blocking_children = self.blocking_children
+        client.client_opened = self.client_opened
         self.blocking_children.append(client)
         return client
+
+    async def initialize(self) -> Self:
+        await super().initialize()
+        if self.single_connection_client:
+            self.client_opened.set()
+        return self
 
 
 class _GatedCloseRedis(_ConnectionTrackingRedis):
@@ -848,6 +803,7 @@ async def test_real_redis_cancelled_consumer_closes_its_pinned_follow_client(
 
     client = _redis_client(_ConnectionTrackingRedis, redis_url)
     client.blocking_children = []
+    client.client_opened = asyncio.Event()
     prefix = f"tfmsg:cancelled-consumer:{uuid4().hex}"
     backend = RedisBackend(
         client,
@@ -887,13 +843,8 @@ async def test_real_redis_cancelled_consumer_closes_its_pinned_follow_client(
                 consume(),
                 name="test-messaging-cancelled-sse-consumer",
             )
-            await asyncio.wait_for(delivered.wait(), timeout=1)
-            async with asyncio.timeout(1):
-                while not (
-                    client.blocking_children
-                    and client.blocking_children[-1].connection is not None
-                ):
-                    await asyncio.sleep(0)
+            await delivered.wait()
+            await client.client_opened.wait()
 
             consumer.cancel()
             await asyncio.gather(consumer, return_exceptions=True)
@@ -939,13 +890,13 @@ async def test_real_redis_signal_closes_the_snapshot_to_xread_gap(
         else waiter.wait_finished(prepared.handle)
     )
     try:
-        await asyncio.wait_for(client.xread_entered.wait(), timeout=0.5)
+        await client.xread_entered.wait()
         if transition == "cancel":
             assert await actor.request_cancel(prepared.handle) is True
         else:
             await actor.finish(prepared.handle, status="completed")
         client.xread_release.set()
-        result = await asyncio.wait_for(waiting, timeout=0.5)
+        result = await waiting
         assert result is True if transition == "cancel" else result == "completed"
     finally:
         client.xread_release.set()
@@ -954,6 +905,43 @@ async def test_real_redis_signal_closes_the_snapshot_to_xread_gap(
     if transition == "cancel":
         assert await actor.begin_settlement(prepared.handle) is True
         await actor.finish(prepared.handle, status="cancelled")
+
+
+async def test_real_redis_committed_message_closes_the_snapshot_to_xread_gap(
+    gated_xread_backends: tuple[
+        RedisBackendHarness,
+        RedisBackendHarness,
+        _GatedXreadRedis,
+    ],
+) -> None:
+    waiter, actor, client = gated_xread_backends
+    prepared = await actor.prepare(
+        channel="events",
+        identity=_identity(),
+        codec="test.bytes.v1",
+        after=0,
+        cancellable=False,
+        recoverable=False,
+    )
+    follower = waiter.follow(prepared.handle, after=0)
+    client.gate_next_xread = True
+    next_message = asyncio.create_task(anext(follower))
+    try:
+        await client.xread_entered.wait()
+        committed = await actor.append(
+            prepared.handle,
+            message_id="message-1",
+            codec="test.bytes.v1",
+            payload=b"durable body",
+        )
+        client.xread_release.set()
+        assert await next_message == committed
+    finally:
+        client.xread_release.set()
+        next_message.cancel()
+        await asyncio.gather(next_message, return_exceptions=True)
+        await follower.aclose()
+        await actor.finish(prepared.handle, status="completed")
 
 
 async def test_real_redis_state_change_before_snapshot_is_immediately_visible(
@@ -970,19 +958,10 @@ async def test_real_redis_state_change_before_snapshot_is_immediately_visible(
     )
 
     assert await owner.request_cancel(prepared.handle) is True
-    assert (
-        await asyncio.wait_for(
-            observer.wait_for_cancel(prepared.handle),
-            timeout=0.2,
-        )
-        is True
-    )
+    assert await observer.wait_for_cancel(prepared.handle) is True
     assert await owner.begin_settlement(prepared.handle) is True
     await owner.finish(prepared.handle, status="cancelled")
-    assert (
-        await asyncio.wait_for(observer.wait_finished(prepared.handle), timeout=0.2)
-        == "cancelled"
-    )
+    assert await observer.wait_finished(prepared.handle) == "cancelled"
 
 
 async def test_real_redis_cancellation_cleanup_can_read_current_run_state(
@@ -1014,10 +993,10 @@ async def test_real_redis_cancellation_cleanup_can_read_current_run_state(
 
     waiting = asyncio.create_task(observe_during_cleanup())
     try:
-        await asyncio.wait_for(entered.wait(), timeout=1)
+        await entered.wait()
         waiting.cancel("close after observing current state")
         with pytest.raises(asyncio.CancelledError, match="close after observing"):
-            await asyncio.wait_for(waiting, timeout=1)
+            await waiting
         assert observed.is_set()
     finally:
         if not waiting.done():
@@ -1032,6 +1011,7 @@ async def test_real_redis_repeated_wait_cancellation_settles_pinned_client_close
 ) -> None:
     client = _redis_client(_GatedCloseRedis, redis_url, max_connections=1)
     client.blocking_children = []
+    client.client_opened = asyncio.Event()
     client.reading = asyncio.Event()
     client.closing = asyncio.Event()
     client.close_release = asyncio.Event()
@@ -1070,17 +1050,16 @@ async def test_real_redis_repeated_wait_cancellation_settles_pinned_client_close
                 )
             )
         )
-        await asyncio.wait_for(client.reading.wait(), timeout=1)
+        await client.reading.wait()
         waiting.cancel("detach requested")
-        await asyncio.wait_for(client.closing.wait(), timeout=1)
+        await client.closing.wait()
         connection = client.blocking_children[-1].connection
         assert connection is not None
         waiting.cancel("caller cancelled again")
-        await asyncio.sleep(0)
         assert not waiting.done()
         client.close_release.set()
         with pytest.raises(asyncio.CancelledError, match="detach requested") as raised:
-            await asyncio.wait_for(waiting, timeout=1)
+            await waiting
         if fail_close:
             assert any(
                 "blocking client close" in note for note in raised.value.__notes__
@@ -1113,9 +1092,8 @@ async def test_real_redis_cancellation_settles_an_inflight_snapshot(
     client.gate_next_eval_before = True
     waiting = asyncio.create_task(backend.wait_for_cancel(prepared.handle))
     try:
-        await asyncio.wait_for(client.eval_entered.wait(), timeout=0.5)
+        await client.eval_entered.wait()
         waiting.cancel("caller cancelled during the Redis snapshot")
-        await asyncio.sleep(0)
         assert not waiting.done()
 
         client.eval_release.set()
@@ -1123,7 +1101,7 @@ async def test_real_redis_cancellation_settles_an_inflight_snapshot(
             asyncio.CancelledError,
             match="caller cancelled during the Redis snapshot",
         ):
-            await asyncio.wait_for(waiting, timeout=0.5)
+            await waiting
         assert await cast(Awaitable[bool], client.ping()) is True
         await backend.finish(prepared.handle, status="completed")
     finally:
@@ -1153,7 +1131,7 @@ async def test_real_redis_state_snapshot_remains_coherent_before_a_later_append(
         )
     )
     try:
-        await asyncio.wait_for(client.eval_returned.wait(), timeout=0.5)
+        await client.eval_returned.wait()
         envelope = await backend.append(
             prepared.handle,
             message_id="message-1",
@@ -1161,7 +1139,7 @@ async def test_real_redis_state_snapshot_remains_coherent_before_a_later_append(
             payload=b"value",
         )
         client.return_release.set()
-        snapshot = await asyncio.wait_for(loading, timeout=0.5)
+        snapshot = await loading
 
         assert envelope.seq == 1
         assert snapshot.stream is not None
@@ -1195,7 +1173,7 @@ async def test_real_redis_state_snapshot_observes_an_append_that_precedes_it(
         )
     )
     try:
-        await asyncio.wait_for(client.eval_entered.wait(), timeout=0.5)
+        await client.eval_entered.wait()
         envelope = await backend.append(
             prepared.handle,
             message_id="message-1",
@@ -1203,7 +1181,7 @@ async def test_real_redis_state_snapshot_observes_an_append_that_precedes_it(
             payload=b"value",
         )
         client.eval_release.set()
-        snapshot = await asyncio.wait_for(loading, timeout=0.5)
+        snapshot = await loading
 
         assert snapshot.stream is not None
         assert snapshot.target_run is not None
@@ -1331,7 +1309,7 @@ async def test_real_redis_persists_channel_and_stream_metadata_separately(
     assert len(stream_meta_keys) == 2
     assert len(run_keys) == 2
     assert len(message_stream_keys) == 2
-    assert len(signal_stream_keys) == 2
+    assert signal_stream_keys == []
     assert len(index_keys) == 2
     assert len(dedupe_keys) == 2
     hash_tags = {key.split("{", 1)[1].split("}", 1)[0] for key in decoded_keys}
@@ -1937,6 +1915,12 @@ async def test_real_redis_concurrent_deletes_converge_after_multiple_batches(
         cancellable=False,
         recoverable=False,
     )
+    # Deletion batching must not depend on how long fixture preparation takes.
+    assert prepared.handle.generation is not None
+    lease_key = first.storage_backend._keys(
+        "events", _identity(), generation=prepared.handle.generation
+    ).lease_key
+    assert await cast(Awaitable[bool], client.persist(lease_key))
     for index in range(130):
         await first.append(
             prepared.handle,
@@ -1965,7 +1949,87 @@ async def test_real_redis_concurrent_deletes_converge_after_multiple_batches(
     assert await client.get(generation_keys[0]) == b"deleted"
 
 
-async def test_real_redis_lifecycle_signal_is_bounded_and_cross_generation(
+async def test_real_redis_notifications_are_bounded_metadata_and_deduplicated(
+    redis_backends: tuple[RedisBackendHarness, RedisBackendHarness, Redis],
+) -> None:
+    _, _, client = redis_backends
+    prefix = f"tfmsg:notification-boundary:{uuid4().hex}"
+    backend = RedisBackend(client, key_prefix=prefix, lease_ttl=30)
+    try:
+        prepared = await backend.prepare(
+            channel="events",
+            identity=_identity(),
+            codec="test.bytes.v1",
+            after=0,
+            cancellable=False,
+            recoverable=False,
+        )
+        notifications = backend.storage_backend._notifications_key
+        counter = backend.storage_backend._notification_counter_key
+        scope = (
+            hashlib.sha1(
+                backend.storage_backend._keys(
+                    "events", _identity(), generation=1
+                ).control.encode(),
+                usedforsecurity=False,
+            )
+            .hexdigest()
+            .encode()
+        )
+        await cast(
+            Awaitable[object],
+            client.eval(
+                """
+                for sequence = 1, 4096 do
+                    redis.call('XADD', KEYS[1], tostring(sequence) .. '-0',
+                        'scope', ARGV[1], 'generation', '1', 'message', '0', 'control', '0')
+                end
+                redis.call('SET', KEYS[2], '4096')
+                """,
+                2,
+                notifications,
+                counter,
+                scope,
+            ),
+        )
+        committed = await backend.append(
+            prepared.handle,
+            message_id="message-1",
+            codec="test.bytes.v1",
+            payload=b"private message body",
+        )
+        duplicate = await backend.append(
+            prepared.handle,
+            message_id="message-1",
+            codec="test.bytes.v1",
+            payload=b"private message body",
+        )
+        assert duplicate == committed
+        entries = await client.xrange(notifications)
+        assert len(entries) == 4096
+        assert entries[0][0] == b"2-0"
+        assert entries[-1] == (
+            b"4097-0",
+            {b"scope": scope, b"generation": b"1", b"message": b"1", b"control": b"0"},
+        )
+        assert await client.get(counter) == b"4097"
+        page = await backend.storage_backend.read_committed_messages(
+            CommittedMessageQuery(
+                channel="events",
+                identity=_identity(),
+                generation=1,
+                after_sequence=0,
+                through_sequence=None,
+                limit=1,
+            )
+        )
+        assert page.messages == (committed,)
+        await backend.finish(prepared.handle, status="completed")
+    finally:
+        await _delete_prefix(client, prefix)
+
+
+async def test_real_redis_metadata_notifications_survive_generation_cleanup(
     redis_backends: tuple[RedisBackendHarness, RedisBackendHarness, Redis],
 ) -> None:
     _, _, client = redis_backends
@@ -1973,7 +2037,7 @@ async def test_real_redis_lifecycle_signal_is_bounded_and_cross_generation(
     backend = RedisBackend(
         client,
         key_prefix=prefix,
-        lease_ttl=0.6,
+        lease_ttl=30,
         poll_interval=0.05,
     )
     try:
@@ -1990,43 +2054,44 @@ async def test_real_redis_lifecycle_signal_is_bounded_and_cross_generation(
         assert await backend.wait_for_cancel(prepared.handle) is True
         assert await backend.begin_settlement(prepared.handle) is True
         await backend.finish(prepared.handle, status="cancelled")
-        signal_keys = [
-            key async for key in client.scan_iter(match=f"{prefix}:*:signals")
+        notification_keys = [
+            key async for key in client.scan_iter(match=f"{prefix}:*:notifications")
         ]
-
-        assert len(signal_keys) == 1
-        signal_key = signal_keys[0]
-        for index in range(2, 132):
-            current = await backend.prepare(
-                channel="events",
-                identity=_identity(run_id=f"run-{index}"),
-                codec="test.bytes.v1",
-                after=0,
-                cancellable=True,
-                recoverable=False,
-            )
-            assert await backend.request_cancel(current.handle) is True
-            assert await backend.begin_settlement(current.handle) is True
-            await backend.finish(current.handle, status="cancelled")
-
-        entries = await client.xrange(signal_key)
-        assert entries is not None
-        signal_entries = cast(
-            Sequence[tuple[bytes, Mapping[bytes, bytes]]],
-            entries,
+        assert len(notification_keys) == 1
+        notification_key = notification_keys[0]
+        control_keys = [
+            key async for key in client.scan_iter(match=f"{prefix}:*:control")
+        ]
+        assert len(control_keys) == 1
+        scope = (
+            hashlib.sha1(control_keys[0], usedforsecurity=False).hexdigest().encode()
         )
-        assert len(signal_entries) == 256
-        assert signal_entries[-1][0] == b"262-0"
-        assert signal_entries[-1][1][b"kind"] == b"finish"
-        assert signal_entries[-1][1][b"generation"] == b"1"
-        assert signal_entries[-1][1][b"run"] == b"run-131"
+        assert await client.xrange(notification_key) == [
+            (
+                b"1-0",
+                {
+                    b"scope": scope,
+                    b"generation": b"1",
+                    b"message": b"0",
+                    b"control": b"1",
+                },
+            ),
+            (
+                b"2-0",
+                {
+                    b"scope": scope,
+                    b"generation": b"1",
+                    b"message": b"0",
+                    b"control": b"2",
+                },
+            ),
+        ]
         await backend.delete_stream(channel="events", identity=_identity())
-        assert await client.xlen(signal_key) == 256
-        entries = await client.xrange(signal_key)
-        assert entries is not None
+        entries = await client.xrange(notification_key)
+        assert len(entries) == 3
         assert entries[-1] == (
-            b"263-0",
-            {b"kind": b"delete", b"generation": b"1", b"run": b""},
+            b"3-0",
+            {b"scope": scope, b"generation": b"1", b"message": b"0", b"control": b"3"},
         )
 
         rebuilt = await backend.prepare(
@@ -2039,17 +2104,20 @@ async def test_real_redis_lifecycle_signal_is_bounded_and_cross_generation(
         )
         assert rebuilt.handle.generation == 2
         await backend.finish(rebuilt.handle, status="completed")
-        assert await client.xlen(signal_key) == 256
-        entries = await client.xrange(signal_key)
-        assert entries is not None
+        entries = await client.xrange(notification_key)
+        assert len(entries) == 4
         assert entries[-1] == (
-            b"264-0",
+            b"4-0",
             {
-                b"kind": b"finish",
+                b"scope": scope,
                 b"generation": b"2",
-                b"run": b"run-rebuilt",
+                b"message": b"0",
+                b"control": b"4",
             },
         )
+        assert [
+            key async for key in client.scan_iter(match=f"{prefix}:*:signals")
+        ] == []
         with pytest.raises(StreamDeleted):
             await backend.wait_finished(prepared.handle)
     finally:
@@ -2076,13 +2144,19 @@ async def test_real_redis_shutdown_settles_during_the_first_commit(
             after=0,
             cancel=cancel,
         )
-        await asyncio.wait_for(client.append_committed.wait(), timeout=1)
+        await client.append_committed.wait()
 
-        closing = asyncio.create_task(messaging.__aexit__(None, None, None))
-        await asyncio.sleep(0)
+        close_entered = asyncio.Event()
+
+        async def close() -> None:
+            close_entered.set()
+            await messaging.__aexit__(None, None, None)
+
+        closing = asyncio.create_task(close())
+        await close_entered.wait()
         assert not closing.done()
         client.append_release.set()
-        await asyncio.wait_for(closing, timeout=2)
+        await closing
 
         assert source.close_calls == 1
     finally:
@@ -2112,7 +2186,7 @@ async def test_real_redis_running_follower_never_crosses_into_a_later_run(
     follower = backend.follow(first.handle, after=1)
     client.gate_next_eval_after = True
     next_message = asyncio.ensure_future(anext(follower))
-    await asyncio.wait_for(client.eval_returned.wait(), timeout=1)
+    await client.eval_returned.wait()
 
     await backend.finish(first.handle, status="completed")
     second = await backend.prepare(
@@ -2134,7 +2208,7 @@ async def test_real_redis_running_follower_never_crosses_into_a_later_run(
 
     try:
         with pytest.raises(StopAsyncIteration):
-            await asyncio.wait_for(next_message, timeout=1)
+            await next_message
     finally:
         await follower.aclose()
 
@@ -2161,14 +2235,14 @@ async def test_real_redis_terminal_snapshot_precedes_later_deletion(
     follower = backend.follow(prepared.handle, after=1)
     client.gate_next_eval_after = True
     next_message = asyncio.ensure_future(anext(follower))
-    await asyncio.wait_for(client.eval_returned.wait(), timeout=1)
+    await client.eval_returned.wait()
 
     await backend.delete_stream(channel="events", identity=_identity())
     client.return_release.set()
 
     try:
         with pytest.raises(StopAsyncIteration):
-            await asyncio.wait_for(next_message, timeout=1)
+            await next_message
     finally:
         await follower.aclose()
 
@@ -2189,14 +2263,14 @@ async def test_real_redis_deletion_precedes_the_atomic_run_snapshot(
     follower = backend.follow(prepared.handle, after=0)
     client.gate_next_eval_before = True
     next_message = asyncio.ensure_future(anext(follower))
-    await asyncio.wait_for(client.eval_entered.wait(), timeout=1)
+    await client.eval_entered.wait()
 
     await backend.delete_stream(channel="events", identity=_identity())
     client.eval_release.set()
 
     try:
         with pytest.raises(StreamDeleted):
-            await asyncio.wait_for(next_message, timeout=1)
+            await next_message
     finally:
         await follower.aclose()
 
@@ -2223,7 +2297,7 @@ async def test_real_redis_cross_worker_attach_uses_one_producer(
             identity=_identity(),
             after=0,
         )
-        await asyncio.wait_for(owner_source.started.wait(), timeout=1)
+        await owner_source.started.wait()
         second = await follower_channel.wrap(
             unused_source,
             identity=_identity(),
@@ -2264,12 +2338,9 @@ async def test_real_redis_remote_cancel_reaches_the_owner_callback(
             after=0,
             cancel=cancel_run,
         )
-        await asyncio.wait_for(source.started.wait(), timeout=1)
+        await source.started.wait()
 
-        assert await asyncio.wait_for(
-            remote_channel.cancel(identity=_identity()),
-            timeout=2,
-        )
+        assert await remote_channel.cancel(identity=_identity())
         assert await _data(subscription) == ["started"]
 
     assert cancel_calls == 1

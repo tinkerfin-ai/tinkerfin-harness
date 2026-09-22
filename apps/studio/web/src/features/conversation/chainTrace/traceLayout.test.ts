@@ -6,12 +6,32 @@ import {
   buildTraceTimelineLayout,
   groupTraceNodesByTurn,
   preferredTraceNode,
+  traceRailAncestors,
 } from './traceLayout'
 
 const startedAt = '2026-09-03T00:00:00.000Z'
 const turn = { id: 'turn-fixture', ordinal: 1, startedAt }
 
 describe('Chain Trace layout derivation', () => {
+  it('keeps the root line through a tool child and ends a final child branch', () => {
+    const tool = traceGraphNode({ id: 'tool', kind: 'tool' })
+    const context = traceGraphNode({ id: 'context', kind: 'context', parentNodeId: 'tool' })
+    const next = traceGraphNode({ id: 'next', kind: 'model' })
+    expect(traceRailAncestors([tool, context, next]).get('context')).toEqual({ ancestorLevels: [0], continues: false })
+    expect(traceRailAncestors([tool, context, next]).get('tool')).toEqual({ ancestorLevels: [], continues: true })
+    expect(traceRailAncestors([tool, context]).get('context')).toEqual({ ancestorLevels: [], continues: false })
+  })
+
+  it('continues only ancestors with later branches in the visible tree', () => {
+    const outer = traceGraphNode({ id: 'outer', kind: 'subagent' })
+    const inner = traceGraphNode({ id: 'inner', kind: 'subagent', parentSubagentId: 'outer' })
+    const leaf = traceGraphNode({ id: 'leaf', kind: 'model', parentSubagentId: 'inner' })
+    const sibling = traceGraphNode({ id: 'sibling', kind: 'tool', parentSubagentId: 'outer' })
+    expect(traceRailAncestors([outer, inner, leaf, sibling]).get('leaf')).toEqual({ ancestorLevels: [1], continues: false })
+    expect(traceRailAncestors([outer, inner, leaf]).get('leaf')).toEqual({ ancestorLevels: [], continues: false })
+    expect(traceRailAncestors([outer, inner, sibling]).get('sibling')).toEqual({ ancestorLevels: [], continues: false })
+  })
+
   it('packs overlapping intervals into deterministic tracks and retains zero-duration nodes', () => {
     const layout = buildTraceTimelineLayout([turn], [
       traceGraphNode({ id: 'model-a', kind: 'model', startedAt, completedAt: '2026-09-03T00:00:02.000Z' }),

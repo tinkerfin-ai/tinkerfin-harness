@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Iterable
+from collections.abc import AsyncGenerator, Iterable
 from datetime import UTC, datetime
 
 import pytest
 from pydantic import JsonValue
 
 from tinkerfin_contracts import (
+    ContextContributionObservation,
     ModelCallObservation,
     NativeInterruptRecord,
     NativeMessageObservation,
@@ -57,6 +58,7 @@ from tinkerfin_tracing.graph import (
 )
 from tinkerfin_tracing.store import (
     TraceGraphNodeRecordPage,
+    TraceStoreUpdate,
     TraceThreadKey,
     TraceWriter,
 )
@@ -554,7 +556,6 @@ async def test_graph_content_search_follows_visible_assistant_body() -> None:
     assert query.matched_node_ids == ()
 
     updates = query.follow()
-    pending = asyncio.create_task(anext(updates))
     await session.observe(
         NativeMessageObservation(
             identity=context.identity,
@@ -570,7 +571,8 @@ async def test_graph_content_search_follows_visible_assistant_body() -> None:
     )
     await session.force(ObservationBoundary.CALL_STARTED)
 
-    update = await asyncio.wait_for(pending, timeout=2)
+    async with updates:
+        update = await anext(updates)
     assistant_ids = tuple(
         node.id
         for node in update.node_upserts
@@ -581,7 +583,6 @@ async def test_graph_content_search_follows_visible_assistant_body() -> None:
         node_id for node_id in update.ordered_node_ids if node_id in assistant_ids
     )
     assert update.ordered_node_ids == update.matched_node_ids
-    await updates.aclose()
     await _finish(session, context)
 
 
@@ -596,7 +597,6 @@ async def test_graph_follow_applies_the_same_page_byte_budget() -> None:
         ),
     )
     updates = query.follow()
-    pending = asyncio.create_task(anext(updates))
     now = datetime.now(UTC)
     await session.observe(
         NativeMessageObservation(
@@ -613,7 +613,8 @@ async def test_graph_follow_applies_the_same_page_byte_budget() -> None:
     )
     await session.force(ObservationBoundary.CALL_STARTED)
 
-    update = await asyncio.wait_for(pending, timeout=2)
+    async with updates:
+        update = await anext(updates)
     assert len(update.model_dump_json(by_alias=True).encode()) <= 2048
     assert update.completeness.details_omitted is True
     assert update.matched_node_ids == tuple(
@@ -623,7 +624,6 @@ async def test_graph_follow_applies_the_same_page_byte_budget() -> None:
     )
     assert update.node_upserts[0].content is None
     assert update.node_upserts[0].content_omitted is True
-    await updates.aclose()
     await _finish(session, context)
 
 
@@ -677,7 +677,6 @@ async def test_graph_cursor_is_fixed_to_filter_head_and_current_tail() -> None:
         second.follow()
 
     updates = first.follow()
-    pending = asyncio.create_task(anext(updates))
     await session.observe(
         NativeStateObservation(
             identity=context.identity,
@@ -688,10 +687,10 @@ async def test_graph_cursor_is_fixed_to_filter_head_and_current_tail() -> None:
         )
     )
     await session.force(ObservationBoundary.CALL_STARTED)
-    update = await asyncio.wait_for(pending, timeout=2)
+    async with updates:
+        update = await anext(updates)
     assert update.next_cursor is not None
     assert update.next_cursor != first.next_cursor
-    await updates.aclose()
     with pytest.raises(InvalidTraceCursor):
         await tracer.query(
             ThreadIdentity(namespace="test", thread_id="thread-query"),
@@ -838,8 +837,26 @@ async def test_tool_end_does_not_claim_execution_success_before_a_result() -> No
     await _finish(session, context)
 
 
-async def test_explicit_branch_follow_advances_to_its_only_descendant_head() -> None:
-    tracer = Tracer()
+async def test_explicit_branch_follow_advances_to_its_only_descendant_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryTraceStore()
+    tracer = Tracer(store=store)
+    follow = store.follow
+    source_closed = asyncio.Event()
+
+    async def follow_until_closed(
+        key: TraceThreadKey, *, after_seq: int
+    ) -> AsyncGenerator[TraceStoreUpdate, None]:
+        source = follow(key, after_seq=after_seq)
+        try:
+            async for update in source:
+                yield update
+        finally:
+            await source.aclose()
+            source_closed.set()
+
+    monkeypatch.setattr(store, "follow", follow_until_closed)
     await _record(tracer, "root")
     await _record(tracer, "branch-a", input_kind="branch", parent_run_id="root")
     await _record(tracer, "branch-b", input_kind="branch", parent_run_id="root")
@@ -854,41 +871,22 @@ async def test_explicit_branch_follow_advances_to_its_only_descendant_head() -> 
         input_kind="resume",
         parent_run_id="branch-a",
     )
-    session = await tracer.open_run(resumed)
-    now = datetime.now(UTC)
-    first_update = asyncio.ensure_future(anext(follower))
-    await session.observe(
-        RunStartedObservation(
-            identity=resumed.identity,
-            observed_at=now,
-            monotonic_ns=1,
-        )
-    )
-    await session.observe(
-        RunInputObservation(
-            identity=resumed.identity,
-            source=resumed,
-            observed_at=now,
-            monotonic_ns=2,
-        )
-    )
-
-    update = await asyncio.wait_for(first_update, timeout=2)
-    assert update.status.head_run_id == "resume-a"
-    assert update.summary.status == update.status
-    assert update.summary.message_count == update.message_count
-    serialized = update.model_dump(mode="json", by_alias=True)
-    assert serialized["summary"]["status"] == serialized["status"]
-    assert serialized["summary"]["messageCount"] == serialized["messageCount"]
-    assert "status" not in type(update).model_fields
-    await _finish(session, resumed)
-    await follower.aclose()
-    await asyncio.sleep(0)
-    assert all(
-        getattr(task.get_coro(), "__qualname__", "") != "async_generator_athrow"
-        for task in asyncio.all_tasks()
-        if task is not asyncio.current_task() and not task.done()
-    )
+    session = await _start(tracer, resumed)
+    try:
+        await session.force(ObservationBoundary.CALL_STARTED)
+        async with follower:
+            update = await anext(follower)
+            assert update.status.head_run_id == "resume-a"
+            assert update.summary.status == update.status
+            assert update.summary.message_count == update.message_count
+            serialized = update.model_dump(mode="json", by_alias=True)
+            assert serialized["summary"]["status"] == serialized["status"]
+            assert serialized["summary"]["messageCount"] == serialized["messageCount"]
+            assert "status" not in type(update).model_fields
+        assert source_closed.is_set()
+    finally:
+        await follower.aclose()
+        await _finish(session, resumed)
 
 
 async def test_event_pages_include_only_the_selected_head_lineage() -> None:
@@ -1076,8 +1074,31 @@ async def test_explicit_continuation_parent_stays_complete(
     assert len(thread.graph.turns) == 1
 
 
-async def test_follow_skips_commits_from_an_unselected_sibling_branch() -> None:
-    tracer = Tracer()
+async def test_follow_skips_commits_from_an_unselected_sibling_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryTraceStore()
+    tracer = Tracer(store=store)
+    follow = store.follow
+    sibling_consumed: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    release_selected = asyncio.Event()
+
+    async def follow_with_sibling_gate(
+        key: TraceThreadKey, *, after_seq: int
+    ) -> AsyncGenerator[TraceStoreUpdate, None]:
+        source = follow(key, after_seq=after_seq)
+        try:
+            async for update in source:
+                yield update
+                if any(
+                    event.fact.identity.run_id == "resume-b" for event in update.events
+                ):
+                    sibling_consumed.set_result(None)
+                    await release_selected.wait()
+        finally:
+            await source.aclose()
+
+    monkeypatch.setattr(store, "follow", follow_with_sibling_gate)
     await _record(tracer, "root")
     await _record(tracer, "branch-a", input_kind="branch", parent_run_id="root")
     await _record(tracer, "branch-b", input_kind="branch", parent_run_id="root")
@@ -1086,7 +1107,6 @@ async def test_follow_skips_commits_from_an_unselected_sibling_branch() -> None:
         head_run_id="branch-a",
     )
     follower = branch.follow()
-    waiting = asyncio.ensure_future(anext(follower))
 
     sibling = _context(
         "resume-b",
@@ -1094,21 +1114,37 @@ async def test_follow_skips_commits_from_an_unselected_sibling_branch() -> None:
         parent_run_id="branch-b",
     )
     sibling_session = await _start(tracer, sibling)
-    await asyncio.sleep(0)
-    assert waiting.done() is False
-
     selected = _context(
         "resume-a",
         input_kind="resume",
         parent_run_id="branch-a",
     )
-    selected_session = await _start(tracer, selected)
-    update = await asyncio.wait_for(waiting, timeout=2)
-    assert {fact.identity.run_id for fact in update.facts} == {"resume-a"}
+    selected_session: RunObservationSession | None = None
+    try:
+        await sibling_session.force(ObservationBoundary.CALL_STARTED)
+        waiting = asyncio.create_task(anext(follower))
+        try:
+            completed, _ = await asyncio.wait(
+                (waiting, sibling_consumed), return_when=asyncio.FIRST_COMPLETED
+            )
+            assert sibling_consumed in completed
+            assert not waiting.done()
 
-    await _finish(sibling_session, sibling)
-    await _finish(selected_session, selected)
-    await follower.aclose()
+            selected_session = await _start(tracer, selected)
+            await selected_session.force(ObservationBoundary.CALL_STARTED)
+            release_selected.set()
+            update = await waiting
+            assert {fact.identity.run_id for fact in update.facts} == {"resume-a"}
+        finally:
+            release_selected.set()
+            if not waiting.done():
+                waiting.cancel()
+            await asyncio.gather(waiting, return_exceptions=True)
+    finally:
+        await follower.aclose()
+        await _finish(sibling_session, sibling)
+        if selected_session is not None:
+            await _finish(selected_session, selected)
 
 
 async def test_cursor_from_a_newer_as_of_is_rejected_by_an_older_handle() -> None:
@@ -1956,3 +1992,95 @@ async def test_deleted_generation_cursor_cannot_address_a_recreated_thread() -> 
 
     with pytest.raises(InvalidTraceCursor):
         await replacement.events(cursor=first_page.next_cursor)
+
+
+@pytest.mark.parametrize(
+    "system",
+    [None, "System instructions", "X" * 4096],
+    ids=["no-system", "system", "omitted"],
+)
+async def test_compaction_context_uses_the_ordinary_system_message_rule(
+    system: str | None,
+) -> None:
+    from tinkerfin_tracing import TraceLimits
+
+    tracer = Tracer(limits=TraceLimits(max_event_bytes=4096))
+    context = _context("system-context")
+    session = await _start(tracer, context)
+    now = datetime.now(UTC)
+    messages = (
+        *(
+            (NativeMessageRecord(message_type="system", content=system),)
+            if system is not None
+            else ()
+        ),
+        NativeMessageRecord(message_type="human", content="SUMMARY-INPUT-ONLY"),
+    )
+    await session.observe(
+        ContextContributionObservation(
+            identity=context.identity,
+            observed_at=now,
+            monotonic_ns=3,
+            phase="started",
+            contribution_id="compact-action",
+            context_kind="compaction",
+            name="context_compaction",
+        )
+    )
+    for index, call_id in enumerate(("ordinary", "summary")):
+        await session.observe(
+            ModelCallObservation(
+                identity=context.identity,
+                observed_at=now,
+                monotonic_ns=4 + index * 2,
+                phase="started",
+                call_id=call_id,
+                contribution_id="compact-action" if call_id == "summary" else None,
+                messages=messages,
+            )
+        )
+        await session.observe(
+            ModelCallObservation(
+                identity=context.identity,
+                observed_at=now,
+                monotonic_ns=5 + index * 2,
+                phase="completed",
+                call_id=call_id,
+            )
+        )
+    await session.observe(
+        ContextContributionObservation(
+            identity=context.identity,
+            observed_at=now,
+            monotonic_ns=8,
+            phase="completed",
+            contribution_id="compact-action",
+            context_kind="compaction",
+            name="context_compaction",
+            model_call_ids=("summary",),
+            output={"status": "compacted"},
+        )
+    )
+    await _finish(session, context)
+    identity = ThreadIdentity(namespace="test", thread_id="thread-query")
+    query = await tracer.query(identity)
+    contexts = [node for node in query.nodes if node.kind is TraceGraphNodeKind.CONTEXT]
+    assert len(contexts) == 2
+    assert contexts[0].content == contexts[1].content
+    assert contexts[0].content_omitted == contexts[1].content_omitted
+    assert "SUMMARY-INPUT-ONLY" not in str([node.content for node in contexts])
+    if system == "System instructions":
+        assert contexts[0].content == system
+    elif system is None:
+        assert contexts[0].content is None
+        assert not contexts[0].content_omitted
+    else:
+        assert contexts[0].content is None
+        assert contexts[0].content_omitted
+    filtered = await tracer.query(
+        identity,
+        where=TraceGraphFilter(
+            kinds=frozenset({TraceGraphNodeKind.CONTEXT}), search="SUMMARY-INPUT-ONLY"
+        ),
+    )
+    assert not filtered.nodes

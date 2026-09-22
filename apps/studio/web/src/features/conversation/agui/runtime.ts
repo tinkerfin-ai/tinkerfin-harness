@@ -1,4 +1,5 @@
 import { mergeConversationTitle } from "../../../lib/workspace"
+import { reduceCompactionEvent, syncCompactionState } from '../compaction/state'
 import { attachmentInput, isAttachment, messageText, messageAttachments, type Attachment } from '../attachments/content'
 import type {
   AgentMode,
@@ -1287,18 +1288,18 @@ const reduceConversationEvent = (
       }
 
     case "STATE_SNAPSHOT":
-      return syncEffectiveModeFromState(syncTodosFromState({
+      return syncCompactionState(syncEffectiveModeFromState(syncTodosFromState({
         ...conversation,
         serverState: event.snapshot,
-      }, event.snapshot), event.snapshot)
+      }, event.snapshot), event.snapshot), event.snapshot)
 
     case "STATE_DELTA":
       {
         const nextState = applyStateDelta(conversation.serverState, event.delta)
-        return syncEffectiveModeFromState(syncTodosFromState({
+        return syncCompactionState(syncEffectiveModeFromState(syncTodosFromState({
           ...conversation,
           serverState: nextState,
-        }, nextState), nextState)
+        }, nextState), nextState), nextState)
       }
 
     case "TEXT_MESSAGE_START": {
@@ -1672,7 +1673,7 @@ export const applyConversationEvent = (
   conversation: Conversation,
   event: ConversationAgUiEvent,
 ): Conversation => {
-  const next = reduceConversationEvent(conversation, event)
+  const next = reduceCompactionEvent(conversation, event) ?? reduceConversationEvent(conversation, event)
   return next === conversation || !next.historySynchronized
     ? next
     : { ...next, historySynchronized: false }

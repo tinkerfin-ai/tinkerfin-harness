@@ -3,14 +3,14 @@
 from sqlalchemy import JSON, Boolean, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from tinkerfin_studio.infrastructure.database import Base
+from tinkerfin_studio.infrastructure.database import MYSQL_TABLE_OPTIONS, Base
 
 
 class User(Base):
     """可登录 Studio 的系统用户"""
 
     __tablename__ = "users"
-    __table_args__ = {"comment": "TinkerFin Studio 登录用户"}
+    __table_args__ = {**MYSQL_TABLE_OPTIONS, "comment": "TinkerFin Studio 登录用户"}
 
     id: Mapped[int] = mapped_column(
         Integer, primary_key=True, autoincrement=True, comment="用户主键"

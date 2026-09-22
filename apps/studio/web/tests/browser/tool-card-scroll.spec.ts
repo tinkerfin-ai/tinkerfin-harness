@@ -61,7 +61,7 @@ async function openStudio(page: Page, theme = 'light', reducedMotion: 'reduce' |
   let history = initial
   await page.emulateMedia({ reducedMotion })
   await page.addInitScript(({ user, theme }) => {
-    localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'scroll-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
+    localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'scroll-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
     localStorage.setItem('tinkerfin:theme', theme)
     localStorage.setItem('tinkerfin:language', 'zh-CN')
   }, { user, theme })

@@ -134,10 +134,14 @@ class _ColumnSignature:
     nullable: bool
     default: str | None
     autoincrement: bool
+    character_set: str | None
+    collation: str | None
 
 
 @dataclass(frozen=True, slots=True)
 class _TableSignature:
+    engine: str
+    collation: str
     columns: dict[str, _ColumnSignature]
     primary_key: tuple[str, ...]
     indexes: dict[str, tuple[tuple[str, ...], bool]]
@@ -178,7 +182,11 @@ def _normalize_default(value: object | None) -> str | None:
     return normalized.casefold()
 
 
-def _column_signature(column: _ReflectedColumn) -> _ColumnSignature:
+def _column_signature(
+    column: _ReflectedColumn,
+    character_set: str | None,
+    collation: str | None,
+) -> _ColumnSignature:
     column_type = column["type"]
     return _ColumnSignature(
         type_name=type(column_type).__name__.casefold(),
@@ -189,6 +197,8 @@ def _column_signature(column: _ReflectedColumn) -> _ColumnSignature:
         nullable=bool(column["nullable"]),
         default=_normalize_default(column.get("default")),
         autoincrement=column.get("autoincrement") is True,
+        character_set=character_set,
+        collation=collation,
     )
 
 
@@ -202,11 +212,37 @@ def _reflect_schema(connection: Connection) -> _SchemaReflection:
     tables: dict[str, _TableSignature] = {}
     table_comments: dict[str, str] = {}
     column_comments: dict[str, dict[str, str]] = {}
+    table_options = {
+        str(row[0]): (str(row[1]), str(row[2]))
+        for row in connection.execute(
+            text(
+                "SELECT TABLE_NAME, ENGINE, TABLE_COLLATION "
+                "FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()"
+            )
+        )
+    }
+    column_options = {
+        (str(row[0]), str(row[1])): (
+            cast(str | None, row[2]),
+            cast(str | None, row[3]),
+        )
+        for row in connection.execute(
+            text(
+                "SELECT TABLE_NAME, COLUMN_NAME, CHARACTER_SET_NAME, COLLATION_NAME "
+                "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"
+            )
+        )
+    }
     for table_name in table_names:
         columns = cast(list[_ReflectedColumn], inspector.get_columns(table_name))
         tables[table_name] = _TableSignature(
+            engine=table_options[table_name][0],
+            collation=table_options[table_name][1],
             columns={
-                str(column["name"]): _column_signature(column) for column in columns
+                str(column["name"]): _column_signature(
+                    column, *column_options[table_name, column["name"]]
+                )
+                for column in columns
             },
             primary_key=tuple(
                 cast(
@@ -290,7 +326,8 @@ async def _create_database(admin_engine: AsyncEngine, database_name: str) -> Non
         raise ValueError("临时数据库名称不符合安全约束")
     async with admin_engine.begin() as connection:
         await connection.exec_driver_sql(
-            f"CREATE DATABASE `{database_name}` CHARACTER SET utf8mb4"
+            f"CREATE DATABASE `{database_name}` "
+            "CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
         )
 
 
@@ -305,7 +342,7 @@ async def _drop_database(admin_engine: AsyncEngine, database_name: str) -> None:
 async def test_business_sql_and_framework_setups_compose_the_current_mysql_schema(
     mysql_admin_url: str,
 ) -> None:
-    """业务 SQL 与三个框架初始化入口组合后必须得到唯一当前 Schema"""
+    """业务 SQL 与框架初始化入口组合后必须得到唯一当前 Schema"""
 
     admin_url = make_url(mysql_admin_url)
     token = secrets.token_hex(8)
@@ -323,7 +360,12 @@ async def test_business_sql_and_framework_setups_compose_the_current_mysql_schem
             created_databases.append(database_name)
         sql_engine = create_async_engine(sql_url)
         runtime_engine = create_async_engine(runtime_url)
+        # 外部库默认值不能改变业务表的文本比较规则
+        for engine in (sql_engine, runtime_engine):
+            await _execute_ddl(engine, "ALTER DATABASE COLLATE utf8mb4_unicode_ci")
         await _execute_ddl(sql_engine, _SCHEMA_PATH.read_text(encoding="utf-8"))
+        async with runtime_engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
         async with AsyncSession(sql_engine) as session:
             initial_user = (await session.scalars(select(User))).one()
             assert initial_user.username == "tinkerfin"
@@ -334,7 +376,16 @@ async def test_business_sql_and_framework_setups_compose_the_current_mysql_schem
         async with sql_engine.connect() as connection:
             business_schema = await connection.run_sync(_reflect_schema)
         assert set(business_schema.tables) == _BUSINESS_TABLES
+        for table in business_schema.tables.values():
+            assert table.engine == "InnoDB"
+            assert table.collation == "utf8mb4_0900_ai_ci"
+            for column in table.columns.values():
+                if column.character_set is not None:
+                    assert column.character_set == "utf8mb4"
+                    assert column.collation == "utf8mb4_0900_ai_ci"
 
+        for engine in (sql_engine, runtime_engine):
+            await _execute_ddl(engine, "ALTER DATABASE COLLATE utf8mb4_0900_ai_ci")
         await _create_runtime_schema(sql_engine)
         await _create_runtime_schema(runtime_engine)
 

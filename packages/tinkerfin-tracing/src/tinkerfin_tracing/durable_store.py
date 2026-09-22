@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from collections.abc import AsyncGenerator
-from dataclasses import dataclass, field
+from asyncio import wait_for as _wait_for_follow_change
+from collections.abc import AsyncGenerator, Mapping
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -13,7 +14,11 @@ from pydantic import JsonValue
 
 from tinkerfin_contracts import RunIdentity, ThreadIdentity
 
-from ._graph_projection import trace_graph_record_search_values
+from ._follow_reads import _FollowPage, _FollowReads
+from ._graph_projection import (
+    context_related_node_ids,
+    trace_graph_record_search_values,
+)
 from ._graph_reducer import (
     ReducedTraceGraphNode,
     ReducedTraceGraphRevision,
@@ -78,6 +83,10 @@ _ASCII_LOWER_TRANSLATION = str.maketrans(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
     "abcdefghijklmnopqrstuvwxyz",
 )
+
+
+class _GraphIndexChanged(Exception):
+    """Restart a page whose indexed reads no longer share one Ledger tail."""
 
 
 class _DurableTraceWriter:
@@ -301,6 +310,9 @@ class DurableTraceStore:
         self._codec = codec or CanonicalTracePayloadCodec()
         self._setup_task: asyncio.Task[TaskOutcome[None]] | None = None
         self._follow_changes: dict[TraceThreadKey, _FollowChange] = {}
+        self._follow_reads = _FollowReads(
+            backend, poll_seconds=self._options.follow_poll_seconds
+        )
         self._enforce_writer_leases = True
 
     @property
@@ -504,28 +516,30 @@ class DurableTraceStore:
                 "Trace Store backend does not provide indexed Graph queries"
             )
         await self.setup()
-        if where.search is not None:
-            return await self._query_searched_trace_graph(
-                backend,
-                key,
-                run_ids=run_ids,
-                started_run_ids=started_run_ids,
-                where=where,
-                limit=limit,
-                max_nodes=max_nodes,
-                before_started_at=before_started_at,
-                before_node_id=before_node_id,
-            )
-        return await self._query_trace_graph_records(
-            backend,
-            key,
-            run_ids=run_ids,
-            started_run_ids=started_run_ids,
-            where=where,
-            limit=limit,
-            max_nodes=max_nodes,
-            before_started_at=before_started_at,
-            before_node_id=before_node_id,
+        read_page = (
+            self._query_searched_trace_graph
+            if where.search is not None
+            else self._query_trace_graph_records
+        )
+        # Relationships may need several index reads. A concurrent append makes
+        # the entire selection stale, including its filter matches and cursor.
+        for _attempt in range(4):
+            try:
+                return await read_page(
+                    backend,
+                    key,
+                    run_ids=run_ids,
+                    started_run_ids=started_run_ids,
+                    where=where,
+                    limit=limit,
+                    max_nodes=max_nodes,
+                    before_started_at=before_started_at,
+                    before_node_id=before_node_id,
+                )
+            except _GraphIndexChanged:
+                continue
+        raise TraceStoreProtocolError(
+            "Trace Graph changed repeatedly while resolving context relationships"
         )
 
     async def _query_trace_graph_records(
@@ -609,6 +623,60 @@ class DurableTraceStore:
                     )
                 return None
             return decode_required(event, sequence)
+
+        # A compression is one inspectable unit even when the direct page matches
+        # only its model or action. Resolve explicit IDs through the index, keeping
+        # the original match/cursor set and the existing total-node bound.
+        related_rows = {item.node_id: item for item in stored.nodes}
+        inspected: set[str] = set()
+        while True:
+            pending: set[str] = set()
+            for item in tuple(related_rows.values()):
+                if item.node_id in inspected:
+                    continue
+                inspected.add(item.node_id)
+                request_event = decode_optional(item.request_event, item.request_seq)
+                result_event = decode_optional(item.result_event, item.result_seq)
+                pending.update(
+                    context_related_node_ids(
+                        item.kind,
+                        None if request_event is None else request_event.fact,
+                        None if result_event is None else result_event.fact,
+                    )
+                )
+            pending.difference_update(related_rows)
+            if not pending:
+                break
+            remaining = max_nodes - len(related_rows)
+            if remaining < len(pending):
+                raise TraceQuotaExceeded(
+                    "Trace Graph context exceeds max_total_nodes",
+                    context={"resource": "graph_total_nodes"},
+                )
+            related = await backend.query_trace_graph(
+                TraceGraphQueryRequest(
+                    key=key,
+                    run_ids=run_ids,
+                    where=TraceGraphFilter(),
+                    limit=len(pending),
+                    total_limit=max_nodes,
+                    node_ids=tuple(sorted(pending)),
+                )
+            )
+            if related.key != key:
+                raise TraceStoreProtocolError(
+                    "Context relationships belong to another generation"
+                )
+            if related.as_of_seq != stored.as_of_seq:
+                raise _GraphIndexChanged
+            for item in related.nodes:
+                related_rows[item.node_id] = item
+            if len(related_rows) > max_nodes:
+                raise TraceQuotaExceeded(
+                    "Trace Graph context exceeds max_total_nodes",
+                    context={"resource": "graph_total_nodes"},
+                )
+        stored = replace(stored, nodes=tuple(related_rows.values()))
 
         if any(item.run_id not in allowed_run_ids for item in stored.nodes):
             raise TraceStoreProtocolError(
@@ -727,6 +795,7 @@ class DurableTraceStore:
             if _graph_record_contains(
                 record,
                 search,
+                related_records=records_by_id,
                 allowed_run_ids=frozenset(run_ids),
             )
         ]
@@ -757,7 +826,18 @@ class DurableTraceStore:
                 ),
             )
         selected_records = {record.node_id: record for record in selected}
-        pending = [record.parent_subagent_id for record in selected]
+        pending = [
+            parent
+            for record in selected
+            for parent in (
+                record.parent_subagent_id,
+                *context_related_node_ids(
+                    record.kind,
+                    None if record.request_event is None else record.request_event.fact,
+                    None if record.result_event is None else record.result_event.fact,
+                ),
+            )
+        ]
         while pending:
             parent_id = pending.pop()
             if parent_id is None or parent_id in selected_records:
@@ -771,7 +851,20 @@ class DurableTraceStore:
                     context={"resource": "graph_total_nodes"},
                 )
             selected_records[parent_id] = parent
-            pending.append(parent.parent_subagent_id)
+            pending.extend(
+                (
+                    parent.parent_subagent_id,
+                    *context_related_node_ids(
+                        parent.kind,
+                        None
+                        if parent.request_event is None
+                        else parent.request_event.fact,
+                        None
+                        if parent.result_event is None
+                        else parent.result_event.fact,
+                    ),
+                )
+            )
         candidate_order = {
             record.node_id: index for index, record in enumerate(candidates.nodes)
         }
@@ -895,11 +988,23 @@ class DurableTraceStore:
         *,
         after_seq: int,
     ) -> AsyncGenerator[TraceStoreUpdate, None]:
-        """Follow bounded pages with exact-generation wakeups and cross-instance reads.
+        """Follow committed events and active Runs within one exact generation.
 
-        An empty read checks the tail and active Runs without loading quota aggregates.
-        Local revisions close the read-to-wait gap; notification state lives only
-        as long as a generation has followers. Database I/O runs outside the condition.
+        Each subscriber keeps its own cursor and mutable event values. Local commits
+        wake waiting subscribers; changes from other Store instances are checked at
+        the configured follow interval. Closing or cancelling the subscription
+        releases its owned reads without closing the borrowed backend.
+
+        Args:
+            key: Exact thread generation to follow.
+            after_seq: Last event sequence already consumed, or zero for all events.
+
+        Returns:
+            An async generator of bounded event pages and writer ownership updates.
+            Close it when leaving iteration early.
+
+        Raises:
+            ValueError: The event sequence is negative.
         """
 
         self._validate_key(key)
@@ -915,6 +1020,7 @@ class DurableTraceStore:
             signal.followers += 1
             cursor = after_seq
             active_run_ids: tuple[str, ...] | None = None
+            previous_page: _FollowPage | None = None
             try:
                 while True:
                     revision = signal.revision
@@ -924,8 +1030,14 @@ class DurableTraceStore:
                         after_seq=cursor,
                         limit=self._limits.follow_batch_size,
                     )
-                    page = await self._backend.read_event_page(request)
+                    result = await self._follow_reads.read(
+                        request, revision=revision, previous=previous_page
+                    )
+                    page = result.page
                     batch = self._decode_event_page(page, expected_request=request)
+                    if signal.revision == revision:
+                        self._follow_reads.remember(request, result, revision=revision)
+                    previous_page = result
                     if batch:
                         cursor = batch[-1].trace_seq
                     if batch or active_run_ids != page.active_run_ids:
@@ -941,12 +1053,15 @@ class DurableTraceStore:
                     async with signal.condition:
                         if signal.revision != revision:
                             continue
+                        remaining = self._follow_reads.remaining(result)
+                        if remaining <= 0:
+                            continue
                         try:
-                            await asyncio.wait_for(
+                            await _wait_for_follow_change(
                                 signal.condition.wait_for(
                                     lambda: signal.revision != revision
                                 ),
-                                timeout=self._options.follow_poll_seconds,
+                                timeout=remaining,
                             )
                         except TimeoutError:
                             pass
@@ -954,6 +1069,7 @@ class DurableTraceStore:
                 signal.followers -= 1
                 if not signal.followers:
                     self._follow_changes.pop(key, None)
+                    self._follow_reads.discard(key)
 
         return iterate()
 
@@ -992,8 +1108,10 @@ class DurableTraceStore:
             else self._follow_changes.get(result.key)
         )
         if signal is not None:
+            assert result.key is not None
             async with signal.condition:
                 signal.revision += 1
+                self._follow_reads.discard(result.key)
                 signal.condition.notify_all()
         return result
 
@@ -1115,6 +1233,9 @@ class DurableTraceStore:
             trace_seq=record.trace_seq,
             generation=key.generation,
             fact=fact,
+            # The built-in decoder allocates the entire fact from JSON. Custom
+            # codecs may share nested values, so keep their defensive copy.
+            copy_fact=type(self._codec) is not CanonicalTracePayloadCodec,
         )
         if event.persisted_bytes != record.persisted_bytes:
             raise TraceStoreProtocolError("Trace event size metadata conflicts")
@@ -1296,7 +1417,10 @@ class _InMemoryTraceLedgerBackend:
             ]
             candidates = effective_graph_nodes(revisions, run_ids=run_ids)
             matching = [
-                row for row in candidates if _graph_node_matches(row, request.where)
+                row
+                for row in candidates
+                if _graph_node_matches(row, request.where)
+                and (request.node_ids is None or row.node_id in request.node_ids)
             ]
             if request.started_run_ids is not None:
                 started_runs = frozenset(request.started_run_ids)
@@ -1672,6 +1796,7 @@ def _graph_record_contains(
     search: str,
     *,
     allowed_run_ids: frozenset[str],
+    related_records: Mapping[str, TraceGraphNodeRecord],
 ) -> bool:
     """Match visible metadata and decoded public details with one literal rule."""
 
@@ -1687,6 +1812,7 @@ def _graph_record_contains(
             for value in trace_graph_record_search_values(
                 record,
                 allowed_run_ids=allowed_run_ids,
+                related_records=related_records,
             )
             for text in _json_search_values(value)
         ),

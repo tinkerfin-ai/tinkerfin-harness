@@ -120,11 +120,9 @@ async def test_redis_change_wait_preserves_cancellation_consumed_by_driver(
         )
     )
     try:
-        await asyncio.wait_for(client.entered.wait(), timeout=1)
+        await client.entered.wait()
         for _ in range(cancel_requests):
             pending.cancel()
-        done, _ = await asyncio.wait({pending}, timeout=1)
-        assert pending in done
         with pytest.raises(asyncio.CancelledError) as raised:
             await pending
         assert raised.value.__cause__ is driver_error
@@ -154,7 +152,7 @@ async def test_redis_backend_preserves_driver_control_exceptions(
         )
     )
     try:
-        await asyncio.wait_for(client.entered.wait(), timeout=1)
+        await client.entered.wait()
         pending.cancel()
         with pytest.raises(type(driver_error)) as raised:
             await pending

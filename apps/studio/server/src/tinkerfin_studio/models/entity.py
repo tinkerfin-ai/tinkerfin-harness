@@ -15,7 +15,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from tinkerfin_studio.infrastructure.database import Base
+from tinkerfin_studio.infrastructure.database import MYSQL_TABLE_OPTIONS, Base
 
 
 def _utcnow() -> datetime:
@@ -30,7 +30,7 @@ class ModelConnection(Base):
         UniqueConstraint(
             "user_id", "connection_id", name="uq_model_connections_owner_connection"
         ),
-        {"comment": "用户模型服务的地址与认证"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "用户模型服务的地址与认证"},
     )
     id: Mapped[int] = mapped_column(
         Integer, primary_key=True, autoincrement=True, comment="连接记录主键"
@@ -84,7 +84,7 @@ class AgentModel(Base):
         ),
         Index("ix_agent_models_connection", "user_id", "connection_id"),
         Index("ix_agent_models_default", "user_id", "purpose", "is_default", "enabled"),
-        {"comment": "可由前端选择的 Agent 模型与连接配置"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "可由前端选择的 Agent 模型与连接配置"},
     )
 
     id: Mapped[int] = mapped_column(

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import Field, JsonValue, field_validator, model_validator
 
@@ -224,6 +225,13 @@ class TraceGraphNode(TraceModel, frozen=True):
         min_length=1,
         max_length=2048,
         description="Nearest owning Subagent; null selects the Turn root scope",
+    )
+    context_kind: (
+        Literal["memory", "guardrail", "retrieval", "custom", "compaction"] | None
+    ) = None
+    compaction_origin: Literal["manual", "automatic", "tool"] | None = None
+    parent_node_id: str | None = Field(
+        default=None, description="Explicit containing context action or tool"
     )
     model_call_id: str | None = Field(
         default=None,

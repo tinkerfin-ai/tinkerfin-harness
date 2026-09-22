@@ -101,11 +101,11 @@ jobs:
           key: chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/studio/web/pnpm-lock.yaml') }}
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps --only-shell chromium
-      - name: Test web proxy and browser uploads
+      - name: Test web HTTP and browser uploads
         if: matrix.shard == 1
-        run: pnpm test:proxy
-      - name: Build web application
-        run: pnpm build
+        run: pnpm test:http
+      - name: Check web and browser test types
+        run: pnpm exec tsc -b
       - name: Test browser behavior and accessibility
         run: pnpm exec playwright test --shard=${{ matrix.shard }}/2
       - name: Upload browser failure evidence

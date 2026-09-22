@@ -6,6 +6,7 @@ import type {
   Message,
 } from '../../../types'
 import { ConversationRunFailure } from '../../conversation/components/ConversationRunFailure'
+import { CompactionCard } from '../../conversation/compaction/CompactionCard'
 import { ActivityDots } from '../../conversation/components/ActivityDots'
 import { ApprovalStatusRow } from '../../conversation/components/ApprovalCard'
 import { MessageBlock, ToolCallBatch } from '../../conversation/components/MessageBlock'
@@ -24,7 +25,7 @@ function collectCopyableAssistantIds(entries: ConversationDisplayEntry[], curren
   }
 
   for (const entry of entries) {
-    if (entry.type === 'run-failure') continue
+    if (entry.type === 'run-failure' || entry.type === 'compaction') continue
     if (entry.type === 'tools') {
       candidate = null
       continue
@@ -107,7 +108,7 @@ export function ConversationViewport({
   onLoadEarlierMessages: (trigger: HTMLButtonElement) => void
 }) {
   const { t } = useI18n()
-  const isEmpty = conversation.messages.length === 0 && !conversation.notice
+  const isEmpty = conversation.messages.length === 0 && !conversation.compactions?.length && !conversation.notice
   const copyableAssistantIds = useMemo(
     () => collectCopyableAssistantIds(entries, isRunning),
     [entries, isRunning],
@@ -178,7 +179,9 @@ export function ConversationViewport({
                 </Button>
               </div>
             )}
-            {entries.map((entry) => entry.type === 'run-failure'
+            {entries.map((entry) => entry.type === 'compaction'
+              ? <CompactionCard key={`compaction:${entry.operation.runId}`} operation={entry.operation} onReload={isRunning ? undefined : onRetryHydration} />
+              : entry.type === 'run-failure'
               ? <ConversationRunFailure id={`failure:${entry.failure.runId}`} key={`failure:${entry.failure.runId}`} retryable={entry.failure.retryable && !entry.message.meta?.contentOmitted && Boolean(entry.message.content || entry.message.attachments?.length)} disabled={retryDisabled} onRetry={onRetryRun ? () => onRetryRun(entry.message) : undefined} />
               : entry.type === 'tools'
               ? <ToolCallBatch key={`batch-${entry.messages[0].id}`} messages={entry.messages} />
@@ -204,7 +207,7 @@ export function ConversationViewport({
                 {t(conversation.notice?.recovery === 'history' ? '重新加载' : conversation.runStatus === 'error' ? '重试' : '恢复连接')}
               </Button>
             )}
-            {isRunning && <p className="message-stream-tail stream-pending-tail"><ActivityDots label={t('任务仍在继续')} /></p>}
+            {isRunning && !conversation.compactions?.some(operation => operation.runId === conversation.activeRunId) && <p className="message-stream-tail stream-pending-tail"><ActivityDots label={t('任务仍在继续')} /></p>}
             <div ref={messageEndRef} />
           </div>
         )}

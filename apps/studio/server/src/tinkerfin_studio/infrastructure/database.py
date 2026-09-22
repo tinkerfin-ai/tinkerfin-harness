@@ -16,6 +16,12 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 
+MYSQL_TABLE_OPTIONS = {
+    "mysql_engine": "InnoDB",
+    "mysql_charset": "utf8mb4",
+    "mysql_collate": "utf8mb4_0900_ai_ci",
+}
+
 
 class Base(DeclarativeBase):
     """Studio ORM 实体声明基类"""
@@ -123,20 +129,21 @@ class Database:
     async def verify_connection_budget(
         self,
         *,
+        total_pool_capacity: int,
         configured_budget: int,
         management_reserve: int,
     ) -> MySQLConnectionBudget:
-        """用数据库连接上限验证共享池容量
+        """用数据库连接上限验证应用所有连接池的合计容量
 
-        Studio 业务、长期记忆、运行记录与沙箱状态共用连接池，
-        连接容量按 `pool_size + max_overflow` 计算。管理保留量不计入应用预算。
+        每个服务器均须容纳两个池的合计预算，管理保留量不计入应用预算。
 
         Args:
+            total_pool_capacity: 两个池的常驻连接与临时连接的合计上限
             configured_budget: Studio 进程允许占用的 MySQL 连接总上限
             management_reserve: 必须留给数据库管理与故障处理的连接数
 
         Returns:
-            已验证的数据库上限、共享池容量和管理保留量
+            已验证的数据库上限、合计池容量和管理保留量
 
         Raises:
             RuntimeError: 配置预算不足或服务器无法同时容纳预算与管理保留量
@@ -145,8 +152,8 @@ class Database:
         if self._pool_size is None or self._max_overflow is None:
             raise RuntimeError("MySQL 连接预算要求显式配置 pool_size 与 max_overflow")
         pool_capacity = self._pool_size + self._max_overflow
-        if pool_capacity > configured_budget:
-            raise RuntimeError("MySQL 连接预算无法覆盖共享池容量")
+        if not pool_capacity <= total_pool_capacity <= configured_budget:
+            raise RuntimeError("MySQL 连接预算无法覆盖所有连接池容量")
         async with self.engine.connect() as connection:
             server_limit = await connection.scalar(text("SELECT @@max_connections"))
         if not isinstance(server_limit, int) or server_limit < 1:
@@ -154,7 +161,7 @@ class Database:
         if configured_budget + management_reserve > server_limit:
             raise RuntimeError("MySQL max_connections 无法容纳应用预算与管理保留量")
         return MySQLConnectionBudget(
-            sqlalchemy_pool_capacity=pool_capacity,
+            sqlalchemy_pool_capacity=total_pool_capacity,
             configured_budget=configured_budget,
             management_reserve=management_reserve,
             server_max_connections=server_limit,

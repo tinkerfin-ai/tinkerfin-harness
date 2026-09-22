@@ -44,9 +44,11 @@ AG-UI 入口需要安装 `tinkerfin[agui]`。
 | `await runtime.ainvoke(...)` | 最终状态的防御性副本 |
 | `runtime.open_run(...)` | 惰性 `NativeRunStream` |
 | `runtime.open_agui_run(...)` | 惰性 `AgUiRunStream` |
+| `await runtime.compact(thread_id=..., run_id=...)` | 返回已保存的 `CompactionResult`，不新增聊天消息 |
+| `runtime.agui.open_compaction(thread_id=..., run_id=...)` | 惰性 AG-UI 上下文压缩流 |
 | `runtime.agui.history(tracer)` | 读取当前 Runtime namespace 下的 AG-UI 对话历史 |
 
-所有执行方法都接收 `thread_id`、`run_id`、普通或 AG-UI 输入，以及可选的
+聊天执行方法接收 `thread_id`、`run_id`、普通或 AG-UI 输入，以及可选的
 `mode`、Graph `config`、带类型 `context`、观察回调和受支持的 LangGraph 流控制参数。
 
 `open_agui_run()` 必须且只能提供以下一种输入：
@@ -58,6 +60,60 @@ AG-UI 入口需要安装 `tinkerfin[agui]`。
 | `resume` | 覆盖全部 pending interrupt 的 `AgUiResumeRequest` |
 
 `on_resume_saved` 和 `on_resume_not_saved` 只用于恢复分支。它们围绕已持久化的 resume marker 结算宿主状态，框架会等待其完成。
+
+## 压缩已保存的上下文
+
+使用已配置 checkpointer 的 Runtime。手动压缩复用原生 `compact_conversation` 的资格规则，以及当前摘要中间件的
+模型、保留范围、提示词、输入裁剪和重试行为。资格门槛为自动压缩阈值的一半；Token 门槛要求匹配供应商的模型用量报告。
+未达门槛或缺少所需用量时，不调用摘要模型。原始消息继续保存，保留的近期上下文维持工具调用配对。
+执行前须先处理待执行任务、审批或 Plan 交互。
+
+```python
+result = await runtime.compact(thread_id=thread_id, run_id=run_id)
+if result.status == "compacted":
+    print(result.summary)
+```
+
+`CompactionResult` 包含 `run_id`、`status`、`summary` 和 `compacted_messages`。
+`nothing_to_compact` 表示没有可压缩内容，不调用模型；`not_reduced` 表示生成的摘要没有缩短上下文，
+因此保留原内容。失败会抛出异常，不返回成功结果。`compact()` 还支持 Runtime 声明的带类型 `context`。
+
+如需主 Agent 在对话中自行调用压缩工具，在构建时启用：
+
+```python
+runtime = (
+    TinkerFin(checkpointer=checkpointer)
+    .with_namespace("account")
+    .with_compaction_tool()
+    .build(model=model)
+)
+```
+
+该工具默认关闭，不传给子 Agent 或 Plan 规划器。工具在当前对话运行内执行，由框架绑定到有效摘要中间件并管理原生状态写回。
+自动压缩和工具压缩保留原生行为；手动入口额外拒绝未缩短上下文的摘要，并要求历史归档成功。
+追踪将摘要模型调用归入对应压缩操作，只有 checkpoint 保存成功后才确认持久化结果。
+
+需要可重放的 AG-UI 输出时，使用与普通聊天相同的 Messaging channel：
+
+```python
+from contextlib import aclosing
+
+channel = messaging.agui_channel(name="conversations")
+source = runtime.agui.open_compaction(thread_id=thread_id, run_id=run_id)
+body = await channel.open_sse(source)
+async with aclosing(body):
+    async for frame in body:
+        await send_bytes(frame)
+```
+
+宿主负责会话授权，为每次操作分配一个 `run_id`，并承载传输；重连复用该 ID 与 channel 的投递游标。
+框架负责执行、工作区清理和持久化，借用 Runtime 已配置的资源。聊天与压缩应使用同一执行边界。
+关闭 Messaging 读取流只断开接收；停止生产端须通过 channel 取消。
+
+压缩只有一组运行生命周期事件，不产生助手消息。已保存结果位于 AG-UI 状态字段 `context_compaction`
+中；为 Runtime 配置 Tracer 观察者后，结果也会记录在历史中的 `context_compaction` 节点。
+RAW `langgraph.custom` 事件的 `event.data.phase="saving"`
+表示开始保存；此后取消或失败不能证明上下文未改变，应先查询历史再发起另一操作。
 
 ## 读取 AG-UI 对话历史
 

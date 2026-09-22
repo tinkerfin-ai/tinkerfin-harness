@@ -29,6 +29,7 @@ from .facts import (
     ToolExecutionFact,
     ToolFact,
     TraceEvent,
+    TraceSemanticFact,
     TurnFact,
 )
 from .graph import (
@@ -204,6 +205,29 @@ def _context_content(
     if not values:
         return None, False
     return (values[0] if len(values) == 1 else values), False
+
+
+def _compaction_system_content(
+    record: TraceGraphNodeRecord,
+    records: Mapping[str, TraceGraphNodeRecord],
+) -> tuple[JsonValue | None, bool]:
+    """Use the same SystemMessage selection for ordinary and compaction contexts."""
+    event = record.result_event or record.request_event
+    if event is None or not isinstance(event.fact, ContextContributionFact):
+        return None, False
+    operation = event.fact
+    if not operation.model_call_ids:
+        return None, False
+    model_record = records.get(operation.model_call_ids[0])
+    if model_record is None or model_record.request_event is None:
+        return None, True
+    model = model_record.request_event.fact
+    if (
+        not isinstance(model, ModelCallFact)
+        or model.contribution_id != operation.contribution_id
+    ):
+        raise TraceStoreProtocolError("Summary input belongs to another context")
+    return _context_content(model)
 
 
 def _tool_node(graph_namespace: tuple[str, ...], source_id: str) -> str:
@@ -505,17 +529,25 @@ def _validate_locator_ownership(
         ):
             raise TraceStoreProtocolError("Model locator belongs to another call")
     elif record.kind is TraceGraphNodeKind.CONTEXT:
-        if any(
-            not isinstance(event.fact, ModelCallFact)
-            or event.fact.phase != "started"
-            or record.node_id
-            != scope_id("context", event.fact.graph_namespace, event.fact.call_id)
-            for event in events
-            if event is not None
-        ):
-            raise TraceStoreProtocolError(
-                "Context locator belongs to another model request"
-            )
+        for event in events:
+            if event is None:
+                continue
+            fact = event.fact
+            if (
+                isinstance(fact, ContextContributionFact)
+                and fact.context_kind == "compaction"
+            ):
+                expected_id = scope_id(
+                    "compaction-context", fact.graph_namespace, fact.contribution_id
+                )
+            elif isinstance(fact, ModelCallFact) and fact.phase == "started":
+                expected_id = scope_id("context", fact.graph_namespace, fact.call_id)
+            else:
+                raise TraceStoreProtocolError("Context locator has no context evidence")
+            if record.node_id != expected_id:
+                raise TraceStoreProtocolError(
+                    "Context locator belongs to another action"
+                )
     elif record.kind is TraceGraphNodeKind.TOOL:
         for event in events:
             if event is None:
@@ -565,8 +597,11 @@ def _validate_locator_ownership(
                     "Message locator belongs to another event"
                 )
             if isinstance(fact, TurnFact):
-                source_id = fact.user_message_id or fact.turn_id
-                if scope_id("message", (), source_id) != record.node_id:
+                source_id = fact.user_message_id
+                if (
+                    source_id is None
+                    or scope_id("message", (), source_id) != record.node_id
+                ):
                     raise TraceStoreProtocolError(
                         "Turn locator belongs to another HumanMessage"
                     )
@@ -656,12 +691,14 @@ def trace_graph_record_search_values(
     record: TraceGraphNodeRecord,
     *,
     allowed_run_ids: frozenset[str],
+    related_records: Mapping[str, TraceGraphNodeRecord],
 ) -> tuple[JsonValue, ...]:
     """Return decoded detail values exposed by the corresponding public event."""
 
     node = project_trace_graph_node(
         record,
         turn_id="search",
+        related_records=related_records,
         parent_subagent_id=record.parent_subagent_id,
         relationship_missing=False,
         allowed_run_ids=allowed_run_ids,
@@ -688,6 +725,7 @@ def project_trace_graph_node(
     parent_subagent_id: str | None,
     relationship_missing: bool,
     allowed_run_ids: frozenset[str],
+    related_records: Mapping[str, TraceGraphNodeRecord] | None = None,
 ) -> TraceGraphNode:
     """Build one public event while validating every Ledger locator owner."""
 
@@ -761,12 +799,21 @@ def project_trace_graph_node(
         )
     elif record.kind is TraceGraphNodeKind.CONTEXT:
         if (
-            not isinstance(request_fact, ModelCallFact)
-            or request_fact.phase != "started"
+            isinstance(request_fact, ContextContributionFact)
+            and request_fact.context_kind == "compaction"
         ):
+            source_id = request_fact.contribution_id
+            if related_records is not None:
+                content, content_omitted = _compaction_system_content(
+                    record, related_records
+                )
+        elif (
+            isinstance(request_fact, ModelCallFact) and request_fact.phase == "started"
+        ):
+            content, content_omitted = _context_content(request_fact)
+            source_id = request_fact.call_id
+        else:
             raise TraceStoreProtocolError("Context Graph event is invalid")
-        content, content_omitted = _context_content(request_fact)
-        source_id = request_fact.call_id
     elif record.kind is TraceGraphNodeKind.MODEL:
         if (
             not isinstance(request_fact, ModelCallFact)
@@ -839,6 +886,25 @@ def project_trace_graph_node(
     else:
         raise TraceStoreProtocolError("Trace Graph event kind has no projection")
 
+    parent_node_id = None
+    if isinstance(request_fact, ModelCallFact):
+        parent_node_id = request_fact.contribution_id
+    elif (
+        isinstance(request_fact, ContextContributionFact)
+        and request_fact.context_kind == "compaction"
+    ):
+        if record.kind is TraceGraphNodeKind.CONTEXT:
+            if request_fact.parent_tool_call_id is not None:
+                parent_node_id = _tool_node(
+                    request_fact.graph_namespace, request_fact.parent_tool_call_id
+                )
+        else:
+            parent_node_id = scope_id(
+                "compaction-context",
+                request_fact.graph_namespace,
+                request_fact.contribution_id,
+            )
+
     issues = () if record.link_issue is None else (record.link_issue,)
     if relationship_missing and TraceGraphLinkIssue.MISSING_SUBAGENT not in issues:
         issues = (*issues, TraceGraphLinkIssue.MISSING_SUBAGENT)
@@ -846,6 +912,13 @@ def project_trace_graph_node(
         id=record.node_id,
         turn_id=turn_id,
         parent_subagent_id=parent_subagent_id,
+        parent_node_id=parent_node_id,
+        context_kind=request_fact.context_kind
+        if isinstance(request_fact, ContextContributionFact)
+        else None,
+        compaction_origin=request_fact.compaction_origin
+        if isinstance(request_fact, ContextContributionFact)
+        else None,
         model_call_id=record.model_call_id,
         kind=record.kind,
         status=record.status,
@@ -885,7 +958,7 @@ def project_trace_graph_records(
     """Project flat scopes and deterministic display order from Graph records."""
 
     turn_by_id = {turn.id: turn for turn in turns}
-    record_ids = {record.node_id for record in records}
+    records_by_id = {record.node_id: record for record in records}
     projected: dict[str, TraceGraphNode] = {}
     for record in records:
         # A later input can settle an earlier pending call without starting it
@@ -898,9 +971,10 @@ def project_trace_graph_records(
                 "Trace Graph event has no selected Turn ownership"
             )
         parent_id = record.parent_subagent_id
-        missing = parent_id is not None and parent_id not in record_ids
+        missing = parent_id is not None and parent_id not in records_by_id
         projected[record.node_id] = project_trace_graph_node(
             record,
+            related_records=records_by_id,
             turn_id=turn.id,
             parent_subagent_id=None if missing else parent_id,
             relationship_missing=missing,
@@ -919,3 +993,32 @@ __all__ = [
     "reduce_trace_graph_records",
     "trace_graph_record_search_values",
 ]
+
+
+def context_related_node_ids(
+    kind: TraceGraphNodeKind,
+    request: TraceSemanticFact | None,
+    result: TraceSemanticFact | None,
+) -> tuple[str, ...]:
+    """Return explicitly recorded members of one inspectable compression unit."""
+    if isinstance(request, ModelCallFact):
+        return () if request.contribution_id is None else (request.contribution_id,)
+    if (
+        not isinstance(request, ContextContributionFact)
+        or request.context_kind != "compaction"
+    ):
+        return ()
+    latest = result if isinstance(result, ContextContributionFact) else request
+    parent = (
+        request.contribution_id
+        if kind is TraceGraphNodeKind.CONTEXT
+        else scope_id(
+            "compaction-context", request.graph_namespace, request.contribution_id
+        )
+    )
+    tool = (
+        ()
+        if request.parent_tool_call_id is None
+        else (_tool_node(request.graph_namespace, request.parent_tool_call_id),)
+    )
+    return (parent, *latest.model_call_ids, *tool)

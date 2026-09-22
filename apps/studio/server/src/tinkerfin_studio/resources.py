@@ -155,7 +155,8 @@ class ApplicationResources:
     model_http_client: httpx.AsyncClient
     model_http_transport: ModelTransport
     attachments: AttachmentService
-    database: Database
+    database: Database  # 业务仓储使用的连接池
+    components_database: Database
     redis_runtime: Redis
     agent_persistence: AgentPersistence
     agent_subagents: dict[str, SubagentSettings]
@@ -187,24 +188,35 @@ def build_lifespan():
                     "认证访问令牌固定有效期：%s 秒",
                     settings.auth_token_expire_seconds,
                 )
-                database_settings = settings.database
-                database = Database(
-                    database_settings.url,
-                    echo=database_settings.echo,
-                    pool_size=database_settings.pool_size,
-                    max_overflow=database_settings.max_overflow,
-                    pool_recycle=database_settings.pool_recycle,
+                databases: list[Database] = []
+                for database_settings in (
+                    settings.business_database,
+                    settings.components_database,
+                ):
+                    resource = Database(
+                        database_settings.url,
+                        echo=database_settings.echo,
+                        pool_size=database_settings.pool_size,
+                        max_overflow=database_settings.max_overflow,
+                        pool_recycle=database_settings.pool_recycle,
+                    )
+                    await _enter_lifespan_context(stack, outcome, resource)
+                    databases.append(resource)
+                database, components_database = databases
+                total_capacity = 2 * (
+                    settings.database_pool_size + settings.database_max_overflow
                 )
-                await _enter_lifespan_context(stack, outcome, database)
-                connection_budget = await database.verify_connection_budget(
-                    configured_budget=database_settings.connection_budget,
-                    management_reserve=database_settings.management_connection_reserve,
-                )
+                for resource in databases:
+                    await resource.verify_connection_budget(
+                        total_pool_capacity=total_capacity,
+                        configured_budget=settings.database_connection_budget,
+                        management_reserve=settings.database_management_connection_reserve,
+                    )
                 logger.info(
-                    "MySQL 连接预算已验证：共享池=%s，预算=%s，管理保留=%s",
-                    connection_budget.sqlalchemy_pool_capacity,
-                    connection_budget.configured_budget,
-                    connection_budget.management_reserve,
+                    "MySQL 连接预算已验证：双池合计=%s，预算=%s，管理保留=%s",
+                    total_capacity,
+                    settings.database_connection_budget,
+                    settings.database_management_connection_reserve,
                 )
                 attachment_storage = await _enter_lifespan_context(
                     stack, outcome, MinioAttachmentStorage.open(settings.s3_storage)
@@ -235,9 +247,11 @@ def build_lifespan():
                 persistence = await _enter_lifespan_context(
                     stack,
                     outcome,
-                    AgentPersistence(database.engine, redis_runtime_settings),
+                    AgentPersistence(
+                        components_database.engine, redis_runtime_settings
+                    ),
                 )
-                trace_store = SqlAlchemyTraceStore(database.engine)
+                trace_store = SqlAlchemyTraceStore(components_database.engine)
                 # 接收请求前检查轨迹存储，数据库连接仍由应用统一管理
                 await trace_store.setup()
                 tracer = Tracer(
@@ -280,9 +294,9 @@ def build_lifespan():
                             ),
                         ),
                         key_resolver=lambda owner: owner,
-                        # Sandbox State 借用业务 Engine；关闭 Manager 不会销毁宿主连接池
+                        # 沙箱分配记录写入组件库，连接池由应用在组件关闭后释放
                         state=SQLAlchemyOpenSandboxState(
-                            engine=database.engine,
+                            engine=components_database.engine,
                             namespace=sandbox_settings.state_namespace,
                         ),
                         warm_pool_size=sandbox_settings.warm_pool_size,
@@ -317,7 +331,7 @@ def build_lifespan():
                 stack.push_async_callback(conversation_trace.aclose)
                 await conversation_trace.recover_preparing()
                 agent_subagents = await load_subagents()
-                automation_store = SqlAlchemyAutomationStore(database.engine)
+                automation_store = SqlAlchemyAutomationStore(components_database.engine)
                 stack.push_async_callback(automation_store.close)
                 automation = await _enter_lifespan_context(
                     stack,
@@ -337,6 +351,7 @@ def build_lifespan():
                     model_http_transport=model_http_transport,
                     attachments=AttachmentService(database, attachment_storage),
                     database=database,
+                    components_database=components_database,
                     redis_runtime=redis_runtime,
                     agent_persistence=persistence,
                     agent_subagents=agent_subagents,
@@ -349,7 +364,8 @@ def build_lifespan():
                     conversation_trace=conversation_trace,
                     conversation_titles=conversation_titles,
                     readiness=ReadinessService(
-                        database=database,
+                        business_database=database,
+                        components_database=components_database,
                         redis=redis_runtime,
                         sandbox=settings.sandbox,
                         sandbox_ready=sandbox_manager.check_ready,

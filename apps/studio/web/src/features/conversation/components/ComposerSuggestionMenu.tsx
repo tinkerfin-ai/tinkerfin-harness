@@ -47,8 +47,10 @@ export function ComposerSuggestionMenu({
     >
       <div className="composer-suggestion-viewport">
         {groups.map((group) => (
-          <div key={group.id} className="composer-suggestion-group" role="group" aria-label={t(group.label as TranslationKey)}>
-            <div className="composer-suggestion-title" role="presentation">{t(group.label as TranslationKey)}</div>
+          <div key={group.id} className="ui-listbox-group" role="group" aria-label={t(group.label as TranslationKey)}>
+            <div className="ui-listbox-group-label" role="presentation">
+              {group.id === 'command' ? t('指令（{count}）', { count: group.items.length }) : t(group.label as TranslationKey)}
+            </div>
             {group.items.map((item) => {
               const itemId = `${group.id}-${item.id}`
               return (
@@ -61,10 +63,8 @@ export function ComposerSuggestionMenu({
                   aria-disabled={item.disabled}
                   disabled={item.disabled}
                   className={`composer-suggestion-item${activeId === itemId ? ' is-active' : ''}`}
-                  onMouseDown={(event) => {
-                    event.preventDefault()
-                    if (!item.disabled) onPick(itemId)
-                  }}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => onPick(itemId)}
                 >
                   <span className="composer-suggestion-name">{item.id === 'skills-unavailable' ? t(item.name as TranslationKey) : item.name}</span>
                   <span className="composer-suggestion-description">{t(item.description as TranslationKey)}</span>

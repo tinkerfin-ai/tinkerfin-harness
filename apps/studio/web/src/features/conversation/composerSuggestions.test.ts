@@ -20,10 +20,12 @@ describe('composerSuggestions', () => {
     expect(detectLeadingSlashToken('/plan 后续', 6)).toBeNull()
   })
 
-  it('filters both groups while leaving Plan as the only enabled item', () => {
+  it('分组包含四条指令，Plan 与模型选择可用且支持筛选', () => {
     const all = filterComposerSuggestionGroups('')
-    expect(all.map((group) => group.label)).toEqual(['命令', '技能'])
-    expect(enabledSuggestionIds(all)).toEqual(['command-plan'])
+    expect(all.map((group) => group.label)).toEqual(['指令', '技能'])
+    expect(all[0]?.items).toHaveLength(4)
+    expect(all[0]?.items.some(item => item.id === 'permission')).toBe(false)
+    expect(enabledSuggestionIds(all)).toEqual(['command-compact', 'command-plan', 'command-model'])
     expect(filterComposerSuggestionGroups('pla')[0]?.items.map((item) => item.id)).toEqual(['plan'])
   })
 
@@ -41,18 +43,18 @@ describe('composerSuggestions', () => {
   })
 
   it('accepts only enabled command prefixes and complete enabled commands', () => {
-    for (const value of ['普通消息', '/', '/p', '/pl', '/pla', '/plan', '/plan ', '/plan 制定方案']) {
+    for (const value of ['普通消息', '/compact', '/compact ', '/compact 说明', '/', '/p', '/pl', '/pla', '/plan', '/plan ', '/plan 制定方案', '/m', '/mo', '/model']) {
       expect(isAllowedComposerDraft(value), value).toBe(true)
     }
-    for (const value of ['/x', '/compact', '/planner', '/pla 正文', '/plan/child']) {
+    for (const value of ['/x', '/permission', '/planner', '/pla 正文', '/plan/child', '/model ', '/model 正文']) {
       expect(isAllowedComposerDraft(value), value).toBe(false)
     }
     expect(isAllowedComposerDraft('正文 /unknown')).toBe(true)
 
-    for (const value of ['/plan', '/plan ', '/plan 制定方案']) {
+    for (const value of ['/compact', '/compact ', '/plan 制定方案', '/plan\n制定方案']) {
       expect(isSubmittableComposerDraft(value), value).toBe(true)
     }
-    for (const value of ['/', '/p', '/compact', '/planner']) {
+    for (const value of ['/', '/p', '/planner', '/model', '/model 正文', '/plan', '/plan ', '  /plan \n\t']) {
       expect(isSubmittableComposerDraft(value), value).toBe(false)
     }
   })

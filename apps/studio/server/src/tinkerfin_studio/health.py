@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from functools import partial
 from typing import cast
 
 import httpx
@@ -23,7 +24,8 @@ class ReadinessService:
     def __init__(
         self,
         *,
-        database: Database,
+        business_database: Database,
+        components_database: Database,
         redis: Redis,
         sandbox: SandboxSettings,
         sandbox_ready: Callable[[], Awaitable[None]],
@@ -32,7 +34,8 @@ class ReadinessService:
         http_client: httpx.AsyncClient,
         timeout_seconds: float = 3,
     ) -> None:
-        self._database = database
+        self._business_database = business_database
+        self._components_database = components_database
         self._redis = redis
         self._sandbox = sandbox
         self._sandbox_ready = sandbox_ready
@@ -41,8 +44,8 @@ class ReadinessService:
         self._http_client = http_client
         self._timeout_seconds = timeout_seconds
 
-    async def _check_mysql(self) -> None:
-        async with self._database.engine.connect() as connection:
+    async def _check_database(self, database: Database) -> None:
+        async with database.engine.connect() as connection:
             await connection.execute(text("SELECT 1"))
 
     async def _check_redis(self) -> None:
@@ -79,8 +82,16 @@ class ReadinessService:
     async def check(self) -> dict[str, bool]:
         """返回不含异常和凭据的稳定组件状态"""
 
-        mysql, redis, opensandbox, automation, attachments = await asyncio.gather(
-            self._safe(self._check_mysql),
+        (
+            business,
+            components,
+            redis,
+            opensandbox,
+            automation,
+            attachments,
+        ) = await asyncio.gather(
+            self._safe(partial(self._check_database, self._business_database)),
+            self._safe(partial(self._check_database, self._components_database)),
             self._safe(self._check_redis),
             self._safe(self._check_opensandbox),
             self._safe(self._automation_ready),
@@ -88,7 +99,8 @@ class ReadinessService:
         )
         return {
             "attachments": attachments,
-            "mysql": mysql,
+            "business_database": business,
+            "components_database": components,
             "redis": redis,
             "opensandbox": opensandbox,
             "automation": automation,

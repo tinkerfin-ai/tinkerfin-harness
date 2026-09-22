@@ -518,18 +518,21 @@ def _event(
 ) -> TraceEvent:
     persisted_bytes = 1
     stored_fact = fact.model_copy(deep=True) if copy_fact else fact
+    event = TraceEvent(
+        event_id=event_id,
+        trace_seq=trace_seq,
+        generation=generation,
+        fact=stored_fact,
+        persisted_bytes=persisted_bytes,
+    )
+    body_bytes = len(event.model_dump_json(by_alias=True).encode()) - 1
+    # Only the size field's decimal digits vary. Starting at one preserves the
+    # smallest fixed point when adjacent sizes (for example 999/1000) both fit.
     for _attempt in range(4):
-        event = TraceEvent(
-            event_id=event_id,
-            trace_seq=trace_seq,
-            generation=generation,
-            fact=stored_fact,
-            persisted_bytes=persisted_bytes,
-        )
-        encoded = event.model_dump_json(by_alias=True).encode()
-        if len(encoded) == persisted_bytes:
-            return event
-        persisted_bytes = len(encoded)
+        encoded_bytes = body_bytes + len(str(persisted_bytes))
+        if encoded_bytes == persisted_bytes:
+            return event.model_copy(update={"persisted_bytes": persisted_bytes})
+        persisted_bytes = encoded_bytes
     raise TraceStoreProtocolError("Trace event size did not converge")
 
 

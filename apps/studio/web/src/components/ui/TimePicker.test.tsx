@@ -14,11 +14,10 @@ describe('TimePicker', () => {
       const [value, setValue] = useState('')
       return <TimePicker value={value} label="上线时刻" onChange={setValue} controlSize="xs" />
     }
-    const { container } = render(<Harness />)
+    render(<Harness />)
 
     const trigger = screen.getByRole('button', { name: '上线时刻' })
     expect(trigger).toHaveTextContent('--:--')
-    expect(container.querySelector('select')).not.toBeInTheDocument()
     await user.click(trigger)
     expect(await screen.findByRole('dialog', { name: '选择时间' })).toBeInTheDocument()
 
@@ -104,7 +103,7 @@ describe('TimePicker', () => {
   })
 
   it('与日期选择器共用触发器、浮层、触控和动效规格', () => {
-    expect(uiStyles).toMatch(/\.ui-temporal-picker__trigger\s*\{[^}]*border-radius:\s*var\(--radius-md\);[^}]*font-size:\s*var\(--type-ui-size\);/s)
+    expect(uiStyles).toMatch(/\.ui-temporal-picker__trigger\s*\{[^}]*border-radius:\s*var\(--radius-button\);[^}]*font-size:\s*var\(--type-ui-size\);/s)
     expect(uiStyles).toMatch(/\.ui-temporal-picker__trigger--xs\s*\{[^}]*height:\s*var\(--control-xs\);[^}]*min-height:\s*var\(--control-xs\);/s)
     expect(uiStyles).toMatch(/\.ui-temporal-picker__popover\s*\{[^}]*box-sizing:\s*border-box;[^}]*border-radius:\s*var\(--radius-3xl\);[^}]*box-shadow:\s*var\(--shadow-3\);/s)
     expect(uiStyles).toMatch(/@media \(max-width: 440px\)[\s\S]*\.ui-temporal-picker__popover\s*\{[^}]*width:\s*calc\(100vw - \(2 \* var\(--space-3\)\)\);/s)

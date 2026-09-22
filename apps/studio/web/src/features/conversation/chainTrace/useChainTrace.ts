@@ -16,12 +16,30 @@ export type ChainTraceState =
   | { phase: 'ready'; page: TraceGraphPage }
   | { phase: 'error' }
 
+const GRAPH_RENDER_INTERVAL_MS = 50
+
+const sameIds = (left: readonly string[], right: readonly string[]) => (
+  left.length === right.length && left.every((id, index) => id === right[index])
+)
+
 const applyUpdate = (
   page: TraceGraphPage,
   update: TraceGraphDelta,
 ): TraceGraphPage => {
   if (update.asOfSeq <= page.asOfSeq) {
     throw new ConversationError('stream_event_invalid')
+  }
+  if (update.turnUpserts.length === 0 && update.turnRemoves.length === 0
+    && update.nodeUpserts.length === 0 && update.nodeRemoves.length === 0
+    && sameIds(page.orderedNodeIds, update.orderedNodeIds)
+    && sameIds(page.matchedNodeIds, update.matchedNodeIds)
+  ) {
+    return {
+      ...page,
+      asOfSeq: update.asOfSeq,
+      nextCursor: update.nextCursor,
+      completeness: update.completeness,
+    }
   }
   const turns = new Map(page.turns.map((turn) => [turn.id, turn]))
   update.turnRemoves.forEach((turnId) => turns.delete(turnId))
@@ -73,6 +91,7 @@ export function useChainTrace({
   active,
   live,
   observedAt,
+  waitingForHistory = false,
   filter,
   limit,
 }: {
@@ -81,6 +100,8 @@ export function useChainTrace({
   live: boolean
   /** 会话权威观测到达后，重新读取终态链路以补齐最后提交的节点 */
   observedAt?: string
+  /** 先重验所选会话，再读取非实时链路；等待期间保留同一查询的展示 */
+  waitingForHistory?: boolean
   filter: TraceGraphFilter
   limit: number
 }) {
@@ -91,6 +112,7 @@ export function useChainTrace({
   const currentFilter = useRef(filter)
   currentFilter.current = filter
   const snapshotObservedAt = live ? undefined : observedAt
+  const snapshotWaiting = !live && waitingForHistory
   const displayedQuery = useRef<string | null>(null)
 
   useEffect(() => {
@@ -104,16 +126,36 @@ export function useChainTrace({
       setState({ phase: 'idle' })
       return
     }
-    const controller = new AbortController()
-    let disposed = false
-    let currentPage: TraceGraphPage | undefined
     const resolvedFilter = currentFilter.current
     const queryKey = JSON.stringify([threadId, filterKey, limit])
     const sameQuery = displayedQuery.current === queryKey
     displayedQuery.current = queryKey
     // 同一查询刷新时保留阅读内容，新快照到达后再替换；查询范围变化则显示加载状态
     setState(current => sameQuery && current.phase === 'ready' ? current : { phase: 'loading' })
-
+    if (snapshotWaiting) return
+    const controller = new AbortController()
+    let disposed = false
+    let currentPage: TraceGraphPage | undefined
+    let publishTimer: number | undefined
+    const clearPublishTimer = () => {
+      window.clearTimeout(publishTimer)
+      publishTimer = undefined
+    }
+    const fail = () => {
+      clearPublishTimer()
+      controller.abort()
+      setState({ phase: 'error' })
+    }
+    const schedulePublish = () => {
+      if (publishTimer !== undefined) return
+      // 增量逐个校验，仅合并页面展示，避免重算未变化的链路布局
+      publishTimer = window.setTimeout(() => {
+        publishTimer = undefined
+        if (!disposed && !controller.signal.aborted && currentPage) {
+          setState({ phase: 'ready', page: currentPage })
+        }
+      }, GRAPH_RENDER_INTERVAL_MS)
+    }
     const load = async () => {
       try {
         if (!live) {
@@ -136,20 +178,18 @@ export function useChainTrace({
           } else if (event.type === 'update') {
             if (!currentPage) throw new ConversationError('stream_event_invalid')
             currentPage = applyUpdate(currentPage, event.update)
-            setState({ phase: 'ready', page: currentPage })
+            schedulePublish()
           } else {
-            controller.abort()
-            setState({ phase: 'error' })
+            fail()
             return
           }
         }
         if (!disposed && !controller.signal.aborted) {
-          setState({ phase: 'error' })
+          fail()
         }
       } catch {
         if (!disposed) {
-          controller.abort()
-          setState({ phase: 'error' })
+          fail()
         }
       }
     }
@@ -159,9 +199,10 @@ export function useChainTrace({
     })
     return () => {
       disposed = true
+      clearPublishTimer()
       controller.abort()
     }
-  }, [active, filterKey, limit, live, retryEpoch, snapshotObservedAt, threadId, visible])
+  }, [active, filterKey, limit, live, retryEpoch, snapshotObservedAt, snapshotWaiting, threadId, visible])
 
   return {
     state,

@@ -39,7 +39,7 @@ test('附件发送失败保留输入与待发送图片', async ({ page }) => {
         'tinkerfin.auth.session',
         JSON.stringify({
           token: 'browser-test-token',
-          tokenType: 'Bearer',
+          serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer',
           expiresAt: '2099-01-01T00:00:00.000Z',
           user,
         }),
@@ -112,7 +112,7 @@ test('历史消息中用户图片在提示词前、工具图片在工具行后�
     messages: history.messages.map(message => message.role === 'user' ? { ...message, content: inputContent } : message),
     graph: { ...history.graph, nodes: history.graph.nodes.map(node => node.kind === 'human_message' ? { ...node, content: inputContent } : node) },
   }
-  await page.addInitScript(user => localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user })), user)
+  await page.addInitScript(user => localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user })), user)
   await page.route('**/{api,objects}/**', async route => {
     const url = new URL(route.request().url())
     const path = url.pathname

@@ -11,7 +11,7 @@ afterEach(() => {
 it('loads the safe backend model catalog with authentication', async () => {
   saveAuthSession({
     token: 'model-token',
-    tokenType: 'Bearer',
+    serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer',
     expiresAt: '2099-01-01T00:00:00.000Z',
     user: { user_id: 7, username: 'alice', display_name: 'Alice', avatar_url: null, roles: [], disabled: false },
   })

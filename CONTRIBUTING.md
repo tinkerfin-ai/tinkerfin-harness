@@ -31,7 +31,7 @@ For Studio web changes, run these commands from `apps/studio/web`:
 pnpm install --frozen-lockfile
 pnpm test
 pnpm exec playwright install chromium
-pnpm test:proxy
+pnpm test:http
 pnpm lint
 pnpm test:browser
 ```
@@ -78,9 +78,9 @@ or rewrite files; manual verification scripts can check work in progress.
 
 CI's `web` job runs unit tests, lint, build and packaging checks through the shared
 Python checker. `web-browser` installs Chromium and splits UI tests across two jobs;
-the first also runs `test:proxy`, which includes a real browser upload test.
+the first also runs `test:http`, which includes a real browser upload test.
 `verify-studio-web.sh --skip-browser` (PowerShell: `verify-studio-web.ps1 -SkipBrowser`)
-omits both proxy and UI browser tests.
+omits both HTTP and UI browser tests.
 
 The hooks are local convenience checks and can be bypassed with Git's `--no-verify` option;
 the repository's required CI checks remain authoritative for changes sent to the remote.

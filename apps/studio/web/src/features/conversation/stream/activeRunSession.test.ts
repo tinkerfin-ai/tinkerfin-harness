@@ -91,3 +91,9 @@ it('多个会话的游标独立保存和清理', () => {
   expect(readActiveRunSession('thread-active')?.lastSeq).toBe(3)
   expect(readActiveRunSession('second')).toBeNull()
 })
+
+it('压缩恢复只保存原运行和所选模型，不引入聊天输入', () => {
+  const compact = { threadId: 't', payload: { threadId: 't', runId: 'compact', model: 'main' }, mode: 'compact' as const, lastSeq: 8 }
+  writeActiveRunSession(compact)
+  expect(readActiveRunSession('t')).toEqual(compact)
+})

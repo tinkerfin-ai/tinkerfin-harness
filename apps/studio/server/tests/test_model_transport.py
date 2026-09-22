@@ -94,8 +94,11 @@ def test_invalid_origin_is_rejected_at_configuration_boundary(origin):
     with pytest.raises((ValidationError, httpx.InvalidURL)):
         Settings.model_validate(
             {
-                "_env_file": None,
-                "database_url": "mysql+asyncmy://test:test@localhost/test",
+                "s3_storage_access_key": "test-access",
+                "s3_storage_secret_key": "test-secret",
+                "s3_storage_bucket": "test-attachments",
+                "business_database_url": "mysql+asyncmy://test:test@localhost/test",
+                "components_database_url": "mysql+asyncmy://u:p@db/components",
                 "model_allowed_origins": (origin,),
             }
         )
@@ -105,7 +108,7 @@ def test_settings_load_json_origins_and_normalize_default_ports(tmp_path, monkey
     monkeypatch.delenv("MODEL_ALLOWED_ORIGINS", raising=False)
     path = tmp_path / "model.env"
     path.write_text(
-        'DATABASE_URL=mysql+asyncmy://test:test@localhost/test\nMODEL_ALLOWED_ORIGINS=["http://LOCALHOST:80", "http://localhost/", "http://ollama:11434"]\n'
+        'COMPONENTS_DATABASE_URL=mysql+asyncmy://u:p@db/components\nBUSINESS_DATABASE_URL=mysql+asyncmy://test:test@localhost/test\nMODEL_ALLOWED_ORIGINS=["http://LOCALHOST:80", "http://localhost/", "http://ollama:11434"]\n'
     )
     assert load_settings(env_file=path).model_allowed_origins == (
         "http://localhost/",

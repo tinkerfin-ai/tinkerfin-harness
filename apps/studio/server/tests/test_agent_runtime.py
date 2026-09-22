@@ -264,6 +264,7 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
         assert isinstance(final_message, AIMessage)
         assert final_message.content == "root"
         assert {
+            "compact_conversation",
             "web_search",
             "read_attachment",
             "deliver_file",

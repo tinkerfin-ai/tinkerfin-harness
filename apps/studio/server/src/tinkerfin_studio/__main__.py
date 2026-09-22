@@ -4,13 +4,17 @@ from argparse import ArgumentParser, BooleanOptionalAction, Namespace
 from collections.abc import Sequence
 
 import uvicorn
+from fastapi import FastAPI
 
 from tinkerfin_studio.application import create_application
 from tinkerfin_studio.config.logging import setup_console_logging
 from tinkerfin_studio.config.settings import get_settings
 from tinkerfin_studio.resources import build_lifespan
 
-app = create_application(lifespan=build_lifespan())
+
+def create_app() -> FastAPI:
+    """在服务进程中创建应用并由生命周期加载资源"""
+    return create_application(lifespan=build_lifespan())
 
 
 def parse_args(args: Sequence[str] | None = None) -> Namespace:
@@ -40,7 +44,8 @@ def main(args: Sequence[str] | None = None) -> None:
     options = parse_args(args)
     setup_console_logging(get_settings().log_level)
     uvicorn.run(
-        "tinkerfin_studio.__main__:app",
+        "tinkerfin_studio.__main__:create_app",
+        factory=True,
         host=options.host,
         port=options.port,
         reload=options.reload,

@@ -13,7 +13,7 @@ const models: AgentModelCatalogItem[] = Array.from({ length: 15 }, (_, index) =>
 async function prepare(page: Page, theme: string) {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.addInitScript(({ user, theme }) => {
-    localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
+    localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
     localStorage.setItem('tinkerfin:language', 'zh-CN')
     localStorage.setItem('tinkerfin:theme', theme)
   }, { user, theme })

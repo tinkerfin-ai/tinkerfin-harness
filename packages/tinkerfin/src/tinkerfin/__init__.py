@@ -10,6 +10,7 @@ from ._call_observation import trace_contribution as trace_contribution
 from ._lazy_run import AgUiRunStream as AgUiRunStream
 from ._lazy_run import NativeRunStream as NativeRunStream
 from ._optional_dependencies import require_agui
+from .compaction import CompactionResult as CompactionResult
 from .errors import AgUiResumeBindingError as AgUiResumeBindingError
 from .errors import RunObservationError as RunObservationError
 from .errors import TinkerFinError as TinkerFinError
@@ -91,6 +92,7 @@ __all__ = [
     "AgentRuntime",
     "AttachmentContent",
     "AttachmentSupport",
+    "CompactionResult",
     "ContextKind",
     "EventObserver",
     "NativeRunStream",

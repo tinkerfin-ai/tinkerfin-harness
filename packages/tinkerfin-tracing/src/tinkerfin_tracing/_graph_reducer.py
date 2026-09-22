@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TypeAlias, cast
 
@@ -166,7 +166,11 @@ def graph_node_mutations(
     for event in events:
         fact = event.fact
         if isinstance(fact, TurnFact):
-            source_message_id = fact.user_message_id or fact.turn_id
+            # A maintenance Turn has no user message. Its execution boundary must
+            # not create a synthetic HumanMessage in either live or rebuilt graphs.
+            source_message_id = fact.user_message_id
+            if source_message_id is None:
+                continue
             mutations.append(
                 TraceGraphNodeMutation(
                     node_id=scope_id("message", (), source_message_id),
@@ -243,25 +247,28 @@ def graph_node_mutations(
                     raise TraceStoreProtocolError(
                         "Model call context start is unavailable"
                     )
-                mutations.append(
-                    TraceGraphNodeMutation(
-                        node_id=scope_id("context", fact.graph_namespace, fact.call_id),
-                        updated_seq=event.trace_seq,
-                        kind=TraceGraphNodeKind.CONTEXT,
-                        status=TraceGraphNodeStatus.SUCCEEDED,
-                        name="Context",
-                        run_id=fact.identity.run_id,
-                        parent_subagent_id=_fact_subagent_owner(fact),
-                        graph_namespace=fact.graph_namespace,
-                        agent_name=fact.agent_name,
-                        provider=fact.provider,
-                        model=fact.model,
-                        started_at=fact.context_started_at,
-                        completed_at=fact.occurred_at,
-                        started_seq=event.trace_seq,
-                        request_seq=event.trace_seq,
+                if fact.contribution_id is None:
+                    mutations.append(
+                        TraceGraphNodeMutation(
+                            node_id=scope_id(
+                                "context", fact.graph_namespace, fact.call_id
+                            ),
+                            updated_seq=event.trace_seq,
+                            kind=TraceGraphNodeKind.CONTEXT,
+                            status=TraceGraphNodeStatus.SUCCEEDED,
+                            name="Context",
+                            run_id=fact.identity.run_id,
+                            parent_subagent_id=_fact_subagent_owner(fact),
+                            graph_namespace=fact.graph_namespace,
+                            agent_name=fact.agent_name,
+                            provider=fact.provider,
+                            model=fact.model,
+                            started_at=fact.context_started_at,
+                            completed_at=fact.occurred_at,
+                            started_seq=event.trace_seq,
+                            request_seq=event.trace_seq,
+                        )
                     )
-                )
                 mutations.append(
                     TraceGraphNodeMutation(
                         node_id=fact.call_id,
@@ -585,6 +592,7 @@ def graph_node_mutations(
                 "guardrail": TraceGraphNodeKind.GUARDRAIL,
                 "retrieval": TraceGraphNodeKind.RETRIEVAL,
                 "custom": TraceGraphNodeKind.CUSTOM,
+                "compaction": TraceGraphNodeKind.CUSTOM,
             }[fact.context_kind]
             if fact.phase == "started":
                 mutations.append(
@@ -603,7 +611,11 @@ def graph_node_mutations(
                     )
                 )
             else:
-                status = _phase_status(fact.phase)
+                status = (
+                    TraceGraphNodeStatus.RUNNING
+                    if fact.phase == "generated"
+                    else _phase_status(fact.phase)
+                )
                 mutations.append(
                     TraceGraphNodeMutation(
                         node_id=fact.contribution_id,
@@ -611,12 +623,30 @@ def graph_node_mutations(
                         run_id=fact.identity.run_id,
                         status=status,
                         completed_at=_terminal_time(status, fact.occurred_at),
-                        result_seq=event.trace_seq,
+                        result_seq=event.trace_seq
+                        if fact.phase in {"generated", "completed"}
+                        else None,
                         failure_seq=(
                             event.trace_seq
                             if fact.phase == "failed" and fact.failure_origin
                             else None
                         ),
+                    )
+                )
+            if fact.context_kind == "compaction":
+                child = mutations[-1]
+                mutations.append(
+                    replace(
+                        child,
+                        node_id=scope_id(
+                            "compaction-context",
+                            fact.graph_namespace,
+                            fact.contribution_id,
+                        ),
+                        kind=TraceGraphNodeKind.CONTEXT
+                        if fact.phase == "started"
+                        else child.kind,
+                        name="Context" if fact.phase == "started" else child.name,
                     )
                 )
             continue

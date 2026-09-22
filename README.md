@@ -37,14 +37,14 @@ Install the Python framework and the model integration you plan to use:
 pip install tinkerfin langchain-openai
 ```
 
-For Studio, use Docker and Docker Compose. The [Studio setup guide](docs/en/studio/quick_start.md)
+For Studio, use Docker Compose for dependencies and Python with uv for the local backend. The [Studio setup guide](docs/en/studio/quick_start.md)
 covers the required services and configuration.
 
 ## Quick Start
 
 ### Try Studio
 
-Start the backend with Docker Compose, then start the Web client separately. Sign in with the initial username `tinkerfin` and password `123456`, then configure your model.
+Run `./apps/studio/server/deploy/start.sh --local` to prepare dependencies and local configuration, then start the backend and Web client. Container deployment is also supported. Sign in with the initial username `tinkerfin` and password `123456`, then configure your model.
 
 [Open the Studio setup guide →](docs/en/studio/quick_start.md)
 

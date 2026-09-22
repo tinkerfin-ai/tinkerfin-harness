@@ -159,7 +159,9 @@ async def test_run_registration_persists_model_and_input(session, attachments) -
     intent = classify_intent(request)
     assert isinstance(intent, StartChatIntent)
     preparer = ConversationRunPreparer(session, user_id=1, attachments=attachments)
-    resolved = await preparer.resolve_thread(request, intent=intent)
+    resolved = await preparer.resolve_thread(
+        thread_id=request.thread_id, run_id=request.run_id, intent=intent
+    )
     prepared = prepare_run_request(
         request,
         user_id=1,
@@ -327,7 +329,9 @@ async def test_same_run_rejects_a_changed_registered_model(
     intent = classify_intent(request)
     assert isinstance(intent, StartChatIntent)
     preparer = ConversationRunPreparer(session, user_id=1, attachments=attachments)
-    resolved = await preparer.resolve_thread(request, intent=intent)
+    resolved = await preparer.resolve_thread(
+        thread_id=request.thread_id, run_id=request.run_id, intent=intent
+    )
     prepared = prepare_run_request(
         request,
         user_id=1,
@@ -1096,3 +1100,183 @@ async def test_initialization_error_is_logged_once_and_replay_does_not_log_again
         assert "model_id=model-main" in message
         assert "RuntimeError: sandbox connection unavailable" in message
         assert build_count == 1
+
+
+async def test_manual_compaction_uses_registered_run_replay_without_chat_or_title(
+    database,
+    session,
+    attachments,
+    monkeypatch,
+):
+    """真实框架压缩使用现有运行登记，重复请求只重放并保留原始消息"""
+    from deepagents.backends import StateBackend
+    from deepagents.middleware.summarization import SummarizationMiddleware
+    from langchain_core.messages import AIMessage, HumanMessage
+    from langgraph.checkpoint.memory import InMemorySaver
+    from test_agent_runtime import _ToolModel
+
+    from tinkerfin_messaging import Messaging
+    from tinkerfin_studio.conversation.request import CompactRequest
+    from tinkerfin_studio.conversation.todo_groups import TodoGroupQueryExecutor
+    from tinkerfin_tracing import Tracer
+
+    model = _ToolModel(responses=["最近回复", "保留项目目标与报告要求", "继续回复"])
+    tracer = Tracer()
+    factory = TinkerFin(checkpointer=InMemorySaver()).with_observer(tracer)
+    runtime = factory.with_namespace("ns_1").build(
+        model=model,
+        middleware=[
+            SummarizationMiddleware(
+                model,
+                backend=StateBackend(),
+                trigger=("messages", 6),
+                keep=("messages", 1),
+            )
+        ],
+    )
+    await runtime.ainvoke(
+        thread_id="compact-thread",
+        run_id="seed",
+        input={
+            "messages": [
+                HumanMessage(content="项目要求 " * 400),
+                AIMessage(content="调查结果 " * 400),
+                HumanMessage(content="整理后继续"),
+            ]
+        },
+    )
+    before = (await runtime.agui.history(tracer).get("compact-thread")).snapshot
+    repository = ConversationRepository(session)
+    thread = await repository.create_thread(
+        user_id=1, thread_id="compact-thread", title="项目", model_id="model-main"
+    )
+    thread.last_access_mode = "write_approval"
+    await repository.commit()
+    monkeypatch.setattr(
+        service_module, "build_conversation_runtime", lambda **_kwargs: runtime
+    )
+    titles = AsyncMock(spec=ConversationTitles)
+    async with Messaging() as messaging:
+        resources = cast(
+            ApplicationResources,
+            SimpleNamespace(
+                database=database,
+                attachments=attachments,
+                conversation_channel=messaging.agui_channel(name="compact"),
+                conversation_trace=_TraceCoordinator(),
+                conversation_titles=titles,
+            ),
+        )
+        service = ConversationChatService(
+            session,
+            user=UserContext(
+                user_id=1,
+                username="user",
+                display_name="用户",
+                roles=(),
+                disabled=False,
+            ),
+            resources=resources,
+        )
+        request = CompactRequest(runId="compact-run", model="model-main")
+        bodies = []
+        for _ in range(2):
+            prepared = await service.start(
+                request, thread_id="compact-thread", last_event_id="0"
+            )
+            try:
+                bodies.append(b"".join([chunk async for chunk in prepared.body]))
+            finally:
+                await prepared.body.aclose()
+        assert bodies[0] == bodies[1]
+        assert b'"type":"RUN_FINISHED"' in bodies[0]
+        assert b"TEXT_MESSAGE_" not in bodies[0]
+        assert model.i == 2
+        titles.start.assert_not_called()
+        after = (await runtime.agui.history(tracer).get("compact-thread")).snapshot
+        assert before.messages == after.messages
+        trace = await tracer.get(runtime.thread_identity("compact-thread"))
+        projector = await TodoGroupQueryExecutor().project(trace)
+        try:
+            task_trace = projector.snapshot(
+                status=trace.status, completeness=trace.completeness
+            )
+            assert task_trace.status == "ready"
+            assert not task_trace.todo_groups
+        finally:
+            projector.close()
+        registration = await repository.get_run(
+            thread_pk=thread.id, run_id="compact-run"
+        )
+        assert registration is not None
+        assert registration.input_json == {
+            "operation": "compact",
+            "threadId": "compact-thread",
+            "runId": "compact-run",
+            "model": "model-main",
+        }
+        assert registration.access_mode == "write_approval"
+        with pytest.raises(BusinessException) as caught:
+            await service.start(
+                CompactRequest(runId="compact-run", model="model-other"),
+                thread_id="compact-thread",
+                last_event_id="0",
+            )
+        assert caught.value.error_code == ConversationErrorCode.RUN_IDENTITY_CONFLICT
+
+
+@pytest.mark.parametrize("condition", ["missing", "another-user", "busy", "approval"])
+async def test_compaction_respects_conversation_ownership_and_pending_work(
+    database,
+    session,
+    attachments,
+    condition,
+):
+    """会话归属、正在执行和待审批沿用聊天的业务约束"""
+    from tinkerfin_studio.conversation.request import CompactRequest
+
+    repository = ConversationRepository(session)
+    if condition != "missing":
+        thread = await repository.create_thread(
+            user_id=2 if condition == "another-user" else 1,
+            thread_id="compact-thread",
+            title="项目",
+            model_id="model-main",
+        )
+        if condition == "busy":
+            thread.last_run_id = "busy-run"
+            thread.status = "running"
+        elif condition == "approval":
+            thread.has_pending_interrupt = True
+            thread.status = "waiting_approval"
+        await repository.commit()
+    resources = cast(
+        ApplicationResources,
+        SimpleNamespace(
+            database=database,
+            attachments=attachments,
+            conversation_trace=_TraceCoordinator(),
+        ),
+    )
+    service = ConversationChatService(
+        session,
+        user=UserContext(
+            user_id=1, username="user", display_name="用户", roles=(), disabled=False
+        ),
+        resources=resources,
+    )
+    with pytest.raises(BusinessException) as caught:
+        await service.start(
+            CompactRequest(runId="compact", model="model-main"),
+            thread_id="compact-thread",
+            last_event_id=None,
+        )
+    assert (
+        caught.value.error_code
+        == {
+            "missing": ConversationErrorCode.NOT_FOUND,
+            "another-user": ConversationErrorCode.NOT_FOUND,
+            "busy": ConversationErrorCode.RUN_CONFLICT,
+            "approval": ConversationErrorCode.PENDING_INTERRUPT,
+        }[condition]
+    )

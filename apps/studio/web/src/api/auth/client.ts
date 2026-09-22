@@ -53,9 +53,14 @@ export function bootstrapAuthSession(): Promise<BootstrapAuthResult> {
     return Promise.resolve({ status: 'unauthenticated', session: null })
   }
 
+  const requestKey = JSON.stringify([session.serverAddress, session.token])
+  const isCurrentSession = () => {
+    const current = getAuthSession()
+    return current?.serverAddress === session.serverAddress && current.token === session.token
+  }
   const requestToken = session.token
   const requestAuthorization = `${session.tokenType || 'Bearer'} ${requestToken}`
-  const inFlight = bootstrapRequests.get(requestToken)
+  const inFlight = bootstrapRequests.get(requestKey)
   if (inFlight) return inFlight
 
   const staleResult = (): BootstrapAuthResult => ({
@@ -67,7 +72,7 @@ export function bootstrapAuthSession(): Promise<BootstrapAuthResult> {
     authorization: requestAuthorization,
   })
     .then((payload) => {
-      if (getAuthSession()?.token !== requestToken) return staleResult()
+      if (!isCurrentSession()) return staleResult()
       const updated = updateAuthSession(payload, requestToken)
       if (!updated) {
         return staleResult()
@@ -78,7 +83,7 @@ export function bootstrapAuthSession(): Promise<BootstrapAuthResult> {
       }
     })
     .catch((error) => {
-      if (getAuthSession()?.token !== requestToken) return staleResult()
+      if (!isCurrentSession()) return staleResult()
       if (error instanceof AuthError) {
         return {
           status: 'unauthenticated' as const,
@@ -94,12 +99,12 @@ export function bootstrapAuthSession(): Promise<BootstrapAuthResult> {
     })
     .finally(() => {
       queueMicrotask(() => {
-        if (bootstrapRequests.get(requestToken) === request) {
-          bootstrapRequests.delete(requestToken)
+        if (bootstrapRequests.get(requestKey) === request) {
+          bootstrapRequests.delete(requestKey)
         }
       })
     })
 
-  bootstrapRequests.set(requestToken, request)
+  bootstrapRequests.set(requestKey, request)
   return request
 }

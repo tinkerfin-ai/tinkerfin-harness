@@ -61,7 +61,7 @@ export async function withViteTestServer(config, run) {
     const results = await Promise.allSettled([closeHttpServers([server]), vite?.close()])
     const errors = results.filter(result => result.status === 'rejected').map(result => result.reason)
     if (errors.length) {
-      throw new AggregateError(failure === undefined ? errors : [failure, ...errors], '测试代理清理失败')
+      throw new AggregateError(failure === undefined ? errors : [failure, ...errors], '测试前端服务清理失败')
     }
   }
 }

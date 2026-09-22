@@ -76,6 +76,15 @@ export interface ChatRequestPayload {
   resume?: ChatResumeEntry[]
 }
 
+export interface CompactRequestPayload {
+  threadId: string
+  runId: string
+  model: string
+}
+
+export type ConversationRunPayload = ChatRequestPayload | CompactRequestPayload
+export type ConversationRunMode = 'start' | 'resume' | 'compact'
+
 interface EventSourceInfoBase {
   kind: "root" | "compiled_subgraph" | "deep_agent_subagent"
   graphNamespace: string[]

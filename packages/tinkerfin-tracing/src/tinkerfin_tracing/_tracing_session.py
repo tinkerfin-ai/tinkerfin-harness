@@ -669,7 +669,7 @@ class _TracingSession:
             resume_ids = (
                 tuple(item.interrupt_id for item in source.resume) + implicit_resume_ids
             )
-            if source.input_kind in {"ordinary", "branch"}:
+            if source.input_kind in {"ordinary", "branch", "compaction"}:
                 facts.append(
                     make_fact(
                         TurnFact,
@@ -702,7 +702,7 @@ class _TracingSession:
                             component_name="run_input",
                             divisor=2,
                         )
-                        if source.input_kind in {"ordinary", "branch"}
+                        if source.input_kind in {"ordinary", "branch", "compaction"}
                         else self._capture(
                             public_input
                             if source.input_kind == "continuation"
@@ -841,6 +841,15 @@ class _TracingSession:
                     ),
                     phase=observation.phase,
                     call_id=call_id,
+                    contribution_id=(
+                        None
+                        if observation.contribution_id is None
+                        else _scope_id(
+                            "context",
+                            observation.graph_namespace,
+                            observation.contribution_id,
+                        )
+                    ),
                     parent_call_id=(
                         None
                         if observation.parent_call_id is None
@@ -1042,6 +1051,12 @@ class _TracingSession:
                         observation.contribution_id,
                     ),
                     parent_call_id=parent_call_id,
+                    parent_tool_call_id=observation.parent_tool_call_id,
+                    compaction_origin=observation.compaction_origin,
+                    model_call_ids=tuple(
+                        _scope_id("model-call", observation.graph_namespace, call_id)
+                        for call_id in observation.model_call_ids
+                    ),
                     context_kind=observation.context_kind,
                     name=observation.name,
                     input=(

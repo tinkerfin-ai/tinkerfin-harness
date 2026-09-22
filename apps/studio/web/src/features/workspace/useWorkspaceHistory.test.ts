@@ -1,12 +1,13 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, cleanup, renderHook } from '@testing-library/react'
 import { useLayoutEffect, useRef } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConversationHistoryDetail } from '../../api/conversation/history'
 import { upsertConversation } from '../../lib/workspace'
 import { emptyTraceGraph } from '../../test/traceFixtures'
 import type { Conversation } from '../../types'
 import { restoreConversationFromTrace } from '../conversation/trace/runtime'
+import { useChainTrace } from '../conversation/chainTrace/useChainTrace'
 import { useWorkspaceState } from './useWorkspaceState'
 import {
   historyItemFromDetail,
@@ -18,6 +19,14 @@ const historyMocks = vi.hoisted(() => ({
   detail: vi.fn(),
   groupConfig: vi.fn(),
   list: vi.fn(),
+  graph: vi.fn(),
+  followGraph: vi.fn(),
+}))
+
+vi.mock(import('../../api/conversation/traceGraph'), async (importOriginal) => ({
+  ...await importOriginal(),
+  queryTraceGraph: historyMocks.graph,
+  followTraceGraph: historyMocks.followGraph,
 }))
 
 vi.mock(import('../../api/conversation/history'), async (importOriginal) => ({
@@ -105,12 +114,23 @@ function deferred<T>() {
   return { promise, reject, resolve }
 }
 
+function queueHistoryResponse() {
+  const requested = deferred<AbortSignal>()
+  const response = deferred<ConversationHistoryDetail>()
+  historyMocks.detail.mockImplementationOnce((_threadId: string, { signal }: { signal: AbortSignal }) => {
+    requested.resolve(signal)
+    return response.promise
+  })
+  return { requested, response }
+}
+
 function useHarness(
   initial: ConversationHistoryDetail,
   options: {
     initiallyHydrated?: boolean
     onToast?: (kind: 'error', message: string) => void
     prepareTaskTraceOwner?: (threadId: string) => Promise<void>
+    traceActive?: boolean
   } = {},
 ) {
   const followDetachedConversation = useRef(vi.fn()).current
@@ -130,9 +150,20 @@ function useHarness(
     retainConversationDetails,
     defaultModelId: 'main',
     modelCatalogStatus: 'loading',
+    refreshOnActivation: options.traceActive,
     followDetachedConversation,
     prepareTaskTraceOwner: options.prepareTaskTraceOwner ?? defaultPrepareTaskTraceOwner,
     onToast: options.onToast ?? vi.fn(),
+  })
+  const selected = workspace.conversations.find((item) => item.threadId === workspace.currentThreadId)
+  const graph = useChainTrace({
+    threadId: workspace.currentThreadId,
+    active: options.traceActive ?? false,
+    live: selected?.runStatus === 'streaming' || selected?.runStatus === 'detached',
+    observedAt: selected?.trace?.observedAt,
+    waitingForHistory: history.isActivationRefreshing,
+    filter: {},
+    limit: 1000,
   })
   const advanceTrace = (next: ConversationHistoryDetail) => {
     setWorkspace((state) => upsertConversation(
@@ -188,6 +219,7 @@ function useHarness(
     advanceDelivery,
     advanceTrace,
     history,
+    graph,
     followDetachedConversation,
     startOwnedRun,
     switchThread,
@@ -232,8 +264,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
     })
     const inconsistent = structuredClone(initial)
     inconsistent.messages[0]!.content = '相同观测中的另一份正文'
-    const response = deferred<ConversationHistoryDetail>()
-    historyMocks.detail.mockReturnValue(response.promise)
+    const { response, requested } = queueHistoryResponse()
     const onToast = vi.fn()
     const { result } = renderHook(() => useHarness(initial, { onToast }))
     let loading: Promise<void | boolean> = Promise.resolve()
@@ -246,7 +277,8 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
         loading = result.current.history.loadOlderTrace(THREAD_ID)
       }
     })
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     await act(async () => {
       response.resolve(inconsistent)
       const loaded = await loading
@@ -262,13 +294,13 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
   })
 
   it('重新激活的历史详情不能覆盖等待期间新启动的本地 Run', async () => {
-    const response = deferred<ConversationHistoryDetail>()
-    historyMocks.detail.mockReturnValue(response.promise)
+    const { response, requested } = queueHistoryResponse()
     const initial = detail({ status: { execution: 'succeeded', headRunId: RUN_ID } })
     const { result } = renderHook(() => useHarness(initial))
     let refreshing: Promise<void> = Promise.resolve()
     act(() => { refreshing = result.current.history.hydrateConversation(THREAD_ID, { refresh: true }) })
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     act(() => result.current.startOwnedRun())
     await act(async () => {
       response.resolve(detail({ observedAt: '2026-09-05T00:00:02.000000Z' }))
@@ -283,24 +315,26 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
     expect(historyMocks.detail).toHaveBeenCalledOnce()
   })
 
-  it('刷新合并并发触发，取消旧请求后允许重新激活且忽略迟到详情', async () => {
+  it('刷新共享完成信号，切换会话后取消旧请求且忽略迟到详情', async () => {
     const response = deferred<ConversationHistoryDetail>()
-    historyMocks.detail.mockReturnValueOnce(response.promise)
+    const requested = deferred<AbortSignal>()
+    historyMocks.detail.mockImplementationOnce((_threadId: string, { signal }: { signal: AbortSignal }) => {
+      requested.resolve(signal)
+      return response.promise
+    })
     const initial = detail({ status: { execution: 'succeeded', headRunId: RUN_ID } })
     const { result } = renderHook(() => useHarness(initial))
-    const controller = new AbortController()
     let refreshing: Promise<void> = Promise.resolve()
-    act(() => {
-      refreshing = result.current.history.hydrateConversation(THREAD_ID, {
-        refresh: true, signal: controller.signal,
-      })
+    let requestSignal!: AbortSignal
+    await act(async () => {
+      refreshing = result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+      requestSignal = await requested.promise
     })
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
-    await act(() => result.current.history.hydrateConversation(THREAD_ID, { refresh: true }))
+    expect(result.current.history.hydrateConversation(THREAD_ID, { refresh: true })).toBe(refreshing)
     expect(historyMocks.detail).toHaveBeenCalledOnce()
-    const requestSignal = historyMocks.detail.mock.calls[0]![1].signal as AbortSignal
-    act(() => controller.abort())
+    act(() => result.current.switchThread('another-thread'))
     expect(requestSignal.aborted).toBe(true)
+    act(() => result.current.switchThread(THREAD_ID))
     historyMocks.detail.mockResolvedValueOnce(detail({
       asOfSeq: 6, observedAt: '2026-09-05T00:00:03.000000Z',
       status: { execution: 'succeeded', headRunId: RUN_ID },
@@ -330,18 +364,18 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
   })
 
   it('重新激活时重验同一运行中的 Run，并重新连接已结束的会话观察', async () => {
-    const response = deferred<ConversationHistoryDetail>()
-    historyMocks.detail.mockReturnValueOnce(response.promise)
+    const { response, requested } = queueHistoryResponse()
     const { result } = renderHook(() => useHarness(detail()))
-    await waitFor(() => expect(result.current.followDetachedConversation).toHaveBeenCalledOnce())
+    expect(result.current.followDetachedConversation).toHaveBeenCalledOnce()
     let refreshing: Promise<void> = Promise.resolve()
     act(() => { refreshing = result.current.history.hydrateConversation(THREAD_ID, { refresh: true }) })
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     await act(async () => {
       response.resolve(detail({ observedAt: '2026-09-05T00:00:01.000000Z' }))
       await refreshing
     })
-    await waitFor(() => expect(result.current.followDetachedConversation).toHaveBeenCalledTimes(2))
+    expect(result.current.followDetachedConversation).toHaveBeenCalledTimes(2)
   })
 
   it('同一持久化前缀的刷新保留已展开历史，Run 前进后使用新的权威窗口', async () => {
@@ -386,8 +420,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
   })
 
   it('discards an old fixed-as-of page after follow advances the Trace', async () => {
-    const response = deferred<ConversationHistoryDetail>()
-    historyMocks.detail.mockReturnValue(response.promise)
+    const { response, requested } = queueHistoryResponse()
     const initial = detail()
     const newer = detail({
       asOfSeq: 6,
@@ -405,11 +438,10 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
     act(() => {
       loading = result.current.history.loadOlderTrace(THREAD_ID)
     })
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     act(() => result.current.advanceTrace(newer))
-    await waitFor(() => {
-      expect(result.current.workspace.conversations[0]?.trace?.asOfSeq).toBe(6)
-    })
+    expect(result.current.workspace.conversations[0]?.trace?.asOfSeq).toBe(6)
 
     let loaded = true
     await act(async () => {
@@ -425,8 +457,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
   })
 
   it('adds fixed-prefix history without reverting a same-sequence ownership update', async () => {
-    const response = deferred<ConversationHistoryDetail>()
-    historyMocks.detail.mockReturnValue(response.promise)
+    const { response, requested } = queueHistoryResponse()
     const initial = detail()
     const newer = detail({
       observedAt: '2026-09-05T00:00:00.000001Z',
@@ -440,7 +471,8 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
     const { result } = renderHook(() => useHarness(initial))
     let loading: Promise<boolean> = Promise.resolve(false)
     act(() => { loading = result.current.history.loadOlderTrace(THREAD_ID) })
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     act(() => result.current.advanceTrace(newer))
     let loaded = false
     await act(async () => {
@@ -457,8 +489,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
   })
 
   it('discards an old page after an owned run starts before Trace advances', async () => {
-    const response = deferred<ConversationHistoryDetail>()
-    historyMocks.detail.mockReturnValue(response.promise)
+    const { response, requested } = queueHistoryResponse()
     const initial = detail()
     const olderPage = detail({
       historyCursor: 'cursor-2',
@@ -470,11 +501,10 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
     act(() => {
       loading = result.current.history.loadOlderTrace(THREAD_ID)
     })
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     act(() => result.current.startOwnedRun())
-    await waitFor(() => {
-      expect(result.current.workspace.conversations[0]?.runStatus).toBe('streaming')
-    })
+    expect(result.current.workspace.conversations[0]?.runStatus).toBe('streaming')
 
     let loaded = true
     await act(async () => {
@@ -491,10 +521,12 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
   })
 
   it('forwards caller cancellation to an older Trace page request', async () => {
+    const requested = deferred<void>()
     historyMocks.detail.mockImplementation((
       _threadId: string,
       options: { signal?: AbortSignal },
     ) => new Promise<ConversationHistoryDetail>((_resolve, reject) => {
+      requested.resolve()
       options.signal?.addEventListener(
         'abort',
         () => reject(new DOMException('aborted', 'AbortError')),
@@ -510,7 +542,8 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
         signal: controller.signal,
       })
     })
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     const requestSignal = historyMocks.detail.mock.calls[0]?.[1]?.signal as
       | AbortSignal
       | undefined
@@ -523,7 +556,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
   })
 
   it('reloads an unavailable task trace once when the user explicitly retries', async () => {
-    const response = deferred<ConversationHistoryDetail>()
+    const { response, requested } = queueHistoryResponse()
     const initial = detail({
       taskTrace: {
         status: 'unavailable',
@@ -535,7 +568,6 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
       asOfSeq: 6,
       taskTrace: { status: 'ready', todoGroups: [] },
     })
-    historyMocks.detail.mockReturnValue(response.promise)
     const prepareTaskTraceOwner = vi.fn(async () => undefined)
     const { result } = renderHook(() => useHarness(initial, { prepareTaskTraceOwner }))
 
@@ -545,7 +577,8 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
       result.current.history.retryTaskTrace(THREAD_ID)
     })
 
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     expect(prepareTaskTraceOwner).toHaveBeenCalledOnce()
     expect(prepareTaskTraceOwner).toHaveBeenCalledWith(THREAD_ID)
     expect(historyMocks.detail).toHaveBeenCalledWith(THREAD_ID, expect.objectContaining({
@@ -555,33 +588,34 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
     expect(result.current.workspace.conversations[0]?.taskTrace.phase).toBe('loading')
 
     await act(async () => response.resolve(refreshed))
-    await waitFor(() => {
-      expect(result.current.workspace.conversations[0]?.taskTrace).toEqual({
-        phase: 'ready',
-        snapshot: { status: 'ready', todoGroups: [] },
-      })
+    expect(result.current.workspace.conversations[0]?.taskTrace).toEqual({
+      phase: 'ready',
+      snapshot: { status: 'ready', todoGroups: [] },
     })
   })
 
   it('keeps conversation hydration recoverable and emits one toast', async () => {
     const onToast = vi.fn()
     const prepareTaskTraceOwner = vi.fn(async () => undefined)
-    historyMocks.detail.mockRejectedValue(new Error('会话恢复失败'))
+    const { response, requested } = queueHistoryResponse()
     const { result } = renderHook(() => useHarness(detail(), {
       initiallyHydrated: false,
       onToast,
       prepareTaskTraceOwner,
     }))
 
-    await waitFor(() => expect(result.current.history.hydrationState).toEqual({
+    await act(async () => { await requested.promise })
+    const loading = result.current.history.hydrateConversation(THREAD_ID)
+    await act(async () => { response.reject(new Error('会话恢复失败')); await loading })
+    expect(result.current.history.hydrationState).toEqual({
       threadId: THREAD_ID,
       status: 'failed',
-    }))
+    })
     expect(onToast).toHaveBeenCalledExactlyOnceWith('error', '会话加载失败，请重试')
   })
 
   it('does not let a retry response replace an owned run started after the request', async () => {
-    const response = deferred<ConversationHistoryDetail>()
+    const { response, requested } = queueHistoryResponse()
     const initial = detail({
       taskTrace: {
         status: 'unavailable',
@@ -589,16 +623,14 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
         errorCode: 'trace_incomplete',
       },
     })
-    historyMocks.detail.mockReturnValue(response.promise)
     const { result } = renderHook(() => useHarness(initial))
     const ownedTaskTrace = readyTaskTrace('owned-new')
 
     act(() => result.current.history.retryTaskTrace(THREAD_ID))
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     act(() => result.current.startOwnedRun(ownedTaskTrace))
-    await waitFor(() => {
-      expect(result.current.workspace.conversations[0]?.activeRunId).toBe('run-owned-new')
-    })
+    expect(result.current.workspace.conversations[0]?.activeRunId).toBe('run-owned-new')
 
     await act(async () => response.resolve(detail({
       status: { execution: 'succeeded', headRunId: RUN_ID },
@@ -616,7 +648,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
   })
 
   it('does not let a retry response roll back a newer followed Trace', async () => {
-    const response = deferred<ConversationHistoryDetail>()
+    const { response, requested } = queueHistoryResponse()
     const initial = detail({
       taskTrace: {
         status: 'unavailable',
@@ -631,15 +663,13 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
       status: { execution: 'succeeded', headRunId: RUN_ID },
       taskTrace: followedTaskTrace.snapshot,
     })
-    historyMocks.detail.mockReturnValue(response.promise)
     const { result } = renderHook(() => useHarness(initial))
 
     act(() => result.current.history.retryTaskTrace(THREAD_ID))
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     act(() => result.current.advanceTrace(newer))
-    await waitFor(() => {
-      expect(result.current.workspace.conversations[0]?.trace?.asOfSeq).toBe(6)
-    })
+    expect(result.current.workspace.conversations[0]?.trace?.asOfSeq).toBe(6)
 
     await act(async () => response.resolve(detail({
       taskTrace: { status: 'ready', todoGroups: [] },
@@ -652,7 +682,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
   })
 
   it('does not let a retry response overwrite a newer delivery in the same Run', async () => {
-    const response = deferred<ConversationHistoryDetail>()
+    const { response, requested } = queueHistoryResponse()
     const initial = detail({
       taskTrace: {
         status: 'unavailable',
@@ -660,16 +690,14 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
         errorCode: 'trace_incomplete',
       },
     })
-    historyMocks.detail.mockReturnValue(response.promise)
     const { result } = renderHook(() => useHarness(initial))
     const deliveredTaskTrace = readyTaskTrace('delivered-newer')
 
     act(() => result.current.history.retryTaskTrace(THREAD_ID))
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     act(() => result.current.advanceDelivery(deliveredTaskTrace))
-    await waitFor(() => {
-      expect(result.current.workspace.conversations[0]?.lastSeq).toBe(1)
-    })
+    expect(result.current.workspace.conversations[0]?.lastSeq).toBe(1)
 
     await act(async () => response.resolve(detail({
       taskTrace: { status: 'ready', todoGroups: [] },
@@ -685,7 +713,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
   })
 
   it('does not report a stale retry failure after an owned run is queued', async () => {
-    const response = deferred<ConversationHistoryDetail>()
+    const { response, requested } = queueHistoryResponse()
     const initial = detail({
       taskTrace: {
         status: 'unavailable',
@@ -694,28 +722,25 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
       },
     })
     const onToast = vi.fn()
-    historyMocks.detail.mockReturnValue(response.promise)
     const { result } = renderHook(() => useHarness(initial, { onToast }))
     const ownedTaskTrace = readyTaskTrace('owned-after-failure')
 
     act(() => result.current.history.retryTaskTrace(THREAD_ID))
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     await act(async () => {
       result.current.startOwnedRun(ownedTaskTrace)
       response.reject(new Error('旧请求失败'))
-      await Promise.resolve()
     })
 
-    await waitFor(() => {
-      expect(result.current.workspace.conversations[0]?.activeRunId).toBe('run-owned-new')
-    })
+    expect(result.current.workspace.conversations[0]?.activeRunId).toBe('run-owned-new')
     expect(result.current.workspace.conversations[0]?.taskTrace).toEqual(ownedTaskTrace)
     expect(result.current.history.taskTraceLoadFailed).toBe(false)
     expect(onToast).not.toHaveBeenCalled()
   })
 
   it('keeps a current retry failure recoverable without a duplicate toast', async () => {
-    const response = deferred<ConversationHistoryDetail>()
+    const { response, requested } = queueHistoryResponse()
     const initial = detail({
       taskTrace: {
         status: 'unavailable',
@@ -724,20 +749,20 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
       },
     })
     const onToast = vi.fn()
-    historyMocks.detail.mockReturnValue(response.promise)
     const { result } = renderHook(() => useHarness(initial, { onToast }))
 
     act(() => result.current.history.retryTaskTrace(THREAD_ID))
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     await act(async () => response.reject(new Error('当前请求失败')))
 
-    await waitFor(() => expect(result.current.history.taskTraceLoadFailed).toBe(true))
+    expect(result.current.history.taskTraceLoadFailed).toBe(true)
     expect(result.current.workspace.conversations[0]?.taskTrace.phase).toBe('unloaded')
     expect(onToast).toHaveBeenCalledExactlyOnceWith('error', '任务轨迹不可用')
   })
 
   it('does not apply a retry response after a same-batch thread switch', async () => {
-    const response = deferred<ConversationHistoryDetail>()
+    const { response, requested } = queueHistoryResponse()
     const initial = detail({
       taskTrace: {
         status: 'unavailable',
@@ -745,17 +770,16 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
         errorCode: 'trace_incomplete',
       },
     })
-    historyMocks.detail.mockReturnValue(response.promise)
     const { result } = renderHook(() => useHarness(initial))
 
     act(() => result.current.history.retryTaskTrace(THREAD_ID))
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     await act(async () => {
       result.current.switchThread('thread-other')
       response.resolve(detail({
         taskTrace: { status: 'ready', todoGroups: [] },
       }))
-      await Promise.resolve()
     })
 
     expect(result.current.workspace.currentThreadId).toBe('thread-other')
@@ -763,7 +787,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
   })
 
   it('does not apply or retain a retry failure after a same-batch thread switch', async () => {
-    const response = deferred<ConversationHistoryDetail>()
+    const { response, requested } = queueHistoryResponse()
     const initial = detail({
       taskTrace: {
         status: 'unavailable',
@@ -772,15 +796,14 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
       },
     })
     const onToast = vi.fn()
-    historyMocks.detail.mockReturnValue(response.promise)
     const { result } = renderHook(() => useHarness(initial, { onToast }))
 
     act(() => result.current.history.retryTaskTrace(THREAD_ID))
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledOnce())
+    await act(async () => { await requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
     await act(async () => {
       result.current.switchThread('thread-other')
       response.reject(new Error('切换后的旧失败'))
-      await Promise.resolve()
     })
 
     expect(result.current.workspace.currentThreadId).toBe('thread-other')
@@ -819,7 +842,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
         signal: firstController.signal,
       })
     })
-    await waitFor(() => expect(historyMocks.detail).toHaveBeenCalledTimes(1))
+    expect(historyMocks.detail).toHaveBeenCalledTimes(1)
     firstController.abort()
     act(() => {
       second = result.current.history.loadOlderTrace(THREAD_ID, {
@@ -941,5 +964,233 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
 
     expect(item.hasPendingInterrupt).toBe(true)
     expect(item.pendingInteractionKind).toBe('tool_approval')
+  })
+})
+
+describe('所选会话与链路共享激活刷新', () => {
+  const initial = detail({ status: { execution: 'succeeded', headRunId: RUN_ID } })
+  const page = { ...emptyTraceGraph(initial.asOfSeq), nextCursor: null }
+  const observed = (second: number): ConversationHistoryDetail => ({
+    ...initial,
+    observedAt: `2026-09-05T00:00:0${second}.000000Z`,
+  })
+
+  beforeEach(() => {
+    vi.resetAllMocks()
+    historyMocks.list.mockResolvedValue({ items: [], nextCursor: null })
+    historyMocks.groupConfig.mockResolvedValue({ dayRanges: [] })
+    historyMocks.graph.mockResolvedValue(page)
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('首次进入等待新的历史观测，再只读取一次链路快照', async () => {
+    const request = queueHistoryResponse()
+    const hook = renderHook(() => useHarness(initial, { traceActive: true }), { reactStrictMode: true })
+    await act(async () => { await request.requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
+    expect(historyMocks.graph).not.toHaveBeenCalled()
+    expect(hook.result.current.graph.state.phase).toBe('loading')
+    const completion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+    await act(async () => { request.response.resolve(observed(1)); await completion })
+    expect(hook.result.current.workspace.conversations[0]?.trace?.observedAt).toBe(observed(1).observedAt)
+    expect(hook.result.current.history.isActivationRefreshing).toBe(false)
+    expect(hook.result.current.graph.state).toEqual({ phase: 'ready', page })
+    expect(historyMocks.graph).toHaveBeenCalledOnce()
+  })
+
+  it('切回对话保留未完成的共享刷新，再进入链路仍等待同一请求', async () => {
+    const request = queueHistoryResponse()
+    const hook = renderHook(({ traceActive }) => useHarness(initial, { traceActive }), {
+      initialProps: { traceActive: true },
+    })
+    let signal!: AbortSignal
+    await act(async () => { signal = await request.requested.promise })
+    hook.rerender({ traceActive: false })
+    expect(signal.aborted).toBe(false)
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
+    hook.rerender({ traceActive: true })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
+    expect(historyMocks.graph).not.toHaveBeenCalled()
+    const completion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+    await act(async () => { request.response.resolve(observed(1)); await completion })
+    expect(historyMocks.graph).toHaveBeenCalledOnce()
+    expect(signal.aborted).toBe(false)
+    hook.rerender({ traceActive: false })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
+  })
+
+  it('刷新在对话页完成时仍应用历史，后续进入链路重新重验', async () => {
+    const request = queueHistoryResponse()
+    const hook = renderHook(({ traceActive }) => useHarness(initial, { traceActive }), {
+      initialProps: { traceActive: true },
+    })
+    await act(async () => { await request.requested.promise })
+    const completion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+    hook.rerender({ traceActive: false })
+    await act(async () => { request.response.resolve(observed(1)); await completion })
+    expect(hook.result.current.workspace.conversations[0]?.trace?.observedAt).toBe(observed(1).observedAt)
+    expect(historyMocks.graph).not.toHaveBeenCalled()
+    const next = queueHistoryResponse()
+    hook.rerender({ traceActive: true })
+    await act(async () => { await next.requested.promise })
+    expect(historyMocks.graph).not.toHaveBeenCalled()
+    const nextCompletion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+    await act(async () => { next.response.resolve(observed(2)); await nextCompletion })
+    expect(historyMocks.detail).toHaveBeenCalledTimes(2)
+    expect(historyMocks.graph).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { leaveTrace: true, failed: false },
+    { leaveTrace: false, failed: false },
+    { leaveTrace: false, failed: true },
+  ])('恢复焦点后重验在途读取，离开链路=$leaveTrace、旧读取失败=$failed', async ({ leaveTrace, failed }) => {
+    const old = queueHistoryResponse()
+    const next = queueHistoryResponse()
+    const hook = renderHook(({ traceActive }) => useHarness(initial, { traceActive }), {
+      initialProps: { traceActive: true },
+    })
+    let signal!: AbortSignal
+    await act(async () => { signal = await old.requested.promise })
+    act(() => { window.dispatchEvent(new Event('blur')) })
+    act(() => { window.dispatchEvent(new Event('focus')) })
+    const completion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+    if (leaveTrace) hook.rerender({ traceActive: false })
+    await act(async () => {
+      if (failed) old.response.reject(new Error('失焦前的读取失败'))
+      else old.response.resolve(observed(1))
+      await next.requested.promise
+    })
+    expect(signal.aborted).toBe(false)
+    expect(hook.result.current.workspace.conversations[0]?.trace?.observedAt).toBe(initial.observedAt)
+    expect(historyMocks.detail).toHaveBeenCalledTimes(2)
+    expect(historyMocks.graph).not.toHaveBeenCalled()
+    await act(async () => { next.response.resolve(observed(2)); await completion })
+    expect(hook.result.current.workspace.conversations[0]?.trace?.observedAt).toBe(observed(2).observedAt)
+    expect(historyMocks.graph).toHaveBeenCalledTimes(leaveTrace ? 0 : 1)
+  })
+
+  it('焦点与可见性同时恢复只重验一次，同序号状态变化仍刷新图且等待期间保留结果', async () => {
+    const first = queueHistoryResponse()
+    const hook = renderHook(() => useHarness(initial, { traceActive: true }))
+    await act(async () => { await first.requested.promise })
+    const firstCompletion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+    await act(async () => { first.response.resolve(observed(1)); await firstCompletion })
+    expect(hook.result.current.graph.state).toEqual({ phase: 'ready', page })
+    const next = queueHistoryResponse()
+    act(() => { window.dispatchEvent(new Event('blur')) })
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await act(async () => { await next.requested.promise })
+    expect(historyMocks.detail).toHaveBeenCalledTimes(2)
+    expect(historyMocks.graph).toHaveBeenCalledOnce()
+    expect(hook.result.current.graph.state).toEqual({ phase: 'ready', page })
+    const completion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+    const changed = { ...observed(2), status: { execution: 'abandoned' as const, headRunId: RUN_ID },
+      completeness: { missingPrefix: false, missingTail: true, payloadOmitted: false } }
+    await act(async () => { next.response.resolve(changed); await completion })
+    expect(hook.result.current.workspace.conversations[0]?.trace).toMatchObject({
+      asOfSeq: initial.asOfSeq, status: changed.status, completeness: changed.completeness,
+    })
+    expect(historyMocks.graph).toHaveBeenCalledTimes(2)
+  })
+
+  it('隐藏页面首次进入不读取，显示后按新观测加载一次', async () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    const request = queueHistoryResponse()
+    const hook = renderHook(() => useHarness(initial, { traceActive: true }))
+    expect(historyMocks.detail).not.toHaveBeenCalled()
+    expect(historyMocks.graph).not.toHaveBeenCalled()
+    visibility.mockReturnValue('visible')
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    await act(async () => { await request.requested.promise })
+    const completion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+    await act(async () => { request.response.resolve(observed(1)); await completion })
+    expect(historyMocks.detail).toHaveBeenCalledOnce()
+    expect(historyMocks.graph).toHaveBeenCalledOnce()
+  })
+
+  it('历史刷新失败保留会话并提示，链路不会永久等待且下次激活可恢复', async () => {
+    const request = queueHistoryResponse()
+    const onToast = vi.fn()
+    const hook = renderHook(({ traceActive }) => useHarness(initial, { traceActive, onToast }), {
+      initialProps: { traceActive: true },
+    })
+    await act(async () => { await request.requested.promise })
+    const completion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+    await act(async () => { request.response.reject(new Error('offline')); await completion })
+    expect(onToast).toHaveBeenCalledWith('error', '会话加载失败，请重试')
+    expect(hook.result.current.workspace.conversations[0]?.trace?.observedAt).toBe(initial.observedAt)
+    expect(hook.result.current.history.isActivationRefreshing).toBe(false)
+    expect(hook.result.current.graph.state).toEqual({ phase: 'ready', page })
+    hook.rerender({ traceActive: false })
+    const next = queueHistoryResponse()
+    hook.rerender({ traceActive: true })
+    await act(async () => { await next.requested.promise })
+    const nextCompletion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+    await act(async () => { next.response.resolve(observed(1)); await nextCompletion })
+    expect(hook.result.current.history.hydrationState).toBeNull()
+    expect(historyMocks.graph).toHaveBeenCalledTimes(2)
+    expect(onToast).toHaveBeenCalledOnce()
+  })
+
+  it.each(['delete', 'switch', 'unmount'] as const)('%s 释放会话所有权并拒绝迟到结果', async (operation) => {
+    const request = queueHistoryResponse()
+    const hook = renderHook(() => useHarness(initial, { traceActive: true }))
+    let signal!: AbortSignal
+    await act(async () => { signal = await request.requested.promise })
+    const completion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+    if (operation === 'unmount') hook.unmount()
+    else if (operation === 'delete') act(() => hook.result.current.setWorkspace({ conversations: [], currentThreadId: '' }))
+    else act(() => hook.result.current.switchThread('another-thread'))
+    expect(signal.aborted).toBe(true)
+    await act(async () => { request.response.resolve(observed(1)); await completion })
+    expect(hook.result.current.workspace.conversations.find(item => item.threadId === THREAD_ID)?.trace?.observedAt)
+      .not.toBe(observed(1).observedAt)
+    expect(historyMocks.graph.mock.calls.some(([threadId]) => threadId === THREAD_ID)).toBe(false)
+  })
+
+  it.each(['local', 'remote'] as const)('%s 新运行进入实时跟随，不等待旧历史且不先查询非实时图', async (source) => {
+    const request = queueHistoryResponse()
+    const followed = deferred<AbortSignal>()
+    const closed = deferred<void>()
+    historyMocks.followGraph.mockImplementation(async function* (
+      _threadId: string, _filter: unknown, { signal }: { signal: AbortSignal },
+    ) {
+      const aborted = deferred<void>()
+      signal.addEventListener('abort', () => aborted.resolve(), { once: true })
+      followed.resolve(signal)
+      try {
+        yield { type: 'snapshot', snapshot: page }
+        await aborted.promise
+      } finally { closed.resolve() }
+    })
+    const hook = renderHook(() => useHarness(initial, { traceActive: true }))
+    await act(async () => { await request.requested.promise })
+    const completion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+    if (source === 'local') {
+      act(() => hook.result.current.startOwnedRun())
+      await act(async () => { await followed.promise })
+      await act(async () => { request.response.resolve(observed(1)); await completion })
+      expect(hook.result.current.workspace.conversations[0]?.activeRunId).toBe('run-owned-new')
+    } else {
+      await act(async () => {
+        request.response.resolve({ ...observed(1), status: { execution: 'running', headRunId: RUN_ID } })
+        await completion
+      })
+      await act(async () => { await followed.promise })
+      expect(hook.result.current.workspace.conversations[0]?.runStatus).toBe('detached')
+    }
+    expect(historyMocks.graph).not.toHaveBeenCalled()
+    expect(historyMocks.followGraph).toHaveBeenCalledOnce()
+    hook.unmount()
+    await act(async () => { await closed.promise })
   })
 })

@@ -9,6 +9,7 @@ import {
 
 import {
   cancelConversationRun,
+  compactConversationContext,
   resumeConversationRun,
   startConversationRun,
 } from '../../../api/conversation/client'
@@ -23,7 +24,7 @@ import {
   followConversationRun,
 } from '../../../api/conversation/history'
 import type { RetainConversationDetails, AcknowledgeComposerPreferences } from '../../workspace/useWorkspaceState'
-import type { ChatRequestPayload } from '../../../api/conversation/types'
+import type { ConversationRunPayload, ConversationRunMode } from '../../../api/conversation/types'
 import type { TaskTraceSnapshot } from '../../../api/conversation/taskTrace'
 import { translateCurrent } from '../../../i18n'
 import type {
@@ -164,8 +165,8 @@ interface ConversationStreamControllerOptions {
 export interface ConversationStreamController {
   streamRun: (
     threadId: string,
-    payload: ChatRequestPayload,
-    mode: 'start' | 'resume',
+    payload: ConversationRunPayload,
+    mode: ConversationRunMode,
     options?: StreamRunOptions,
   ) => Promise<void>
   followDetachedConversation: (threadId: string) => Promise<void>
@@ -210,8 +211,8 @@ export function useConversationStreamController({
   const recoveryPending = useRef(new Set<string>())
   const recoveryRequests = useRef(new Map<string, {
     threadId: string
-    payload: ChatRequestPayload
-    mode: 'start' | 'resume'
+    payload: ConversationRunPayload
+    mode: ConversationRunMode
     options: StreamRunOptions
     receivedEvent: boolean
   }>())
@@ -360,10 +361,32 @@ export function useConversationStreamController({
       let lastSeq: number | undefined
       let completed = false
       let projector: LiveTodoTraceProjector | null = null
-      const publish = () => setWorkspace((state) => updateConversation(state, threadId, (item) => (
-        signal.aborted || !isMounted.current || isActiveThread(threadId)
-          ? item : { ...projected, ...mergeConversationTitle(item, projected) }
-      )))
+      let publishTimer: number | undefined
+      let pendingProjection: Conversation | undefined
+      const discardPending = () => {
+        window.clearTimeout(publishTimer)
+        publishTimer = undefined
+        pendingProjection = undefined
+      }
+      const flushPublish = () => {
+        const value = pendingProjection
+        discardPending()
+        if (!value || signal.aborted || !isMounted.current || isActiveThread(threadId)) return
+        setWorkspace((state) => updateConversation(state, threadId, (item) => (
+          signal.aborted || !isMounted.current || isActiveThread(threadId)
+            ? item : { ...value, pinned: item.pinned, ...mergeConversationTitle(item, value) }
+        )))
+      }
+      const publish = (deferTextRender = false) => {
+        pendingProjection = projected
+        if (!deferTextRender) {
+          flushPublish()
+        } else if (publishTimer === undefined) {
+          // 只保留已按序应用的最新正文，恢复读取不等待页面展示
+          publishTimer = window.setTimeout(flushPublish, TEXT_RENDER_INTERVAL_MS)
+        }
+      }
+      signal.addEventListener('abort', discardPending, { once: true })
       try {
         let attempts = 0
         while (!signal.aborted) {
@@ -405,12 +428,13 @@ export function useConversationStreamController({
               projected = { ...projected, lastSeq }
               completed = (item.event.type === 'RUN_FINISHED' && item.event.runId === runId)
                 || (item.event.type === 'RUN_ERROR' && item.event.rawEvent?.source?.agentType !== 'subagent')
-              publish()
+              publish(item.event.type === 'TEXT_MESSAGE_CONTENT')
             }
             if (completed) break
             throw new ConversationError('stream_disconnected')
           } catch (error) {
             if (signal.aborted) return
+            flushPublish()
             if (!(isTransportFailure(error) || hasConversationErrorCode(error, 'stream_disconnected') || hasConversationErrorCode(error, 'stream_sequence_invalid'))
               || attempts >= DETACHED_TRACE_RECONNECT_LIMIT) throw error
             attempts += 1
@@ -425,6 +449,7 @@ export function useConversationStreamController({
         publish()
       } catch (error) {
         if (signal.aborted || !isMounted.current || isActiveThread(threadId)) return
+        flushPublish()
         const notice: NonNullable<Conversation['notice']> = completed ? historySyncNotice(`${runId}:history`) : {
           kind: 'error', content: conversationErrorMessage(error, 'stream_recovery_failed'),
         }
@@ -435,6 +460,8 @@ export function useConversationStreamController({
           }
         )))
       } finally {
+        signal.removeEventListener('abort', discardPending)
+        discardPending()
         projector?.close()
       }
       })
@@ -452,8 +479,8 @@ export function useConversationStreamController({
 
   const streamRun = useCallback(async (
     threadIdToStream: string,
-    payload: ChatRequestPayload,
-    mode: 'start' | 'resume',
+    payload: ConversationRunPayload,
+    mode: ConversationRunMode,
     options: StreamRunOptions = { target: 'workspace' },
   ) => {
     if (threadIdToStream && isActiveThread(threadIdToStream)) return
@@ -477,7 +504,10 @@ export function useConversationStreamController({
       recoveryRequests.current.delete(threadIdToStream || payload.runId)
       if (options.target === 'draft' && options.initialConversation) options.onDraftChange?.(options.initialConversation)
 
-      const stream = mode === 'resume' ? resumeConversationRun : startConversationRun
+      const modelId = 'model' in payload ? payload.model : payload.forwardedProps.model
+      const stream = (request: ConversationRunPayload, signal?: AbortSignal, afterSeq?: number) => 'model' in request
+        ? compactConversationContext(request, signal, afterSeq)
+        : (mode === 'resume' ? resumeConversationRun : startConversationRun)(request, signal, afterSeq)
       let target = options.target
       let targetThreadId = threadIdToStream
       let draftTarget = options.initialConversation
@@ -489,7 +519,7 @@ export function useConversationStreamController({
       let todoProjector: LiveTodoTraceProjector | null = null
       let projectedTaskTrace = validationTarget?.taskTrace ?? { phase: 'unloaded' as const }
       let projectedSnapshot: TaskTraceSnapshot | null = null
-      if (validationTarget?.taskTrace.phase !== 'unavailable') {
+      if (mode !== 'compact' && validationTarget?.taskTrace.phase !== 'unavailable') {
         todoProjector = new LiveTodoTraceProjector()
         const priorHead = validationTarget?.trace?.headRunId
           ?? latestUserTurn(validationTarget)?.runId
@@ -509,7 +539,7 @@ export function useConversationStreamController({
         todoProjector.startRun({
           runId: payload.runId,
           inputKind: mode === 'start' ? 'ordinary' : 'resume',
-          parentRunId: payload.parentRunId,
+          parentRunId: 'parentRunId' in payload ? payload.parentRunId : undefined,
           turn,
         })
         projectedSnapshot = todoProjector.snapshot
@@ -542,7 +572,7 @@ export function useConversationStreamController({
       let receivedEvent = false
       let mainTerminalReceived = false
       let traceAuthorityLoaded = false
-      let requestPayload: ChatRequestPayload = { ...payload }
+      let requestPayload: ConversationRunPayload = { ...payload }
       let reconnectAttempt = 0
       let lastAppliedSeq: number | null = (
         options.initialAfterSeq
@@ -601,7 +631,7 @@ export function useConversationStreamController({
             )
           }
 
-          if (event.type === 'RUN_STARTED' && event.runId === payload.runId) {
+          if (event.type === 'RUN_STARTED' && event.runId === payload.runId && 'forwardedProps' in payload) {
             acknowledgeComposerPreferences(reportedThreadId, {
               model: payload.forwardedProps.model,
               mode: payload.forwardedProps.command?.plan === 'on' ? 'plan' : 'default',
@@ -728,7 +758,7 @@ export function useConversationStreamController({
           })
           const authoritative = restoreConversationFromTrace(detail, {
             previous: validationTarget ?? undefined,
-            model: validationTarget?.model ?? payload.forwardedProps.model,
+            model: validationTarget?.model ?? modelId,
             lastDeliveredSeq: lastAppliedSeq ?? undefined,
             includeTaskTrace,
           })
@@ -828,6 +858,7 @@ export function useConversationStreamController({
             (state) => updateConversation(state, currentTargetThreadId, (item) => ({
               ...item,
               runStatus: 'error',
+              compactions: item.compactions?.map(operation => operation.runId === payload.runId ? { ...operation, status: 'failed' as const } : operation),
               activeRunId: undefined,
               notice: { kind: 'error', content: message, id: `${payload.runId}:connection:${streamEpoch}` },
             })),
@@ -904,7 +935,7 @@ export function useConversationStreamController({
     const matchesPending = pending?.threadId === threadId && (
       current ? current.activeRunId === pending.payload.runId : pending.options.target === 'draft'
     )
-    const request: { payload: ChatRequestPayload; mode: 'start' | 'resume'; options: StreamRunOptions } | null = matchesPending ? pending! : (
+    const request: { payload: ConversationRunPayload; mode: ConversationRunMode; options: StreamRunOptions } | null = matchesPending ? pending! : (
       session?.threadId === threadId && current?.activeRunId === session.payload.runId
         ? { ...session, options: { target: 'workspace' as const, initialAfterSeq: Math.max(session.lastSeq, current.lastSeq ?? 0) } }
         : null

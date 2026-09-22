@@ -5,7 +5,7 @@ import type { CSSProperties } from 'react'
 import type { TraceGraphNode } from '../../../api/conversation/traceGraph'
 import { OverlayScrollbar } from '../../../components/ui'
 import { useI18n } from '../../../i18n'
-import type { TraceTurnRows } from './traceLayout'
+import { traceParentId, traceRailAncestors, type TraceTurnRows } from './traceLayout'
 import {
   durationLabel,
   traceNodeAccessibleLabel,
@@ -45,7 +45,7 @@ export function TraceLedger({
     () => new Set(),
   )
   const [collapsedSubagentIds, setCollapsedSubagentIds] = useState<ReadonlySet<string>>(
-    () => new Set(),
+    () => new Set(groups.flatMap(group => group.nodes).filter(node => node.kind === 'context' && node.contextKind === 'compaction').map(node => node.id)),
   )
   const nodesById = useMemo(
     () => new Map(groups.flatMap(({ nodes }) => nodes).map((node) => [node.id, node])),
@@ -54,19 +54,22 @@ export function TraceLedger({
   const expandableSubagentIds = useMemo(
     () => new Set(
       groups.flatMap(({ nodes }) => nodes)
-        .flatMap((node) => node.parentSubagentId ? [node.parentSubagentId] : []),
+        .flatMap((node) => { const parent = traceParentId(node); return parent ? [parent] : [] }),
     ),
     [groups],
   )
+  const seenNodeIds = useRef(new Set<string>())
+  useLayoutEffect(() => {
+    const added = groups.flatMap(group => group.nodes).filter(node => !seenNodeIds.current.has(node.id))
+    added.forEach(node => seenNodeIds.current.add(node.id))
+    const compactIds = added.filter(node => node.kind === 'context' && node.contextKind === 'compaction').map(node => node.id)
+    if (compactIds.length) setCollapsedSubagentIds(current => new Set([...current, ...compactIds]))
+  }, [groups])
   const depths = useMemo(() => {
     const values = new Map<string, number>()
     groups.flatMap(({ nodes }) => nodes).forEach((node) => {
-      const parentDepth = node.parentSubagentId
-        ? values.get(node.parentSubagentId)
-        : -1
-      if (node.parentSubagentId && parentDepth === undefined) {
-        throw new Error('invalid Subagent scope order')
-      }
+      const parentId = traceParentId(node)
+      const parentDepth = parentId ? values.get(parentId) : -1
       values.set(node.id, (parentDepth ?? -1) + 1)
     })
     return values
@@ -81,10 +84,10 @@ export function TraceLedger({
       return next
     })
     const owners = new Set<string>()
-    let ownerId = selected.parentSubagentId
+    let ownerId = traceParentId(selected)
     while (ownerId) {
       owners.add(ownerId)
-      ownerId = nodesById.get(ownerId)?.parentSubagentId
+      ownerId = traceParentId(nodesById.get(ownerId))
     }
     setCollapsedSubagentIds((current) => {
       if (![...owners].some((id) => current.has(id))) return current
@@ -94,7 +97,7 @@ export function TraceLedger({
   const hiddenNodeIds = useMemo(() => {
     const hidden = new Set<string>()
     groups.flatMap(({ nodes }) => nodes).forEach((node) => {
-      const ownerId = node.parentSubagentId
+      const ownerId = traceParentId(node)
       if (ownerId && (collapsedSubagentIds.has(ownerId) || hidden.has(ownerId))) {
         hidden.add(node.id)
       }
@@ -105,11 +108,12 @@ export function TraceLedger({
     const descendants = new Map<string, string[]>()
     const ancestors = new Map<string, string[]>()
     groups.flatMap(({ nodes }) => nodes).forEach((node) => {
-      const parentAncestors = node.parentSubagentId
-        ? ancestors.get(node.parentSubagentId) ?? []
+      const parentId = traceParentId(node)
+      const parentAncestors = parentId
+        ? ancestors.get(parentId) ?? []
         : []
-      const nodeAncestors = node.parentSubagentId
-        ? [...parentAncestors, node.parentSubagentId]
+      const nodeAncestors = parentId
+        ? [...parentAncestors, parentId]
         : []
       ancestors.set(node.id, nodeAncestors)
       nodeAncestors.forEach((subagentId) => descendants.set(subagentId, [
@@ -135,13 +139,13 @@ export function TraceLedger({
   }
   const toggleSubagent = (nodeId: string, trigger: HTMLButtonElement) => {
     if (!collapsedSubagentIds.has(nodeId) && selectedId) {
-      let ownerId = nodesById.get(selectedId)?.parentSubagentId
+      let ownerId = traceParentId(nodesById.get(selectedId))
       while (ownerId) {
         if (ownerId === nodeId) {
           onHideSelection(trigger)
           break
         }
-        ownerId = nodesById.get(ownerId)?.parentSubagentId
+        ownerId = traceParentId(nodesById.get(ownerId))
       }
     }
     setCollapsedSubagentIds((current) => {
@@ -179,7 +183,8 @@ export function TraceLedger({
           {groups.map(({ turn, nodes }) => {
             const collapsed = collapsedTurnIds.has(turn.id)
             const contentId = `trace-ledger-${turn.id}`
-            const rootNodes = nodes.filter((node) => node.parentSubagentId == null)
+            const railAncestors = traceRailAncestors(nodes.filter(node => !hiddenNodeIds.has(node.id)))
+            const rootNodes = nodes.filter((node) => traceParentId(node) == null)
             const firstRootId = rootNodes[0]?.id
             const lastRootId = rootNodes.at(-1)?.id
             const startedAt = Date.parse(turn.startedAt)
@@ -213,6 +218,8 @@ export function TraceLedger({
                         key={node.id}
                         node={node}
                         depth={depths.get(node.id) ?? 0}
+                        ancestorLevels={railAncestors.get(node.id)?.ancestorLevels ?? []}
+                        continues={railAncestors.get(node.id)?.continues ?? false}
                         direct={directNodeIds.has(node.id)}
                         selected={node.id === selectedId}
                         expandable={expandableSubagentIds.has(node.id)}
@@ -242,6 +249,8 @@ export function TraceLedger({
 function TraceLedgerRow({
   node,
   depth,
+  ancestorLevels,
+  continues,
   direct,
   selected,
   expandable,
@@ -257,6 +266,8 @@ function TraceLedgerRow({
 }: {
   node: TraceGraphNode
   depth: number
+  ancestorLevels: number[]
+  continues: boolean
   direct: boolean
   selected: boolean
   expandable: boolean
@@ -271,7 +282,6 @@ function TraceLedgerRow({
   onSelect: (nodeId: string, trigger: HTMLButtonElement) => void
 }) {
   const { t } = useI18n()
-  const subagent = node.kind === 'subagent'
   return (
     <div
       id={traceLedgerRowId(node.id)}
@@ -279,17 +289,17 @@ function TraceLedgerRow({
       style={{ '--chain-trace-scope-depth': depth } as ScopeRowStyle}
       hidden={hidden}
     >
-      {subagent && expandable && (
+      {expandable && (
         <button
           type="button"
           className="chain-trace-ledger-toggle"
           aria-label={collapsed
-            ? t('展开子智能体 {name}，第 {turn} 轮步骤 {step}', {
+            ? t(node.kind === 'subagent' ? '展开子智能体 {name}，第 {turn} 轮步骤 {step}' : '展开节点 {name}，第 {turn} 轮步骤 {step}', {
                 name: node.name,
                 turn: turnOrdinal,
                 step: stepOrdinal,
               })
-            : t('收起子智能体 {name}，第 {turn} 轮步骤 {step}', {
+            : t(node.kind === 'subagent' ? '收起子智能体 {name}，第 {turn} 轮步骤 {step}' : '收起节点 {name}，第 {turn} 轮步骤 {step}', {
                 name: node.name,
                 turn: turnOrdinal,
                 step: stepOrdinal,
@@ -303,13 +313,21 @@ function TraceLedgerRow({
       )}
       <button
         type="button"
-        className={`chain-trace-ledger-row${selected ? ' is-selected' : ''}${node.failure ? ' has-error' : ''}${firstTurnRoot ? ' is-turn-root-start' : ''}${lastTurnRoot ? ' is-turn-root-end' : ''}`}
+        className={`chain-trace-ledger-row${selected ? ' is-selected' : ''}${node.failure ? ' has-error' : ''}${firstTurnRoot ? ' is-turn-root-start' : ''}${lastTurnRoot ? ' is-turn-root-end' : ''}${!continues ? ' is-branch-end' : ''}`}
         data-trace-node-id={node.id}
         aria-label={`${direct ? '' : `${t('范围')}，`}${traceNodeAccessibleLabel(node, t)}，${traceStatusLabel(node.status, t)}，${t('查看详情')}`}
         aria-current={selected || undefined}
         onClick={(event) => onSelect(node.id, event.currentTarget)}
       >
-        <span className="chain-trace-ledger-rail"><i /></span>
+        <span className="chain-trace-ledger-rail" aria-hidden="true">
+          {ancestorLevels.map(level => <span key={level} className="chain-trace-ancestor-rail" style={{ left: `calc((${level} - ${depth}) * var(--chain-trace-level-indent))` }} />)}
+          {expandable && !collapsed && (
+            <svg className="chain-trace-child-link" viewBox="0 0 32 20" preserveAspectRatio="none">
+              <path d="M 0 0 C 0 12 32 8 32 20" vectorEffect="non-scaling-stroke" />
+            </svg>
+          )}
+          <i />
+        </span>
         <TraceNodeType node={node} />
         <span className="chain-trace-ledger-main">
           {!direct && <span className="chain-trace-scope-badge">{t('范围')}</span>}

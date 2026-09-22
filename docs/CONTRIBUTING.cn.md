@@ -31,7 +31,7 @@ uv run pytest
 pnpm install --frozen-lockfile
 pnpm test
 pnpm exec playwright install chromium
-pnpm test:proxy
+pnpm test:http
 pnpm lint
 pnpm test:browser
 ```
@@ -74,8 +74,8 @@ PowerShell 对应命令：
 
 CI 的 `web` 通过共用 Python 检查器执行单元测试、Lint、构建和打包检查。
 `web-browser` 安装 Chromium 并将界面测试分为两个任务；第一分片还执行包含真实浏览器
-上传测试的 `test:proxy`。`verify-studio-web.sh --skip-browser`（PowerShell：
-`verify-studio-web.ps1 -SkipBrowser`）跳过代理测试和界面浏览器测试。
+上传测试的 `test:http`。`verify-studio-web.sh --skip-browser`（PowerShell：
+`verify-studio-web.ps1 -SkipBrowser`）跳过 HTTP 测试和界面浏览器测试。
 
 本地钩子可通过 Git 的 `--no-verify` 绕过；提交到远程的改动仍以仓库要求的 CI 检查为准。
 

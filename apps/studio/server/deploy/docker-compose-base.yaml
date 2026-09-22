@@ -1,16 +1,16 @@
-name: tinkerfin-studio
+name: tinkerfin
 
 services:
   minio:
+    container_name: minio
     profiles: [bundled, minio]
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     command: [server, /data, --console-address, ':9001']
     environment:
-      MINIO_ROOT_USER_FILE: /run/secrets/s3_storage_access_key
-      MINIO_ROOT_PASSWORD_FILE: /run/secrets/s3_storage_secret_key
+      MINIO_ROOT_USER: ${S3_STORAGE_ACCESS_KEY:-}
+      MINIO_ROOT_PASSWORD: ${S3_STORAGE_SECRET_KEY:-}
       # 浏览器使用签名许可，不依赖 Cookie；跨域放行不授予匿名对象权限
       MINIO_API_CORS_ALLOW_ORIGIN: '*'
-    secrets: [s3_storage_access_key, s3_storage_secret_key]
     ports:
       - "${S3_STORAGE_BIND_ADDRESS:-127.0.0.1}:${S3_STORAGE_PUBLISHED_PORT:-9000}:9000"
     volumes:
@@ -23,21 +23,25 @@ services:
     restart: unless-stopped
 
   mysql:
+    container_name: mysql8
     profiles: [bundled, mysql]
     image: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
     environment:
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-tinkerfin}
-      MYSQL_USER: ${MYSQL_USER:-studio}
-      MYSQL_PASSWORD_FILE: /run/secrets/mysql_password
-      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
-    secrets: [mysql_password, mysql_root_password]
+      MYSQL_BUSINESS_DATABASE: ${MYSQL_BUSINESS_DATABASE:-tinkerfin}
+      MYSQL_COMPONENTS_DATABASE: ${MYSQL_COMPONENTS_DATABASE:-tinkerfin_components}
+      MYSQL_BUSINESS_USER: ${MYSQL_BUSINESS_USER:-tinkerfin}
+      MYSQL_COMPONENTS_USER: ${MYSQL_COMPONENTS_USER:-tinkerfin_components}
+      MYSQL_BUSINESS_PASSWORD: ${MYSQL_BUSINESS_PASSWORD:-}
+      MYSQL_COMPONENTS_PASSWORD: ${MYSQL_COMPONENTS_PASSWORD:-}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-}
     ports:
       - "127.0.0.1:${MYSQL_PUBLISHED_PORT:-13306}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
-      - ../database/mysql/schema.sql:/docker-entrypoint-initdb.d/10-studio-business.sql:ro
+      - ../database/mysql/schema.sql:/opt/studio/schema.sql:ro
+      - ./mysql/init-databases.sh:/docker-entrypoint-initdb.d/10-databases.sh:ro
     healthcheck:
-      test: [CMD-SHELL, "mysqladmin ping -h 127.0.0.1 -uroot -p$$(cat /run/secrets/mysql_root_password) --silent"]
+      test: [CMD-SHELL, "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysqladmin ping -h 127.0.0.1 -uroot --silent"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -45,40 +49,50 @@ services:
     restart: unless-stopped
 
   redis-runtime:
+    container_name: redis-runtime
     profiles: [bundled, redis-runtime]
     image: redis/redis-stack-server:7.4.0-v8@sha256:798ab84d9f266936b034ab11c4d04a2b8e4b441884c5aa7d17ac951eefdf742a
     entrypoint: [/bin/sh, -ec]
-    command: ['export REDIS_ARGS="--appendonly yes --requirepass $$(cat /run/secrets/redis_runtime_password)"; exec /entrypoint.sh']
-    secrets: [redis_runtime_password]
+    environment:
+      REDIS_RUNTIME_PASSWORD: ${REDIS_RUNTIME_PASSWORD:-}
+      REDIS_ARGS: --appendonly yes
+    command:
+      - |
+        password=$$(printf '%s' "$$REDIS_RUNTIME_PASSWORD" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        printf 'requirepass "%s"\n' "$$password" > /redis-stack.conf
+        exec /entrypoint.sh
     ports:
       - "127.0.0.1:${REDIS_RUNTIME_PUBLISHED_PORT:-6379}:6379"
     volumes:
       - redis-runtime-data:/data
     healthcheck:
-      test: [CMD-SHELL, "redis-cli -a $$(cat /run/secrets/redis_runtime_password) ping | grep -q PONG"]
+      test: [CMD-SHELL, "REDISCLI_AUTH=\"$$REDIS_RUNTIME_PASSWORD\" redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 12
     restart: unless-stopped
 
   opensandbox:
+    container_name: opensandbox
     cpus: 0.5
     mem_limit: 512m
     profiles: [bundled, opensandbox]
     image: opensandbox/server:v0.2.3@sha256:ae8dfbb277f40a39ff01ef35e5e1c10675acfe0fa9db15259b8f323e5efab778
     entrypoint: [/bin/sh, -ec]
-    command:
-      - export OPENSANDBOX_SERVER_API_KEY="$$(cat /run/secrets/opensandbox_api_key)"; exec opensandbox-server --config /etc/opensandbox/config.toml
+    environment:
+      OPENSANDBOX_SERVER_API_KEY: ${OPEN_SANDBOX_API_KEY:-}
+    command: [exec opensandbox-server --config /etc/opensandbox/config.toml]
     extra_hosts:
       - host.docker.internal:host-gateway
-    secrets: [opensandbox_api_key]
     ports:
       - "127.0.0.1:${OPEN_SANDBOX_PUBLISHED_PORT:-8091}:8090"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - opensandbox-data:/data
       - opensandbox-metadata:/root/.opensandbox/metadata
-      - ./opensandbox/config.toml:/etc/opensandbox/config.toml:ro
+    configs:
+      - source: opensandbox-config
+        target: /etc/opensandbox/config.toml
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=3)"]
       interval: 10s
@@ -88,25 +102,59 @@ services:
     restart: unless-stopped
 
 
-secrets:
-  s3_storage_access_key:
-    file: ${SECRETS_DIR:-./secrets}/s3_storage_access_key
-  s3_storage_secret_key:
-    file: ${SECRETS_DIR:-./secrets}/s3_storage_secret_key
-  mysql_root_password:
-    file: ${SECRETS_DIR:-./secrets}/mysql_root_password
-  mysql_password:
-    file: ${SECRETS_DIR:-./secrets}/mysql_password
-  redis_runtime_password:
-    file: ${SECRETS_DIR:-./secrets}/redis_runtime_password
-  opensandbox_api_key:
-    file: ${SECRETS_DIR:-./secrets}/opensandbox_api_key
-  database_url:
-    file: ${SECRETS_DIR:-./secrets}/database_url
-
 volumes:
   minio-data:
   mysql-data:
   redis-runtime-data:
   opensandbox-data:
   opensandbox-metadata:
+
+configs:
+  opensandbox-config:
+    content: |
+      [server]
+      host = "0.0.0.0"
+      port = 8090
+      max_sandbox_timeout_seconds = 86400
+
+      [log]
+      level = "INFO"
+      file_enabled = false
+
+      [runtime]
+      type = "docker"
+      execd_image = "opensandbox/execd:v1.0.22"
+
+      [storage]
+      allowed_host_paths = []
+      volume_default_size = "1Gi"
+
+      [store]
+      type = "sqlite"
+      path = "/data/opensandbox.db"
+
+      [docker]
+      network_mode = "bridge"
+      host_ip = "${OPEN_SANDBOX_PUBLIC_HOST:-host.docker.internal}"
+      port_range_min = 40000
+      port_range_max = 60000
+      drop_capabilities = [
+          "AUDIT_WRITE",
+          "MKNOD",
+          "NET_ADMIN",
+          "NET_RAW",
+          "SYS_ADMIN",
+          "SYS_MODULE",
+          "SYS_PTRACE",
+          "SYS_TIME",
+          "SYS_TTY_CONFIG",
+      ]
+      no_new_privileges = true
+      pids_limit = 4096
+
+      [ingress]
+      mode = "direct"
+
+      [egress]
+      image = "opensandbox/egress:v1.1.7"
+      mode = "dns"

@@ -17,7 +17,7 @@ describe('模型异常全局通知', () => {
   let unsubscribe: () => void
   beforeEach(() => {
     apiError.mockReset()
-    saveAuthSession({token: 'test-model-feedback', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user: {user_id: 1, username: 'test', display_name: 'Test', avatar_url: null, roles: [], disabled: false}})
+    saveAuthSession({token: 'test-model-feedback', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user: {user_id: 1, username: 'test', display_name: 'Test', avatar_url: null, roles: [], disabled: false}})
     unsubscribe = subscribeApiErrors(apiError)
   })
   afterEach(() => {

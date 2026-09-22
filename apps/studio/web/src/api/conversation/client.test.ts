@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { cancelConversationRun, startConversationRun } from './client'
+import { cancelConversationRun, compactConversationContext, startConversationRun } from './client'
 import type { ChatRequestPayload } from './types'
-import { clearAuthSession, saveAuthSession } from '../../auth/session'
+import { getServerAddress, setServerAddress } from '../shared/config'
+import { getAuthSession, clearAuthSession, saveAuthSession } from '../../auth/session'
 
 const requestPayload: ChatRequestPayload = {
   threadId: 'thread-conflict',
@@ -32,7 +33,7 @@ describe('conversation stream client', () => {
   beforeEach(() => {
     saveAuthSession({
       token: 'conversation-token',
-      tokenType: 'Bearer',
+      serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user: { user_id: 7, username: 'yunsan', display_name: '云杉', avatar_url: null, roles: [], disabled: false },
     })
@@ -364,11 +365,12 @@ describe('conversation stream client', () => {
   })
 
   it.each([
-    ['/backend', '/backend/api/conversation/chat'],
-    ['backend', '/backend/api/conversation/chat'],
+    ['http://127.0.0.1:8092', 'http://127.0.0.1:8092/api/conversation/chat'],
     ['https://api.example.test/backend', 'https://api.example.test/backend/api/conversation/chat'],
   ])('applies the configured API base exactly once: %s', async (apiBase, expectedUrl) => {
-    vi.stubEnv('VITE_API_BASE_URL', apiBase)
+    const session = getAuthSession()!
+    setServerAddress(apiBase)
+    saveAuthSession({ ...session, serverAddress: getServerAddress() })
     vi.resetModules()
     const { startConversationRun: startConfiguredRun } = await import('./client')
     let requestedUrl: RequestInfo | URL | undefined
@@ -390,5 +392,18 @@ describe('conversation stream client', () => {
     }
 
     expect(requestedUrl).toBe(expectedUrl)
+  })
+  it('压缩请求只携带运行和模型，重连保留原游标', async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init)
+    expect(new URL(request.url).pathname).toBe('/api/conversation/thread%2Fone/compact')
+    expect(await request.json()).toEqual({ runId: 'compact-run', model: 'main' })
+    expect(request.headers.get('Last-Event-ID')).toBe('8')
+    return sseResponse('id: 9\ndata: {"type":"RUN_FINISHED","threadId":"thread/one","runId":"compact-run"}\n\n')
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const events = []
+  for await (const event of compactConversationContext({ threadId: 'thread/one', runId: 'compact-run', model: 'main' }, undefined, 8)) events.push(event)
+  expect(events[0]?.seq).toBe(9)
   })
 })

@@ -23,7 +23,7 @@ from tinkerfin_studio.api.responses import (
     trace_sse_response,
 )
 from tinkerfin_studio.conversation.repository import ConversationRepository
-from tinkerfin_studio.conversation.request import ChatRequest
+from tinkerfin_studio.conversation.request import ChatRequest, CompactRequest
 from tinkerfin_studio.conversation.schemas import (
     CancelRunResponse,
     ConversationHistoryDetail,
@@ -305,6 +305,28 @@ async def chat(
         user=user,
         resources=get_resources(request.app),
     ).start(chat_request, last_event_id=last_event_id)
+    return sse_response(prepared.body)
+
+
+@router.post(
+    "/{thread_id}/compact",
+    response_class=StreamingResponse,
+)
+async def compact(
+    thread_id: ThreadIdPath,
+    input_data: CompactRequest,
+    request: Request,
+    session: SessionDep,
+    user: UserContextDep,
+    last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+) -> StreamingResponse:
+    """整理已有会话上下文；相同运行 ID 附着或重放原操作"""
+
+    prepared = await ConversationChatService(
+        session,
+        user=user,
+        resources=get_resources(request.app),
+    ).start(input_data, thread_id=thread_id, last_event_id=last_event_id)
     return sse_response(prepared.body)
 
 

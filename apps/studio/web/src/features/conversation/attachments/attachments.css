@@ -42,7 +42,7 @@
     max-width: 100%;
     padding: 0;
     border: 0;
-    border-radius: inherit;
+    border-radius: var(--radius-button);
     outline: 0;
     overflow: hidden;
     background: var(--color-layer-2);
@@ -162,7 +162,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: var(--type-meta-size);
-    font-weight: var(--weight-semibold);
+    font-weight: var(--weight-ui);
   }
   .attachment-description small {
     display: block;
@@ -186,7 +186,7 @@
     color: var(--color-file-icon-ink);
     box-shadow: var(--shadow-file-icon);
     font-size: var(--type-file-icon-size);
-    font-weight: var(--weight-bold);
+    font-weight: var(--weight-ui);
     letter-spacing: .02em;
     line-height: 1;
   }
@@ -260,6 +260,7 @@
     background: transparent;
     color: inherit;
     font: inherit;
+    font-weight: var(--weight-ui);
     text-align: start;
   }
   .attachment-document-preview {
@@ -268,7 +269,7 @@
   .attachment-document-preview:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-button);
   }
   .attachment-file-actions {
     position: absolute;
@@ -336,7 +337,7 @@
     flex: 1;
     overflow: hidden;
     font-size: var(--type-caption-size);
-    font-weight: var(--weight-medium);
+    font-weight: var(--weight-ui);
     letter-spacing: normal;
   }
   .attachment-document-viewer .modal-dialog-head > div:first-child {
@@ -379,7 +380,7 @@
     margin: 0 var(--space-2) 10px;
     color: var(--color-text-secondary);
     font-size: var(--type-micro-size);
-    font-weight: var(--weight-regular);
+    font-weight: var(--weight-ui);
   }
   .attachment-document-rail > button {
     display: flex;
@@ -389,7 +390,7 @@
     min-width: 0;
     padding: 9px var(--space-2);
     border: 0;
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-button);
     background: transparent;
     color: var(--color-text-primary);
     text-align: start;
@@ -479,6 +480,7 @@
     min-width: 100%;
     border-collapse: collapse;
     font-size: var(--type-caption-size);
+    font-weight: var(--weight-regular);
     font-variant-numeric: tabular-nums;
   }
   .attachment-sheet :is(th, td) {
@@ -557,7 +559,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: var(--type-caption-size);
-    font-weight: var(--weight-medium);
+    font-weight: var(--weight-ui);
     letter-spacing: normal;
   }
   .attachment-viewer-actions {
@@ -693,7 +695,7 @@
     padding: var(--space-1);
     border: 0;
     outline: 0;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-button);
     background: transparent;
     cursor: pointer;
   }
@@ -806,7 +808,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: var(--type-meta-size);
-    font-weight: var(--weight-regular);
+    font-weight: var(--weight-ui);
     line-height: var(--type-meta-line);
   }
   .composer-attachment .composer-attachment-name {

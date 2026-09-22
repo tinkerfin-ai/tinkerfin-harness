@@ -1,4 +1,5 @@
 import { mergeConversationTitle } from "../../../lib/workspace"
+import { compactionsFromTrace } from '../compaction/state'
 import { messageAttachments, messageText, type Attachment } from '../attachments/content'
 import type {
   ConversationHistoryCoreDetail,
@@ -528,6 +529,7 @@ const projectTraceConversation = (
     accessMode: trace.accessMode,
     mode: modeFromState(trace.state.root),
     messages,
+    compactions: compactionsFromTrace(trace.graph.nodes, messages),
     runFailures: parseRunFailures(trace.runFailures),
     todos: todosFromState(trace.state.root),
     taskTrace,

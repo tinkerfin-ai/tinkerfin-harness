@@ -33,7 +33,7 @@ from tinkerfin_tracing import Tracer
 
 
 @pytest.fixture
-async def automation_resources(database, attachments, monkeypatch):
+async def automation_resources(database, components_database, attachments, monkeypatch):
     async with database.session() as session:
         session.add(
             User(
@@ -80,7 +80,7 @@ async def automation_resources(database, attachments, monkeypatch):
             assert key == "users/1"
             return workspace
 
-    store = SqlAlchemyAutomationStore(database.engine)
+    store = SqlAlchemyAutomationStore(components_database.engine)
     try:
         async with AutomationService(namespace=NAMESPACE, store=store) as automation:
             tracer = Tracer()
@@ -91,6 +91,7 @@ async def automation_resources(database, attachments, monkeypatch):
                     ApplicationResources,
                     SimpleNamespace(
                         database=database,
+                        components_database=components_database,
                         attachments=attachments,
                         automation=automation,
                         tracer=tracer,
@@ -235,7 +236,7 @@ async def test_saved_schedule_survives_service_restart(automation_resources):
             configuration=TaskConfiguration.model_validate(configuration()),
         )
     )
-    second_store = SqlAlchemyAutomationStore(resources.database.engine)
+    second_store = SqlAlchemyAutomationStore(resources.components_database.engine)
     try:
         async with AutomationService(namespace=NAMESPACE, store=second_store) as second:
             restored = await second.get_task(owner_id="1", task_id=task.id)

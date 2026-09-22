@@ -356,7 +356,8 @@ class Tracer:
             where: Optional filters for nodes and retained public content.
             head_run_id: Branch head, required when the conversation has several heads.
             cursor: Cursor for the same generation, branch, filter, and current tail.
-            limit: Maximum direct matches, before their owning subagents are included.
+            limit: Maximum direct matches, before owning subagents and associated
+                compaction context are included.
 
         Returns:
             Graph page with a closeable follow iterator on its current first page.

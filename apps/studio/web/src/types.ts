@@ -238,6 +238,7 @@ export interface Conversation extends Partial<Pick<ConversationTitleSnapshot, "t
   mode: AgentMode
   accessMode: AccessMode
   messages: Message[]
+  compactions?: import('./features/conversation/compaction/state').ContextCompaction[]
   /** 尚未加载或发生失败时可为空；运行结果不属于消息正文 */
   runFailures?: import('./api/conversation/history').ConversationRunFailure[]
   notice?: ConversationNotice

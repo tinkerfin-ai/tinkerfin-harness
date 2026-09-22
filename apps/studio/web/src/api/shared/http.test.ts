@@ -15,6 +15,7 @@ import {
   subscribeApiErrors,
   type ApiAxiosRequestConfig,
 } from './http'
+import { DEFAULT_SERVER_ADDRESS, setServerAddress } from './config'
 import { LANGUAGE_STORAGE_KEY } from '../../i18n'
 
 function jsonResponse(data: unknown, code = 0, message = 'success', status = 200) {
@@ -36,7 +37,7 @@ function jsonResponse(data: unknown, code = 0, message = 'success', status = 200
 function seedAuthSession(token = 'token-123') {
   saveAuthSession({
     token,
-    tokenType: 'Bearer',
+    serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer',
     expiresAt: '2099-01-01T00:00:00.000Z',
     user: {
       user_id: 7,
@@ -543,8 +544,7 @@ describe('shared HTTP client', () => {
 
   it.each([
     ['', '/api/user/7', null],
-    ['/backend', '/backend/api/user/7', null],
-    ['backend', '/backend/api/user/7', null],
+    ['http://127.0.0.1:8092/backend', '/backend/api/user/7', 'http://127.0.0.1:8092'],
     [
       'https://api.example.test/backend',
       '/backend/api/user/7',
@@ -553,7 +553,7 @@ describe('shared HTTP client', () => {
   ])(
     'applies the Axios API base exactly once: %s',
     async (apiBase, expectedPath, configuredOrigin) => {
-      vi.stubEnv('VITE_API_BASE_URL', apiBase)
+      setServerAddress(apiBase)
       vi.resetModules()
       const { requestJson: requestWithConfiguredBase } = await import('./http')
       let requestedUrl = ''
@@ -567,7 +567,7 @@ describe('shared HTTP client', () => {
       })).resolves.toEqual({ id: 7 })
 
       const parsedUrl = new URL(requestedUrl)
-      expect(parsedUrl.origin).toBe(configuredOrigin ?? window.location.origin)
+      expect(parsedUrl.origin).toBe(configuredOrigin ?? DEFAULT_SERVER_ADDRESS)
       expect(parsedUrl.pathname).toBe(expectedPath)
     },
   )

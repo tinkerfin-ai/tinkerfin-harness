@@ -1,8 +1,10 @@
+import { getServerAddress } from '../api/shared/config'
 import type { AuthSessionResponse, AuthUser, LoginResponse } from '../api/auth/types'
 
 export const AUTH_SESSION_STORAGE_KEY = 'tinkerfin.auth.session'
 
 export interface AuthSession {
+  serverAddress: string
   token: string
   tokenType: string
   expiresAt: string
@@ -42,7 +44,8 @@ function normalizeExpiresAt(value: string): string {
 
 function sessionsEqual(first: AuthSession | null | undefined, second: AuthSession | null) {
   if (first == null || second == null) return first == null && second == null
-  return first.token === second.token
+  return first.serverAddress === second.serverAddress
+    && first.token === second.token
     && first.tokenType === second.tokenType
     && first.expiresAt === second.expiresAt
     && first.user.user_id === second.user.user_id
@@ -95,19 +98,23 @@ function normalizeAuthSession(value: unknown): AuthSession | null {
   if (!value || typeof value !== 'object') return null
   if (Object.keys(value).sort().join('\0') !== [
     'expiresAt',
+    'serverAddress',
     'token',
     'tokenType',
     'user',
   ].join('\0')) return null
   const candidate = value as Partial<AuthSession>
   const user = normalizeAuthUser(candidate.user)
-  if (!(typeof candidate.token === 'string'
+  if (!(typeof candidate.serverAddress === 'string'
+    && candidate.serverAddress === getServerAddress()
+    && typeof candidate.token === 'string'
     && candidate.token.length > 0
     && typeof candidate.tokenType === 'string'
     && typeof candidate.expiresAt === 'string'
     && Number.isFinite(Date.parse(candidate.expiresAt))
     && user != null)) return null
   return {
+    serverAddress: candidate.serverAddress,
     token: candidate.token,
     tokenType: candidate.tokenType,
     expiresAt: candidate.expiresAt,
@@ -161,14 +168,19 @@ function notifySessionListeners(session: AuthSession | null) {
 
 export function getAuthSession(): AuthSession | null {
   if (currentSession === undefined) currentSession = readStoredSession()
-  if (currentSession && isAuthSessionExpired(currentSession)) {
-    clearAuthSession()
-    return null
+  if (currentSession) {
+    try {
+      if (currentSession.serverAddress !== getServerAddress() || isAuthSessionExpired(currentSession)) clearAuthSession()
+    } catch {
+      // 无法确认服务器归属时退出会话；请求层仍报告地址配置错误
+      clearAuthSession()
+    }
   }
   return currentSession
 }
 
 export function saveAuthSession(session: AuthSession) {
+  if (session.serverAddress !== getServerAddress()) return
   const normalized = {
     ...session,
     expiresAt: normalizeExpiresAt(session.expiresAt),
@@ -238,6 +250,7 @@ export function getAuthorizationHeader(): string | null {
 
 export function createAuthSession(payload: LoginResponse): AuthSession {
   return {
+    serverAddress: getServerAddress(),
     token: payload.access_token,
     tokenType: payload.token_type || 'Bearer',
     expiresAt: normalizeExpiresAt(payload.expires_at),
