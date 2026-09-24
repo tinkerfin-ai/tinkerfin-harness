@@ -33,6 +33,7 @@ class AutomationErrorCode(StrEnum):
     STORE_PROTOCOL_ERROR = "automation.store_protocol_error"
     SCHEDULER_UNAVAILABLE = "automation.scheduler_unavailable"
     LIFECYCLE = "automation.lifecycle"
+    WAIT_TIMEOUT = "automation.wait_timeout"
 
 
 class AutomationError(Exception):
@@ -177,6 +178,12 @@ class AutomationLifecycleError(AutomationError, RuntimeError):
     code = AutomationErrorCode.LIFECYCLE
 
 
+class AutomationWaitTimeout(AutomationError, TimeoutError):
+    """The observer's wait expired without cancelling the underlying execution."""
+
+    code = AutomationErrorCode.WAIT_TIMEOUT
+
+
 __all__ = [
     "AutomationError",
     "AutomationErrorCode",
@@ -185,6 +192,7 @@ __all__ = [
     "AutomationStoreError",
     "AutomationStoreProtocolError",
     "AutomationStoreTimeout",
+    "AutomationWaitTimeout",
     "ClaimLostError",
     "ExecutionBusyError",
     "ExecutionNotFoundError",

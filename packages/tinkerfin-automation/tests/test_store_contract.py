@@ -34,6 +34,7 @@ def _task(*, task_id: str = "task-1", max_runs: int = 1) -> AutomationTask:
         task_id=task_id,
         namespace="app",
         owner_id="owner-1",
+        execution_namespace="app",
         name="Daily summary",
         target="summary",
         input={"project_id": "project-1"},

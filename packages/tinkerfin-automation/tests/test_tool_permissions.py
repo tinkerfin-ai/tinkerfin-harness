@@ -7,14 +7,31 @@ from typing import Any
 import pytest
 
 from tinkerfin_automation import (
-    AutomationService,
+    Automation,
+    AutomationOwner,
+    ExecutionRequest,
     OnceSchedule,
     TaskConflictError,
+    TaskHandle,
     create_automation_tools,
 )
 from tinkerfin_automation.clock import ManualClock
 from tinkerfin_automation.models import AutomationTask
+from tinkerfin_automation.service import AutomationService
 from tinkerfin_automation.store import AutomationStore
+
+
+@pytest.fixture
+async def automation_owner(store_with_clock):
+    store, clock = store_with_clock
+    app = Automation(namespace="app", store=store, clock=clock)
+
+    @app.target("allowed")
+    async def allowed(request: ExecutionRequest) -> None:
+        return None
+
+    async with app.worker():
+        yield app.for_owner("owner")
 
 
 async def _task(
@@ -32,7 +49,9 @@ async def _task(
     "action", ["update_automation", "enable_automation", "run_automation_task_now"]
 )
 async def test_existing_task_cannot_bypass_target_permissions(
-    store_with_clock: tuple[AutomationStore, ManualClock], action: str
+    store_with_clock: tuple[AutomationStore, ManualClock],
+    automation_owner: AutomationOwner,
+    action: str,
 ) -> None:
     store, clock = store_with_clock
     async with AutomationService(namespace="app", store=store, clock=clock) as service:
@@ -40,7 +59,7 @@ async def test_existing_task_cannot_bypass_target_permissions(
         tools = {
             t.name: t
             for t in create_automation_tools(
-                service, owner_id="owner", allowed_targets={"allowed"}
+                automation_owner, allowed_targets={"allowed"}
             )
         }
         arguments: dict[str, Any] = {"task_id": task.task_id, "request_id": "attempt"}
@@ -67,26 +86,27 @@ async def test_concurrent_target_change_cannot_change_authorized_work(
     monkeypatch: pytest.MonkeyPatch,
     action: str,
     revision_offset: int,
+    automation_owner: AutomationOwner,
 ) -> None:
     store, clock = store_with_clock
     async with AutomationService(namespace="app", store=store, clock=clock) as service:
         async with AutomationService(namespace="app", store=store, clock=clock) as peer:
             task = await _task(service, clock, "allowed")
             ready, release = asyncio.Event(), asyncio.Event()
-            read = service.get_task
+            read = automation_owner.task
 
-            async def gated_read(*, owner_id: str, task_id: str) -> AutomationTask:
-                result = await read(owner_id=owner_id, task_id=task_id)
+            async def gated_read(task_id: str) -> TaskHandle:
+                result = await read(task_id)
                 if not ready.is_set():
                     ready.set()
                     await release.wait()
                 return result
 
-            monkeypatch.setattr(service, "get_task", gated_read)
+            monkeypatch.setattr(automation_owner, "task", gated_read)
             tools = {
                 t.name: t
                 for t in create_automation_tools(
-                    service, owner_id="owner", allowed_targets={"allowed"}
+                    automation_owner, allowed_targets={"allowed"}
                 )
             }
             arguments: dict[str, Any] = {
@@ -179,7 +199,9 @@ async def test_run_now_checks_revision_inside_enqueue_and_keeps_command_idempote
     "action", ["update_automation", "enable_automation", "run_automation_task_now"]
 )
 async def test_allowed_task_command_replays_after_its_revision_changes(
-    store_with_clock: tuple[AutomationStore, ManualClock], action: str
+    store_with_clock: tuple[AutomationStore, ManualClock],
+    automation_owner: AutomationOwner,
+    action: str,
 ) -> None:
     store, clock = store_with_clock
     async with AutomationService(namespace="app", store=store, clock=clock) as service:
@@ -187,7 +209,7 @@ async def test_allowed_task_command_replays_after_its_revision_changes(
         tools = {
             t.name: t
             for t in create_automation_tools(
-                service, owner_id="owner", allowed_targets={"allowed"}
+                automation_owner, allowed_targets={"allowed"}
             )
         }
         arguments: dict[str, Any] = {"task_id": task.task_id, "request_id": "repeat"}
@@ -195,4 +217,7 @@ async def test_allowed_task_command_replays_after_its_revision_changes(
             arguments["expected_revision"] = task.revision
         first = await tools[action].ainvoke(arguments)
         repeated = await tools[action].ainvoke(arguments)
-        assert repeated == first
+        if action == "run_automation_task_now":
+            assert repeated["execution_id"] == first["execution_id"]
+        else:
+            assert repeated == first

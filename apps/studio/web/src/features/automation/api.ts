@@ -5,7 +5,7 @@ import { presentRun, type AutomationDraft, type AutomationRun, type AutomationRu
 
 export interface Page<T> { items: T[]; nextCursor: string | null }
 interface TaskResponse extends Omit<AutomationTask, 'startsOn' | 'endsOn'> { startsOn: string | null; endsOn: string | null }
-export interface RunDetail extends AutomationRunRecord { messages: TraceMessage[]; attachments: Attachment[]; resultAvailable: boolean }
+export interface RunDetail extends AutomationRunRecord { messages: TraceMessage[]; outputFiles: Attachment[]; resultAvailable: boolean }
 export interface BatchResult { taskId: string; succeeded: boolean; error: string | null }
 const taskView = (task: TaskResponse): AutomationTask => ({ ...task, startsOn: task.startsOn ?? '', endsOn: task.endsOn ?? '' })
 const path = (suffix: string, params: Record<string, string | undefined> = {}) => {

@@ -3,7 +3,6 @@
 from typing import TYPE_CHECKING
 
 from .agent_tools import create_automation_tools as create_automation_tools
-from .engine import AutomationEngine as AutomationEngine
 from .engine import OnInterrupt as OnInterrupt
 from .errors import (
     AutomationError as AutomationError,
@@ -26,6 +25,7 @@ from .errors import (
 from .errors import (
     AutomationStoreTimeout as AutomationStoreTimeout,
 )
+from .errors import AutomationWaitTimeout as AutomationWaitTimeout
 from .errors import (
     ClaimLostError as ClaimLostError,
 )
@@ -68,6 +68,9 @@ from .errors import (
 from .errors import (
     TaskNotFoundError as TaskNotFoundError,
 )
+from .facade import Automation as Automation
+from .handles import RunHandle as RunHandle
+from .handles import TaskHandle as TaskHandle
 from .memory import MemoryAutomationStore as MemoryAutomationStore
 from .memory import MemoryStoreLimits as MemoryStoreLimits
 from .models import (
@@ -103,6 +106,8 @@ from .models import (
 from .models import (
     TaskStatus as TaskStatus,
 )
+from .owner import AutomationOwner as AutomationOwner
+from .owner import HandlePage as HandlePage
 from .policies import ExecutionLimits as ExecutionLimits
 from .policies import MisfireMode as MisfireMode
 from .policies import MisfirePolicy as MisfirePolicy
@@ -113,9 +118,9 @@ from .schedules import CronSchedule as CronSchedule
 from .schedules import IntervalSchedule as IntervalSchedule
 from .schedules import OnceSchedule as OnceSchedule
 from .schedules import Schedule as Schedule
+from .schedules import ScheduleSpec as ScheduleSpec
 from .schedules import next_run_after as next_run_after
 from .schedules import preview_schedule as preview_schedule
-from .service import AutomationService as AutomationService
 from .targets import AutomationTarget as AutomationTarget
 from .targets import ExecutionFailed as ExecutionFailed
 from .targets import ExecutionInterrupted as ExecutionInterrupted
@@ -130,18 +135,19 @@ if TYPE_CHECKING:
 
 __all__ = [
     "AttentionResolution",
-    "AutomationEngine",
+    "Automation",
     "AutomationError",
     "AutomationErrorCode",
     "AutomationExecution",
     "AutomationLifecycleError",
+    "AutomationOwner",
     "AutomationSchedulerError",
-    "AutomationService",
     "AutomationStoreError",
     "AutomationStoreProtocolError",
     "AutomationStoreTimeout",
     "AutomationTarget",
     "AutomationTask",
+    "AutomationWaitTimeout",
     "ClaimLostError",
     "CronSchedule",
     "ExecutionBusyError",
@@ -159,6 +165,7 @@ __all__ = [
     "ExecutionSucceeded",
     "ExecutionUncertain",
     "FunctionTarget",
+    "HandlePage",
     "InterruptCallbackError",
     "InterruptedExecution",
     "IntervalSchedule",
@@ -174,13 +181,16 @@ __all__ = [
     "RequestConflictError",
     "ResolutionNotAllowedError",
     "RetryNotAllowedError",
+    "RunHandle",
     "Schedule",
+    "ScheduleSpec",
     "SqlAlchemyAutomationStore",
     "StartAlreadyAuthorizedError",
     "TargetExecutionError",
     "TargetNotFoundError",
     "TaskConflictError",
     "TaskFilter",
+    "TaskHandle",
     "TaskNotFoundError",
     "TaskPage",
     "TaskStatus",

@@ -13,7 +13,7 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from tinkerfin_native_stream import NativeRuntimeInterrupt
 
 from .errors import TargetExecutionError
-from .models import AutomationExecution, ExecutionFailure
+from .models import AutomationExecution, ExecutionFailure, JsonObject
 
 _JSON_VALUE: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
@@ -24,6 +24,11 @@ class ExecutionRequest:
 
     execution: AutomationExecution
     deadline: datetime
+
+    @property
+    def input(self) -> JsonObject:
+        """Return the saved execution input without another source or lookup."""
+        return self.execution.input
 
 
 @dataclass(frozen=True, slots=True)

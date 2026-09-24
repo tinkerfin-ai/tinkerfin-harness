@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from pydantic import TypeAdapter
 
 from tinkerfin_automation import (
     CronSchedule,
@@ -10,6 +11,8 @@ from tinkerfin_automation import (
     MisfireMode,
     MisfirePolicy,
     OnceSchedule,
+    Schedule,
+    ScheduleSpec,
 )
 from tinkerfin_automation.schedules import (
     materialize_schedule,
@@ -31,6 +34,29 @@ def test_once_and_interval_are_strictly_after_cursor() -> None:
     assert next_run_after(interval, once_at + timedelta(seconds=1)) == (
         once_at + timedelta(minutes=1)
     )
+
+
+def test_factories_preserve_persisted_models_and_discriminator() -> None:
+    anchor = datetime(2026, 9, 10, tzinfo=UTC)
+    values = (
+        Schedule.once(at=anchor),
+        Schedule.every(minutes=1, start_at=anchor),
+        Schedule.every(days=365, start_at=anchor),
+        Schedule.cron("0 9 * * mon-fri", timezone="Asia/Shanghai"),
+    )
+    adapter = TypeAdapter(ScheduleSpec)
+    for value in values:
+        assert adapter.validate_json(adapter.dump_json(value)) == value
+        assert schedule_from_json(schedule_to_json(value)) == value
+    assert adapter.json_schema()["discriminator"]["propertyName"] == "kind"
+    with pytest.raises(TypeError):
+        Schedule()
+
+
+@pytest.mark.parametrize("seconds", [-1, 0, 59, True, 60.5, 365 * 86400 + 1])
+def test_interval_factory_rejects_invalid_duration(seconds) -> None:
+    with pytest.raises(ValueError):
+        Schedule.every(seconds=seconds, start_at=datetime(2026, 9, 10, tzinfo=UTC))
 
 
 def test_cron_skips_dst_gap() -> None:

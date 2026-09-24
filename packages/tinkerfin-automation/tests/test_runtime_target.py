@@ -56,8 +56,10 @@ def _execution(now: datetime) -> AutomationExecution:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("scheduling_namespace", ["app", "scheduler"])
 async def test_runtime_target_uses_ainvoke_and_returns_interrupt_without_resume(
     monkeypatch: pytest.MonkeyPatch,
+    scheduling_namespace: str,
 ) -> None:
     calls: list[tuple[RunIdentity, object, AgentMode | None]] = []
 
@@ -82,7 +84,7 @@ async def test_runtime_target_uses_ainvoke_and_returns_interrupt_without_resume(
     runtime = TinkerFin().with_namespace("app").build(model="provider:model")
     target: AutomationTarget = TinkerFinTarget(runtime, mode="default")
     now = datetime(2026, 9, 9, 8, tzinfo=UTC)
-    execution = _execution(now)
+    execution = replace(_execution(now), namespace=scheduling_namespace)
 
     result = await target.run(
         ExecutionRequest(execution=execution, deadline=now + timedelta(minutes=30))
@@ -93,24 +95,15 @@ async def test_runtime_target_uses_ainvoke_and_returns_interrupt_without_resume(
     assert not target.cancellation_is_final
 
 
-@pytest.mark.parametrize("identity_only", [False, True])
+@pytest.mark.parametrize("scheduling_namespace", ["app", "other"])
 async def test_runtime_target_rejects_foreign_namespace_before_preparing_resources(
-    identity_only: bool,
+    scheduling_namespace: str,
 ) -> None:
     runtime = TinkerFin().with_namespace("app").build(model="provider:model")
     now = datetime(2026, 9, 9, 8, tzinfo=UTC)
-    if identity_only:
-        with pytest.raises(ValueError, match="identity.namespace"):
-            replace(
-                _execution(now),
-                identity=RunIdentity(
-                    namespace="other", thread_id="thread-1", run_id="run-1"
-                ),
-            )
-        return
     execution = replace(
         _execution(now),
-        namespace="other",
+        namespace=scheduling_namespace,
         identity=RunIdentity(namespace="other", thread_id="thread-1", run_id="run-1"),
     )
     with pytest.raises(TargetExecutionError, match="namespaces must match"):

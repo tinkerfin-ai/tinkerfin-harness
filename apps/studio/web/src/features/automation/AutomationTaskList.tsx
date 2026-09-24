@@ -6,12 +6,11 @@ import { useI18n } from '../../i18n'
 import { beijingDate, beijingTime, type AutomationTask } from './model'
 import { formatDate, formatSchedule } from './presentation'
 
-export function AutomationTaskList({ tasks, query, status, busy, total, onEdit, onExecute, onToggle, onPause, onDelete, onClearFilter }: {
+export function AutomationTaskList({ tasks, query, status, busy, onEdit, onExecute, onToggle, onPause, onDelete, onClearFilter }: {
   tasks: AutomationTask[]
   query: string
   status: 'all' | 'enabled' | 'paused'
   busy: ReadonlySet<string>
-  total: number
   onEdit: (task: AutomationTask, trigger: HTMLElement) => void
   onExecute: (id: string) => void
   onToggle: (id: string) => void
@@ -30,17 +29,16 @@ export function AutomationTaskList({ tasks, query, status, busy, total, onEdit, 
   }, [selectedVisible, visible.length, batch])
 
   return <>
-    <div className="automation-toolbar">
-      <div className="automation-batch-actions">
-        <h2>{t('全部任务')} <span className="automation-caption">{total}</span></h2>
-        {batch && <><label className="automation-select"><input ref={allRef} type="checkbox"
+    <div className="automation-toolbar automation-task-toolbar">
+      {batch && <div className="automation-batch-actions">
+        <label className="automation-select"><input ref={allRef} type="checkbox"
           aria-label={t('全选当前任务')} checked={visible.length > 0 && selectedVisible === visible.length}
           onChange={(event) => setSelected((current) => {
             const next = new Set(current)
             visible.forEach((task) => event.target.checked ? next.add(task.id) : next.delete(task.id))
             return next
-          })} /></label><span className="automation-caption">{t('已选 {count} 项', { count: selected.size })}</span></>}
-      </div>
+          })} /></label><span className="automation-caption">{t('已选 {count} 项', { count: selected.size })}</span>
+      </div>}
       <div className="automation-batch-actions">
         {batch ? <>
           <Button type="button" size="sm" variant="ghost" disabled={!selected.size || busy.size > 0} onClick={() => { void onPause(selected).then(ids => setSelected(new Set(ids))) }}>{t('暂停')}</Button>

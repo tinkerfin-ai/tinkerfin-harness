@@ -122,7 +122,11 @@ def _utc_datetime(value: datetime) -> datetime:
 
 def _identity_digest(execution: AutomationExecution) -> bytes:
     encoded = json.dumps(
-        [execution.identity.thread_id, execution.identity.run_id],
+        [
+            execution.identity.namespace,
+            execution.identity.thread_id,
+            execution.identity.run_id,
+        ],
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")

@@ -76,7 +76,7 @@ export function AutomationEditor({ task, trigger, onSave, onClose, defaultModelI
       for (const file of files) {
         const attachment = await uploadAttachment(file, controller.signal, () => {})
         if (controller.signal.aborted || !mounted.current) return
-        setDraft(current => ({ ...current, attachments: [...current.attachments, attachment.id], files: [...current.files, attachment] }))
+        setDraft(current => ({ ...current, attachments: [...current.attachments, attachment.id], inputFiles: [...current.inputFiles, attachment] }))
       }
     } catch {
       if (!controller.signal.aborted && mounted.current) setFailure(t('参考文件上传失败，请重试'))
@@ -119,8 +119,8 @@ export function AutomationEditor({ task, trigger, onSave, onClose, defaultModelI
             aria-invalid={Boolean(errors.prompt)} aria-describedby={errors.prompt ? `${id}-prompt-error` : undefined}
             onChange={(event) => update('prompt', event.target.value)} />
           {draft.attachments.length > 0 && <div className="automation-attachments">
-            {draft.files.map(file => <span key={file.id}>{file.name}<IconButton size="sm" label={t('移除参考文件：{name}', { name: file.name })}
-              icon={<X size={14} />} disabled={uploading} onClick={() => setDraft(current => ({ ...current, attachments: current.attachments.filter(id => id !== file.id), files: current.files.filter(item => item.id !== file.id) }))} /></span>)}
+            {draft.inputFiles.map(file => <span key={file.id}>{file.name}<IconButton size="sm" label={t('移除参考文件：{name}', { name: file.name })}
+              icon={<X size={14} />} disabled={uploading} onClick={() => setDraft(current => ({ ...current, attachments: current.attachments.filter(id => id !== file.id), inputFiles: current.inputFiles.filter(item => item.id !== file.id) }))} /></span>)}
           </div>}
           <div className="automation-prompt-tools">
             <IconButton size="sm" label={t('添加参考文件')} loading={uploading} icon={<Paperclip size={18} />} onClick={() => fileRef.current?.click()} />

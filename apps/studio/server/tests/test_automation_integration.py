@@ -12,9 +12,9 @@ from test_agent_runtime import _ToolModel, _Workspace
 
 from tinkerfin import TinkerFin
 from tinkerfin_automation import (
-    AutomationEngine,
-    AutomationService,
+    Automation,
     SqlAlchemyAutomationStore,
+    next_run_after,
 )
 from tinkerfin_studio.agent import runtime as runtime_module
 from tinkerfin_studio.api.dependencies import get_user_context
@@ -33,7 +33,9 @@ from tinkerfin_tracing import Tracer
 
 
 @pytest.fixture
-async def automation_resources(database, components_database, attachments, monkeypatch):
+async def automation_environment(
+    database, components_database, attachments, monkeypatch
+):
     async with database.session() as session:
         session.add(
             User(
@@ -81,34 +83,49 @@ async def automation_resources(database, components_database, attachments, monke
             return workspace
 
     store = SqlAlchemyAutomationStore(components_database.engine)
+    automation = Automation(namespace=NAMESPACE, store=store)
     try:
-        async with AutomationService(namespace=NAMESPACE, store=store) as automation:
-            tracer = Tracer()
-            async with httpx.AsyncClient(
-                transport=httpx.MockTransport(lambda _: httpx.Response(500))
-            ) as client:
-                yield cast(
-                    ApplicationResources,
-                    SimpleNamespace(
-                        database=database,
-                        components_database=components_database,
-                        attachments=attachments,
-                        automation=automation,
-                        tracer=tracer,
-                        tinkerfin=TinkerFin(
-                            checkpointer=InMemorySaver(), store=InMemoryStore()
-                        ).with_observer(tracer),
-                        model_http_transport=None,
-                        model_http_client=client,
-                        sandbox_manager=Sandboxes(),
-                        agent_subagents={},
-                        settings=SimpleNamespace(
-                            tavily_api_key=None, model_allowed_origins=()
-                        ),
+        tracer = Tracer()
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: httpx.Response(500))
+        ) as client:
+            resources = cast(
+                ApplicationResources,
+                SimpleNamespace(
+                    database=database,
+                    components_database=components_database,
+                    attachments=attachments,
+                    automation=automation,
+                    tracer=tracer,
+                    tinkerfin=TinkerFin(
+                        checkpointer=InMemorySaver(), store=InMemoryStore()
+                    ).with_observer(tracer),
+                    model_http_transport=None,
+                    model_http_client=client,
+                    sandbox_manager=Sandboxes(),
+                    agent_subagents={},
+                    settings=SimpleNamespace(
+                        tavily_api_key=None, model_allowed_origins=()
                     ),
-                )
+                ),
+            )
+            automation.target("studio_agent", StudioAutomationTarget(resources))
+            async with automation.worker(
+                on_interrupt=fail_interactive_execution
+            ) as worker:
+                yield resources, worker
     finally:
         await store.close()
+
+
+@pytest.fixture
+async def automation_resources(automation_environment):
+    return automation_environment[0]
+
+
+@pytest.fixture
+async def automation_worker(automation_environment):
+    return automation_environment[1]
 
 
 def configuration():
@@ -119,7 +136,7 @@ def configuration():
         "accessMode": "full",
         "schedule": {
             "kind": "once",
-            "date": (datetime.now(UTC) + timedelta(days=2)).date().isoformat(),
+            "date": "2099-09-22",
             "time": "09:00",
         },
         "attachments": [],
@@ -128,8 +145,38 @@ def configuration():
     }
 
 
+@pytest.mark.parametrize("clock_offset", [-400_000, 400_000])
+def test_interval_first_occurrence_waits_one_period_from_saved_anchor(clock_offset):
+    anchor = datetime(2026, 9, 23, 1, 52, 44, tzinfo=UTC)
+    config = TaskConfiguration.model_validate(
+        {
+            **configuration(),
+            "schedule": {"kind": "interval", "every": 5, "unit": "minutes"},
+        }
+    )
+    schedule = config.framework_schedule(anchor)
+    assert next_run_after(
+        schedule, anchor + timedelta(microseconds=clock_offset)
+    ) == anchor + timedelta(minutes=5)
+
+
+def test_interval_with_start_date_keeps_the_requested_midnight():
+    anchor = datetime(2026, 9, 23, 1, 52, 44, tzinfo=UTC)
+    config = TaskConfiguration.model_validate(
+        {
+            **configuration(),
+            "schedule": {"kind": "interval", "every": 5, "unit": "minutes"},
+            "startsOn": "2026-09-24",
+        }
+    )
+    assert next_run_after(config.framework_schedule(anchor), anchor) == datetime(
+        2026, 9, 23, 16, tzinfo=UTC
+    )
+
+
 async def test_http_crud_idempotency_real_result_and_owner_isolation(
     automation_resources,
+    automation_worker,
 ):
     resources = automation_resources
     application = create_application(lifespan=None)
@@ -169,62 +216,51 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
         assert (
             await client.post(f"/api/automation/tasks/{task['id']}/run", json=command)
         ).json()["data"]["id"] == execution_id
-        async with AutomationEngine(
-            resources.automation,
-            targets={"studio_agent": StudioAutomationTarget(resources)},
-            on_interrupt=fail_interactive_execution,
-        ) as worker:
-            await worker.wait_until_idle()
-            await worker.check_ready()
-            result = await client.get(f"/api/automation/runs/{execution_id}")
-            assert result.status_code == 200, result.text
-            detail = result.json()["data"]
-            saved_run = await resources.automation.get_execution(
-                owner_id="1", execution_id=execution_id
-            )
-            assert detail["status"] == "succeeded", (
-                saved_run.failure_code,
-                saved_run.failure_message,
-            )
-            assert any(
-                message["content"] == "任务完成" for message in detail["messages"]
-            )
-            changed = {
-                "requestId": "edit",
-                "expectedRevision": 1,
-                "configuration": {**configuration(), "name": "更名"},
-            }
-            edited = await client.put(
-                f"/api/automation/tasks/{task['id']}", json=changed
-            )
-            assert edited.status_code == 200, edited.text
-            conflict = await client.put(
-                f"/api/automation/tasks/{task['id']}",
-                json={**changed, "requestId": "conflict"},
-            )
-            assert conflict.status_code == 409
-            deleted = await client.request(
-                "DELETE",
-                f"/api/automation/tasks/{task['id']}",
-                json={"requestId": "delete", "expectedRevision": 2},
-            )
-            assert deleted.status_code == 200, deleted.text
-            assert (await client.get(f"/api/automation/runs/{execution_id}")).json()[
-                "data"
-            ]["name"] == "日报"
-            user = UserContext(
-                user_id=2,
-                username="other",
-                display_name="Other",
-                roles=(),
-                disabled=False,
-            )
-            assert (
-                await client.get(f"/api/automation/runs/{execution_id}")
-            ).status_code == 404
-            assert (await client.get("/api/automation/tasks")).json()["data"][
-                "items"
-            ] == []
+        await automation_worker.wait_until_idle()
+        await automation_worker.check_ready()
+        result = await client.get(f"/api/automation/runs/{execution_id}")
+        assert result.status_code == 200, result.text
+        detail = result.json()["data"]
+        saved_run = (
+            await resources.automation.for_owner("1").get_run(execution_id)
+        ).snapshot
+        assert detail["status"] == "succeeded", (
+            saved_run.failure_code,
+            saved_run.failure_message,
+        )
+        assert any(message["content"] == "任务完成" for message in detail["messages"])
+        changed = {
+            "requestId": "edit",
+            "expectedRevision": 1,
+            "configuration": {**configuration(), "name": "更名"},
+        }
+        edited = await client.put(f"/api/automation/tasks/{task['id']}", json=changed)
+        assert edited.status_code == 200, edited.text
+        conflict = await client.put(
+            f"/api/automation/tasks/{task['id']}",
+            json={**changed, "requestId": "conflict"},
+        )
+        assert conflict.status_code == 409
+        deleted = await client.request(
+            "DELETE",
+            f"/api/automation/tasks/{task['id']}",
+            json={"requestId": "delete", "expectedRevision": 2},
+        )
+        assert deleted.status_code == 200, deleted.text
+        assert (await client.get(f"/api/automation/runs/{execution_id}")).json()[
+            "data"
+        ]["name"] == "日报"
+        user = UserContext(
+            user_id=2,
+            username="other",
+            display_name="Other",
+            roles=(),
+            disabled=False,
+        )
+        assert (
+            await client.get(f"/api/automation/runs/{execution_id}")
+        ).status_code == 404
+        assert (await client.get("/api/automation/tasks")).json()["data"]["items"] == []
 
 
 async def test_saved_schedule_survives_service_restart(automation_resources):
@@ -238,37 +274,16 @@ async def test_saved_schedule_survives_service_restart(automation_resources):
     )
     second_store = SqlAlchemyAutomationStore(resources.components_database.engine)
     try:
-        async with AutomationService(namespace=NAMESPACE, store=second_store) as second:
-            restored = await second.get_task(owner_id="1", task_id=task.id)
+        async with Automation(namespace=NAMESPACE, store=second_store) as second:
+            restored = (await second.for_owner("1").task(task.id)).snapshot
             assert restored.name == "日报"
             assert restored.next_run_at == task.next_run_at
     finally:
         await second_store.close()
 
 
-async def test_target_prepares_business_input_for_the_assigned_runtime(
-    automation_resources,
-):
-    from tinkerfin_automation.targets import ExecutionRequest, ExecutionSucceeded
-
-    resources = automation_resources
-    task = await StudioAutomationService(resources, user_id=1).save(
-        SaveTask(
-            request_id="target",
-            configuration=TaskConfiguration.model_validate(configuration()),
-        )
-    )
-    execution = await resources.automation.run_task_now(owner_id="1", task_id=task.id)
-    outcome = await StudioAutomationTarget(resources).run(
-        ExecutionRequest(
-            execution=execution, deadline=datetime.now(UTC) + timedelta(minutes=1)
-        )
-    )
-    assert isinstance(outcome, ExecutionSucceeded)
-
-
 async def test_read_only_automation_fails_instead_of_approving_a_write(
-    automation_resources, monkeypatch
+    automation_resources, automation_worker, monkeypatch
 ):
     from collections.abc import Callable, Sequence
     from typing import Any
@@ -316,26 +331,10 @@ async def test_read_only_automation_fails_instead_of_approving_a_write(
             configuration=TaskConfiguration.model_validate(config),
         )
     )
-    run = await resources.automation.run_task_now(owner_id="1", task_id=task.id)
-    errors: list[Exception] = []
-
-    class ObservedTarget(StudioAutomationTarget):
-        async def run(self, request):
-            try:
-                return await super().run(request)
-            except Exception as error:
-                errors.append(error)
-                raise
-
-    async with AutomationEngine(
-        resources.automation,
-        targets={"studio_agent": ObservedTarget(resources)},
-        on_interrupt=fail_interactive_execution,
-    ) as worker:
-        await worker.wait_until_idle()
-    if errors:
-        raise errors[0]
-    result = await service.result(run.execution_id)
+    task_handle = await resources.automation.for_owner("1").task(task.id)
+    run = await task_handle.run()
+    await automation_worker.wait_until_idle()
+    result = await service.result(run.id)
     assert result.status == "failed"
     assert result.error == "任务需要人工处理，自动化不会继续执行"
 

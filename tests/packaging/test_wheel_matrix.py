@@ -564,15 +564,14 @@ for root in case["forbidden_modules"]:
 async def smoke() -> None:
     if case["smoke"] == "automation_core":
         from tinkerfin_automation import (
-            AutomationService,
+            Automation,
             TinkerFinTarget,
             create_automation_tools,
         )
-        service = AutomationService(namespace="wheel-matrix")
+        automation = Automation(namespace="wheel-matrix")
         try:
             tools = create_automation_tools(
-                service,
-                owner_id="wheel-owner",
+                automation.for_owner("wheel-owner"),
                 allowed_targets={"summary"},
             )
             assert len(tools) == 9
@@ -582,10 +581,11 @@ async def smoke() -> None:
             }
             assert TinkerFinTarget is not None
         finally:
-            await service.close()
+            await automation.aclose()
     elif case["smoke"] == "automation_sqlite":
         from sqlalchemy.ext.asyncio import create_async_engine
-        from tinkerfin_automation import AutomationService, SqlAlchemyAutomationStore
+        from tinkerfin_automation import SqlAlchemyAutomationStore
+        from tinkerfin_automation.service import AutomationService
         from sqlalchemy.pool import AsyncAdaptedQueuePool
         engine = create_async_engine(
             "sqlite+aiosqlite:///:memory:", poolclass=AsyncAdaptedQueuePool, pool_size=1, max_overflow=0

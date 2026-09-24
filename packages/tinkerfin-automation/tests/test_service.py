@@ -7,7 +7,6 @@ import pytest
 
 from tinkerfin_automation import (
     AutomationLifecycleError,
-    AutomationService,
     ExecutionOrigin,
     ExecutionStatus,
     IntervalSchedule,
@@ -17,6 +16,7 @@ from tinkerfin_automation import (
     TaskStatus,
 )
 from tinkerfin_automation.clock import ManualClock
+from tinkerfin_automation.service import AutomationService
 
 NOW = datetime(2026, 9, 9, 8, tzinfo=UTC)
 
@@ -138,6 +138,12 @@ async def test_service_crud_uses_task_names_and_keeps_scheduler_in_sync() -> Non
 
     page = await service.list_tasks(owner_id="owner-1")
     assert [item.task_id for item in page.items] == [task.task_id]
+    await service.delete_task(
+        owner_id="owner-1",
+        task_id=task.task_id,
+        expected_revision=4,
+        request_id="delete-1",
+    )
     await service.delete_task(
         owner_id="owner-1",
         task_id=task.task_id,
@@ -296,6 +302,7 @@ async def test_due_wakeup_atomically_advances_task_and_queues_latest_misfire() -
     )
     task = await service.create_task(
         owner_id="owner-1",
+        execution_namespace="owner-runtime",
         name="Summary",
         schedule=IntervalSchedule(every_seconds=60, start_at=NOW),
         target="summary",
@@ -306,6 +313,8 @@ async def test_due_wakeup_atomically_advances_task_and_queues_latest_misfire() -
 
     history = await service.list_executions(owner_id="owner-1", task_id=task.task_id)
     assert len(history.items) == 1
+    assert history.items[0].namespace == "app"
+    assert history.items[0].identity.namespace == "owner-runtime"
     assert history.items[0].scheduled_for == NOW + timedelta(minutes=5)
     updated = await service.get_task(owner_id="owner-1", task_id=task.task_id)
     assert updated.next_run_at == NOW + timedelta(minutes=6)

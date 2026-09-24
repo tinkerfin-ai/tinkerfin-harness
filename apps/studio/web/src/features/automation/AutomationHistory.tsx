@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, CircleAlert } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, CircleAlert } from 'lucide-react'
 import { useLayoutEffect, useRef } from 'react'
 
 import { Button, IconButton, OverlayScrollbar, ViewTabs } from '../../components/ui'
@@ -29,19 +29,23 @@ function HistoryDay({ date, runs, onOpenRun, hasMore, onLoadMore, loading }: {
     <div className="automation-day-body">
       <div ref={viewportRef} className="automation-day-scroll ui-scrollbar" role="region" tabIndex={0}
         aria-label={t('{date} 的运行记录，可上下滚动', { date })}>
-        {runs.length ? runs.map((run) => <Button key={run.id} type="button" variant="ghost"
-          className={`automation-run-chip is-${run.status}`}
-          aria-label={t('查看运行：{name}，{date} {time}，{status}', {
-            name: run.name, date: run.date, time: run.time,
-            status: t(runStatusLabels[run.status]),
-          })} onClick={(event) => onOpenRun(run, event.currentTarget)}>
-          <span className="automation-event-content">
-            <span className="automation-event-time"><time>{run.time}</time>
-              {run.status === 'failed' && <span className="automation-event-failure" aria-hidden="true"><CircleAlert size={14} />{t('失败')}</span>}
-            </span>
-            <span className="automation-event-name">{run.name}</span>
+        {runs.length ? runs.map((run) => <div key={run.id} className="automation-timeline-entry">
+          <span className={`automation-timeline-marker is-${run.status}`} aria-hidden="true">
+            {run.status === 'succeeded' && <Check size={10} strokeWidth={2.4} />}
           </span>
-        </Button>) : <p className="automation-day-empty">{t('暂无记录')}</p>}
+          <Button type="button" variant="ghost" className={`automation-run-chip is-${run.status}`}
+            aria-label={t('查看运行：{name}，{date} {time}，{status}', {
+              name: run.name, date: run.date, time: run.time,
+              status: t(runStatusLabels[run.status]),
+            })} onClick={(event) => onOpenRun(run, event.currentTarget)}>
+            <span className="automation-event-content">
+              <span className="automation-event-time"><time>{run.time}</time>
+                {run.status === 'failed' && <span className="automation-event-failure" aria-hidden="true">{t('失败')}</span>}
+              </span>
+              <span className="automation-event-name">{run.name}</span>
+            </span>
+          </Button>
+        </div>) : <p className="automation-day-empty">{t('暂无记录')}</p>}
         {hasMore && <Button variant="text" loading={loading} onClick={onLoadMore}>{t('加载更多')}</Button>}
       </div>
       <OverlayScrollbar viewportRef={viewportRef} size="compact" visibility="persistent" />
@@ -106,17 +110,14 @@ export function AutomationHistory({ runs, query, status, onOpenRun, offset, onOf
       ]} onChange={onViewChange} />
     </div>
     <div id="automation-history-view" role="tabpanel" aria-label={t(view === 'week' ? '周历' : '列表')}>
-      {view === 'week' ? <>
+      {view === 'week' ?
         <div className="automation-calendar">
           <div ref={weekRef} className="automation-week ui-scrollbar" role="region" tabIndex={0} aria-label={t('本周运行历史，可横向滚动')}>
             {dates.map((date) => <HistoryDay key={date} date={date} hasMore={Boolean(cursors[date])} onLoadMore={() => onLoadMore(date)} loading={loading}
               runs={matching.filter((run) => run.date === date).reverse()} onOpenRun={onOpenRun} />)}
           </div>
         </div>
-        <div className="automation-history-hint">
-          <small><span className="automation-horizontal-hint">{t('左右查看其他日期')} · </span>{t('每日记录可上下滚动')}</small>
-        </div>
-      </> : matching.length ? [...dates].reverse().filter((date) => matching.some((run) => run.date === date)).map((date) => (
+      : matching.length ? [...dates].reverse().filter((date) => matching.some((run) => run.date === date)).map((date) => (
         <section key={date} className="automation-history-group">
           <h3>{formatDate(date, locale)}</h3>
           {matching.filter((run) => run.date === date).map((run) => <Button type="button" variant="ghost" key={run.id}

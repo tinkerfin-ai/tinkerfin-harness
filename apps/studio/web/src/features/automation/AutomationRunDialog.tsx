@@ -60,7 +60,7 @@ export function AutomationRunDialog({ run, trigger, onClose }: {
           {detail.error && <p role="status">{isTranslationKey(detail.error) ? t(detail.error) : detail.error}</p>}
           {!detail.resultAvailable && <p>{t('暂时没有可显示的结果')}</p>}
           <div className="automation-result-output">{detail.messages.filter(message => message.role === 'assistant').map(message => <MarkdownContent key={message.id} content={messageText(message.content)} />)}</div>
-          {detail.attachments.map(file => <ResultFile key={file.id} file={file} />)}
+          {detail.outputFiles.map(file => <ResultFile key={file.id} file={file} />)}
         </>}
     </div>}
   </Dialog>

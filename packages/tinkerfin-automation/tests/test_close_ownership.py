@@ -9,12 +9,12 @@ from test_engine_failures import _causes
 from tinkerfin_automation import (
     AutomationLifecycleError,
     AutomationSchedulerError,
-    AutomationService,
     AutomationStoreError,
     MemoryAutomationStore,
 )
 from tinkerfin_automation.clock import ManualClock
 from tinkerfin_automation.scheduler import MemoryScheduler
+from tinkerfin_automation.service import AutomationService
 
 
 @pytest.mark.parametrize("borrowed", [False, True])

@@ -15,7 +15,6 @@ from test_store_contract import NOW, _task, _taskless_execution
 
 from tinkerfin_automation import (
     AttentionResolution,
-    AutomationService,
     AutomationStoreProtocolError,
     ExecutionFailure,
     ExecutionStatus,
@@ -24,6 +23,7 @@ from tinkerfin_automation import (
 )
 from tinkerfin_automation._codec import decode_task, encode_task
 from tinkerfin_automation.clock import ManualClock
+from tinkerfin_automation.service import AutomationService
 from tinkerfin_automation.store import AutomationStore, ScheduledExecution
 from tinkerfin_contracts import RunIdentity
 
@@ -259,6 +259,7 @@ def test_task_and_execution_snapshots_reject_non_json_values(
     [
         ("task_id", "x" * 37),
         ("namespace", "x" * 129),
+        ("execution_namespace", "x" * 129),
         ("owner_id", "x" * 192),
         ("name", "x" * 256),
         ("target", "x" * 192),
@@ -272,12 +273,22 @@ def test_persisted_models_reject_sql_text_width_overflows(
         replace(_task(), **invalid_fields)
 
 
-def test_execution_rejects_identity_namespace_mismatch() -> None:
-    with pytest.raises(ValueError, match="identity.namespace"):
-        replace(
-            _taskless_execution(execution_id="run"),
-            identity=RunIdentity(namespace="other", thread_id="thread", run_id="run"),
-        )
+def test_execution_runtime_scope_is_independent_of_scheduling_scope() -> None:
+    execution = replace(
+        _taskless_execution(execution_id="run"),
+        identity=RunIdentity(namespace="other", thread_id="thread", run_id="run"),
+    )
+    assert execution.namespace == "app"
+    assert execution.identity.namespace == "other"
+
+
+def test_task_codec_requires_and_preserves_execution_namespace() -> None:
+    task = replace(_task(), execution_namespace="runtime-user")
+    assert decode_task(encode_task(task)) == task
+    payload = json.loads(encode_task(task))
+    del payload["execution_namespace"]
+    with pytest.raises(AutomationStoreProtocolError):
+        decode_task(json.dumps(payload))
 
 
 @pytest.mark.parametrize("value", [b"failure", "failure\x00text", "failure\ud800"])

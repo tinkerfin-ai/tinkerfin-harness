@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from tinkerfin_automation import (
-    AutomationService,
     CronSchedule,
     IntervalSchedule,
     InvalidScheduleError,
@@ -15,6 +14,7 @@ from tinkerfin_automation import (
 )
 from tinkerfin_automation.clock import ManualClock
 from tinkerfin_automation.schedules import materialize_schedule, preview_schedule
+from tinkerfin_automation.service import AutomationService
 from tinkerfin_automation.store import AutomationStore
 
 START = datetime(2026, 9, 15, tzinfo=UTC)

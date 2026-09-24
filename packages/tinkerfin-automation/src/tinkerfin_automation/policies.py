@@ -40,7 +40,7 @@ class ExecutionLimits:
     """Bound queueing and execution resources for one task or one-time owner.
 
     Task executions share these limits by ``task_id``. Executions submitted through
-    :meth:`~tinkerfin_automation.AutomationService.execute_once` share them with other
+    :meth:`~tinkerfin_automation.AutomationOwner.run` share them with other
     taskless executions owned by the same subject. Every execution also consumes global
     Engine capacity.
     """

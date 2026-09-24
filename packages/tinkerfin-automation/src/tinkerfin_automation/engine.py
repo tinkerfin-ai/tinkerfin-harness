@@ -221,6 +221,9 @@ class AutomationEngine:
             self._ensure_running()
             await self._reap_finished()
             await self._dispatch_ready()
+            # Another dispatcher may have committed a claim without publishing
+            # its owned task yet. Its empty peer cannot establish engine idleness.
+            await self._dispatch_idle.wait()
             self._ensure_running()
             if not self._owned:
                 return

@@ -7,9 +7,7 @@ import pytest
 
 from tinkerfin_automation import (
     AttentionResolution,
-    AutomationEngine,
     AutomationLifecycleError,
-    AutomationService,
     AutomationStoreError,
     ExecutionFailure,
     ExecutionInterrupted,
@@ -20,6 +18,8 @@ from tinkerfin_automation import (
     OnceSchedule,
 )
 from tinkerfin_automation.clock import ManualClock
+from tinkerfin_automation.engine import AutomationEngine
+from tinkerfin_automation.service import AutomationService
 from tinkerfin_automation.store import WorkItemClaim
 from tinkerfin_automation.targets import normalize_target_result
 from tinkerfin_native_stream import NativeRuntimeInterrupt
@@ -110,6 +110,68 @@ async def _status(service: AutomationService, execution_id: str) -> ExecutionSta
     return (
         await service.get_execution(owner_id="owner-1", execution_id=execution_id)
     ).status
+
+
+async def test_idle_wait_settles_claims_before_their_local_publication() -> None:
+    clock = ManualClock(NOW)
+    claimed = asyncio.Event()
+    observed_empty = asyncio.Event()
+    publish = asyncio.Event()
+
+    class PublishingStore(MemoryAutomationStore):
+        async def claim_work(
+            self,
+            namespace: str,
+            worker_id: str,
+            *,
+            limit: int,
+            lease_duration: timedelta,
+            global_concurrency: int,
+        ) -> tuple[WorkItemClaim, ...]:
+            claims = await super().claim_work(
+                namespace,
+                worker_id,
+                limit=limit,
+                lease_duration=lease_duration,
+                global_concurrency=global_concurrency,
+            )
+            if claims and not claimed.is_set():
+                claimed.set()
+                await publish.wait()
+            elif claimed.is_set():
+                observed_empty.set()
+            return claims
+
+    async def run(_request: ExecutionRequest) -> None:
+        pass
+
+    service = AutomationService(
+        namespace="app", store=PublishingStore(clock=clock), clock=clock
+    )
+    execution = await service.execute_once(owner_id="owner", target="report")
+    engine = AutomationEngine(
+        service, targets={"report": FunctionTarget(run)}, clock=clock
+    )
+    await engine.start()
+    waiter: asyncio.Task[None] | None = None
+    try:
+        await claimed.wait()
+        waiter = asyncio.create_task(engine.wait_until_idle())
+        await observed_empty.wait()
+        assert not waiter.done()
+        publish.set()
+        await waiter
+        assert (
+            await service.get_execution(
+                owner_id="owner", execution_id=execution.execution_id
+            )
+        ).status is ExecutionStatus.SUCCEEDED
+    finally:
+        publish.set()
+        if waiter is not None:
+            await asyncio.gather(waiter, return_exceptions=True)
+        await engine.close()
+        await service.close()
 
 
 def test_runtime_interrupt_shape_is_normalized_without_decision() -> None:

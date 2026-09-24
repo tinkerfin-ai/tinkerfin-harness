@@ -4,7 +4,7 @@ export const AUTOMATION_TEST_NOW = '2026-09-10T07:00:00Z'
 export const taskFixture = (overrides: Partial<AutomationTask> = {}): AutomationTask => ({
   id: 'news', name: '每日 AI 新闻简报', prompt: '整理新闻', modelId: 'main', accessMode: 'full',
   schedule: { kind: 'daily', time: '09:00' }, startsOn: '', endsOn: '', enabled: true,
-  attachments: [], files: [], revision: 1, nextRunAt: '2026-09-11T01:00:00Z', ...overrides,
+  attachments: [], inputFiles: [], revision: 1, nextRunAt: '2026-09-11T01:00:00Z', ...overrides,
 })
 export const runFixture = (overrides: Partial<AutomationRunRecord> = {}): AutomationRun => presentRun({
   id: 'run', taskId: 'news', name: '每日 AI 新闻简报', queuedAt: '2026-09-10T01:00:00Z', startedAt: '2026-09-10T01:00:01Z', finishedAt: '2026-09-10T01:00:05Z', status: 'succeeded', trigger: 'scheduled', error: null, ...overrides,

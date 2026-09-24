@@ -12,7 +12,6 @@ from tests.support.sql_engines import SqlEngineFactory
 
 from tinkerfin_automation import (
     AutomationExecution,
-    AutomationService,
     AutomationStoreError,
     AutomationStoreProtocolError,
     AutomationTask,
@@ -26,6 +25,7 @@ from tinkerfin_automation import (
     SqlAlchemyAutomationStore,
     TaskStatus,
 )
+from tinkerfin_automation.service import AutomationService
 from tinkerfin_automation.sql_schema import AUTOMATION_TABLE_NAMES, tasks, work_items
 from tinkerfin_automation.store import AutomationStore
 from tinkerfin_contracts import RunIdentity
@@ -36,6 +36,7 @@ def _task(now: datetime) -> AutomationTask:
         task_id="00000000-0000-0000-0000-000000000001",
         namespace="app",
         owner_id="owner-1",
+        execution_namespace="app",
         name="Daily summary",
         target="summary",
         input={"project_id": "project-1"},

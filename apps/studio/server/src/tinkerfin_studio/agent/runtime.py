@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 from deepagents.backends.store import StoreBackend
 from langchain.agents.middleware import TodoListMiddleware
@@ -18,6 +20,7 @@ from tinkerfin_studio.agent.tool_policy import tool_execution_policy
 from tinkerfin_studio.agent.tools import build_web_search_tool
 from tinkerfin_studio.attachments.tools import build_attachment_tools
 from tinkerfin_studio.attachments.workspace_tools import build_sandbox_attachment_tools
+from tinkerfin_studio.automation.tools import build_automation_tools
 from tinkerfin_studio.models.chat import create_chat_model
 from tinkerfin_studio.models.schemas import AgentModelConfig
 
@@ -28,7 +31,7 @@ _SYSTEM_PROMPT = """你是 TinkerFin Studio 的主 Agent。
 
 复杂任务用 write_todos 跟踪，独立研究可用 task 委派。
 附件用 read_attachment 读取或 import_attachment 导入工作区；引用丢失时用 list_attachments 查找。
-生成工具只保存工作文件，按需读取、检查和修改；仅用 deliver_file 交付选定结果。
+生成工具只保存工作文件，按需读取、检查和修改；用 deliver_file 交付选定的工作文件。
 工具成功后再确认结果，并简短回复；不交付无须给用户的中间文件。
 工具失败先核实原因、调整方案，不原样重复调用。
 """
@@ -116,6 +119,17 @@ def _build_runtime(
     )
     subagents: list[SubAgent] = [
         {
+            "name": "general-purpose",
+            "description": "处理主 Agent 委派的资料整理、分析与文件任务",
+            "system_prompt": "完成委派任务并返回结果；自动化任务的管理由主 Agent 处理。"
+            + image_instructions,
+            "interrupt_on": file_review_policy(access_mode),
+            "middleware": tool_execution_policy(),
+            "tools": [web_search, *attachment_tools],
+        },
+    ]
+    subagents.extend(
+        {
             "name": name,
             "description": definition.description,
             "system_prompt": definition.system_prompt + image_instructions,
@@ -127,7 +141,32 @@ def _build_runtime(
             ],
         }
         for name, definition in resources.agent_subagents.items()
-    ]
+    )
+    conversation_tools = (
+        build_automation_tools(
+            resources,
+            user_id=user_id,
+            model_id=model_config.model_id,
+            access_mode=access_mode,
+        )
+        if collection_id is None
+        else ()
+    )
+    automation_instructions = (
+        "\n用户明确要求时可直接创建、修改、暂停、启用、删除或立即运行自动化任务，无须再次确认。"
+        "缺少时间、执行内容或任务指代不清时先询问；控制已有任务前先查询其 ID 和 revision。"
+        "修改提交完整配置并保留用户未要求修改的字段；不要静默替换冲突版本或重复失败命令。"
+        "创建保存独立完整指令，默认使用当前模型与文件审批选择，仅引用明确指定的附件。"
+        "根据工具成功结果回报名称、日程和北京时间下次执行时间，可在侧栏自动化页面管理。"
+        "立即运行只代表已提交；后台任务需要人工交互时会失败，不会自动批准。"
+        "核对执行情况用 list_automation_runs，读取结果用 get_automation_run；任务 inputFiles 是参考文件，运行 outputFiles 才是产物。"
+        "不能从下次执行时间或工作目录推断是否运行；查询失败或结果未就绪时如实说明。"
+        "用户要求取回已有结果时用 deliver_automation_files，不重新运行任务或生成文件。"
+        "时间统一按北京时间，工作日指周一至周五。"
+        f"当前北京时间：{datetime.now(ZoneInfo('Asia/Shanghai')).isoformat(timespec='minutes')}。\n"
+        if conversation_tools
+        else ""
+    )
     configured = (
         resources.tinkerfin.with_compaction_tool()
         .with_namespace(namespace)
@@ -150,20 +189,14 @@ def _build_runtime(
         configured = configured.with_plan(enabled=False)
     return configured.build(
         model=model,
-        tools=[web_search, *attachment_tools],
-        system_prompt=_SYSTEM_PROMPT + image_instructions,
+        tools=[web_search, *attachment_tools, *conversation_tools],
+        system_prompt=_SYSTEM_PROMPT + image_instructions + automation_instructions,
         middleware=(TodoListMiddleware(), *tool_execution_policy()),
         subagents=subagents,
         backend=resources.sandbox_manager.workspace(
             f"users/{user_id}",
             routes={
-                "/memories/": StoreBackend(
-                    namespace=lambda _runtime: (
-                        ("memories",)
-                        if collection_id is None
-                        else ("users", str(user_id), "memories")
-                    )
-                )
+                "/memories/": StoreBackend(namespace=lambda _runtime: ("memories",))
             },
         ),
         interrupt_on=file_review_policy(access_mode),
@@ -203,7 +236,7 @@ def build_automation_runtime(
     image_model: AgentModelConfig | None,
     access_mode: AccessMode,
 ) -> AgentRuntime[None]:
-    """绑定一次后台执行的文件集合；用户沙箱与记忆分别保持隔离"""
+    """为独立后台执行绑定产物集合，沿用该用户的沙箱与长期记忆"""
     return _build_runtime(
         resources=resources,
         user_id=user_id,
@@ -211,7 +244,7 @@ def build_automation_runtime(
         model_config=model_config,
         image_model=image_model,
         access_mode=access_mode,
-        namespace="studio_automation",
+        namespace=f"ns_{user_id}",
         collection_id=execution_id,
         plan_enabled=False,
     )

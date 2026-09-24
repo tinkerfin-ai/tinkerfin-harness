@@ -9,6 +9,17 @@
     padding: var(--space-6) var(--layout-page-gutter);
   }
 
+  .automation-content:has(.automation-calendar),
+  #automation-panel:has(.automation-calendar),
+  #automation-history-view:has(.automation-calendar) {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .automation-content:has(.automation-calendar) { height: 100%; }
+
   .chat-header:has(.header-navigation):has(.automation-header-actions) {
     padding-inline: var(--layout-page-gutter);
   }
@@ -16,7 +27,6 @@
   .automation-toolbar,
   .automation-date-nav,
   .automation-task-actions,
-  .automation-history-hint,
   .automation-result-meta,
   .automation-batch-actions {
     display: flex;
@@ -25,6 +35,7 @@
   }
 
   .automation-toolbar {
+    flex-shrink: 0;
     justify-content: space-between;
     gap: var(--space-4);
     margin-bottom: var(--space-5);
@@ -37,12 +48,17 @@
     font-weight: var(--weight-ui);
   }
 
-  .automation-toolbar.automation-history-toolbar { align-items: flex-start; flex-wrap: nowrap; }
+  .automation-toolbar.automation-history-toolbar { align-items: flex-start; flex-wrap: nowrap; padding-inline-end: var(--space-2); }
+  .automation-history-toolbar .ui-view-tabs > button:last-child { padding-inline-end: var(--space-2); }
+  .automation-history-toolbar .ui-view-tabs > button:last-child[aria-selected='true']::after { right: var(--space-2); }
+  .automation-task-toolbar > .automation-batch-actions:last-child { margin-left: auto; }
   .automation-date-nav { flex: 1; min-width: 0; gap: var(--space-2); flex-wrap: wrap; }
-  .automation-date-switcher { flex-shrink: 0; min-width: 0; max-width: 100%; display: flex; align-items: center; gap: var(--space-1); }
-  .automation-date-switcher h2 { min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; text-align: center; }
+  .automation-date-switcher { flex-shrink: 0; min-width: 0; max-width: 100%; display: flex; align-items: center; gap: 0; }
+  .automation-date-switcher h2 { min-width: 0; inline-size: 10em; flex: 0 1 10em; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; text-align: center; }
 
   .automation-calendar {
+    flex: 1;
+    min-height: 0;
     padding: var(--space-2);
     border-radius: var(--radius-xl);
     background: var(--color-layer-2);
@@ -51,14 +67,22 @@
   .automation-week {
     position: relative;
     display: grid;
+    height: 100%;
     grid-template-columns: repeat(7, minmax(0, 1fr));
+    grid-template-rows: minmax(0, 1fr);
     gap: var(--space-1);
     overflow-x: auto;
   }
 
-  .automation-history-day { min-width: 0; }
+  .automation-history-day {
+    display: grid;
+    grid-template-rows: var(--control-lg) minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+  }
 
   .automation-day-heading {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -70,6 +94,19 @@
     line-height: var(--type-micro-line);
     font-weight: var(--weight-ui);
   }
+
+  .automation-day-heading::after {
+    position: absolute;
+    right: var(--space-2);
+    bottom: 0;
+    left: var(--space-2);
+    height: var(--space-0-5);
+    border-radius: var(--radius-pill);
+    background: var(--color-border);
+    content: '';
+  }
+
+  .automation-history-day.is-today .automation-day-heading::after { background: var(--color-brand); }
 
   .automation-day-heading b {
     display: grid;
@@ -87,10 +124,10 @@
     background: var(--color-brand);
   }
 
-  .automation-day-body { position: relative; }
+  .automation-day-body { position: relative; min-height: 0; }
 
   .automation-day-scroll {
-    height: calc(var(--space-16) * 4 - var(--space-5));
+    height: 100%;
     padding: 0 var(--space-1) var(--space-2);
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -103,17 +140,66 @@
     border-radius: var(--radius-md);
   }
 
+  .automation-timeline-entry {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--space-4) minmax(0, 1fr);
+    gap: var(--space-1);
+    min-width: 0;
+    margin-bottom: var(--space-1);
+  }
+
+  .automation-day-scroll > .automation-timeline-entry:first-child { margin-top: var(--space-2); }
+
+  .automation-timeline-entry:not(:last-of-type)::before {
+    position: absolute;
+    top: var(--space-5);
+    bottom: calc(-1 * var(--space-3));
+    left: calc(var(--space-2) - .5px);
+    width: 1px;
+    background: var(--color-border);
+    content: '';
+  }
+
+  .automation-timeline-marker {
+    z-index: 1;
+    display: grid;
+    grid-column: 1;
+    grid-row: 1;
+    width: var(--space-3);
+    height: var(--space-3);
+    margin-top: var(--space-2);
+    place-self: start center;
+    place-items: center;
+    border: 1px solid var(--color-text-secondary);
+    border-radius: var(--radius-pill);
+    background: var(--color-layer-2);
+    color: var(--color-text-secondary);
+  }
+
+  .automation-timeline-marker.is-failed {
+    border-color: var(--color-danger-text);
+    background: var(--color-danger-text);
+  }
+
   .automation-run-chip {
     display: grid;
+    grid-column: 2;
+    grid-row: 1;
     grid-template-columns: minmax(0, 1fr);
     width: 100%;
     height: auto;
     min-height: var(--space-16);
     padding: var(--space-2);
-    margin-bottom: var(--space-1);
     justify-content: stretch;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--color-layer-1);
+    box-shadow: var(--shadow-1);
     text-align: left;
   }
+
+  .automation-run-chip:hover:not(:disabled) { background: var(--color-hover); }
 
   .automation-event-content { display: grid; min-width: 0; width: 100%; gap: var(--space-1); }
 
@@ -131,15 +217,11 @@
   .automation-event-failure {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-1);
-    padding-inline: var(--space-1);
-    border-radius: var(--radius-sm);
-    background: var(--color-danger-soft);
     color: var(--color-danger-text);
     white-space: nowrap;
   }
-  .automation-event-failure svg { flex-shrink: 0; }
-  .automation-run-chip.is-failed { background: color-mix(in srgb, var(--color-danger-soft) 45%, transparent); }
+  .automation-run-chip.is-failed,
+  .automation-run-chip.is-failed:hover:not(:disabled) { background: var(--color-danger-soft); }
   .automation-event-name {
     display: -webkit-box;
     overflow: hidden;
@@ -160,10 +242,6 @@
   }
 
   .automation-day-empty { margin: var(--space-6) 0; text-align: center; }
-  .automation-history-hint { margin-top: var(--space-4); color: var(--color-text-secondary); font-size: var(--type-micro-size); }
-  .automation-history-hint small { margin-left: auto; font-size: inherit; }
-  .automation-horizontal-hint { display: none; }
-
   .automation-history-group { margin-top: var(--space-6); }
   .automation-history-group:first-child { margin-top: 0; }
   .automation-history-group h3 { margin: 0 0 var(--space-2); font-size: var(--type-caption-size); font-weight: var(--weight-ui); color: var(--color-text-secondary); }
@@ -193,12 +271,9 @@
     .chat-header:has(.header-navigation):has(.automation-header-actions) { padding-inline: var(--layout-page-gutter); }
     .automation-toolbar { flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-4); }
     .automation-date-nav { flex-wrap: wrap; }
+    .automation-date-switcher h2 { inline-size: 9em; flex-basis: 9em; }
     .automation-week { display: flex; padding-bottom: var(--space-2); }
     .automation-history-day { flex: 0 0 calc(var(--space-16) * 2); }
-    .automation-day-scroll { height: calc(var(--space-16) * 4 - var(--space-2)); }
-    .automation-history-hint { flex-wrap: wrap; }
-    .automation-history-hint small { flex-basis: 100%; margin-left: 0; }
-    .automation-horizontal-hint { display: inline; }
     .automation-history-row-content { gap: var(--space-2); }
     .automation-history-row-content > svg { display: none; }
   }
@@ -206,6 +281,11 @@
   @media (forced-colors: active) {
     .automation-calendar, .automation-run-chip { outline: 1px solid CanvasText; }
     .automation-history-day.is-today .automation-day-heading b { background: Highlight; color: HighlightText; }
+    .automation-day-heading::after { background: CanvasText; }
+    .automation-history-day.is-today .automation-day-heading::after { background: Highlight; }
+    .automation-timeline-entry::before { background: CanvasText; }
+    .automation-timeline-marker { border-color: CanvasText; background: Canvas; color: CanvasText; }
+    .automation-timeline-marker.is-failed { border-color: Highlight; background: Highlight; }
   }
 }
 

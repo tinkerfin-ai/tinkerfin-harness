@@ -12,7 +12,7 @@ export type AutomationSchedule =
   | { kind: 'monthly'; day: number; time: string }
   | { kind: 'interval'; every: number; unit: 'minutes' | 'hours' | 'days' }
 
-/** 服务端保存的任务与日程，附件ID用于提交，files用于展示 */
+/** 服务端保存的任务与日程，附件ID用于提交，inputFiles用于展示 */
 export interface AutomationTask {
   id: string
   name: string
@@ -24,7 +24,7 @@ export interface AutomationTask {
   modelId: string
   accessMode: AccessMode
   attachments: string[]
-  files: Attachment[]
+  inputFiles: Attachment[]
   revision: number
   nextRunAt: string | null
 }
@@ -62,7 +62,7 @@ export interface AutomationDraft {
   modelId: string
   accessMode: AccessMode
   attachments: string[]
-  files: Attachment[]
+  inputFiles: Attachment[]
 }
 export type DraftField = 'name' | 'prompt' | 'schedule' | 'validity' | 'model'
 export type DraftError = '请输入任务名称' | '请输入任务指令' | '请输入有效的执行时间'
@@ -132,7 +132,7 @@ export function validateDraft(draft: AutomationDraft): DraftErrors {
 export function emptyDraft(): AutomationDraft {
   return {
     name: '', prompt: '', schedule: { kind: 'daily', time: '09:00' },
-    startsOn: '', endsOn: '', modelId: '', accessMode: 'full', attachments: [], files: [],
+    startsOn: '', endsOn: '', modelId: '', accessMode: 'full', attachments: [], inputFiles: [],
   }
 }
 

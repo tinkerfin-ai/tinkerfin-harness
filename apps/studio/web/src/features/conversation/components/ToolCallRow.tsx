@@ -8,6 +8,8 @@ import {
   FolderTree,
   Globe2,
   ListChecks,
+  Pause,
+  Play,
   SquareTerminal,
   TextSearch,
   Trash2,
@@ -18,6 +20,7 @@ import type { ReactNode } from 'react'
 
 import type { Message } from '../../../types'
 import { useI18n } from '../../../i18n'
+import { isTranslationKey } from '../../../i18n/messages'
 
 type MessageStatus = NonNullable<Message['meta']>['status']
 
@@ -39,6 +42,17 @@ const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
   web_search: { title: 'Search', icon: Globe2, summaryKeys: ['query'] },
   write_todos: { title: 'Todos', icon: ListChecks, summaryKeys: [] },
   task: { title: 'Task', icon: Bot, summaryKeys: ['description', 'subagent_type'] },
+  create_automation: { title: '创建任务', icon: FilePlus2, summaryKeys: ['name'] },
+  update_automation: { title: '修改任务', icon: FilePenLine, summaryKeys: ['task_id'] },
+  pause_automation: { title: '暂停任务', icon: Pause, summaryKeys: ['task_id'] },
+  enable_automation: { title: '启用任务', icon: Play, summaryKeys: ['task_id'] },
+  delete_automation: { title: '删除任务', icon: Trash2, summaryKeys: ['task_id'] },
+  run_automation_task_now: { title: '立即运行任务', icon: Play, summaryKeys: ['task_id'] },
+  get_automation: { title: '查看任务', icon: FileText, summaryKeys: ['task_id'] },
+  list_automations: { title: '查找任务', icon: ListChecks, summaryKeys: ['query'] },
+  list_automation_runs: { title: '查询任务执行', icon: ListChecks, summaryKeys: ['query', 'task_id'] },
+  get_automation_run: { title: '读取运行结果', icon: FileText, summaryKeys: ['execution_id'] },
+  deliver_automation_files: { title: '发送任务文件', icon: FileText, summaryKeys: ['execution_id'] },
 }
 
 const firstLine = (value: string) => value.split(/\r?\n/, 1)[0]?.trim() ?? ''
@@ -120,6 +134,7 @@ export function ToolCallRow({
   const { t } = useI18n()
   const toolName = message.meta?.toolName?.trim() || 'tool'
   const presentation = TOOL_PRESENTATIONS[toolName]
+  const title = presentation?.title ?? 'Tool call'
   const ToolIcon = presentation?.icon ?? Wrench
   const status = message.meta?.status ?? 'completed'
   const failure = status === 'failed' && Boolean(message.meta?.result)
@@ -157,7 +172,7 @@ export function ToolCallRow({
           <ChevronDown className="tool-row-chevron" size={14} strokeWidth={2} />
         </span>
         <span className="tool-row-title">
-          {presentationOverride?.title ?? presentation?.title ?? 'Tool call'}
+          {presentationOverride?.title ?? (isTranslationKey(title) ? t(title) : title)}
         </span>
         {summary
           ? <>

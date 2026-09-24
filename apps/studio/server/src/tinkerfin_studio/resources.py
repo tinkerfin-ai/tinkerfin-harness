@@ -20,11 +20,7 @@ from opensandbox.config import ConnectionConfig
 from redis.asyncio import Redis
 
 from tinkerfin import TinkerFin
-from tinkerfin_automation import (
-    AutomationEngine,
-    AutomationService,
-    SqlAlchemyAutomationStore,
-)
+from tinkerfin_automation import Automation, SqlAlchemyAutomationStore
 from tinkerfin_messaging import AgUiChannel, MessagingLimits, MessagingRetentionPolicy
 from tinkerfin_messaging.messaging import Messaging
 from tinkerfin_messaging.redis import RedisBackend
@@ -169,7 +165,7 @@ class ApplicationResources:
     conversation_trace: ConversationTraceCoordinator
     conversation_titles: ConversationTitles
     readiness: ReadinessService
-    automation: AutomationService
+    automation: Automation
 
 
 def build_lifespan():
@@ -333,12 +329,8 @@ def build_lifespan():
                 agent_subagents = await load_subagents()
                 automation_store = SqlAlchemyAutomationStore(components_database.engine)
                 stack.push_async_callback(automation_store.close)
-                automation = await _enter_lifespan_context(
-                    stack,
-                    outcome,
-                    AutomationService(
-                        namespace="studio_automation", store=automation_store
-                    ),
+                automation = Automation(
+                    namespace="studio_automation", store=automation_store
                 )
 
                 async def check_automation() -> None:
@@ -374,15 +366,13 @@ def build_lifespan():
                         http_client=http_client,
                     ),
                 )
+                automation.target("studio_agent", StudioAutomationTarget(resources))
                 automation_worker = await _enter_lifespan_context(
                     stack,
                     outcome,
-                    AutomationEngine(
-                        automation,
-                        targets={"studio_agent": StudioAutomationTarget(resources)},
-                        on_interrupt=fail_interactive_execution,
-                    ),
+                    automation.worker(on_interrupt=fail_interactive_execution),
                 )
+                await automation_worker.check_ready()
                 application.state.resources = resources
                 resources_published = True
                 await application.state.resources.attachments.cleanup()

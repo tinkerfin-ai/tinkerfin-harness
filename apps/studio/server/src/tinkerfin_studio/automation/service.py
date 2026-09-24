@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING
 from uuid import NAMESPACE_URL, uuid5
 
 from tinkerfin.agui import AgUiHistory
@@ -24,7 +24,9 @@ from tinkerfin_automation.errors import (
     TaskConflictError,
     TaskNotFoundError,
 )
+from tinkerfin_contracts.media import Attachment
 from tinkerfin_studio.api.errors import (
+    AttachmentErrorCode,
     AutomationErrorCode,
     BusinessException,
     ModelErrorCode,
@@ -105,21 +107,15 @@ def run_view(run: AutomationExecution) -> RunView:
     )
 
 
-class _CommandArguments(TypedDict):
-    owner_id: str
-    task_id: str
-    expected_revision: int
-    request_id: str
-
-
 class StudioAutomationService:
     """绑定当前用户后完成任务命令、查询和文件授权"""
 
     def __init__(self, resources: ApplicationResources, *, user_id: int) -> None:
         self._resources = resources
         self._user_id = user_id
-        self._owner = str(user_id)
-        self._automation = resources.automation
+        self._automation = resources.automation.for_owner(
+            str(user_id), execution_namespace=f"ns_{user_id}"
+        )
 
     async def _task_view(self, task: AutomationTask) -> TaskView:
         config = task_configuration(task)
@@ -132,7 +128,7 @@ class StudioAutomationService:
             enabled=task.status == TaskStatus.ENABLED,
             revision=task.revision,
             next_run_at=task.next_run_at,
-            files=files,
+            input_files=files,
         )
 
     async def _validate_configuration(self, config: TaskConfiguration) -> None:
@@ -156,12 +152,11 @@ class StudioAutomationService:
         config = command.configuration
         if (task_id is None) != (command.expected_revision is None):
             raise BusinessException(AutomationErrorCode.INVALID_CONFIGURATION)
-        if task_id is not None:
-            await self._automation.get_task(owner_id=self._owner, task_id=task_id)
+        task = None if task_id is None else await self._automation.task(task_id)
         await self._validate_configuration(config)
         identity = str(
             uuid5(
-                NAMESPACE_URL, f"studio-automation:{self._owner}:{command.request_id}"
+                NAMESPACE_URL, f"studio-automation:{self._user_id}:{command.request_id}"
             )
         )
         files = self._resources.attachments
@@ -181,9 +176,8 @@ class StudioAutomationService:
             "attachmentCollectionId": identity,
         }
         try:
-            if task_id is None:
+            if task is None:
                 task = await self._automation.create_task(
-                    owner_id=self._owner,
                     name=config.name,
                     schedule=schedule,
                     target=TARGET,
@@ -192,9 +186,7 @@ class StudioAutomationService:
                 )
             else:
                 assert command.expected_revision is not None
-                task = await self._automation.update_task(
-                    owner_id=self._owner,
-                    task_id=task_id,
+                await task.update(
                     expected_revision=command.expected_revision,
                     name=config.name,
                     schedule=schedule,
@@ -207,15 +199,13 @@ class StudioAutomationService:
             )
             raise
         await files.mark_collection_task(
-            user_id=self._user_id, collection_id=identity, task_id=task.task_id
+            user_id=self._user_id, collection_id=identity, task_id=task.id
         )
-        return await self._task_view(task)
+        return await self._task_view(task.snapshot)
 
     async def get_task(self, task_id: str) -> TaskView:
         """读取本人任务的完整可编辑配置"""
-        return await self._task_view(
-            await self._automation.get_task(owner_id=self._owner, task_id=task_id)
-        )
+        return await self._task_view((await self._automation.task(task_id)).snapshot)
 
     async def list_tasks(
         self,
@@ -227,7 +217,6 @@ class StudioAutomationService:
     ) -> TaskList:
         """筛选发生在存储端，返回稳定游标和真实下次执行时间"""
         page = await self._automation.list_tasks(
-            owner_id=self._owner,
             filters=TaskFilter(
                 name_contains=query, statuses=(status,) if status else ()
             ),
@@ -235,39 +224,41 @@ class StudioAutomationService:
             limit=limit,
         )
         return TaskList(
-            items=[await self._task_view(task) for task in page.items],
+            items=[await self._task_view(task.snapshot) for task in page.items],
             next_cursor=page.next_cursor,
         )
 
     async def task_counts(self, *, query: str | None = None) -> dict[TaskStatus, int]:
         """统计全部匹配任务，不受当前分页和状态选择影响"""
         return await self._automation.summarize_tasks(
-            owner_id=self._owner, filters=TaskFilter(name_contains=query)
+            filters=TaskFilter(name_contains=query)
         )
 
     async def task_command(
         self, task_id: str, operation: str, command: TaskCommand
     ) -> TaskView | RunView | None:
         """执行启停、删除或手动运行；删除保留历史和附件引用"""
-        args: _CommandArguments = {
-            "owner_id": self._owner,
-            "task_id": task_id,
-            "expected_revision": command.expected_revision,
-            "request_id": command.request_id,
-        }
         if operation == "delete":
-            await self._automation.delete_task(**args)
+            await self._automation.delete_task(
+                task_id,
+                expected_revision=command.expected_revision,
+                request_id=command.request_id,
+            )
             return None
+        task = await self._automation.task(task_id)
         if operation == "run":
-            run = await self._automation.run_task_now(**args)
-            return run_view(run)
-        if operation == "pause":
-            task = await self._automation.pause_task(**args)
-        elif operation == "enable":
-            task = await self._automation.enable_task(**args)
-        else:
+            run = await task.run(
+                expected_revision=command.expected_revision,
+                request_id=command.request_id,
+            )
+            return run_view(run.snapshot)
+        change = {"pause": task.pause, "enable": task.enable}.get(operation)
+        if change is None:
             raise BusinessException(AutomationErrorCode.INVALID_CONFIGURATION)
-        return await self._task_view(task)
+        await change(
+            expected_revision=command.expected_revision, request_id=command.request_id
+        )
+        return await self._task_view(task.snapshot)
 
     async def batch(self, command: BatchCommand) -> list[BatchResult]:
         """逐项返回有限批量命令结果，取消请求时保持取消传播"""
@@ -302,16 +293,17 @@ class StudioAutomationService:
     async def list_runs(
         self,
         *,
-        queued_from: datetime,
-        queued_until: datetime,
+        queued_from: datetime | None = None,
+        queued_until: datetime | None = None,
+        task_id: str | None = None,
         query: str | None = None,
         status: ExecutionStatus | None = None,
         cursor: str | None = None,
         limit: int = 50,
     ) -> RunList:
         """按北京时间换算后的范围读取执行历史，时间范围左闭右开"""
-        page = await self._automation.list_executions(
-            owner_id=self._owner,
+        page = await self._automation.list_runs(
+            task_id=task_id,
             filters=ExecutionFilter(
                 name_contains=query,
                 statuses=(status,) if status else (),
@@ -322,15 +314,15 @@ class StudioAutomationService:
             limit=limit,
         )
         return RunList(
-            items=[run_view(run) for run in page.items], next_cursor=page.next_cursor
+            items=[run_view(run.snapshot) for run in page.items],
+            next_cursor=page.next_cursor,
         )
 
     async def run_counts(
         self, *, queued_from: datetime, queued_until: datetime, query: str | None = None
     ) -> dict[ExecutionStatus, int]:
         """按名称及日期范围汇总历史的完整状态分布"""
-        return await self._automation.summarize_executions(
-            owner_id=self._owner,
+        return await self._automation.summarize_runs(
             filters=ExecutionFilter(
                 name_contains=query, queued_from=queued_from, queued_until=queued_until
             ),
@@ -338,15 +330,13 @@ class StudioAutomationService:
 
     async def result(self, execution_id: str) -> RunDetail:
         """先核验执行归属，再读取框架的只读消息与当前执行附件"""
-        run = await self._automation.get_execution(
-            owner_id=self._owner, execution_id=execution_id
-        )
+        run = (await self._automation.get_run(execution_id)).snapshot
         view = run_view(run)
         if run.execution_started_at is None:
             return RunDetail(**view.model_dump(), result_available=False)
         try:
             history = await AgUiHistory(
-                self._resources.tracer, namespace=NAMESPACE
+                self._resources.tracer, namespace=run.identity.namespace
             ).get(run.identity.thread_id, head_run_id=run.identity.run_id, limit=100)
         except TraceThreadNotFound:
             return RunDetail(**view.model_dump(), result_available=False)
@@ -357,6 +347,42 @@ class StudioAutomationService:
         return RunDetail(
             **view.model_dump(),
             result_available=True,
-            messages=list(history.snapshot.messages),
-            attachments=[file for file in files if file.id not in original_ids],
+            messages=[
+                message
+                for message in history.snapshot.messages
+                if message.role == "assistant"
+            ],
+            output_files=[file for file in files if file.id not in original_ids],
         )
+
+    async def deliver_files(
+        self, execution_id: str, attachment_ids: list[str]
+    ) -> list[Attachment]:
+        """核验本人执行及所选产物，复用持久附件，不重新生成或复制
+
+        Args:
+            execution_id: 已查询的执行 ID
+            attachment_ids: 运行结果 outputFiles 中选定的文件 ID，不含参考附件
+
+        Returns:
+            按请求顺序返回可交付附件，重复 ID 只保留第一次
+
+        Raises:
+            ExecutionNotFoundError: 执行不存在或不属于当前用户
+            BusinessException: 所选文件不属于本次产物或已经不可用
+            ValueError: 文件数量不在一至一百之间
+        """
+        if not 1 <= len(attachment_ids) <= 100:
+            raise ValueError("请选择一至一百个运行产物")
+        run = (await self._automation.get_run(execution_id)).snapshot
+        inputs = set(task_configuration(run).attachments)
+        files: list[Attachment] = []
+        for identity in dict.fromkeys(attachment_ids):
+            if identity in inputs:
+                raise BusinessException(AttachmentErrorCode.NOT_FOUND)
+            files.append(
+                await self._resources.attachments.get(
+                    identity, user_id=self._user_id, collection_id=execution_id
+                )
+            )
+        return files

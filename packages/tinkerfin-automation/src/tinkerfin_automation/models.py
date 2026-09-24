@@ -15,7 +15,7 @@ from tinkerfin_contracts import RunIdentity
 
 from ._json import require_finite_json
 from .policies import ExecutionLimits, MisfirePolicy
-from .schedules import Schedule
+from .schedules import ScheduleSpec
 
 JsonObject: TypeAlias = Mapping[str, JsonValue]
 
@@ -90,15 +90,20 @@ class AttentionResolution(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class AutomationTask:
-    """A persisted task definition visible to its owning application subject."""
+    """A persisted task with separate scheduling and Runtime isolation scopes.
+
+    namespace selects the scheduling Store partition. execution_namespace is the
+    immutable Runtime scope inherited by every occurrence of this task.
+    """
 
     task_id: str
     namespace: str
     owner_id: str
+    execution_namespace: str
     name: str
     target: str
     input: JsonObject
-    schedule: Schedule
+    schedule: ScheduleSpec
     status: TaskStatus
     revision: int
     next_run_at: datetime | None
@@ -113,6 +118,9 @@ class AutomationTask:
         _validate_persisted_text(self.task_id, name="task_id", maximum=36)
         _validate_persisted_text(self.namespace, name="namespace", maximum=128)
         _validate_persisted_text(self.owner_id, name="owner_id", maximum=191)
+        _validate_persisted_text(
+            self.execution_namespace, name="execution_namespace", maximum=128
+        )
         _validate_persisted_text(self.name, name="name", maximum=255)
         _validate_persisted_text(self.target, name="target", maximum=191)
         require_finite_json(self.input)
@@ -121,7 +129,11 @@ class AutomationTask:
 
 @dataclass(frozen=True, slots=True)
 class AutomationExecution:
-    """A persisted attempt to run a task snapshot or one-time input."""
+    """A persisted attempt with its scheduling scope and complete Runtime identity.
+
+    identity.namespace selects Runtime memory, checkpoints, workspaces, and Trace;
+    it can differ from the scheduling Store partition in namespace.
+    """
 
     execution_id: str
     task_id: str | None
@@ -170,8 +182,6 @@ class AutomationExecution:
         _validate_persisted_text(self.identity.run_id, name="identity.run_id")
         if self.retry_of is not None:
             _validate_persisted_text(self.retry_of, name="retry_of", maximum=36)
-        if self.identity.namespace != self.namespace:
-            raise ValueError("identity.namespace must match namespace")
         if self.failure_code is not None:
             _validate_persisted_text(self.failure_code, name="failure_code")
         if self.failure_message is not None:

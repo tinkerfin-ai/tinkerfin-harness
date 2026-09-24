@@ -47,6 +47,7 @@ class MinioAttachmentStorage:
 
     使用 open 上下文创建实例，退出时关闭全部连接。最多并发四个对象操作；
     单次操作最长 60 秒，连接超时 5 秒，不进行隐式请求重试。
+    直接访问配置的存储地址，不继承进程或系统代理。
     """
 
     def __init__(self, client: S3Client, signer: S3Client, bucket: str) -> None:
@@ -63,6 +64,7 @@ class MinioAttachmentStorage:
         """打开存储连接，异常及取消时也关闭已创建的客户端"""
         session = get_session()
         config = AioConfig(
+            proxies={},
             signature_version="s3v4",
             s3={"addressing_style": "path"},
             connect_timeout=5,

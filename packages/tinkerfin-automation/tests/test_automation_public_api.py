@@ -7,6 +7,8 @@ import tinkerfin_automation
 
 def test_specialized_contracts_use_their_domain_modules() -> None:
     modules = {
+        "service": ("AutomationService",),
+        "engine": ("AutomationEngine",),
         "store": (
             "AutomationStore",
             "WorkItemClaim",
@@ -30,8 +32,14 @@ def test_specialized_contracts_use_their_domain_modules() -> None:
 
 def test_common_tasks_keep_direct_root_imports() -> None:
     for name in (
-        "AutomationService",
-        "AutomationEngine",
+        "Automation",
+        "AutomationOwner",
+        "TaskHandle",
+        "RunHandle",
+        "Schedule",
+        "ScheduleSpec",
+        "HandlePage",
+        "AutomationWaitTimeout",
         "FunctionTarget",
         "TinkerFinTarget",
         "OnceSchedule",

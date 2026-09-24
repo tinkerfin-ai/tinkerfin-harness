@@ -34,7 +34,7 @@ async function prepare(page: Page, language = 'zh-CN') {
       const command: { requestId: string; configuration: AutomationDraft } = route.request().postDataJSON()
       if (operations.has(command.requestId)) data = operations.get(command.requestId)
       else {
-        data = taskFixture({ ...command.configuration, files: [], id: `created-${state.tasks.length}` })
+        data = taskFixture({ ...command.configuration, inputFiles: [], id: `created-${state.tasks.length}` })
         state.tasks.push(data as ReturnType<typeof taskFixture>)
         operations.set(command.requestId, data)
       }
@@ -66,7 +66,7 @@ async function prepare(page: Page, language = 'zh-CN') {
     } else if (path === '/api/automation/runs') data = { items: matchingRuns.filter(run => !status || run.status === status), nextCursor: null }
     else if (path.startsWith('/api/automation/runs/')) {
       const run = state.runs.find(run => run.id === path.split('/').at(-1))!
-      data = { ...run, messages: [], attachments: [], resultAvailable: true }
+      data = { ...run, messages: [], outputFiles: [], resultAvailable: true }
     } else throw new Error(`Unexpected request: ${method} ${path}`)
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })

@@ -155,7 +155,7 @@ export function AutomationPage({ navigationTriggerRef, onOpenNavigation, onModal
         <div id="automation-panel" role="tabpanel" aria-label={t(page === 'history' ? '历史' : '任务')} aria-busy={data.loading}>
           {data.loading && !data.tasks.length && !data.runs.length ? <p role="status">{t('正在加载自动化')}</p> : page === 'history'
             ? <AutomationHistory offset={weekOffset} onOffsetChange={setWeekOffset} runs={data.runs} query={query} status={filter === 'enabled' || filter === 'paused' ? 'all' : filter} onOpenRun={(run, trigger) => setDialog({ kind: 'result', run, trigger })} view={view} onViewChange={setView} cursors={data.cursors} onLoadMore={data.loadMore} loading={data.loading} />
-            : <><AutomationTaskList tasks={data.tasks} query={query} status={filter === 'enabled' || filter === 'paused' ? filter : 'all'} busy={busy} total={filter === 'all' ? total : data.counts[filter] ?? 0}
+            : <><AutomationTaskList tasks={data.tasks} query={query} status={filter === 'enabled' || filter === 'paused' ? filter : 'all'} busy={busy}
               onEdit={(task, trigger) => setDialog({ kind: 'editor', task, trigger })} onExecute={id => void execute(id, 'run')}
               onToggle={id => void execute(id, data.tasks.find(task => task.id === id)?.enabled ? 'pause' : 'enable')}
               onPause={ids => batch(data.tasks.filter(task => ids.has(task.id)), 'pause')} onDelete={requestDelete} onClearFilter={clearFilters} />

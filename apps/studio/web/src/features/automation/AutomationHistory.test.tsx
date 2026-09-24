@@ -42,9 +42,10 @@ describe('自动化运行历史', () => {
   })
   it('结果对话框读取服务端事实且不提供审批或执行操作', async () => {
     const run = runFixture()
-    vi.mocked(fetchRunDetail).mockResolvedValue({ ...run, resultAvailable: true, messages: [], attachments: [] })
+    vi.mocked(fetchRunDetail).mockResolvedValue({ ...run, resultAvailable: true, messages: [], outputFiles: [{ id: 'report', name: 'report.md', mime_type: 'text/markdown', size_bytes: 12 }] })
     render(<AutomationRunDialog run={run} trigger={null} onClose={vi.fn()} />)
     await waitFor(() => expect(fetchRunDetail).toHaveBeenCalledWith(run.id, expect.any(AbortSignal)))
+    expect(await screen.findByRole('button', { name: 'report.md' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /执行|审批/ })).not.toBeInTheDocument()
   })
 })

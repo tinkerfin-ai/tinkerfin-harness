@@ -33,6 +33,7 @@ def _task(now: datetime) -> AutomationTask:
         task_id=str(uuid4()),
         namespace="mysql-test",
         owner_id="owner-1",
+        execution_namespace="app",
         name="Concurrent task",
         target="target",
         input={},

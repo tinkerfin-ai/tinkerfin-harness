@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import MutableMapping
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from tinkerfin_automation import (
+    AutomationError,
     AutomationErrorCode,
+    AutomationWaitTimeout,
     ExecutionFailure,
     ExecutionLimits,
     ExecutionStatus,
@@ -48,12 +51,21 @@ def test_failure_requires_stable_public_information() -> None:
         ExecutionFailure(code=" host.denied", message="Access was denied")
 
 
-def test_error_context_is_safe_immutable_and_cause_is_chained() -> None:
+@pytest.mark.parametrize(
+    ("error_type", "code"),
+    [
+        (TaskConflictError, AutomationErrorCode.TASK_CONFLICT),
+        (AutomationWaitTimeout, AutomationErrorCode.WAIT_TIMEOUT),
+    ],
+)
+def test_error_context_is_safe_immutable_and_cause_is_chained(
+    error_type: type[AutomationError], code: AutomationErrorCode
+) -> None:
     public = {"task_id": "task-1"}
     diagnostic = {"operation": "update"}
     cause = RuntimeError("private detail")
-    error = TaskConflictError(
-        "Task revision changed",
+    error = error_type(
+        "Operation did not complete",
         context=public,
         diagnostic_context=diagnostic,
         cause=cause,
@@ -61,9 +73,9 @@ def test_error_context_is_safe_immutable_and_cause_is_chained() -> None:
     public["task_id"] = "changed"
     diagnostic["operation"] = "changed"
 
-    assert error.code is AutomationErrorCode.TASK_CONFLICT
+    assert isinstance(error, AutomationError)
+    assert error.code is code
     assert error.context == {"task_id": "task-1"}
     assert error.diagnostic_context == {"operation": "update"}
     assert error.__cause__ is cause
-    with pytest.raises(TypeError):
-        error.context["task_id"] = "changed"  # type: ignore[index]
+    assert not isinstance(error.context, MutableMapping)

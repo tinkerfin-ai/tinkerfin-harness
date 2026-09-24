@@ -21,6 +21,7 @@ from langgraph.store.memory import InMemoryStore
 from pydantic import Field, SecretStr, ValidationError
 
 from tinkerfin import AgentRuntime, TinkerFin
+from tinkerfin_automation import Automation
 from tinkerfin_contracts import PreparedWorkspace, RunIdentity
 from tinkerfin_sandbox import (
     OpenSandboxBackendUnavailableError,
@@ -209,6 +210,7 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
     resources = cast(
         ApplicationResources,
         SimpleNamespace(
+            automation=Automation(namespace="studio_automation"),
             attachments=attachments,
             model_http_transport=None,
             model_http_client=model_http_client,
@@ -344,6 +346,7 @@ async def test_file_access_choice_controls_root_and_subagent_review(
     resources = cast(
         ApplicationResources,
         SimpleNamespace(
+            automation=Automation(namespace="studio_automation"),
             attachments=attachments,
             model_http_transport=None,
             model_http_client=model_http_client,
@@ -430,6 +433,7 @@ async def test_product_tool_failure_allows_root_and_researcher_to_reply(
     resources = cast(
         ApplicationResources,
         SimpleNamespace(
+            automation=Automation(namespace="studio_automation"),
             attachments=attachments,
             model_http_transport=None,
             model_http_client=model_http_client,

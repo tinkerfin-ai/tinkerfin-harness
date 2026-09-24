@@ -17,11 +17,13 @@ from .schedules import (
     CronSchedule,
     IntervalSchedule,
     OnceSchedule,
-    Schedule,
+    ScheduleSpec,
 )
 
 _AUTOMATION_NAMESPACE = UUID("154841d6-4a23-50da-8f53-0f3609cab079")
-_CanonicalValue: TypeAlias = JsonValue | datetime | Schedule | Mapping[str, JsonValue]
+_CanonicalValue: TypeAlias = (
+    JsonValue | datetime | ScheduleSpec | Mapping[str, JsonValue]
+)
 
 
 def _json_value(value: _CanonicalValue) -> JsonValue:
@@ -61,6 +63,7 @@ def occurrence_key(parts: Sequence[str]) -> str:
 def execution_identity(
     *,
     namespace: str,
+    execution_namespace: str,
     owner_id: str,
     task_id: str | None,
     occurrence: str,
@@ -69,13 +72,13 @@ def execution_identity(
     """Derive the execution ID and Runtime identity for one business attempt."""
 
     material = json.dumps(
-        [namespace, owner_id, task_id, occurrence, attempt],
+        [namespace, execution_namespace, owner_id, task_id, occurrence, attempt],
         ensure_ascii=False,
         separators=(",", ":"),
     )
     execution_id = str(uuid5(_AUTOMATION_NAMESPACE, f"execution:{material}"))
     identity = RunIdentity(
-        namespace=namespace,
+        namespace=execution_namespace,
         thread_id=str(uuid5(_AUTOMATION_NAMESPACE, f"thread:{material}")),
         run_id=str(uuid5(_AUTOMATION_NAMESPACE, f"run:{material}")),
     )

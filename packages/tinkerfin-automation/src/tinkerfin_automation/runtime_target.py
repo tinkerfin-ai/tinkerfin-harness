@@ -37,7 +37,7 @@ class TinkerFinTarget:
         """Borrow a built Runtime without preparing resources or executing work.
 
         Args:
-            runtime: Runtime using the same namespace as scheduled executions.
+            runtime: Runtime matching the execution identity's saved namespace.
             mode: Optional execution mode already supported by this Runtime.
 
         Raises:
@@ -65,14 +65,13 @@ class TinkerFinTarget:
             Success without copying private state, or the pending interrupt IDs.
 
         Raises:
-            TargetExecutionError: The execution belongs to another namespace.
+            TargetExecutionError: The execution identity belongs to another Runtime
+                namespace; the scheduling namespace does not select Runtime resources.
             BaseException: Runtime execution fails or is cancelled after cleanup.
         """
 
         identity = request.execution.identity
-        if not (
-            identity.namespace == request.execution.namespace == self._runtime.namespace
-        ):
+        if identity.namespace != self._runtime.namespace:
             raise TargetExecutionError("Execution and Runtime namespaces must match")
 
         result = await self._runtime.ainvoke(

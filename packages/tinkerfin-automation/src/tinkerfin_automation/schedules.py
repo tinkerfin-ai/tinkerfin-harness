@@ -276,12 +276,88 @@ class CronSchedule(_ScheduleModel):
         return value
 
 
-Schedule: TypeAlias = Annotated[
+ScheduleSpec: TypeAlias = Annotated[
     OnceSchedule | IntervalSchedule | CronSchedule,
     Field(discriminator="kind"),
 ]
 
-_SCHEDULE_ADAPTER: TypeAdapter[Schedule] = TypeAdapter(Schedule)
+_SCHEDULE_ADAPTER: TypeAdapter[ScheduleSpec] = TypeAdapter(ScheduleSpec)
+
+
+class Schedule:
+    """Create validated schedules with explicit timezones and stable time anchors.
+
+    Factory results are the persisted schedule models, typed as ScheduleSpec.
+    Creating a schedule performs no I/O and does not register or start a task.
+    """
+
+    def __new__(cls) -> Self:
+        """Require a factory rather than constructing a schedule namespace."""
+        raise TypeError("Use Schedule.once(), Schedule.every(), or Schedule.cron()")
+
+    @staticmethod
+    def once(
+        *,
+        at: datetime,
+        active_from: datetime | None = None,
+        active_until: datetime | None = None,
+    ) -> OnceSchedule:
+        """Create one occurrence at an aware instant within optional active bounds."""
+        return OnceSchedule(at=at, active_from=active_from, active_until=active_until)
+
+    @staticmethod
+    def every(
+        *,
+        seconds: int = 0,
+        minutes: int = 0,
+        hours: int = 0,
+        days: int = 0,
+        start_at: datetime,
+        active_from: datetime | None = None,
+        active_until: datetime | None = None,
+    ) -> IntervalSchedule:
+        """Create a fixed interval from nonnegative integer duration components.
+
+        Args:
+            seconds: Whole seconds to add to the interval.
+            minutes: Whole minutes to add to the interval.
+            hours: Whole hours to add to the interval.
+            days: Whole 24-hour days to add to the interval.
+            start_at: Aware anchor; reuse it when replaying a creation request.
+            active_from: Inclusive optional start of scheduled occurrences.
+            active_until: Exclusive optional end of scheduled occurrences.
+
+        Returns:
+            A fixed-rate schedule between 60 seconds and 365 days.
+
+        Raises:
+            ValueError: A component, total duration, anchor, or bound is invalid.
+        """
+        values = (seconds, minutes, hours, days)
+        if any(type(value) is not int or value < 0 for value in values):
+            raise ValueError("Interval components must be nonnegative integers")
+        return IntervalSchedule(
+            every_seconds=seconds + minutes * 60 + hours * 3600 + days * 86400,
+            start_at=start_at,
+            active_from=active_from,
+            active_until=active_until,
+        )
+
+    @staticmethod
+    def cron(
+        expression: str,
+        *,
+        timezone: str,
+        active_from: datetime | None = None,
+        active_until: datetime | None = None,
+    ) -> CronSchedule:
+        """Create a five-field Cron schedule in an explicit IANA timezone."""
+        return CronSchedule(
+            expression=expression,
+            timezone=timezone,
+            active_from=active_from,
+            active_until=active_until,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,19 +369,19 @@ class MaterializedSchedule:
     skipped_before: datetime | None
 
 
-def schedule_to_json(schedule: Schedule) -> str:
+def schedule_to_json(schedule: ScheduleSpec) -> str:
     """Encode a validated schedule as canonical JSON for durable storage."""
 
     return _SCHEDULE_ADAPTER.dump_json(schedule).decode("utf-8")
 
 
-def schedule_from_json(value: str) -> Schedule:
+def schedule_from_json(value: str) -> ScheduleSpec:
     """Decode and validate one durable schedule value."""
 
     return _SCHEDULE_ADAPTER.validate_json(value)
 
 
-def next_run_after(schedule: Schedule, after: datetime) -> datetime | None:
+def next_run_after(schedule: ScheduleSpec, after: datetime) -> datetime | None:
     """Return the first scheduled UTC instant strictly after ``after``.
 
     Cron calendar days are bounded to eight years. A local time inside a DST gap
@@ -338,7 +414,7 @@ def next_run_after(schedule: Schedule, after: datetime) -> datetime | None:
     return candidate
 
 
-def _next_occurrence(schedule: Schedule, after_utc: datetime) -> datetime | None:
+def _next_occurrence(schedule: ScheduleSpec, after_utc: datetime) -> datetime | None:
     if isinstance(schedule, OnceSchedule):
         return schedule.at if schedule.at > after_utc else None
     if isinstance(schedule, IntervalSchedule):
@@ -379,7 +455,7 @@ def _next_occurrence(schedule: Schedule, after_utc: datetime) -> datetime | None
 
 
 def preview_schedule(
-    schedule: Schedule,
+    schedule: ScheduleSpec,
     *,
     after: datetime,
     count: int = 5,
@@ -411,7 +487,7 @@ def _latest_interval_due(
 
 
 def materialize_schedule(
-    schedule: Schedule,
+    schedule: ScheduleSpec,
     *,
     next_run_at: datetime,
     now: datetime,
@@ -490,6 +566,7 @@ __all__ = [
     "MaterializedSchedule",
     "OnceSchedule",
     "Schedule",
+    "ScheduleSpec",
     "materialize_schedule",
     "next_run_after",
     "preview_schedule",

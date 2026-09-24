@@ -19,7 +19,7 @@ from .models import (
     TaskStatus,
 )
 from .policies import ExecutionLimits, MisfireMode, MisfirePolicy
-from .schedules import Schedule
+from .schedules import ScheduleSpec
 
 
 class _RecordModel(BaseModel):
@@ -44,10 +44,11 @@ class _TaskRecord(_RecordModel):
     task_id: str
     namespace: str
     owner_id: str
+    execution_namespace: str
     name: str
     target: str
     input: dict[str, JsonValue]
-    schedule: Schedule
+    schedule: ScheduleSpec
     status: TaskStatus
     revision: int
     next_run_at: datetime | None
@@ -58,7 +59,9 @@ class _TaskRecord(_RecordModel):
 
     @field_validator("schedule", mode="before")
     @classmethod
-    def canonical_schedule(cls, value: JsonValue | Schedule) -> JsonValue | Schedule:
+    def canonical_schedule(
+        cls, value: JsonValue | ScheduleSpec
+    ) -> JsonValue | ScheduleSpec:
         if isinstance(value, dict) and not {"active_from", "active_until"}.issubset(
             value
         ):
@@ -153,6 +156,7 @@ def encode_task(task: AutomationTask) -> str:
         task_id=task.task_id,
         namespace=task.namespace,
         owner_id=task.owner_id,
+        execution_namespace=task.execution_namespace,
         name=task.name,
         target=task.target,
         input=dict(task.input),
@@ -176,6 +180,7 @@ def decode_task(payload: str) -> AutomationTask:
             task_id=record.task_id,
             namespace=record.namespace,
             owner_id=record.owner_id,
+            execution_namespace=record.execution_namespace,
             name=record.name,
             target=record.target,
             input=record.input,

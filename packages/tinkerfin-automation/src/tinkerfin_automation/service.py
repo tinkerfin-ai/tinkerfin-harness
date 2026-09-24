@@ -12,6 +12,8 @@ from uuid import uuid4
 
 from pydantic import JsonValue, TypeAdapter
 
+from tinkerfin_contracts.identity import validate_namespace
+
 from ._tasks import TaskOutcome, capture, join_owned_task, select_failure
 from .clock import AutomationClock, SystemClock
 from .errors import (
@@ -37,7 +39,12 @@ from .models import (
 from .policies import ExecutionLimits, MisfirePolicy
 from .queries import ExecutionFilter, TaskFilter
 from .scheduler import AutomationScheduler, MemoryScheduler, _require_external_close
-from .schedules import Schedule, materialize_schedule, next_run_after, preview_schedule
+from .schedules import (
+    ScheduleSpec,
+    materialize_schedule,
+    next_run_after,
+    preview_schedule,
+)
 from .store import AutomationStore, ScheduledExecution
 
 _CancelRunning: TypeAlias = Callable[[str], Awaitable[None]]
@@ -79,7 +86,7 @@ class AutomationService:
 
     @property
     def namespace(self) -> str:
-        """Return the host-selected isolation namespace."""
+        """Return the scheduling Store partition managed by this service."""
 
         return self._namespace
 
@@ -88,12 +95,13 @@ class AutomationService:
         *,
         owner_id: str,
         name: str,
-        schedule: Schedule,
+        schedule: ScheduleSpec,
         target: str,
         input: Mapping[str, JsonValue] | None = None,
         misfire_policy: MisfirePolicy | None = None,
         limits: ExecutionLimits | None = None,
         request_id: str | None = None,
+        execution_namespace: str | None = None,
     ) -> AutomationTask:
         """Create an enabled task and schedule its first future wakeup.
 
@@ -106,6 +114,8 @@ class AutomationService:
             misfire_policy: Optional missed-wakeup behavior.
             limits: Optional queue and execution limits.
             request_id: Optional command idempotency key.
+            execution_namespace: Host-selected Runtime scope for every occurrence;
+                None selects this service's scheduling namespace.
 
         Returns:
             The persisted task definition.
@@ -121,6 +131,9 @@ class AutomationService:
         self._validate_identifier(target, name="target", maximum=191)
         self._validate_request_id(request_id)
         normalized_input = self._json_input(input)
+        selected_namespace = validate_namespace(
+            self._namespace if execution_namespace is None else execution_namespace
+        )
         now = await self._store.current_time()
         next_run_at = next_run_after(schedule, now)
         if next_run_at is None:
@@ -129,6 +142,7 @@ class AutomationService:
             task_id=str(uuid4()),
             namespace=self._namespace,
             owner_id=owner_id,
+            execution_namespace=selected_namespace,
             name=name,
             target=target,
             input=normalized_input,
@@ -146,6 +160,7 @@ class AutomationService:
         digest = canonical_digest(
             {
                 "operation": "create_task",
+                "execution_namespace": selected_namespace,
                 "owner_id": owner_id,
                 "name": name,
                 "target": target,
@@ -241,7 +256,7 @@ class AutomationService:
         task_id: str,
         expected_revision: int,
         name: str | None = None,
-        schedule: Schedule | None = None,
+        schedule: ScheduleSpec | None = None,
         target: str | None = None,
         input: Mapping[str, JsonValue] | None = None,
         misfire_policy: MisfirePolicy | None = None,
@@ -409,7 +424,7 @@ class AutomationService:
 
     async def preview_schedule(
         self,
-        schedule: Schedule,
+        schedule: ScheduleSpec,
         *,
         after: datetime | None = None,
         count: int = 5,
@@ -428,6 +443,7 @@ class AutomationService:
         input: Mapping[str, JsonValue] | None = None,
         limits: ExecutionLimits | None = None,
         request_id: str | None = None,
+        execution_namespace: str | None = None,
     ) -> AutomationExecution:
         """Queue one immediate execution without creating a task definition.
 
@@ -440,6 +456,8 @@ class AutomationService:
             input: JSON input to persist for the target; omit credentials and secrets.
             limits: Optional owner-scoped queue and execution limits.
             request_id: Optional command idempotency key.
+            execution_namespace: Host-selected Runtime scope for this attempt;
+                None selects this service's scheduling namespace.
 
         Returns:
             The persisted queued execution without a task identity.
@@ -456,6 +474,9 @@ class AutomationService:
         self._validate_request_id(request_id)
         normalized_input = self._json_input(input)
         selected_limits = limits or ExecutionLimits()
+        selected_namespace = validate_namespace(
+            self._namespace if execution_namespace is None else execution_namespace
+        )
         now = await self._store.current_time()
         request_part = request_id or str(uuid4())
         occurrence = occurrence_key(
@@ -463,6 +484,7 @@ class AutomationService:
         )
         execution_id, identity = execution_identity(
             namespace=self._namespace,
+            execution_namespace=selected_namespace,
             owner_id=owner_id,
             task_id=None,
             occurrence=occurrence,
@@ -499,6 +521,7 @@ class AutomationService:
         digest = canonical_digest(
             {
                 "operation": "execute_once",
+                "execution_namespace": selected_namespace,
                 "target": target,
                 "input": normalized_input,
                 "limits": self._limits_json(selected_limits),
@@ -674,6 +697,7 @@ class AutomationService:
         )
         retry_id, identity = execution_identity(
             namespace=self._namespace,
+            execution_namespace=original.identity.namespace,
             owner_id=owner_id,
             task_id=original.task_id,
             occurrence=occurrence,
@@ -936,6 +960,7 @@ class AutomationService:
     ) -> AutomationExecution:
         execution_id, identity = execution_identity(
             namespace=task.namespace,
+            execution_namespace=task.execution_namespace,
             owner_id=task.owner_id,
             task_id=task.task_id,
             occurrence=occurrence,

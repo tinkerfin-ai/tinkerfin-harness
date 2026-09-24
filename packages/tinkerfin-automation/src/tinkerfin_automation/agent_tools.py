@@ -8,9 +8,10 @@ from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from ._rules import require_task_revision
+from .handles import TaskHandle
 from .models import AutomationExecution, AutomationTask
-from .schedules import Schedule
-from .service import AutomationService
+from .owner import AutomationOwner
+from .schedules import ScheduleSpec
 
 
 class _ToolInput(BaseModel):
@@ -19,7 +20,7 @@ class _ToolInput(BaseModel):
 
 class _CreateAutomationInput(_ToolInput):
     name: str = Field(min_length=1, max_length=255)
-    schedule: Schedule
+    schedule: ScheduleSpec
     target: str = Field(
         min_length=1,
         max_length=191,
@@ -43,7 +44,7 @@ class _UpdateAutomationInput(_ToolInput):
         description="Current task revision required for conflict detection",
     )
     name: str | None = Field(default=None, min_length=1, max_length=255)
-    schedule: Schedule | None = None
+    schedule: ScheduleSpec | None = None
     target: str | None = Field(default=None, min_length=1, max_length=191)
     input: dict[str, JsonValue] | None = None
     request_id: str = Field(
@@ -128,25 +129,22 @@ def _execution_output(execution: AutomationExecution) -> dict[str, JsonValue]:
 
 
 def create_automation_tools(
-    service: AutomationService,
+    owner: AutomationOwner,
     *,
-    owner_id: str,
     allowed_targets: Collection[str],
 ) -> tuple[BaseTool, ...]:
-    """Create Automation tools bound to trusted identity and target permissions.
+    """Create tools bound to trusted ownership and target permissions.
 
     Args:
-        service: Shared service used by non-Agent callers as well.
-        owner_id: Trusted subject identity captured outside model input.
+        owner: Owner view borrowed from an active Automation lifecycle.
         allowed_targets: Target names this Agent may schedule or execute.
 
     Returns:
-        Nine LangChain tools with the supplied owner and target permissions.
+        Nine tools. Schedule mutations require a local worker lifecycle.
 
     Raises:
         ValueError: No allowed target is supplied.
     """
-
     allowed = frozenset(allowed_targets)
     if not allowed:
         raise ValueError("allowed_targets must not be empty")
@@ -157,135 +155,101 @@ def create_automation_tools(
 
     async def authorized_task(
         task_id: str, *, expected_revision: int | None = None, target: str | None = None
-    ) -> AutomationTask:
-        task = await service.get_task(owner_id=owner_id, task_id=task_id)
-        # Older revisions can be idempotent retries; the Store decides those before
-        # its atomic revision check. A future revision cannot authorize a target we
-        # have not observed, even if a concurrent edit later creates that revision.
+    ) -> TaskHandle:
+        task = await owner.task(task_id)
+        # An older revision can replay an existing command. A future revision
+        # cannot authorize a target that this caller has never observed.
         if expected_revision is not None and expected_revision > task.revision:
-            require_task_revision(task, expected_revision)
-        require_target(task.target if target is None else target)
+            require_task_revision(task.snapshot, expected_revision)
+        require_target(task.snapshot.target if target is None else target)
         return task
 
     async def create_automation(
         name: str,
-        schedule: Schedule,
+        schedule: ScheduleSpec,
         target: str,
         input: Mapping[str, JsonValue],
         request_id: str,
     ) -> dict[str, JsonValue]:
         require_target(target)
-        return _task_output(
-            await service.create_task(
-                owner_id=owner_id,
-                name=name,
-                schedule=schedule,
-                target=target,
-                input=input,
-                request_id=request_id,
-            )
+        task = await owner.create_task(
+            name=name,
+            schedule=schedule,
+            target=target,
+            input=input,
+            request_id=request_id,
         )
+        return _task_output(task.snapshot)
 
     async def update_automation(
         task_id: str,
         expected_revision: int,
         name: str | None,
-        schedule: Schedule | None,
+        schedule: ScheduleSpec | None,
         target: str | None,
         input: Mapping[str, JsonValue] | None,
         request_id: str,
     ) -> dict[str, JsonValue]:
-        await authorized_task(
+        task = await authorized_task(
             task_id, expected_revision=expected_revision, target=target
         )
-        return _task_output(
-            await service.update_task(
-                owner_id=owner_id,
-                task_id=task_id,
-                expected_revision=expected_revision,
-                name=name,
-                schedule=schedule,
-                target=target,
-                input=input,
-                request_id=request_id,
-            )
+        await task.update(
+            expected_revision=expected_revision,
+            name=name,
+            schedule=schedule,
+            target=target,
+            input=input,
+            request_id=request_id,
         )
+        return _task_output(task.snapshot)
 
     async def pause_automation(
         task_id: str, expected_revision: int, request_id: str
     ) -> dict[str, JsonValue]:
-        return _task_output(
-            await service.pause_task(
-                owner_id=owner_id,
-                task_id=task_id,
-                expected_revision=expected_revision,
-                request_id=request_id,
-            )
-        )
+        task = await owner.task(task_id)
+        await task.pause(expected_revision=expected_revision, request_id=request_id)
+        return _task_output(task.snapshot)
 
     async def enable_automation(
         task_id: str, expected_revision: int, request_id: str
     ) -> dict[str, JsonValue]:
-        await authorized_task(task_id, expected_revision=expected_revision)
-        return _task_output(
-            await service.enable_task(
-                owner_id=owner_id,
-                task_id=task_id,
-                expected_revision=expected_revision,
-                request_id=request_id,
-            )
-        )
+        task = await authorized_task(task_id, expected_revision=expected_revision)
+        await task.enable(expected_revision=expected_revision, request_id=request_id)
+        return _task_output(task.snapshot)
 
     async def delete_automation(
         task_id: str, expected_revision: int, request_id: str
     ) -> dict[str, JsonValue]:
-        await service.delete_task(
-            owner_id=owner_id,
-            task_id=task_id,
-            expected_revision=expected_revision,
-            request_id=request_id,
+        await owner.delete_task(
+            task_id, expected_revision=expected_revision, request_id=request_id
         )
         return {"task_id": task_id, "deleted": True}
 
     async def get_automation(task_id: str) -> dict[str, JsonValue]:
-        return _task_output(await service.get_task(owner_id=owner_id, task_id=task_id))
+        return _task_output((await owner.task(task_id)).snapshot)
 
     async def list_automations(
         limit: int = 50, cursor: str | None = None
     ) -> dict[str, JsonValue]:
-        page = await service.list_tasks(owner_id=owner_id, limit=limit, cursor=cursor)
+        page = await owner.list_tasks(limit=limit, cursor=cursor)
         return {
-            "items": [_task_output(task) for task in page.items],
+            "items": [_task_output(task.snapshot) for task in page.items],
             "next_cursor": page.next_cursor,
         }
 
     async def execute_automation_once(
-        target: str,
-        input: Mapping[str, JsonValue],
-        request_id: str,
+        target: str, input: Mapping[str, JsonValue], request_id: str
     ) -> dict[str, JsonValue]:
         require_target(target)
         return _execution_output(
-            await service.execute_once(
-                owner_id=owner_id,
-                target=target,
-                input=input,
-                request_id=request_id,
-            )
+            (await owner.run(target, input=input, request_id=request_id)).snapshot
         )
 
     async def run_automation_task_now(
         task_id: str, request_id: str
     ) -> dict[str, JsonValue]:
         task = await authorized_task(task_id)
-        return _execution_output(
-            await service.run_task_now(
-                owner_id=owner_id,
-                task_id=task_id,
-                request_id=request_id,
-                expected_revision=task.revision,
-            )
-        )
+        return _execution_output((await task.run(request_id=request_id)).snapshot)
 
     definitions = (
         (

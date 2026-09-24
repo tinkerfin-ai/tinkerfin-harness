@@ -10,8 +10,6 @@ from typing import TypeVar
 import pytest
 
 from tinkerfin_automation import (
-    AutomationEngine,
-    AutomationService,
     AutomationStoreError,
     ExecutionInterrupted,
     ExecutionStatus,
@@ -19,7 +17,9 @@ from tinkerfin_automation import (
     MemoryAutomationStore,
 )
 from tinkerfin_automation.clock import ManualClock
+from tinkerfin_automation.engine import AutomationEngine
 from tinkerfin_automation.scheduler import MemoryScheduler
+from tinkerfin_automation.service import AutomationService
 from tinkerfin_automation.store import WorkItemClaim
 
 NOW = datetime(2026, 9, 9, 8, tzinfo=UTC)

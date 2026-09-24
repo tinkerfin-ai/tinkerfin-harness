@@ -4,7 +4,14 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Literal, Self
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    field_validator,
+    model_validator,
+)
 from pydantic.alias_generators import to_camel
 
 from tinkerfin.agui import AgUiTraceMessage
@@ -14,7 +21,7 @@ from tinkerfin_automation import (
     IntervalSchedule,
     OnceSchedule,
 )
-from tinkerfin_automation.schedules import Schedule
+from tinkerfin_automation.schedules import ScheduleSpec
 from tinkerfin_contracts.media import Attachment
 from tinkerfin_studio.agent.access import AccessMode
 
@@ -89,9 +96,16 @@ class Interval(Boundary):
         return self
 
 
-ScheduleInput = Annotated[
-    Once | Daily | Weekly | Monthly | Interval, Field(discriminator="kind")
-]
+class ScheduleInput(
+    RootModel[
+        Annotated[
+            Once | Daily | Weekly | Monthly | Interval, Field(discriminator="kind")
+        ]
+    ]
+):
+    """按 kind 选择日程字段，接口与模型工具均使用 JSON 对象"""
+
+    model_config = ConfigDict(json_schema_extra={"type": "object"})
 
 
 class TaskConfiguration(Boundary):
@@ -122,16 +136,17 @@ class TaskConfiguration(Boundary):
             raise ValueError("结束日期必须早于9999-12-31")
         if self.starts_on and self.ends_on and self.starts_on > self.ends_on:
             raise ValueError("结束日期不能早于开始日期")
-        if isinstance(self.schedule, Once) and (
-            (self.starts_on and self.schedule.date < self.starts_on)
-            or (self.ends_on and self.schedule.date > self.ends_on)
+        schedule = self.schedule.root
+        if isinstance(schedule, Once) and (
+            (self.starts_on and schedule.date < self.starts_on)
+            or (self.ends_on and schedule.date > self.ends_on)
         ):
             raise ValueError("执行日期必须在有效期内")
         if len(self.attachments) != len(set(self.attachments)):
             raise ValueError("参考文件不能重复")
         return self
 
-    def framework_schedule(self, anchor: datetime) -> Schedule:
+    def framework_schedule(self, anchor: datetime) -> ScheduleSpec:
         """将用户日历选项交给框架计算下一次执行，手动运行不受有效期限制"""
         active_from = (
             datetime.combine(self.starts_on, time(), ZONE) if self.starts_on else None
@@ -141,7 +156,7 @@ class TaskConfiguration(Boundary):
             if self.ends_on
             else None
         )
-        schedule = self.schedule
+        schedule = self.schedule.root
         if isinstance(schedule, Once):
             return OnceSchedule(
                 at=datetime.combine(
@@ -151,10 +166,14 @@ class TaskConfiguration(Boundary):
                 active_until=active_until,
             )
         if isinstance(schedule, Interval):
+            every_seconds = (
+                schedule.every
+                * {"minutes": 60, "hours": 3600, "days": 86400}[schedule.unit]
+            )
             return IntervalSchedule(
-                every_seconds=schedule.every
-                * {"minutes": 60, "hours": 3600, "days": 86400}[schedule.unit],
-                start_at=active_from or anchor.astimezone(UTC),
+                every_seconds=every_seconds,
+                start_at=active_from
+                or anchor.astimezone(UTC) + timedelta(seconds=every_seconds),
                 active_from=active_from,
                 active_until=active_until,
             )
@@ -219,7 +238,9 @@ class TaskView(TaskConfiguration):
     enabled: bool
     revision: int
     next_run_at: datetime | None
-    files: list[Attachment] = Field(default_factory=list)
+    input_files: list[Attachment] = Field(
+        default_factory=list, description="任务配置的参考附件，不包含执行产物"
+    )
 
 
 class TaskList(Boundary):
@@ -254,5 +275,7 @@ class RunDetail(RunView):
     """经过归属校验的只读消息和运行附件"""
 
     messages: list[AgUiTraceMessage] = Field(default_factory=list)
-    attachments: list[Attachment] = Field(default_factory=list)
+    output_files: list[Attachment] = Field(
+        default_factory=list, description="本次执行已交付的文件，不包含参考附件"
+    )
     result_available: bool
