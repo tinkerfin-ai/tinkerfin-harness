@@ -466,15 +466,71 @@ describe('MessageBlock subagent card', () => {
   })
 })
 
+describe('无参工具详情', () => {
+  it.each([
+    ['list_attachments', '{}'],
+    ['compact_conversation', ' {\n } '],
+  ])('%s 的完整空对象不显示输入，展开后直接查看输出', async (toolName, params) => {
+    const user = userEvent.setup()
+    render(<MessageBlock message={{ ...childTool, meta: { toolName, params, result: '处理完成', status: 'completed' } }} />)
+
+    await user.click(screen.getByText(toolName))
+    expect(screen.queryByText('输入')).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '输出' })).toHaveTextContent('处理完成')
+  })
+
+  it.each([
+    ['read_file', '{}'],
+    ['custom_tool', '{}'],
+    ['list_attachments', '{"filter":"report"}'],
+    ['compact_conversation', undefined],
+    ['list_attachments', ''],
+    ['compact_conversation', '{'],
+    ['list_attachments', 'null'],
+    ['list_attachments', '[]'],
+    ['compact_conversation', '"{}"'],
+  ])('%s 参数为 %s 时保留输入供查看', (toolName, params) => {
+    render(<MessageBlock message={{ ...childTool, meta: { toolName, params, status: 'running' } }} />)
+    expect(screen.getByText('输入')).toBeInTheDocument()
+  })
+
+  it('参数收齐后隐藏输入，卡片保持展开且输出状态继续更新', async () => {
+    const user = userEvent.setup()
+    const message: Message = { ...childTool, meta: { toolName: 'list_attachments', params: '{', status: 'running' } }
+    const { rerender } = render(<MessageBlock message={message} />)
+    await user.click(screen.getByText('list_attachments'))
+    expect(screen.getByRole('region', { name: '输入' })).toBeVisible()
+
+    rerender(<MessageBlock message={{ ...message, meta: { ...message.meta, params: '{}' } }} />)
+    expect(screen.queryByText('输入')).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '输出' })).toContainElement(screen.getByLabelText('工具字段加载中'))
+
+    rerender(<MessageBlock message={{ ...message, meta: { ...message.meta, params: '{}', result: '附件暂时无法读取', status: 'failed' } }} />)
+    expect(screen.queryByText('输入')).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '输出' })).toHaveTextContent('附件暂时无法读取')
+  })
+
+  it('批量与子 Agent 工具共用无参输入展示规则', () => {
+    const noInput: Message = { ...childTool, meta: { toolName: 'list_attachments', params: '{}', result: '[]', status: 'completed' } }
+    render(<>
+      <ToolCallBatch messages={[noInput, { ...noInput, id: 'compact', meta: { ...noInput.meta, toolName: 'compact_conversation' } }]} />
+      <MessageBlock message={subagentMessage} childTools={[{ ...noInput, id: 'nested-list' }]} />
+    </>)
+    expect(screen.queryByText('输入')).not.toBeInTheDocument()
+    expect(screen.getAllByText('输出')).toHaveLength(3)
+  })
+})
+
 describe('MessageBlock user composition', () => {
-  it('keeps one copy action after the user bubble and copies the source message', async () => {
+  it('用户消息在原操作位置显示本地时间，复制仍使用源文', async () => {
     const user = userEvent.setup()
     const writeText = vi.spyOn(navigator.clipboard, 'writeText')
+    const createdAt = new Date(2026, 7, 26, 9, 7).toISOString()
     const { container } = render(<MessageBlock message={{
       id: 'user-copy',
       role: 'user',
       content: '保留 **Markdown** 源文',
-      createdAt: '2026-08-26T00:00:00Z',
+      createdAt,
     }} />)
 
     const markdown = container.querySelector('.message-markdown')
@@ -483,9 +539,7 @@ describe('MessageBlock user composition', () => {
     expect(markdown!.compareDocumentPosition(actionRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(within(actionRow).getAllByRole('button')).toHaveLength(1)
     expect(within(actionRow).getByRole('button', { name: '复制消息' }).querySelector('svg')).toHaveAttribute('width', '20')
-    expect(conversationStyles).toMatch(/\.message-action-row--user\s*{[^}]*width:\s*var\(--space-10\);[^}]*min-height:\s*var\(--space-10\);[^}]*padding:\s*var\(--space-1\);/s)
-    expect(conversationStyles).toMatch(/@media \(hover:\s*hover\) and \(pointer:\s*fine\)[\s\S]*\.message-action-row--user\s*{[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;[^}]*transition:\s*opacity var\(--motion-slow\) var\(--ease-in-out\);/s)
-    expect(conversationStyles).toMatch(/\.user-message:hover \.message-action-row--user\s*{[^}]*opacity:\s*1;[^}]*pointer-events:\s*auto;[^}]*transition-delay:\s*var\(--motion-slow\);/s)
+    expect(within(actionRow).getByText('08-26 09:07')).toHaveAttribute('datetime', createdAt)
 
     await user.click(within(actionRow).getByRole('button', { name: '复制消息' }))
     expect(writeText).toHaveBeenCalledWith('保留 **Markdown** 源文')

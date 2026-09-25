@@ -27,7 +27,7 @@ import {
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent } from 'react'
 
 import type { AuthUser } from '../../../api/auth/types'
-import { BrandLogo, Button, IconButton, OverlayScrollbar, UserAvatar } from '../../../components/ui'
+import { BrandLogo, Button, FeedbackState, IconButton, OverlayScrollbar, UserAvatar } from '../../../components/ui'
 import { useI18n } from '../../../i18n'
 import { isConversationRunning } from '../../../lib/workspace'
 import type { Conversation, WorkspaceState } from '../../../types'
@@ -765,11 +765,7 @@ export function Sidebar({
                     </div>
                   ) : loadMoreError ? (
                     <div className="history-pagination-status">
-                      {onRetryLoadMore && (
-                        <Button size="sm" variant="text" onClick={onRetryLoadMore}>
-                          {t('重试加载历史')}
-                        </Button>
-                      )}
+                      <FeedbackState kind="error" appearance="retry" title={t('更多历史加载失败')} retryLabel={t('重试加载历史')} onRetry={onRetryLoadMore} />
                     </div>
                   ) : null}
                 </div>

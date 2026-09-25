@@ -373,16 +373,29 @@
     margin-inline: calc((var(--message-action-control-size) - var(--message-action-icon-size)) / -2);
   }
 
-  /* 用户操作区始终占位，显隐时不会推动下一条消息 */
+  /* 时间与复制操作共用原位置，切换时保留同一行的尺寸 */
   .message-action-row--user {
-    width: var(--space-10);
+    display: grid;
+    width: max-content;
     min-height: var(--space-10);
-    justify-content: flex-end;
+    align-items: center;
+    justify-items: end;
     margin: 0 calc(var(--space-1) * -1) 0 0;
     padding: var(--space-1);
   }
 
+  .message-action-time {
+    display: none;
+    grid-area: 1 / 1;
+    font-size: var(--type-caption-size);
+    line-height: var(--type-caption-line);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
   .message-action-row--user .ui-icon-button-wrap {
+    grid-area: 1 / 1;
     width: var(--message-action-control-size);
   }
 
@@ -403,21 +416,36 @@
   }
 
   @media (hover: hover) and (pointer: fine) {
-    .message-action-row--user {
+    .message-action-time {
+      display: block;
+      transition: opacity var(--motion-slow) var(--ease-in-out);
+    }
+
+    .message-action-row--user .ui-icon-button-wrap {
       opacity: 0;
       pointer-events: none;
       transition: opacity var(--motion-slow) var(--ease-in-out);
     }
 
-    .user-message:hover .message-action-row--user {
+    .user-message:hover .message-action-row--user .ui-icon-button-wrap {
       opacity: 1;
       pointer-events: auto;
       transition-delay: var(--motion-slow);
     }
 
-    .user-message:focus-within .message-action-row--user {
+    .user-message:hover .message-action-time {
+      opacity: 0;
+      transition-delay: var(--motion-slow);
+    }
+
+    .user-message:focus-within .message-action-row--user .ui-icon-button-wrap {
       opacity: 1;
       pointer-events: auto;
+      transition: none;
+    }
+
+    .user-message:focus-within .message-action-time {
+      opacity: 0;
       transition: none;
     }
   }
@@ -520,6 +548,7 @@
     scroll-margin-block-end: var(--space-4);
   }
 
+  .tool-row > .tool-row-heading,
   .tool-row > summary {
     position: relative;
     display: flex;
@@ -533,6 +562,8 @@
     list-style: none;
     cursor: pointer;
   }
+
+  .tool-row > .tool-row-heading { cursor: default; }
 
   .tool-row > summary::-webkit-details-marker { display: none; }
 
@@ -629,6 +660,8 @@
   .tool-row-state-dot.is-cancelled { background: var(--color-text-tertiary); }
 
   /* 尚未终止的 Tool 与 SubAgent 共用扫光，审批暂停仍保留准确的业务状态 */
+  .tool-row.running > .tool-row-heading::after,
+  .tool-row.paused > .tool-row-heading::after,
   .tool-row.running > summary::after,
   .tool-row.paused > summary::after,
   .subagent-card.running > summary::after,
@@ -1769,6 +1802,10 @@
   .composer-input-mirror,
   .composer-input-backdrop { box-sizing: border-box; padding: 4px 12px 0 16px; font-family: var(--font-ui); font-size: var(--type-body-size); line-height: var(--type-composer-line); white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
 
+  .composer-attachment-notice { display: flex; align-items: flex-start; gap: var(--space-1-5); margin-inline: var(--space-4); color: var(--color-text-secondary); font-size: var(--type-caption-size); line-height: var(--type-meta-line); }
+  .composer-attachment-notice > svg { flex: 0 0 auto; width: var(--icon-xs); height: var(--icon-xs); margin-top: calc((var(--type-meta-line) - var(--icon-xs)) / 2); color: var(--color-warning-text); }
+  .composer-attachment-notice > span { min-width: 0; overflow-wrap: anywhere; text-wrap: pretty; }
+
   .composer-toolbar-container { container: composer-tools / inline-size; min-width: 0; }
   .composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-width: 0; min-height: 42px; padding: 2px var(--space-2) 6px; }
   .composer-toolbar-leading,
@@ -1904,14 +1941,17 @@
     .message-action-row { --message-action-control-size: var(--control-lg); }
     .message-action-row--assistant { min-height: calc(var(--control-lg) + 14px); }
     .message-action-row--user {
-      width: calc(var(--control-lg) + var(--space-2));
       min-height: calc(var(--control-lg) + var(--space-2));
+    }
+    .message-action-time { display: none; }
+    .message-action-row--user .ui-icon-button-wrap {
       opacity: 1;
       pointer-events: auto;
       transition: none;
     }
     .subagent-card-head { height: var(--control-lg); }
     .subagent-task-summary { min-height: var(--control-lg); }
+    .tool-row > .tool-row-heading,
     .tool-row > summary { height: var(--control-lg); }
     .plan-question-option,
     .plan-question-custom,
@@ -1927,7 +1967,8 @@
 
   @media (prefers-reduced-motion: reduce) {
     .composer-auxiliary-control,
-    .message-action-row--user,
+    .user-message .message-action-row--user :is(.message-action-time, .ui-icon-button-wrap),
+    .user-message:is(:hover, :focus-within) .message-action-row--user :is(.message-action-time, .ui-icon-button-wrap),
     .plan-question-progress-step > span,
     .plan-question-option,
     .plan-question-custom,
@@ -2009,6 +2050,8 @@
   @media (prefers-reduced-motion: reduce) {
     .activity-dots i,
     .subagent-output-pulse,
+    .tool-row.running > .tool-row-heading::after,
+    .tool-row.paused > .tool-row-heading::after,
     .tool-row.running > summary::after,
     .tool-row.paused > summary::after,
     .subagent-card.running > summary::after,
@@ -2036,31 +2079,9 @@
 
 @layer conversation {
   .conversation-run-failure {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
+    display: grid;
+    place-items: center;
     width: 100%;
     min-height: calc(var(--control-xl) + var(--space-2));
-    padding: var(--space-2) var(--space-4);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-lg);
-    background: var(--color-canvas);
-    color: var(--color-text-primary);
-    font-size: var(--type-meta-size);
-  }
-  .conversation-run-failure-label {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    font-weight: var(--weight-ui);
-  }
-  .conversation-run-failure-label > svg { color: var(--color-danger-text); flex: none; }
-  @media (max-width: 767px), (any-pointer: coarse) {
-    .conversation-run-failure {
-      min-height: calc(var(--control-lg) + var(--space-4));
-      padding: var(--space-1-5) var(--space-3);
-    }
-    .conversation-run-failure > .ui-button { min-height: var(--control-lg); min-width: var(--control-lg); }
   }
 }

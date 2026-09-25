@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PlanQuestionItem, PlanQuestionState } from '../../../types'
-import { PlanQuestionComposer, PlanQuestionStatusRow } from './PlanQuestionComposer'
+import { PlanQuestionComposer } from './PlanQuestionComposer'
 import conversationStyles from '../conversation.css?raw'
 
 const interaction = (): PlanQuestionState => ({
@@ -199,7 +199,7 @@ describe('PlanQuestionComposer', () => {
     expect(submit).toHaveBeenCalledOnce()
   })
 
-  it('uses keyboard confirmation, supports optional skip and reports status', () => {
+  it('支持键盘确认并跳过可选问题', () => {
     let current = interaction()
     const change = (updater: (value: PlanQuestionState) => PlanQuestionState) => {
       current = updater(current)
@@ -219,14 +219,6 @@ describe('PlanQuestionComposer', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: '跳过本题' }))
     expect(current.questions[1]).toMatchObject({ skipped: true })
-
-    const statusView = render(<PlanQuestionStatusRow interaction={current} />)
-    expect(screen.getByText('等待回答')).toBeInTheDocument()
-    expect(screen.queryByText('3 / 3')).not.toBeInTheDocument()
-    expect(statusView.container.querySelectorAll('.activity-dots i')).toHaveLength(3)
-
-    statusView.rerender(<PlanQuestionStatusRow interaction={{ ...current, submitted: true }} />)
-    expect(statusView.container.querySelector('.activity-dots')).not.toBeInTheDocument()
   })
 
   it('collapses to the title, current prompt and progress without losing drafts', () => {

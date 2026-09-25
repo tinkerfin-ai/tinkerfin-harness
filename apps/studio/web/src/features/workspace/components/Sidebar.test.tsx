@@ -625,6 +625,7 @@ describe('Sidebar', () => {
     expect(onRetryLoadMore).toHaveBeenCalledOnce()
     expect(onLoadMore).not.toHaveBeenCalled()
     expect(screen.queryByText('加载历史失败')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('更多历史加载失败')
     await user.click(screen.getByRole('button', { name: '重试加载历史' }))
     expect(onRetryLoadMore).toHaveBeenCalledTimes(2)
   })

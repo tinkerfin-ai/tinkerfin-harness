@@ -11,9 +11,17 @@ import {
   traceGraphWithNodes,
 } from '../../src/test/traceFixtures'
 import type { JsonObject, JsonValue, Message } from '../../src/types'
+import { attachmentInput } from '../../src/features/conversation/attachments/content'
 
 const THREAD_ID = 'browser-thread'
 const BASE_TIME = '2026-08-25T00:00:00.000Z'
+
+const toolResultContent = (message: Message): JsonValue | undefined => message.attachments?.length
+  ? [
+      ...(message.meta?.result ? [{ type: 'text', text: message.meta.result }] : []),
+      ...message.attachments.map(attachmentInput),
+    ]
+  : message.meta?.result
 
 const user = {
   user_id: 7,
@@ -587,8 +595,8 @@ async function mockStudio(page: Page, {
           graphNamespace: [],
           runId: 'browser-run',
           role: 'tool' as const,
-          content: message.meta.result ?? null,
-          contentOmitted: message.meta.result == null,
+          content: toolResultContent(message) ?? null,
+          contentOmitted: toolResultContent(message) == null,
           name: message.meta.toolName ?? null,
           toolCallId: message.meta.toolCallId,
           status: 'completed' as const,
@@ -633,7 +641,7 @@ async function mockStudio(page: Page, {
       const request = message.role === 'subagent'
         ? message.meta?.input
         : message.meta?.params
-      const result = message.meta?.result
+      const result = message.role === 'tool' ? toolResultContent(message) : message.meta?.result
       return [traceGraphNode({
         id: message.id,
         agui: message.role === 'tool' && message.meta?.toolCallId
@@ -1333,6 +1341,8 @@ for (const card of ['question', 'review'] as const) {
     await mockStudio(page, { planQuestion: card === 'question', planReview: card === 'review' })
     const input = page.getByRole('textbox', { name: '消息输入' })
     const close = page.getByRole('button', { name: '关闭卡片，继续对话', exact: true })
+    const waiting = page.getByRole('status', { name: card === 'question' ? '等待回答' : '等待审阅', exact: true })
+    await expect(waiting).toBeVisible()
     await expect(input).toHaveCount(0)
     for (const colorScheme of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
@@ -1372,6 +1382,7 @@ for (const card of ['question', 'review'] as const) {
     })
     await close.click()
     await requested
+    await expect(waiting).toHaveCount(0)
     await expect(input).toHaveCount(0)
     release()
     await expect(input).toBeVisible()
@@ -1383,6 +1394,58 @@ for (const card of ['question', 'review'] as const) {
     await page.screenshot({ path: testInfo.outputPath(`plan-${card}-closed.png`) })
   })
 }
+
+test('澄清工具显示表单标题，原始 JSON 只在展开详情中显示', async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await mockStudio(page, {
+    planQuestion: true,
+    expectedMessageText: '继续吧',
+    conversationMessages: [
+      { id: 'question-user', role: 'user', content: '继续吧', createdAt: BASE_TIME },
+      {
+        id: 'question-tool', role: 'tool', content: 'ask_user_question', createdAt: BASE_TIME,
+        meta: {
+          toolName: 'ask_user_question', toolCallId: 'question-call',
+          params: JSON.stringify({ form: planQuestionForm }, null, 2),
+          result: 'Questions submitted; awaiting the user.', status: 'completed',
+        },
+      },
+    ],
+  })
+  const row = page.locator('[data-tool-name="ask_user_question"]')
+  const summary = row.locator('summary')
+  const conversation = page.getByRole('region', { name: '对话内容', exact: true })
+  const waiting = conversation.getByRole('status', { name: '等待回答', exact: true })
+  await expect(summary).toContainText('提问')
+  await expect(summary).toContainText('确认执行方式')
+  await expect(summary).not.toContainText('{')
+  await expect(summary).not.toContainText('ask_user_question')
+  await expect(conversation.getByText('提问', { exact: true })).toHaveCount(1)
+  await expect(conversation.getByText('等待回答', { exact: true })).toHaveCount(0)
+  await expect(waiting).toHaveCount(1)
+  await expect(waiting).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Plan 澄清问题', exact: true })).toBeVisible()
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      const closeNavigation = page.getByRole('button', { name: '关闭导航', exact: true })
+      if (await closeNavigation.isVisible()) await closeNavigation.click()
+      await expect(closeNavigation).toBeHidden()
+      await summary.scrollIntoViewIfNeeded()
+      await expect(summary).toBeInViewport()
+      await expect(waiting).toBeInViewport()
+      expect(await waiting.evaluate(element => element.getAnimations({ subtree: true }).length)).toBe(0)
+      const [summaryBounds, waitingBounds] = await Promise.all([summary.boundingBox(), waiting.boundingBox()])
+      if (!summaryBounds || !waitingBounds) throw new Error('提问摘要或等待提示的位置不可用')
+      expect(waitingBounds.y).toBeGreaterThanOrEqual(summaryBounds.y + summaryBounds.height)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await page.screenshot({ path: testInfo.outputPath(`question-summary-${theme}-${width}.png`) })
+    }
+  }
+  await summary.press('Enter')
+  await expect(row.locator('.tool-code-field')).toContainText('"title": "确认执行方式"')
+})
 
 test('Plan 澄清按后端题型渲染单选、多选、文本与日期控件', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 900 })
@@ -1968,7 +2031,7 @@ test('展开的审批、Plan 澄清与草稿使用统一单行标题规格和静
   }
 })
 
-test('展开的 Plan 澄清与草稿在四个视口保持可滚动且避开等待状态', async ({ page }) => {
+test('展开的 Plan 澄清与草稿在四个视口保持可滚动且处于视口内', async ({ page }) => {
   const viewports = [
     { width: 320, height: 640 },
     { width: 768, height: 900 },
@@ -2147,77 +2210,98 @@ test('普通用户与回答使用角色化节奏且卡片边界保持16px', asyn
   }
 })
 
-test('用户复制操作悬浮与聚焦显隐不改变消息几何', async ({ page }) => {
-  await mockStudio(page, {
-    conversationMessages: spacingAuditMessages,
-    expectedMessageText: '普通文本 B',
-  })
-  await page.setViewportSize({ width: 1024, height: 900 })
-  expect(await page.evaluate(() => matchMedia('(hover: hover) and (pointer: fine)').matches)).toBe(true)
+test.describe('消息时间显示', () => {
+  test.use({ timezoneId: 'Asia/Shanghai' })
 
-  const message = page.locator('#spacing-user-a')
-  const bubble = message.locator('.message-markdown')
-  const action = message.locator('.message-action-row--user')
-  const button = action.locator('.ui-icon-button')
-  const icon = button.locator('svg')
-  const answer = page.locator('#spacing-assistant-a .message-markdown')
+  test('用户消息时间单行占用复制位置，悬浮和聚焦原位切换且布局稳定', async ({ page }, testInfo) => {
+    await mockStudio(page, {
+      conversationMessages: spacingAuditMessages.map(message => ({ ...message, createdAt: '2026-08-25T01:07:00Z' })),
+      expectedMessageText: '普通文本 B',
+    })
+    expect(await page.evaluate(() => matchMedia('(hover: hover) and (pointer: fine)').matches)).toBe(true)
 
-  for (const colorScheme of ['light', 'dark'] as const) {
-    await page.emulateMedia({ colorScheme })
-    await page.getByRole('region', { name: '对话内容' }).focus()
-    await page.locator('.chat-header').hover()
-    await bubble.scrollIntoViewIfNeeded()
-    await expect(action).toHaveCSS('opacity', '0')
-    await expect(action).toHaveCSS('pointer-events', 'none')
+    const message = page.locator('#spacing-user-a')
+    const bubble = message.locator('.message-markdown')
+    const action = message.locator('.message-action-row--user')
+    const timestamp = action.locator('time')
+    const copy = action.locator('.ui-icon-button-wrap')
+    const button = action.locator('.ui-icon-button')
+    const icon = button.locator('svg')
+    const answer = page.locator('#spacing-assistant-a .message-markdown')
 
-    const [bubbleBefore, actionBefore, buttonBefore, iconBefore, answerBefore] = await Promise.all([
-      bubble.boundingBox(),
-      action.boundingBox(),
-      button.boundingBox(),
-      icon.boundingBox(),
-      answer.boundingBox(),
-    ])
-    if (!bubbleBefore || !actionBefore || !buttonBefore || !iconBefore || !answerBefore) {
-      throw new Error('用户复制操作几何不可用')
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme })
+      await page.evaluate(theme => { document.documentElement.dataset.theme = theme }, colorScheme)
+      for (const width of [320, 768, 1024, 1440]) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.getByRole('region', { name: '对话内容' }).focus()
+        await page.locator('.chat-header').hover()
+        await bubble.scrollIntoViewIfNeeded()
+        await expect(timestamp).toHaveText('08-25 09:07')
+        await expect(timestamp).toHaveCSS('opacity', '1')
+        await expect(copy).toHaveCSS('opacity', '0')
+        await expect(copy).toHaveCSS('pointer-events', 'none')
+
+        const [bubbleBefore, actionBefore, buttonBefore, iconBefore, answerBefore] = await Promise.all([
+          bubble.boundingBox(),
+          action.boundingBox(),
+          button.boundingBox(),
+          icon.boundingBox(),
+          answer.boundingBox(),
+        ])
+        if (!bubbleBefore || !actionBefore || !buttonBefore || !iconBefore || !answerBefore) {
+          throw new Error('用户复制操作几何不可用')
+        }
+        expect(bubbleBefore.height).toBeCloseTo(44, 5)
+        expect(actionBefore.height).toBeCloseTo(40, 5)
+        expect(actionBefore.y).toBeCloseTo(bubbleBefore.y + bubbleBefore.height, 5)
+        expect(buttonBefore.width).toBeCloseTo(32, 5)
+        expect(buttonBefore.height).toBeCloseTo(32, 5)
+        expect(buttonBefore.y - actionBefore.y).toBeCloseTo(4, 5)
+        expect(buttonBefore.x + buttonBefore.width).toBeCloseTo(bubbleBefore.x + bubbleBefore.width, 5)
+        expect(iconBefore.width).toBeCloseTo(20, 5)
+        expect(iconBefore.height).toBeCloseTo(20, 5)
+        expect(answerBefore.y - (bubbleBefore.y + bubbleBefore.height)).toBeCloseTo(40, 5)
+        const timeBefore = await timestamp.boundingBox()
+        if (!timeBefore) throw new Error('缺少消息时间')
+        expect(timeBefore.height).toBeLessThanOrEqual(buttonBefore.height)
+        expect(timeBefore.x + timeBefore.width).toBeCloseTo(buttonBefore.x + buttonBefore.width, 5)
+        expect(timeBefore.y + timeBefore.height / 2).toBeCloseTo(buttonBefore.y + buttonBefore.height / 2, 5)
+        await message.screenshot({ path: testInfo.outputPath(`message-time-${colorScheme}-${width}.png`) })
+
+        await bubble.hover()
+        await expect(timestamp).toHaveCSS('opacity', '0')
+        await expect(copy).toHaveCSS('opacity', '1')
+        await expect(copy).toHaveCSS('pointer-events', 'auto')
+
+        const [bubbleAfter, actionAfter, answerAfter] = await Promise.all([
+          bubble.boundingBox(),
+          action.boundingBox(),
+          answer.boundingBox(),
+        ])
+        expect(bubbleAfter).toEqual(bubbleBefore)
+        expect(actionAfter).toEqual(actionBefore)
+        expect(answerAfter).toEqual(answerBefore)
+        await message.screenshot({ path: testInfo.outputPath(`message-copy-${colorScheme}-${width}.png`) })
+
+        await page.locator('.chat-header').hover()
+        await expect(timestamp).toHaveCSS('opacity', '1')
+        await expect(copy).toHaveCSS('opacity', '0')
+        await button.focus()
+        await expect(copy).toHaveCSS('transition-duration', '0s')
+        await expect(timestamp).toHaveCSS('opacity', '0')
+        await expect(copy).toHaveCSS('opacity', '1')
+        await expect(copy).toHaveCSS('pointer-events', 'auto')
+      }
     }
-    expect(bubbleBefore.height).toBeCloseTo(44, 5)
-    expect(actionBefore.height).toBeCloseTo(40, 5)
-    expect(actionBefore.y).toBeCloseTo(bubbleBefore.y + bubbleBefore.height, 5)
-    expect(buttonBefore.width).toBeCloseTo(32, 5)
-    expect(buttonBefore.height).toBeCloseTo(32, 5)
-    expect(buttonBefore.y - actionBefore.y).toBeCloseTo(4, 5)
-    expect(buttonBefore.x + buttonBefore.width).toBeCloseTo(bubbleBefore.x + bubbleBefore.width, 5)
-    expect(iconBefore.width).toBeCloseTo(20, 5)
-    expect(iconBefore.height).toBeCloseTo(20, 5)
-    expect(answerBefore.y - (bubbleBefore.y + bubbleBefore.height)).toBeCloseTo(40, 5)
 
+    await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+    await page.getByRole('region', { name: '对话内容' }).focus()
     await bubble.hover()
-    await expect(action).toHaveCSS('transition-duration', '0.3s')
-    await expect(action).toHaveCSS('transition-delay', '0.3s')
-    await expect(action).toHaveCSS('transition-timing-function', 'cubic-bezier(0.4, 0, 0.2, 1)')
-    await expect(action).toHaveCSS('opacity', '1')
-    await expect(action).toHaveCSS('pointer-events', 'auto')
-
-    const [bubbleAfter, actionAfter, answerAfter] = await Promise.all([
-      bubble.boundingBox(),
-      action.boundingBox(),
-      answer.boundingBox(),
-    ])
-    expect(bubbleAfter).toEqual(bubbleBefore)
-    expect(actionAfter).toEqual(actionBefore)
-    expect(answerAfter).toEqual(answerBefore)
-
-    await page.locator('.chat-header').hover()
-    await expect(action).toHaveCSS('opacity', '0')
-    await button.focus()
-    await expect(action).toHaveCSS('transition-duration', '0s')
-    await expect(action).toHaveCSS('opacity', '1')
-    await expect(action).toHaveCSS('pointer-events', 'auto')
-  }
-
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
-  await bubble.hover()
-  await expect(action).toHaveCSS('transition-duration', '0s')
+    await expect(copy).toHaveCSS('transition-duration', '0s')
+    await expect(copy).toHaveCSS('transition-delay', '0s')
+    await expect(timestamp).toHaveCSS('transition-duration', '0s')
+  })
 })
 
 test('界面统一字重且文章型 Markdown 保留语义排版与可滚动表格', async ({ page }, testInfo) => {
@@ -2339,6 +2423,73 @@ test('界面统一字重且文章型 Markdown 保留语义排版与可滚动表�
   }
   await page.locator('.new-chat').click()
   await expect(historyTitle).toHaveCSS('font-weight', '400')
+})
+
+test('无参工具直接显示输出，有参工具的空对象仍可查看', async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await mockStudio(page, {
+    expectedMessageText: '检查工具输入',
+    conversationMessages: [
+      { id: 'no-input-user', role: 'user', content: '检查工具输入', createdAt: BASE_TIME },
+      { id: 'no-input-list', role: 'tool', content: 'list_attachments', createdAt: BASE_TIME,
+        meta: { toolName: 'list_attachments', params: '{}', result: '[]', status: 'completed' } },
+      { id: 'no-input-compact', role: 'tool', content: 'compact_conversation', createdAt: BASE_TIME,
+        meta: { toolName: 'compact_conversation', params: ' {\n } ', result: '当前会话无需压缩', status: 'completed' } },
+      { id: 'input-read', role: 'tool', content: 'read_file', createdAt: BASE_TIME,
+        meta: { toolName: 'read_file', params: '{}', result: '缺少文件路径', status: 'failed' } },
+      { id: 'no-input-agent', role: 'subagent', content: '', createdAt: BASE_TIME,
+        meta: { agentName: 'researcher', result: '附件检查完成', status: 'completed', subRunId: 'no-input-child' } },
+      { id: 'no-input-nested', role: 'tool', content: 'list_attachments', createdAt: BASE_TIME,
+        meta: { toolName: 'list_attachments', params: '{}', result: '[]', status: 'completed', runId: 'no-input-child', sourceAgentName: 'researcher' } },
+      { id: 'no-input-file', role: 'tool', content: 'list_attachments', createdAt: BASE_TIME,
+        attachments: [{ id: 'no-input-report', name: 'report.txt', mime_type: 'text/plain', size_bytes: 12 }],
+        meta: { toolName: 'list_attachments', params: '{}', status: 'completed' } },
+    ],
+  })
+  const list = page.locator('#no-input-list')
+  const compact = page.locator('#no-input-compact')
+  const read = page.locator('#input-read')
+  const nested = page.locator('#no-input-nested')
+  const fileOnly = page.locator('#no-input-file')
+  await list.locator('summary').press('Enter')
+  await compact.locator('summary').press('Enter')
+  await read.locator('summary').press('Enter')
+  await page.locator('#no-input-agent > summary').press('Enter')
+  await nested.locator('summary').press('Enter')
+  await expect(fileOnly.locator('summary')).toHaveCount(0)
+  await expect(fileOnly.getByRole('region')).toHaveCount(0)
+  await expect(page.getByText('report.txt', { exact: true })).toBeVisible()
+  await expect(read.getByRole('region', { name: '输入', exact: true })).toHaveText('输入{}')
+  for (const row of [list, compact, nested]) {
+    await expect(row.getByText('输入', { exact: true })).toHaveCount(0)
+    const output = row.getByRole('region', { name: '输出', exact: true })
+    await expect(output).toBeVisible()
+    const spacing = await output.evaluate(element => {
+      const card = element.parentElement!
+      const style = getComputedStyle(card)
+      return card.getBoundingClientRect().height - element.getBoundingClientRect().height
+        - parseFloat(style.borderTopWidth) - parseFloat(style.borderBottomWidth)
+    })
+    expect(Math.abs(spacing)).toBeLessThanOrEqual(1)
+  }
+  await list.locator('summary').focus()
+  await page.keyboard.press('Tab')
+  await expect(list.getByRole('region', { name: '输出', exact: true })).toBeFocused()
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 1000 })
+      const closeNavigation = page.getByRole('button', { name: '关闭导航', exact: true })
+      if (await closeNavigation.isVisible()) await closeNavigation.click()
+      await list.scrollIntoViewIfNeeded()
+      await expect(list.getByRole('region', { name: '输出', exact: true })).toBeInViewport()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await page.screenshot({ path: testInfo.outputPath(`no-input-tools-${theme}-${width}.png`) })
+      await fileOnly.scrollIntoViewIfNeeded()
+      await expect(fileOnly).toBeInViewport()
+      await page.screenshot({ path: testInfo.outputPath(`no-input-file-${theme}-${width}.png`) })
+    }
+  }
 })
 
 test('同批 Todos 与单个普通 Tool 保持公共中间间距', async ({ page }) => {
@@ -2526,7 +2677,7 @@ test('加载更早消息后从按钮热区底边继续公共消息间距', async
   }
 })
 
-test('提问等待状态与上一条气泡使用公共顶层间距', async ({ page }) => {
+test('澄清问题接管输入区并沿用主题色', async ({ page }) => {
   await mockStudio(page, {
     planQuestion: true,
     conversationMessages: [{
@@ -2537,18 +2688,12 @@ test('提问等待状态与上一条气泡使用公共顶层间距', async ({ pa
     }],
     expectedMessageText: '确认执行选项',
   })
-  const bubble = page.locator('#plan-spacing-user .message-markdown')
-  const bubbleAction = page.locator('#plan-spacing-user .message-action-row--user')
-  const waitState = page.locator('.plan-question-wait-state')
   const card = page.getByRole('region', { name: 'Plan 澄清问题' })
   const header = card.locator('.plan-question-composer-head')
   const title = card.locator('.plan-question-composer-heading h2 > span')
   const icon = card.locator('.plan-question-composer-heading h2 > svg')
   const bridge = card.locator('.interaction-card-color-bridge.is-plan')
   const attentionDot = page.locator(`[data-history-thread-id="${THREAD_ID}"] .conversation-attention-dot`)
-  const statusRow = waitState.locator('.plan-question-status-row')
-  const waitDots = waitState.locator('.activity-dots')
-  const messageList = page.locator('.message-list')
 
   await expect(header.locator('.plan-interaction-card-description'))
     .toHaveText('这些答案会影响后续规划')
@@ -2571,21 +2716,6 @@ test('提问等待状态与上一条气泡使用公共顶层间距', async ({ pa
       expect(bridgeBackground).toContain(contentBackground)
       await expect(attentionDot).toHaveClass(/is-plan/)
       await expect(attentionDot).toHaveCSS('color', accentColor)
-      await expect(statusRow.locator('.plan-interaction-status-label')).toHaveCSS('font-weight', '400')
-      const [bubbleBounds, bubbleActionBounds, waitBounds, statusBounds, dotsBounds, messageListBounds] = await Promise.all([
-        bubble.boundingBox(),
-        bubbleAction.boundingBox(),
-        waitState.boundingBox(),
-        statusRow.boundingBox(),
-        waitDots.boundingBox(),
-        messageList.boundingBox(),
-      ])
-      if (!bubbleBounds || !bubbleActionBounds || !waitBounds || !statusBounds || !dotsBounds || !messageListBounds) throw new Error('提问等待间距几何不可用')
-      expect(waitBounds.y - (bubbleBounds.y + bubbleBounds.height)).toBeCloseTo(56, 5)
-      expect(waitBounds.y - (bubbleActionBounds.y + bubbleActionBounds.height)).toBeCloseTo(16, 5)
-      expect(dotsBounds.y - (statusBounds.y + statusBounds.height)).toBeCloseTo(16, 5)
-      expect(dotsBounds.x - messageListBounds.x).toBeCloseTo(1, 5)
-      expect(Math.abs(dotsBounds.x - await visibleSvgStrokeLeft(statusRow.locator('svg')))).toBeLessThanOrEqual(.5)
     }
   }
 })

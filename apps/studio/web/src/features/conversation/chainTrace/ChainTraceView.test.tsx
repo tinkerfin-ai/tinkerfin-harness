@@ -518,7 +518,7 @@ describe('ChainTraceView', () => {
     const failed = render(<ChainTraceView threadId="thread-1" active live={false} onError={onError} />)
     expect(screen.queryByLabelText('链路操作')).not.toBeInTheDocument()
     expect(onError).toHaveBeenCalledExactlyOnceWith('链路加载失败')
-    expect(screen.queryByText('链路加载失败')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('链路加载失败')
     fireEvent.click(screen.getByRole('button', { name: '重新加载' }))
     expect(retry).toHaveBeenCalledOnce()
 

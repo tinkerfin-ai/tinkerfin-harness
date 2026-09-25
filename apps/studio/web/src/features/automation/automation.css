@@ -9,6 +9,18 @@
     padding: var(--space-6) var(--layout-page-gutter);
   }
 
+  .automation-load-failure {
+    position: absolute;
+    z-index: var(--layer-local-raised);
+    inset: var(--layout-header-height) 0 0;
+    display: grid;
+    place-items: center;
+    padding: var(--space-3);
+    pointer-events: none;
+  }
+  .automation-load-failure.is-history { top: calc(var(--layout-header-height) + var(--space-12)); }
+  .automation-load-failure .ui-feedback-state { pointer-events: auto; }
+
   .automation-content:has(.automation-calendar),
   #automation-panel:has(.automation-calendar),
   #automation-history-view:has(.automation-calendar) {
@@ -162,7 +174,7 @@
   }
 
   .automation-timeline-marker {
-    z-index: 1;
+    z-index: var(--layer-local);
     display: grid;
     grid-column: 1;
     grid-row: 1;
@@ -261,6 +273,7 @@
   .automation-result-content { padding: var(--space-2) var(--dialog-content-padding) var(--dialog-content-padding); }
   .automation-result-content h3 { overflow-wrap: anywhere; margin: 0 0 var(--space-3); font-size: var(--type-title-size); font-weight: var(--weight-ui); }
   .automation-result-meta { flex-wrap: wrap; color: var(--color-text-secondary); font-size: var(--type-micro-size); }
+  .automation-result-failure { display: grid; min-height: calc(var(--space-16) * 2); place-items: center; }
   .automation-result-output { margin-top: var(--space-6); font-size: var(--type-ui-size); line-height: var(--type-ui-line); }
   .automation-result-output p { margin: 0 0 var(--space-4); }
   .automation-result-output ul { padding-left: var(--space-5); }

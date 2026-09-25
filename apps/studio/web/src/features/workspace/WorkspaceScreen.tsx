@@ -208,12 +208,10 @@ export function WorkspaceScreen({
   const [initialActiveSessions] = useState(readActiveRunSessions)
   const autoRecoveredRunIds = useRef(new Set<string>())
   const notifiedConversationEvents = useRef(new Set<string>())
-  const notifiedImageSupportWarnings = useRef(new Set<string>())
   const notifiedChainWarnings = useRef(new Set<string>())
   latestWorkspace.current = workspace
   const pushToast = onToast
   const notifyConversation = useCallback((notice: NonNullable<Conversation['notice']>) => {
-    if (notice.id?.endsWith(':terminal')) return
     const key = notice.id ?? `${notice.kind}:${notice.content}`
     if (notifiedConversationEvents.current.has(key)) return
     notifiedConversationEvents.current.add(key)
@@ -307,25 +305,14 @@ export function WorkspaceScreen({
     pushToast('warning', message)
   }, [conversation.threadId, pushToast])
 
-  useEffect(() => {
-    const imageAttachmentIds = localAttachments.attachments
-      .filter((item) => item.kind === 'image')
-      .map((item) => item.id)
-      .join(',')
-    const support = imageSupport(conversation.model)
-    if (!imageAttachmentIds || modelCatalogStatus !== 'ready' || support === 'supported') return
-    const key = `${conversation.threadId || 'draft'}:${conversation.model}:${support}:${imageAttachmentIds}`
-    if (notifiedImageSupportWarnings.current.has(key)) return
-    notifiedImageSupportWarnings.current.add(key)
-    if (notifiedImageSupportWarnings.current.size > 256) {
-      const oldest = notifiedImageSupportWarnings.current.values().next().value
-      if (oldest) notifiedImageSupportWarnings.current.delete(oldest)
-    }
-    pushToast(
-      'warning',
-      support === 'unsupported' ? t('当前模型不支持图片') : t('当前模型的图片能力未确认'),
-    )
-  }, [conversation.model, conversation.threadId, imageSupport, localAttachments.attachments, modelCatalogStatus, pushToast, t])
+  const selectedModelImageSupport = imageSupport(conversation.model)
+  const attachmentDisabledReason = modelCatalogStatus === 'ready'
+    && localAttachments.attachments.some(item => item.kind === 'image')
+    && selectedModelImageSupport !== 'supported'
+    ? selectedModelImageSupport === 'unsupported'
+      ? t('当前模型不支持图片，请切换模型或移除图片')
+      : t('当前模型的图片能力未确认，请切换模型或移除图片')
+    : undefined
 
   useEffect(() => {
     const notification = conversation.notice
@@ -1351,7 +1338,7 @@ export function WorkspaceScreen({
               planActive={conversation.mode === 'plan'}
               planLocked={isRunning}
               attachments={localAttachments.attachments}
-              attachmentBlocked={localAttachments.attachments.some(item => item.kind === 'image') && imageSupport(conversation.model) !== 'supported'}
+              attachmentDisabledReason={attachmentDisabledReason}
               onRetryAttachment={localAttachments.retryAttachment}
               onAttachmentError={() => onToast('error', t('无法打开文件选择器，请重试'))}
               disabledReason={isConversationHydrationFailed

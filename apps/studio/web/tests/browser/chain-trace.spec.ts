@@ -975,8 +975,9 @@ test('搜索结果中的 Model 详情只补取一次完整响应且不重复读�
   expect(pageErrors).toEqual([])
 })
 
-test('详情省略时 fail-closed，英文界面不会把空响应展示为成功', async ({ page }) => {
+test('详情省略时 fail-closed，英文界面不会把空响应展示为成功', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 850 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   const pageErrors = await mockChainTraceStudio(page, {
     language: 'en',
     directSnapshot: responsePage(true),
@@ -990,9 +991,17 @@ test('详情省略时 fail-closed，英文界面不会把空响应展示为成�
   await details.getByRole('tab', { name: 'Response' }).click()
   const notifications = page.getByRole('list', { name: 'System notifications' })
   await expect(notifications.getByRole('status')).toHaveText('Failed to load the complete response')
-  await expect(page.getByText('Failed to load the complete response', { exact: true })).toHaveCount(1)
-  await expect(details.getByRole('alert')).toHaveCount(0)
+  await expect(details.getByRole('alert')).toContainText('Failed to load the complete response')
   await expect(details.getByRole('button', { name: 'Reload', exact: true })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('chain-response-failure.png') })
+  await page.setViewportSize({ width: 320, height: 900 })
+  const closeNavigation = page.getByRole('button', { name: 'Close navigation' })
+  if (await closeNavigation.isVisible()) await closeNavigation.click()
+  await expect(details.getByRole('alert')).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('chain-response-failure-mobile.png') })
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'dark' })
+  await page.screenshot({ path: testInfo.outputPath('chain-response-failure-mobile-dark.png') })
   await expect(details.getByText('准备委派任务')).toHaveCount(0)
   expect(pageErrors).toEqual([])
 })

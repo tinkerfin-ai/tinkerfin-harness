@@ -114,6 +114,66 @@ test('自动化通过任务接口保存和运行，历史只读且删除保留�
   expect(errors).toEqual([])
 })
 
+test('自动化读取失败在内容区展示统一重试并通知全局 Toast', async ({ page }, testInfo) => {
+  await prepare(page)
+  const taskFailure = '**/api/automation/tasks?**'
+  await page.route(taskFailure, route => route.fulfill({ status: 503, json: { code: 1001007004, message: 'unavailable', data: null } }))
+  await page.getByRole('tab', { name: '任务', exact: true }).click()
+  const taskAlert = page.getByRole('tabpanel', { name: '任务' }).getByRole('alert')
+  await expect(taskAlert).toContainText('自动化数据加载失败')
+  await expect(page.getByRole('list', { name: '系统提示' })).toContainText('自动化数据加载失败')
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      const position = await taskAlert.evaluate((element) => {
+        const card = element.getBoundingClientRect()
+        const region = document.querySelector('.automation-scroll')!.getBoundingClientRect()
+        return { offsetX: Math.abs(card.left + card.width / 2 - region.left - region.width / 2), offsetY: Math.abs(card.top + card.height / 2 - region.top - region.height / 2), overflow: document.documentElement.scrollWidth > innerWidth }
+      })
+      expect(position.offsetX).toBeLessThanOrEqual(2)
+      expect(position.offsetY).toBeLessThanOrEqual(2)
+      expect(position.overflow).toBe(false)
+      await page.screenshot({ path: testInfo.outputPath(`automation-failure-${theme}-${width}.png`) })
+    }
+  }
+  await page.locator('#automation-panel').evaluate(element => { element.style.minHeight = '2400px' })
+  await page.locator('.automation-scroll').evaluate(element => { element.scrollTop = 1200 })
+  await expect(taskAlert).toBeInViewport()
+  await expect(taskAlert.getByRole('button', { name: '重新加载' })).toBeVisible()
+  await page.locator('#automation-panel').evaluate(element => { element.style.minHeight = '' })
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'light' })
+  await page.unroute(taskFailure)
+  await taskAlert.getByRole('button', { name: '重新加载' }).click()
+  await expect(taskAlert).toHaveCount(0)
+
+  const historyFailure = '**/api/automation/runs?**'
+  await page.route(historyFailure, route => route.fulfill({ status: 503, json: { code: 1001007004, message: 'unavailable', data: null } }))
+  await page.getByRole('tab', { name: '历史', exact: true }).click()
+  const historyAlert = page.getByRole('tabpanel', { name: '历史' }).getByRole('alert')
+  await expect(historyAlert).toContainText('自动化数据加载失败')
+  await expect(page.getByRole('button', { name: '上一周' })).toBeVisible()
+  await expect(page.getByText('暂无记录')).toHaveCount(0)
+  await page.setViewportSize({ width: 320, height: 900 })
+  await page.screenshot({ path: testInfo.outputPath('automation-history-failure-light-320.png') })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.unroute(historyFailure)
+  await historyAlert.getByRole('button', { name: '重新加载' }).click()
+  await expect(historyAlert).toHaveCount(0)
+
+  const runFailure = '**/api/automation/runs/*'
+  await page.route(runFailure, route => route.fulfill({ status: 503, json: { code: 1001007004, message: 'unavailable', data: null } }))
+  await page.getByRole('button', { name: /查看运行：每日 AI 新闻简报/ }).first().click()
+  const dialog = page.getByRole('dialog', { name: '运行结果' })
+  const resultAlert = dialog.getByRole('alert')
+  await expect(resultAlert).toContainText('运行结果加载失败')
+  await expect(page.getByRole('list', { name: '系统提示' })).toContainText('运行结果加载失败')
+  await page.screenshot({ path: testInfo.outputPath('automation-run-result-failure.png') })
+  await page.unroute(runFailure)
+  await resultAlert.getByRole('button', { name: '重新加载' }).click()
+  await expect(resultAlert).toHaveCount(0)
+})
+
 test('自动化沿用会话主题与四尺寸布局，共享表单弹层可使用', async ({ page }, testInfo) => {
   await prepare(page)
   for (const theme of ['light', 'dark']) {

@@ -10,7 +10,6 @@ import { CompactionCard } from '../../conversation/compaction/CompactionCard'
 import { ActivityDots } from '../../conversation/components/ActivityDots'
 import { ApprovalStatusRow } from '../../conversation/components/ApprovalCard'
 import { MessageBlock, ToolCallBatch } from '../../conversation/components/MessageBlock'
-import { PlanQuestionStatusRow } from '../../conversation/components/PlanQuestionComposer'
 import { PlanReviewStatusRow } from '../../conversation/components/PlanReviewCard'
 import { TodoGroupRow } from '../../conversation/todoTrace/components/TodoGroupRow'
 import type { ConversationDisplayEntry } from '../../conversation/todoTrace/displayEntries'
@@ -155,11 +154,11 @@ export function ConversationViewport({
         {!isHistoryBootstrapped || historyStatus === 'loading' ? (
           <FeedbackState kind="loading" title={t('正在加载历史会话')} />
         ) : isInitialHistoryUnavailable ? (
-          <Button type="button" variant="text" onClick={onRetryHistory}>{t('重新加载')}</Button>
+          <div className="conversation-load-failure"><FeedbackState kind="error" appearance="retry" title={t('历史会话加载失败')} retryLabel={t('重新加载')} onRetry={onRetryHistory} /></div>
         ) : isHydrating ? (
           <FeedbackState kind="loading" title={t('正在加载会话')} />
         ) : isHydrationFailed ? (
-          <Button type="button" variant="text" onClick={onRetryHydration}>{t('重新加载')}</Button>
+          <div className="conversation-load-failure"><FeedbackState kind="error" appearance="retry" title={t('会话加载失败')} retryLabel={t('重新加载')} onRetry={onRetryHydration} /></div>
         ) : isEmpty ? (
           <EmptyConversation />
         ) : (
@@ -196,8 +195,10 @@ export function ConversationViewport({
                     : []}
                 />)}
             {conversation.approval && !conversation.approval.submitted && <ApprovalStatusRow />}
-            {conversation.planInteraction?.kind === 'questions' && (
-              <PlanQuestionStatusRow interaction={conversation.planInteraction} />
+            {conversation.planInteraction?.kind === 'questions' && !conversation.planInteraction.submitted && (
+              <div className="plan-interaction-wait-state">
+                <ActivityDots label={t('等待回答')} />
+              </div>
             )}
             {conversation.planInteraction?.kind === 'review' && (
               <PlanReviewStatusRow interaction={conversation.planInteraction} />

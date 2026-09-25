@@ -139,7 +139,7 @@ async function* traceItems(
   for (const item of items) yield item
 }
 
-function useControllerHarness(initialConversation: Conversation) {
+function useControllerHarness(initialConversation: Conversation, onNotice?: (notice: NonNullable<Conversation['notice']>) => void) {
   const { workspace, setWorkspace, retainConversationDetails, acknowledgeComposerPreferences, setComposerPreference } = useWorkspaceState()
   const initial = useRef(initialConversation).current
   useLayoutEffect(() => {
@@ -152,6 +152,7 @@ function useControllerHarness(initialConversation: Conversation) {
     setDraftConversation,
     retainConversationDetails,
     acknowledgeComposerPreferences,
+    onNotice,
   })
   return { controller, workspace, draftConversation, setWorkspace, setComposerPreference }
 }
@@ -448,7 +449,7 @@ describe('useConversationStreamController', () => {
     })
   })
 
-  it('从权威历史恢复独立运行错误，不合成消息或 Toast 通知', async () => {
+  it('实时主运行失败通知一次，权威历史只恢复持久失败事实', async () => {
     traceMocks.detail.mockResolvedValue(traceDetail({
       status: { execution: 'failed', headRunId: RUN_ID },
       messages: [],
@@ -466,7 +467,8 @@ describe('useConversationStreamController', () => {
         },
       },
     ]))
-    const { result } = renderHook(() => useControllerHarness(conversation()))
+    const onNotice = vi.fn()
+    const { result } = renderHook(() => useControllerHarness(conversation(), onNotice))
 
     await act(async () => {
       await result.current.controller.streamRun(THREAD_ID, payload, 'start')
@@ -476,6 +478,51 @@ describe('useConversationStreamController', () => {
     expect(current?.messages.filter((message) => message.role === 'error')).toHaveLength(0)
     expect(current?.runFailures).toMatchObject([{ runId: RUN_ID, retryable: false }])
     expect(current?.notice).toBeUndefined()
+    expect(onNotice).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      kind: 'error', content: '对话运行失败', id: `${RUN_ID}:terminal`,
+    }))
+  })
+
+  it('刷新恢复的终止失败只恢复会话事实，不重复通知全局 Toast', async () => {
+    writeActiveRunSession({ threadId: THREAD_ID, payload, mode: 'start', lastSeq: 1 })
+    clientMocks.start.mockImplementation(() => streamItems([
+      { seq: 2, event: { type: 'RUN_ERROR', rawEvent: { runId: RUN_ID }, code: 'failed', message: 'temporary failure' } },
+    ]))
+    traceMocks.detail.mockResolvedValue(traceDetail({
+      status: { execution: 'failed', headRunId: RUN_ID },
+      runFailures: [{ runId: RUN_ID, errorCode: 'failed', failedAt: BASE_TIME, retryable: false }],
+    }))
+    const onNotice = vi.fn()
+    const { result } = renderHook(() => useControllerHarness(conversation({ lastSeq: 1 }), onNotice))
+
+    await act(async () => { await result.current.controller.recoverConversation(THREAD_ID) })
+
+    expect(clientMocks.start).toHaveBeenCalledWith(payload, expect.any(AbortSignal), 1)
+    expect(result.current.workspace.conversations[0]?.runFailures).toMatchObject([{ runId: RUN_ID }])
+    expect(onNotice).not.toHaveBeenCalled()
+  })
+
+  it('用户取消主运行不会弹出失败通知', async () => {
+    clientMocks.start.mockImplementation(() => streamItems([
+      { seq: 1, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } },
+      { seq: 2, event: { type: 'RUN_ERROR', rawEvent: { runId: RUN_ID }, code: 'cancelled', message: 'cancelled' } },
+    ]))
+    const onNotice = vi.fn()
+    const { result } = renderHook(() => useControllerHarness(conversation(), onNotice))
+    await act(async () => { await result.current.controller.streamRun(THREAD_ID, payload, 'start') })
+    expect(onNotice).not.toHaveBeenCalled()
+  })
+
+  it('子 Agent 错误后主运行成功，不弹出主运行失败通知', async () => {
+    clientMocks.start.mockImplementation(() => streamItems([
+      { seq: 1, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } },
+      { seq: 2, event: { type: 'RUN_ERROR', rawEvent: { runId: 'child-run', source: { kind: 'deep_agent_subagent', agentType: 'subagent', agentName: 'researcher', graphNamespace: ['tools:child'] } }, code: 'failed', message: 'child failed' } },
+      { seq: 3, event: { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID, outcome: { type: 'success' } } },
+    ]))
+    const onNotice = vi.fn()
+    const { result } = renderHook(() => useControllerHarness(conversation(), onNotice))
+    await act(async () => { await result.current.controller.streamRun(THREAD_ID, payload, 'start') })
+    expect(onNotice).not.toHaveBeenCalled()
   })
 })
 

@@ -314,7 +314,7 @@ function TraceDetails({
               {responseStatus === 'loading' ? (
                 <FeedbackState kind="loading" title={t('正在加载完整响应…')} />
               ) : responseStatus === 'error' ? (
-                <Button type="button" variant="text" onClick={onRetryResponse}>{t('重新加载')}</Button>
+                <div className="chain-trace-response-failure"><FeedbackState kind="error" appearance="retry" title={t('完整响应加载失败')} retryLabel={t('重新加载')} onRetry={onRetryResponse} /></div>
               ) : (
                 <>
                   {responseMessages.map((message) => message.content && (
@@ -743,8 +743,8 @@ export function ChainTraceView({
         </div>
       )}
       {trace.state.phase === 'error' && (
-        <div className="chain-trace-state is-feedback">
-          <Button type="button" variant="text" onClick={trace.retry}>{t('重新加载')}</Button>
+        <div className="chain-trace-state is-feedback is-retry">
+          <FeedbackState kind="error" appearance="retry" title={t('链路加载失败')} retryLabel={t('重新加载')} onRetry={trace.retry} />
         </div>
       )}
       {trace.state.phase === 'ready' && !incomplete && nodes.length === 0 && (

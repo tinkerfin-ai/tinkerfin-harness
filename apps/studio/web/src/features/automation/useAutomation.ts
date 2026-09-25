@@ -14,17 +14,20 @@ interface Snapshot {
 const initial: Snapshot = { tasks: [], runs: [], counts: {}, cursors: {}, loading: true, error: false }
 
 /** 按当前视图读取服务端分页；刷新已加载页，隐藏或离开页面时取消请求 */
-export function useAutomation({ page, query, status, dates, view }: {
+export function useAutomation({ page, query, status, dates, view, onLoadError }: {
   page: 'tasks' | 'history'
   query: string
   status: string
   dates: string[]
   view: 'week' | 'list'
+  onLoadError?: () => void
 }) {
   const key = JSON.stringify([page, query, status, dates, view])
   const [pages, setPages] = useState<{ key: string; counts: Record<string, number> }>({ key: '', counts: {} })
   const [revision, setRevision] = useState(0)
   const [snapshot, setSnapshot] = useState<Snapshot>(initial)
+  const latestLoadError = useRef(onLoadError)
+  latestLoadError.current = onLoadError
   const displayedKey = useRef('')
   const pageCounts = JSON.stringify(pages.key === key ? pages.counts : {})
   const dateKey = dates.join(',')
@@ -78,6 +81,7 @@ export function useAutomation({ page, query, status, dates, view }: {
         if (closed || controller.signal.aborted) return
         controller.abort()
         setSnapshot(current => ({ ...current, loading: false, error: true }))
+        latestLoadError.current?.()
       }
     }
     const visibility = () => {

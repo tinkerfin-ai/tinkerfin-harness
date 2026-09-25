@@ -25,7 +25,7 @@ import {
   readPlanQuestionCollapsed,
   writePlanQuestionCollapsed,
 } from '../planQuestionCollapse'
-import { PlanInteractionCard, PlanInteractionStatusRow } from './PlanInteractionCard'
+import { PlanInteractionCard } from './PlanInteractionCard'
 
 const multipleSelectionMaximum = (
   question: Extract<PlanQuestionItem, { answerType: 'multiple_choice' }>,
@@ -226,20 +226,6 @@ const resizeTextAnswer = (textarea: HTMLTextAreaElement | null) => {
     : contentHeight
   textarea.style.height = `${nextHeight}px`
   textarea.style.overflowY = contentHeight > nextHeight ? 'auto' : 'hidden'
-}
-
-export function PlanQuestionStatusRow({ interaction }: { interaction: PlanQuestionState }) {
-  const { t } = useI18n()
-  return (
-    <PlanInteractionStatusRow
-      kind="question"
-      icon={<CircleHelp size={14} aria-hidden="true" />}
-      label={t('提问')}
-      pendingStatus={t('等待回答')}
-      submittedStatus={t('正在继续规划')}
-      submitted={interaction.submitted}
-    />
-  )
 }
 
 export function PlanQuestionComposer({

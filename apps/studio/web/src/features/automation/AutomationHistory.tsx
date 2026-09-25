@@ -14,11 +14,12 @@ export function RunStatus({ run }: { run: AutomationRun }) {
   </span>
 }
 
-function HistoryDay({ date, runs, onOpenRun, hasMore, onLoadMore, loading }: {
+function HistoryDay({ date, runs, onOpenRun, hasMore, onLoadMore, loading, loadFailed }: {
   date: string
   hasMore: boolean
   onLoadMore: () => void
   loading: boolean
+  loadFailed: boolean
   runs: AutomationRun[]
   onOpenRun: (run: AutomationRun, trigger: HTMLElement) => void
 }) {
@@ -45,7 +46,7 @@ function HistoryDay({ date, runs, onOpenRun, hasMore, onLoadMore, loading }: {
               <span className="automation-event-name">{run.name}</span>
             </span>
           </Button>
-        </div>) : <p className="automation-day-empty">{t('暂无记录')}</p>}
+        </div>) : loadFailed ? null : <p className="automation-day-empty">{t('暂无记录')}</p>}
         {hasMore && <Button variant="text" loading={loading} onClick={onLoadMore}>{t('加载更多')}</Button>}
       </div>
       <OverlayScrollbar viewportRef={viewportRef} size="compact" visibility="persistent" />
@@ -54,7 +55,7 @@ function HistoryDay({ date, runs, onOpenRun, hasMore, onLoadMore, loading }: {
 }
 
 /** 周历和列表只组织已经发生的运行，不提供调度或再次执行入口 */
-export function AutomationHistory({ runs, query, status, onOpenRun, offset, onOffsetChange, view, onViewChange, cursors, onLoadMore, loading }: {
+export function AutomationHistory({ runs, query, status, onOpenRun, offset, onOffsetChange, view, onViewChange, cursors, onLoadMore, loading, loadFailed = false }: {
   runs: AutomationRun[]
   query: string
   status: 'all' | AutomationRun['status']
@@ -64,6 +65,7 @@ export function AutomationHistory({ runs, query, status, onOpenRun, offset, onOf
   cursors: Record<string, string | null>
   onLoadMore: (day: string) => void
   loading: boolean
+  loadFailed?: boolean
   onOffsetChange: (offset: number) => void
   onOpenRun: (run: AutomationRun, trigger: HTMLElement) => void
 }) {
@@ -113,7 +115,7 @@ export function AutomationHistory({ runs, query, status, onOpenRun, offset, onOf
       {view === 'week' ?
         <div className="automation-calendar">
           <div ref={weekRef} className="automation-week ui-scrollbar" role="region" tabIndex={0} aria-label={t('本周运行历史，可横向滚动')}>
-            {dates.map((date) => <HistoryDay key={date} date={date} hasMore={Boolean(cursors[date])} onLoadMore={() => onLoadMore(date)} loading={loading}
+            {dates.map((date) => <HistoryDay key={date} date={date} hasMore={Boolean(cursors[date])} onLoadMore={() => onLoadMore(date)} loading={loading} loadFailed={loadFailed}
               runs={matching.filter((run) => run.date === date).reverse()} onOpenRun={onOpenRun} />)}
           </div>
         </div>
@@ -129,7 +131,7 @@ export function AutomationHistory({ runs, query, status, onOpenRun, offset, onOf
             </span>
           </Button>)}
         </section>
-      )) : <div className="automation-empty"><h3>{t(filtered ? '没有找到运行记录' : '还没有运行记录')}</h3><p>{t(filtered ? '换个关键词试试' : '本周的运行结果会显示在这里')}</p></div>}
+      )) : loadFailed ? null : <div className="automation-empty"><h3>{t(filtered ? '没有找到运行记录' : '还没有运行记录')}</h3><p>{t(filtered ? '换个关键词试试' : '本周的运行结果会显示在这里')}</p></div>}
       {view === 'list' && cursors[dates[0]] && <Button variant="text" loading={loading} onClick={() => onLoadMore(dates[0])}>{t('加载更多')}</Button>}
     </div>
   </>

@@ -1,7 +1,7 @@
 import { Plus, Search } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 
-import { Button, Dialog, IconButton, SearchField, ViewTabs } from '../../components/ui'
+import { Button, Dialog, FeedbackState, IconButton, SearchField, ViewTabs } from '../../components/ui'
 import type { ToastKind } from '../../components/ui/ToastViewport'
 import { useI18n } from '../../i18n'
 import { WorkspaceHeader } from '../workspace/components/WorkspaceHeader'
@@ -50,7 +50,9 @@ export function AutomationPage({ navigationTriggerRef, onOpenNavigation, onModal
   const wasSearchOpenRef = useRef(false)
   const today = todayInBeijing()
   const dates = useMemo(() => weekDates(today, weekOffset), [today, weekOffset])
-  const data = useAutomation({ page, query, status: filter, dates, view })
+  const data = useAutomation({ page, query, status: filter, dates, view,
+    onLoadError: () => onToast('error', t('自动化数据加载失败')),
+  })
 
   useEffect(() => {
     mounted.current = true
@@ -151,11 +153,11 @@ export function AutomationPage({ navigationTriggerRef, onOpenNavigation, onModal
       </div>} />
     <div className="automation-scroll ui-scrollbar">
       <section className="automation-content">
-        {data.error && <div role="alert">{t('自动化数据加载失败')}<Button variant="text" onClick={data.reload}>{t('重试')}</Button></div>}
         <div id="automation-panel" role="tabpanel" aria-label={t(page === 'history' ? '历史' : '任务')} aria-busy={data.loading}>
+          {data.error && <div className={`automation-load-failure is-${page}`}><FeedbackState kind="error" appearance="retry" title={t('自动化数据加载失败')} retryLabel={t('重新加载')} onRetry={data.reload} /></div>}
           {data.loading && !data.tasks.length && !data.runs.length ? <p role="status">{t('正在加载自动化')}</p> : page === 'history'
-            ? <AutomationHistory offset={weekOffset} onOffsetChange={setWeekOffset} runs={data.runs} query={query} status={filter === 'enabled' || filter === 'paused' ? 'all' : filter} onOpenRun={(run, trigger) => setDialog({ kind: 'result', run, trigger })} view={view} onViewChange={setView} cursors={data.cursors} onLoadMore={data.loadMore} loading={data.loading} />
-            : <><AutomationTaskList tasks={data.tasks} query={query} status={filter === 'enabled' || filter === 'paused' ? filter : 'all'} busy={busy}
+            ? <AutomationHistory offset={weekOffset} onOffsetChange={setWeekOffset} runs={data.runs} query={query} status={filter === 'enabled' || filter === 'paused' ? 'all' : filter} onOpenRun={(run, trigger) => setDialog({ kind: 'result', run, trigger })} view={view} onViewChange={setView} cursors={data.cursors} onLoadMore={data.loadMore} loading={data.loading} loadFailed={data.error && !data.runs.length} />
+            : data.error && !data.tasks.length ? null : <><AutomationTaskList tasks={data.tasks} query={query} status={filter === 'enabled' || filter === 'paused' ? filter : 'all'} busy={busy}
               onEdit={(task, trigger) => setDialog({ kind: 'editor', task, trigger })} onExecute={id => void execute(id, 'run')}
               onToggle={id => void execute(id, data.tasks.find(task => task.id === id)?.enabled ? 'pause' : 'enable')}
               onPause={ids => batch(data.tasks.filter(task => ids.has(task.id)), 'pause')} onDelete={requestDelete} onClearFilter={clearFilters} />
@@ -164,7 +166,7 @@ export function AutomationPage({ navigationTriggerRef, onOpenNavigation, onModal
       </section>
     </div>
     {dialog?.kind === 'editor' && <AutomationEditor task={dialog.task} trigger={dialog.trigger} defaultModelId={defaultModelId} renderModelChoice={renderModelChoice} onClose={() => setDialog(null)} onSave={() => { setDialog(null); data.reload(); onToast('info', t('任务已保存')) }} />}
-    {dialog?.kind === 'result' && <AutomationRunDialog run={dialog.run} trigger={dialog.trigger} onClose={() => setDialog(null)} />}
+    {dialog?.kind === 'result' && <AutomationRunDialog run={dialog.run} trigger={dialog.trigger} onToast={onToast} onClose={() => setDialog(null)} />}
     {dialog?.kind === 'delete' && <Dialog open title={t('删除所选任务')} restoreFocusTo={dialog.trigger} closeDisabled={busy.size > 0} onClose={cancelDelete}>
       <p>{t('将删除 {count} 个任务并取消排队执行，运行历史会保留，此操作不可撤销', { count: dialog.tasks.length })}</p>
       <div className="automation-form-footer"><Button variant="ghost" disabled={busy.size > 0} onClick={cancelDelete}>{t('取消')}</Button>

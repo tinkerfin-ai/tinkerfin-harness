@@ -274,6 +274,15 @@ const tool: Message = {
   },
 }
 describe('生成结果布局', () => {
+  it('无参工具仅返回附件时直接保留附件，不显示空输入和空输出', async () => {
+    render(<MessageBlock message={{ ...tool, meta: { toolName: 'list_attachments', params: '{}', status: 'completed' } }} />)
+    const image = await screen.findByRole('img', { name: cat.name })
+    expect(screen.getByText('list_attachments').closest('details')).toBeNull()
+    expect(image).toBeVisible()
+    expect(screen.queryByText('输入')).not.toBeInTheDocument()
+    expect(screen.queryByText('输出')).not.toBeInTheDocument()
+  })
+
   it('用户附件位于提示词之前，复制操作仍位于消息末尾', async () => {
     render(<MessageBlock message={{ id: 'user', role: 'user', content: '参考这张图片', createdAt: '', attachments: [cat, chart] }} />)
     const prompt = screen.getByText('参考这张图片')

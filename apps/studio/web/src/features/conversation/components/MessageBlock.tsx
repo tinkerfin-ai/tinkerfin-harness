@@ -56,39 +56,67 @@ function RichField({ value, status, className = 'tool-rich-field', contentRef }:
     : <PlaceholderField status={status} />
 }
 
+function shouldHideToolInput(message: Message): boolean {
+  const toolName = message.meta?.toolName?.trim()
+  if (toolName !== 'list_attachments' && toolName !== 'compact_conversation') return false
+  const params = message.meta?.params
+  if (!params) return false
+  // 仅隐藏已确认无参工具的完整空对象，缺失或异常参数仍可查看
+  try {
+    const input: unknown = JSON.parse(params)
+    return input !== null && typeof input === 'object' && !Array.isArray(input) && Object.keys(input).length === 0
+  } catch {
+    return false
+  }
+}
+
+function hasToolDetails(message: Message): boolean {
+  return !message.attachments?.length || Boolean(message.meta?.result) || !shouldHideToolInput(message)
+}
+
 function ToolDetails({ message, visible }: { message: Message; visible: boolean }) {
   const { t } = useI18n()
   const inputLabelId = useId()
   const outputLabelId = useId()
+  const showInput = !shouldHideToolInput(message)
+  const showOutput = Boolean(message.meta?.result || !message.attachments?.length)
   const { viewportRef, contentRef } = useStreamingContentScroll({
     identity: message.id,
     value: message.meta?.params,
     running: message.meta?.status === 'running',
-    visible,
+    visible: visible && showInput,
   })
   return (
     <div className="tool-detail-card">
-      <div ref={viewportRef} className="tool-detail-section tool-detail-section--params" role="region" aria-labelledby={inputLabelId} tabIndex={0}>
+      {showInput && <div ref={viewportRef} className="tool-detail-section tool-detail-section--params" role="region" aria-labelledby={inputLabelId} tabIndex={0}>
         <span id={inputLabelId} className="tool-field-label">{t('输入')}</span>
         <CodeField contentRef={contentRef} value={message.meta?.params} status={message.meta?.status} />
-      </div>
-      {(message.meta?.result || !message.attachments?.length) && <>
-        <span className="tool-detail-divider" aria-hidden="true" />
+      </div>}
+      {showInput && showOutput && <span className="tool-detail-divider" aria-hidden="true" />}
+      {showOutput &&
         <div className="tool-detail-section tool-detail-section--result" role="region" aria-labelledby={outputLabelId} tabIndex={0}>
           <span id={outputLabelId} className="tool-field-label">{t('输出')}</span>
           <RichField value={message.meta?.result} status={message.meta?.status} />
         </div>
-      </>}
+      }
     </div>
   )
 }
 
 type MessageActionKind = 'user' | 'assistant'
 
-function MessageActionRow({ content, kind }: { content: string; kind: MessageActionKind }) {
+function formatMessageTime(createdAt: string): string | null {
+  const date = new Date(createdAt)
+  if (!createdAt || Number.isNaN(date.getTime())) return null
+  const part = (value: number) => String(value).padStart(2, '0')
+  return `${part(date.getMonth() + 1)}-${part(date.getDate())} ${part(date.getHours())}:${part(date.getMinutes())}`
+}
+
+function MessageActionRow({ content, kind, createdAt }: { content: string; kind: MessageActionKind; createdAt?: string }) {
   const { t } = useI18n()
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const resetTimer = useRef<number | null>(null)
+  const messageTime = kind === 'user' && createdAt ? formatMessageTime(createdAt) : null
 
   useEffect(() => () => {
     if (resetTimer.current != null) window.clearTimeout(resetTimer.current)
@@ -126,7 +154,9 @@ function MessageActionRow({ content, kind }: { content: string; kind: MessageAct
       role="group"
       aria-label={labels.group}
     >
+      {messageTime && <time className="message-action-time" dateTime={createdAt}>{messageTime}</time>}
       <IconButton
+        type="button"
         label={label}
         tooltip={label}
         icon={copyState === 'copied'
@@ -162,7 +192,7 @@ function SubagentToolTraceRow({
       open={open}
       onOpenChange={onOpenChange}
     >
-      <ToolDetails message={message} visible={parentOpen && open} />
+      {hasToolDetails(message) ? <ToolDetails message={message} visible={parentOpen && open} /> : null}
     </ToolCallRow>
     <AttachmentList attachments={message.attachments} />
     </>
@@ -332,7 +362,7 @@ function MessageBlockView({
       <article id={message.id} className="message user-message">
         <AttachmentList attachments={message.attachments} />
         <MarkdownContent content={message.content} className="message-markdown" />
-        <MessageActionRow content={message.content} kind="user" />
+        <MessageActionRow content={message.content} kind="user" createdAt={message.createdAt} />
       </article>
     )
   }
@@ -389,7 +419,7 @@ export function ToolCallCard({ message, className }: { message: Message; classNa
     <ToolCallRow message={message} open={open} onOpenChange={setOpen} className={`tool-card${className ? ` ${className}` : ''}`}>
       {isTodoUpdate
         ? <div className="todo-trace-tool-status">{todoStatus}</div>
-        : <ToolDetails message={message} visible={open} />}
+        : hasToolDetails(message) ? <ToolDetails message={message} visible={open} /> : null}
     </ToolCallRow>
     <AttachmentList attachments={message.attachments} />
     </>

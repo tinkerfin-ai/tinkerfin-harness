@@ -24,7 +24,7 @@ const detail: ConversationHistoryDetail = { accessMode: 'write_approval',
   runFailures: messages.map(message => ({ runId: message.runId, errorCode: 'runtime_initialization_error', failedAt: time, retryable: true })),
 }
 for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440]) {
-  test(`连续失败的间距和只读历史 ${theme} ${width}`, async ({ page }) => {
+  test(`连续失败的间距和只读历史 ${theme} ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 960 })
     await page.addInitScript(({ user, theme }) => {
       localStorage.setItem('tinkerfin:theme', theme)
@@ -79,6 +79,9 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
       if (width === 320) expect(item.buttonHeight).toBeGreaterThanOrEqual(44)
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    if ((theme === 'light' && width === 320) || (theme === 'dark' && width === 1440)) {
+      await page.screenshot({ path: testInfo.outputPath(`conversation-run-failures-${theme}-${width}.png`) })
+    }
 
     expect(posts).toHaveLength(0)
     if (theme !== 'light' || width !== 320) return
@@ -96,3 +99,74 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
     await expect(draft).toHaveValue('保留这个草稿')
   })
 }
+
+test('首次历史与当前会话读取失败分别保留居中重试和全局 Toast', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 320, height: 900 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.addInitScript((user) => {
+    localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'test-only', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
+  }, user)
+  let listFailed = false
+  let detailFailed = false
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    let data: unknown = {}
+    if (path === '/api/auth/me') data = { user, expires_at: '2099-01-01T00:00:00Z' }
+    else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main', imageSupport: 'supported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
+    else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
+    else if (path === '/api/conversation/history') {
+      if (!listFailed) { listFailed = true; await route.fulfill({ status: 503, json: { code: 1001007004, message: '服务暂不可用，请稍后重试', data: null } }); return }
+      data = { items: [{ ...detail, status: 'error', lastRunId: 'run-3', hasPendingInterrupt: false, pendingInteractionKind: null }], nextCursor: null }
+    } else if (path === `/api/conversation/${threadId}/history`) {
+      if (!detailFailed) { detailFailed = true; await route.fulfill({ status: 503, json: { code: 1001007004, message: 'unavailable', data: null } }); return }
+      data = detail
+    }
+    await route.fulfill({ json: { code: 0, message: 'success', data } })
+  })
+  await page.goto('/')
+  const conversation = page.getByRole('region', { name: '对话内容', exact: true })
+  const historyAlert = conversation.getByRole('alert')
+  await expect(historyAlert).toContainText('历史会话加载失败')
+  await expect(page.getByRole('list', { name: '系统提示' })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('history-bootstrap-failure-320.png') })
+  await historyAlert.getByRole('button', { name: '重新加载' }).click()
+  const detailAlert = conversation.getByRole('alert')
+  await expect(detailAlert).toContainText('会话加载失败')
+  await page.screenshot({ path: testInfo.outputPath('conversation-hydration-failure-320.png') })
+  await detailAlert.getByRole('button', { name: '重新加载' }).click()
+  await expect(conversation.getByRole('alert').filter({ hasText: '会话加载失败' })).toHaveCount(0)
+  await expect(conversation.getByText('正常问题')).toBeVisible()
+})
+
+test('侧栏更多历史读取失败保留原位重试和全局 Toast', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 320, height: 900 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.addInitScript((user) => {
+    localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'test-only', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
+  }, user)
+  let pageFailed = false
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url())
+    const path = url.pathname
+    let data: unknown = {}
+    if (path === '/api/auth/me') data = { user, expires_at: '2099-01-01T00:00:00Z' }
+    else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main', imageSupport: 'supported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
+    else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
+    else if (path === '/api/conversation/history') {
+      if (url.searchParams.has('cursor')) {
+        if (!pageFailed) { pageFailed = true; await route.fulfill({ status: 503, json: { code: 1001007004, message: 'unavailable', data: null } }); return }
+        data = { items: [], nextCursor: null }
+      } else data = { items: [{ ...detail, status: 'error', lastRunId: 'run-3', hasPendingInterrupt: false, pendingInteractionKind: null }], nextCursor: 'older-page' }
+    } else if (path === `/api/conversation/${threadId}/history`) data = detail
+    await route.fulfill({ json: { code: 0, message: 'success', data } })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: '打开导航' }).click()
+  const sidebar = page.getByRole('region', { name: '最近对话' })
+  const failure = sidebar.getByRole('alert')
+  await expect(failure).toContainText('更多历史加载失败')
+  await expect(page.getByRole('list', { name: '系统提示' })).toContainText('历史记录加载失败')
+  await page.screenshot({ path: testInfo.outputPath('history-pagination-failure-320.png') })
+  await failure.getByRole('button', { name: '重试加载历史' }).click()
+  await expect(failure).toHaveCount(0)
+})

@@ -20,14 +20,26 @@ const settle = () => act(async () => { await vi.advanceTimersByTimeAsync(0) })
 describe('自动化服务端数据', () => {
   it('旧查询被取消，延迟返回不能覆盖新的筛选结果', async () => {
     let release: (value: Awaited<ReturnType<typeof fetchTaskPage>>) => void = () => {}
+    const onLoadError = vi.fn()
     vi.mocked(fetchTaskPage).mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
-    const { result, rerender } = renderHook(({ query }) => useAutomation({ ...base, query }), { initialProps: { query: 'old' } })
+    const { result, rerender } = renderHook(({ query }) => useAutomation({ ...base, query, onLoadError }), { initialProps: { query: 'old' } })
     const oldSignal = vi.mocked(fetchTaskPage).mock.calls[0][1]
     vi.mocked(fetchTaskPage).mockResolvedValue({ items: [taskFixture({ id: 'new' })], nextCursor: null })
     rerender({ query: 'new' }); await settle()
     expect(oldSignal.aborted).toBe(true)
     await act(async () => release({ items: [taskFixture({ id: 'old' })], nextCursor: null }))
     expect(result.current.tasks.map(task => task.id)).toEqual(['new'])
+    expect(onLoadError).not.toHaveBeenCalled()
+  })
+  it('读取失败通知一次，显式重试成功后清除失败状态', async () => {
+    const onLoadError = vi.fn()
+    vi.mocked(fetchTaskPage).mockRejectedValueOnce(new Error('unavailable'))
+    const { result } = renderHook(() => useAutomation({ ...base, onLoadError })); await settle()
+    expect(result.current.error).toBe(true)
+    expect(onLoadError).toHaveBeenCalledOnce()
+    act(() => result.current.reload()); await settle()
+    expect(result.current.error).toBe(false)
+    expect(onLoadError).toHaveBeenCalledOnce()
   })
   it('加载更多使用后端游标，刷新保留已加载页', async () => {
     vi.mocked(fetchTaskPage).mockImplementation(async params => params.cursor ? { items: [taskFixture({ id: 'second' })], nextCursor: null } : { items: [taskFixture({ id: 'first' })], nextCursor: 'next' })

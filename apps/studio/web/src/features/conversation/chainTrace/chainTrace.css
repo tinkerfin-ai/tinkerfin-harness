@@ -927,6 +927,7 @@
   }
 
   .chain-trace-response { display: grid; gap: var(--space-5); }
+  .chain-trace-response-failure { display: grid; min-height: calc(var(--space-16) * 2); place-items: center; }
   .chain-trace-response-message,
   .chain-trace-response-data { min-width: 0; }
   .chain-trace-response-message > span {
@@ -985,7 +986,7 @@
   }
   .chain-trace-feedback-action.ui-button:hover:not(:disabled) { background: transparent; color: var(--color-brand-text); }
   .chain-trace-feedback-action.ui-button:active:not(:disabled) { background: transparent; color: var(--color-text-primary); }
-  :is(.chain-trace, .chain-trace-details) .ui-feedback-state {
+  :is(.chain-trace, .chain-trace-details) .ui-feedback-state:not(.is-retry) {
     width: fit-content;
     max-width: 100%;
     min-height: var(--control-lg);
@@ -995,7 +996,7 @@
     box-shadow: none;
     background: transparent;
   }
-  :is(.chain-trace, .chain-trace-details) .ui-feedback-state.has-action { grid-template-columns: auto minmax(0, 1fr) auto; }
+  :is(.chain-trace, .chain-trace-details) .ui-feedback-state.has-action:not(.is-retry) { grid-template-columns: auto minmax(0, 1fr) auto; }
   :is(.chain-trace, .chain-trace-details) .ui-feedback-state__title { text-align: left; font-size: var(--type-meta-size); font-weight: var(--weight-ui); }
   :is(.chain-trace, .chain-trace-details) .ui-feedback-icon { width: var(--icon-lg); height: var(--icon-lg); background: transparent; }
   :is(.chain-trace, .chain-trace-details) .ui-feedback-state > .ui-icon-button-wrap { translate: none; }
@@ -1020,6 +1021,7 @@
     padding-block: 0;
     place-content: start center;
   }
+  .chain-trace-state.is-feedback.is-retry { place-content: center; }
   .chain-trace-empty { grid-row: 1 / -1; }
   @media (max-width: 920px) {
     .chain-trace-toolbar { gap: var(--space-2); }

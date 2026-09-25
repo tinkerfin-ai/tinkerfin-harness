@@ -597,7 +597,7 @@ describe('Studio Trace history integration', () => {
     expect(attempts).toBe(5)
   })
 
-  it('初始化失败在会话中持久展示且不弹 Toast', async () => {
+  it('初始化失败在会话中持久展示并通知一次全局 Toast', async () => {
     const user = userEvent.setup()
     const details = { [THREAD_ID]: traceDetail() }
     installFetch({
@@ -623,7 +623,7 @@ describe('Studio Trace history integration', () => {
     expect(await screen.findByText('会话异常')).toBeInTheDocument()
     await waitFor(() => expect((readActiveRunSessions()[0] ?? null)).toBeNull())
     expect(screen.getByRole('textbox', { name: '消息输入' })).toBeEnabled()
-    expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument()
+    expect(within(await screen.findByRole('list', { name: '系统提示' })).getByText('任务初始化失败，请重试')).toBeInTheDocument()
     expect(screen.queryByText('Agent run failed')).not.toBeInTheDocument()
     expect(screen.queryByText('任务遇到问题')).not.toBeInTheDocument()
     expect(screen.queryByText('对话运行失败')).not.toBeInTheDocument()

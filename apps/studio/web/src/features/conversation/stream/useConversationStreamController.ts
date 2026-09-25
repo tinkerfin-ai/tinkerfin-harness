@@ -24,7 +24,7 @@ import {
   followConversationRun,
 } from '../../../api/conversation/history'
 import type { RetainConversationDetails, AcknowledgeComposerPreferences } from '../../workspace/useWorkspaceState'
-import type { ConversationRunPayload, ConversationRunMode } from '../../../api/conversation/types'
+import type { ConversationAgUiEvent, ConversationRunPayload, ConversationRunMode } from '../../../api/conversation/types'
 import type { TaskTraceSnapshot } from '../../../api/conversation/taskTrace'
 import { translateCurrent } from '../../../i18n'
 import type {
@@ -151,6 +151,8 @@ export interface StreamRunOptions {
   target: 'draft' | 'workspace'
   initialConversation?: Conversation
   initialAfterSeq?: number
+  /** 刷新恢复只重建运行事实，不重复提示先前的终止事件 */
+  notifyRunError?: boolean
 }
 
 interface ConversationStreamControllerOptions {
@@ -508,6 +510,21 @@ export function useConversationStreamController({
       const stream = (request: ConversationRunPayload, signal?: AbortSignal, afterSeq?: number) => 'model' in request
         ? compactConversationContext(request, signal, afterSeq)
         : (mode === 'resume' ? resumeConversationRun : startConversationRun)(request, signal, afterSeq)
+      const notifyMainRunError = (event: ConversationAgUiEvent, current: Conversation) => {
+        if (options.notifyRunError === false
+          || event.type !== 'RUN_ERROR'
+          || event.code === 'cancelled'
+          || event.code === 'resume_cancelled'
+          || (event.rawEvent?.runId !== payload.runId && event.rawEvent?.source?.agentType === 'subagent')) return
+        latestNoticeHandler.current?.(current.notice?.id?.endsWith(':terminal') ? current.notice : {
+          kind: 'error',
+          content: conversationErrorMessage(
+            new ConversationError(event.code === 'runtime_initialization_error' ? 'run_initialization_failed' : 'run_failed', event.message),
+            'run_failed',
+          ),
+          id: `${payload.runId}:terminal`,
+        })
+      }
       let target = options.target
       let targetThreadId = threadIdToStream
       let draftTarget = options.initialConversation
@@ -649,6 +666,7 @@ export function useConversationStreamController({
             const nextDraft = seq == null
               ? withEvent
               : { ...withEvent, lastSeq: seq, isHydrated: true }
+            notifyMainRunError(event, nextDraft)
             draftTarget = nextDraft
             options.onDraftChange?.(nextDraft)
             if (seq != null) lastAppliedSeq = seq
@@ -695,9 +713,7 @@ export function useConversationStreamController({
           validationTarget = seq == null
             ? { ...validated, isHydrated: true }
             : { ...validated, lastSeq: seq, isHydrated: true }
-          if (event.type === 'RUN_ERROR' && validationTarget.notice) {
-            latestNoticeHandler.current?.(validationTarget.notice)
-          }
+          notifyMainRunError(event, validationTarget)
 
           enqueueWorkspaceUpdate(streamEpoch, (state) => {
             const targetConversationId = reportedThreadId
@@ -993,6 +1009,7 @@ export function useConversationStreamController({
       }
       await streamRun(threadId, request.payload, request.mode, {
         ...request.options,
+        notifyRunError: false,
         initialConversation: request.options.initialConversation
           ? { ...request.options.initialConversation, activeRunId: request.payload.runId, runStatus: 'streaming', notice: undefined }
           : undefined,
