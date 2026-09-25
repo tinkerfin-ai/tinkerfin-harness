@@ -113,6 +113,7 @@ def work_file_runtime():
 
     workspace.aupload_files = AsyncMock(side_effect=upload)
     workspace.aread_bytes = AsyncMock(side_effect=read)
+    workspace.to_shell_path.side_effect = lambda path: path.lstrip("/")
 
     class WorkspaceRuntime(ToolRuntime[None, RootedOpenSandboxBackend]):
         @property

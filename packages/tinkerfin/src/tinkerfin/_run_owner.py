@@ -11,7 +11,11 @@ from typing import Generic, TypeVar, cast
 
 from tinkerfin_contracts import RunIdentity
 
-from ._failure_evidence import retain_failure, select_failure
+from ._failure_evidence import (
+    has_non_cancellation_failure,
+    retain_failure,
+    select_failure,
+)
 from ._tasks import join_task
 from .coordination import RunCoordinator
 from .errors import RunCoordinationOwnershipLostError, TinkerFinLifecycleError
@@ -114,6 +118,7 @@ class RunOwner:
         self._scope_error: BaseException | None = None
         self._admission_error: BaseException | None = None
         self._failure: BaseException | None = None
+        self._failure_delivered = False
         self._caller_cancellation: asyncio.CancelledError | None = None
         self._cleanup_error: BaseException | None = None
         self._close_native: Callable[[BaseException | None], Awaitable[None]] | None = (
@@ -348,12 +353,17 @@ class RunOwner:
 
         self._commands.put_nowait(execute)
         try:
-            return (await asyncio.shield(result)).unwrap()
-        except asyncio.CancelledError as primary:
-            self._record_caller_cancellation(primary)
-            await self._close_after_failure(primary)
-            if result.done():
-                result.result().retain_failure(primary)
+            try:
+                return (await asyncio.shield(result)).unwrap()
+            except asyncio.CancelledError as primary:
+                self._record_caller_cancellation(primary)
+                await self._close_after_failure(primary)
+                if result.done():
+                    result.result().retain_failure(primary)
+                raise
+        except BaseException:
+            if self._failure is not None:
+                self._failure_delivered = True
             raise
         finally:
             self._pending = False
@@ -426,6 +436,17 @@ class RunOwner:
                 raise
         if self._cleanup_error is not None:
             raise self._cleanup_error
+        if (
+            not self._pending
+            and not self._failure_delivered
+            and self._failure is not None
+            and has_non_cancellation_failure(self._failure)
+        ):
+            # Closing an idle source can attach a resource failure to the owner's
+            # stop cancellation after the last pull was delivered. No pending call
+            # remains to carry it, so close must expose that retained evidence.
+            self._failure_delivered = True
+            raise self._failure
 
     async def _close_after_failure(self, primary: BaseException) -> None:
         try:

@@ -191,7 +191,6 @@ export function WorkspaceScreen({
   const theme = useThemePreference()
   const navigation = useWorkspaceNavigation()
   const {
-    imageSupport,
     status: modelCatalogStatus,
     modelIds,
     defaultModelId,
@@ -304,15 +303,6 @@ export function WorkspaceScreen({
     }
     pushToast('warning', message)
   }, [conversation.threadId, pushToast])
-
-  const selectedModelImageSupport = imageSupport(conversation.model)
-  const attachmentDisabledReason = modelCatalogStatus === 'ready'
-    && localAttachments.attachments.some(item => item.kind === 'image')
-    && selectedModelImageSupport !== 'supported'
-    ? selectedModelImageSupport === 'unsupported'
-      ? t('当前模型不支持图片，请切换模型或移除图片')
-      : t('当前模型的图片能力未确认，请切换模型或移除图片')
-    : undefined
 
   useEffect(() => {
     const notification = conversation.notice
@@ -561,16 +551,6 @@ export function WorkspaceScreen({
     if ((!trimmed && !readyAttachments.length) || isRunning || !conversation.model || (!resubmission && localAttachments.attachments.some(item => item.state !== 'ready'))) return
     if (!conversation.threadId && conversation.runStatus === 'detached') return
     if (resubmission && (conversation.runStatus === 'detached' || conversation.pendingInteractionKind || conversation.approval || conversation.planInteraction)) return
-    if (readyAttachments.some(item => item.mime_type.startsWith('image/')) && imageSupport(conversation.model) !== 'supported') {
-      if (resubmission) {
-        const support = imageSupport(conversation.model)
-        pushToast(
-          'warning',
-          support === 'unsupported' ? t('当前模型不支持图片') : t('当前模型的图片能力未确认'),
-        )
-      }
-      return
-    }
     const submittedIds = localAttachments.attachments.map(item => item.id)
     const submittedThreadId = workspace.currentThreadId
     const submittedDraft = draft
@@ -701,7 +681,7 @@ export function WorkspaceScreen({
     })
     if (!resubmission) setDraft('')
     void streamRun(currentConversation.threadId, payload, 'start', { target: 'workspace', onAccepted, onRequestRejected }).finally(() => releaseSubmission(payload.runId))
-  }, [isActiveThread, pushToast, t, conversation, localAttachments, imageSupport, draft, draftConversation?.model, draftModel, pendingConversations, discardDraft, setHistoryQuery, hydrateConversation, isRunning, messageWindow, scrollConversationToBottomImmediately, setDraft, setComposerPreference, setWorkspace, streamRun, workspace.conversations, workspace.currentThreadId])
+  }, [isActiveThread, t, conversation, localAttachments, draft, draftConversation?.model, draftModel, pendingConversations, discardDraft, setHistoryQuery, hydrateConversation, isRunning, messageWindow, scrollConversationToBottomImmediately, setDraft, setComposerPreference, setWorkspace, streamRun, workspace.conversations, workspace.currentThreadId])
 
   const retryRun = useCallback((message: Message) => {
     const current = latestWorkspace.current.conversations.find(item => item.threadId === workspace.currentThreadId)
@@ -1338,7 +1318,6 @@ export function WorkspaceScreen({
               planActive={conversation.mode === 'plan'}
               planLocked={isRunning}
               attachments={localAttachments.attachments}
-              attachmentDisabledReason={attachmentDisabledReason}
               onRetryAttachment={localAttachments.retryAttachment}
               onAttachmentError={() => onToast('error', t('无法打开文件选择器，请重试'))}
               disabledReason={isConversationHydrationFailed

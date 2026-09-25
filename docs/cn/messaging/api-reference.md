@@ -167,10 +167,15 @@ Backend 实现者契约由 `tinkerfin_messaging.backend_contract` 导出：
 | `CancelContext` | 不可变的 channel 与 RunIdentity |
 | `CommittedCallback` | owner 提交后接收完整 Envelope |
 | `on_source_ready` | source 就绪后、producer 创建前的 owner 专用异步 callback |
+| `open_sse(on_subscribed=...)` | 每次生产或附着订阅成功后、返回响应内容前执行的异步通知 |
 | `on_delivery_not_started` | source 未就绪且 attachment 未成立时执行的异步清理 |
 
-Attachment 不调用两个 delivery callback。`on_owner_preflight` 属于 source，在 deferred opener
+附着订阅调用 `on_subscribed`，不调用 `on_source_ready` 或 `on_delivery_not_started`。
+`on_owner_preflight` 属于 source，在 deferred opener
 之前执行；`on_source_ready` 在 opener 完成后执行。
+
+`on_subscribed` 失败或取消时，Messaging 只关闭本次订阅读者，并在异常链中保留回调和清理失败。
+持久化生产任务继续执行，已成立的交付不会触发 `on_delivery_not_started`。
 
 取消请求会等待已经开始的交付回调执行完毕。回调中的数据库和网络操作应设置超时，以限制等待时间。
 

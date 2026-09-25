@@ -28,7 +28,7 @@ async function openComposer(page: Page, locale = 'zh-CN', theme = 'light') {
     const path = new URL(route.request().url()).pathname
     let data: unknown = {}
     if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00.000Z', user }
-    else if (path === '/api/models') data = { items: names.map((name, index) => ({ modelId: name, displayName: name, imageSupport: 'supported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: index === 1 })), defaultModelId: names[1] }
+    else if (path === '/api/models') data = { items: names.map((name, index) => ({ modelId: name, displayName: name,connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: index === 1 })), defaultModelId: names[1] }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history') data = { items: [], nextCursor: null }
     await route.fulfill({ json: { code: 0, message: 'success', data } })

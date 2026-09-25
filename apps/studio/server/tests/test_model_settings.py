@@ -4,7 +4,7 @@ import asyncio
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from tinkerfin_studio.api.errors import BusinessException, ModelErrorCode
 from tinkerfin_studio.conversation.models import (
@@ -271,3 +271,48 @@ async def test_cancelled_connection_save_rolls_back_and_propagates(
         await owner.save_connection(connection("changed"))
     assert not session.in_transaction()
     assert (await owner.require_connection("shared")).api_key == "secret"
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        [],
+        "{}",
+        {"model": "override"},
+        {"Authorization": "secret"},
+        {"size": 123},
+        {"output_format": None},
+        {"unknown": float("nan")},
+        {"unknown": float("inf")},
+        {"nested": [float("nan")]},
+        {"unknown": "中" * 22000},
+    ],
+)
+def test_generation_options_reject_invalid_values(options):
+    with pytest.raises(ValidationError):
+        model(generation_options=options)
+
+
+def test_generation_options_preserve_unknown_json_values():
+    options = {
+        "size": "custom-size",
+        "output_format": "custom-format",
+        "custom": {"nested": [True, 1, 1.5, None, "value"]},
+    }
+    assert model(generation_options=options).generation_options == options
+
+
+@pytest.mark.parametrize("arrays", [False, True])
+@pytest.mark.parametrize("depth", [64, 65])
+def test_generation_options_limit_container_depth_with_root_at_one(arrays, depth):
+    from pydantic import JsonValue
+
+    value: JsonValue = {}
+    for _ in range(depth - 2):
+        value = [value] if arrays else {"nested": value}
+    options = {"root": value}
+    if depth == 64:
+        assert model(generation_options=options).generation_options == options
+    else:
+        with pytest.raises(ValidationError):
+            model(generation_options=options)

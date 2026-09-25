@@ -33,7 +33,6 @@ PLAN_PRIVATE_STATE_KEYS = frozenset(
         PLAN_CONTENT_SCHEMA_FINGERPRINT_KEY,
         PLAN_HANDOFF_STATE_KEY,
         "_plan_run_id",
-        "_plan_model_calls",
         "_plan_format_corrections",
     }
 )
@@ -43,7 +42,6 @@ class PlanningWorkflowNodeState(DeepAgentState, total=False):
     """Stable node-input subset shared by standalone Planning nodes."""
 
     _plan_run_id: NotRequired[str]
-    _plan_model_calls: NotRequired[int]
     _plan_format_corrections: NotRequired[int]
     tinkerfin_plan: NotRequired[dict[str, JsonValue]]
     _tinkerfin_plan_clarification_schema: NotRequired[str]

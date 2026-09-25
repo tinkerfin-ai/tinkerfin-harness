@@ -1803,10 +1803,6 @@
   .composer-input-mirror,
   .composer-input-backdrop { box-sizing: border-box; padding: 4px 12px 0 16px; font-family: var(--font-ui); font-size: var(--type-body-size); line-height: var(--type-composer-line); white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
 
-  .composer-attachment-notice { display: flex; align-items: flex-start; gap: var(--space-1-5); margin-inline: var(--space-4); color: var(--color-text-secondary); font-size: var(--type-caption-size); line-height: var(--type-meta-line); }
-  .composer-attachment-notice > svg { flex: 0 0 auto; width: var(--icon-xs); height: var(--icon-xs); margin-top: calc((var(--type-meta-line) - var(--icon-xs)) / 2); color: var(--color-warning-text); }
-  .composer-attachment-notice > span { min-width: 0; overflow-wrap: anywhere; text-wrap: pretty; }
-
   .composer-toolbar-container { container: composer-tools / inline-size; min-width: 0; }
   .composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-width: 0; min-height: 42px; padding: 2px var(--space-2) 6px; }
   .composer-toolbar-leading,
@@ -2001,8 +1997,7 @@
     .ui-button:not(.ui-icon-button):focus-visible { outline: 2px solid Highlight; }
 
     .approval-rejection-form textarea:focus-visible,
-    .plan-review-rejection-form textarea:focus-visible,
-    .composer-attachment-remove:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+    .plan-review-rejection-form textarea:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
 
     .plan-question-option:focus-visible,
     .plan-question-option:has(.plan-question-native-control:focus-visible),
@@ -2071,7 +2066,6 @@
 
     .tool-row-icon,
     .tool-row-chevron,
-    .plan-option,
     .interaction-card-resize-handle::after,
     .composer {
       transition: none;

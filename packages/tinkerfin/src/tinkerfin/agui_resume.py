@@ -113,23 +113,30 @@ def _observation_group_summary(
 
 
 @dataclass(frozen=True, slots=True)
-class AgUiResumeCheckpoint:
-    """Stable evidence delivered after a resume marker is saver-readable.
+class AgUiResumeResponse:
+    """Identify one saved public interrupt response without its decision payload."""
 
-    Hosts must consume this value idempotently. A retry intentionally delivers the
-    same prepared marker again before continuation output; once the Graph has accepted
-    the native decision, retry continues without resubmitting it.
+    interrupt_id: str
+    status: Literal["resolved", "cancelled"]
+
+
+@dataclass(frozen=True, slots=True)
+class AgUiResumeReceipt:
+    """Confirm that a validated resume request has been durably saved.
+
+    The receipt precedes continuation and does not confirm tool execution. Hosts
+    consume it idempotently using the opaque ``receipt_id``. Retrying the same
+    request delivers an equal receipt, with responses sorted by public interrupt
+    ID. Responses contain only IDs and statuses, never decision payloads.
     """
 
     identity: RunIdentity
     parent_run_id: str | None
-    marker_id: str
-    native_interrupt_ids: frozenset[str]
+    receipt_id: str
+    responses: tuple[AgUiResumeResponse, ...]
 
 
-AgUiResumeCheckpointObserver: TypeAlias = Callable[
-    [AgUiResumeCheckpoint], Awaitable[None]
-]
+AgUiResumeReceiptObserver: TypeAlias = Callable[[AgUiResumeReceipt], Awaitable[None]]
 AgUiResumeNotSavedObserver: TypeAlias = Callable[[], Awaitable[None]]
 
 
@@ -540,22 +547,6 @@ class AgUiResumeBinding(BaseModel):
             resume={key: decisions[key] for key in sorted(missing_interrupt_ids)}
         )
 
-    def _checkpoint(
-        self,
-        *,
-        identity: RunIdentity,
-        parent_run_id: str | None,
-    ) -> AgUiResumeCheckpoint:
-        """Return stable host evidence for a durably prepared resume intent."""
-
-        marker_id = self._marker_id(identity=identity, parent_run_id=parent_run_id)
-        return AgUiResumeCheckpoint(
-            identity=identity,
-            parent_run_id=parent_run_id,
-            marker_id=marker_id,
-            native_interrupt_ids=frozenset(self.native_interrupt_ids),
-        )
-
     @staticmethod
     def _validate_scope(
         *,
@@ -611,9 +602,10 @@ def _contains_cancel_decision(value: object) -> bool:
 
 __all__ = [
     "AgUiResumeBinding",
-    "AgUiResumeCheckpoint",
-    "AgUiResumeCheckpointObserver",
     "AgUiResumeNotSavedObserver",
+    "AgUiResumeReceipt",
+    "AgUiResumeReceiptObserver",
     "AgUiResumeRequest",
+    "AgUiResumeResponse",
     "parse_resume_marker",
 ]

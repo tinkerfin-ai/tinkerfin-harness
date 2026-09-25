@@ -43,7 +43,7 @@ def connection_provider(connection: ModelConnection) -> ModelProvider:
 def resolved_model(
     value: AgentModelWrite, connection: ModelConnection
 ) -> AgentModelConfig:
-    """绑定已经核验归属的连接，供本次运行或测试使用"""
+    """绑定已经核验归属的连接，供本次运行使用"""
     if (
         connection.auth_type == "api_key"
         or connection_provider(connection) == "deepseek"
@@ -70,6 +70,7 @@ def resolved_model(
         {
             **value.model_dump(),
             "provider": connection_provider(connection),
+            "provider_id": connection.provider_id,
             "base_url": connection.base_url,
             "api_key": SecretStr(connection.api_key),
         }
@@ -100,7 +101,6 @@ class AgentModelService:
                         "display_name": row.display_name,
                         "connection_id": connection.connection_id,
                         "connection_display_name": connection.display_name,
-                        "image_support": row.image_support,
                         "reasoning_enabled": row.reasoning_enabled,
                         "is_default": row.is_default,
                     }
@@ -166,10 +166,6 @@ class AgentModelService:
                 message="提供方连接不存在，请先添加连接",
             )
         return connection
-
-    async def resolve_draft(self, value: AgentModelSave) -> AgentModelConfig:
-        """测试未保存的模型参数，使用本人已保存连接，外部请求前归还数据库会话"""
-        return resolved_model(value, await self.require_connection(value.connection_id))
 
     async def save_connection(self, value: ModelConnectionSave) -> None:
         """保存连接，地址或接口改变时禁止复用密钥，运行期间保护关联模型

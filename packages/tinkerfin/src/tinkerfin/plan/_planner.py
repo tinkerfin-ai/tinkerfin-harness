@@ -1,30 +1,21 @@
-"""Read-only Planner agent used by the standalone Planning workflow."""
+"""Planner guidance for user-reviewed work with the bound tool permissions."""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from typing import cast
 
-from deepagents.backends.protocol import BackendProtocol
-from deepagents.middleware.filesystem import (
-    FilesystemMiddleware,
-    FilesystemPermission,
-    FsToolName,
-)
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AnyMessage, HumanMessage
+from langchain_core.tools import BaseTool
 
+from .._agent_spec import ToolDefinition
 from ._clarification import ClarificationSchemaBinding
 from ._content import PlanContentBinding
 from .models import PlanContentModel, PlanReviewAction, PlanState
 
-_READ_ONLY_TOOLS: list[FsToolName] = [
-    "ls",
-    "read_file",
-    "glob",
-    "grep",
-]
 _PLAN_REVIEW_REPLY_PROMPT = """You respond after the user has rejected or cancelled one
 Plan draft. The rejected draft is permanently non-executable, but the conversation
 remains in Planning mode. Write exactly one concise, user-visible paragraph in the
@@ -32,21 +23,16 @@ user's language. Acknowledge the decision and invite the user to continue refini
 Plan. Reflect an optional rejection reason without inventing one. Do not produce a new
 draft, ask a structured clarification, call a tool, execute work, claim that Planning
 mode ended, or expose private chain-of-thought."""
-_PLANNER_PROMPT = """You are the single read-only Planner for a user-reviewed workflow.
+_PLANNER_PROMPT = """You are the Planner for a user-reviewed workflow.
 
-You create a Plan for a separate execution Deep Agent. Your deliberately restricted
-tool list exists only for optional workspace inspection; it neither describes nor
-limits the execution Agent's tools. Preserve explicitly requested execution tools and
-capabilities in the draft even when they are absent here. Never call, simulate, or test
-an execution tool yourself, and never claim it is unavailable merely because the
-Planner does not bind it.
-
-Use read-only filesystem tools only when existing workspace evidence can materially
-change the Plan. Start with one targeted listing, read, or search. If that inspection
-shows no relevant artifact, stop inspecting; do not broaden the search, repeat an
-equivalent query, or guess file paths. State the resulting assumption in the draft.
-Spend no more than three model turns on filesystem inspection, then return the
-response or Plan tool call.
+Use the bound tools and workspace to investigate the request, inspect documents,
+and run analysis needed to prepare an accurate Plan. The current tool permissions
+apply throughout Planning: operations requiring review must await that review.
+Tool approval authorizes only the reviewed operation; it does not approve a Plan
+draft or start the approved Plan's execution. Continue Planning after analysis.
+Preserve the user's requested scope and capabilities in the draft, and distinguish
+observed results from assumptions. Do not carry out the proposed implementation
+before the user approves the complete Plan.
 
 Choose whether this turn calls for an ordinary reply, clarification, or a complete
 Plan draft. Reply directly to explain, compare, analyze, or discuss. Even an explicit request for a Plan may
@@ -72,8 +58,8 @@ with one complete draft conforming exactly to the configured Plan content schema
 schema and its field descriptions as the authoritative content contract.
 
 Issue at most one Plan action per response, without other tools in that batch.
-Never claim to have modified state and never request a write or execution tool. Do not
-expose private chain-of-thought. Choose each question's semantic answer type only from
+Report tool results accurately and do not expose private chain-of-thought.
+Choose each question's semantic answer type only from
 the configured types listed below. Choice options must be concise and stable within the
 form. Allow custom text only when it can safely express a valid alternative.
 """
@@ -88,6 +74,18 @@ def resolve_planner_model(model: str | BaseChatModel) -> BaseChatModel:
     if not isinstance(resolved, BaseChatModel):
         raise TypeError("an explicit Planner model must resolve to BaseChatModel")
     return resolved
+
+
+def planner_tool_name(definition: ToolDefinition) -> str | None:
+    """Read the model-facing name without replacing a declared tool."""
+    if isinstance(definition, BaseTool):
+        return definition.name
+    if isinstance(definition, dict):
+        declaration = cast(Mapping[object, object], definition)
+        name = declaration.get("name", declaration.get("type"))
+    else:
+        name = getattr(definition, "__name__", None)
+    return name if isinstance(name, str) else None
 
 
 def _planner_system_prompt(
@@ -138,33 +136,6 @@ def _planner_system_prompt(
     return (
         f"{_PLANNER_PROMPT.rstrip()}\n\n{instruction}\n\n{content_instruction}"
         f"{type_instruction}"
-    )
-
-
-def create_planner_filesystem(
-    backend: BackendProtocol,
-    *,
-    filesystem_instructions: str | None,
-    permissions: Sequence[FilesystemPermission],
-) -> FilesystemMiddleware:
-    """Build read-only access for the planning Agent.
-
-    Planning has no file approval step. Read-interrupt rules deny access using
-    the native permission ordering.
-    """
-    return FilesystemMiddleware(
-        backend=backend,
-        tools=_READ_ONLY_TOOLS,
-        system_prompt=filesystem_instructions,
-        _permissions=[
-            FilesystemPermission(
-                operations=["read"],
-                paths=list(rule.paths),
-                mode="deny" if rule.mode == "interrupt" else rule.mode,
-            )
-            for rule in permissions
-            if "read" in rule.operations
-        ],
     )
 
 

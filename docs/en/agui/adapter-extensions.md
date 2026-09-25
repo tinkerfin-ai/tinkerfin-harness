@@ -59,16 +59,19 @@ Plan Runtimes provide their internal keys automatically.
 `Attachment` from `tinkerfin_contracts.media` contains `id`, `name`, `mime_type`,
 and `size_bytes`. Its `content_block()` produces a LangChain `image` or `file`
 block with `file_id`, `mime_type`, and `extras.attachment`. Store the reference in
-messages; the host authorizes access and supplies bounded file bytes through
+messages. To resolve it, the host authorizes access and supplies bounded file bytes through
 `TinkerFin().with_attachments(AttachmentSupport(read_content=...))` when making model
-requests. The asynchronous reader returns `AttachmentContent(data=..., mime_type=...)`.
-Each destination model must support the file format. Model profiles determine image,
-audio, video, and PDF support by default; `supports_content(model, mime_type)` can
-supply an explicit capability check. Unsupported formats remain references for
-file-reading tools. This does not parse files or convert video into frames.
+requests. The optional asynchronous reader returns
+`AttachmentContent(data=..., mime_type=...)`; without it, stored attachments remain
+references for file-reading tools. Native media needs no reader: framework-created
+graphs check it against the destination model's declared image, audio, video, and PDF
+capabilities by default. `supports_content(model, mime_type)` can customize this check
+without a reader. Unsupported content or unknown support produces descriptive text
+for the model; original messages and stored references remain unchanged.
+This does not parse files or convert video into frames.
 
-`max_attachments` defaults to 5 recent supported files per request. `max_bytes`
-defaults to 20 MiB of total resolved content before base64 encoding; exceeding it
+With a reader, `max_attachments` defaults to 5 recent supported files per request.
+`max_bytes` defaults to 20 MiB of total resolved content before base64 encoding; exceeding it
 raises `ValueError` before provider invocation. The host must also bound storage
 reads before returning bytes. This policy applies to framework-created graphs;
 externally compiled and remote agents choose their own file-input mechanism.

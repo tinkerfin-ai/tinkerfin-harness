@@ -41,7 +41,7 @@ class _ReplayRenderer:
 class AgUiChannel:
     """Deliver AG-UI runs without exposing codec or source-adapter operations.
 
-    The parent Messaging owns producers. Notifications describe committed main-run
+    The parent Messaging owns producers. Main-run notifications describe committed
     events and run only on the producing worker; replay never repeats them.
     """
 
@@ -63,6 +63,7 @@ class AgUiChannel:
         after: int | Callable[[], int | None] | None = None,
         cancel: CancelCallback[BaseEvent] | None = None,
         on_source_ready: Callable[[], Awaitable[None]] | None = None,
+        on_subscribed: Callable[[], Awaitable[None]] | None = None,
         on_delivery_not_started: Callable[[], Awaitable[None]] | None = None,
         transform_event: Callable[[BaseEvent], BaseEvent | Awaitable[BaseEvent]]
         | None = None,
@@ -78,6 +79,11 @@ class AgUiChannel:
             after: Exclusive replay cursor, resolver, or current tail when omitted.
             cancel: Optional explicit cancellation callback.
             on_source_ready: Producer-only notification before execution starts.
+            on_subscribed: Async notification once per owner or attachment after
+                subscription succeeds and before returning the body. Failure closes
+                only this reader, without cancelling the durable producer or invoking
+                `on_delivery_not_started`. Cancellation waits for an accepted callback
+                and its cleanup; bound callback I/O with resource timeouts.
             on_delivery_not_started: Cleanup when no producer or attachment started.
             transform_event: Business transformation before validation and persistence.
             on_run_started: Producer-only notification after the main start is committed.
@@ -87,9 +93,12 @@ class AgUiChannel:
             Caller-owned SSE body; closing detaches without cancelling the producer.
 
         Raises:
-            TypeError: The source does not supply the required AG-UI contract.
+            TypeError: The source does not supply the required AG-UI contract, or a
+                delivery callback is not callable or does not return an awaitable.
             ValueError: Identity, cursor, or transformed protocol data is invalid.
             MessagingError: Preparation, persistence, or delivery fails.
+            BaseException: A delivery callback fails; concurrent cleanup failures
+                remain in the exception chain.
         """
         try:
             prepared = _AgUiRunSource.prepare(source, transform_event=transform_event)
@@ -123,6 +132,7 @@ class AgUiChannel:
             cancel=cancel,
             on_committed=committed,
             on_source_ready=on_source_ready,
+            on_subscribed=on_subscribed,
             on_delivery_not_started=on_delivery_not_started,
         )
 

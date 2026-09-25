@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 _SYSTEM_PROMPT = """你是 TinkerFin Studio 的主 Agent。
 
 复杂任务用 write_todos 跟踪，独立研究可用 task 委派。
-附件用 read_attachment 读取或 import_attachment 导入工作区；引用丢失时用 list_attachments 查找。
+需要工作文件时用 import_attachment 导入附件；引用丢失时用 list_attachments 查找。
 生成工具只保存工作文件，按需读取、检查和修改；用 deliver_file 交付选定的工作文件。
 工具成功后再确认结果，并简短回复；不交付无须给用户的中间文件。
 工具失败先核实原因、调整方案，不原样重复调用。
@@ -57,7 +57,7 @@ def _build_runtime(
         thread_id: 已校验归属的会话 ID
         model_config: 已解密的聊天模型配置
         image_model: 可选的图片生成模型配置
-        access_mode: 写文件工具的审批选择，不改变用户工作区范围
+        access_mode: 脚本与文件写入的审批选择，不改变用户工作区范围
         namespace: 已授权业务运行的隔离范围
         collection_id: 后台执行的附件集合，普通会话不设置
         plan_enabled: 是否允许会话计划与人工交互
@@ -99,30 +99,19 @@ def _build_runtime(
     ]
 
     attachment_support = AttachmentSupport(
-        read_content=lambda attachment: resources.attachments.read_image(
+        read_content=lambda attachment: resources.attachments.read_content(
             attachment,
             user_id=user_id,
             thread_id=None if collection_id is not None else thread_id,
             collection_id=collection_id,
         ),
-        supports_content=lambda candidate, mime_type: (
-            mime_type.startswith("image/")
-            and candidate is model
-            and model_config.image_support == "supported"
-        ),
     )
     tool_registry = {web_search.name: web_search}
-    image_instructions = (
-        "\n看图优先读取 preview_file_path，交付使用 file_path 原图。\n"
-        if model_config.image_support == "supported"
-        else "\n当前模型未启用视觉，不读取图片；仍可生成并交付图片。\n"
-    )
     subagents: list[SubAgent] = [
         {
             "name": "general-purpose",
             "description": "处理主 Agent 委派的资料整理、分析与文件任务",
-            "system_prompt": "完成委派任务并返回结果；自动化任务的管理由主 Agent 处理。"
-            + image_instructions,
+            "system_prompt": "完成委派任务并返回结果；自动化任务的管理由主 Agent 处理。",
             "interrupt_on": file_review_policy(access_mode),
             "middleware": tool_execution_policy(),
             "tools": [web_search, *attachment_tools],
@@ -132,7 +121,7 @@ def _build_runtime(
         {
             "name": name,
             "description": definition.description,
-            "system_prompt": definition.system_prompt + image_instructions,
+            "system_prompt": definition.system_prompt,
             "interrupt_on": file_review_policy(access_mode),
             "middleware": tool_execution_policy(),
             "tools": [
@@ -190,7 +179,7 @@ def _build_runtime(
     return configured.build(
         model=model,
         tools=[web_search, *attachment_tools, *conversation_tools],
-        system_prompt=_SYSTEM_PROMPT + image_instructions + automation_instructions,
+        system_prompt=_SYSTEM_PROMPT + automation_instructions,
         middleware=(TodoListMiddleware(), *tool_execution_policy()),
         subagents=subagents,
         backend=resources.sandbox_manager.workspace(

@@ -43,6 +43,10 @@ canonical 非负 ASCII 十进制值。返回的每帧使用提交序号作为 SS
 `on_delivery_not_started` 只在 source 未就绪且 attachment 未成立时调用；attachment 不调用两者。
 返回 body 由调用方拥有，不再消费时必须关闭。
 
+每次成功订阅都需要执行的异步工作可放在 `on_subscribed`，附着订阅也会调用。
+Messaging 等待通知完成后才返回响应内容；失败或取消时只关闭本次读者，不取消持久化生产任务，
+并在异常链中保留通知和清理失败。取消会等待已开始的回调结束，因此回调中的 I/O 应设置超时。
+
 有效 attachment 成立后，Messaging 会关闭未打开的 single-use candidate source，调用方不能复用。
 
 相同字节流也可交给 `EventSourceResponse(body)`。HTTP 关闭约束见[流与 SSE](../runtime/streams-and-sse.md)。

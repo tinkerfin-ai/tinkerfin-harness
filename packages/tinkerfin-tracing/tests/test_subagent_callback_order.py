@@ -22,6 +22,7 @@ from tinkerfin_contracts import (
     ToolExecutionObservation,
 )
 from tinkerfin_tracing import (
+    CapturePolicy,
     ModelCallFact,
     SubagentFact,
     ToolExecutionFact,
@@ -45,6 +46,7 @@ async def _prepare(
     descriptor: bool = True,
     parent_execution: bool = True,
     parent_time: int = 6,
+    proposed_description: str = "local child",
 ) -> RunObservationSession:
     source = RunSourceContext(
         identity=_IDENTITY,
@@ -84,27 +86,7 @@ async def _prepare(
         )
     )
     if descriptor:
-        await session.observe(
-            NativeTaskObservation(
-                identity=_IDENTITY,
-                graph_namespace=(),
-                phase="start",
-                task_id="parent-task",
-                name="tools",
-                input=[
-                    {
-                        "id": "delegate",
-                        "name": "task",
-                        "args": {
-                            "description": "local child",
-                            "subagent_type": "worker",
-                        },
-                    }
-                ],
-                observed_at=_time(5),
-                monotonic_ns=5,
-            )
-        )
+        await session.observe(_parent_task_start(description=proposed_description))
     if parent_execution:
         await session.observe(
             ToolExecutionObservation(
@@ -114,12 +96,32 @@ async def _prepare(
                 execution_id="parent-execution",
                 tool_call_id="delegate",
                 tool_name="task",
+                graph_task_id="parent-task",
                 input={"description": "local child", "subagent_type": "worker"},
                 observed_at=_time(parent_time),
                 monotonic_ns=parent_time,
             )
         )
     return session
+
+
+def _parent_task_start(*, description: str = "local child") -> NativeTaskObservation:
+    return NativeTaskObservation(
+        identity=_IDENTITY,
+        graph_namespace=(),
+        phase="start",
+        task_id="parent-task",
+        name="tools",
+        input=[
+            {
+                "id": "delegate",
+                "name": "task",
+                "args": {"description": description, "subagent_type": "worker"},
+            }
+        ],
+        observed_at=_time(5),
+        monotonic_ns=5,
+    )
 
 
 def _model_start(
@@ -165,11 +167,13 @@ def _native_start(value: int) -> NativeTaskObservation:
 
 
 @pytest.mark.parametrize("first", ("model", "tool", "native"))
+@pytest.mark.parametrize("parent_native_first", (False, True))
 async def test_child_callback_and_native_orders_share_one_proven_start(
     first: Literal["model", "tool", "native"],
+    parent_native_first: bool,
 ) -> None:
     tracer = Tracer()
-    session = await _prepare(tracer)
+    session = await _prepare(tracer, descriptor=parent_native_first)
     expected_context_start = _time(6)
     try:
         if first == "native":
@@ -196,6 +200,8 @@ async def test_child_callback_and_native_orders_share_one_proven_start(
             )
             await session.observe(_model_start(10))
             expected_context_start = _time(9)
+        if not parent_native_first:
+            await session.observe(_parent_task_start())
         await session.observe(
             NativeStateObservation(
                 identity=_IDENTITY,
@@ -224,6 +230,7 @@ async def test_child_callback_and_native_orders_share_one_proven_start(
                 tool_call_id="delegate",
                 tool_name="task",
                 output="done",
+                graph_task_id="parent-task",
                 observed_at=_time(13),
                 monotonic_ns=13,
             )
@@ -339,13 +346,14 @@ async def test_proven_child_callback_rejects_missing_or_later_parent_boundary(
     assert not any(isinstance(event.fact, SubagentFact) for event in events)
 
 
-async def test_unproven_namespace_keeps_ordinary_scope_without_inventing_subagent() -> (
-    None
-):
+@pytest.mark.parametrize("namespace", [("ordinary:subgraph",), ("tools:unrelated",)])
+async def test_unproven_namespace_keeps_ordinary_scope_without_inventing_subagent(
+    namespace: tuple[str, ...],
+) -> None:
     tracer = Tracer()
     session = await _prepare(tracer, descriptor=False)
     try:
-        await session.observe(_model_start(7, namespace=("ordinary:subgraph",)))
+        await session.observe(_model_start(7, namespace=namespace))
     finally:
         await session.aclose()
     snapshot = await tracer.store.snapshot(_IDENTITY.thread)
@@ -361,3 +369,79 @@ async def test_unproven_namespace_keeps_ordinary_scope_without_inventing_subagen
     assert isinstance(child, ModelCallFact)
     assert not child.in_subagent_scope
     assert child.context_started_at == _time(4)
+
+
+@pytest.mark.parametrize("parent_native_first", (False, True))
+async def test_subagent_uses_executed_arguments_when_native_proposal_differs(
+    parent_native_first: bool,
+) -> None:
+    tracer = Tracer(capture_policy=CapturePolicy.public_history())
+    session = await _prepare(
+        tracer,
+        descriptor=parent_native_first,
+        proposed_description="proposed task",
+    )
+    try:
+        await session.observe(_model_start(7))
+        if not parent_native_first:
+            await session.observe(_parent_task_start(description="proposed task"))
+        await session.observe(
+            ModelCallObservation(
+                identity=_IDENTITY,
+                graph_namespace=_CHILD,
+                phase="completed",
+                call_id="child-model",
+                observed_at=_time(8),
+                monotonic_ns=8,
+            )
+        )
+    finally:
+        await session.aclose()
+
+    snapshot = await tracer.store.snapshot(_IDENTITY.thread)
+    events = await tracer.store.read_events(
+        snapshot.key, after_seq=0, as_of_seq=snapshot.as_of_seq, limit=100
+    )
+    opening = next(
+        event.fact for event in events if isinstance(event.fact, SubagentFact)
+    )
+    assert isinstance(opening, SubagentFact)
+    assert opening.input is not None
+    assert opening.input.value == {
+        "description": "local child",
+        "subagent_type": "worker",
+    }
+    models = [
+        event.fact
+        for event in events
+        if isinstance(event.fact, ModelCallFact)
+        and event.fact.graph_namespace == _CHILD
+    ]
+    assert [model.in_subagent_scope for model in models] == [True, True]
+    assert any(
+        node.kind is TraceGraphNodeKind.SUBAGENT
+        for node in (await tracer.query(_IDENTITY.thread)).nodes
+    )
+
+
+async def test_tool_execution_cannot_change_its_owning_graph_task() -> None:
+    tracer = Tracer()
+    session = await _prepare(tracer)
+    try:
+        with pytest.raises(TraceCorruption, match="Tool execution identity changed"):
+            await session.observe(
+                ToolExecutionObservation(
+                    identity=_IDENTITY,
+                    graph_namespace=(),
+                    phase="completed",
+                    execution_id="parent-execution",
+                    tool_call_id="delegate",
+                    tool_name="task",
+                    graph_task_id="another-task",
+                    output="done",
+                    observed_at=_time(7),
+                    monotonic_ns=7,
+                )
+            )
+    finally:
+        await session.aclose()

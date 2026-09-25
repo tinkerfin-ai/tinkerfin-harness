@@ -23,7 +23,7 @@ def attachment_tools():
     sandbox = MagicMock(spec=RootedOpenSandboxBackend)
     sandbox.aread_bytes = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
     sandbox.aexecute = AsyncMock(return_value=ExecuteResponse(output="", exit_code=0))
-    sandbox.to_shell_path.side_effect = lambda path: "/workspace" + path
+    sandbox.to_shell_path.side_effect = lambda path: path.lstrip("/")
     service = MagicMock(spec=AttachmentService)
     service.documents = DocumentProcessor()
     service.upload = AsyncMock(
@@ -213,12 +213,13 @@ async def test_concurrent_screenshots_keep_distinct_reusable_workspace_artifacts
     )
     commands = [shlex.split(call.args[0]) for call in sandbox.aexecute.await_args_list]
     assert len(commands) == 2
-    assert {parts[-1] for parts in commands} == {"/workspace" + path for path in paths}
+    assert {parts[-1] for parts in commands} == {path.lstrip("/") for path in paths}
     assert all(parts[0] == "python" for parts in commands)
     service.upload.assert_not_awaited()
     for path, result in zip(paths, results, strict=True):
         assert json.loads(result) == {
             "file_path": path,
+            "shell_path": path.lstrip("/"),
             "name": "浏览器截图.png",
             "mime_type": "image/png",
             "size_bytes": len(b"\x89PNG\r\n\x1a\nimage"),

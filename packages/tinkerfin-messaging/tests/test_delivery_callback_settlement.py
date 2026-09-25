@@ -183,8 +183,10 @@ async def test_rejected_delivery_finishes_source_cleanup_before_caller_cancellat
 
 
 @pytest.mark.parametrize("external_first", [False, True])
+@pytest.mark.parametrize("boundary", ["ready", "subscribed"])
 async def test_callback_close_and_external_close_wait_for_their_owned_work(
     external_first: bool,
+    boundary: str,
 ) -> None:
     entered, close_from_callback, callback_stopped, finish_callback = (
         asyncio.Event(),
@@ -205,12 +207,13 @@ async def test_callback_close_and_external_close_wait_for_their_owned_work(
 
     async def deliver() -> None:
         with pytest.raises(MessagingClosed):
-            await channel.wrap(
+            await channel.open_sse(
                 FiniteMessageSource(("item",)),
                 identity=RunIdentity(
                     namespace="test", thread_id="thread", run_id="run"
                 ),
-                on_source_ready=ready,
+                on_source_ready=ready if boundary == "ready" else None,
+                on_subscribed=ready if boundary == "subscribed" else None,
             )
 
     external_entered = asyncio.Event()

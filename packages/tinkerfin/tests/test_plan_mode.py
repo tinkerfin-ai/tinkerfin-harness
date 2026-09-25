@@ -29,7 +29,7 @@ from ag_ui.core.types import ResumeEntry
 from deepagents.backends import StoreBackend
 from deepagents.backends.utils import create_file_data
 from deepagents.graph import DeepAgentState
-from langchain.agents.middleware import TodoListMiddleware
+from langchain.agents.middleware import TodoListMiddleware, ToolCallLimitMiddleware
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     AgentState,
@@ -67,8 +67,9 @@ from redis.exceptions import ResponseError
 import tinkerfin.plan as plan_api
 import tinkerfin.plan._runtime as plan_runtime_module
 from tinkerfin import (
-    AgUiResumeCheckpoint,
+    AgUiResumeReceipt,
     AgUiResumeRequest,
+    AgUiResumeResponse,
     RunIdentity,
     RunObservationError,
     TinkerFin,
@@ -2388,9 +2389,9 @@ async def test_agui_plan_resume_checkpoints_durably_and_retries_without_reexecut
         payload=payload,
     )
     identity = _identity("settlement-execution")
-    checkpoints: list[AgUiResumeCheckpoint] = []
+    checkpoints: list[AgUiResumeReceipt] = []
 
-    async def checkpointed(value: AgUiResumeCheckpoint) -> None:
+    async def checkpointed(value: AgUiResumeReceipt) -> None:
         checkpoints.append(value)
 
     runtime = cast(Any, definition)
@@ -2409,6 +2410,11 @@ async def test_agui_plan_resume_checkpoints_durably_and_retries_without_reexecut
 
     _assert_success(events)
     assert len(checkpoints) == 1
+    assert checkpoints[0].identity == identity
+    assert checkpoints[0].parent_run_id == "settlement-review"
+    assert checkpoints[0].responses == (
+        AgUiResumeResponse(binding.entries[0].interrupt_id, "resolved"),
+    )
     serialized_events = "\n".join(
         event.model_dump_json(by_alias=True) for event in events
     )
@@ -4177,7 +4183,7 @@ async def test_agui_interrupt_snapshots_precede_the_terminal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_only_planner_inherits_store_and_has_no_write_tools() -> None:
+async def test_planner_inherits_store_and_its_file_tools() -> None:
     model = _FakeModel(
         responses=[
             AIMessage(
@@ -4238,13 +4244,12 @@ async def test_read_only_planner_inherits_store_and_has_no_write_tools() -> None
         for names in planner_bindings
     )
     assert all(
-        {"write_file", "edit_file", "delete", "execute"}.isdisjoint(names)
-        for names in planner_bindings
+        {"write_file", "edit_file", "delete"} <= names for names in planner_bindings
     )
 
 
 @pytest.mark.asyncio
-async def test_read_only_planner_has_a_bounded_model_call_budget() -> None:
+async def test_planner_analysis_uses_the_declared_tool_budget() -> None:
     repeated: list[BaseMessage] = [
         AIMessage(
             content="",
@@ -4257,22 +4262,28 @@ async def test_read_only_planner_has_a_bounded_model_call_budget() -> None:
                 }
             ],
         )
-        for index in range(6)
+        for index in range(7)
     ]
+    model = _FakeModel(responses=[*repeated, _planner()])
     definition = (
         TinkerFin(checkpointer=InMemorySaver())
         .with_namespace("test")
         .with_plan(enabled=True)
-        .build(model=_FakeModel(responses=repeated), tools=[])
-    )
-    with pytest.raises(PlanStructuredOutputError, match="within six model calls"):
-        await _parts(
-            definition,
-            {"messages": [HumanMessage(content="Inspect", id="message")]},
-            run_id="budget",
-            config={"configurable": {"thread_id": "plan-thread"}},
-            mode="plan",
+        .build(
+            model=model,
+            tools=[],
+            middleware=[ToolCallLimitMiddleware(run_limit=8, exit_behavior="end")],
         )
+    )
+    parts = await _parts(
+        definition,
+        {"messages": [HumanMessage(content="Inspect", id="message")]},
+        run_id="budget",
+        config={"configurable": {"thread_id": "plan-thread"}},
+        mode="plan",
+    )
+    assert len(model.model_inputs) == 8
+    assert _root_interrupts(parts)[0].value["kind"] == "tinkerfin:plan_review"
 
 
 @pytest.mark.asyncio
@@ -4309,8 +4320,8 @@ async def test_planner_and_native_preserve_runtime_context() -> None:
 
 
 @pytest.mark.asyncio
-async def test_planner_receives_only_explicit_read_only_host_tools() -> None:
-    """Planning includes declared safe host tools while excluding write-capable tools."""
+async def test_planner_receives_all_declared_host_tools() -> None:
+    """Planning exposes the host's tools without interpreting metadata as permissions."""
     from langchain_core.tools import tool
 
     @tool
@@ -4321,7 +4332,7 @@ async def test_planner_receives_only_explicit_read_only_host_tools() -> None:
     @tool
     async def publish_report() -> str:
         """Publish a report."""
-        raise AssertionError("Planning cannot publish")
+        return "published"
 
     inspect_report.metadata = {"read_only": True}
     model = _FakeModel(responses=[_planner()])
@@ -4346,8 +4357,7 @@ async def test_planner_receives_only_explicit_read_only_host_tools() -> None:
     ]
     assert planner_bindings
     assert all(
-        "inspect_report" in names and "publish_report" not in names
-        for names in planner_bindings
+        {"inspect_report", "publish_report"} <= names for names in planner_bindings
     )
 
 
@@ -4408,7 +4418,7 @@ async def test_attachment_capabilities_follow_planner_and_review_model(planner_i
     for request in planner.model_inputs:
         assert ("data:image/png;base64" in str(request)) == planner_images
         assert (
-            "does not support this file format" in str(request)
+            "direct input of this file format is not enabled" in str(request)
         ) != planner_images, [m.content for m in request if isinstance(m, HumanMessage)]
     assert not root.model_inputs
     assert message.content == [attachment.content_block()]
@@ -4715,7 +4725,8 @@ async def test_attachment_capability_uses_final_model_after_routing(destination_
             "data:image/png;base64" in str(destination.model_inputs[index])
         ) == destination_images
         assert (
-            "does not support this file format" in str(destination.model_inputs[index])
+            "direct input of this file format is not enabled"
+            in str(destination.model_inputs[index])
         ) != destination_images
     assert len(reads) == (3 if destination_images else 0)
     assert "data:image" not in str(result)
@@ -5213,9 +5224,9 @@ async def test_blank_discussion_is_rejected_before_accepting_the_card(
         if card_kind == "clarification"
         else {"type": "respond", "baseRevision": 1, "message": " \n\t "}
     )
-    saved: list[AgUiResumeCheckpoint] = []
+    saved: list[AgUiResumeReceipt] = []
 
-    async def checkpointed(value: AgUiResumeCheckpoint) -> None:
+    async def checkpointed(value: AgUiResumeReceipt) -> None:
         saved.append(value)
 
     rejected = [
@@ -5353,7 +5364,7 @@ async def test_cancelling_a_plan_reply_closes_its_model_call() -> None:
 
 
 @pytest.mark.asyncio
-async def test_plan_reply_cannot_call_execution_tools() -> None:
+async def test_plan_reply_rejects_tools_absent_from_the_declaration() -> None:
     model = _FakeModel(
         responses=[
             AIMessage(
@@ -5362,8 +5373,8 @@ async def test_plan_reply_cannot_call_execution_tools() -> None:
                 tool_calls=[
                     {
                         "id": f"forbidden-call-{index}",
-                        "name": "execute",
-                        "args": {"command": "echo forbidden"},
+                        "name": "unavailable_operation",
+                        "args": {},
                     }
                 ],
             )
@@ -5385,4 +5396,4 @@ async def test_plan_reply_cannot_call_execution_tools() -> None:
     )
     assert isinstance(events[-1], RunErrorEvent)
     assert len(model.model_inputs) == 3
-    assert all("execute" not in names for names in model.bound_tool_names)
+    assert all("unavailable_operation" not in names for names in model.bound_tool_names)

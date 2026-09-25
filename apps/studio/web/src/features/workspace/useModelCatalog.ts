@@ -35,7 +35,6 @@ export function useModelCatalog() {
   const retry = useCallback(() => setVersion((current) => current + 1), [])
 
   return {
-    imageSupport: (id: string) => models.find(item => item.modelId === id)?.imageSupport ?? 'unknown',
     status,
     modelIds,
     models,

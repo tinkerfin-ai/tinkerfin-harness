@@ -16,49 +16,22 @@ const composerChromeProps = () => ({
 })
 
 describe('Composer', () => {
-  it.each([
-    '当前模型不支持图片，请切换模型或移除图片',
-    '当前模型的图片能力未确认，请切换模型或移除图片',
-  ])('显示图片发送受阻原因并关联输入和发送按钮：%s', (reason) => {
+  it('图片上传就绪后允许发送并保留正文与附件', () => {
     const attachment: DraftAttachment = {
       id: 'image', name: '截图.png', kind: 'image', size: 3, state: 'ready', progress: 100,
     }
-    const props = {
-      ...composerChromeProps(), value: '保留正文', isRunning: false, attachments: [attachment],
-      onChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn(),
-    }
-    const { rerender } = render(<Composer {...props} attachmentDisabledReason={reason} />)
-    const notice = screen.getByRole('status')
+    const onSend = vi.fn()
+    render(<Composer {...composerChromeProps()} value="保留正文" isRunning={false} attachments={[attachment]}
+      onChange={vi.fn()} onSend={onSend} onStop={vi.fn()} />)
     const input = screen.getByRole('textbox', { name: '消息输入' })
     const send = screen.getByRole('button', { name: '发送消息' })
-    expect(notice).toHaveTextContent(reason)
-    expect(within(notice).queryByRole('button')).not.toBeInTheDocument()
-    expect(input).toHaveAccessibleDescription(reason)
-    expect(send).toHaveAccessibleDescription(reason)
-    expect(send).toBeDisabled()
-    fireEvent.click(send)
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(props.onSend).not.toHaveBeenCalled()
-    expect(input).toHaveValue('保留正文')
-
-    rerender(<Composer {...props} />)
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(input).not.toHaveAccessibleDescription()
     expect(send).not.toHaveAccessibleDescription()
     expect(send).toBeEnabled()
     expect(screen.getByRole('group', { name: '截图.png' })).toBeVisible()
     fireEvent.keyDown(input, { key: 'Enter' })
-    expect(props.onSend).toHaveBeenCalledOnce()
-  })
-
-  it('压缩命令不发送附件，因此不显示图片阻塞提示', () => {
-    render(<Composer {...composerChromeProps()} value="/compact 后续说明" isRunning={false}
-      attachments={[{ id: 'image', name: '截图.png', kind: 'image', size: 3, state: 'ready', progress: 100 }]}
-      attachmentDisabledReason="当前模型不支持图片，请切换模型或移除图片"
-      onChange={vi.fn()} onSend={vi.fn()} onStop={vi.fn()} onCompact={vi.fn(() => true)} />)
-    expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
-    expect(screen.getByRole('textbox', { name: '消息输入' })).not.toHaveAccessibleDescription()
+    expect(onSend).toHaveBeenCalledOnce()
+    expect(input).toHaveValue('保留正文')
   })
 
   it.each(['queued', 'uploading', 'error'] as const)('附件为 %s 时禁用发送并阻止 Enter，全部就绪后恢复', (state) => {

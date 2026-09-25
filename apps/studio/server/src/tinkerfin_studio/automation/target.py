@@ -14,7 +14,7 @@ from tinkerfin_automation.targets import (
     ExecutionRequest,
 )
 from tinkerfin_studio.agent.runtime import build_automation_runtime
-from tinkerfin_studio.api.errors import BusinessException, ModelErrorCode
+from tinkerfin_studio.api.errors import BusinessException
 from tinkerfin_studio.auth.models import User
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.service import AgentModelService
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 async def fail_interactive_execution(
     execution: InterruptedExecution,
 ) -> ExecutionFailure:
-    """只读自动化不处理人工请求，结束执行而不提交审批决定"""
+    """自动化不处理人工请求，结束执行而不提交审批决定"""
     return ExecutionFailure(
         code="studio.interaction_required",
         message="任务需要人工处理，自动化不会继续执行",
@@ -78,10 +78,6 @@ class StudioAutomationTarget:
             )
             if set(config.attachments) != {file.id for file in inputs}:
                 raise ValueError("任务附件快照不一致")
-            if model.image_support != "supported" and any(
-                file.mime_type.startswith("image/") for file in inputs
-            ):
-                raise BusinessException(ModelErrorCode.IMAGE_UNSUPPORTED)
             await files.create_collection(
                 user_id=user_id,
                 collection_id=execution.execution_id,

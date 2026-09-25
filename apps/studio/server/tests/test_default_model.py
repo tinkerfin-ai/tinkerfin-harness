@@ -6,6 +6,7 @@ from typing import Literal
 
 import anyio
 import pytest
+from anyio.lowlevel import checkpoint
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -197,16 +198,17 @@ async def test_repeated_cancel_waits_for_default_rollback_and_propagates(
     monkeypatch.setattr(repository, "rollback", wait_rollback)
     task = asyncio.create_task(service.set_default("target"))
     try:
-        async with asyncio.timeout(3):
-            await committing.wait()
-            task.cancel()
-            await rolling_back.wait()
-            task.cancel()
-            await asyncio.sleep(0)
-            assert not task.done()
-            release.set()
-            with pytest.raises(asyncio.CancelledError):
-                await task
+        await committing.wait()
+        task.cancel()
+        await rolling_back.wait()
+        task.cancel()
+        delivered = asyncio.Event()
+        asyncio.get_running_loop().call_soon(delivered.set)
+        await delivered.wait()
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
     finally:
         release.set()
         task.cancel()
@@ -227,7 +229,7 @@ async def test_anyio_cancellation_finishes_default_rollback(
 
         async def cancel_commit() -> None:
             scope.cancel()
-            await anyio.sleep(0)
+            await checkpoint()
 
         monkeypatch.setattr(repository, "commit", cancel_commit)
         await service.set_default("target")

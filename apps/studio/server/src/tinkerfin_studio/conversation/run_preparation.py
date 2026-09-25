@@ -75,7 +75,6 @@ class RegisteredRun:
 
     run_id: int
     created: bool
-    claimed_interrupt_ids: frozenset[str]
 
 
 def classify_intent(request: ChatRequest) -> ChatIntent:

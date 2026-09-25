@@ -19,10 +19,9 @@ async function setup(page: Page, crowded = false) {
     const path = new URL(route.request().url()).pathname
     let data: unknown = {}
     if (path === '/api/auth/me') data = {expires_at:'2099-01-01T00:00:00.000Z',user}
-    else if (path === '/api/models') data = {items:models.map(model=>({modelId:model.model_id,displayName:model.display_name,connectionId:model.connection_id,connectionDisplayName:connections.find(connection=>connection.connection_id===model.connection_id)!.display_name,reasoningEnabled:model.reasoning_enabled,imageSupport:model.image_support,isDefault:model.is_default})),defaultModelId:'pro'}
+    else if (path === '/api/models') data = {items:models.map(model=>({modelId:model.model_id,displayName:model.display_name,connectionId:model.connection_id,connectionDisplayName:connections.find(connection=>connection.connection_id===model.connection_id)!.display_name,reasoningEnabled:model.reasoning_enabled,isDefault:model.is_default})),defaultModelId:'pro'}
     else if (path === '/api/models/settings') data = { models: savedModels, connections, providers:[{provider_id:'custom',display_name:'自定义提供方',api_type:'openai_chat_completions',base_url:'',auth_type:'api_key',models:[]},...connections.map(connection=>({...connection,models:[]})), ...Array.from({length:15}, (_, index) => ({provider_id:`test-${index}`,display_name:`Provider ${index}`,api_type:'openai_chat_completions',base_url:'https://example.invalid',auth_type:'api_key',models:[]}))] }
-    else if (path === '/api/models/configurations/test') { const body = route.request().postDataJSON(); data = {kind:body.kind,outcome:'success',elapsed_ms:125,code:body.kind==='basic'?'model_listed':'text_received',text:body.kind==='basic'?null:'OK',image:null} }
-    else if (path.endsWith('/models')) data = {outcome:'success',code:'models_received',items:[{model_name:'qwen3:14b',display_name:'Qwen3 14B',image_support:'unknown'},{model_name:'qwen3:8b',display_name:'Qwen3 8B',image_support:'unknown'}]}
+    else if (path.endsWith('/models')) data = {outcome:'success',code:'models_received',items:[{model_name:'qwen3:14b',display_name:'Qwen3 14B'},{model_name:'qwen3:8b',display_name:'Qwen3 8B'}]}
     else if (path === '/api/conversation/config') data = {dayRanges:[7,30]}
     else if (path === '/api/conversation/history') data = {items:[],nextCursor:null}
     await route.fulfill({json:{code:0,message:'success',data}})
@@ -92,8 +91,7 @@ for (const language of ['zh-CN','en'] as const) for (const theme of ['light','da
     await dialog.getByRole('navigation',{name:language==='en'?'Model settings navigation':'模型配置导航'}).getByRole('button',{name:language==='en'?'Models':'模型配置',exact:true}).click()
     await dialog.getByRole('button',{name:language==='en'?'Configure Qwen3 14B':'配置模型 Qwen3 14B'}).click()
     await expect(dialog.getByLabel('Model ID',{exact:true})).toHaveValue('qwen3:14b')
-    await dialog.getByRole('button',{name:language==='en'?'Text reply':'文字回复'}).click()
-    await expect(dialog.getByText('OK',{exact:true})).toBeVisible()
+    await expect(dialog.getByRole('button',{name:language==='en'?'Image input capability':'图片输入能力',exact:true})).toHaveText(language==='en'?'Use model default':'使用模型默认值')
     await page.screenshot({path:testInfo.outputPath('model-form.png'),animations:'disabled'})
     expect(failures).toEqual([])
   })
@@ -167,29 +165,6 @@ test('展开生成参数保留字段与边框之间的内边距', async ({page})
   const helper = await parameters.getByText('用逗号分隔，最多四项').boundingBox()
   expect(label!.x - box!.x).toBeGreaterThanOrEqual(12)
   expect(box!.y + box!.height - helper!.y - helper!.height).toBeGreaterThanOrEqual(12)
-})
-
-test('取消模型测试显示全局 warning Toast', async ({page}) => {
-  let release!: () => void
-  const responseGate = new Promise<void>(resolve => { release = resolve })
-  await setup(page)
-  await page.route('**/api/models/configurations/test', async route => {
-    await responseGate
-    try {
-      await route.fulfill({json:{code:0,message:'success',data:{kind:'text',outcome:'success',elapsed_ms:125,code:'text_received',text:'OK',image:null}}})
-    } catch {
-      // 取消测试会中止浏览器请求，路由可能已经无法返回响应
-    }
-  })
-  await openSettings(page, 'zh-CN', 'light')
-  const dialog = page.getByRole('dialog', {name:'设置', exact:true})
-  await dialog.getByRole('button', {name:'配置模型 DeepSeek V4 Pro', exact:true}).click()
-  await dialog.getByRole('button', {name:'文字回复', exact:true}).click()
-  const pending = dialog.getByRole('status').filter({hasText:'测试进行中'})
-  await expect(pending).toBeVisible()
-  await pending.getByRole('button', {name:'取消等待', exact:true}).click()
-  await expect(page.locator('.toast-card.is-warning')).toContainText('已取消等待，服务商可能仍在处理并计费')
-  release()
 })
 
 for (const language of ['zh-CN', 'en'] as const) for (const theme of ['light', 'dark'] as const) {

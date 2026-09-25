@@ -1,13 +1,47 @@
 """从当前模型连接获取候选 ID，不推断服务未声明的能力"""
 
+import socket
+
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from tinkerfin_studio.models.schemas import (
     DiscoveredModel,
+    ModelDiscoveryFailureCode,
     ModelDiscoveryResult,
     ModelProvider,
 )
+from tinkerfin_studio.models.transport import (
+    ModelEndpointNotAllowed,
+    ModelResponseTooLarge,
+)
+
+
+def discovery_failure_code(error: Exception) -> ModelDiscoveryFailureCode:
+    """将模型目录请求的异常归为固定原因，不向浏览器传递供应商正文"""
+    cause: BaseException | None = error
+    for _ in range(8):
+        if isinstance(cause, ModelEndpointNotAllowed):
+            return "endpoint_not_allowed"
+        if isinstance(cause, ModelResponseTooLarge):
+            return "response_too_large"
+        if isinstance(cause, (TimeoutError, httpx.TimeoutException)):
+            return "timeout"
+        if isinstance(cause, httpx.HTTPStatusError):
+            status = cause.response.status_code
+            if status in {401, 403}:
+                return "authentication_failed"
+            return "rate_limited" if status == 429 else "service_error"
+        if isinstance(cause, (httpx.RequestError, socket.gaierror)):
+            return "network_error"
+        if cause is None:
+            break
+        cause = cause.__cause__
+    return (
+        "invalid_response"
+        if isinstance(error, (ValueError, OSError))
+        else "service_error"
+    )
 
 
 class _OpenAIModel(BaseModel):

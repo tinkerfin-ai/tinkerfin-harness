@@ -45,15 +45,15 @@ describe('Button', () => {
 describe('IconButton', () => {
   it('保留调用方的补充说明，并在提供工具提示时合并可访问描述', () => {
     const { rerender } = render(<>
-      <p id="action-reason">当前模型不支持图片</p>
+      <p id="action-reason">附件仍在上传</p>
       <IconButton label="发送消息" aria-describedby="action-reason" disabled icon={<Search size={18} />} />
     </>)
-    expect(screen.getByRole('button', { name: '发送消息' })).toHaveAccessibleDescription('当前模型不支持图片')
+    expect(screen.getByRole('button', { name: '发送消息' })).toHaveAccessibleDescription('附件仍在上传')
     rerender(<>
-      <p id="action-reason">当前模型不支持图片</p>
+      <p id="action-reason">附件仍在上传</p>
       <IconButton label="发送消息" aria-describedby="action-reason" tooltip="发送草稿" disabled icon={<Search size={18} />} />
     </>)
-    expect(screen.getByRole('button', { name: '发送消息' })).toHaveAccessibleDescription('当前模型不支持图片 发送草稿')
+    expect(screen.getByRole('button', { name: '发送消息' })).toHaveAccessibleDescription('附件仍在上传 发送草稿')
   })
 
   it('requires an accessible label and exposes the optional tooltip', () => {

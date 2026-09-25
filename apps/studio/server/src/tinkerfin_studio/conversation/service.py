@@ -13,7 +13,7 @@ from ag_ui.core import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tinkerfin import AgUiResumeCheckpoint, AgUiRunStream, RunIdentity, SseBody
+from tinkerfin import AgUiResumeReceipt, AgUiRunStream, RunIdentity, SseBody
 from tinkerfin_messaging import (
     parse_sse_event_id,
 )
@@ -27,7 +27,6 @@ from tinkerfin_studio.api.errors import (
     AttachmentErrorCode,
     BusinessException,
     ConversationErrorCode,
-    ModelErrorCode,
     SystemException,
 )
 from tinkerfin_studio.auth.types import UserContext
@@ -38,7 +37,6 @@ from tinkerfin_studio.conversation.run_preparation import (
     ChatIntent,
     CompactIntent,
     PreparedRunRequest,
-    ResumeChatIntent,
     StartChatIntent,
     classify_intent,
     conversation_identity,
@@ -207,7 +205,7 @@ class ConversationChatService:
             intent = CompactIntent(thread_id=thread_id)
         else:
             model = await models.resolve(request.forwarded_props.model)
-            request = await self._resolve_attachments(request, model)
+            request = await self._resolve_attachments(request)
             image_model = await models.resolve_image_model()
             intent = classify_intent(request)
             thread_id = request.thread_id
@@ -248,10 +246,8 @@ class ConversationChatService:
         )
         return PreparedChat(body=body, thread_id=execution.thread.thread_id)
 
-    async def _resolve_attachments(
-        self, request: ChatRequest, model: AgentModelConfig
-    ) -> ChatRequest:
-        """以仓储信息替换客户端附件描述，检查模型能力和文件总量"""
+    async def _resolve_attachments(self, request: ChatRequest) -> ChatRequest:
+        """以有权读取的仓储信息替换客户端附件描述，核验文件总量"""
         if not request.messages:
             return request
         submission = request.user_input
@@ -263,11 +259,6 @@ class ConversationChatService:
                 user_id=self._user.user_id,
                 thread_id=request.thread_id or None,
             )
-            if (
-                attachment.mime_type.startswith("image/")
-                and model.image_support != "supported"
-            ):
-                raise BusinessException(ModelErrorCode.IMAGE_UNSUPPORTED)
             total += attachment.size_bytes
             attachments.append(attachment)
         if total > 25 * 1024 * 1024:
@@ -398,13 +389,10 @@ class ConversationChatService:
             messages = None
             resume_request = execution.resume
 
-        async def record_resume_checkpoint(checkpoint: AgUiResumeCheckpoint) -> None:
-            if not isinstance(intent, ResumeChatIntent):
-                raise TypeError("普通运行不应收到 resume checkpoint")
+        async def record_saved(receipt: AgUiResumeReceipt) -> None:
             await self._resources.conversation_trace.settle_resume(
                 thread_pk=execution.thread.id,
-                entries=intent.entries,
-                checkpoint=checkpoint,
+                receipt=receipt,
             )
 
         async def release_resume_claims() -> None:
@@ -434,7 +422,7 @@ class ConversationChatService:
                 parent_run_id=prepared.parent_run_id,
                 mode=prepared.mode,
                 config=prepared.graph_config,
-                on_resume_saved=record_resume_checkpoint,
+                on_resume_saved=record_saved,
                 on_resume_not_saved=release_resume_claims,
             )
         return events
@@ -504,11 +492,20 @@ class ConversationChatService:
                 thread_created=execution.thread_created,
             )
 
+        async def subscription_ready() -> None:
+            """每次成功订阅均确保会话摘要持续更新"""
+
+            self._resources.conversation_trace.ensure(
+                thread_pk=execution.thread.id,
+                identity=prepared.identity,
+            )
+
         try:
             body = await self._resources.conversation_channel.open_sse(
                 events,
                 after=after,
                 on_source_ready=activate_ready_source,
+                on_subscribed=subscription_ready,
                 transform_event=decorate_event,
                 on_run_started=run_started,
                 on_run_finished=run_finished,
@@ -516,31 +513,6 @@ class ConversationChatService:
             )
         except MessagingError as error:
             raise self._messaging_error(error) from error
-        try:
-            self._resources.conversation_trace.ensure(
-                thread_pk=execution.thread.id,
-                identity=prepared.identity,
-            )
-        except BaseException as error:
-            try:
-                await body.aclose()
-            except BaseException as close_error:
-                if isinstance(error, Exception) and not isinstance(
-                    close_error, Exception
-                ):
-                    close_error.add_note(
-                        "SSE 内容关闭前的 Trace follow 注册也失败: "
-                        f"{type(error).__name__}: {error}"
-                    )
-                    raise close_error.with_traceback(
-                        close_error.__traceback__
-                    ) from error
-                error.add_note(
-                    "Trace follow 注册失败后的 SSE 内容关闭也失败: "
-                    f"{type(close_error).__name__}: {close_error}"
-                )
-                raise error.with_traceback(error.__traceback__) from close_error
-            raise
         return body
 
     async def cancel(self, *, thread_id: str, run_id: str) -> CancelRunResponse:

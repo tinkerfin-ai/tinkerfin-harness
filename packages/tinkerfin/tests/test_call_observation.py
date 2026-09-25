@@ -10,12 +10,14 @@ from typing import Any, cast
 from uuid import uuid4
 
 import pytest
+from langchain.agents.middleware import ToolRetryMiddleware
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     ModelRequest,
     ModelResponse,
 )
 from langchain.tools import tool
+from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.language_models.fake_chat_models import (
     FakeListChatModel,
     FakeMessagesListChatModel,
@@ -27,7 +29,12 @@ from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
 )
-from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, LLMResult
+from langchain_core.outputs import (
+    ChatGeneration,
+    ChatGenerationChunk,
+    ChatResult,
+    LLMResult,
+)
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
@@ -48,12 +55,14 @@ from tinkerfin_contracts import (
     ContextContributionObservation,
     ModelCallObservation,
     NativeMessageObservation,
+    NativeTaskObservation,
     ObservationBoundary,
     RunObservationSession,
     RunSourceContext,
     RuntimeObservation,
     ToolExecutionObservation,
 )
+from tinkerfin_tracing import SubagentFact, TraceGraphNodeKind, Tracer
 
 
 class _Session:
@@ -189,6 +198,212 @@ def test_error_claim_retains_identity_for_the_run_lifetime() -> None:
 
     assert reference() is not None
     assert hub.claim_error(ClaimedError("distinct failure")) is True
+
+
+@pytest.mark.asyncio
+async def test_parallel_identical_tasks_keep_exact_graph_execution_ownership() -> None:
+    """Actual task identities distinguish simultaneous delegates with identical input."""
+
+    session = _Session()
+    tracer = Tracer()
+    runtime = (
+        TinkerFin(checkpointer=MemorySaver())
+        .with_namespace("test")
+        .with_observer(_Observer(session))
+        .with_observer(tracer)
+        .build(
+            model=_MessageModel(
+                responses=[
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "task",
+                                "id": call_id,
+                                "args": {
+                                    "description": "Analyze the same input",
+                                    "subagent_type": "worker",
+                                },
+                            }
+                            for call_id in ("delegate-one", "delegate-two")
+                        ],
+                    ),
+                    AIMessage(content="Complete"),
+                ]
+            ),
+            subagents=[
+                {
+                    "name": "worker",
+                    "description": "Analyze inputs",
+                    "system_prompt": "Analyze the assigned input",
+                    "model": _MessageModel(responses=[AIMessage(content="Analyzed")]),
+                    "tools": [],
+                }
+            ],
+        )
+    )
+    stream = runtime.open_agui_run(
+        thread_id="parallel-identical",
+        run_id="run",
+        messages=[{"id": "user", "role": "user", "content": "Analyze twice"}],
+    )
+    events = [event async for event in stream]
+    assert stream.error is None
+    assert events[-1].type.value == "RUN_FINISHED"
+
+    native_task_ids: dict[str, str] = {}
+    for observation in session.observations:
+        if (
+            isinstance(observation, NativeTaskObservation)
+            and observation.phase == "start"
+            and observation.name == "tools"
+        ):
+            assert isinstance(observation.input, list)
+            assert len(observation.input) == 1
+            call = observation.input[0]
+            assert isinstance(call, dict)
+            call_id = call.get("id")
+            assert isinstance(call_id, str)
+            native_task_ids[call_id] = observation.task_id
+    executions = [
+        observation
+        for observation in session.observations
+        if isinstance(observation, ToolExecutionObservation)
+        and observation.tool_name == "task"
+    ]
+    assert len(native_task_ids) == len(set(native_task_ids.values())) == 2
+    assert len(executions) == 4
+    for execution in executions:
+        assert execution.tool_call_id is not None
+        assert execution.graph_task_id == native_task_ids[execution.tool_call_id]
+    model_scopes = {
+        observation.graph_namespace
+        for observation in session.observations
+        if isinstance(observation, ModelCallObservation) and observation.graph_namespace
+    }
+    assert model_scopes == {
+        (f"tools:{task_id}",) for task_id in native_task_ids.values()
+    }
+
+    snapshot = await tracer.store.snapshot(
+        runtime.thread_identity("parallel-identical")
+    )
+    trace_events = await tracer.store.read_events(
+        snapshot.key, after_seq=0, as_of_seq=snapshot.as_of_seq, limit=100
+    )
+    subagents = [
+        event.fact
+        for event in trace_events
+        if isinstance(event.fact, SubagentFact) and event.fact.phase == "started"
+    ]
+    assert {fact.parent_tool_call_id: fact.graph_namespace for fact in subagents} == {
+        call_id: (f"tools:{task_id}",) for call_id, task_id in native_task_ids.items()
+    }
+    graph = await tracer.query(runtime.thread_identity("parallel-identical"))
+    assert sum(node.kind is TraceGraphNodeKind.SUBAGENT for node in graph.nodes) == 2
+
+
+@pytest.mark.asyncio
+async def test_task_retry_keeps_logical_graph_identity_and_distinct_executions() -> (
+    None
+):
+    """A repeated Tool attempt retains its request and records a fresh execution."""
+
+    class FailOnceModel(_MessageModel):
+        attempts: int = 0
+
+        async def _agenerate(
+            self,
+            messages: list[BaseMessage],
+            stop: list[str] | None = None,
+            run_manager: AsyncCallbackManagerForLLMRun | None = None,
+            **kwargs: Any,
+        ) -> ChatResult:
+            del messages, stop, run_manager, kwargs
+            self.attempts += 1
+            if self.attempts == 1:
+                raise ValueError("child attempt failed")
+            return ChatResult(generations=[ChatGeneration(message=self.responses[0])])
+
+    child = FailOnceModel(responses=[AIMessage(content="Analyzed")])
+    session = _Session()
+    tracer = Tracer()
+    runtime = (
+        TinkerFin(checkpointer=MemorySaver())
+        .with_namespace("test")
+        .with_observer(_Observer(session))
+        .with_observer(tracer)
+        .build(
+            model=_MessageModel(
+                responses=[
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "task",
+                                "id": "delegate",
+                                "args": {
+                                    "description": "Analyze",
+                                    "subagent_type": "worker",
+                                },
+                            }
+                        ],
+                    ),
+                    AIMessage(content="Complete"),
+                ]
+            ),
+            subagents=[
+                {
+                    "name": "worker",
+                    "description": "Analyze inputs",
+                    "system_prompt": "Analyze the assigned input",
+                    "model": child,
+                    "tools": [],
+                }
+            ],
+            middleware=[
+                ToolRetryMiddleware(
+                    tools=["task"],
+                    max_retries=1,
+                    retry_on=(ValueError,),
+                    initial_delay=0,
+                    jitter=False,
+                    on_failure="error",
+                )
+            ],
+        )
+    )
+    stream = runtime.open_run(
+        thread_id="task-retry",
+        run_id="run",
+        input={"messages": [HumanMessage(content="Analyze")]},
+    )
+    _parts = [part async for part in stream]
+    assert stream.error is None
+    assert child.attempts == 2
+    executions = [
+        observation
+        for observation in session.observations
+        if isinstance(observation, ToolExecutionObservation)
+        and observation.tool_name == "task"
+    ]
+    assert [execution.phase for execution in executions] == [
+        "started",
+        "failed",
+        "started",
+        "completed",
+    ]
+    assert executions[0].execution_id == executions[1].execution_id
+    assert executions[2].execution_id == executions[3].execution_id
+    assert executions[0].execution_id != executions[2].execution_id
+    assert executions[1].error_type == "builtins.ValueError"
+    assert executions[1].error_message == "child attempt failed"
+    task_id = executions[0].graph_task_id
+    assert task_id is not None
+    assert {execution.graph_task_id for execution in executions} == {task_id}
+    assert {execution.tool_call_id for execution in executions} == {"delegate"}
+    trace = await tracer.get(runtime.thread_identity("task-retry"))
+    assert trace.status.execution == "succeeded"
 
 
 @pytest.mark.asyncio

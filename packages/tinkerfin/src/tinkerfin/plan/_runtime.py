@@ -37,7 +37,7 @@ from ._handoff import (
     PLAN_HANDOFF_STATE_KEY,
     PlanHandoffStream,
 )
-from ._resume import validate_plan_resume_response
+from ._resume import require_plan_schemas, validate_plan_resume_response
 from ._state import (
     PLAN_CHECKPOINT_RUN_ID,
     PLAN_STATE_KEY,
@@ -371,8 +371,8 @@ def _plan_values_part(
 class PlanCapableGraphRuntime:
     """Route one request without wrapping or modifying the native Deep Agent graph.
 
-    Ordinary default inputs and every Tool resume delegate directly to the native
-    graph. Plan inputs and Plan resumes use the standalone Planning graph. An approved
+    Ordinary default inputs delegate to the native graph. Tool resumes follow the
+    interrupted graph's checkpoint role. Plan inputs use the Planning graph. An approved
     Planning run is synchronously handed to the same native graph in this request.
     The wrapper owns no external resource; both graphs borrow the Definition's saver,
     Store, cache, backend, and context.
@@ -584,6 +584,9 @@ class PlanCapableGraphRuntime:
                     native_pending = bool(native_snapshot.next)
             else:
                 planning_snapshot = await planning.aget_state(config)
+                checkpoint_state = dict(
+                    cast(Mapping[str, object], planning_snapshot.values)
+                )
                 native_snapshot, _native_config = await _native_snapshot_for_plan(
                     self._native,
                     config,
@@ -601,19 +604,32 @@ class PlanCapableGraphRuntime:
                         "pending Planning checkpoint has no Plan state"
                     )
                 checkpoint_plan = read_plan_state(checkpoint_state, self._content)
+                require_plan_schemas(checkpoint_state, self._options)
                 command = cast(Command[object], graph_input)
                 raw_response = command.resume
-                # Native Commands accept a scalar; AG-UI binds responses to the
-                # pending interrupt ID. Validate both before checkpoint acceptance.
-                if isinstance(raw_response, Mapping):
-                    response_map = cast(Mapping[str, object], raw_response)
-                    response: object = response_map
-                    if len(planning_snapshot.interrupts) == 1:
-                        interrupt_id = planning_snapshot.interrupts[0].id
-                        response = response_map.get(interrupt_id, response_map)
-                else:
-                    response = raw_response
-                validate_plan_resume_response(checkpoint_state, self._options, response)
+                if not planning_snapshot.interrupts:
+                    raise PlanStateConflictError(
+                        "pending Planning checkpoint has no interrupt"
+                    )
+                for pending in planning_snapshot.interrupts:
+                    value = pending.value
+                    if not isinstance(value, Mapping):
+                        continue
+                    if cast(Mapping[object, object], value).get("kind") not in {
+                        "tinkerfin:plan_clarification",
+                        "tinkerfin:plan_review",
+                    }:
+                        # Tool review owns its decision contract and persisted IDs.
+                        # A tool approval must not consume or approve a Plan card.
+                        continue
+                    if isinstance(raw_response, Mapping):
+                        response_map = cast(Mapping[object, object], raw_response)
+                        response = response_map.get(pending.id, response_map)
+                    else:
+                        response = raw_response
+                    validate_plan_resume_response(
+                        checkpoint_state, self._options, response
+                    )
                 use_planning = True
             elif native_pending:
                 use_planning = bool(

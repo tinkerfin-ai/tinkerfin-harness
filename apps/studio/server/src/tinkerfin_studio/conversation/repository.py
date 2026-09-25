@@ -4,13 +4,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from ag_ui.core.types import ResumeEntry
 from pydantic import JsonValue
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.dml import Update
 
+from tinkerfin import AgUiResumeReceipt
 from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.conversation.models import (
     ConversationInterruptClaim,
@@ -243,34 +243,34 @@ class ConversationRepository:
         self,
         *,
         thread_pk: int,
-        run_id: str,
-        entries: tuple[ResumeEntry, ...],
-        resolution_id: str,
+        receipt: AgUiResumeReceipt,
     ) -> None:
-        """按框架 checkpoint marker 幂等结算当前 Run 的全部认领"""
+        """按恢复回执中的公开审批结果幂等结算当前运行的认领"""
 
         claims = await self.list_claims_for_update(
             thread_pk=thread_pk,
-            interrupt_ids=frozenset(entry.interrupt_id for entry in entries),
+            interrupt_ids=frozenset(
+                response.interrupt_id for response in receipt.responses
+            ),
         )
         by_id = {claim.interrupt_id: claim for claim in claims}
         now = datetime.now(UTC).replace(tzinfo=None)
-        for entry in entries:
-            claim = by_id.get(entry.interrupt_id)
-            if claim is None or claim.claimed_run_id != run_id:
-                raise RuntimeError("恢复 checkpoint 缺少当前 Run 的完整认领")
-            expected = "cancelled" if entry.status == "cancelled" else "resolved"
-            if claim.resolution_id not in (None, resolution_id):
-                raise RuntimeError("恢复认领已由不同 checkpoint marker 结算")
+        for response in receipt.responses:
+            claim = by_id.get(response.interrupt_id)
+            if claim is None or claim.claimed_run_id != receipt.identity.run_id:
+                raise RuntimeError("恢复回执缺少当前运行的完整认领")
+            expected = response.status
+            if claim.resolution_id not in (None, receipt.receipt_id):
+                raise RuntimeError("恢复认领已由不同回执结算")
             if claim.status not in ("claimed", expected):
-                raise RuntimeError("恢复认领状态与当前 checkpoint 冲突")
+                raise RuntimeError("恢复认领状态与当前回执冲突")
             claim.status = expected
-            claim.resolution_id = resolution_id
+            claim.resolution_id = receipt.receipt_id
             claim.resolved_at = now
             claim.updated_at = now
 
     async def release_claims(self, *, thread_pk: int, run_id: str) -> None:
-        """删除尚未由 checkpoint marker 结算的当前 Run 认领"""
+        """删除尚未由恢复回执结算的当前运行认领"""
 
         await self._session.execute(
             delete(ConversationInterruptClaim).where(

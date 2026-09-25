@@ -73,12 +73,12 @@ events = runtime.open_agui_run(
     run_id="request-2",
     resume=AgUiResumeRequest(entries=tuple(resume_entries)),
     parent_run_id=parent_run_id,
-    on_resume_saved=record_checkpoint_idempotently,
+    on_resume_saved=record_receipt_idempotently,
     on_resume_not_saved=release_claim_idempotently,
 )
 ```
 
-重试时，`on_resume_saved` 可能再次收到相同 checkpoint 证据，因此必须幂等。只有不存在持久 resume marker 时才会调用 `on_resume_not_saved`。取消完整 pending 批次不会执行任何已审阅工具。
+`on_resume_saved` 接收不可变的 `AgUiResumeReceipt`，其中包含已保存的公开回复摘要。重试会交付相等的回执，应使用其不透明的 `receipt_id` 幂等结算。只有请求尚未持久保存时才会调用 `on_resume_not_saved`。取消整个待审批批次不会执行任何已审阅工具，也不会调用 `on_resume_saved`。
 
 ## 事件身份
 

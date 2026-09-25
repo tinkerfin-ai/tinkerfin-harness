@@ -126,7 +126,7 @@ Common asynchronous methods:
 | Large output | `aexecute_with_offload` |
 | Lifecycle | `arenew(timeout)`, `aget_runtime_info()`, `akill()`, `aclose()` |
 
-`RootedOpenSandboxBackend.to_shell_path(file_path)` converts a virtual path for Shell. Prefer middleware-managed mapping in ordinary applications.
+`RootedOpenSandboxBackend.to_shell_path(file_path)` converts a virtual path to a Shell path relative to the workspace root, for commands passed to `aexecute`.
 
 Synchronous remote methods fail explicitly; use the asynchronous forms.
 

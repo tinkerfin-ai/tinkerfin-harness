@@ -26,7 +26,7 @@ async function openConversation(page: Page, theme: string) {
     if (!path.startsWith('/api/')) { await route.continue(); return }
     let data: unknown = {}
     if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00Z', user }
-    else if (path === '/api/models') data = { defaultModelId: 'model-0', items: [{ modelId: 'model-0', displayName: 'Model', imageSupport: 'unknown', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }] }
+    else if (path === '/api/models') data = { defaultModelId: 'model-0', items: [{ modelId: 'model-0', displayName: 'Model',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }] }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history') data = { items: [{ ...history, status: 'idle', hasPendingInterrupt: false, updatedAt: '2026-09-14T00:00:00Z' }], nextCursor: null }
     else if (path.endsWith(`/${history.threadId}/history`)) data = history

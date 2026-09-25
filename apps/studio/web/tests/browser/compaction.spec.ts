@@ -98,7 +98,7 @@ async function openConversation(page: Page, options: { theme?: string; detail?: 
       return
     }
     if (path === '/api/auth/me') data = { user, expires_at: '2099-01-01T00:00:00Z' }
-    else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main', imageSupport: 'supported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
+    else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history') data = { items: [{ ...detail, status: detail.status.execution === 'running' ? 'running' : 'idle', lastRunId: detail.headRunId, hasPendingInterrupt: false, pendingInteractionKind: null }], nextCursor: null }
     else if (path.endsWith('/history')) {

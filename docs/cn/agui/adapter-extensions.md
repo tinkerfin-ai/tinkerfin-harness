@@ -57,16 +57,17 @@ channel，不会递归删除嵌套同名业务字段。TinkerFin Plan Runtime �
 
 `tinkerfin_contracts.media` 的 `Attachment` 包含 `id`、`name`、`mime_type`
 和 `size_bytes`。调用 `content_block()` 会得到 LangChain 的 `image` 或 `file`
-内容块，带有 `file_id`、`mime_type` 和 `extras.attachment`。消息保存该引用；宿主
-负责访问授权，并通过 `TinkerFin().with_attachments(AttachmentSupport(read_content=...))`
-在模型请求时提供有大小限制的文件内容。异步读取函数返回
-`AttachmentContent(data=..., mime_type=...)`。目标模型必须支持对应格式；默认依据模型
-profile 判断图片、音频、视频和 PDF 输入能力，也可通过
-`supports_content(model, mime_type)` 显式判断。不支持的格式保留引用，供文件读取工具处理；
+内容块，带有 `file_id`、`mime_type` 和 `extras.attachment`。消息保存该引用；需要读取时，
+由宿主负责访问授权，并通过 `TinkerFin().with_attachments(AttachmentSupport(read_content=...))`
+在模型请求时提供有大小限制的文件内容。可选的异步读取函数返回
+`AttachmentContent(data=..., mime_type=...)`；未配置时，已存储附件保留引用，供文件工具读取。
+原生媒体不需要读取函数，框架创建的图默认按目标模型声明的图片、音频、视频和 PDF
+输入能力检查。可单独提供 `supports_content(model, mime_type)` 自定义检查，无须同时提供
+读取函数。格式不受支持或能力未知时，模型收到文字说明，原消息和已存储附件引用保持不变。
 该能力不负责文件解析或视频抽帧。
 
-`max_attachments` 默认每次请求读取最近 5 个受支持附件；`max_bytes` 默认限制编码前的
-内容总量为 20 MiB，超出时在调用模型前抛出 `ValueError`。宿主还需在返回字节前限制
+配置读取函数后，`max_attachments` 默认每次请求读取最近 5 个受支持附件；
+`max_bytes` 默认限制编码前的内容总量为 20 MiB，超出时在调用模型前抛出 `ValueError`。宿主还需在返回字节前限制
 存储读取量。该策略作用于框架创建的图；外部编译图和远程智能体自行选择文件输入方式。
 
 普通运行直接向 `runtime.open_agui_run(messages=...)` 提交标准用户消息，由 Runtime 校验并转换。宿主自行分配消息 ID 时，可用 `AgUiUserInput` 提前读取文字和附件引用，并替换已授权的附件描述。

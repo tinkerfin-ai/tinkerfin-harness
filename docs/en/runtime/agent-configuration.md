@@ -91,9 +91,12 @@ result = await runtime.ainvoke(
 ```
 
 Plan chooses an ordinary reply, a clarification, or a draft based on the conversation.
-An ordinary reply keeps Planning mode active; execution starts only after the user
-approves the current draft. Its built-in filesystem access is read-only. `mode="default"` executes the
-agent directly. Plan models and review actions are exported from `tinkerfin.plan`.
+It shares the configured tools, workspace, skills, and permission rules, and can run
+analysis commands when the backend supports execution. Required tool approvals also
+apply during Planning. Approving a tool authorizes that operation and continues Planning;
+only approval of the current draft starts its execution. An ordinary reply keeps
+Planning mode active. `mode="default"` executes the agent directly. Plan models and
+review actions are exported from `tinkerfin.plan`.
 
 ## Lazy workspaces and tools
 

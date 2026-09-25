@@ -52,6 +52,28 @@ def _contains(error: BaseException, target: BaseException) -> bool:
     return False
 
 
+def cancellation_only(error: BaseException) -> bool:
+    """Recognize expected cancellation without hiding retained failures."""
+
+    pending = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if _is_group(current):
+            pending.extend(current.exceptions)
+        elif not isinstance(current, asyncio.CancelledError):
+            return False
+        pending.extend(
+            item
+            for item in (current.__cause__, current.__context__, _stored_cause(current))
+            if item is not None
+        )
+    return True
+
+
 def _retain(primary: BaseException, secondary: BaseException) -> None:
     # Preserve original objects and explicit causes. A cancelled operation can
     # already refer to its caller's cancellation; remove that back edge before
@@ -121,6 +143,13 @@ async def capture(operation: Awaitable[_T]) -> TaskOutcome[_T]:
         return error
 
 
+def _cancel_task_once(task: asyncio.Task[TaskOutcome[_T]]) -> None:
+    # Several owners may stop the same accepted operation. Repeated cancellation
+    # must not interrupt the operation's own finally block.
+    if not task.done() and not task.cancelling():
+        task.cancel()
+
+
 async def join_owned_task(
     task: asyncio.Task[TaskOutcome[_T]], *, cancel_operation: bool
 ) -> _T:
@@ -156,7 +185,9 @@ async def join_owned_task(
                     # The task is already queued. Schedule cancellation after its
                     # first step so capture owns the coroutine even when the caller
                     # was cancelled before the child began executing.
-                    cancel_handle = asyncio.get_running_loop().call_soon(task.cancel)
+                    cancel_handle = asyncio.get_running_loop().call_soon(
+                        _cancel_task_once, task
+                    )
         outcome = task.result()
     finally:
         if cancel_handle is not None:

@@ -11,7 +11,8 @@
 | `AgUiRunStream.aclose()` | 等待执行与清理完成 |
 | `AgUiRunStream.to_sse()` | 返回单次消费的 UTF-8 SSE 字节流 `SseBody[bytes]` |
 | `AgUiResumeRequest` | 携带 pending interrupt 的不可信客户端决定 |
-| `AgUiResumeCheckpoint` | resume marker 持久后交给回调的证据 |
+| `AgUiResumeReceipt` | 已保存请求的不可变回执，包含 `identity`、`parent_run_id`、不透明的 `receipt_id` 和 `responses` |
+| `AgUiResumeResponse` | 一条已保存回复的公开 `interrupt_id` 和 `status`，不含决定载荷 |
 
 ### `open_agui_run()`
 
@@ -34,7 +35,8 @@
 ## 输入辅助类型
 
 宿主在授权后才分配消息 ID 时，可用 `AgUiUserInput` 校验一条无 ID 用户消息。
-`with_attachments(AttachmentSupport(...))` 允许宿主在模型调用前解析已授权附件描述。
+`with_attachments(AttachmentSupport(read_content=...))` 配置模型调用前按附件 ID 进行的授权读取。
+原生媒体不需要读取函数，框架默认按目标模型声明的输入能力检查。
 
 `AgUiResumeBinding` 是框架解析后保存的恢复值。普通宿主把 `AgUiResumeRequest` 交给 Runtime，不自行构造 Binding。
 

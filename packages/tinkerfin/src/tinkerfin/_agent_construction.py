@@ -44,7 +44,7 @@ from langgraph.typing import ContextT
 from tinkerfin_contracts import PreparedWorkspace
 
 from ._agent_spec import AgentMiddlewareType, AgentSpec
-from ._attachment_agents import _AttachmentMiddleware, attachment_filesystem
+from ._attachment_agents import _AttachmentMiddleware, preserve_media
 from ._hitl import create_tool_review
 from ._middleware_resources import prepare_middleware_resources
 from ._state_schema import private_state_fields
@@ -102,17 +102,55 @@ def _filesystem(
 def _with_attachments(
     middleware: list[AgentMiddlewareType], attachments: AttachmentSupport | None
 ) -> list[AgentMiddlewareType]:
-    if attachments is None:
-        return middleware
+    support = attachments if attachments is not None else AttachmentSupport()
     return [
         *(
-            attachment_filesystem(item, attachments)
-            if item.name == "FilesystemMiddleware"
+            preserve_media(
+                item,
+                support,
+                protect_messages=isinstance(item, FilesystemMiddleware)
+                or item.name == "FilesystemMiddleware",
+            )
+            if isinstance(
+                item,
+                (
+                    FilesystemMiddleware,
+                    SkillsMiddleware,
+                    MemoryMiddleware,
+                    SubAgentMiddleware,
+                    AsyncSubAgentMiddleware,
+                    SummarizationToolMiddleware,
+                ),
+            )
+            or item.name == "FilesystemMiddleware"
             else item
             for item in middleware
         ),
-        _AttachmentMiddleware(attachments),
+        _AttachmentMiddleware(support),
     ]
+
+
+def _role_defaults(
+    *,
+    model: BaseChatModel,
+    backend: BackendProtocol,
+    skills: Sequence[str] | None,
+    permissions: Sequence[FilesystemPermission],
+    interrupt_on: dict[str, bool | InterruptOnConfig] | None,
+    workspace: PreparedWorkspace[object, BackendProtocol] | None,
+) -> list[AgentMiddlewareType]:
+    """Share file access, context management, and approvals across Agent roles."""
+    defaults: list[AgentMiddlewareType] = [
+        _filesystem(backend, permissions, workspace),
+        observe_summarization(create_summarization_middleware(model, backend)),
+        PatchToolCallsMiddleware(),
+    ]
+    review = create_tool_review(permissions, interrupt_on)
+    if review is not None:
+        defaults.append(review)
+    if skills is not None:
+        defaults.append(SkillsMiddleware(backend=backend, sources=list(skills)))
+    return defaults
 
 
 def _child_stack(
@@ -128,16 +166,14 @@ def _child_stack(
     tool_scope: _ToolRunScope[object] | None,
     inherit_slots_only: bool = False,
 ) -> list[AgentMiddlewareType]:
-    defaults: list[AgentMiddlewareType] = [
-        _filesystem(backend, permissions, workspace),
-        observe_summarization(create_summarization_middleware(model, backend)),
-        PatchToolCallsMiddleware(),
-    ]
-    review = create_tool_review(permissions, interrupt_on)
-    if review is not None:
-        defaults.append(review)
-    if skills is not None:
-        defaults.append(SkillsMiddleware(backend=backend, sources=list(skills)))
+    defaults = _role_defaults(
+        model=model,
+        backend=backend,
+        skills=skills,
+        permissions=permissions,
+        interrupt_on=interrupt_on,
+        workspace=workspace,
+    )
     if inherit_slots_only:
         names = {item.name for item in defaults}
         custom = tuple(item for item in custom if item.name in names)

@@ -1,4 +1,4 @@
-import { ArrowUp, Paperclip, Plus, Square, TriangleAlert } from 'lucide-react'
+import { ArrowUp, Paperclip, Plus, Square } from 'lucide-react'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 
@@ -63,7 +63,6 @@ export function Composer({
   onAddAttachments,
   onRemoveAttachment,
   onRetryAttachment,
-  attachmentDisabledReason,
   onAttachmentError,
 }: {
   value: string
@@ -94,8 +93,6 @@ export function Composer({
   onAddAttachments: (files: readonly File[]) => void
   onRemoveAttachment: (id: string) => void
   onRetryAttachment?: (id: string) => void
-  /** 附件与当前模型不兼容时的发送原因，解除限制后不传入 */
-  attachmentDisabledReason?: string
   onAttachmentError?: () => void
 }) {
   const { t } = useI18n()
@@ -108,7 +105,6 @@ export function Composer({
   const pendingCaret = useRef<number | null>(null)
   const acceptedCaret = useRef(value.length)
   const menuId = `composer-suggestions-${useId()}`
-  const attachmentNoticeId = `composer-attachment-notice-${useId()}`
   const [caret, setCaret] = useState(value.length)
   const [menuRequested, setMenuRequested] = useState(false)
   const [activeSuggestionId, setActiveSuggestionId] = useState<string>()
@@ -143,8 +139,7 @@ export function Composer({
     : enabledIds[0]
   const planClaim = planClaimParts(value)
   const isCompactCommand = /^\/compact(?:\s|$)/.test(value.trim())
-  const attachmentNotice = !isDisabled && !isCompactCommand ? attachmentDisabledReason : undefined
-  const canSubmitDraft = (Boolean(value.trim()) || attachments.length > 0) && (!value.trim() || isSubmittableComposerDraft(value)) && (isCompactCommand ? !compactDisabledReason : !attachmentDisabledReason && attachments.every(item => item.state === 'ready'))
+  const canSubmitDraft = (Boolean(value.trim()) || attachments.length > 0) && (!value.trim() || isSubmittableComposerDraft(value)) && (isCompactCommand ? !compactDisabledReason : attachments.every(item => item.state === 'ready'))
   const cancelSuggestionMenu = useCallback(() => {
     if (menuRequested) {
       setMenuRequested(false)
@@ -352,7 +347,6 @@ export function Composer({
               className="composer-input"
               aria-label={t('消息输入')}
               aria-busy={isHydrating}
-              aria-describedby={attachmentNotice ? attachmentNoticeId : undefined}
               aria-controls={menuOpen ? menuId : undefined}
               aria-activedescendant={menuOpen && resolvedActiveId ? `${menuId}-${resolvedActiveId}` : undefined}
               aria-autocomplete="list"
@@ -398,12 +392,6 @@ export function Composer({
             <div className="composer-input-mirror" aria-hidden="true">{`${value}\n`}</div>
           </div>
         </div>
-        {attachmentNotice && (
-          <div className="composer-attachment-notice" id={attachmentNoticeId} role="status">
-            <TriangleAlert size={14} aria-hidden="true" />
-            <span>{attachmentNotice}</span>
-          </div>
-        )}
         <div className="composer-toolbar-container">
         <div className="composer-toolbar">
           <div className="composer-toolbar-leading">
@@ -470,7 +458,7 @@ export function Composer({
                 onClick={onStop}
               />
             ) : (
-              <IconButton className="send-button" label={t('发送消息')} icon={<ArrowUp size={18} />} aria-describedby={attachmentNotice ? attachmentNoticeId : undefined} disabled={isDisabled || !canSubmitDraft} onClick={onSend} />
+              <IconButton className="send-button" label={t('发送消息')} icon={<ArrowUp size={18} />} disabled={isDisabled || !canSubmitDraft} onClick={onSend} />
             )}
           </div>
         </div>

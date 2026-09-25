@@ -2,22 +2,27 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 from unittest.mock import create_autospec
 
 import httpx
 import pytest
 from ag_ui.core import RunAgentInput
 from deepagents.backends import BackendProtocol, StateBackend
+from deepagents.backends.protocol import ExecuteResponse, SandboxBackendProtocol
 from langchain_core.language_models import BaseChatModel
-from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langchain_core.language_models.fake_chat_models import (
+    FakeListChatModel,
+    FakeMessagesListChatModel,
+)
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
+from langgraph.types import Command
 from pydantic import Field, SecretStr, ValidationError
 
 from tinkerfin import AgentRuntime, TinkerFin
@@ -28,6 +33,7 @@ from tinkerfin_sandbox import (
     RootedOpenSandboxBackend,
 )
 from tinkerfin_studio.agent import runtime as runtime_module
+from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.agent.plan_content import StudioMarkdownPlanContent
 from tinkerfin_studio.agent.runtime import build_conversation_runtime
 from tinkerfin_studio.agent.subagents import load_subagents
@@ -37,6 +43,32 @@ from tinkerfin_studio.models import providers as providers_module
 from tinkerfin_studio.models.chat import create_chat_model
 from tinkerfin_studio.models.schemas import AgentModelConfig
 from tinkerfin_studio.resources import ApplicationResources
+
+
+class _CommandBackend(StateBackend, SandboxBackendProtocol):
+    """记录授权后实际提交的命令，不启动外部进程"""
+
+    def __init__(self) -> None:
+        self.commands: list[str] = []
+
+    @property
+    def id(self) -> str:
+        return "test-workspace"
+
+    async def aexecute(
+        self, command: str, *, timeout: int | None = None
+    ) -> ExecuteResponse:
+        self.commands.append(command)
+        return ExecuteResponse(output="total=42", exit_code=0)
+
+
+class _CommandModel(FakeMessagesListChatModel):
+    def bind_tools(
+        self,
+        tools: Sequence[dict[str, Any] | type | Callable[..., Any] | BaseTool],
+        **kwargs: Any,
+    ) -> BaseChatModel:
+        return self
 
 
 @pytest.fixture
@@ -153,22 +185,28 @@ class _ToolModel(FakeListChatModel):
 class _Workspace:
     """通过同步信号记录执行期间的用户工作区借用"""
 
-    def __init__(self, failure: Exception | None = None) -> None:
+    def __init__(
+        self,
+        failure: Exception | None = None,
+        *,
+        backend: BackendProtocol | None = None,
+    ) -> None:
         self.opened: list[RunIdentity] = []
         self.closed: list[RunIdentity] = []
         self.failure = failure
+        self.backend = backend if backend is not None else StateBackend()
 
     @asynccontextmanager
     async def prepare(
         self, identity: RunIdentity
-    ) -> AsyncIterator[PreparedWorkspace[RootedOpenSandboxBackend, BackendProtocol]]:
+    ) -> AsyncGenerator[PreparedWorkspace[RootedOpenSandboxBackend, BackendProtocol]]:
         self.opened.append(identity)
         try:
             if self.failure is not None:
                 raise self.failure
             yield PreparedWorkspace(
                 workspace=create_autospec(RootedOpenSandboxBackend, instance=True),
-                backend=StateBackend(),
+                backend=self.backend,
             )
         finally:
             self.closed.append(identity)
@@ -207,19 +245,17 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
             return workspace
 
     monkeypatch.setattr(runtime_module, "create_chat_model", create_model)
-    resources = cast(
-        ApplicationResources,
-        SimpleNamespace(
-            automation=Automation(namespace="studio_automation"),
-            attachments=attachments,
-            model_http_transport=None,
-            model_http_client=model_http_client,
-            agent_persistence=SimpleNamespace(store=InMemoryStore()),
-            agent_subagents=await load_subagents(),
-            tinkerfin=TinkerFin(checkpointer=InMemorySaver()),
-            sandbox_manager=Sandboxes(),
-            settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
-        ),
+    resources = create_autospec(ApplicationResources, instance=True)
+    resources.configure_mock(
+        automation=Automation(namespace="studio_automation"),
+        attachments=attachments,
+        model_http_transport=None,
+        model_http_client=model_http_client,
+        agent_persistence=SimpleNamespace(store=InMemoryStore()),
+        agent_subagents=await load_subagents(),
+        tinkerfin=TinkerFin(checkpointer=InMemorySaver()),
+        sandbox_manager=Sandboxes(),
+        settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
     )
     config = _model_config().model_copy(
         update={
@@ -268,7 +304,7 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
         assert {
             "compact_conversation",
             "web_search",
-            "read_attachment",
+            "import_attachment",
             "deliver_file",
             "capture_browser",
             "write_todos",
@@ -343,18 +379,16 @@ async def test_file_access_choice_controls_root_and_subagent_review(
             assert key == "users/7"
             return workspace
 
-    resources = cast(
-        ApplicationResources,
-        SimpleNamespace(
-            automation=Automation(namespace="studio_automation"),
-            attachments=attachments,
-            model_http_transport=None,
-            model_http_client=model_http_client,
-            agent_subagents=await load_subagents(),
-            tinkerfin=TinkerFin(checkpointer=InMemorySaver()),
-            sandbox_manager=Sandboxes(),
-            settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
-        ),
+    resources = create_autospec(ApplicationResources, instance=True)
+    resources.configure_mock(
+        automation=Automation(namespace="studio_automation"),
+        attachments=attachments,
+        model_http_transport=None,
+        model_http_client=model_http_client,
+        agent_subagents=await load_subagents(),
+        tinkerfin=TinkerFin(checkpointer=InMemorySaver()),
+        sandbox_manager=Sandboxes(),
+        settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
     )
     runtime = build_conversation_runtime(
         resources=resources,
@@ -430,18 +464,16 @@ async def test_product_tool_failure_allows_root_and_researcher_to_reply(
             return workspace
 
     tracer = Tracer()
-    resources = cast(
-        ApplicationResources,
-        SimpleNamespace(
-            automation=Automation(namespace="studio_automation"),
-            attachments=attachments,
-            model_http_transport=None,
-            model_http_client=model_http_client,
-            agent_subagents=await load_subagents(),
-            tinkerfin=TinkerFin(checkpointer=InMemorySaver()).with_observer(tracer),
-            sandbox_manager=Sandboxes(),
-            settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
-        ),
+    resources = create_autospec(ApplicationResources, instance=True)
+    resources.configure_mock(
+        automation=Automation(namespace="studio_automation"),
+        attachments=attachments,
+        model_http_transport=None,
+        model_http_client=model_http_client,
+        agent_subagents=await load_subagents(),
+        tinkerfin=TinkerFin(checkpointer=InMemorySaver()).with_observer(tracer),
+        sandbox_manager=Sandboxes(),
+        settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
     )
     runtime = build_conversation_runtime(
         resources=resources,
@@ -466,4 +498,78 @@ async def test_product_tool_failure_allows_root_and_researcher_to_reply(
             node.kind == "subagent" and node.status == "succeeded"
             for node in graph.nodes
         )
+    assert workspace.opened == workspace.closed
+
+
+@pytest.mark.parametrize("mode", ["default", "plan"])
+@pytest.mark.parametrize("access_mode", ["full", "write_approval"])
+async def test_analysis_commands_follow_permissions_in_chat_and_plan(
+    attachments,
+    model_http_client,
+    monkeypatch: pytest.MonkeyPatch,
+    mode,
+    access_mode: AccessMode,
+) -> None:
+    """计划分析与普通对话使用同一审批策略，批准前命令没有副作用"""
+    backend = _CommandBackend()
+    workspace = _Workspace(backend=backend)
+    model = _CommandModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "analyze",
+                        "name": "execute",
+                        "args": {"command": "python analyze.py"},
+                    }
+                ],
+            ),
+            AIMessage(content="分析结果是42"),
+        ]
+    )
+    monkeypatch.setattr(
+        runtime_module, "create_chat_model", lambda *args, **kwargs: model
+    )
+
+    class Sandboxes:
+        def workspace(self, key, *, routes):
+            return workspace
+
+    resources = create_autospec(ApplicationResources, instance=True)
+    resources.configure_mock(
+        automation=Automation(namespace="studio_automation"),
+        attachments=attachments,
+        model_http_transport=None,
+        model_http_client=model_http_client,
+        agent_subagents={},
+        tinkerfin=TinkerFin(checkpointer=InMemorySaver()),
+        sandbox_manager=Sandboxes(),
+        settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
+    )
+    runtime = build_conversation_runtime(
+        resources=resources,
+        user_id=7,
+        thread_id="analysis",
+        model_config=_model_config(),
+        image_model=None,
+        access_mode=access_mode,
+    )
+    result = await runtime.ainvoke(
+        thread_id="analysis",
+        run_id="analysis-request",
+        mode=mode,
+        input={"messages": [{"role": "user", "content": "运行脚本分析数据"}]},
+    )
+    if access_mode == "write_approval":
+        assert result.get("__interrupt__")
+        assert backend.commands == []
+        result = await runtime.ainvoke(
+            thread_id="analysis",
+            run_id="analysis-approved",
+            mode="default",
+            input=Command(resume={"decisions": [{"type": "approve"}]}),
+        )
+    assert backend.commands == ["python analyze.py"]
+    assert not result.get("__interrupt__")
     assert workspace.opened == workspace.closed

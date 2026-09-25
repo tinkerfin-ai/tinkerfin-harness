@@ -1,4 +1,4 @@
-"""Planner reads respect workspace permissions without inheriting prepared tools."""
+"""Planner tools borrow the workspace and preserve its allow, deny, and review rules."""
 
 from pathlib import Path
 from typing import Literal
@@ -11,7 +11,8 @@ from langchain.tools import tool
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
-from test_plan_mode import _FakeModel, _parts, _planner
+from langgraph.types import Command
+from test_plan_mode import _FakeModel, _parts, _planner, _root_interrupts
 from test_runtime_workspace import _Workspace
 
 from tinkerfin import TinkerFin
@@ -77,6 +78,19 @@ async def test_planner_workspace_filters_protected_reads(
         config={"configurable": {"thread_id": "plan-thread"}},
         mode="plan",
     )
+    if mode == "interrupt":
+        pending = _root_interrupts(parts)
+        assert len(pending) == 1
+        assert pending[0].value["action_requests"][0]["name"] == name
+        parts.extend(
+            await _parts(
+                runtime,
+                Command(resume={"decisions": [{"type": "approve"}]}),
+                run_id="planner-permissions-review",
+                config={"configurable": {"thread_id": "plan-thread"}},
+                mode="plan",
+            )
+        )
     replies: dict[str, str] = {}
     for part in parts:
         if part["type"] != "messages":
@@ -87,11 +101,12 @@ async def test_planner_workspace_filters_protected_reads(
             replies[message.tool_call_id] = str(message.content)
     assert "public information" in replies["read-public"]
     protected = "secret information" if name == "read_file" else "secret.txt"
-    assert (protected in replies["inspect"]) is (mode == "allow")
-    assert workspace.closed == workspace.opened and len(workspace.opened) == 1
+    assert (protected in replies["inspect"]) is (mode != "deny")
+    assert workspace.closed == workspace.opened
+    assert len(workspace.opened) == (2 if mode == "interrupt" else 1)
 
 
-async def test_read_only_planner_tools_receive_the_prepared_workspace() -> None:
+async def test_planner_tools_receive_the_prepared_workspace() -> None:
     from tinkerfin.tools import ToolRuntime
 
     seen: list[Path] = []
@@ -102,7 +117,6 @@ async def test_read_only_planner_tools_receive_the_prepared_workspace() -> None:
         seen.append(runtime.workspace)
         return "customer information"
 
-    read_customer.metadata = {"read_only": True}
     workspace = _Workspace()
     model = _FakeModel(
         responses=[

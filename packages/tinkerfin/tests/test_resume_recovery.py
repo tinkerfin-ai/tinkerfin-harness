@@ -18,7 +18,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.types import Command, interrupt
 
-from tinkerfin import AgentRuntime, AgUiResumeCheckpoint, AgUiResumeRequest, TinkerFin
+from tinkerfin import AgentRuntime, AgUiResumeReceipt, AgUiResumeRequest, TinkerFin
 from tinkerfin._agent_spec import AgentSpec
 from tinkerfin._checkpoint import NamespaceCheckpointer
 
@@ -159,7 +159,7 @@ async def test_another_native_run_cannot_be_counted_as_this_approval(
     assert initial.error is None
     request = _request(events[-1])
 
-    async def stop_before_submission(checkpoint: AgUiResumeCheckpoint) -> None:
+    async def stop_before_submission(checkpoint: AgUiResumeReceipt) -> None:
         assert checkpoint.identity.run_id == "B"
         raise RuntimeError("checkpoint callback failed")
 

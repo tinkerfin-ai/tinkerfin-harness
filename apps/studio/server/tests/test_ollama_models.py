@@ -222,7 +222,6 @@ async def test_discovery_uses_selected_interface_and_does_not_invent_capabilitie
             provider, "http://service.local:11434", "", client
         )
     assert result.outcome == "success" and len(result.items) == 1
-    assert result.items[0].image_support == "unknown"
     assert seen[0].url.path == path
     assert "authorization" not in seen[0].headers
 

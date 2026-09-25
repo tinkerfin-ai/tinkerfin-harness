@@ -28,7 +28,7 @@ async function openConversation(page: Page, content: string, { theme = 'light', 
     const path = new URL(route.request().url()).pathname
     let data: unknown = {}
     if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00.000Z', user }
-    else if (path === '/api/models') data = { items: [{ modelId: snapshot.lastModel, displayName: '测试模型', imageSupport: 'supported', connectionId: 'test', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true }], defaultModelId: snapshot.lastModel }
+    else if (path === '/api/models') data = { items: [{ modelId: snapshot.lastModel, displayName: '测试模型',connectionId: 'test', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true }], defaultModelId: snapshot.lastModel }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history') data = { items: [{ ...snapshot, status: running ? 'running' : 'idle', hasPendingInterrupt: false, updatedAt: '2099-01-01T00:00:00.000Z' }], nextCursor: null }
     else if (path === `/api/conversation/${snapshot.threadId}/history`) data = snapshot

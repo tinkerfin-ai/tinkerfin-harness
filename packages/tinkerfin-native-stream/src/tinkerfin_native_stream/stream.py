@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Annotated, Literal, cast
 
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import AIMessageChunk, BaseMessage, ToolCallChunk
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -121,7 +121,7 @@ class NativeMessageData(NativeBoundaryModel):
     @field_validator("message", mode="before")
     @classmethod
     def require_live_message(cls, value: object) -> object:
-        """Reject serialized data where a live LangChain message is required."""
+        """Require live messages and normalize omitted Tool-delta identity fields."""
 
         # LangGraph's messages handler also emits state updates from middleware,
         # including HumanMessage and RemoveMessage. These are live messages, not
@@ -131,6 +131,24 @@ class NativeMessageData(NativeBoundaryModel):
                 "messages_native_object",
                 "messages stream data must contain a live LangChain BaseMessage",
             )
+        if isinstance(value, AIMessageChunk) and any(
+            chunk.get("id") == "" or chunk.get("name") == ""
+            for chunk in value.tool_call_chunks
+        ):
+            # Core 1.6.1 ToolCallChunk merges strings by index; an empty id/name
+            # contributes no identity. langchain-openai 1.4.3 preserves these
+            # provider fields in _convert_delta_to_message_chunk. Normalize once
+            # for observers, replay, and adapters without mutating the source.
+            # This remains a chunk; its derived tool_calls is not a full snapshot.
+            chunks: list[ToolCallChunk] = [
+                {
+                    **chunk,
+                    "id": None if chunk.get("id") == "" else chunk.get("id"),
+                    "name": None if chunk.get("name") == "" else chunk.get("name"),
+                }
+                for chunk in value.tool_call_chunks
+            ]
+            return value.model_copy(update={"tool_call_chunks": chunks})
         return value
 
 
@@ -255,9 +273,10 @@ def validate_native_stream_part(part: object) -> NativeValidatedStreamPart:
         part: Live upstream envelope.
 
     Returns:
-        The mode-specific validated envelope. Its fields remain mutable, and message
-        objects are borrowed from the input. Consumers must treat both as read-only
-        while processing the part; validation does not freeze upstream objects.
+        The mode-specific validated envelope. Messages are borrowed unless empty
+        Tool-delta identity fields require a normalized copy. Input messages are
+        never changed. The envelope and its messages remain mutable; consumers must
+        treat both as read-only while processing the part.
 
     Raises:
         NativeStreamContractError: The envelope or payload is malformed.

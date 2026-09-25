@@ -130,7 +130,6 @@ class ConversationRunPreparer:
             run_id=prepared.identity.run_id,
         )
         self._require_same_registration(existing, prepared=prepared, model=model)
-        claimed_ids: frozenset[str] = frozenset()
         try:
             models = AgentModelRepository(self._session, user_id=self._user_id)
             await models.lock_owner()
@@ -171,7 +170,7 @@ class ConversationRunPreparer:
             if isinstance(intent, ResumeChatIntent):
                 if source_run_id is None:
                     raise BusinessException(ConversationErrorCode.RESUME_REQUIRED)
-                claimed_ids = await self._claim_resume(
+                await self._claim_resume(
                     intent,
                     prepared=prepared,
                     thread=thread,
@@ -203,7 +202,6 @@ class ConversationRunPreparer:
                 registered=RegisteredRun(
                     run_id=existing.id,
                     created=created,
-                    claimed_interrupt_ids=claimed_ids,
                 ),
                 resume=(
                     AgUiResumeRequest(entries=intent.entries)
@@ -307,7 +305,7 @@ class ConversationRunPreparer:
         prepared: PreparedRunRequest,
         thread: ConversationThread,
         source_run_id: str,
-    ) -> frozenset[str]:
+    ) -> None:
         """认领客户端 ID，完整性与 Tool correlation 由框架 Checkpointer 校验"""
 
         claimed_ids = frozenset(entry.interrupt_id for entry in intent.entries)
@@ -340,7 +338,6 @@ class ConversationRunPreparer:
                 raise BusinessException(
                     ConversationErrorCode.RESUME_ALREADY_CLAIMED
                 ) from error
-        return claimed_ids
 
     @staticmethod
     def _continuation_source_run_id(

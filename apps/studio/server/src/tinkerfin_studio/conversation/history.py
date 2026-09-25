@@ -366,40 +366,41 @@ class ConversationHistoryService:
             last_status = trace.status
             last_completeness = trace.completeness
             try:
-                yield ConversationTraceSnapshotEvent(snapshot=detail)
-                async for update in updates:
-                    for message_id in update.messages.removes:
-                        user_runs.pop(message_id, None)
-                    for item in update.messages.upserts:
-                        if item.role == "user" and not item.graph_namespace:
-                            user_runs[item.id] = item.run_id
-                    task_trace_update = None
-                    if projector is not None:
-                        for event in update.events:
-                            projector.consume(event)
-                        if (
-                            projector.revision != last_revision
-                            or update.status != last_status
-                            or update.completeness != last_completeness
-                        ):
-                            candidate = projector.snapshot(
-                                status=update.status,
-                                completeness=update.completeness,
-                            )
-                            last_revision = projector.revision
-                            last_status = update.status
-                            last_completeness = update.completeness
-                            if candidate != last_task_trace:
-                                task_trace_update = candidate
-                                last_task_trace = candidate
-                    yield ConversationTraceUpdateEvent(
-                        update=update,
-                        runFailures=visible_run_failures(
-                            update.projections[FAILURE_PROJECTION],
-                            set(user_runs.values()),
-                        ),
-                        taskTrace=task_trace_update,
-                    )
+                async with updates:
+                    yield ConversationTraceSnapshotEvent(snapshot=detail)
+                    async for update in updates:
+                        for message_id in update.messages.removes:
+                            user_runs.pop(message_id, None)
+                        for item in update.messages.upserts:
+                            if item.role == "user" and not item.graph_namespace:
+                                user_runs[item.id] = item.run_id
+                        task_trace_update = None
+                        if projector is not None:
+                            for event in update.events:
+                                projector.consume(event)
+                            if (
+                                projector.revision != last_revision
+                                or update.status != last_status
+                                or update.completeness != last_completeness
+                            ):
+                                candidate = projector.snapshot(
+                                    status=update.status,
+                                    completeness=update.completeness,
+                                )
+                                last_revision = projector.revision
+                                last_status = update.status
+                                last_completeness = update.completeness
+                                if candidate != last_task_trace:
+                                    task_trace_update = candidate
+                                    last_task_trace = candidate
+                        yield ConversationTraceUpdateEvent(
+                            update=update,
+                            runFailures=visible_run_failures(
+                                update.projections[FAILURE_PROJECTION],
+                                set(user_runs.values()),
+                            ),
+                            taskTrace=task_trace_update,
+                        )
             except asyncio.CancelledError:
                 raise
             except TracingError as error:
@@ -410,7 +411,6 @@ class ConversationHistoryService:
                 )
                 yield ConversationTraceErrorEvent()
             finally:
-                await updates.aclose()
                 if projector is not None:
                     projector.close()
 
@@ -461,11 +461,11 @@ class ConversationHistoryService:
             | ConversationTraceGraphErrorEvent,
             None,
         ]:
-            updates = query.follow()
             try:
-                yield ConversationTraceGraphSnapshotEvent(snapshot=query.snapshot)
-                async for update in updates:
-                    yield ConversationTraceGraphUpdateEvent(update=update)
+                async with query.follow() as updates:
+                    yield ConversationTraceGraphSnapshotEvent(snapshot=query.snapshot)
+                    async for update in updates:
+                        yield ConversationTraceGraphUpdateEvent(update=update)
             except asyncio.CancelledError:
                 raise
             except TracingError as error:
@@ -475,8 +475,6 @@ class ConversationHistoryService:
                     exc_info=(type(error), error, error.__traceback__),
                 )
                 yield ConversationTraceGraphErrorEvent()
-            finally:
-                await updates.aclose()
 
         return events()
 

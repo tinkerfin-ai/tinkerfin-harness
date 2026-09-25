@@ -1,9 +1,12 @@
-"""附件原件保留、权限、文档读取和删除边界"""
+"""附件原件保留、授权读取、文件生成和删除边界"""
 
 import base64
 import io
+import json
 import struct
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
@@ -26,24 +29,13 @@ def png():
 
 
 def pptx():
-    from pptx import Presentation
-
-    presentation = Presentation()
-    slide = presentation.slides.add_slide(presentation.slide_layouts[1])
-    title = slide.shapes.title
-    assert title is not None
-    setattr(title, "text", "门店月报")
-    setattr(slide.placeholders[1], "text", "九月营收：128 万元")
-    second = presentation.slides.add_slide(presentation.slide_layouts[5])
-    second_title = second.shapes.title
-    assert second_title is not None
-    setattr(second_title, "text", "下月安排")
-    output = io.BytesIO()
-    presentation.save(output)
-    return output.getvalue()
+    return office_container(
+        "ppt/presentation.xml",
+        b'<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" />',
+    )
 
 
-def pptx_container(member: str, content: bytes) -> bytes:
+def office_container(member: str, content: bytes) -> bytes:
     output = io.BytesIO()
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
         archive.writestr(member, content)
@@ -69,6 +61,53 @@ async def test_upload_keeps_original_and_rejects_other_users(attachments):
     assert denied.value.error_code.http_status == 404
 
 
+@pytest.mark.parametrize("name,content", [("chart.png", png), ("slides.pptx", pptx)])
+async def test_model_content_uses_image_variant_or_original_file(
+    attachments, name, content
+):
+    """授权原生输入使用图片模型变体，文档则保留原件格式和字节"""
+    data = content()
+    file = await attachments.upload(user_id=1, name=name, chunks=byte_chunks(data))
+    resolved = await attachments.read_content(file, user_id=1)
+    if file.mime_type.startswith("image/"):
+        _, expected = await attachments.read(file.id, user_id=1, variant="model")
+        assert resolved.data == expected
+        assert resolved.mime_type == "image/jpeg"
+        with Image.open(io.BytesIO(resolved.data)) as image:
+            assert image.format == "JPEG"
+    else:
+        assert resolved.data == data
+        assert resolved.mime_type == file.mime_type
+    assert (await attachments.read(file.id, user_id=1))[1] == data
+
+
+@pytest.mark.parametrize("user_id,collection_id", [(2, "files"), (1, "other")])
+async def test_model_content_authorizes_before_reading_storage(
+    attachments, attachment_storage, monkeypatch, user_id, collection_id
+):
+    """跨用户或集合读取在访问附件字节前被拒绝"""
+    await attachments.create_collection(
+        user_id=1,
+        collection_id="files",
+        purpose="execution",
+        attachment_ids=(),
+        configuration={},
+    )
+    file = await attachments.upload(
+        user_id=1,
+        collection_id="files",
+        name="note.md",
+        chunks=byte_chunks(b"# private"),
+    )
+    read = AsyncMock(wraps=attachment_storage.read)
+    monkeypatch.setattr(attachment_storage, "read", read)
+    with pytest.raises(FileNotFoundError, match="附件内容不可用"):
+        await attachments.read_content(
+            file, user_id=user_id, collection_id=collection_id
+        )
+    read.assert_not_awaited()
+
+
 async def test_binding_prevents_cross_thread_reuse_and_draft_deletion(
     attachments, database
 ):
@@ -92,6 +131,11 @@ async def test_binding_prevents_cross_thread_reuse_and_draft_deletion(
         await session.commit()
     with pytest.raises(BusinessException):
         await attachments.get(file.id, user_id=1, thread_id="thread-b")
+    with pytest.raises(FileNotFoundError):
+        await attachments.read_content(file, user_id=1, thread_id="thread-b")
+    assert (
+        await attachments.read_content(file, user_id=1, thread_id="thread-a")
+    ).mime_type == "image/jpeg"
     with pytest.raises(BusinessException) as rejected:
         await attachments.remove_draft(file.id, user_id=1)
     assert rejected.value.error_code.http_status == 409
@@ -100,15 +144,19 @@ async def test_binding_prevents_cross_thread_reuse_and_draft_deletion(
     ].id == file.id
 
 
-async def test_cleanup_removes_expired_drafts_and_deleted_thread_files(
-    attachments, database
-):
+async def test_cleanup_removes_expired_drafts(attachments, database, monkeypatch):
+    from tinkerfin_studio.attachments import service as attachment_service
+
+    now = datetime(2026, 9, 26, tzinfo=UTC)
+    monkeypatch.setattr(
+        attachment_service, "datetime", SimpleNamespace(now=lambda _tz: now)
+    )
     file = await attachments.upload(
         user_id=1, name="chart.png", chunks=byte_chunks(png())
     )
     async with database.session() as session:
         row = await session.get(AttachmentFile, file.id)
-        row.created_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=2)
+        row.created_at = now.replace(tzinfo=None) - timedelta(days=2)
         await session.commit()
     await attachments.cleanup()
     with pytest.raises(BusinessException):
@@ -127,8 +175,8 @@ async def test_invalid_type_and_path_do_not_publish_files(attachments):
             await attachments.upload(user_id=1, name=name, chunks=byte_chunks(data))
 
 
-async def test_pptx_upload_and_agent_read_slides(attachments):
-    """PPTX 可以安全上传，并由统一文档读取器提取幻灯片文字"""
+async def test_pptx_upload_preserves_original_container_and_format(attachments):
+    """PPTX 上传保留原件字节和 MIME 类型，可按附件身份取回"""
     data = pptx()
     file = await attachments.upload(
         user_id=1, name="门店月报.pptx", chunks=byte_chunks(data)
@@ -137,19 +185,8 @@ async def test_pptx_upload_and_agent_read_slides(attachments):
         "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     )
     _, downloaded = await attachments.read(file.id, user_id=1)
-    result = await attachments.documents.run(
-        {
-            "operation": "read",
-            "mime_type": file.mime_type,
-            "name": file.name,
-            "data": base64.b64encode(downloaded).decode("ascii"),
-            "start": 1,
-            "count": 100,
-        }
-    )
-    assert "门店月报" in str(result)
-    assert "九月营收：128 万元" in str(result)
-    assert "下月安排" in str(result)
+    assert downloaded == data
+    assert file.size_bytes == len(data)
 
 
 def test_pptx_validation_rejects_bad_encrypted_and_oversized_containers():
@@ -160,9 +197,9 @@ def test_pptx_validation_rejects_bad_encrypted_and_oversized_containers():
     with pytest.raises(ValueError, match="容器损坏"):
         validate_file("report.pptx", b"not a zip")
     with pytest.raises(ValueError, match="文档损坏或已加密"):
-        validate_file("report.pptx", pptx_container("ppt/slide1.xml", b"<slide />"))
+        validate_file("report.pptx", office_container("ppt/slide1.xml", b"<slide />"))
 
-    encrypted = bytearray(pptx_container("ppt/presentation.xml", b"<ppt />"))
+    encrypted = bytearray(office_container("ppt/presentation.xml", b"<ppt />"))
     encrypted[6:8] = struct.pack("<H", 1)
     central_header = encrypted.find(b"PK\x01\x02")
     assert central_header >= 0
@@ -173,11 +210,14 @@ def test_pptx_validation_rejects_bad_encrypted_and_oversized_containers():
     with pytest.raises(ValueError, match="解压后过大"):
         validate_file(
             "report.pptx",
-            pptx_container("ppt/presentation.xml", b"0" * (50 * 1024 * 1024 + 1)),
+            office_container("ppt/presentation.xml", b"0" * (50 * 1024 * 1024 + 1)),
         )
 
 
-async def test_generated_workbook_and_pdf_are_readable(attachments):
+async def test_generated_workbook_and_pdf_have_valid_content(attachments):
+    """生成的工作簿保留单元格，PDF 满足附件格式校验"""
+    from openpyxl import load_workbook
+
     workbook = await attachments.documents.run(
         {
             "operation": "generate",
@@ -185,31 +225,18 @@ async def test_generated_workbook_and_pdf_are_readable(attachments):
             "rows": [["quarter", "revenue"], ["Q3", "128"]],
         }
     )
-    result = await attachments.documents.run(
-        {
-            "operation": "read",
-            "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "name": "report.xlsx",
-            "data": workbook["data"],
-            "start": 1,
-            "count": 3,
-        }
-    )
-    assert "quarter" in str(result) and "Q3" in str(result)
+    parsed = load_workbook(io.BytesIO(base64.b64decode(workbook["data"])))
+    try:
+        assert parsed.active is not None
+        assert list(parsed.active.values) == [("quarter", "revenue"), ("Q3", "128")]
+    finally:
+        parsed.close()
     pdf = await attachments.documents.run(
         {"operation": "generate", "kind": "pdf", "text": "第三季度营收：128 万元"}
     )
-    assert base64.b64decode(pdf["data"]).startswith(b"%PDF")
-    result = await attachments.documents.run(
-        {
-            "operation": "read",
-            "mime_type": "application/pdf",
-            "name": "report.pdf",
-            "data": pdf["data"],
-            "count": 1,
-        }
+    assert (
+        validate_file("report.pdf", base64.b64decode(pdf["data"])) == "application/pdf"
     )
-    assert "128" in str(result)
 
 
 async def test_cancelled_storage_write_removes_staging_record_and_bytes(
@@ -236,30 +263,6 @@ async def test_cancelled_storage_write_removes_staging_record_and_bytes(
     assert not storage.objects
 
 
-async def test_docx_paragraphs_and_tables_are_read(attachments):
-    """Word 的正文与表格内容均能被附件工具读取"""
-    from docx import Document
-
-    document = Document()
-    document.add_paragraph("订单编号 42")
-    table = document.add_table(rows=1, cols=2)
-    table.cell(0, 0).text = "金额"
-    table.cell(0, 1).text = "128"
-    output = io.BytesIO()
-    document.save(output)
-    result = await attachments.documents.run(
-        {
-            "operation": "read",
-            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "name": "report.docx",
-            "data": base64.b64encode(output.getvalue()).decode("ascii"),
-            "count": 10,
-        }
-    )
-    assert "订单编号 42" in str(result)
-    assert "金额" in str(result) and "128" in str(result)
-
-
 async def test_workbook_preserves_numbers_and_treats_formula_like_text_as_text(
     attachments,
 ):
@@ -281,17 +284,20 @@ async def test_same_name_attachments_remain_distinct_after_service_restart(
     attachments, database, attachment_storage
 ):
     """同名报告按 ID 区分，重新创建服务后原件和会话引用仍可读取"""
-    from docx import Document
-
     files = []
+    originals = []
     for marker in ("报告 A：收入 128", "报告 B：收入 256"):
-        document = Document()
-        document.add_paragraph(marker)
-        output = io.BytesIO()
-        document.save(output)
+        data = office_container(
+            "word/document.xml",
+            (
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                f"<w:body><w:p><w:r><w:t>{marker}</w:t></w:r></w:p></w:body></w:document>"
+            ).encode(),
+        )
+        originals.append(data)
         files.append(
             await attachments.upload(
-                user_id=1, name="report.docx", chunks=byte_chunks(output.getvalue())
+                user_id=1, name="report.docx", chunks=byte_chunks(data)
             )
         )
     assert files[0].id != files[1].id
@@ -320,17 +326,8 @@ async def test_same_name_attachments_remain_distinct_after_service_restart(
     results = []
     for file in files:
         _, data = await restored.read(file.id, user_id=1, thread_id="reports")
-        results.append(
-            await restored.documents.run(
-                {
-                    "operation": "read",
-                    "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    "name": "report.docx",
-                    "data": base64.b64encode(data).decode("ascii"),
-                }
-            )
-        )
-    assert "128" in str(results[0]) and "256" in str(results[1])
+        results.append(data)
+    assert results == originals
 
 
 @pytest.mark.parametrize(
@@ -457,17 +454,67 @@ async def test_generated_image_tool_preserves_actual_format_and_typed_result(
         {"operation": "unknown", "kind": "png", "values": [1]},
         {"operation": "generate", "kind": "xlsx", "rows": [[{"unexpected": "object"}]]},
         {
-            "operation": "read",
-            "mime_type": "application/pdf",
-            "name": "report.pdf",
-            "data": "",
-            "start": True,
+            "operation": "preview_image",
+            "data": "invalid-base64",
+            "max_bytes": 4096,
         },
     ],
 )
-async def test_document_worker_rejects_invalid_protocol_input(attachments, payload):
+async def test_file_worker_rejects_invalid_input(attachments, payload):
     with pytest.raises(ValueError):
         await attachments.documents.run(payload)
+
+
+@pytest.mark.parametrize(
+    "failure_type,kind",
+    [(ValueError, "invalid_input"), (RuntimeError, "internal_error")],
+)
+def test_file_worker_reports_input_and_internal_failures_separately(
+    monkeypatch, capsys, failure_type, kind
+):
+    """子进程区分无效输入和内部故障，只公开故障类别"""
+    from tinkerfin_studio.attachments import worker
+
+    def fail(_payload):
+        raise failure_type("private generator details")
+
+    monkeypatch.setattr(worker.resource, "setrlimit", lambda *_args: None)
+    monkeypatch.setattr(
+        worker.sys,
+        "stdin",
+        SimpleNamespace(
+            buffer=io.BytesIO(b'{"operation":"generate","kind":"md","text":"ok"}')
+        ),
+    )
+    monkeypatch.setattr(worker, "generate", fail)
+    with pytest.raises(SystemExit) as exited:
+        worker.main()
+    assert exited.value.code == 1
+    assert json.loads(capsys.readouterr().out) == {"kind": kind}
+
+
+@pytest.mark.parametrize(
+    "kind,error_type", [("invalid_input", ValueError), ("internal_error", RuntimeError)]
+)
+async def test_file_processor_preserves_worker_failure_category_and_reaps_process(
+    monkeypatch, kind, error_type
+):
+    """无效参数与执行故障分别传播，已退出的处理进程仍会等待回收"""
+    from tinkerfin_studio.attachments import documents
+
+    process = SimpleNamespace(
+        returncode=1,
+        communicate=AsyncMock(return_value=(json.dumps({"kind": kind}).encode(), b"")),
+        wait=AsyncMock(return_value=1),
+    )
+    monkeypatch.setattr(
+        documents.asyncio, "create_subprocess_exec", AsyncMock(return_value=process)
+    )
+    with pytest.raises(error_type):
+        await documents.DocumentProcessor().run(
+            {"operation": "generate", "kind": "md", "text": "# report"}
+        )
+    process.wait.assert_awaited_once()
 
 
 def test_attachment_tools_describe_all_model_visible_parameters(attachments):
@@ -491,10 +538,10 @@ def test_attachment_tools_describe_all_model_visible_parameters(attachments):
 
 
 @pytest.mark.parametrize("extension", ["md", "markdown", "MD"])
-async def test_markdown_upload_keeps_original_encoding_and_reads_line_ranges(
+async def test_markdown_upload_preserves_encoding_and_read_authorization(
     attachments, extension
 ):
-    """Markdown 保留原件字节，读取接受 BOM 并按原文行号返回内容"""
+    """Markdown 接受 BOM 并保留原件字节，下载仍要求附件所有权"""
     original = "\ufeff# 门店月报\r\n\r\n| 门店 | 营收 |\r\n| --- | --- |\r\n| 一店 | 128 |\r\n".encode()
     file = await attachments.upload(
         user_id=1, name=f"月报.{extension}", chunks=byte_chunks(original)
@@ -503,19 +550,6 @@ async def test_markdown_upload_keeps_original_encoding_and_reads_line_ranges(
     assert file.size_bytes == len(original)
     _, downloaded = await attachments.read(file.id, user_id=1)
     assert downloaded == original
-    result = await attachments.documents.run(
-        {
-            "operation": "read",
-            "mime_type": "text/markdown",
-            "name": f"月报.{extension}",
-            "data": base64.b64encode(downloaded).decode("ascii"),
-            "start": 2,
-            "count": 2,
-        }
-    )
-    assert result["start_line"] == 2
-    assert result["lines"] == ["", "| 门店 | 营收 |"]
-    assert result["total_lines"] == 5
     with pytest.raises(BusinessException):
         await attachments.read(file.id, user_id=2)
     with pytest.raises(BusinessException):
@@ -532,10 +566,10 @@ async def test_invalid_markdown_is_not_published(attachments, database, data):
 
 
 @pytest.mark.parametrize("extension", ["md", "markdown"])
-async def test_markdown_tools_generate_deliver_read_and_reopen(
+async def test_markdown_tools_generate_deliver_import_and_reopen(
     attachments, database, attachment_storage, extension, work_file_runtime
 ):
-    """真实生成和读取工具交付同一 Markdown，服务重建后保留正文与会话权限"""
+    """Markdown 生成、交付和重新导入保留原件，服务重建后仍校验会话权限"""
     import json
 
     from langchain_core.messages import ToolMessage
@@ -588,6 +622,7 @@ async def test_markdown_tools_generate_deliver_read_and_reopen(
     assert isinstance(result.content, str)
     work_file = json.loads(result.content)
     assert files[work_file["file_path"]] == text.encode()
+    assert work_file["shell_path"] == work_file["file_path"].lstrip("/")
     assert await attachments.list_thread(user_id=1, thread_id="markdown-report") == []
     deliver = build_sandbox_attachment_tools(
         service=attachments, user_id=1, thread_id="markdown-report"
@@ -608,8 +643,6 @@ async def test_markdown_tools_generate_deliver_read_and_reopen(
     assert isinstance(result.content, list)
     file = attachment_from_block(result.content[0])
     assert file is not None and file.mime_type == "text/markdown"
-    read = await tools["read_attachment"].ainvoke({"attachment_id": file.id})
-    assert json.loads(read)["lines"] == text.splitlines()
     restored = AttachmentService(database, attachment_storage)
     _, original = await restored.read(file.id, user_id=1, thread_id="markdown-report")
     assert original == text.encode()
@@ -619,6 +652,7 @@ async def test_markdown_tools_generate_deliver_read_and_reopen(
         )
     )
     assert imported["file_path"] != work_file["file_path"]
+    assert imported["shell_path"] == imported["file_path"].lstrip("/")
     assert files[imported["file_path"]] == original
     files[imported["file_path"]] = b"# edited"
     assert (await restored.read(file.id, user_id=1, thread_id="markdown-report"))[

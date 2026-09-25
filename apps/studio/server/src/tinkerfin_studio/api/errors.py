@@ -101,9 +101,6 @@ class ModelErrorCode(ErrorCode):
     CONFIGURATION_CHANGED = _ErrorCodeValue(
         1_001_005_008, 409, "模型配置已变化，请重新发送"
     )
-    IMAGE_UNSUPPORTED = _ErrorCodeValue(
-        1_001_005_009, 422, "当前模型不支持图片或能力未确认，请切换模型"
-    )
 
 
 class AttachmentErrorCode(ErrorCode):

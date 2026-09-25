@@ -25,7 +25,7 @@ async function prepare(page: Page, language = 'zh-CN') {
     const matchingTasks = state.tasks.filter(task => task.name.toLowerCase().includes(query))
     const matchingRuns = state.runs.filter(run => run.name.toLowerCase().includes(query) && Date.parse(run.queuedAt) >= Date.parse(url.searchParams.get('from') ?? '2000-01-01') && Date.parse(run.queuedAt) < Date.parse(url.searchParams.get('until') ?? '2100-01-01'))
     if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00.000Z', user }
-    else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: '主模型', imageSupport: 'unsupported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true }], defaultModelId: 'main' }
+    else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: '主模型',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true }], defaultModelId: 'main' }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history') data = { items: [], nextCursor: null }
     else if (path === '/api/automation/tasks/counts') data = { enabled: matchingTasks.filter(task => task.enabled).length, paused: matchingTasks.filter(task => !task.enabled).length }

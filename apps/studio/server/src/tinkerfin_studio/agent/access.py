@@ -8,14 +8,26 @@ AccessMode: TypeAlias = Literal["full", "write_approval"]
 
 
 def file_review_policy(access_mode: AccessMode) -> dict[str, bool | InterruptOnConfig]:
-    """仅决定写文件工具是否需要审批，不授予额外的工作区访问权限"""
+    """为脚本和文件写入配置相同审批，不扩大工作区权限或批准整份计划"""
     if access_mode == "full":
         return {}
     if access_mode != "write_approval":
         raise ValueError("访问模式无效")
     return {
-        "write_file": {
+        name: {
             "allowed_decisions": ["approve", "reject"],
-            "description": "需要人工审批：Agent 正准备写入文件",
+            "description": "需要人工审批：Agent 正准备运行命令或写入文件",
         }
+        for name in (
+            "execute",
+            "write_file",
+            "edit_file",
+            "delete",
+            "import_attachment",
+            "create_file",
+            "generate_image",
+            "capture_browser",
+            "deliver_file",
+            "deliver_automation_files",
+        )
     }

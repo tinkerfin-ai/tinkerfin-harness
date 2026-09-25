@@ -360,14 +360,6 @@ def build_automation_tools(
             raise automation_error(error) from error
         return [file.content_block() for file in files]
 
-    for query_tool in (
-        get_automation,
-        list_automations,
-        list_automation_runs,
-        get_automation_run,
-        deliver_automation_files,
-    ):
-        query_tool.metadata = {"read_only": True}
     return (
         create_automation,
         update_automation,

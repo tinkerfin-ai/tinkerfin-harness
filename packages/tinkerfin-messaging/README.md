@@ -171,7 +171,10 @@ opens an expensive custom source only for the selected producer. Runtime streams
 provide lazy opening, identity and cancellation.
 
 Channel callbacks `on_source_ready` and `on_delivery_not_started` can activate or clean up
-application delivery state; attachments invoke neither. `on_committed` observes new
+application delivery state; attachments invoke neither. `open_sse(on_subscribed=...)`
+notifies each successful subscription before returning the body, including attachments.
+If that async callback fails or is cancelled, Messaging closes the reader and preserves
+the failure without cancelling the producer. `on_committed` observes new
 commits without repeating notifications during replay. Callback failures cannot undo an
 already committed message. `Messaging(settlement_timeout=...)` limits the caller's wait;
 accepted work remains owned and can be awaited again with `aclose()`.

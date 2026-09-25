@@ -317,7 +317,7 @@ async def test_review_acknowledgement_cannot_execute_unoffered_plan_tool(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("editing", [False, True])
-async def test_direct_read_only_result_ends_the_turn_and_keeps_plan_context(
+async def test_direct_tool_result_ends_the_turn_and_keeps_plan_context(
     editing: bool,
 ) -> None:
     from langchain_core.tools import tool
@@ -327,7 +327,6 @@ async def test_direct_read_only_result_ends_the_turn_and_keeps_plan_context(
         """Read the current synthetic status."""
         return "All good"
 
-    read_status.metadata = {"read_only": True}
     read_call = AIMessage(
         content="", tool_calls=[{"name": "read_status", "args": {}, "id": "read-1"}]
     )

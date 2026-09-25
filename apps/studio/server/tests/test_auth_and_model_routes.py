@@ -165,7 +165,6 @@ async def test_auth_user_and_model_routes_keep_the_public_contract() -> None:
                 "connectionId": "main-provider",
                 "connectionDisplayName": "主提供方",
                 "reasoningEnabled": True,
-                "imageSupport": "unknown",
                 "isDefault": True,
             }
         ],

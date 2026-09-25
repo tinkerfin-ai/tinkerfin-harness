@@ -14,16 +14,18 @@ const presets: ProviderPreset[] = [
 let models: ModelSettings[]
 let connections: ModelConnection[]
 let failWrite: boolean
+let discoveryCode: string | undefined
 function writes() { return vi.mocked(requestJson).mock.calls.filter(([, options]) => options?.method && options.method !== 'GET') }
 
 beforeEach(() => {
   models = [{ ...newModel('shared'), model_id: 'mine', display_name: '我的模型', model_name: 'provider-model' }]
-  connections = [connection]; failWrite = false
+  connections = [connection]; failWrite = false; discoveryCode = undefined
   vi.mocked(requestJson).mockReset()
   vi.mocked(requestJson).mockImplementation(async (path, options) => {
     if (!options?.method) return { models, connections, providers: presets }
     if (failWrite) throw new Error('保存失败')
-    if (path.endsWith('/models')) return { outcome: 'success', code: 'models_received', items: [{ model_name: 'provider-model', display_name: 'provider-model', image_support: 'unknown' }, { model_name: 'new-model', display_name: '新模型', image_support: 'unknown' }] }
+    if (path.endsWith('/models') && discoveryCode) return { outcome: 'failed', code: discoveryCode, items: [] }
+    if (path.endsWith('/models')) return { outcome: 'success', code: 'models_received', items: [{ model_name: 'provider-model', display_name: 'provider-model' }, { model_name: 'new-model', display_name: '新模型' }] }
     if (path.endsWith('/default')) models = models.map(model => ({ ...model, is_default: true, enabled: true }))
     else if (path.includes('/connections/')) {
       const value = options.body as ConnectionWrite
@@ -43,7 +45,7 @@ describe('提供方与模型设置', () => {
       { ...newModel('local'), model_id: 'qwen', display_name: '中文助手', model_name: 'qwen3:4b' },
       { ...newModel('local'), model_id: 'other', display_name: '其他模型', model_name: 'other-model' },
     )
-    render(<ModelSettingsPanel onToast={vi.fn()} />)
+    render(<ModelSettingsPanel />)
     const search = await screen.findByRole('textbox', { name: '搜索提供方或模型' })
     for (const query of [' QWEN3:4B ', '中文助手']) {
       fireEvent.change(search, { target: { value: query } })
@@ -68,7 +70,7 @@ describe('提供方与模型设置', () => {
     expect(writes()).toHaveLength(0)
   })
   it('获取模型时按名称或 ID 搜索，隐藏的勾选项仍计数并一并添加', async () => {
-    render(<ModelSettingsPanel onToast={vi.fn()} />)
+    render(<ModelSettingsPanel />)
     fireEvent.click(await screen.findByRole('button', { name: '获取模型' }))
     await screen.findByRole('checkbox', { name: 'new-model' })
     const search = screen.getByRole('textbox', { name: '搜索模型名称或 Model ID' })
@@ -86,10 +88,10 @@ describe('提供方与模型设置', () => {
     expect(screen.getByRole('checkbox', { name: 'new-model' })).toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: '添加所选模型' }))
     await waitFor(() => expect(writes()).toHaveLength(2))
-    expect(writes()[1][1]?.body).toEqual([expect.objectContaining({ model_name: 'new-model', connection_id: 'shared' })])
+    expect(writes()[1][1]?.body).toEqual([expect.objectContaining({ model_name: 'new-model', connection_id: 'shared', image_support: 'unknown' })])
   })
   it('面包屑展示提供方和当前模型，上级入口返回提供方模型列表', async () => {
-    render(<ModelSettingsPanel onToast={vi.fn()} />)
+    render(<ModelSettingsPanel />)
     fireEvent.click(await screen.findByRole('button', { name: '配置模型 我的模型' }))
     const navigation = screen.getByRole('navigation', { name: '模型配置导航' })
     expect(navigation).toHaveTextContent('模型配置我的服务我的模型')
@@ -99,7 +101,7 @@ describe('提供方与模型设置', () => {
     expect(await screen.findByRole('button', { name: '获取模型' })).toBeVisible()
   })
   it('分栏支持方向键及最小最大宽度，模型列表有独立滚动区域', async () => {
-    render(<ModelSettingsPanel onToast={vi.fn()} />)
+    render(<ModelSettingsPanel />)
     const splitter = await screen.findByRole('separator', { name: '调整提供方列表宽度' })
     expect(screen.getByRole('region', { name: '模型列表' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: '模型配置' })).not.toBeInTheDocument()
@@ -113,7 +115,7 @@ describe('提供方与模型设置', () => {
   })
   it('连接共享凭据，编辑模型只提交连接引用和模型参数', async () => {
     const changed = vi.fn()
-    render(<ModelSettingsPanel onToast={vi.fn()} onChanged={changed} />)
+    render(<ModelSettingsPanel onChanged={changed} />)
     await screen.findByText('我的模型')
     expect(screen.getByText('已配置密钥')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '配置模型 我的模型' }))
@@ -126,7 +128,7 @@ describe('提供方与模型设置', () => {
     expect(writes()[0][1]?.body).not.toHaveProperty('base_url')
   })
   it('连接表单密钥留空表示保留数据库中的密钥', async () => {
-    render(<ModelSettingsPanel onToast={vi.fn()} />)
+    render(<ModelSettingsPanel />)
     fireEvent.click(await screen.findByRole('button', { name: '连接设置' }))
     expect(screen.getByLabelText('API Key')).toHaveValue('')
     fireEvent.change(screen.getByLabelText('显示名称'), { target: { value: '新的连接名' } })
@@ -135,7 +137,7 @@ describe('提供方与模型设置', () => {
     expect(writes()[0][1]?.body).toMatchObject({ display_name: '新的连接名', api_key: null })
   })
   it('选择千问预设填写地址，密钥仍由表单输入', async () => {
-    render(<ModelSettingsPanel onToast={vi.fn()} />)
+    render(<ModelSettingsPanel />)
     fireEvent.click(await screen.findByRole('button', { name: '添加提供方' }))
     fireEvent.click(screen.getByRole('button', { name: '提供方' }))
     fireEvent.click(screen.getByRole('option', { name: '通义千问' }))
@@ -148,7 +150,7 @@ describe('提供方与模型设置', () => {
     expect(writes()[0][1]?.body).not.toHaveProperty('models')
   })
   it('Ollama 预设无需输入占位密钥，也不展示未支持协议', async () => {
-    render(<ModelSettingsPanel onToast={vi.fn()} />)
+    render(<ModelSettingsPanel />)
     fireEvent.click(await screen.findByRole('button', { name: '添加提供方' }))
     fireEvent.click(screen.getByRole('button', { name: '提供方' }))
     fireEvent.click(screen.getByRole('option', { name: 'Ollama' }))
@@ -162,7 +164,7 @@ describe('提供方与模型设置', () => {
     expect(writes()[0][1]?.body).toMatchObject({ api_type: 'ollama', auth_type: 'none', api_key: '' })
   })
   it('写入失败保留模型草稿，重试时仍使用相同模型身份', async () => {
-    render(<ModelSettingsPanel onToast={vi.fn()} />)
+    render(<ModelSettingsPanel />)
     fireEvent.click(await screen.findByRole('button', { name: '手动添加' }))
     fireEvent.change(screen.getByLabelText('显示名称'), { target: { value: '新模型' } })
     fireEvent.change(screen.getByLabelText('Model ID'), { target: { value: 'new-model' } })
@@ -177,17 +179,32 @@ describe('提供方与模型设置', () => {
     expect(writes()[1][0]).toBe(writes()[0][0])
   })
   it('发现模型后选择添加，已有模型不重复写入', async () => {
-    render(<ModelSettingsPanel onToast={vi.fn()} />)
+    render(<ModelSettingsPanel />)
     fireEvent.click(await screen.findByRole('button', { name: '获取模型' }))
     expect(await screen.findByRole('checkbox', { name: /provider-model/ })).toBeDisabled()
     fireEvent.click(screen.getByRole('checkbox', { name: 'new-model' }))
     fireEvent.click(screen.getByRole('button', { name: '添加所选模型' }))
     await waitFor(() => expect(writes()).toHaveLength(2))
     expect(writes()[1][0]).toBe('/api/models/configurations')
-    expect(writes()[1][1]?.body).toEqual([expect.objectContaining({ model_name: 'new-model', connection_id: 'shared' })])
+    expect(writes()[1][1]?.body).toEqual([expect.objectContaining({ model_name: 'new-model', connection_id: 'shared', image_support: 'unknown' })])
+  })
+  it.each([
+    ['authentication_failed', '服务拒绝了认证，请检查密钥及接口权限'],
+    ['timeout', '获取模型列表超时，请重试'],
+    ['response_too_large', '模型列表超过大小限制'],
+  ])('模型发现失败保留原因与重试入口：%s', async (code, message) => {
+    discoveryCode = code
+    render(<ModelSettingsPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: '获取模型' }))
+    expect(await screen.findByText(message)).toBeVisible()
+    expect(screen.getByRole('button', { name: '手动添加' })).toBeEnabled()
+    discoveryCode = undefined
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByRole('checkbox', { name: 'new-model' })).toBeEnabled()
+    expect(screen.queryByText(message)).not.toBeInTheDocument()
   })
   it('设默认不要求再次输入密钥', async () => {
-    render(<ModelSettingsPanel onToast={vi.fn()} />)
+    render(<ModelSettingsPanel />)
     fireEvent.click(await screen.findByRole('button', { name: '设为默认' }))
     await screen.findByText('默认', { exact: true })
     expect(writes()[0][0]).toBe('/api/models/configurations/mine/default')

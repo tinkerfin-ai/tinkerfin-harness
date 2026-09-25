@@ -9,6 +9,7 @@ from unittest.mock import create_autospec
 import pytest
 from ag_ui.core import BaseEvent, RunStartedEvent
 
+from tinkerfin import AgUiResumeReceipt, AgUiResumeResponse
 from tinkerfin_contracts import (
     RunClosedObservation,
     RunIdentity,
@@ -537,6 +538,122 @@ async def test_owner_preflight_cas_fences_a_stale_recovery_delete(database) -> N
         assert run.status == "starting"
 
     await coordinator.aclose()
+
+
+async def test_saved_receipt_settles_public_responses_idempotently(database) -> None:
+    """业务认领仅依赖已保存回执，重复交付保持相同结算结果"""
+
+    tracer, context, trace_session, thread_pk = await _setup_run(
+        database, thread_id="thread-receipt", run_id="run-receipt"
+    )
+    receipt = AgUiResumeReceipt(
+        identity=context.identity,
+        parent_run_id="run-review",
+        receipt_id="receipt-id",
+        responses=(
+            AgUiResumeResponse("public-approve", "resolved"),
+            AgUiResumeResponse("public-cancel", "cancelled"),
+        ),
+    )
+    async with database.session() as session:
+        repository = ConversationRepository(session)
+        await repository.create_interrupt_claims(
+            thread_pk=thread_pk,
+            source_run_id="run-review",
+            claimed_run_id=context.identity.run_id,
+            interrupt_ids=tuple(
+                response.interrupt_id for response in receipt.responses
+            ),
+        )
+        await repository.commit()
+    messaging, channel = await _messaging_channel()
+    coordinator = ConversationTraceCoordinator(
+        database=database, tracer=tracer, conversation_channel=channel
+    )
+    try:
+        await coordinator.settle_resume(thread_pk=thread_pk, receipt=receipt)
+        await coordinator.settle_resume(thread_pk=thread_pk, receipt=receipt)
+        async with database.session() as session:
+            claims = await ConversationRepository(session).list_claims_for_update(
+                thread_pk=thread_pk,
+                interrupt_ids=frozenset(
+                    response.interrupt_id for response in receipt.responses
+                ),
+            )
+        assert {
+            claim.interrupt_id: (claim.status, claim.resolution_id) for claim in claims
+        } == {
+            "public-approve": ("resolved", "receipt-id"),
+            "public-cancel": ("cancelled", "receipt-id"),
+        }
+    finally:
+        await coordinator.aclose()
+        await messaging.aclose()
+        await trace_session.aclose()
+
+
+@pytest.mark.parametrize("conflict", ["run", "receipt", "status"])
+async def test_saved_receipt_cannot_replace_a_different_claim_resolution(
+    database, conflict: str
+) -> None:
+    """拒绝身份、回执或审批状态不一致的重复结算"""
+
+    tracer, context, trace_session, thread_pk = await _setup_run(
+        database, thread_id="thread-receipt-conflict", run_id="run-receipt-conflict"
+    )
+    response = AgUiResumeResponse("public-review", "resolved")
+    receipt = AgUiResumeReceipt(
+        identity=context.identity,
+        parent_run_id="run-review",
+        receipt_id="receipt-id",
+        responses=(response,),
+    )
+    async with database.session() as session:
+        repository = ConversationRepository(session)
+        await repository.create_interrupt_claims(
+            thread_pk=thread_pk,
+            source_run_id="run-review",
+            claimed_run_id=context.identity.run_id,
+            interrupt_ids=(response.interrupt_id,),
+        )
+        await repository.commit()
+    messaging, channel = await _messaging_channel()
+    coordinator = ConversationTraceCoordinator(
+        database=database, tracer=tracer, conversation_channel=channel
+    )
+    try:
+        await coordinator.settle_resume(thread_pk=thread_pk, receipt=receipt)
+        different = AgUiResumeReceipt(
+            identity=(
+                RunIdentity(
+                    namespace=context.identity.namespace,
+                    thread_id=context.identity.thread_id,
+                    run_id="another-run",
+                )
+                if conflict == "run"
+                else context.identity
+            ),
+            parent_run_id="run-review",
+            receipt_id="different-id" if conflict == "receipt" else receipt.receipt_id,
+            responses=(
+                AgUiResumeResponse("public-review", "cancelled")
+                if conflict == "status"
+                else response,
+            ),
+        )
+        with pytest.raises(RuntimeError, match="恢复"):
+            await coordinator.settle_resume(thread_pk=thread_pk, receipt=different)
+        async with database.session() as session:
+            claims = await ConversationRepository(session).list_claims_for_update(
+                thread_pk=thread_pk, interrupt_ids=frozenset({response.interrupt_id})
+            )
+        assert [(claim.status, claim.resolution_id) for claim in claims] == [
+            ("resolved", "receipt-id")
+        ]
+    finally:
+        await coordinator.aclose()
+        await messaging.aclose()
+        await trace_session.aclose()
 
 
 async def test_abandoned_trace_settles_the_complete_claim_batch_as_cancelled(

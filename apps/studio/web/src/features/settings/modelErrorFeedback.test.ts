@@ -3,8 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearAuthSession, saveAuthSession } from '../../auth/session'
 import { subscribeApiErrors } from '../../api/shared/http'
 import { useModelSettings } from './useModelSettings'
-import { useModelTest } from './useModelTest'
-import { newModel } from './useModelSettings'
 
 const jsonResponse = (data: unknown, status = 200) => new Response(JSON.stringify({
   code: status === 200 ? 0 : 500,
@@ -39,16 +37,6 @@ describe('模型异常全局通知', () => {
     await waitFor(() => expect(hook.result.current.loading).toBe(false))
     expect(hook.result.current.loadFailed).toBe(false)
     expect(apiError).toHaveBeenCalledOnce()
-  })
-
-  it('测试请求失败由统一请求层通知，业务回调不重复通知', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(jsonResponse(null, 503)))
-    const onToast = vi.fn()
-    const hook = renderHook(() => useModelTest(onToast))
-    await act(() => hook.result.current.run('text', newModel('connection')))
-    expect(apiError).toHaveBeenCalledOnce()
-    expect(onToast).not.toHaveBeenCalled()
-    expect(hook.result.current.running).toBeUndefined()
   })
 
   it('取消模型加载后不通知晚到的服务错误', async () => {

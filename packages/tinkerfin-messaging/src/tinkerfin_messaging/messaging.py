@@ -595,6 +595,7 @@ class MessageChannel(Generic[SourceT, ReplayT]):
         cancel: CancelCallback[SourceT] | None = None,
         on_committed: CommittedCallback | None = None,
         on_source_ready: Callable[[], Awaitable[None]] | None = None,
+        on_subscribed: Callable[[], Awaitable[None]] | None = None,
         on_delivery_not_started: Callable[[], Awaitable[None]] | None = None,
     ) -> AsyncGenerator[bytes, None]: ...
 
@@ -608,6 +609,7 @@ class MessageChannel(Generic[SourceT, ReplayT]):
         cancel: CancelCallback[ProfileSourceT] | None = None,
         on_committed: CommittedCallback | None = None,
         on_source_ready: Callable[[], Awaitable[None]] | None = None,
+        on_subscribed: Callable[[], Awaitable[None]] | None = None,
         on_delivery_not_started: Callable[[], Awaitable[None]] | None = None,
     ) -> AsyncGenerator[bytes, None]: ...
 
@@ -620,6 +622,7 @@ class MessageChannel(Generic[SourceT, ReplayT]):
         cancel: CancelCallback[object] | None = None,
         on_committed: CommittedCallback | None = None,
         on_source_ready: Callable[[], Awaitable[None]] | None = None,
+        on_subscribed: Callable[[], Awaitable[None]] | None = None,
         on_delivery_not_started: Callable[[], Awaitable[None]] | None = None,
     ) -> AsyncGenerator[bytes, None]:
         """Start or attach a run and return its committed messages as UTF-8 SSE bytes.
@@ -636,6 +639,11 @@ class MessageChannel(Generic[SourceT, ReplayT]):
             on_committed: Optional owner-only observer for newly committed envelopes.
             on_source_ready: Owner-only async callback after source readiness and before
                 producer creation.
+            on_subscribed: Async notification once per owner or attachment after
+                subscription succeeds and before returning the body. Failure closes
+                only this reader, without cancelling the durable producer or invoking
+                `on_delivery_not_started`. Cancellation waits for an accepted callback
+                and its cleanup; bound callback I/O with resource timeouts.
             on_delivery_not_started: Async cleanup callback when no delivery starts.
 
         Returns:
@@ -644,7 +652,10 @@ class MessageChannel(Generic[SourceT, ReplayT]):
 
         Raises:
             MessagingError: Durable preparation or producer startup is rejected.
-            TypeError: The resolved cursor is neither an integer nor `None`.
+            TypeError: The resolved cursor is invalid or a delivery callback is not
+                callable or does not return an awaitable.
+            BaseException: A delivery callback fails; concurrent cleanup failures
+                remain in the exception chain.
             ValueError: The explicit and source identities conflict.
         """
 
@@ -656,6 +667,7 @@ class MessageChannel(Generic[SourceT, ReplayT]):
             cancel=cancel,
             on_committed=on_committed,
             on_source_ready=on_source_ready,
+            on_subscribed=on_subscribed,
             on_delivery_not_started=on_delivery_not_started,
         )
 

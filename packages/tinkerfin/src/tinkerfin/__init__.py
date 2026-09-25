@@ -35,22 +35,24 @@ from .runtime import TinkerFin as TinkerFin
 if TYPE_CHECKING:
     from .agui_input import AgUiUserInput as AgUiUserInput
     from .agui_resume import AgUiResumeBinding as AgUiResumeBinding
-    from .agui_resume import AgUiResumeCheckpoint as AgUiResumeCheckpoint
-    from .agui_resume import (
-        AgUiResumeCheckpointObserver as AgUiResumeCheckpointObserver,
-    )
     from .agui_resume import (
         AgUiResumeNotSavedObserver as AgUiResumeNotSavedObserver,
     )
+    from .agui_resume import AgUiResumeReceipt as AgUiResumeReceipt
+    from .agui_resume import (
+        AgUiResumeReceiptObserver as AgUiResumeReceiptObserver,
+    )
     from .agui_resume import AgUiResumeRequest as AgUiResumeRequest
+    from .agui_resume import AgUiResumeResponse as AgUiResumeResponse
 
 _AGUI_RESUME_EXPORTS = frozenset(
     {
         "AgUiResumeBinding",
-        "AgUiResumeCheckpoint",
-        "AgUiResumeCheckpointObserver",
+        "AgUiResumeReceipt",
+        "AgUiResumeReceiptObserver",
         "AgUiResumeNotSavedObserver",
         "AgUiResumeRequest",
+        "AgUiResumeResponse",
     }
 )
 
@@ -81,10 +83,11 @@ if not TYPE_CHECKING:
 __all__ = [
     "AgUiResumeBinding",
     "AgUiResumeBindingError",
-    "AgUiResumeCheckpoint",
-    "AgUiResumeCheckpointObserver",
     "AgUiResumeNotSavedObserver",
+    "AgUiResumeReceipt",
+    "AgUiResumeReceiptObserver",
     "AgUiResumeRequest",
+    "AgUiResumeResponse",
     "AgUiRunStream",
     "AgUiSettlementTimeoutError",
     "AgUiUserInput",

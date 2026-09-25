@@ -1,4 +1,4 @@
-"""供 Studio Agent 使用的附件阅读和结果交付工具"""
+"""供 Studio Agent 使用的附件导入、文件生成和结果交付工具"""
 
 from __future__ import annotations
 
@@ -54,48 +54,14 @@ def build_attachment_tools(
         )
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
-    async def read_attachment(
-        attachment_id: str, start: int = 1, count: int = 20
-    ) -> str:
-        """读取附件经统一解析器转换后的文档内容片段
-
-        Args:
-            attachment_id: 当前会话附件标识
-            start: 从 1 开始的内容行号
-            count: 读取数量，最多 100 行
-
-        Returns:
-            包含读取内容及位置的 JSON 对象
-
-        Raises:
-            BusinessException: 附件不可用或当前用户无权访问
-            ValueError: 格式、读取范围或文档内容不符合要求
-            TimeoutError: 文档处理超过 30 秒"""
-        file, data = await service.read(
-            attachment_id,
-            user_id=user_id,
-            thread_id=thread_id,
-            collection_id=collection_id,
-        )
-        result = await processor.run(
-            {
-                "operation": "read",
-                "mime_type": file.mime_type,
-                "name": file.name,
-                "data": base64.b64encode(data).decode("ascii"),
-                "start": start,
-                "count": count,
-            }
-        )
-        return json.dumps(result, ensure_ascii=False)
-
-    @tool(parse_docstring=True, error_on_invalid_docstring=True)
     async def import_attachment(
         attachment_id: str, runtime: ToolRuntime[None, RootedOpenSandboxBackend]
     ) -> str:
         """把已有附件复制到工作区，供读取、检查或编辑，不交付新附件
 
-        视觉模型看图时优先用 read_file 读取 preview_file_path，否则读取 file_path。
+        file_path 供文件工具使用；命令及脚本中的文件读取参数都使用 shell_path。
+        file_path 是虚拟路径，不能当作容器中的绝对路径。
+        图片如有 preview_file_path，可先读取预览；文档按实际格式选择脚本处理。
         修改工作文件不会改变原附件，需要交付修改结果时调用 deliver_file。
 
         Args:
@@ -108,7 +74,8 @@ def build_attachment_tools(
             BusinessException: 附件不可用或当前用户无权访问
             ValueError: 文件名或文件大小不符合要求
             OSError: 工作文件保存失败
-            OpenSandboxError: 工作区不可用或传输失败"""
+            OpenSandboxError: 工作区不可用或传输失败
+            TimeoutError: 图片预览生成超时"""
         file, data = await service.read(
             attachment_id,
             user_id=user_id,
@@ -174,7 +141,7 @@ def build_attachment_tools(
     ) -> str:
         """使用本人默认生图服务生成工作图片，不自动交付或重复收费请求
 
-        仅视觉模型可看图，优先读取 preview_file_path；交付时用 file_path 原图。
+        检查图片时可先使用 preview_file_path，交付时使用 file_path 原图。
 
         Args:
             prompt: 图片描述，长度为 1 到 4000 字符
@@ -186,7 +153,8 @@ def build_attachment_tools(
             ValueError: 未设置默认生图服务、描述或供应商响应不合法
             OSError: 工作文件保存失败
             OpenSandboxError: 工作区不可用或传输失败
-            httpx.HTTPError: 生图或下载发生网络错误"""
+            httpx.HTTPError: 生图或下载发生网络错误
+            TimeoutError: 图片预览生成超时"""
         data = await generate_image_bytes(
             image_model, prompt, allowed_origins=model_allowed_origins
         )
@@ -203,11 +171,8 @@ def build_attachment_tools(
         )
         return saved.tool_result()
 
-    for read_tool in (list_attachments, read_attachment):
-        read_tool.metadata = {"read_only": True}
     return [
         list_attachments,
-        read_attachment,
         import_attachment,
         create_file,
         generate_image,

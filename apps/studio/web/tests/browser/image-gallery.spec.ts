@@ -22,7 +22,7 @@ test('图片失败态、恢复与多图连续键盘浏览保持无边框布局',
     const url = new URL(route.request().url())
     let data: unknown = {}
     if (url.pathname === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00.000Z', user }
-    else if (url.pathname === '/api/models') data = { items: [{ modelId: history.lastModel, displayName: '测试模型', imageSupport: 'supported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true }], defaultModelId: history.lastModel }
+    else if (url.pathname === '/api/models') data = { items: [{ modelId: history.lastModel, displayName: '测试模型',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true }], defaultModelId: history.lastModel }
     else if (url.pathname === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (url.pathname === '/api/conversation/history') data = { items: [{ ...history, status: 'idle', hasPendingInterrupt: false, updatedAt: new Date().toISOString() }], nextCursor: null }
     else if (url.pathname === `/api/conversation/${history.threadId}/history`) data = history

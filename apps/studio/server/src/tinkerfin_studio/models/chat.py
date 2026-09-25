@@ -1,10 +1,10 @@
-"""会话和配置测试共用的聊天模型构建"""
+"""按当前用户连接构建聊天模型，并声明本次可直接使用的媒体输入"""
 
 from collections.abc import Callable, Mapping
 from typing import Literal
 
 import httpx
-from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models import BaseChatModel, ModelProfile
 
 from tinkerfin_studio.models.providers import (
     ChatModelOptions,
@@ -21,6 +21,49 @@ _MODEL_PROVIDERS: Mapping[
     "deepseek": create_deepseek_model,
     "ollama": create_ollama_model,
 }
+
+
+def _input_profile(
+    config: AgentModelConfig, supplied: ModelProfile | None
+) -> ModelProfile:
+    """仅采信官方连接的型号资料，自定义服务使用人工声明"""
+    profile = (supplied or {}).copy()
+    endpoint = httpx.URL(config.base_url)
+    trusted = (
+        config.provider_id == "openai"
+        and config.provider == "openai"
+        and str(endpoint).rstrip("/") == "https://api.openai.com/v1"
+    ) or (
+        config.provider_id == "deepseek"
+        and config.provider == "deepseek"
+        and str(endpoint).rstrip("/")
+        in {"https://api.deepseek.com", "https://api.deepseek.com/v1"}
+    )
+    # 集成的 profile 按型号查表，不校验服务地址；不能让兼容服务继承同名模型的能力
+    if not trusted:
+        profile.pop("image_inputs", None)
+        profile.pop("image_url_inputs", None)
+        profile.pop("pdf_inputs", None)
+        profile.pop("audio_inputs", None)
+        profile.pop("video_inputs", None)
+        profile.pop("image_tool_message", None)
+        profile.pop("pdf_tool_message", None)
+        profile.pop("attachment", None)
+        profile.pop("image_outputs", None)
+        profile.pop("audio_outputs", None)
+        profile.pop("video_outputs", None)
+    profile["image_inputs"] = (
+        profile.get("image_inputs") is True
+        if config.image_support == "unknown"
+        else config.image_support == "supported"
+    )
+    # 未确认的媒体字段显式为 False，使原生文件工具与附件读取遵循相同声明
+    profile["pdf_inputs"] = profile.get("pdf_inputs") is True
+    profile["audio_inputs"] = profile.get("audio_inputs") is True
+    profile["video_inputs"] = profile.get("video_inputs") is True
+    profile["image_tool_message"] = profile.get("image_tool_message") is True
+    profile["pdf_tool_message"] = profile.get("pdf_tool_message") is True
+    return profile
 
 
 def create_chat_model(
@@ -65,9 +108,5 @@ def create_chat_model(
             max_retries=max_retries,
         )
     )
-    # 将用户声明的图片能力提供给文件读取工具，避免向纯文本模型传入图片
-    model.profile = {
-        **(model.profile or {}),
-        "image_inputs": config.image_support == "supported",
-    }
+    model.profile = _input_profile(config, model.profile)
     return model

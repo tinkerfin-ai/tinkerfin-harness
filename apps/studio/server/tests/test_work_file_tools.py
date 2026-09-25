@@ -69,10 +69,9 @@ async def test_large_images_have_readable_previews_and_deliver_unchanged_origina
             {"runtime": runtime, "attachment_id": original.id}
         )
     else:
-        workspace.to_shell_path.side_effect = lambda path: path
 
         async def capture(command, *, timeout):
-            files[shlex.split(command)[-1]] = large_image
+            files["/" + shlex.split(command)[-1]] = large_image
             return ExecuteResponse(output="", exit_code=0)
 
         workspace.aexecute.side_effect = capture
@@ -80,6 +79,7 @@ async def test_large_images_have_readable_previews_and_deliver_unchanged_origina
             {"runtime": runtime, "url": "https://example.test"}
         )
     saved = json.loads(result)
+    assert saved["shell_path"] == saved["file_path"].lstrip("/")
     assert files[saved["file_path"]] == large_image
     preview = files[saved["preview_file_path"]]
     assert 0 < len(preview) <= MAX_BINARY_BYTES
@@ -133,7 +133,9 @@ async def test_same_named_generated_files_are_independent(
             for _ in range(2)
         )
     )
-    paths = [json.loads(result)["file_path"] for result in results]
+    saved = [json.loads(result) for result in results]
+    paths = [item["file_path"] for item in saved]
+    assert all(item["shell_path"] == item["file_path"].lstrip("/") for item in saved)
     assert len(set(paths)) == 2
     assert all(files[path] == b"# draft" for path in paths)
     service.upload.assert_not_called()
@@ -247,6 +249,7 @@ async def test_import_authorizes_before_copying_and_keeps_original(
             {"runtime": runtime, "attachment_id": original.id}
         )
     )
+    assert imported["shell_path"] == imported["file_path"].lstrip("/")
     files[imported["file_path"]] = b"# changed"
     deliver = build_sandbox_attachment_tools(
         service=attachments, user_id=1, collection_id="run"

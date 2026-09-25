@@ -11,7 +11,8 @@
 | `AgUiRunStream.aclose()` | Settle execution and cleanup |
 | `AgUiRunStream.to_sse()` | Return a single-use `SseBody[bytes]` of UTF-8 SSE frames |
 | `AgUiResumeRequest` | Carry untrusted client decisions for pending interrupts |
-| `AgUiResumeCheckpoint` | Evidence passed after a resume marker is durable |
+| `AgUiResumeReceipt` | Immutable saved-request receipt with `identity`, `parent_run_id`, opaque `receipt_id`, and `responses` |
+| `AgUiResumeResponse` | One saved public `interrupt_id` and `status`, without a decision payload |
 
 ### `open_agui_run()`
 
@@ -35,8 +36,9 @@ again before disposing shared resources.
 ## Input helpers
 
 `AgUiUserInput` validates one ID-free user message when a host assigns message IDs after
-authorization. `with_attachments(AttachmentSupport(...))` lets the host resolve approved
-attachment descriptors before model calls.
+authorization. `with_attachments(AttachmentSupport(read_content=...))` configures
+authorized reads of stored attachment IDs before model calls. Native media requires
+no reader and is checked against the destination model's declared capabilities by default.
 
 `AgUiResumeBinding` is the persisted framework-resolved resume value. Ordinary hosts
 pass `AgUiResumeRequest` to the Runtime and do not construct bindings.

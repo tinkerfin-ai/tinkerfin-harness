@@ -11,14 +11,9 @@ from tinkerfin import (
     AgUiResumeBinding,
     AgUiResumeBindingError,
     AgUiResumeRequest,
-    RunIdentity,
 )
 from tinkerfin_agui_adapter import ResumeMappingError, ResumeTranslation, ScopedIdCodec
 from tinkerfin_native_stream import NativeRuntimeInterrupt
-
-
-def _identity(*, run_id: str = "run-resume") -> RunIdentity:
-    return RunIdentity(namespace="test", thread_id="thread-1", run_id=run_id)
 
 
 def _interrupts() -> tuple[Interrupt, ...]:
@@ -290,35 +285,3 @@ def test_binding_rejects_invalid_persisted_shapes() -> None:
                 "priorToolCallIds": ["call-1"],
             }
         )
-
-
-def test_marker_combines_binding_with_identity_parent_and_tool_correlation() -> None:
-    identity = _identity()
-    first = _resolved_binding()
-    second = first.model_copy(
-        update={
-            "prior_tool_call_ids": (
-                ScopedIdCodec().encode("tool", (), "different-call"),
-            )
-        }
-    )
-
-    first_checkpoint = first._checkpoint(
-        identity=identity,
-        parent_run_id="run-parent",
-    )
-    second_checkpoint = second._checkpoint(
-        identity=identity,
-        parent_run_id="run-parent",
-    )
-
-    assert first_checkpoint.identity is identity
-    assert first_checkpoint.parent_run_id == "run-parent"
-    assert first_checkpoint.marker_id != second_checkpoint.marker_id
-    assert (
-        first_checkpoint.marker_id
-        != first._checkpoint(
-            identity=_identity(run_id="run-other"),
-            parent_run_id="run-parent",
-        ).marker_id
-    )

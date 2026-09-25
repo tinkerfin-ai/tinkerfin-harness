@@ -1,4 +1,4 @@
-"""在可终止的独立进程内读取文档和生成交付文件"""
+"""在可终止的独立进程内生成文件和处理图片预览"""
 
 from __future__ import annotations
 
@@ -13,30 +13,17 @@ from xml.sax.saxutils import escape
 
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
-from tinkerfin_studio.attachments.documents import DOCUMENT_READERS, ReadContext
 from tinkerfin_studio.attachments.processing import (
     MAX_FILE_BYTES,
     image_variant,
 )
-
-
-class _ReadDocument(BaseModel):
-    """子进程读取请求，使用服务端确认的 MIME 类型选择解析器"""
-
-    model_config = ConfigDict(extra="forbid")
-    operation: Literal["read"]
-    mime_type: str = Field(min_length=1, max_length=128)
-    name: str = Field(min_length=1, max_length=255)
-    data: str = Field(max_length=14_000_000, description="原文件的Base64内容")
-    start: int = Field(default=1, ge=1, strict=True, description="从1开始的内容行号")
-    count: int = Field(default=20, ge=1, le=100, strict=True, description="读取行数")
 
 
 class _GenerateDocument(BaseModel):
@@ -68,7 +55,7 @@ class _ImagePreview(BaseModel):
 
 _DOCUMENT_REQUEST = TypeAdapter(
     Annotated[
-        _ReadDocument | _GenerateDocument | _ImagePreview,
+        _GenerateDocument | _ImagePreview,
         Field(discriminator="operation"),
     ]
 )
@@ -78,24 +65,14 @@ def preview_image(payload: _ImagePreview) -> dict[str, JsonValue]:
     """生成有界 JPEG 缩略图，不修改原图"""
     data = base64.b64decode(payload.data, validate=True)
     for max_side in (1280, 960, 640, 320):
-        preview = image_variant(data, max_side)
+        try:
+            preview = image_variant(data, max_side)
+        except OSError as error:
+            # 图片从内存解码；此处的解码失败表示输入损坏，不是存储服务故障
+            raise ValueError("图片内容无法解码") from error
         if len(preview) <= payload.max_bytes:
             return {"data": base64.b64encode(preview).decode("ascii")}
     raise ValueError("图片预览超过读取限制")
-
-
-def read_document(payload: _ReadDocument) -> dict[str, JsonValue]:
-    """通过 MIME 注册表读取有界内容，最终输出受子进程总量限制"""
-    reader = DOCUMENT_READERS.create(payload.mime_type)
-    return reader.read(
-        ReadContext(
-            name=payload.name,
-            mime_type=payload.mime_type,
-            data=base64.b64decode(payload.data, validate=True),
-            start=payload.start,
-            count=payload.count,
-        )
-    )
 
 
 def generate(payload: _GenerateDocument) -> dict[str, JsonValue]:
@@ -176,25 +153,29 @@ def main() -> None:
         payload = _DOCUMENT_REQUEST.validate_json(
             sys.stdin.buffer.read(20 * 1024 * 1024)
         )
-        if isinstance(payload, _ReadDocument):
-            result = read_document(payload)
-        elif isinstance(payload, _ImagePreview):
+        if isinstance(payload, _ImagePreview):
             result = preview_image(payload)
         else:
             result = generate(payload)
         encoded = json.dumps(result, ensure_ascii=False)
-        if len(encoded) > (
-            100_000 if isinstance(payload, _ReadDocument) else 15_000_000
-        ):
-            raise ValueError("输出超过限制，请缩小读取范围")
+        if len(encoded) > 15_000_000:
+            raise ValueError("生成结果超过大小限制")
         print(encoded)
-    except Exception:  # noqa: BLE001 - 子进程边界只向用户返回文件错误，不泄露内部路径
+    except (
+        ValueError,
+        UnidentifiedImageError,
+        Image.DecompressionBombWarning,
+        Image.DecompressionBombError,
+    ):
         print(
             json.dumps(
-                {"error": "文件损坏、加密、扫描件或内容超限，请检查文件并缩小读取范围"},
+                {"kind": "invalid_input"},
                 ensure_ascii=False,
             )
         )
+        raise SystemExit(1)
+    except Exception:  # noqa: BLE001 - 子进程返回故障类别，父进程继续传播运行失败
+        print(json.dumps({"kind": "internal_error"}))
         raise SystemExit(1)
 
 

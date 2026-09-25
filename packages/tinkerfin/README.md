@@ -165,13 +165,14 @@ result = await runtime.ainvoke(
 )
 ```
 
-Plan asks for clarification and approval before execution. Its built-in file tools
-are read-only. Tools marked `metadata={"read_only": True}` may also be available to
-planning; apply that marker only to operations safe for that purpose.
+Plan can reply, ask for clarification, or present a draft for review. It uses the
+configured tools and workspace to inspect inputs and run analysis under the same
+permissions. Required tool approvals remain in force; approving a tool does not
+approve the Plan draft.
 
-Plan requires a concrete checkpointer and an explicit model. Approval starts the
-configured agent. Rejection returns to planning. Editing is available only when
-explicitly included in `allowed_review_actions`. Public forms and Plan content
+Plan requires a concrete checkpointer and an explicit model. Approving the current
+draft starts the configured agent. Rejection returns to planning. Editing is available
+only when explicitly included in `allowed_review_actions`. Public forms and Plan content
 models are available from `tinkerfin.plan`.
 
 ### Observations and attachments
@@ -182,18 +183,22 @@ receives `RunTerminalObservation` and is awaited. Callback failure propagates wi
 emitting a second terminal event. A terminal notification does not guarantee that
 all resources have closed or provide delivery after a process crash.
 
-`with_attachments(AttachmentSupport(read_content=read_content))` enables authorized
-attachment access. The asynchronous reader returns `AttachmentContent(data=...,
-mime_type=...)` and authorizes and bounds each storage read. File references remain
-in history; content is supplied only to a model that supports its format. Model
-profiles determine image, audio, video, and PDF input capabilities by default;
-`supports_content(model, mime_type)` can provide an explicit capability check.
+Framework-created agents check native media against the destination model's declared
+input capabilities by default. `with_attachments(AttachmentSupport(...))` customizes
+that policy and can add authorized reads for stored attachment references. The optional
+asynchronous `read_content` function returns `AttachmentContent(data=..., mime_type=...)`
+and authorizes and bounds each storage read. Without a reader, stored attachments
+remain references for file-reading tools. Model profiles declare image, audio, video,
+and PDF input capabilities; `supports_content(model, mime_type)` can provide an explicit
+check. When support is unknown or a format is unsupported, model requests contain
+text descriptions without changing the original messages.
 
-Each request reads at most `max_attachments` recent supported files (default 5).
+With a reader, each request reads at most `max_attachments` recent supported files
+(default 5).
 `max_bytes` limits their total content before base64 encoding (default 20 MiB);
-oversized content raises `ValueError` before the model call. Other formats remain
-references for file-reading tools. Compiled and remote agents configure their own
-attachment access. See the runtime guide for submission parsing and file references.
+oversized content raises `ValueError` before the model call. Compiled and remote
+agents configure their own attachment access. See the runtime guide for submission
+parsing and file references.
 
 ### Resource ownership
 

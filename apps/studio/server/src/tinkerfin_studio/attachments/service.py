@@ -520,7 +520,7 @@ class AttachmentService:
             raise BusinessException(AttachmentErrorCode.NOT_FOUND) from error
         return attachment, data
 
-    async def read_image(
+    async def read_content(
         self,
         attachment: Attachment,
         *,
@@ -528,20 +528,25 @@ class AttachmentService:
         thread_id: str | None = None,
         collection_id: str | None = None,
     ) -> AttachmentContent:
-        """提供模型用图，原件失效时让框架明确标记为不可阅读"""
+        """按当前用户权限提供原生输入，图片使用模型预览，其他文件保留原件格式"""
         try:
-            _, data = await self.read(
+            variant = (
+                "model" if attachment.mime_type.startswith("image/") else "original"
+            )
+            file, data = await self.read(
                 attachment.id,
                 user_id=user_id,
                 thread_id=thread_id,
                 collection_id=collection_id,
-                variant="model",
+                variant=variant,
             )
         except BusinessException as error:
             if error.error_code.http_status == 404:
-                raise FileNotFoundError("附件图片不可用") from error
+                raise FileNotFoundError("附件内容不可用") from error
             raise
-        return AttachmentContent(data=data, mime_type="image/jpeg")
+        return AttachmentContent(
+            data=data, mime_type="image/jpeg" if variant == "model" else file.mime_type
+        )
 
     async def list_thread(self, *, user_id: int, thread_id: str) -> list[Attachment]:
         """为长对话和压缩后的重新阅读列出当前会话附件"""

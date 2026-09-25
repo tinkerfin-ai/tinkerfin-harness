@@ -2802,6 +2802,40 @@ def test_ai_message_without_stable_id_is_rejected_before_stream_state_changes() 
             "both id and name",
         ),
         (
+            {"name": "", "args": "{}", "id": "", "index": 0, "type": "tool_call_chunk"},
+            "no scoped start",
+        ),
+        (
+            {
+                "name": "search",
+                "args": "{}",
+                "id": "",
+                "index": 0,
+                "type": "tool_call_chunk",
+            },
+            "both id and name",
+        ),
+        (
+            {
+                "name": "",
+                "args": "{}",
+                "id": "call-1",
+                "index": 0,
+                "type": "tool_call_chunk",
+            },
+            "both id and name",
+        ),
+        (
+            {
+                "name": "",
+                "args": "{}",
+                "id": "",
+                "index": None,
+                "type": "tool_call_chunk",
+            },
+            "both id and name",
+        ),
+        (
             {
                 "name": "search",
                 "args": "{}",

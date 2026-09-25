@@ -5,11 +5,17 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Generic, TypeVar, cast
+from typing import Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ._tasks import join_task
+from ._failure_evidence import select_failure
+from ._tasks import (
+    _capture_operation,
+    _join_operation,
+    _OperationOutcome,
+    stop_operation,
+)
 from .errors import TinkerFinLifecycleError
 
 ChunkT_co = TypeVar("ChunkT_co", covariant=True)
@@ -96,8 +102,8 @@ class SseBody(Generic[ChunkT_co]):
         self._started = False
         self._closed = False
         self._prepared = False
-        self._active_task: asyncio.Task[object] | None = None
-        self._close_task: asyncio.Task[None] | None = None
+        self._active_task: asyncio.Task[_OperationOutcome[ChunkT_co]] | None = None
+        self._close_task: asyncio.Task[_OperationOutcome[None]] | None = None
 
     async def prepare(self, *, preflight: SsePreflight | None = None) -> None:
         """Run optional host preflight without opening or pulling the source."""
@@ -131,60 +137,32 @@ class SseBody(Generic[ChunkT_co]):
 
         if self._closed:
             raise StopAsyncIteration
-        current = cast(asyncio.Task[object] | None, asyncio.current_task())
-        if current is None:  # pragma: no cover - async methods run in a Task
-            raise TinkerFinLifecycleError("an SSE body requires an asyncio task")
-        active = self._active_task
-        if active is not None and not active.done():
+        if self._active_task is not None:
             raise TinkerFinLifecycleError("an SSE body operation is already active")
-        self._active_task = current
         self._started = True
+
+        async def pull_next() -> ChunkT_co:
+            source = self._source
+            if source is None:
+                source = self._source_factory()
+                self._source = source
+            return await anext(source)
+
+        pull = asyncio.create_task(
+            _capture_operation(pull_next), name="tinkerfin-sse-body-pull"
+        )
+        self._active_task = pull
         try:
             try:
-                source = self._source
-                if source is None:
-                    source = self._source_factory()
-                    self._source = source
-            except BaseException as error:
-                await self._finish(error)
-                raise
-
-            async def pull_next() -> ChunkT_co:
-                return await anext(source)
-
-            pull = asyncio.create_task(
-                pull_next(),
-                name="tinkerfin-sse-body-pull",
-            )
-            try:
-                return await asyncio.shield(pull)
+                return await _join_operation(pull, cancel_on_interrupt=True)
             except StopAsyncIteration:
                 await self._finish(None)
-                raise
-            except asyncio.CancelledError as error:
-                if not pull.done():
-                    pull.cancel()
-                    try:
-                        await join_task(
-                            pull,
-                            suppress_task_cancellation=True,
-                        )
-                    except asyncio.CancelledError:
-                        # Repeated caller cancellation is restored by the original
-                        # cancellation after the owned pull finishes cleanup.
-                        pass
-                    except BaseException as cleanup_error:  # noqa: BLE001
-                        error.add_note(
-                            "SSE pull cleanup also failed: "
-                            f"{type(cleanup_error).__name__}: {cleanup_error}"
-                        )
-                await self._finish(error)
                 raise
             except BaseException as error:
                 await self._finish(error)
                 raise
         finally:
-            if self._active_task is current:
+            if self._active_task is pull:
                 self._active_task = None
 
     async def aclose(self) -> None:
@@ -196,38 +174,37 @@ class SseBody(Generic[ChunkT_co]):
             raise TinkerFinLifecycleError(
                 "an SSE body cannot close its active operation"
             )
-        if active is not None and not active.done():
-            active.cancel()
-            await asyncio.gather(active, return_exceptions=True)
-        await self._finish(None)
+        self._closed = True
+        primary: BaseException | None = None
+        if active is not None:
+            try:
+                await stop_operation(active)
+            except BaseException as error:  # noqa: BLE001 - release resources before propagating
+                primary = error
+        await self._finish(primary)
+        if primary is not None:
+            raise primary
 
     async def _finish(self, primary: BaseException | None) -> None:
         task = self._close_task
         if task is None:
             self._closed = True
             task = asyncio.create_task(
-                self._close_once(),
+                _capture_operation(self._close_once),
                 name="tinkerfin-sse-body-close",
             )
             self._close_task = task
         try:
-            await join_task(task)
+            await _join_operation(task, cancel_on_interrupt=False)
         except BaseException as cleanup_error:
             if primary is not None and not isinstance(primary, GeneratorExit):
-                if isinstance(primary, Exception) and not isinstance(
-                    cleanup_error, Exception
-                ):
-                    cleanup_error.add_note(
-                        "SSE processing also failed: "
-                        f"{type(primary).__name__}: {primary}"
-                    )
-                    raise cleanup_error.with_traceback(
-                        cleanup_error.__traceback__
-                    ) from primary
-                primary.add_note(
-                    "SSE cleanup also failed: "
-                    f"{type(cleanup_error).__name__}: {cleanup_error}"
+                selected = select_failure(
+                    primary, cleanup_error, label="SSE cleanup also failed"
                 )
+                if selected is not primary:
+                    if selected.__cause__ is None:
+                        raise selected from primary
+                    raise selected
                 return
             raise
 
@@ -246,8 +223,8 @@ class SseBody(Generic[ChunkT_co]):
             await self._close()
         except BaseException as error:  # noqa: BLE001 - cleanup outcome
             if primary is not None:
-                primary.add_note(
-                    f"SSE upstream cleanup also failed: {type(error).__name__}: {error}"
+                primary = select_failure(
+                    primary, error, label="SSE upstream cleanup also failed"
                 )
             else:
                 primary = error

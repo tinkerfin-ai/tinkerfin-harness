@@ -13,7 +13,7 @@ AG-UI entry points require `pip install "tinkerfin[agui]"`.
 | `.with_observer(observer)` | Add a Runtime observer |
 | `.with_observer(on_terminal=callback)` | Add one asynchronous terminal callback |
 | `.with_plan(...)` | Enable Plan and choose its model, forms, content, and review actions |
-| `.with_attachments(support)` | Enable host-authorized attachment resolution |
+| `.with_attachments(support)` | Configure model input policy and optional host-authorized attachment reads |
 | `.build(model, tools, ...)` | Capture agent configuration and return `AgentRuntime` |
 
 Configuration methods return independent builders. `build()` performs no execution I/O
@@ -61,8 +61,9 @@ stream controls.
 | `input` | Advanced native agent state |
 | `resume` | `AgUiResumeRequest` for all pending interrupts |
 
-Resume-only callbacks are `on_resume_saved` and `on_resume_not_saved`. They settle host
-state around the durable resume marker and are awaited.
+For resume requests, `on_resume_saved` receives an `AgUiResumeReceipt` for business
+settlement; `on_resume_not_saved` releases claims when the request was not saved.
+The framework awaits both callbacks.
 
 ## Compress saved context
 
@@ -85,7 +86,7 @@ if result.status == "compacted":
 the generated summary was not shorter. Failures raise without returning a success result.
 `compact()` also accepts the Runtime's typed `context`.
 
-To let the main agent invoke compression during a conversation, enable the tool when building:
+To let the main agent or Planner invoke compression, enable the tool when building:
 
 ```python
 runtime = (
@@ -96,7 +97,8 @@ runtime = (
 )
 ```
 
-The tool is off by default and does not propagate to subagents or the Plan planner.
+The tool is off by default. When enabled, it is available to the main agent and Planner;
+subagents do not inherit it.
 It runs within the current conversation run. The framework binds it to the effective
 summarization middleware and manages its native state update. Automatic and tool compression
 retain native behavior; the manual endpoint additionally rejects a summary that does not

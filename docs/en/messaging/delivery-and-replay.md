@@ -39,6 +39,12 @@ before producer creation. `on_delivery_not_started` runs only when readiness was
 reached and no attachment was established. Attachments invoke neither callback. The
 returned body is caller-owned and must be closed when it will not be consumed.
 
+Use `on_subscribed` for async work needed by every successful subscription, including
+attachments. Messaging awaits it before returning the body. Failure or cancellation
+closes that reader without cancelling the durable producer; callback and cleanup
+failures remain in the exception chain. Accepted callbacks settle before cancellation
+returns, so bound their I/O with resource timeouts.
+
 The same byte body can be sent with `EventSourceResponse(body)`. See
 [Streams and SSE](../runtime/streams-and-sse.md) for HTTP cleanup requirements.
 

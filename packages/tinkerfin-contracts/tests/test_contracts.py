@@ -188,6 +188,32 @@ def test_reasoning_observation_is_explicit_and_strict() -> None:
         )
 
 
+@pytest.mark.parametrize("graph_task_id", (None, "graph-task"))
+def test_tool_execution_graph_task_identity_round_trips(
+    graph_task_id: str | None,
+) -> None:
+    observation = ToolExecutionObservation(
+        identity=_context().identity,
+        phase="started",
+        execution_id="callback-execution",
+        tool_name="task",
+        tool_call_id="model-proposal",
+        graph_task_id=graph_task_id,
+        input={"description": "Analyze", "subagent_type": "worker"},
+        observed_at=datetime(2026, 9, 5, tzinfo=UTC),
+        monotonic_ns=1,
+    )
+    payload = observation.model_dump(mode="json", by_alias=True)
+    restored = RUNTIME_OBSERVATION_ADAPTER.validate_json(
+        observation.model_dump_json(by_alias=True)
+    )
+
+    assert restored == observation
+    assert isinstance(restored, ToolExecutionObservation)
+    assert restored.graph_task_id == graph_task_id
+    assert payload["graphTaskId"] == graph_task_id
+
+
 def test_call_failure_origin_is_exclusive_to_failed_phases() -> None:
     now = datetime.now(UTC)
     failures = (

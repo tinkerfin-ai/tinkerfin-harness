@@ -41,11 +41,13 @@ class WorkFile:
     """当前用户工作区中的文件，交付时复制该路径当时的内容
 
     file_path 是框架工作区路径，不是宿主机路径或附件下载地址。
+    shell_path 是同一文件在工作区命令中的相对路径，含空格时须在命令中加引号。
     size_bytes 表示保存时的字节数，后续编辑不更新此工具结果。
     preview_file_path 是大图片保存时的缩略图，仅供看图；交付始终选择原文件。
     """
 
     file_path: str
+    shell_path: str
     name: str
     mime_type: str
     size_bytes: int
@@ -112,7 +114,14 @@ async def describe_work_file(
             or results[0].error is not None
         ):
             raise OSError("图片预览保存失败")
-    return WorkFile(path, name, mime, len(data), preview_path)
+    return WorkFile(
+        file_path=path,
+        shell_path=workspace.to_shell_path(path),
+        name=name,
+        mime_type=mime,
+        size_bytes=len(data),
+        preview_file_path=preview_path,
+    )
 
 
 async def save_work_file(
@@ -223,7 +232,7 @@ def build_sandbox_attachment_tools(
     ) -> str:
         """在用户工作区生成网页视口截图，不自动交付
 
-        仅视觉模型可看图，优先用 read_file 读取 preview_file_path，否则读取 file_path。
+        如有 preview_file_path，可先读取预览；也可使用工作区工具处理原图。
         决定交给用户时再调用 deliver_file；截图始终作为独立工作文件保留。
         运行取消或连接失败时不报告成功，工作区可能保留已生成的产物。
 
@@ -237,6 +246,7 @@ def build_sandbox_attachment_tools(
             ValueError: 地址不合法、截图失败或大小超限
             OpenSandboxError: 工作区不可用、读取失败或文件超过大小限制
             OSError: 截图不存在、不可读或不是普通文件
+            TimeoutError: 图片预览生成超时
         """
         parsed = urlsplit(url)
         if (

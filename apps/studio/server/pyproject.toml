@@ -44,7 +44,6 @@ dependencies = [
     "tinkerfin-sandbox[sqlalchemy]==0.1.0",
     "tinkerfin-tracing[sqlalchemy]==0.1.0",
     "uvicorn[standard]>=0.52,<1",
-    "docling-slim[convert-core,format-pdf,format-office,format-markdown]>=2.127,<3",
     "pillow>=12,<13",
     "openpyxl>=3.1.5,<4",
     "reportlab>=4.4,<5",

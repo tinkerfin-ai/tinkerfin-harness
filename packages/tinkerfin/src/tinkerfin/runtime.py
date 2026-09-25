@@ -74,7 +74,7 @@ from ._optional_dependencies import require_agui
 from ._run_owner import RunOwner
 from ._run_resources import RunResources
 from ._runtime_streams import _validate_timeout
-from ._tasks import OwnedOperationFailures, join_task
+from ._tasks import OwnedOperationFailures, _OperationOutcome, join_task
 from ._terminal_observer import TerminalCallbackObserver, TerminalObserver
 from .compaction import CompactionResult
 from .coordination import RunCoordinator
@@ -120,8 +120,8 @@ if TYPE_CHECKING:
     from .agui import RuntimeAgUi
     from .agui_resume import (
         AgUiResumeBinding,
-        AgUiResumeCheckpointObserver,
         AgUiResumeNotSavedObserver,
+        AgUiResumeReceiptObserver,
         AgUiResumeRequest,
     )
 
@@ -544,13 +544,13 @@ class AgUiEventStream:
         self._source = aiter(micro_batch(self._convert()))
         self._on_event = on_event
         self._closed = False
-        self._active_task: asyncio.Task[object] | None = None
+        self._active_task: asyncio.Task[_OperationOutcome[BaseEvent]] | None = None
         self._observer_lineage = ContextVar(
             f"tinkerfin_agui_observer_lineage_{id(self)}",
             default=False,
         )
         self._active_observers = 0
-        self._close_task: asyncio.Task[None] | None = None
+        self._close_task: asyncio.Task[_OperationOutcome[None]] | None = None
         self._main_started = False
         self._completed = False
         self._aborted = False
@@ -633,7 +633,7 @@ class AgUiEventStream:
         self,
         primary: BaseException | None,
         *,
-        active: asyncio.Task[object] | None = None,
+        active: asyncio.Task[_OperationOutcome[BaseEvent]] | None = None,
     ) -> None:
         return await self._runtime_agui._close(
             self,
@@ -641,14 +641,16 @@ class AgUiEventStream:
             active=active,
         )
 
-    def _close_finished(self, task: asyncio.Task[None]) -> None:
+    def _close_finished(self, task: asyncio.Task[_OperationOutcome[None]]) -> None:
         """Consume a retained close failure even when no caller waits again."""
 
         return self._runtime_agui._close_finished(
             task,
         )
 
-    async def _close_once(self, active: asyncio.Task[object] | None) -> None:
+    async def _close_once(
+        self, active: asyncio.Task[_OperationOutcome[BaseEvent]] | None
+    ) -> None:
         return await self._runtime_agui._close_once(
             self,
             active,
@@ -981,14 +983,14 @@ class TinkerFin:
         return bind_agent(self, spec)
 
     def with_compaction_tool(self, *, enabled: bool = True) -> TinkerFin:
-        """Let the main agent request context compression through its native tool.
+        """Let the main agent and Planner request context compression.
 
         The tool shares the effective summarization middleware's model, retention,
         backend and eligibility rules. It runs within the current conversation;
-        declared subagents and the read-only Planner do not inherit this option.
+        subagents do not inherit this option.
 
         Args:
-            enabled: Whether the main agent receives ``compact_conversation``.
+            enabled: Whether the main agent and Planner receive ``compact_conversation``.
 
         Returns:
             An independent builder retaining its resources and other options.
@@ -1012,13 +1014,15 @@ class TinkerFin:
         return configured
 
     def with_attachments(self, support: AttachmentSupport) -> TinkerFin:
-        """Configure authorized attachment access for the selected models.
+        """Configure model input capabilities and optional authorized attachment reads.
 
-        Framework-created agents apply this policy after model routing. The reader
-        remains borrowed; authorization and its resource lifetime belong to the host.
+        Framework-created agents check native media by default. This policy can
+        customize those checks or resolve stored Attachment IDs after model routing.
+        An optional reader remains borrowed; authorization and its resource lifetime
+        belong to the host.
 
         Args:
-            support: Borrowed per-model content policy and host-authorized file reader.
+            support: Per-model content policy and optional host-authorized file reader.
 
         Returns:
             An independent builder retaining its namespace and other options.
@@ -1099,15 +1103,16 @@ class TinkerFin:
             PlanReviewAction
         ] = DEFAULT_ALLOWED_REVIEW_ACTIONS,
     ) -> TinkerFin:
-        """Configure planning with read-only tools and human review.
+        """Configure planning with the Agent's tools, permissions, and Plan review.
 
         Existing builders and Runtimes retain their configuration. The returned
-        builder borrows the same shared resources.
+        builder borrows the same shared resources. Planning can use the configured
+        workspace for analysis; required tool approval does not approve a Plan draft.
 
         Args:
             enabled: Whether built Runtimes support planning.
             default_mode: Mode used when execution does not select one.
-            planner_model: Optional model dedicated to read-only planning.
+            planner_model: Optional model dedicated to planning.
             clarification_schema: Concrete host form used by the Planner.
             clarification_types: Additional custom semantic question types.
             content_schema: Concrete content model used for drafts and confirmed Plans.
@@ -1568,7 +1573,7 @@ class AgentRuntime(Generic[ContextT]):
         mode: AgentMode | None = None,
         config: RunnableConfig | None = None,
         context: ContextT | None = None,
-        on_resume_saved: AgUiResumeCheckpointObserver | None = None,
+        on_resume_saved: AgUiResumeReceiptObserver | None = None,
         on_resume_not_saved: AgUiResumeNotSavedObserver | None = None,
         stream_timeout: float | None = None,
         cleanup_timeout: float | None = None,
@@ -1597,7 +1602,7 @@ class AgentRuntime(Generic[ContextT]):
         mode: AgentMode | None = None,
         config: RunnableConfig | None = None,
         context: ContextT | None = None,
-        on_resume_saved: AgUiResumeCheckpointObserver | None = None,
+        on_resume_saved: AgUiResumeReceiptObserver | None = None,
         on_resume_not_saved: AgUiResumeNotSavedObserver | None = None,
         stream_timeout: float | None = None,
         cleanup_timeout: float | None = None,
@@ -1621,12 +1626,15 @@ class AgentRuntime(Generic[ContextT]):
             messages: Host-authorized user messages for ordinary conversation.
             input: Explicit graph state, exclusive with messages and resume.
             resume: Human decisions for an interrupted run, exclusive with other inputs.
+                Copied when this method is called, before lazy preparation begins.
             parent_run_id: Optional related run in the same namespace and thread.
             mode: Optional execution or Plan mode for new input.
             config: Optional graph execution settings.
             context: Context matching the schema supplied to build().
-            on_resume_saved: Optional settlement after resume evidence is durable.
-            on_resume_not_saved: Optional settlement when no resume evidence was saved.
+            on_resume_saved: Receives an immutable AgUiResumeReceipt after the request
+                is durably saved and before continuation. An equal receipt is sent
+                again on retry; it does not confirm tool execution.
+            on_resume_not_saved: Optional settlement when the request was not saved.
             stream_timeout: Optional total Native pull deadline in seconds.
             cleanup_timeout: Optional wait limit for protected cleanup in seconds.
             include_reasoning_events: Whether to emit supported public reasoning events.
@@ -1671,6 +1679,10 @@ class AgentRuntime(Generic[ContextT]):
             )
         if resume is not None and not isinstance(resume, ResumeRequest):
             raise TypeError("resume must be an AgUiResumeRequest")
+        if resume is not None:
+            # ResumeEntry payloads are mutable; validation and receipts must share
+            # one caller-independent snapshot throughout deferred preparation.
+            resume = ResumeRequest.model_validate(resume.model_dump(mode="python"))
         if resume is None and (
             on_resume_saved is not None or on_resume_not_saved is not None
         ):
@@ -1813,7 +1825,7 @@ class AgentRuntime(Generic[ContextT]):
         mode: AgentMode | None = None,
         config: RunnableConfig | None = None,
         context: object | None = None,
-        on_resume_saved: AgUiResumeCheckpointObserver | None = None,
+        on_resume_saved: AgUiResumeReceiptObserver | None = None,
         on_resume_not_saved: AgUiResumeNotSavedObserver | None = None,
         stream_timeout: float | None = None,
         cleanup_timeout: float | None = None,
@@ -1855,7 +1867,7 @@ class AgentRuntime(Generic[ContextT]):
                     mode=mode,
                     config=config,
                     context=context,
-                    on_resume_checkpointed=on_resume_saved,
+                    on_resume_saved=on_resume_saved,
                     on_resume_not_saved=on_resume_not_saved,
                     timeout=stream_timeout,
                     settlement_timeout=cleanup_timeout,

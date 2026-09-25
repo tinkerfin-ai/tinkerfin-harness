@@ -21,7 +21,7 @@ from tinkerfin_studio.api.responses import ApiResponse
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.infrastructure._failures import _cleanup_failure_priority
 from tinkerfin_studio.models.catalog import PROVIDER_PRESETS
-from tinkerfin_studio.models.discovery import discover_models
+from tinkerfin_studio.models.discovery import discover_models, discovery_failure_code
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import (
     AgentModelCatalog,
@@ -31,12 +31,9 @@ from tinkerfin_studio.models.schemas import (
     ModelConnectionSettings,
     ModelDiscoveryResult,
     ModelSettingsOverview,
-    ModelTestRequest,
-    ModelTestResult,
     ProviderPreset,
 )
 from tinkerfin_studio.models.service import AgentModelService, connection_provider
-from tinkerfin_studio.models.testing import _failure_code, run_model_test
 from tinkerfin_studio.models.transport import ModelTransport
 from tinkerfin_studio.resources import get_resources
 
@@ -151,31 +148,11 @@ async def delete_connection(
     return ApiResponse.success()
 
 
-async def _test_user(request: Request, token: RawTokenDep) -> UserContext:
-    """测试前完成认证并归还连接，外部模型等待不占用认证数据库会话"""
+async def _discovery_user(request: Request, token: RawTokenDep) -> UserContext:
+    """发现模型前完成认证并归还连接，网络等待不占用认证数据库会话"""
     async with get_resources(request.app).database.session() as session:
         service = await get_auth_service(request, session)
         return (await get_auth_session(token, service)).user
-
-
-@router.post("/configurations/test", response_model=ApiResponse[ModelTestResult])
-async def test_model_configuration(
-    request: Request,
-    payload: ModelTestRequest,
-    user: Annotated[UserContext, Depends(_test_user)],
-) -> ApiResponse[ModelTestResult]:
-    """仅测试当前草稿；请求断开时取消本次任务，并等待客户端关闭"""
-    resources = get_resources(request.app)
-    result = await _connected_operation(
-        request,
-        lambda: run_model_test(
-            resources.database,
-            user_id=user.user_id,
-            payload=payload,
-            allowed_origins=resources.settings.model_allowed_origins,
-        ),
-    )
-    return ApiResponse.success(result)
 
 
 @router.post(
@@ -185,7 +162,7 @@ async def test_model_configuration(
 async def connection_models(
     request: Request,
     connection_id: str,
-    user: Annotated[UserContext, Depends(_test_user)],
+    user: Annotated[UserContext, Depends(_discovery_user)],
 ) -> ApiResponse[ModelDiscoveryResult]:
     """获取本人连接的模型列表，网络等待不占用数据库连接，断连时取消"""
     resources = get_resources(request.app)
@@ -198,26 +175,29 @@ async def connection_models(
         api_key = connection.api_key
 
     async def discover() -> ModelDiscoveryResult:
-        try:
-            with anyio.fail_after(15):
-                async with httpx.AsyncClient(
-                    transport=ModelTransport(
-                        allowed_origins=resources.settings.model_allowed_origins,
-                        response_limit_bytes=4 * 1024 * 1024,
-                    ),
-                    timeout=10,
-                    trust_env=False,
-                    follow_redirects=False,
-                    headers={"Accept-Encoding": "identity"},
-                ) as client:
+        async with httpx.AsyncClient(
+            transport=ModelTransport(
+                allowed_origins=resources.settings.model_allowed_origins,
+                response_limit_bytes=4 * 1024 * 1024,
+            ),
+            timeout=10,
+            trust_env=False,
+            follow_redirects=False,
+            headers={"Accept-Encoding": "identity"},
+        ) as client:
+            # 发现超时和供应商错误返回固定原因，客户端关闭失败继续传播
+            try:
+                with anyio.fail_after(15):
                     return await discover_models(
                         provider,
                         base_url,
                         api_key,
                         client,
                     )
-        except Exception as error:  # noqa: BLE001 - 供应商错误只返回固定原因
-            return ModelDiscoveryResult(outcome="failed", code=_failure_code(error))
+            except Exception as error:  # noqa: BLE001 - 供应商错误只返回固定原因
+                return ModelDiscoveryResult(
+                    outcome="failed", code=discovery_failure_code(error)
+                )
 
     return ApiResponse.success(await _connected_operation(request, discover))
 
@@ -228,7 +208,7 @@ _ResultT = TypeVar("_ResultT")
 async def _connected_operation(
     request: Request, operation: Callable[[], Awaitable[_ResultT]]
 ) -> _ResultT:
-    """拥有测试或发现请求，浏览器断连时取消并等待全部任务清理"""
+    """拥有模型发现请求，浏览器断连时取消并等待全部任务清理"""
 
     async def watch_disconnect() -> None:
         while not await request.is_disconnected():
@@ -237,21 +217,21 @@ async def _connected_operation(
     async def execute() -> _ResultT:
         return await operation()
 
-    test = asyncio.create_task(execute())
+    operation_task = asyncio.create_task(execute())
     disconnected = asyncio.create_task(watch_disconnect())
     primary: BaseException | None = None
     try:
         done, _ = await asyncio.wait(
-            (test, disconnected), return_when=asyncio.FIRST_COMPLETED
+            (operation_task, disconnected), return_when=asyncio.FIRST_COMPLETED
         )
-        if test not in done:
+        if operation_task not in done:
             raise asyncio.CancelledError()
-        return await test
+        return await operation_task
     except BaseException as error:
         primary = error
         raise
     finally:
-        tasks = (test, disconnected)
+        tasks = (operation_task, disconnected)
         for task in tasks:
             if not task.done() and not task.cancelling():
                 task.cancel()
@@ -284,7 +264,7 @@ async def _connected_operation(
                 secondary = (
                     remaining[0]
                     if len(remaining) == 1
-                    else BaseExceptionGroup("模型测试与客户端清理同时失败", remaining)
+                    else BaseExceptionGroup("模型发现与客户端清理同时失败", remaining)
                 )
                 try:
                     raise secondary

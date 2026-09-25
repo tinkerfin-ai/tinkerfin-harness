@@ -316,7 +316,12 @@ class ModelCallObservation(ObservationModel):
 
 
 class ToolExecutionObservation(ObservationModel):
-    """Record actual Tool execution separately from a model's Tool proposal."""
+    """Record actual Tool execution separately from a model's Tool proposal.
+
+    ``graph_task_id`` identifies the Graph task that owns the execution and stays
+    unchanged across its phases. Calls outside a Graph leave it unset; callback
+    ``execution_id`` and model ``tool_call_id`` remain separate identities.
+    """
 
     kind: Literal["call.tool"] = "call.tool"
     identity: RunIdentity
@@ -331,6 +336,15 @@ class ToolExecutionObservation(ObservationModel):
     execution_id: str = Field(min_length=1, max_length=1024)
     parent_call_id: str | None = Field(default=None, min_length=1, max_length=1024)
     graph_namespace: tuple[str, ...] = ()
+    graph_task_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=1024,
+        description=(
+            "Identity of the Graph task executing this Tool, distinct from the "
+            "callback execution and model Tool call IDs; absent outside a Graph"
+        ),
+    )
     agent_name: str | None = Field(default=None, min_length=1, max_length=1024)
     tool_call_id: str | None = Field(default=None, min_length=1, max_length=1024)
     tool_name: str = Field(min_length=1, max_length=1024)

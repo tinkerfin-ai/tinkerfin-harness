@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
@@ -10,10 +11,13 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from test_attachments import png
 
 from tinkerfin import AgentRuntime, AgUiResumeRequest, RunIdentity, TinkerFin
+from tinkerfin_messaging import MessageSubscription, Messaging
 from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
+from tinkerfin_studio.attachments.service import byte_chunks
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.conversation import service as service_module
 from tinkerfin_studio.conversation.models import (
@@ -46,6 +50,7 @@ def _model(model_id: str = "model-main") -> AgentModelConfig:
         model_id=model_id,
         display_name="主模型",
         provider="deepseek",
+        provider_id="deepseek",
         model_name="deepseek-chat",
         base_url="https://example.invalid/v1",
         api_key=SecretStr("secret"),
@@ -72,7 +77,7 @@ async def stored_model_configs(session):
             AgentModelSave.model_validate(
                 {
                     **_model(model_id).model_dump(
-                        exclude={"provider", "base_url", "api_key"}
+                        exclude={"provider", "provider_id", "base_url", "api_key"}
                     ),
                     "connection_id": "trace",
                 }
@@ -83,6 +88,11 @@ async def stored_model_configs(session):
 @pytest.fixture(autouse=True)
 def conversation_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     """会话登记和传输测试使用本地模型，业务工具装配由 Runtime 测试覆盖"""
+
+    class ReplyModel(FakeListChatModel):
+        def bind_tools(self, tools: Sequence[object], **kwargs: object) -> ReplyModel:
+            del tools, kwargs
+            return self
 
     def build_runtime(
         *,
@@ -95,7 +105,7 @@ def conversation_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     ) -> AgentRuntime[None]:
         del thread_id, model_config, image_model, access_mode
         return resources.tinkerfin.with_namespace(f"ns_{user_id}").build(
-            model=FakeListChatModel(responses=["unused"])
+            model=ReplyModel(responses=["unused"])
         )
 
     monkeypatch.setattr(service_module, "build_conversation_runtime", build_runtime)
@@ -365,10 +375,8 @@ async def test_same_run_rejects_a_changed_registered_model(
 
 
 class _Channel:
-    def __init__(self, *, close_error: BaseException | None = None) -> None:
+    def __init__(self) -> None:
         self.after: int | None = None
-        self.body: _Body | None = None
-        self._close_error = close_error
 
     async def open_sse(
         self,
@@ -376,26 +384,23 @@ class _Channel:
         *,
         after: int | None = None,
         on_source_ready=None,
-        on_committed=None,
+        on_subscribed=None,
         transform_event=None,
         on_run_started=None,
         on_run_finished=None,
         on_delivery_not_started=None,
     ):
-        del on_delivery_not_started, on_committed
+        del on_delivery_not_started
         self.after = after
         if on_source_ready is not None:
             await on_source_ready()
+        if on_subscribed is not None:
+            await on_subscribed()
 
-        self.body = _Body(close_error=self._close_error)
-        return self.body
+        return _Body()
 
 
 class _Body:
-    def __init__(self, *, close_error: BaseException | None = None) -> None:
-        self.closed = False
-        self._close_error = close_error
-
     def __aiter__(self) -> _Body:
         return self
 
@@ -403,9 +408,7 @@ class _Body:
         raise StopAsyncIteration
 
     async def aclose(self) -> None:
-        self.closed = True
-        if self._close_error is not None:
-            raise self._close_error
+        pass
 
 
 class _TraceCoordinator:
@@ -435,10 +438,12 @@ class _FailingTraceCoordinator(_TraceCoordinator):
         raise RuntimeError("trace follow unavailable")
 
 
-async def test_chat_service_uses_messaging_only_for_delivery(
+@pytest.mark.parametrize("image_support", ["supported", "unsupported", "unknown"])
+async def test_chat_accepts_images_and_uses_messaging_only_for_delivery(
     database,
     session,
     attachments,
+    image_support,
 ) -> None:
     await AgentModelService(AgentModelRepository(session, user_id=1)).save_settings(
         AgentModelSave(
@@ -448,6 +453,7 @@ async def test_chat_service_uses_messaging_only_for_delivery(
             model_name="deepseek-chat",
             enabled=True,
             is_default=True,
+            image_support=image_support,
         )
     )
     channel = _Channel()
@@ -480,7 +486,24 @@ async def test_chat_service_uses_messaging_only_for_delivery(
         resources=resources,
     )
 
-    prepared = await service.start(_ordinary_request(), last_event_id=None)
+    file = await attachments.upload(
+        user_id=1, name="image.png", chunks=byte_chunks(png())
+    )
+    payload = _ordinary_request().model_dump()
+    payload["messages"] = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {"type": "url", "value": f"attachment:{file.id}"},
+                }
+            ],
+        }
+    ]
+    prepared = await service.start(
+        ChatRequest.model_validate(payload), last_event_id=None
+    )
 
     assert channel.after is None
     assert len(trace.ensured) == 1
@@ -490,29 +513,20 @@ async def test_chat_service_uses_messaging_only_for_delivery(
     assert thread is not None
     assert thread.last_run_id == "run-1"
     assert thread.status == "running"
+    assert [
+        item.id
+        for item in await attachments.list_thread(user_id=1, thread_id=thread.thread_id)
+    ] == [file.id]
     assert [chunk async for chunk in prepared.body] == []
 
 
-@pytest.mark.parametrize(
-    ("close_error", "expected_error"),
-    (
-        pytest.param(None, RuntimeError, id="close-succeeds"),
-        pytest.param(ValueError("body close failed"), RuntimeError, id="close-fails"),
-        pytest.param(
-            asyncio.CancelledError("body close cancelled"),
-            asyncio.CancelledError,
-            id="close-cancelled",
-        ),
-    ),
-)
-async def test_chat_service_closes_sse_body_when_trace_follow_cannot_start(
+async def test_trace_notification_failure_retains_the_running_conversation(
     database,
     session,
     attachments,
-    close_error: BaseException | None,
-    expected_error: type[BaseException],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Trace follow 注册失败时立即释放尚未交给 HTTP 的 SSE 内容"""
+    """摘要跟随后台任务注册失败时释放订阅，保留已开始的会话供重连"""
 
     await AgentModelService(AgentModelRepository(session, user_id=1)).save_settings(
         AgentModelSave(
@@ -524,48 +538,60 @@ async def test_chat_service_closes_sse_body_when_trace_follow_cannot_start(
             is_default=True,
         )
     )
-    channel = _Channel(close_error=close_error)
-    trace = _FailingTraceCoordinator()
-    resources = cast(
-        ApplicationResources,
-        SimpleNamespace(
-            database=database,
-            attachments=attachments,
-            model_http_transport=None,
-            model_http_client=None,
-            agent_persistence=object(),
-            sandbox_manager=object(),
-            tinkerfin=TinkerFin(),
-            settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
-            conversation_channel=channel,
-            conversation_trace=trace,
-            conversation_titles=AsyncMock(spec=ConversationTitles),
-        ),
-    )
-    service = ConversationChatService(
-        session,
-        user=UserContext(
-            user_id=1,
-            username="user",
-            display_name="用户",
-            roles=(),
-            disabled=False,
-        ),
-        resources=resources,
-    )
+    async with Messaging() as messaging:
+        channel = messaging.agui_channel(name="conversations")
+        trace = _FailingTraceCoordinator()
+        detached: list[MessageSubscription[object]] = []
+        close = MessageSubscription.aclose
 
-    with pytest.raises(expected_error) as caught:
-        await service.start(_ordinary_request(), last_event_id=None)
+        async def close_subscription(subscription: MessageSubscription[object]) -> None:
+            await close(subscription)
+            detached.append(subscription)
 
-    assert channel.body is not None
-    assert channel.body.closed
-    if isinstance(close_error, Exception):
-        assert isinstance(caught.value, RuntimeError)
-        assert "body close failed" in " ".join(getattr(caught.value, "__notes__", ()))
-        assert caught.value.__cause__ is close_error
-    elif isinstance(close_error, asyncio.CancelledError):
-        assert isinstance(caught.value.__cause__, RuntimeError)
-        assert "trace follow unavailable" in str(caught.value.__cause__)
+        monkeypatch.setattr(MessageSubscription, "aclose", close_subscription)
+        resources = cast(
+            ApplicationResources,
+            SimpleNamespace(
+                database=database,
+                attachments=attachments,
+                model_http_transport=None,
+                model_http_client=None,
+                agent_persistence=object(),
+                sandbox_manager=object(),
+                tinkerfin=TinkerFin(),
+                settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
+                conversation_channel=channel,
+                conversation_trace=trace,
+                conversation_titles=AsyncMock(spec=ConversationTitles),
+            ),
+        )
+        service = ConversationChatService(
+            session,
+            user=UserContext(
+                user_id=1,
+                username="user",
+                display_name="用户",
+                roles=(),
+                disabled=False,
+            ),
+            resources=resources,
+        )
+
+        with pytest.raises(RuntimeError, match="trace follow unavailable"):
+            await service.start(_ordinary_request(), last_event_id=None)
+        assert len(detached) == 1
+        with pytest.raises(RuntimeError, match="subscription is closed"):
+            aiter(detached[0])
+        identity = trace.ensured[0]
+        repository = ConversationRepository(session)
+        thread = await repository.get_thread(user_id=1, thread_id=identity.thread_id)
+        assert thread is not None and thread.last_run_id == identity.run_id
+        assert await repository.get_run(thread_pk=thread.id, run_id=identity.run_id)
+        replay = await channel.follow(identity=identity)
+        events = [item.data.type.value async for item in replay]
+        assert events.count("RUN_STARTED") == events.count("RUN_FINISHED") == 1
+        assert "RUN_ERROR" not in events
+        assert await channel.get_run_status(identity=identity) == "completed"
 
 
 async def test_previous_head_reconcile_releases_the_request_transaction(

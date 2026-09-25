@@ -776,6 +776,7 @@ async def _wrap(
     cancel: CancelCallback[object] | None = None,
     on_committed: CommittedCallback | None = None,
     on_source_ready: _DeliveryCallback | None = None,
+    on_subscribed: _DeliveryCallback | None = None,
     on_delivery_not_started: _DeliveryCallback | None = None,
 ) -> MessageSubscription[object]:
     """Validate and start-or-attach before an HTTP response is constructed.
@@ -797,6 +798,8 @@ async def _wrap(
         on_committed: Asynchronous owner-only observer invoked with each durable
             envelope after append. Observer failures are logged and do not change
             the run outcome; replay attachments do not invoke it.
+        on_subscribed: Async notification after binding this reader and before
+            transferring it to the caller; failures detach only this reader.
 
     Returns:
         A detachable subscription over committed decoded messages.
@@ -828,6 +831,7 @@ async def _wrap(
                 cancel=cancel,
                 on_committed=on_committed,
                 on_source_ready=on_source_ready,
+                on_subscribed=on_subscribed,
                 on_delivery_not_started=on_delivery_not_started,
                 cancel_requested=cancel_requested,
                 preflight=preflight,
@@ -864,6 +868,7 @@ async def _wrap_once(
     cancel: CancelCallback[object] | None,
     on_committed: CommittedCallback | None,
     on_source_ready: _DeliveryCallback | None,
+    on_subscribed: _DeliveryCallback | None,
     on_delivery_not_started: _DeliveryCallback | None,
     cancel_requested: asyncio.Event,
     preflight: _PreflightRegistration,
@@ -880,6 +885,7 @@ async def _wrap_once(
     source_released = False
     producer_codec: MessageCodec[object, object] | None = None
     replay_renderer: SseRenderer[object] | None = None
+    subscription: MessageSubscription[object] | None = None
     try:
         _validate_delivery_callback("on_source_ready", on_source_ready)
         _validate_delivery_callback(
@@ -985,12 +991,21 @@ async def _wrap_once(
             await source.aclose()
             source_released = True
             self._messaging._require_open()
-        return MessageSubscription[object]._create(
+        subscription = MessageSubscription[object]._create(
             ledger=self._messaging._runtime_backend,
             prepared=prepared,
             codec=producer_codec,
             renderer=replay_renderer,
         )
+        # The framework owns this reader until its notification settles. Keeping
+        # the existing preflight registered makes shutdown join this work, while
+        # callback-triggered shutdown can still recognize its effective owner.
+        await _invoke_delivery_callback(
+            "on_subscribed", on_subscribed, preflight=preflight
+        )
+        self._messaging._require_open()
+        _raise_if_start_cancelled(cancel_requested)
+        return subscription
     # Preflight settlement must cover cancellation and process-control outcomes while
     # preserving the initiating failure after owned cleanup.
     except BaseException as error:  # noqa: BLE001 - deliver the combined failure after cleanup
@@ -1001,6 +1016,11 @@ async def _wrap_once(
             primary = (
                 lease.error if lease is not None and lease.error is not None else error
             )
+            if subscription is not None:
+                try:
+                    await subscription.aclose()
+                except BaseException as close_error:  # noqa: BLE001 - cleanup continues
+                    primary = _retain_settlement_failure(primary, close_error)
             if not producer_started and not source_released:
                 try:
                     await source.aclose()
@@ -1049,6 +1069,7 @@ async def open_sse(
     cancel: CancelCallback[object] | None = None,
     on_committed: CommittedCallback | None = None,
     on_source_ready: _DeliveryCallback | None = None,
+    on_subscribed: _DeliveryCallback | None = None,
     on_delivery_not_started: _DeliveryCallback | None = None,
 ) -> AsyncGenerator[bytes, None]:
     """Prepare durable publication and return its SSE response body.
@@ -1063,6 +1084,8 @@ async def open_sse(
         cancel: Optional callback used for accepted remote cancellation. Omit it
             when the source declares its own callback.
         on_committed: Optional owner-only observer for newly committed envelopes.
+        on_subscribed: Async notification for every successful owner or attachment
+            subscription, settled before returning the body.
 
     Returns:
         A durable SSE body whose IDs are committed channel sequence numbers.
@@ -1070,33 +1093,43 @@ async def open_sse(
 
     Raises:
         MessagingError: Durable preparation or producer startup is rejected.
-        TypeError: The resolved cursor is neither an integer nor `None`.
+        TypeError: The cursor or delivery callback is invalid.
         ValueError: The explicit and source identities conflict.
     """
 
     try:
+        _validate_delivery_callback("on_subscribed", on_subscribed)
         resolved_after = after() if callable(after) else after
-    # Cursor resolution happens before delivery; every failure category still owns the
-    # unused candidate source and host not-started settlement.
+    # Callback validation and cursor resolution precede delivery; every failure
+    # still owns the unused candidate source and host not-started settlement.
     except BaseException as error:  # noqa: BLE001 - deliver the combined failure after cleanup
         await _settle_unregistered_delivery(
             error, source=source, on_delivery_not_started=on_delivery_not_started
         )
 
-    subscription = await self._wrap(
+    subscription = await _wrap(
+        self,
         source,
         identity=identity,
         after=resolved_after,
         cancel=cancel,
         on_committed=on_committed,
         on_source_ready=on_source_ready,
+        on_subscribed=on_subscribed,
         on_delivery_not_started=on_delivery_not_started,
     )
     try:
         return subscription.to_sse()
-    except BaseException:
-        await subscription.aclose()
-        raise
+    except BaseException as error:  # noqa: BLE001 - preserve rendering and cleanup failures
+
+        async def settle_failure(error: BaseException) -> NoReturn:
+            try:
+                await subscription.aclose()
+            except BaseException as close_error:  # noqa: BLE001 - preserve failure priority
+                raise _retain_settlement_failure(error, close_error)
+            raise error
+
+        return await _settle_delivery_step(settle_failure(error))
 
 
 async def wrap_recoverable(

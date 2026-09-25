@@ -158,7 +158,7 @@
         "updatedSeq": 7,
         "content": [
           {
-            "text": "你是 TinkerFin Studio 的主 Agent。\n\n处理复杂任务时使用 write_todos 维护清单，\n使用 task 委派适合的独立研究任务，\n使用文件工具在用户 Sandbox 中读写结果。\n附件引用中的 ID 可用于 read_attachment 或 view_image。\n历史内容压缩后，先用 list_attachments 重新查找附件，不要假装已读原文件。\n使用 create_file 或 generate_image 交付可下载结果，工具成功才表示文件存在。\n工作区内已有文件用 deliver_file 交付；网页截图用 capture_browser。\n",
+            "text": "你是 TinkerFin Studio 的主 Agent。\n\n处理复杂任务时使用 write_todos 维护清单，\n使用 task 委派适合的独立研究任务，\n使用文件工具在用户 Sandbox 中读写结果。\n需要工作文件时用 import_attachment 导入附件。\n历史内容压缩后，先用 list_attachments 重新查找附件，不要假装已读原文件。\n使用 create_file 或 generate_image 生成工作文件，工具成功才表示文件存在。\n工作区内已有文件用 deliver_file 交付；网页截图用 capture_browser。\n",
             "type": "text"
           },
           {
@@ -336,7 +336,7 @@
         "updatedSeq": 21,
         "content": [
           {
-            "text": "你是 TinkerFin Studio 的主 Agent。\n\n处理复杂任务时使用 write_todos 维护清单，\n使用 task 委派适合的独立研究任务，\n使用文件工具在用户 Sandbox 中读写结果。\n附件引用中的 ID 可用于 read_attachment 或 view_image。\n历史内容压缩后，先用 list_attachments 重新查找附件，不要假装已读原文件。\n使用 create_file 或 generate_image 交付可下载结果，工具成功才表示文件存在。\n工作区内已有文件用 deliver_file 交付；网页截图用 capture_browser。\n",
+            "text": "你是 TinkerFin Studio 的主 Agent。\n\n处理复杂任务时使用 write_todos 维护清单，\n使用 task 委派适合的独立研究任务，\n使用文件工具在用户 Sandbox 中读写结果。\n需要工作文件时用 import_attachment 导入附件。\n历史内容压缩后，先用 list_attachments 重新查找附件，不要假装已读原文件。\n使用 create_file 或 generate_image 生成工作文件，工具成功才表示文件存在。\n工作区内已有文件用 deliver_file 交付；网页截图用 capture_browser。\n",
             "type": "text"
           },
           {

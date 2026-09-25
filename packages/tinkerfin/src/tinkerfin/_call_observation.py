@@ -94,7 +94,7 @@ def _checkpoint_segments(
 def _callback_namespace(metadata: Mapping[str, object] | None) -> tuple[str, ...]:
     """Resolve the locked LangGraph callback scope to its Native namespace.
 
-    LangGraph 1.2.10 appends the current graph node to
+    LangGraph 1.2.11 appends the current graph node to
     ``langgraph_checkpoint_ns``. Removing that final segment yields the same child
     namespace carried by the validated v2 Native stream. The locked dependency contract
     test protects this mapping for root and subagent calls.
@@ -108,6 +108,25 @@ def _optional_text(value: object) -> str | None:
     return (
         value if isinstance(value, str) and value and value == value.strip() else None
     )
+
+
+def _callback_graph_task_id(metadata: Mapping[str, object] | None) -> str | None:
+    """Preserve the executing Graph task independently of callback delivery order.
+
+    LangGraph 1.2.11 ``pregel._algo`` places ``<node>:<task_id>`` in the final
+    checkpoint namespace segment. Parent graph segments, including repeated-subgraph
+    counters, remain in ``graph_namespace``. Non-Graph Tool calls have no segment.
+    """
+
+    segments = _checkpoint_segments(metadata)
+    if not segments:
+        return None
+    node, separator, task_id = segments[-1].partition(":")
+    if not node or not separator or not task_id:
+        raise TinkerFinStreamProtocolError(
+            "Tool callback has invalid Graph task identity"
+        )
+    return task_id
 
 
 def _agent_name(metadata: Mapping[str, object] | None) -> str | None:
@@ -251,6 +270,7 @@ class _ModelCallState:
 class _ToolCallState:
     parent_call_id: str | None
     namespace: tuple[str, ...]
+    graph_task_id: str | None
     agent_name: str | None
     tool_call_id: str | None
     tool_name: str
@@ -559,6 +579,7 @@ class RuntimeCallHandler(AsyncCallbackHandler):
         state = _ToolCallState(
             parent_call_id=self._call_parent(parent_run_id, metadata),
             namespace=_callback_namespace(metadata),
+            graph_task_id=_callback_graph_task_id(metadata),
             agent_name=_agent_name(metadata),
             tool_call_id=tool_call_id,
             tool_name=tool_name,
@@ -573,6 +594,7 @@ class RuntimeCallHandler(AsyncCallbackHandler):
             execution_id=execution_id,
             parent_call_id=state.parent_call_id,
             graph_namespace=state.namespace,
+            graph_task_id=state.graph_task_id,
             agent_name=state.agent_name,
             tool_call_id=state.tool_call_id,
             tool_name=state.tool_name,
@@ -657,6 +679,7 @@ class RuntimeCallHandler(AsyncCallbackHandler):
                 execution_id=execution_id,
                 parent_call_id=state.parent_call_id,
                 graph_namespace=state.namespace,
+                graph_task_id=state.graph_task_id,
                 agent_name=state.agent_name,
                 tool_call_id=state.tool_call_id,
                 tool_name=state.tool_name,
@@ -716,6 +739,7 @@ class RuntimeCallHandler(AsyncCallbackHandler):
                     execution_id=execution_id,
                     parent_call_id=state.parent_call_id,
                     graph_namespace=state.namespace,
+                    graph_task_id=state.graph_task_id,
                     agent_name=state.agent_name,
                     tool_call_id=state.tool_call_id,
                     tool_name=state.tool_name,

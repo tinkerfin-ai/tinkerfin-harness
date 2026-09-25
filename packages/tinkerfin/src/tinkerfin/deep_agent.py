@@ -62,9 +62,10 @@ from .plan._config import (
 if TYPE_CHECKING:
     from .agui_resume import (
         AgUiResumeBinding,
-        AgUiResumeCheckpointObserver,
         AgUiResumeNotSavedObserver,
+        AgUiResumeReceiptObserver,
         AgUiResumeRequest,
+        AgUiResumeResponse,
     )
     from .runtime import (
         AgentRuntime,
@@ -422,7 +423,8 @@ def _create_graph_agui_stream(
     private_state_keys: frozenset[str],
     checkpointer: object | None,
     resume: AgUiResumeBinding | None,
-    on_resume_checkpointed: AgUiResumeCheckpointObserver | None,
+    resume_responses: tuple[AgUiResumeResponse, ...],
+    on_resume_saved: AgUiResumeReceiptObserver | None,
     on_resume_not_saved: (AgUiResumeNotSavedObserver | None),
     on_event: EventObserver | None,
     compaction: bool = False,
@@ -503,18 +505,27 @@ def _create_graph_agui_stream(
         resume_marker_is_readable if resume is not None else None,
     )
 
-    async def record_resume_checkpoint(effective_parent_run_id: str | None) -> None:
+    async def record_resume_saved(effective_parent_run_id: str | None) -> None:
+        from .agui_resume import AgUiResumeReceipt
+
         assert resume is not None
-        checkpoint = resume._checkpoint(
+        marker_id = resume._marker_id(
             identity=identity,
             parent_run_id=effective_parent_run_id,
         )
         await observation.resume_checkpointed(
-            marker_id=checkpoint.marker_id,
-            native_interrupt_ids=checkpoint.native_interrupt_ids,
+            marker_id=marker_id,
+            native_interrupt_ids=frozenset(resume.native_interrupt_ids),
         )
-        if on_resume_checkpointed is not None:
-            await on_resume_checkpointed(checkpoint)
+        if on_resume_saved is not None:
+            await on_resume_saved(
+                AgUiResumeReceipt(
+                    identity=identity,
+                    parent_run_id=effective_parent_run_id,
+                    receipt_id=marker_id,
+                    responses=resume_responses,
+                )
+            )
 
     async def source(
         native_astream: Callable[..., AsyncIterator[Mapping[str, object]]],
@@ -545,14 +556,14 @@ def _create_graph_agui_stream(
                     "resume did not resolve to a durable intent"
                 )
             # Both phases are proven saver-readable by bind/stage. From this point a
-            # retry must preserve the claim and re-deliver the exact checkpoint callback.
+            # retry must preserve the claim and re-deliver the same saved receipt.
             resume_guard.mark_marker_readable()
             bound.arguments["config"] = resolution.config
             bound.arguments["input"] = resume._invocation_command(
                 resolution.missing_interrupt_ids
             )
             bound.arguments["durability"] = "sync"
-            await record_resume_checkpoint(resolution.parent_run_id)
+            await record_resume_saved(resolution.parent_run_id)
         else:
             bound.arguments["config"] = resolution.config
             raw_input = bound.arguments.get("input")
@@ -686,7 +697,8 @@ def _wrap_agui_astream(
             private_state_keys=private_state_keys,
             checkpointer=None,
             resume=None,
-            on_resume_checkpointed=None,
+            resume_responses=(),
+            on_resume_saved=None,
             on_resume_not_saved=None,
             on_event=on_event,
             compaction=compaction,
@@ -746,7 +758,8 @@ def _wrap_agui_resume_astream(
     private_state_keys: frozenset[str],
     checkpointer: object | None,
     resume: AgUiResumeBinding,
-    on_resume_checkpointed: AgUiResumeCheckpointObserver | None,
+    resume_responses: tuple[AgUiResumeResponse, ...],
+    on_resume_saved: AgUiResumeReceiptObserver | None,
     on_resume_not_saved: (AgUiResumeNotSavedObserver | None),
     on_event: EventObserver | None,
 ) -> Callable[..., AgUiEventStream]:
@@ -822,7 +835,8 @@ def _wrap_agui_resume_astream(
             private_state_keys=private_state_keys,
             checkpointer=checkpointer,
             resume=resume,
-            on_resume_checkpointed=on_resume_checkpointed,
+            resume_responses=resume_responses,
+            on_resume_saved=on_resume_saved,
             on_resume_not_saved=on_resume_not_saved,
             on_event=on_event,
         )
@@ -1323,7 +1337,7 @@ class _AgentDefinition:
         mode: AgentMode | None,
         config: RunnableConfig | None,
         context: object | None,
-        on_resume_checkpointed: AgUiResumeCheckpointObserver | None,
+        on_resume_saved: AgUiResumeReceiptObserver | None,
         on_resume_not_saved: (AgUiResumeNotSavedObserver | None),
         timeout: float | None,
         settlement_timeout: float | None,
@@ -1374,6 +1388,14 @@ class _AgentDefinition:
             request=resume_request,
             parent_run_id=parent_run_id,
         )
+        from .agui_resume import AgUiResumeResponse
+
+        responses = tuple(
+            AgUiResumeResponse(entry.interrupt_id, entry.status)
+            for entry in sorted(
+                resume_request.entries, key=lambda entry: entry.interrupt_id
+            )
+        )
         astream = _wrap_agui_resume_astream(
             (None if binding.mode == "abandon" else lambda: graph._astream),
             tinkerfin=self._tinkerfin,
@@ -1388,7 +1410,8 @@ class _AgentDefinition:
             private_state_keys=self._private_state_keys,
             checkpointer=self._checkpointer,
             resume=binding,
-            on_resume_checkpointed=on_resume_checkpointed,
+            resume_responses=responses,
+            on_resume_saved=on_resume_saved,
             on_resume_not_saved=on_resume_not_saved,
             on_event=on_event,
         )

@@ -29,7 +29,6 @@ from tinkerfin_studio.api.errors import (
     AttachmentErrorCode,
     AutomationErrorCode,
     BusinessException,
-    ModelErrorCode,
 )
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.service import AgentModelService
@@ -136,16 +135,9 @@ class StudioAutomationService:
             models = AgentModelService(
                 AgentModelRepository(session, user_id=self._user_id)
             )
-            model = await models.resolve(config.model_id)
+            await models.resolve(config.model_id)
         for identity in config.attachments:
-            file = await self._resources.attachments.get(
-                identity, user_id=self._user_id
-            )
-            if (
-                file.mime_type.startswith("image/")
-                and model.image_support != "supported"
-            ):
-                raise BusinessException(ModelErrorCode.IMAGE_UNSUPPORTED)
+            await self._resources.attachments.get(identity, user_id=self._user_id)
 
     async def save(self, command: SaveTask, *, task_id: str | None = None) -> TaskView:
         """先保留不可变输入，再提交可幂等重试的调度命令"""

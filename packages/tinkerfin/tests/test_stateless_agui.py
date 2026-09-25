@@ -343,7 +343,8 @@ async def test_agui_abort_allows_external_task_while_event_observer_is_active() 
     try:
         abort_tail = await stream.abort()
 
-        assert consumer.cancelled()
+        outcome = (await asyncio.gather(consumer, return_exceptions=True))[0]
+        assert isinstance(outcome, asyncio.CancelledError)
         assert [event.type.value for event in abort_tail] == ["RUN_ERROR"]
     finally:
         hold_observer.set()

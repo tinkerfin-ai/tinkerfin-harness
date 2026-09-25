@@ -13,7 +13,7 @@ AG-UI 入口需要安装 `tinkerfin[agui]`。
 | `.with_observer(observer)` | 添加 Runtime observer |
 | `.with_observer(on_terminal=callback)` | 添加一个异步终态回调 |
 | `.with_plan(...)` | 启用 Plan，并选择模型、表单、内容和审阅动作 |
-| `.with_attachments(support)` | 启用由宿主授权的附件解析 |
+| `.with_attachments(support)` | 配置模型输入策略和可选的宿主授权附件读取 |
 | `.build(model, tools, ...)` | 保存智能体配置并返回 `AgentRuntime` |
 
 所有配置方法都返回独立 builder。`build()` 不执行 I/O，也不接管传入资源的所有权。
@@ -59,7 +59,7 @@ AG-UI 入口需要安装 `tinkerfin[agui]`。
 | `input` | 高级原生智能体状态 |
 | `resume` | 覆盖全部 pending interrupt 的 `AgUiResumeRequest` |
 
-`on_resume_saved` 和 `on_resume_not_saved` 只用于恢复分支。它们围绕已持久化的 resume marker 结算宿主状态，框架会等待其完成。
+`on_resume_saved` 和 `on_resume_not_saved` 只用于恢复分支：前者接收 `AgUiResumeReceipt` 供业务结算，后者在请求未保存时释放认领。框架会等待回调完成。
 
 ## 压缩已保存的上下文
 
@@ -78,7 +78,7 @@ if result.status == "compacted":
 `nothing_to_compact` 表示没有可压缩内容，不调用模型；`not_reduced` 表示生成的摘要没有缩短上下文，
 因此保留原内容。失败会抛出异常，不返回成功结果。`compact()` 还支持 Runtime 声明的带类型 `context`。
 
-如需主 Agent 在对话中自行调用压缩工具，在构建时启用：
+如需主 Agent 或 Planner 自行调用压缩工具，在构建时启用：
 
 ```python
 runtime = (
@@ -89,7 +89,8 @@ runtime = (
 )
 ```
 
-该工具默认关闭，不传给子 Agent 或 Plan 规划器。工具在当前对话运行内执行，由框架绑定到有效摘要中间件并管理原生状态写回。
+该工具默认关闭；启用后主 Agent 和 Planner 均可使用，子 Agent 不继承此选项。
+工具在当前对话运行内执行，由框架绑定到有效摘要中间件并管理原生状态写回。
 自动压缩和工具压缩保留原生行为；手动入口额外拒绝未缩短上下文的摘要，并要求历史归档成功。
 追踪将摘要模型调用归入对应压缩操作，只有 checkpoint 保存成功后才确认持久化结果。
 

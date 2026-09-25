@@ -51,7 +51,6 @@ async def test_model_catalog_returns_only_enabled_safe_fields(
         "connectionId",
         "connectionDisplayName",
         "reasoningEnabled",
-        "imageSupport",
         "isDefault",
     }
     assert payload["items"][0]["connectionId"] == "deepseek"

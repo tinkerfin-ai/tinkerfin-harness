@@ -10,9 +10,8 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from ag_ui.core import BaseEvent
-from ag_ui.core.types import ResumeEntry
 
-from tinkerfin import AgUiResumeCheckpoint, RunIdentity
+from tinkerfin import AgUiResumeReceipt, RunIdentity
 from tinkerfin_messaging import AgUiChannel, RunNotFound, is_active_run_status
 from tinkerfin_messaging.messaging import MessageChannel
 from tinkerfin_studio.api.errors import ConversationErrorCode, SystemException
@@ -113,21 +112,18 @@ class ConversationTraceCoordinator:
         self,
         *,
         thread_pk: int,
-        entries: tuple[ResumeEntry, ...],
-        checkpoint: AgUiResumeCheckpoint,
+        receipt: AgUiResumeReceipt,
     ) -> None:
-        """用框架 checkpoint marker 幂等结算不含 payload 的业务认领"""
+        """按框架已保存的恢复回执幂等结算业务认领"""
 
         async with self._database.session() as session:
             repository = ConversationRepository(session)
             await repository.settle_claims(
                 thread_pk=thread_pk,
-                run_id=checkpoint.identity.run_id,
-                entries=entries,
-                resolution_id=checkpoint.marker_id,
+                receipt=receipt,
             )
             await repository.commit()
-        await self.reconcile(thread_pk=thread_pk, identity=checkpoint.identity)
+        await self.reconcile(thread_pk=thread_pk, identity=receipt.identity)
 
     async def recover_preparing(
         self,
@@ -305,8 +301,7 @@ class ConversationTraceCoordinator:
         trace = await self._reconcile_view(thread_pk=thread_pk, identity=identity)
         if trace.summary.status.execution != "running":
             return True
-        updates = trace.follow()
-        try:
+        async with trace.follow() as updates:
             async for update in updates:
                 result = await self._persist_view(thread_pk=thread_pk, view=update)
                 if result != "applied":
@@ -314,8 +309,6 @@ class ConversationTraceCoordinator:
                     return False
                 if update.summary.status.execution != "running":
                     return True
-        finally:
-            await updates.aclose()
         return False
 
     async def _persist_view(

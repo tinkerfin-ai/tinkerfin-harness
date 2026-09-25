@@ -42,7 +42,7 @@ async function openFixture(page: Page, theme = 'light') {
     const path = url.pathname
     let data: unknown = {}
     if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00Z', user }
-    else if (path === '/api/models') data = { defaultModelId: 'model-0', items: [{ modelId: 'model-0', displayName: 'Model', imageSupport: 'unknown', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }] }
+    else if (path === '/api/models') data = { defaultModelId: 'model-0', items: [{ modelId: 'model-0', displayName: 'Model',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }] }
     else if (path === '/api/automation/runs' || path === '/api/automation/tasks') data = { items: [], nextCursor: null }
     else if (path === '/api/automation/runs/counts') data = {}
     else if (path === '/api/automation/tasks/counts') data = { enabled: 0, paused: 0 }

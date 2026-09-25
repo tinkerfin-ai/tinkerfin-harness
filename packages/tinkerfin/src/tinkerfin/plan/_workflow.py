@@ -1,4 +1,4 @@
-"""Standalone, read-only Planning workflow for Plan-capable Deep Agents."""
+"""Planning workflow sharing its Agent's tools, workspace, and permission policy."""
 
 from __future__ import annotations
 
@@ -11,6 +11,11 @@ from uuid import uuid4
 
 from deepagents.backends import StateBackend
 from deepagents.backends.protocol import BackendProtocol
+from deepagents.middleware.memory import MemoryMiddleware
+from deepagents.middleware.summarization import (
+    SummarizationMiddleware,
+    SummarizationToolMiddleware,
+)
 from langchain.agents import create_agent  # pyright: ignore[reportUnknownVariableType]
 from langchain.tools import ToolRuntime
 from langchain_core.language_models import BaseChatModel
@@ -20,7 +25,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.store.base import BaseStore
@@ -31,7 +36,8 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, creat
 from tinkerfin_contracts import PreparedWorkspace
 from tinkerfin_native_stream import RuntimeInterruptEnvelope
 
-from .._agent_spec import AgentSpec
+from .._agent_construction import _merge_middleware, _role_defaults, _with_attachments
+from .._agent_spec import AgentMiddlewareType, AgentSpec
 from .._agui_lineage_state import (
     CHECKPOINT_ROLE_METADATA_KEY,
     LINEAGE_CONFIG_KEY,
@@ -39,8 +45,8 @@ from .._agui_lineage_state import (
     RUN_ID_METADATA_KEY,
     LineageMarker,
 )
-from .._attachment_agents import _AttachmentMiddleware, attachment_filesystem
-from .._hitl import _as_permissions
+from .._middleware_resources import prepare_middleware_resources
+from .._summarization import ObservedCompactionTool
 from .._tool_runtime import _ToolRuntimeMiddleware
 from ._clarification import (
     ClarificationDiscussionResponse,
@@ -68,7 +74,7 @@ from ._contracts import (
 from ._json_schema import require_valid_schema
 from ._lifecycle import PlanLifecycle
 from ._planner import (
-    create_planner_filesystem,
+    planner_tool_name,
     resolve_planner_model,
 )
 from ._resume import require_plan_schemas
@@ -440,31 +446,41 @@ class _PlanningGraphFactory(Generic[ContextT]):
             else cast(BackendProtocol, backend_value)
         )
         base_state_schema = spec.state_schema
-        caller_middleware = spec.middleware
+        caller_middleware = prepare_middleware_resources(spec.middleware)
         supplied_tools = spec.tools
-        read_only_tools = (
-            tuple(
-                tool
-                for tool in cast(Sequence[object], supplied_tools)
-                if isinstance(tool, BaseTool)
-                and tool.metadata
-                and tool.metadata.get("read_only") is True
-            )
-            if isinstance(supplied_tools, Sequence)
-            else ()
-        )
         resolved_model = resolve_planner_model(self._options.planner_model or model)
-        filesystem = create_planner_filesystem(
-            backend,
-            permissions=_as_permissions(spec.permissions),
-            filesystem_instructions=(
-                None if workspace is None else workspace.filesystem_instructions
-            ),
+        defaults = _role_defaults(
+            model=resolved_model,
+            backend=backend,
+            skills=spec.skills,
+            permissions=spec.permissions,
+            interrupt_on=spec.interrupt_on,
+            workspace=workspace,
         )
-        state_schema = create_plan_state_schema(
-            base_state_schema,
-            middleware=(*caller_middleware, filesystem),
-        )
+        common_middleware = _merge_middleware(defaults, caller_middleware)
+        trailing: list[AgentMiddlewareType] = []
+        if spec.compaction_tool_enabled:
+            summary = next(
+                item
+                for item in common_middleware
+                if item.name == "SummarizationMiddleware"
+            )
+            if not isinstance(summary, SummarizationMiddleware):
+                raise TypeError(
+                    "the compaction tool requires Deep Agents summarization"
+                )
+            if any(
+                isinstance(item, SummarizationToolMiddleware)
+                for item in common_middleware
+            ):
+                raise ValueError(
+                    "configure the compaction tool through one entry point"
+                )
+            trailing.append(ObservedCompactionTool(summary))
+        if spec.memory is not None:
+            trailing.append(
+                MemoryMiddleware(backend=backend, sources=list(spec.memory))
+            )
 
         def initialize_node(state: PlanningWorkflowNodeState) -> dict[str, object]:
             mapped = cast(Mapping[str, object], state)
@@ -876,29 +892,47 @@ class _PlanningGraphFactory(Generic[ContextT]):
         }
         options = self._options
         known_tools = {
-            tool.name for tool in (*plan_tools, *read_only_tools, *filesystem.tools)
+            name
+            for definition in (
+                *plan_tools,
+                *supplied_tools,
+                *(
+                    tool
+                    for item in (*common_middleware, *trailing)
+                    if hasattr(item, "tools")
+                    for tool in item.tools
+                ),
+            )
+            if (name := planner_tool_name(definition)) is not None
         }
-
-        middleware = [
-            PlanLifecycle[ContextT](
-                options,
-                initialize=initialize_node,
-                answer=answer_clarification,
-                review=review_node,
-                validate_state=lambda state: require_plan_schemas(state, options),
-                clarifications=lambda plan: _clarification_context(plan, options),
-                argument_schemas=argument_schemas,
-                known_tools=known_tools,
-            ),
-            attachment_filesystem(filesystem, spec.attachments)
-            if spec.attachments
-            else filesystem,
-            _ToolRuntimeMiddleware(spec.tool_scope),
-            *([_AttachmentMiddleware(spec.attachments)] if spec.attachments else []),
-        ]
+        lifecycle = PlanLifecycle[ContextT](
+            options,
+            initialize=initialize_node,
+            answer=answer_clarification,
+            review=review_node,
+            validate_state=lambda state: require_plan_schemas(state, options),
+            clarifications=lambda plan: _clarification_context(plan, options),
+            argument_schemas=argument_schemas,
+            known_tools=known_tools,
+        )
+        # After-model hooks run in reverse: host changes, Plan validation, then
+        # tool review. An invalid Plan action must never authorize another tool.
+        middleware = _with_attachments(
+            [
+                *_merge_middleware([*defaults, lifecycle], caller_middleware),
+                *trailing,
+                _ToolRuntimeMiddleware(spec.tool_scope),
+            ],
+            spec.attachments,
+        )
+        state_schema = create_plan_state_schema(
+            base_state_schema,
+            middleware=[item for item in middleware if item is not lifecycle],
+        )
         parent = create_agent(
             model=resolved_model,
-            tools=[*read_only_tools, *plan_tools],
+            tools=[*supplied_tools, *plan_tools],
+            system_prompt=spec.system_prompt,
             middleware=middleware,
             state_schema=state_schema,
             context_schema=context_schema,
@@ -915,7 +949,7 @@ def create_planning_graph(
     options: PlanOptions,
     workspace: PreparedWorkspace[object, BackendProtocol] | None = None,
 ) -> PlanningWorkflowGraph[ContextT]:
-    """Build the read-only planning workflow from its declared agent resources."""
+    """Build Planning with the declared Agent resources and tool-review policy."""
     return _PlanningGraphFactory[ContextT](options)._build(spec, workspace=workspace)
 
 

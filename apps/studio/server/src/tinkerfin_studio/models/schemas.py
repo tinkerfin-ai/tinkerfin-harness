@@ -31,6 +31,19 @@ ModelId = Annotated[
 
 ModelProvider = Literal["openai", "deepseek", "ollama"]
 ModelAPI = Literal["openai_chat_completions", "ollama"]
+ModelDiscoveryFailureCode = Literal[
+    "endpoint_not_allowed",
+    "response_too_large",
+    "timeout",
+    "authentication_failed",
+    "rate_limited",
+    "service_error",
+    "network_error",
+    "invalid_response",
+]
+ModelDiscoveryCode = Literal[
+    "models_received", "models_unavailable", ModelDiscoveryFailureCode
+]
 
 
 class ChatOptions(BaseModel):
@@ -107,11 +120,10 @@ class ProviderPreset(BaseModel):
 
 
 class DiscoveredModel(BaseModel):
-    """模型服务实际返回的候选项；未返回的能力保持未知"""
+    """模型服务实际返回的候选名称，不代表已验证的输入能力"""
 
     model_name: str = Field(min_length=1, max_length=128)
     display_name: str
-    image_support: Literal["supported", "unsupported", "unknown"] = "unknown"
 
 
 class ModelDiscoveryResult(BaseModel):
@@ -119,7 +131,7 @@ class ModelDiscoveryResult(BaseModel):
 
     outcome: Literal["success", "inconclusive", "failed"]
     items: list[DiscoveredModel] = Field(default_factory=list)
-    code: str
+    code: ModelDiscoveryCode
 
 
 class AgentModelWrite(BaseModel):
@@ -140,7 +152,8 @@ class AgentModelWrite(BaseModel):
         min_length=1, max_length=128, description="供应商实际模型名称"
     )
     image_support: Literal["supported", "unsupported", "unknown"] = Field(
-        default="unknown", description="已确认的图片输入能力，未知时禁止发送新图片"
+        default="unknown",
+        description="原生图片输入的人工声明；unknown 使用可信模型资料，不限制附件提交",
     )
     reasoning_enabled: bool = Field(
         default=False, description="是否启用 provider reasoning 参数"
@@ -154,7 +167,7 @@ class AgentModelWrite(BaseModel):
     def validate_generation_options(
         cls, value: dict[str, JsonValue]
     ) -> dict[str, JsonValue]:
-        """保存和测试共享附加参数的大小、数值及受控字段约束"""
+        """限制生成参数的大小、数值和受控字段"""
         if {key.casefold() for key in value}.intersection(
             {"model", "prompt", "n", "api_key", "authorization"}
         ):
@@ -204,9 +217,6 @@ class AgentModelCatalogItem(BaseModel):
     connection_display_name: str = Field(
         alias="connectionDisplayName", description="模型配置页中的提供方名称"
     )
-    image_support: Literal["supported", "unsupported", "unknown"] = Field(
-        default="unknown", alias="imageSupport", description="图片输入能力"
-    )
     reasoning_enabled: bool = Field(
         alias="reasoningEnabled", description="是否启用 reasoning"
     )
@@ -232,6 +242,9 @@ class AgentModelConfig(BaseModel):
     model_id: str
     display_name: str
     provider: ModelProvider
+    provider_id: str = Field(
+        default="custom", description="已授权连接的提供方标识，用于核验模型资料来源"
+    )
     model_name: str
     base_url: str
     api_key: SecretStr
@@ -259,62 +272,3 @@ class ModelSettingsOverview(BaseModel):
     models: list[AgentModelSettings]
     connections: list[ModelConnectionSettings]
     providers: list[ProviderPreset]
-
-
-ModelTestKind = Literal["basic", "text", "vision", "image"]
-ModelTestCode = Literal[
-    "model_listed",
-    "models_unavailable",
-    "model_not_listed",
-    "text_received",
-    "vision_response_received",
-    "image_received",
-    "empty_response",
-    "invalid_response",
-    "response_too_large",
-    "timeout",
-    "authentication_failed",
-    "rate_limited",
-    "service_error",
-    "network_error",
-    "endpoint_not_allowed",
-    "invalid_configuration",
-]
-
-
-class ModelTestRequest(BaseModel):
-    """测试当前表单草稿，不保存配置或改变模型能力标记"""
-
-    model_config = ConfigDict(extra="forbid")
-    kind: ModelTestKind
-    configuration: AgentModelSave
-
-    @model_validator(mode="after")
-    def validate_test_purpose(self) -> ModelTestRequest:
-        if self.kind == "image" and self.configuration.purpose != "image":
-            raise ValueError("生图测试需要生图服务配置")
-        if self.kind in {"text", "vision"} and self.configuration.purpose != "chat":
-            raise ValueError("文字和看图测试需要聊天模型配置")
-        return self
-
-
-class ModelTestImage(BaseModel):
-    """测试输入或生图结果的有界内联预览，不创建附件"""
-
-    mime_type: Literal["image/png", "image/jpeg"]
-    data_base64: str = Field(
-        max_length=350_000, description="不超过 256 KiB 的图片字节的 Base64 编码"
-    )
-
-
-class ModelTestResult(BaseModel):
-    """一次独立测试的结果；未确认不代表模型不可用"""
-
-    kind: ModelTestKind
-    outcome: Literal["success", "failed", "inconclusive"]
-    elapsed_ms: int = Field(ge=0, description="本次测试耗时，单位毫秒")
-    code: ModelTestCode
-    text: str | None = Field(
-        default=None, max_length=2000, description="文字或看图测试的有界模型回复"
-    )
-    image: ModelTestImage | None = None

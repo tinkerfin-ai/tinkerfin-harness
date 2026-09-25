@@ -62,6 +62,34 @@ def test_message_and_values_parts_preserve_live_objects_and_namespaces() -> None
     assert validated_message.data.message.content == "changed upstream"
 
 
+@pytest.mark.parametrize("tool_id", [None, ""])
+@pytest.mark.parametrize("tool_name", [None, ""])
+def test_indexed_tool_delta_normalizes_absent_identity_without_changing_source(
+    tool_id: str | None,
+    tool_name: str | None,
+) -> None:
+    message = AIMessageChunk(
+        id="message-1",
+        content="",
+        tool_call_chunks=[{"id": tool_id, "name": tool_name, "args": "{", "index": 0}],
+    )
+    original = message.model_copy(deep=True)
+    validated = validate_native_stream_part(
+        {
+            "type": "messages",
+            "ns": (),
+            "data": (message, {"langgraph_node": "model"}),
+        }
+    )
+    assert isinstance(validated, NativeMessageStreamPart)
+    canonical = validated.data.message
+    assert isinstance(canonical, AIMessageChunk)
+    assert canonical.tool_call_chunks == [
+        {"type": "tool_call_chunk", "id": None, "name": None, "args": "{", "index": 0}
+    ]
+    assert message == original
+
+
 @pytest.mark.parametrize(
     "part",
     (

@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 
 import pytest
+from ag_ui.core import ToolCallArgsEvent, ToolCallEndEvent, ToolCallStartEvent
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from pydantic import JsonValue
 
@@ -18,6 +19,7 @@ from tinkerfin.runtime_profile import (
     DeepAgentsV2RuntimeProfile,
     DeepAgentsV3RuntimeProfile,
 )
+from tinkerfin_agui_adapter import DeepAgentAgUiAdapter
 from tinkerfin_contracts import (
     NativeMessageObservation,
     NativeReasoningObservation,
@@ -25,6 +27,7 @@ from tinkerfin_contracts import (
     NativeToolCallChunk,
     RunSourceContext,
 )
+from tinkerfin_native_stream import NativeStreamPart
 
 
 class _ProviderReasoningExtractor:
@@ -206,7 +209,11 @@ def test_v3_host_extractor_ignores_another_provider_reasoning_delta() -> None:
     assert "other-provider-private" not in frame.replay.model_dump_json(by_alias=True)
 
 
-def test_v2_driver_keeps_idless_followup_tool_data_as_a_chunk() -> None:
+@pytest.mark.parametrize("tool_id", [None, ""])
+@pytest.mark.parametrize("tool_name", [None, ""])
+def test_v2_driver_keeps_idless_followup_tool_data_as_a_chunk(
+    tool_id: str | None, tool_name: str | None
+) -> None:
     frame = DeepAgentsV2StreamDriver().normalize(
         _message_part(
             AIMessageChunk(
@@ -214,9 +221,9 @@ def test_v2_driver_keeps_idless_followup_tool_data_as_a_chunk() -> None:
                 content="",
                 tool_call_chunks=[
                     {
-                        "name": None,
+                        "name": tool_name,
                         "args": "{",
-                        "id": None,
+                        "id": tool_id,
                         "index": 0,
                         "type": "tool_call_chunk",
                     }
@@ -232,6 +239,93 @@ def test_v2_driver_keeps_idless_followup_tool_data_as_a_chunk() -> None:
     assert observation.message.tool_call_chunks == (
         NativeToolCallChunk(index=0, arguments="{"),
     )
+    assert isinstance(frame.replay.data, dict)
+    replay_message = frame.replay.data["message"]
+    assert isinstance(replay_message, dict)
+    assert replay_message["toolCalls"] == []
+    assert replay_message["toolCallChunks"] == [
+        {"index": 0, "id": None, "name": None, "arguments": "{"}
+    ]
+    assert (
+        NativeStreamPart.model_validate_json(frame.replay.model_dump_json())
+        == frame.replay
+    )
+
+
+@pytest.mark.parametrize(
+    "driver_type",
+    [None, DeepAgentsV2StreamDriver, DeepAgentsV3StreamDriver],
+    ids=["standalone", "v2_frame", "v3_frame"],
+)
+def test_tool_argument_stream_keeps_its_identity_across_empty_provider_fields(
+    driver_type: type[DeepAgentsV2StreamDriver] | None,
+) -> None:
+    driver = None if driver_type is None else driver_type()
+    context = _context()
+    adapter = DeepAgentAgUiAdapter(identity=context.identity)
+    messages = [
+        AIMessageChunk(
+            id="message-1",
+            content="",
+            tool_call_chunks=[
+                {
+                    "index": 0,
+                    "id": "call-1",
+                    "name": "execute",
+                    "args": '{"command":',
+                }
+            ],
+        ),
+        AIMessageChunk(
+            id="message-1",
+            content="",
+            tool_call_chunks=[
+                {
+                    "index": 0,
+                    "id": "",
+                    "name": "",
+                    "args": '"python analyze.py"}',
+                }
+            ],
+        ),
+        AIMessageChunk(id="message-1", content="", chunk_position="last"),
+    ]
+    originals = [message.model_copy(deep=True) for message in messages]
+    events = [
+        event
+        for message in messages
+        for event in (
+            adapter.process(_message_part(message))
+            if driver is None
+            else adapter.process_frame(
+                driver.normalize(_message_part(message), context=context)
+            )
+        )
+    ]
+    events.extend(adapter.finish())
+    assert [type(event) for event in events] == [
+        ToolCallStartEvent,
+        ToolCallArgsEvent,
+        ToolCallArgsEvent,
+        ToolCallEndEvent,
+    ]
+    assert (
+        len(
+            {
+                event.tool_call_id
+                for event in events
+                if isinstance(
+                    event, (ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent)
+                )
+            }
+        )
+        == 1
+    )
+    assert (
+        "".join(event.delta for event in events if isinstance(event, ToolCallArgsEvent))
+        == '{"command":"python analyze.py"}'
+    )
+    assert messages == originals
 
 
 def test_v2_driver_preserves_unindexed_tool_calls_from_ollama() -> None:
@@ -264,14 +358,41 @@ def test_v2_driver_preserves_unindexed_tool_calls_from_ollama() -> None:
     )
 
 
-def test_v2_driver_still_rejects_a_complete_tool_call_without_an_id() -> None:
+@pytest.mark.parametrize("tool_id", [None, ""])
+def test_v2_driver_rejects_a_complete_tool_call_without_an_id(
+    tool_id: str | None,
+) -> None:
     with pytest.raises(ValueError, match="complete Tool calls require a stable ID"):
         DeepAgentsV2StreamDriver().normalize(
             _message_part(
                 AIMessage(
                     id="message-1",
                     content="",
-                    tool_calls=[{"name": "ls", "args": {}, "id": None}],
+                    tool_calls=[{"name": "ls", "args": {}, "id": tool_id}],
+                )
+            ),
+            context=_context(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("tool_id", "tool_name"), [("", "execute"), ("call-1", ""), ("", "")]
+)
+def test_v2_driver_rejects_unindexed_tool_chunks_without_identity(
+    tool_id: str,
+    tool_name: str,
+) -> None:
+    with pytest.raises(
+        ValueError, match="unindexed tool calls require both id and name"
+    ):
+        DeepAgentsV2StreamDriver().normalize(
+            _message_part(
+                AIMessageChunk(
+                    id="message-1",
+                    content="",
+                    tool_call_chunks=[
+                        {"id": tool_id, "name": tool_name, "args": "{}", "index": None}
+                    ],
                 )
             ),
             context=_context(),

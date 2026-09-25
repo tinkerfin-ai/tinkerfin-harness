@@ -169,7 +169,9 @@ async def test_model_projection_preserves_original_and_tool_order(supports_image
         assert safe[-1] == FILE.content_block()
         assert "dGVzdA==" not in str(safe)
     else:
-        assert "does not support this file format" in str(projected[1].content)
+        assert "direct input of this file format is not enabled" in str(
+            projected[1].content
+        )
 
 
 @pytest.mark.asyncio
@@ -300,7 +302,9 @@ async def test_capabilities_follow_actual_model_and_authorization_is_independent
             direct=direct,
         )
         assert isinstance(result, ModelResponse)
-        assert "does not support this file format" in str(result.result[0].content)
+        assert "direct input of this file format is not enabled" in str(
+            result.result[0].content
+        )
     assert not reads
     with pytest.raises(PermissionError, match="not authorized"):
         await _project(
@@ -427,7 +431,7 @@ async def test_media_projection_keeps_bytes_out_of_history_and_trace(
             )
             assert safe == attachment.content_block()
         else:
-            assert "does not support this file format" in str(
+            assert "direct input of this file format is not enabled" in str(
                 response.result[1].content
             )
     assert reads == [attachment.id]

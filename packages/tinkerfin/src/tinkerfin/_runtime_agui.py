@@ -13,7 +13,13 @@ from ag_ui.core import BaseEvent, RunErrorEvent, RunStartedEvent
 from ._failure_evidence import retain_failure, select_failure
 from ._run_callbacks import callback_scope
 from ._runtime_streams import _map_sse_item, _resolve_sse_event_id
-from ._tasks import join_task
+from ._tasks import (
+    _capture_operation,
+    _join_operation,
+    _operation_result,
+    _OperationOutcome,
+    stop_operation,
+)
 from .errors import AgUiSettlementTimeoutError, TinkerFinLifecycleError
 from .sse import (
     SseBody,
@@ -53,18 +59,26 @@ async def __anext__(self: AgUiEventStream) -> BaseEvent:
 
     if self._closed:
         raise StopAsyncIteration
-    current = cast(asyncio.Task[object] | None, asyncio.current_task())
-    if current is None:  # pragma: no cover - async methods run in a Task
-        raise TinkerFinLifecycleError("an AG-UI event stream requires an asyncio task")
-    active = self._active_task
-    if active is not None and not active.done():
+    if self._active_task is not None:
         raise TinkerFinLifecycleError(
             "an AG-UI event stream operation is already active"
         )
-    self._active_task = current
+
+    async def next_event() -> BaseEvent:
+        event = await anext(self._source)
+        if self._on_event is not None:
+            await self._observe(event)
+        return event
+
+    # The accepted conversion and observation belong to this stream. The host
+    # task waiting for their result may continue unrelated work after cancellation.
+    pull = asyncio.create_task(
+        _capture_operation(next_event), name="tinkerfin-agui-event-pull"
+    )
+    self._active_task = pull
     try:
         try:
-            event = await anext(self._source)
+            return await _join_operation(pull, cancel_on_interrupt=True)
         except StopAsyncIteration:
             self._closed = True
             raise
@@ -76,24 +90,15 @@ async def __anext__(self: AgUiEventStream) -> BaseEvent:
                 )
             for note in self._secondary_error_notes:
                 cancellation.add_note(note)
+            await self._close(cancellation)
             raise
-        except Exception as error:
-            if self.error is None:
+        except BaseException as error:
+            if self.error is None and isinstance(error, Exception):
                 self.error = error
             await self._close(error)
             raise
-        observer = self._on_event
-        if observer is not None:
-            try:
-                await self._observe(event)
-            except Exception as error:
-                if self.error is None:
-                    self.error = error
-                await self._close(error)
-                raise
-        return event
     finally:
-        if self._active_task is current:
+        if self._active_task is pull:
             self._active_task = None
 
 
@@ -209,7 +214,7 @@ async def _close(
     self: AgUiEventStream,
     primary: BaseException | None,
     *,
-    active: asyncio.Task[object] | None = None,
+    active: asyncio.Task[_OperationOutcome[BaseEvent]] | None = None,
 ) -> None:
     """Join one retained cleanup task under the caller's settlement budget.
 
@@ -223,7 +228,7 @@ async def _close(
     if task is None:
         self._closed = True
         task = asyncio.create_task(
-            self._close_once(active),
+            _capture_operation(lambda: self._close_once(active)),
             name="tinkerfin-agui-event-stream-close",
         )
         self._close_task = task
@@ -231,14 +236,15 @@ async def _close(
     try:
         settlement_timeout = self._settlement_timeout
         if settlement_timeout is None:
-            await join_task(task)
+            await _join_operation(task, cancel_on_interrupt=False)
         elif task.done():
-            task.result()
+            _operation_result(task.result())
         else:
             settlement_deadline = asyncio.timeout(settlement_timeout)
             try:
                 async with settlement_deadline:
-                    await asyncio.shield(task)
+                    outcome = await asyncio.shield(task)
+                _operation_result(outcome)
             except TimeoutError as error:
                 if settlement_deadline.expired():
                     raise AgUiSettlementTimeoutError(
@@ -272,7 +278,7 @@ async def _close(
         raise
 
 
-def _close_finished(task: asyncio.Task[None]) -> None:
+def _close_finished(task: asyncio.Task[_OperationOutcome[None]]) -> None:
     """Consume a retained close failure even when no caller waits again."""
 
     if not task.cancelled():
@@ -281,18 +287,24 @@ def _close_finished(task: asyncio.Task[None]) -> None:
 
 async def _close_once(
     self: AgUiEventStream,
-    active: asyncio.Task[object] | None,
+    active: asyncio.Task[_OperationOutcome[BaseEvent]] | None,
 ) -> None:
-    if active is not None and not active.done():
-        await join_task(active, cancel=True, suppress_task_cancellation=True)
     primary: BaseException | None = None
+    if active is not None:
+        try:
+            await stop_operation(active)
+        except BaseException as error:  # noqa: BLE001 - cleanup still owns the upstream
+            primary = error
     close = getattr(self._source, "aclose", None)
     try:
         if close is not None:
             await close()
     except BaseException as error:  # noqa: BLE001 - cleanup owns all outcomes
-        primary = error
-    await self._close_upstream(primary)
+        primary = error if primary is None else select_failure(primary, error)
+    try:
+        await self._close_upstream(primary)
+    except BaseException as error:  # noqa: BLE001 - preserve pull and close failures
+        primary = error if primary is None else select_failure(primary, error)
     if primary is not None:
         raise primary.with_traceback(primary.__traceback__)
 

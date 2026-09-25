@@ -36,7 +36,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
       const path = url.pathname
       let data: unknown = {}
       if (path === '/api/auth/me') data = { user, expires_at: '2099-01-01T00:00:00Z' }
-      else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main', imageSupport: 'supported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
+      else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
       else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
       else if (path === '/api/conversation/history') data = { items: [{ ...detail, status: 'error', lastRunId: 'run-3', hasPendingInterrupt: false, pendingInteractionKind: null }], nextCursor: null }
       else if (path.endsWith('/history')) data = { ...detail, taskTrace: url.searchParams.get('includeTaskTrace') === 'false' ? null : detail.taskTrace }
@@ -112,7 +112,7 @@ test('首次历史与当前会话读取失败分别保留居中重试和全局 T
     const path = new URL(route.request().url()).pathname
     let data: unknown = {}
     if (path === '/api/auth/me') data = { user, expires_at: '2099-01-01T00:00:00Z' }
-    else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main', imageSupport: 'supported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
+    else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history') {
       if (!listFailed) { listFailed = true; await route.fulfill({ status: 503, json: { code: 1001007004, message: '服务暂不可用，请稍后重试', data: null } }); return }
@@ -150,7 +150,7 @@ test('侧栏更多历史读取失败保留原位重试和全局 Toast', async ({
     const path = url.pathname
     let data: unknown = {}
     if (path === '/api/auth/me') data = { user, expires_at: '2099-01-01T00:00:00Z' }
-    else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main', imageSupport: 'supported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
+    else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history') {
       if (url.searchParams.has('cursor')) {

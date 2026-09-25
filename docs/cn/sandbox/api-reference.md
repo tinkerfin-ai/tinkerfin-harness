@@ -116,7 +116,7 @@ Manager 通过 `observers=()` 和 `notification_options=None` 配置通知。事
 | 大输出 | `aexecute_with_offload` |
 | 生命周期 | `arenew(timeout)`、`aget_runtime_info()`、`akill()`、`aclose()` |
 
-`RootedOpenSandboxBackend.to_shell_path(file_path)` 把虚拟路径转换成 Shell 可使用的物理路径。普通业务优先让 middleware 处理该映射。
+`RootedOpenSandboxBackend.to_shell_path(file_path)` 把虚拟路径转换成相对于工作区根目录的 Shell 路径，供 `aexecute` 中的命令使用。
 
 同步远程方法会明确报错；始终使用 `a` 开头的异步版本。
 

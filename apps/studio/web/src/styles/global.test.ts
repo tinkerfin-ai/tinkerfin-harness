@@ -213,7 +213,7 @@ describe('前端视觉契约', () => {
 
   it('全部样式入口共用界面字体与 400 字重，内容排版使用独立语义', () => {
     expect(declarations(typographyStyles).get('--weight-ui')).toBe('400')
-    const contentBoundary = /\.markdown-content|\.tool-(?:code|rich)-field|\.ui-code-text|\.attachment-sheet|\.model-options-plain|\.mermaid-render-host|\bcode,\s*kbd,\s*pre,\s*samp/
+    const contentBoundary = /\.markdown-content|\.tool-(?:code|rich)-field|\.ui-code-text|\.attachment-sheet|\.mermaid-render-host|\bcode,\s*kbd,\s*pre,\s*samp/
     for (const [path, source] of Object.entries(cssFiles)) {
       if (path.endsWith('/fonts.css')) continue
       for (const [, selector, block] of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {

@@ -6,9 +6,9 @@ import type { AgentModelCatalogItem } from '../../../api/models/types'
 import { ComposerModelPicker } from './ComposerModelPicker'
 
 const models: AgentModelCatalogItem[] = [
-  { modelId: 'a', displayName: '同名模型', connectionId: 'first', connectionDisplayName: 'DeepSeek', imageSupport: 'unknown', reasoningEnabled: false, isDefault: true },
-  { modelId: 'b', displayName: '同名模型', connectionId: 'second', connectionDisplayName: 'DeepSeek', imageSupport: 'unknown', reasoningEnabled: false, isDefault: false },
-  { modelId: 'c', displayName: '另一个模型', connectionId: 'first', connectionDisplayName: 'DeepSeek', imageSupport: 'unknown', reasoningEnabled: false, isDefault: false },
+  { modelId: 'a', displayName: '同名模型', connectionId: 'first', connectionDisplayName: 'DeepSeek',reasoningEnabled: false, isDefault: true },
+  { modelId: 'b', displayName: '同名模型', connectionId: 'second', connectionDisplayName: 'DeepSeek',reasoningEnabled: false, isDefault: false },
+  { modelId: 'c', displayName: '另一个模型', connectionId: 'first', connectionDisplayName: 'DeepSeek',reasoningEnabled: false, isDefault: false },
 ]
 
 function Example({ items = models }: { items?: AgentModelCatalogItem[] }) {

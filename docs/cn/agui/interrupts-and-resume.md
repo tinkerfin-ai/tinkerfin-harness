@@ -88,10 +88,34 @@ async with aclosing(
 
 | 参数 | 调用条件 |
 | --- | --- |
-| `on_resume_saved` | 请求已经持久保存；接收 `AgUiResumeCheckpoint`，重试会再次交付同一记录 |
+| `on_resume_saved` | 已校验的请求持久保存后、继续执行前调用；接收 `AgUiResumeReceipt` |
 | `on_resume_not_saved` | 请求未保存就失败或取消；用于释放业务认领 |
 
 两个回调都应幂等。`on_resume_saved` 表示请求已保存，不表示工具执行成功；不要根据 `RUN_STARTED` 结算审批。
+
+不可变回执包含已绑定的 `identity`、实际使用的 `parent_run_id`、不透明的 `receipt_id`，以及按公开 `interrupt_id` 排序的 `AgUiResumeResponse` 元组。每条回复只有 `interrupt_id` 和 `status`，不含决定载荷。等价请求的重试会交付相等的回执，包括回复顺序不同的请求。整批取消走放弃路径，不调用 `on_resume_saved`。
+
+宿主负责审批存储和权限。业务结算直接消费回执，以 `receipt_id` 去重，从 `responses` 读取已保存的审批结果：
+
+```python
+from tinkerfin import AgUiResumeReceipt
+
+async def record_saved(receipt: AgUiResumeReceipt) -> None:
+    await approval_repository.settle_resume(receipt=receipt)
+
+async with aclosing(
+    runtime.open_agui_run(
+        thread_id="conversation-1",
+        run_id="approval-1",
+        resume=AgUiResumeRequest(entries=tuple(resume_entries)),
+        on_resume_saved=record_saved,
+    )
+) as events:
+    async for event in events:
+        await send_event(event)
+```
+
+框架为提交的请求建立快照，完成校验和持久保存后等待回调，再继续执行。回调无需保留客户端回复或重建原生决定。回调失败时，使用同一请求重试；已保存的回执仍然有效，继续执行会等待业务结算成功。
 
 自定义 Graph 在同一 checkpoint/task 中连续调用 interrupt 时，AG-UI 不接受新一轮审批；应让每轮审批经过新的 Graph 步骤。存在其他 Native 调用遗留的全局恢复值时，框架会拒绝继续，防止该值回答未经批准的问题。
 

@@ -175,10 +175,16 @@ it never interprets or persists the token.
 | `CancelContext` | Immutable channel and RunIdentity |
 | `CommittedCallback` | Receives owner commits after append |
 | `on_source_ready` | Owner-only async callback after source readiness and before producer creation |
+| `open_sse(on_subscribed=...)` | Async notification after each owner or attachment subscription succeeds, before returning the body |
 | `on_delivery_not_started` | Async cleanup when readiness and attachment were both absent |
 
-Attachments invoke neither delivery callback. `on_owner_preflight` belongs to the source
+Attachments invoke `on_subscribed`, but neither `on_source_ready` nor
+`on_delivery_not_started`. `on_owner_preflight` belongs to the source
 and runs before a deferred opener; `on_source_ready` runs after that opener completes.
+
+If `on_subscribed` fails or is cancelled, Messaging closes only that reader and retains
+callback and cleanup failures in the exception chain. The durable producer continues,
+and `on_delivery_not_started` is not invoked for this already established delivery.
 
 Cancellation waits for a delivery callback that has already started to finish.
 Use database and network timeouts inside these callbacks to bound that wait.

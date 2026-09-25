@@ -62,9 +62,13 @@ Messaging 选定生产者后才打开 Agent。附着请求复用已有状态，�
 body = await channel.open_sse(
     source,
     on_source_ready=activate_business_run,
+    on_subscribed=refresh_delivery_state,
     on_delivery_not_started=cleanup_business_run,
 )
 ```
+
+`on_subscribed` 在每次订阅成功后、返回响应内容前调用，附着订阅也会执行。
+通知失败时只关闭本次读者，不取消运行。
 
 Source 自有 `on_owner_preflight` 是准备 source 本身的高级 hook，不是宿主激活的另一个名称。
 

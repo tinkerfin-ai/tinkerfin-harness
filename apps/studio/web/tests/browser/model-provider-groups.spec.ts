@@ -7,7 +7,7 @@ const models: AgentModelCatalogItem[] = Array.from({ length: 15 }, (_, index) =>
   displayName: index < 3 ? ['DeepSeek-V4-Pro', 'DeepSeek-V4-Flash', 'DeepSeek-V4-Flash-Vision'][index] : `Qwen ${index} 长名称模型用于验证菜单中的文字省略`,
   connectionId: index < 3 ? 'deepseek' : 'custom',
   connectionDisplayName: index < 3 ? 'DeepSeek' : '自定义提供方连接名称较长时保留完整可访问名称',
-  imageSupport: 'unknown', reasoningEnabled: false, isDefault: index === 0,
+reasoningEnabled: false, isDefault: index === 0,
 }))
 
 async function prepare(page: Page, theme: string) {

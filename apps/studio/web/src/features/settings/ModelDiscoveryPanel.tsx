@@ -4,9 +4,9 @@ import { Button, TextField } from '../../components/ui'
 import { requestJson } from '../../api/shared/http'
 import { useI18n } from '../../i18n'
 import { ModelSettingsLayout } from './ModelSettingsLayout'
-import { modelTestMessages } from './modelTestMessages'
+import { modelDiscoveryMessages } from './modelDiscoveryMessages'
 import { newModel, type ModelConnection, type ModelSettings } from './useModelSettings'
-interface DiscoveredModel { model_name: string; display_name: string; image_support: ModelSettings['image_support'] }
+interface DiscoveredModel { model_name: string; display_name: string }
 interface DiscoveryResult { outcome: 'success' | 'inconclusive' | 'failed'; code: string; items: DiscoveredModel[] }
 
 export function ModelDiscoveryPanel({ connection, models, saving, onAdd, onManual, onCancel }: {
@@ -36,7 +36,7 @@ export function ModelDiscoveryPanel({ connection, models, saving, onAdd, onManua
     <span className="settings-models__muted" role="status">{t('已选 {count} 项', { count: candidates.length })}</span>
     <Button size="sm" type="button" variant="text" disabled={saving} onClick={onManual}>{t('手动添加')}</Button>
     <Button size="sm" type="button" disabled={saving} onClick={onCancel}>{t('取消')}</Button><Button size="sm" type="button" variant="primary" loading={saving} disabled={candidates.length === 0 || candidates.length > 200} onClick={() => {
-      void onAdd(candidates.map(item => ({ ...newModel(connection.connection_id), model_name: item.model_name, display_name: item.display_name, image_support: item.image_support }))).then(saved => { if (saved) onCancel() })
+      void onAdd(candidates.map(item => ({ ...newModel(connection.connection_id), model_name: item.model_name, display_name: item.display_name }))).then(saved => { if (saved) onCancel() })
     }}>{t('添加所选模型')}</Button></div>}>
     {loading ? <p role="status">{t('正在获取模型')}</p> : result?.outcome === 'success' ? <>
       {result.items.length > 0 && <TextField shape="standard" fieldSize="md" label={t('搜索模型名称或 Model ID')} value={search} disabled={saving} leadingContent={<Search size={14} />} onChange={event => setSearch(event.target.value)} />}
@@ -44,7 +44,7 @@ export function ModelDiscoveryPanel({ connection, models, saving, onAdd, onManua
       {result.items.length === 0 && <p>{t('服务没有返回模型，可手动添加')}</p>}
       {result.items.length > 0 && matches.length === 0 && <div className="settings-models__empty" role="status"><p>{t('没有匹配的模型')}</p><Button type="button" disabled={saving} onClick={() => setSearch('')}>{t('清除搜索')}</Button></div>}
       {matches.map(item => <label key={item.model_name}><input type="checkbox" disabled={saving || existing.has(item.model_name)} checked={existing.has(item.model_name) || selected.includes(item.model_name)} onChange={event => setSelected(values => event.target.checked ? [...values, item.model_name] : values.filter(name => name !== item.model_name))} /><span>{item.model_name}</span>{existing.has(item.model_name) && <small>{t('已添加')}</small>}</label>)}
-    </div></> : <div role="status"><p>{t(modelTestMessages[result?.code ?? ''] ?? '无法获取模型列表，请重试或手动添加')}</p><Button type="button" leadingIcon={<RefreshCw size={14} />} onClick={() => setRevision(value => value + 1)}>{t('重试')}</Button></div>}
+    </div></> : <div role="status"><p>{t(modelDiscoveryMessages[result?.code ?? ''] ?? '无法获取模型列表，请重试或手动添加')}</p><Button type="button" leadingIcon={<RefreshCw size={14} />} onClick={() => setRevision(value => value + 1)}>{t('重试')}</Button></div>}
 
   </ModelSettingsLayout></div>
 }

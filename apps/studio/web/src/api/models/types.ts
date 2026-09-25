@@ -3,7 +3,6 @@ export interface AgentModelCatalogItem {
   displayName: string
   connectionId: string
   connectionDisplayName: string
-  imageSupport: 'supported' | 'unsupported' | 'unknown'
   reasoningEnabled: boolean
   isDefault: boolean
 }

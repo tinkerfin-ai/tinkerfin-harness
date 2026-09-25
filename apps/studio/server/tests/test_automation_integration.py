@@ -9,6 +9,7 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
 from test_agent_runtime import _ToolModel, _Workspace
+from test_attachments import png
 
 from tinkerfin import TinkerFin
 from tinkerfin_automation import (
@@ -19,6 +20,7 @@ from tinkerfin_automation import (
 from tinkerfin_studio.agent import runtime as runtime_module
 from tinkerfin_studio.api.dependencies import get_user_context
 from tinkerfin_studio.application import create_application
+from tinkerfin_studio.attachments.service import byte_chunks
 from tinkerfin_studio.auth.models import User
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.automation.schemas import SaveTask, TaskConfiguration
@@ -282,7 +284,7 @@ async def test_saved_schedule_survives_service_restart(automation_resources):
         await second_store.close()
 
 
-async def test_read_only_automation_fails_instead_of_approving_a_write(
+async def test_automation_requiring_write_approval_stops_for_human_review(
     automation_resources, automation_worker, monkeypatch
 ):
     from collections.abc import Callable, Sequence
@@ -371,3 +373,39 @@ def test_configuration_rejects_end_date_without_representable_exclusive_bound():
     value["endsOn"] = "9999-12-31"
     with pytest.raises(ValueError, match="结束日期"):
         TaskConfiguration.model_validate(value)
+
+
+@pytest.mark.parametrize("image_support", ["supported", "unsupported", "unknown"])
+async def test_automation_accepts_and_runs_authorized_image_inputs(
+    automation_resources, automation_worker, image_support
+):
+    resources = automation_resources
+    async with resources.database.session() as session:
+        from sqlalchemy import select
+
+        model = await session.scalar(select(AgentModel).where(AgentModel.user_id == 1))
+        assert model is not None
+        model.image_support = image_support
+        await session.commit()
+    file = await resources.attachments.upload(
+        user_id=1, name="image.png", chunks=byte_chunks(png())
+    )
+    service = StudioAutomationService(resources, user_id=1)
+    task = await service.save(
+        SaveTask(
+            request_id="image-input",
+            configuration=TaskConfiguration.model_validate(
+                {**configuration(), "attachments": [file.id]}
+            ),
+        )
+    )
+    assert [item.id for item in task.input_files] == [file.id]
+    handle = await resources.automation.for_owner("1").task(task.id)
+    run = await handle.run()
+    await automation_worker.wait_until_idle()
+    result = await service.result(run.id)
+    assert result.status == "succeeded"
+    inputs = await resources.attachments.list_collection(
+        user_id=1, collection_id=run.id
+    )
+    assert [item.id for item in inputs] == [file.id]

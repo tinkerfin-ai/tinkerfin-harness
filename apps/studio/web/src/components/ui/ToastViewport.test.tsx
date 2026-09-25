@@ -162,7 +162,7 @@ describe('ToastViewport', () => {
           { id: 'success', kind: 'success', message: '已保存' },
           { id: 'info', kind: 'info', message: '正在同步' },
           { id: 'error', kind: 'error', message: '保存失败' },
-          { id: 'warning', kind: 'warning', message: '当前模型不支持图片' },
+          { id: 'warning', kind: 'warning', message: '附件仍在上传' },
         ]}
         onDismiss={vi.fn()}
       />,
@@ -174,7 +174,7 @@ describe('ToastViewport', () => {
   it('renders warning with the shared toast structure and status semantics', () => {
     render(
       <ToastViewport
-        toasts={[{ id: 'warning', kind: 'warning', message: '当前模型不支持图片' }]}
+        toasts={[{ id: 'warning', kind: 'warning', message: '附件仍在上传' }]}
         onDismiss={vi.fn()}
       />,
     )

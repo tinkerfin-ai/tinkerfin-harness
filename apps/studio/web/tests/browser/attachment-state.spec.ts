@@ -1,20 +1,21 @@
 import { expect, test } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { mockDownloadPermits } from './support/attachment-storage'
 
 const user = { user_id: 1, username: 'attachment-test', display_name: '附件验收', avatar_url: null, roles: [], disabled: false }
 const imageName = 'AI架构应用开发工程师-附件截图.png'
 const sample = resolve(process.cwd(), 'tests/browser/fixtures/chart.png')
 const modelCatalog = {
   items: [
-    { modelId: 'flash', displayName: 'DeepSeek-V4-Flash', imageSupport: 'unsupported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true },
-    { modelId: 'vision', displayName: '支持图片的模型', imageSupport: 'supported', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: false },
-    { modelId: 'unknown', displayName: '未确认图片能力的模型', imageSupport: 'unknown', connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: false },
+    { modelId: 'flash', displayName: 'DeepSeek-V4-Flash',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true },
+    { modelId: 'vision', displayName: '视觉模型',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: false },
+    { modelId: 'unknown', displayName: '自定义模型',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: false },
   ], defaultModelId: 'flash',
 }
 
 for (const source of ['picker', 'paste', 'drop'] as const) {
-  test(`${source} 添加附件后显示失败、允许重试与移除，仅全部就绪且模型支持时发送`, async ({ page }, testInfo) => {
+  test(`${source} 添加附件后显示失败、允许重试与移除，全部就绪后允许发送`, async ({ page }, testInfo) => {
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
     let finishFirst = () => {}
@@ -98,12 +99,8 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
       await input.press('Enter')
       expect(submissions).toBe(0)
       await expect(input).toHaveValue('保留我的正文')
-      const reason = '当前模型不支持图片，请切换模型或移除图片'
-      const notice = page.getByRole('status').filter({ hasText: reason })
-      await expect(notice).toBeVisible()
-      await expect(input).toHaveAccessibleDescription(reason)
-      await expect(send).toHaveAccessibleDescription(reason)
-      await expect(page.getByText('当前模型不支持图片', { exact: true })).toHaveCount(0)
+      await expect(input).toHaveAccessibleDescription('')
+      await expect(send).toHaveAccessibleDescription('')
 
       if (source === 'picker') {
         let checkedScrollToEnd = false
@@ -113,7 +110,6 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
           for (const width of [320, 768, 1024, 1440]) {
             await page.setViewportSize({ width, height: 960 })
             await expect(card.getByRole('status')).toBeInViewport()
-            await expect(notice).toBeInViewport()
             if (width >= 768 || !checkedScrollToEnd) {
               await expect(card.getByRole('button', { name: `移除附件：${imageName}` })).toBeInViewport()
               checkedScrollToEnd = true
@@ -178,11 +174,7 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
             expect((await card.boundingBox())!.height).toBe(44)
             for (const button of await card.getByRole('button').all()) {
               const box = (await button.boundingBox())!
-              if ((await button.getAttribute('aria-label'))?.startsWith('重试附件：') || (await button.getAttribute('aria-label'))?.startsWith('移除附件：')) {
-                expect(box.width).toBe(24)
-              } else {
-                expect(box.width).toBeGreaterThanOrEqual(44)
-              }
+              expect(box.width).toBeGreaterThanOrEqual(44)
               expect(box.height).toBe(44)
             }
             const retry = (await card.getByRole('button', { name: `重试附件：${imageName}` }).boundingBox())!
@@ -202,11 +194,10 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
       }
       await page.getByRole('button', { name: '选择模型', exact: true }).click()
       await expect(page.getByRole('listbox', { name: '模型选项' })).toBeFocused()
-      await page.getByRole('option', { name: '未确认图片能力的模型', exact: true }).click()
-      await expect(page.getByRole('status').filter({ hasText: '当前模型的图片能力未确认，请切换模型或移除图片' })).toBeVisible()
+      await page.getByRole('option', { name: '自定义模型', exact: true }).click()
       await expect(send).toBeDisabled()
       await page.getByRole('button', { name: '选择模型', exact: true }).click()
-      await page.getByRole('option', { name: '支持图片的模型', exact: true }).click()
+      await page.getByRole('option', { name: '视觉模型', exact: true }).click()
       await expect(page.getByRole('button', { name: '选择模型', exact: true })).toBeFocused()
       await expect(input).toHaveAccessibleDescription('')
       await expect(send).toHaveAccessibleDescription('')
@@ -235,16 +226,9 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
 }
 
 for (const locale of ['zh-CN', 'en'] as const) {
-  test(`已上传图片的模型受阻原因持续显示，切换模型或移除图片后恢复发送 ${locale}`, async ({ page }, testInfo) => {
+  test(`已上传图片可使用所选模型提交，失败保留正文与附件 ${locale}`, async ({ page }, testInfo) => {
     const english = locale === 'en'
-    const unsupported = english
-      ? 'This model does not support images. Switch models or remove the images'
-      : '当前模型不支持图片，请切换模型或移除图片'
-    const unknown = english
-      ? 'Image support for this model is unverified. Switch models or remove the images'
-      : '当前模型的图片能力未确认，请切换模型或移除图片'
-    let submissions = 0
-    await page.clock.install()
+    const submissions: string[] = []
     await page.addInitScript(({ user, locale }) => {
       localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user }))
       localStorage.setItem('tinkerfin:language', locale)
@@ -261,59 +245,55 @@ for (const locale of ['zh-CN', 'en'] as const) {
       else if (path === '/api/attachments/uploads') data = { attachment_id: 'ready-image', url: new URL('/objects/upload', url).href, fields: {}, expires_in: 600 }
       else if (path === '/objects/upload') { await route.fulfill({ status: 204 }); return }
       else if (path.endsWith('/complete')) data = { id: 'ready-image', name: imageName, mime_type: 'image/png', size_bytes: 3 }
-      else if (path === '/api/conversation/chat') { submissions += 1; await route.fulfill({ status: 422, json: { code: 422, message: '发送失败', data: null } }); return }
-      else if (route.request().method() === 'DELETE') data = null
+      else if (path === '/objects/ready-image') { await route.fulfill({ path: sample, contentType: 'image/png' }); return }
+      else if (path === '/api/conversation/chat') {
+        const payload = route.request().postDataJSON()
+        submissions.push(payload.forwardedProps.model)
+        expect(payload.messages[0].content).toEqual(expect.arrayContaining([
+          expect.objectContaining({ type: 'image', source: expect.objectContaining({ value: 'attachment:ready-image' }) }),
+        ]))
+        await route.fulfill({ status: 422, json: { code: 422, message: '发送失败', data: null } })
+        return
+      } else if (route.request().method() === 'DELETE') data = null
       await route.fulfill({ json: { code: 0, message: 'success', data } })
     })
+    await mockDownloadPermits(page)
     await page.goto('/')
     await expect(page.locator('html')).toHaveAttribute('lang', locale)
     const input = page.getByRole('textbox', { name: english ? 'Message input' : '消息输入' })
     const send = page.getByRole('button', { name: english ? 'Send message' : '发送消息', exact: true })
     const model = page.getByRole('button', { name: english ? 'Select model' : '选择模型', exact: true })
-    const notice = page.getByRole('status').filter({ hasText: unsupported })
     await input.fill('保留正文与附件')
     await page.locator('input[type=file]').setInputFiles({ name: imageName, mimeType: 'image/png', buffer: await readFile(sample) })
     const card = page.getByRole('group', { name: imageName, exact: true })
     await expect(card.getByRole('img', { name: imageName })).toBeVisible()
     await expect(card).not.toHaveAttribute('aria-busy')
-    await expect(notice).toBeVisible()
-    await page.clock.runFor(10_000)
-    await expect(notice).toBeVisible()
-    await expect(input).toHaveAccessibleDescription(unsupported)
-    await expect(send).toHaveAccessibleDescription(unsupported)
-    await expect(send).toBeDisabled()
-    await input.press('Enter')
-    expect(submissions).toBe(0)
-    await expect(model).toHaveCount(1)
-    await model.click()
-    await expect(page.getByRole('option')).toHaveText(modelCatalog.items.map(item => item.displayName))
-    await page.getByRole('option', { name: '未确认图片能力的模型', exact: true }).click()
-    await expect(send).toHaveAccessibleDescription(unknown)
-    await expect(send).toBeDisabled()
-    const unknownNotice = page.getByRole('status').filter({ hasText: unknown })
-    await expect(unknownNotice).toBeVisible()
+    for (const [index, candidate] of modelCatalog.items.entries()) {
+      await model.click()
+      await expect(page.getByRole('option')).toHaveText(modelCatalog.items.map(item => item.displayName))
+      await page.getByRole('option', { name: candidate.displayName, exact: true }).click()
+      await expect(send).toBeEnabled()
+      await expect(input).toHaveAccessibleDescription('')
+      await expect(send).toHaveAccessibleDescription('')
+      if (index === 1) await input.press('Enter')
+      else await send.click()
+      await expect.poll(() => submissions.length).toBe(index + 1)
+      expect(submissions[index]).toBe(candidate.modelId)
+      await expect(input).toHaveValue('保留正文与附件')
+      await expect(card).toBeVisible()
+      await expect(send).toBeEnabled()
+    }
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.setViewportSize({ width: 320, height: 960 })
     for (const theme of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme: theme })
-      await expect(unknownNotice).toBeInViewport()
+      await expect(card).toBeInViewport()
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-      await page.screenshot({ path: testInfo.outputPath(`image-notice-${locale}-${theme}-320.png`) })
+      await page.screenshot({ path: testInfo.outputPath(`image-draft-${locale}-${theme}-320.png`) })
     }
-    await model.click()
-    await page.getByRole('option', { name: '支持图片的模型', exact: true }).click()
-    await expect(unknownNotice).toHaveCount(0)
-    await expect(send).toBeEnabled()
-    await expect(input).toHaveValue('保留正文与附件')
-    await expect(card).toBeVisible()
-    await model.click()
-    await page.getByRole('option', { name: 'DeepSeek-V4-Flash', exact: true }).click()
-    await expect(notice).toBeVisible()
     await card.getByRole('button', { name: english ? `Remove attachment: ${imageName}` : `移除附件：${imageName}`, exact: true }).click()
-    await expect(notice).toHaveCount(0)
+    await expect(card).toHaveCount(0)
     await expect(send).toBeEnabled()
-    await expect(input).toHaveAccessibleDescription('')
-    await expect(send).toHaveAccessibleDescription('')
     await expect(input).toHaveValue('保留正文与附件')
   })
 }

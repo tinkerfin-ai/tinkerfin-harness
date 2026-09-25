@@ -36,54 +36,27 @@
   .settings-models__check:has(input:disabled) { opacity: .48; cursor: not-allowed; }
   .settings-models__advanced { min-width: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
   .settings-models__advanced > summary { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); min-height: var(--control-md); font-size: var(--type-meta-size); cursor: pointer; list-style: none; border-radius: var(--radius-button); }
-  .settings-models__advanced > summary::-webkit-details-marker, .settings-models__test-disclosure > summary::-webkit-details-marker { display: none; }
-  .settings-models__advanced > summary > small { color: var(--color-text-secondary); }
+  .settings-models__advanced > summary::-webkit-details-marker { display: none; }
   .settings-models__advanced > summary > svg { margin-left: auto; flex-shrink: 0; }
   .settings-models__advanced[open] > summary > svg { transform: rotate(180deg); }
   .settings-models__advanced-body { border-top: 1px solid var(--color-border-subtle); padding: var(--space-3); }
   .settings-models__hint { color: var(--color-text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line); margin-block: 0 var(--space-2); }
   .settings-models__error { color: var(--color-danger-text); font-size: var(--type-meta-size); margin-block: var(--space-2); }
   .model-options-editor { border: 0; border-radius: var(--radius-md); overflow: hidden; min-width: 0; background: var(--color-layer-1); }
-  .model-options-plain { display: block; box-sizing: border-box; width: 100%; min-height: calc(var(--space-12) * 3); margin-top: var(--space-2); padding: var(--space-2); resize: vertical; border: 0; border-radius: var(--radius-md); background: var(--color-layer-1); color: var(--color-text-primary); font-family: var(--font-code); font-size: var(--type-meta-size); font-weight: var(--weight-regular); line-height: var(--type-meta-line); }
-  .model-options-plain:hover, .model-options-plain:active { background: var(--color-layer-2); }
-  .model-options-plain:focus-visible { outline: none; background: var(--color-layer-2); }
-  .model-options-plain:disabled { opacity: .48; cursor: not-allowed; }
-  .settings-models__test-disclosure { margin-top: var(--space-5); border-top: 1px solid var(--color-border); }
-  .settings-models__test-disclosure > summary { display: flex; align-items: center; gap: var(--space-2); padding-block: var(--space-3); min-height: var(--control-md); cursor: pointer; font-size: var(--type-meta-size); list-style: none; }
-  .settings-models__test-disclosure > summary > svg:last-child { margin-left: auto; }
-  .settings-models__test-disclosure[open] > summary > svg:last-child { transform: rotate(180deg); }
-  .settings-models__advanced > summary:hover, .settings-models__test-disclosure > summary:hover { color: var(--color-text-primary); background: var(--color-hover); }
-  .settings-models__advanced > summary:active, .settings-models__test-disclosure > summary:active { background: var(--color-active); }
-  .settings-models__advanced > summary:focus-visible, .settings-models__test-disclosure > summary:focus-visible { outline: 1px solid var(--color-text-secondary); outline-offset: 0; }
-  .settings-models__test { padding-bottom: var(--space-3); }
-  .settings-models__test-row { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); padding-block: var(--space-2); }
-  .settings-models__test-row strong { font-size: var(--type-meta-size); font-weight: var(--weight-ui); }
-  .settings-models__test-row p { margin: 0; color: var(--color-text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
-  .settings-models__test-buttons { max-width:100%; display: flex; gap: var(--space-1); flex-shrink: 0; }
-  .settings-models__test-pending { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); font-size: var(--type-meta-size); }
-  .settings-models__test-result { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3); margin-top: var(--space-2); }
-  .settings-models__result-heading { display: flex; align-items: start; gap: var(--space-2); font-size: var(--type-meta-size); }
-  .settings-models__result-heading strong { flex: 1; font-weight: var(--weight-ui); }
-  .settings-models__result-heading > span { display: flex; align-items: center; gap: var(--space-1); font-size: var(--type-caption-size); color: var(--color-text-secondary); white-space: nowrap; }
-  .settings-models__test-result[data-outcome='success'] .settings-models__result-heading > svg { color: var(--color-success-text); }
-  .settings-models__test-result[data-outcome='failed'] .settings-models__result-heading > svg { color: var(--color-danger-text); }
-  .settings-models__test-result.is-stale { border-style: dashed; }
-  .settings-models__test-result.is-stale > p { font-size: var(--type-caption-size); }
-  .settings-models__test-reply { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--type-meta-size); margin-block: var(--space-2) 0; }
-  .settings-models__test-image { display: block; width: auto; max-width: 100%; max-height: calc(var(--space-12) * 5); object-fit: contain; margin-top: var(--space-3); border-radius: var(--radius-md); }
+  .settings-models__advanced > summary:hover { color: var(--color-text-primary); background: var(--color-hover); }
+  .settings-models__advanced > summary:active { background: var(--color-active); }
+  .settings-models__advanced > summary:focus-visible { outline: 1px solid var(--color-text-secondary); outline-offset: 0; }
   @media (max-width: 767px) {
     .settings-models__grid { grid-template-columns: minmax(0, 1fr); }
     .settings-models__row { flex-wrap: wrap; }
     .settings-models__identity { flex-basis: 55%; }
     .settings-models__row-actions { margin-left: auto; }
-    .settings-models__test-row { flex-wrap: wrap; }
-    .settings-models__test-buttons { flex-wrap: wrap; }
   }
   @media (pointer: coarse) {
     .settings-models .ui-text-field__control, .settings-models .settings-choice-trigger { min-height: var(--control-lg); }
     .settings-models .ui-button, .settings-models__purpose label, .settings-models__check, .settings-models__advanced > summary { min-height: var(--control-lg); min-width: var(--control-lg); }
   }
   @media (forced-colors: active) {
-    .model-options-editor:focus-within, .model-options-plain:focus-visible, .settings-models__purpose label.is-selected { outline: 1px solid Highlight; }
+    .model-options-editor:focus-within, .settings-models__purpose label.is-selected { outline: 1px solid Highlight; }
   }
 }

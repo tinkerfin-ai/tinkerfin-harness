@@ -23,9 +23,10 @@ an upstream version.
 detached finite `NativeStreamPart` used by Native SSE and Messaging. A replay codec must
 consume that model directly rather than parse the provider object again.
 
-The frame prevents reassignment of its fields. Its canonical envelope and borrowed
-messages remain mutable: consumers must treat them as read-only, and upstream changes
-can still affect the live objects. The detached replay representation does not follow
+The frame prevents reassignment of its fields. Its canonical envelope and messages
+remain mutable: consumers must treat them as read-only. Messages are borrowed unless
+normalization requires a copy, and input messages are never changed. Upstream changes
+can still affect borrowed objects; the detached replay representation does not follow
 those changes.
 
 `RuntimeInterruptEnvelope` defines the protocol-neutral JSON value emitted by Native

@@ -98,12 +98,17 @@ class _PendingInteraction:
 
 @dataclass(frozen=True, slots=True)
 class _SubagentDescriptor:
-    """Retain one proven Deep Agents task Tool to child-namespace relationship."""
+    """Retain one logical task relationship and the authority of its arguments.
+
+    Callback execution attempts belong to the Tool execution maps, not to this
+    request identity. A repeated attempt can retain the same Graph task and input.
+    """
 
     parent_tool_call_id: str
     parent_task_id: str
     agent_name: str
     description: str
+    input_source: Literal["proposal", "execution"] = "proposal"
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +118,7 @@ class _PendingToolExecution:
     input: JsonValue | None
     parent_call_id: str | None
     namespace: tuple[str, ...]
+    graph_task_id: str | None
     agent_name: str | None
     tool_name: str
     traced: bool
@@ -126,6 +132,23 @@ class _ContextAnchor:
 
     occurred_at: datetime
     monotonic_ns: int | None
+
+
+def _subagent_arguments(value: JsonValue | None) -> tuple[str, str] | None:
+    """Read the required Deep Agents task arguments from one observed call."""
+
+    if not isinstance(value, dict):
+        return None
+    description = value.get("description")
+    agent_name = value.get("subagent_type")
+    if (
+        not isinstance(description, str)
+        or not description
+        or not isinstance(agent_name, str)
+        or not agent_name
+    ):
+        return None
+    return agent_name, description
 
 
 class _TracingSession:
@@ -939,12 +962,14 @@ class _TracingSession:
                     input=observation.input if traced else None,
                     parent_call_id=parent_call_id,
                     namespace=observation.graph_namespace,
+                    graph_task_id=observation.graph_task_id,
                     agent_name=observation.agent_name,
                     tool_name=observation.tool_name,
                     traced=traced,
                     observed_at=observation.observed_at,
                     monotonic_ns=observation.monotonic_ns,
                 )
+                self._remember_subagent_execution(observation)
                 if not traced:
                     return []
                 self._callback_entries[observation.execution_id] = execution_id
@@ -975,6 +1000,7 @@ class _TracingSession:
                 raise TraceCorruption("Tool execution terminal has no matching start")
             if (
                 pending.namespace != observation.graph_namespace
+                or pending.graph_task_id != observation.graph_task_id
                 or pending.agent_name != observation.agent_name
                 or pending.tool_name != observation.tool_name
             ):
@@ -2262,12 +2288,11 @@ class _TracingSession:
         self,
         observation: NativeTaskObservation,
     ) -> None:
-        """Index verified Deep Agents task Tool inputs before child parts arrive.
+        """Index task proposals without depending on Native/callback arrival order.
 
-        Deep Agents 0.7.5 emits the parent ``tools`` task start before each child
-        namespace. The task input carries model Tool calls; only exact ``task`` calls
-        with the locked ``description`` and ``subagent_type`` fields establish public
-        subagent identity. Contract coverage mirrors the adapter provenance tests.
+        Deep Agents 0.7.13 supplies ``description`` and ``subagent_type`` for each
+        ``task`` call. Native task records establish the relationship for Native-only
+        sources; actual execution inputs take precedence after middleware edits.
         """
 
         if (
@@ -2288,15 +2313,10 @@ class _TracingSession:
                 or not isinstance(raw_args, dict)
             ):
                 continue
-            description = raw_args.get("description")
-            agent_name = raw_args.get("subagent_type")
-            if (
-                not isinstance(description, str)
-                or not description
-                or not isinstance(agent_name, str)
-                or not agent_name
-            ):
+            arguments = _subagent_arguments(raw_args)
+            if arguments is None:
                 continue
+            agent_name, description = arguments
             descriptors.append((raw_id, agent_name, description))
         multiple = len(descriptors) > 1
         for index, (tool_call_id, agent_name, description) in enumerate(descriptors):
@@ -2310,13 +2330,77 @@ class _TracingSession:
                 agent_name=agent_name,
                 description=description,
             )
-            existing = self._subagent_descriptors.get(namespace)
-            if existing is not None and existing != descriptor:
+            self._remember_subagent_descriptor(namespace, descriptor)
+
+    def _remember_subagent_execution(
+        self,
+        observation: ToolExecutionObservation,
+    ) -> None:
+        """Bind a child to its actual task execution before any child work starts.
+
+        The locked Deep Agents Send path gives each Tool its own Graph task. This
+        identity, its parent namespace, and exact Tool call ID distinguish parallel
+        delegates even when their arguments match. Neither callback parent IDs nor
+        the order in which Native parts are consumed proves this relationship.
+        """
+
+        if (
+            observation.tool_name != "task"
+            or observation.tool_call_id is None
+            or observation.graph_task_id is None
+        ):
+            return
+        arguments = _subagent_arguments(observation.input)
+        if arguments is None:
+            return
+        agent_name, description = arguments
+        self._remember_subagent_descriptor(
+            (*observation.graph_namespace, f"tools:{observation.graph_task_id}"),
+            _SubagentDescriptor(
+                parent_tool_call_id=observation.tool_call_id,
+                parent_task_id=observation.graph_task_id,
+                agent_name=agent_name,
+                description=description,
+                input_source="execution",
+            ),
+        )
+
+    def _remember_subagent_descriptor(
+        self, namespace: tuple[str, ...], descriptor: _SubagentDescriptor
+    ) -> None:
+        existing = self._subagent_descriptors.get(namespace)
+        if existing is not None and existing != descriptor:
+            if (
+                existing.parent_task_id != descriptor.parent_task_id
+                or existing.parent_tool_call_id != descriptor.parent_tool_call_id
+            ):
                 raise TraceCorruption(
-                    "Subagent parent task Tool changed before child execution"
+                    "Subagent Graph task changed its owning Tool call"
                 )
-            self._subagent_descriptors[namespace] = descriptor
-            self._subagent_task_descriptions[namespace] = description
+            if (
+                existing.input_source == "execution"
+                and descriptor.input_source == "proposal"
+            ):
+                # A queued Native proposal cannot replace post-middleware inputs.
+                return
+            if (
+                existing.input_source == "execution"
+                or descriptor.input_source == "proposal"
+            ):
+                raise TraceCorruption(
+                    "Subagent parent task Tool changed before execution"
+                )
+            if namespace in self._active_subagents and (
+                existing.agent_name != descriptor.agent_name
+                or existing.description != descriptor.description
+            ):
+                raise TraceCorruption(
+                    "Subagent execution inputs arrived after child work"
+                )
+            # A waiting child hydrated during resume retains its identity and input;
+            # attaching this Run's execution evidence does not change that request.
+        self._subagent_descriptors[namespace] = descriptor
+        self._subagent_task_descriptions[namespace] = descriptor.description
 
     def _subagent_completions(
         self,

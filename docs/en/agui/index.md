@@ -82,14 +82,16 @@ events = runtime.open_agui_run(
     run_id="request-2",
     resume=AgUiResumeRequest(entries=tuple(resume_entries)),
     parent_run_id=parent_run_id,
-    on_resume_saved=record_checkpoint_idempotently,
+    on_resume_saved=record_receipt_idempotently,
     on_resume_not_saved=release_claim_idempotently,
 )
 ```
 
-`on_resume_saved` may receive the same checkpoint evidence again after a retry and must
-be idempotent. `on_resume_not_saved` is used only when no durable resume marker exists.
-Cancelling the complete pending batch runs no reviewed tools.
+`on_resume_saved` receives an immutable `AgUiResumeReceipt` with the saved public
+responses. Retries deliver an equal receipt, so settlement must use its opaque
+`receipt_id` idempotently. `on_resume_not_saved` is used only when the request has not
+been durably saved. Cancelling the complete pending batch runs no reviewed tools and
+does not call `on_resume_saved`.
 
 ## Event identity
 

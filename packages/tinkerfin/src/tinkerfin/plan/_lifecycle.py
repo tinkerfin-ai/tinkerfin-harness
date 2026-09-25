@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any
+from typing import Any, cast
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -13,14 +13,13 @@ from langchain.agents.middleware.types import (
 )
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import BaseTool
 from langgraph.config import get_config
 from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
 from pydantic import BaseModel, JsonValue
 
 from ._config import PlanOptions
-from ._planner import planner_request_messages, planner_system_prompt
+from ._planner import planner_request_messages, planner_system_prompt, planner_tool_name
 from ._state import PlanningWorkflowNodeState, plan_state_update, read_plan_state
 from .errors import PlanModeConfigurationError, PlanStructuredOutputError
 from .models import PlanContentModel, PlanReviewAction, PlanState, PlanStatus
@@ -101,15 +100,9 @@ class PlanLifecycle(AgentMiddleware[PlanningWorkflowNodeState, ContextT, Any]):
         if not isinstance(run_id, str) or not run_id:
             raise PlanModeConfigurationError("Planning requires a run identity")
         same_run = state.get("_plan_run_id") == run_id
-        calls = state.get("_plan_model_calls", 0) if same_run else 0
-        if calls >= 6:
-            raise PlanStructuredOutputError(
-                "Planning did not produce a response within six model calls"
-            )
         return {
             **update,
             "_plan_run_id": run_id,
-            "_plan_model_calls": calls + 1,
             "_plan_format_corrections": state.get("_plan_format_corrections", 0)
             if same_run
             else 0,
@@ -123,19 +116,38 @@ class PlanLifecycle(AgentMiddleware[PlanningWorkflowNodeState, ContextT, Any]):
         current = read_plan_state(request.state, self._options.content)
         allowed = self._allowed_tools(current)
         selected = [
-            tool
-            for tool in request.tools
-            if (tool.name if isinstance(tool, BaseTool) else tool.get("name"))
-            in allowed
+            tool for tool in request.tools if planner_tool_name(tool) in allowed
         ]
+        instruction = planner_system_prompt(
+            self._options.clarification, self._options.content, current
+        )
+        system_message = request.system_message
+        if system_message is None:
+            system_message = SystemMessage(content=instruction)
+        else:
+            # Preserve provider-native media until final input projection. Core's
+            # content_blocks can change an inline file's declared MIME type.
+            content = system_message.content
+            blocks = (
+                [{"type": "text", "text": content}]
+                if isinstance(content, str)
+                else content
+            )
+            system_message = system_message.model_copy(
+                update={
+                    "content": cast(
+                        list[str | dict[str, Any]],
+                        [
+                            *blocks,
+                            {"type": "text", "text": f"\n\n{instruction}"},
+                        ],
+                    )
+                }
+            )
         return await handler(
             request.override(
                 tools=selected,
-                system_message=SystemMessage(
-                    content=planner_system_prompt(
-                        self._options.clarification, self._options.content, current
-                    )
-                ),
+                system_message=system_message,
                 messages=planner_request_messages(
                     request.messages, current, self._clarifications(current)
                 ),
@@ -216,12 +228,15 @@ class PlanLifecycle(AgentMiddleware[PlanningWorkflowNodeState, ContextT, Any]):
         self, state: PlanningWorkflowNodeState, runtime: Runtime[ContextT]
     ) -> dict[str, object] | None:
         # LangChain's return_direct Tool branch ends at after_agent (factory.py).
-        # Settle a completed read-only result without demanding another model call.
+        # Settle return_direct results and a host policy's visible final response.
         # This node also owns the stable handoff checkpoint update site.
         current = read_plan_state(state, self._options.content)
         if current.status is PlanStatus.PLANNING:
-            if not state["messages"] or not isinstance(
-                state["messages"][-1], ToolMessage
+            last = state["messages"][-1] if state["messages"] else None
+            if not isinstance(last, ToolMessage) and not (
+                isinstance(last, AIMessage)
+                and last.text.strip()
+                and not last.tool_calls
             ):
                 raise PlanStructuredOutputError(
                     "Planning ended without a completed response"

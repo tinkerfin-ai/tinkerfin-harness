@@ -20,7 +20,7 @@ from langgraph.types import interrupt
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
-from tinkerfin import AgUiResumeCheckpoint, AgUiResumeRequest, TinkerFin
+from tinkerfin import AgUiResumeReceipt, AgUiResumeRequest, TinkerFin
 from tinkerfin._agui_lineage_state import (
     LINEAGE_METADATA_KEY,
     RESUME_METADATA_KEY,
@@ -181,9 +181,9 @@ async def test_real_redis_scoped_checkpoints_resume_once(
                 ]
             }
         )
-        checkpoints: list[AgUiResumeCheckpoint] = []
+        checkpoints: list[AgUiResumeReceipt] = []
 
-        async def fail_after_staging(value: AgUiResumeCheckpoint) -> None:
+        async def fail_after_staging(value: AgUiResumeReceipt) -> None:
             checkpoints.append(value)
             raise RuntimeError("host settlement unavailable")
 
@@ -208,7 +208,7 @@ async def test_real_redis_scoped_checkpoints_resume_once(
             for _task_id, channel, _value in staged.pending_writes or ()
         )
 
-        async def checkpointed(value: AgUiResumeCheckpoint) -> None:
+        async def checkpointed(value: AgUiResumeReceipt) -> None:
             checkpoints.append(value)
 
         resumed_stream = runtime.open_agui_run(

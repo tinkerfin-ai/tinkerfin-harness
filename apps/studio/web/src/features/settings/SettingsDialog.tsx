@@ -84,7 +84,7 @@ export function SettingsDialog({
           <button type="button" className={`settings-nav__item${activeSection === 'models' ? ' is-selected' : ''}`} aria-current={activeSection === 'models' ? 'page' : undefined} onClick={() => setActiveSection('models')}><Cpu size={18} aria-hidden="true" />{t('模型配置')}</button>
         </nav>
         {activeSection === 'models' ? <div className="settings-models-host">
-          <ErrorBoundary onError={() => onToast('error', t('模型加载失败，请先重试'))} fallback={({ reset }) => <Button type="button" onClick={reset}>{t('重新加载模型')}</Button>}><ModelSettingsPanel onToast={onToast} onChanged={onModelsChanged} /></ErrorBoundary>
+          <ErrorBoundary onError={() => onToast('error', t('模型加载失败，请先重试'))} fallback={({ reset }) => <Button type="button" onClick={reset}>{t('重新加载模型')}</Button>}><ModelSettingsPanel onChanged={onModelsChanged} /></ErrorBoundary>
         </div> : <div
           ref={contentRef}
           className="settings-content ui-scrollbar"

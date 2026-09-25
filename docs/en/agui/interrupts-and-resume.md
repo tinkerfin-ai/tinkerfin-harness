@@ -88,10 +88,44 @@ Applications that settle business approvals can provide two asynchronous callbac
 
 | Parameter | When it runs |
 | --- | --- |
-| `on_resume_saved` | The request is durably saved; receives `AgUiResumeCheckpoint`, delivered again on retry |
+| `on_resume_saved` | The validated request is durably saved, before continuation; receives `AgUiResumeReceipt` |
 | `on_resume_not_saved` | The request failed or was cancelled before being saved; releases an application claim |
 
 Both callbacks must be idempotent. `on_resume_saved` confirms request persistence, not Tool success. Do not settle approvals from `RUN_STARTED`.
+
+The immutable receipt contains the bound `identity`, effective `parent_run_id`, an
+opaque `receipt_id`, and a tuple of `AgUiResumeResponse` values sorted by public
+`interrupt_id`. Each response contains only `interrupt_id` and `status`, without
+decision payloads. Equivalent retries, including reordered
+entries, deliver equal receipts. Cancelling the complete batch follows abandonment
+and does not call `on_resume_saved`.
+
+The host owns approval storage and permissions. Its settlement operation can consume
+the receipt directly, using `receipt_id` for deduplication and `responses` for the
+saved results:
+
+```python
+from tinkerfin import AgUiResumeReceipt
+
+async def record_saved(receipt: AgUiResumeReceipt) -> None:
+    await approval_repository.settle_resume(receipt=receipt)
+
+async with aclosing(
+    runtime.open_agui_run(
+        thread_id="conversation-1",
+        run_id="approval-1",
+        resume=AgUiResumeRequest(entries=tuple(resume_entries)),
+        on_resume_saved=record_saved,
+    )
+) as events:
+    async for event in events:
+        await send_event(event)
+```
+
+The framework validates and snapshots the submitted request, saves it, and awaits
+the callback before continuing. The callback does not need to retain client entries
+or reconstruct native decisions. If it fails, retry the same request; the saved
+receipt remains available and continuation waits for successful settlement.
 
 AG-UI does not accept a new review round when a custom Graph repeatedly interrupts within the same checkpoint/task. Put each round in a new Graph step. If another Native invocation leaves a global resume value, the framework rejects continuation to prevent it from answering an unapproved question.
 

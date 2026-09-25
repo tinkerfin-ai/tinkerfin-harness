@@ -767,3 +767,34 @@ async def test_channel_sse_closes_source_when_cursor_callback_fails(
     assert source.close_calls == 1
     assert not source.started.is_set()
     assert not_started == 1
+
+
+async def test_sse_construction_failure_retains_reader_cleanup_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failure = OSError("reader close failed")
+    subscribed = []
+    close = MessageSubscription.aclose
+
+    async def subscription_ready() -> None:
+        subscribed.append(True)
+
+    async def close_subscription(subscription: MessageSubscription[object]) -> None:
+        await close(subscription)
+        raise failure
+
+    async with Messaging() as messaging:
+        channel = messaging.channel(name="events", codec=_TextCodec())
+        with monkeypatch.context() as patch:
+            patch.setattr(MessageSubscription, "aclose", close_subscription)
+            with pytest.raises(SseRenderingUnsupported) as caught:
+                await channel.open_sse(
+                    _ControlledSource("committed"),
+                    identity=_identity(),
+                    after=0,
+                    on_subscribed=subscription_ready,
+                )
+        assert caught.value.__cause__ is failure
+        replay = await channel.follow(identity=_identity(), after=0)
+        assert [item.data async for item in replay] == ["committed"]
+    assert subscribed == [True]

@@ -1,4 +1,4 @@
-"""Durable resume checkpoint callback and retry contracts."""
+"""Durable resume receipt callback and retry contracts."""
 
 from __future__ import annotations
 
@@ -20,8 +20,9 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
 from tinkerfin import (
-    AgUiResumeCheckpoint,
+    AgUiResumeReceipt,
     AgUiResumeRequest,
+    AgUiResumeResponse,
     RunIdentity,
     TinkerFin,
 )
@@ -267,9 +268,9 @@ async def test_open_agui_run_reuses_one_graph_for_resume_resolution_and_executio
         thread_id=parent_identity.thread_id,
         run_id="run-resume",
     )
-    checkpoints: list[AgUiResumeCheckpoint] = []
+    checkpoints: list[AgUiResumeReceipt] = []
 
-    async def checkpointed(checkpoint: AgUiResumeCheckpoint) -> None:
+    async def checkpointed(checkpoint: AgUiResumeReceipt) -> None:
         checkpoints.append(checkpoint)
 
     resumed_stream = definition.open_agui_run(
@@ -578,7 +579,7 @@ async def test_open_agui_run_retains_marker_probe_across_repeated_cancellation(
 
 
 @pytest.mark.asyncio
-async def test_runtime_resolves_resume_from_checkpoint_decisions(
+async def test_saved_receipt_is_stable_after_rebuilding_and_reordering_decisions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     saver = MemorySaver()
@@ -676,9 +677,9 @@ async def test_runtime_resolves_resume_from_checkpoint_decisions(
     )
     binding = request
 
-    failed_checkpoints: list[AgUiResumeCheckpoint] = []
+    failed_checkpoints: list[AgUiResumeReceipt] = []
 
-    async def fail_after_staging(checkpoint: AgUiResumeCheckpoint) -> None:
+    async def fail_after_staging(checkpoint: AgUiResumeReceipt) -> None:
         failed_checkpoints.append(checkpoint)
         raise RuntimeError("host settlement unavailable")
 
@@ -698,13 +699,15 @@ async def test_runtime_resolves_resume_from_checkpoint_decisions(
     assert resumed == []
     assert len(failed_checkpoints) == 1
 
-    recovered = request
-    recovered_checkpoints: list[AgUiResumeCheckpoint] = []
+    recovered = AgUiResumeRequest(entries=tuple(reversed(request.entries)))
+    recovered_checkpoints: list[AgUiResumeReceipt] = []
 
-    async def checkpointed(checkpoint: AgUiResumeCheckpoint) -> None:
+    async def checkpointed(checkpoint: AgUiResumeReceipt) -> None:
         recovered_checkpoints.append(checkpoint)
 
-    resumed_runtime = definition
+    resumed_runtime = (
+        TinkerFin().with_namespace("test").build(model="provider:model", tools=[])
+    )
     resumed_events = [
         event
         async for event in resumed_runtime.open_agui_run(
@@ -717,12 +720,72 @@ async def test_runtime_resolves_resume_from_checkpoint_decisions(
 
     assert resumed_events[-1].type.value == "RUN_FINISHED"
     assert recovered_checkpoints == failed_checkpoints
+    assert recovered_checkpoints[0].identity == resume_identity
     assert recovered_checkpoints[0].parent_run_id == parent_identity.run_id
+    assert recovered_checkpoints[0].receipt_id
+    assert recovered_checkpoints[0].responses == tuple(
+        AgUiResumeResponse(interrupt_id=interrupt_id, status="resolved")
+        for interrupt_id in sorted(public_ids)
+    )
+    assert resumed == [{"decisions": [{"type": "approve"}, {"type": "approve"}]}]
+
+    completed_retry = [
+        event
+        async for event in resumed_runtime.open_agui_run(
+            thread_id=resume_identity.thread_id,
+            run_id=resume_identity.run_id,
+            resume=request,
+            on_resume_saved=checkpointed,
+        )
+    ]
+    assert completed_retry[-1].type.value == "RUN_FINISHED"
+    assert recovered_checkpoints == failed_checkpoints * 2
     assert resumed == [{"decisions": [{"type": "approve"}, {"type": "approve"}]}]
 
 
 @pytest.mark.asyncio
-async def test_checkpoint_callback_failure_retries_without_reexecuting_decision(
+async def test_resume_validation_and_receipt_use_the_submitted_request_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller mutation after opening cannot alter saved responses or execution."""
+
+    _saver, graphs, executions = _install_resume_graph(monkeypatch)
+    runtime = TinkerFin().with_namespace("test").build(model="provider:model", tools=[])
+    interrupt_id = await _create_interrupted_parent(runtime, graphs)
+    identity, request = _resume_request(interrupt_id)
+    receipts: list[AgUiResumeReceipt] = []
+
+    async def saved(receipt: AgUiResumeReceipt) -> None:
+        assert executions == []
+        receipts.append(receipt)
+
+    stream = runtime.open_agui_run(
+        thread_id=identity.thread_id,
+        run_id=identity.run_id,
+        parent_run_id="run-parent",
+        resume=request,
+        on_resume_saved=saved,
+    )
+    entry = request.entries[0]
+    assert isinstance(entry.payload, dict)
+    entry.payload["type"] = "reject"
+    entry.interrupt_id = "different-interrupt"
+    entry.status = "cancelled"
+    events = [event async for event in stream]
+
+    assert events[-1].type.value == "RUN_FINISHED"
+    assert stream.error is None
+    assert executions == [{"decisions": [{"type": "approve"}]}]
+    assert len(receipts) == 1
+    assert receipts[0].identity == identity
+    assert receipts[0].parent_run_id == "run-parent"
+    assert receipts[0].responses == (
+        AgUiResumeResponse(interrupt_id=interrupt_id, status="resolved"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_saved_callback_failure_retries_without_reexecuting_decision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     saver, graphs, executions = _install_resume_graph(monkeypatch)
@@ -731,14 +794,14 @@ async def test_checkpoint_callback_failure_retries_without_reexecuting_decision(
     )
     interrupt_id = await _create_interrupted_parent(definition, graphs)
     identity, binding = _resume_request(interrupt_id)
-    checkpoints: list[AgUiResumeCheckpoint] = []
+    checkpoints: list[AgUiResumeReceipt] = []
     initialization_releases = 0
 
     async def release_unprepared() -> None:
         nonlocal initialization_releases
         initialization_releases += 1
 
-    async def fail_after_recording(checkpoint: AgUiResumeCheckpoint) -> None:
+    async def fail_after_recording(checkpoint: AgUiResumeReceipt) -> None:
         checkpoints.append(checkpoint)
         raise RuntimeError("checkpoint observer unavailable")
 
@@ -764,7 +827,7 @@ async def test_checkpoint_callback_failure_retries_without_reexecuting_decision(
 
     trace: list[str] = []
 
-    async def checkpointed(checkpoint: AgUiResumeCheckpoint) -> None:
+    async def checkpointed(checkpoint: AgUiResumeReceipt) -> None:
         checkpoints.append(checkpoint)
         trace.append("checkpointed")
 
@@ -805,7 +868,7 @@ async def test_resume_staging_failure_releases_unprepared_host_claim_once(
     identity, binding = _resume_request(interrupt_id)
     original_stage = DeepAgentsV2RuntimeProfile.stage_resume_intent
     releases = 0
-    checkpoints: list[AgUiResumeCheckpoint] = []
+    checkpoints: list[AgUiResumeReceipt] = []
 
     async def fail_stage(
         _profile: DeepAgentsV2RuntimeProfile,
@@ -819,7 +882,7 @@ async def test_resume_staging_failure_releases_unprepared_host_claim_once(
         nonlocal releases
         releases += 1
 
-    async def checkpointed(checkpoint: AgUiResumeCheckpoint) -> None:
+    async def checkpointed(checkpoint: AgUiResumeReceipt) -> None:
         checkpoints.append(checkpoint)
 
     monkeypatch.setattr(DeepAgentsV2RuntimeProfile, "stage_resume_intent", fail_stage)
@@ -844,9 +907,9 @@ async def test_resume_staging_failure_releases_unprepared_host_claim_once(
         "stage_resume_intent",
         original_stage,
     )
-    retry_checkpoints: list[AgUiResumeCheckpoint] = []
+    retry_checkpoints: list[AgUiResumeReceipt] = []
 
-    async def retry_checkpointed(checkpoint: AgUiResumeCheckpoint) -> None:
+    async def retry_checkpointed(checkpoint: AgUiResumeReceipt) -> None:
         retry_checkpoints.append(checkpoint)
 
     retry = cast(Any, definition)
@@ -1039,7 +1102,7 @@ async def test_resume_graph_factory_failure_preserves_a_durable_retry_claim(
     interrupt_id = await _create_interrupted_parent(definition, graphs)
     identity, binding = _resume_request(interrupt_id)
 
-    async def fail_after_marker(_checkpoint: AgUiResumeCheckpoint) -> None:
+    async def fail_after_marker(_checkpoint: AgUiResumeReceipt) -> None:
         raise RuntimeError("host settlement unavailable")
 
     first = cast(Any, definition)
@@ -1144,10 +1207,10 @@ async def test_close_during_checkpoint_callback_keeps_exactly_once_marker(
     )
     interrupt_id = await _create_interrupted_parent(definition, graphs)
     identity, binding = _resume_request(interrupt_id)
-    checkpoints: list[AgUiResumeCheckpoint] = []
+    checkpoints: list[AgUiResumeReceipt] = []
     checkpoint_entered = asyncio.Event()
 
-    async def checkpointed(checkpoint: AgUiResumeCheckpoint) -> None:
+    async def checkpointed(checkpoint: AgUiResumeReceipt) -> None:
         checkpoints.append(checkpoint)
         checkpoint_entered.set()
         await asyncio.Event().wait()
@@ -1172,7 +1235,7 @@ async def test_close_during_checkpoint_callback_keeps_exactly_once_marker(
     await stream.aclose()
     assert executions == []
 
-    async def checkpoint_retry(checkpoint: AgUiResumeCheckpoint) -> None:
+    async def checkpoint_retry(checkpoint: AgUiResumeReceipt) -> None:
         checkpoints.append(checkpoint)
 
     retry = cast(Any, definition)
@@ -1207,7 +1270,7 @@ async def test_trace_resume_checkpoint_forces_before_user_callback_and_output(
     order.clear()
     identity, binding = _resume_request(interrupt_id)
 
-    async def checkpointed(_checkpoint: AgUiResumeCheckpoint) -> None:
+    async def checkpointed(_checkpoint: AgUiResumeReceipt) -> None:
         head = await NamespaceCheckpointer(saver, "test").aget_tuple(
             {"configurable": {"thread_id": identity.thread_id}}
         )

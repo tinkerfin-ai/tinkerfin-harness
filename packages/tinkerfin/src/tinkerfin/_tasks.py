@@ -7,11 +7,11 @@ from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Generic, TypeVar, cast
+from typing import Generic, TypeAlias, TypeVar, cast
 
 from anyio import to_thread
 
-from ._failure_evidence import retain_failure
+from ._failure_evidence import retain_failure, select_failure
 
 __all__ = ["join_task"]
 
@@ -163,6 +163,91 @@ class _TaskFailure:
     error: BaseException
 
 
+_OperationOutcome: TypeAlias = _TaskValue[_TaskResult] | _TaskFailure
+
+
+async def _capture_operation(
+    operation: Callable[[], Awaitable[_TaskResult]],
+) -> _OperationOutcome[_TaskResult]:
+    """Keep process control inside the owned task until a caller receives it."""
+
+    try:
+        return _TaskValue(await operation())
+    except BaseException as error:  # noqa: BLE001 - transport the original task outcome
+        return _TaskFailure(error)
+
+
+def _operation_result(outcome: _OperationOutcome[_TaskResult]) -> _TaskResult:
+    if isinstance(outcome, _TaskFailure):
+        raise outcome.error
+    return outcome.value
+
+
+def _cancel_operation_once(task: asyncio.Task[_OperationOutcome[_TaskResult]]) -> None:
+    if not task.done() and not task.cancelling():
+        task.cancel()
+
+
+async def _join_operation(
+    task: asyncio.Task[_OperationOutcome[_TaskResult]], *, cancel_on_interrupt: bool
+) -> _TaskResult:
+    """Wait for accepted work without cancelling the caller or its later work.
+
+    Args:
+        task: One operation owned by the stream, never a borrowed consumer task.
+        cancel_on_interrupt: Cancel private work once when its waiting caller is
+            cancelled. Retained cleanup tasks use False and always finish.
+
+    Returns:
+        The operation result after its own cleanup has settled.
+
+    Raises:
+        BaseException: Original operation failure or caller cancellation, with
+            concurrent failures preserved and process control taking priority.
+    """
+
+    cancellation: asyncio.CancelledError | None = None
+    cancel_handle: asyncio.Handle | None = None
+    try:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+                if cancel_on_interrupt and cancel_handle is None and not task.done():
+                    # Enter capture before delivering cancellation, including when
+                    # the waiter was cancelled before the child task's first step.
+                    cancel_handle = asyncio.get_running_loop().call_soon(
+                        _cancel_operation_once, task
+                    )
+        outcome = task.result()
+    finally:
+        if cancel_handle is not None:
+            cancel_handle.cancel()
+    if cancellation is not None:
+        if isinstance(outcome, _TaskFailure):
+            raise select_failure(cancellation, outcome.error)
+        raise cancellation
+    return _operation_result(outcome)
+
+
+async def stop_operation(task: asyncio.Task[_OperationOutcome[_TaskResult]]) -> None:
+    """Cancel accepted work once while retaining independent close-caller failure."""
+
+    cancel_handle = asyncio.get_running_loop().call_soon(_cancel_operation_once, task)
+    try:
+        await _join_operation(task, cancel_on_interrupt=False)
+    except asyncio.CancelledError as error:
+        outcome = task.result()
+        if not isinstance(outcome, _TaskFailure) or outcome.error is not error:
+            raise
+        # The active pull's waiter receives this exact captured cancellation,
+        # including its causes. A closer must not turn it into a second failed
+        # cleanup; only cancellation of this independent closer propagates here.
+    finally:
+        cancel_handle.cancel()
+
+
 async def run_sync_owned(operation: Callable[[], _TaskResult]) -> _TaskResult:
     """Run bounded synchronous preparation and join its worker before cancellation.
 
@@ -200,13 +285,7 @@ async def run_async_owned(
             over concurrent caller cancellation.
     """
 
-    async def work() -> _TaskValue[_TaskResult] | _TaskFailure:
-        try:
-            return _TaskValue(await operation())
-        except BaseException as error:  # noqa: BLE001 - deliver control through the owning task
-            return _TaskFailure(error)
-
-    task = asyncio.create_task(work(), name=task_name)
+    task = asyncio.create_task(_capture_operation(operation), name=task_name)
     try:
         outcome = await join_task(task)
     except asyncio.CancelledError as cancellation:

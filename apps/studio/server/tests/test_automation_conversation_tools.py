@@ -153,8 +153,6 @@ async def test_conversation_commands_preserve_saved_configuration_and_replay(
             "credentials",
             "input",
         }.intersection(properties)
-    assert tools["get_automation"].metadata == {"read_only": True}
-    assert tools["list_automations"].metadata == {"read_only": True}
     create = {**creation(), "runtime": call_runtime()}
     task = json.loads(await tools["create_automation"].ainvoke(create))
     replay = json.loads(await tools["create_automation"].ainvoke(create))
@@ -355,17 +353,17 @@ async def test_other_users_cannot_query_or_delete_conversation_tasks(
 
 
 @pytest.mark.parametrize("mode", ["plan", "delegated"])
-async def test_plan_and_default_subagent_cannot_create_tasks(
+async def test_automation_management_is_bound_to_main_roles(
     automation_resources, monkeypatch, mode
 ):
     messages: list[BaseMessage] = [
         AIMessage(
             content="",
             tool_calls=[
-                {"name": "create_automation", "args": creation(), "id": "forbidden"}
+                {"name": "create_automation", "args": creation(), "id": "create"}
             ],
         ),
-        AIMessage(content="由主对话在执行模式管理任务"),
+        AIMessage(content="自动化管理请求已处理"),
     ]
     if mode == "delegated":
         messages.insert(
@@ -404,12 +402,13 @@ async def test_plan_and_default_subagent_cannot_create_tasks(
     )
     _ = [event async for event in stream]
     assert stream.error is None, repr(stream.error)
-    assert not (
-        await StudioAutomationService(automation_resources, user_id=1).list_tasks()
-    ).items
-    assert any("create_automation" not in names for names in model.seen_tools)
+    tasks = await StudioAutomationService(automation_resources, user_id=1).list_tasks()
     if mode == "plan":
-        assert all("create_automation" not in names for names in model.seen_tools)
+        assert len(tasks.items) == 1
+        assert all("create_automation" in names for names in model.seen_tools)
+    else:
+        assert tasks.items == []
+        assert any("create_automation" not in names for names in model.seen_tools)
 
 
 async def test_checkpoint_resume_replays_a_committed_tool_without_another_task(

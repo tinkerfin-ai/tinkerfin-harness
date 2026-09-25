@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import inspect
+from dataclasses import FrozenInstanceError, fields
 
+import pytest
 from pydantic import BaseModel
 
 import tinkerfin
@@ -11,25 +13,55 @@ import tinkerfin_agui_adapter
 from tinkerfin import (
     AgentRuntime,
     AgUiResumeBinding,
-    AgUiResumeCheckpoint,
+    AgUiResumeReceipt,
+    AgUiResumeResponse,
+    RunIdentity,
 )
 
 
-def test_target_public_surface_removes_context_and_exposes_checkpoint_semantics() -> (
-    None
-):
-    """Expose one canonical identity and checkpoint-specific resume types."""
+def test_target_public_surface_exposes_saved_resume_receipts() -> None:
+    """Expose one canonical identity and saved public response summaries."""
 
     assert "AgUiRunContext" not in tinkerfin_agui_adapter.__all__
     assert not hasattr(tinkerfin_agui_adapter, "AgUiRunContext")
     assert "AgUiResumeSettlement" not in tinkerfin.__all__
     assert "AgUiResumeSettlementObserver" not in tinkerfin.__all__
-    assert "AgUiResumeCheckpoint" in tinkerfin.__all__
-    assert "AgUiResumeCheckpointObserver" in tinkerfin.__all__
+    assert "AgUiResumeCheckpoint" not in tinkerfin.__all__
+    assert not hasattr(tinkerfin, "AgUiResumeCheckpoint")
+    assert "AgUiResumeCheckpointObserver" not in tinkerfin.__all__
+    assert not hasattr(tinkerfin, "AgUiResumeCheckpointObserver")
+    assert "AgUiResumeReceipt" in tinkerfin.__all__
+    assert "AgUiResumeReceiptObserver" in tinkerfin.__all__
+    assert "AgUiResumeResponse" in tinkerfin.__all__
     assert "AgUiResumeNotSavedObserver" in tinkerfin.__all__
     assert "AgentRuntime" in tinkerfin.__all__
-    assert AgUiResumeCheckpoint is not None
+    assert AgUiResumeReceipt is not None
     assert AgentRuntime is not None
+
+
+def test_saved_receipt_contains_immutable_public_response_summaries() -> None:
+    """A receipt contains only bound identity, an opaque ID, and public responses."""
+
+    response = AgUiResumeResponse(interrupt_id="public-interrupt", status="resolved")
+    receipt = AgUiResumeReceipt(
+        identity=RunIdentity(namespace="test", thread_id="thread", run_id="run"),
+        parent_run_id="parent",
+        receipt_id="opaque-receipt",
+        responses=(response,),
+    )
+
+    assert {field.name for field in fields(receipt)} == {
+        "identity",
+        "parent_run_id",
+        "receipt_id",
+        "responses",
+    }
+    assert {field.name for field in fields(response)} == {"interrupt_id", "status"}
+    assert isinstance(receipt.responses, tuple)
+    with pytest.raises(FrozenInstanceError):
+        setattr(receipt, "receipt_id", "changed")
+    with pytest.raises(FrozenInstanceError):
+        setattr(response, "status", "cancelled")
 
 
 def test_execution_signature_has_no_protocol_input_or_settlement_callback() -> None:

@@ -64,9 +64,13 @@ Use channel callbacks for host delivery state:
 body = await channel.open_sse(
     source,
     on_source_ready=activate_business_run,
+    on_subscribed=refresh_delivery_state,
     on_delivery_not_started=cleanup_business_run,
 )
 ```
+
+`on_subscribed` runs for each successful subscription, including attachments, before
+the response body is returned. Failure closes that reader without cancelling the run.
 
 Source-owned `on_owner_preflight` is a separate advanced hook for preparing the source
 itself. It is not a second name for host activation.

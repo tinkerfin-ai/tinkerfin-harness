@@ -60,7 +60,7 @@ const MODEL_CATALOG: AgentModelCatalog = {
   items: [{
     modelId: 'main',
     displayName: 'Main Model',
-    connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, imageSupport: 'unknown',
+    connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false,
     isDefault: true,
   }],
   defaultModelId: 'main',
@@ -629,13 +629,13 @@ describe('Studio Trace history integration', () => {
     expect(screen.queryByText('对话运行失败')).not.toBeInTheDocument()
   })
 
-  it('重试较早问题会追加新一轮，保留草稿、原失败及附件且只提交一次', async () => {
+  it('重试较早图片问题会追加新一轮，保留草稿、原失败及附件且只提交一次', async () => {
     const user = userEvent.setup()
-    const attachment = { id: 'original-document', name: '说明.txt', mime_type: 'text/plain', size_bytes: 12 }
+    const attachment = { id: 'original-image', name: '说明.png', mime_type: 'image/png', size_bytes: 12 }
     const original = traceDetail().messages[0]!
     const source = traceDetail({
       messages: [
-        { ...original, id: 'failed-question', role: 'user', runId: 'old-failed', content: [{ type: 'text', text: '原问题' }, { type: 'document', source: { type: 'url', value: 'attachment:original-document', mimeType: 'text/plain' }, metadata: attachment }] },
+        { ...original, id: 'failed-question', role: 'user', runId: 'old-failed', content: [{ type: 'text', text: '原问题' }, { type: 'image', source: { type: 'url', value: 'attachment:original-image', mimeType: 'image/png' }, metadata: attachment }] },
         { ...original, id: 'later-question', role: 'user', content: '后来的问题' },
         { ...original, id: 'later-answer', content: '后来的回答' },
       ],

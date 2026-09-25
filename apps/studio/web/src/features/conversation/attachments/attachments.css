@@ -247,7 +247,6 @@
   .attachment-file-icon[data-file-kind='code'] { --attachment-file-color: var(--color-file-code); }
   .attachment-file-icon[data-file-kind='image'] { --attachment-file-color: var(--color-file-image); }
   .attachment-file-icon[data-file-kind='unknown'] { --attachment-file-color: var(--color-file-unknown); }
-  .attachment-document-summary,
   .attachment-document-preview {
     display: flex;
     align-items: center;
@@ -798,7 +797,6 @@
   }
   .composer-attachment-actions .ui-button {
     --button-control-size: var(--space-6);
-    /* 附件操作在触屏沿用紧凑宽度，高度仍保留触控空间 */
     min-width: var(--button-control-size);
   }
   .composer-attachment-name-text {
@@ -905,11 +903,9 @@
       height: var(--control-lg);
     }
     .composer-attachment .ui-button {
+      min-width: var(--control-lg);
       min-height: var(--control-lg);
       height: var(--control-lg);
-    }
-    .composer-attachment .composer-attachment-name {
-      min-width: var(--control-lg);
     }
     .composer-attachment {
       height: auto;

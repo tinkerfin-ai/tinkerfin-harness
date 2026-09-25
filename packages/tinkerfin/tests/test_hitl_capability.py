@@ -22,7 +22,13 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
-from tinkerfin import AgUiResumeRequest, TinkerFin, TinkerFinLifecycleError
+from tinkerfin import (
+    AgUiResumeReceipt,
+    AgUiResumeRequest,
+    AgUiResumeResponse,
+    TinkerFin,
+    TinkerFinLifecycleError,
+)
 from tinkerfin.deep_agent import create_graph
 from tinkerfin_agui_adapter import AttachmentMessagesSnapshotEvent
 from tinkerfin_contracts import RunTerminalObservation
@@ -621,8 +627,15 @@ async def test_nested_graph_cancellation_checks_only_its_actual_owner(
     terminal = events[-1]
     assert isinstance(terminal, RunFinishedEvent)
     assert isinstance(terminal.outcome, RunFinishedInterruptOutcome)
+    receipts: list[AgUiResumeReceipt] = []
+
+    async def saved(receipt: AgUiResumeReceipt) -> None:
+        assert not executed and not received
+        receipts.append(receipt)
+
+    request = _request(terminal.outcome, decision)
     resumed = runtime.open_agui_run(
-        thread_id="thread", run_id="resume", resume=_request(terminal.outcome, decision)
+        thread_id="thread", run_id="resume", resume=request, on_resume_saved=saved
     )
     result = [event async for event in resumed]
     if decision == "mixed" and nested_kind != "completed":
@@ -630,15 +643,24 @@ async def test_nested_graph_cancellation_checks_only_its_actual_owner(
         assert "tool review support" in str(resumed.error)
         assert isinstance(result[-1], RunErrorEvent)
         assert not executed and not received
+        assert receipts == []
     elif decision == "abandon":
         assert isinstance(result[-1], RunErrorEvent)
         assert result[-1].code == "resume_cancelled"
         assert not executed and not received
+        assert receipts == []
     else:
         assert resumed.error is None
         assert isinstance(result[-1], RunFinishedEvent)
         assert result[-1].outcome is not None
         assert result[-1].outcome.type == "success"
+        assert len(receipts) == 1
+        assert receipts[0].identity == runtime.run_identity("thread", "resume")
+        assert receipts[0].parent_run_id == "initial"
+        assert receipts[0].responses == tuple(
+            AgUiResumeResponse(entry.interrupt_id, entry.status)
+            for entry in sorted(request.entries, key=lambda entry: entry.interrupt_id)
+        )
         if nested_kind == "inherited":
             assert received == [
                 {"decisions": [{"type": "approve"}, {"type": "approve"}]}
