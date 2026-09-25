@@ -951,7 +951,7 @@ const contrastRatios = async (page: Page, selector: string) => page.locator(sele
   }
   return elements.map((element) => {
     const foreground = luminance(getComputedStyle(element).color)
-    const background = luminance(getComputedStyle(element.parentElement!).backgroundColor)
+    const background = luminance(getComputedStyle(element).backgroundColor)
     return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05)
   })
 })
@@ -2463,7 +2463,7 @@ test('无参工具直接显示输出，有参工具的空对象仍可查看', as
   await expect(fileOnly.locator('summary')).toHaveCount(0)
   await expect(fileOnly.getByRole('region')).toHaveCount(0)
   await expect(page.getByText('report.txt', { exact: true })).toBeVisible()
-  await expect(read.getByRole('region', { name: '输入', exact: true })).toHaveText('输入{}')
+  await expect(read.getByRole('region', { name: '输入', exact: true })).toHaveText('{}')
   for (const row of [list, compact, nested]) {
     await expect(row.getByText('输入', { exact: true })).toHaveCount(0)
     const output = row.getByRole('region', { name: '输出', exact: true })
@@ -2486,7 +2486,16 @@ test('无参工具直接显示输出，有参工具的空对象仍可查看', as
       const closeNavigation = page.getByRole('button', { name: '关闭导航', exact: true })
       if (await closeNavigation.isVisible()) await closeNavigation.click()
       await list.scrollIntoViewIfNeeded()
-      await expect(list.getByRole('region', { name: '输出', exact: true })).toBeInViewport()
+      const output = list.getByRole('region', { name: '输出', exact: true })
+      await expect(output).toBeInViewport()
+      if (width >= 1024) {
+        const insets = await output.getByText('[]', { exact: true }).evaluate(element => {
+          const content = element.getBoundingClientRect()
+          const section = element.closest('[role="region"]')!.getBoundingClientRect()
+          return { top: content.top - section.top, bottom: section.bottom - content.bottom }
+        })
+        expect(Math.abs(insets.top - insets.bottom)).toBeLessThanOrEqual(1)
+      }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
       await page.screenshot({ path: testInfo.outputPath(`no-input-tools-${theme}-${width}.png`) })
       await fileOnly.scrollIntoViewIfNeeded()
@@ -3047,14 +3056,9 @@ test('运行中 SubAgent 与普通 Tool 共用扫光且标题保持稳定', asyn
   await toolHeader.click()
   const openToolSections = page.locator('.tool-detail-section:visible')
   await expect(openToolSections).toHaveCount(4)
-  const sharedAlignment = await openToolSections.evaluateAll((sections) => sections.map((section) => ({
-    alignItems: getComputedStyle(section).alignItems,
-    labelAlignSelf: getComputedStyle(section.children[0]).alignSelf,
-  })))
-  expect(sharedAlignment).toEqual(Array.from({ length: 4 }, () => ({
-    alignItems: 'baseline',
-    labelAlignSelf: 'baseline',
-  })))
+  const sharedAlignment = await openToolSections.evaluateAll(sections => sections.map(section =>
+    Math.abs(section.children[0].getBoundingClientRect().top - section.children[1].getBoundingClientRect().top)))
+  expect(sharedAlignment.every(delta => delta <= 1)).toBe(true)
 })
 
 test('搜索会话点击后保持标准输入高度且不显示容器描边', async ({ page }) => {

@@ -9,7 +9,7 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react'
-import { memo, useEffect, useId, useRef, useState, type Ref } from 'react'
+import { memo, useEffect, useId, useMemo, useRef, useState, type Ref } from 'react'
 
 import { IconButton } from '../../../components/ui'
 import type { Message } from '../../../types'
@@ -56,6 +56,23 @@ function RichField({ value, status, className = 'tool-rich-field', contentRef }:
     : <PlaceholderField status={status} />
 }
 
+function ToolResultField({ value, status }: { value?: string; status?: MessageStatus }) {
+  const formatted = useMemo(() => {
+    if (!value || status === 'running') return null
+    const first = value.trimStart()[0]
+    if (first !== '{' && first !== '[') return null
+    try {
+      const parsed: unknown = JSON.parse(value)
+      return parsed !== null && typeof parsed === 'object' ? JSON.stringify(parsed, null, 2) : null
+    } catch {
+      return null
+    }
+  }, [value, status])
+  return formatted !== null
+    ? <CodeField value={formatted} status={status} />
+    : <RichField value={value} status={status} />
+}
+
 function shouldHideToolInput(message: Message): boolean {
   const toolName = message.meta?.toolName?.trim()
   if (toolName !== 'list_attachments' && toolName !== 'compact_conversation') return false
@@ -88,15 +105,19 @@ function ToolDetails({ message, visible }: { message: Message; visible: boolean 
   })
   return (
     <div className="tool-detail-card">
-      {showInput && <div ref={viewportRef} className="tool-detail-section tool-detail-section--params" role="region" aria-labelledby={inputLabelId} tabIndex={0}>
+      {showInput && <div className="tool-detail-section tool-detail-section--params">
         <span id={inputLabelId} className="tool-field-label">{t('输入')}</span>
-        <CodeField contentRef={contentRef} value={message.meta?.params} status={message.meta?.status} />
+        <div ref={viewportRef} className="tool-detail-viewport" role="region" aria-labelledby={inputLabelId} tabIndex={0}>
+          <CodeField contentRef={contentRef} value={message.meta?.params} status={message.meta?.status} />
+        </div>
       </div>}
       {showInput && showOutput && <span className="tool-detail-divider" aria-hidden="true" />}
       {showOutput &&
-        <div className="tool-detail-section tool-detail-section--result" role="region" aria-labelledby={outputLabelId} tabIndex={0}>
+        <div className="tool-detail-section tool-detail-section--result">
           <span id={outputLabelId} className="tool-field-label">{t('输出')}</span>
-          <RichField value={message.meta?.result} status={message.meta?.status} />
+          <div className="tool-detail-viewport" role="region" aria-labelledby={outputLabelId} tabIndex={0}>
+            <ToolResultField value={message.meta?.result} status={message.meta?.status} />
+          </div>
         </div>
       }
     </div>

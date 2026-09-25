@@ -41,7 +41,7 @@ afterEach(() => {
 describe('工具卡片流式阅读', () => {
   it('运行中的输入参数展开及追加后显示底部', () => {
     const { rerender } = render(<MessageBlock message={tool} />)
-    const input = screen.getByText('输入').parentElement!
+    const input = screen.getByRole('region', { name: '输入', hidden: true })
     geometry(input, 500)
     expand('Read')
     expect(input.scrollTop).toBe(350)
@@ -66,20 +66,20 @@ describe('工具卡片流式阅读', () => {
   it('同批次新增第二个工具时保留首个工具的展开和阅读位置', () => {
     const { rerender } = render(<ToolCallBatch messages={[tool]} />)
     expand('Read')
-    const input = screen.getByText('输入').parentElement!
+    const input = screen.getByRole('region', { name: '输入', hidden: true })
     geometry(input, 500)
     act(() => { input.scrollTop = 120 })
     fireEvent.scroll(input)
 
     rerender(<ToolCallBatch messages={[tool, { ...tool, id: 'second-tool', meta: { toolName: 'ls', status: 'running' } }]} />)
     expect(screen.getByText('Read').closest('details')).toHaveAttribute('open')
-    expect(screen.getAllByText('输入')[0].parentElement!.scrollTop).toBe(120)
+    expect(screen.getAllByRole('region', { name: '输入', hidden: true })[0].scrollTop).toBe(120)
   })
 
   it('嵌套工具在父卡片折叠期间保留自己的阅读位置', () => {
     const { rerender } = render(<MessageBlock message={subagent} childTools={[tool]} />)
     expand('SubAgent')
-    const input = screen.getByText('输入').parentElement!
+    const input = screen.getByRole('region', { name: '输入', hidden: true })
     geometry(input, 500)
     expand('Read')
     expect(input.scrollTop).toBe(350)
@@ -98,8 +98,8 @@ describe('工具卡片流式阅读', () => {
 
   it.each(['completed', 'failed', 'cancelled', 'paused'] as const)('工具 %s 时最后参数仍跟随，完整结果从顶部阅读', (status) => {
     const { rerender } = render(<MessageBlock message={tool} />)
-    const input = screen.getByText('输入').parentElement!
-    const output = screen.getByText('输出').parentElement!
+    const input = screen.getByRole('region', { name: '输入', hidden: true })
+    const output = screen.getByRole('region', { name: '输出', hidden: true })
     geometry(input, 500)
     geometry(output, 800)
     expand('Read')

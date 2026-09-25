@@ -247,19 +247,16 @@ describe('MessageBlock subagent card', () => {
     expect(detailSections).toHaveLength(2)
     expect(detailSections[0]).toHaveClass('tool-detail-section--params')
     expect(detailSections[1]).toHaveClass('tool-detail-section--result')
+    expect(screen.getByRole('region', { name: '输入' })).not.toContainElement(screen.getByText('输入'))
+    expect(screen.getByRole('region', { name: '输出' })).not.toContainElement(screen.getByText('输出'))
     expect(row.querySelector('.tool-code-field')).toHaveTextContent('{"query":"Lang')
     expect(screen.getByText('输入')).toBeInTheDocument()
     expect(screen.getByText('输出')).toBeInTheDocument()
     expect(screen.getByLabelText('工具字段加载中')).toHaveClass('tool-field-pending')
     expect(row.querySelector('.tool-skeleton')).toBeNull()
     expect(conversationStyles).toMatch(/\.tool-detail-card\s*\{[^}]*margin:\s*var\(--space-2\) 0 0 calc\(var\(--icon-sm\) \+ var\(--space-2\)\);[^}]*background:\s*var\(--color-layer-1\);[^}]*font-family:\s*var\(--font-ui\);/s)
-    expect(conversationStyles).toMatch(/\.tool-detail-section\s*\{[^}]*grid-template-columns:\s*calc\(var\(--space-12\) \+ var\(--space-2\)\) minmax\(0, 1fr\);[^}]*column-gap:\s*var\(--space-4\);[^}]*align-items:\s*baseline;[^}]*max-height:\s*150px;/s)
-    expect(conversationStyles).toMatch(/\.tool-detail-section--params\s*\{[^}]*background:\s*var\(--color-layer-2\);/s)
-    expect(conversationStyles).toMatch(/\.tool-detail-section--result\s*\{[^}]*background:\s*var\(--color-layer-1\);/s)
     expect(conversationStyles).toMatch(/\.tool-code-field,[\s\S]*\.tool-rich-field\s*\{[^}]*font-family:\s*var\(--font-code\);[^}]*font-size:\s*var\(--type-caption-size\);/s)
-    expect(conversationStyles).toMatch(/\.tool-field-label\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0;[^}]*align-self:\s*baseline;/s)
     expect(conversationStyles).toMatch(/\.tool-field-pending > i\s*\{[^}]*animation:\s*conversation-tool-result-pulse var\(--motion-tool-result-cycle\)/s)
-    expect(conversationStyles).toMatch(/@container conversation \(max-width:\s*440px\)[\s\S]*\.tool-detail-card\s*\{[^}]*margin-left:\s*0;[^}]*\}[\s\S]*\.tool-detail-section\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[^}]*row-gap:\s*var\(--space-1-5\);/s)
 
     rerender(<MessageBlock message={{
       ...running,
@@ -467,6 +464,25 @@ describe('MessageBlock subagent card', () => {
 })
 
 describe('无参工具详情', () => {
+  it('完整 JSON 输出按原字段生成可阅读的多行代码，其他输出保留 Markdown', () => {
+    const message: Message = {
+      ...childTool,
+      meta: { ...childTool.meta, result: '{"file_path":"/artifact.pptx","size_bytes":38604}', status: 'completed' },
+    }
+    const { container, rerender } = render(<MessageBlock message={message} />)
+    fireEvent.click(container.querySelector('summary')!)
+    const output = screen.getByRole('region', { name: '输出' })
+    expect(output.querySelector('pre code')).toHaveAttribute('data-language', 'json')
+    expect(output.querySelector('pre')?.textContent).toBe('{\n  "file_path": "/artifact.pptx",\n  "size_bytes": 38604\n}')
+
+    rerender(<MessageBlock message={{ ...message, meta: { ...message.meta, result: '[{"name":"报告"}]' } }} />)
+    expect(output.querySelector('pre')?.textContent).toBe('[\n  {\n    "name": "报告"\n  }\n]')
+
+    rerender(<MessageBlock message={{ ...message, meta: { ...message.meta, result: '查看[报告](https://example.com)' } }} />)
+    expect(output.querySelector('pre')).toBeNull()
+    expect(within(output).getByRole('link', { name: '报告' })).toHaveAttribute('href', 'https://example.com')
+  })
+
   it.each([
     ['list_attachments', '{}'],
     ['compact_conversation', ' {\n } '],

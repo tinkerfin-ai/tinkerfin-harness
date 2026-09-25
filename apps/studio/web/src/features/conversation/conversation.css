@@ -697,38 +697,40 @@
 
   .tool-detail-section {
     display: grid;
-    grid-template-columns: calc(var(--space-12) + var(--space-2)) minmax(0, 1fr);
-    column-gap: var(--space-4);
-    align-items: baseline;
+    grid-template-columns: calc(var(--space-12) + var(--space-2) + var(--space-4)) minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .tool-detail-viewport {
+    min-width: 0;
     max-height: 150px;
     padding: calc(var(--space-3) + var(--space-0-5)) var(--space-4);
     overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--color-layer-1);
     scrollbar-width: thin;
     scrollbar-color: var(--color-scroll-thumb) transparent;
   }
 
-  .tool-detail-section--params { background: var(--color-layer-2); }
-  .tool-detail-section--result { background: var(--color-layer-1); }
-
-  .tool-detail-section,
+  .tool-detail-viewport,
   .subagent-trace-output { overflow-anchor: none; }
 
-  .tool-detail-section:focus-visible,
+  .tool-detail-viewport:focus-visible,
   .subagent-trace-output:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: -2px;
   }
 
-  .tool-detail-section::-webkit-scrollbar { width: var(--space-2); height: var(--space-2); }
+  .tool-detail-viewport::-webkit-scrollbar { width: var(--space-2); height: var(--space-2); }
 
-  .tool-detail-section::-webkit-scrollbar-thumb {
+  .tool-detail-viewport::-webkit-scrollbar-thumb {
     border: 2px solid transparent;
     border-radius: var(--radius-pill);
     background: var(--color-scroll-thumb);
     background-clip: padding-box;
   }
 
-  .tool-detail-section::-webkit-scrollbar-track { margin: var(--space-1-5) 0; }
+  .tool-detail-viewport::-webkit-scrollbar-track { margin: var(--space-1-5) 0; }
 
   .tool-detail-divider {
     height: 1px;
@@ -737,9 +739,8 @@
   }
 
   .tool-field-label {
-    position: sticky;
-    top: 0;
-    align-self: baseline;
+    padding: calc(var(--space-3) + var(--space-0-5)) var(--space-4);
+    background: var(--color-layer-2);
     color: var(--color-text-caption-on-layer);
     font-family: var(--font-ui);
     font-size: var(--type-caption-size);
@@ -777,6 +778,8 @@
   .tool-rich-field .markdown-content :is(p, ul, ol, blockquote, .markdown-code-block, .markdown-table-wrap) {
     margin-bottom: var(--space-2);
   }
+
+  .tool-rich-field .markdown-content > :last-child { margin-bottom: 0; }
 
   .tool-field-placeholder {
     color: var(--color-text-tertiary);
@@ -1297,8 +1300,6 @@
 
   .approval-tool-card:hover,
   .approval-tool-card:focus-within { background: var(--color-hover); }
-
-  .approval-tool-card .tool-detail-card { background: var(--color-layer-2); }
 
   .approval-rejection-form,
   .plan-review-rejection-form {
@@ -1924,8 +1925,9 @@
     :is(.composer-scroll-to-bottom-control, .composer-task-trace-control)
     .composer-auxiliary-control > span { display: none; }
     .tool-detail-card { margin-left: 0; }
-    .tool-detail-section { grid-template-columns: minmax(0, 1fr); row-gap: var(--space-1-5); padding: var(--space-3); }
-    .tool-field-label { position: static; }
+    .tool-detail-section { grid-template-columns: minmax(0, 1fr); }
+    .tool-field-label,
+    .tool-detail-viewport { padding: var(--space-3); }
     .plan-review-composer-head { gap: var(--space-2); }
   }
 
@@ -1991,7 +1993,7 @@
     .plan-review-composer-footer::before { background: Canvas; }
     .subagent-card-head:focus-visible,
     .tool-row > summary:focus-visible,
-    .tool-detail-section:focus-visible,
+    .tool-detail-viewport:focus-visible,
     .subagent-trace-output:focus-visible,
     .plan-interaction-toggle-surface:focus-visible,
     .plan-question-progress-step:focus-visible,

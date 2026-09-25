@@ -244,6 +244,44 @@ test('首次打开已完成工具和子 Agent 时从顶部阅读', async ({ page
   }
 })
 
+for (const theme of ['light', 'dark']) for (const width of [320, 1440]) {
+  test(`工具字段标题独立于滚动内容 ${theme} ${width}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 })
+    await openStudio(page, theme, 'reduce', completedHistory([
+      historicalTool('write-call', 'write_file', `{\n${params('历史参数')}\n}`, JSON.stringify({
+        file_path: '/artifact.pptx', name: 'FDE岗位信息.pptx',
+        entries: Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 页`),
+      })),
+    ]))
+    await page.getByText('Write', { exact: true }).click()
+    const output = page.getByRole('region', { name: '输出', exact: true })
+    await expect(output.locator('pre code')).toHaveAttribute('data-language', 'json')
+    expect(await output.locator('pre').textContent()).toContain('\n  "file_path": "/artifact.pptx",\n')
+    for (const name of ['输入', '输出']) {
+      const region = page.getByRole('region', { name, exact: true })
+      const section = page.locator(name === '输入' ? '.tool-detail-section--params' : '.tool-detail-section--result')
+      const label = section.getByText(name, { exact: true })
+      await expect.poll(() => region.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(0)
+      const before = await label.boundingBox()
+      await region.evaluate(element => { element.scrollTop = element.scrollHeight })
+      await expect.poll(() => region.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+      const bottom = await position(region)
+      await wheelUp(page, region)
+      expect(await position(region)).toBeLessThan(bottom)
+      const after = await label.boundingBox()
+      expect(Math.abs(after!.y - before!.y)).toBeLessThanOrEqual(1)
+      const colors = await section.evaluate(element => ({
+        label: getComputedStyle(element.querySelector('.tool-field-label')!).backgroundColor,
+        content: getComputedStyle(element.querySelector('[role="region"]')!).backgroundColor,
+        card: getComputedStyle(element.parentElement!).backgroundColor,
+      }))
+      expect(colors.label).not.toBe(colors.content)
+      expect(colors.content).toBe(colors.card)
+    }
+    await page.screenshot({ path: testInfo.outputPath(`tool-fixed-label-${theme}-${width}.png`) })
+  })
+}
+
 for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440]) {
   test(`流式工具布局 ${theme} ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 })
