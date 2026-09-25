@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta
@@ -203,7 +203,7 @@ class Automation:
         self._require_new()
 
         @asynccontextmanager
-        async def lifespan() -> AsyncIterator[AutomationEngine]:
+        async def lifespan() -> AsyncGenerator[AutomationEngine, None]:
             self._require_new()
             self._state = "starting"
             try:
@@ -304,7 +304,7 @@ class Automation:
             )
 
     @contextmanager
-    def _activity(self) -> Iterator[None]:
+    def _activity(self) -> Generator[None, None, None]:
         activity = _Activity(self)
         token = _activities.set(
             (*[item for item in _activities.get() if item.active], activity)
@@ -316,7 +316,9 @@ class Automation:
             _activities.reset(token)
 
     @asynccontextmanager
-    async def _operation(self, *, schedule_write: bool = False) -> AsyncIterator[None]:
+    async def _operation(
+        self, *, schedule_write: bool = False
+    ) -> AsyncGenerator[None, None]:
         if self._state not in {"client", "worker"}:
             raise AutomationLifecycleError(
                 "Enter an Automation lifecycle before operating"

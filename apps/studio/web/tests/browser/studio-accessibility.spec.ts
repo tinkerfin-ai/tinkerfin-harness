@@ -1139,7 +1139,7 @@ test('侧栏切换控件共享纵向锚点且 tooltip 避开相邻操作区', as
   expect(overflow).toBeLessThanOrEqual(0)
 })
 
-test('操作与读取异常只显示一条全局 Toast，并保留独立恢复入口', async ({ page }) => {
+test('操作失败显示单条通知，读取失败保留页内提示与重试', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.setViewportSize({ width: 1440, height: 900 })
   await mockStudio(page, { pinError: true, traceError: true })
@@ -1157,8 +1157,8 @@ test('操作与读取异常只显示一条全局 Toast，并保留独立恢复�
   const retry = trace.getByRole('button', { name: '重新加载', exact: true })
   await expect(notifications.getByRole('status')).toHaveText('链路加载失败')
   await expect(notifications.getByRole('listitem')).toHaveCount(1)
-  await expect(page.getByText('链路加载失败', { exact: true })).toHaveCount(1)
-  await expect(trace.getByRole('alert')).toHaveCount(0)
+  await expect(trace.getByRole('alert')).toContainText('链路加载失败')
+  await expect(trace.getByText('链路加载失败', { exact: true })).toHaveCount(1)
   await expect(retry).toBeEnabled()
   const toast = page.locator('.toast-card').filter({ hasText: '链路加载失败' })
   await expect(toast).toBeVisible()
@@ -1204,10 +1204,14 @@ test('操作与读取异常只显示一条全局 Toast，并保留独立恢复�
   }
   await toast.getByRole('button').click()
   await expect(notifications.getByRole('status')).toHaveCount(0)
+  await expect(trace.getByRole('alert')).toBeVisible()
+  await expect(retry).toBeEnabled()
   await retry.focus()
   await retry.press('Enter')
   await expect(notifications.getByRole('status')).toHaveText('链路加载失败')
-  await expect(page.getByText('链路加载失败', { exact: true })).toHaveCount(1)
+  await expect(notifications.getByRole('listitem')).toHaveCount(1)
+  await expect(trace.getByRole('alert')).toContainText('链路加载失败')
+  await expect(trace.getByText('链路加载失败', { exact: true })).toHaveCount(1)
 })
 
 test('首页与会话态使用相同的输入卡片高度', async ({ page }) => {
