@@ -287,7 +287,7 @@ def test_checkpoint_projection_normalizes_task_exceptions() -> None:
         {
             "id": "task-error",
             "name": "model",
-            "error": {"type": "RuntimeError", "message": "boom"},
+            "error": {"type": "TaskError"},
         }
     ]
     assert "private" not in event.model_dump_json()
@@ -394,7 +394,7 @@ def test_checkpoint_projection_normalizes_task_exceptions() -> None:
                 "payload": {
                     "id": "task-2",
                     "name": "model",
-                    "error": {"type": "RuntimeError", "message": "boom"},
+                    "error": {"type": "TaskError"},
                     "interrupts": [],
                     "result": {"answer": 42, "additional_kwargs": {}},
                 },

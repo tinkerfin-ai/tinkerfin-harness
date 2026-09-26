@@ -7,11 +7,13 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Literal, Protocol, cast, runtime_checkable
 
-from langchain_core.messages import AIMessageChunk, BaseMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
 from langgraph.types import Command, StreamMode
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from tinkerfin_contracts import (
+    NativeMessageObservation,
+    NativeMessageRecord,
     NativeObservation,
     NativeReasoningObservation,
     NativeStateObservation,
@@ -24,11 +26,18 @@ from tinkerfin_native_stream import (
     NativeMessageStreamPart,
     NativeStreamFrame,
     NativeStreamPart,
+    NativeTasksStreamPart,
+    NativeTaskStartPayload,
     NativeUpdatesStreamPart,
     NativeValidatedStreamPart,
     NativeValuesStreamPart,
-    to_json_value,
+    qualified_name,
     validate_native_stream_part,
+)
+from tinkerfin_native_stream.public import (
+    normalize_operational_data,
+    public_extra_data,
+    sanitize_public_data,
 )
 
 from ._agui_lineage_state import RESUME_METADATA_KEY, RUNTIME_PROFILE_METADATA_KEY
@@ -221,16 +230,54 @@ def _bind_deep_agents_invocation(
     return bound
 
 
+def _public_source_value(value: object, recorded: JsonValue | None) -> JsonValue:
+    """Preserve an established opaque omission without serializing host resources."""
+
+    if (
+        isinstance(recorded, dict)
+        and set(recorded) == {"$type", "class"}
+        and recorded["$type"] == "omitted"
+        and recorded["class"] == qualified_name(value)
+    ):
+        return recorded
+    return normalize_operational_data(value)
+
+
+def _public_message_record(
+    message: BaseMessage, record: NativeMessageRecord
+) -> dict[str, JsonValue]:
+    payload = cast(dict[str, JsonValue], record.model_dump(mode="json", by_alias=True))
+    payload["content"] = _public_source_value(message.content, record.content)
+    payload["responseMetadata"] = _public_source_value(
+        message.response_metadata, record.response_metadata
+    )
+    payload["usageMetadata"] = _public_source_value(
+        getattr(message, "usage_metadata", None), record.usage_metadata
+    )
+    if isinstance(message, ToolMessage):
+        payload["artifact"] = _public_source_value(message.artifact, record.artifact)
+    if isinstance(message, AIMessage) and not isinstance(message, AIMessageChunk):
+        payload["toolCalls"] = [
+            {
+                **call.model_dump(mode="json", by_alias=True),
+                "arguments": normalize_operational_data(raw["args"]),
+            }
+            for call, raw in zip(record.tool_calls, message.tool_calls, strict=True)
+        ]
+    return payload
+
+
 def _canonical_replay(
     part: NativeValidatedStreamPart,
     observation: NativeObservation,
 ) -> NativeStreamPart:
-    """Build finite replay from the already normalized public observation graph.
+    """Build finite public replay independently of diagnostic capture tags.
 
     Replay deliberately excludes Runtime identity and timestamps because the stream
-    source owns those separately. Building from the observation avoids serializing
-    opaque upstream task/state objects a second time. The Plan non-JSON regression and
-    Native codec contract tests protect this ordering.
+    source owns those separately. The observation supplies typed record structure
+    and established omissions for opaque host resources. Supported public values use
+    the same plain JSON normalization as live protocol conversion; literal business
+    type tags are never interpreted as serialized Python objects.
     """
 
     # Extra modes deliberately remain metadata-only in the user Trace Ledger, but
@@ -238,7 +285,7 @@ def _canonical_replay(
     # Normalizing here keeps that provider-shaped value inside the Driver boundary;
     # downstream SSE and Messaging consumers receive only the detached result.
     payload = (
-        to_json_value(part.data)
+        public_extra_data(part)
         if isinstance(part, NativeExtraStreamPart | NativeUpdatesStreamPart)
         else cast(
             JsonValue,
@@ -250,11 +297,58 @@ def _canonical_replay(
                     "kind",
                     "monotonic_ns",
                     "graph_namespace",
+                    "graph_origin",
+                    "subagent_requests",
                     "observed_at",
                 },
             ),
         )
     )
+    if isinstance(payload, dict):
+        if isinstance(part, NativeMessageStreamPart) and isinstance(
+            observation, NativeMessageObservation
+        ):
+            payload["message"] = _public_message_record(
+                part.data.message, observation.message
+            )
+            payload["metadata"] = normalize_operational_data(dict(part.data.metadata))
+        elif isinstance(part, NativeTasksStreamPart) and isinstance(
+            observation, NativeTaskObservation
+        ):
+            if isinstance(part.data, NativeTaskStartPayload):
+                value = _public_source_value(part.data.input, observation.input)
+                payload["input"] = (
+                    value if part.data.name == "tools" else sanitize_public_data(value)
+                )
+                payload["metadata"] = (
+                    {}
+                    if part.data.metadata is None
+                    else sanitize_public_data(dict(part.data.metadata))
+                )
+            else:
+                payload["result"] = sanitize_public_data(
+                    _public_source_value(part.data.result, observation.result)
+                )
+        elif isinstance(part, NativeValuesStreamPart) and isinstance(
+            observation, NativeStateObservation
+        ):
+            payload["state"] = sanitize_public_data(
+                {
+                    key: _public_source_value(part.data[key], value)
+                    for key, value in observation.state.items()
+                }
+            )
+            raw_messages = part.data.get("messages", ())
+            if not isinstance(raw_messages, (tuple, list)):
+                raise TypeError("Native state messages must be a sequence")
+            messages: list[JsonValue] = []
+            for message, record in zip(
+                cast(Sequence[object], raw_messages), observation.messages, strict=True
+            ):
+                if not isinstance(message, BaseMessage):
+                    raise TypeError("Native state messages must be live messages")
+                messages.append(_public_message_record(message, record))
+            payload["messages"] = messages
     interrupt_records = (
         observation.interrupts
         if isinstance(observation, NativeTaskObservation | NativeStateObservation)

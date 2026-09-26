@@ -54,19 +54,9 @@ class SubagentProvenance(BaseModel):
         min_length=1,
         description="Logical invocation ID stable across checkpoint resume",
     )
-    graph_namespace: tuple[str, ...] = Field(
-        alias="graphNamespace",
-        min_length=1,
-        description="Complete native child graph namespace",
-    )
     parent_graph_namespace: tuple[str, ...] = Field(
         alias="parentGraphNamespace",
         description="Complete graph namespace that issued the parent task Tool",
-    )
-    graph_task_id: str = Field(
-        alias="graphTaskId",
-        min_length=1,
-        description="Native LangGraph task ID that opened the child graph",
     )
     agent_name: str = Field(
         alias="agentName",
@@ -88,7 +78,7 @@ class SubagentProvenance(BaseModel):
         description="Main AG-UI request currently carrying this event",
     )
 
-    @field_validator("graph_namespace", "parent_graph_namespace")
+    @field_validator("parent_graph_namespace")
     @classmethod
     def namespace_parts_are_canonical(
         cls,
@@ -102,20 +92,13 @@ class SubagentProvenance(BaseModel):
 
     @model_validator(mode="after")
     def native_relationships_are_consistent(self) -> SubagentProvenance:
-        """Cross-check parent Tool scope and the complete child graph namespace."""
+        """Cross-check the logical request's complete parent Tool scope."""
 
         kind, parent_tool_namespace, _raw_id = ScopedIdCodec().decode(
             self.parent_tool_call_id
         )
         if kind != "tool" or parent_tool_namespace != self.parent_graph_namespace:
             raise ValueError("parentToolCallId does not match parentGraphNamespace")
-        if (
-            len(self.graph_namespace) != len(self.parent_graph_namespace) + 1
-            or self.graph_namespace[: len(self.parent_graph_namespace)]
-            != self.parent_graph_namespace
-            or not self.graph_namespace[-1].startswith(f"tools:{self.graph_task_id}")
-        ):
-            raise ValueError("graph namespace does not match the native graph task")
         return self
 
 
@@ -123,12 +106,14 @@ def subagent_invocation_id(
     *,
     identity: RunIdentity,
     parent_tool_call_id: str,
+    subagent_id: str,
 ) -> str:
     """Return the canonical logical invocation ID.
 
     Args:
         identity: Current request identity; only its stable thread ID participates.
         parent_tool_call_id: Complete scoped parent `task` Tool call ID.
+        subagent_id: Stable logical delegation identity supplied by the graph source.
 
     Returns:
         A `subagent-` prefixed UUID5 derived from the frozen canonical JSON array.
@@ -140,6 +125,10 @@ def subagent_invocation_id(
 
     if not isinstance(identity, RunIdentity):
         raise TypeError("identity must be a RunIdentity")
+    if not isinstance(subagent_id, str):
+        raise TypeError("subagent_id must be a canonical string")
+    if not subagent_id or subagent_id != subagent_id.strip():
+        raise ValueError("subagent_id must be a canonical non-empty identity")
     try:
         kind, _namespace, _raw_id = ScopedIdCodec().decode(parent_tool_call_id)
     except (TypeError, ValueError) as error:
@@ -149,7 +138,12 @@ def subagent_invocation_id(
     if kind != "tool":
         raise ValueError("parent_tool_call_id must identify a scoped Tool call")
     canonical = json.dumps(
-        [SUBAGENT_PROVENANCE_SCHEMA, identity.thread_id, parent_tool_call_id],
+        [
+            SUBAGENT_PROVENANCE_SCHEMA,
+            identity.thread_id,
+            subagent_id,
+            parent_tool_call_id,
+        ],
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -159,9 +153,8 @@ def subagent_invocation_id(
 def create_subagent_provenance(
     *,
     identity: RunIdentity,
-    graph_namespace: tuple[str, ...],
     parent_graph_namespace: tuple[str, ...],
-    graph_task_id: str,
+    subagent_id: str,
     agent_name: str,
     parent_tool_call_id: str,
     description: str,
@@ -173,10 +166,9 @@ def create_subagent_provenance(
         subagentInvocationId=subagent_invocation_id(
             identity=identity,
             parent_tool_call_id=parent_tool_call_id,
+            subagent_id=subagent_id,
         ),
-        graphNamespace=graph_namespace,
         parentGraphNamespace=parent_graph_namespace,
-        graphTaskId=graph_task_id,
         agentName=agent_name,
         parentToolCallId=parent_tool_call_id,
         description=description,

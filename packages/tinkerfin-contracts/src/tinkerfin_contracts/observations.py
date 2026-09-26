@@ -9,6 +9,7 @@ from pydantic import Field, TypeAdapter, model_validator
 
 from ._json import FiniteJsonValue
 from ._models import ContractModel, ObservationModel
+from .graph import GraphOrigin, SubagentRequestReference
 from .identity import RunIdentity
 
 RunInputKind: TypeAlias = Literal[
@@ -148,6 +149,21 @@ class NativeMessageRecord(ContractModel):
     tool_status: Literal["success", "error"] | None = None
     response_metadata: dict[str, FiniteJsonValue] = Field(default_factory=dict)
     usage_metadata: dict[str, FiniteJsonValue] | None = None
+    chunk_position: Literal["last"] | None = None
+    artifact: FiniteJsonValue | None = None
+    chat_role: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def replay_fields_match_message_type(self) -> NativeMessageRecord:
+        """Keep subtype-specific public values attached to their real message kind."""
+
+        if self.chunk_position is not None and self.message_type != "assistant_chunk":
+            raise ValueError("only assistant chunks can carry chunk_position")
+        if self.artifact is not None and self.message_type != "tool":
+            raise ValueError("only Tool messages can carry artifact")
+        if self.chat_role is not None and self.message_type != "chat":
+            raise ValueError("only Chat messages can carry chat_role")
+        return self
 
 
 class NativeInterruptRecord(ContractModel):
@@ -245,6 +261,7 @@ class ModelCallObservation(ObservationModel):
         default=None, description="Explicit context action owning this provider call"
     )
     graph_namespace: tuple[str, ...] = ()
+    graph_origin: GraphOrigin = Field(default_factory=GraphOrigin)
     agent_name: str | None = Field(default=None, min_length=1, max_length=1024)
     provider: str | None = Field(default=None, min_length=1, max_length=1024)
     model: str | None = Field(default=None, min_length=1, max_length=1024)
@@ -336,6 +353,7 @@ class ToolExecutionObservation(ObservationModel):
     execution_id: str = Field(min_length=1, max_length=1024)
     parent_call_id: str | None = Field(default=None, min_length=1, max_length=1024)
     graph_namespace: tuple[str, ...] = ()
+    graph_origin: GraphOrigin = Field(default_factory=GraphOrigin)
     graph_task_id: str | None = Field(
         default=None,
         min_length=1,
@@ -347,6 +365,8 @@ class ToolExecutionObservation(ObservationModel):
     )
     agent_name: str | None = Field(default=None, min_length=1, max_length=1024)
     tool_call_id: str | None = Field(default=None, min_length=1, max_length=1024)
+    tool_call_namespace: tuple[str, ...] | None = None
+    delegation: SubagentRequestReference | None = None
     tool_name: str = Field(min_length=1, max_length=1024)
     input: FiniteJsonValue | None = Field(
         default=None,
@@ -407,6 +427,7 @@ class ContextContributionObservation(ObservationModel):
     compaction_origin: Literal["manual", "automatic", "tool"] | None = None
     parent_tool_call_id: str | None = None
     graph_namespace: tuple[str, ...] = ()
+    graph_origin: GraphOrigin = Field(default_factory=GraphOrigin)
     context_kind: ContextKind
     name: str = Field(min_length=1, max_length=1024)
     input: FiniteJsonValue | None = Field(
@@ -445,6 +466,7 @@ class NativeMessageObservation(ObservationModel):
     kind: Literal["native.message"] = "native.message"
     identity: RunIdentity
     graph_namespace: tuple[str, ...]
+    graph_origin: GraphOrigin = Field(default_factory=GraphOrigin)
     message: NativeMessageRecord
     metadata: dict[str, FiniteJsonValue] = Field(default_factory=dict)
 
@@ -460,6 +482,7 @@ class NativeReasoningObservation(ObservationModel):
     kind: Literal["native.reasoning"] = "native.reasoning"
     identity: RunIdentity
     graph_namespace: tuple[str, ...]
+    graph_origin: GraphOrigin = Field(default_factory=GraphOrigin)
     message_id: str = Field(min_length=1, max_length=1024)
     extractor: str = Field(min_length=1, max_length=1024)
     content: FiniteJsonValue
@@ -474,7 +497,9 @@ class NativeTaskObservation(ObservationModel):
     kind: Literal["native.task"] = "native.task"
     identity: RunIdentity
     graph_namespace: tuple[str, ...]
+    graph_origin: GraphOrigin = Field(default_factory=GraphOrigin)
     phase: Literal["start", "result"]
+    subagent_requests: tuple[SubagentRequestReference, ...] = ()
     task_id: str = Field(min_length=1, max_length=1024)
     name: str = Field(min_length=1, max_length=1024)
     triggers: tuple[str, ...] = ()
@@ -491,8 +516,13 @@ class NativeStateObservation(ObservationModel):
     kind: Literal["native.state"] = "native.state"
     identity: RunIdentity
     graph_namespace: tuple[str, ...]
+    graph_origin: GraphOrigin = Field(default_factory=GraphOrigin)
     state: dict[str, FiniteJsonValue]
     messages: tuple[NativeMessageRecord, ...] = ()
+    messages_present: bool = Field(
+        default=True,
+        description="Whether the state contains a messages channel, including an explicitly empty one",
+    )
     interrupts: tuple[NativeInterruptRecord, ...] = ()
 
 
@@ -502,6 +532,7 @@ class NativeExtraObservation(ObservationModel):
     kind: Literal["native.extra"] = "native.extra"
     identity: RunIdentity
     graph_namespace: tuple[str, ...]
+    graph_origin: GraphOrigin = Field(default_factory=GraphOrigin)
     mode: NativeExtraMode
     data_type: str = Field(min_length=1, max_length=1024)
     safe_size_bytes: int = Field(ge=0)

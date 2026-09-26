@@ -34,6 +34,12 @@ AG-UI 入口需要安装 `tinkerfin[agui]`。
 `model` 必填；持久化通过 `TinkerFin(checkpointer=..., store=...)` 配置。
 `context_schema` 决定各执行方法的 `context` 参数类型。
 
+配置 checkpointer 后，标准 `ToolRetryMiddleware` 对 `task` 的重试会保留已完成尝试，并从原待审批位置继续。
+工作未完成时，委派参数和重试设置须保持一致。持久重试回调须使用 Python 函数，也可用 `functools.partial` 绑定参数；默认值和绑定参数仅支持不可变字面值或异常类型。
+绑定方法、可调用实例和自定义重试子类会被拒绝。闭包中引用的配置也须保持一致；恢复时不会比较闭包中的可变状态或外部服务。
+未配置 checkpointer 时，重试保持普通的进程内行为。
+默认的重试耗尽消息不包含供应商诊断信息。显式 `on_failure` 回调接收原始异常且只调用一次，返回文本直接作为工具的公开错误输出。
+
 ## AgentRuntime
 
 | API | 结果 |
@@ -181,6 +187,12 @@ finally:
 
 `NativeStreamPart` 是有限原生回放值。Python 字段 `graph_namespace` 表示 Graph
 位置，第三方 wire alias 仍为 `ns`。业务隔离始终使用 `RunIdentity.namespace`。
+
+Native SSE 和 Messaging 通过 `graphOrigin`、`subagentRequests` 保留已核验的任务归属。
+记录运行时，将 `runtime.open_run(...)` 直接交给 [Messaging 通道](../messaging/index.md)，
+流会自动提供身份和编码方式。Messaging 回放消息的 `data` 是 `NativeStreamPart`，可交给独立
+AG-UI 转换器；Native SSE 记录也可通过 `NativeStreamPart.model_validate_json()` 解码。
+只需要 AG-UI 输出时，直接使用 `open_agui_run()`。
 
 ## 公共模块
 

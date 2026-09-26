@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tinkerfin_contracts import NativeObservation
+from tinkerfin_contracts import GraphOrigin, NativeObservation, SubagentRequestReference
 
 from .serialization import NativeStreamPart
 from .stream import NativeValidatedStreamPart
@@ -27,12 +27,19 @@ class NativeStreamFrame:
         observations: Ordered protocol-neutral facts emitted for Runtime observers.
         replay: Detached finite representation used by native persistence and SSE.
         root_interrupt_ids: Root interrupt IDs observed at this exact part boundary.
+        origin: Proven physical opening task and logical owner of this part.
+        subagent_requests: Logical delegations declared by this exact task start.
+        internal: Whether this frame carries a framework-owned private record that
+            must not reach public observers, event conversion, or transport.
     """
 
     canonical: NativeValidatedStreamPart
     observations: tuple[NativeObservation, ...]
     replay: NativeStreamPart
     root_interrupt_ids: tuple[str, ...] = ()
+    origin: GraphOrigin = GraphOrigin()
+    subagent_requests: tuple[SubagentRequestReference, ...] = ()
+    internal: bool = False
 
 
 __all__ = ["NativeStreamFrame"]

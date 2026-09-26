@@ -516,7 +516,7 @@ describe('useConversationStreamController', () => {
   it('子 Agent 错误后主运行成功，不弹出主运行失败通知', async () => {
     clientMocks.start.mockImplementation(() => streamItems([
       { seq: 1, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } },
-      { seq: 2, event: { type: 'RUN_ERROR', rawEvent: { runId: 'child-run', source: { kind: 'deep_agent_subagent', agentType: 'subagent', agentName: 'researcher', graphNamespace: ['tools:child'] } }, code: 'failed', message: 'child failed' } },
+      { seq: 2, event: { type: 'RUN_ERROR', rawEvent: { runId: 'child-run', source: { kind: 'deep_agent_subagent', agentType: 'subagent', agentName: 'researcher', graphNamespace: ['tools:child'], subagentInvocationId: 'subagent-11111111-1111-5111-8111-111111111111' } }, code: 'failed', message: 'child failed' } },
       { seq: 3, event: { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID, outcome: { type: 'success' } } },
     ]))
     const onNotice = vi.fn()

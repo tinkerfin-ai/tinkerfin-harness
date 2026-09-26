@@ -23,10 +23,11 @@ class TraceFactBase(TimedTraceModel, frozen=True):
     source_observation_id: str = Field(min_length=1, max_length=1024)
     identity: RunIdentity
     graph_namespace: tuple[str, ...] = ()
-    in_subagent_scope: bool = Field(
-        default=False,
-        exclude_if=_omit_false,
-        description="Whether the graph namespace is a proven Subagent execution scope",
+    parent_subagent_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2048,
+        description="Exact owning logical Subagent node ID; null denotes root work",
     )
 
 
@@ -43,7 +44,7 @@ class RunFact(TraceFactBase, frozen=True):
     """Describe the root Runtime lifecycle without transport or Subagent state.
 
     Run observations describe the whole invocation. Their graph namespace is always empty
-    and ``in_subagent_scope`` is false; child execution belongs to ``SubagentFact``.
+    and ``parent_subagent_id`` is null; child execution belongs to ``SubagentFact``.
     """
 
     kind: Literal["run"] = "run"
@@ -79,7 +80,7 @@ class RunFact(TraceFactBase, frozen=True):
     def phase_fields_are_consistent(self) -> RunFact:
         """Require the evidence needed to interpret each lifecycle phase."""
 
-        if self.graph_namespace != () or self.in_subagent_scope is not False:
+        if self.graph_namespace != () or self.parent_subagent_id is not None:
             raise ValueError("Run lifecycle facts require the root scope")
         if self.phase == "started" and self.input_kind is None:
             raise ValueError("started Run facts require input_kind")
@@ -281,11 +282,13 @@ class InteractionFact(TraceFactBase, frozen=True):
 class SubagentFact(TraceFactBase, frozen=True):
     """Record one validated child Agent execution or its waiting/terminal state.
 
-    ``started`` requires ``running``; ``updated`` requires ``waiting``; ``completed``
+    ``started`` requires ``running``; ``updated`` accepts ``running`` or ``waiting``; ``completed``
     accepts ``succeeded``, ``failed``, ``cancelled``, or ``abandoned``. Only started
     facts carry ``input``, ``parent_tool_call_id``, ``parent_execution_id``, and
     ``model_call_id``. Subsequent facts retain the same ``subagent_id`` and graph namespace
     while inherited opening evidence supplies their request and relationships.
+    The namespace identifies the parent Tool request; actual child execution scopes
+    remain on the corresponding model, Tool, and Native facts.
     """
 
     kind: Literal["subagent"] = "subagent"
@@ -321,7 +324,7 @@ class SubagentFact(TraceFactBase, frozen=True):
 
         expected_statuses = {
             "started": {"running"},
-            "updated": {"waiting"},
+            "updated": {"running", "waiting"},
             "completed": {"succeeded", "failed", "cancelled", "abandoned"},
         }
         if self.status not in expected_statuses[self.phase]:
@@ -489,6 +492,10 @@ class ToolExecutionFact(TraceFactBase, frozen=True):
     parent_call_id: str | None = Field(default=None, min_length=1, max_length=1024)
     agent_name: str | None = Field(default=None, min_length=1, max_length=1024)
     source_tool_call_id: str | None = Field(default=None, min_length=1, max_length=1024)
+    tool_call_namespace: tuple[str, ...] | None = Field(
+        default=None,
+        description="Exact scope of the original Tool proposal, independent of execution scope",
+    )
     tool_name: str = Field(min_length=1, max_length=1024)
     input: CapturedValue | None = None
     output: CapturedValue | None = None
@@ -500,6 +507,10 @@ class ToolExecutionFact(TraceFactBase, frozen=True):
     def phase_fields_are_consistent(self) -> ToolExecutionFact:
         """Keep actual input, output, and failures attached to their lifecycle phase."""
 
+        if (self.source_tool_call_id is None) != (self.tool_call_namespace is None):
+            raise ValueError(
+                "Tool request ID and proposal namespace must be supplied together"
+            )
         if self.phase == "started" and self.input is None:
             raise ValueError("started Tool execution facts require input")
         if self.phase != "started" and self.input is not None:

@@ -19,9 +19,11 @@ from pydantic import JsonValue
 from tinkerfin_contracts import (
     ContextContributionObservation,
     ContextKind,
+    GraphTaskReference,
     ModelCallObservation,
     ObservationBoundary,
     RunTerminalOutcome,
+    SubagentRequestReference,
     ToolExecutionObservation,
 )
 
@@ -63,6 +65,109 @@ _CURRENT_NAMESPACE: ContextVar[tuple[str, ...]] = ContextVar(
 _SYNC_CALLBACK: ContextVar[bool] = ContextVar("tinkerfin_sync_callback", default=False)
 
 
+def register_delegation_retry(
+    *,
+    parent_namespace: tuple[str, ...],
+    parent_graph_task_id: str,
+    parent_tool_call_id: str,
+    node_name: str,
+    agent_name: str,
+    description: str,
+) -> SubagentRequestReference:
+    """Register the logical request and its private durable task before replay.
+
+    The request-owned Runtime hub retains this evidence even when an attempt's
+    checkpoint result is reused without executing its body or emitting callbacks.
+    """
+
+    hub = _CURRENT_HUB.get()
+    if hub is None:
+        raise RuntimeError("durable delegation requires an active Runtime request")
+    request = hub.graph_scopes.register_delegation(
+        parent_namespace=parent_namespace,
+        graph_task_id=parent_graph_task_id,
+        tool_call_id=parent_tool_call_id,
+        agent_name=agent_name,
+        description=description,
+        executed=True,
+    )
+    hub.graph_scopes.register_retry(request, node_name=node_name)
+    return request
+
+
+def register_delegation_scope(
+    *,
+    namespace: tuple[str, ...],
+    parent_namespace: tuple[str, ...],
+    parent_graph_task_id: str,
+    parent_tool_call_id: str,
+    graph_task_id: str,
+    node_name: str,
+    agent_name: str,
+    description: str,
+) -> SubagentRequestReference:
+    """Bind an entered or checkpoint-proven attempt to its original request.
+
+    Registering retained evidence creates no execution observation. Only actual
+    Tool and model callbacks report work; cached attempts remain replay-only.
+    """
+
+    request = register_delegation_retry(
+        parent_namespace=parent_namespace,
+        parent_graph_task_id=parent_graph_task_id,
+        parent_tool_call_id=parent_tool_call_id,
+        node_name=node_name,
+        agent_name=agent_name,
+        description=description,
+    )
+    hub = _CURRENT_HUB.get()
+    assert hub is not None
+    hub.graph_scopes.register_execution(
+        namespace,
+        parent_task=GraphTaskReference(
+            graph_namespace=parent_namespace,
+            task_id=graph_task_id,
+            node_name=node_name,
+        ),
+        request=request,
+    )
+    return request
+
+
+def register_delegation_result(
+    *,
+    parent_namespace: tuple[str, ...],
+    graph_task_id: str,
+    reference: dict[str, str],
+) -> None:
+    """Keep an exact durable RETURN reference outside public Native transport."""
+
+    hub = _CURRENT_HUB.get()
+    if hub is None:
+        raise RuntimeError("durable delegation requires an active Runtime request")
+    hub.graph_scopes.record_internal_result(parent_namespace, graph_task_id, reference)
+
+
+def register_delegation_invocation(
+    *,
+    parent_namespace: tuple[str, ...],
+    parent_graph_task_id: str,
+    node_name: str,
+    arguments: tuple[int | str, ...],
+) -> None:
+    """Register one exact private call before LangGraph publishes its task start."""
+
+    hub = _CURRENT_HUB.get()
+    if hub is None:
+        raise RuntimeError("durable delegation requires an active Runtime request")
+    request = hub.graph_scopes.execution_request(parent_namespace, parent_graph_task_id)
+    if request is None:
+        raise RuntimeError("private delegation call requires its original request")
+    hub.graph_scopes.register_private_invocation(
+        request, node_name=node_name, arguments=arguments
+    )
+
+
 def bind_observation_hub(
     hub: RuntimeObservationHub,
 ) -> Token[RuntimeObservationHub | None]:
@@ -85,10 +190,16 @@ def _checkpoint_segments(
     if metadata is None:
         return ()
     raw_namespace = metadata.get("langgraph_checkpoint_ns")
-    if not isinstance(raw_namespace, str) or not raw_namespace:
+    if raw_namespace is None or raw_namespace == "":
         return ()
+    if not isinstance(raw_namespace, str):
+        raise TinkerFinStreamProtocolError("Callback checkpoint namespace is not text")
     segments = tuple(raw_namespace.split("|"))
-    return () if any(not segment for segment in segments) else segments
+    if any(not segment or segment != segment.strip() for segment in segments):
+        raise TinkerFinStreamProtocolError(
+            "Callback checkpoint namespace is not canonical"
+        )
+    return segments
 
 
 def _callback_namespace(metadata: Mapping[str, object] | None) -> tuple[str, ...]:

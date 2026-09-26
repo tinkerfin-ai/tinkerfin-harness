@@ -87,16 +87,39 @@ def test_task_raw_filters_provider_reasoning_in_every_phase(
     )
     assert "START-SECRET" not in serialized
     assert "RESULT-SECRET" not in serialized
+    assert "error-sibling" not in serialized
+    assert "error-business" not in serialized
     for visible in (
         "input-sibling",
         "metadata-sibling",
-        "error-sibling",
         "result-sibling",
         "input-business",
-        "error-business",
         "result-business",
     ):
         assert visible in serialized
+
+
+def test_private_exception_details_still_detect_conflicting_task_replays() -> None:
+    adapter = DeepAgentAgUiAdapter(identity=_identity())
+    adapter.process(_task(phase="start", secret="provider-secret"))
+    payload = {
+        "id": "task-1",
+        "name": "model",
+        "result": {},
+        "interrupts": [],
+        "error": RuntimeError("private-first"),
+    }
+    result = {"type": "tasks", "ns": (), "data": payload}
+    events = adapter.process(result)
+    assert "private-first" not in events[0].model_dump_json()
+    assert adapter.process(result) == []
+    with pytest.raises(ValueError, match="conflicting task result"):
+        adapter.process(
+            {
+                **result,
+                "data": {**payload, "error": RuntimeError("private-second")},
+            }
+        )
 
 
 def test_task_tool_args_are_preserved_as_operational_data() -> None:
@@ -382,12 +405,12 @@ def test_consumed_prior_tool_id_cannot_silently_restart() -> None:
         )
 
 
-def test_nameless_task_result_preserves_subagent_related_namespace() -> None:
+def test_nameless_task_result_preserves_logical_subagent_reference() -> None:
     adapter = DeepAgentAgUiAdapter(
         identity=_identity(),
         prior_tool_call_ids=frozenset({_root_tool_id("call-task")}),
     )
-    adapter.process(
+    started = adapter.process(
         _native_tool_start(
             graph_task_id="native-task-node",
             tool_name="task",
@@ -406,7 +429,12 @@ def test_nameless_task_result_preserves_subagent_related_namespace() -> None:
     )
 
     assert isinstance(result.raw_event, dict)
-    assert result.raw_event["relatedGraphNamespace"] == ["tools:native-task-node"]
+    raw = next(event for event in started if isinstance(event, RawEvent))
+    assert (
+        result.raw_event["relatedSubagentInvocationId"]
+        == raw.event["provenance"]["subagents"][0]["subagentInvocationId"]
+    )
+    assert "relatedGraphNamespace" not in result.raw_event
 
 
 def test_native_task_starts_reject_scoped_tool_id_reuse_atomically() -> None:

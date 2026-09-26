@@ -122,10 +122,5 @@ def test_new_tool_proposal_cannot_reuse_a_completed_tool_id(
         {"type": "values", "ns": (), "data": {"messages": [proposal("old")]}}
     )
     emit(ToolMessage(id="old-result", content="Saved", tool_call_id="save"))
-    expected = (
-        "ended tool-call ID cannot start again"
-        if late_values
-        else "new Tool proposals require unique IDs"
-    )
-    with pytest.raises(ValueError, match=expected):
+    with pytest.raises(ValueError, match="new Tool proposals require unique IDs"):
         emit(proposal("another"))

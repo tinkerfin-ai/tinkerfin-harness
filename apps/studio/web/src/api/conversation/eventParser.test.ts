@@ -82,6 +82,20 @@ describe('AG-UI 事件边界解析', () => {
     })).toThrow('事件流包含无效的 AG-UI 事件')
   })
 
+  it.each([undefined, null, '', ' '])('拒绝缺少逻辑子任务身份 %s 的工具来源', (subagentInvocationId) => {
+    expect(() => parseConversationAgUiEvent({
+      type: 'TOOL_CALL_START', toolCallId: 'child-tool', toolCallName: 'work',
+      rawEvent: {
+        runId: 'main-run',
+        source: {
+          kind: 'deep_agent_subagent', agentType: 'subagent', agentName: 'researcher',
+          graphNamespace: ['tools:original', 'delegation_attempt:second'],
+          graphTaskId: 'second', subagentInvocationId,
+        },
+      },
+    })).toThrow('事件流包含无效的 AG-UI 事件')
+  })
+
   it.each([
     ['TOOL_CALL_START', {
       type: 'TOOL_CALL_START',

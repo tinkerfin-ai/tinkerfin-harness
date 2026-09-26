@@ -320,7 +320,6 @@ def _process_message_part(
     self._record_agent_name(source_namespace, agent_name)
     source = self._source(source_namespace)
     events: list[BaseEvent] = []
-    related_namespace: tuple[str, ...] | None = None
     related_subagent_invocation_id: str | None = None
     if isinstance(message, ToolMessage):
         scoped_tool_call_id = self._tool_call_id(
@@ -347,7 +346,6 @@ def _process_message_part(
         "messages",
         source,
         langgraph_node=metadata.langgraph_node,
-        related_namespace=related_namespace,
         related_subagent_invocation_id=related_subagent_invocation_id,
         tool_result_status=(
             message.status if isinstance(message, ToolMessage) else None
@@ -884,26 +882,16 @@ def _record_agent_name(
     namespace: tuple[str, ...],
     agent_name: str | None,
 ) -> None:
-    invocation = self._subagent_invocations.get(namespace)
-    if invocation is None or not agent_name:
+    request = self._scope_registry.delegation_execution(namespace)
+    if request is None or not agent_name:
         return
-    if invocation.agent_name != agent_name:
-        raise ValueError(
-            "task subagent_type does not match streamed lc_agent_name: "
-            f"namespace={namespace!r} expected={invocation.agent_name!r} "
-            f"actual={agent_name!r}"
-        )
     self._namespace_agent_names[namespace] = agent_name
 
 
 def _require_started_source(self: DeepAgentAgUiAdapter, source: AgentSource) -> None:
     if source.kind == "root":
         return
-    if source.graph_namespace not in self._graph_scopes:
-        raise RuntimeError(
-            "subgraph stream arrived before its native task-start correlation: "
-            f"namespace={source.graph_namespace!r}"
-        )
+    self._scope_registry.resolve(source.graph_namespace)
 
 
 def _source(
@@ -924,31 +912,41 @@ def _source(
             agent_name="main",
             graph_namespace=namespace,
         )
-    invocation = self._subagent_invocations.get(namespace)
-    if invocation is not None:
+    from .subagent import subagent_invocation_id
+
+    origin = self._scope_registry.resolve(namespace)
+    request = origin.subagent_request
+    parent_task = origin.parent_task
+    if request is not None:
+        parent_tool_id = self._tool_call_id(
+            request.parent_graph_namespace, request.parent_tool_call_id
+        )
         return AgentSource(
             kind="deep_agent_subagent",
             graph_namespace=namespace,
-            parent_graph_namespace=invocation.parent_namespace,
-            graph_task_id=invocation.graph_task_id,
-            node_name="tools",
-            agent_type="subagent",
-            agent_name=self._namespace_agent_names.get(
-                namespace, invocation.agent_name
+            parent_graph_namespace=(
+                None if parent_task is None else parent_task.graph_namespace
             ),
-            parent_tool_call_id=invocation.parent_tool_call_id,
-            subagent_input=invocation.subagent_input,
-            subagent_invocation_id=(invocation.provenance.subagent_invocation_id),
+            graph_task_id=None if parent_task is None else parent_task.task_id,
+            node_name=None if parent_task is None else parent_task.node_name,
+            agent_type="subagent",
+            agent_name=self._namespace_agent_names.get(namespace, request.agent_name),
+            parent_tool_call_id=parent_tool_id,
+            subagent_input=request.description,
+            subagent_invocation_id=subagent_invocation_id(
+                identity=self._identity,
+                parent_tool_call_id=parent_tool_id,
+                subagent_id=request.id,
+            ),
         )
-    scope = self._graph_scopes.get(namespace)
-    if scope is None:
-        return AgentSource(kind="compiled_subgraph", graph_namespace=namespace)
     return AgentSource(
         kind="compiled_subgraph",
         graph_namespace=namespace,
-        parent_graph_namespace=scope.parent_namespace,
-        graph_task_id=scope.graph_task_id,
-        node_name=scope.node_name,
+        parent_graph_namespace=None
+        if parent_task is None
+        else parent_task.graph_namespace,
+        graph_task_id=None if parent_task is None else parent_task.task_id,
+        node_name=None if parent_task is None else parent_task.node_name,
     )
 
 

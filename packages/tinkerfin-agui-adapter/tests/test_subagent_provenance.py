@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from tinkerfin_agui_adapter import (
     SUBAGENT_PROVENANCE_SCHEMA,
+    AgUiStreamContractError,
     DeepAgentAgUiAdapter,
     RunIdentity,
     ScopedIdCodec,
@@ -19,8 +20,92 @@ from tinkerfin_agui_adapter import (
     create_subagent_provenance,
     subagent_invocation_id,
 )
+from tinkerfin_contracts import (
+    GraphOrigin,
+    GraphTaskReference,
+    NativeMessageRecord,
+    SubagentRequestReference,
+    subagent_request_id,
+)
+from tinkerfin_native_stream import NativeStreamPart
 
 _PACKAGE_ROOT = Path(__file__).parents[1]
+
+
+@pytest.mark.parametrize(
+    "failure", ["message_identity", "missing_owner", "conflicting_owner"]
+)
+def test_rejected_recorded_message_preserves_the_original_delegate(
+    failure: str,
+) -> None:
+    identity = RunIdentity(namespace="test", thread_id="thread", run_id="run")
+    adapter = DeepAgentAgUiAdapter(identity=identity)
+    adapter.process(
+        {
+            "type": "tasks",
+            "ns": (),
+            "data": {
+                "id": "parent",
+                "name": "tools",
+                "triggers": ("__pregel_push",),
+                "input": [
+                    {
+                        "id": "delegate",
+                        "name": "task",
+                        "type": "tool_call",
+                        "args": {"subagent_type": "worker", "description": "Work"},
+                    }
+                ],
+            },
+        }
+    )
+    namespace = ("tools:parent",)
+    request = SubagentRequestReference(
+        id=subagent_request_id(namespace),
+        parent_graph_namespace=(),
+        parent_tool_call_id="delegate",
+        graph_task_id="parent",
+        agent_name="poison",
+        description="Work",
+    )
+    if failure == "conflicting_owner":
+        request = request.model_copy(update={"id": "another-delegate"})
+    forged = NativeStreamPart(
+        type="messages",
+        ns=namespace,
+        data={
+            "message": NativeMessageRecord(
+                message_type="assistant_chunk",
+                content="rejected",
+                id=None if failure == "message_identity" else "probe",
+            ).model_dump(mode="json", by_alias=True),
+            "metadata": {},
+        },
+        graphOrigin=GraphOrigin(
+            parent_task=GraphTaskReference(
+                graph_namespace=(), task_id="parent", node_name="tools"
+            ),
+            subagent_request=None if failure == "missing_owner" else request,
+        ),
+    )
+    with pytest.raises(AgUiStreamContractError):
+        adapter.process(forged)
+    events = adapter.process(
+        {
+            "type": "messages",
+            "ns": namespace,
+            "data": (
+                AIMessageChunk(id="valid", content="accepted", chunk_position="last"),
+                {"lc_agent_name": "worker"},
+            ),
+        }
+    )
+    source = events[0].raw_event
+    assert isinstance(source, dict)
+    assert source["source"]["kind"] == "deep_agent_subagent"
+    assert source["source"]["agentName"] == "worker"
+
+
 _REPOSITORY_ROOT = Path(__file__).parents[3]
 
 
@@ -39,22 +124,22 @@ def test_subagent_invocation_id_has_a_frozen_known_vector() -> None:
         subagent_invocation_id(
             identity=identity,
             parent_tool_call_id=parent_tool_call_id,
+            subagent_id=subagent_request_id(("tools:parent", "tools:graph-task")),
         )
-        == "subagent-2594398b-b209-5a61-a9f0-8a4d6100bbcd"
+        == "subagent-f40ee085-115c-51b6-b683-45659b5b3639"
     )
     resumed = create_subagent_provenance(
         identity=RunIdentity(
             namespace="test", thread_id="thread-known", run_id="run-resumed"
         ),
-        graph_namespace=("tools:parent", "tools:graph-task"),
+        subagent_id=subagent_request_id(("tools:parent", "tools:graph-task")),
         parent_graph_namespace=("tools:parent",),
-        graph_task_id="graph-task",
         agent_name="researcher",
         parent_tool_call_id=parent_tool_call_id,
         description="Research",
     )
     assert resumed.subagent_invocation_id == (
-        "subagent-2594398b-b209-5a61-a9f0-8a4d6100bbcd"
+        "subagent-f40ee085-115c-51b6-b683-45659b5b3639"
     )
     assert resumed.request_run_id == "run-resumed"
     assert (
@@ -63,6 +148,7 @@ def test_subagent_invocation_id_has_a_frozen_known_vector() -> None:
                 namespace="test", thread_id="other-thread", run_id="run-known"
             ),
             parent_tool_call_id=parent_tool_call_id,
+            subagent_id=subagent_request_id(("tools:parent", "tools:graph-task")),
         )
         != resumed.subagent_invocation_id
     )
@@ -158,7 +244,7 @@ def test_adapter_publishes_stable_identity_without_rewriting_main_run() -> None:
     assert descriptor.request_run_id == "run-before"
     assert descriptor.parent_tool_call_id == parent_tool_call_id
 
-    child_namespace = tuple(descriptor.graph_namespace)
+    child_namespace = ("tools:graph-task",)
     child_text = adapter.process(
         {
             "type": "messages",
@@ -208,7 +294,7 @@ def test_adapter_publishes_stable_identity_without_rewriting_main_run() -> None:
     assert isinstance(result_raw, dict)
     assert result_raw["runId"] == "run-before"
     assert result_raw["relatedSubagentInvocationId"] == invocation_id
-    assert result_raw["relatedGraphNamespace"] == list(child_namespace)
+    assert "relatedGraphNamespace" not in result_raw
 
     _, _resumed_task, resumed_descriptor = _converted_invocation(run_id="run-after")
     assert resumed_descriptor.subagent_invocation_id == invocation_id
@@ -219,9 +305,8 @@ def test_adapter_publishes_stable_identity_without_rewriting_main_run() -> None:
 def test_subagent_provenance_is_frozen_and_strict() -> None:
     value = create_subagent_provenance(
         identity=RunIdentity(namespace="test", thread_id="thread-1", run_id="run-1"),
-        graph_namespace=("tools:parent", "tools:graph-task"),
+        subagent_id=subagent_request_id(("tools:parent", "tools:graph-task")),
         parent_graph_namespace=("tools:parent",),
-        graph_task_id="graph-task",
         agent_name="researcher",
         parent_tool_call_id=_parent_tool_id(),
         description="Research",
@@ -241,6 +326,7 @@ def test_subagent_provenance_is_frozen_and_strict() -> None:
                 namespace="test", thread_id="thread-1", run_id="run-1"
             ),
             parent_tool_call_id="not-scoped",
+            subagent_id=subagent_request_id(("tools:parent", "tools:graph-task")),
         )
 
 

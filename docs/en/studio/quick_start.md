@@ -6,7 +6,7 @@
 
 - Docker, Docker Compose 2.24+, and Bash; use WSL on Windows
 - Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- Node.js 20.19+ (20.x) or 22.12+, and pnpm 10.8.0
+- Node.js 20.19+ (20.x), 22.12+ (22.x), or 24+, and pnpm 10.8.0
 - A model provider endpoint, model name, and API key
 
 Docker runs MySQL, Redis, OpenSandbox, and MinIO. Run the Studio backend and Web client on your machine.

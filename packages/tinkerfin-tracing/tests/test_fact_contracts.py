@@ -189,7 +189,7 @@ def test_model_call_fact_requires_current_message_link_evidence() -> None:
     assert completed.output_message_ids == ("assistant-1",)
 
 
-def test_subagent_scope_evidence_is_explicit_and_omitted_at_root() -> None:
+def test_subagent_ownership_is_explicit_and_null_at_root() -> None:
     codec = CanonicalTracePayloadCodec()
     root = ModelCallFact.model_validate(
         {
@@ -210,15 +210,15 @@ def test_subagent_scope_evidence_is_explicit_and_omitted_at_root() -> None:
         update={
             "call_id": "model:child",
             "graph_namespace": ("tools:child",),
-            "in_subagent_scope": True,
+            "parent_subagent_id": "subagent:child",
         }
     )
 
     root_payload = codec.encode_fact(root).data
     child_payload = codec.encode_fact(child).data
 
-    assert b'"inSubagentScope"' not in root_payload
-    assert b'"inSubagentScope":true' in child_payload
+    assert b'"parentSubagentId":null' in root_payload
+    assert b'"parentSubagentId":"subagent:child"' in child_payload
     assert codec.decode_fact(root_payload) == root
     assert codec.decode_fact(child_payload) == child
 
@@ -227,7 +227,7 @@ def test_subagent_scope_evidence_is_explicit_and_omitted_at_root() -> None:
     ("phase", "status"),
     [
         ("started", "succeeded"),
-        ("updated", "running"),
+        ("updated", "succeeded"),
         ("completed", "waiting"),
     ],
 )
@@ -239,7 +239,7 @@ def test_subagent_status_matches_its_lifecycle_phase(
         SubagentFact.model_validate(
             {
                 **_common(),
-                "graph_namespace": ("tools:child",),
+                "graph_namespace": (),
                 "phase": phase,
                 "subagentId": "subagent:child",
                 "status": status,
@@ -247,12 +247,27 @@ def test_subagent_status_matches_its_lifecycle_phase(
         )
 
 
+@pytest.mark.parametrize("status", ("waiting", "running"))
+def test_subagent_updates_retain_the_logical_identity(status: str) -> None:
+    fact = SubagentFact.model_validate(
+        {
+            **_common(),
+            "phase": "updated",
+            "subagentId": "subagent:child",
+            "status": status,
+        }
+    )
+    assert fact.subagent_id == "subagent:child"
+    assert fact.status == status
+    assert fact.input is None
+
+
 def test_subagent_relationship_evidence_belongs_only_to_its_start() -> None:
     with pytest.raises(ValidationError, match="opening evidence"):
         SubagentFact.model_validate(
             {
                 **_common(),
-                "graph_namespace": ("tools:child",),
+                "graph_namespace": (),
                 "phase": "updated",
                 "subagentId": "subagent:child",
                 "parentToolCallId": "call-task",
@@ -263,7 +278,7 @@ def test_subagent_relationship_evidence_belongs_only_to_its_start() -> None:
     started = SubagentFact.model_validate(
         {
             **_common(),
-            "graph_namespace": ("tools:child",),
+            "graph_namespace": (),
             "phase": "started",
             "subagentId": "subagent:child",
             "parentToolCallId": "call-task",
@@ -310,7 +325,7 @@ def test_failure_origin_requires_a_failed_terminal_run() -> None:
     ),
 )
 @pytest.mark.parametrize(
-    "scope", ({"graph_namespace": ("child",)}, {"in_subagent_scope": True})
+    "scope", ({"graph_namespace": ("child",)}, {"parent_subagent_id": "subagent:child"})
 )
 def test_all_run_lifecycle_phases_are_root_scoped(
     phase_fields: dict[str, object],
@@ -323,6 +338,6 @@ def test_all_run_lifecycle_phases_are_root_scoped(
             config=CapturedValue(disposition="inline", safe_size_bytes=4),
         )
     valid = RunFact.model_validate(fields)
-    assert valid.graph_namespace == () and valid.in_subagent_scope is False
+    assert valid.graph_namespace == () and valid.parent_subagent_id is None
     with pytest.raises(ValidationError, match="root scope"):
         RunFact.model_validate({**fields, **scope})

@@ -72,18 +72,8 @@ def _tool_node(graph_namespace: tuple[str, ...], source_tool_call_id: str) -> st
     return scope_id("tool", graph_namespace, source_tool_call_id)
 
 
-def _subagent_owner(graph_namespace: tuple[str, ...]) -> str | None:
-    if not graph_namespace:
-        return None
-    return scope_id("subagent", graph_namespace, graph_namespace[-1])
-
-
-def _outer_subagent_owner(graph_namespace: tuple[str, ...]) -> str | None:
-    return _subagent_owner(graph_namespace[:-1])
-
-
 def _fact_subagent_owner(fact: TraceSemanticFact) -> str | None:
-    return _subagent_owner(fact.graph_namespace) if fact.in_subagent_scope else None
+    return fact.parent_subagent_id
 
 
 def _subagent_input_node(fact: SubagentFact) -> str:
@@ -128,6 +118,7 @@ def resolve_graph_node_kind(
 def _subagent_status(value: str) -> TraceGraphNodeStatus:
     try:
         return {
+            "running": TraceGraphNodeStatus.RUNNING,
             "succeeded": TraceGraphNodeStatus.SUCCEEDED,
             "failed": TraceGraphNodeStatus.FAILED,
             "cancelled": TraceGraphNodeStatus.CANCELLED,
@@ -463,8 +454,13 @@ def graph_node_mutations(
         if isinstance(fact, ToolExecutionFact):
             if fact.tool_name == "task":
                 continue
+            proposal_scope = (
+                fact.graph_namespace
+                if fact.tool_call_namespace is None
+                else fact.tool_call_namespace
+            )
             node_id = (
-                _tool_node(fact.graph_namespace, fact.source_tool_call_id)
+                _tool_node(proposal_scope, fact.source_tool_call_id)
                 if fact.source_tool_call_id is not None
                 else fact.execution_id
             )
@@ -482,7 +478,7 @@ def graph_node_mutations(
                         model_call_seq=(
                             event.trace_seq if fact.parent_call_id is not None else None
                         ),
-                        graph_namespace=fact.graph_namespace,
+                        graph_namespace=proposal_scope,
                         agent_name=fact.agent_name,
                         started_at=fact.occurred_at,
                         started_seq=event.trace_seq,
@@ -517,7 +513,7 @@ def graph_node_mutations(
                 )
             continue
         if isinstance(fact, SubagentFact):
-            parent_subagent_id = _outer_subagent_owner(fact.graph_namespace)
+            parent_subagent_id = fact.parent_subagent_id
             if fact.phase == "started":
                 mutations.append(
                     TraceGraphNodeMutation(
@@ -809,14 +805,16 @@ def graph_execution_started(
     if source is None:
         return False
     fact = source.fact
-    if (
-        fact.identity.run_id != mutation.run_id
-        or fact.graph_namespace != mutation.graph_namespace
-    ):
+    scope = (
+        fact.tool_call_namespace
+        if isinstance(fact, ToolExecutionFact) and fact.tool_call_namespace is not None
+        else fact.graph_namespace
+    )
+    if fact.identity.run_id != mutation.run_id or scope != mutation.graph_namespace:
         return False
     if isinstance(fact, ToolExecutionFact):
         expected_node = (
-            _tool_node(fact.graph_namespace, fact.source_tool_call_id)
+            _tool_node(scope, fact.source_tool_call_id)
             if fact.source_tool_call_id is not None
             else fact.execution_id
         )

@@ -26,6 +26,7 @@ from tinkerfin_agui_adapter import (
 )
 from tinkerfin_agui_adapter.media import MessageAttachments
 from tinkerfin_agui_adapter.models import JsonObject
+from tinkerfin_contracts import subagent_request_id
 from tinkerfin_contracts.media import Attachment
 
 _SCRIPT_PATH = Path(__file__).resolve()
@@ -170,9 +171,8 @@ def _artifacts() -> dict[Path, str]:
         identity=RunIdentity(
             namespace="test", thread_id="thread-known", run_id="run-known"
         ),
-        graph_namespace=(*parent_namespace, "tools:graph-task"),
+        subagent_id=subagent_request_id((*parent_namespace, "tools:graph-task")),
         parent_graph_namespace=parent_namespace,
-        graph_task_id="graph-task",
         agent_name="researcher",
         parent_tool_call_id=parent_tool_call_id,
         description="Research the requested topic",

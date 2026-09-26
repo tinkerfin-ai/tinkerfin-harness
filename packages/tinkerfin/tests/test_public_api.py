@@ -29,6 +29,8 @@ def test_top_level_exposes_the_stateless_runtime_contract() -> None:
         "AttachmentContent",
         "AttachmentSupport",
         "ContextKind",
+        "DelegationFailedError",
+        "DelegationReplayError",
         "EventObserver",
         "RunIdentity",
         "RunObservationError",

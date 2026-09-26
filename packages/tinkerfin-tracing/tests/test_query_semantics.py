@@ -391,7 +391,7 @@ async def _record_subagent_scope(
             SubagentFact(
                 source_observation_id="subagent-start",
                 identity=identity,
-                graph_namespace=namespace,
+                graph_namespace=(),
                 occurred_at=now,
                 monotonic_ns=3,
                 phase="started",
@@ -404,7 +404,7 @@ async def _record_subagent_scope(
             SubagentFact(
                 source_observation_id="subagent-complete",
                 identity=identity,
-                graph_namespace=namespace,
+                graph_namespace=(),
                 occurred_at=now,
                 monotonic_ns=4,
                 phase="completed",
@@ -436,7 +436,7 @@ async def _record_subagent_scope(
         mandatory=True,
     )
     await writer.aclose()
-    return tracer, namespace
+    return tracer, ()
 
 
 async def test_graph_page_prefers_structure_and_marks_omitted_details() -> None:
@@ -471,6 +471,7 @@ async def test_graph_subagent_scope_expansion_obeys_the_total_limit() -> None:
             where=TraceGraphFilter(
                 kinds={TraceGraphNodeKind.HUMAN_MESSAGE},
                 graph_namespaces={namespace},
+                agent_names={"reviewer"},
             ),
             limit=1,
         )
@@ -485,6 +486,7 @@ async def test_graph_query_separates_direct_matches_from_scope_parents() -> None
         where=TraceGraphFilter(
             kinds={TraceGraphNodeKind.HUMAN_MESSAGE},
             graph_namespaces={namespace},
+            agent_names={"reviewer"},
         ),
     )
 

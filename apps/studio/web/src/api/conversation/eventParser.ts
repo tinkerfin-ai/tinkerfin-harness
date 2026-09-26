@@ -101,6 +101,9 @@ const isEventSourceInfo = (value: unknown): value is EventSourceInfo => {
         && value.agentType === 'subagent'
         && typeof value.agentName === 'string'
         && value.agentName.length > 0
+        && typeof value.subagentInvocationId === 'string'
+        && value.subagentInvocationId.length > 0
+        && value.subagentInvocationId.trim() === value.subagentInvocationId
     default:
       return false
   }

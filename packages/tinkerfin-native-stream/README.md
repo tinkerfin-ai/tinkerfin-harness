@@ -23,6 +23,13 @@ an upstream version.
 detached finite `NativeStreamPart` used by Native SSE and Messaging. A replay codec must
 consume that model directly rather than parse the provider object again.
 
+Public replay payloads use plain JSON: tuples become arrays, Pydantic models and
+dataclasses use their JSON serializers, and bytes default to URL-safe base64 strings.
+Business fields
+such as `$type` remain ordinary data. The Driver preserves established omissions for
+opaque host resources; additional stream modes require JSON-compatible payloads.
+Recorded parts retain the graph origins needed for delegated retry and resume.
+
 The frame prevents reassignment of its fields. Its canonical envelope and messages
 remain mutable: consumers must treat them as read-only. Messages are borrowed unless
 normalization requires a copy, and input messages are never changed. Upstream changes

@@ -238,16 +238,6 @@ def _subagent_input_node(fact: SubagentFact) -> str:
     return scope_id("subagent-input", fact.graph_namespace, fact.subagent_id)
 
 
-def _subagent_owner(graph_namespace: tuple[str, ...]) -> str | None:
-    if not graph_namespace:
-        return None
-    return scope_id("subagent", graph_namespace, graph_namespace[-1])
-
-
-def _outer_subagent_owner(graph_namespace: tuple[str, ...]) -> str | None:
-    return _subagent_owner(graph_namespace[:-1])
-
-
 def _message_fact_for(record: TraceGraphNodeRecord) -> MessageFact | None:
     facts = (
         None if record.result_event is None else record.result_event.fact,
@@ -433,8 +423,14 @@ def _validate_locator_ownership(
             event is record.updated_event
             and _assistant_run_terminal_locator(record, event) is not None
         )
+        scope = (
+            fact.tool_call_namespace
+            if isinstance(fact, ToolExecutionFact)
+            and fact.tool_call_namespace is not None
+            else fact.graph_namespace
+        )
         if (
-            fact.graph_namespace != record.graph_namespace
+            scope != record.graph_namespace
             and not isinstance(fact, TurnFact)
             and not run_terminal
         ):
@@ -450,19 +446,13 @@ def _validate_locator_ownership(
         ),
         None,
     )
-    if record.kind is TraceGraphNodeKind.SUBAGENT:
-        if not record.graph_namespace:
-            raise TraceStoreProtocolError(
-                "Subagent Graph event requires a graph_namespace"
-            )
-        expected_parent_subagent_id = _outer_subagent_owner(record.graph_namespace)
-    elif record.kind is TraceGraphNodeKind.HUMAN_MESSAGE and isinstance(
+    if record.kind is TraceGraphNodeKind.HUMAN_MESSAGE and isinstance(
         subagent_fact, SubagentFact
     ):
         expected_parent_subagent_id = subagent_fact.subagent_id
     else:
         scope_evidence = {
-            event.fact.in_subagent_scope
+            event.fact.parent_subagent_id
             for event in events
             if event is not None and not isinstance(event.fact, (TurnFact, RunFact))
         }
@@ -470,14 +460,10 @@ def _validate_locator_ownership(
             raise TraceStoreProtocolError(
                 "Trace Graph facts disagree on Subagent scope ownership"
             )
-        expected_parent_subagent_id = (
-            _subagent_owner(record.graph_namespace)
-            if scope_evidence == {True}
-            else None
-        )
+        expected_parent_subagent_id = next(iter(scope_evidence), None)
     if record.parent_subagent_id != expected_parent_subagent_id:
         raise TraceStoreProtocolError(
-            "Trace Graph Subagent owner conflicts with its graph_namespace"
+            "Trace Graph Subagent owner conflicts with its recorded relationship"
         )
 
     model_call_ids: set[str] = set()
@@ -562,7 +548,8 @@ def _validate_locator_ownership(
             if (
                 isinstance(fact, ToolExecutionFact)
                 and fact.source_tool_call_id is not None
-                and _tool_node(fact.graph_namespace, fact.source_tool_call_id)
+                and fact.tool_call_namespace is not None
+                and _tool_node(fact.tool_call_namespace, fact.source_tool_call_id)
                 != record.node_id
             ):
                 raise TraceStoreProtocolError("Tool execution belongs to another call")

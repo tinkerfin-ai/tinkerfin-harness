@@ -297,7 +297,7 @@ async def test_parallel_identical_tasks_keep_exact_graph_execution_ownership() -
         if isinstance(event.fact, SubagentFact) and event.fact.phase == "started"
     ]
     assert {fact.parent_tool_call_id: fact.graph_namespace for fact in subagents} == {
-        call_id: (f"tools:{task_id}",) for call_id, task_id in native_task_ids.items()
+        call_id: () for call_id in native_task_ids
     }
     graph = await tracer.query(runtime.thread_identity("parallel-identical"))
     assert sum(node.kind is TraceGraphNodeKind.SUBAGENT for node in graph.nodes) == 2
@@ -398,11 +398,26 @@ async def test_task_retry_keeps_logical_graph_identity_and_distinct_executions()
     assert executions[0].execution_id != executions[2].execution_id
     assert executions[1].error_type == "builtins.ValueError"
     assert executions[1].error_message == "child attempt failed"
-    task_id = executions[0].graph_task_id
-    assert task_id is not None
-    assert {execution.graph_task_id for execution in executions} == {task_id}
+    assert len({execution.graph_task_id for execution in executions}) == 2
+    requests = [execution.delegation for execution in executions]
+    assert all(request is not None for request in requests)
+    assert len({request.id for request in requests if request is not None}) == 1
+    assert (
+        len({request.graph_task_id for request in requests if request is not None}) == 1
+    )
+    assert {execution.tool_call_namespace for execution in executions} == {()}
     assert {execution.tool_call_id for execution in executions} == {"delegate"}
     trace = await tracer.get(runtime.thread_identity("task-retry"))
+    subagents = [node for node in trace.graph.nodes if node.kind == "subagent"]
+    assert len(subagents) == 1
+    assert subagents[0].graph_namespace == ()
+    child_models = [
+        node
+        for node in trace.graph.nodes
+        if node.kind == "model" and node.graph_namespace
+    ]
+    assert len(child_models) == 2
+    assert {node.parent_subagent_id for node in child_models} == {subagents[0].id}
     assert trace.status.execution == "succeeded"
 
 

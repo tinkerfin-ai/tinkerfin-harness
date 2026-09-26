@@ -43,7 +43,7 @@ async with aclosing(events):
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
-| `parts` | 必填 | LangGraph v2 异步数据流 |
+| `parts` | 必填 | LangGraph v2 异步数据流或已解码的 `NativeStreamPart` 记录 |
 | `identity` | 必填 | 本次转换产生的主 thread 和 run 身份 |
 | `expose_reasoning_events` | `False` | 是否产生支持的推理事件 |
 | `expose_subagent_events` | `True` | 是否交付子 Agent 事件 |
@@ -52,6 +52,13 @@ async with aclosing(events):
 
 独立转换器无法推断宿主的私有字段，因此 `private_state_keys` 需要显式提供，并且只过滤顶层
 channel，不会递归删除嵌套同名业务字段。TinkerFin Plan Runtime 会自动提供自己的内部 key。
+
+已记录的 TinkerFin Native 运行也使用同一入口转换。通过 `tinkerfin_native_stream` 的
+`NativeStreamPart.model_validate_json()` 逐条解码，保留记录中的任务关联和原始顺序。
+直接使用 LangGraph 原始流时，流中必须有足够证据确定每个子任务的父任务；无法确定
+函数式子任务归属时，转换器产生 `AgUiAdapterError`，由 `astream_events()` 输出为
+`RUN_ERROR`。Runtime 管理的委派会在 Native
+记录中提供关联信息，也可以通过 `runtime.open_agui_run()` 直接转换。
 
 ## 持久附件
 
@@ -200,7 +207,7 @@ print(review.tool_name, review.original_args.root)
 未知字段或来自客户端的 interrupt metadata 都不能作为可信恢复依据。
 
 Deep Agents `task` 调用发布 `tinkerfin.subagent-provenance` 形状的
-`SubagentProvenance`。`subagentInvocationId` 跨 resume 稳定，`requestRunId` 表示当前承载事件的
+`SubagentProvenance`。`subagentInvocationId` 在重试与恢复时保持不变，`requestRunId` 表示当前承载事件的
 主请求；父 task Result 使用 `relatedSubagentInvocationId`。这些字段表达 Agent 嵌套，标准
 AG-UI `parentRunId` 继续只表达分支和时间旅行谱系。
 

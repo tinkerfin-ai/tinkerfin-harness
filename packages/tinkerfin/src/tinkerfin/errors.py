@@ -16,6 +16,8 @@ class TinkerFinErrorCode(StrEnum):
     ERROR = "tinkerfin.error"
     LIFECYCLE_ERROR = "tinkerfin.lifecycle_error"
     STREAM_PROTOCOL_ERROR = "tinkerfin.stream_protocol_error"
+    DELEGATION_REPLAY_INVALID = "tinkerfin.delegation_replay_invalid"
+    DELEGATION_FAILED = "tinkerfin.delegation_failed"
     PLAN_MODE_CONFIGURATION = "tinkerfin.plan_mode_configuration"
     PLAN_CLARIFICATION_RESPONSE_INVALID = (
         "tinkerfin.plan_clarification_response_invalid"
@@ -86,6 +88,23 @@ class TinkerFinStreamProtocolError(TinkerFinError, ValueError):
     """A native stream value violates the supported public contract."""
 
     code = TinkerFinErrorCode.STREAM_PROTOCOL_ERROR
+
+
+class DelegationReplayError(TinkerFinLifecycleError):
+    """A delegated attempt cannot safely reuse its recorded checkpoint evidence."""
+
+    code = TinkerFinErrorCode.DELEGATION_REPLAY_INVALID
+
+
+class DelegationFailedError(TinkerFinError):
+    """A recorded delegated failure ended execution before this process resumed it.
+
+    Original live exceptions retain their cause at the first failure boundary.
+    Replayed failures expose a stable safe summary and trusted diagnostic evidence;
+    they never fabricate a provider exception from serialized text.
+    """
+
+    code = TinkerFinErrorCode.DELEGATION_FAILED
 
 
 class AgUiResumeBindingError(TinkerFinError, ValueError):
@@ -190,6 +209,8 @@ class RedisLeaseLifecycleError(RedisLeaseError):
 __all__ = [
     "AgUiResumeBindingError",
     "AgUiSettlementTimeoutError",
+    "DelegationFailedError",
+    "DelegationReplayError",
     "RedisLeaseError",
     "RedisLeaseLifecycleError",
     "RedisLeaseProtocolError",

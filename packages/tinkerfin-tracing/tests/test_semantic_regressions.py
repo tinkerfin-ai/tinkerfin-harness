@@ -9,6 +9,8 @@ import pytest
 from pydantic import JsonValue
 
 from tinkerfin_contracts import (
+    GraphOrigin,
+    GraphTaskReference,
     ModelCallObservation,
     NativeInterruptRecord,
     NativeMessageObservation,
@@ -28,8 +30,10 @@ from tinkerfin_contracts import (
     RunStartedObservation,
     RunTerminalObservation,
     RunTerminalOutcome,
+    SubagentRequestReference,
     ThreadIdentity,
     ToolExecutionObservation,
+    subagent_request_id,
 )
 from tinkerfin_tracing import (
     CapturePolicy,
@@ -366,6 +370,7 @@ async def test_disabled_tool_emits_no_tool_or_result_message_facts() -> None:
             phase="started",
             execution_id="execution-disabled-tool",
             tool_call_id="call-disabled-tool",
+            tool_call_namespace=(),
             tool_name="private_tool",
             input={"secret": "private"},
             observed_at=datetime.now(UTC),
@@ -378,6 +383,7 @@ async def test_disabled_tool_emits_no_tool_or_result_message_facts() -> None:
             phase="completed",
             execution_id="execution-disabled-tool",
             tool_call_id="call-disabled-tool",
+            tool_call_namespace=(),
             tool_name="private_tool",
             output={"secret": "private"},
             observed_at=datetime.now(UTC),
@@ -490,10 +496,25 @@ async def test_parent_task_result_completes_its_direct_subagent_before_interrupt
     now = datetime.now(UTC)
     parent_task_id = "parent-task"
     namespace = (f"tools:{parent_task_id}",)
+    request = SubagentRequestReference(
+        id=subagent_request_id(namespace),
+        parent_graph_namespace=(),
+        parent_tool_call_id="task-call",
+        graph_task_id=parent_task_id,
+        agent_name="general-purpose",
+        description="Complete the delegated task",
+    )
+    origin = GraphOrigin(
+        parent_task=GraphTaskReference(
+            graph_namespace=(), task_id=parent_task_id, node_name="tools"
+        ),
+        subagent_request=request,
+    )
     await session.observe(
         NativeTaskObservation(
             identity=context.identity,
             graph_namespace=(),
+            subagent_requests=(request,),
             phase="start",
             task_id=parent_task_id,
             name="tools",
@@ -516,6 +537,7 @@ async def test_parent_task_result_completes_its_direct_subagent_before_interrupt
         NativeTaskObservation(
             identity=context.identity,
             graph_namespace=namespace,
+            graph_origin=origin,
             phase="start",
             task_id="child-task",
             name="model",
@@ -529,6 +551,7 @@ async def test_parent_task_result_completes_its_direct_subagent_before_interrupt
         NativeTaskObservation(
             identity=context.identity,
             graph_namespace=namespace,
+            graph_origin=origin,
             phase="result",
             task_id="child-task",
             name="model",
@@ -589,6 +612,20 @@ async def test_verified_task_tool_adds_subagent_identity_and_input(
         "description": "Research the current contract",
         "subagent_type": "researcher",
     }
+    request = SubagentRequestReference(
+        id=subagent_request_id(("tools:parent-task",)),
+        parent_graph_namespace=(),
+        parent_tool_call_id="call-task",
+        graph_task_id="parent-task",
+        agent_name="researcher",
+        description="Research the current contract",
+    )
+    origin = GraphOrigin(
+        parent_task=GraphTaskReference(
+            graph_namespace=(), task_id="parent-task", node_name="tools"
+        ),
+        subagent_request=request,
+    )
     task_input: list[JsonValue] = [
         {
             "name": "task",
@@ -621,6 +658,7 @@ async def test_verified_task_tool_adds_subagent_identity_and_input(
         NativeTaskObservation(
             identity=context.identity,
             graph_namespace=(),
+            subagent_requests=(request,),
             phase="start",
             task_id="parent-task",
             name="tools",
@@ -635,6 +673,7 @@ async def test_verified_task_tool_adds_subagent_identity_and_input(
         NativeTaskObservation(
             identity=context.identity,
             graph_namespace=namespace,
+            graph_origin=origin,
             phase="start",
             task_id="child-model",
             name="model",
@@ -654,6 +693,7 @@ async def test_verified_task_tool_adds_subagent_identity_and_input(
         NativeStateObservation(
             identity=context.identity,
             graph_namespace=namespace,
+            graph_origin=origin,
             state={},
             messages=(child_input,),
             observed_at=now,
@@ -664,6 +704,7 @@ async def test_verified_task_tool_adds_subagent_identity_and_input(
         NativeMessageObservation(
             identity=context.identity,
             graph_namespace=namespace,
+            graph_origin=origin,
             message=NativeMessageRecord(
                 message_type="human",
                 id="child-follow-up",
@@ -677,6 +718,7 @@ async def test_verified_task_tool_adds_subagent_identity_and_input(
         NativeStateObservation(
             identity=context.identity,
             graph_namespace=namespace,
+            graph_origin=origin,
             state={},
             messages=(
                 child_input,
@@ -784,6 +826,20 @@ async def test_resumed_subagent_keeps_its_task_input_in_one_fact(
     context = _context(run_id="delegation-initial")
     session = await _start(tracer, context)
     namespace = ("tools:delegation",)
+    request = SubagentRequestReference(
+        id=subagent_request_id(namespace),
+        parent_graph_namespace=(),
+        parent_tool_call_id="call-task",
+        graph_task_id="delegation",
+        agent_name="researcher",
+        description="original task",
+    )
+    origin = GraphOrigin(
+        parent_task=GraphTaskReference(
+            graph_namespace=(), task_id="delegation", node_name="tools"
+        ),
+        subagent_request=request,
+    )
     message = NativeMessageRecord(
         message_type="human", id="initial", content="original task"
     )
@@ -791,6 +847,7 @@ async def test_resumed_subagent_keeps_its_task_input_in_one_fact(
         NativeTaskObservation(
             identity=context.identity,
             graph_namespace=(),
+            subagent_requests=(request,),
             phase="start",
             task_id="delegation",
             name="tools",
@@ -812,6 +869,7 @@ async def test_resumed_subagent_keeps_its_task_input_in_one_fact(
         NativeStateObservation(
             identity=context.identity,
             graph_namespace=namespace,
+            graph_origin=origin,
             state={},
             messages=(message,),
             observed_at=datetime.now(UTC),
@@ -826,6 +884,7 @@ async def test_resumed_subagent_keeps_its_task_input_in_one_fact(
             NativeStateObservation(
                 identity=context.identity,
                 graph_namespace=namespace,
+                graph_origin=origin,
                 state={},
                 messages=(message,),
                 observed_at=datetime.now(UTC),
@@ -845,6 +904,7 @@ async def test_resumed_subagent_keeps_its_task_input_in_one_fact(
         NativeStateObservation(
             identity=resumed.identity,
             graph_namespace=namespace,
+            graph_origin=origin,
             state={},
             messages=(message,),
             observed_at=datetime.now(UTC),
@@ -855,6 +915,7 @@ async def test_resumed_subagent_keeps_its_task_input_in_one_fact(
         NativeStateObservation(
             identity=resumed.identity,
             graph_namespace=namespace,
+            graph_origin=origin,
             state={},
             messages=(),
             observed_at=datetime.now(UTC),
@@ -903,6 +964,26 @@ async def test_grouped_parallel_task_result_completes_every_direct_subagent() ->
     session = await _start(tracer, context)
     now = datetime.now(UTC)
     parent_task_id = "parallel-parent"
+    requests = tuple(
+        SubagentRequestReference(
+            id=subagent_request_id((f"tools:{parent_task_id}:{index}",)),
+            parent_graph_namespace=(),
+            parent_tool_call_id=tool_call_id,
+            graph_task_id=parent_task_id,
+            agent_name=agent_name,
+            description=description,
+        )
+        for index, (tool_call_id, agent_name, description) in enumerate(
+            (
+                ("call-task-a", "researcher", "Inspect the first independent area"),
+                (
+                    "call-task-b",
+                    "general-purpose",
+                    "Inspect the second independent area",
+                ),
+            )
+        )
+    )
     calls: list[JsonValue] = [
         {
             "name": "task",
@@ -927,6 +1008,7 @@ async def test_grouped_parallel_task_result_completes_every_direct_subagent() ->
         NativeTaskObservation(
             identity=context.identity,
             graph_namespace=(),
+            subagent_requests=requests,
             phase="start",
             task_id=parent_task_id,
             name="tools",
@@ -940,6 +1022,12 @@ async def test_grouped_parallel_task_result_completes_every_direct_subagent() ->
             NativeTaskObservation(
                 identity=context.identity,
                 graph_namespace=(f"tools:{parent_task_id}:{index}",),
+                graph_origin=GraphOrigin(
+                    parent_task=GraphTaskReference(
+                        graph_namespace=(), task_id=parent_task_id, node_name="tools"
+                    ),
+                    subagent_request=requests[index],
+                ),
                 phase="start",
                 task_id=f"child-{index}",
                 name="model",

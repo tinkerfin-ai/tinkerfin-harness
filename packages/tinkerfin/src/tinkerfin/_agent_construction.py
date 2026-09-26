@@ -43,8 +43,9 @@ from langgraph.typing import ContextT
 
 from tinkerfin_contracts import PreparedWorkspace
 
-from ._agent_spec import AgentMiddlewareType, AgentSpec
+from ._agent_spec import AgentMiddlewareType, AgentSpec, CheckpointSaver
 from ._attachment_agents import _AttachmentMiddleware, preserve_media
+from ._durable_delegation import prepare_delegation_retry
 from ._hitl import create_tool_review
 from ._middleware_resources import prepare_middleware_resources
 from ._state_schema import private_state_fields
@@ -164,6 +165,7 @@ def _child_stack(
     workspace: PreparedWorkspace[object, BackendProtocol] | None,
     attachments: AttachmentSupport | None,
     tool_scope: _ToolRunScope[object] | None,
+    checkpointer: CheckpointSaver | None,
     inherit_slots_only: bool = False,
 ) -> list[AgentMiddlewareType]:
     defaults = _role_defaults(
@@ -178,7 +180,12 @@ def _child_stack(
         names = {item.name for item in defaults}
         custom = tuple(item for item in custom if item.name in names)
     return _with_attachments(
-        [*_merge_middleware(defaults, custom), _ToolRuntimeMiddleware(tool_scope)],
+        [
+            *prepare_delegation_retry(
+                _merge_middleware(defaults, custom), checkpointer
+            ),
+            _ToolRuntimeMiddleware(tool_scope),
+        ],
         attachments,
     )
 
@@ -224,6 +231,7 @@ def create_agent_graph(
                 workspace=workspace,
                 attachments=spec.attachments,
                 tool_scope=spec.tool_scope,
+                checkpointer=spec.checkpointer,
             )
             native: NativeSubAgent = {
                 "name": child["name"],
@@ -257,6 +265,7 @@ def create_agent_graph(
                     workspace=workspace,
                     attachments=spec.attachments,
                     tool_scope=spec.tool_scope,
+                    checkpointer=spec.checkpointer,
                     inherit_slots_only=True,
                 ),
             },
@@ -280,7 +289,9 @@ def create_agent_graph(
         defaults.append(review)
     if remote:
         defaults.append(AsyncSubAgentMiddleware(async_subagents=remote))
-    middleware = _merge_middleware(defaults, custom)
+    middleware = prepare_delegation_retry(
+        _merge_middleware(defaults, custom), spec.checkpointer
+    )
     if spec.compaction_tool_enabled:
         summary = next(
             item for item in middleware if item.name == "SummarizationMiddleware"

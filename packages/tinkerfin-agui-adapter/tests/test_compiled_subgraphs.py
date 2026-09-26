@@ -19,6 +19,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
 from tinkerfin_agui_adapter import (
+    AgUiStreamContractError,
     AttachmentMessagesSnapshotEvent,
     AttachmentToolCallResultEvent,
     DeepAgentAgUiAdapter,
@@ -213,10 +214,70 @@ async def test_nested_compiled_subgraphs_keep_complete_task_provenance() -> None
     assert phases == ["start", "result"]
 
 
+@pytest.mark.asyncio
+async def test_repeated_child_calls_share_the_proven_parent_task() -> None:
+    """Sequential child invocations retain their complete physical scopes."""
+
+    child_builder = StateGraph(_State)
+    child_builder.add_node("increment", _increment)
+    child_builder.add_edge(START, "increment")
+    child_builder.add_edge("increment", END)
+    child = child_builder.compile()
+
+    async def twice(state: _State, config: RunnableConfig) -> _State:
+        first = await child.ainvoke(state, config)
+        first_value = first["value"]
+        assert isinstance(first_value, int)
+        second = await child.ainvoke({"value": first_value}, config)
+        second_value = second["value"]
+        assert isinstance(second_value, int)
+        return {"value": second_value}
+
+    parent_builder = StateGraph(_State)
+    parent_builder.add_node("twice", twice)
+    parent_builder.add_edge(START, "twice")
+    parent_builder.add_edge("twice", END)
+    graph = parent_builder.compile()
+    adapter = DeepAgentAgUiAdapter(identity=_identity())
+    events: list[BaseEvent] = []
+    namespaces: set[tuple[str, ...]] = set()
+    async for part in _parts(graph):
+        assert isinstance(part, dict)
+        namespaces.add(part["ns"])
+        events.extend(adapter.process(part))
+    events.extend(adapter.finish())
+
+    children = sorted(namespace for namespace in namespaces if namespace)
+    assert len(children) == 2
+    assert children[1] == (*children[0], "1")
+    values = [
+        event
+        for event in events
+        if isinstance(event, RawEvent) and event.source == "langgraph.values"
+    ]
+    actual_namespaces: set[tuple[str, ...]] = set()
+    for event in values:
+        raw = event.raw_event
+        assert isinstance(raw, Mapping)
+        namespace = raw.get("ns")
+        assert isinstance(namespace, list)
+        assert all(isinstance(part, str) for part in namespace)
+        actual_namespaces.add(tuple(namespace))
+    assert actual_namespaces == set(children)
+    assert {event.event["provenance"]["graphTaskId"] for event in values} == {
+        children[0][0].partition(":")[2]
+    }
+    assert all(
+        event.event["provenance"]["parentGraphNamespace"] == [] for event in values
+    )
+
+
 def test_unregistered_compiled_subgraph_part_is_rejected() -> None:
     adapter = DeepAgentAgUiAdapter(identity=_identity())
 
-    with pytest.raises(RuntimeError, match="before its native task-start correlation"):
+    with pytest.raises(
+        AgUiStreamContractError, match="before its native task-start correlation"
+    ):
         adapter.process(
             {
                 "type": "values",

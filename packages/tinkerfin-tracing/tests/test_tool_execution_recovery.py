@@ -76,6 +76,7 @@ def _events(
                 phase=phase,
                 execution_id="first" if index < 3 else "second",
                 source_tool_call_id="report",
+                tool_call_namespace=namespace,
                 tool_name="deliver_report",
                 input=_capture(f"input-{index}") if phase == "started" else None,
                 output=_capture("delivered") if phase == "completed" else None,

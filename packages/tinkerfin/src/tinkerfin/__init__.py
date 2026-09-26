@@ -12,6 +12,8 @@ from ._lazy_run import NativeRunStream as NativeRunStream
 from ._optional_dependencies import require_agui
 from .compaction import CompactionResult as CompactionResult
 from .errors import AgUiResumeBindingError as AgUiResumeBindingError
+from .errors import DelegationFailedError as DelegationFailedError
+from .errors import DelegationReplayError as DelegationReplayError
 from .errors import RunObservationError as RunObservationError
 from .errors import TinkerFinError as TinkerFinError
 from .errors import TinkerFinErrorCode as TinkerFinErrorCode
@@ -97,6 +99,8 @@ __all__ = [
     "AttachmentSupport",
     "CompactionResult",
     "ContextKind",
+    "DelegationFailedError",
+    "DelegationReplayError",
     "EventObserver",
     "NativeRunStream",
     "NativeStreamPart",

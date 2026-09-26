@@ -26,6 +26,8 @@ from langgraph.types import Command
 from pydantic import JsonValue
 
 from tinkerfin_contracts import (
+    ContextContributionObservation,
+    ModelCallObservation,
     NativeExtraObservation,
     NativeInterruptRecord,
     NativeMessageObservation,
@@ -51,11 +53,14 @@ from tinkerfin_contracts import (
     RunTerminalOutcome,
     RuntimeObservation,
     RuntimeObserver,
+    ToolExecutionObservation,
 )
 from tinkerfin_native_stream import (
     NativeExtraStreamPart,
+    NativeGraphScopeRegistry,
     NativeMessageStreamPart,
     NativeRuntimeInterrupt,
+    NativeStreamContractError,
     NativeTaskResultPayload,
     NativeTasksStreamPart,
     NativeTaskStartPayload,
@@ -68,7 +73,7 @@ from tinkerfin_native_stream import (
 from ._failure_evidence import retain_failure, select_failure
 from ._run_callbacks import callback_scope
 from ._tasks import join_task
-from .errors import RunObservationError
+from .errors import RunObservationError, TinkerFinStreamProtocolError
 
 if TYPE_CHECKING:
     from ._compaction_observation import CompactionOperation
@@ -185,6 +190,13 @@ def _message_record(message: BaseMessage) -> NativeMessageRecord:
         tool_status=tool_status,
         response_metadata=response_metadata,
         usage_metadata=usage_metadata,
+        chunk_position=message.chunk_position
+        if isinstance(message, AIMessageChunk)
+        else None,
+        artifact=_source_value(message.artifact)
+        if isinstance(message, ToolMessage)
+        else None,
+        chat_role=message.role if isinstance(message, ChatMessage) else None,
     )
 
 
@@ -274,6 +286,7 @@ def native_observation(
             monotonic_ns=monotonic_ns,
             state=state,
             messages=tuple(messages),
+            messages_present="messages" in part.data,
             interrupts=tuple(
                 NativeInterruptRecord(id=value.id, value=_json_value(value.value))
                 for value in part.interrupts
@@ -381,6 +394,7 @@ class RuntimeObservationHub:
         from ._sync_call_observation import SyncRuntimeCallHandler
 
         self.compactions: dict[str, CompactionOperation] = {}
+        self.graph_scopes = NativeGraphScopeRegistry()
         self.context = context
         self._observers = observers
         self._initialization_error = initialization_error
@@ -581,6 +595,79 @@ class RuntimeObservationHub:
 
         if self._closed:
             raise RuntimeError("Runtime Observation Hub is closed")
+        if isinstance(
+            observation,
+            (
+                ModelCallObservation,
+                ToolExecutionObservation,
+                ContextContributionObservation,
+            ),
+        ):
+            origin = self.graph_scopes.callback_origin(observation.graph_namespace)
+            if (
+                isinstance(observation, ModelCallObservation)
+                and observation.phase == "completed"
+            ):
+                try:
+                    self.graph_scopes.validate_model_output(
+                        observation.graph_namespace,
+                        message_ids=observation.output_message_ids,
+                        tool_call_ids=observation.tool_call_ids,
+                    )
+                except NativeStreamContractError as error:
+                    raise TinkerFinStreamProtocolError(
+                        "Native model output violates the current contract",
+                        diagnostic_context={"native_code": error.code.value},
+                        cause=error,
+                    ) from error
+            updates: dict[str, object] = {"graph_origin": origin}
+            if isinstance(observation, ToolExecutionObservation):
+                delegation = None
+                if (
+                    observation.tool_name == "task"
+                    and observation.graph_task_id is not None
+                ):
+                    delegation = self.graph_scopes.execution_request(
+                        observation.graph_namespace, observation.graph_task_id
+                    )
+                    if (
+                        observation.phase == "started"
+                        and observation.tool_call_id is not None
+                    ):
+                        arguments = observation.input
+                        if isinstance(arguments, dict):
+                            agent_name = arguments.get("subagent_type")
+                            description = arguments.get("description")
+                            if isinstance(agent_name, str) and isinstance(
+                                description, str
+                            ):
+                                delegation = self.graph_scopes.register_delegation(
+                                    parent_namespace=(
+                                        observation.graph_namespace
+                                        if delegation is None
+                                        else delegation.parent_graph_namespace
+                                    ),
+                                    graph_task_id=(
+                                        observation.graph_task_id
+                                        if delegation is None
+                                        else delegation.graph_task_id
+                                    ),
+                                    tool_call_id=observation.tool_call_id,
+                                    agent_name=agent_name,
+                                    description=description,
+                                    executed=True,
+                                )
+                updates.update(
+                    delegation=delegation,
+                    tool_call_namespace=(
+                        None
+                        if observation.tool_call_id is None
+                        else observation.graph_namespace
+                        if delegation is None
+                        else delegation.parent_graph_namespace
+                    ),
+                )
+            observation = observation.model_copy(update=updates)
         await self._deliver_observation(observation)
 
     def _start_delivery_worker(self) -> None:

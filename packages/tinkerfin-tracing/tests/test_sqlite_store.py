@@ -626,7 +626,6 @@ async def test_sql_graph_query_keeps_latest_non_null_lineage_values(
     origin_started_at = datetime(2026, 1, 1, 0, 0, 10, tzinfo=UTC)
     later_revision_at = origin_started_at + timedelta(seconds=5)
     subagent_id = "subagent:shared"
-    subagent_namespace = ("tools:shared",)
     try:
         for store in stores:
             root = await store.open_writer(_identity("graph-parent"))
@@ -637,7 +636,7 @@ async def test_sql_graph_query_keeps_latest_non_null_lineage_values(
                     SubagentFact(
                         source_observation_id="graph-parent-subagent",
                         identity=_identity("graph-parent"),
-                        graph_namespace=subagent_namespace,
+                        graph_namespace=(),
                         occurred_at=origin_started_at,
                         monotonic_ns=2,
                         phase="started",
@@ -655,7 +654,7 @@ async def test_sql_graph_query_keeps_latest_non_null_lineage_values(
                     SubagentFact(
                         source_observation_id="graph-child-subagent",
                         identity=_identity("graph-child"),
-                        graph_namespace=subagent_namespace,
+                        graph_namespace=(),
                         occurred_at=later_revision_at,
                         monotonic_ns=3,
                         phase="completed",
@@ -764,7 +763,7 @@ async def test_sql_graph_query_keeps_latest_non_null_lineage_values(
                     SubagentFact(
                         source_observation_id="graph-conflicting-subagent",
                         identity=_identity("graph-conflict"),
-                        graph_namespace=subagent_namespace,
+                        graph_namespace=(),
                         occurred_at=later_revision_at + timedelta(seconds=1),
                         monotonic_ns=4,
                         phase="completed",
@@ -811,7 +810,16 @@ async def test_graph_store_accepts_64_subagent_levels_and_rejects_level_65(
                         SubagentFact(
                             source_observation_id=f"subagent-depth-{depth}",
                             identity=_identity(run_id),
-                            graph_namespace=namespace,
+                            graph_namespace=namespace[:-1],
+                            parent_subagent_id=(
+                                scope_id(
+                                    "subagent",
+                                    namespaces[depth - 2],
+                                    namespaces[depth - 2][-1],
+                                )
+                                if depth > 1
+                                else None
+                            ),
                             occurred_at=datetime(2026, 1, 1, tzinfo=UTC)
                             + timedelta(milliseconds=depth),
                             monotonic_ns=depth + 1,
@@ -839,7 +847,7 @@ async def test_graph_store_accepts_64_subagent_levels_and_rejects_level_65(
                 run_ids=(run_id,),
                 where=TraceGraphFilter(
                     kinds={TraceGraphNodeKind.SUBAGENT},
-                    graph_namespaces={namespaces[63]},
+                    graph_namespaces={namespaces[63][:-1]},
                 ),
                 limit=1,
                 max_nodes=65,
@@ -900,6 +908,7 @@ async def test_sql_append_reuses_locked_state_and_one_graph_prefetch(
                     phase="started",
                     execution_id=f"execution-{index}",
                     source_tool_call_id=f"call-{index}",
+                    tool_call_namespace=(),
                     tool_name="read_file",
                     input=_captured({"path": str(index)}),
                 )
@@ -924,6 +933,7 @@ async def test_sql_append_reuses_locked_state_and_one_graph_prefetch(
                     phase="completed",
                     execution_id=f"execution-{index}",
                     source_tool_call_id=f"call-{index}",
+                    tool_call_namespace=(),
                     tool_name="read_file",
                     output=_captured("ok"),
                 )
@@ -1033,6 +1043,7 @@ async def test_tool_lineage_uses_execution_time_and_clears_stale_completion(
                         execution_id="shared-execution",
                         parent_call_id="model-call",
                         source_tool_call_id="shared-tool",
+                        tool_call_namespace=(),
                         tool_name="read_file",
                         input=_captured({"path": "a"}),
                     ),
@@ -1045,6 +1056,7 @@ async def test_tool_lineage_uses_execution_time_and_clears_stale_completion(
                         execution_id="shared-execution",
                         parent_call_id="model-call",
                         source_tool_call_id="shared-tool",
+                        tool_call_namespace=(),
                         tool_name="read_file",
                         output=_captured("ok"),
                     ),
@@ -1076,6 +1088,7 @@ async def test_tool_lineage_uses_execution_time_and_clears_stale_completion(
                         execution_id="shared-execution",
                         parent_call_id="model-call",
                         source_tool_call_id="shared-tool",
+                        tool_call_namespace=(),
                         tool_name="read_file",
                         input=_captured({"path": "a"}),
                     ),
@@ -1145,15 +1158,21 @@ async def test_subagent_lineage_survives_two_interrupts_and_rebuild(
                     SubagentFact(
                         source_observation_id=f"{run_id}-start",
                         identity=_identity(run_id),
-                        graph_namespace=namespace,
+                        graph_namespace=(),
                         occurred_at=started_at,
                         monotonic_ns=2,
-                        phase="started",
+                        phase="started" if run_id == "subagent-first" else "updated",
                         subagent_id=subagent_id,
                         agent_name="researcher",
-                        parent_tool_call_id="task-call",
-                        parent_execution_id="task-execution",
-                        model_call_id="model-call",
+                        parent_tool_call_id="task-call"
+                        if run_id == "subagent-first"
+                        else None,
+                        parent_execution_id="task-execution"
+                        if run_id == "subagent-first"
+                        else None,
+                        model_call_id="model-call"
+                        if run_id == "subagent-first"
+                        else None,
                         status="running",
                     ),
                 ]
@@ -1162,7 +1181,7 @@ async def test_subagent_lineage_survives_two_interrupts_and_rebuild(
                         SubagentFact(
                             source_observation_id=f"{run_id}-waiting",
                             identity=_identity(run_id),
-                            graph_namespace=namespace,
+                            graph_namespace=(),
                             occurred_at=started_at + timedelta(seconds=1),
                             monotonic_ns=3,
                             phase="updated",
@@ -1176,7 +1195,7 @@ async def test_subagent_lineage_survives_two_interrupts_and_rebuild(
                         SubagentFact(
                             source_observation_id=f"{run_id}-terminal",
                             identity=_identity(run_id),
-                            graph_namespace=namespace,
+                            graph_namespace=(),
                             occurred_at=terminal_at,
                             monotonic_ns=3,
                             phase="completed",
@@ -1196,7 +1215,7 @@ async def test_subagent_lineage_survives_two_interrupts_and_rebuild(
                         where=TraceGraphFilter(kinds={TraceGraphNodeKind.SUBAGENT}),
                         limit=10,
                     )
-                    assert interrupted.nodes[0].started_at == second_start
+                    assert interrupted.nodes[0].started_at == first_start
                     assert interrupted.nodes[0].completed_at is None
                     assert interrupted.nodes[0].status is TraceGraphNodeStatus.WAITING
 
@@ -1213,7 +1232,7 @@ async def test_subagent_lineage_survives_two_interrupts_and_rebuild(
                 page.nodes[0].completed_at,
                 page.nodes[0].status,
             )
-            assert observed == (final_start, terminal_at, expected_status)
+            assert observed == (first_start, terminal_at, expected_status)
 
             await store.rebuild_trace_graph(snapshot.key)
             rebuilt = await store.query_trace_graph(

@@ -2,6 +2,10 @@ import type { InterruptEvent } from '../api/conversation/types'
 import type { JsonObject } from '../types'
 import type { ToolReviewDecision } from '../features/conversation/agui/toolReviewContract'
 
+/** 构造根作用域内完整的框架工具 ID */
+export const rootToolId = (rawId: string): string =>
+  `tf:tool:${btoa(JSON.stringify([[], rawId])).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`
+
 /** 构造用于验证审批界面的公开协议样本 */
 export const toolReviewInterrupts = (
   nativeInterruptId: string,

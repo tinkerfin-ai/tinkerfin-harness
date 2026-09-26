@@ -2,7 +2,7 @@ import { applyConversationEvent, prepareResumeSubmission } from '../agui'
 import { buildConversationDisplayEntries } from '../todoTrace/displayEntries'
 import type { JsonValue } from '../../../types'
 import type { ConversationAgUiEvent } from '../../../api/conversation/types'
-import { toolReviewInterrupts, planInterrupt } from '../../../test/aguiFixtures'
+import { toolReviewInterrupts, planInterrupt, rootToolId } from '../../../test/aguiFixtures'
 import { describe, expect, it } from 'vitest'
 import mediaFixture from '../agui/contracts/message-attachments.fixture.json'
 
@@ -1215,7 +1215,7 @@ describe('历史恢复与实时续流联合验证', () => {
     snapshot.graph.nodes = [{
       ...snapshot.graph.nodes[0]!, id: 'native-child', kind: 'subagent', name: 'researcher',
       graphNamespace: ['tools:opaque:task'], sourceId: 'native-parent-call', ...capture,
-      agui: { kind: 'subagent', parentToolCallId: 'public-parent-call', subagentInvocationId: 'subagent-11111111-1111-5111-8111-111111111111' },
+      agui: { kind: 'subagent', parentToolCallId: rootToolId('public-parent-call'), subagentInvocationId: 'subagent-11111111-1111-5111-8111-111111111111' },
       status: 'waiting', completedAt: null,
     }]
     const restored = restoreConversationFromTrace(snapshot, { model: 'main', includeTaskTrace: true })
@@ -1224,8 +1224,7 @@ describe('历史恢复与实时续流联合验证', () => {
       event: { data: { id: 'opaque:task', name: 'tools' }, provenance: {
         kind: 'root', graphNamespace: [], agentType: 'main', agentName: 'main', subagents: [{
           schema: 'tinkerfin.subagent-provenance',
-          subagentInvocationId: 'subagent-11111111-1111-5111-8111-111111111111', parentToolCallId: 'public-parent-call',
-          graphNamespace: ['tools:opaque:task'], parentGraphNamespace: [], graphTaskId: 'opaque:task',
+          subagentInvocationId: 'subagent-11111111-1111-5111-8111-111111111111', parentToolCallId: rootToolId('public-parent-call'), parentGraphNamespace: [],
           agentName: 'researcher', description: '分析门店数据', requestRunId: 'run-resume',
         }],
       } },
@@ -1235,10 +1234,10 @@ describe('历史恢复与实时续流联合验证', () => {
     const children = conversation.messages.filter(message => message.role === 'subagent')
     expect(children).toHaveLength(1)
     expect(children[0]).toMatchObject({ id: 'native-child', meta: {
-      subRunId: 'subagent-11111111-1111-5111-8111-111111111111', graphTaskId: 'opaque:task', input: '分析门店数据', originMainRunId: 'run-1', lastMainRunId: 'run-resume',
+      subRunId: 'subagent-11111111-1111-5111-8111-111111111111', input: '分析门店数据', originMainRunId: 'run-1', lastMainRunId: 'run-resume',
     } })
     const conflicts = conversation.messages.map(message => message.role === 'subagent'
-      ? { ...message, meta: { ...message.meta, graphTaskId: 'different-task' } } : message)
+      ? { ...message, meta: { ...message.meta, toolCallId: 'different-parent-call' } } : message)
     expect(() => applyConversationEvent({ ...conversation, messages: conflicts }, event)).toThrow('身份冲突')
     const conflictingInput = conversation.messages.map(message => message.role === 'subagent'
       ? { ...message, meta: { ...message.meta, input: '另一个任务' } } : message)

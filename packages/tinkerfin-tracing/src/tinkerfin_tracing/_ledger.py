@@ -345,7 +345,7 @@ def _resolve_append_events(
     # writer flags, quotas, and Graph rows cannot commit a contradictory Run terminal.
     if any(
         isinstance(fact, RunFact)
-        and (fact.graph_namespace != () or fact.in_subagent_scope is not False)
+        and (fact.graph_namespace != () or fact.parent_subagent_id is not None)
         for fact in facts
     ):
         raise TraceStoreProtocolError("Run lifecycle facts require the root scope")

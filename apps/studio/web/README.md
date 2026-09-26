@@ -4,7 +4,7 @@ Studio 的 React + TypeScript 客户端。后端启动与模型配置见 [Studio
 
 ## 本地运行
 
-需要 Node.js 20.19+（20.x）或 22.12+，以及 pnpm 10.8.0。在本目录执行：
+需要 Node.js 20.19+（20.x）、22.12+（22.x）或 24 及以上版本，以及 pnpm 10.8.0。在本目录执行：
 
 ```bash
 pnpm install --frozen-lockfile

@@ -580,19 +580,12 @@ type ResolvedRawEventContext = RawEventContext & Required<
 >
 
 const runIdForSource = (
-  conversation: Conversation,
   rawEvent: ResolvedRawEventContext,
 ) => (
   rawEvent.source.agentType === "subagent"
-  && rawEvent.source.subagentInvocationId
     ? rawEvent.source.subagentInvocationId
     : rawEvent.runId
-) ?? conversation.messages.find(
-  (message) =>
-    message.role === "subagent"
-    && rawEvent.source.graphTaskId != null
-    && message.meta?.graphTaskId === rawEvent.source.graphTaskId,
-)?.meta?.subRunId
+)
 
 const rawEventOrMain = (
   conversation: Conversation,
@@ -618,12 +611,16 @@ const startSubagentRun = (
     (message) => message.role === "subagent" && message.meta?.subRunId === subRunId,
   )
   if (existing) {
+    const confirmed = existing.meta?.subagentProvenance
     if (
       existing.meta?.originMainRunId == null
       || existing.meta?.agentName !== provenance.agentName
-      || (existing.meta?.graphTaskId != null && existing.meta.graphTaskId !== provenance.graphTaskId)
       || existing.meta?.toolCallId !== provenance.parentToolCallId
-      || (existing.meta?.graphTaskId != null && existing.meta.input !== provenance.description)
+      || (confirmed != null && (
+        confirmed.description !== provenance.description
+        || existing.meta?.input !== provenance.description
+        || JSON.stringify(confirmed.parentGraphNamespace) !== JSON.stringify(provenance.parentGraphNamespace)
+      ))
     ) throw new Error(`子 Agent 身份冲突: ${subRunId}`)
     return updateMessage(
       conversation,
@@ -635,7 +632,7 @@ const startSubagentRun = (
           ...message.meta,
           status: "running",
           lastMainRunId: provenance.requestRunId,
-          graphTaskId: provenance.graphTaskId,
+          subagentProvenance: message.role === "subagent" ? provenance : message.meta?.subagentProvenance,
           input: message.role === "subagent" ? provenance.description : message.meta?.input,
           completedAt: undefined,
           durationMs: undefined,
@@ -644,7 +641,6 @@ const startSubagentRun = (
     )
   }
 
-  const graphTaskId = provenance.graphTaskId
   const pendingTasks = conversation.messages.filter(
     (message) =>
       message.role === "tool"
@@ -671,7 +667,7 @@ const startSubagentRun = (
       runId: subRunId,
       originMainRunId: provenance.requestRunId,
       lastMainRunId: provenance.requestRunId,
-      graphTaskId,
+      subagentProvenance: provenance,
     },
   }
 
@@ -684,7 +680,6 @@ const startSubagentRun = (
             meta: {
               ...message.meta,
               subRunId,
-              graphTaskId,
               lastMainRunId: provenance.requestRunId,
             },
           }
@@ -699,17 +694,13 @@ const updateSubagentRun = (
   rawEvent: ResolvedRawEventContext,
   updater: (message: Message) => Message,
 ): Conversation => {
-  const runId = runIdForSource(conversation, rawEvent)
+  const runId = runIdForSource(rawEvent)
   const index = findMessageIndex(
     conversation,
     (message) =>
       message.role === "subagent"
-      && (runId != null
-        ? message.meta?.subRunId === runId
-        : (
-          rawEvent.source.graphTaskId != null
-          && message.meta?.graphTaskId === rawEvent.source.graphTaskId
-        )),
+      && runId != null
+      && message.meta?.subRunId === runId,
   )
 
   if (index < 0) return conversation
@@ -1395,7 +1386,7 @@ const reduceConversationEvent = (
     case "TOOL_CALL_START":
       {
         const rawEvent = rawEventOrMain(conversation, event.rawEvent)
-        const sourceRunId = runIdForSource(conversation, rawEvent)
+        const sourceRunId = runIdForSource(rawEvent)
         const withSubagentName = rawEvent.source.agentType === "subagent"
           ? updateSubagentRun(conversation, rawEvent, (message) => ({
               ...message,
@@ -1424,7 +1415,6 @@ const reduceConversationEvent = (
             parentMessageId: event.parentMessageId,
             batchId: message?.meta?.batchId ?? event.parentMessageId,
             runId: sourceRunId ?? conversation.activeRunId,
-            graphTaskId: rawEvent.source.graphTaskId ?? message?.meta?.graphTaskId,
             sourceAgentName:
               rawEvent.source.agentType === "subagent"
                 ? rawEvent.source.agentName
@@ -1481,7 +1471,6 @@ const reduceConversationEvent = (
                 result: event.content,
                 status: rawEvent.toolResultStatus === "error" ? "failed" : "completed",
                 subRunId: relatedSubagentInvocationId,
-                graphTaskId: relatedSubagent.meta?.graphTaskId,
                 completedAt: message.meta?.completedAt ?? completedAt,
                 durationMs: message.meta?.durationMs ?? elapsedMs(message.createdAt, completedAt),
               },
@@ -1505,11 +1494,8 @@ const reduceConversationEvent = (
               durationMs: elapsedMs(createdAt, completedAt),
               runId:
                 message?.meta?.runId
-                ?? runIdForSource(conversation, rawEvent)
+                ?? runIdForSource(rawEvent)
                 ?? conversation.activeRunId,
-              graphTaskId:
-                rawEvent.source.graphTaskId
-                ?? message?.meta?.graphTaskId,
               sourceAgentName:
                 rawEvent.source.agentType === "subagent"
                   ? rawEvent.source.agentName

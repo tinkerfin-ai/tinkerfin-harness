@@ -43,9 +43,11 @@ from tinkerfin_agui_adapter import (
     RunIdentity,
     create_subagent_provenance,
     parse_tool_review_interrupt,
+    subagent_invocation_id,
 )
 from tinkerfin_agui_adapter.adapter import DeepAgentAgUiAdapter
 from tinkerfin_agui_adapter.ids import ScopedIdCodec
+from tinkerfin_contracts import subagent_request_id
 from tinkerfin_native_stream import NativeStreamContractError
 
 _IDS = ScopedIdCodec()
@@ -238,9 +240,8 @@ def test_task_start_emits_sanitized_raw_with_subagent_correlation() -> None:
             "subagents": [
                 create_subagent_provenance(
                     identity=_identity(),
-                    graph_namespace=("tools:graph-a",),
+                    subagent_id=subagent_request_id(("tools:graph-a",)),
                     parent_graph_namespace=(),
-                    graph_task_id="graph-a",
                     agent_name="researcher",
                     parent_tool_call_id=_tool_id((), "call-parent-a"),
                     description="并行任务 A",
@@ -274,7 +275,7 @@ def test_conflicting_duplicate_task_start_preserves_original_correlation() -> No
     child_namespace = ("tools:graph-same",)
     with pytest.raises(
         ValueError,
-        match="expected='researcher' actual='analyst'",
+        match="task subagent_type does not match streamed lc_agent_name",
     ):
         adapter.process(
             {
@@ -327,75 +328,6 @@ def test_identical_duplicate_task_start_is_idempotent() -> None:
     assert duplicate[0].model_dump(
         mode="json", by_alias=True, exclude_none=True
     ) == first[0].model_dump(mode="json", by_alias=True, exclude_none=True)
-
-
-@pytest.mark.parametrize(
-    ("initial_calls", "replayed_calls", "probe_is_original"),
-    [
-        (
-            (
-                ("call-a", "task A", "researcher"),
-                ("call-b", "task B", "analyst"),
-                ("call-c", "task C", "reviewer"),
-            ),
-            (
-                ("call-a", "task A", "researcher"),
-                ("call-b", "task B", "analyst"),
-            ),
-            True,
-        ),
-        (
-            (
-                ("call-a", "task A", "researcher"),
-                ("call-b", "task B", "analyst"),
-            ),
-            (
-                ("call-a", "task A", "researcher"),
-                ("call-b", "task B", "analyst"),
-                ("call-c", "task C", "reviewer"),
-            ),
-            False,
-        ),
-    ],
-    ids=("shrink", "expand"),
-)
-def test_task_start_replay_rejects_a_different_ordered_invocation_set_atomically(
-    initial_calls: tuple[tuple[str, str, str], ...],
-    replayed_calls: tuple[tuple[str, str, str], ...],
-    probe_is_original: bool,
-) -> None:
-    adapter = _adapter()
-    adapter.process(_task_group_start(graph_task_id="graph-set", calls=initial_calls))
-
-    with pytest.raises(ValueError, match="conflicting task start"):
-        adapter.process(
-            _task_group_start(graph_task_id="graph-set", calls=replayed_calls)
-        )
-
-    probe = {
-        "type": "messages",
-        "ns": ("tools:graph-set:2",),
-        "data": (
-            AIMessageChunk(
-                id="message-probe",
-                content="probe",
-                chunk_position="last",
-            ),
-            {"lc_agent_name": "reviewer", "langgraph_node": "model"},
-        ),
-    }
-    if probe_is_original:
-        assert [event.type.value for event in adapter.process(probe)] == [
-            "TEXT_MESSAGE_START",
-            "TEXT_MESSAGE_CONTENT",
-            "TEXT_MESSAGE_END",
-        ]
-    else:
-        with pytest.raises(
-            RuntimeError,
-            match="subgraph stream arrived before its native task-start",
-        ):
-            adapter.process(probe)
 
 
 @pytest.mark.parametrize(
@@ -540,9 +472,8 @@ def test_nested_task_start_keeps_full_parent_and_child_namespace() -> None:
     assert provenance["subagents"] == [
         create_subagent_provenance(
             identity=_identity(),
-            graph_namespace=("tools:outer", "tools:inner"),
+            subagent_id=subagent_request_id(("tools:outer", "tools:inner")),
             parent_graph_namespace=("tools:outer",),
-            graph_task_id="inner",
             agent_name="analyst",
             parent_tool_call_id=_tool_id(("tools:outer",), "call-inner"),
             description="内层任务",
@@ -578,58 +509,59 @@ def test_parallel_task_results_use_parent_tool_call_id_not_result_order() -> Non
         if isinstance(event, AttachmentToolCallResultEvent)
     )
 
-    assert _raw_event(result_b)["relatedGraphNamespace"] == ["tools:graph-b"]
-    assert _raw_event(result_a)["relatedGraphNamespace"] == ["tools:graph-a"]
+    for result, task_id, call_id in (
+        (result_b, "graph-b", "call-parent-b"),
+        (result_a, "graph-a", "call-parent-a"),
+    ):
+        assert "relatedGraphNamespace" not in _raw_event(result)
+        assert _raw_event(result)[
+            "relatedSubagentInvocationId"
+        ] == subagent_invocation_id(
+            identity=_identity(),
+            subagent_id=subagent_request_id((f"tools:{task_id}",)),
+            parent_tool_call_id=_tool_id((), call_id),
+        )
     payload = result_b.model_dump(mode="json", by_alias=True, exclude_none=True)
     assert "relatedRunId" not in payload
     AttachmentToolCallResultEvent.model_validate(payload)
 
 
-def test_one_tool_node_correlates_multiple_parallel_subagent_invocations() -> None:
+def test_delegated_calls_require_distinct_native_task_identities() -> None:
     adapter = _adapter()
 
-    events = adapter.process(
-        {
-            "type": "tasks",
-            "ns": (),
-            "data": {
-                "id": "graph-group",
-                "name": "tools",
-                "input": [
-                    {
-                        "name": "task",
-                        "args": {
-                            "description": "任务 A",
-                            "subagent_type": "researcher",
-                        },
-                        "id": "call-group-a",
-                        "type": "tool_call",
+    part = {
+        "type": "tasks",
+        "ns": (),
+        "data": {
+            "id": "graph-group",
+            "name": "tools",
+            "input": [
+                {
+                    "name": "task",
+                    "args": {
+                        "description": "任务 A",
+                        "subagent_type": "researcher",
                     },
-                    {
-                        "name": "task",
-                        "args": {
-                            "description": "任务 B",
-                            "subagent_type": "analyst",
-                        },
-                        "id": "call-group-b",
-                        "type": "tool_call",
+                    "id": "call-group-a",
+                    "type": "tool_call",
+                },
+                {
+                    "name": "task",
+                    "args": {
+                        "description": "任务 B",
+                        "subagent_type": "analyst",
                     },
-                ],
-                "triggers": ("__pregel_push",),
-            },
-        }
-    )
-
-    raw = next(event for event in events if isinstance(event, RawEvent))
-    subagents = raw.event["provenance"]["subagents"]
-    assert {tuple(item["graphNamespace"]) for item in subagents} == {
-        ("tools:graph-group:0",),
-        ("tools:graph-group:1",),
+                    "id": "call-group-b",
+                    "type": "tool_call",
+                },
+            ],
+            "triggers": ("__pregel_push",),
+        },
     }
-    assert {item["parentToolCallId"] for item in subagents} == {
-        _tool_id((), "call-group-a"),
-        _tool_id((), "call-group-b"),
-    }
+    with pytest.raises(AgUiStreamContractError, match="own Native task identity"):
+        adapter.process(part)
+    with pytest.raises(AgUiStreamContractError, match="before its native task-start"):
+        adapter.process({"type": "values", "ns": ("tools:graph-group",), "data": {}})
 
 
 def test_duplicate_task_call_id_leaves_no_correlation_and_allows_retry() -> None:
@@ -664,7 +596,7 @@ def test_duplicate_task_call_id_leaves_no_correlation_and_allows_retry() -> None
         },
     }
 
-    with pytest.raises(ValueError, match="duplicate parent tool call ID: same-call"):
+    with pytest.raises(AgUiStreamContractError, match="own Native task identity"):
         adapter.process(duplicate_start)
 
     for namespace in (
@@ -672,7 +604,7 @@ def test_duplicate_task_call_id_leaves_no_correlation_and_allows_retry() -> None
         ("tools:graph-duplicate:1",),
     ):
         with pytest.raises(
-            RuntimeError,
+            AgUiStreamContractError,
             match="subgraph stream arrived before its native task-start",
         ):
             adapter.process(
@@ -716,7 +648,7 @@ def test_orphan_subgraph_names_do_not_poison_later_correlation() -> None:
 
     for index, agent_name in enumerate(("poison-a", "poison-b")):
         with pytest.raises(
-            RuntimeError,
+            AgUiStreamContractError,
             match="subgraph stream arrived before its native task-start",
         ):
             adapter.process(
@@ -782,7 +714,7 @@ def test_task_error_is_raw_provenance_not_a_standard_run_terminal() -> None:
     assert raw.event["data"] == {
         "id": "graph-error",
         "name": "tools",
-        "error": "boom",
+        "error": {"type": "TaskError"},
         "interrupts": [],
         "result": {},
     }
@@ -1169,9 +1101,14 @@ def test_real_sample_shape_keeps_parallel_chunks_namespaces_and_results() -> Non
         _tool_id((), "call-parent-b"),
         _tool_id((), "call-parent-a"),
     ]
-    assert [_raw_event(event)["relatedGraphNamespace"] for event in results] == [
-        ["tools:graph-b"],
-        ["tools:graph-a"],
+    assert all("relatedGraphNamespace" not in _raw_event(event) for event in results)
+    assert [_raw_event(event)["relatedSubagentInvocationId"] for event in results] == [
+        subagent_invocation_id(
+            identity=_identity(),
+            subagent_id=subagent_request_id((f"tools:graph-{suffix}",)),
+            parent_tool_call_id=_tool_id((), f"call-parent-{suffix}"),
+        )
+        for suffix in ("b", "a")
     ]
 
 
@@ -2929,7 +2866,9 @@ def test_in_run_ended_tool_id_rejects_every_new_start_before_mutation(
         )
     ] == ["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END"]
 
-    with pytest.raises(ValueError, match="ended tool-call ID cannot start again"):
+    with pytest.raises(
+        ValueError, match="unique IDs|ended tool-call ID cannot start again"
+    ):
         adapter.process(
             part(
                 second_name,

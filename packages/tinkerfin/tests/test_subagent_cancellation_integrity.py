@@ -281,7 +281,7 @@ async def test_subagent_failures_keep_their_distinct_runtime_cause(
     assert len(terminals) == 1
     assert isinstance(terminals[0], RunErrorEvent)
     assert terminals[0].code == "runtime_error"
-    assert expected_error.__name__ in _task_error_types(events)
+    assert set(_task_error_types(events)) == {"TaskError"}
     task_start = next(
         event
         for event in events

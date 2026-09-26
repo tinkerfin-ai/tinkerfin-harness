@@ -1,5 +1,5 @@
 import type { JsonObject } from '../../../types'
-import { planInterrupt } from '../../../test/aguiFixtures'
+import { planInterrupt, rootToolId } from '../../../test/aguiFixtures'
 import { describe, expect, it } from 'vitest'
 import mediaFixture from './contracts/message-attachments.fixture.json'
 import checkpointReplay from '../../../../../../../packages/tinkerfin/tests/fixtures/checkpoint-message-replay.json'
@@ -139,11 +139,9 @@ function nativeContractEvents(): ConversationAgUiEvent[] {
   const provenance = {
     schema: 'tinkerfin.subagent-provenance' as const,
     subagentInvocationId: subRunId,
-    graphNamespace: ['tools:graph-research'],
     parentGraphNamespace: [],
-    graphTaskId: 'graph-research',
     agentName: 'researcher',
-    parentToolCallId: 'call-task',
+    parentToolCallId: rootToolId('call-task'),
     description: '研究百度与 Google',
     requestRunId: RUN_ID,
   }
@@ -151,10 +149,10 @@ function nativeContractEvents(): ConversationAgUiEvent[] {
     kind: 'deep_agent_subagent' as const,
     agentType: 'subagent' as const,
     agentName: 'researcher',
-    graphNamespace: [...provenance.graphNamespace],
+    graphNamespace: ['tools:graph-research'],
     parentGraphNamespace: [],
     graphTaskId: 'graph-research',
-    parentToolCallId: 'call-task',
+    parentToolCallId: rootToolId('call-task'),
     subagentInput: provenance.description,
     subagentInvocationId: subRunId,
   }
@@ -187,13 +185,13 @@ function nativeContractEvents(): ConversationAgUiEvent[] {
     },
     {
       type: 'TOOL_CALL_START',
-      toolCallId: 'call-task',
+      toolCallId: rootToolId('call-task'),
       toolCallName: 'task',
       rawEvent: { streamMode: 'messages', source: mainSource, runId: RUN_ID },
     },
     {
       type: 'TOOL_CALL_ARGS',
-      toolCallId: 'call-task',
+      toolCallId: rootToolId('call-task'),
       delta: JSON.stringify({ description: '研究百度与 Google', subagent_type: 'researcher' }),
       rawEvent: { streamMode: 'messages', source: mainSource, runId: RUN_ID },
     },
@@ -228,7 +226,7 @@ function nativeContractEvents(): ConversationAgUiEvent[] {
     },
     {
       type: 'TOOL_CALL_RESULT',
-      toolCallId: 'call-task',
+      toolCallId: rootToolId('call-task'),
       messageId: 'message-task',
       content: '百度与 Google 调研完成',
       role: 'tool',
@@ -522,7 +520,7 @@ describe('AG-UI runtime reducer', () => {
       graphNamespace: ['tools:graph-server'],
       graphTaskId: 'graph-server',
       parentGraphNamespace: [],
-      parentToolCallId: 'call-task-server',
+      parentToolCallId: rootToolId('call-task-server'),
       subagentInput: '检索 LangGraph',
       subagentInvocationId: subRunId,
     }
@@ -530,13 +528,13 @@ describe('AG-UI runtime reducer', () => {
       { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID },
       {
         type: 'TOOL_CALL_START',
-        toolCallId: 'call-task-server',
+        toolCallId: rootToolId('call-task-server'),
         toolCallName: 'task',
         rawEvent: { streamMode: 'messages', source: mainSource, runId: RUN_ID },
       },
       {
         type: 'TOOL_CALL_ARGS',
-        toolCallId: 'call-task-server',
+        toolCallId: rootToolId('call-task-server'),
         delta: JSON.stringify({
           description: '检索 LangGraph',
           subagent_type: 'researcher',
@@ -557,11 +555,9 @@ describe('AG-UI runtime reducer', () => {
             subagents: [{
               schema: 'tinkerfin.subagent-provenance',
               subagentInvocationId: subRunId,
-              graphNamespace: ['tools:graph-server'],
               parentGraphNamespace: [],
-              graphTaskId: 'graph-server',
               agentName: 'researcher',
-              parentToolCallId: 'call-task-server',
+              parentToolCallId: rootToolId('call-task-server'),
               description: '检索 LangGraph',
               requestRunId: RUN_ID,
             }],
@@ -593,7 +589,7 @@ describe('AG-UI runtime reducer', () => {
       },
       {
         type: 'TOOL_CALL_RESULT',
-        toolCallId: 'call-task-server',
+        toolCallId: rootToolId('call-task-server'),
         messageId: 'message-task-server',
         content: '子 Agent 完成',
         role: 'tool',
@@ -619,7 +615,7 @@ describe('AG-UI runtime reducer', () => {
       (message) => message.meta?.toolCallId === 'call-search-server',
     )
     const task = current.messages.find(
-      (message) => message.meta?.toolCallId === 'call-task-server',
+      (message) => message.meta?.toolCallId === rootToolId('call-task-server'),
     )
 
     expect(subagent?.meta).toMatchObject({
@@ -630,29 +626,26 @@ describe('AG-UI runtime reducer', () => {
       runId: subRunId,
       originMainRunId: RUN_ID,
       lastMainRunId: RUN_ID,
-      graphTaskId: 'graph-server',
+      subagentProvenance: { subagentInvocationId: subRunId, parentToolCallId: rootToolId('call-task-server') },
     })
     expect(childTool?.meta).toMatchObject({
       runId: subRunId,
-      graphTaskId: 'graph-server',
       sourceAgentName: 'researcher',
       status: 'completed',
     })
     expect(childTool?.id).toBe('call-search-server')
-    expect(task?.id).toBe('call-task-server')
+    expect(task?.id).toBe(rootToolId('call-task-server'))
     expect(task?.meta?.subRunId).toBe(subRunId)
   })
 
   it('keeps one subagent card while a resumed descriptor updates its current main run', () => {
     const subRunId = 'subagent-cccccccc-cccc-5ccc-8ccc-cccccccccccc'
     const graphTaskId = 'graph-resume'
-    const parentToolCallId = 'call-task-resume'
+    const parentToolCallId = rootToolId('call-task-resume')
     const descriptor = (requestRunId: string) => ({
       schema: 'tinkerfin.subagent-provenance' as const,
       subagentInvocationId: subRunId,
-      graphNamespace: [`tools:${graphTaskId}`],
       parentGraphNamespace: [],
-      graphTaskId,
       agentName: 'researcher',
       parentToolCallId,
       description: '继续研究',
@@ -725,11 +718,9 @@ describe('AG-UI runtime reducer', () => {
     const descriptors = (['a', 'b'] as const).map((suffix) => ({
       schema: 'tinkerfin.subagent-provenance' as const,
       subagentInvocationId: invocationIds[suffix],
-      graphNamespace: [`tools:${graphTaskId}:${suffix}`],
       parentGraphNamespace: [],
-      graphTaskId,
       agentName: 'researcher',
-      parentToolCallId: `call-task-${suffix}`,
+      parentToolCallId: rootToolId(`call-task-${suffix}`),
       description: `研究任务 ${suffix.toUpperCase()}`,
       requestRunId: RUN_ID,
     }))
@@ -771,12 +762,12 @@ describe('AG-UI runtime reducer', () => {
         now: '2026-08-18T00:00:00.000Z',
       }),
     )
-    const withText = descriptors.flatMap<ConversationAgUiEvent>((descriptor) => {
+    const withText = descriptors.flatMap<ConversationAgUiEvent>((descriptor, index) => {
       const source = {
         kind: 'deep_agent_subagent' as const,
         agentType: 'subagent' as const,
         agentName: descriptor.agentName,
-        graphNamespace: descriptor.graphNamespace,
+        graphNamespace: index === 0 ? [`tools:${graphTaskId}`] : [`tools:${graphTaskId}`, String(index)],
         graphTaskId,
         parentGraphNamespace: [],
         parentToolCallId: descriptor.parentToolCallId,
@@ -825,7 +816,7 @@ describe('AG-UI runtime reducer', () => {
       graphNamespace: ['tools:graph-main-error'],
       graphTaskId: 'graph-main-error',
       parentGraphNamespace: [],
-      parentToolCallId: 'call-task-main-error',
+      parentToolCallId: rootToolId('call-task-main-error'),
       subagentInput: '执行研究',
       subagentInvocationId: subRunId,
     }
@@ -833,7 +824,7 @@ describe('AG-UI runtime reducer', () => {
       { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID },
       {
         type: 'TOOL_CALL_START',
-        toolCallId: 'call-task-main-error',
+        toolCallId: rootToolId('call-task-main-error'),
         toolCallName: 'task',
         rawEvent: { streamMode: 'messages', source: mainSource, runId: RUN_ID },
       },
@@ -851,11 +842,9 @@ describe('AG-UI runtime reducer', () => {
             subagents: [{
               schema: 'tinkerfin.subagent-provenance',
               subagentInvocationId: subRunId,
-              graphNamespace: subSource.graphNamespace,
               parentGraphNamespace: [],
-              graphTaskId: subSource.graphTaskId,
               agentName: subSource.agentName,
-              parentToolCallId: 'call-task-main-error',
+              parentToolCallId: rootToolId('call-task-main-error'),
               description: '执行研究',
               requestRunId: RUN_ID,
             }],
@@ -1263,7 +1252,6 @@ describe('AG-UI runtime reducer', () => {
           runId: subRunId,
           originMainRunId: RUN_ID,
           lastMainRunId: RUN_ID,
-          graphTaskId: 'graph-reasoning',
         },
       }],
     }
@@ -1365,7 +1353,7 @@ describe('AG-UI runtime reducer', () => {
       graphNamespace: [`tools:graph-${suffix}`],
       parentGraphNamespace: [],
       graphTaskId: `graph-${suffix}`,
-      parentToolCallId: `task-${suffix}`,
+      parentToolCallId: rootToolId(`task-${suffix}`),
       subagentInput: `研究任务 ${suffix.toUpperCase()}`,
       subagentInvocationId: subRunIds[suffix],
     })
@@ -1375,14 +1363,14 @@ describe('AG-UI runtime reducer', () => {
       apply({
         type: 'TOOL_CALL_START',
         rawEvent: { streamMode: 'messages', source: mainSource, runId: RUN_ID },
-        toolCallId: `task-${suffix}`,
+        toolCallId: rootToolId(`task-${suffix}`),
         toolCallName: 'task',
         parentMessageId: 'task-parent',
       })
       apply({
         type: 'TOOL_CALL_ARGS',
         rawEvent: { streamMode: 'messages', source: mainSource, runId: RUN_ID },
-        toolCallId: `task-${suffix}`,
+        toolCallId: rootToolId(`task-${suffix}`),
         delta: JSON.stringify({
           description: `研究任务 ${suffix.toUpperCase()}`,
           subagent_type: 'researcher',
@@ -1407,11 +1395,9 @@ describe('AG-UI runtime reducer', () => {
             subagents: [{
               schema: 'tinkerfin.subagent-provenance',
               subagentInvocationId: subRunId,
-              graphNamespace: [`tools:${graphTaskId}`],
               parentGraphNamespace: [],
-              graphTaskId,
               agentName: 'researcher',
-              parentToolCallId: `task-${suffix}`,
+              parentToolCallId: rootToolId(`task-${suffix}`),
               description: `研究任务 ${suffix.toUpperCase()}`,
               requestRunId: RUN_ID,
             }],
@@ -1434,13 +1420,13 @@ describe('AG-UI runtime reducer', () => {
     const runningSubagents = current.messages.filter((message) => message.role === 'subagent')
     const runningSubagentA = runningSubagents.find((message) => message.meta?.subRunId === subRunIds.a)
     const runningSubagentB = runningSubagents.find((message) => message.meta?.subRunId === subRunIds.b)
-    const runningTaskA = current.messages.find((message) => message.meta?.toolCallId === 'task-a')
-    const runningTaskB = current.messages.find((message) => message.meta?.toolCallId === 'task-b')
+    const runningTaskA = current.messages.find((message) => message.meta?.toolCallId === rootToolId('task-a'))
+    const runningTaskB = current.messages.find((message) => message.meta?.toolCallId === rootToolId('task-b'))
 
     expect(runningSubagentA?.meta?.input).toBe('研究任务 A')
-    expect(runningSubagentA?.meta?.toolCallId).toBe('task-a')
+    expect(runningSubagentA?.meta?.toolCallId).toBe(rootToolId('task-a'))
     expect(runningSubagentB?.meta?.input).toBe('研究任务 B')
-    expect(runningSubagentB?.meta?.toolCallId).toBe('task-b')
+    expect(runningSubagentB?.meta?.toolCallId).toBe(rootToolId('task-b'))
     expect(runningTaskA?.meta?.subRunId).toBe(subRunIds.a)
     expect(runningTaskB?.meta?.subRunId).toBe(subRunIds.b)
 
@@ -1454,7 +1440,7 @@ describe('AG-UI runtime reducer', () => {
           relatedSubagentInvocationId: subRunIds[suffix],
         },
         messageId: `task-result-${suffix}`,
-        toolCallId: `task-${suffix}`,
+        toolCallId: rootToolId(`task-${suffix}`),
         content: `最终结果 ${suffix.toUpperCase()}`,
         role: 'tool',
       })
@@ -1797,7 +1783,7 @@ describe('AG-UI runtime reducer', () => {
     )
     const task = applyConversationEvent(initial, {
       type: 'TOOL_CALL_START',
-      toolCallId: 'call-subagent-error',
+      toolCallId: rootToolId('call-subagent-error'),
       toolCallName: 'task',
       rawEvent: {
         streamMode: 'messages',
@@ -1820,11 +1806,9 @@ describe('AG-UI runtime reducer', () => {
           subagents: [{
             schema: 'tinkerfin.subagent-provenance',
             subagentInvocationId: subRunId,
-            graphNamespace: ['tools:graph-error'],
             parentGraphNamespace: [],
-            graphTaskId: 'graph-error',
             agentName: 'researcher',
-            parentToolCallId: 'call-subagent-error',
+            parentToolCallId: rootToolId('call-subagent-error'),
             description: '失败任务',
             requestRunId: RUN_ID,
           }],
@@ -1834,7 +1818,7 @@ describe('AG-UI runtime reducer', () => {
 
     const failed = applyConversationEvent(running, {
       type: 'TOOL_CALL_RESULT',
-      toolCallId: 'call-subagent-error',
+      toolCallId: rootToolId('call-subagent-error'),
       messageId: 'call-subagent-error-result',
       content: '子智能体运行失败',
       role: 'tool',

@@ -63,6 +63,8 @@ def _captured(value: JsonValue) -> CapturedValue:
 
 def _facts(
     identity: RunIdentity,
+    *,
+    execution_namespace: tuple[str, ...] = (),
 ) -> tuple[
     tuple[TraceSemanticFact, ...], ModelCallFact, ToolExecutionFact, ToolExecutionFact
 ]:
@@ -112,18 +114,22 @@ def _facts(
     )
     execution_started = ToolExecutionFact(
         **_source(identity, 9),
+        graph_namespace=execution_namespace,
         phase="started",
         execution_id="local-execution",
         source_tool_call_id="local-tool",
+        tool_call_namespace=(),
         tool_name="local_tool",
         parent_call_id=None,
         input=_captured({"value": "edited"}),
     )
     execution_completed = ToolExecutionFact(
         **_source(identity, 10),
+        graph_namespace=execution_namespace,
         phase="completed",
         execution_id="local-execution",
         source_tool_call_id="local-tool",
+        tool_call_namespace=(),
         tool_name="local_tool",
         parent_call_id=None,
         output=_captured({"result": "done"}),
@@ -172,14 +178,19 @@ async def graph_store(
 
 
 @pytest.mark.parametrize("same_commit", (False, True))
+@pytest.mark.parametrize("execution_namespace", ((), ("attempt:child",)))
 async def test_tool_execution_retains_model_proof_and_actual_input(
-    graph_store: tuple[TraceStore, AsyncEngine | None], same_commit: bool
+    graph_store: tuple[TraceStore, AsyncEngine | None],
+    same_commit: bool,
+    execution_namespace: tuple[str, ...],
 ) -> None:
     store, _ = graph_store
     assert isinstance(store, TraceGraphStore)
     identity = RunIdentity(namespace="test", thread_id="model-evidence", run_id="run")
     tracer = Tracer(store=store)
-    initial, model_completed, execution_started, execution_completed = _facts(identity)
+    initial, model_completed, execution_started, execution_completed = _facts(
+        identity, execution_namespace=execution_namespace
+    )
     writer = await store.open_writer(identity)
     try:
         await writer.append(initial)
@@ -196,7 +207,7 @@ async def test_tool_execution_retains_model_proof_and_actual_input(
             )
             committed = await writer.append(batch)
             assert committed[-1].fact == execution_started
-            delta = await asyncio.wait_for(pending, timeout=2)
+            delta = await pending
             assert any(
                 node.kind is TraceGraphNodeKind.TOOL
                 and node.model_call_id == model_completed.call_id
@@ -210,9 +221,12 @@ async def test_tool_execution_retains_model_proof_and_actual_input(
             await follow.aclose()
 
         current = await tracer.query(identity.thread)
-        tool = next(
+        tools = tuple(
             node for node in current.nodes if node.kind is TraceGraphNodeKind.TOOL
         )
+        assert len(tools) == 1
+        tool = tools[0]
+        assert tool.graph_namespace == ()
         assert tool.request == {"value": "edited"}
         assert tool.started_at == execution_started.occurred_at
         assert tool.model_call_id == model_completed.call_id

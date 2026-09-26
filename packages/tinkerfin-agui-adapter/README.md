@@ -2,8 +2,9 @@
 
 ## What it is
 
-`tinkerfin-agui-adapter` converts caller-supplied Deep Agents or LangGraph v2 stream
-parts into validated AG-UI 0.1.19 events. It does not create a graph, invoke a model,
+`tinkerfin-agui-adapter` converts live Deep Agents or LangGraph v2 stream parts and
+recorded TinkerFin `NativeStreamPart` values into validated AG-UI 0.1.19 events.
+It does not create a graph, invoke a model,
 query checkpoints, authenticate requests, or provide an HTTP server.
 
 Use it when an application already owns Graph execution and needs only the conversion
@@ -21,7 +22,8 @@ pip install tinkerfin-agui-adapter
 
 ## Quick Start
 
-The converter accepts an asynchronous iterable of live v2 parts:
+The converter accepts an asynchronous iterable of live v2 parts or decoded
+`NativeStreamPart` records. This example supplies live parts:
 
 <!-- adapter-quick-start:start -->
 ```python
@@ -62,6 +64,9 @@ Production graph integration supplies `messages`, `tasks`, and `values` with
 `version="v2"` and `subgraphs=True`. `RUN_STARTED.input` is omitted; transport input and
 Graph input remain caller-owned boundaries rather than duplicated event payloads.
 One conversion exclusively consumes and closes the supplied iterator.
+Recorded Native parts retain the execution origins needed for delegated retries.
+Raw SDK parts require sufficient task-start evidence; ambiguous functional-task
+ancestry and multiple delegated requests sharing one Native task are rejected.
 `astream_events()` already creates the main lifecycle, including its unique terminal;
 `AgUiLifecycleEventFactory` is for custom orchestrators that do not use this stream
 facade. `encode_sse()` only renders an event and does not take lifecycle or transport
@@ -82,7 +87,8 @@ ownership.
   subgraph provenance never uses AG-UI `parentRunId`.
 - Verified Deep Agents delegates publish `SubagentProvenance` with schema
   `tinkerfin.subagent-provenance`. `subagentInvocationId` is derived from the
-  thread and complete scoped parent `task` Tool ID, so it remains stable when a new
+  thread, original delegation task identity, and complete scoped parent `task` Tool
+  ID, so it remains stable when a new
   request run resumes the same checkpointed invocation.
 - Delegate provenance uses the effective Deep Agents `task` fields `description` and
   `subagent_type`. The sanitized task RAW event retains the complete native
@@ -90,6 +96,7 @@ ownership.
   delegate identity or invalidate an otherwise executable task.
 - Provider-private reasoning is removed from task, state, raw, message, and terminal
   payloads. `expose_reasoning_events=True` enables only verified event sources.
+  Task errors in RAW events use `type="TaskError"` without exception details.
 - `expose_subagent_events=False` suppresses public subgraph events while preserving
   validation.
 - Child interrupts remain buffered until root `values` propagates an identical full ID

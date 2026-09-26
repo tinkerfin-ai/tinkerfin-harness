@@ -7,6 +7,8 @@ import {
   writeWorkspaceToLocation,
 } from './threadRoute'
 
+afterEach(() => vi.restoreAllMocks())
+
 describe('threadRoute', () => {
   beforeEach(() => {
     window.sessionStorage.clear()

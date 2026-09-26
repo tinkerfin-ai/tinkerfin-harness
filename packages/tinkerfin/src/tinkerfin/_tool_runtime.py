@@ -8,10 +8,41 @@ from typing import Any, cast
 
 from langchain.agents.middleware.types import AgentMiddleware, ToolCallRequest
 from langchain.tools import ToolRuntime as LangChainToolRuntime
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import ToolCall, ToolMessage
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import BaseTool
+from langgraph.config import get_config
+from langgraph.runtime import get_runtime
 from langgraph.types import Command
+from pydantic import Field
 
 from .tools import ToolRuntime, _ToolRunScope
+
+
+class _InvocationTool(BaseTool):
+    """Keep ToolNode validation while binding execution to its durable task.
+
+    LangGraph 1.2.11 ToolNode._arun_one closes over its original config. Forwarding
+    that config would replace the functional task's scratchpad and enter the wrong
+    child checkpoint. Only this owned delegation boundary substitutes the current
+    execution config; the original tool retains its schema, callbacks and result.
+    """
+
+    original: BaseTool = Field(exclude=True)
+    invocation: RunnableConfig = Field(exclude=True)
+
+    def _run(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError(
+            "Persistent delegation requires asynchronous execution"
+        )
+
+    async def ainvoke(
+        self,
+        input: str | dict[str, Any] | ToolCall,
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        return await self.original.ainvoke(input, self.invocation, **kwargs)
 
 
 class _ToolRuntimeMiddleware(AgentMiddleware):
@@ -53,7 +84,50 @@ class _ToolRuntimeMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
-        return await handler(self._request(request))
+        from ._durable_delegation import (
+            current_delegation_attempt,
+            current_delegation_dispatch,
+        )
+        from .errors import DelegationReplayError
+
+        prepared = self._request(request)
+        attempt = current_delegation_attempt()
+        dispatch = current_delegation_dispatch()
+        if attempt is not None and attempt.owns_request(prepared):
+            try:
+                await attempt.accept_request(prepared)
+            except DelegationReplayError as error:
+                if dispatch is not None:
+                    dispatch.conflict = error
+                raise
+            config = get_config()
+            native = cast(LangChainToolRuntime[Any, Any], prepared.runtime)  # pyright: ignore[reportUnknownMemberType]
+            runtime = replace(
+                native,
+                config=config,
+                execution_info=get_runtime().execution_info,
+            )
+            # ToolRuntime's managed workspace is excluded from dataclass init.
+            if isinstance(runtime, ToolRuntime):
+                runtime._scope = self._scope
+            original = prepared.tool
+            if original is None:
+                raise ValueError("managed delegation has no tool")
+            prepared = replace(
+                prepared,
+                runtime=runtime,
+                tool=_InvocationTool(
+                    name=original.name,
+                    description=original.description,
+                    args_schema=original.args_schema,
+                    return_direct=original.return_direct,
+                    original=original,
+                    invocation=config,
+                ),
+            )
+        elif dispatch is not None and dispatch.owns_request(prepared):
+            dispatch.accept_direct(prepared)
+        return await handler(prepared)
 
 
 __all__ = ["_ToolRuntimeMiddleware"]

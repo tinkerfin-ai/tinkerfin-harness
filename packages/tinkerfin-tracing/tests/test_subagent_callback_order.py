@@ -8,6 +8,8 @@ from typing import Literal
 import pytest
 
 from tinkerfin_contracts import (
+    GraphOrigin,
+    GraphTaskReference,
     ModelCallObservation,
     NativeMessageRecord,
     NativeStateObservation,
@@ -19,7 +21,9 @@ from tinkerfin_contracts import (
     RunSourceContext,
     RunStartedObservation,
     RunTerminalObservation,
+    SubagentRequestReference,
     ToolExecutionObservation,
+    subagent_request_id,
 )
 from tinkerfin_tracing import (
     CapturePolicy,
@@ -33,6 +37,20 @@ from tinkerfin_tracing import (
 
 _IDENTITY = RunIdentity(namespace="test", thread_id="callback-order", run_id="run")
 _CHILD = ("tools:parent-task",)
+_REQUEST = SubagentRequestReference(
+    id=subagent_request_id(_CHILD),
+    parent_graph_namespace=(),
+    parent_tool_call_id="delegate",
+    graph_task_id="parent-task",
+    agent_name="worker",
+    description="local child",
+)
+_CHILD_ORIGIN = GraphOrigin(
+    parent_task=GraphTaskReference(
+        graph_namespace=(), task_id="parent-task", node_name="tools"
+    ),
+    subagent_request=_REQUEST,
+)
 _BASE = datetime(2026, 9, 5, tzinfo=UTC)
 
 
@@ -92,9 +110,11 @@ async def _prepare(
             ToolExecutionObservation(
                 identity=_IDENTITY,
                 graph_namespace=(),
+                delegation=_REQUEST,
                 phase="started",
                 execution_id="parent-execution",
                 tool_call_id="delegate",
+                tool_call_namespace=(),
                 tool_name="task",
                 graph_task_id="parent-task",
                 input={"description": "local child", "subagent_type": "worker"},
@@ -109,6 +129,7 @@ def _parent_task_start(*, description: str = "local child") -> NativeTaskObserva
     return NativeTaskObservation(
         identity=_IDENTITY,
         graph_namespace=(),
+        subagent_requests=(_REQUEST,),
         phase="start",
         task_id="parent-task",
         name="tools",
@@ -125,11 +146,14 @@ def _parent_task_start(*, description: str = "local child") -> NativeTaskObserva
 
 
 def _model_start(
-    value: int, namespace: tuple[str, ...] = _CHILD
+    value: int,
+    namespace: tuple[str, ...] = _CHILD,
+    graph_origin: GraphOrigin = _CHILD_ORIGIN,
 ) -> ModelCallObservation:
     return ModelCallObservation(
         identity=_IDENTITY,
         graph_namespace=namespace,
+        graph_origin=graph_origin,
         phase="started",
         call_id="child-model",
         agent_name="worker",
@@ -143,9 +167,11 @@ def _tool_start(value: int) -> ToolExecutionObservation:
     return ToolExecutionObservation(
         identity=_IDENTITY,
         graph_namespace=_CHILD,
+        graph_origin=_CHILD_ORIGIN,
         phase="started",
         execution_id="child-execution",
         tool_call_id="child-tool",
+        tool_call_namespace=_CHILD,
         tool_name="child_tool",
         input={"value": "local"},
         observed_at=_time(value),
@@ -157,6 +183,7 @@ def _native_start(value: int) -> NativeTaskObservation:
     return NativeTaskObservation(
         identity=_IDENTITY,
         graph_namespace=_CHILD,
+        graph_origin=_CHILD_ORIGIN,
         phase="start",
         task_id="child-native-task",
         name="model",
@@ -189,9 +216,11 @@ async def test_child_callback_and_native_orders_share_one_proven_start(
                 ToolExecutionObservation(
                     identity=_IDENTITY,
                     graph_namespace=_CHILD,
+                    graph_origin=_CHILD_ORIGIN,
                     phase="completed",
                     execution_id="child-execution",
                     tool_call_id="child-tool",
+                    tool_call_namespace=_CHILD,
                     tool_name="child_tool",
                     output="done",
                     observed_at=_time(9),
@@ -206,6 +235,7 @@ async def test_child_callback_and_native_orders_share_one_proven_start(
             NativeStateObservation(
                 identity=_IDENTITY,
                 graph_namespace=_CHILD,
+                graph_origin=_CHILD_ORIGIN,
                 state={},
                 observed_at=_time(11),
                 monotonic_ns=11,
@@ -215,6 +245,7 @@ async def test_child_callback_and_native_orders_share_one_proven_start(
             ModelCallObservation(
                 identity=_IDENTITY,
                 graph_namespace=_CHILD,
+                graph_origin=_CHILD_ORIGIN,
                 phase="completed",
                 call_id="child-model",
                 observed_at=_time(12),
@@ -225,9 +256,11 @@ async def test_child_callback_and_native_orders_share_one_proven_start(
             ToolExecutionObservation(
                 identity=_IDENTITY,
                 graph_namespace=(),
+                delegation=_REQUEST,
                 phase="completed",
                 execution_id="parent-execution",
                 tool_call_id="delegate",
+                tool_call_namespace=(),
                 tool_name="task",
                 output="done",
                 graph_task_id="parent-task",
@@ -279,7 +312,9 @@ async def test_child_callback_and_native_orders_share_one_proven_start(
     assert isinstance(opening.fact, SubagentFact)
     assert opening.fact.occurred_at == _time(6)
     assert opening.fact.monotonic_ns == 6
-    assert opening.fact.graph_namespace == _CHILD
+    assert opening.fact.graph_namespace == ()
+    assert opening.fact.parent_subagent_id is None
+    assert opening.fact.subagent_id == _REQUEST.id
     assert opening.fact.parent_execution_id is not None
     child_model = next(
         event
@@ -289,6 +324,7 @@ async def test_child_callback_and_native_orders_share_one_proven_start(
         and event.fact.graph_namespace == _CHILD
     )
     assert isinstance(child_model.fact, ModelCallFact)
+    assert child_model.fact.parent_subagent_id == _REQUEST.id
     assert child_model.fact.context_started_at == expected_context_start
     assert opening.trace_seq < child_model.trace_seq
     if first == "tool":
@@ -353,7 +389,9 @@ async def test_unproven_namespace_keeps_ordinary_scope_without_inventing_subagen
     tracer = Tracer()
     session = await _prepare(tracer, descriptor=False)
     try:
-        await session.observe(_model_start(7, namespace=namespace))
+        await session.observe(
+            _model_start(7, namespace=namespace, graph_origin=GraphOrigin())
+        )
     finally:
         await session.aclose()
     snapshot = await tracer.store.snapshot(_IDENTITY.thread)
@@ -367,7 +405,7 @@ async def test_unproven_namespace_keeps_ordinary_scope_without_inventing_subagen
         if isinstance(event.fact, ModelCallFact) and event.fact.graph_namespace
     )
     assert isinstance(child, ModelCallFact)
-    assert not child.in_subagent_scope
+    assert child.parent_subagent_id is None
     assert child.context_started_at == _time(4)
 
 
@@ -389,6 +427,7 @@ async def test_subagent_uses_executed_arguments_when_native_proposal_differs(
             ModelCallObservation(
                 identity=_IDENTITY,
                 graph_namespace=_CHILD,
+                graph_origin=_CHILD_ORIGIN,
                 phase="completed",
                 call_id="child-model",
                 observed_at=_time(8),
@@ -417,7 +456,7 @@ async def test_subagent_uses_executed_arguments_when_native_proposal_differs(
         if isinstance(event.fact, ModelCallFact)
         and event.fact.graph_namespace == _CHILD
     ]
-    assert [model.in_subagent_scope for model in models] == [True, True]
+    assert [model.parent_subagent_id for model in models] == [_REQUEST.id, _REQUEST.id]
     assert any(
         node.kind is TraceGraphNodeKind.SUBAGENT
         for node in (await tracer.query(_IDENTITY.thread)).nodes
@@ -433,9 +472,11 @@ async def test_tool_execution_cannot_change_its_owning_graph_task() -> None:
                 ToolExecutionObservation(
                     identity=_IDENTITY,
                     graph_namespace=(),
+                    delegation=_REQUEST,
                     phase="completed",
                     execution_id="parent-execution",
                     tool_call_id="delegate",
+                    tool_call_namespace=(),
                     tool_name="task",
                     graph_task_id="another-task",
                     output="done",

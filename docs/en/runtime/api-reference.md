@@ -35,6 +35,17 @@ and borrows supplied resources.
 `model` is required. Configure persistence on `TinkerFin(checkpointer=..., store=...)`.
 `context_schema` determines the type of each execution method's `context` argument.
 
+With a checkpointer, standard `ToolRetryMiddleware` retries of `task` preserve completed
+attempts and resume the exact pending approval. Keep the delegation arguments and retry
+settings unchanged while work is pending. Persistent retry callbacks must be Python
+functions, optionally bound with `functools.partial`; their defaults and bound arguments
+must be immutable literals or exception types. Bound methods, callable instances and
+custom retry subclasses are rejected. Keep captured configuration unchanged too;
+mutable closure state and external services are not compared during recovery.
+Without a checkpointer, retries retain ordinary in-process behavior.
+The default exhaustion message omits provider diagnostics. An explicit `on_failure`
+callable receives the original exception once and chooses the tool's public error text.
+
 ## AgentRuntime
 
 | API | Result |
@@ -202,6 +213,14 @@ before closing shared resources.
 `NativeStreamPart` is the finite native replay value. Its Python field
 `graph_namespace` identifies Graph position; its third-party wire alias remains `ns`.
 Business isolation always comes from `RunIdentity.namespace`.
+
+Native SSE and Messaging retain verified task ownership in `graphOrigin` and
+`subagentRequests`. Pass `runtime.open_run(...)` directly to a
+[Messaging channel](../messaging/index.md) to record it; the stream supplies its
+identity and codec. Each replayed message's `data` is a `NativeStreamPart` for the
+standalone AG-UI converter. Native SSE records can also be decoded with
+`NativeStreamPart.model_validate_json()`. Use `open_agui_run()` when only AG-UI
+output is needed.
 
 ## Public modules
 

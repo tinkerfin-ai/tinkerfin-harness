@@ -16,21 +16,6 @@
       "title": "Description",
       "type": "string"
     },
-    "graphNamespace": {
-      "description": "Complete native child graph namespace",
-      "items": {
-        "type": "string"
-      },
-      "minItems": 1,
-      "title": "Graphnamespace",
-      "type": "array"
-    },
-    "graphTaskId": {
-      "description": "Native LangGraph task ID that opened the child graph",
-      "minLength": 1,
-      "title": "Graphtaskid",
-      "type": "string"
-    },
     "parentGraphNamespace": {
       "description": "Complete graph namespace that issued the parent task Tool",
       "items": {
@@ -67,9 +52,7 @@
   "required": [
     "schema",
     "subagentInvocationId",
-    "graphNamespace",
     "parentGraphNamespace",
-    "graphTaskId",
     "agentName",
     "parentToolCallId",
     "description",

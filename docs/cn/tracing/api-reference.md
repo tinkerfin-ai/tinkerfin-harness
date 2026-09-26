@@ -163,7 +163,7 @@ JSON、非有限数字或破坏 state、模型消息及 HITL 必需结构时，�
 
 ## 存储接口
 
-`RunFact` 表示整个 Runtime 调用，`graph_namespace` 必须为空，`in_subagent_scope` 必须为 false；
+`RunFact` 表示整个 Runtime 调用，`graph_namespace` 必须为空，`parent_subagent_id` 必须为 `None`；
 子 Agent 执行使用 `SubagentFact`。构造时会拒绝其他作用域。Writer 也会在提交前原子拒绝含有
 非法 Run 作用域的整批事实，包括通过不执行校验的模型复制方式构造的输入。
 
@@ -173,10 +173,16 @@ JSON、非有限数字或破坏 state、模型消息及 HITL 必需结构时，�
 或暂停时使用 `completed`；Graph 单独表达成功、取消、等待或放弃。恢复后的消息可以重新进入
 `streaming`，且不会重复已有正文。
 
-`SubagentFact` 的阶段与状态对应为 `started/running`、`updated/waiting`；`completed`
+`SubagentFact` 的 `started` 对应 `running`，`updated` 接受 `running` 或 `waiting`；`completed`
 只接受 `succeeded`、`failed`、`cancelled` 或 `abandoned`。`input`、`parent_tool_call_id`、
 `parent_execution_id` 和 `model_call_id` 只在 `started` 保存。后续事实沿用相同的
-`subagent_id` 与 graph_namespace，从开场事实取得请求和关系。
+`subagent_id` 与 `graph_namespace`，从开场事实取得请求和关系。
+这里的 `graph_namespace` 表示父 Tool 所在作用域；子任务内的事实保留实际执行作用域，
+通过 `parent_subagent_id` 指明所属子任务。
+
+`ToolExecutionFact.source_tool_call_id` 与 `tool_call_namespace` 共同指向原 Tool 请求，
+两者必须同时提供或同时为 `None`；根 Tool 作用域使用空元组。
+`graph_namespace` 保留实际执行作用域。
 
 | 接口 | 职责 |
 | --- | --- |

@@ -31,6 +31,7 @@ from tinkerfin_contracts import (
     RunStartedObservation,
     RunTerminalObservation,
     RuntimeObservation,
+    SubagentRequestReference,
     ToolExecutionObservation,
 )
 
@@ -97,27 +98,13 @@ class _PendingInteraction:
 
 
 @dataclass(frozen=True, slots=True)
-class _SubagentDescriptor:
-    """Retain one logical task relationship and the authority of its arguments.
-
-    Callback execution attempts belong to the Tool execution maps, not to this
-    request identity. A repeated attempt can retain the same Graph task and input.
-    """
-
-    parent_tool_call_id: str
-    parent_task_id: str
-    agent_name: str
-    description: str
-    input_source: Literal["proposal", "execution"] = "proposal"
-
-
-@dataclass(frozen=True, slots=True)
 class _PendingToolExecution:
     """Retain actual Tool input until its execution callback reaches a terminal."""
 
     input: JsonValue | None
     parent_call_id: str | None
     namespace: tuple[str, ...]
+    tool_call_namespace: tuple[str, ...] | None
     graph_task_id: str | None
     agent_name: str | None
     tool_name: str
@@ -132,23 +119,6 @@ class _ContextAnchor:
 
     occurred_at: datetime
     monotonic_ns: int | None
-
-
-def _subagent_arguments(value: JsonValue | None) -> tuple[str, str] | None:
-    """Read the required Deep Agents task arguments from one observed call."""
-
-    if not isinstance(value, dict):
-        return None
-    description = value.get("description")
-    agent_name = value.get("subagent_type")
-    if (
-        not isinstance(description, str)
-        or not description
-        or not isinstance(agent_name, str)
-        or not agent_name
-    ):
-        return None
-    return agent_name, description
 
 
 class _TracingSession:
@@ -225,7 +195,7 @@ class _TracingSession:
         self._message_contents: dict[tuple[tuple[str, ...], str], CapturedValue] = {}
         self._message_completed: set[tuple[tuple[str, ...], str]] = set()
         self._pending_assistant_messages: dict[
-            tuple[tuple[str, ...], str], tuple[str | None, str | None, bool]
+            tuple[tuple[str, ...], str], tuple[str | None, str | None, str | None]
         ] = {}
         self._waiting_assistant_messages: set[tuple[tuple[str, ...], str]] = set()
         self._completed_model_messages: set[tuple[tuple[str, ...], str]] = set()
@@ -254,9 +224,13 @@ class _TracingSession:
         self._pending_interactions: dict[
             tuple[tuple[str, ...], str], _PendingInteraction
         ] = {}
-        self._subagent_descriptors: dict[tuple[str, ...], _SubagentDescriptor] = {}
+        self._subagent_descriptors: dict[tuple[str, ...], SubagentRequestReference] = {}
+        self._subagent_requests: dict[str, SubagentRequestReference] = {}
+        self._logical_openings: dict[str, SubagentFact] = {}
+        self._logical_status: dict[str, str] = {}
+        self._scope_subagent_ids: dict[tuple[str, ...], str] = {}
+        self._subagent_result_status: dict[tuple[tuple[str, ...], str], str] = {}
         self._active_subagents: dict[tuple[str, ...], tuple[str, str | None]] = {}
-        self._subagent_parent_calls: dict[tuple[str, ...], str] = {}
         self._subagent_task_descriptions: dict[tuple[str, ...], str] = {}
         self._subagent_task_message_scopes: set[tuple[str, ...]] = set()
         self._subagent_task_message_keys: set[tuple[tuple[str, ...], str]] = set()
@@ -274,6 +248,10 @@ class _TracingSession:
 
         for event in events:
             fact = event.fact
+            if fact.parent_subagent_id is not None and not isinstance(
+                fact, SubagentFact
+            ):
+                self._scope_subagent_ids[fact.graph_namespace] = fact.parent_subagent_id
             self._advance_context_anchors((fact,), historical=True)
             if isinstance(fact, MessageFact) and fact.source_message_id is not None:
                 key = (fact.graph_namespace, fact.source_message_id)
@@ -353,7 +331,8 @@ class _TracingSession:
                 isinstance(fact, ToolExecutionFact)
                 and fact.source_tool_call_id is not None
             ):
-                key = (fact.graph_namespace, fact.source_tool_call_id)
+                assert fact.tool_call_namespace is not None
+                key = (fact.tool_call_namespace, fact.source_tool_call_id)
                 if fact.phase == "started":
                     self._tool_execution_by_call[key] = fact.execution_id
                     self._settled_tool_calls.discard(key)
@@ -381,50 +360,23 @@ class _TracingSession:
                 else:
                     self._pending_interactions.pop(key, None)
             elif isinstance(fact, SubagentFact):
-                if fact.phase == "started" and fact.parent_tool_call_id is not None:
-                    if not fact.graph_namespace:
-                        raise TraceCorruption("A child call requires a graph namespace")
-                    self._subagent_parent_calls[fact.graph_namespace] = (
-                        fact.parent_tool_call_id
-                    )
-                if (
-                    fact.phase == "started"
-                    and fact.input is not None
-                    and fact.input.disposition == "inline"
-                    and isinstance(fact.input.value, dict)
-                ):
-                    task_input = fact.input.value
-                    if set(task_input) == {""} and isinstance(task_input[""], dict):
-                        task_input = task_input[""]
-                    description = task_input.get("description")
-                    if isinstance(description, str):
-                        self._subagent_task_descriptions[fact.graph_namespace] = (
-                            description
-                        )
-                if fact.phase in {"started", "updated"} and fact.status in {
-                    "running",
-                    "waiting",
-                }:
-                    self._active_subagents[fact.graph_namespace] = (
-                        fact.subagent_id,
-                        fact.agent_name,
-                    )
-                else:
-                    self._active_subagents.pop(fact.graph_namespace, None)
-                    self._subagent_task_descriptions.pop(fact.graph_namespace, None)
+                if fact.phase == "started":
+                    self._logical_openings[fact.subagent_id] = fact
+                self._logical_status[fact.subagent_id] = fact.status
 
-        # A failed attempt can still own checkpoint-backed child requests. Keep
-        # only those proven relationships or scopes that are currently active.
-        pending_scopes = {
-            namespace[:depth]
-            for namespace, _interrupt_id in self._pending_interactions
-            for depth in range(1, len(namespace) + 1)
-        }
-        self._subagent_parent_calls = {
-            namespace: call
-            for namespace, call in self._subagent_parent_calls.items()
-            if namespace in self._active_subagents or namespace in pending_scopes
-        }
+        for namespace, subagent_id in self._scope_subagent_ids.items():
+            opening = self._logical_openings.get(subagent_id)
+            if opening is None:
+                raise TraceCorruption("Child fact has no retained logical Subagent")
+            if self._logical_status.get(subagent_id) in {"running", "waiting"}:
+                self._active_subagents[namespace] = (subagent_id, opening.agent_name)
+            if opening.input is not None and isinstance(opening.input.value, dict):
+                task_input = opening.input.value
+                if set(task_input) == {""} and isinstance(task_input[""], dict):
+                    task_input = task_input[""]
+                description = task_input.get("description")
+                if isinstance(description, str):
+                    self._subagent_task_descriptions[namespace] = description
 
     async def observe(self, observation: RuntimeObservation) -> None:
         """Map and enqueue one already ordered Runtime observation.
@@ -440,6 +392,27 @@ class _TracingSession:
 
         if self._closed:
             raise RuntimeError("Trace observation session is closed")
+        if isinstance(
+            observation,
+            (
+                ModelCallObservation,
+                ToolExecutionObservation,
+                ContextContributionObservation,
+                NativeMessageObservation,
+                NativeReasoningObservation,
+                NativeTaskObservation,
+                NativeStateObservation,
+                NativeExtraObservation,
+            ),
+        ):
+            request = observation.graph_origin.subagent_request
+            if request is not None:
+                self._subagent_requests[request.id] = request
+                self._scope_subagent_ids[observation.graph_namespace] = request.id
+                self._subagent_descriptors[observation.graph_namespace] = request
+                self._subagent_task_descriptions[observation.graph_namespace] = (
+                    request.description
+                )
         self._observation_index += 1
         source_id = (
             f"observation:{self._writer.key.generation}:{self._run_scope}:"
@@ -493,7 +466,7 @@ class _TracingSession:
 
         scope = (
             observation.graph_namespace
-            if self._in_subagent_scope(observation.graph_namespace)
+            if self._parent_subagent_id(observation.graph_namespace)
             else ()
         )
         anchor = self._context_anchors.get(scope)
@@ -532,7 +505,7 @@ class _TracingSession:
                 "completed",
                 "reconciled",
             }:
-                namespaces = (fact.graph_namespace if fact.in_subagent_scope else (),)
+                namespaces = (fact.graph_namespace if fact.parent_subagent_id else (),)
             elif isinstance(fact, ModelCallFact) and fact.phase in {
                 "completed",
                 "failed",
@@ -540,7 +513,7 @@ class _TracingSession:
                 "interrupted",
                 "abandoned",
             }:
-                namespaces = (fact.graph_namespace if fact.in_subagent_scope else (),)
+                namespaces = (fact.graph_namespace if fact.parent_subagent_id else (),)
             elif isinstance(fact, ToolExecutionFact) and fact.phase in {
                 "completed",
                 "failed",
@@ -548,20 +521,18 @@ class _TracingSession:
                 "interrupted",
                 "abandoned",
             }:
-                namespaces = (fact.graph_namespace if fact.in_subagent_scope else (),)
+                namespaces = (fact.graph_namespace if fact.parent_subagent_id else (),)
             elif isinstance(fact, ToolFact) and fact.phase in {
                 "result",
                 "cancelled",
                 "abandoned",
             }:
-                namespaces = (fact.graph_namespace if fact.in_subagent_scope else (),)
+                namespaces = (fact.graph_namespace if fact.parent_subagent_id else (),)
             elif isinstance(fact, SubagentFact):
-                if fact.phase == "started":
+                if fact.phase == "completed" or fact.status == "waiting":
                     namespaces = (fact.graph_namespace,)
-                elif fact.phase == "completed" or fact.status == "waiting":
-                    namespaces = (fact.graph_namespace[:-1],)
             elif isinstance(fact, InteractionFact) and fact.phase == "resolved":
-                namespaces = (fact.graph_namespace if fact.in_subagent_scope else (),)
+                namespaces = (fact.graph_namespace if fact.parent_subagent_id else (),)
             candidate = _ContextAnchor(
                 fact.occurred_at,
                 None if historical else fact.monotonic_ns,
@@ -851,7 +822,7 @@ class _TracingSession:
                         (
                             message_id,
                             None,
-                            self._in_subagent_scope(observation.graph_namespace),
+                            self._parent_subagent_id(observation.graph_namespace),
                         ),
                     )
             return [
@@ -859,7 +830,7 @@ class _TracingSession:
                     ModelCallFact,
                     common,
                     graph_namespace=observation.graph_namespace,
-                    in_subagent_scope=self._in_subagent_scope(
+                    parent_subagent_id=self._parent_subagent_id(
                         observation.graph_namespace
                     ),
                     phase=observation.phase,
@@ -931,6 +902,12 @@ class _TracingSession:
                 )
             ]
         if isinstance(observation, ToolExecutionObservation):
+            tool_scope = observation.tool_call_namespace
+            if observation.tool_call_id is not None and tool_scope is None:
+                raise TraceCorruption("Tool execution has no original proposal scope")
+            owner_scope = (
+                observation.graph_namespace if tool_scope is None else tool_scope
+            )
             execution_id = _scope_id(
                 "tool-execution",
                 observation.graph_namespace,
@@ -942,16 +919,18 @@ class _TracingSession:
                 if observation.input is None:  # pragma: no cover - contract validation
                     raise TraceCorruption("Tool execution start has no input")
                 if observation.tool_call_id is not None:
+                    assert tool_scope is not None
                     self._settled_tool_calls.discard(
-                        (observation.graph_namespace, observation.tool_call_id)
+                        (tool_scope, observation.tool_call_id)
                     )
                     self._tool_execution_by_call[
-                        (observation.graph_namespace, observation.tool_call_id)
+                        (tool_scope, observation.tool_call_id)
                     ] = execution_id
                 traced = self._policy.traces_tool(observation.tool_name)
                 if traced and observation.tool_call_id is not None:
+                    assert tool_scope is not None
                     self._visible_tool_execution_calls.add(
-                        (observation.graph_namespace, observation.tool_call_id)
+                        (tool_scope, observation.tool_call_id)
                     )
                 parent_call_id = (
                     None
@@ -962,6 +941,7 @@ class _TracingSession:
                     input=observation.input if traced else None,
                     parent_call_id=parent_call_id,
                     namespace=observation.graph_namespace,
+                    tool_call_namespace=tool_scope,
                     graph_task_id=observation.graph_task_id,
                     agent_name=observation.agent_name,
                     tool_name=observation.tool_name,
@@ -978,14 +958,13 @@ class _TracingSession:
                         ToolExecutionFact,
                         common,
                         graph_namespace=observation.graph_namespace,
-                        in_subagent_scope=self._in_subagent_scope(
-                            observation.graph_namespace
-                        ),
+                        parent_subagent_id=self._parent_subagent_id(owner_scope),
                         phase="started",
                         execution_id=execution_id,
                         parent_call_id=parent_call_id,
                         agent_name=observation.agent_name,
                         source_tool_call_id=observation.tool_call_id,
+                        tool_call_namespace=tool_scope,
                         tool_name=observation.tool_name,
                         input=self._capture_tool(
                             tool_name=observation.tool_name,
@@ -1000,6 +979,7 @@ class _TracingSession:
                 raise TraceCorruption("Tool execution terminal has no matching start")
             if (
                 pending.namespace != observation.graph_namespace
+                or pending.tool_call_namespace != tool_scope
                 or pending.graph_task_id != observation.graph_task_id
                 or pending.agent_name != observation.agent_name
                 or pending.tool_name != observation.tool_name
@@ -1011,9 +991,8 @@ class _TracingSession:
                 observation.tool_call_id is not None
                 and observation.phase != "interrupted"
             ):
-                self._settled_tool_calls.add(
-                    (observation.graph_namespace, observation.tool_call_id)
-                )
+                assert tool_scope is not None
+                self._settled_tool_calls.add((tool_scope, observation.tool_call_id))
             if observation.failure_origin:
                 self._failure_origin_seen = True
             output = (
@@ -1030,14 +1009,13 @@ class _TracingSession:
                     ToolExecutionFact,
                     common,
                     graph_namespace=observation.graph_namespace,
-                    in_subagent_scope=self._in_subagent_scope(
-                        observation.graph_namespace
-                    ),
+                    parent_subagent_id=self._parent_subagent_id(owner_scope),
                     phase=observation.phase,
                     execution_id=execution_id,
                     parent_call_id=pending.parent_call_id,
                     agent_name=observation.agent_name,
                     source_tool_call_id=observation.tool_call_id,
+                    tool_call_namespace=tool_scope,
                     tool_name=observation.tool_name,
                     output=output,
                     error_type=observation.error_type,
@@ -1067,7 +1045,7 @@ class _TracingSession:
                     ContextContributionFact,
                     common,
                     graph_namespace=observation.graph_namespace,
-                    in_subagent_scope=self._in_subagent_scope(
+                    parent_subagent_id=self._parent_subagent_id(
                         observation.graph_namespace
                     ),
                     phase=observation.phase,
@@ -1188,7 +1166,7 @@ class _TracingSession:
                     NativeExtraFact,
                     common,
                     graph_namespace=namespace,
-                    in_subagent_scope=self._in_subagent_scope(namespace),
+                    parent_subagent_id=self._parent_subagent_id(namespace),
                     mode=observation.mode,
                     data_type=observation.data_type,
                     top_level_keys=tuple(
@@ -1228,7 +1206,7 @@ class _TracingSession:
         # Native error callbacks do not promise a final Assistant snapshot (LangGraph
         # StreamMessagesHandler.on_llm_error). Wait for Runtime's observation drain so
         # every accepted Native fragment precedes this one bounded delivery snapshot.
-        for key, (source_message_id, name, in_subagent_scope) in sorted(
+        for key, (source_message_id, name, parent_subagent_id) in sorted(
             self._pending_assistant_messages.items()
         ):
             namespace, message_source_id = key
@@ -1259,7 +1237,7 @@ class _TracingSession:
                     MessageFact,
                     common,
                     graph_namespace=namespace,
-                    in_subagent_scope=in_subagent_scope,
+                    parent_subagent_id=parent_subagent_id,
                     phase="completed" if model_completed else terminal_phase,
                     message_id=_scope_id("message", namespace, message_source_id),
                     source_message_id=source_message_id,
@@ -1271,31 +1249,32 @@ class _TracingSession:
             if model_completed or terminal_phase != "interrupted":
                 self._message_completed.add(key)
         self._pending_assistant_messages.clear()
-        for namespace, (subagent_id, agent_name) in sorted(
-            self._active_subagents.items()
-        ):
+        for subagent_id, opening in sorted(self._logical_openings.items()):
+            if self._logical_status.get(subagent_id) not in {"running", "waiting"}:
+                continue
             waiting = terminal_phase == "interrupted"
-            subagent_status: Literal["waiting", "cancelled", "abandoned"]
-            if waiting:
-                subagent_status = "waiting"
-            elif terminal_phase == "cancelled":
-                subagent_status = "cancelled"
-            else:
-                subagent_status = "abandoned"
+            subagent_status: Literal["waiting", "cancelled", "abandoned"] = (
+                "waiting"
+                if waiting
+                else "cancelled"
+                if terminal_phase == "cancelled"
+                else "abandoned"
+            )
             facts.append(
                 SubagentFact(
                     source_observation_id=source_id,
                     identity=observation.identity,
-                    graph_namespace=namespace,
+                    graph_namespace=opening.graph_namespace,
+                    parent_subagent_id=opening.parent_subagent_id,
                     occurred_at=observation.observed_at,
                     monotonic_ns=observation.monotonic_ns,
                     phase="updated" if waiting else "completed",
                     subagent_id=subagent_id,
-                    agent_name=agent_name,
+                    agent_name=opening.agent_name,
                     status=subagent_status,
                 )
             )
-            self._subagent_descriptors.pop(namespace, None)
+            self._logical_status[subagent_id] = subagent_status
         if terminal_phase != "interrupted":
             unresolved_tools = sorted(
                 self._tool_started - self._tool_results - self._settled_tool_calls
@@ -1309,7 +1288,7 @@ class _TracingSession:
                         ToolFact,
                         common,
                         graph_namespace=namespace,
-                        in_subagent_scope=self._in_subagent_scope(namespace),
+                        parent_subagent_id=self._parent_subagent_id(namespace),
                         phase=(
                             "cancelled"
                             if terminal_phase == "cancelled"
@@ -1341,7 +1320,7 @@ class _TracingSession:
             "source_observation_id": source_id,
             "identity": observation.identity,
             "graph_namespace": namespace,
-            "in_subagent_scope": self._in_subagent_scope(namespace),
+            "parent_subagent_id": self._parent_subagent_id(namespace),
             "occurred_at": observation.observed_at,
             "monotonic_ns": observation.monotonic_ns,
         }
@@ -1461,7 +1440,7 @@ class _TracingSession:
             ReasoningFact,
             common,
             graph_namespace=namespace,
-            in_subagent_scope=self._in_subagent_scope(namespace),
+            parent_subagent_id=self._parent_subagent_id(namespace),
             phase="completed",
             reasoning_id=_scope_id("reasoning", namespace, source_message_id),
             message_id=_scope_id("message", namespace, source_message_id),
@@ -1496,7 +1475,7 @@ class _TracingSession:
                         "source_observation_id": source_id,
                         "identity": observation.identity,
                         "graph_namespace": observation.graph_namespace,
-                        "in_subagent_scope": self._in_subagent_scope(
+                        "parent_subagent_id": self._parent_subagent_id(
                             observation.graph_namespace
                         ),
                         "occurred_at": observation.observed_at,
@@ -1516,7 +1495,7 @@ class _TracingSession:
             "source_observation_id": source_id,
             "identity": observation.identity,
             "graph_namespace": observation.graph_namespace,
-            "in_subagent_scope": self._in_subagent_scope(observation.graph_namespace),
+            "parent_subagent_id": self._parent_subagent_id(observation.graph_namespace),
             "occurred_at": observation.observed_at,
             "monotonic_ns": observation.monotonic_ns,
         }
@@ -1614,7 +1593,7 @@ class _TracingSession:
                 (
                     message.id,
                     message.name,
-                    self._in_subagent_scope(observation.graph_namespace),
+                    self._parent_subagent_id(observation.graph_namespace),
                 ),
             )
         if role == "assistant" and message.content not in ("", []):
@@ -1820,6 +1799,7 @@ class _TracingSession:
         # A real parent result settles its call even if an earlier failed Run
         # provisionally marked the attempt abandoned. Its exact ID and scope,
         # not result text or the new Run's outcome, identify owned requests.
+        self._subagent_result_status[key] = message.tool_status or "success"
         facts = self._complete_subagent_call(key, common=common)
         if key in self._tool_results:
             return facts
@@ -1879,7 +1859,7 @@ class _TracingSession:
             "source_observation_id": source_id,
             "identity": observation.identity,
             "graph_namespace": namespace,
-            "in_subagent_scope": self._in_subagent_scope(namespace),
+            "parent_subagent_id": self._parent_subagent_id(namespace),
             "occurred_at": observation.observed_at,
             "monotonic_ns": observation.monotonic_ns,
         }
@@ -2155,28 +2135,9 @@ class _TracingSession:
         return facts
 
     def _subagent_start(
-        self,
-        observation: RuntimeObservation,
-        *,
-        source_id: str,
+        self, observation: RuntimeObservation, *, source_id: str
     ) -> list[TraceSemanticFact]:
-        """Open one proven child scope before its first observed work.
-
-        Child callbacks can precede Native parts. Their verified parent task Tool
-        execution supplies the existing preparation boundary; a callback's own start
-        time must not replace missing evidence. Native-only observations retain their
-        first-child-part boundary when no Tool callback was captured.
-
-        Args:
-            observation: Native child activity or the start of a child callback.
-            source_id: Identity of the observation that first exposes this scope.
-
-        Returns:
-            One opening fact, or no facts for an existing or unproven child scope.
-
-        Raises:
-            TraceCorruption: A proven child callback lacks its parent execution evidence.
-        """
+        """Open one logical delegate and attach every proven physical child scope."""
 
         if not isinstance(
             observation,
@@ -2192,352 +2153,241 @@ class _TracingSession:
         ):
             return []
         namespace = observation.graph_namespace
-        if not namespace:
+        request = observation.graph_origin.subagent_request
+        if request is None or not namespace:
             return []
-        if namespace in self._active_subagents:
+        if isinstance(observation, ToolExecutionObservation) and (
+            observation.delegation is not None
+            and observation.delegation.id == request.id
+        ):
             return []
-        descriptor = self._subagent_descriptors.get(namespace)
-        if descriptor is None:
-            return []
-        callback_start = isinstance(
+        callback = isinstance(
             observation, (ModelCallObservation, ToolExecutionObservation)
         )
-        if callback_start and observation.phase != "started":
+        if callback and observation.phase != "started":
             return []
-        agent_name: str | None = descriptor.agent_name
-        if isinstance(observation, NativeMessageObservation):
-            raw_name = observation.metadata.get("lc_agent_name")
-            if isinstance(raw_name, str) and raw_name:
-                if agent_name is not None and raw_name != agent_name:
-                    raise TraceCorruption(
-                        "Subagent name conflicts with its parent task Tool"
-                    )
-                agent_name = raw_name
-        subagent_id = _scope_id("subagent", namespace, namespace[-1])
-        parent_execution_id = self._tool_execution_by_call.get(
-            (namespace[:-1], descriptor.parent_tool_call_id)
+        parent_key = (request.parent_graph_namespace, request.parent_tool_call_id)
+        execution_id = self._tool_execution_by_call.get(parent_key)
+        execution = (
+            None if execution_id is None else self._tool_executions.get(execution_id)
         )
-        parent_execution = (
-            None
-            if parent_execution_id is None
-            else self._tool_executions.get(parent_execution_id)
-        )
-        if callback_start and (
-            parent_execution is None or parent_execution.tool_name != "task"
-        ):
+        if callback and (execution is None or execution.tool_name != "task"):
             raise TraceCorruption(
                 "Subagent callback has no observed parent task execution boundary"
             )
+        started_at = (
+            observation.observed_at if execution is None else execution.observed_at
+        )
+        started_ns = (
+            observation.monotonic_ns if execution is None else execution.monotonic_ns
+        )
         if (
-            callback_start
-            and parent_execution is not None
-            and (
-                parent_execution.observed_at > observation.observed_at
-                or parent_execution.monotonic_ns > observation.monotonic_ns
-            )
+            started_at > observation.observed_at
+            or started_ns > observation.monotonic_ns
         ):
             raise TraceCorruption("Subagent execution boundary follows child callback")
-        parent_tool_call_id = descriptor.parent_tool_call_id
-        model_call_id = self._tool_call_models.get(
-            (namespace[:-1], descriptor.parent_tool_call_id)
+        if namespace not in self._context_anchors:
+            self._context_anchors[namespace] = _ContextAnchor(started_at, started_ns)
+        self._active_subagents[namespace] = (request.id, request.agent_name)
+        previous = self._logical_openings.get(request.id)
+        status = self._logical_status.get(request.id)
+        if previous is not None:
+            if (previous.graph_namespace, previous.parent_tool_call_id) != parent_key:
+                raise TraceCorruption("Logical Subagent changed its parent request")
+            if status == "running":
+                return []
+            self._logical_status[request.id] = "running"
+            return [
+                SubagentFact(
+                    source_observation_id=source_id,
+                    identity=observation.identity,
+                    graph_namespace=previous.graph_namespace,
+                    parent_subagent_id=previous.parent_subagent_id,
+                    occurred_at=started_at,
+                    monotonic_ns=started_ns,
+                    phase="updated",
+                    subagent_id=request.id,
+                    agent_name=request.agent_name,
+                    status="running",
+                )
+            ]
+        opening = SubagentFact(
+            source_observation_id=source_id,
+            identity=observation.identity,
+            graph_namespace=request.parent_graph_namespace,
+            parent_subagent_id=self._parent_subagent_id(request.parent_graph_namespace),
+            occurred_at=started_at,
+            monotonic_ns=started_ns,
+            phase="started",
+            subagent_id=request.id,
+            agent_name=request.agent_name,
+            parent_tool_call_id=request.parent_tool_call_id,
+            parent_execution_id=execution_id,
+            model_call_id=self._tool_call_models.get(parent_key),
+            input=self._capture_tool(
+                tool_name="task",
+                value={
+                    "description": request.description,
+                    "subagent_type": request.agent_name,
+                },
+                target="arguments",
+            ),
+            status="running",
         )
-        started_at = (
-            observation.observed_at
-            if parent_execution is None
-            else parent_execution.observed_at
-        )
-        started_monotonic_ns = (
-            observation.monotonic_ns
-            if parent_execution is None
-            else parent_execution.monotonic_ns
-        )
-        self._active_subagents[namespace] = (subagent_id, agent_name)
-        self._subagent_parent_calls[namespace] = parent_tool_call_id
-        return [
-            SubagentFact(
-                source_observation_id=source_id,
-                identity=observation.identity,
-                graph_namespace=namespace,
-                occurred_at=started_at,
-                monotonic_ns=started_monotonic_ns,
-                phase="started",
-                subagent_id=subagent_id,
-                agent_name=agent_name,
-                parent_tool_call_id=parent_tool_call_id,
-                parent_execution_id=parent_execution_id,
-                model_call_id=model_call_id,
-                input=self._capture_tool(
-                    tool_name="task",
-                    value={
-                        "description": descriptor.description,
-                        "subagent_type": descriptor.agent_name,
-                    },
-                    target="arguments",
-                ),
-                status="running",
-            )
-        ]
+        self._logical_openings[request.id] = opening
+        self._logical_status[request.id] = "running"
+        return [opening]
 
-    def _in_subagent_scope(self, namespace: tuple[str, ...]) -> bool:
-        return bool(namespace) and (
-            namespace in self._active_subagents
-            or namespace in self._subagent_descriptors
-        )
+    def _parent_subagent_id(self, namespace: tuple[str, ...]) -> str | None:
+        return self._scope_subagent_ids.get(namespace)
 
     def _remember_subagent_descriptors(
-        self,
-        observation: NativeTaskObservation,
+        self, observation: NativeTaskObservation
     ) -> None:
-        """Index task proposals without depending on Native/callback arrival order.
-
-        Deep Agents 0.7.13 supplies ``description`` and ``subagent_type`` for each
-        ``task`` call. Native task records establish the relationship for Native-only
-        sources; actual execution inputs take precedence after middleware edits.
-        """
-
-        if (
-            observation.phase != "start"
-            or observation.name != "tools"
-            or not isinstance(observation.input, list)
-        ):
-            return
-        descriptors: list[tuple[str, str, str]] = []
-        for raw_call in observation.input:
-            if not isinstance(raw_call, dict) or raw_call.get("name") != "task":
-                continue
-            raw_id = raw_call.get("id")
-            raw_args = raw_call.get("args")
-            if (
-                not isinstance(raw_id, str)
-                or not raw_id
-                or not isinstance(raw_args, dict)
-            ):
-                continue
-            arguments = _subagent_arguments(raw_args)
-            if arguments is None:
-                continue
-            agent_name, description = arguments
-            descriptors.append((raw_id, agent_name, description))
-        multiple = len(descriptors) > 1
-        for index, (tool_call_id, agent_name, description) in enumerate(descriptors):
-            suffix = (
-                f"{observation.task_id}:{index}" if multiple else observation.task_id
-            )
-            namespace = (*observation.graph_namespace, f"tools:{suffix}")
-            descriptor = _SubagentDescriptor(
-                parent_tool_call_id=tool_call_id,
-                parent_task_id=observation.task_id,
-                agent_name=agent_name,
-                description=description,
-            )
-            self._remember_subagent_descriptor(namespace, descriptor)
+        for request in observation.subagent_requests:
+            self._subagent_requests[request.id] = request
 
     def _remember_subagent_execution(
-        self,
-        observation: ToolExecutionObservation,
+        self, observation: ToolExecutionObservation
     ) -> None:
-        """Bind a child to its actual task execution before any child work starts.
-
-        The locked Deep Agents Send path gives each Tool its own Graph task. This
-        identity, its parent namespace, and exact Tool call ID distinguish parallel
-        delegates even when their arguments match. Neither callback parent IDs nor
-        the order in which Native parts are consumed proves this relationship.
-        """
-
-        if (
-            observation.tool_name != "task"
-            or observation.tool_call_id is None
-            or observation.graph_task_id is None
-        ):
-            return
-        arguments = _subagent_arguments(observation.input)
-        if arguments is None:
-            return
-        agent_name, description = arguments
-        self._remember_subagent_descriptor(
-            (*observation.graph_namespace, f"tools:{observation.graph_task_id}"),
-            _SubagentDescriptor(
-                parent_tool_call_id=observation.tool_call_id,
-                parent_task_id=observation.graph_task_id,
-                agent_name=agent_name,
-                description=description,
-                input_source="execution",
-            ),
-        )
-
-    def _remember_subagent_descriptor(
-        self, namespace: tuple[str, ...], descriptor: _SubagentDescriptor
-    ) -> None:
-        existing = self._subagent_descriptors.get(namespace)
-        if existing is not None and existing != descriptor:
-            if (
-                existing.parent_task_id != descriptor.parent_task_id
-                or existing.parent_tool_call_id != descriptor.parent_tool_call_id
-            ):
-                raise TraceCorruption(
-                    "Subagent Graph task changed its owning Tool call"
-                )
-            if (
-                existing.input_source == "execution"
-                and descriptor.input_source == "proposal"
-            ):
-                # A queued Native proposal cannot replace post-middleware inputs.
-                return
-            if (
-                existing.input_source == "execution"
-                or descriptor.input_source == "proposal"
-            ):
-                raise TraceCorruption(
-                    "Subagent parent task Tool changed before execution"
-                )
-            if namespace in self._active_subagents and (
-                existing.agent_name != descriptor.agent_name
-                or existing.description != descriptor.description
-            ):
-                raise TraceCorruption(
-                    "Subagent execution inputs arrived after child work"
-                )
-            # A waiting child hydrated during resume retains its identity and input;
-            # attaching this Run's execution evidence does not change that request.
-        self._subagent_descriptors[namespace] = descriptor
-        self._subagent_task_descriptions[namespace] = descriptor.description
+        if observation.delegation is not None:
+            self._subagent_requests[observation.delegation.id] = observation.delegation
 
     def _subagent_completions(
-        self,
-        observation: NativeTaskObservation,
-        *,
-        source_id: str,
+        self, observation: NativeTaskObservation, *, source_id: str
     ) -> list[TraceSemanticFact]:
-        """Close direct child graph scopes when their owning task returns."""
+        """Settle logical requests only when their original parent task returns."""
 
         if observation.phase != "result" or observation.interrupts:
             return []
-        parent = observation.graph_namespace
-        # LangGraph v2 scopes encode a direct child as ``<node>:<owning-task-id>``.
-        # The locked Plan fixture and the parent-task regression test verify this join.
-        matches = [
-            namespace
-            for namespace in self._active_subagents
-            if len(namespace) == len(parent) + 1
-            and namespace[: len(parent)] == parent
-            and (
-                (
-                    self._subagent_descriptors[namespace].parent_task_id
-                    if namespace in self._subagent_descriptors
-                    else namespace[-1].partition(":")[2]
-                )
-                == observation.task_id
-            )
-        ]
         facts: list[TraceSemanticFact] = []
-        for namespace in sorted(matches):
-            subagent_id, agent_name = self._active_subagents.pop(namespace)
-            self._subagent_descriptors.pop(namespace, None)
-            self._subagent_task_descriptions.pop(namespace, None)
+        for request in self._subagent_requests.values():
+            if (
+                request.parent_graph_namespace != observation.graph_namespace
+                or request.graph_task_id != observation.task_id
+                or self._logical_status.get(request.id) not in {"running", "waiting"}
+            ):
+                continue
+            opening = self._logical_openings[request.id]
+            result = self._subagent_result_status.get(
+                (request.parent_graph_namespace, request.parent_tool_call_id)
+            )
+            status = (
+                "failed" if observation.error_type or result == "error" else "succeeded"
+            )
             facts.append(
                 SubagentFact(
                     source_observation_id=source_id,
                     identity=observation.identity,
-                    graph_namespace=namespace,
+                    graph_namespace=request.parent_graph_namespace,
+                    parent_subagent_id=opening.parent_subagent_id,
                     occurred_at=observation.observed_at,
                     monotonic_ns=observation.monotonic_ns,
                     phase="completed",
-                    subagent_id=subagent_id,
-                    agent_name=agent_name,
-                    status="failed" if observation.error_type else "succeeded",
+                    subagent_id=request.id,
+                    agent_name=request.agent_name,
+                    status=status,
                 )
             )
+            self._logical_status[request.id] = status
+            self._active_subagents = {
+                scope: value
+                for scope, value in self._active_subagents.items()
+                if value[0] != request.id
+            }
         return facts
 
     def _complete_subagent_call(
-        self,
-        parent_key: tuple[tuple[str, ...], str],
-        *,
-        common: Mapping[str, object],
+        self, parent_key: tuple[tuple[str, ...], str], *, common: Mapping[str, object]
     ) -> list[TraceSemanticFact]:
-        """Cancel unresolved child reviews only when their parent call has returned.
+        """Abandon unresolved descendants only after their owning request returns."""
 
-        A parent result can precede the owning task's authoritative completion.
-        Without a pending review, keep that task active so its actual outcome is
-        recorded. A still-pending review cannot resume after its parent returns.
-        """
-
-        returned_scopes = tuple(
-            namespace
-            for namespace, call in self._subagent_parent_calls.items()
-            if (namespace[:-1], call) == parent_key
-        )
+        returned = {
+            value.subagent_id
+            for value in self._logical_openings.values()
+            if (value.graph_namespace, value.parent_tool_call_id) == parent_key
+        }
+        descendants = set(returned)
+        while True:
+            children = {
+                value.subagent_id
+                for value in self._logical_openings.values()
+                if value.parent_subagent_id in descendants
+            }
+            if children <= descendants:
+                break
+            descendants.update(children)
+        owned_scopes = {
+            scope
+            for scope, owner in self._scope_subagent_ids.items()
+            if owner in descendants
+        }
+        if not any(scope in owned_scopes for scope, _ in self._pending_interactions):
+            return []
         facts: list[TraceSemanticFact] = []
-        for namespace in returned_scopes:
-            for scope in tuple(self._subagent_parent_calls):
-                if scope[: len(namespace)] == namespace:
-                    self._subagent_parent_calls.pop(scope)
-            if not any(
-                scope[: len(namespace)] == namespace
-                for scope, _interrupt_id in self._pending_interactions
-            ):
+        for logical_id in sorted(descendants):
+            opening = self._logical_openings[logical_id]
+            if self._logical_status.get(logical_id) not in {"running", "waiting"}:
                 continue
-            for scope in tuple(self._active_subagents):
-                if scope[: len(namespace)] != namespace:
-                    continue
-                subagent_id, agent_name = self._active_subagents.pop(scope)
-                facts.append(
-                    make_fact(
-                        SubagentFact,
-                        common,
-                        graph_namespace=scope,
-                        in_subagent_scope=True,
-                        phase="completed",
-                        subagent_id=subagent_id,
-                        agent_name=agent_name,
-                        status="abandoned",
-                    )
+            facts.append(
+                make_fact(
+                    SubagentFact,
+                    common,
+                    graph_namespace=opening.graph_namespace,
+                    parent_subagent_id=opening.parent_subagent_id,
+                    phase="completed",
+                    subagent_id=logical_id,
+                    agent_name=opening.agent_name,
+                    status="abandoned",
                 )
-                self._subagent_descriptors.pop(scope, None)
-                self._subagent_task_descriptions.pop(scope, None)
-            for key in tuple(self._pending_interactions):
-                scope, interrupt_id = key
-                if scope[: len(namespace)] != namespace:
-                    continue
-                pending = self._pending_interactions.pop(key)
-                facts.append(
-                    make_fact(
-                        InteractionFact,
-                        common,
-                        graph_namespace=scope,
-                        in_subagent_scope=True,
-                        phase="resolved",
-                        interaction_id=_scope_id("interaction", scope, interrupt_id),
-                        source_interaction_id=interrupt_id,
-                        interaction_kind=pending.kind,
-                        tool_call_ids=pending.tool_call_ids,
-                        status="cancelled",
-                    )
-                )
-            unresolved = (
-                self._tool_started - self._tool_results - self._settled_tool_calls
             )
-            for scope, tool_call_id in sorted(unresolved):
-                if scope[: len(namespace)] != namespace:
-                    continue
-                tool_key = (scope, tool_call_id)
-                tool_name = self._tool_names.get(tool_key)
-                if tool_name is not None and self._policy.traces_tool(tool_name):
-                    facts.append(
-                        make_fact(
-                            ToolFact,
-                            common,
-                            graph_namespace=scope,
-                            in_subagent_scope=True,
-                            phase="abandoned",
-                            tool_call_id=_scope_id("tool", scope, tool_call_id),
-                            source_tool_call_id=tool_call_id,
-                            parent_call_id=self._tool_call_models.get(tool_key),
-                            tool_name=tool_name,
-                        )
+            self._logical_status[logical_id] = "abandoned"
+        self._active_subagents = {
+            scope: value
+            for scope, value in self._active_subagents.items()
+            if value[0] not in descendants
+        }
+        for key in tuple(self._pending_interactions):
+            scope, interrupt_id = key
+            if scope not in owned_scopes:
+                continue
+            pending = self._pending_interactions.pop(key)
+            facts.append(
+                make_fact(
+                    InteractionFact,
+                    common,
+                    graph_namespace=scope,
+                    parent_subagent_id=self._parent_subagent_id(scope),
+                    phase="resolved",
+                    interaction_id=_scope_id("interaction", scope, interrupt_id),
+                    source_interaction_id=interrupt_id,
+                    interaction_kind=pending.kind,
+                    tool_call_ids=pending.tool_call_ids,
+                    status="cancelled",
+                )
+            )
+        unresolved = self._tool_started - self._tool_results - self._settled_tool_calls
+        for scope, tool_call_id in sorted(unresolved):
+            if scope not in owned_scopes:
+                continue
+            key = (scope, tool_call_id)
+            name = self._tool_names.get(key)
+            if name is not None and self._policy.traces_tool(name):
+                facts.append(
+                    make_fact(
+                        ToolFact,
+                        common,
+                        graph_namespace=scope,
+                        parent_subagent_id=self._parent_subagent_id(scope),
+                        phase="abandoned",
+                        tool_call_id=_scope_id("tool", scope, tool_call_id),
+                        source_tool_call_id=tool_call_id,
+                        parent_call_id=self._tool_call_models.get(key),
+                        tool_name=name,
                     )
-                self._tool_results.add(tool_key)
-                self._tool_completed.add(tool_key)
+                )
+            self._tool_results.add(key)
+            self._tool_completed.add(key)
         return facts
 
     def _resolved_interaction_facts(
@@ -2565,7 +2415,7 @@ class _TracingSession:
                     ),
                     source_interaction_id=summary.interrupt_id,
                     graph_namespace=interaction_namespace,
-                    in_subagent_scope=self._in_subagent_scope(interaction_namespace),
+                    parent_subagent_id=self._parent_subagent_id(interaction_namespace),
                     interaction_kind=pending_interaction.kind,
                     tool_call_ids=pending_interaction.tool_call_ids,
                     status=summary.status,

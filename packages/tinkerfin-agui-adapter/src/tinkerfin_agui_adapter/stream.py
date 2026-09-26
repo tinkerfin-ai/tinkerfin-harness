@@ -43,7 +43,7 @@ async def _astream_events(
     prior_tool_call_ids: frozenset[str] = frozenset(),
     private_state_keys: frozenset[str] = frozenset(),
 ) -> AsyncIterator[BaseEvent]:
-    """Convert a caller-supplied Deep Agents v2 stream into one AG-UI lifecycle.
+    """Convert a live or recorded Native stream into one AG-UI lifecycle.
 
     Parts are validated one at a time before adapter state changes. The function
     does not prefetch into a queue: while a text batch awaits its 0.3-second
@@ -66,9 +66,10 @@ async def _astream_events(
 
     Args:
         parts: Live `messages`, `tasks`, `values`, `updates`, `checkpoints`,
-            `debug`, and `custom` v2 parts produced under the Deep Agents profile,
-            with subgraph provenance supplied by native task starts rather than
-            arbitrary LangGraph namespace inference.
+            `debug`, and `custom` v2 parts, or decoded ``NativeStreamPart`` records.
+            Live subgraph provenance requires Native task evidence. Recorded Runtime
+            parts carry validated execution origins for delegated retry and resume;
+            the converter does not infer missing ancestry from namespace text.
         identity: Canonical thread and run identity for lifecycle events.
         expose_reasoning_events: Emit supported reasoning events when true.
         expose_subagent_events: Emit events derived from non-root namespaces when true.

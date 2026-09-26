@@ -1,16 +1,11 @@
 {
   "agentName": "researcher",
   "description": "Research the requested topic",
-  "graphNamespace": [
-    "tools:parent",
-    "tools:graph-task"
-  ],
-  "graphTaskId": "graph-task",
   "parentGraphNamespace": [
     "tools:parent"
   ],
   "parentToolCallId": "tf:tool:W1sidG9vbHM6cGFyZW50Il0sImNhbGwtdGFzayJd",
   "requestRunId": "run-known",
   "schema": "tinkerfin.subagent-provenance",
-  "subagentInvocationId": "subagent-2594398b-b209-5a61-a9f0-8a4d6100bbcd"
+  "subagentInvocationId": "subagent-f40ee085-115c-51b6-b683-45659b5b3639"
 }

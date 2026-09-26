@@ -229,6 +229,7 @@ async def test_framework_safety_and_business_redaction_cover_model_tool_and_stat
             phase="started",
             execution_id="execution-redaction",
             tool_call_id="tool-redaction",
+            tool_call_namespace=(),
             tool_name="create_customer",
             input={
                 "id_card_number": "310000000000000000",
@@ -247,6 +248,7 @@ async def test_framework_safety_and_business_redaction_cover_model_tool_and_stat
             phase="completed",
             execution_id="execution-redaction",
             tool_call_id="tool-redaction",
+            tool_call_namespace=(),
             tool_name="create_customer",
             output={"customer_id": "customer-1", "auth_token": "tool-credential"},
             observed_at=observed_at,

@@ -16,6 +16,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from tinkerfin_contracts import (
+    GraphOrigin,
+    GraphTaskReference,
     ModelCallObservation,
     NativeMessageObservation,
     NativeMessageRecord,
@@ -29,7 +31,9 @@ from tinkerfin_contracts import (
     RunStartedObservation,
     RunTerminalObservation,
     RunTerminalOutcome,
+    SubagentRequestReference,
     ToolExecutionObservation,
+    subagent_request_id,
 )
 from tinkerfin_tracing import (
     CapturedValue,
@@ -131,12 +135,14 @@ async def _message(
     *,
     message_id: str = "assistant",
     namespace: tuple[str, ...] = (),
+    graph_origin: GraphOrigin = GraphOrigin(),
     complete: bool = False,
 ) -> None:
     await session.observe(
         NativeMessageObservation(
             **_source(identity, sequence),
             graph_namespace=namespace,
+            graph_origin=graph_origin,
             message=NativeMessageRecord(
                 message_type="assistant" if complete else "assistant_chunk",
                 id=message_id,
@@ -712,6 +718,21 @@ async def test_child_assistant_uses_its_own_native_scope_at_cancellation(
     store, _engine = assistant_store
     tracer = Tracer(store=store)
     identity = RunIdentity(namespace="test", thread_id="child", run_id="run")
+    child = ("tools:parent-task",)
+    request = SubagentRequestReference(
+        id=subagent_request_id(child),
+        parent_graph_namespace=(),
+        parent_tool_call_id="delegate",
+        graph_task_id="parent-task",
+        agent_name="worker",
+        description="local child",
+    )
+    origin = GraphOrigin(
+        parent_task=GraphTaskReference(
+            graph_namespace=(), task_id="parent-task", node_name="tools"
+        ),
+        subagent_request=request,
+    )
     session = await _start(tracer, identity)
     await session.observe(
         ModelCallObservation(
@@ -733,6 +754,7 @@ async def test_child_assistant_uses_its_own_native_scope_at_cancellation(
         NativeTaskObservation(
             **_source(identity, 5),
             graph_namespace=(),
+            subagent_requests=(request,),
             phase="start",
             task_id="parent-task",
             name="tools",
@@ -749,18 +771,21 @@ async def test_child_assistant_uses_its_own_native_scope_at_cancellation(
         ToolExecutionObservation(
             **_source(identity, 6),
             graph_namespace=(),
+            graph_task_id="parent-task",
+            delegation=request,
             phase="started",
             execution_id="parent-execution",
             tool_call_id="delegate",
+            tool_call_namespace=(),
             tool_name="task",
             input={"description": "local child", "subagent_type": "worker"},
         )
     )
-    child = ("tools:parent-task",)
     await session.observe(
         ModelCallObservation(
             **_source(identity, 7),
             graph_namespace=child,
+            graph_origin=origin,
             phase="started",
             call_id="child-model",
             messages=(NativeMessageRecord(message_type="human", content="child"),),
@@ -770,12 +795,15 @@ async def test_child_assistant_uses_its_own_native_scope_at_cancellation(
         ModelCallObservation(
             **_source(identity, 8),
             graph_namespace=child,
+            graph_origin=origin,
             phase="first_output",
             call_id="child-model",
             output_message_ids=("assistant",),
         )
     )
-    await _message(session, identity, 9, "child partial", namespace=child)
+    await _message(
+        session, identity, 9, "child partial", namespace=child, graph_origin=origin
+    )
     if parent_result:
         await session.observe(
             NativeTaskObservation(
@@ -916,7 +944,8 @@ async def test_terminal_cannot_close_or_supply_a_locator_for_another_run(
 @pytest.mark.parametrize("unchecked", ("copy", "construct"))
 @pytest.mark.parametrize("phase", ("started", "terminal", "closed"))
 @pytest.mark.parametrize(
-    "invalid_scope", ({"graph_namespace": ("child",)}, {"in_subagent_scope": True})
+    "invalid_scope",
+    ({"graph_namespace": ("child",)}, {"parent_subagent_id": "subagent:child"}),
 )
 async def test_unchecked_run_scope_is_rejected_atomically_before_any_batch_fact(
     assistant_store: tuple[TraceStore, AsyncEngine | None],

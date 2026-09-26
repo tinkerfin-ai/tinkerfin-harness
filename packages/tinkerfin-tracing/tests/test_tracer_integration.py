@@ -37,6 +37,8 @@ from tinkerfin.runtime_profile import (
     DeepAgentsV3RuntimeProfile,
 )
 from tinkerfin_contracts import (
+    GraphOrigin,
+    GraphTaskReference,
     ModelCallObservation,
     NativeMessageRecord,
     NativeTaskObservation,
@@ -48,8 +50,10 @@ from tinkerfin_contracts import (
     RunStartedObservation,
     RunTerminalObservation,
     RuntimeObservation,
+    SubagentRequestReference,
     ThreadIdentity,
     ToolExecutionObservation,
+    subagent_request_id,
 )
 from tinkerfin_tracing import (
     AmbiguousTraceHead,
@@ -250,6 +254,7 @@ async def test_model_context_spans_preparation_without_duplicating_model_request
             phase="started",
             execution_id="tool-first",
             tool_call_id="tool-call-first",
+            tool_call_namespace=(),
             tool_name="search",
             input={"query": "context"},
             observed_at=started + timedelta(milliseconds=130),
@@ -260,6 +265,7 @@ async def test_model_context_spans_preparation_without_duplicating_model_request
             phase="completed",
             execution_id="tool-first",
             tool_call_id="tool-call-first",
+            tool_call_namespace=(),
             tool_name="search",
             output="result",
             observed_at=started + timedelta(milliseconds=160),
@@ -340,6 +346,20 @@ async def test_resumed_subagent_context_excludes_prior_wait_time() -> None:
     parent = await tracer.open_run(parent_source)
     started = datetime(2026, 9, 5, 1, 0, tzinfo=UTC)
     child_namespace = ("tools:delegation",)
+    request = SubagentRequestReference(
+        id=subagent_request_id(child_namespace),
+        parent_graph_namespace=(),
+        parent_tool_call_id="task-call",
+        graph_task_id="delegation",
+        agent_name="researcher",
+        description="Delegate the work",
+    )
+    origin = GraphOrigin(
+        parent_task=GraphTaskReference(
+            graph_namespace=(), task_id="delegation", node_name="tools"
+        ),
+        subagent_request=request,
+    )
     parent_observations: tuple[RuntimeObservation, ...] = (
         RunStartedObservation(
             identity=parent_identity,
@@ -355,6 +375,7 @@ async def test_resumed_subagent_context_excludes_prior_wait_time() -> None:
         NativeTaskObservation(
             identity=parent_identity,
             graph_namespace=(),
+            subagent_requests=(request,),
             phase="start",
             task_id="delegation",
             name="tools",
@@ -374,6 +395,7 @@ async def test_resumed_subagent_context_excludes_prior_wait_time() -> None:
         NativeTaskObservation(
             identity=parent_identity,
             graph_namespace=child_namespace,
+            graph_origin=origin,
             phase="start",
             task_id="child-model-task",
             name="model",
@@ -423,9 +445,26 @@ async def test_resumed_subagent_context_excludes_prior_wait_time() -> None:
             observed_at=resumed_at + timedelta(milliseconds=1),
             monotonic_ns=2,
         ),
+        ToolExecutionObservation(
+            identity=resumed_identity,
+            phase="started",
+            execution_id="resumed-parent-execution",
+            graph_task_id="delegation",
+            tool_call_id="task-call",
+            tool_call_namespace=(),
+            delegation=request,
+            tool_name="task",
+            input={
+                "description": request.description,
+                "subagent_type": request.agent_name,
+            },
+            observed_at=resumed_at + timedelta(milliseconds=1),
+            monotonic_ns=2,
+        ),
         ModelCallObservation(
             identity=resumed_identity,
             graph_namespace=child_namespace,
+            graph_origin=origin,
             phase="started",
             call_id="resumed-child-model",
             messages=(
@@ -440,6 +479,7 @@ async def test_resumed_subagent_context_excludes_prior_wait_time() -> None:
         ModelCallObservation(
             identity=resumed_identity,
             graph_namespace=child_namespace,
+            graph_origin=origin,
             phase="completed",
             call_id="resumed-child-model",
             observed_at=resumed_at + timedelta(milliseconds=40),
@@ -506,6 +546,29 @@ async def test_parallel_subagents_keep_independent_context_boundaries() -> None:
     started = datetime(2026, 9, 5, 1, 30, tzinfo=UTC)
     first_namespace = ("tools:delegation:0",)
     second_namespace = ("tools:delegation:1",)
+    first_request = SubagentRequestReference(
+        id=subagent_request_id(first_namespace),
+        parent_graph_namespace=(),
+        parent_tool_call_id="task-first",
+        graph_task_id="delegation",
+        agent_name="researcher",
+        description="First task",
+    )
+    second_request = SubagentRequestReference(
+        id=subagent_request_id(second_namespace),
+        parent_graph_namespace=(),
+        parent_tool_call_id="task-second",
+        graph_task_id="delegation",
+        agent_name="reviewer",
+        description="Second task",
+    )
+    parent_task = GraphTaskReference(
+        graph_namespace=(), task_id="delegation", node_name="tools"
+    )
+    first_origin = GraphOrigin(parent_task=parent_task, subagent_request=first_request)
+    second_origin = GraphOrigin(
+        parent_task=parent_task, subagent_request=second_request
+    )
     observations: tuple[RuntimeObservation, ...] = (
         RunStartedObservation(
             identity=identity,
@@ -521,6 +584,7 @@ async def test_parallel_subagents_keep_independent_context_boundaries() -> None:
         NativeTaskObservation(
             identity=identity,
             graph_namespace=(),
+            subagent_requests=(first_request, second_request),
             phase="start",
             task_id="delegation",
             name="tools",
@@ -545,9 +609,26 @@ async def test_parallel_subagents_keep_independent_context_boundaries() -> None:
             observed_at=started + timedelta(milliseconds=5),
             monotonic_ns=3,
         ),
+        ToolExecutionObservation(
+            identity=identity,
+            phase="started",
+            execution_id="first-execution",
+            graph_task_id="delegation",
+            tool_call_id="task-first",
+            tool_call_namespace=(),
+            delegation=first_request,
+            tool_name="task",
+            input={
+                "description": first_request.description,
+                "subagent_type": first_request.agent_name,
+            },
+            observed_at=started + timedelta(milliseconds=10),
+            monotonic_ns=4,
+        ),
         NativeTaskObservation(
             identity=identity,
             graph_namespace=first_namespace,
+            graph_origin=first_origin,
             phase="start",
             task_id="first-model-task",
             name="model",
@@ -555,9 +636,26 @@ async def test_parallel_subagents_keep_independent_context_boundaries() -> None:
             observed_at=started + timedelta(milliseconds=10),
             monotonic_ns=4,
         ),
+        ToolExecutionObservation(
+            identity=identity,
+            phase="started",
+            execution_id="second-execution",
+            graph_task_id="delegation",
+            tool_call_id="task-second",
+            tool_call_namespace=(),
+            delegation=second_request,
+            tool_name="task",
+            input={
+                "description": second_request.description,
+                "subagent_type": second_request.agent_name,
+            },
+            observed_at=started + timedelta(milliseconds=15),
+            monotonic_ns=5,
+        ),
         NativeTaskObservation(
             identity=identity,
             graph_namespace=second_namespace,
+            graph_origin=second_origin,
             phase="start",
             task_id="second-model-task",
             name="model",
@@ -568,6 +666,7 @@ async def test_parallel_subagents_keep_independent_context_boundaries() -> None:
         ModelCallObservation(
             identity=identity,
             graph_namespace=second_namespace,
+            graph_origin=second_origin,
             phase="started",
             call_id="second-model",
             messages=(
@@ -579,6 +678,7 @@ async def test_parallel_subagents_keep_independent_context_boundaries() -> None:
         ModelCallObservation(
             identity=identity,
             graph_namespace=first_namespace,
+            graph_origin=first_origin,
             phase="started",
             call_id="first-model",
             messages=(
@@ -590,6 +690,7 @@ async def test_parallel_subagents_keep_independent_context_boundaries() -> None:
         ModelCallObservation(
             identity=identity,
             graph_namespace=second_namespace,
+            graph_origin=second_origin,
             phase="completed",
             call_id="second-model",
             observed_at=started + timedelta(milliseconds=40),
@@ -598,6 +699,7 @@ async def test_parallel_subagents_keep_independent_context_boundaries() -> None:
         ModelCallObservation(
             identity=identity,
             graph_namespace=first_namespace,
+            graph_origin=first_origin,
             phase="completed",
             call_id="first-model",
             observed_at=started + timedelta(milliseconds=45),
@@ -1012,7 +1114,7 @@ async def test_managed_ainvoke_stores_one_delegated_task_payload(
         event.fact
         for event in events
         if isinstance(event.fact, MessageFact)
-        and event.fact.graph_namespace == subagent.graph_namespace
+        and event.fact.parent_subagent_id == subagent.subagent_id
         and event.fact.role == "user"
     ]
     subagent_node = next(
@@ -1419,6 +1521,16 @@ async def test_propagated_subagent_interrupt_uses_the_deepest_trace_scope(
         ],
     )
     parts: tuple[Mapping[str, object], ...] = (
+        {
+            "type": "tasks",
+            "ns": (),
+            "data": {
+                "id": "subagent-task",
+                "name": "tools",
+                "input": root_message.tool_calls,
+                "triggers": ("branch:to:tools",),
+            },
+        },
         {
             "type": "values",
             "ns": namespace,

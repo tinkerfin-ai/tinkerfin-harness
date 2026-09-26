@@ -1,4 +1,5 @@
 import type { ConversationTitleSnapshot } from "./api/conversation/titles"
+import type { SubagentProvenance } from './api/conversation/types'
 import type { ConversationHistoryCoreDetail } from './api/conversation/history'
 import type {
   ReadyTaskTraceSnapshot,
@@ -71,7 +72,8 @@ export interface Message {
     subRunId?: string
     originMainRunId?: string
     lastMainRunId?: string
-    graphTaskId?: string
+    /** 已确认的逻辑委派请求，用于补全历史后核验后续事件 */
+    subagentProvenance?: SubagentProvenance
     runId?: string
     completedAt?: string
     durationMs?: number

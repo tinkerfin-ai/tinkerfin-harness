@@ -71,12 +71,10 @@ def _node(node: TraceGraphNode, identity: ThreadIdentity) -> AgUiTraceGraphNode:
             )
         )
     elif node.source_id is not None and node.kind == "subagent":
-        if not node.graph_namespace:
-            raise TraceStoreProtocolError("Subagent references require a child scope")
-        # Trace Subagent source_id is its parent Tool ID; the node itself uses the
-        # child scope. Keep this projection paired with Adapter provenance tests.
+        # The logical node retains its parent Tool scope across physical attempts.
+        # Keep this projection paired with Adapter provenance tests.
         parent_tool_call_id = ScopedIdCodec().encode(
-            "tool", node.graph_namespace[:-1], node.source_id
+            "tool", node.graph_namespace, node.source_id
         )
         reference = AgUiSubagentReference(
             parent_tool_call_id=parent_tool_call_id,
@@ -87,6 +85,7 @@ def _node(node: TraceGraphNode, identity: ThreadIdentity) -> AgUiTraceGraphNode:
                     run_id=node.run_id,
                 ),
                 parent_tool_call_id=parent_tool_call_id,
+                subagent_id=node.id,
             ),
         )
     return AgUiTraceGraphNode(**node.model_dump(exclude={"agui"}), agui=reference)
@@ -255,8 +254,6 @@ def _project_graph_page(
     Returns:
         Nodes with live references and the original cursor and ordering.
 
-    Raises:
-        TraceStoreProtocolError: A Subagent source has no child scope.
     """
 
     return AgUiTraceGraphPage(
@@ -277,8 +274,6 @@ def _project_graph_delta(
     Returns:
         Upserted nodes with references and unchanged removal and ordering fields.
 
-    Raises:
-        TraceStoreProtocolError: A Subagent source has no child scope.
     """
 
     return AgUiTraceGraphDelta(

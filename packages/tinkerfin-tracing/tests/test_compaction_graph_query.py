@@ -32,7 +32,7 @@ from tinkerfin_tracing.store import TraceThreadKey, TraceWriter
 class _Common(TypedDict):
     identity: RunIdentity
     graph_namespace: tuple[str, ...]
-    in_subagent_scope: bool
+    parent_subagent_id: str | None
     occurred_at: datetime
     monotonic_ns: int
 
@@ -51,13 +51,17 @@ async def compaction_store(
     )
     identity = RunIdentity(namespace="n", thread_id="t", run_id="r")
     namespace = ("tools:child",)
+    child_id = scope_id("subagent", namespace, namespace[-1])
     common: _Common = {
         "identity": identity,
         "graph_namespace": namespace,
-        "in_subagent_scope": True,
+        "parent_subagent_id": child_id,
         "occurred_at": datetime(2026, 9, 22, tzinfo=UTC),
         "monotonic_ns": 0,
     }
+    parent_common = common.copy()
+    parent_common["graph_namespace"] = ()
+    parent_common["parent_subagent_id"] = None
     operation = ContextContributionFact(
         **common,
         source_observation_id="action",
@@ -72,10 +76,10 @@ async def compaction_store(
             await writer.append(
                 (
                     SubagentFact(
-                        **common,
+                        **parent_common,
                         source_observation_id="child",
                         phase="started",
-                        subagent_id=scope_id("subagent", namespace, namespace[-1]),
+                        subagent_id=child_id,
                         agent_name="worker",
                         status="running",
                     ),

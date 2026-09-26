@@ -112,12 +112,23 @@ interface DeepAgentSubagentEventSourceInfo extends EventSourceInfoBase {
   kind: "deep_agent_subagent"
   agentType: "subagent"
   agentName: string
+  subagentInvocationId: string
 }
 
 export type EventSourceInfo =
   | RootEventSourceInfo
   | CompiledSubgraphEventSourceInfo
   | DeepAgentSubagentEventSourceInfo
+
+export interface SubagentProvenance {
+  readonly schema: "tinkerfin.subagent-provenance"
+  readonly subagentInvocationId: string
+  readonly parentGraphNamespace: readonly string[]
+  readonly agentName: string
+  readonly parentToolCallId: string
+  readonly description: string
+  readonly requestRunId: string
+}
 
 export interface RawEventContext {
   streamMode?: "messages" | "tasks" | "values"

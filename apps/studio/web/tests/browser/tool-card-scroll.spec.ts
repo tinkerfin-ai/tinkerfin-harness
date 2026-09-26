@@ -33,13 +33,13 @@ const subSource: RawEventContext = {
   source: {
     kind: 'deep_agent_subagent', agentType: 'subagent', agentName: 'researcher',
     graphNamespace: ['tools:research'], parentGraphNamespace: [], graphTaskId: 'research',
-    parentToolCallId: 'task-call', subagentInvocationId: SUB_RUN, subagentInput: '检查资料并总结',
+    parentToolCallId: 'tf:tool:W1tdLCJ0YXNrLWNhbGwiXQ', subagentInvocationId: SUB_RUN, subagentInput: '检查资料并总结',
   },
 }
 const text = (delta: string): ConversationAgUiEvent => ({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'research-text', delta, rawEvent: subSource })
 const startSubagent: ConversationAgUiEvent[] = [
-  { type: 'TOOL_CALL_START', toolCallId: 'task-call', toolCallName: 'task' },
-  { type: 'TOOL_CALL_ARGS', toolCallId: 'task-call', delta: JSON.stringify({ description: '检查资料并总结', subagent_type: 'researcher' }) },
+  { type: 'TOOL_CALL_START', toolCallId: 'tf:tool:W1tdLCJ0YXNrLWNhbGwiXQ', toolCallName: 'task' },
+  { type: 'TOOL_CALL_ARGS', toolCallId: 'tf:tool:W1tdLCJ0YXNrLWNhbGwiXQ', delta: JSON.stringify({ description: '检查资料并总结', subagent_type: 'researcher' }) },
   {
     type: 'RAW', source: 'langgraph.tasks', rawEvent: { type: 'tasks', phase: 'start', ns: [] },
     event: {
@@ -47,9 +47,8 @@ const startSubagent: ConversationAgUiEvent[] = [
       provenance: {
         kind: 'root', graphNamespace: [], agentType: 'main', agentName: 'main',
         subagents: [{
-          schema: 'tinkerfin.subagent-provenance', subagentInvocationId: SUB_RUN,
-          graphNamespace: ['tools:research'], parentGraphNamespace: [], graphTaskId: 'research',
-          agentName: 'researcher', parentToolCallId: 'task-call', description: '检查资料并总结', requestRunId: RUN,
+          schema: 'tinkerfin.subagent-provenance', subagentInvocationId: SUB_RUN, parentGraphNamespace: [],
+          agentName: 'researcher', parentToolCallId: 'tf:tool:W1tdLCJ0YXNrLWNhbGwiXQ', description: '检查资料并总结', requestRunId: RUN,
         }],
       },
     },
@@ -99,7 +98,7 @@ const historicalTool = (id: string, name: string, request: string, result: strin
 })
 
 const historicalSubagent = (result: string, status: 'succeeded' | 'failed' | 'cancelled' = 'succeeded') => traceGraphNode({
-  id: 'trace-subagent', agui: { kind: 'subagent', parentToolCallId: 'task-call', subagentInvocationId: SUB_RUN },
+  id: 'trace-subagent', agui: { kind: 'subagent', parentToolCallId: 'tf:tool:W1tdLCJ0YXNrLWNhbGwiXQ', subagentInvocationId: SUB_RUN },
   kind: 'subagent', name: 'researcher', agentName: 'researcher', runId: RUN, sourceId: SUB_RUN,
   graphNamespace: ['tools:research'], startedSeq: 3, updatedSeq: 100,
   request: '检查资料并总结', result, status,

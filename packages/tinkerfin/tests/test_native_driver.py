@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import inspect
+from dataclasses import dataclass
 
 import pytest
 from ag_ui.core import ToolCallArgsEvent, ToolCallEndEvent, ToolCallStartEvent
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
-from pydantic import JsonValue
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    ChatMessage,
+    ToolMessage,
+)
+from langgraph.types import Interrupt
+from pydantic import BaseModel, JsonValue, field_serializer
 
 from tinkerfin import (
     RunIdentity,
@@ -27,7 +35,11 @@ from tinkerfin_contracts import (
     NativeToolCallChunk,
     RunSourceContext,
 )
-from tinkerfin_native_stream import NativeStreamPart
+from tinkerfin_native_stream import (
+    NativeMessageStreamPart,
+    NativeStreamPart,
+    NativeValuesStreamPart,
+)
 
 
 class _ProviderReasoningExtractor:
@@ -76,6 +88,259 @@ def _message_part(
         "ns": (),
         "data": (message, metadata),
     }
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        AIMessageChunk(
+            id="last-chunk",
+            content="complete",
+            chunk_position="last",
+            additional_kwargs={"reasoning_content": "private"},
+        ),
+        ToolMessage(
+            id="tool-result",
+            tool_call_id="call",
+            content="Saved",
+            artifact={"record_digest": "business", "path": "report.md"},
+        ),
+        ChatMessage(id="chat", role="reviewer", content="Reviewed"),
+    ],
+)
+def test_native_replay_restores_public_message_subtype_fields(
+    message: BaseMessage,
+) -> None:
+    frame = DeepAgentsV2StreamDriver().normalize(
+        _message_part(message), context=_context()
+    )
+    replay = NativeStreamPart.model_validate_json(
+        frame.replay.model_dump_json(by_alias=True)
+    )
+    restored = replay.to_frame().canonical
+    assert isinstance(restored, NativeMessageStreamPart)
+    assert restored.data.message == message.model_copy(update={"additional_kwargs": {}})
+    assert "private" not in replay.model_dump_json()
+    live_adapter = DeepAgentAgUiAdapter(identity=_context().identity)
+    replay_adapter = DeepAgentAgUiAdapter(identity=_context().identity)
+    live = [*live_adapter.process_frame(frame), *live_adapter.finish()]
+    replayed = [*replay_adapter.process(replay), *replay_adapter.finish()]
+    assert [event.model_dump() for event in replayed] == [
+        event.model_dump() for event in live
+    ]
+
+
+@pytest.mark.parametrize("has_messages", [False, True])
+def test_native_replay_preserves_state_channel_presence_and_interrupts(
+    has_messages: bool,
+) -> None:
+    values: dict[str, object] = {"answer": 42}
+    if has_messages:
+        values["messages"] = []
+    frame = DeepAgentsV2StreamDriver().normalize(
+        {
+            "type": "values",
+            "ns": (),
+            "data": values,
+            "interrupts": (Interrupt(value={"question": "Continue?"}, id="review"),),
+        },
+        context=_context(),
+    )
+    replay = NativeStreamPart.model_validate_json(
+        frame.replay.model_dump_json(by_alias=True)
+    )
+    restored = replay.to_frame().canonical
+    assert isinstance(restored, NativeValuesStreamPart)
+    assert restored.data == values
+    assert [(item.id, item.value) for item in restored.interrupts] == [
+        ("review", {"question": "Continue?"})
+    ]
+
+
+def test_native_replay_and_live_task_failures_publish_the_same_safe_events() -> None:
+    live = DeepAgentAgUiAdapter(identity=_context().identity)
+    replayed = DeepAgentAgUiAdapter(identity=_context().identity)
+    parts = [
+        {
+            "type": "tasks",
+            "ns": (),
+            "data": {
+                "id": "model-task",
+                "name": "model",
+                "input": {},
+                "triggers": ("branch:to:model",),
+            },
+        },
+        {
+            "type": "tasks",
+            "ns": (),
+            "data": {
+                "id": "model-task",
+                "name": "model",
+                "result": {},
+                "interrupts": [],
+                "error": ValueError("private provider detail"),
+            },
+        },
+    ]
+    for raw in parts:
+        frame = DeepAgentsV2StreamDriver().normalize(raw, context=_context())
+        record = NativeStreamPart.model_validate_json(
+            frame.replay.model_dump_json(by_alias=True)
+        )
+        direct_events = live.process(raw)
+        recorded_events = replayed.process(record)
+        assert [event.model_dump() for event in recorded_events] == [
+            event.model_dump() for event in direct_events
+        ]
+        assert all(
+            "private provider detail" not in event.model_dump_json()
+            for event in direct_events
+        )
+
+
+class _PublicPoint(BaseModel):
+    coordinates: tuple[int, int]
+    binary: bytes = b"\xff"
+    secret: str = "private-model-field"
+
+    @field_serializer("secret", when_used="json")
+    def redact(self, value: str) -> str:
+        return "redacted"
+
+
+@dataclass(frozen=True, slots=True)
+class _PublicLabel:
+    names: tuple[str, ...]
+    binary: bytes = b"\xff"
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "values",
+        "task_start",
+        "task_result",
+        "updates",
+        "custom",
+        "checkpoints",
+        "debug_task",
+        "debug_checkpoint",
+    ],
+)
+def test_all_public_replay_modes_keep_json_values_and_literal_type_fields(
+    kind: str,
+) -> None:
+    business = {
+        "coordinates": (1, 2),
+        "literal": {"$type": "tuple", "items": [3, 4]},
+        "literalMessage": {"$type": "langchain.message", "value": {"type": "business"}},
+        "point": _PublicPoint(coordinates=(5, 6)),
+        "label": _PublicLabel(names=("one", "two")),
+        "textBytes": b"visible",
+        "binaryBytes": b"\xff",
+        "bytearray": bytearray(b"\xff"),
+        "literalBytes": {"$type": "bytes", "base64": "/w=="},
+    }
+    message = AIMessage(
+        id="message",
+        content="visible",
+        additional_kwargs={"reasoning_content": "private-reasoning", "keep": "public"},
+    )
+    checkpoint = {
+        "values": {**business, "messages": [message]},
+        "next": ("model",),
+        "tasks": [
+            {
+                "id": "task",
+                "name": "model",
+                "error": ValueError("private-error"),
+                "result": business,
+            }
+        ],
+    }
+    start = {
+        "type": "tasks",
+        "ns": (),
+        "data": {
+            "id": "task",
+            "name": "model",
+            "input": {**business, "messages": [message]},
+            "triggers": ("branch:to:model",),
+            "metadata": business,
+        },
+    }
+    prefix: list[dict[str, object]] = []
+    if kind == "values":
+        part = {
+            "type": "values",
+            "ns": (),
+            "data": {**business, "messages": [message]},
+            "interrupts": (),
+        }
+    elif kind == "task_start":
+        part = start
+    elif kind == "task_result":
+        prefix.append(start)
+        part = {
+            "type": "tasks",
+            "ns": (),
+            "data": {
+                "id": "task",
+                "name": "model",
+                "result": {**business, "messages": [message]},
+                "interrupts": [],
+                "error": None,
+            },
+        }
+    elif kind == "updates":
+        part = {
+            "type": "updates",
+            "ns": (),
+            "data": {"node": {**business, "messages": [message]}},
+        }
+    elif kind == "custom":
+        part = {"type": "custom", "ns": (), "data": business}
+    elif kind == "checkpoints":
+        part = {"type": "checkpoints", "ns": (), "data": checkpoint}
+    elif kind == "debug_task":
+        part = {
+            "type": "debug",
+            "ns": (),
+            "data": {
+                "type": "task",
+                "step": 1,
+                "timestamp": "2026-01-01T00:00:00Z",
+                "payload": start["data"],
+            },
+        }
+    else:
+        part = {
+            "type": "debug",
+            "ns": (),
+            "data": {
+                "type": "checkpoint",
+                "step": 1,
+                "timestamp": "2026-01-01T00:00:00Z",
+                "payload": checkpoint,
+            },
+        }
+    live = DeepAgentAgUiAdapter(identity=_context().identity)
+    replayed = DeepAgentAgUiAdapter(identity=_context().identity)
+    for raw in [*prefix, part]:
+        recorded = DeepAgentsV2StreamDriver().normalize(raw, context=_context()).replay
+        decoded = NativeStreamPart.model_validate_json(
+            recorded.model_dump_json(by_alias=True)
+        )
+        assert [event.model_dump() for event in live.process(raw)] == [
+            event.model_dump() for event in replayed.process(decoded)
+        ]
+        serialized = recorded.model_dump_json()
+        assert (
+            "private-reasoning" not in serialized
+            and "private-error" not in serialized
+            and "private-model-field" not in serialized
+        )
 
 
 def _astream_shape(

@@ -20,6 +20,7 @@ from tinkerfin_native_stream import (
     NativeMessageStreamPart,
     NativeTaskResultPayload,
     NativeTasksStreamPart,
+    NativeTaskStartPayload,
     NativeValuesStreamPart,
     validate_native_stream_part,
 )
@@ -214,8 +215,24 @@ async def test_successful_child_result_waits_for_its_authoritative_task_completi
         fact.status == "succeeded" for fact in completed
     )
     for start in starts:
-        parent = start.graph_namespace[:-1]
-        task_id = start.graph_namespace[-1].partition(":")[2]
+        parent = start.graph_namespace
+        owning_tasks = {
+            parsed.data.id
+            for part in captured.parts
+            if isinstance(
+                parsed := validate_native_stream_part(part), NativeTasksStreamPart
+            )
+            and parsed.ns == parent
+            and isinstance(parsed.data, NativeTaskStartPayload)
+            and parsed.data.name == "tools"
+            and isinstance(parsed.data.input, list)
+            and any(
+                isinstance(call, dict) and call.get("id") == start.parent_tool_call_id
+                for call in parsed.data.input
+            )
+        }
+        assert len(owning_tasks) == 1
+        task_id = next(iter(owning_tasks))
         result_positions: list[int] = []
         task_positions: list[int] = []
         for index, part in enumerate(captured.parts):

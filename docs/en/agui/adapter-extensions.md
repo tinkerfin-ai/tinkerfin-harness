@@ -43,7 +43,7 @@ Fully consuming `astream_events()` delivers one `RUN_STARTED` and one main termi
 
 | Parameter | Default | Purpose |
 | --- | --- | --- |
-| `parts` | required | Async LangGraph v2 stream |
+| `parts` | required | Async LangGraph v2 stream or decoded `NativeStreamPart` records |
 | `identity` | required | Main thread and run identity emitted by this conversion |
 | `expose_reasoning_events` | `False` | Emits supported reasoning events |
 | `expose_subagent_events` | `True` | Delivers subagent events |
@@ -53,6 +53,14 @@ Fully consuming `astream_events()` delivers one `RUN_STARTED` and one main termi
 `private_state_keys` is explicit for the standalone converter because it cannot infer
 which host fields are private. It never deletes nested same-named fields. TinkerFin
 Plan Runtimes provide their internal keys automatically.
+
+Recorded TinkerFin Native runs can be converted through the same entry point.
+Decode each record with `NativeStreamPart.model_validate_json()` from
+`tinkerfin_native_stream`; preserve its task relationships and original order.
+Raw LangGraph parts must provide enough evidence to identify each child task's
+parent. An ambiguous functional subtask fails with `AgUiAdapterError`, reported as
+`RUN_ERROR` by `astream_events()`. Runtime-managed delegation supplies the evidence in
+its Native records or converts it directly through `runtime.open_agui_run()`.
 
 ## Durable attachments
 
@@ -210,7 +218,7 @@ decision policy, arguments, and scoped Tool ID. Unknown fields and client-suppli
 interrupt metadata fail closed.
 
 Deep Agents `task` calls publish `SubagentProvenance` with schema
-`tinkerfin.subagent-provenance`. Its `subagentInvocationId` is stable across resume;
+`tinkerfin.subagent-provenance`. Its `subagentInvocationId` is stable across retries and resume;
 `requestRunId` identifies the main request carrying the current event. Parent task
 results expose `relatedSubagentInvocationId`. These fields describe Agent nesting;
 standard AG-UI `parentRunId` retains branch and time-travel lineage semantics.

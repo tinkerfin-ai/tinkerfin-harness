@@ -68,7 +68,7 @@ selection belongs to the higher-level Runtime or host.
 | `RuntimeInterruptEnvelope` | Validated non-tool workflow pause |
 | `HitlRequest` | Paired tool actions and review policies |
 | `ToolReviewInterruptMetadata` | Stable tool review correlation data |
-| `SubagentProvenance` | Stable subagent invocation and full Graph position |
+| `SubagentProvenance` | Stable delegation identity and its parent Tool request |
 
 Public tool decisions are `approve`, `edit`, `reject`, and `respond`. Edited arguments
 are validated against the action schema before native resume translation. See

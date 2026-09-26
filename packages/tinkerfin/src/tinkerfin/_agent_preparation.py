@@ -18,6 +18,7 @@ from langgraph.typing import ContextT
 from tinkerfin_contracts import PreparedWorkspace, RunIdentity, Workspace
 
 from ._agent_spec import AgentMiddlewareType, AgentSpec, ToolDefinition
+from ._durable_delegation import validate_delegation_retry
 from ._hitl import _as_permissions
 from ._middleware_resources import validate_middleware_resources
 from ._run_resources import RunResources
@@ -162,6 +163,7 @@ def validate_agent_spec(spec: AgentSpec[ContextT]) -> None:
     if any(not isinstance(item, AgentMiddleware) for item in spec.middleware):
         raise TypeError("middleware must contain AgentMiddleware instances")
     _validate_middleware(spec.middleware)
+    validate_delegation_retry(spec.middleware, persistent=spec.checkpointer is not None)
     has_remote_agents = any(
         isinstance(child, Mapping) and "graph_id" in child for child in spec.subagents
     )
@@ -202,6 +204,9 @@ def validate_agent_spec(spec: AgentSpec[ContextT]) -> None:
                 raise TypeError("declarative subagents require system_prompt")
             middleware = declaration.get("middleware", ())
             _validate_middleware(middleware)
+            validate_delegation_retry(
+                middleware, persistent=spec.checkpointer is not None
+            )
             _validate_delegation_tools(
                 declaration.get("tools", spec.tools),
                 middleware,

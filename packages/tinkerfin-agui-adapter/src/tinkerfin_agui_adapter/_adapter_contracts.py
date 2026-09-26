@@ -217,16 +217,6 @@ class SubagentInvocation:
 
 
 @dataclass(frozen=True, slots=True)
-class GraphScope:
-    """Native compiled-graph scope established by a parent task start."""
-
-    namespace: tuple[str, ...]
-    parent_namespace: tuple[str, ...]
-    graph_task_id: str
-    node_name: str
-
-
-@dataclass(frozen=True, slots=True)
 class BufferedChildInterrupt:
     """Validated child interrupt awaiting an identical root propagation."""
 
@@ -487,10 +477,8 @@ def _prepare_root_interrupts(
     visible_child_ids = self._resolved_child_interrupt_ids | propagated_child_ids
     child_namespaces = tuple(
         namespace
-        for namespace in self._graph_scopes
-        if visible_child_ids.intersection(
-            self._child_interrupt_ids_by_namespace.get(namespace, ())
-        )
+        for namespace, interrupt_ids in self._child_interrupt_ids_by_namespace.items()
+        if visible_child_ids.intersection(interrupt_ids)
     )
     return prepared, propagated_child_ids, child_namespaces
 

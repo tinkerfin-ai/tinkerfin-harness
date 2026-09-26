@@ -6,7 +6,7 @@
 
 - Docker、Docker Compose 2.24+ 和 Bash；Windows 使用 WSL
 - Python 3.11+ 和 [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- Node.js 20.19+（20.x）或 22.12+，pnpm 10.8.0
+- Node.js 20.19+（20.x）、22.12+（22.x）或 24 及以上版本，pnpm 10.8.0
 - 可用的模型服务地址、模型名称与 API 密钥
 
 MySQL、Redis、OpenSandbox 和 MinIO 通过 Docker 启动；Studio 后端和 Web 客户端在本机运行。

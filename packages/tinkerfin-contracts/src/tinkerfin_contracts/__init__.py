@@ -1,5 +1,9 @@
 """Protocol-neutral identities and Runtime observation contracts."""
 
+from .graph import GraphOrigin as GraphOrigin
+from .graph import GraphTaskReference as GraphTaskReference
+from .graph import SubagentRequestReference as SubagentRequestReference
+from .graph import subagent_request_id as subagent_request_id
 from .identity import RunIdentity as RunIdentity
 from .identity import ThreadIdentity as ThreadIdentity
 from .observations import RUNTIME_OBSERVATION_ADAPTER as RUNTIME_OBSERVATION_ADAPTER
@@ -45,6 +49,8 @@ __all__ = [
     "RUNTIME_OBSERVATION_ADAPTER",
     "ContextContributionObservation",
     "ContextKind",
+    "GraphOrigin",
+    "GraphTaskReference",
     "ModelCallObservation",
     "NativeExtraMode",
     "NativeExtraObservation",
@@ -75,7 +81,9 @@ __all__ = [
     "RunTerminalOutcome",
     "RuntimeObservation",
     "RuntimeObserver",
+    "SubagentRequestReference",
     "ThreadIdentity",
     "ToolExecutionObservation",
     "Workspace",
+    "subagent_request_id",
 ]

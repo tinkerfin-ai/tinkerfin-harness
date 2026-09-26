@@ -21,6 +21,7 @@ from tinkerfin_native_stream import (
     NativeMessageStreamPart,
     NativeStreamContractError,
     NativeStreamFrame,
+    NativeStreamPart,
     NativeTaskResultPayload,
     NativeTasksStreamPart,
     NativeTaskStartPayload,
@@ -36,7 +37,6 @@ from ._adapter_contracts import (
     ActiveToolCall,
     AgentSource,
     BufferedChildInterrupt,
-    GraphScope,
     NativeToolCall,
     StreamMode,
     SubagentInvocation,
@@ -196,6 +196,9 @@ class DeepAgentAgUiAdapter:
             raise ValueError(
                 "private_state_keys must contain canonical non-empty strings"
             )
+        from tinkerfin_native_stream import NativeGraphScopeRegistry
+
+        self._scope_registry: NativeGraphScopeRegistry = NativeGraphScopeRegistry()
         self._identity = identity
         self._expose_reasoning_events = expose_reasoning_events
         self._expose_subagent_events = expose_subagent_events
@@ -236,7 +239,6 @@ class DeepAgentAgUiAdapter:
             self._started_tool_ids.add(event_id)
             self._ended_tool_ids.add(event_id)
         self._namespace_agent_names: dict[tuple[str, ...], str] = {}
-        self._graph_scopes: dict[tuple[str, ...], GraphScope] = {}
         self._subagent_invocations: dict[tuple[str, ...], SubagentInvocation] = {}
         self._sub_namespaces_by_parent_tool_call: dict[
             tuple[tuple[str, ...], str], tuple[str, ...]
@@ -261,23 +263,31 @@ class DeepAgentAgUiAdapter:
         self._interrupts_by_id: dict[str, AgUiInterrupt] = {}
 
     def process(self, part: object) -> list[BaseEvent]:
-        """Validate and convert one standalone Deep Agents v2 part.
+        """Validate and convert one live or recorded Native part.
 
         Returns events in protocol order. Validation and correlation errors are
         raised before this part changes lifecycle state. Runtime integrations that
         already own a Profile must use :meth:`process_frame` instead.
 
         Args:
-            part: One complete live v2 StreamPart object from the standalone source.
+            part: One complete live v2 StreamPart or a finite ``NativeStreamPart``
+                decoded from Runtime capture, Messaging, or Native SSE. Recorded
+                parts retain proven origins that private execution records omit.
 
         Returns:
             Visible AG-UI events in lifecycle order.
 
         Raises:
-            AgUiStreamContractError: The v2 envelope is structurally invalid.
+            AgUiStreamContractError: The envelope or recorded payload is invalid.
             AgUiAdapterError: Conversion or full-ID correlation fails.
         """
 
+        if isinstance(part, NativeStreamPart):
+            try:
+                frame = part.to_frame()
+            except NativeStreamContractError as error:
+                raise AgUiStreamContractError(str(error), cause=error) from error
+            return self.process_frame(frame)
         return self.process_validated(validate_deep_agent_stream_part(part))
 
     def process_frame(self, frame: NativeStreamFrame) -> list[BaseEvent]:
@@ -296,7 +306,27 @@ class DeepAgentAgUiAdapter:
 
         if not isinstance(frame, NativeStreamFrame):
             raise TypeError("frame must be a NativeStreamFrame")
-        return self.process_validated(frame.canonical)
+        original_scopes = self._scope_registry
+        self._scope_registry = original_scopes.copy()
+        try:
+            self._scope_registry.adopt_origin(frame.canonical.ns, frame.origin)
+            if frame.subagent_requests:
+                self._scope_registry.accept(frame.canonical)
+                self._scope_registry.adopt_declarations(
+                    frame.canonical, frame.subagent_requests
+                )
+            events = self.process_validated(frame.canonical)
+            return [] if frame.internal else events
+        except AgUiAdapterError:
+            self._scope_registry = original_scopes
+            raise
+        except (TypeError, ValueError) as error:
+            self._scope_registry = original_scopes
+            translated = _stream_contract_error(frame.canonical, error)
+            raise translated from error
+        except BaseException:
+            self._scope_registry = original_scopes
+            raise
 
     def process_validated(
         self,
@@ -318,8 +348,11 @@ class DeepAgentAgUiAdapter:
             TypeError: The validated model contains an unsupported live-object shape.
         """
 
+        original_scopes = self._scope_registry
+        self._scope_registry = original_scopes.copy()
         try:
             validated = part
+            self._scope_registry.accept(validated)
             if isinstance(validated, MessageStreamPart):
                 self._validate_message_part(validated)
                 events = self._process_message_part(validated)
@@ -329,12 +362,21 @@ class DeepAgentAgUiAdapter:
                 events = self._process_values_part(validated)
             else:
                 events = self._process_extra_part(validated)
-            return self._visible_events(events)
+            return (
+                []
+                if self._scope_registry.is_internal(validated)
+                else self._visible_events(events)
+            )
         except AgUiAdapterError:
+            self._scope_registry = original_scopes
             raise
         except (TypeError, ValueError, ValidationError) as error:
+            self._scope_registry = original_scopes
             translated = _stream_contract_error(part, error)
             raise translated from error
+        except BaseException:
+            self._scope_registry = original_scopes
+            raise
 
     def _visible_events(self, events: list[BaseEvent]) -> list[BaseEvent]:
         """Suppress every event whose serialized provenance is a subgraph."""

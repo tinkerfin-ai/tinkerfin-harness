@@ -933,6 +933,17 @@ class TinkerFin:
             middleware: Additional behavior or named replacements for default
                 middleware. Configure delegation through subagents and tool review
                 through interrupt_on; their middleware and tool names are reserved.
+                With a checkpointer, standard ToolRetryMiddleware preserves completed
+                delegation attempts; custom retry subclasses cannot provide persistent
+                task retries. Callbacks must be Python functions, optionally bound
+                with functools.partial; defaults and bound arguments must be immutable
+                literals or exception types. Bound methods and callable instances
+                are rejected. Captured configuration must remain unchanged; mutable
+                closure state and external services are not compared during recovery.
+                Pending delegation arguments and retry settings must remain unchanged.
+                Default exhaustion messages omit provider diagnostics. An explicit
+                on_failure formatter receives the original exception once and supplies
+                the tool's public error text.
                 Resource-bearing declarations use the Runtime store.
                 A workspace owns its filesystem middleware and file tools. Without
                 a workspace, replacing these is allowed only for roles without

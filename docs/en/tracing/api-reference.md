@@ -182,7 +182,7 @@ chain. The final safety pass cannot be disabled.
 ## Storage interfaces
 
 `RunFact` describes the whole Runtime invocation. Its `graph_namespace` must be empty and
-`in_subagent_scope` must be false; child execution uses `SubagentFact`. Construction
+`parent_subagent_id` must be `None`; child execution uses `SubagentFact`. Construction
 rejects another scope. A writer also rejects invalid Run scope atomically before
 committing any fact in a batch, including input made through unchecked model copying.
 
@@ -194,10 +194,16 @@ uses `completed` when delivery ends or pauses. The Graph separately records its
 success, cancellation, waiting, or abandonment. A resumed delivery can become
 `streaming` again without duplicating already retained content.
 
-`SubagentFact` uses `started/running`, `updated/waiting`, and `completed` with
+`SubagentFact` uses `started/running`, `updated` with `running` or `waiting`, and `completed` with
 `succeeded`, `failed`, `cancelled`, or `abandoned`. Only `started` carries `input`,
 `parent_tool_call_id`, `parent_execution_id`, and `model_call_id`. Later facts keep
 the same `subagent_id` and graph namespace and inherit the opening request and relationships.
+Its `graph_namespace` identifies the parent Tool's scope. Child facts retain their
+actual execution scope and identify their owner through `parent_subagent_id`.
+
+`ToolExecutionFact.source_tool_call_id` and `tool_call_namespace` jointly identify
+the original Tool request. Both must be present or both `None`; the root Tool scope
+is an empty tuple. `graph_namespace` retains the actual execution scope.
 
 | Interface | Responsibility |
 | --- | --- |

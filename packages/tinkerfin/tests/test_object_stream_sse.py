@@ -45,6 +45,16 @@ async def test_native_object_stream_encodes_the_current_sse_contract(
 ) -> None:
     async def source() -> AsyncIterator[object]:
         yield {
+            "type": "tasks",
+            "ns": (),
+            "data": {
+                "id": "task-1",
+                "name": "child",
+                "input": {},
+                "triggers": ("branch:to:child",),
+            },
+        }
+        yield {
             "type": "values",
             "ns": ("child:task-1",),
             "data": {"answer": 42},
@@ -62,18 +72,28 @@ async def test_native_object_stream_encodes_the_current_sse_contract(
     )
     frames = [frame.decode("utf-8") async for frame in body]
 
-    assert len(frames) == 1
-    assert frames[0].startswith("event: stream-part\n")
-    payload = json.loads(frames[0].split("data: ", maxsplit=1)[1])
+    assert len(frames) == 2
+    assert frames[-1].startswith("event: stream-part\n")
+    payload = json.loads(frames[-1].split("data: ", maxsplit=1)[1])
     assert payload == {
         "type": "values",
         "ns": ["child:task-1"],
         "data": {
             "state": {"answer": 42},
             "messages": [],
+            "messagesPresent": False,
             "interrupts": [],
         },
         "interrupts": [],
+        "graphOrigin": {
+            "parentTask": {
+                "graphNamespace": [],
+                "taskId": "task-1",
+                "nodeName": "child",
+            },
+            "subagentRequest": None,
+        },
+        "subagentRequests": [],
     }
 
 

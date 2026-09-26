@@ -244,9 +244,12 @@ async def test_real_subagent_tool_resume_preserves_native_identity() -> None:
         )
     ]
     assert len(descriptors) == 1
-    before_provenance = SubagentProvenance.model_validate(descriptors[0])
-    assert before_provenance.graph_namespace == child_namespace
-    assert before_provenance.graph_task_id == graph_task_id
+    descriptor = descriptors[0]
+    assert isinstance(descriptor, Mapping)
+    before_provenance = SubagentProvenance.model_validate(descriptor)
+    assert before_provenance.parent_graph_namespace == ()
+    assert "graphNamespace" not in descriptor
+    assert "graphTaskId" not in descriptor
     assert before_provenance.request_run_id == "request-before"
     public_interrupt = before_outcome.interrupts[0]
     translation = ResumeMapper().map_agui(

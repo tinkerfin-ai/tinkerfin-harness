@@ -5,11 +5,18 @@ from __future__ import annotations
 import asyncio
 import inspect
 import math
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from dataclasses import replace
 from typing import TYPE_CHECKING, TypeVar, cast
 
 from tinkerfin_contracts import RunTerminalOutcome
-from tinkerfin_native_stream import NativeStreamContractError, NativeValuesStreamPart
+from tinkerfin_native_stream import (
+    NativeExtraStreamPart,
+    NativeStreamContractError,
+    NativeUpdatesStreamPart,
+    NativeValuesStreamPart,
+)
+from tinkerfin_native_stream.public import public_extra_data
 
 from ._failure_evidence import retain_failure, select_failure
 from ._run_callbacks import callback_scope
@@ -180,7 +187,11 @@ async def __anext__(self: _GraphRunStream[PartT]) -> PartT:
         assert source is not None
         try:
             with self._owned_operation_failures.capture():
-                part = await _next_or_observer_failure(self, source)
+                while True:
+                    part = await _next_or_observer_failure(self, source)
+                    await self._observe(part)
+                    if self._native_frame is None or not self._native_frame[1].internal:
+                        break
         except StopAsyncIteration:
             outcome: RunTerminalOutcome
             if self._observation.context.input_kind == "abandon":
@@ -197,15 +208,11 @@ async def __anext__(self: _GraphRunStream[PartT]) -> PartT:
                 self.error = error
             await self._finish(error, outcome=_error_outcome(error))
             raise error
-        try:
-            await self._observe(part)
-        except BaseException as error:
-            error = _run_error(self, error)
-            if isinstance(error, Exception):
-                self.error = error
-            await self._finish(error, outcome=_error_outcome(error))
-            raise error
-        return part
+        return (
+            cast(PartT, self._native_frame[0])
+            if self._native_frame is not None
+            else part
+        )
     finally:
         if self._active_task is current:
             self._active_task = None
@@ -395,12 +402,62 @@ async def _observe(self: _GraphRunStream[PartT], part: PartT) -> None:
             part,
             context=self._observation.context,
         )
+        origin = self._observation.graph_scopes.accept(frame.canonical)
+        declarations = self._observation.graph_scopes.declarations(frame.canonical)
+        public = self._observation.graph_scopes.public_part(frame.canonical)
+        if public is not None and public is not frame.canonical:
+            if not isinstance(part, Mapping):
+                raise TypeError(
+                    "private Native records require a mapping stream envelope"
+                )
+            part = cast(PartT, {**part, "data": public.data})
+            if not isinstance(public, (NativeExtraStreamPart, NativeUpdatesStreamPart)):
+                raise TypeError("Native privacy filtering changed an unsupported mode")
+            frame = replace(
+                frame,
+                canonical=public,
+                replay=frame.replay.model_copy(
+                    update={"data": public_extra_data(public)}
+                ),
+            )
+        observations = tuple(
+            value.model_copy(
+                update={
+                    "graph_origin": origin,
+                    **(
+                        {"subagent_requests": declarations}
+                        if value.kind == "native.task"
+                        else {}
+                    ),
+                }
+            )
+            for value in frame.observations
+        )
+        frame = replace(
+            frame,
+            origin=origin,
+            subagent_requests=declarations,
+            observations=observations,
+            internal=public is None,
+            replay=frame.replay.model_copy(
+                update={
+                    "graph_origin": origin,
+                    "subagent_requests": declarations,
+                }
+            ),
+        )
     except NativeStreamContractError as error:
         translated = _native_contract_error(error)
         raise translated from error
+    except (TypeError, ValueError) as error:
+        raise TinkerFinStreamProtocolError(
+            "Native graph provenance violates the current contract", cause=error
+        ) from error
     # The sidecar is the only downstream normalization authority for this raw part.
     # AG-UI, native SSE, and Messaging must consume it rather than parse v2 again.
     self._native_frame = (part, frame)
+    if frame.internal:
+        return
     # Each root values part reports the interrupts for one task, not all pending
     # tasks. Accumulate this invocation's IDs as LangGraph 1.2.10 Pregel.ainvoke
     # does, including when later task/value parts contain no interrupts.

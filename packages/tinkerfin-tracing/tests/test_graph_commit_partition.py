@@ -28,7 +28,14 @@ from tinkerfin_tracing._graph_reducer import (
 from tinkerfin_tracing._ids import scope_id
 from tinkerfin_tracing.facts import TraceEvent
 
-Scenario = Literal["proposal", "execution", "late-arguments", "interrupted", "recovery"]
+Scenario = Literal[
+    "proposal",
+    "execution",
+    "relocated-execution",
+    "late-arguments",
+    "interrupted",
+    "recovery",
+]
 
 
 class _Source(TypedDict):
@@ -59,6 +66,7 @@ def _events(scenario: Scenario, *, thread: str, nested: bool) -> tuple[TraceEven
     names = {
         "proposal": ("proposal", "arguments", "result"),
         "execution": ("proposal", "arguments", "started", "completed"),
+        "relocated-execution": ("proposal", "arguments", "started", "completed"),
         "late-arguments": ("proposal", "started", "arguments", "completed"),
         "interrupted": ("proposal", "arguments", "started", "interrupted"),
         "recovery": ("started", "failed", "started", "arguments", "completed"),
@@ -87,11 +95,15 @@ def _events(scenario: Scenario, *, thread: str, nested: bool) -> tuple[TraceEven
                 result_status="success" if name == "result" else None,
             )
         else:
+            execution_common = common.copy()
+            if scenario == "relocated-execution":
+                execution_common["graph_namespace"] = (*namespace, "attempt:child")
             fact = ToolExecutionFact(
-                **common,
+                **execution_common,
                 phase=name,
                 execution_id=f"execution-{1 if sequence < 3 else 2}",
                 source_tool_call_id="call",
+                tool_call_namespace=namespace,
                 tool_name="deliver_report",
                 input=captured if name == "started" else None,
                 output=captured if name == "completed" else None,
@@ -111,7 +123,15 @@ def _events(scenario: Scenario, *, thread: str, nested: bool) -> tuple[TraceEven
 
 
 @pytest.mark.parametrize(
-    "scenario", ["proposal", "execution", "late-arguments", "interrupted", "recovery"]
+    "scenario",
+    [
+        "proposal",
+        "execution",
+        "relocated-execution",
+        "late-arguments",
+        "interrupted",
+        "recovery",
+    ],
 )
 @pytest.mark.parametrize("nested", [False, True])
 def test_every_prefix_and_commit_partition_uses_the_actual_start_fact(
@@ -122,6 +142,7 @@ def test_every_prefix_and_commit_partition_uses_the_actual_start_fact(
         prefix = events[:length]
         reference: dict[tuple[str, str], ReducedTraceGraphRevision] = {}
         apply_graph_events(reference, prefix)
+        assert len(reference) == 1
         for batches in _partitions(prefix):
             actual: dict[tuple[str, str], ReducedTraceGraphRevision] = {}
             for batch in batches:
@@ -134,7 +155,15 @@ def test_every_prefix_and_commit_partition_uses_the_actual_start_fact(
 
 
 @pytest.mark.parametrize(
-    "scenario", ["proposal", "execution", "late-arguments", "interrupted", "recovery"]
+    "scenario",
+    [
+        "proposal",
+        "execution",
+        "relocated-execution",
+        "late-arguments",
+        "interrupted",
+        "recovery",
+    ],
 )
 async def test_sql_batches_and_rebuild_keep_identical_tool_records(
     trace_sql_engine: AsyncEngine, scenario: Scenario
@@ -160,9 +189,11 @@ async def test_sql_batches_and_rebuild_keep_identical_tool_records(
             snapshot.key, run_ids=("run",), where=TraceGraphFilter(), limit=100
         )
         assert before.nodes == after.nodes
+        assert len(after.nodes) == 1
         expected_start = {
             "proposal": 1,
             "execution": 3,
+            "relocated-execution": 3,
             "late-arguments": 2,
             "interrupted": 3,
             "recovery": 3,

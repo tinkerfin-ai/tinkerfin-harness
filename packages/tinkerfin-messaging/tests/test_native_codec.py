@@ -113,4 +113,6 @@ def test_native_sse_renderer_uses_sequence_and_current_json() -> None:
         "ns": [],
         "data": {"answer": 42},
         "interrupts": [],
+        "graphOrigin": {"parentTask": None, "subagentRequest": None},
+        "subagentRequests": [],
     }

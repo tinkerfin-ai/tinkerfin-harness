@@ -26,6 +26,7 @@ from ag_ui.core import (
 from ag_ui.core.types import Message
 from pydantic import JsonValue
 
+from tinkerfin_contracts import subagent_request_id
 from tinkerfin_native_stream import (
     NativeExtraStreamPart as ExtraStreamPart,
 )
@@ -44,11 +45,11 @@ from tinkerfin_native_stream import (
 from tinkerfin_native_stream import (
     NativeValuesStreamPart as ValuesStreamPart,
 )
+from tinkerfin_native_stream.public import public_task_error as _public_task_error
 
 from ._adapter_contracts import (
     _MESSAGE_STATE_KEY,
     AgentSource,
-    GraphScope,
     NativeToolCall,
     NativeToolCallList,
     SubagentInvocation,
@@ -79,14 +80,6 @@ def _without_private_state_keys(
         for key, item in mapping.items()
         if not isinstance(key, str) or key not in private_state_keys
     }
-
-
-def _public_task_error(error: object | None) -> object | None:
-    """Project a native task error into a stable public shape without traceback."""
-
-    if isinstance(error, BaseException):
-        return {"type": type(error).__name__, "message": str(error)}
-    return error
 
 
 def _safe_checkpoint_task(
@@ -264,13 +257,7 @@ def _process_task_start(
             (
                 None
                 if payload.metadata is None
-                else _to_json_value(
-                    payload.metadata.model_dump(
-                        mode="python",
-                        by_alias=False,
-                        exclude_none=False,
-                    )
-                )
+                else _to_json_value(dict(payload.metadata))
             ),
             ensure_ascii=False,
             sort_keys=True,
@@ -288,22 +275,10 @@ def _process_task_start(
     staged_native_tool_calls: dict[
         tuple[tuple[str, ...], str], list[NativeToolCall]
     ] = {key: list(calls) for key, calls in self._native_tool_calls.items()}
-    staged_graph_scopes = dict(self._graph_scopes)
     staged_subagent_invocations = dict(self._subagent_invocations)
     staged_sub_namespaces = dict(self._sub_namespaces_by_parent_tool_call)
     staged_agent_names = dict(self._namespace_agent_names)
     staged_tool_names = dict(self._tool_names_by_id)
-    child_namespace = (*parent_namespace, f"{payload.name}:{payload.id}")
-    graph_scope = GraphScope(
-        namespace=child_namespace,
-        parent_namespace=parent_namespace,
-        graph_task_id=payload.id,
-        node_name=payload.name,
-    )
-    existing_scope = staged_graph_scopes.get(child_namespace)
-    if existing_scope is not None and existing_scope != graph_scope:
-        raise ValueError(f"conflicting task start for namespace={child_namespace!r}")
-    staged_graph_scopes[child_namespace] = graph_scope
     if payload.name == "tools":
         payload_tool_ids: set[str] = set()
         for tool_call in tool_calls:
@@ -340,31 +315,24 @@ def _process_task_start(
             (task_call, SubagentTaskInput.model_validate(task_call.args.root))
             for task_call in task_calls
         ]
-        multiple = len(parsed_calls) > 1
-        for index, (task_call, descriptor) in enumerate(parsed_calls):
-            suffix = f"{payload.id}:{index}" if multiple else payload.id
-            child_namespace = (*parent_namespace, f"tools:{suffix}")
-            graph_scope = GraphScope(
-                namespace=child_namespace,
-                parent_namespace=parent_namespace,
-                graph_task_id=payload.id,
-                node_name=payload.name,
+        for task_call, descriptor in parsed_calls:
+            request = self._scope_registry.execution_request(
+                parent_namespace, payload.id
             )
-            existing_scope = staged_graph_scopes.get(child_namespace)
-            if existing_scope is not None and existing_scope != graph_scope:
-                raise ValueError(
-                    f"conflicting task start for namespace={child_namespace!r}"
+            if request is not None:
+                descriptor = SubagentTaskInput(
+                    subagent_type=request.agent_name,
+                    description=request.description,
                 )
-            staged_graph_scopes[child_namespace] = graph_scope
+            child_namespace = (*parent_namespace, f"tools:{payload.id}")
             parent_tool_call_id = self._tool_call_id(
                 parent_namespace,
                 task_call.id,
             )
             provenance = create_subagent_provenance(
                 identity=self._identity,
-                graph_namespace=child_namespace,
                 parent_graph_namespace=parent_namespace,
-                graph_task_id=payload.id,
+                subagent_id=subagent_request_id(child_namespace),
                 agent_name=descriptor.subagent_type,
                 parent_tool_call_id=parent_tool_call_id,
                 description=descriptor.description,
@@ -412,12 +380,11 @@ def _process_task_start(
             "triggers": payload.triggers,
             **(
                 {
-                    "metadata": payload.metadata.model_dump(
-                        mode="python",
-                        by_alias=False,
-                        exclude_none=True,
-                        exclude_defaults=True,
-                    )
+                    "metadata": {
+                        key: value
+                        for key, value in payload.metadata
+                        if value is not None
+                    }
                 }
                 if payload.metadata is not None
                 else {}
@@ -429,7 +396,6 @@ def _process_task_start(
     staged_task_start_fingerprints[fingerprint_key] = fingerprint
     (
         self._native_tool_calls,
-        self._graph_scopes,
         self._subagent_invocations,
         self._sub_namespaces_by_parent_tool_call,
         self._namespace_agent_names,
@@ -437,7 +403,6 @@ def _process_task_start(
         self._task_start_fingerprints,
     ) = (
         staged_native_tool_calls,
-        staged_graph_scopes,
         staged_subagent_invocations,
         staged_sub_namespaces,
         staged_agent_names,
@@ -474,10 +439,17 @@ def _process_task_result(
             f"namespace={namespace!r} graph_task_id={payload.id!r}"
         )
     public_error = _public_task_error(payload.error)
+    # Duplicate detection retains the original failure text inside this request;
+    # only the classified public value below reaches RAW transport.
+    error_identity = (
+        {"type": type(payload.error).__name__, "message": str(payload.error)}
+        if isinstance(payload.error, BaseException)
+        else payload.error
+    )
     fingerprint = TaskResultFingerprint(
         name=payload.name,
         error_json=json.dumps(
-            _to_json_value(public_error),
+            _to_json_value(error_identity),
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),

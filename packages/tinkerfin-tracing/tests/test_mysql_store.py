@@ -339,7 +339,16 @@ async def test_mysql_graph_scope_closure_accepts_64_levels_and_rejects_65() -> N
                     SubagentFact(
                         source_observation_id=f"mysql-depth-{depth}",
                         identity=identity,
-                        graph_namespace=namespace,
+                        graph_namespace=namespace[:-1],
+                        parent_subagent_id=(
+                            scope_id(
+                                "subagent",
+                                namespaces[depth - 2],
+                                namespaces[depth - 2][-1],
+                            )
+                            if depth > 1
+                            else None
+                        ),
                         occurred_at=datetime(2026, 1, 1, tzinfo=UTC)
                         + timedelta(milliseconds=depth),
                         monotonic_ns=depth + 1,
@@ -361,34 +370,28 @@ async def test_mysql_graph_scope_closure_accepts_64_levels_and_rejects_65() -> N
         await writer.aclose()
         snapshot = await store.snapshot(identity.thread)
 
-        legal = await asyncio.wait_for(
-            store.query_trace_graph(
-                snapshot.key,
-                run_ids=(identity.run_id,),
-                where=TraceGraphFilter(
-                    kinds={TraceGraphNodeKind.SUBAGENT},
-                    graph_namespaces={namespaces[63]},
-                ),
-                limit=1,
-                max_nodes=65,
+        legal = await store.query_trace_graph(
+            snapshot.key,
+            run_ids=(identity.run_id,),
+            where=TraceGraphFilter(
+                kinds={TraceGraphNodeKind.SUBAGENT},
+                graph_namespaces={namespaces[63][:-1]},
             ),
-            timeout=5,
+            limit=1,
+            max_nodes=65,
         )
         assert len(legal.nodes) == 64
 
         with pytest.raises(TraceStoreProtocolError, match="at most 64 levels"):
-            await asyncio.wait_for(
-                store.query_trace_graph(
-                    snapshot.key,
-                    run_ids=(identity.run_id,),
-                    where=TraceGraphFilter(
-                        kinds={TraceGraphNodeKind.SUBAGENT},
-                        agent_names={"agent-65"},
-                    ),
-                    limit=1,
-                    max_nodes=65,
+            await store.query_trace_graph(
+                snapshot.key,
+                run_ids=(identity.run_id,),
+                where=TraceGraphFilter(
+                    kinds={TraceGraphNodeKind.SUBAGENT},
+                    agent_names={"agent-65"},
                 ),
-                timeout=5,
+                limit=1,
+                max_nodes=65,
             )
         await store.delete(snapshot.key)
     finally:
@@ -491,7 +494,7 @@ async def test_mysql_graph_keeps_lineage_parent_and_tool_failure_evidence() -> N
                 SubagentFact(
                     source_observation_id="mysql-subagent-start",
                     identity=parent_identity,
-                    graph_namespace=("tools:mysql-subagent",),
+                    graph_namespace=(),
                     occurred_at=now,
                     monotonic_ns=2,
                     phase="started",
@@ -521,6 +524,7 @@ async def test_mysql_graph_keeps_lineage_parent_and_tool_failure_evidence() -> N
                     phase="started",
                     execution_id="mysql-execution",
                     source_tool_call_id="mysql-tool",
+                    tool_call_namespace=(),
                     tool_name="read_file",
                     input=_captured({"path": "missing.txt"}),
                 ),
@@ -532,6 +536,7 @@ async def test_mysql_graph_keeps_lineage_parent_and_tool_failure_evidence() -> N
                     phase="failed",
                     execution_id="mysql-execution",
                     source_tool_call_id="mysql-tool",
+                    tool_call_namespace=(),
                     tool_name="read_file",
                     error_type="FileNotFoundError",
                     error_message=_captured("missing.txt was not found"),
@@ -558,7 +563,7 @@ async def test_mysql_graph_keeps_lineage_parent_and_tool_failure_evidence() -> N
                 SubagentFact(
                     source_observation_id="mysql-subagent-completed",
                     identity=child_identity,
-                    graph_namespace=("tools:mysql-subagent",),
+                    graph_namespace=(),
                     occurred_at=now + timedelta(seconds=5),
                     monotonic_ns=7,
                     phase="completed",

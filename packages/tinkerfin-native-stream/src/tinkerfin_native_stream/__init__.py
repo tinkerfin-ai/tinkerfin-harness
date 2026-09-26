@@ -4,6 +4,7 @@ from .errors import NativeError as NativeError
 from .errors import NativeErrorCode as NativeErrorCode
 from .errors import NativeStreamContractError as NativeStreamContractError
 from .frame import NativeStreamFrame as NativeStreamFrame
+from .graph import NativeGraphScopeRegistry as NativeGraphScopeRegistry
 from .json import qualified_name as qualified_name
 from .json import to_json_value as to_json_value
 from .serialization import NativeStreamPart as NativeStreamPart
@@ -27,6 +28,7 @@ __all__ = [
     "NativeError",
     "NativeErrorCode",
     "NativeExtraStreamPart",
+    "NativeGraphScopeRegistry",
     "NativeMessageStreamPart",
     "NativeRuntimeInterrupt",
     "NativeStreamContractError",

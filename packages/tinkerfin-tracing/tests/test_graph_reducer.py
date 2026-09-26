@@ -294,6 +294,7 @@ def test_task_tool_produces_only_one_subagent_with_an_input_child() -> None:
                 execution_id="task-execution",
                 parent_call_id="model-call",
                 source_tool_call_id="task-call",
+                tool_call_namespace=(),
                 tool_name="task",
                 input=_captured({"description": "inspect"}),
             ),
@@ -301,7 +302,7 @@ def test_task_tool_produces_only_one_subagent_with_an_input_child() -> None:
         _event(
             3,
             SubagentFact(
-                **_common(3, namespace=namespace),
+                **_common(3),
                 phase="started",
                 subagent_id=subagent_id,
                 agent_name="researcher",
@@ -346,7 +347,7 @@ def test_nested_subagent_scope_uses_only_nearest_subagent_owner() -> None:
         _event(
             1,
             SubagentFact(
-                **_common(1, namespace=outer_namespace),
+                **_common(1),
                 phase="started",
                 subagent_id=outer_id,
                 agent_name="outer",
@@ -357,7 +358,8 @@ def test_nested_subagent_scope_uses_only_nearest_subagent_owner() -> None:
         _event(
             2,
             SubagentFact(
-                **_common(2, namespace=inner_namespace),
+                **_common(2, namespace=outer_namespace),
+                parent_subagent_id=outer_id,
                 phase="started",
                 subagent_id=inner_id,
                 agent_name="inner",
@@ -396,6 +398,7 @@ def test_tool_execution_start_replaces_proposal_time_and_interrupt_has_no_comple
                 execution_id="execution",
                 parent_call_id="model",
                 source_tool_call_id="call",
+                tool_call_namespace=(),
                 tool_name="read_file",
                 input=_captured({"file_path": "/tmp/a"}),
             ),
@@ -408,6 +411,7 @@ def test_tool_execution_start_replaces_proposal_time_and_interrupt_has_no_comple
                 execution_id="execution",
                 parent_call_id="model",
                 source_tool_call_id="call",
+                tool_call_namespace=(),
                 tool_name="read_file",
             ),
         ),
@@ -427,7 +431,9 @@ def test_rebuild_reduction_preserves_scope_and_model_relations() -> None:
             1,
             ToolFact(
                 **_common(1, namespace=("tools:parent",)),
-                in_subagent_scope=True,
+                parent_subagent_id=scope_id(
+                    "subagent", ("tools:parent",), "tools:parent"
+                ),
                 phase="started",
                 tool_call_id=scope_id("tool", ("tools:parent",), "call"),
                 source_tool_call_id="call",
@@ -647,6 +653,7 @@ def test_locator_cannot_reuse_another_tool_result() -> None:
                 phase="started",
                 execution_id="a",
                 source_tool_call_id="a",
+                tool_call_namespace=(),
                 tool_name="read_file",
                 input=_captured({"file_path": "a"}),
             ),
@@ -658,6 +665,7 @@ def test_locator_cannot_reuse_another_tool_result() -> None:
                 phase="completed",
                 execution_id="b",
                 source_tool_call_id="b",
+                tool_call_namespace=(),
                 tool_name="read_file",
                 output=_captured("b"),
             ),

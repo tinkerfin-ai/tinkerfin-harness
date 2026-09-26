@@ -63,6 +63,6 @@ Adapter 的 `RunIdentity` 只包含 AG-UI thread 和 run ID。业务 namespace �
 | `RuntimeInterruptEnvelope` | 已校验的非工具工作流暂停 |
 | `HitlRequest` | 配对的工具动作与审阅策略 |
 | `ToolReviewInterruptMetadata` | 稳定工具审阅关联数据 |
-| `SubagentProvenance` | 稳定子智能体调用与完整 Graph 位置 |
+| `SubagentProvenance` | 稳定的子任务身份与父 Tool 请求 |
 
 公开工具决定包括 `approve`、`edit`、`reject` 和 `respond`。编辑后的参数在转换为原生 resume 前按动作 Schema 校验。完整流程见 [Interrupt 与恢复](interrupts-and-resume.md)。

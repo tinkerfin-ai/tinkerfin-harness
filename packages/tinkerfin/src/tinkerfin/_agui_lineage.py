@@ -214,17 +214,64 @@ async def _run_checkpoints(
     thread_id: str,
     run_id: str,
 ) -> list[CheckpointTuple]:
-    """List root checkpoints created by one run from newest to oldest."""
+    """List exact dispatch checkpoints proven by a run's own checkpoint writes.
 
-    config: RunnableConfig = {
-        "configurable": {"thread_id": thread_id, "checkpoint_ns": ""}
-    }
-    candidates: list[CheckpointTuple] = []
+    A delegated run can reach another review without advancing the root node. Its
+    child checkpoint then owns the new run while metadata.parents retains the
+    original root dispatch ID. Include that explicit reference without relabelling
+    the root checkpoint or choosing the thread's latest head.
+
+    Args:
+        checkpointer: Borrowed saver containing the run and its root ancestry.
+        thread_id: Canonical namespaced thread whose checkpoints may be inspected.
+        run_id: Semantic run identity owning the root or referencing child writes.
+
+    Returns:
+        Root dispatch checkpoints supported by exact ownership or ancestry evidence.
+
+    Raises:
+        TinkerFinLifecycleError: Child ancestry is missing or has conflicting owners.
+    """
+
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+    candidates: dict[str, CheckpointTuple] = {}
     async for checkpoint in checkpointer.alist(config):
         marker = _checkpoint_lineage(checkpoint)
-        if marker is not None and marker.run_id == run_id:
-            candidates.append(checkpoint)
-    return candidates
+        if marker is None or marker.run_id != run_id:
+            continue
+        if not checkpoint.config.get("configurable", {}).get("checkpoint_ns", ""):
+            candidates[_checkpoint_id(checkpoint)] = checkpoint
+            continue
+        parents: object = checkpoint.metadata.get("parents", {})
+        if not isinstance(parents, Mapping):
+            raise TinkerFinLifecycleError("child checkpoint ancestry is not a mapping")
+        root_id = cast(Mapping[str, object], parents).get("")
+        if not isinstance(root_id, str) or not root_id:
+            raise TinkerFinLifecycleError(
+                "child run has no exact root checkpoint ancestry"
+            )
+        root = await checkpointer.aget_tuple(
+            {
+                "configurable": {
+                    "thread_id": thread_id,
+                    "checkpoint_ns": "",
+                    "checkpoint_id": root_id,
+                }
+            }
+        )
+        root_marker = None if root is None else _checkpoint_lineage(root)
+        if (
+            root is None
+            or root_marker is None
+            or root_marker.thread != marker.thread
+            or root_marker.runtime_profile != marker.runtime_profile
+            or _checkpoint_id(root) != root_id
+        ):
+            raise TinkerFinLifecycleError(
+                "child run lost its root checkpoint ownership"
+            )
+        candidates[root_id] = root
+    return list(candidates.values())
 
 
 def _unique_leaf(
@@ -333,7 +380,7 @@ async def _run_head(
     thread_id: str,
     run_id: str,
 ) -> CheckpointTuple:
-    """Return the unique root checkpoint leaf created by one run."""
+    """Return the unique dispatch leaf proved by one root or delegated run."""
 
     checkpoints = await _run_checkpoints(
         checkpointer,
@@ -1085,7 +1132,13 @@ def _validate_resume_source(
         or marker.run_id != identity.run_id
         or marker.runtime_profile != runtime_profile.profile_id
         or lineage.runtime_profile != runtime_profile.profile_id
-        or marker.parent_run_id != lineage.run_id
+        or (
+            marker.parent_run_id != lineage.run_id
+            and not any(
+                anchor.source.run_id == marker.parent_run_id
+                for anchor in marker.anchors
+            )
+        )
         or marker.source_checkpoint_id != _checkpoint_id(source)
         or marker.source_checkpoint_ns != source_ns
         or marker.role != lineage.role
@@ -1188,6 +1241,17 @@ async def _resume_stage_and_source(
         if any(channel == "__error__" for _, channel, _ in actual.pending_writes or ()):
             raise TinkerFinLifecycleError(
                 "resume checkpoint contains failed task evidence"
+            )
+        source_lineage = _checkpoint_lineage(source)
+        if (
+            source_lineage is not None
+            and marker.parent_run_id != source_lineage.run_id
+            and anchor.source.run_id == marker.parent_run_id
+            and actual.metadata.get("parents", {}).get(marker.source_checkpoint_ns)
+            != marker.source_checkpoint_id
+        ):
+            raise TinkerFinLifecycleError(
+                "approval run does not own the selected dispatch checkpoint"
             )
     return stage, source
 
@@ -1622,12 +1686,10 @@ async def bind_agui_lineage(
         source_lineage = _checkpoint_lineage(source)
         if source_lineage is None:
             raise TinkerFinLifecycleError("resume source has no private lineage marker")
-        effective_parent = source_lineage.run_id
-        if parent_run_id is not None and effective_parent != parent_run_id:
-            raise TinkerFinLifecycleError(
-                "resume source conflicts with parentRunId",
-                context={"parent_run_id": parent_run_id},
-            )
+        # _run_head verified the requested run's exact root ancestry. A child can
+        # own the latest review while the dispatch checkpoint still belongs to the
+        # original parent run; the frozen anchors verify that relationship again.
+        effective_parent = parent_run_id or source_lineage.run_id
         if effective_parent == identity.run_id:
             raise TinkerFinLifecycleError(
                 "resume runId cannot own its interrupted source"

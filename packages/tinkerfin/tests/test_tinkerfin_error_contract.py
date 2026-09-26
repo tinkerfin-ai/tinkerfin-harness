@@ -5,6 +5,8 @@ from __future__ import annotations
 from tinkerfin import (
     AgUiResumeBindingError,
     AgUiSettlementTimeoutError,
+    DelegationFailedError,
+    DelegationReplayError,
     TinkerFinError,
     TinkerFinErrorCode,
     TinkerFinLifecycleError,
@@ -53,3 +55,22 @@ def test_semantic_errors_keep_python_catch_contracts() -> None:
     assert isinstance(AgUiSettlementTimeoutError(timeout=1), TimeoutError)
     assert isinstance(TinkerFinLifecycleError("closed"), RuntimeError)
     assert issubclass(RunCoordinationError, TinkerFinError)
+    assert issubclass(DelegationReplayError, TinkerFinLifecycleError)
+    assert issubclass(DelegationFailedError, TinkerFinError)
+
+
+def test_delegation_failure_details_remain_in_the_trusted_error_context() -> None:
+    cause = ValueError("private provider detail")
+    error = DelegationReplayError(
+        "Delegation cannot continue",
+        cause=cause,
+        diagnostic_context={"original": str(cause)},
+    )
+    assert error.code is TinkerFinErrorCode.DELEGATION_REPLAY_INVALID
+    assert error.cause is cause and error.__cause__ is cause
+    assert str(error) == "Delegation cannot continue" and not error.context
+    assert not hasattr(error.diagnostic_context, "__setitem__")
+    assert (
+        DelegationFailedError("Delegated task failed").code
+        is TinkerFinErrorCode.DELEGATION_FAILED
+    )

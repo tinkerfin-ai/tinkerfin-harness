@@ -186,6 +186,7 @@ async def test_native_custom_mapper_filters_and_controls_payload_fields(
         if part.data == {
             "state": {"value": 1},
             "messages": [],
+            "messagesPresent": False,
             "interrupts": [],
         }:
             return None
@@ -195,6 +196,7 @@ async def test_native_custom_mapper_filters_and_controls_payload_fields(
         assert part.data == {
             "state": {"value": 2},
             "messages": [],
+            "messagesPresent": False,
             "interrupts": [],
         }
         return 7
