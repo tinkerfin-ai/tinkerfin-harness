@@ -54,12 +54,20 @@ test('图片失败态、恢复与多图连续键盘浏览保持无边框布局',
     for (const width of [320, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: 1000 })
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
-      const card = (await preview.boundingBox())!
-      const controls = await actions.getByRole('button').all()
-      expect(controls).toHaveLength(3)
+      const controls = actions.getByRole('button')
+      // 响应式布局可能在两次浏览器调用之间更新，比较的边界必须来自同一次采样
+      const geometry = await controls.evaluateAll((elements, preview) => {
+        if (!preview) throw new Error('图片预览按钮不存在')
+        const bounds = (element: Element) => {
+          const { x, y, width, height } = element.getBoundingClientRect()
+          return { x, y, width, height }
+        }
+        return { card: bounds(preview), controls: elements.map(bounds) }
+      }, await preview.elementHandle())
+      const { card } = geometry
+      expect(geometry.controls).toHaveLength(3)
       let previousRight: number | undefined
-      for (const control of controls) {
-        const box = (await control.boundingBox())!
+      for (const box of geometry.controls) {
         expect(box.x).toBeGreaterThanOrEqual(card.x)
         expect(box.y).toBeGreaterThanOrEqual(card.y)
         expect(box.x + box.width).toBeLessThanOrEqual(card.x + card.width)
@@ -67,6 +75,8 @@ test('图片失败态、恢复与多图连续键盘浏览保持无边框布局',
         expect(box.width).toBe(box.height)
         if (previousRight !== undefined) expect(box.x - previousRight).toBe(2)
         previousRight = box.x + box.width
+      }
+      for (const control of await controls.all()) {
         await expect(control).toHaveCSS('border-width', '0px')
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
@@ -114,10 +124,16 @@ test('图片失败态、恢复与多图连续键盘浏览保持无边框布局',
     for (const name of ['第一张.png', '第二张.png', '第三张.png']) {
       const button = page.getByRole('button', { name: `放大图片：${name}`, exact: true })
       const image = button.getByRole('img')
-      const bounds = await button.boundingBox()
-      const picture = await image.boundingBox()
-      expect(bounds).not.toBeNull()
-      expect(picture!.width).toBeCloseTo(bounds!.width, 1)
+      await expect(button).toBeVisible()
+      await expect(image).toBeVisible()
+      const geometry = await image.evaluate((element, button) => {
+        if (!button) throw new Error('图片预览按钮不存在')
+        return {
+          buttonWidth: button.getBoundingClientRect().width,
+          imageWidth: element.getBoundingClientRect().width,
+        }
+      }, await button.elementHandle())
+      expect(geometry.imageWidth).toBeCloseTo(geometry.buttonWidth, 1)
       await expect(button).toHaveCSS('border-width', '0px')
     }
   }
