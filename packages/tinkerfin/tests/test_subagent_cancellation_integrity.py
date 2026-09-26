@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 import pytest
 from ag_ui.core import (
@@ -303,11 +303,16 @@ async def test_subagent_failures_keep_their_distinct_runtime_cause(
 
 
 @pytest.mark.asyncio
-async def test_external_abort_stays_cancelled_and_cleans_the_subagent() -> None:
+@pytest.mark.parametrize("delivery_boundary", ["pending_event", "between_pulls"])
+async def test_external_abort_stays_cancelled_and_cleans_the_subagent(
+    delivery_boundary: Literal["pending_event", "between_pulls"],
+) -> None:
     """Runtime cancellation must not be converted into an ordinary run failure."""
 
     entered = asyncio.Event()
     cleaned = asyncio.Event()
+    delivery_reached = asyncio.Event()
+    release_delivery = asyncio.Event()
 
     async def block(state: MessagesState) -> dict[str, object]:
         del state
@@ -317,6 +322,17 @@ async def test_external_abort_stays_cancelled_and_cleans_the_subagent() -> None:
         finally:
             cleaned.set()
         return {"messages": [AIMessage(content="unreachable")]}
+
+    async def on_event(_: BaseEvent) -> None:
+        if (
+            delivery_boundary == "pending_event"
+            and entered.is_set()
+            and not delivery_reached.is_set()
+        ):
+            # The public observer is part of the accepted event pull. Keep that
+            # operation pending until abort cancels it.
+            delivery_reached.set()
+            await release_delivery.wait()
 
     definition = (
         TinkerFin(checkpointer=InMemorySaver())
@@ -345,6 +361,7 @@ async def test_external_abort_stays_cancelled_and_cleans_the_subagent() -> None:
         thread_id=identity.thread_id,
         run_id=identity.run_id,
         mode="default",
+        on_agui_event=on_event,
         input={"messages": [HumanMessage(content="Delegate the work")]},
         config={"configurable": {"thread_id": "external-abort"}},
     )
@@ -353,19 +370,48 @@ async def test_external_abort_stays_cancelled_and_cleans_the_subagent() -> None:
     async def consume() -> None:
         async for event in stream:
             delivered.append(event)
+            if (
+                delivery_boundary == "between_pulls"
+                and entered.is_set()
+                and not delivery_reached.is_set()
+            ):
+                # This event has already been delivered. The following wait is
+                # host work, so abort must close the run without cancelling it.
+                delivery_reached.set()
+                await release_delivery.wait()
 
     consumer = asyncio.create_task(consume())
-    await asyncio.wait_for(entered.wait(), timeout=5)
-    tail = await stream.abort()
-    outcome = (await asyncio.gather(consumer, return_exceptions=True))[0]
+    try:
+        await entered.wait()
+        await delivery_reached.wait()
+        tail = await stream.abort()
+        assert cleaned.is_set()
+        assert consumer.cancelling() == 0
+        if delivery_boundary == "between_pulls":
+            assert not consumer.done()
+        release_delivery.set()
+        outcome = (await asyncio.gather(consumer, return_exceptions=True))[0]
 
-    assert isinstance(outcome, asyncio.CancelledError)
-    assert cleaned.is_set()
-    assert stream.error is None
-    assert not any(isinstance(event, RunErrorEvent) for event in delivered)
-    assert len(tail) == 1
-    assert isinstance(tail[0], RunErrorEvent)
-    assert tail[0].code == "cancelled"
+        if delivery_boundary == "pending_event":
+            assert isinstance(outcome, asyncio.CancelledError)
+        else:
+            assert outcome is None
+        assert stream.error is None
+        assert not any(
+            isinstance(event, RunErrorEvent | RunFinishedEvent) for event in delivered
+        )
+        assert len(tail) == 1
+        assert isinstance(tail[0], RunErrorEvent)
+        assert tail[0].code == "cancelled"
+        assert await stream.abort() == []
+    finally:
+        release_delivery.set()
+        try:
+            await stream.aclose()
+        finally:
+            if not consumer.done():
+                consumer.cancel()
+            await asyncio.gather(consumer, return_exceptions=True)
 
 
 @pytest.mark.asyncio
