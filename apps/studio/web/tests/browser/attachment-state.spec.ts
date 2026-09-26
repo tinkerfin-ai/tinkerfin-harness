@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { mockDownloadPermits } from './support/attachment-storage'
+import { measureBounds } from './support/geometry'
 
 const user = { user_id: 1, username: 'attachment-test', display_name: '附件验收', avatar_url: null, roles: [], disabled: false }
 const imageName = 'AI架构应用开发工程师-附件截图.png'
@@ -118,9 +119,11 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
             // 单行高度及中性卡片是用户确认的视觉约束
             expect((await card.boundingBox())!.height).toBe(40)
             const documentCard = page.getByRole('group', { name: '报告.pdf', exact: true })
-            const documentBox = (await documentCard.boundingBox())!
-            const iconBox = (await documentCard.locator('.composer-attachment-icon').boundingBox())!
-            const deleteBox = (await documentCard.getByRole('button', { name: '移除附件：报告.pdf' }).boundingBox())!
+            const [documentBox, iconBox, deleteBox] = await measureBounds(
+              documentCard,
+              documentCard.locator('.composer-attachment-icon'),
+              documentCard.getByRole('button', { name: '移除附件：报告.pdf' }),
+            )
             expect(iconBox.width).toBe(deleteBox.width)
             expect(iconBox.x - documentBox.x).toBe(documentBox.x + documentBox.width - deleteBox.x - deleteBox.width)
             const contrast = await card.getByRole('status').evaluate(element => {
@@ -137,8 +140,10 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
               return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05)
             })
             expect(contrast).toBeGreaterThanOrEqual(4.5)
-            const retryBox = (await card.getByRole('button', { name: `重试附件：${imageName}` }).boundingBox())!
-            const removeBox = (await card.getByRole('button', { name: `移除附件：${imageName}` }).boundingBox())!
+            const [retryBox, removeBox] = await measureBounds(
+              card.getByRole('button', { name: `重试附件：${imageName}` }),
+              card.getByRole('button', { name: `移除附件：${imageName}` }),
+            )
             expect(retryBox.width).toBe(24)
             expect(removeBox.width).toBe(24)
             expect(removeBox.x - retryBox.x - retryBox.width).toBe(0)
@@ -177,8 +182,10 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
               expect(box.width).toBeGreaterThanOrEqual(44)
               expect(box.height).toBe(44)
             }
-            const retry = (await card.getByRole('button', { name: `重试附件：${imageName}` }).boundingBox())!
-            const remove = (await card.getByRole('button', { name: `移除附件：${imageName}` }).boundingBox())!
+            const [retry, remove] = await measureBounds(
+              card.getByRole('button', { name: `重试附件：${imageName}` }),
+              card.getByRole('button', { name: `移除附件：${imageName}` }),
+            )
             expect(remove.x - retry.x - retry.width).toBe(0)
             await page.screenshot({ path: testInfo.outputPath(`attachment-touch-${theme}-${width}.png`) })
           }

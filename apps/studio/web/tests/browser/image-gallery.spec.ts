@@ -1,4 +1,5 @@
 import { mockDownloadPermits } from './support/attachment-storage'
+import { measureBounds } from './support/geometry'
 import { test, expect } from '@playwright/test'
 import { resolve } from 'node:path'
 import source from './fixtures/multimodal-history.json' with { type: 'json' }
@@ -55,19 +56,10 @@ test('图片失败态、恢复与多图连续键盘浏览保持无边框布局',
       await page.setViewportSize({ width, height: 1000 })
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
       const controls = actions.getByRole('button')
-      // 响应式布局可能在两次浏览器调用之间更新，比较的边界必须来自同一次采样
-      const geometry = await controls.evaluateAll((elements, preview) => {
-        if (!preview) throw new Error('图片预览按钮不存在')
-        const bounds = (element: Element) => {
-          const { x, y, width, height } = element.getBoundingClientRect()
-          return { x, y, width, height }
-        }
-        return { card: bounds(preview), controls: elements.map(bounds) }
-      }, await preview.elementHandle())
-      const { card } = geometry
-      expect(geometry.controls).toHaveLength(3)
+      const [card, ...controlBoxes] = await measureBounds(preview, ...await controls.all())
+      expect(controlBoxes).toHaveLength(3)
       let previousRight: number | undefined
-      for (const box of geometry.controls) {
+      for (const box of controlBoxes) {
         expect(box.x).toBeGreaterThanOrEqual(card.x)
         expect(box.y).toBeGreaterThanOrEqual(card.y)
         expect(box.x + box.width).toBeLessThanOrEqual(card.x + card.width)
@@ -126,14 +118,8 @@ test('图片失败态、恢复与多图连续键盘浏览保持无边框布局',
       const image = button.getByRole('img')
       await expect(button).toBeVisible()
       await expect(image).toBeVisible()
-      const geometry = await image.evaluate((element, button) => {
-        if (!button) throw new Error('图片预览按钮不存在')
-        return {
-          buttonWidth: button.getBoundingClientRect().width,
-          imageWidth: element.getBoundingClientRect().width,
-        }
-      }, await button.elementHandle())
-      expect(geometry.imageWidth).toBeCloseTo(geometry.buttonWidth, 1)
+      const [bounds, picture] = await measureBounds(button, image)
+      expect(picture.width).toBeCloseTo(bounds.width, 1)
       await expect(button).toHaveCSS('border-width', '0px')
     }
   }

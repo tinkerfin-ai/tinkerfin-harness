@@ -1,4 +1,5 @@
 import { mockDownloadPermits } from './support/attachment-storage'
+import { measureBounds } from './support/geometry'
 import { expect, test } from '@playwright/test'
 import { resolve } from 'node:path'
 
@@ -126,9 +127,11 @@ test('生成文件使用紧凑类型卡片并沿用图片预览工具栏', async
     for (const width of [320, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: 960 })
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
-      const cardBox = (await fileCards.first().boundingBox())!
-      const iconBox = (await fileCards.first().locator('.attachment-file-icon').boundingBox())!
-      const imageBox = (await page.locator('.attachment-card--image').first().boundingBox())!
+      const [cardBox, iconBox, imageBox] = await measureBounds(
+        fileCards.first(),
+        fileCards.first().locator('.attachment-file-icon'),
+        page.locator('.attachment-card--image').first(),
+      )
       expect(iconBox.y).toBeGreaterThanOrEqual(cardBox.y)
       expect(iconBox.y + iconBox.height).toBeLessThanOrEqual(cardBox.y + cardBox.height)
       expect(imageBox.width).toBe(cardBox.width)
@@ -142,12 +145,12 @@ test('生成文件使用紧凑类型卡片并沿用图片预览工具栏', async
     await imageOpener.click()
     const imageDialog = page.getByRole('dialog', { name: '项目封面.png', exact: true })
     await expect(imageDialog.getByRole('img', { name: '项目封面.png', exact: true })).toBeVisible()
-    const imageToolbar = await Promise.all([
-      '引用附件：项目封面.png',
-      '下载附件：项目封面.png',
-      '图片信息',
-      '关闭对话框',
-    ].map(async name => imageDialog.getByRole('button', { name, exact: true }).boundingBox()))
+    const imageToolbar = await measureBounds(
+      imageDialog.getByRole('button', { name: '引用附件：项目封面.png', exact: true }),
+      imageDialog.getByRole('button', { name: '下载附件：项目封面.png', exact: true }),
+      imageDialog.getByRole('button', { name: '图片信息', exact: true }),
+      imageDialog.getByRole('button', { name: '关闭对话框', exact: true }),
+    )
     await imageDialog.getByRole('button', { name: '关闭对话框', exact: true }).click()
 
     const readme = page.getByRole('button', { name: '预览文档：README.md', exact: true })
@@ -175,12 +178,12 @@ test('生成文件使用紧凑类型卡片并沿用图片预览工具栏', async
       await expect(button).toBeVisible()
       await expect(button.locator('.ui-button__label')).toHaveCount(0)
     }
-    const documentToolbar = await Promise.all([
-      '引用附件：README.md',
-      '下载附件：README.md',
-      '文件信息',
-      '关闭对话框',
-    ].map(async name => dialog.getByRole('button', { name, exact: true }).boundingBox()))
+    const documentToolbar = await measureBounds(
+      dialog.getByRole('button', { name: '引用附件：README.md', exact: true }),
+      dialog.getByRole('button', { name: '下载附件：README.md', exact: true }),
+      dialog.getByRole('button', { name: '文件信息', exact: true }),
+      dialog.getByRole('button', { name: '关闭对话框', exact: true }),
+    )
     expect(documentToolbar).toEqual(imageToolbar)
     await page.screenshot({ path: testInfo.outputPath(`preview-${theme}.png`) })
     await rail.getByRole('button', { name: '查看文件：model-weights.bin', exact: true }).click()

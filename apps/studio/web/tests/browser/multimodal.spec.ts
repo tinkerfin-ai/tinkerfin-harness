@@ -1,4 +1,5 @@
 import { mockDownloadPermits } from './support/attachment-storage'
+import { measureBounds } from './support/geometry'
 import { test, expect } from '@playwright/test'
 import { resolve } from 'node:path'
 import history from './fixtures/multimodal-history.json' with { type: 'json' }
@@ -164,16 +165,17 @@ test('历史消息中用户图片在提示词前、工具图片在工具行后�
     for (const width of [320, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: 960 })
       await inputPreview.scrollIntoViewIfNeeded()
-      const inputBounds = (await inputPreview.boundingBox())!
-      const promptBounds = (await page.getByText(inputText, { exact: true }).boundingBox())!
+      const [inputBounds, promptBounds, userBounds] = await measureBounds(
+        inputPreview,
+        page.getByText(inputText, { exact: true }),
+        page.getByRole('article').filter({ has: inputPreview }),
+      )
       expect(inputBounds.y + inputBounds.height).toBeLessThanOrEqual(promptBounds.y)
-      const userBounds = (await page.getByRole('article').filter({ has: inputPreview }).boundingBox())!
       expect(inputBounds.x + inputBounds.width).toBeCloseTo(userBounds.x + userBounds.width, 0)
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
       await page.screenshot({ path: testInfo.outputPath(`input-${theme}-${width}.png`) })
       await preview.scrollIntoViewIfNeeded()
-      const toolBounds = (await toolSummary.boundingBox())!
-      const imageBounds = (await preview.boundingBox())!
+      const [toolBounds, imageBounds] = await measureBounds(toolSummary, preview)
       expect(toolBounds.y + toolBounds.height).toBeLessThanOrEqual(imageBounds.y)
       await page.screenshot({ path: testInfo.outputPath( `media-${theme}-${width}.png`) })
     }
