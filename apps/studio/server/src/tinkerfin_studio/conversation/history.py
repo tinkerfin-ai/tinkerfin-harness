@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 from collections.abc import AsyncGenerator
+from contextlib import nullcontext
 from datetime import datetime
 
 from pydantic import (
@@ -23,8 +24,8 @@ from tinkerfin.agui import (
     AgUiGraphQuery,
     AgUiHistory,
     AgUiHistoryView,
+    AgUiLiveView,
     AgUiReplayChannel,
-    AgUiTraceGraphPage,
 )
 from tinkerfin_messaging import InvalidCursor as InvalidDeliveryCursor
 from tinkerfin_messaging import MessagingError, RunNotFound, StreamExpired
@@ -36,6 +37,10 @@ from tinkerfin_studio.api.errors import (
 from tinkerfin_studio.conversation.failures import (
     FAILURE_PROJECTION,
     visible_run_failures,
+)
+from tinkerfin_studio.conversation.history_queries import (
+    HistoryQueryAdmission,
+    HistoryQueryTimeout,
 )
 from tinkerfin_studio.conversation.models import ConversationThread
 from tinkerfin_studio.conversation.repository import ConversationRepository
@@ -54,10 +59,15 @@ from tinkerfin_studio.conversation.schemas import (
     PendingInteractionKind,
 )
 from tinkerfin_studio.conversation.todo_groups import (
-    TaskTraceQueryTimeout,
+    TODO_PROJECTION,
     TaskTraceSnapshot,
-    TodoGroupProjector,
-    TodoGroupQueryExecutor,
+    TodoGroupProjectionResult,
+    render_task_trace,
+)
+from tinkerfin_studio.conversation.trace_responses import (
+    ConversationGraph,
+    ConversationGraphQueryPage,
+    ConversationTraceUpdate,
 )
 from tinkerfin_tracing import (
     InvalidTraceCursor,
@@ -133,14 +143,14 @@ class ConversationHistoryService:
         *,
         user_id: int,
         tracer: Tracer,
-        todo_group_query: TodoGroupQueryExecutor,
+        history_queries: HistoryQueryAdmission,
         conversation_channel: AgUiReplayChannel | None = None,
     ) -> None:
         self._repository = repository
         self._user_id = user_id
         # 读取源与用户作用域在此绑定，快照、分页和跟随均使用同一会话身份
         self._history = AgUiHistory(tracer, namespace=f"ns_{user_id}")
-        self._todo_group_query = todo_group_query
+        self._history_queries = history_queries
         self._conversation_channel = conversation_channel
 
     async def list_history(
@@ -193,27 +203,15 @@ class ConversationHistoryService:
             thread_id,
             history_cursor=history_cursor,
             limit=limit,
+            include_task_trace=include_task_trace,
         )
-        trace = history.trace
-        projector: TodoGroupProjector | None = None
-        try:
-            task_trace = None
-            if include_task_trace:
-                projector = await self._project_task_trace(trace)
-                task_trace = projector.snapshot(
-                    status=trace.status,
-                    completeness=trace.completeness,
-                )
-            detail = await self._detail(
-                thread=thread,
-                history=history,
-                task_trace=task_trace,
-            )
-            await self._repository.commit()
-            return detail
-        finally:
-            if projector is not None:
-                projector.close()
+        detail = await self._detail(
+            thread=thread,
+            history=history,
+            task_trace=self._task_trace(history.trace) if include_task_trace else None,
+        )
+        await self._repository.commit()
+        return detail
 
     async def follow_live(
         self,
@@ -233,35 +231,63 @@ class ConversationHistoryService:
         await self._repository.commit()
         if self._conversation_channel is None:
             raise RuntimeError("未配置会话续播通道")
+        needs_snapshot = include_task_trace and last_event_id is None
         try:
-            live = await self._history.open_live(
-                thread_id,
-                head_run_id=run_id,
-                channel=self._conversation_channel,
-                last_event_id=last_event_id,
-                projections=(FAILURE_PROJECTION,),
-            )
-        except InvalidDeliveryCursor as error:
-            raise BusinessException(
-                ConversationErrorCode.INVALID_LAST_EVENT_ID
-            ) from error
-        except RunNotFound as error:
-            raise BusinessException(ConversationErrorCode.RUN_NOT_FOUND) from error
-        except StreamExpired as error:
-            raise BusinessException(
-                ConversationErrorCode.MESSAGING_STREAM_EXPIRED
-            ) from error
-        except MessagingError as error:
-            raise SystemException(
-                ConversationErrorCode.MESSAGING_UNAVAILABLE
-            ) from error
-        except ValueError as error:
-            raise BusinessException(
-                ConversationErrorCode.INVALID_LAST_EVENT_ID
-            ) from error
-        except TracingError as error:
+            async with (
+                self._history_queries.admit() if needs_snapshot else nullcontext()
+            ):
+                try:
+                    live = await self._history.open_live(
+                        thread_id,
+                        head_run_id=run_id,
+                        channel=self._conversation_channel,
+                        last_event_id=last_event_id,
+                        projections=(FAILURE_PROJECTION, TODO_PROJECTION)
+                        if needs_snapshot
+                        else (FAILURE_PROJECTION,),
+                    )
+                except InvalidDeliveryCursor as error:
+                    raise BusinessException(
+                        ConversationErrorCode.INVALID_LAST_EVENT_ID
+                    ) from error
+                except RunNotFound as error:
+                    raise BusinessException(
+                        ConversationErrorCode.RUN_NOT_FOUND
+                    ) from error
+                except StreamExpired as error:
+                    raise BusinessException(
+                        ConversationErrorCode.MESSAGING_STREAM_EXPIRED
+                    ) from error
+                except MessagingError as error:
+                    raise SystemException(
+                        ConversationErrorCode.MESSAGING_UNAVAILABLE
+                    ) from error
+                except ValueError as error:
+                    raise BusinessException(
+                        ConversationErrorCode.INVALID_LAST_EVENT_ID
+                    ) from error
+                except TracingError as error:
+                    raise SystemException(
+                        ConversationErrorCode.TRACE_UNAVAILABLE
+                    ) from error
+                return await self._prepare_live_body(
+                    thread,
+                    live,
+                    last_event_id=last_event_id,
+                    include_task_trace=include_task_trace,
+                )
+        except HistoryQueryTimeout as error:
             raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE) from error
 
+    async def _prepare_live_body(
+        self,
+        thread: ConversationThread,
+        live: AgUiLiveView,
+        *,
+        last_event_id: str | None,
+        include_task_trace: bool,
+    ) -> SseBody[bytes]:
+        """由响应体接管已打开的续播资源，首快照失败时一并关闭"""
         snapshot: ConversationRunSnapshotEvent | None = None
         body: SseBody[bytes]
 
@@ -269,30 +295,17 @@ class ConversationHistoryService:
             nonlocal snapshot
             if last_event_id is not None:
                 return
-            projector = (
-                await self._project_task_trace(live.history.trace)
+            detail = await self._detail(
+                thread=thread,
+                history=live.history,
+                task_trace=self._task_trace(live.history.trace)
                 if include_task_trace
-                else None
+                else None,
             )
-            try:
-                task_trace = (
-                    projector.snapshot(
-                        status=live.history.trace.status,
-                        completeness=live.history.trace.completeness,
-                    )
-                    if projector is not None
-                    else None
-                )
-                detail = await self._detail(
-                    thread=thread, history=live.history, task_trace=task_trace
-                )
-                snapshot = ConversationRunSnapshotEvent(
-                    snapshot=detail, replay=live.body is not None
-                )
-                await self._repository.commit()
-            finally:
-                if projector is not None:
-                    projector.close()
+            snapshot = ConversationRunSnapshotEvent(
+                snapshot=detail, replay=live.body is not None
+            )
+            await self._repository.commit()
 
         async def iterate() -> AsyncGenerator[bytes, None]:
             if snapshot is not None:
@@ -326,28 +339,15 @@ class ConversationHistoryService:
             thread_id,
             history_cursor=None,
             limit=100,
+            include_task_trace=include_task_trace,
         )
         trace = history.trace
-        projector: TodoGroupProjector | None = None
-        try:
-            task_trace = None
-            if include_task_trace:
-                projector = await self._project_task_trace(trace)
-                task_trace = projector.snapshot(
-                    status=trace.status,
-                    completeness=trace.completeness,
-                )
-            detail = await self._detail(
-                thread=thread,
-                history=history,
-                task_trace=task_trace,
-            )
-            # 归属和 Run 配置已固定到 snapshot；长流开始前归还业务连接
-            await self._repository.commit()
-        except BaseException:
-            if projector is not None:
-                projector.close()
-            raise
+        task_trace = self._task_trace(trace) if include_task_trace else None
+        detail = await self._detail(
+            thread=thread, history=history, task_trace=task_trace
+        )
+        # 归属和运行配置已固定到快照；长流开始前归还业务连接
+        await self._repository.commit()
 
         async def events() -> AsyncGenerator[
             ConversationTraceSnapshotEvent
@@ -356,7 +356,7 @@ class ConversationHistoryService:
             None,
         ]:
             updates = history.follow()
-            last_revision = projector.revision if projector is not None else 0
+            last_projection = trace.projections.get(TODO_PROJECTION)
             last_task_trace = task_trace
             user_runs = {
                 item.id: item.run_id
@@ -375,26 +375,28 @@ class ConversationHistoryService:
                             if item.role == "user" and not item.graph_namespace:
                                 user_runs[item.id] = item.run_id
                         task_trace_update = None
-                        if projector is not None:
-                            for event in update.events:
-                                projector.consume(event)
+                        if include_task_trace:
+                            projection = update.projections[TODO_PROJECTION]
                             if (
-                                projector.revision != last_revision
+                                projection != last_projection
                                 or update.status != last_status
                                 or update.completeness != last_completeness
                             ):
-                                candidate = projector.snapshot(
+                                candidate = render_task_trace(
+                                    TodoGroupProjectionResult.model_validate(
+                                        projection
+                                    ),
                                     status=update.status,
                                     completeness=update.completeness,
                                 )
-                                last_revision = projector.revision
+                                last_projection = projection
                                 last_status = update.status
                                 last_completeness = update.completeness
                                 if candidate != last_task_trace:
                                     task_trace_update = candidate
                                     last_task_trace = candidate
                         yield ConversationTraceUpdateEvent(
-                            update=update,
+                            update=ConversationTraceUpdate.from_update(update),
                             runFailures=visible_run_failures(
                                 update.projections[FAILURE_PROJECTION],
                                 set(user_runs.values()),
@@ -410,9 +412,6 @@ class ConversationHistoryService:
                     exc_info=(type(error), error, error.__traceback__),
                 )
                 yield ConversationTraceErrorEvent()
-            finally:
-                if projector is not None:
-                    projector.close()
 
         return events()
 
@@ -423,16 +422,20 @@ class ConversationHistoryService:
         where: TraceGraphFilter,
         cursor: str | None,
         limit: int,
-    ) -> AgUiTraceGraphPage:
+    ) -> ConversationGraphQueryPage:
         """在框架 Store 内筛选当前会话链路节点"""
 
-        query = await self._load_graph_query(
+        query, head_run_id = await self._load_graph_query(
             thread_id,
             where=where,
             cursor=cursor,
             limit=limit,
         )
-        return query.snapshot
+        return ConversationGraphQueryPage.from_page(
+            query.snapshot,
+            generation=query.trace.key.generation,
+            head_run_id=head_run_id,
+        )
 
     async def follow_trace_graph(
         self,
@@ -448,7 +451,7 @@ class ConversationHistoryService:
     ]:
         """先发送当前筛选页，再跟随同一 generation 的链路变化"""
 
-        query = await self._load_graph_query(
+        query, head_run_id = await self._load_graph_query(
             thread_id,
             where=where,
             cursor=None,
@@ -463,7 +466,13 @@ class ConversationHistoryService:
         ]:
             try:
                 async with query.follow() as updates:
-                    yield ConversationTraceGraphSnapshotEvent(snapshot=query.snapshot)
+                    yield ConversationTraceGraphSnapshotEvent(
+                        snapshot=ConversationGraphQueryPage.from_page(
+                            query.snapshot,
+                            generation=query.trace.key.generation,
+                            head_run_id=head_run_id,
+                        )
+                    )
                     async for update in updates:
                         yield ConversationTraceGraphUpdateEvent(update=update)
             except asyncio.CancelledError:
@@ -485,7 +494,7 @@ class ConversationHistoryService:
         where: TraceGraphFilter,
         cursor: str | None,
         limit: int,
-    ) -> AgUiGraphQuery:
+    ) -> tuple[AgUiGraphQuery, str]:
         """校验会话归属并在释放业务连接后查询框架索引"""
 
         thread = await self._require_thread(thread_id)
@@ -494,13 +503,14 @@ class ConversationHistoryService:
             raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
         await self._repository.commit()
         try:
-            return await self._history.query(
+            query = await self._history.query(
                 thread.thread_id,
                 where=where,
                 head_run_id=head_run_id,
                 cursor=cursor,
                 limit=limit,
             )
+            return query, head_run_id
         except InvalidTraceCursor as error:
             raise BusinessException(ConversationErrorCode.INVALID_CURSOR) from error
         except (TraceThreadNotFound, TracingError) as error:
@@ -512,6 +522,7 @@ class ConversationHistoryService:
         *,
         history_cursor: str | None,
         limit: int,
+        include_task_trace: bool,
     ) -> tuple[ConversationThread, AgUiHistoryView]:
         """释放业务事务后读取组件库中的运行轨迹"""
 
@@ -522,29 +533,35 @@ class ConversationHistoryService:
         # 先结束归属查询，避免读取轨迹期间继续占用业务库连接
         await self._repository.commit()
         try:
-            history = await self._history.get(
-                thread.thread_id,
-                head_run_id=None if history_cursor is not None else head_run_id,
-                history_cursor=history_cursor,
-                projections=(FAILURE_PROJECTION,),
-                limit=min(max(limit, 1), _HISTORY_PAGE_SIZE_MAX),
-            )
+            async with (
+                self._history_queries.admit() if include_task_trace else nullcontext()
+            ):
+                history = await self._history.get(
+                    thread.thread_id,
+                    head_run_id=None if history_cursor is not None else head_run_id,
+                    history_cursor=history_cursor,
+                    projections=(FAILURE_PROJECTION, TODO_PROJECTION)
+                    if include_task_trace
+                    else (FAILURE_PROJECTION,),
+                    limit=min(max(limit, 1), _HISTORY_PAGE_SIZE_MAX),
+                )
+        except HistoryQueryTimeout as error:
+            raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE) from error
         except InvalidTraceCursor as error:
             raise BusinessException(ConversationErrorCode.INVALID_CURSOR) from error
         except (TraceThreadNotFound, TracingError) as error:
             raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE) from error
         return thread, history
 
-    async def _project_task_trace(
-        self,
-        trace: TraceThread,
-    ) -> TodoGroupProjector:
-        """把任务轨迹读取失败映射为现有 Trace 不可用错误"""
-
-        try:
-            return await self._todo_group_query.project(trace)
-        except (TaskTraceQueryTimeout, TracingError) as error:
-            raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE) from error
+    @staticmethod
+    def _task_trace(trace: TraceThread) -> TaskTraceSnapshot:
+        return render_task_trace(
+            TodoGroupProjectionResult.model_validate(
+                trace.projections[TODO_PROJECTION]
+            ),
+            status=trace.status,
+            completeness=trace.completeness,
+        )
 
     async def _detail(
         self,
@@ -593,7 +610,7 @@ class ConversationHistoryService:
                 },
             ),
             reasoning=snapshot.reasoning,
-            graph=snapshot.graph,
+            graph=ConversationGraph.from_graph(snapshot.graph),
             state=snapshot.state,
             interactions=tuple(
                 sorted(

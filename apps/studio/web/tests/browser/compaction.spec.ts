@@ -103,9 +103,14 @@ async function openConversation(page: Page, options: { theme?: string; detail?: 
     else if (path === '/api/conversation/history') data = { items: [{ ...detail, status: detail.status.execution === 'running' ? 'running' : 'idle', lastRunId: detail.headRunId, hasPendingInterrupt: false, pendingInteractionKind: null }], nextCursor: null }
     else if (path.endsWith('/history')) {
       historyReads += 1
-      data = { ...detail, taskTrace: url.searchParams.get('includeTaskTrace') === 'false' ? null : detail.taskTrace }
+      data = { ...detail, graph: { ...detail.graph, nodes: detail.graph.nodes.map(node => {
+        if (node.kind !== 'model') return node
+        const retained: Record<string, unknown> = { ...node }
+        delete retained.request
+        return retained
+      }) }, taskTrace: url.searchParams.get('includeTaskTrace') === 'false' ? null : detail.taskTrace }
     } else if (path.endsWith('/trace/graph')) {
-      data = { ...(url.searchParams.has('modelCallId') ? traceGraphWithNodes([], detail.asOfSeq) : detail.graph), nextCursor: null }
+      data = { ...(url.searchParams.has('modelCallId') ? traceGraphWithNodes([], detail.asOfSeq) : detail.graph), nextCursor: null, generation: detail.generation, headRunId: detail.headRunId }
     } else if (path.endsWith('/follow')) {
       await finish
       await route.fulfill({ contentType: 'text/event-stream', body: '' })

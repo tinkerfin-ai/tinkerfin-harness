@@ -1198,12 +1198,30 @@ def advance_projection_state(
         current = projection.state_type.model_validate_json(
             state.model_dump_json(by_alias=True)
         )
-        for fact in facts:
-            current = projection.apply(current, fact)
-            current = projection.state_type.model_validate_json(
-                current.model_dump_json(by_alias=True)
-            )
-        return current
+    except Exception as error:
+        raise TraceProjectionFailed(
+            "Trace Projection failed",
+            context={"projection": projection.name},
+            diagnostic_context={"error_type": type(error).__name__},
+            cause=error,
+        ) from error
+    for fact in facts:
+        current = _apply_projection_fact(projection, current, fact)
+    return current
+
+
+def _apply_projection_fact(
+    projection: RegisteredTraceProjection,
+    state: BaseModel,
+    fact: TraceSemanticFact,
+) -> BaseModel:
+    """Isolate extension inputs and validate every individual transition."""
+
+    try:
+        current = projection.apply(state, fact.model_copy(deep=True))
+        return projection.state_type.model_validate_json(
+            current.model_dump_json(by_alias=True)
+        )
     except Exception as error:
         raise TraceProjectionFailed(
             "Trace Projection failed",
@@ -1217,7 +1235,7 @@ def finish_projection(
     projection: RegisteredTraceProjection,
     state: BaseModel,
 ) -> BaseModel:
-    """Validate one public result from an already checkpointed Projection state."""
+    """Validate one detached public result from a fixed-prefix Projection state."""
 
     try:
         validated = projection.state_type.model_validate_json(

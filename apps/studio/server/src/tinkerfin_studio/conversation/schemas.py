@@ -6,17 +6,19 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from tinkerfin.agui import (
-    AgUiTraceGraph,
     AgUiTraceGraphDelta,
-    AgUiTraceGraphPage,
     AgUiTraceInteraction,
     AgUiTraceMessage,
-    AgUiTraceUpdate,
 )
 from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.conversation.failures import ConversationRunFailure
 from tinkerfin_studio.conversation.models import TitleGenerationStatus, TitleSource
 from tinkerfin_studio.conversation.todo_groups import TaskTraceSnapshot
+from tinkerfin_studio.conversation.trace_responses import (
+    ConversationGraph,
+    ConversationGraphQueryPage,
+    ConversationTraceUpdate,
+)
 from tinkerfin_tracing import (
     TraceCompleteness,
     TraceReasoning,
@@ -115,7 +117,7 @@ class ConversationHistoryDetail(ConversationTitle):
     messages: tuple[AgUiTraceMessage, ...]
     run_failures: tuple[ConversationRunFailure, ...] = Field(alias="runFailures")
     reasoning: tuple[TraceReasoning, ...]
-    graph: AgUiTraceGraph
+    graph: ConversationGraph
     state: TraceState
     interactions: tuple[AgUiTraceInteraction, ...]
     status: TraceStatus
@@ -147,7 +149,7 @@ class ConversationTraceUpdateEvent(BaseModel):
     """Trace SSE 在快照之后发送的语义增量"""
 
     type: Literal["update"] = "update"
-    update: AgUiTraceUpdate
+    update: ConversationTraceUpdate
     run_failures: tuple[ConversationRunFailure, ...] = Field(alias="runFailures")
     task_trace: TaskTraceSnapshot | None = Field(alias="taskTrace")
 
@@ -163,7 +165,7 @@ class ConversationTraceGraphSnapshotEvent(BaseModel):
     """链路跟随连接建立后的完整筛选页"""
 
     type: Literal["snapshot"] = "snapshot"
-    snapshot: AgUiTraceGraphPage
+    snapshot: ConversationGraphQueryPage
 
 
 class ConversationTraceGraphUpdateEvent(BaseModel):

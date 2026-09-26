@@ -1938,9 +1938,7 @@ class _FailingProjection:
         return _ProjectionResult(count=state.count)
 
 
-async def test_custom_projection_checkpoint_reuses_state_and_derives_child_runs() -> (
-    None
-):
+async def test_custom_projection_reuses_state_and_derives_child_runs() -> None:
     projection = _CountingProjection()
     tracer = Tracer(projections=(projection,))
     await _record_run(tracer, run_id="projection-root")

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from types import MappingProxyType
 from typing import Any
 
 from pydantic import BaseModel
@@ -17,6 +16,7 @@ from tinkerfin_contracts import (
 )
 
 from ._graph_projection import project_trace_graph_records
+from ._projection_cache import ProjectionRegistry
 from ._tasks import capture, join_owned_task, select_failure
 from ._tracing_session import _TracingSession
 from .capture import (
@@ -607,7 +607,7 @@ def _projection_registry(
         ):
             raise TypeError("Projection state and result types must be Pydantic models")
         values[name] = projection
-    return MappingProxyType(values)
+    return ProjectionRegistry(values)
 
 
 __all__ = ["Tracer"]

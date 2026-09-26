@@ -3,6 +3,7 @@ import { useLayoutEffect, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConversationHistoryDetail } from '../../api/conversation/history'
+import { ApiError } from '../../api/shared/http'
 import { upsertConversation } from '../../lib/workspace'
 import { emptyTraceGraph } from '../../test/traceFixtures'
 import type { Conversation } from '../../types'
@@ -160,8 +161,10 @@ function useHarness(
     threadId: workspace.currentThreadId,
     active: options.traceActive ?? false,
     live: selected?.runStatus === 'streaming' || selected?.runStatus === 'detached',
-    observedAt: selected?.trace?.observedAt,
-    waitingForHistory: history.isActivationRefreshing,
+    liveRunId: selected?.activeRunId,
+    observation: selected?.trace,
+    historyRefresh: history.historyRefresh,
+    onRecheckHistory: history.recheckConversationHistory,
     filter: {},
     limit: 1000,
   })
@@ -610,6 +613,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
     expect(result.current.history.hydrationState).toEqual({
       threadId: THREAD_ID,
       status: 'failed',
+      unavailable: false,
     })
     expect(onToast).toHaveBeenCalledExactlyOnceWith('error', '会话加载失败，请重试')
   })
@@ -969,7 +973,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
 
 describe('所选会话与链路共享激活刷新', () => {
   const initial = detail({ status: { execution: 'succeeded', headRunId: RUN_ID } })
-  const page = { ...emptyTraceGraph(initial.asOfSeq), nextCursor: null }
+  const page = { ...emptyTraceGraph(initial.asOfSeq), nextCursor: null, generation: initial.generation, headRunId: RUN_ID }
   const observed = (second: number): ConversationHistoryDetail => ({
     ...initial,
     observedAt: `2026-09-05T00:00:0${second}.000000Z`,
@@ -988,22 +992,23 @@ describe('所选会话与链路共享激活刷新', () => {
     vi.restoreAllMocks()
   })
 
-  it('首次进入等待新的历史观测，再只读取一次链路快照', async () => {
+  it('首次进入并发读取，链路先显示且会话观测到达不重复查询', async () => {
     const request = queueHistoryResponse()
     const hook = renderHook(() => useHarness(initial, { traceActive: true }), { reactStrictMode: true })
     await act(async () => { await request.requested.promise })
     expect(historyMocks.detail).toHaveBeenCalledOnce()
-    expect(historyMocks.graph).not.toHaveBeenCalled()
-    expect(hook.result.current.graph.state.phase).toBe('loading')
+    expect(historyMocks.graph).toHaveBeenCalledOnce()
+    expect(hook.result.current.graph.state).toEqual({ phase: 'ready', page })
+    expect(hook.result.current.graph.historyStatus).toBe('pending')
     const completion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
     await act(async () => { request.response.resolve(observed(1)); await completion })
     expect(hook.result.current.workspace.conversations[0]?.trace?.observedAt).toBe(observed(1).observedAt)
-    expect(hook.result.current.history.isActivationRefreshing).toBe(false)
+    expect(hook.result.current.history.historyRefresh?.phase).toBe('ready')
     expect(hook.result.current.graph.state).toEqual({ phase: 'ready', page })
     expect(historyMocks.graph).toHaveBeenCalledOnce()
   })
 
-  it('切回对话保留未完成的共享刷新，再进入链路仍等待同一请求', async () => {
+  it('切回对话保留共享刷新，再进入链路并发读取图且复用会话请求', async () => {
     const request = queueHistoryResponse()
     const hook = renderHook(({ traceActive }) => useHarness(initial, { traceActive }), {
       initialProps: { traceActive: true },
@@ -1013,12 +1018,12 @@ describe('所选会话与链路共享激活刷新', () => {
     hook.rerender({ traceActive: false })
     expect(signal.aborted).toBe(false)
     expect(historyMocks.detail).toHaveBeenCalledOnce()
-    hook.rerender({ traceActive: true })
+    await act(async () => hook.rerender({ traceActive: true }))
     expect(historyMocks.detail).toHaveBeenCalledOnce()
-    expect(historyMocks.graph).not.toHaveBeenCalled()
+    expect(historyMocks.graph).toHaveBeenCalledTimes(2)
     const completion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
     await act(async () => { request.response.resolve(observed(1)); await completion })
-    expect(historyMocks.graph).toHaveBeenCalledOnce()
+    expect(historyMocks.graph).toHaveBeenCalledTimes(2)
     expect(signal.aborted).toBe(false)
     hook.rerender({ traceActive: false })
     expect(historyMocks.detail).toHaveBeenCalledOnce()
@@ -1034,15 +1039,15 @@ describe('所选会话与链路共享激活刷新', () => {
     hook.rerender({ traceActive: false })
     await act(async () => { request.response.resolve(observed(1)); await completion })
     expect(hook.result.current.workspace.conversations[0]?.trace?.observedAt).toBe(observed(1).observedAt)
-    expect(historyMocks.graph).not.toHaveBeenCalled()
+    expect(historyMocks.graph).toHaveBeenCalledOnce()
     const next = queueHistoryResponse()
     hook.rerender({ traceActive: true })
     await act(async () => { await next.requested.promise })
-    expect(historyMocks.graph).not.toHaveBeenCalled()
+    expect(historyMocks.graph).toHaveBeenCalledTimes(2)
     const nextCompletion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
     await act(async () => { next.response.resolve(observed(2)); await nextCompletion })
     expect(historyMocks.detail).toHaveBeenCalledTimes(2)
-    expect(historyMocks.graph).toHaveBeenCalledOnce()
+    expect(historyMocks.graph).toHaveBeenCalledTimes(2)
   })
 
   it.each([
@@ -1069,13 +1074,13 @@ describe('所选会话与链路共享激活刷新', () => {
     expect(signal.aborted).toBe(false)
     expect(hook.result.current.workspace.conversations[0]?.trace?.observedAt).toBe(initial.observedAt)
     expect(historyMocks.detail).toHaveBeenCalledTimes(2)
-    expect(historyMocks.graph).not.toHaveBeenCalled()
+    expect(historyMocks.graph).toHaveBeenCalledTimes(leaveTrace ? 1 : 2)
     await act(async () => { next.response.resolve(observed(2)); await completion })
     expect(hook.result.current.workspace.conversations[0]?.trace?.observedAt).toBe(observed(2).observedAt)
-    expect(historyMocks.graph).toHaveBeenCalledTimes(leaveTrace ? 0 : 1)
+    expect(historyMocks.graph).toHaveBeenCalledTimes(leaveTrace ? 1 : 2)
   })
 
-  it('焦点与可见性同时恢复只重验一次，同序号状态变化仍刷新图且等待期间保留结果', async () => {
+  it('焦点与可见性同时恢复只重验一次，同序号状态变化复用并发读到的图', async () => {
     const first = queueHistoryResponse()
     const hook = renderHook(() => useHarness(initial, { traceActive: true }))
     await act(async () => { await first.requested.promise })
@@ -1090,7 +1095,7 @@ describe('所选会话与链路共享激活刷新', () => {
     })
     await act(async () => { await next.requested.promise })
     expect(historyMocks.detail).toHaveBeenCalledTimes(2)
-    expect(historyMocks.graph).toHaveBeenCalledOnce()
+    expect(historyMocks.graph).toHaveBeenCalledTimes(2)
     expect(hook.result.current.graph.state).toEqual({ phase: 'ready', page })
     const completion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
     const changed = { ...observed(2), status: { execution: 'abandoned' as const, headRunId: RUN_ID },
@@ -1128,7 +1133,7 @@ describe('所选会话与链路共享激活刷新', () => {
     await act(async () => { request.response.reject(new Error('offline')); await completion })
     expect(onToast).toHaveBeenCalledWith('error', '会话加载失败，请重试')
     expect(hook.result.current.workspace.conversations[0]?.trace?.observedAt).toBe(initial.observedAt)
-    expect(hook.result.current.history.isActivationRefreshing).toBe(false)
+    expect(hook.result.current.history.historyRefresh?.phase).toBe('failed')
     expect(hook.result.current.graph.state).toEqual({ phase: 'ready', page })
     hook.rerender({ traceActive: false })
     const next = queueHistoryResponse()
@@ -1139,6 +1144,18 @@ describe('所选会话与链路共享激活刷新', () => {
     expect(hook.result.current.history.hydrationState).toBeNull()
     expect(historyMocks.graph).toHaveBeenCalledTimes(2)
     expect(onToast).toHaveBeenCalledOnce()
+  })
+
+  it.each([401, 403, 404, 503])('历史返回 %s 时区分无权访问与暂时读取失败', async (status) => {
+    const request = queueHistoryResponse()
+    const hook = renderHook(() => useHarness(initial, { traceActive: true }))
+    await act(async () => { await request.requested.promise })
+    expect(hook.result.current.graph.state.phase).toBe('ready')
+    const completion = hook.result.current.history.hydrateConversation(THREAD_ID, { refresh: true })
+    await act(async () => { request.response.reject(new ApiError('read failed', { status })); await completion })
+    expect(hook.result.current.history.historyRefresh?.phase).toBe(status === 503 ? 'failed' : 'unavailable')
+    expect(hook.result.current.graph.state.phase).toBe(status === 503 ? 'ready' : 'error')
+    expect(historyMocks.graph).toHaveBeenCalledOnce()
   })
 
   it.each(['delete', 'switch', 'unmount'] as const)('%s 释放会话所有权并拒绝迟到结果', async (operation) => {
@@ -1154,10 +1171,10 @@ describe('所选会话与链路共享激活刷新', () => {
     await act(async () => { request.response.resolve(observed(1)); await completion })
     expect(hook.result.current.workspace.conversations.find(item => item.threadId === THREAD_ID)?.trace?.observedAt)
       .not.toBe(observed(1).observedAt)
-    expect(historyMocks.graph.mock.calls.some(([threadId]) => threadId === THREAD_ID)).toBe(false)
+    expect(historyMocks.graph.mock.calls.filter(([threadId]) => threadId === THREAD_ID)).toHaveLength(1)
   })
 
-  it.each(['local', 'remote'] as const)('%s 新运行进入实时跟随，不等待旧历史且不先查询非实时图', async (source) => {
+  it.each(['local', 'remote'] as const)('%s 新运行进入实时跟随，不等待旧历史且不重复查询非实时图', async (source) => {
     const request = queueHistoryResponse()
     const followed = deferred<AbortSignal>()
     const closed = deferred<void>()
@@ -1188,7 +1205,7 @@ describe('所选会话与链路共享激活刷新', () => {
       await act(async () => { await followed.promise })
       expect(hook.result.current.workspace.conversations[0]?.runStatus).toBe('detached')
     }
-    expect(historyMocks.graph).not.toHaveBeenCalled()
+    expect(historyMocks.graph).toHaveBeenCalledOnce()
     expect(historyMocks.followGraph).toHaveBeenCalledOnce()
     hook.unmount()
     await act(async () => { await closed.promise })

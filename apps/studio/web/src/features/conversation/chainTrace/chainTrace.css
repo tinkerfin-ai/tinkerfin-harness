@@ -60,6 +60,10 @@
     padding: 0 var(--chain-trace-inline-inset);
   }
 
+  .chain-trace-history-feedback {
+    padding: 0 var(--chain-trace-inline-inset) var(--space-2);
+  }
+
   .chain-trace-timeline-scroll::-webkit-scrollbar,
   .chain-trace-ledger::-webkit-scrollbar,
   .chain-trace-detail-body::-webkit-scrollbar,

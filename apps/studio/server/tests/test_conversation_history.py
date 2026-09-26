@@ -31,23 +31,20 @@ from tinkerfin_studio.api.conversation_router import follow_trace, get_history
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
 from tinkerfin_studio.conversation.failures import ConversationFailureProjection
 from tinkerfin_studio.conversation.history import ConversationHistoryService
+from tinkerfin_studio.conversation.history_queries import HistoryQueryAdmission
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.schemas import (
     ConversationHistoryDetail,
     ConversationTraceErrorEvent,
 )
 from tinkerfin_studio.conversation.todo_groups import (
-    TodoGroupProjector,
-    TodoGroupQueryExecutor,
+    TodoGroupProjection,
 )
 from tinkerfin_tracing import (
-    TraceCompleteness,
     TraceGraphFilter,
     TraceGraphNodeKind,
     TraceGraphNodeStatus,
     Tracer,
-    TraceStatus,
-    TraceThread,
 )
 
 
@@ -55,22 +52,14 @@ def _service(
     repository: ConversationRepository,
     *,
     tracer: Tracer,
-    todo_group_query: TodoGroupQueryExecutor | None = None,
+    history_queries: HistoryQueryAdmission | None = None,
 ) -> ConversationHistoryService:
     return ConversationHistoryService(
         repository,
         user_id=1,
         tracer=tracer,
-        todo_group_query=todo_group_query or TodoGroupQueryExecutor(),
+        history_queries=history_queries or HistoryQueryAdmission(),
     )
-
-
-class _CapturingTodoGroupQuery(TodoGroupQueryExecutor):
-    projector: TodoGroupProjector | None = None
-
-    async def project(self, trace: TraceThread) -> TodoGroupProjector:
-        self.projector = await super().project(trace)
-        return self.projector
 
 
 async def _get_detail(
@@ -192,7 +181,7 @@ async def test_history_reads_fixed_trace_view_without_agui_event_tail(
     session,
 ) -> None:
     tracer = Tracer(
-        projections=(ConversationFailureProjection(),),
+        projections=(ConversationFailureProjection(), TodoGroupProjection()),
     )
     repository = ConversationRepository(session)
     thread = await _register(
@@ -242,7 +231,7 @@ async def test_history_reads_fixed_trace_view_without_agui_event_tail(
 
 async def test_trace_graph_query_returns_the_final_model_request(session) -> None:
     tracer = Tracer(
-        projections=(ConversationFailureProjection(),),
+        projections=(ConversationFailureProjection(), TodoGroupProjection()),
     )
     repository = ConversationRepository(session)
     thread = await _register(
@@ -256,6 +245,9 @@ async def test_trace_graph_query_returns_the_final_model_request(session) -> Non
         thread_id=thread.thread_id,
         run_id="run-entry-history",
     )
+    service = _service(repository, tracer=tracer)
+    updates = await service.follow_trace(thread.thread_id)
+    assert (await anext(updates)).type == "snapshot"
     now = datetime.now(UTC)
     await trace_session.observe(
         ModelCallObservation(
@@ -286,6 +278,71 @@ async def test_trace_graph_query_returns_the_final_model_request(session) -> Non
     )
     await _finish_trace(context, trace_session)
 
+    update = await anext(updates)
+    assert update.type == "update"
+    update_wire = update.model_dump(mode="json", by_alias=True)["update"]
+    assert update_wire["hasEvents"] is True
+    assert set(update_wire) == {
+        "generation",
+        "observedAt",
+        "asOfSeq",
+        "hasEvents",
+        "messages",
+        "reasoning",
+        "graph",
+        "interactions",
+        "state",
+        "status",
+        "completeness",
+        "messageCount",
+        "toolCallCount",
+    }
+    model_update = next(
+        node for node in update_wire["graph"]["nodeUpserts"] if node["kind"] == "model"
+    )
+    assert "request" not in model_update
+    assert model_update["requestOmitted"] is False
+    await updates.aclose()
+
+    detail = await service.get_detail(thread.thread_id)
+    history_wire = detail.model_dump(mode="json", by_alias=True)
+    model_history = next(
+        node for node in history_wire["graph"]["nodes"] if node["kind"] == "model"
+    )
+    assert "request" not in model_history
+    assert model_history["requestOmitted"] is False
+    trace_events = await service.follow_trace(thread.thread_id)
+    try:
+        snapshot = await anext(trace_events)
+        assert snapshot.type == "snapshot"
+        assert snapshot.snapshot.graph == detail.graph
+    finally:
+        await trace_events.aclose()
+
+    from tinkerfin_messaging import Messaging
+
+    async with Messaging() as messaging:
+        live_service = ConversationHistoryService(
+            repository,
+            user_id=1,
+            tracer=tracer,
+            history_queries=HistoryQueryAdmission(),
+            conversation_channel=messaging.agui_channel(name="history-contract"),
+        )
+        body = await live_service.follow_live(
+            thread.thread_id,
+            run_id="run-entry-history",
+            last_event_id=None,
+        )
+        try:
+            run_snapshot = json.loads(
+                (await anext(body)).decode().split("data: ", 1)[1]
+            )
+            assert run_snapshot["snapshot"]["graph"] == history_wire["graph"]
+            assert run_snapshot["replay"] is False
+        finally:
+            await body.aclose()
+
     page = await _service(repository, tracer=tracer).query_trace_graph(
         thread.thread_id,
         where=TraceGraphFilter(
@@ -294,6 +351,20 @@ async def test_trace_graph_query_returns_the_final_model_request(session) -> Non
         cursor=None,
         limit=100,
     )
+
+    assert page.generation == detail.generation
+    assert page.head_run_id == detail.head_run_id
+    graph_events = await service.follow_trace_graph(
+        thread.thread_id,
+        where=TraceGraphFilter(kinds={TraceGraphNodeKind.MODEL}),
+        limit=100,
+    )
+    try:
+        graph_snapshot = await anext(graph_events)
+        assert graph_snapshot.type == "snapshot"
+        assert graph_snapshot.snapshot == page
+    finally:
+        await graph_events.aclose()
 
     assert len(page.nodes) == 1
     assert len(page.turns) == 1
@@ -346,7 +417,7 @@ async def test_trace_graph_query_returns_the_final_model_request(session) -> Non
 
 async def test_trace_graph_follow_sends_snapshot_update_and_closes(session) -> None:
     tracer = Tracer(
-        projections=(ConversationFailureProjection(),),
+        projections=(ConversationFailureProjection(), TodoGroupProjection()),
     )
     repository = ConversationRepository(session)
     thread = await _register(
@@ -405,7 +476,7 @@ async def test_trace_graph_follow_sends_snapshot_update_and_closes(session) -> N
 
 async def test_history_cursor_keeps_original_as_of_after_new_turn(session) -> None:
     tracer = Tracer(
-        projections=(ConversationFailureProjection(),),
+        projections=(ConversationFailureProjection(), TodoGroupProjection()),
     )
     repository = ConversationRepository(session)
     thread = await _register(
@@ -457,7 +528,7 @@ async def test_history_keeps_pending_interactions_outside_the_visible_turn(
     session,
 ) -> None:
     tracer = Tracer(
-        projections=(ConversationFailureProjection(),),
+        projections=(ConversationFailureProjection(), TodoGroupProjection()),
     )
     repository = ConversationRepository(session)
     thread = await _register(
@@ -525,7 +596,7 @@ async def test_history_rejects_another_users_thread_before_trace_lookup(
     service = _service(
         repository,
         tracer=Tracer(
-            projections=(ConversationFailureProjection(),),
+            projections=(ConversationFailureProjection(), TodoGroupProjection()),
         ),
     )
 
@@ -547,7 +618,7 @@ async def test_trace_follow_sends_snapshot_then_semantic_update_and_closes(
     session,
 ) -> None:
     tracer = Tracer(
-        projections=(ConversationFailureProjection(),),
+        projections=(ConversationFailureProjection(), TodoGroupProjection()),
     )
     repository = ConversationRepository(session)
     thread = await _register(
@@ -598,11 +669,11 @@ async def test_trace_follow_sends_snapshot_then_semantic_update_and_closes(
     await _finish_trace(context, trace_session)
 
 
-async def test_trace_follow_closes_projector_when_disconnected_after_snapshot(
+async def test_trace_follow_releases_initial_admission_before_snapshot_delivery(
     session,
 ) -> None:
     tracer = Tracer(
-        projections=(ConversationFailureProjection(),),
+        projections=(ConversationFailureProjection(), TodoGroupProjection()),
     )
     repository = ConversationRepository(session)
     thread = await _register(
@@ -616,24 +687,17 @@ async def test_trace_follow_closes_projector_when_disconnected_after_snapshot(
         thread_id=thread.thread_id,
         run_id="run-follow-snapshot-close",
     )
-    query = _CapturingTodoGroupQuery()
+    query = HistoryQueryAdmission()
     events = await _service(
         repository,
         tracer=tracer,
-        todo_group_query=query,
+        history_queries=query,
     ).follow_trace(thread.thread_id)
 
     assert (await anext(events)).type == "snapshot"
     await events.aclose()
 
-    assert query.projector is not None
-    with pytest.raises(RuntimeError, match="已关闭"):
-        query.projector.snapshot(
-            status=TraceStatus(
-                execution="running", head_run_id=context.identity.run_id
-            ),
-            completeness=TraceCompleteness(),
-        )
+    assert query.borrowed_tokens == 0
     await _finish_trace(context, trace_session)
 
 
@@ -641,7 +705,7 @@ async def test_trace_follow_replaces_task_trace_only_after_authoritative_state(
     session,
 ) -> None:
     tracer = Tracer(
-        projections=(ConversationFailureProjection(),),
+        projections=(ConversationFailureProjection(), TodoGroupProjection()),
     )
     repository = ConversationRepository(session)
     thread = await _register(
@@ -753,7 +817,7 @@ async def test_detached_follow_can_skip_task_trace_without_losing_base_updates(
     session,
 ) -> None:
     tracer = Tracer(
-        projections=(ConversationFailureProjection(),),
+        projections=(ConversationFailureProjection(), TodoGroupProjection()),
     )
     repository = ConversationRepository(session)
     thread = await _register(
@@ -803,7 +867,7 @@ async def test_history_follow_publishes_ownership_without_fabricating_graph_even
 ) -> None:
     """失活更新同时抵达公开摘要与任务视图，事件和 Graph 保持原有事实"""
     tracer = Tracer(
-        projections=(ConversationFailureProjection(),),
+        projections=(ConversationFailureProjection(), TodoGroupProjection()),
     )
     repository = ConversationRepository(session)
     thread = await _register(
@@ -879,7 +943,7 @@ async def test_history_follow_publishes_ownership_without_fabricating_graph_even
         assert update.update.generation == initial.snapshot.generation
         assert update.update.observed_at >= initial.snapshot.observed_at
         assert update.update.status.execution == "unknown"
-        assert update.update.events == ()
+        assert update.update.has_events is False
         assert update.update.graph.node_upserts == ()
         assert update.update.graph.turn_upserts == ()
         assert update.task_trace is not None
@@ -894,7 +958,7 @@ async def test_history_route_returns_one_validated_json_body_with_task_trace(
     session,
 ) -> None:
     tracer = Tracer(
-        projections=(ConversationFailureProjection(),),
+        projections=(ConversationFailureProjection(), TodoGroupProjection()),
     )
     repository = ConversationRepository(session)
     thread = await _register(
@@ -987,7 +1051,9 @@ async def test_trace_route_serializes_one_complete_sse_frame() -> None:
 
 
 async def test_failures_follow_the_history_window_and_fixed_prefix(session):
-    tracer = Tracer(projections=(ConversationFailureProjection(),))
+    tracer = Tracer(
+        projections=(ConversationFailureProjection(), TodoGroupProjection())
+    )
     repository = ConversationRepository(session)
     for run_id in ("old-failed", "latest-failed"):
         await _register(
@@ -1028,7 +1094,9 @@ async def test_failures_follow_the_history_window_and_fixed_prefix(session):
 
 
 async def test_live_failure_and_snapshot_have_identical_results(session):
-    tracer = Tracer(projections=(ConversationFailureProjection(),))
+    tracer = Tracer(
+        projections=(ConversationFailureProjection(), TodoGroupProjection())
+    )
     repository = ConversationRepository(session)
     await _register(repository, user_id=1, thread_id="failure-live", run_id="run-live")
     context, source = await _open_trace(
@@ -1063,7 +1131,9 @@ async def test_tool_review_uses_same_reference_in_history_graph_and_follow(
     session,
 ) -> None:
     """审批与工具在历史、链路分页和订阅快照中保留同一可恢复关联"""
-    tracer = Tracer(projections=(ConversationFailureProjection(),))
+    tracer = Tracer(
+        projections=(ConversationFailureProjection(), TodoGroupProjection())
+    )
     repository = ConversationRepository(session)
     thread = await _register(
         repository,
@@ -1189,7 +1259,9 @@ async def test_live_replay_authorizes_run_and_keeps_sse_cursor_separate(
 
     from tinkerfin_messaging import AgUiCodec, Messaging
 
-    tracer = Tracer(projections=(ConversationFailureProjection(),))
+    tracer = Tracer(
+        projections=(ConversationFailureProjection(), TodoGroupProjection())
+    )
     repository = ConversationRepository(session)
     thread = await _register(
         repository, user_id=1, thread_id="live-thread", run_id="live-run"
@@ -1216,7 +1288,7 @@ async def test_live_replay_authorizes_run_and_keeps_sse_cursor_separate(
             repository,
             user_id=1,
             tracer=tracer,
-            todo_group_query=TodoGroupQueryExecutor(),
+            history_queries=HistoryQueryAdmission(),
             conversation_channel=channel,
         )
         try:
@@ -1225,7 +1297,7 @@ async def test_live_replay_authorizes_run_and_keeps_sse_cursor_separate(
                 repository,
                 user_id=2,
                 tracer=tracer,
-                todo_group_query=TodoGroupQueryExecutor(),
+                history_queries=HistoryQueryAdmission(),
                 conversation_channel=channel,
             )
             with pytest.raises(BusinessException) as missing_thread:

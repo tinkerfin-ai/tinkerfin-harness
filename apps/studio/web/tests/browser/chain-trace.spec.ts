@@ -414,7 +414,7 @@ async function mockChainTraceStudio(
     threadId: THREAD_ID,
     selectedTheme: theme,
     selectedLanguage: language,
-    initialSnapshotJson: JSON.stringify(snapshot),
+    initialSnapshotJson: JSON.stringify({ ...snapshot, generation: `browser-generation:${THREAD_ID}`, headRunId: RUN_ID }),
   })
 
   await page.route('**/api/**', async (route) => {
@@ -489,7 +489,7 @@ async function mockChainTraceStudio(
       return
     }
     if (url.pathname === `/api/conversation/${THREAD_ID}/trace/graph`) {
-      await fulfillJson(route, directSnapshot)
+      await fulfillJson(route, { ...directSnapshot, generation: `browser-generation:${THREAD_ID}`, headRunId: RUN_ID })
       return
     }
     await route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
@@ -523,7 +523,7 @@ const traceRow = (page: Page, nodeId: string) => (
   page.locator(`[data-trace-node-id="${nodeId}"]`)
 )
 
-test('链路等待共享历史，切回对话后刷新完成且再次进入只查询一次图', async ({ page }) => {
+test('链路与共享历史并发，切回对话保留刷新且每次激活只查询一次图', async ({ page }) => {
   let releaseHistory!: () => void
   let markRequested!: () => void
   const release = new Promise<void>((resolve) => { releaseHistory = resolve })
@@ -554,7 +554,9 @@ test('链路等待共享历史，切回对话后刷新完成且再次进入只�
     await expect(page.getByRole('button', { name: '任务轨迹 1', exact: true })).toBeVisible()
     await page.getByRole('tab', { name: '链路', exact: true }).click()
     await requested
-    expect((await traceRequests(page)).snapshots).toHaveLength(0)
+    await expect(page.getByRole('region', { name: '调用时间线' })).toBeVisible()
+    await expect(page.getByText('正在同步会话状态', { exact: true })).toBeVisible()
+    expect((await traceRequests(page)).snapshots).toHaveLength(1)
     await page.getByRole('tab', { name: '对话', exact: true }).click()
     const received = page.waitForResponse((response) => (
       new URL(response.url()).pathname === `/api/conversation/${THREAD_ID}/history`
@@ -566,13 +568,77 @@ test('链路等待共享历史，切回对话后刷新完成且再次进入只�
     expect(failures).toEqual([])
     await page.getByRole('tab', { name: '链路', exact: true }).click()
     await expect(page.getByRole('region', { name: '调用时间线' })).toBeVisible()
-    expect((await traceRequests(page)).snapshots).toHaveLength(1)
+    expect((await traceRequests(page)).snapshots).toHaveLength(2)
     expect(historyRequests).toBe(3)
     expect(errors).toEqual([])
   } finally {
     releaseHistory()
   }
 })
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`会话同步提示保留链路且可重试，四视口 ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    let releaseHistory!: () => void
+    let markRequested!: () => void
+    const release = new Promise<void>(resolve => { releaseHistory = resolve })
+    const requested = new Promise<void>(resolve => { markRequested = resolve })
+    let historyRequests = 0
+    const errors = await mockChainTraceStudio(page, {
+      theme,
+      historyResponse: async (route, response) => {
+        historyRequests += 1
+        if (historyRequests === 2) {
+          markRequested()
+          await release
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ code: 503, message: 'history unavailable', data: null }),
+          })
+          return
+        }
+        await fulfillJson(route, response)
+      },
+    })
+    try {
+      await expect(page.getByRole('button', { name: '任务轨迹 1', exact: true })).toBeVisible()
+      await page.getByRole('tab', { name: '链路', exact: true }).click()
+      await requested
+      await expect(page.getByRole('region', { name: '调用时间线' })).toBeVisible()
+      await page.getByRole('button', { name: '关闭链路详情', exact: true }).click()
+      for (const phase of ['pending', 'failed'] as const) {
+        if (phase === 'failed') releaseHistory()
+        const label = phase === 'pending' ? '正在同步会话状态' : '会话状态同步失败，链路为已读取快照'
+        await expect(page.getByText(label, { exact: true })).toBeVisible()
+        if (phase === 'failed') await page.getByRole('button', { name: '关闭提示：会话加载失败，请重试', exact: true }).click()
+        for (const width of [320, 768, 1024, 1440]) {
+          await page.setViewportSize({ width, height: 900 })
+          await expect(page.getByText(label, { exact: true })).toBeVisible()
+          await expect(page.getByRole('region', { name: /^(调用时间线|执行序列)$/ })).toBeVisible()
+          expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+          if (phase === 'failed') {
+            const retry = await page.getByRole('button', { name: '重新加载', exact: true }).boundingBox()
+            expect(retry).not.toBeNull()
+            expect(retry!.x).toBeGreaterThanOrEqual(0)
+            expect(retry!.x + retry!.width).toBeLessThanOrEqual(width)
+          }
+          await page.screenshot({ path: testInfo.outputPath(`history-sync-${phase}-${theme}-${width}.png`) })
+        }
+      }
+      expect((await traceRequests(page)).snapshots).toHaveLength(1)
+      await page.getByRole('button', { name: '重新加载', exact: true }).click()
+      await expect(page.getByText('会话状态同步失败，链路为已读取快照', { exact: true })).toHaveCount(0)
+      await expect(page.getByText('正在同步会话状态', { exact: true })).toHaveCount(0)
+      expect((await traceRequests(page)).snapshots).toHaveLength(2)
+      expect(historyRequests).toBe(3)
+      expect(errors).toEqual([])
+    } finally {
+      releaseHistory()
+    }
+  })
+}
 
 for (const theme of ['light', 'dark'] as const) {
   for (const width of [320, 768, 1024, 1440]) {

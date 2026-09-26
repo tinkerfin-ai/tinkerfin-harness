@@ -1,12 +1,14 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { TraceGraphEvent, TraceGraphPage } from '../../../api/conversation/traceGraph'
+import type { TraceGraphEvent, TraceGraphQueryPage } from '../../../api/conversation/traceGraph'
 import { clearAuthSession, saveAuthSession } from '../../../auth/session'
 import { traceGraphNode, traceGraphWithNodes } from '../../../test/traceFixtures'
 import { useChainTrace } from './useChainTrace'
 
-const snapshot = (asOfSeq = 1): TraceGraphPage => ({
+const snapshot = (asOfSeq = 1): TraceGraphQueryPage => ({
+  generation: 'generation-test',
+  headRunId: 'run-fixture',
   ...traceGraphWithNodes([traceGraphNode({
     id: 'human-1',
     kind: 'human_message',
@@ -121,9 +123,9 @@ describe('链路读取协议生命周期', () => {
     const stream = openStream()
     const requests = fetchRequests()
     vi.stubGlobal('fetch', requests.fetch)
-    const { result, rerender } = renderHook(({ live, observedAt }) => useChainTrace({
-      threadId: 'thread-live', active: true, live, observedAt, filter: {}, limit: 1000,
-    }), { initialProps: { live: true, observedAt: 'initial' } })
+    const { result, rerender } = renderHook(({ live, asOfSeq }) => useChainTrace({
+      threadId: 'thread-live', active: true, live, observation: snapshot(asOfSeq), filter: {}, limit: 1000,
+    }), { initialProps: { live: true, asOfSeq: 1 } })
     const follow = await requests.next()
     await act(async () => follow.respond(stream.response))
     expect(requests.fetch).toHaveBeenCalledTimes(1)
@@ -137,10 +139,10 @@ describe('链路读取协议生命周期', () => {
     } }))
     await act(async () => vi.advanceTimersByTimeAsync(50))
     expect(result.current.state).toEqual({ phase: 'ready', page: snapshot(2) })
-    rerender({ live: true, observedAt: 'another-live-observation' })
+    rerender({ live: true, asOfSeq: 2 })
     expect(requests.fetch).toHaveBeenCalledTimes(1)
 
-    rerender({ live: false, observedAt: 'another-live-observation' })
+    rerender({ live: false, asOfSeq: 2 })
     const terminal = await requests.next()
     await act(async () => {
       terminal.respond(jsonResponse(snapshot(3)))
@@ -149,7 +151,7 @@ describe('链路读取协议生命周期', () => {
     expect(result.current.state).toEqual({ phase: 'ready', page: snapshot(3) })
     expect(follow.request.signal.aborted).toBe(true)
     expect(stream.cancelled).toHaveBeenCalledTimes(1)
-    rerender({ live: false, observedAt: 'final-authoritative-observation' })
+    rerender({ live: false, asOfSeq: 4 })
     const final = await requests.next()
     await act(async () => final.respond(jsonResponse(snapshot(4))))
     expect(result.current.state).toEqual({ phase: 'ready', page: snapshot(4) })
@@ -166,7 +168,7 @@ describe('链路读取协议生命周期', () => {
     const requests = fetchRequests()
     vi.stubGlobal('fetch', requests.fetch)
     const { result, rerender, unmount } = renderHook(({ live }) => useChainTrace({
-      threadId: 'thread-resumed', active: true, live, observedAt: 'same-observation', filter: {}, limit: 1000,
+      threadId: 'thread-resumed', active: true, live, observation: snapshot(), filter: {}, limit: 1000,
     }), { initialProps: { live: false } })
     const initial = await requests.next()
     await act(async () => initial.respond(jsonResponse(snapshot())))
@@ -201,6 +203,58 @@ describe('链路读取协议生命周期', () => {
     expect(resumed.request.signal.aborted).toBe(true)
   })
 
+  it.each([false, true])('运行中的不同 generation 快照在历史确认后报错并关闭流，历史初始 pending=%s', async (pending) => {
+    const stream = openStream()
+    const requests = fetchRequests()
+    vi.stubGlobal('fetch', requests.fetch)
+    const { result, rerender } = renderHook(({ waiting }) => useChainTrace({
+      threadId: 'thread-generation', active: true, live: true, liveRunId: 'run-fixture',
+      historyRefresh: { epoch: 0, phase: waiting ? 'pending' : 'ready' },
+      observation: { ...snapshot(), generation: 'another-generation' }, filter: {}, limit: 1000,
+    }), { initialProps: { waiting: pending } })
+    const follow = await requests.next()
+    await act(async () => {
+      follow.respond(stream.response)
+      stream.send({ type: 'snapshot', snapshot: snapshot(3) })
+    })
+    if (pending) {
+      expect(result.current.state).toEqual({ phase: 'ready', page: snapshot(3) })
+      expect(result.current.historyStatus).toBe('pending')
+      expect(follow.request.signal.aborted).toBe(false)
+      rerender({ waiting: false })
+    }
+    await act(async () => { await stream.closed })
+    expect(result.current.state.phase).toBe('error')
+    expect(stream.cancelled).toHaveBeenCalledOnce()
+    expect(follow.request.signal.aborted).toBe(true)
+    expect(requests.fetch).toHaveBeenCalledOnce()
+  })
+
+  it('历史待确认时允许展示新 generation 的运行快照，对齐新 head 后沿用当前跟随', async () => {
+    const stream = openStream()
+    const requests = fetchRequests()
+    vi.stubGlobal('fetch', requests.fetch)
+    const currentPage = { ...snapshot(3), generation: 'generation-new', headRunId: 'run-new' }
+    const { result, rerender, unmount } = renderHook(({ waiting }) => useChainTrace({
+      threadId: 'thread-generation', active: true, live: true, liveRunId: 'run-new',
+      historyRefresh: { epoch: 0, phase: waiting ? 'pending' : 'ready' },
+      observation: waiting ? snapshot() : currentPage, filter: {}, limit: 1000,
+    }), { initialProps: { waiting: true } })
+    const follow = await requests.next()
+    await act(async () => {
+      follow.respond(stream.response)
+      stream.send({ type: 'snapshot', snapshot: currentPage })
+    })
+    expect(result.current.state).toEqual({ phase: 'ready', page: currentPage })
+    rerender({ waiting: false })
+    expect(result.current.state).toEqual({ phase: 'ready', page: currentPage })
+    expect(result.current.historyStatus).toBe('ready')
+    expect(follow.request.signal.aborted).toBe(false)
+    expect(requests.fetch).toHaveBeenCalledOnce()
+    unmount()
+    await act(async () => { await stream.closed })
+  })
+
   it('过滤与线程切换取消旧快照，迟到响应不能覆盖当前页面', async () => {
     const requests = fetchRequests()
     vi.stubGlobal('fetch', requests.fetch)
@@ -222,30 +276,30 @@ describe('链路读取协议生命周期', () => {
   it('同一查询刷新期间保留结果，切换筛选重新加载，刷新失败允许重试', async () => {
     const requests = fetchRequests()
     vi.stubGlobal('fetch', requests.fetch)
-    const { result, rerender } = renderHook(({ observedAt, query }) => useChainTrace({
-      threadId: 'thread-refresh', active: true, live: false, observedAt, filter: { query }, limit: 1000,
-    }), { initialProps: { observedAt: 'initial', query: '' } })
+    const { result, rerender } = renderHook(({ epoch, query }) => useChainTrace({
+      threadId: 'thread-refresh', active: true, live: false, historyRefresh: { epoch, phase: 'ready' }, filter: { query }, limit: 1000,
+    }), { initialProps: { epoch: 0, query: '' } })
     const initial = await requests.next()
     expect(requests.fetch).toHaveBeenCalledTimes(1)
     expect(result.current.state.phase).toBe('loading')
     await act(async () => initial.respond(jsonResponse(snapshot())))
     expect(result.current.state).toEqual({ phase: 'ready', page: snapshot() })
 
-    rerender({ observedAt: 'updated', query: '' })
+    rerender({ epoch: 1, query: '' })
     const updated = await requests.next()
     expect(requests.fetch).toHaveBeenCalledTimes(2)
     expect(result.current.state).toEqual({ phase: 'ready', page: snapshot() })
     await act(async () => updated.respond(jsonResponse(snapshot(2))))
     expect(result.current.state).toEqual({ phase: 'ready', page: snapshot(2) })
 
-    rerender({ observedAt: 'updated', query: 'different' })
+    rerender({ epoch: 1, query: 'different' })
     const filtered = await requests.next()
     expect(requests.fetch).toHaveBeenCalledTimes(3)
     expect(result.current.state.phase).toBe('loading')
     await act(async () => filtered.respond(jsonResponse(snapshot(3))))
     expect(result.current.state.phase).toBe('ready')
 
-    rerender({ observedAt: 'latest', query: 'different' })
+    rerender({ epoch: 2, query: 'different' })
     const failed = await requests.next()
     expect(requests.fetch).toHaveBeenCalledTimes(4)
     expect(result.current.state).toEqual({ phase: 'ready', page: snapshot(3) })
@@ -276,21 +330,23 @@ describe('链路读取协议生命周期', () => {
     expect(requests.fetch).toHaveBeenCalledTimes(2)
   })
 
-  it('等待会话重验时取消未完成的图，迟到快照不能覆盖随后查询', async () => {
+  it('前台恢复取消旧图并立即与会话重验并发，迟到结果不能覆盖当前图', async () => {
     const requests = fetchRequests()
     vi.stubGlobal('fetch', requests.fetch)
-    const { result, rerender } = renderHook(({ waitingForHistory, observedAt }) => useChainTrace({
-      threadId: 'thread-waiting', active: true, live: false, waitingForHistory, observedAt,
+    const { result, rerender } = renderHook(({ epoch, pending }) => useChainTrace({
+      threadId: 'thread-waiting', active: true, live: false,
+      historyRefresh: { epoch, phase: pending ? 'pending' : 'ready' }, observation: snapshot(2),
       filter: {}, limit: 1000,
-    }), { initialProps: { waitingForHistory: false, observedAt: 'initial' } })
+    }), { initialProps: { epoch: 0, pending: false } })
     const old = await requests.next()
-    rerender({ waitingForHistory: true, observedAt: 'initial' })
+    rerender({ epoch: 1, pending: true })
+    const current = await requests.next()
     expect(old.request.signal.aborted).toBe(true)
     expect(result.current.state.phase).toBe('loading')
-    expect(requests.fetch).toHaveBeenCalledOnce()
-    rerender({ waitingForHistory: false, observedAt: 'refreshed' })
-    const current = await requests.next()
+    expect(requests.fetch).toHaveBeenCalledTimes(2)
     await act(async () => current.respond(jsonResponse(snapshot(2))))
+    expect(result.current.historyStatus).toBe('pending')
+    rerender({ epoch: 1, pending: false })
     await act(async () => old.respond(jsonResponse(snapshot(1))))
     expect(requests.fetch).toHaveBeenCalledTimes(2)
     expect(result.current.state).toEqual({ phase: 'ready', page: snapshot(2) })

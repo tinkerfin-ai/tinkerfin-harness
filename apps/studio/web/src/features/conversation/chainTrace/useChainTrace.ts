@@ -2,18 +2,24 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   followTraceGraph,
-  parseTraceGraphPage,
+  parseTraceGraphQueryPage,
   queryTraceGraph,
   type TraceGraphDelta,
   type TraceGraphFilter,
-  type TraceGraphPage,
+  type TraceGraphQueryPage,
 } from '../../../api/conversation/traceGraph'
 import { ConversationError } from '../../../api/conversation/errors'
+import {
+  isConversationUnavailable,
+  type ConversationObservation,
+  type HistoryActivationRefresh,
+  type HistoryRefreshResult,
+} from '../trace/historyRefresh'
 
 export type ChainTraceState =
   | { phase: 'idle' }
   | { phase: 'loading' }
-  | { phase: 'ready'; page: TraceGraphPage }
+  | { phase: 'ready'; page: TraceGraphQueryPage }
   | { phase: 'error' }
 
 const GRAPH_RENDER_INTERVAL_MS = 50
@@ -22,10 +28,14 @@ const sameIds = (left: readonly string[], right: readonly string[]) => (
   left.length === right.length && left.every((id, index) => id === right[index])
 )
 
+const sameObservation = (left: ConversationObservation | undefined, right: ConversationObservation | undefined) => (
+  left?.generation === right?.generation && left?.headRunId === right?.headRunId && left?.asOfSeq === right?.asOfSeq
+)
+
 const applyUpdate = (
-  page: TraceGraphPage,
+  page: TraceGraphQueryPage,
   update: TraceGraphDelta,
-): TraceGraphPage => {
+): TraceGraphQueryPage => {
   if (update.asOfSeq <= page.asOfSeq) {
     throw new ConversationError('stream_event_invalid')
   }
@@ -72,7 +82,7 @@ const applyUpdate = (
   if (orderedNodes.length !== nodes.size) {
     throw new ConversationError('stream_event_invalid')
   }
-  return parseTraceGraphPage({
+  return parseTraceGraphQueryPage({
     ...page,
     asOfSeq: update.asOfSeq,
     nextCursor: update.nextCursor,
@@ -90,30 +100,36 @@ export function useChainTrace({
   threadId,
   active,
   live,
-  observedAt,
-  waitingForHistory = false,
+  liveRunId,
+  observation,
+  historyRefresh,
+  onRecheckHistory,
   filter,
   limit,
 }: {
   threadId: string
   active: boolean
   live: boolean
-  /** 会话权威观测到达后，重新读取终态链路以补齐最后提交的节点 */
-  observedAt?: string
-  /** 先重验所选会话，再读取非实时链路；等待期间保留同一查询的展示 */
-  waitingForHistory?: boolean
+  liveRunId?: string
+  observation?: ConversationObservation
+  historyRefresh?: HistoryActivationRefresh
+  onRecheckHistory?: (threadId: string) => Promise<HistoryRefreshResult>
   filter: TraceGraphFilter
   limit: number
 }) {
   const [retryEpoch, setRetryEpoch] = useState(0)
+  const [runEpoch, setRunEpoch] = useState(0)
   const [visible, setVisible] = useState(document.visibilityState !== 'hidden')
   const [state, setState] = useState<ChainTraceState>({ phase: 'idle' })
+  const [historyStatus, setHistoryStatus] = useState<HistoryActivationRefresh['phase']>('ready')
   const filterKey = useMemo(() => JSON.stringify(filter), [filter])
-  const currentFilter = useRef(filter)
-  currentFilter.current = filter
-  const snapshotObservedAt = live ? undefined : observedAt
-  const snapshotWaiting = !live && waitingForHistory
+  const latest = useRef({ filter, observation, historyRefresh, onRecheckHistory })
+  latest.current = { filter, observation, historyRefresh, onRecheckHistory }
   const displayedQuery = useRef<string | null>(null)
+  const reconcileCurrent = useRef<(() => void) | undefined>(undefined)
+  const retryHistory = useRef(false)
+  const foregroundEpoch = historyRefresh?.epoch
+  const liveIdentity = live ? liveRunId ?? observation?.headRunId : undefined
 
   useEffect(() => {
     const updateVisibility = () => setVisible(document.visibilityState !== 'hidden')
@@ -126,24 +142,31 @@ export function useChainTrace({
       setState({ phase: 'idle' })
       return
     }
-    const resolvedFilter = currentFilter.current
+    const resolvedFilter = latest.current.filter
     const queryKey = JSON.stringify([threadId, filterKey, limit])
     const sameQuery = displayedQuery.current === queryKey
     displayedQuery.current = queryKey
-    // 同一查询刷新时保留阅读内容，新快照到达后再替换；查询范围变化则显示加载状态
     setState(current => sameQuery && current.phase === 'ready' ? current : { phase: 'loading' })
-    if (snapshotWaiting) return
+    setHistoryStatus(latest.current.historyRefresh?.phase ?? 'ready')
     const controller = new AbortController()
     let disposed = false
-    let currentPage: TraceGraphPage | undefined
+    let currentPage: TraceGraphQueryPage | undefined
     let publishTimer: number | undefined
+    let reading = false
+    let recheckingHistory = false
+    let correctedGraph = false
+    let recheckedHistory = false
+    let acceptedObservation: ConversationObservation | undefined
+    let recheckedObservation: { previous: ConversationObservation | undefined; current: ConversationObservation } | undefined
     const clearPublishTimer = () => {
       window.clearTimeout(publishTimer)
       publishTimer = undefined
     }
-    const fail = () => {
+    const current = () => !disposed && !controller.signal.aborted
+    const fail = (unavailable = false) => {
       clearPublishTimer()
       controller.abort()
+      if (unavailable) setHistoryStatus('unavailable')
       setState({ phase: 'error' })
     }
     const schedulePublish = () => {
@@ -151,61 +174,149 @@ export function useChainTrace({
       // 增量逐个校验，仅合并页面展示，避免重算未变化的链路布局
       publishTimer = window.setTimeout(() => {
         publishTimer = undefined
-        if (!disposed && !controller.signal.aborted && currentPage) {
-          setState({ phase: 'ready', page: currentPage })
-        }
+        if (current() && currentPage) setState({ phase: 'ready', page: currentPage })
       }, GRAPH_RENDER_INTERVAL_MS)
     }
-    const load = async () => {
+    const readGraph = async () => {
+      if (reading || !current()) return
+      reading = true
       try {
-        if (!live) {
-          const page = await queryTraceGraph(threadId, resolvedFilter, {
-            limit,
-            signal: controller.signal,
-          })
-          if (!disposed && !controller.signal.aborted) setState({ phase: 'ready', page })
-          return
-        }
-        for await (const event of followTraceGraph(threadId, resolvedFilter, {
-          limit,
-          signal: controller.signal,
-        })) {
-          if (disposed || controller.signal.aborted) return
+        const page = await queryTraceGraph(threadId, resolvedFilter, { limit, signal: controller.signal })
+        if (!current()) return
+        currentPage = page
+        setState({ phase: 'ready', page })
+        reading = false
+        reconcile()
+      } catch (error) {
+        reading = false
+        if (current()) fail(isConversationUnavailable(error))
+      }
+    }
+    const recheckHistory = async (identityConflict: boolean) => {
+      const recheck = latest.current.onRecheckHistory
+      if (!recheck) return
+      recheckedHistory = true
+      recheckingHistory = true
+      setHistoryStatus('pending')
+      if (identityConflict) setState({ phase: 'loading' })
+      const previous = latest.current.observation
+      let result: HistoryRefreshResult
+      try { result = await recheck(threadId) }
+      catch (error) { result = { phase: isConversationUnavailable(error) ? 'unavailable' : 'failed' } }
+      if (!current()) return
+      recheckingHistory = false
+      if (result.phase !== 'ready') {
+        setHistoryStatus(result.phase)
+        if (identityConflict || result.phase === 'unavailable') fail(result.phase === 'unavailable')
+        return
+      }
+      recheckedObservation = { previous, current: result.observation }
+      reconcile()
+    }
+    const reconcile = (): void => {
+      if (!current()) return
+      const refresh = latest.current.historyRefresh
+      if (refresh?.phase === 'unavailable') { fail(true); return }
+      if (recheckingHistory || refresh?.phase === 'pending') {
+        setHistoryStatus('pending')
+        return
+      }
+      if (refresh?.phase === 'failed') { setHistoryStatus('failed'); return }
+      setHistoryStatus('ready')
+      if (reading || !currentPage) return
+      const authority = recheckedObservation && sameObservation(recheckedObservation.previous, latest.current.observation)
+        ? recheckedObservation.current
+        : latest.current.observation
+      if (!authority) return
+      if (authority.generation !== currentPage.generation) { fail(); return }
+      if (live) return
+      if (acceptedObservation && authority.headRunId !== acceptedObservation.headRunId) {
+        // 已对齐后出现真实新运行，开启它自己的读取需求；校正结果不能重置本次预算
+        disposed = true
+        clearPublishTimer()
+        controller.abort()
+        setRunEpoch(value => value + 1)
+        return
+      }
+      if (authority.headRunId === currentPage.headRunId && currentPage.asOfSeq >= authority.asOfSeq) {
+        acceptedObservation = authority
+        const page = currentPage
+        setState(currentState => currentState.phase === 'ready' && currentState.page === currentPage
+          ? currentState : { phase: 'ready', page })
+        return
+      }
+      if (authority.headRunId !== currentPage.headRunId && !recheckedHistory && latest.current.onRecheckHistory) {
+        void recheckHistory(true)
+        return
+      }
+      // 每次激活、前台恢复、筛选或终态需求最多补查一次，不能由迟到结果循环续查
+      if (correctedGraph) { fail(); return }
+      correctedGraph = true
+      setHistoryStatus('pending')
+      void readGraph()
+    }
+    reconcileCurrent.current = reconcile
+    const load = async () => {
+      if (latest.current.historyRefresh?.phase === 'unavailable') { fail(true); return }
+      if (retryHistory.current) {
+        retryHistory.current = false
+        void recheckHistory(false)
+      }
+      if (!live) { await readGraph(); return }
+      try {
+        for await (const event of followTraceGraph(threadId, resolvedFilter, { limit, signal: controller.signal })) {
+          if (!current()) return
           if (event.type === 'snapshot') {
             if (currentPage) throw new ConversationError('stream_event_invalid')
             currentPage = event.snapshot
             setState({ phase: 'ready', page: event.snapshot })
+            reconcile()
           } else if (event.type === 'update') {
             if (!currentPage) throw new ConversationError('stream_event_invalid')
             currentPage = applyUpdate(currentPage, event.update)
             schedulePublish()
-          } else {
-            fail()
-            return
-          }
+          } else { fail(); return }
         }
-        if (!disposed && !controller.signal.aborted) {
-          fail()
-        }
-      } catch {
-        if (!disposed) {
-          fail()
-        }
+        if (current()) fail()
+      } catch (error) {
+        if (current()) fail(isConversationUnavailable(error))
       }
     }
-    // StrictMode 会先同步重放 setup/cleanup；只让仍存活的 Effect 发起读取
-    queueMicrotask(() => {
-      if (!disposed) void load()
-    })
+    // StrictMode 同步重放期间只让仍存活的请求归属发起读取
+    queueMicrotask(() => { if (current()) void load() })
     return () => {
       disposed = true
+      if (reconcileCurrent.current === reconcile) reconcileCurrent.current = undefined
       clearPublishTimer()
       controller.abort()
     }
-  }, [active, filterKey, limit, live, retryEpoch, snapshotObservedAt, snapshotWaiting, threadId, visible])
+  }, [active, filterKey, foregroundEpoch, limit, live, liveIdentity, retryEpoch, runEpoch, threadId, visible])
+
+  useEffect(() => { reconcileCurrent.current?.() }, [historyRefresh, observation])
 
   return {
     state,
-    retry: () => setRetryEpoch((value) => value + 1),
+    historyStatus,
+    retry: () => {
+      const recheck = latest.current.onRecheckHistory
+      if (latest.current.historyRefresh?.phase === 'unavailable' && recheck) {
+        const owner = reconcileCurrent.current
+        if (!owner) return
+        // 失去会话访问权后，显式重试先重新确认历史；不能展示此前的图
+        setHistoryStatus('pending')
+        void recheck(threadId).then(result => {
+          if (reconcileCurrent.current !== owner) return
+          setHistoryStatus(result.phase)
+          if (result.phase === 'ready') setRetryEpoch(value => value + 1)
+        }, error => {
+          if (reconcileCurrent.current === owner) {
+            setHistoryStatus(isConversationUnavailable(error) ? 'unavailable' : 'failed')
+          }
+        })
+        return
+      }
+      retryHistory.current = true
+      setRetryEpoch(value => value + 1)
+    },
   }
 }

@@ -8,6 +8,7 @@ import {
   parseTraceGraph,
   parseTraceGraphDelta,
   parseTraceGraphPage,
+  parseTraceGraphQueryPage,
   queryTraceGraph,
   type TraceGraphPage,
 } from './traceGraph'
@@ -129,7 +130,7 @@ describe('Trace Graph client', () => {
       expect(url.searchParams.has('includeTechnicalNodes')).toBe(false)
       expect(url.searchParams.has('includeAncestorNodes')).toBe(false)
       expect(url.searchParams.get('limit')).toBe('1000')
-      return eventStream({ type: 'snapshot', snapshot: page() })
+      return eventStream({ type: 'snapshot', snapshot: { ...page(), generation: 'generation-test', headRunId: 'run-fixture' } })
     }))
 
     const events = []
@@ -142,6 +143,17 @@ describe('Trace Graph client', () => {
     }, { limit: 1000 })) events.push(event)
 
     expect(events[0]).toHaveProperty('snapshot.nodes.0.name', 'HumanMessage')
+  })
+
+  it('查询页要求固定身份且保留完整模型请求，基础图不接受查询身份', () => {
+    const source = { ...page(), generation: 'generation-test', headRunId: 'run-fixture' }
+    expect(parseTraceGraphQueryPage(source)).toEqual(source)
+    expect(() => parseTraceGraphQueryPage(page())).toThrow('stream_event_invalid')
+    expect(() => parseTraceGraphPage(source)).toThrow('stream_event_invalid')
+    expect(() => parseTraceGraphQueryPage({ ...source, headRunId: '' })).toThrow('stream_event_invalid')
+    const model = source.nodes.find(node => node.kind === 'model')!
+    model.request = { messages: [{ content: '独立链路中的模型原始输入' }] }
+    expect(parseTraceGraphQueryPage(source).nodes.find(node => node.kind === 'model')?.request).toEqual(model.request)
   })
 
   it('queries one model response from the direct Graph route', async () => {
@@ -158,7 +170,7 @@ describe('Trace Graph client', () => {
         'subagent',
       ])
       expect(url.searchParams.get('limit')).toBe('1000')
-      return new Response(JSON.stringify({ code: 0, message: 'ok', data: page() }), {
+      return new Response(JSON.stringify({ code: 0, message: 'ok', data: { ...page(), generation: 'generation-test', headRunId: 'run-fixture' } }), {
         headers: { 'Content-Type': 'application/json' },
       })
     }))
@@ -173,7 +185,7 @@ describe('Trace Graph client', () => {
 
   it('parses authoritative ordering and removal updates', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => eventStream(
-      { type: 'snapshot', snapshot: page() },
+      { type: 'snapshot', snapshot: { ...page(), generation: 'generation-test', headRunId: 'run-fixture' } },
       {
         type: 'update',
         update: {
@@ -207,7 +219,7 @@ describe('Trace Graph client', () => {
   it('rejects unknown event-envelope fields', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => eventStream({
       type: 'snapshot',
-      snapshot: page(),
+      snapshot: { ...page(), generation: 'generation-test', headRunId: 'run-fixture' },
       legacyEntries: [],
     })))
 

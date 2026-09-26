@@ -19,6 +19,11 @@ import {
   readActiveRunSession,
 } from '../conversation/stream/activeRunSession'
 import { restoreConversationFromTrace } from '../conversation/trace/runtime'
+import {
+  isConversationUnavailable,
+  type HistoryActivationRefresh,
+  type HistoryRefreshResult,
+} from '../conversation/trace/historyRefresh'
 import { readThreadFromLocation } from '../../lib/threadRoute'
 import {
   selectCurrentConversation,
@@ -65,6 +70,7 @@ interface HydrationRequest {
   controller: AbortController
   completion: Promise<void>
   foreground: number
+  result?: HistoryRefreshResult
 }
 
 const ownsTracePageRequest = (
@@ -330,6 +336,7 @@ export function useWorkspaceHistory({
   const [hydrationState, setHydrationState] = useState<{
     threadId: string
     status: 'loading' | 'failed'
+    unavailable?: boolean
   } | null>(null)
   const [taskTraceLoadFailures, setTaskTraceLoadFailures] = useState(
     () => new Map<string, TaskTraceLoadFailure>(),
@@ -925,6 +932,7 @@ export function useWorkspaceHistory({
               lastDeliveredSeq: target.lastSeq,
               includeTaskTrace: true,
             })
+            request.result = { phase: 'ready', observation: restored.trace ?? detail }
             setHydrationState((current) => current?.threadId === threadId ? null : current)
             setWorkspace((state) => {
               const previous = state.conversations.find((item) => item.threadId === threadId)
@@ -938,12 +946,14 @@ export function useWorkspaceHistory({
             })
             return
           }
-        } catch {
+        } catch (error) {
           const current = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
           if (current && latestWorkspace.current.currentThreadId === threadId
             && !controller.signal.aborted && hydrationRequests.current.get(threadId) === request
             && (!requestIdentity || matchesTaskTraceRequestIdentity(current, requestIdentity))) {
-            setHydrationState({ threadId, status: 'failed' })
+            const unavailable = isConversationUnavailable(error)
+            request.result = { phase: unavailable ? 'unavailable' : 'failed' }
+            setHydrationState({ threadId, status: 'failed', unavailable })
             onToast('error', t('会话加载失败，请重试'))
           }
         } finally {
@@ -1002,6 +1012,13 @@ export function useWorkspaceHistory({
     })
     return () => { disposed = true }
   }, [activation])
+
+  const recheckConversationHistory = useCallback(async (threadId: string): Promise<HistoryRefreshResult> => {
+    const completion = hydrateConversation(threadId, { refresh: true })
+    const request = hydrationRequests.current.get(threadId)
+    await completion
+    return request?.result ?? { phase: 'failed' }
+  }, [hydrateConversation])
 
   const loadOlderTrace = useCallback(async (
     threadId: string,
@@ -1224,6 +1241,19 @@ export function useWorkspaceHistory({
     taskTraceRequests.current.clear()
   }, [])
 
+  const historyRefresh = useMemo<HistoryActivationRefresh | undefined>(() => {
+    if (!activation) return undefined
+    const selectedHydration = hydrationState?.threadId === activation.threadId ? hydrationState : undefined
+    return {
+      epoch: activation.foreground,
+      phase: settledActivation !== activation || selectedHydration?.status === 'loading'
+        ? 'pending'
+        : selectedHydration?.status === 'failed'
+          ? selectedHydration.unavailable ? 'unavailable' : 'failed'
+          : 'ready',
+    }
+  }, [activation, hydrationState, settledActivation])
+
   return {
     historyConversations,
     historyDayRanges,
@@ -1237,7 +1267,8 @@ export function useWorkspaceHistory({
     isHistoryBootstrapped,
     historyBootstrapStatus,
     hydrationState,
-    isActivationRefreshing: activation !== null && settledActivation !== activation,
+    historyRefresh,
+    recheckConversationHistory,
     taskTraceLoadFailed: selectedTaskTraceLoadFailed,
     loadMoreHistory,
     retryHistoryLoad,

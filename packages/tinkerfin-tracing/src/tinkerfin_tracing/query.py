@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from collections.abc import AsyncIterator, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
 from typing import TypeVar, cast
@@ -18,6 +20,12 @@ from ._graph_projection import (
     reduce_trace_graph_records,
 )
 from ._models import TraceModel
+from ._projection_cache import (
+    ProjectionRegistry,
+    _ProjectionScope,
+    _ProjectionState,
+)
+from .codec import CanonicalTracePayloadCodec
 from .errors import (
     InvalidTraceCursor,
     TraceProjectionCheckpointConflict,
@@ -26,7 +34,7 @@ from .errors import (
     TraceStoreProtocolError,
     TraceThreadNotFound,
 )
-from .facts import MessageFact, TraceEvent, TraceSemanticFact
+from .facts import MessageFact, TraceEvent
 from .follow import TraceFollow, _close_trace_source, create_trace_follow
 from .graph import (
     TraceGraph,
@@ -40,6 +48,7 @@ from .projection import (
     CoreProjection,
     CoreProjectionState,
     RegisteredTraceProjection,
+    _apply_projection_fact,
     advance_core_projection_state,
     advance_projection_state,
     empty_core_projection_state,
@@ -72,6 +81,14 @@ from .views import (
 
 EntityT = TypeVar("EntityT", bound=BaseModel)
 _CORE_PROJECTION_NAME = "tinkerfin.core.summary"
+
+
+def _projection_registry(
+    values: Mapping[str, RegisteredTraceProjection],
+) -> ProjectionRegistry:
+    return (
+        values if isinstance(values, ProjectionRegistry) else ProjectionRegistry(values)
+    )
 
 
 class _CursorPayload(TraceModel, frozen=True):
@@ -147,9 +164,10 @@ class TraceThread:
         self._graph_query_limits = graph_query_limits
         self._turn_limit = turn_limit
         self._head_requested = head_requested
-        self._projection_registry = projections
+        self._projection_registry = _projection_registry(projections)
         self._projection_names = projection_names
         self._projection_results = MappingProxyType(dict(projection_results))
+        self._projection_states: dict[str, _ProjectionState] = {}
         self._deleted = False
 
     @property
@@ -430,6 +448,9 @@ class TraceThread:
             core_state = self._core_state
             previous = self._core
             previous_graph = self._graph
+            # Each follower retains its own exact prefix independently of cache
+            # eviction, newer queries, and other followers of this same handle.
+            projection_states = dict(self._projection_states)
             batches = self._store.follow(self.key, after_seq=self.as_of_seq)
             primary_error: BaseException | None = None
             try:
@@ -439,6 +460,7 @@ class TraceThread:
                             "Trace Store returned an invalid follow update"
                         )
                     batch = stored_update.events
+                    previous_seq = core_state.as_of_seq
                     _validate_event_batch(
                         batch,
                         key=self.key,
@@ -460,6 +482,20 @@ class TraceThread:
                         for event in batch
                         if event.fact.identity.run_id in current.selected_run_ids
                     )
+                    projection_views = await _projection_results(
+                        self._projection_registry,
+                        self._projection_names,
+                        store=self._store,
+                        key=self.key,
+                        core_state=core_state,
+                        head_run_id=current.selected_head,
+                        run_ids=current.selected_run_ids,
+                        as_of_seq=core_state.as_of_seq,
+                        previous_states=projection_states,
+                        events=batch,
+                        after_seq=previous_seq,
+                    )
+                    projection_states = projection_views.states
                     if not selected_batch and current.summary == previous.summary:
                         previous = current
                         continue
@@ -471,16 +507,6 @@ class TraceThread:
                         core=current,
                         turn_limit=self._turn_limit,
                         limits=self._graph_query_limits,
-                    )
-                    projection_results = await _projection_results(
-                        self._projection_registry,
-                        self._projection_names,
-                        store=self._store,
-                        key=self.key,
-                        core_state=core_state,
-                        head_run_id=current.selected_head,
-                        run_ids=current.selected_run_ids,
-                        as_of_seq=core_state.as_of_seq,
                     )
                     update = TraceUpdate(
                         generation=self.key.generation,
@@ -506,7 +532,7 @@ class TraceThread:
                         summary=current.summary,
                         projections={
                             name: result.model_dump(mode="json", by_alias=True)
-                            for name, result in projection_results.items()
+                            for name, result in projection_views.results.items()
                         },
                     )
                     previous = current
@@ -516,6 +542,7 @@ class TraceThread:
                 primary_error = error
                 raise
             finally:
+                projection_states.clear()
                 await _close_trace_source(
                     batches,
                     primary_error=primary_error,
@@ -680,7 +707,18 @@ async def build_trace_thread(
         turn_limit=limit,
         limits=graph_query_limits,
     )
-    return TraceThread(
+    registry = _projection_registry(projections)
+    projection_views = await _projection_results(
+        registry,
+        projection_names,
+        store=store,
+        key=snapshot.key,
+        core_state=core_state,
+        head_run_id=core.selected_head,
+        run_ids=core.selected_run_ids,
+        as_of_seq=snapshot.as_of_seq,
+    )
+    thread = TraceThread(
         store=store,
         snapshot=snapshot,
         core_state=core_state,
@@ -689,19 +727,12 @@ async def build_trace_thread(
         graph_query_limits=graph_query_limits,
         turn_limit=limit,
         head_requested=head_run_id,
-        projections=projections,
+        projections=registry,
         projection_names=projection_names,
-        projection_results=await _projection_results(
-            projections,
-            projection_names,
-            store=store,
-            key=snapshot.key,
-            core_state=core_state,
-            head_run_id=core.selected_head,
-            run_ids=core.selected_run_ids,
-            as_of_seq=snapshot.as_of_seq,
-        ),
+        projection_results=projection_views.results,
     )
+    thread._projection_states = projection_views.states
+    return thread
 
 
 def _validate_snapshot(snapshot: StoreThreadSnapshot) -> None:
@@ -838,22 +869,6 @@ async def read_lineage_events(
         after_seq=0,
         as_of_seq=as_of_seq,
     )
-
-
-async def _read_lineage_facts(
-    store: TraceStore,
-    key: TraceThreadKey,
-    *,
-    run_ids: frozenset[str],
-    as_of_seq: int,
-) -> tuple[TraceSemanticFact, ...]:
-    events = await read_lineage_events(
-        store,
-        key,
-        run_ids=run_ids,
-        as_of_seq=as_of_seq,
-    )
-    return tuple(event.fact for event in events)
 
 
 async def _read_events_for_runs(
@@ -994,6 +1009,24 @@ def _validate_limit(value: int) -> None:
         raise ValueError("limit must be between 1 and 1000")
 
 
+@dataclass(frozen=True, slots=True)
+class _ProjectionViews:
+    results: dict[str, BaseModel]
+    states: dict[str, _ProjectionState]
+
+
+@dataclass(frozen=True, slots=True)
+class _ProjectionSeed:
+    """Bind one extension to its independently proven starting prefix."""
+
+    projection: RegisteredTraceProjection
+    candidate: _ProjectionState | None
+
+    @property
+    def as_of_seq(self) -> int:
+        return 0 if self.candidate is None else self.candidate.as_of_seq
+
+
 async def _projection_results(
     registry: Mapping[str, RegisteredTraceProjection],
     names: tuple[str, ...],
@@ -1004,28 +1037,88 @@ async def _projection_results(
     head_run_id: str,
     run_ids: frozenset[str],
     as_of_seq: int,
-) -> dict[str, BaseModel]:
-    """Finish requested business Projections from Run-scoped incremental cache."""
+    previous_states: Mapping[str, _ProjectionState] | None = None,
+    events: tuple[TraceEvent, ...] | None = None,
+    after_seq: int | None = None,
+) -> _ProjectionViews:
+    """Finish independent views from proven prefixes, never shared mutable state."""
 
-    results: dict[str, BaseModel] = {}
+    registrations = _projection_registry(registry)
+    stored_seeds: list[_ProjectionSeed] = []
+    following_seeds: list[_ProjectionSeed] = []
     for name in names:
-        projection = registry.get(name)
+        projection = registrations.get(name)
         if projection is None:
             raise TraceProjectionFailed(
                 "Unknown Trace Projection",
                 context={"projection": name},
             )
-        state = await load_projection_state(
-            projection,
-            store=store,
-            key=key,
-            core_state=core_state,
-            head_run_id=head_run_id,
-            run_ids=run_ids,
-            as_of_seq=as_of_seq,
+        scope = _ProjectionScope(key, name, head_run_id)
+        candidate = None if previous_states is None else previous_states.get(name)
+        following = (
+            candidate is not None
+            and candidate.as_of_seq == after_seq
+            and candidate.can_seed(
+                scope,
+                run_ids=run_ids,
+                as_of_seq=as_of_seq,
+                core_state=core_state,
+            )
         )
+        if not following:
+            candidate = registrations.seed(
+                scope,
+                run_ids=run_ids,
+                as_of_seq=as_of_seq,
+                core_state=core_state,
+            )
+        seed = _ProjectionSeed(projection, candidate)
+        if following and events is not None:
+            following_seeds.append(seed)
+        else:
+            stored_seeds.append(seed)
+    folded = await _fold_projection_states(
+        tuple(stored_seeds),
+        store=store,
+        key=key,
+        run_ids=run_ids,
+        as_of_seq=as_of_seq,
+    )
+    if following_seeds:
+        folded.update(
+            await _fold_projection_states(
+                tuple(following_seeds),
+                store=store,
+                key=key,
+                run_ids=run_ids,
+                as_of_seq=as_of_seq,
+                events=events,
+            )
+        )
+    results: dict[str, BaseModel] = {}
+    states: dict[str, _ProjectionState] = {}
+    for name in names:
+        projection = registrations[name]
+        state = folded[name]
         results[name] = finish_projection(projection, state)
-    return results
+        try:
+            data = (
+                CanonicalTracePayloadCodec()
+                .encode_json(state.model_dump(mode="json", by_alias=True))
+                .data
+            )
+        except Exception as error:
+            raise TraceProjectionFailed(
+                "Trace Projection state is not serializable",
+                context={"projection": name},
+                cause=error,
+            ) from error
+        retained = _ProjectionState(
+            _ProjectionScope(key, name, head_run_id), run_ids, as_of_seq, data
+        )
+        states[name] = retained
+        registrations.remember(retained)
+    return _ProjectionViews(results, states)
 
 
 async def load_projection_state(
@@ -1038,97 +1131,121 @@ async def load_projection_state(
     run_ids: frozenset[str],
     as_of_seq: int,
 ) -> BaseModel:
-    """Load, increment, and CAS one Run-scoped custom Projection state."""
+    """Fold one selected lineage without retaining mutable or durable cache state."""
 
-    while True:
-        checkpoint: TraceProjectionCheckpoint | None = None
-        checkpoint_run_id: str | None = head_run_id
-        visited: set[str] = set()
-        while checkpoint_run_id is not None and checkpoint_run_id not in visited:
-            visited.add(checkpoint_run_id)
-            checkpoint = await store.load_projection_checkpoint(
-                key,
-                projection_name=projection.name,
-                run_id=checkpoint_run_id,
-                as_of_seq=as_of_seq,
-            )
-            if checkpoint is not None:
-                break
-            run = core_state.runs.get(checkpoint_run_id)
-            checkpoint_run_id = None if run is None else run.parent_run_id
-        if checkpoint is None:
-            facts = await _read_lineage_facts(
-                store,
-                key,
-                run_ids=run_ids,
-                as_of_seq=as_of_seq,
-            )
-            state = advance_projection_state(
-                projection,
-                projection.initial_state(),
-                facts,
-            )
-            expected_seq: int | None = None
-        else:
-            try:
-                state = projection.state_type.model_validate_json(
-                    json.dumps(
-                        checkpoint.state,
-                        ensure_ascii=False,
-                        allow_nan=False,
-                        separators=(",", ":"),
-                        sort_keys=True,
-                    ).encode()
-                )
-            except (TypeError, ValueError, ValidationError) as error:
-                raise TraceStoreProtocolError(
-                    "Trace Store returned an invalid Projection checkpoint",
-                    context={"projection": projection.name},
-                    cause=error,
-                ) from error
-            tail = await _read_events_for_runs(
-                store,
-                key,
-                run_ids=run_ids,
-                after_seq=checkpoint.as_of_seq,
-                as_of_seq=as_of_seq,
-            )
-            state = advance_projection_state(
-                projection,
-                state,
-                tuple(event.fact for event in tail),
-            )
-            expected_seq = (
-                checkpoint.as_of_seq if checkpoint.run_id == head_run_id else None
-            )
-        checkpoint_seq = 0 if checkpoint is None else checkpoint.as_of_seq
-        if (
-            checkpoint is not None
-            and checkpoint_seq == as_of_seq
-            and checkpoint.run_id == head_run_id
-        ):
-            return state
-        candidate = TraceProjectionCheckpoint(
-            key=key,
-            projection_name=projection.name,
-            run_id=head_run_id,
-            as_of_seq=as_of_seq,
-            state=cast(
-                JsonValue,
-                state.model_dump(mode="json", by_alias=True),
-            ),
+    del core_state, head_run_id
+    states = await _fold_projection_states(
+        (_ProjectionSeed(projection, None),),
+        store=store,
+        key=key,
+        run_ids=run_ids,
+        as_of_seq=as_of_seq,
+    )
+    return states[projection.name]
+
+
+def _projection_initial_state(seed: _ProjectionSeed) -> BaseModel:
+    projection = seed.projection
+    try:
+        return (
+            advance_projection_state(projection, projection.initial_state(), ())
+            if seed.candidate is None
+            else projection.state_type.model_validate_json(seed.candidate.data)
         )
-        try:
-            await store.save_projection_checkpoint(
-                candidate,
-                expected_as_of_seq=expected_seq,
+    except TraceProjectionFailed:
+        raise
+    except Exception as error:
+        raise TraceProjectionFailed(
+            "Trace Projection state is invalid",
+            context={"projection": projection.name},
+            cause=error,
+        ) from error
+
+
+async def _fold_projection_states(
+    seeds: tuple[_ProjectionSeed, ...],
+    *,
+    store: TraceStore,
+    key: TraceThreadKey,
+    run_ids: frozenset[str],
+    as_of_seq: int,
+    events: tuple[TraceEvent, ...] | None = None,
+) -> dict[str, BaseModel]:
+    """Advance independent states while reading each bounded page only once.
+
+    Cold readers share a scan starting at the earliest proven seed. Each extension
+    skips facts already included in its own state and receives an isolated fact,
+    preserving its validation and cancellation boundaries. Followers instead use
+    their already validated contiguous batch. Neither path retains the full ledger.
+    """
+
+    states = {seed.projection.name: _projection_initial_state(seed) for seed in seeds}
+    if not seeds:
+        return states
+    cursor = min(seed.as_of_seq for seed in seeds)
+    if events is not None:
+        _validate_projection_page(
+            events, key=key, after_seq=cursor, as_of_seq=as_of_seq
+        )
+        if (events[-1].trace_seq if events else cursor) != as_of_seq:
+            raise TraceStoreProtocolError(
+                "Trace Projection follow prefix is incomplete"
             )
-        except TraceProjectionCheckpointConflict as error:
-            current = error.context.get("current_as_of_seq")
-            if isinstance(current, int) and current > as_of_seq:
-                return state
-            continue
-        return state
+        await _fold_projection_page(seeds, states, events, run_ids=run_ids)
+        return states
+    while cursor < as_of_seq:
+        batch = await store.read_events(
+            key,
+            after_seq=cursor,
+            as_of_seq=as_of_seq,
+            limit=store.limits.follow_batch_size,
+        )
+        if not batch:
+            raise TraceStoreProtocolError("Trace Projection event prefix is incomplete")
+        _validate_projection_page(batch, key=key, after_seq=cursor, as_of_seq=as_of_seq)
+        await _fold_projection_page(seeds, states, batch, run_ids=run_ids)
+        cursor = batch[-1].trace_seq
+        del batch
+    return states
+
+
+def _validate_projection_page(
+    events: tuple[TraceEvent, ...],
+    *,
+    key: TraceThreadKey,
+    after_seq: int,
+    as_of_seq: int,
+) -> None:
+    _validate_event_batch(events, key=key, expected_after=after_seq)
+    if any(
+        event.trace_seq > as_of_seq
+        or event.fact.identity.namespace != key.namespace
+        or event.fact.identity.thread_id != key.thread_id
+        for event in events
+    ):
+        raise TraceStoreProtocolError("Trace Projection events exceed the fixed scope")
+
+
+async def _fold_projection_page(
+    seeds: tuple[_ProjectionSeed, ...],
+    states: dict[str, BaseModel],
+    events: tuple[TraceEvent, ...],
+    *,
+    run_ids: frozenset[str],
+) -> None:
+    for event in events:
+        for seed in seeds:
+            if event.trace_seq <= seed.as_of_seq:
+                continue
+            # In-memory reads may not yield. Observe cancellation before every
+            # extension transition without weakening individual state validation.
+            await asyncio.sleep(0)
+            if event.fact.identity.run_id in run_ids:
+                projection = seed.projection
+                states[projection.name] = _apply_projection_fact(
+                    projection, states[projection.name], event.fact
+                )
+    await asyncio.sleep(0)
 
 
 async def _read_selected_events(

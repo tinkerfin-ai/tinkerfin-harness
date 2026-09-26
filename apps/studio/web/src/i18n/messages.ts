@@ -1,4 +1,6 @@
 export const englishMessages = {
+  '正在同步会话状态': 'Syncing conversation status',
+  '会话状态同步失败，链路为已读取快照': 'Conversation status could not sync; showing the loaded trace',
   '压缩': 'Compact',
   '摘要': 'Summary',
   '压缩上下文': 'Compact context',

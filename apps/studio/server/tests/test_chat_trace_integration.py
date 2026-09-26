@@ -1143,11 +1143,16 @@ async def test_manual_compaction_uses_registered_run_replay_without_chat_or_titl
 
     from tinkerfin_messaging import Messaging
     from tinkerfin_studio.conversation.request import CompactRequest
-    from tinkerfin_studio.conversation.todo_groups import TodoGroupQueryExecutor
+    from tinkerfin_studio.conversation.todo_groups import (
+        TODO_PROJECTION,
+        TodoGroupProjection,
+        TodoGroupProjectionResult,
+        render_task_trace,
+    )
     from tinkerfin_tracing import Tracer
 
     model = _ToolModel(responses=["最近回复", "保留项目目标与报告要求", "继续回复"])
-    tracer = Tracer()
+    tracer = Tracer(projections=(TodoGroupProjection(),))
     factory = TinkerFin(checkpointer=InMemorySaver()).with_observer(tracer)
     runtime = factory.with_namespace("ns_1").build(
         model=model,
@@ -1221,16 +1226,19 @@ async def test_manual_compaction_uses_registered_run_replay_without_chat_or_titl
         titles.start.assert_not_called()
         after = (await runtime.agui.history(tracer).get("compact-thread")).snapshot
         assert before.messages == after.messages
-        trace = await tracer.get(runtime.thread_identity("compact-thread"))
-        projector = await TodoGroupQueryExecutor().project(trace)
-        try:
-            task_trace = projector.snapshot(
-                status=trace.status, completeness=trace.completeness
-            )
-            assert task_trace.status == "ready"
-            assert not task_trace.todo_groups
-        finally:
-            projector.close()
+        trace = await tracer.get(
+            runtime.thread_identity("compact-thread"),
+            projections=(TODO_PROJECTION,),
+        )
+        task_trace = render_task_trace(
+            TodoGroupProjectionResult.model_validate(
+                trace.projections[TODO_PROJECTION]
+            ),
+            status=trace.status,
+            completeness=trace.completeness,
+        )
+        assert task_trace.status == "ready"
+        assert not task_trace.todo_groups
         registration = await repository.get_run(
             thread_pk=thread.id, run_id="compact-run"
         )

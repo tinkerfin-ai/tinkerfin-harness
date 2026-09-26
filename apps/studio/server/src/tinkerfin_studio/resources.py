@@ -42,8 +42,9 @@ from tinkerfin_studio.conversation.coordinator import (
     ConversationTraceCoordinator,
 )
 from tinkerfin_studio.conversation.failures import ConversationFailureProjection
+from tinkerfin_studio.conversation.history_queries import HistoryQueryAdmission
 from tinkerfin_studio.conversation.titles import ConversationTitles
-from tinkerfin_studio.conversation.todo_groups import TodoGroupQueryExecutor
+from tinkerfin_studio.conversation.todo_groups import TodoGroupProjection
 from tinkerfin_studio.health import ReadinessService
 from tinkerfin_studio.infrastructure.database import Database
 from tinkerfin_studio.infrastructure.redis_client import create_redis_client
@@ -158,7 +159,7 @@ class ApplicationResources:
     agent_subagents: dict[str, SubagentSettings]
     tinkerfin: TinkerFin
     tracer: Tracer
-    todo_group_query: TodoGroupQueryExecutor
+    history_queries: HistoryQueryAdmission
     messaging: Messaging
     conversation_channel: AgUiChannel
     sandbox_manager: OpenSandboxManager[str]
@@ -251,13 +252,16 @@ def build_lifespan():
                 # 接收请求前检查轨迹存储，数据库连接仍由应用统一管理
                 await trace_store.setup()
                 tracer = Tracer(
-                    projections=(ConversationFailureProjection(),),
+                    projections=(
+                        ConversationFailureProjection(),
+                        TodoGroupProjection(),
+                    ),
                     store=trace_store,
                     capture_policy=CapturePolicy.public_history(
                         include_error_messages=True
                     ),
                 )
-                todo_group_query = TodoGroupQueryExecutor()
+                history_queries = HistoryQueryAdmission()
                 # 为会话记录运行轨迹；轨迹写入失败时中止运行
                 # 保留有长度限制的错误摘要，省略模型的内部推理内容
                 tinkerfin = TinkerFin(
@@ -349,7 +353,7 @@ def build_lifespan():
                     agent_subagents=agent_subagents,
                     tinkerfin=tinkerfin,
                     tracer=tracer,
-                    todo_group_query=todo_group_query,
+                    history_queries=history_queries,
                     messaging=messaging,
                     conversation_channel=channel,
                     sandbox_manager=sandbox_manager,

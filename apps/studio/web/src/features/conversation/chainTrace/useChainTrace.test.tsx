@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   TraceGraphDelta,
   TraceGraphEvent,
-  TraceGraphPage,
+  TraceGraphQueryPage,
 } from '../../../api/conversation/traceGraph'
 import { useChainTrace } from './useChainTrace'
 
@@ -14,7 +14,9 @@ vi.mock('../../../api/conversation/traceGraph', async (importOriginal) => ({
   followTraceGraph,
 }))
 
-const page: TraceGraphPage = {
+const page: TraceGraphQueryPage = {
+  generation: 'generation-test',
+  headRunId: 'run-fixture',
   turns: [{
     id: 'turn-1',
     ordinal: 1,

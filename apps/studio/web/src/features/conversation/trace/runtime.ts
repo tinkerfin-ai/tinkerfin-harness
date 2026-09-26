@@ -9,11 +9,11 @@ import type {
 } from '../../../api/conversation/history'
 import { parseRunFailures, traceObservationTime } from '../../../api/conversation/history'
 import {
-  parseTraceGraph,
-  type TraceGraph,
-  type TraceGraphDelta,
-  type TraceGraphNode,
-} from '../../../api/conversation/traceGraph'
+  parseConversationGraph,
+  type ConversationGraph,
+  type ConversationGraphDelta,
+  type ConversationGraphNode,
+} from '../../../api/conversation/historyGraph'
 import type { TaskTraceSnapshot } from '../../../api/conversation/taskTrace'
 import { ConversationError } from '../../../api/conversation/errors'
 import type {
@@ -30,7 +30,7 @@ import type {
 import { approvalItemsFromInterrupts, planInteractionFromInterrupts } from '../agui'
 
 type TraceSnapshot = DeepReadonly<ConversationHistoryCoreDetail>
-type TraceNode = DeepReadonly<TraceGraphNode>
+type TraceNode = DeepReadonly<ConversationGraphNode>
 
 const isObject = (value: unknown): value is DeepReadonly<JsonObject> => (
   value != null && typeof value === 'object' && !Array.isArray(value)
@@ -49,7 +49,7 @@ const elapsedMs = (startedAt: string, completedAt?: string | null) => {
 }
 
 const nodeMessageStatus = (
-  status: TraceGraphNode['status'],
+  status: ConversationGraphNode['status'],
 ): NonNullable<Message['meta']>['status'] => {
   switch (status) {
     case 'running': return 'running'
@@ -101,9 +101,9 @@ const applyEntityDelta = <T extends { id: string }>(
 }
 
 const applyTraceGraphDelta = (
-  current: DeepReadonly<TraceGraph>,
-  delta: TraceGraphDelta,
-): DeepReadonly<TraceGraph> => {
+  current: DeepReadonly<ConversationGraph>,
+  delta: ConversationGraphDelta,
+): DeepReadonly<ConversationGraph> => {
   if (delta.asOfSeq < current.asOfSeq) throw new ConversationError('stream_event_invalid')
   if (delta.asOfSeq === current.asOfSeq && (
     delta.turnUpserts.length || delta.turnRemoves.length
@@ -148,7 +148,7 @@ const applyTraceGraphDelta = (
     delta.turnUpserts,
     delta.turnRemoves,
   )].sort((left, right) => left.ordinal - right.ordinal || left.id.localeCompare(right.id))
-  return parseTraceGraph({
+  return parseConversationGraph({
     turns,
     nodes: delta.orderedNodeIds.map((id) => nodesById.get(id)),
     orderedNodeIds: [...delta.orderedNodeIds],
@@ -557,7 +557,7 @@ export const applyConversationTraceUpdate = (
   if (!previous) throw new ConversationError('stream_event_invalid')
   if (compareTraceObservation(previous, update) < 0) return conversation
   if (update.asOfSeq === previous.asOfSeq) {
-    if (update.events.length || update.facts.length) return conversation
+    if (update.hasEvents) return conversation
     if (!sameTraceValue(update.runFailures, previous.runFailures)
       || update.messages.upserts.length || update.messages.removes.length
       || update.reasoning.upserts.length || update.reasoning.removes.length

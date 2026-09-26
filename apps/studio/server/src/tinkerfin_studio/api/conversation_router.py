@@ -9,7 +9,6 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from starlette.responses import Response, StreamingResponse
 
-from tinkerfin.agui import AgUiTraceGraphPage
 from tinkerfin_studio.api.dependencies import (
     ConversationCommandDep,
     ConversationHistoryDep,
@@ -34,6 +33,7 @@ from tinkerfin_studio.conversation.schemas import (
     ConversationTitle,
 )
 from tinkerfin_studio.conversation.service import ConversationChatService
+from tinkerfin_studio.conversation.trace_responses import ConversationGraphQueryPage
 from tinkerfin_studio.resources import get_resources
 from tinkerfin_tracing import (
     TraceGraphFilter,
@@ -220,7 +220,7 @@ async def follow_trace(
 
 @router.get(
     "/{thread_id}/trace/graph",
-    response_model=ApiResponse[AgUiTraceGraphPage],
+    response_model=ApiResponse[ConversationGraphQueryPage],
 )
 async def query_trace_graph(
     thread_id: ThreadIdPath,
@@ -228,7 +228,7 @@ async def query_trace_graph(
     where: TraceGraphFilterDep,
     cursor: Annotated[str | None, Query(min_length=1, max_length=16_384)] = None,
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
-) -> ApiResponse[AgUiTraceGraphPage]:
+) -> ApiResponse[ConversationGraphQueryPage]:
     """按当前会话归属直接筛选链路节点"""
 
     return ApiResponse.success(

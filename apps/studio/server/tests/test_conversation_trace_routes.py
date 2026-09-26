@@ -4,6 +4,24 @@ from httpx import ASGITransport, AsyncClient
 
 from tinkerfin_studio.api.dependencies import get_conversation_history_service
 from tinkerfin_studio.application import create_application
+from tinkerfin_studio.conversation.trace_responses import ConversationTraceUpdate
+
+
+def test_conversation_schema_distinguishes_model_details_from_execution_requests():
+    """响应的实际字段与公开模式一致，链路查询仍提供完整模型请求"""
+    schemas = create_application(lifespan=None).openapi()["components"]["schemas"]
+    model = schemas["ConversationModelNode"]
+    assert "request" not in model["properties"]
+    assert model["additionalProperties"] is False
+    assert "request" in schemas["ConversationExecutionNode"]["properties"]
+    assert "request" in schemas["AgUiTraceGraphNode"]["properties"]
+    page = schemas["ConversationGraphQueryPage"]
+    assert {"generation", "headRunId"} <= set(page["required"])
+    update = ConversationTraceUpdate.model_json_schema(by_alias=True)
+    assert "hasEvents" in update["required"]
+    assert {"events", "facts", "projections", "summary"}.isdisjoint(
+        update["properties"]
+    )
 
 
 async def test_trace_graph_query_rejects_noncanonical_namespace() -> None:

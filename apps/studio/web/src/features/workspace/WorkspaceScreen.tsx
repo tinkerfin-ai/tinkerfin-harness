@@ -257,7 +257,8 @@ export function WorkspaceScreen({
     isHistoryBootstrapped,
     historyBootstrapStatus,
     hydrationState,
-    isActivationRefreshing,
+    historyRefresh,
+    recheckConversationHistory,
     taskTraceLoadFailed,
     loadMoreHistory,
     retryHistoryLoad,
@@ -1360,8 +1361,10 @@ export function WorkspaceScreen({
               threadId={conversation.threadId}
               active={workspaceView === 'trace'}
               live={conversation.runStatus === 'streaming' || conversation.runStatus === 'detached'}
-              observedAt={conversation.trace?.observedAt}
-              waitingForHistory={isActivationRefreshing}
+              liveRunId={conversation.activeRunId}
+              observation={conversation.trace}
+              historyRefresh={historyRefresh}
+              onRecheckHistory={recheckConversationHistory}
             />
           </ErrorBoundary>
         )}

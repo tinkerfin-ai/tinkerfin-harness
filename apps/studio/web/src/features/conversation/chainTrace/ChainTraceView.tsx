@@ -26,6 +26,7 @@ import {
 import { useI18n } from '../../../i18n'
 import type { JsonObject, JsonValue } from '../../../types'
 import { MarkdownContent } from '../components/MarkdownContent'
+import type { ConversationObservation, HistoryActivationRefresh, HistoryRefreshResult } from '../trace/historyRefresh'
 import { CodeText } from '../../../components/ui/CodeText'
 import { TraceLedger } from './TraceLedger'
 import { CompactionDetails } from './CompactionDetails'
@@ -388,8 +389,10 @@ export function ChainTraceView({
   threadId,
   active,
   live,
-  observedAt,
-  waitingForHistory = false,
+  liveRunId,
+  observation,
+  historyRefresh,
+  onRecheckHistory,
   onError,
   onWarning,
 }: {
@@ -399,8 +402,10 @@ export function ChainTraceView({
   threadId: string
   active: boolean
   live: boolean
-  observedAt?: string
-  waitingForHistory?: boolean
+  liveRunId?: string
+  observation?: ConversationObservation
+  historyRefresh?: HistoryActivationRefresh
+  onRecheckHistory?: (threadId: string) => Promise<HistoryRefreshResult>
   onError?: (message: string) => void
   onWarning?: (message: string) => void
 }) {
@@ -446,7 +451,7 @@ export function ChainTraceView({
   const filter = useMemo(() => ({
     query: searchQuery || undefined,
   }), [searchQuery])
-  const trace = useChainTrace({ threadId, active, live, observedAt, waitingForHistory, filter, limit: 1000 })
+  const trace = useChainTrace({ threadId, active, live, liveRunId, observation, historyRefresh, onRecheckHistory, filter, limit: 1000 })
   useEffect(() => {
     if (trace.state.phase === 'error') latestErrorHandler.current?.(t('链路加载失败'))
   }, [trace.state.phase, t])
@@ -734,6 +739,18 @@ export function ChainTraceView({
             </div>
           </div>
           </div>
+          {(trace.historyStatus === 'pending' || trace.historyStatus === 'failed') && (
+            <div className="chain-trace-history-feedback">
+              <FeedbackState
+                compact
+                appearance="retry"
+                kind={trace.historyStatus === 'pending' ? 'loading' : 'error'}
+                title={trace.historyStatus === 'pending' ? t('正在同步会话状态') : t('会话状态同步失败，链路为已读取快照')}
+                retryLabel={t('重新加载')}
+                onRetry={trace.historyStatus === 'failed' ? trace.retry : undefined}
+              />
+            </div>
+          )}
         </div>
       )}
 

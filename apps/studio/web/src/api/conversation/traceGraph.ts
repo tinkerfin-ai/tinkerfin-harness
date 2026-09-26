@@ -109,6 +109,12 @@ export interface TraceGraphPage {
 
 export type TraceGraph = Omit<TraceGraphPage, 'nextCursor'>
 
+/** 查询身份用于协调会话状态；图节点和游标仍属于同一个固定前缀 */
+export interface TraceGraphQueryPage extends TraceGraphPage {
+  generation: string
+  headRunId: string
+}
+
 export interface TraceGraphDelta {
   asOfSeq: number
   nextCursor: string | null
@@ -135,7 +141,7 @@ export interface TraceGraphFilter {
 }
 
 export type TraceGraphEvent =
-  | { type: 'snapshot'; snapshot: TraceGraphPage }
+  | { type: 'snapshot'; snapshot: TraceGraphQueryPage }
   | { type: 'update'; update: TraceGraphDelta }
   | { type: 'error'; code: 'trace_unavailable' }
 
@@ -314,7 +320,7 @@ const isReferenceId = (value: unknown) => (
   typeof value === 'string' && value.length > 0 && value.trim() === value
 )
 
-const parseNode = (value: unknown): TraceGraphNode => {
+export const parseTraceGraphNode = (value: unknown): TraceGraphNode => {
   if (!isRecord(value)
     || !hasOnlyKeys(value, NODE_KEYS)
     || !isCanonicalString(value.id, 2048)
@@ -458,10 +464,11 @@ const expectedNodeOrder = (
   return ordered
 }
 
-const parseTraceGraphValue = (
+const parseTraceGraphValue = <Node extends TraceGraphNode>(
   value: unknown,
   allowedKeys: Set<string>,
-): TraceGraph => {
+  parseNode: (value: unknown) => Node,
+): Omit<TraceGraph, 'nodes'> & { nodes: Node[] } => {
   if (!isRecord(value)
     || !hasOnlyKeys(value, allowedKeys)
     || !Array.isArray(value.turns)
@@ -514,8 +521,15 @@ const parseTraceGraphValue = (
   }
 }
 
+export const parseTraceGraphWithNodes = <Node extends TraceGraphNode>(
+  value: unknown,
+  parseNode: (value: unknown) => Node,
+): Omit<TraceGraph, 'nodes'> & { nodes: Node[] } => (
+  parseTraceGraphValue(value, GRAPH_KEYS, parseNode)
+)
+
 export const parseTraceGraph = (value: unknown): TraceGraph => (
-  parseTraceGraphValue(value, GRAPH_KEYS)
+  parseTraceGraphWithNodes(value, parseTraceGraphNode)
 )
 
 export const parseTraceGraphPage = (value: unknown): TraceGraphPage => {
@@ -523,12 +537,26 @@ export const parseTraceGraphPage = (value: unknown): TraceGraphPage => {
     || (value.nextCursor !== null && typeof value.nextCursor !== 'string')
   ) throw new ConversationError('stream_event_invalid')
   return {
-    ...parseTraceGraphValue(value, PAGE_KEYS),
+    ...parseTraceGraphValue(value, PAGE_KEYS, parseTraceGraphNode),
     nextCursor: value.nextCursor,
   }
 }
 
-export const parseTraceGraphDelta = (value: unknown): TraceGraphDelta => {
+export const parseTraceGraphQueryPage = (value: unknown): TraceGraphQueryPage => {
+  if (!isRecord(value)
+    || typeof value.generation !== 'string'
+    || typeof value.headRunId !== 'string'
+    || !isCanonicalString(value.generation, 1024)
+    || !isCanonicalString(value.headRunId, 1024)
+  ) throw new ConversationError('stream_event_invalid')
+  const { generation, headRunId, ...page } = value
+  return { ...parseTraceGraphPage(page), generation, headRunId }
+}
+
+export const parseTraceGraphDeltaWithNodes = <Node extends TraceGraphNode>(
+  value: unknown,
+  parseNode: (value: unknown) => Node,
+): Omit<TraceGraphDelta, 'nodeUpserts'> & { nodeUpserts: Node[] } => {
   if (!isRecord(value)
     || !hasOnlyKeys(value, DELTA_KEYS)
     || !Number.isSafeInteger(value.asOfSeq)
@@ -578,10 +606,14 @@ export const parseTraceGraphDelta = (value: unknown): TraceGraphDelta => {
   }
 }
 
+export const parseTraceGraphDelta = (value: unknown): TraceGraphDelta => (
+  parseTraceGraphDeltaWithNodes(value, parseTraceGraphNode)
+)
+
 const parseTraceGraphEvent = (value: unknown): TraceGraphEvent => {
   if (!isRecord(value)) throw new ConversationError('stream_event_invalid')
   if (value.type === 'snapshot' && hasOnlyKeys(value, SNAPSHOT_EVENT_KEYS)) {
-    return { type: 'snapshot', snapshot: parseTraceGraphPage(value.snapshot) }
+    return { type: 'snapshot', snapshot: parseTraceGraphQueryPage(value.snapshot) }
   }
   if (value.type === 'update' && hasOnlyKeys(value, UPDATE_EVENT_KEYS)) {
     return { type: 'update', update: parseTraceGraphDelta(value.update) }
@@ -625,7 +657,7 @@ export const queryTraceGraph = async (
   threadId: string,
   filter: TraceGraphFilter,
   options: { limit?: number; signal?: AbortSignal } = {},
-): Promise<TraceGraphPage> => parseTraceGraphPage(await requestJson<unknown>(
+): Promise<TraceGraphQueryPage> => parseTraceGraphQueryPage(await requestJson<unknown>(
   graphUrl(threadId, filter, {
     follow: false,
     limit: options.limit ?? 100,

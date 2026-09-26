@@ -5,16 +5,20 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
-from typing import cast
+from typing import Literal
 
+import pytest
 from pydantic import JsonValue
 
 from tinkerfin_contracts import RunIdentity, ThreadIdentity
 from tinkerfin_studio.conversation.failures import ConversationFailureProjection
+from tinkerfin_studio.conversation.history_queries import HistoryQueryAdmission
 from tinkerfin_studio.conversation.todo_groups import (
+    TODO_PROJECTION,
     TaskTraceSnapshot,
-    TodoGroupQueryExecutor,
+    TodoGroupProjection,
+    TodoGroupProjectionResult,
+    render_task_trace,
 )
 from tinkerfin_tracing import (
     CapturedValue,
@@ -25,7 +29,6 @@ from tinkerfin_tracing import (
     ToolFact,
     Tracer,
     TraceSemanticFact,
-    TraceThread,
     TraceWriter,
     TurnFact,
 )
@@ -168,61 +171,179 @@ async def _tracer_with_facts() -> tuple[Tracer, TraceWriter]:
     store = InMemoryTraceStore()
     writer = await store.open_writer(_IDENTITY)
     await writer.append(_trace_facts())
-    return Tracer(projections=(ConversationFailureProjection(),), store=store), writer
+    return Tracer(
+        projections=(ConversationFailureProjection(), TodoGroupProjection()),
+        store=store,
+    ), writer
 
 
-async def test_query_executor_projects_a_fixed_public_trace_prefix() -> None:
+async def test_registered_projection_renders_the_fixed_trace_prefix() -> None:
     tracer, writer = await _tracer_with_facts()
-    trace = await tracer.get(
-        ThreadIdentity(namespace="test", thread_id="thread:first-success"),
-        head_run_id="run-1",
-    )
-    executor = TodoGroupQueryExecutor(capacity=1)
-
-    projector = await executor.project(trace)
     try:
-        assert (
-            projector.snapshot(
-                status=trace.status,
-                completeness=trace.completeness,
+        for _ in range(2):
+            trace = await tracer.get(
+                ThreadIdentity(namespace="test", thread_id="thread:first-success"),
+                head_run_id="run-1",
+                projections=(TODO_PROJECTION,),
             )
-            == _expected_snapshot()
+            assert (
+                render_task_trace(
+                    TodoGroupProjectionResult.model_validate(
+                        trace.projections[TODO_PROJECTION]
+                    ),
+                    status=trace.status,
+                    completeness=trace.completeness,
+                )
+                == _expected_snapshot()
+            )
+
+        start = await tracer.get(
+            ThreadIdentity(namespace="test", thread_id="thread:first-success"),
+            head_run_id="run-1",
+            at_run_start=True,
+            projections=(TODO_PROJECTION,),
         )
-        assert executor.borrowed_tokens == 0
+        assert render_task_trace(
+            TodoGroupProjectionResult.model_validate(
+                start.projections[TODO_PROJECTION]
+            ),
+            status=start.status,
+            completeness=start.completeness,
+        ) == TaskTraceSnapshot(status="ready", todo_groups=())
+
+        without_todos = await tracer.get(
+            ThreadIdentity(namespace="test", thread_id="thread:first-success"),
+            head_run_id="run-1",
+        )
+        assert TODO_PROJECTION not in without_todos.projections
     finally:
-        projector.close()
         await writer.aclose()
 
 
-class _BlockingTrace:
-    def __init__(self) -> None:
-        self.entered = 0
-        self.first_entered = asyncio.Event()
-        self.release = asyncio.Event()
-
-    async def events(self, **_kwargs: object) -> object:
-        self.entered += 1
-        self.first_entered.set()
-        await self.release.wait()
-        return SimpleNamespace(items=(), next_cursor=None)
-
-
-async def test_query_limiter_only_bounds_initial_replay() -> None:
-    trace = _BlockingTrace()
-    executor = TodoGroupQueryExecutor(capacity=1, timeout_seconds=1)
-
-    first = asyncio.create_task(executor.project(cast(TraceThread, trace)))
-    await asyncio.wait_for(trace.first_entered.wait(), timeout=1)
-    second = asyncio.create_task(executor.project(cast(TraceThread, trace)))
-    await asyncio.sleep(0)
-
-    assert trace.entered == 1
-    assert executor.borrowed_tokens == 1
-    trace.release.set()
-    first_projector, second_projector = await asyncio.gather(first, second)
+async def test_todo_follow_applies_facts_then_calibrates_writer_loss() -> None:
+    tracer, writer = await _tracer_with_facts()
     try:
-        assert trace.entered == 2
-        assert executor.borrowed_tokens == 0
+        trace = await tracer.get(
+            ThreadIdentity(namespace="test", thread_id="thread:first-success"),
+            head_run_id="run-1",
+            projections=(TODO_PROJECTION,),
+        )
+        initial = TodoGroupProjectionResult.model_validate(
+            trace.projections[TODO_PROJECTION]
+        )
+        async with trace.follow() as updates:
+            await writer.append(
+                (
+                    StateRevisionFact(
+                        source_observation_id="state-progress",
+                        identity=_IDENTITY,
+                        occurred_at=_OCCURRED_AT + timedelta(seconds=9),
+                        monotonic_ns=7,
+                        revision_id="state-progress",
+                        changes=_capture(
+                            {
+                                "todos": [
+                                    {
+                                        "id": "todo-1",
+                                        "content": "实现 Server",
+                                        "status": "completed",
+                                    },
+                                    {
+                                        "id": "todo-2",
+                                        "content": "实现 Web",
+                                        "status": "in_progress",
+                                    },
+                                ]
+                            }
+                        ),
+                    ),
+                )
+            )
+            progress = await anext(updates)
+            projected = TodoGroupProjectionResult.model_validate(
+                progress.projections[TODO_PROJECTION]
+            )
+            visible = render_task_trace(
+                projected,
+                status=progress.summary.status,
+                completeness=progress.summary.completeness,
+            )
+            assert [todo.status for todo in visible.todo_groups[0].todos] == [
+                "completed",
+                "running",
+            ]
+
+            await writer.aclose()
+            lost = await anext(updates)
+            assert lost.as_of_seq == progress.as_of_seq
+            assert not lost.events
+            lost_result = TodoGroupProjectionResult.model_validate(
+                lost.projections[TODO_PROJECTION]
+            )
+            assert lost_result == projected
+            lost_view = render_task_trace(
+                lost_result,
+                status=lost.summary.status,
+                completeness=lost.summary.completeness,
+            )
+            assert lost_view.todo_groups[0].status == "failed"
+            assert [todo.status for todo in lost_view.todo_groups[0].todos] == [
+                "completed",
+                "failed",
+            ]
+        assert (
+            render_task_trace(
+                initial, status=trace.status, completeness=trace.completeness
+            )
+            == _expected_snapshot()
+        )
     finally:
-        first_projector.close()
-        second_projector.close()
+        await writer.aclose()
+
+
+@pytest.mark.parametrize("cancelled", ["owner", "waiter"])
+async def test_initial_admission_releases_capacity_on_cancellation(
+    cancelled: Literal["owner", "waiter"],
+) -> None:
+    admission = HistoryQueryAdmission(capacity=1)
+    owner_entered = asyncio.Event()
+    waiter_attempted = asyncio.Event()
+    waiter_entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def hold_capacity(*, owner: bool) -> None:
+        if not owner:
+            waiter_attempted.set()
+        async with admission.admit():
+            (owner_entered if owner else waiter_entered).set()
+            await release.wait()
+
+    owner = asyncio.create_task(hold_capacity(owner=True))
+    tasks = [owner]
+    try:
+        await owner_entered.wait()
+        waiter = asyncio.create_task(hold_capacity(owner=False))
+        tasks.append(waiter)
+        await waiter_attempted.wait()
+        assert admission.borrowed_tokens == 1
+        assert not waiter_entered.is_set()
+        victim = owner if cancelled == "owner" else waiter
+        victim.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await victim
+        if cancelled == "owner":
+            await waiter_entered.wait()
+        else:
+            assert not waiter_entered.is_set()
+        assert admission.borrowed_tokens == 1
+        release.set()
+        await (waiter if cancelled == "owner" else owner)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    assert admission.borrowed_tokens == 0
+    async with admission.admit():
+        assert admission.borrowed_tokens == 1
+    assert admission.borrowed_tokens == 0

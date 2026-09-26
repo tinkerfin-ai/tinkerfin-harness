@@ -186,6 +186,21 @@ describe('ChainTraceView', () => {
     }))
   })
 
+  it.each([
+    ['pending', '正在同步会话状态'],
+    ['failed', '会话状态同步失败，链路为已读取快照'],
+  ])('会话观测 %s 时保留链路并展示可访问提示', (historyStatus, label) => {
+    const retry = vi.fn()
+    useChainTrace.mockReturnValue({ state: { phase: 'ready', page: graphPage(nodes) }, historyStatus, retry })
+    render(<ChainTraceView threadId="thread-status" active live={false} />)
+    expect(screen.getByText(label)).toBeVisible()
+    expect(screen.getByText(label).closest(historyStatus === 'pending' ? '[role="status"]' : '[role="alert"]')).not.toBeNull()
+    if (historyStatus === 'failed') {
+      fireEvent.click(screen.getByRole('button', { name: '重新加载' }))
+      expect(retry).toHaveBeenCalledOnce()
+    }
+  })
+
   it('压缩合并到上下文一行，详情页签各自展示输入和摘要', () => {
     const compactNodes = [
       node('compact', 'custom', 1, { name: 'context_compaction', contextKind: 'compaction', parentNodeId: 'input', request: { messages: [{ id: 'source', content: '原始选中消息' }] }, result: { status: 'not_reduced', generated_summary: '已生成的摘要文本', compacted_messages: 0 } }),

@@ -15,7 +15,7 @@ import {
   type ConversationHistoryDetail,
 } from './history'
 import { clearAuthSession, saveAuthSession } from '../../auth/session'
-import { emptyTraceGraph, emptyTraceGraphDelta } from '../../test/traceFixtures'
+import { emptyTraceGraph, emptyTraceGraphDelta, traceGraphNode, traceGraphWithNodes } from '../../test/traceFixtures'
 
 function envelope(data: unknown, code = 0, message = 'success', status = 200) {
   return new Response(JSON.stringify({ code, message, data }), {
@@ -57,6 +57,15 @@ const detail = (): ConversationHistoryDetail => ({ accessMode: 'write_approval',
 const frameworkDetail = (history: typeof frameworkResume.history | typeof frameworkResume.finalHistory) => ({
   ...detail(),
   ...history,
+  graph: {
+    ...history.graph,
+    nodes: history.graph.nodes.map(node => {
+      if (node.kind !== 'model') return node
+      const { request: _request, ...model } = node
+      void _request
+      return model
+    }),
+  },
   status: history.summary.status,
   completeness: history.summary.completeness,
   messageCount: history.summary.messageCount,
@@ -97,6 +106,74 @@ describe('conversation Trace client', () => {
   afterEach(() => {
     clearAuthSession()
     vi.unstubAllGlobals()
+  })
+
+  it.each(['rest', 'run', 'snapshot', 'update'] as const)('%s 使用不含模型请求的对话图并保留工具附件', async (transport) => {
+    const nodes = [
+      traceGraphNode({ id: 'model-1', kind: 'model', requestOmitted: true }),
+      traceGraphNode({ id: 'tool-1', kind: 'tool', request: { path: '/report.pdf' }, result: {
+        content: [{ type: 'text', text: '报告', extras: { attachment: { id: 'attachment-1', filename: 'report.pdf' } } }],
+      } }),
+    ]
+    const source = { ...detail(), graph: traceGraphWithNodes(nodes, 4) }
+    const update = {
+      generation: source.generation, observedAt: source.observedAt, asOfSeq: 4, hasEvents: false,
+      messages: { upserts: [], removes: [] }, reasoning: { upserts: [], removes: [] },
+      interactions: { upserts: [], removes: [] }, state: source.state,
+      status: source.status, completeness: source.completeness,
+      messageCount: source.messageCount, toolCallCount: source.toolCallCount,
+      graph: { ...emptyTraceGraphDelta(4), nodeUpserts: source.graph.nodes,
+        orderedNodeIds: source.graph.orderedNodeIds, matchedNodeIds: source.graph.matchedNodeIds },
+    }
+    const read = async () => {
+      if (transport === 'rest') {
+        vi.stubGlobal('fetch', vi.fn(async () => envelope(source)))
+        return (await fetchConversationHistoryDetail(source.threadId, { includeTaskTrace: true })).graph.nodes
+      }
+      if (transport === 'run') {
+        vi.stubGlobal('fetch', vi.fn(async () => streamResponse({ type: 'snapshot', snapshot: source, replay: false })))
+        const stream = followConversationRun(source.threadId, source.headRunId, { includeTaskTrace: true, signal: new AbortController().signal })
+        try {
+          const first = await stream.next()
+          if (first.done || first.value.type !== 'snapshot') throw new Error('missing snapshot')
+          return first.value.snapshot.graph.nodes
+        } finally { await stream.return(undefined) }
+      }
+      vi.stubGlobal('fetch', vi.fn(async () => streamResponse(transport === 'snapshot'
+        ? { type: 'snapshot', snapshot: source }
+        : { type: 'update', update, runFailures: [], taskTrace: null })))
+      const stream = followConversationTrace(source.threadId, { includeTaskTrace: true })
+      try {
+        const first = await stream.next()
+        if (first.done || first.value.type === 'error') throw new Error('missing graph')
+        return first.value.type === 'snapshot' ? first.value.snapshot.graph.nodes : first.value.update.graph.nodeUpserts
+      } finally { await stream.return(undefined) }
+    }
+    const parsed = await read()
+    expect(parsed).toEqual(source.graph.nodes)
+    expect(Object.hasOwn(parsed[0]!, 'request')).toBe(false)
+    expect(parsed[0]!.requestOmitted).toBe(true)
+    Object.assign(source.graph.nodes[0]!, { request: null })
+    await expect(read()).rejects.toMatchObject({ code: 'stream_event_invalid' })
+  })
+
+  it.each([
+    { hasEvents: undefined }, { hasEvents: 0 }, { events: [] }, { facts: [] },
+    { projections: {} }, { summary: {} },
+  ])('增量拒绝缺失事件标记或未约定的原始证据 %j', async (invalid) => {
+    const source = detail()
+    vi.stubGlobal('fetch', vi.fn(async () => streamResponse({
+      type: 'update', runFailures: [], taskTrace: null,
+      update: {
+        generation: source.generation, observedAt: source.observedAt, asOfSeq: 4, hasEvents: false,
+        messages: { upserts: [], removes: [] }, reasoning: { upserts: [], removes: [] },
+        interactions: { upserts: [], removes: [] }, graph: emptyTraceGraphDelta(4),
+        state: source.state, status: source.status, completeness: source.completeness,
+        messageCount: source.messageCount, toolCallCount: source.toolCallCount, ...invalid,
+      },
+    })))
+    await expect(followConversationTrace(source.threadId, { includeTaskTrace: true }).next())
+      .rejects.toMatchObject({ code: 'stream_event_invalid' })
   })
 
   it.each([
@@ -186,8 +263,7 @@ describe('conversation Trace client', () => {
         asOfSeq: 5,
         generation: 'generation-test',
         observedAt: '2026-09-05T00:00:00.000001Z',
-        events: [],
-        facts: [],
+        hasEvents: false,
         messages: { upserts: [], removes: [] },
         reasoning: { upserts: [], removes: [] },
         graph: emptyTraceGraphDelta(5),
@@ -197,7 +273,6 @@ describe('conversation Trace client', () => {
         completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false },
         messageCount: 1,
         toolCallCount: 0,
-        projections: {}, runFailures: [],
       },
     }
     vi.stubGlobal('fetch', vi.fn(async () => streamResponse(snapshot, update)))
@@ -207,7 +282,7 @@ describe('conversation Trace client', () => {
       includeTaskTrace: true,
     })) received.push(event)
 
-    expect(received).toEqual([snapshot, update])
+    expect(received).toEqual([snapshot, { ...update, update: { ...update.update, runFailures: [] } }])
   })
 
   it('rejects a non-Trace SSE event instead of coercing it', async () => {
@@ -321,7 +396,7 @@ describe('conversation Trace client', () => {
         messages: { upserts: [message], removes: [] }, reasoning: { upserts: [], removes: [] },
         interactions: { upserts: [], removes: [] }, graph: emptyTraceGraphDelta(5),
         state: base.state, status: base.status, completeness: base.completeness,
-        events: [], facts: [], messageCount: 1, toolCallCount: 0, projections: {},
+        hasEvents: false, messageCount: 1, toolCallCount: 0,
       },
     }
     vi.stubGlobal('fetch', vi.fn(async () => streamResponse(update)))

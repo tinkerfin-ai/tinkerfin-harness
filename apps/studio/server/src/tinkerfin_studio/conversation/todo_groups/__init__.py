@@ -8,17 +8,24 @@ from .contracts import (
     TodoTraceItem,
     TodoTraceItemStatus,
 )
-from .projector import TodoGroupProjector
-from .query import TaskTraceQueryTimeout, TodoGroupQueryExecutor
+from .projection import (
+    TODO_PROJECTION,
+    TodoGroupProjection,
+    TodoGroupProjectionResult,
+    TodoGroupProjectionState,
+    render_task_trace,
+)
 
 __all__ = [
+    "TODO_PROJECTION",
     "TaskTraceErrorCode",
-    "TaskTraceQueryTimeout",
     "TaskTraceSnapshot",
     "TodoGroup",
-    "TodoGroupProjector",
-    "TodoGroupQueryExecutor",
+    "TodoGroupProjection",
+    "TodoGroupProjectionResult",
+    "TodoGroupProjectionState",
     "TodoGroupStatus",
     "TodoTraceItem",
     "TodoTraceItemStatus",
+    "render_task_trace",
 ]

@@ -199,7 +199,7 @@ function installFetch(options: {
       const threadId = decodeURIComponent(traceFollow[1] ?? '')
       const detail = details[threadId]
       if (!detail) throw new Error('missing Trace detail for ' + threadId)
-      const snapshot = { ...detail.graph, nextCursor: null }
+      const snapshot = { ...detail.graph, nextCursor: null, generation: detail.generation, headRunId: detail.headRunId }
       return traceFollow[2]
         ? jsonSseResponse({ type: 'snapshot', snapshot })
         : jsonResponse(snapshot)
@@ -776,7 +776,7 @@ describe('Studio Trace history integration', () => {
           return new Response(new ReadableStream<Uint8Array>({
             start(controller) {
               controller.enqueue(new TextEncoder().encode(`event: trace\ndata: ${JSON.stringify({
-                type: 'snapshot', snapshot: { ...initial.graph, nextCursor: null },
+                type: 'snapshot', snapshot: { ...initial.graph, nextCursor: null, generation: initial.generation, headRunId: initial.headRunId },
               })}\n\n`))
             },
             cancel: graphClosed,
@@ -834,7 +834,7 @@ describe('Studio Trace history integration', () => {
       if (path.endsWith('/trace') || path.endsWith('/trace/graph/follow')) {
         const snapshot = path.endsWith('/trace')
           ? details[THREAD_ID]
-          : { ...details[THREAD_ID].graph, nextCursor: null }
+          : { ...details[THREAD_ID].graph, nextCursor: null, generation: details[THREAD_ID].generation, headRunId: details[THREAD_ID].headRunId }
         return new Response(new ReadableStream<Uint8Array>({
           start(controller) {
             controller.enqueue(new TextEncoder().encode(
@@ -871,6 +871,41 @@ describe('Studio Trace history integration', () => {
     expect(historyCount()).toBe(before + 1)
     unmount()
     visibility.mockRestore()
+  })
+
+  it('链路历史返回 403 后显式重试重新核验会话，权限恢复才再次展示图', async () => {
+    const user = userEvent.setup()
+    const graph = traceGraphWithNodes([traceGraphNode({
+      id: 'recovered-answer', kind: 'assistant_message', name: 'AssistantMessage',
+      content: '权限恢复后的链路', startedSeq: 4, updatedSeq: 5,
+    })], 5)
+    const fetch = installFetch({ list: [historyItem()], details: { [THREAD_ID]: traceDetail({ graph }) } })
+    const defaultFetch = fetch.getMockImplementation()!
+    let historyRequests = 0
+    let graphRequests = 0
+    fetch.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(new URL(String(input), window.location.origin), init)
+      const path = new URL(request.url).pathname
+      if (path.endsWith('/trace/graph')) graphRequests += 1
+      if (path === `/api/conversation/${THREAD_ID}/history`) {
+        historyRequests += 1
+        if (historyRequests === 2) {
+          return Response.json({ code: 403, message: 'permission denied', data: null }, { status: 403 })
+        }
+      }
+      return defaultFetch(input, init)
+    })
+    render(<App />)
+    await screen.findByText('来自 Trace 的历史回复')
+    await user.click(screen.getByRole('tab', { name: '链路' }))
+    const panel = within(screen.getByRole('tabpanel', { name: '链路' }))
+    await panel.findByText('链路加载失败')
+    expect(panel.queryByText('权限恢复后的链路')).not.toBeInTheDocument()
+    const beforeRetry = graphRequests
+    await user.click(panel.getByRole('button', { name: '重新加载' }))
+    expect(await panel.findAllByText('权限恢复后的链路')).not.toHaveLength(0)
+    expect(historyRequests).toBe(3)
+    expect(graphRequests).toBe(beforeRetry + 1)
   })
 
   it('restores an approval from public Trace interaction references', async () => {

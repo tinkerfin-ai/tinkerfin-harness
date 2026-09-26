@@ -281,7 +281,7 @@ describe('权威快照的共享与隔离', () => {
     freezeSnapshot(initial.trace)
     const update: ConversationTraceUpdate = {
       asOfSeq: 9, generation: source.generation, observedAt: '2026-09-05T00:00:00.000001Z',
-      events: [], facts: [],
+      hasEvents: false,
       messages: { upserts: [{ ...source.messages[1], content: '追加结果' }], removes: [] },
       reasoning: { upserts: [], removes: [] },
       interactions: { upserts: [], removes: [] },
@@ -292,7 +292,7 @@ describe('权威快照的共享与隔离', () => {
       },
       state: { root: { todos: [{ content: '新任务', status: 'completed' }] }, subgraphs: {} },
       status: { ...source.status }, completeness: { ...source.completeness },
-      messageCount: source.messageCount, toolCallCount: source.toolCallCount, projections: {}, runFailures: [],
+      messageCount: source.messageCount, toolCallCount: source.toolCallCount, runFailures: [],
     }
     const updated = applyConversationTraceUpdate(initial, update, null, false)
     expect(updated.trace).not.toBe(initial.trace)
@@ -485,8 +485,7 @@ describe('Trace conversation projection', () => {
       asOfSeq: source.asOfSeq,
       generation: source.generation,
       observedAt: '2026-09-05T00:00:00.000001Z',
-      events: [],
-      facts: [],
+      hasEvents: false,
       messages: { upserts: [], removes: [] },
       reasoning: { upserts: [], removes: [] },
       interactions: { upserts: [], removes: [] },
@@ -506,7 +505,7 @@ describe('Trace conversation projection', () => {
       completeness: { ...source.completeness, missingTail: true },
       messageCount: source.messageCount,
       toolCallCount: source.toolCallCount,
-      projections: {}, runFailures: [],
+      runFailures: [],
     }
 
     const updated = applyConversationTraceUpdate(initial, update, null, true)
@@ -522,6 +521,10 @@ describe('Trace conversation projection', () => {
     expect(repeated.trace).toEqual(updated.trace)
     expect(applyConversationTraceUpdate(updated, {
       ...update, asOfSeq: source.asOfSeq - 1, status: source.status,
+    }, null, true)).toBe(updated)
+    expect(applyConversationTraceUpdate(updated, {
+      ...update, hasEvents: true,
+      messages: { upserts: [{ ...source.messages[1]!, content: '重复事件不会替换内容' }], removes: [] },
     }, null, true)).toBe(updated)
     expect(() => applyConversationTraceUpdate(updated, {
       ...update,
@@ -736,8 +739,7 @@ describe('Trace conversation projection', () => {
       asOfSeq: 10,
       generation: 'generation-test',
       observedAt: '2026-09-05T00:00:00.000001Z',
-      events: [],
-      facts: [],
+      hasEvents: false,
       messages: {
         upserts: [{
           ...detail().messages[1]!,
@@ -767,7 +769,7 @@ describe('Trace conversation projection', () => {
       completeness: { missingPrefix: false, missingTail: true, payloadOmitted: false },
       messageCount: 2,
       toolCallCount: 1,
-      projections: {}, runFailures: [],
+      runFailures: [],
     }, null, true)
 
     expect(updated.trace?.asOfSeq).toBe(10)
@@ -892,6 +894,7 @@ describe('Trace conversation projection', () => {
       {
         ...source.graph.nodes[0]!,
         id: 'tool-b',
+        kind: 'tool',
         status: 'waiting',
         sourceId: 'call-b',
         request: { content: 'B', file_path: '/multi-hitl-b.txt' },
@@ -899,6 +902,7 @@ describe('Trace conversation projection', () => {
       {
         ...source.graph.nodes[0]!,
         id: 'tool-a',
+        kind: 'tool',
         status: 'waiting',
         sourceId: 'call-a',
         request: { content: 'A', file_path: '/multi-hitl-a.txt' },
