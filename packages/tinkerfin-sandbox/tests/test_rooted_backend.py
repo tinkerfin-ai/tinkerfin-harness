@@ -8,6 +8,7 @@ import threading
 from collections.abc import Coroutine, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from contextvars import Context
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -1442,7 +1443,8 @@ async def test_cancelled_pending_async_call_cannot_use_a_replacement_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loop = asyncio.get_running_loop()
-    queued, release = asyncio.Event(), asyncio.Event()
+    queued: asyncio.Future[None] = loop.create_future()
+    release = asyncio.Event()
     create_task = loop.create_task
     owned: list[asyncio.Task[WriteResult]] = []
     old_backend = _RecordingBackend()
@@ -1452,13 +1454,16 @@ async def test_cancelled_pending_async_call_cannot_use_a_replacement_backend(
 
     def queue(
         coroutine: Coroutine[None, None, WriteResult],
+        *,
+        name: str | None = None,
+        context: Context | None = None,
     ) -> asyncio.Task[WriteResult]:
         async def delayed() -> WriteResult:
-            queued.set()
+            queued.set_result(None)
             await release.wait()
             return await coroutine
 
-        child = create_task(delayed())
+        child = create_task(delayed(), name=name, context=context)
         # The callback closes the accepted coroutine even if the wrapper is
         # cancelled before its first step. The test owns both task and input.
         child.add_done_callback(lambda _task: coroutine.close())
@@ -1469,16 +1474,22 @@ async def test_cancelled_pending_async_call_cannot_use_a_replacement_backend(
     try:
         with monkeypatch.context() as patch:
             patch.setattr(loop, "create_task", queue)
-            await queued.wait()
+            done, _pending = await asyncio.wait(
+                (operation, queued), return_when=asyncio.FIRST_COMPLETED
+            )
+            if operation in done:
+                await operation
+                pytest.fail("The operation completed before its call was queued")
             operation.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await operation
         handle._replace_backend(cast(OpenSandboxBackend, new_backend))
         release.set()
         await asyncio.gather(*owned, return_exceptions=True)
-        assert old_backend.write_calls == []
-        assert new_backend.write_calls == []
+        assert old_backend.rooted_upload_calls == []
+        assert new_backend.rooted_upload_calls == []
     finally:
+        queued.cancel()
         release.set()
         if not operation.done():
             operation.cancel()

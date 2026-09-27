@@ -15,6 +15,8 @@ const models = [
   {model_id:'local',connection_id:'ollama',display_name:'Qwen3 14B',purpose:'chat',model_name:'qwen3:14b',image_support:'unknown',reasoning_enabled:true,enabled:true,is_default:false,sort_order:0,generation_options:{},chat_options},
 ]
 async function setup(page: Page, crowded = false) {
+  // 布局测量使用静态画面，避免把弹窗入场过程记录为尺寸基线
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   const savedModels = crowded ? [...models, ...Array.from({length: 20}, (_, index) => ({...models[1], model_id: `extra-${index}`, display_name: `Model ${index}`, model_name: `model-${index}`}))] : models
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname
@@ -259,7 +261,6 @@ test('列表未溢出时保持静止且不产生滚动回弹', async ({page}) =>
 test.describe('模型配置触控', () => {
   test.use({hasTouch:true,viewport:{width:320,height:960}})
   test('表单和操作保持可触控尺寸',async ({page},testInfo) => {
-    await page.emulateMedia({reducedMotion:'reduce'})
     await setup(page)
     await openSettings(page,'zh-CN','light')
     const dialog = page.getByRole('dialog',{name:'设置',exact:true})
