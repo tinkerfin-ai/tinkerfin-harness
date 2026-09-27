@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tinkerfin.media import AttachmentContent
 from tinkerfin_contracts.media import Attachment
+from tinkerfin_notifications import Notifications
 from tinkerfin_studio.api.errors import AttachmentErrorCode, BusinessException
 from tinkerfin_studio.attachments.documents import DocumentProcessor
 from tinkerfin_studio.attachments.entity import (
@@ -37,6 +38,7 @@ from tinkerfin_studio.attachments.storage import (
     DownloadLink,
     UploadForm,
 )
+from tinkerfin_studio.changes import notify_change
 from tinkerfin_studio.conversation.models import ConversationThread
 from tinkerfin_studio.infrastructure.database import Database
 
@@ -58,9 +60,16 @@ def descriptor(row: AttachmentFile) -> Attachment:
 class AttachmentService:
     """管理附件对象与业务数据库，数据库事务不跨文件或解析 I/O"""
 
-    def __init__(self, database: Database, storage: AttachmentStorage) -> None:
+    def __init__(
+        self,
+        database: Database,
+        storage: AttachmentStorage,
+        *,
+        notifications: Notifications,
+    ) -> None:
         self.documents = DocumentProcessor()
         self._database = database
+        self._notifications = notifications
         self._storage = storage
         self._processing = anyio.CapacityLimiter(2)
         self._uploads = anyio.CapacityLimiter(2)
@@ -241,8 +250,21 @@ class AttachmentService:
             saved.mime_type = mime
             saved.sha256 = hashlib.sha256(data).hexdigest()
             saved.status = "ready"
+            result = descriptor(saved)
             await session.commit()
-            return descriptor(saved)
+        details: dict[str, JsonValue] = {"attachment_id": row.id}
+        if row.thread_id is not None:
+            details["thread_id"] = row.thread_id
+        if collection_id is not None:
+            details["collection_id"] = collection_id
+        await notify_change(
+            self._notifications,
+            user_id=row.user_id,
+            topic="studio.attachments.changed",
+            key=collection_id or row.thread_id or row.id,
+            details=details,
+        )
+        return result
 
     async def _discard(self, attachment_id: str) -> None:
         # 原错误或取消必须保留；删除失败的记录交给已有清理入口回收
@@ -364,6 +386,17 @@ class AttachmentService:
                     configuration=configuration,
                 )
 
+        await self._notify_collection(user_id, collection_id)
+
+    async def _notify_collection(self, user_id: int, collection_id: str) -> None:
+        await notify_change(
+            self._notifications,
+            user_id=user_id,
+            topic="studio.attachments.changed",
+            key=collection_id,
+            details={"collection_id": collection_id},
+        )
+
     async def _verify_collection(
         self,
         session: AsyncSession,
@@ -432,6 +465,7 @@ class AttachmentService:
                 raise BusinessException(AttachmentErrorCode.REFERENCE_CONFLICT)
             collection.task_id = task_id
             await session.commit()
+        await self._notify_collection(user_id, collection_id)
 
     async def discard_collection(self, *, user_id: int, collection_id: str) -> None:
         """仅回收确认未提交任务的输入集合；不删除文件或运行历史"""
@@ -446,6 +480,7 @@ class AttachmentService:
             )
             await session.delete(collection)
             await session.commit()
+        await self._notify_collection(user_id, collection_id)
 
     async def _require_thread(
         self, session: AsyncSession, user_id: int, thread_id: str
@@ -618,6 +653,13 @@ class AttachmentService:
             row.status = "deleting"
             await session.commit()
         await self._delete(attachment_id)
+        await notify_change(
+            self._notifications,
+            user_id=user_id,
+            topic="studio.attachments.changed",
+            key=attachment_id,
+            details={"attachment_id": attachment_id},
+        )
 
     async def _delete(self, attachment_id: str) -> None:
         for suffix in ("", "-preview", "-model", "-upload"):

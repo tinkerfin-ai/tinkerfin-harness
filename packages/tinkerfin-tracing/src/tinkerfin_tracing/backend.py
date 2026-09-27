@@ -39,7 +39,9 @@ class TraceStoreOptions:
         writer_lease_seconds: Storage-clock ownership duration after a successful
             writer open, heartbeat, or append.
         writer_heartbeat_interval_seconds: Delay between owned writer renewals.
-        follow_poll_seconds: Maximum delay between cross-instance follow reads.
+        follow_poll_seconds: Cross-instance read interval without Notifications.
+            With Notifications, followers repair every 30 seconds or at the next
+            writer lease deadline, whichever comes first.
         commit_retry_attempts: Maximum explicit retryable commit attempts, including
             the first attempt.
         commit_retry_delay_seconds: Base delay for linear commit retry backoff.
@@ -360,6 +362,9 @@ class StoredTraceEventPage:
 
     Ownership is observed with the tail, independently of event content. Expired
     leases are excluded even when no writer has committed another event.
+    ``next_writer_lease_remaining_seconds`` uses the same storage clock as
+    ``observed_at`` and is None when no active writer has a finite lease. Consumers
+    deduct local read/cache age without comparing clocks across processes.
     """
 
     key: TraceThreadKey
@@ -367,6 +372,7 @@ class StoredTraceEventPage:
     events: tuple[StoredTraceEvent, ...]
     active_run_ids: tuple[str, ...]
     observed_at: datetime
+    next_writer_lease_remaining_seconds: float | None
 
 
 @dataclass(frozen=True, slots=True)

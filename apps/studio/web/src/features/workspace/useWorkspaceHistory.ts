@@ -6,6 +6,7 @@ import {
   useState,
 } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
+import { watchResource } from '../../api/shared/watchResource'
 
 import {
   fetchConversationHistoryDetail,
@@ -346,8 +347,14 @@ export function useWorkspaceHistory({
   const normalizedHistoryQuery = historyQuery.trim()
   const normalizedHistoryQueryRef = useRef(normalizedHistoryQuery)
   normalizedHistoryQueryRef.current = normalizedHistoryQuery
-  const hasHistoryBootstrapStarted = useRef(false)
-  const historyBootstrapAbortController = useRef<AbortController | null>(null)
+  const historyWatch = useRef<ReturnType<typeof watchResource> | null>(null)
+  const historyRefreshing = useRef(false)
+  const historyPageRequest = useRef<Promise<void> | null>(null)
+  const historyExcludedIds = useRef(new Set<string>())
+  const searchRefreshing = useRef(false)
+  const searchPageRequest = useRef<Promise<void> | null>(null)
+  const latestSearchIds = useRef(searchThreadIds)
+  latestSearchIds.current = searchThreadIds
   const historyLoadingRef = useRef(false)
   const historyLastLoadSettledAt = useRef<number | null>(null)
   const historyInFlightCursor = useRef<string | null>(null)
@@ -390,16 +397,26 @@ export function useWorkspaceHistory({
   }, [taskTraceLoadFailures, workspace, t])
 
   const refreshHistoryList = useCallback(async (
-    options: { preferredThreadId?: string; signal?: AbortSignal } = {},
+    options: { preferredThreadId?: string; signal?: AbortSignal; preserveWindow?: boolean } = {},
   ) => {
     const preferredThreadId = options.preferredThreadId ?? ''
     const retention = preferredThreadId ? retainConversationDetails(preferredThreadId) : undefined
     try {
       const [response, preferredDetail, groupConfig] = await Promise.all([
-        fetchConversationHistoryList({
-          pageSize: HISTORY_PAGE_SIZE,
-          signal: options.signal,
-        }),
+        (async () => {
+          const pageCount = options.preserveWindow ? Math.max(1, Math.ceil(historyThreadIdsRef.current.length / HISTORY_PAGE_SIZE)) : 1
+          const items: ConversationHistoryListItem[] = []
+          let cursor: string | undefined
+          let nextCursor: string | null = null
+          for (let index = 0; index < pageCount; index += 1) {
+            const page = await fetchConversationHistoryList({ pageSize: HISTORY_PAGE_SIZE, cursor, signal: options.signal, suppressGlobalError: options.preserveWindow })
+            items.push(...page.items)
+            nextCursor = page.nextCursor ?? null
+            if (!nextCursor || options.signal?.aborted) break
+            cursor = nextCursor
+          }
+          return { items, nextCursor }
+        })(),
         preferredThreadId
           ? prepareTaskTraceOwner(preferredThreadId)
             .then(() => fetchConversationHistoryDetail(preferredThreadId, {
@@ -424,14 +441,24 @@ export function useWorkspaceHistory({
         ? [...response.items, historyItemFromDetail(preferredDetail)]
         : response.items
       const nextThreadIds = historyItems.map((item) => item.threadId)
+      if (options.preserveWindow) {
+        const visible = new Set(nextThreadIds)
+        for (const threadId of historyThreadIdsRef.current) {
+          if (!visible.has(threadId)) historyExcludedIds.current.add(threadId)
+        }
+      }
       historyThreadIdsRef.current = nextThreadIds
       setHistoryThreadIds(nextThreadIds)
-      for (const threadId of nextThreadIds) searchOnlyThreadIds.current.delete(threadId)
+      for (const threadId of nextThreadIds) {
+        searchOnlyThreadIds.current.delete(threadId)
+        historyExcludedIds.current.delete(threadId)
+      }
       loadedHistoryCursors.current.clear()
       historyLastLoadSettledAt.current = null
       setHistoryCursor(response.nextCursor ?? null)
       setHistoryDayRanges(groupConfig.dayRanges)
       setWorkspace((state) => {
+        if (options.signal?.aborted) return state
         const conversations = mergeHistoryConversations(
           state.conversations,
           historyItems,
@@ -467,6 +494,7 @@ export function useWorkspaceHistory({
       .filter((threadId) => (
         threadId
         && !known.has(threadId)
+        && !historyExcludedIds.current.has(threadId)
         && !searchOnlyThreadIds.current.has(threadId)
       ))
     if (additions.length === 0) return
@@ -486,7 +514,6 @@ export function useWorkspaceHistory({
 
   useEffect(() => {
     historySearchGeneration.current += 1
-    const generation = historySearchGeneration.current
     if (historySearchDebounceTimer.current != null) {
       window.clearTimeout(historySearchDebounceTimer.current)
       historySearchDebounceTimer.current = null
@@ -523,48 +550,54 @@ export function useWorkspaceHistory({
     }
 
     setHistorySearching(true)
+    let watch: ReturnType<typeof watchResource> | undefined
     historySearchDebounceTimer.current = window.setTimeout(() => {
       historySearchDebounceTimer.current = null
-      const controller = new AbortController()
-      historySearchAbortController.current = controller
-      void fetchConversationHistoryList({
-        pageSize: HISTORY_PAGE_SIZE,
-        query: normalizedHistoryQuery,
-        signal: controller.signal,
-        suppressGlobalError: true,
-      }).then((response) => {
-        if (
-          controller.signal.aborted
-          || historySearchGeneration.current !== generation
-        ) return
-        const normalIds = new Set(historyThreadIdsRef.current)
-        for (const item of response.items) {
-          if (!normalIds.has(item.threadId)) searchOnlyThreadIds.current.add(item.threadId)
-        }
-        setSearchThreadIds(response.items.map((item) => item.threadId))
-        setSearchCursor(response.nextCursor ?? null)
-        setWorkspace((state) => ({
-          ...state,
-          conversations: mergeHistoryConversations(
-            state.conversations,
-            response.items,
-            defaultModelId,
-          ),
-        }))
-      }).catch(() => {
-        if (
-          !controller.signal.aborted
-          && historySearchGeneration.current === generation
-        ) {
+      watch = watchResource({
+        matches: change => change.topic === 'studio.conversation.changed' || change.topic === 'studio.conversation.title.changed',
+        read: async signal => {
+          searchRefreshing.current = true
+          try {
+            await searchPageRequest.current
+            if (signal.aborted) throw signal.reason
+            const items: ConversationHistoryListItem[] = []
+            const count = Math.max(1, Math.ceil(latestSearchIds.current.length / HISTORY_PAGE_SIZE))
+            let cursor: string | undefined
+            let nextCursor: string | null = null
+            for (let index = 0; index < count; index += 1) {
+              const response = await fetchConversationHistoryList({
+                pageSize: HISTORY_PAGE_SIZE, query: normalizedHistoryQuery, cursor, signal, suppressGlobalError: true,
+              })
+              items.push(...response.items)
+              nextCursor = response.nextCursor ?? null
+              if (!nextCursor || signal.aborted) break
+              cursor = nextCursor
+            }
+            return { items, nextCursor }
+          } finally {
+            searchRefreshing.current = false
+          }
+        },
+        update: (response, signal) => {
+          const normalIds = new Set(historyThreadIdsRef.current)
+          for (const item of response.items) {
+            if (!normalIds.has(item.threadId)) searchOnlyThreadIds.current.add(item.threadId)
+          }
+          setSearchThreadIds(response.items.map(item => item.threadId))
+          setSearchCursor(response.nextCursor)
+          loadedSearchCursors.current.clear()
+          setHistorySearching(false)
+          setSearchLoadError(null)
+          setWorkspace(state => signal.aborted ? state : ({
+            ...state,
+            conversations: mergeHistoryConversations(state.conversations, response.items, defaultModelId),
+          }))
+        },
+        onError: () => {
+          setHistorySearching(false)
           setSearchLoadError(t('搜索会话失败'))
           latestToast.current('error', t('搜索会话失败'))
-        }
-      }).finally(() => {
-        if (historySearchGeneration.current !== generation) return
-        if (historySearchAbortController.current === controller) {
-          historySearchAbortController.current = null
-        }
-        if (!controller.signal.aborted) setHistorySearching(false)
+        },
       })
     }, HISTORY_SEARCH_DEBOUNCE_MS)
 
@@ -573,32 +606,19 @@ export function useWorkspaceHistory({
         window.clearTimeout(historySearchDebounceTimer.current)
         historySearchDebounceTimer.current = null
       }
+      watch?.close()
       historySearchAbortController.current?.abort()
       historySearchAbortController.current = null
     }
   }, [defaultModelId, normalizedHistoryQuery, searchRetryVersion, setWorkspace, t])
 
   const retryHistoryBootstrap = useCallback(() => {
-    historyBootstrapAbortController.current?.abort()
-    const controller = new AbortController()
-    historyBootstrapAbortController.current = controller
     setHistoryBootstrapStatus('loading')
-    void refreshHistoryList({
-      preferredThreadId: readThreadFromLocation(),
-      signal: controller.signal,
-    }).then((succeeded) => {
-      if (controller.signal.aborted) return
-      setHistoryBootstrapStatus(succeeded ? 'ready' : 'error')
-      setHistoryBootstrapped(true)
-    }).finally(() => {
-      if (historyBootstrapAbortController.current === controller) {
-        historyBootstrapAbortController.current = null
-      }
-    })
-  }, [refreshHistoryList])
+    historyWatch.current?.refresh()
+  }, [])
 
   const loadMoreNormalHistory = useCallback((isExplicitRetry = false) => {
-    if (historyLoadingRef.current) return
+    if (historyLoadingRef.current || historyRefreshing.current) return
     if (historyLoadError && !isExplicitRetry) return
     const cursor = historyCursor
     if (
@@ -615,13 +635,13 @@ export function useWorkspaceHistory({
     setHistoryLoadError(null)
     const controller = new AbortController()
     historyAbortController.current = controller
-    void fetchConversationHistoryList({
+    historyPageRequest.current = fetchConversationHistoryList({
       pageSize: HISTORY_PAGE_SIZE,
       cursor,
       signal: controller.signal,
       suppressGlobalError: true,
     }).then((response) => {
-      if (historyInFlightCursor.current !== cursor) return
+      if (controller.signal.aborted || historyInFlightCursor.current !== cursor) return
       historyLastLoadSettledAt.current = Date.now()
       loadedHistoryCursors.current.add(cursor)
       const incomingIds = response.items.map((item) => item.threadId)
@@ -631,7 +651,10 @@ export function useWorkspaceHistory({
       )
       historyThreadIdsRef.current = nextThreadIds
       setHistoryThreadIds(nextThreadIds)
-      for (const threadId of incomingIds) searchOnlyThreadIds.current.delete(threadId)
+      for (const threadId of incomingIds) {
+        searchOnlyThreadIds.current.delete(threadId)
+        historyExcludedIds.current.delete(threadId)
+      }
       setHistoryCursor(response.nextCursor ?? null)
       setWorkspace((state) => ({
         ...state,
@@ -663,7 +686,7 @@ export function useWorkspaceHistory({
 
   const loadMoreSearchHistory = useCallback((isExplicitRetry = false) => {
     if (
-      historySearchLoadingRef.current
+      historySearchLoadingRef.current || searchRefreshing.current
     ) return
     if (searchLoadError && !isExplicitRetry) return
     const cursor = searchCursor
@@ -683,7 +706,7 @@ export function useWorkspaceHistory({
     setSearchLoadError(null)
     const controller = new AbortController()
     historySearchAbortController.current = controller
-    void fetchConversationHistoryList({
+    searchPageRequest.current = fetchConversationHistoryList({
       pageSize: HISTORY_PAGE_SIZE,
       cursor,
       query,
@@ -1115,29 +1138,37 @@ export function useWorkspaceHistory({
     : historyLoadError
 
   useEffect(() => {
-    if (modelCatalogStatus === 'loading' || isHistoryBootstrapped) return
-    if (hasHistoryBootstrapStarted.current) return
-    hasHistoryBootstrapStarted.current = true
-    const controller = new AbortController()
-    historyBootstrapAbortController.current = controller
-    setHistoryBootstrapStatus('loading')
-    void refreshHistoryList({
-      preferredThreadId: initialThreadId.current,
-      signal: controller.signal,
-    }).then((succeeded) => {
-      if (!controller.signal.aborted) {
+    if (modelCatalogStatus === 'loading') return
+    let initialized = false
+    const watch = watchResource({
+      matches: change => change.topic === 'studio.conversation.changed' || change.topic === 'studio.conversation.title.changed',
+      read: async signal => {
+        historyRefreshing.current = true
+        try {
+          await historyPageRequest.current
+          if (signal.aborted) return false
+          if (!initialized) setHistoryBootstrapStatus('loading')
+          return await refreshHistoryList({
+            preferredThreadId: initialized ? undefined : initialThreadId.current,
+            signal,
+            preserveWindow: initialized,
+          })
+        } finally {
+          historyRefreshing.current = false
+        }
+      },
+      update: succeeded => {
+        initialized = true
         setHistoryBootstrapStatus(succeeded ? 'ready' : 'error')
         setHistoryBootstrapped(true)
-      }
+      },
     })
+    historyWatch.current = watch
     return () => {
-      controller.abort()
-      if (historyBootstrapAbortController.current === controller) {
-        historyBootstrapAbortController.current = null
-      }
-      hasHistoryBootstrapStarted.current = false
+      watch.close()
+      if (historyWatch.current === watch) historyWatch.current = null
     }
-  }, [isHistoryBootstrapped, modelCatalogStatus, refreshHistoryList])
+  }, [modelCatalogStatus, refreshHistoryList])
 
   const selectedConversation = workspace.conversations.find(
     (item) => item.threadId === workspace.currentThreadId,
@@ -1231,7 +1262,7 @@ export function useWorkspaceHistory({
     if (historySearchDebounceTimer.current != null) window.clearTimeout(historySearchDebounceTimer.current)
     historyAbortController.current?.abort()
     historySearchAbortController.current?.abort()
-    historyBootstrapAbortController.current?.abort()
+    historyWatch.current?.close()
     for (const request of hydrationRequests.current.values()) request.controller.abort()
     hydrationRequests.current.clear()
     prefetchedHistoryDetails.current.clear()

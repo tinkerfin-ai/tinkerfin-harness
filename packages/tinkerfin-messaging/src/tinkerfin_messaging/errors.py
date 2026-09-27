@@ -26,6 +26,7 @@ class MessagingErrorCode(StrEnum):
     PUBLICATION_REJECTED = "messaging.publication_rejected"
     QUOTA_EXCEEDED = "messaging.quota_exceeded"
     RUN_ALREADY_ACTIVE = "messaging.run_already_active"
+    RUN_REQUEST_CONFLICT = "messaging.run_request_conflict"
     RUN_NOT_FOUND = "messaging.run_not_found"
     RUN_PRODUCER_FAILED = "messaging.run_producer_failed"
     CANCELLATION_UNSUPPORTED = "messaging.cancellation_unsupported"
@@ -120,6 +121,20 @@ class MessagingClosed(MessagingError):
     """The single-use Messaging facade has already closed."""
 
     code = MessagingErrorCode.CLOSED
+
+
+class RunRequestConflict(MessagingError):
+    """A retained run is already bound to different command content."""
+
+    code = MessagingErrorCode.RUN_REQUEST_CONFLICT
+
+    def __init__(self, *, identity: RunIdentity) -> None:
+        """Identify the conflicting run without exposing either request digest."""
+        self.identity = identity
+        super().__init__(
+            "Run identity is already bound to another request",
+            context=_identity_context(identity),
+        )
 
 
 class InvalidCursor(MessagingError):

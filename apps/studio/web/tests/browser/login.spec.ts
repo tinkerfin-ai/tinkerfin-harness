@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { expect, test } from '@playwright/test'
 
 test.beforeEach(async ({ page }) => {
@@ -5,6 +6,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('登录页保留服务器地址并将认证失败显示在公共页头下方', async ({ page }) => {
+  await installNotificationStream(page)
   await page.goto('/')
   const address = page.getByRole('textbox', { name: '服务器地址', exact: true })
   await expect(address).toBeVisible()
@@ -45,6 +47,7 @@ for (const theme of ['light', 'dark']) {
     page.on('request', request => {
       if (!request.isNavigationRequest() && new URL(request.url()).origin !== new URL(page.url()).origin) external.push(request.url())
     })
+    await installNotificationStream(page)
     await page.goto('/')
     const panel = page.getByRole('region', { name: '欢迎回来' })
     await expect(panel).toBeVisible()
@@ -72,6 +75,7 @@ for (const theme of ['light', 'dark']) {
 
 test('减少动态效果时主题折叠与展开均不覆盖品牌', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 500 })
+  await installNotificationStream(page)
   await page.goto('/')
   const light = page.getByRole('radio', { name: '浅色', exact: true })
   const dark = page.getByRole('radio', { name: '深色', exact: true })

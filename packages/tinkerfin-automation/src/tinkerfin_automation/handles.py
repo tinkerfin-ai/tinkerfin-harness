@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import math
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AsyncExitStack
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -14,8 +15,14 @@ from typing import TYPE_CHECKING, Self
 from pydantic import JsonValue
 
 from tinkerfin_contracts import RunIdentity
+from tinkerfin_notifications import (
+    NotificationError,
+    NotificationScope,
+    NotificationSubscription,
+)
 
 from ._tasks import (
+    TaskOutcome,
     capture,
     join_owned_task,
     select_failure,
@@ -24,6 +31,7 @@ from ._tasks import (
 )
 from .errors import (
     AutomationLifecycleError,
+    AutomationStoreError,
     AutomationStoreProtocolError,
     AutomationWaitTimeout,
 )
@@ -386,7 +394,9 @@ class RunHandle:
 
         Args:
             timeout: Finite positive seconds covering locks, reads and intervals.
-            poll_interval: Finite positive seconds between Store observations.
+            poll_interval: Finite positive interval when no Notifications service
+                is bound. With Notifications, hints wake reads and a 30-second
+                authoritative read repairs loss.
 
         Returns:
             This handle with a terminal, interrupted, or needs_attention snapshot.
@@ -458,18 +468,75 @@ class RunHandle:
             return self
 
     async def _poll(self, interval: float) -> Self:
-        while True:
-            await self.refresh()
-            if self.status.is_terminal or self.status in {
-                ExecutionStatus.INTERRUPTED,
-                ExecutionStatus.NEEDS_ATTENTION,
-            }:
-                return self
-            # No handle lock spans the interval; cancellation from another coroutine
-            # can update this same execution while the observer is sleeping.
-            await self._owner._automation._clock.wait_until(
-                self._owner._automation._clock.now() + timedelta(seconds=interval)
-            )
+        app = self._owner._automation
+        notifications = app._service._execution_store.notifications
+        try:
+            async with AsyncExitStack() as stack:
+                hints = (
+                    None
+                    if notifications is None
+                    else await stack.enter_async_context(
+                        notifications.subscribe(
+                            scope=NotificationScope(
+                                self._owner.namespace, self._owner.owner_id
+                            ),
+                            topics={"automation.execution.changed"},
+                            key=self.id,
+                        )
+                    )
+                )
+                while True:
+                    await self.refresh()
+                    if self.status.is_terminal or self.status in {
+                        ExecutionStatus.INTERRUPTED,
+                        ExecutionStatus.NEEDS_ATTENTION,
+                    }:
+                        return self
+                    # Subscribe before the authoritative baseline so changes during
+                    # a read remain queued. No handle lock spans the waiting period.
+                    if hints is None:
+                        await app._clock.wait_until(
+                            app._clock.now() + timedelta(seconds=interval)
+                        )
+                    else:
+                        await self._wait_for_change(hints)
+        except NotificationError as error:
+            raise AutomationStoreError(
+                "Execution change notifications are unavailable", cause=error
+            ) from error
+        except StopAsyncIteration as error:
+            raise AutomationStoreError(
+                "Execution change notifications stopped", cause=error
+            ) from error
+
+    async def _wait_for_change(self, hints: NotificationSubscription) -> None:
+        clock = self._owner._automation._clock
+        children: list[asyncio.Task[TaskOutcome[object]]] = [
+            asyncio.create_task(
+                capture(anext(hints)), name="tinkerfin-automation-wait-change"
+            ),
+            asyncio.create_task(
+                capture(clock.wait_until(clock.now() + timedelta(seconds=30))),
+                name="tinkerfin-automation-wait-repair",
+            ),
+        ]
+        failure: BaseException | None = None
+        try:
+            done, _ = await asyncio.wait(children, return_when=asyncio.FIRST_COMPLETED)
+            for child in done:
+                task_result(child)
+        except BaseException as error:  # noqa: BLE001 - settle both owned waits before propagating
+            failure = error
+        cleanup = asyncio.create_task(
+            capture(stop_owned_tasks(children)),
+            name="tinkerfin-automation-wait-change-close",
+        )
+        try:
+            await join_owned_task(cleanup)
+        except BaseException as error:  # noqa: BLE001 - retain cancellation and cleanup failures
+            failure = error if failure is None else select_failure(failure, error)
+        if failure is not None:
+            raise failure
 
     async def _change(
         self, change: Callable[[], Awaitable[AutomationExecution]]

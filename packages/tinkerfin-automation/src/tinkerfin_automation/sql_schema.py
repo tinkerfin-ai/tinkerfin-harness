@@ -200,6 +200,12 @@ runs = Table(
         comment="One-based explicit business attempt number",
     ),
     Column(
+        "max_concurrent_runs",
+        Integer,
+        nullable=False,
+        comment="Immutable execution-specific concurrency limit for task or owner admission",
+    ),
+    Column(
         "retry_of",
         String(36),
         nullable=True,
@@ -275,6 +281,9 @@ runs = Table(
         comment="UTC last state change",
     ),
     CheckConstraint("attempt >= 1", name="ck_tinkerfin_automation_runs_attempt"),
+    CheckConstraint(
+        "max_concurrent_runs >= 1", name="ck_tinkerfin_automation_runs_concurrency"
+    ),
     UniqueConstraint(
         "namespace",
         "occurrence_key",
@@ -300,6 +309,13 @@ Index(
     runs.c.namespace,
     runs.c.status,
     runs.c.updated_at,
+    runs.c.execution_id,
+)
+Index(
+    "ix_tinkerfin_automation_runs_queue_deadline",
+    runs.c.namespace,
+    runs.c.status,
+    runs.c.queue_deadline,
     runs.c.execution_id,
 )
 

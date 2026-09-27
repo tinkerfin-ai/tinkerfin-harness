@@ -19,6 +19,7 @@ classifiers = [
 dependencies = [
     "pydantic>=2.12,<3",
     "tinkerfin-contracts==0.1.0",
+    "tinkerfin-notifications==0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -44,4 +45,5 @@ tinkerfin_tracing = ["py.typed"]
 
 [tool.uv.sources]
 tinkerfin-contracts = { workspace = true }
+tinkerfin-notifications = { workspace = true }
 tinkerfin-sqlalchemy = { workspace = true }

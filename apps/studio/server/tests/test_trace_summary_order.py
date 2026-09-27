@@ -97,7 +97,7 @@ async def test_summary_order_preserves_microseconds_rejects_conflicts_and_allows
                 trace_observed_at=stamp,
             )
             await repository.commit()
-            return result
+            return result.status
 
     assert await write(stamp=first) == "applied"
     assert await write(stamp=second, status="error") == "applied"

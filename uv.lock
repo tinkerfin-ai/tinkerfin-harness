@@ -22,10 +22,12 @@ members = [
     "tinkerfin-agui-adapter",
     "tinkerfin-automation",
     "tinkerfin-contracts",
+    "tinkerfin-gateway",
     "tinkerfin-harness",
     "tinkerfin-langgraph-store",
     "tinkerfin-messaging",
     "tinkerfin-native-stream",
+    "tinkerfin-notifications",
     "tinkerfin-sandbox",
     "tinkerfin-sqlalchemy",
     "tinkerfin-studio",
@@ -3411,6 +3413,7 @@ dependencies = [
     { name = "tinkerfin" },
     { name = "tinkerfin-contracts" },
     { name = "tinkerfin-native-stream" },
+    { name = "tinkerfin-notifications" },
     { name = "tzdata" },
 ]
 
@@ -3429,6 +3432,7 @@ requires-dist = [
     { name = "tinkerfin", editable = "packages/tinkerfin" },
     { name = "tinkerfin-contracts", editable = "packages/tinkerfin-contracts" },
     { name = "tinkerfin-native-stream", editable = "packages/tinkerfin-native-stream" },
+    { name = "tinkerfin-notifications", editable = "packages/tinkerfin-notifications" },
     { name = "tinkerfin-sqlalchemy", marker = "extra == 'sqlalchemy'", editable = "packages/tinkerfin-sqlalchemy" },
     { name = "tzdata", specifier = ">=2025.2" },
 ]
@@ -3444,6 +3448,38 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "pydantic", specifier = ">=2,<3" }]
+
+[[package]]
+name = "tinkerfin-gateway"
+version = "0.1.0"
+source = { editable = "packages/tinkerfin-gateway" }
+dependencies = [
+    { name = "ag-ui-protocol" },
+    { name = "langgraph" },
+    { name = "pydantic" },
+    { name = "tinkerfin", extra = ["agui"] },
+    { name = "tinkerfin-contracts" },
+    { name = "tinkerfin-messaging", extra = ["agui"] },
+    { name = "tinkerfin-notifications" },
+]
+
+[package.optional-dependencies]
+starlette = [
+    { name = "starlette" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ag-ui-protocol", specifier = "==0.1.19" },
+    { name = "langgraph", specifier = ">=1.2.10,<=1.2.11" },
+    { name = "pydantic", specifier = ">=2,<3" },
+    { name = "starlette", marker = "extra == 'starlette'", specifier = ">=0.49,<2" },
+    { name = "tinkerfin", extras = ["agui"], editable = "packages/tinkerfin" },
+    { name = "tinkerfin-contracts", editable = "packages/tinkerfin-contracts" },
+    { name = "tinkerfin-messaging", extras = ["agui"], editable = "packages/tinkerfin-messaging" },
+    { name = "tinkerfin-notifications", editable = "packages/tinkerfin-notifications" },
+]
+provides-extras = ["starlette"]
 
 [[package]]
 name = "tinkerfin-harness"
@@ -3644,6 +3680,26 @@ requires-dist = [
 ]
 
 [[package]]
+name = "tinkerfin-notifications"
+version = "0.1.0"
+source = { editable = "packages/tinkerfin-notifications" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+redis = [
+    { name = "redis" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2,<3" },
+    { name = "redis", marker = "extra == 'redis'", specifier = ">=6,<9" },
+]
+provides-extras = ["redis"]
+
+[[package]]
 name = "tinkerfin-sandbox"
 version = "0.1.0"
 source = { editable = "packages/tinkerfin-sandbox" }
@@ -3726,8 +3782,10 @@ dependencies = [
     { name = "tinkerfin", extra = ["agui", "redis", "tracing"] },
     { name = "tinkerfin-automation", extra = ["sqlalchemy"] },
     { name = "tinkerfin-contracts" },
+    { name = "tinkerfin-gateway", extra = ["starlette"] },
     { name = "tinkerfin-langgraph-store", extra = ["sqlalchemy"] },
     { name = "tinkerfin-messaging", extra = ["agui", "redis"] },
+    { name = "tinkerfin-notifications", extra = ["redis"] },
     { name = "tinkerfin-sandbox", extra = ["sqlalchemy"] },
     { name = "tinkerfin-tracing", extra = ["sqlalchemy"] },
     { name = "types-aiobotocore", extra = ["s3"] },
@@ -3769,8 +3827,10 @@ requires-dist = [
     { name = "tinkerfin", extras = ["agui", "redis", "tracing"], editable = "packages/tinkerfin" },
     { name = "tinkerfin-automation", extras = ["sqlalchemy"], editable = "packages/tinkerfin-automation" },
     { name = "tinkerfin-contracts", editable = "packages/tinkerfin-contracts" },
+    { name = "tinkerfin-gateway", extras = ["starlette"], editable = "packages/tinkerfin-gateway" },
     { name = "tinkerfin-langgraph-store", extras = ["sqlalchemy"], editable = "packages/tinkerfin-langgraph-store" },
     { name = "tinkerfin-messaging", extras = ["agui", "redis"], editable = "packages/tinkerfin-messaging" },
+    { name = "tinkerfin-notifications", extras = ["redis"], editable = "packages/tinkerfin-notifications" },
     { name = "tinkerfin-sandbox", extras = ["sqlalchemy"], editable = "packages/tinkerfin-sandbox" },
     { name = "tinkerfin-tracing", extras = ["sqlalchemy"], editable = "packages/tinkerfin-tracing" },
     { name = "types-aiobotocore", extras = ["s3"], specifier = ">=3,<4" },
@@ -3785,6 +3845,7 @@ source = { editable = "packages/tinkerfin-tracing" }
 dependencies = [
     { name = "pydantic" },
     { name = "tinkerfin-contracts" },
+    { name = "tinkerfin-notifications" },
 ]
 
 [package.optional-dependencies]
@@ -3798,6 +3859,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12,<3" },
     { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'sqlalchemy'", specifier = "==2.0.52" },
     { name = "tinkerfin-contracts", editable = "packages/tinkerfin-contracts" },
+    { name = "tinkerfin-notifications", editable = "packages/tinkerfin-notifications" },
     { name = "tinkerfin-sqlalchemy", marker = "extra == 'sqlalchemy'", editable = "packages/tinkerfin-sqlalchemy" },
 ]
 provides-extras = ["sqlalchemy"]

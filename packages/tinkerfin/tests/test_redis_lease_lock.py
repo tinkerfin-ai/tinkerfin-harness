@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from lease_test_support import LeaseClock
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
@@ -21,6 +22,11 @@ from tinkerfin.redis import (
     RedisLeaseLost,
     RedisLeaseUnavailableError,
 )
+
+
+@pytest.fixture(autouse=True)
+def controlled_lease_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    LeaseClock(monkeypatch)
 
 
 class _LeaseRedis:

@@ -31,6 +31,13 @@ The default backend is `MemoryBackend`.
 
 RunIdentity is optional only when the source advertises an immutable profile.
 
+`AgUiChannel.open_run(source, after=..., request_digest=...)` returns the original
+admission `MessageSubscription[BaseEvent]`. It accepts the same lifecycle and
+presentation callbacks as `open_sse`; the SSE entry point renders this subscription.
+Use `async with subscription` or `await subscription.aclose()` to detach safely.
+Ordinary `wrap`, `wrap_recoverable`, and `open_sse` admissions also accept
+`request_digest`. Bound and unbound admissions cannot attach to one another.
+
 ## Subscription and Envelope
 
 | API | Purpose |

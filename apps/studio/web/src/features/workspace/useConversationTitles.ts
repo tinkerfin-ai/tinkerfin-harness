@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react'
 import { fetchConversationTitle } from '../../api/conversation/titles'
+import { watchResource } from '../../api/shared/watchResource'
 import { mergeConversationTitle, updateConversation } from '../../lib/workspace'
 import type { Conversation, WorkspaceState } from '../../types'
 import { messageText } from '../conversation/attachments/content'
@@ -18,69 +19,41 @@ const sameTitle = (current: Conversation, next: ReturnType<typeof mergeConversat
 
 /** 标题查询属于工作区，不受当前会话选择或主回复结束影响 */
 export function useConversationTitles(workspace: WorkspaceState, setWorkspace: Dispatch<SetStateAction<WorkspaceState>>) {
-  const [visible, setVisible] = useState(document.visibilityState !== 'hidden')
-  const requests = useRef(new Map<string, { controller: AbortController; timer?: number; failures: number }>())
+  const watches = useRef(new Map<string, ReturnType<typeof watchResource>>())
   const latestConversations = useRef(workspace.conversations)
   latestConversations.current = workspace.conversations
 
   useEffect(() => {
-    const updateVisibility = () => setVisible(document.visibilityState !== 'hidden')
-    document.addEventListener('visibilitychange', updateVisibility)
-    return () => document.removeEventListener('visibilitychange', updateVisibility)
-  }, [])
-
-  useEffect(() => {
-    const pending = new Set(visible ? workspace.conversations.filter(needsTitle).map(item => item.threadId) : [])
-    for (const [threadId, request] of requests.current) {
-      if (pending.has(threadId)) continue
-      request.controller.abort()
-      window.clearTimeout(request.timer)
-      requests.current.delete(threadId)
+    const known = new Map(workspace.conversations.filter(item => item.threadId).map(item => [item.threadId, item]))
+    for (const [threadId, watch] of watches.current) {
+      if (known.has(threadId)) continue
+      watch.close()
+      watches.current.delete(threadId)
     }
-    for (const threadId of pending) {
-      if (requests.current.has(threadId)) continue
-      const request = { controller: new AbortController(), timer: undefined as number | undefined, failures: 0 }
-      requests.current.set(threadId, request)
-      const isCurrent = () => !request.controller.signal.aborted && document.visibilityState !== 'hidden'
-      const poll = async () => {
-        request.timer = undefined
-        if (!isCurrent()) return
-        try {
-          const title = await fetchConversationTitle(threadId, request.controller.signal)
-          if (!isCurrent()) return
-          request.failures = 0
+    for (const [threadId, conversation] of known) {
+      if (watches.current.has(threadId)) continue
+      const watch = watchResource({
+        initialRead: needsTitle(conversation),
+        repairWhen: () => {
           const current = latestConversations.current.find(item => item.threadId === threadId)
-          if (!current) return
+          return Boolean(current && needsTitle(current))
+        },
+        matches: change => change.topic === 'studio.conversation.title.changed' && change.key === threadId,
+        read: signal => fetchConversationTitle(threadId, signal),
+        update: (title, signal) => setWorkspace(state => {
+          if (signal.aborted) return state
+          const current = state.conversations.find(item => item.threadId === threadId)
+          if (!current) return state
           const merged = mergeConversationTitle(current, title)
-          if (!sameTitle(current, merged)) {
-            setWorkspace(state => {
-              if (!isCurrent()) return state
-              const item = state.conversations.find(conversation => conversation.threadId === threadId)
-              if (!item) return state
-              const nextTitle = mergeConversationTitle(item, title)
-              return sameTitle(item, nextTitle) ? state : updateConversation(state, threadId, conversation => ({ ...conversation, ...nextTitle }))
-            })
-          }
-          // 标题终态无需再唤醒定时器；工作区提交后会释放对应查询
-          if (!needsTitle({ ...current, ...merged })) return
-        } catch {
-          if (!isCurrent()) return
-          request.failures = Math.min(request.failures + 1, 5)
-        }
-        request.timer = window.setTimeout(() => void poll(), Math.min(1000 * (2 ** request.failures), 30_000))
-      }
-      void poll()
+          return sameTitle(current, merged) ? state : updateConversation(state, threadId, item => ({ ...item, ...merged }))
+        }),
+      })
+      watches.current.set(threadId, watch)
     }
-  }, [workspace.conversations, setWorkspace, visible])
+  }, [workspace.conversations, setWorkspace])
 
   useEffect(() => {
-    const owned = requests.current
-    return () => {
-      for (const request of owned.values()) {
-        request.controller.abort()
-        window.clearTimeout(request.timer)
-      }
-      owned.clear()
-    }
+    const owned = watches.current
+    return () => { for (const watch of owned.values()) watch.close(); owned.clear() }
   }, [])
 }

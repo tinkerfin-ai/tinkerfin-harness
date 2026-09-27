@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 
 const user = { user_id: 1, username: 'composer-test', display_name: '输入区验收', avatar_url: null, roles: [], disabled: false }
@@ -37,6 +38,7 @@ async function openComposer(page: Page, locale = 'zh-CN', theme = 'light') {
     localStorage.setItem('tinkerfin:language', locale)
     localStorage.setItem('tinkerfin:theme', theme)
   }, { locale, theme })
+  await installNotificationStream(page)
   await page.goto('/')
 }
 

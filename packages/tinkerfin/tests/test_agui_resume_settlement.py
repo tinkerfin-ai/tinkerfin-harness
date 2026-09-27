@@ -969,7 +969,7 @@ async def test_resume_staging_cancellation_releases_unprepared_host_claim_once(
     )
     assert (await anext(stream)).type.value == "RUN_STARTED"
     pull = asyncio.create_task(anext(stream))
-    await asyncio.wait_for(entered.wait(), timeout=5)
+    await entered.wait()
 
     pull.cancel()
     allow_stage_settlement.set()
@@ -1226,7 +1226,7 @@ async def test_close_during_checkpoint_callback_keeps_exactly_once_marker(
     first = await anext(stream)
     assert first.type.value == "RUN_STARTED"
     next_event = asyncio.create_task(anext(stream))
-    await asyncio.wait_for(checkpoint_entered.wait(), timeout=5)
+    await checkpoint_entered.wait()
     assert len(checkpoints) == 1
     assert executions == []
     next_event.cancel()

@@ -157,6 +157,7 @@ class _MessagingLedger:
         after: int | None,
         cancellable: bool,
         recoverable: bool,
+        request_digest: str | None = None,
     ) -> PreparedRun:
         """Atomically start, recover, or attach to one semantic run."""
 
@@ -173,6 +174,7 @@ class _MessagingLedger:
                 after_sequence=after,
                 cancellable=cancellable,
                 recoverable=recoverable,
+                request_digest=request_digest,
             )
         )
         reference = result.run_reference

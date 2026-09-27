@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from uuid import NAMESPACE_URL, uuid5
+from datetime import UTC, datetime
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tinkerfin import AgUiResumeRequest
+from tinkerfin_notifications import Notifications
 from tinkerfin_studio.api.errors import (
     BusinessException,
     ConversationErrorCode,
     ModelErrorCode,
 )
 from tinkerfin_studio.attachments.service import AttachmentService
+from tinkerfin_studio.changes import notify_change
 from tinkerfin_studio.conversation.models import (
     ConversationRunRegistration,
     ConversationThread,
@@ -55,9 +58,15 @@ class ConversationRunPreparer:
     """拥有 chat 启动前短事务，不读取 Agent 内部状态或审批 payload"""
 
     def __init__(
-        self, session: AsyncSession, *, user_id: int, attachments: AttachmentService
+        self,
+        session: AsyncSession,
+        *,
+        user_id: int,
+        attachments: AttachmentService,
+        notifications: Notifications,
     ) -> None:
         self._attachments = attachments
+        self._notifications = notifications
         self._session = session
         self._user_id = user_id
         self._repository = ConversationRepository(session)
@@ -112,6 +121,13 @@ class ConversationRunPreparer:
             if thread is None:
                 raise
         await self._repository.commit()
+        if created:
+            await notify_change(
+                self._notifications,
+                user_id=self._user_id,
+                topic="studio.conversation.changed",
+                key=thread.thread_id,
+            )
         return ResolvedThread(thread=thread, created=created)
 
     async def register(
@@ -152,6 +168,11 @@ class ConversationRunPreparer:
             if locked is None or locked.status == "deleting":
                 raise BusinessException(ConversationErrorCode.NOT_FOUND)
             thread = locked
+            # 同一登记可能已被另一请求建立；锁内重新读取，避免使用锁前的快照
+            existing = await self._repository.get_run_for_update(
+                thread_pk=thread.id, run_id=prepared.identity.run_id
+            )
+            self._require_same_registration(existing, prepared=prepared, model=model)
             source_run_id = self._continuation_source_run_id(
                 intent,
                 prepared=prepared,
@@ -196,12 +217,25 @@ class ConversationRunPreparer:
                     thread=thread,
                 )
             self._require_same_registration(existing, prepared=prepared, model=model)
+            if not created and existing.status in {"preparing", "starting"}:
+                # 共享登记后的失败请求不再拥有独占清理权；过期恢复同样比较此标识
+                existing.preparation_id = uuid4().hex
+                existing.updated_at = datetime.now(UTC).replace(tzinfo=None)
             await self._repository.commit()
+            if isinstance(intent, StartChatIntent) and intent.attachments:
+                await notify_change(
+                    self._notifications,
+                    user_id=self._user_id,
+                    topic="studio.attachments.changed",
+                    key=thread.thread_id,
+                    details={"thread_id": thread.thread_id},
+                )
             return PreparedExecution(
                 thread=thread,
                 registered=RegisteredRun(
                     run_id=existing.id,
                     created=created,
+                    preparation_id=existing.preparation_id,
                 ),
                 resume=(
                     AgUiResumeRequest(entries=intent.entries)
@@ -218,6 +252,7 @@ class ConversationRunPreparer:
         self,
         *,
         thread_pk: int,
+        thread_id: str,
         identity_run_id: str,
         registered: RegisteredRun,
         thread_created: bool,
@@ -229,6 +264,7 @@ class ConversationRunPreparer:
 
         Args:
             thread_pk: 已校验归属的会话主键
+            thread_id: 当前会话的公开标识
             identity_run_id: 当前请求的运行 ID
             registered: 本次登记结果，决定是否拥有删除权限
             thread_created: 是否允许一并删除本次新建的空会话
@@ -242,13 +278,21 @@ class ConversationRunPreparer:
                 if not registered.created:
                     await self._repository.rollback()
                 else:
-                    await self._repository.delete_unstarted_run(
+                    result = await self._repository.delete_unstarted_run(
                         thread_pk=thread_pk,
                         run_pk=registered.run_id,
                         run_id=identity_run_id,
+                        preparation_id=registered.preparation_id,
                         delete_empty_thread=thread_created,
                     )
                     await self._repository.commit()
+                    if result.run_deleted:
+                        await notify_change(
+                            self._notifications,
+                            user_id=self._user_id,
+                            topic="studio.conversation.changed",
+                            key=thread_id,
+                        )
             except BaseException as error:  # noqa: BLE001 - 交回请求处理方，避免后台任务丢失控制异常
                 return error
             return None
@@ -280,6 +324,7 @@ class ConversationRunPreparer:
         self,
         *,
         thread_pk: int,
+        thread_id: str,
         identity_run_id: str,
         registered: RegisteredRun,
     ) -> None:
@@ -297,6 +342,12 @@ class ConversationRunPreparer:
         except BaseException:
             await self._repository.rollback()
             raise
+        await notify_change(
+            self._notifications,
+            user_id=self._user_id,
+            topic="studio.conversation.changed",
+            key=thread_id,
+        )
 
     async def _claim_resume(
         self,

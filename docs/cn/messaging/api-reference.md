@@ -31,6 +31,8 @@
 
 TinkerFin profile source 的 `identity` 可省略；普通自定义 source 必须显式提供。
 
+`AgUiChannel.open_run(source, after=..., request_digest=...)` 返回本次受理的原始 `MessageSubscription[BaseEvent]`，使用与 `open_sse` 相同的生命周期和展示回调；SSE 入口负责渲染该订阅。通过 `async with subscription` 或 `await subscription.aclose()` 安全断开读取。普通 `wrap`、`wrap_recoverable` 和 `open_sse` 受理也接受 `request_digest`，已绑定与未绑定的请求不能互相附着。
+
 ## Subscription 与 Envelope
 
 | API | 用途 |

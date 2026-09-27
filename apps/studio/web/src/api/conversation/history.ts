@@ -5,7 +5,7 @@ import type { ConversationTitleSnapshot } from "./titles"
 import type { PendingInteractionKind, JsonObject, JsonValue } from '../../types'
 import { requestEventStream, requestJson } from '../shared/http'
 import { ConversationError } from './errors'
-import { parseJsonSseStream } from './sse'
+import { parseJsonSseStream } from '../shared/sse'
 import type {
   ConversationGraph,
   ConversationGraphDelta,

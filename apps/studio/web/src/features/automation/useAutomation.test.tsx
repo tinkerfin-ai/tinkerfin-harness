@@ -4,11 +4,14 @@ import { fetchCounts, fetchRunPage, fetchTaskPage } from './api'
 import { useAutomation } from './useAutomation'
 import { taskFixture, runFixture } from '../../test/automationFixtures'
 import { weekDates } from './model'
+import { mockResourceNotices } from '../../test/resourceNotices'
 
 vi.mock('./api', () => ({ fetchCounts: vi.fn(), fetchRunPage: vi.fn(), fetchTaskPage: vi.fn() }))
 const dates = weekDates('2026-09-10')
 const base = { page: 'tasks' as const, query: '', status: 'all', dates, view: 'week' as const }
+let notices: ReturnType<typeof mockResourceNotices>
 beforeEach(() => {
+  notices = mockResourceNotices()
   vi.useFakeTimers()
   vi.mocked(fetchCounts).mockResolvedValue({ enabled: 1, paused: 0 })
   vi.mocked(fetchTaskPage).mockReset().mockResolvedValue({ items: [taskFixture()], nextCursor: null })
@@ -49,13 +52,15 @@ describe('自动化服务端数据', () => {
     act(() => result.current.reload()); await settle()
     expect(result.current.tasks.map(task => task.id)).toEqual(['first', 'second'])
   })
-  it('运行状态按虚拟时钟刷新，隐藏页面和卸载停止请求', async () => {
+  it('运行变化触发读取，空闲只做三十秒校准，隐藏和卸载停止请求', async () => {
     let hidden = false
     vi.spyOn(document, 'hidden', 'get').mockImplementation(() => hidden)
     vi.mocked(fetchRunPage).mockResolvedValue({ items: [runFixture({ status: 'running' })], nextCursor: null })
     const { unmount } = renderHook(() => useAutomation({ ...base, page: 'history', view: 'list' })); await settle()
     expect(fetchRunPage).toHaveBeenCalledTimes(1)
     await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    expect(fetchRunPage).toHaveBeenCalledTimes(1)
+    await act(async () => notices.changed('automation.execution.changed', 'run'))
     expect(fetchRunPage).toHaveBeenCalledTimes(2)
     act(() => { hidden = true; document.dispatchEvent(new Event('visibilitychange')) })
     await act(async () => { await vi.advanceTimersByTimeAsync(10000) })

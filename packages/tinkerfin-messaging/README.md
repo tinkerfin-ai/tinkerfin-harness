@@ -73,8 +73,11 @@ Closing a subscription detaches that subscriber. The producer remains owned by
 | `seq` | One-based message position within a thread generation |
 
 Reuse the complete `RunIdentity` for retries, replay or attachment to the same run.
-Use a new `run_id` for new input. The application owns authorization and request-body
-idempotency; Messaging does not compare business request bodies.
+Use a new `run_id` for new input. An optional lowercase SHA-256 `request_digest`
+binds command content while the run record is retained. Different bindings, or a
+bound/unbound pair, raise `RunRequestConflict` before ownership changes. The host
+owns digest calculation and authorization; [Gateway](https://github.com/tinkerfin-ai/tinkerfin-harness/tree/main/packages/tinkerfin-gateway)
+calculates bindings for complete Runtime commands.
 
 `after=None` starts from the tail observed during preparation, `after=0` replays all
 retained messages, and `after=N` returns messages with `seq > N`. Negative cursors and
@@ -119,6 +122,7 @@ for drivers, Redis configuration and custom backends.
 
 | Operation | Purpose |
 | --- | --- |
+| AG-UI `open_run()` | Accept once and return the original typed object subscription |
 | `wrap()` / `open_sse()` | Start or attach and return decoded messages or SSE bytes |
 | `read()` | Read one finite ordered page |
 | `follow()` | Replay and wait for the selected run to finish |

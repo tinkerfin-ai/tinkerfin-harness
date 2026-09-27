@@ -9,6 +9,8 @@
     "packages/tinkerfin-sqlalchemy/src",
     "packages/tinkerfin-agui-adapter/src",
     "packages/tinkerfin-messaging/src",
+    "packages/tinkerfin-notifications/src",
+    "packages/tinkerfin-gateway/src",
     "packages/tinkerfin-sandbox/src"
   ],
   "pythonVersion": "3.11",

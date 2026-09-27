@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { installLiveRun } from './fixtures/liveRun'
 import { expect, test, type Page, type Route } from '@playwright/test'
 import { resolve } from 'node:path'
@@ -298,6 +299,7 @@ async function mockTodoTraceStudio(page: Page, {
     await route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
   })
   const liveRun = await installLiveRun(page, detail({ groups, answer, taskTraceGroups, visibleGroups, includeTaskTrace: true, historyCursor }))
+  await installNotificationStream(page)
   await page.goto(`/?thread=${THREAD_ID}`)
   if (taskTraceGroups.length > 0) {
     await expect(page.getByRole('button', { name: `${language === 'en' ? 'Task trace' : '任务轨迹'} ${taskTraceGroups.length}`, exact: true }))

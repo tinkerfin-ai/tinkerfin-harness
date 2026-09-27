@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { mockDownloadPermits } from './support/attachment-storage'
 import { measureBounds } from './support/geometry'
 import { test, expect } from '@playwright/test'
@@ -37,6 +38,7 @@ test('图片失败态、恢复与多图连续键盘浏览保持无边框布局',
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
   await mockDownloadPermits(page)
+  await installNotificationStream(page)
   await page.goto('/')
   await page.getByRole('button', { name: '打开会话：多图预览回归', exact: true }).click()
   const preview = page.getByRole('button', { name: '放大图片：第一张.png', exact: true })

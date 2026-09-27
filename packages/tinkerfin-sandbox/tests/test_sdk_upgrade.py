@@ -187,7 +187,7 @@ async def test_repeated_cancel_and_close_wait_for_sdk_sibling_body_cleanup() -> 
     transport.body.cleanup_release.clear()
     client = _client(transport)
     connecting = asyncio.create_task(client.connect("bad"))
-    await asyncio.wait_for(transport.body.cleanup_started.wait(), timeout=1)
+    await transport.body.cleanup_started.wait()
     connecting.cancel()
     await asyncio.sleep(0)
     connecting.cancel()
@@ -198,8 +198,8 @@ async def test_repeated_cancel_and_close_wait_for_sdk_sibling_body_cleanup() -> 
     assert not transport.body.finished.is_set()
     transport.body.cleanup_release.set()
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(connecting, timeout=1)
-    await asyncio.wait_for(closing, timeout=1)
+        await connecting
+    await closing
     assert transport.body.finished.is_set()
     assert transport.closed is False
 
@@ -210,8 +210,8 @@ async def test_sdk_failure_scope_does_not_cancel_another_connection() -> None:
     client = _client(transport)
     failing = asyncio.create_task(client.connect("bad"))
     try:
-        await asyncio.wait_for(transport.body.cleanup_started.wait(), timeout=1)
-        backend = await asyncio.wait_for(client.connect("good"), timeout=1)
+        await transport.body.cleanup_started.wait()
+        backend = await client.connect("good")
         assert backend.id == "good"
         await backend.aclose()
         assert not failing.done()
@@ -443,7 +443,7 @@ async def test_close_joins_reclamation_registered_after_shutdown_started() -> No
 
     client = _client(httpx.MockTransport(respond))
     creating = asyncio.create_task(client.create())
-    await asyncio.wait_for(creating_started.wait(), timeout=1)
+    await creating_started.wait()
     closing = asyncio.create_task(client.aclose())
     # Let the public close call and its retained close task begin waiting while
     # creation is still owned by the caller rather than cancelled-create cleanup.
@@ -453,7 +453,7 @@ async def test_close_joins_reclamation_registered_after_shutdown_started() -> No
     await asyncio.sleep(0)
     creating_release.set()
     try:
-        await asyncio.wait_for(reclaim_started.wait(), timeout=1)
+        await reclaim_started.wait()
         creating.cancel()
         await asyncio.sleep(0)
         assert not closing.done()
@@ -484,7 +484,7 @@ async def test_lifecycle_control_requests_wait_for_settlement_after_repeated_can
     changing = asyncio.create_task(
         client.pause("existing") if operation == "pause" else client.resume("existing")
     )
-    await asyncio.wait_for(transport.mutation_started.wait(), timeout=1)
+    await transport.mutation_started.wait()
     changing.cancel()
     await asyncio.sleep(0)
     changing.cancel()
@@ -596,7 +596,7 @@ async def test_cancelled_native_open_owns_late_initializer_failure(
         task = asyncio.create_task(
             client.connect("existing") if operation == "connect" else client.create()
         )
-        await asyncio.wait_for(entered.wait(), 2)
+        await entered.wait()
         task.cancel()
         await asyncio.sleep(0)
         release.set()

@@ -98,11 +98,18 @@ finally:
 
 实例只能进入一次；client 和 worker 不能嵌套。`async with automation` 不启动本地 Worker，
 可通过共享持久 Store 向远端 Worker 提交立即执行、查询、手动运行已有任务、取消、重试和结算执行。
-日程的创建、更新、暂停、启用和删除只允许在本地 worker 模式进行。共享 SQL 本身不提供远端动态日程发现。
+日程的创建、更新、暂停、启用和删除需要本地 worker 模式，或为 Store 绑定已启动的通知服务。
+远端管理需让客户端和 Worker 使用共享存储及相同的 Redis 通知频道；仅共享 SQL 不提供动态日程发现。
 同 namespace 的 Worker 必须能够执行其可能领取的全部目标，领取不按 target 名称路由。
 
 Store setup 创建空库或校验完整当前结构，不自动修补部分表。空库需 DDL 权限，预建结构必须匹配。
 高级直接使用 Store 的宿主可显式调用 `await store.setup()`；数据库连接池必须保证连接独占借用。
+
+`MemoryAutomationStore(notifications=notifications)` 和
+`SqlAlchemyAutomationStore(database, notifications=notifications)` 借用已启动的
+`tinkerfin_notifications.Notifications`，应在 Worker 和观察者结束后再关闭通知服务。
+提交后的任务与执行通知会唤醒 Worker，包括远端删除日程和取消执行。遗漏的提示每 30 秒通过
+权威读取修正，到期事项与 claim 租约仍按原有规则处理。通知只携带资源身份，不包含任务输入或结果正文。
 
 ## 任务命令与执行结果
 
@@ -143,6 +150,9 @@ wait 使用有限正数秒，期限包含锁等待、读取和间隔；超时抛
 取消等待不会取消执行。正常终态以及 interrupted/needs_attention 都会返回，后两者仍非终态。
 业务失败通过状态及 snapshot.failure_code/failure_message 读取；Store 错误直接传播。
 RunHandle.id 是执行记录 ID，identity.run_id 才是 Runtime run ID；result 可能为空。
+
+Store 绑定通知后，`wait()` 先订阅再读取，收到变化时刷新，并每 30 秒校准一次。
+`poll_interval` 仅在未绑定通知时生效；取消观察者不会取消执行。
 
 ### 筛选任务和运行历史
 
@@ -209,7 +219,7 @@ tools = create_automation_tools(
 )
 ```
 
-九个通用工具使用绑定的 Owner，日程写操作要求活动 worker；模型不能覆盖 owner、namespace 或目标权限。
+九个通用工具使用绑定的 Owner，日程写操作需要 worker 或已绑定通知的 Store；模型不能覆盖 owner、namespace 或目标权限。
 execute_automation_once 提交无任务执行，run_automation_task_now 运行已有任务并校验所见目标和 revision。
 修改类工具要求稳定 request_id；不开放执行取消、重试、人工结算或 Graph 恢复。
 宿主决定哪些 Agent 获得管理工具，并限制派生任务的数量、频率和权限。
@@ -221,7 +231,7 @@ execute_automation_once 提交无任务执行，run_automation_task_now 运行�
 | 模块 | 公共契约 |
 | --- | --- |
 | `service` / `engine` | `AutomationService` / `AutomationEngine` |
-| `store` | `AutomationStore`、`WorkItemClaim`、`WorkKind`、`StartAuthorization`、`ScheduledExecution`、`MaterializationResult` |
+| `store` | `AutomationStore`、`WorkItemClaim`、`WorkClaimBatch`、`ClaimRenewal`、`WorkKind`、`StartAuthorization`、`ScheduledExecution`、`MaterializationResult` |
 | `scheduler` | `AutomationScheduler`、`MemoryScheduler`、`TaskDue` |
 | `clock` | `AutomationClock`、`SystemClock`、`ManualClock` |
 | `schedules` | `materialize_schedule`、`MaterializedSchedule`、调度 JSON 转换 |
@@ -242,11 +252,17 @@ Store 提供异步命令、查询和状态统计，各组操作保护不同的�
 | 任务 CRUD | owner 隔离、修订检查、命令幂等 |
 | 调度读取与 `materialize_task` | 推进已观察的唤醒时间，并在同一边界写入去重后的发生项 |
 | `enqueue_execution` | 发生项/命令去重、排队容量和可选任务修订检查一起完成 |
-| `claim_work`、`renew_claim` | 预占共享并发额度，并核验当前所有者及 fence |
+| `claim_work`、`renew_claim` | 返回含下次检查间隔的 `WorkClaimBatch`，或含取消意图的 `ClaimRenewal`；核验当前所有者、fence 和共享并发额度 |
 | `authorize_start` | 在调用目标前保存唯一一次开始授权 |
 | `mark_interrupted`、`finish_execution` | 保留截止时间，仅在确认终态后释放额度 |
 | 取消与人工结算 | 不确定工作保留额度，直到经过授权的明确结算 |
 | 初始化、时间、读取与关闭 | 当前 Schema 校验、权威时间、稳定分页和借用资源归属 |
+
+`claim_work(limit=0)` 只维护到期事项，不返回 claim，也不分配新的执行容量。调用返回
+`WorkClaimBatch(claims, next_check_after_seconds)`；间隔按存储时钟计算，调用方需扣除自身调用耗时。
+本次取得 claim、完成了可继续推进的有界维护，或期限在调用期间到达时返回 0，表示应再进行一次有界检查。
+容量阻塞本身不能触发零间隔重查。
+`renew_claim` 返回 `ClaimRenewal(claim, cancellation_requested)`，在同一权威操作中确认续租与取消意图。
 
 仓库的 `test_store_contract.py`、`test_store_atomicity.py`、`test_sql_queue_admission.py`、
 `test_tool_permissions.py` 覆盖这些契约；`store_with_clock` fixture 将共用场景运行在

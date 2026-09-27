@@ -12,10 +12,13 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[1]
 _COMPONENT_ROOTS = {
     "agui",
+    "automation",
     "contracts",
+    "gateway",
     "langgraph_store",
     "messaging",
     "native_stream",
+    "notifications",
     "runtime",
     "sandbox",
     "tracing",

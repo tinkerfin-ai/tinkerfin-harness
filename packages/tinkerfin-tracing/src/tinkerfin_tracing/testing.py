@@ -169,7 +169,7 @@ async def verify_trace_ledger_backend(
         assert current.active_run_ids == (third_identity.run_id,)
         waiting = asyncio.create_task(anext(follower))
         await third.append((_run_fact(third_identity, "started"),))
-        followed = await asyncio.wait_for(waiting, timeout=2)
+        followed = await waiting
         waiting = None
         assert [event.trace_seq for event in followed.events] == [7]
         await third.append(

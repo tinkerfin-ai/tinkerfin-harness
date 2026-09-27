@@ -51,6 +51,11 @@ _PROJECTS = (
         "tinkerfin_contracts/py.typed",
     ),
     _WheelProject(
+        "tinkerfin-notifications",
+        _ROOT / "packages/tinkerfin-notifications",
+        "tinkerfin_notifications/py.typed",
+    ),
+    _WheelProject(
         "tinkerfin-native-stream",
         _ROOT / "packages/tinkerfin-native-stream",
         "tinkerfin_native_stream/py.typed",
@@ -70,6 +75,11 @@ _PROJECTS = (
         "tinkerfin-messaging",
         _ROOT / "packages/tinkerfin-messaging",
         "tinkerfin_messaging/py.typed",
+    ),
+    _WheelProject(
+        "tinkerfin-gateway",
+        _ROOT / "packages/tinkerfin-gateway",
+        "tinkerfin_gateway/py.typed",
     ),
     _WheelProject(
         "tinkerfin-tracing",
@@ -95,6 +105,30 @@ _PROJECTS = (
 )
 
 _CORE_CASES = (
+    _InstallCase(
+        "notifications-core",
+        "tinkerfin-notifications==0.1.0",
+        ("tinkerfin_notifications",),
+        ("tinkerfin-notifications", "pydantic"),
+        ("tinkerfin", "langgraph", "redis", "sqlalchemy", "fastapi", "starlette"),
+        ("tinkerfin", "langgraph", "redis", "sqlalchemy", "fastapi", "starlette"),
+        smoke="notifications",
+    ),
+    _InstallCase(
+        "gateway-core",
+        "tinkerfin-gateway==0.1.0",
+        ("tinkerfin_gateway",),
+        (
+            "tinkerfin-gateway",
+            "tinkerfin",
+            "tinkerfin-messaging",
+            "tinkerfin-notifications",
+            "ag-ui-protocol",
+        ),
+        ("fastapi", "starlette", "redis"),
+        ("fastapi", "starlette", "redis"),
+        smoke="gateway",
+    ),
     _InstallCase(
         "contracts-core",
         "tinkerfin-contracts==0.1.0",
@@ -209,6 +243,25 @@ _CORE_CASES = (
 )
 
 _FULL_CASES = (
+    _InstallCase(
+        "notifications-redis",
+        "tinkerfin-notifications[redis]==0.1.0",
+        ("tinkerfin_notifications.redis",),
+        ("tinkerfin-notifications", "redis"),
+        ("tinkerfin", "langgraph", "sqlalchemy", "fastapi", "starlette"),
+        ("tinkerfin", "langgraph", "sqlalchemy", "fastapi", "starlette"),
+        full_matrix_only=True,
+    ),
+    _InstallCase(
+        "gateway-starlette",
+        "tinkerfin-gateway[starlette]==0.1.0",
+        ("tinkerfin_gateway.starlette",),
+        ("tinkerfin-gateway", "starlette"),
+        ("fastapi", "redis"),
+        ("fastapi", "redis"),
+        smoke="gateway_starlette",
+        full_matrix_only=True,
+    ),
     _InstallCase(
         "messaging-sqlalchemy",
         "tinkerfin-messaging[sqlalchemy]==0.1.0",
@@ -325,6 +378,8 @@ _STUDIO_CASE = _InstallCase(
         "tinkerfin",
         "tinkerfin_langgraph_store",
         "tinkerfin_messaging",
+        "tinkerfin_notifications",
+        "tinkerfin_gateway",
         "tinkerfin_sandbox",
         "tinkerfin_tracing",
     ),
@@ -333,6 +388,8 @@ _STUDIO_CASE = _InstallCase(
         "tinkerfin",
         "tinkerfin-langgraph-store",
         "tinkerfin-messaging",
+        "tinkerfin-notifications",
+        "tinkerfin-gateway",
         "tinkerfin-sandbox",
         "tinkerfin-tracing",
     ),
@@ -562,7 +619,32 @@ for root in case["forbidden_modules"]:
         raise AssertionError(f"forbidden module loaded: {root}")
 
 async def smoke() -> None:
-    if case["smoke"] == "automation_core":
+    if case["smoke"] == "notifications":
+        from tinkerfin_notifications import Notification, Notifications, NotificationScope
+        async with Notifications() as service:
+            scope = NotificationScope("installed")
+            async with service.subscribe(scope=scope) as changes:
+                await service.publish(Notification(scope=scope, topic="task.changed", key="task"))
+                assert (await anext(changes)).key == "task"
+    elif case["smoke"] in {"gateway", "gateway_starlette"}:
+        from tinkerfin_gateway import Gateway
+        from tinkerfin_messaging import Messaging
+        from tinkerfin_notifications import Notifications, NotificationScope
+        async with Messaging() as messaging, Notifications() as notifications:
+            gateway = Gateway(messaging=messaging, notifications=notifications)
+            stream = await gateway.notifications(scopes=[NotificationScope("installed")])
+            if case["smoke"] == "gateway_starlette":
+                from tinkerfin_gateway.starlette import sse_response
+                response = await sse_response(stream)
+                await response.aclose()
+            else:
+                async with stream:
+                    frames = stream.to_sse()
+                    try:
+                        assert await anext(frames) == b"event: ready\ndata: {}\n\n"
+                    finally:
+                        await frames.aclose()
+    elif case["smoke"] == "automation_core":
         from tinkerfin_automation import (
             Automation,
             TinkerFinTarget,

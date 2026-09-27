@@ -7,6 +7,7 @@ from tinkerfin_studio.api.auth_router import router as auth_router
 from tinkerfin_studio.api.automation_router import router as automation_router
 from tinkerfin_studio.api.conversation_router import router as conversation_router
 from tinkerfin_studio.api.model_router import router as model_router
+from tinkerfin_studio.api.notification_router import router as notification_router
 from tinkerfin_studio.api.user_router import router as user_router
 
 
@@ -19,5 +20,6 @@ def create_api_router() -> APIRouter:
     router.include_router(auth_router)
     router.include_router(conversation_router)
     router.include_router(model_router)
+    router.include_router(notification_router)
     router.include_router(user_router)
     return router

@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { mockDownloadPermits } from './support/attachment-storage'
 import { measureBounds } from './support/geometry'
 import { test, expect } from '@playwright/test'
@@ -85,6 +86,7 @@ test('附件发送失败保留输入与待发送图片', async ({ page }) => {
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
   await mockDownloadPermits(page)
+  await installNotificationStream(page)
   await page.goto('/')
   await page.locator('input[type=file]').setInputFiles(sample)
   await expect(page.getByLabel('待发送附件').getByRole('img', { name: 'multimodal.png', exact: true })).toBeVisible()
@@ -129,6 +131,7 @@ test('历史消息中用户图片在提示词前、工具图片在工具行后�
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
   await mockDownloadPermits(page)
+  await installNotificationStream(page)
   await page.goto('/')
   await page.getByRole('button', { name: `打开会话：${history.title}`, exact: true }).click()
   const preview = page.getByRole('button', { name: '放大图片：验收图表.png', exact: true })

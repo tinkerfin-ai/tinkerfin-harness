@@ -162,7 +162,7 @@ async def test_deferred_source_cancel_waits_for_the_shared_open() -> None:
         cancellable=True,
     )
     pulling = asyncio.create_task(anext(aiter(source)))
-    await asyncio.wait_for(opening.wait(), timeout=1)
+    await opening.wait()
     context = CancelContext(channel="events", identity=_identity())
     cancelling = asyncio.create_task(source.cancel(context))
     await asyncio.sleep(0)
@@ -170,8 +170,8 @@ async def test_deferred_source_cancel_waits_for_the_shared_open() -> None:
 
     release.set()
 
-    assert await asyncio.wait_for(cancelling, timeout=1) == (9,)
-    assert await asyncio.wait_for(pulling, timeout=1) == 1
+    assert await cancelling == (9,)
+    assert await pulling == 1
     assert received == [context]
     await source.aclose()
     assert opened.close_calls == 1
@@ -216,9 +216,9 @@ async def test_deferred_source_close_cancels_an_in_flight_open() -> None:
         cancellable=False,
     )
     pulling = asyncio.create_task(anext(aiter(source)))
-    await asyncio.wait_for(opening.wait(), timeout=1)
+    await opening.wait()
 
-    await asyncio.wait_for(source.aclose(), timeout=1)
+    await source.aclose()
 
     assert cancelled.is_set()
     with pytest.raises(asyncio.CancelledError):
@@ -413,13 +413,13 @@ async def test_map_source_waits_for_transform_before_pulling_next_item() -> None
     mapped = map_source(source, transform)
     iterator = aiter(mapped)
     first = asyncio.ensure_future(anext(iterator))
-    await asyncio.wait_for(transform_started.wait(), timeout=1)
+    await transform_started.wait()
 
     assert source.pulled == [1]
     assert not first.done()
 
     transform_release.set()
-    assert await asyncio.wait_for(first, timeout=1) == 10
+    assert await first == 10
     assert await anext(iterator) == 20
     with pytest.raises(StopAsyncIteration):
         await anext(iterator)
@@ -462,7 +462,7 @@ async def test_map_source_cancellation_closes_upstream() -> None:
 
     mapped = map_source(source, block)
     consuming = asyncio.ensure_future(anext(aiter(mapped)))
-    await asyncio.wait_for(transform_started.wait(), timeout=1)
+    await transform_started.wait()
     consuming.cancel()
 
     with pytest.raises(asyncio.CancelledError):
@@ -478,14 +478,14 @@ async def test_map_source_close_survives_caller_cancellation() -> None:
     source = _BlockingCloseSource()
     mapped = map_source(source, lambda item: item)
     closing = asyncio.create_task(mapped.aclose())
-    await asyncio.wait_for(source.close_started.wait(), timeout=1)
+    await source.close_started.wait()
 
     closing.cancel("caller stopped waiting")
     await asyncio.sleep(0)
     assert not closing.done()
     source.close_release.set()
     with pytest.raises(asyncio.CancelledError, match="caller stopped waiting"):
-        await asyncio.wait_for(closing, timeout=1)
+        await closing
 
     await mapped.aclose()
     assert source.close_calls == 1

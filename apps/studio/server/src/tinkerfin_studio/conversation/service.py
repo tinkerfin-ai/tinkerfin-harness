@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 
-from ag_ui.core import (
-    BaseEvent,
-    RunErrorEvent,
-    RunFinishedEvent,
-    RunStartedEvent,
-)
+from ag_ui.core import BaseEvent
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tinkerfin import AgUiResumeReceipt, AgUiRunStream, RunIdentity, SseBody
+from tinkerfin import RunIdentity
+from tinkerfin_gateway import (
+    CompactRun,
+    ResumeRun,
+    RunCommand,
+    RunPresentation,
+    StartRun,
+)
 from tinkerfin_messaging import (
+    MessageSubscription,
     parse_sse_event_id,
 )
 from tinkerfin_messaging.errors import (
@@ -30,7 +32,11 @@ from tinkerfin_studio.api.errors import (
     SystemException,
 )
 from tinkerfin_studio.auth.types import UserContext
-from tinkerfin_studio.conversation.error_logging import log_conversation_error
+from tinkerfin_studio.conversation.delivery import (
+    ConversationAdmission,
+    ConversationResumeSettlement,
+    ConversationRunObserver,
+)
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.request import ChatRequest, CompactRequest
 from tinkerfin_studio.conversation.run_preparation import (
@@ -40,7 +46,6 @@ from tinkerfin_studio.conversation.run_preparation import (
     StartChatIntent,
     classify_intent,
     conversation_identity,
-    decorate_main_event,
     prepare_run_request,
 )
 from tinkerfin_studio.conversation.run_registration import (
@@ -87,6 +92,10 @@ _MESSAGING_ERRORS: dict[
         False,
     ),
     MessagingErrorCode.MESSAGE_ID_CONFLICT: (
+        ConversationErrorCode.RUN_IDENTITY_CONFLICT,
+        True,
+    ),
+    MessagingErrorCode.RUN_REQUEST_CONFLICT: (
         ConversationErrorCode.RUN_IDENTITY_CONFLICT,
         True,
     ),
@@ -166,7 +175,7 @@ def parse_last_event_id(value: str | None) -> int | None:
 class PreparedChat:
     """完成 Messaging 预握手后的 HTTP SSE 内容"""
 
-    body: AsyncGenerator[bytes, None] | SseBody[bytes]
+    stream: MessageSubscription[BaseEvent]
     thread_id: str
 
 
@@ -209,42 +218,103 @@ class ConversationChatService:
             image_model = await models.resolve_image_model()
             intent = classify_intent(request)
             thread_id = request.thread_id
-        run_preparer, prepared, execution = await self._prepare_execution(
+        prepared, execution = await self._prepare_execution(
             request,
             intent=intent,
             model=model,
             thread_id=thread_id,
         )
+        admission = ConversationAdmission(
+            self._resources,
+            user_id=self._user.user_id,
+            thread_pk=execution.thread.id,
+            identity=prepared.identity,
+            registered=execution.registered,
+            thread_created=execution.thread_created,
+        )
         try:
-            events = self._create_events(
-                intent=intent,
-                execution=execution,
-                prepared=prepared,
-                model=model,
+            runtime = build_conversation_runtime(
+                resources=self._resources,
+                user_id=self._user.user_id,
+                thread_id=prepared.identity.thread_id,
+                model_config=model,
                 image_model=image_model,
+                access_mode=prepared.access_mode,
+            )
+            command: RunCommand
+            if isinstance(intent, CompactIntent):
+                command = CompactRun(
+                    thread_id=prepared.identity.thread_id,
+                    run_id=prepared.identity.run_id,
+                )
+            elif isinstance(intent, StartChatIntent):
+                command = StartRun(
+                    thread_id=prepared.identity.thread_id,
+                    run_id=prepared.identity.run_id,
+                    messages=prepared.messages,
+                    parent_run_id=prepared.parent_run_id,
+                    mode=prepared.mode,
+                    parameters=prepared.parameters,
+                )
+            else:
+                if execution.resume is None:
+                    raise RuntimeError("恢复请求缺少审批决定")
+                command = ResumeRun(
+                    thread_id=prepared.identity.thread_id,
+                    run_id=prepared.identity.run_id,
+                    resume=execution.resume,
+                    parent_run_id=prepared.parent_run_id,
+                    mode=prepared.mode,
+                    parameters=prepared.parameters,
+                )
+            title_text = (
+                request.user_input.text
+                if isinstance(request, ChatRequest)
+                and isinstance(intent, StartChatIntent)
+                and execution.thread.title_source == "default"
+                and execution.thread.title_generation_status == "idle"
+                else ""
+            )
+            presentation = RunPresentation(
+                start_attributes={
+                    "title": execution.thread.title,
+                    "titleSource": execution.thread.title_source,
+                    "titleSeq": execution.thread.title_seq,
+                    "titleGenerationStatus": execution.thread.title_generation_status,
+                },
+                cancelled_message="上下文压缩已停止"
+                if isinstance(intent, CompactIntent)
+                else "聊天生成已取消",
             )
         except BaseException:
-            # 流尚未交给消息服务，本次业务登记仍由请求负责清理
-            await run_preparer.cleanup_unstarted(
-                thread_pk=execution.thread.id,
-                identity_run_id=prepared.identity.run_id,
-                registered=execution.registered,
-                thread_created=execution.thread_created,
-            )
+            await admission.release()
             raise
-        body = await self._start_delivery(
-            events,
-            after=after,
-            prepared=prepared,
-            execution=execution,
-            run_preparer=run_preparer,
-            title_text=request.user_input.text
-            if isinstance(request, ChatRequest) and isinstance(intent, StartChatIntent)
-            else "",
-            model=model,
-            image_model=image_model,
-        )
-        return PreparedChat(body=body, thread_id=execution.thread.thread_id)
+        try:
+            # 业务提供授权命令和登记；框架负责受理、重播、取消及输出订阅的清理
+            stream = await self._resources.gateway.stream(
+                runtime,
+                command,
+                after=after,
+                registration=admission,
+                settlement=ConversationResumeSettlement(
+                    self._resources,
+                    thread_pk=execution.thread.id,
+                    run_id=prepared.identity.run_id,
+                )
+                if isinstance(command, ResumeRun)
+                else None,
+                on_committed=ConversationRunObserver(
+                    self._resources,
+                    thread_pk=execution.thread.id,
+                    title_text=title_text,
+                    model=model,
+                    image_model=image_model,
+                ),
+                presentation=presentation,
+            )
+        except MessagingError as error:
+            raise self._messaging_error(error) from error
+        return PreparedChat(stream=stream, thread_id=prepared.identity.thread_id)
 
     async def _resolve_attachments(self, request: ChatRequest) -> ChatRequest:
         """以有权读取的仓储信息替换客户端附件描述，核验文件总量"""
@@ -276,13 +346,14 @@ class ConversationChatService:
         intent: ChatIntent,
         model: AgentModelConfig,
         thread_id: str,
-    ) -> tuple[ConversationRunPreparer, PreparedRunRequest, PreparedExecution]:
+    ) -> tuple[PreparedRunRequest, PreparedExecution]:
         """完成 thread 解析、权威快照和短事务 run 注册"""
 
         run_preparer = ConversationRunPreparer(
             self._session,
             user_id=self._user.user_id,
             attachments=self._resources.attachments,
+            notifications=self._resources.notifications,
         )
         resolved_thread = await run_preparer.resolve_thread(
             thread_id=thread_id,
@@ -352,168 +423,7 @@ class ConversationChatService:
             )
         except MessagingError as error:
             raise self._messaging_error(error) from error
-        return run_preparer, prepared, execution
-
-    def _create_events(
-        self,
-        *,
-        intent: ChatIntent,
-        execution: PreparedExecution,
-        prepared: PreparedRunRequest,
-        model: AgentModelConfig,
-        image_model: AgentModelConfig | None,
-    ) -> AgUiRunStream:
-        """创建会话事件流，在执行开始时准备运行资源"""
-
-        runtime = build_conversation_runtime(
-            resources=self._resources,
-            user_id=self._user.user_id,
-            thread_id=execution.thread.thread_id,
-            model_config=model,
-            image_model=image_model,
-            access_mode=prepared.access_mode,
-        )
-        if isinstance(intent, CompactIntent):
-            # 框架整理已保存的会话上下文，复用会话投递与取消，不提交草稿或业务工具调用
-            return runtime.agui.open_compaction(
-                thread_id=prepared.identity.thread_id,
-                run_id=prepared.identity.run_id,
-            )
-
-        resume_request = None
-        if isinstance(intent, StartChatIntent):
-            messages = prepared.messages
-        else:
-            if execution.resume is None:
-                raise RuntimeError("恢复请求缺少 AgUiResumeRequest")
-            messages = None
-            resume_request = execution.resume
-
-        async def record_saved(receipt: AgUiResumeReceipt) -> None:
-            await self._resources.conversation_trace.settle_resume(
-                thread_pk=execution.thread.id,
-                receipt=receipt,
-            )
-
-        async def release_resume_claims() -> None:
-            async with self._resources.database.session() as session:
-                repository = ConversationRepository(session)
-                await repository.release_claims(
-                    thread_pk=execution.thread.id,
-                    run_id=prepared.identity.run_id,
-                )
-                await repository.commit()
-
-        if resume_request is None:
-            assert messages is not None
-            events = runtime.open_agui_run(
-                thread_id=prepared.identity.thread_id,
-                run_id=prepared.identity.run_id,
-                messages=messages,
-                parent_run_id=prepared.parent_run_id,
-                mode=prepared.mode,
-                config=prepared.graph_config,
-            )
-        else:
-            events = runtime.open_agui_run(
-                thread_id=prepared.identity.thread_id,
-                run_id=prepared.identity.run_id,
-                resume=resume_request,
-                parent_run_id=prepared.parent_run_id,
-                mode=prepared.mode,
-                config=prepared.graph_config,
-                on_resume_saved=record_saved,
-                on_resume_not_saved=release_resume_claims,
-            )
-        return events
-
-    async def _start_delivery(
-        self,
-        events: AgUiRunStream,
-        *,
-        after: int | None,
-        prepared: PreparedRunRequest,
-        execution: PreparedExecution,
-        run_preparer: ConversationRunPreparer,
-        title_text: str,
-        model: AgentModelConfig,
-        image_model: AgentModelConfig | None,
-    ) -> AsyncGenerator[bytes, None] | SseBody[bytes]:
-        """接入会话事件持久化与重连回放，并返回 SSE 内容"""
-
-        async def decorate_event(event: BaseEvent) -> BaseEvent:
-            return decorate_main_event(
-                event,
-                prepared=prepared,
-                title=execution.thread.title,
-                title_source=execution.thread.title_source,
-                title_seq=execution.thread.title_seq,
-                title_generation_status=execution.thread.title_generation_status,
-            )
-
-        async def run_started(_event: RunStartedEvent) -> None:
-            if (
-                title_text.strip()
-                and execution.thread.title_source == "default"
-                and execution.thread.title_generation_status == "idle"
-            ):
-                await self._resources.conversation_titles.start(
-                    thread_pk=execution.thread.id,
-                    text=title_text,
-                    model=model,
-                )
-
-        async def run_finished(event: RunFinishedEvent | RunErrorEvent) -> None:
-            if isinstance(event, RunErrorEvent) and event.code != "cancelled":
-                await log_conversation_error(
-                    identity=prepared.identity,
-                    model=model,
-                    image_model=image_model,
-                    code=event.code,
-                    error=events.error,
-                )
-
-        async def activate_ready_source() -> None:
-            """在框架 Run 可查询后发布业务 head"""
-
-            await run_preparer.activate_started(
-                thread_pk=execution.thread.id,
-                identity_run_id=prepared.identity.run_id,
-                registered=execution.registered,
-            )
-
-        async def cleanup_not_started() -> None:
-            """清理没有 producer 且没有 attachment 的业务注册"""
-
-            await run_preparer.cleanup_unstarted(
-                thread_pk=execution.thread.id,
-                identity_run_id=prepared.identity.run_id,
-                registered=execution.registered,
-                thread_created=execution.thread_created,
-            )
-
-        async def subscription_ready() -> None:
-            """每次成功订阅均确保会话摘要持续更新"""
-
-            self._resources.conversation_trace.ensure(
-                thread_pk=execution.thread.id,
-                identity=prepared.identity,
-            )
-
-        try:
-            body = await self._resources.conversation_channel.open_sse(
-                events,
-                after=after,
-                on_source_ready=activate_ready_source,
-                on_subscribed=subscription_ready,
-                transform_event=decorate_event,
-                on_run_started=run_started,
-                on_run_finished=run_finished,
-                on_delivery_not_started=cleanup_not_started,
-            )
-        except MessagingError as error:
-            raise self._messaging_error(error) from error
-        return body
+        return prepared, execution
 
     async def cancel(self, *, thread_id: str, run_id: str) -> CancelRunResponse:
         """验证用户归属后请求并等待 durable run 取消"""
@@ -533,9 +443,7 @@ class ConversationChatService:
             identity = conversation_identity(
                 thread_id, run_id, user_id=self._user.user_id
             )
-            cancelled = await self._resources.conversation_channel.cancel(
-                identity=identity,
-            )
+            cancelled = await self._resources.gateway.run(identity).cancel()
         except RunProducerFailed:
             # run 已经失败时“停止”是幂等确认，用户应回到可重试状态而不是看到 500
             await self._reconcile_trace(thread_pk=thread_pk, identity=identity)

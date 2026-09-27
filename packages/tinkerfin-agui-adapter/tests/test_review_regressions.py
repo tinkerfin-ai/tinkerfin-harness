@@ -381,7 +381,7 @@ def test_root_state_closes_child_lifecycles_before_snapshot_or_delta(
 
 
 def test_content_batcher_flushes_at_exact_character_threshold() -> None:
-    batcher = ContentBatcher()
+    batcher = ContentBatcher(now=lambda: 0.0)
 
     assert (
         batcher.add(TextMessageContentEvent(message_id="message-1", delta="a" * 1023))
@@ -395,7 +395,7 @@ def test_content_batcher_flushes_at_exact_character_threshold() -> None:
 
 
 def test_content_batcher_merges_only_consecutive_deltas_for_one_message() -> None:
-    batcher = ContentBatcher()
+    batcher = ContentBatcher(now=lambda: 0.0)
 
     assert batcher.add(TextMessageContentEvent(message_id="message-1", delta="a")) == []
     assert batcher.add(TextMessageContentEvent(message_id="message-1", delta="b")) == []
@@ -413,7 +413,7 @@ def test_content_batcher_merges_only_consecutive_deltas_for_one_message() -> Non
 
 
 def test_content_batcher_flushes_before_every_non_text_event() -> None:
-    batcher = ContentBatcher()
+    batcher = ContentBatcher(now=lambda: 0.0)
     boundary = TextMessageStartEvent(message_id="message-2")
     assert (
         batcher.add(TextMessageContentEvent(message_id="message-1", delta="pending"))
@@ -558,7 +558,7 @@ async def test_cancellation_remains_primary_when_upstream_close_fails() -> None:
     events = _BlockedFailingCloseEvents()
     stream = micro_batch(events)
     pull = asyncio.create_task(anext(stream))
-    await asyncio.wait_for(events.pull_started.wait(), timeout=1)
+    await events.pull_started.wait()
 
     pull.cancel()
 
@@ -594,10 +594,10 @@ async def test_repeated_cancellation_cannot_interrupt_microbatch_cleanup() -> No
     stream = micro_batch(events)
     baseline_tasks = set(asyncio.all_tasks())
     consumer = asyncio.create_task(anext(stream))
-    await asyncio.wait_for(events.pull_started.wait(), timeout=1)
+    await events.pull_started.wait()
 
     consumer.cancel()
-    await asyncio.wait_for(events.close_started.wait(), timeout=1)
+    await events.close_started.wait()
     consumer.cancel()
     events.release_close.set()
 
@@ -620,7 +620,7 @@ async def test_repeated_cancellation_cannot_interrupt_microbatch_cleanup() -> No
 async def test_cleanup_cancellation_overrides_an_earlier_pull_failure() -> None:
     events = _FailingPullBlockingCloseEvents()
     consumer = asyncio.create_task(anext(micro_batch(events)))
-    await asyncio.wait_for(events.close_started.wait(), timeout=1)
+    await events.close_started.wait()
 
     consumer.cancel("caller cancelled during microbatch cleanup")
     events.release_close.set()
@@ -641,7 +641,7 @@ async def test_public_stream_close_propagates_cancellation_after_cleanup() -> No
     assert (await anext(stream)).type.value == "RUN_STARTED"
 
     close_task = asyncio.ensure_future(stream.aclose())
-    await asyncio.wait_for(parts.close_started.wait(), timeout=1)
+    await parts.close_started.wait()
     close_task.cancel("caller cancelled public stream close")
     parts.release_close.set()
 

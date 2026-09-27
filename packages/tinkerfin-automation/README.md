@@ -127,6 +127,11 @@ states. Observation timeout raises `AutomationWaitTimeout`; cancelling observati
 does not cancel execution. Waiting retains the last successfully read snapshot,
 propagates Store failures, and stops when Automation closes.
 
+Bind an open `Notifications` service to the Store's `notifications` argument to wake
+workers and `run.wait()` after commits. Waiting then uses a 30-second repair read;
+`poll_interval` applies when Notifications is not configured. Work deadlines and
+claim renewals remain authoritative and are never replaced by notification delivery.
+
 ### Filter tasks and execution history
 
 `owner.list_tasks(filters=TaskFilter(...))` and
@@ -186,9 +191,18 @@ Shutdown joins accepted operations and owned cleanup, including on cancellation.
 It can submit immediate work, query, manually run existing tasks, cancel, retry,
 and resolve executions through a shared persistent Store and a remote worker.
 Creating, editing, pausing, enabling, or deleting schedules requires a local
-`automation.worker()` context; the default Scheduler does not discover remote
-dynamic schedule changes. Workers in one namespace must handle every target they
+`automation.worker()` context or a Store bound to Notifications. For remote schedule
+management, use shared storage and the same Redis notification channel on clients
+and workers. Workers in one namespace must handle every target they
 can claim. Configure database connection and statement timeouts on the host engine.
+
+Both `MemoryAutomationStore(notifications=notifications)` and
+`SqlAlchemyAutomationStore(database, notifications=notifications)` borrow the service.
+Start it before Automation and close it after workers and observers exit. A worker
+updates changed schedules and removes remotely deleted ones, with a 30-second repair
+read for missed hints. Owner-scoped `automation.task.changed` and
+`automation.execution.changed` hints contain resource identities rather than input
+or result content.
 
 ### Agent tools
 

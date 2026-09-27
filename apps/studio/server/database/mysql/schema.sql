@@ -91,6 +91,7 @@ CREATE TABLE conversation_run_registrations (
   model_id VARCHAR(64) NOT NULL COMMENT '主 Run 使用的稳定模型 ID',
   status VARCHAR(32) NOT NULL COMMENT 'preparing/starting/running/waiting/succeeded/failed/cancelled/abandoned',
   input_json JSON NOT NULL COMMENT '用于同 runId 幂等核验的标准请求',
+  preparation_id VARCHAR(32) NOT NULL COMMENT '本次准备登记的随机标识，清理时比较以保护并发提交',
   terminal_outcome VARCHAR(32) COMMENT 'Trace 终态结果',
   error_code VARCHAR(128) COMMENT '客户端安全的终态错误码',
   trace_generation VARCHAR(2048) COMMENT '首次观测绑定的 Trace generation',

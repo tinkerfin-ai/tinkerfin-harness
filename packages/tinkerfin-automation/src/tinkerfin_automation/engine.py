@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
 from typing import TypeAlias, TypeVar
 from uuid import uuid4
+
+from tinkerfin_notifications import (
+    NotificationScope,
+    NotificationSubscription,
+    ResyncRequired,
+)
 
 from ._tasks import (
     TaskOutcome,
@@ -23,6 +30,9 @@ from .clock import AutomationClock, SystemClock
 from .errors import (
     AutomationError,
     AutomationLifecycleError,
+    AutomationStoreProtocolError,
+    ClaimLostError,
+    ExecutionNotFoundError,
     InterruptCallbackError,
     TargetExecutionError,
     TargetNotFoundError,
@@ -97,7 +107,9 @@ class AutomationEngine:
             global_concurrency: Maximum unfinished executions admitted globally.
             claim_batch_size: Maximum work items considered per dispatch cycle.
             lease_duration: Store ownership duration renewed during active work.
-            poll_interval: Maximum delay before checking durable work after restart.
+            poll_interval: Read interval without Store Notifications. With a bound
+                service, changes and work deadlines wake the worker and a 30-second
+                authoritative read repairs lost hints and task schedules.
             drain_timeout: Graceful shutdown wait before cancelling owned tasks.
             on_interrupt: Optional classifier that cannot resume the graph.
             clock: Optional controllable clock used by lifecycle tests.
@@ -152,6 +164,13 @@ class AutomationEngine:
         self._ready = False
         self._closing = False
         self._closed = False
+        self._subscription: NotificationSubscription | None = None
+        self._notification_reader: asyncio.Task[TaskOutcome[None]] | None = None
+        self._changed_tasks: set[str] = set()
+        self._changed_executions: set[str] = set()
+        self._resync = False
+        self._next_check_at: datetime | None = None
+        self._repair_at: datetime | None = None
 
     async def start(self) -> None:
         """Prepare storage, then start wakeups and one durable-work supervisor."""
@@ -168,12 +187,25 @@ class AutomationEngine:
             self._ensure_startup_open()
             self._service._bind_engine(self._cancel_running, self._wake.set)
             engine_bound = True
+            notifications = self._service._execution_store.notifications
+            if notifications is not None:
+                self._subscription = notifications.subscribe(
+                    scope=NotificationScope(self._service.namespace),
+                    topics={"automation.task.changed", "automation.execution.changed"},
+                )
+                await self._subscription.__aenter__()
+                self._ensure_startup_open()
+                self._notification_reader = asyncio.create_task(
+                    capture(self._listen_for_changes()),
+                    name="tinkerfin-automation-notifications",
+                )
             await self._service._task_scheduler.start(
                 self._service._materialize_due_task
             )
             scheduler_started = True
             self._ensure_startup_open()
             await self._service._sync_all_tasks()
+            self._repair_at = self._clock.now() + timedelta(seconds=30)
             self._ensure_startup_open()
             self._wake.set()
             self._supervisor = asyncio.create_task(
@@ -183,6 +215,14 @@ class AutomationEngine:
             self._ready = True
         except BaseException as error:  # noqa: BLE001 - re-raise after owned cleanup
             failure = error
+            cleanup_notifications = asyncio.create_task(
+                capture(self._stop_notifications()),
+                name="tinkerfin-automation-notifications-start-cleanup",
+            )
+            try:
+                await join_owned_task(cleanup_notifications)
+            except BaseException as cleanup_error:  # noqa: BLE001 - settle all startup resources
+                failure = select_failure(failure, cleanup_error)
             if scheduler_started:
                 cleanup = asyncio.create_task(
                     capture(self._service._task_scheduler.close()),
@@ -264,9 +304,13 @@ class AutomationEngine:
     async def _close_once(self) -> None:
         failure: BaseException | None = None
         try:
+            await self._stop_notifications()
+        except BaseException as error:  # noqa: BLE001 - every resource still needs cleanup
+            failure = error
+        try:
             await self._service._task_scheduler.close()
         except BaseException as error:  # noqa: BLE001 - re-raise after owned cleanup
-            failure = error
+            failure = error if failure is None else select_failure(failure, error)
         if self._supervisor is not None:
             try:
                 await join_owned_task(self._supervisor)
@@ -325,11 +369,30 @@ class AutomationEngine:
     async def _run_supervisor(self) -> None:
         try:
             while not self._closing and self._failure is None:
-                await self._reap_finished()
-                await self._dispatch_ready()
+                # Clear before authoritative work, so a hint arriving during a
+                # query remains observable on the next pass.
                 self._wake.clear()
+                await self._reap_finished()
+                if self._subscription is not None:
+                    now = self._clock.now()
+                    if self._repair_at is None or now >= self._repair_at:
+                        self._resync = True
+                        self._repair_at = now + timedelta(seconds=30)
+                    await self._refresh_changes()
+                await self._dispatch_ready()
                 if self._closing:
                     break
+                if self._wake.is_set():
+                    continue
+                deadline = self._clock.now() + (
+                    timedelta(seconds=30)
+                    if self._subscription is not None
+                    else self._poll_interval
+                )
+                if self._next_check_at is not None:
+                    deadline = min(deadline, self._next_check_at)
+                if self._subscription is not None and self._repair_at is not None:
+                    deadline = min(deadline, self._repair_at)
                 children: list[asyncio.Task[TaskOutcome[object]]] = []
                 failure: BaseException | None = None
                 try:
@@ -338,7 +401,7 @@ class AutomationEngine:
                             capture_call(
                                 partial(
                                     self._clock.wait_until,
-                                    self._clock.now() + self._poll_interval,
+                                    deadline,
                                 )
                             ),
                             name="tinkerfin-automation-engine-poll",
@@ -369,27 +432,50 @@ class AutomationEngine:
         self._dispatches += 1
         self._dispatch_idle.clear()
         try:
-            available = self._global_concurrency - len(self._owned)
-            if available <= 0:
-                return 0
-            claims = await self._service._execution_store.claim_work(
-                self._service.namespace,
-                self._worker_id,
-                limit=min(available, self._claim_batch_size),
-                lease_duration=self._lease_duration,
-                global_concurrency=self._global_concurrency,
-            )
-            for claim in claims:
-                cancellation = asyncio.Event()
-                task = asyncio.create_task(
-                    capture(self._process_claim(claim, cancellation)),
-                    name=f"tinkerfin-automation-execution-{claim.execution_id}",
+            dispatched = 0
+            while not self._closing and self._failure is None:
+                available = max(0, self._global_concurrency - len(self._owned))
+                observed = self._clock.now()
+                batch = await self._service._execution_store.claim_work(
+                    self._service.namespace,
+                    self._worker_id,
+                    limit=min(available, self._claim_batch_size),
+                    lease_duration=self._lease_duration,
+                    global_concurrency=self._global_concurrency,
                 )
-                task.add_done_callback(lambda completed: self._wake.set())
-                self._owned[claim.execution_id] = _OwnedExecution(
-                    task=task, cancel_requested=cancellation
+                delay = batch.next_check_after_seconds
+                if delay is not None and (
+                    not isinstance(delay, int | float)
+                    or isinstance(delay, bool)
+                    or not math.isfinite(delay)
+                    or delay < 0
+                ):
+                    raise AutomationStoreProtocolError(
+                        "Work check delay must be finite non-negative seconds"
+                    )
+                self._next_check_at = (
+                    None if delay is None else observed + timedelta(seconds=delay)
                 )
-            return len(claims)
+                if len(batch.claims) > available:
+                    raise AutomationStoreProtocolError(
+                        "Store returned more claims than the available worker capacity"
+                    )
+                for claim in batch.claims:
+                    cancellation = asyncio.Event()
+                    task = asyncio.create_task(
+                        capture(self._process_claim(claim, cancellation)),
+                        name=f"tinkerfin-automation-execution-{claim.execution_id}",
+                    )
+                    task.add_done_callback(lambda completed: self._wake.set())
+                    self._owned[claim.execution_id] = _OwnedExecution(
+                        task=task, cancel_requested=cancellation
+                    )
+                dispatched += len(batch.claims)
+                if delay != 0 and not batch.claims:
+                    break
+                # A zero-delay empty batch requests another bounded scan;
+                # the next call may also be maintenance-only at full local capacity.
+            return dispatched
         except Exception as error:  # noqa: BLE001 - expose the stable lifecycle failure
             self._record_failure(error)
             assert self._failure is not None
@@ -416,6 +502,68 @@ class AutomationEngine:
             self._record_failure(failure)
             assert self._failure is not None
             raise self._failure
+
+    async def _listen_for_changes(self) -> None:
+        assert self._subscription is not None
+        try:
+            async for change in self._subscription:
+                if isinstance(change, ResyncRequired):
+                    self._service._invalidate_schedule()
+                    self._resync = True
+                    self._changed_tasks.clear()
+                    self._changed_executions.clear()
+                elif change.topic == "automation.task.changed":
+                    self._service._invalidate_schedule()
+                    if len(self._changed_tasks) >= 128:
+                        self._resync = True
+                        self._changed_tasks.clear()
+                    else:
+                        self._changed_tasks.add(change.key)
+                elif change.key in self._owned:
+                    self._changed_executions.add(change.key)
+                self._wake.set()
+            if not self._closing:
+                raise AutomationLifecycleError("Automation change subscription stopped")
+        except asyncio.CancelledError:
+            raise
+        except BaseException as error:
+            self._record_failure(error)
+            raise
+
+    async def _stop_notifications(self) -> None:
+        reader, self._notification_reader = self._notification_reader, None
+        try:
+            if reader is not None:
+                await stop_owned_tasks([reader])
+        finally:
+            if self._subscription is not None:
+                await self._subscription.aclose()
+                self._subscription = None
+
+    async def _refresh_changes(self) -> None:
+        if self._resync:
+            self._resync = False
+            self._changed_tasks.clear()
+            self._changed_executions.update(self._owned)
+            await self._service._sync_all_tasks()
+        while self._changed_tasks:
+            task_id = self._changed_tasks.pop()
+            await self._service._sync_task_id(task_id)
+        while self._changed_executions:
+            execution_id = self._changed_executions.pop()
+            if execution_id not in self._owned:
+                continue
+            try:
+                execution = (
+                    await self._service._execution_store.get_scheduled_execution(
+                        self._service.namespace,
+                        execution_id,
+                    )
+                )
+            except ExecutionNotFoundError:
+                continue
+            if execution.status is ExecutionStatus.CANCEL_REQUESTED:
+                await self._cancel_running(execution_id)
 
     def _record_failure(self, error: BaseException) -> None:
         if isinstance(error, Exception) and not isinstance(error, AutomationError):
@@ -449,19 +597,19 @@ class AutomationEngine:
     async def _process_claim(
         self, claim: WorkItemClaim, cancel_requested: asyncio.Event
     ) -> None:
-        if claim.kind is WorkKind.EXPIRE_INTERRUPT:
-            await self._service._execution_store.finish_execution(
-                claim,
-                status=ExecutionStatus.TIMED_OUT,
-                failure_code="automation.execution_timeout",
-                failure_message="Interrupted execution exceeded its deadline",
-            )
-            return
         target: AutomationTarget | None = None
         authorization = None
         active_task: asyncio.Task[TaskOutcome[ExecutionOutcome]] | None = None
         current_claim = claim
         try:
+            if claim.kind is WorkKind.EXPIRE_INTERRUPT:
+                await self._service._execution_store.finish_execution(
+                    claim,
+                    status=ExecutionStatus.TIMED_OUT,
+                    failure_code="automation.execution_timeout",
+                    failure_message="Interrupted execution exceeded its deadline",
+                )
+                return
             execution = await self._service._execution_store.get_scheduled_execution(
                 self._service.namespace, claim.execution_id
             )
@@ -520,6 +668,20 @@ class AutomationEngine:
                 claim=current_claim,
                 cancel_requested=cancel_requested,
             )
+        except ClaimLostError:
+            # Remote cancellation or task deletion may settle a queued claim
+            # before start authorization. Only authoritative cancellation without
+            # a started target is a normal handoff; other ownership losses remain
+            # visible, including any failure while stopping active work.
+            if authorization is None:
+                execution = (
+                    await self._service._execution_store.get_scheduled_execution(
+                        self._service.namespace, claim.execution_id
+                    )
+                )
+                if execution.status is ExecutionStatus.CANCELLED:
+                    return
+            raise
         except _ExecutionDeadline:
             assert active_task is not None
             status = (
@@ -729,9 +891,12 @@ class AutomationEngine:
                 if renewal_wait in done:
                     task_result(renewal_wait)
                     waits.remove(renewal_wait)
-                    current_claim = await self._service._execution_store.renew_claim(
+                    renewal = await self._service._execution_store.renew_claim(
                         current_claim, lease_duration=self._lease_duration
                     )
+                    current_claim = renewal.claim
+                    if renewal.cancellation_requested:
+                        raise _ExecutionCancellation
                     renewal_wait = asyncio.create_task(
                         capture(
                             self._clock.wait_until(

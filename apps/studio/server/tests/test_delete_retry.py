@@ -68,6 +68,7 @@ async def _completed_trace(tracer: Tracer, identity: RunIdentity) -> None:
 
 @pytest.mark.parametrize("failure_stage", ["checkpoint", "messaging", "database"])
 async def test_delete_retries_each_destructive_stage_without_restoring_old_authority(
+    notifications,
     session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
     failure_stage: str,
@@ -133,6 +134,7 @@ async def test_delete_retries_each_destructive_stage_without_restoring_old_autho
         ApplicationResources,
         SimpleNamespace(
             tracer=tracer,
+            notifications=notifications,
             conversation_channel=Channel(),
             agent_persistence=SimpleNamespace(checkpointer=Checkpointer()),
         ),
@@ -163,6 +165,7 @@ async def test_delete_retries_each_destructive_stage_without_restoring_old_autho
 
 
 async def test_delete_refuses_an_active_trace_and_restores_summary_status(
+    notifications,
     session: AsyncSession,
 ) -> None:
     repository = ConversationRepository(session)
@@ -221,7 +224,9 @@ async def test_delete_refuses_an_active_trace_and_restores_summary_status(
 
     resources = cast(
         ApplicationResources,
-        SimpleNamespace(tracer=tracer, conversation_channel=Channel()),
+        SimpleNamespace(
+            tracer=tracer, conversation_channel=Channel(), notifications=notifications
+        ),
     )
     service = ConversationCommandService(repository, user_id=7, resources=resources)
 

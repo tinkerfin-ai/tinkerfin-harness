@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { expect, test } from '@playwright/test'
 
 const user = { user_id: 1, username: 'connection-test', display_name: '连接验收', avatar_url: null, roles: [], disabled: false }
@@ -30,6 +31,7 @@ for (const theme of ['light', 'dark']) {
         else if (path === '/api/conversation/history') data = { items: [], nextCursor: null }
         await route.fulfill({ json: { code: 0, message: 'success', data } })
       })
+      await installNotificationStream(page)
       await page.goto('/')
       const input = page.getByRole('textbox', { name: '消息输入' })
       await expect(input).toBeEnabled()

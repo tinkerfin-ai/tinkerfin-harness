@@ -7,7 +7,7 @@ from dataclasses import replace
 
 from tinkerfin_contracts import RunIdentity
 
-from ._identity import required_identifier, required_identity
+from ._identity import required_identifier, required_identity, validate_request_digest
 from .backend import is_final_run_status
 from .backend_contract import (
     MessagingBackendSettings,
@@ -32,6 +32,7 @@ from .errors import (
     PublicationRejected,
     RunAlreadyActive,
     RunNotFound,
+    RunRequestConflict,
     StreamDeleteConflict,
     StreamDeleted,
     StreamExpired,
@@ -154,6 +155,7 @@ def _resolve_prepare_run(
     state: MessagingStateSnapshot,
 ) -> MessagingStorageEffect:
     codec_id = _required_text("codec_id", transition.codec_id)
+    validate_request_digest(transition.request_digest)
     after_sequence = transition.after_sequence
     if after_sequence is not None and (
         isinstance(after_sequence, bool) or not isinstance(after_sequence, int)
@@ -227,6 +229,8 @@ def _resolve_prepare_run(
             raise MessagingBackendProtocolError(
                 "Messaging run generation conflicts with its stream"
             )
+        if target_run.request_digest != transition.request_digest:
+            raise RunRequestConflict(identity=transition.identity)
         if is_final_run_status(target_run.status) or target_run.producer_lease_active:
             return _prepared_attachment(
                 transition,
@@ -340,6 +344,7 @@ def _resolve_prepare_run(
     producer_token = transition.transition_id
     created_run = StoredMessagingRun(
         identity=transition.identity,
+        request_digest=transition.request_digest,
         generation=stream.generation,
         start_sequence=latest_sequence,
         end_sequence=latest_sequence,

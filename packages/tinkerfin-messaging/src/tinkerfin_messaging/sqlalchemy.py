@@ -910,6 +910,7 @@ class SqlAlchemyBackend:
                 "lease_deadline": deadline,
                 "publication_closed": run.publication_closed,
                 "publication_ready": run.publication_ready,
+                "request_digest": run.request_digest,
                 "failure_class": encode_text(run.failure_class),
                 "failure_message": encode_text(run.failure_message),
                 **checkpoint_values(run.checkpoint),

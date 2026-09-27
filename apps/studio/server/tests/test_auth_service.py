@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +41,7 @@ async def test_password_hash_uses_independent_salts() -> None:
 
 async def test_login_resolve_and_logout_use_one_token_record(
     session: AsyncSession,
+    fixed_utc_time: datetime,
 ) -> None:
     """登录签发的 token 应可解析，并在登出后立即失效"""
 
@@ -60,14 +61,14 @@ async def test_login_resolve_and_logout_use_one_token_record(
         token_expire_seconds=1800,
     )
 
-    issued_after = datetime.now(UTC)
+    issued_after = fixed_utc_time
     login = await service.login("alice", "secret-pass")
     resolved = await service.resolve_token(login.access_token)
     assert session.in_transaction() is False
     await service.logout(login.access_token)
     revoked = await service.resolve_token(login.access_token)
 
-    assert issued_after + timedelta(seconds=1800) <= login.expires_at
+    assert login.expires_at == issued_after + timedelta(seconds=1800)
     assert login.user.username == "alice"
     assert resolved.is_authenticated is True
     assert resolved.user == login.user
@@ -122,10 +123,11 @@ async def test_login_releases_the_user_transaction_before_password_and_redis(
 
 async def test_expired_token_is_rejected_without_changing_its_deadline(
     session: AsyncSession,
+    fixed_utc_time: datetime,
 ) -> None:
     """固定到期的 token 在重复校验时不得续期"""
 
-    expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    expires_at = fixed_utc_time - timedelta(seconds=1)
     tokens = TokenMemoryStore()
     tokens.records["expired-token"] = TokenRecord(
         token="expired-token",

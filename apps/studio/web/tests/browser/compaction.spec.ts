@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
@@ -120,6 +121,7 @@ async function openConversation(page: Page, options: { theme?: string; detail?: 
     else if (path.endsWith('/complete')) data = { id: 'draft-document', name: '草稿.pdf', mime_type: 'application/pdf', size_bytes: 3 }
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
+  await installNotificationStream(page)
   await page.goto('/?thread=' + threadId)
   await expect(page.getByText('项目目标和附件已确认，可以继续讨论实现细节', { exact: true })).toBeVisible()
   return { requests, release, setDetail: (value: ConversationHistoryDetail) => { detail = value }, historyReads: () => historyReads }

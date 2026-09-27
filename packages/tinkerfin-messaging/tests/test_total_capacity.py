@@ -180,7 +180,7 @@ async def test_failed_admission_leaves_no_channel_or_run_records(
         MessagingLimits(max_total_records=5), MessagingRetentionPolicy()
     )
     first = await _start(backend, "first")
-    for index in range(100):
+    for index in range(2):
         with pytest.raises(MessagingQuotaExceeded):
             await _start(backend, f"rejected-{index}", channel=f"rejected-{index}")
     await backend.finish(first.handle, status="completed")

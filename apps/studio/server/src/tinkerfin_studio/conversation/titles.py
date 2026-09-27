@@ -12,6 +12,8 @@ import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from tinkerfin_notifications import Notifications
+from tinkerfin_studio.changes import notify_change
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.schemas import ConversationTitle
 from tinkerfin_studio.infrastructure.database import Database
@@ -41,9 +43,29 @@ def _title_prompt(text: str) -> str:
     return json.dumps(text[:low], ensure_ascii=False)
 
 
+async def _commit_title(
+    repository: ConversationRepository,
+    notifications: Notifications,
+    thread_pk: int,
+) -> ConversationTitle | None:
+    thread = await repository.get_thread_by_pk(thread_pk)
+    snapshot = None if thread is None else ConversationTitle.model_validate(thread)
+    await repository.commit()
+    if thread is not None:
+        await notify_change(
+            notifications,
+            user_id=thread.user_id,
+            topic="studio.conversation.title.changed",
+            key=thread.thread_id,
+            details={"title_seq": thread.title_seq},
+        )
+    return snapshot
+
+
 async def summarize_conversation_title(
     *,
     database: Database,
+    notifications: Notifications,
     thread_pk: int,
     text: str,
     model: BaseChatModel,
@@ -52,6 +74,7 @@ async def summarize_conversation_title(
 
     Args:
         database: 应用数据库，模型调用期间不持有连接
+        notifications: 应用拥有的通知服务，标题提交后提示浏览器读取
         thread_pk: 已完成用户归属校验的会话主键
         text: 本次普通提问的用户文本，空文本不消耗总结机会
         model: 当前对话所选模型，调用方构建时关闭推理和 SDK 重试
@@ -73,7 +96,10 @@ async def summarize_conversation_title(
             async with database.session() as session:
                 repository = ConversationRepository(session)
                 won = await repository.claim_title(thread_pk)
-                await repository.commit()
+                if won:
+                    await _commit_title(repository, notifications, thread_pk)
+                else:
+                    await repository.commit()
                 claimed = won
                 return won
 
@@ -127,12 +153,14 @@ async def summarize_conversation_title(
                 async with database.session() as session:
                     repository = ConversationRepository(session)
                     updated = await repository.finish_title(thread_pk, title)
-                    await repository.commit()
+                    snapshot = await _commit_title(repository, notifications, thread_pk)
                     saved = updated
-                    if saved:
-                        thread = await repository.get_thread_by_pk(thread_pk)
-                        if thread is not None and thread.title_source == "generated":
-                            return ConversationTitle.model_validate(thread)
+                    if (
+                        saved
+                        and snapshot is not None
+                        and snapshot.title_source == "generated"
+                    ):
+                        return snapshot
     except Exception as error:  # noqa: BLE001 - 辅助模型失败不影响主回复，不记录敏感异常正文
         logger.warning(
             "会话标题总结失败 thread=%s reason=%s", thread_pk, type(error).__name__
@@ -153,8 +181,13 @@ async def summarize_conversation_title(
                         async with asyncio.timeout(_TITLE_CLEANUP_SECONDS):
                             async with database.session() as session:
                                 repository = ConversationRepository(session)
-                                await repository.finish_title(thread_pk, None)
-                                await repository.commit()
+                                changed = await repository.finish_title(thread_pk, None)
+                                if changed:
+                                    await _commit_title(
+                                        repository, notifications, thread_pk
+                                    )
+                                else:
+                                    await repository.commit()
                     except Exception as error:  # noqa: BLE001 - 辅助失败不覆盖主回复，不输出敏感正文
                         logger.warning(
                             "会话标题结算失败 thread=%s reason=%s",
@@ -199,10 +232,12 @@ class ConversationTitles:
         self,
         *,
         database: Database,
+        notifications: Notifications,
         http_client: httpx.AsyncClient,
         http_transport: httpx.AsyncBaseTransport | None,
     ) -> None:
         self._database = database
+        self._notifications = notifications
         self._http_client = http_client
         self._http_transport = http_transport
         self._tasks: dict[int, asyncio.Task[None]] = {}
@@ -244,7 +279,9 @@ class ConversationTitles:
                     repository = ConversationRepository(session)
                     if await repository.claim_title(thread_pk):
                         await repository.finish_title(thread_pk, None)
-                    await repository.commit()
+                        await _commit_title(repository, self._notifications, thread_pk)
+                    else:
+                        await repository.commit()
         except Exception as error:  # noqa: BLE001 - 标题失败不影响主回复
             logger.warning(
                 "会话标题排队失败 thread=%s reason=%s", thread_pk, type(error).__name__
@@ -273,6 +310,7 @@ class ConversationTitles:
             return
         await summarize_conversation_title(
             database=self._database,
+            notifications=self._notifications,
             thread_pk=thread_pk,
             text=text,
             model=model,

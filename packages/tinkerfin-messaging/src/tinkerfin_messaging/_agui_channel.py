@@ -9,7 +9,11 @@ from ag_ui.core import BaseEvent, RunErrorEvent, RunFinishedEvent, RunStartedEve
 
 from tinkerfin_contracts import RunIdentity
 
-from ._message_channel import _settle_unregistered_delivery
+from ._message_channel import (
+    _render_subscription_sse,
+    _settle_unregistered_delivery,
+    _validate_delivery_callback,
+)
 from .agui import AgUiCodec, _AgUiRunSource
 from .backend import RunStatus
 from .messaging import (
@@ -55,11 +59,12 @@ class AgUiChannel:
         )
         self.name = self._channel.name
 
-    async def open_sse(
+    async def open_run(
         self,
         source: ProfiledMessageSource[BaseEvent, BaseEvent],
         *,
         identity: RunIdentity | None = None,
+        request_digest: str | None = None,
         after: int | Callable[[], int | None] | None = None,
         cancel: CancelCallback[BaseEvent] | None = None,
         on_source_ready: Callable[[], Awaitable[None]] | None = None,
@@ -70,12 +75,14 @@ class AgUiChannel:
         on_run_started: Callable[[RunStartedEvent], Awaitable[None]] | None = None,
         on_run_finished: Callable[[RunFinishedEvent | RunErrorEvent], Awaitable[None]]
         | None = None,
-    ) -> AsyncGenerator[bytes, None]:
-        """Start or attach durable delivery and observe committed main-run events.
+    ) -> MessageSubscription[BaseEvent]:
+        """Accept a run and return its detachable, typed object subscription.
 
         Args:
             source: Unconsumed profiled AG-UI source with its cancellation contract.
             identity: Optional equality check against the source's bound identity.
+            request_digest: Optional canonical SHA-256 command binding. Conflicting
+                content is rejected before source preparation or execution.
             after: Exclusive replay cursor, resolver, or current tail when omitted.
             cancel: Optional explicit cancellation callback.
             on_source_ready: Producer-only notification before execution starts.
@@ -90,7 +97,8 @@ class AgUiChannel:
             on_run_finished: Producer-only notification after the main terminal is committed.
 
         Returns:
-            Caller-owned SSE body; closing detaches without cancelling the producer.
+            Caller-owned object subscription. The producer runs independently of
+            consumption; closing the subscription never cancels the producer.
 
         Raises:
             TypeError: The source does not supply the required AG-UI contract, or a
@@ -102,6 +110,8 @@ class AgUiChannel:
         """
         try:
             prepared = _AgUiRunSource.prepare(source, transform_event=transform_event)
+            _validate_delivery_callback("on_subscribed", on_subscribed)
+            resolved_after = after() if callable(after) else after
         except BaseException as error:  # noqa: BLE001 - cleanup re-raises primary failure
             await _settle_unregistered_delivery(
                 error,
@@ -125,16 +135,56 @@ class AgUiChannel:
             ):
                 await on_run_finished(event)
 
-        return await self._channel.open_sse(
+        return await self._channel.wrap(
             prepared,
             identity=identity,
-            after=after,
+            after=resolved_after,
+            request_digest=request_digest,
             cancel=cancel,
             on_committed=committed,
             on_source_ready=on_source_ready,
             on_subscribed=on_subscribed,
             on_delivery_not_started=on_delivery_not_started,
         )
+
+    async def open_sse(
+        self,
+        source: ProfiledMessageSource[BaseEvent, BaseEvent],
+        *,
+        identity: RunIdentity | None = None,
+        request_digest: str | None = None,
+        after: int | Callable[[], int | None] | None = None,
+        cancel: CancelCallback[BaseEvent] | None = None,
+        on_source_ready: Callable[[], Awaitable[None]] | None = None,
+        on_subscribed: Callable[[], Awaitable[None]] | None = None,
+        on_delivery_not_started: Callable[[], Awaitable[None]] | None = None,
+        transform_event: Callable[[BaseEvent], BaseEvent | Awaitable[BaseEvent]]
+        | None = None,
+        on_run_started: Callable[[RunStartedEvent], Awaitable[None]] | None = None,
+        on_run_finished: Callable[[RunFinishedEvent | RunErrorEvent], Awaitable[None]]
+        | None = None,
+    ) -> AsyncGenerator[bytes, None]:
+        """Accept and render the same admission subscription as UTF-8 SSE.
+
+        Arguments and failures follow ``open_run``. The cursor is resolved once
+        before admission; the initial committed tail and producer-only observers
+        are preserved. The caller owns the response body and must close it if it
+        will not be consumed. Detaching never cancels the accepted producer.
+        """
+        subscription = await self.open_run(
+            source,
+            identity=identity,
+            request_digest=request_digest,
+            after=after,
+            cancel=cancel,
+            on_source_ready=on_source_ready,
+            on_subscribed=on_subscribed,
+            on_delivery_not_started=on_delivery_not_started,
+            transform_event=transform_event,
+            on_run_started=on_run_started,
+            on_run_finished=on_run_finished,
+        )
+        return await _render_subscription_sse(subscription)
 
     async def follow(
         self, *, identity: RunIdentity, after: int | None = None

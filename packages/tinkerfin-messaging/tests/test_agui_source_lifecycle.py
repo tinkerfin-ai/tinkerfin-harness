@@ -23,6 +23,7 @@ from tinkerfin_messaging import (
     MessageSource,
     MessageSourceBinding,
     Messaging,
+    RunRequestConflict,
     map_source,
 )
 from tinkerfin_messaging.agui import _AgUiRunSource
@@ -93,6 +94,31 @@ def _cancel_callback(
     return cast(
         Callable[[CancelContext], Awaitable[Iterable[BaseEvent] | None]], callback
     )
+
+
+async def test_object_admission_runs_without_consuming_a_response() -> None:
+    source = _Events()
+    async with Messaging() as messaging:
+        channel = messaging.agui_channel(name="events")
+        subscription = await channel.open_run(source, request_digest="a" * 64)
+        await source.close_started.wait()
+        assert source.close_count == 1
+        async with subscription:
+            values = [item.data async for item in subscription]
+        assert [value.type.value for value in values] == ["RUN_STARTED", "RUN_FINISHED"]
+        assert source.cancel_count == 0
+        duplicate = _Events()
+        attached = await channel.open_run(duplicate, request_digest="a" * 64, after=0)
+        await attached.aclose()
+        assert duplicate.calls == ["close"]
+        different = _Events()
+        with pytest.raises(RunRequestConflict):
+            await channel.open_run(different, request_digest="b" * 64)
+        assert different.calls == ["close"]
+        unbound = _Events()
+        with pytest.raises(RunRequestConflict):
+            await channel.open_run(unbound)
+        assert unbound.calls == ["close"]
 
 
 async def test_owner_preparation_precedes_ready_and_first_pull() -> None:

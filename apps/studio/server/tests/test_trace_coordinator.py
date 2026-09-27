@@ -20,6 +20,7 @@ from tinkerfin_contracts import (
     RunTerminalObservation,
     ThreadIdentity,
 )
+from tinkerfin_gateway import Gateway
 from tinkerfin_messaging import MessageChannel, Messaging, RunNotFound
 from tinkerfin_messaging.agui import AgUiCodec
 from tinkerfin_messaging.errors import RunProducerFailed
@@ -140,6 +141,7 @@ async def _thread(database, thread_pk: int):
 
 
 async def test_delayed_same_run_snapshot_cannot_restore_stale_running_status(
+    notifications,
     database,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -176,11 +178,13 @@ async def test_delayed_same_run_snapshot_cannot_restore_stale_running_status(
         database=database,
         tracer=tracer,
         conversation_channel=channel,
+        notifications=notifications,
     )
     current = ConversationTraceCoordinator(
         database=database,
         tracer=tracer,
         conversation_channel=channel,
+        notifications=notifications,
     )
     pending = asyncio.create_task(
         delayed.reconcile(thread_pk=thread_pk, identity=context.identity)
@@ -227,6 +231,7 @@ async def _finish(context, trace_session) -> None:
 
 
 async def test_summary_timestamp_collision_requires_a_fresh_trace_observation(
+    notifications,
     database,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -282,6 +287,7 @@ async def test_summary_timestamp_collision_requires_a_fresh_trace_observation(
         database=database,
         tracer=tracer,
         conversation_channel=channel,
+        notifications=notifications,
     )
     try:
         assert (
@@ -313,6 +319,7 @@ async def test_summary_timestamp_collision_requires_a_fresh_trace_observation(
 
 
 async def test_cancel_after_producer_failure_reconciles_missing_trace_tail(
+    notifications,
     database,
 ) -> None:
     """已失败 producer 的停止请求返回未取消，并按 Trace 清除列表运行态"""
@@ -326,6 +333,7 @@ async def test_cancel_after_producer_failure_reconciles_missing_trace_tail(
         database=database,
         tracer=tracer,
         conversation_channel=channel,
+        notifications=notifications,
     )
 
     class FailedSource:
@@ -354,6 +362,9 @@ async def test_cancel_after_producer_failure_reconciles_missing_trace_tail(
         await trace_session.aclose()
         resources = create_autospec(ApplicationResources, instance=True)
         resources.conversation_channel = channel
+        resources.gateway = Gateway(
+            messaging=messaging, notifications=notifications, name=channel.name
+        )
         resources.conversation_trace = coordinator
         async with database.session() as session:
             service = ConversationChatService(
@@ -386,7 +397,11 @@ async def test_cancel_after_producer_failure_reconciles_missing_trace_tail(
         await messaging.aclose()
 
 
-async def test_recover_preparing_deletes_empty_thread_without_trace(database) -> None:
+async def test_recover_preparing_deletes_empty_thread_without_trace(
+    notifications,
+    database,
+    fixed_utc_time: datetime,
+) -> None:
     tracer = Tracer(
         projections=(ConversationFailureProjection(),),
     )
@@ -405,7 +420,7 @@ async def test_recover_preparing_deletes_empty_thread_without_trace(database) ->
             model_id="model-main",
             input_json={"runId": "run-stale"},
         )
-        registration.created_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+        registration.created_at = fixed_utc_time.replace(tzinfo=None) - timedelta(
             minutes=1
         )
         thread.last_run_id = registration.run_id
@@ -416,6 +431,7 @@ async def test_recover_preparing_deletes_empty_thread_without_trace(database) ->
         database=database,
         tracer=tracer,
         conversation_channel=channel,
+        notifications=notifications,
     )
 
     await coordinator.recover_preparing(thread_pk=thread_pk)
@@ -426,7 +442,9 @@ async def test_recover_preparing_deletes_empty_thread_without_trace(database) ->
 
 
 async def test_recover_preparing_removes_only_a_missing_new_run_from_existing_trace(
+    notifications,
     database,
+    fixed_utc_time: datetime,
 ) -> None:
     tracer, old_context, old_session, thread_pk = await _setup_run(
         database,
@@ -445,7 +463,7 @@ async def test_recover_preparing_removes_only_a_missing_new_run_from_existing_tr
             model_id="model-main",
             input_json={"runId": "run-missing-trace"},
         )
-        registration.created_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+        registration.created_at = fixed_utc_time.replace(tzinfo=None) - timedelta(
             minutes=1
         )
         thread.last_run_id = registration.run_id
@@ -456,6 +474,7 @@ async def test_recover_preparing_removes_only_a_missing_new_run_from_existing_tr
         database=database,
         tracer=tracer,
         conversation_channel=channel,
+        notifications=notifications,
     )
 
     await coordinator.recover_preparing(thread_pk=thread_pk)
@@ -478,7 +497,11 @@ async def test_recover_preparing_removes_only_a_missing_new_run_from_existing_tr
     await messaging.aclose()
 
 
-async def test_owner_preflight_cas_fences_a_stale_recovery_delete(database) -> None:
+async def test_owner_preflight_cas_fences_a_stale_recovery_delete(
+    notifications,
+    database,
+    fixed_utc_time: datetime,
+) -> None:
     """missing 检查后的 owner 激活必须让延迟删除 CAS 失效"""
 
     identity = RunIdentity(
@@ -499,7 +522,7 @@ async def test_owner_preflight_cas_fences_a_stale_recovery_delete(database) -> N
             model_id="model-main",
             input_json={"runId": identity.run_id},
         )
-        registration.created_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+        registration.created_at = fixed_utc_time.replace(tzinfo=None) - timedelta(
             minutes=1
         )
         thread.last_run_id = identity.run_id
@@ -517,9 +540,10 @@ async def test_owner_preflight_cas_fences_a_stale_recovery_delete(database) -> N
             MessageChannel[BaseEvent, BaseEvent],
             barrier,
         ),
+        notifications=notifications,
     )
     recovery = asyncio.create_task(coordinator.recover_preparing(thread_pk=thread_pk))
-    await asyncio.wait_for(barrier.checked.wait(), timeout=2)
+    await barrier.checked.wait()
     async with database.session() as session:
         repository = ConversationRepository(session)
         assert await repository.activate_run_registration(
@@ -529,7 +553,7 @@ async def test_owner_preflight_cas_fences_a_stale_recovery_delete(database) -> N
         )
         await repository.commit()
     barrier.release.set()
-    await asyncio.wait_for(recovery, timeout=2)
+    await recovery
 
     async with database.session() as session:
         repository = ConversationRepository(session)
@@ -540,7 +564,9 @@ async def test_owner_preflight_cas_fences_a_stale_recovery_delete(database) -> N
     await coordinator.aclose()
 
 
-async def test_saved_receipt_settles_public_responses_idempotently(database) -> None:
+async def test_saved_receipt_settles_public_responses_idempotently(
+    notifications, database
+) -> None:
     """业务认领仅依赖已保存回执，重复交付保持相同结算结果"""
 
     tracer, context, trace_session, thread_pk = await _setup_run(
@@ -568,7 +594,10 @@ async def test_saved_receipt_settles_public_responses_idempotently(database) -> 
         await repository.commit()
     messaging, channel = await _messaging_channel()
     coordinator = ConversationTraceCoordinator(
-        database=database, tracer=tracer, conversation_channel=channel
+        database=database,
+        tracer=tracer,
+        conversation_channel=channel,
+        notifications=notifications,
     )
     try:
         await coordinator.settle_resume(thread_pk=thread_pk, receipt=receipt)
@@ -594,7 +623,7 @@ async def test_saved_receipt_settles_public_responses_idempotently(database) -> 
 
 @pytest.mark.parametrize("conflict", ["run", "receipt", "status"])
 async def test_saved_receipt_cannot_replace_a_different_claim_resolution(
-    database, conflict: str
+    notifications, database, conflict: str
 ) -> None:
     """拒绝身份、回执或审批状态不一致的重复结算"""
 
@@ -619,7 +648,10 @@ async def test_saved_receipt_cannot_replace_a_different_claim_resolution(
         await repository.commit()
     messaging, channel = await _messaging_channel()
     coordinator = ConversationTraceCoordinator(
-        database=database, tracer=tracer, conversation_channel=channel
+        database=database,
+        tracer=tracer,
+        conversation_channel=channel,
+        notifications=notifications,
     )
     try:
         await coordinator.settle_resume(thread_pk=thread_pk, receipt=receipt)
@@ -657,6 +689,7 @@ async def test_saved_receipt_cannot_replace_a_different_claim_resolution(
 
 
 async def test_abandoned_trace_settles_the_complete_claim_batch_as_cancelled(
+    notifications,
     database,
 ) -> None:
     tracer = Tracer(
@@ -741,6 +774,7 @@ async def test_abandoned_trace_settles_the_complete_claim_batch_as_cancelled(
         database=database,
         tracer=tracer,
         conversation_channel=channel,
+        notifications=notifications,
     )
 
     await coordinator.reconcile(thread_pk=thread_pk, identity=identity)
@@ -763,7 +797,7 @@ async def test_abandoned_trace_settles_the_complete_claim_batch_as_cancelled(
     await messaging.aclose()
 
 
-async def test_initialization_error_code_is_persisted(database):
+async def test_initialization_error_code_is_persisted(notifications, database):
     tracer, context, source, thread_pk = await _setup_run(
         database, thread_id="thread-setup-error", run_id="run-setup-error"
     )
@@ -780,7 +814,10 @@ async def test_initialization_error_code_is_persisted(database):
     await source.aclose()
     messaging, channel = await _messaging_channel()
     coordinator = ConversationTraceCoordinator(
-        database=database, tracer=tracer, conversation_channel=channel
+        database=database,
+        tracer=tracer,
+        conversation_channel=channel,
+        notifications=notifications,
     )
     try:
         await coordinator.reconcile(thread_pk=thread_pk, identity=context.identity)

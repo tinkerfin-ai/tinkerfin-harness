@@ -69,6 +69,7 @@ def verify_server() -> None:
         "tests/test_latest_only_contracts.py",
         "tests/test_docker_services.py",
         "tests/test_studio_checks.py",
+        "tests/test_prepare_gateway_storage.py",
         "apps/studio/server",
         "--durations=10",
     )

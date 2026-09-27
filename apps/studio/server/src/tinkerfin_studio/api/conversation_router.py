@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from starlette.responses import Response, StreamingResponse
 
+from tinkerfin_gateway.starlette import sse_response as gateway_sse_response
 from tinkerfin_studio.api.dependencies import (
     ConversationCommandDep,
     ConversationHistoryDep,
@@ -305,7 +306,7 @@ async def chat(
         user=user,
         resources=get_resources(request.app),
     ).start(chat_request, last_event_id=last_event_id)
-    return sse_response(prepared.body)
+    return await gateway_sse_response(prepared.stream)
 
 
 @router.post(
@@ -327,7 +328,7 @@ async def compact(
         user=user,
         resources=get_resources(request.app),
     ).start(input_data, thread_id=thread_id, last_event_id=last_event_id)
-    return sse_response(prepared.body)
+    return await gateway_sse_response(prepared.stream)
 
 
 @router.post(

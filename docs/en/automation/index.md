@@ -111,13 +111,23 @@ An instance can be entered once. Client and worker contexts cannot be nested.
 `async with automation` starts no local Worker; with shared durable storage and a
 remote Worker it supports immediate submission, queries, manual task execution,
 cancellation, retries, and settlement. Creating, editing, pausing, enabling, and
-deleting schedules requires local worker mode. Shared SQL alone does not provide
-dynamic remote schedule discovery. Workers in one namespace must support all targets
+deleting schedules requires local worker mode or a Store with a started Notifications
+service. For remote management, bind clients and workers to shared storage and the
+same Redis notification channel. Shared SQL alone does not provide dynamic schedule
+discovery. Workers in one namespace must support all targets
 they can claim; claims are not routed by target name.
 
 Store setup creates empty storage or verifies the complete current structure without
 repairing partial tables. Empty storage requires DDL permission. Direct Store users
 can call `await store.setup()`. Database pool checkouts must be exclusive.
+
+`MemoryAutomationStore(notifications=notifications)` and
+`SqlAlchemyAutomationStore(database, notifications=notifications)` borrow an open
+`tinkerfin_notifications.Notifications` service. Close it after workers and observers.
+Committed task and execution hints wake workers, including remote schedule deletions
+and cancellation requests. Workers repair lost hints every 30 seconds and still
+check due work and claim leases. Notifications carry resource identity, not input or
+result content.
 
 ## Task commands and execution results
 
@@ -164,6 +174,10 @@ Terminal states and interrupted/needs_attention return; the latter two remain no
 Read business failure through status and snapshot.failure_code/failure_message; Store
 errors propagate. RunHandle.id is the execution record ID; identity.run_id belongs to
 the Runtime. A successful result may be None.
+
+With Store Notifications, `wait()` subscribes before reading and checks again on
+change or every 30 seconds to repair loss. Its `poll_interval` only applies without
+Notifications; cancelling the observer never cancels the execution.
 
 ### Filter tasks and execution history
 
@@ -238,7 +252,7 @@ tools = create_automation_tools(
 )
 ```
 
-The nine tools share the bound owner. Schedule writes require an active worker;
+The nine tools share the bound owner. Schedule writes require a worker or Store Notifications;
 models cannot replace owner, namespace, or target permissions. execute_automation_once
 submits taskless work; run_automation_task_now verifies the saved target and observed
 revision. Mutations require stable request_id values. Tools do not expose execution
@@ -252,7 +266,7 @@ Use the existing public modules for specialized integration contracts:
 | Module | Public contracts |
 | --- | --- |
 | `service` / `engine` | `AutomationService` / `AutomationEngine` |
-| `store` | `AutomationStore`, `WorkItemClaim`, `WorkKind`, `StartAuthorization`, `ScheduledExecution`, `MaterializationResult` |
+| `store` | `AutomationStore`, `WorkItemClaim`, `WorkClaimBatch`, `ClaimRenewal`, `WorkKind`, `StartAuthorization`, `ScheduledExecution`, `MaterializationResult` |
 | `scheduler` | `AutomationScheduler`, `MemoryScheduler`, `TaskDue` |
 | `clock` | `AutomationClock`, `SystemClock`, `ManualClock` |
 | `schedules` | `materialize_schedule`, `MaterializedSchedule`, schedule JSON conversion |
@@ -276,11 +290,19 @@ are part of the contract:
 | Task CRUD | Owner isolation, revision checks, command idempotency |
 | Scheduled reads and `materialize_task` | Advance the observed wakeup and insert deduplicated occurrences together |
 | `enqueue_execution` | Occurrence/command deduplication, queue capacity, and optional task-revision check in one boundary |
-| `claim_work`, `renew_claim` | Reserve shared concurrency and enforce current ownership/fence |
+| `claim_work`, `renew_claim` | Return `WorkClaimBatch` with the next storage-clock delay, or `ClaimRenewal` with current cancellation intent; enforce ownership/fence and shared capacity |
 | `authorize_start` | Persist the one-time start grant before target invocation |
 | `mark_interrupted`, `finish_execution` | Preserve deadlines and release capacity only for a proven terminal outcome |
 | Cancel and resolve | Retain uncertain capacity until authorized resolution |
 | Setup, time, reads, close | Current schema validation, authoritative time, stable pagination, and borrowed-resource ownership |
+
+`claim_work(limit=0)` performs due maintenance without returning claims or allocating
+new execution capacity. The result is `WorkClaimBatch(claims, next_check_after_seconds)`;
+the delay uses Store time and callers deduct their own call duration. Zero requests
+another bounded check after obtaining claims, making maintenance progress that can
+continue, or crossing a deadline during the call;
+capacity-blocked work alone cannot cause a zero-delay retry. `renew_claim` returns
+`ClaimRenewal(claim, cancellation_requested)` from one authoritative renewal operation.
 
 The repository's `test_store_contract.py`, `test_store_atomicity.py`,
 `test_sql_queue_admission.py`, and `test_tool_permissions.py` exercise these contracts.

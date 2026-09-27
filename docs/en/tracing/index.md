@@ -78,8 +78,12 @@ async with history.follow() as updates:
         await handle(update)
 ```
 
-`TraceStoreOptions.follow_poll_seconds` controls how often to check changes from other
-Store instances; the default is 0.5 seconds. Writer closure or lease expiry without a
+Pass a started `tinkerfin_notifications.Notifications` service as the Store's
+`notifications` argument for cross-instance wakeups; use its Redis backend across
+processes. Keep it open until writers and followers close. Missed hints are repaired
+every 30 seconds or at the next writer lease deadline. Without Notifications,
+`TraceStoreOptions.follow_poll_seconds` controls the read interval, defaulting to
+0.5 seconds. Writer closure or lease expiry without a
 recorded terminal reports `unknown` with `missing_tail=True`; it does not claim that
 the Agent succeeded. A valid takeover can restore `running` at the same event sequence.
 

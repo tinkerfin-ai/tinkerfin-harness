@@ -20,3 +20,5 @@
 | SSE | An HTTP format for sending a continuing event stream to a browser |
 | Messaging | The component that persists and delivers streams |
 | Sandbox | An isolated environment where an agent can use files and commands |
+| Notifications | Advisory resource-change broadcast for independent listeners |
+| Gateway | Combines authorized run commands, durable output, and browser notifications |

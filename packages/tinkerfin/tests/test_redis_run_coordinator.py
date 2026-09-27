@@ -5,6 +5,7 @@ from collections import deque
 from typing import cast
 
 import pytest
+from lease_test_support import LeaseClock
 from redis.asyncio import Redis
 from redis.asyncio.cluster import RedisCluster
 from redis.exceptions import ConnectionError as RedisConnectionError
@@ -20,6 +21,11 @@ from tinkerfin.redis import (
     RedisLeaseUnavailableError,
     RedisRunCoordinator,
 )
+
+
+@pytest.fixture(autouse=True)
+def controlled_lease_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    LeaseClock(monkeypatch)
 
 
 def _identity(*, thread_id: str = "user-1", run_id: str = "run-1") -> RunIdentity:
@@ -320,7 +326,7 @@ async def test_from_url_cancellation_closes_owned_client_before_propagating(
     entering.cancel("Redis startup cancelled")
 
     try:
-        await asyncio.wait_for(client.close_started.wait(), timeout=0.2)
+        await client.close_started.wait()
         entering.cancel("Redis startup cancelled again")
         client.release_close.set()
         with pytest.raises(asyncio.CancelledError):

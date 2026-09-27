@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from test_attachments import png
 
 from tinkerfin import AgentRuntime, AgUiResumeRequest, RunIdentity, TinkerFin
-from tinkerfin_messaging import MessageSubscription, Messaging
+from tinkerfin_gateway import CommittedRunEvent, Gateway, RunAcceptance
+from tinkerfin_messaging import Messaging
 from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
 from tinkerfin_studio.attachments.service import byte_chunks
@@ -164,11 +165,15 @@ def _resume_request(
     )
 
 
-async def test_run_registration_persists_model_and_input(session, attachments) -> None:
+async def test_run_registration_persists_model_and_input(
+    notifications, session, attachments
+) -> None:
     request = _ordinary_request()
     intent = classify_intent(request)
     assert isinstance(intent, StartChatIntent)
-    preparer = ConversationRunPreparer(session, user_id=1, attachments=attachments)
+    preparer = ConversationRunPreparer(
+        session, user_id=1, attachments=attachments, notifications=notifications
+    )
     resolved = await preparer.resolve_thread(
         thread_id=request.thread_id, run_id=request.run_id, intent=intent
     )
@@ -198,6 +203,7 @@ async def test_run_registration_persists_model_and_input(session, attachments) -
     assert execution.thread.status == "idle"
 
     await preparer.activate_started(
+        thread_id=execution.thread.thread_id,
         thread_pk=execution.thread.id,
         identity_run_id=request.run_id,
         registered=execution.registered,
@@ -210,7 +216,7 @@ async def test_run_registration_persists_model_and_input(session, attachments) -
 
 
 async def test_resume_registration_stores_only_claim_identity(
-    session, attachments
+    notifications, session, attachments
 ) -> None:
     repository = ConversationRepository(session)
     thread = await repository.create_thread(
@@ -241,7 +247,7 @@ async def test_resume_registration_stores_only_claim_identity(
     )
 
     execution = await ConversationRunPreparer(
-        session, user_id=1, attachments=attachments
+        session, user_id=1, attachments=attachments, notifications=notifications
     ).register(
         intent=intent,
         prepared=prepared,
@@ -264,6 +270,7 @@ async def test_resume_registration_stores_only_claim_identity(
 @pytest.mark.parametrize("continuation", ["resume", "branch"])
 @pytest.mark.parametrize("changed", ["model", "access"])
 async def test_continuation_preserves_source_model_and_file_access(
+    notifications,
     session,
     continuation: str,
     changed: str,
@@ -314,7 +321,7 @@ async def test_continuation_preserves_source_model_and_file_access(
 
     with pytest.raises(BusinessException) as captured:
         await ConversationRunPreparer(
-            session, user_id=1, attachments=attachments
+            session, user_id=1, attachments=attachments, notifications=notifications
         ).register(
             intent=intent,
             prepared=prepared,
@@ -333,12 +340,14 @@ async def test_continuation_preserves_source_model_and_file_access(
 
 
 async def test_same_run_rejects_a_changed_registered_model(
-    session, attachments
+    notifications, session, attachments
 ) -> None:
     request = _ordinary_request(run_id="run-model")
     intent = classify_intent(request)
     assert isinstance(intent, StartChatIntent)
-    preparer = ConversationRunPreparer(session, user_id=1, attachments=attachments)
+    preparer = ConversationRunPreparer(
+        session, user_id=1, attachments=attachments, notifications=notifications
+    )
     resolved = await preparer.resolve_thread(
         thread_id=request.thread_id, run_id=request.run_id, intent=intent
     )
@@ -374,33 +383,32 @@ async def test_same_run_rejects_a_changed_registered_model(
     assert captured.value.error_code is ConversationErrorCode.RUN_IDENTITY_CONFLICT
 
 
-class _Channel:
+class _Gateway:
     def __init__(self) -> None:
         self.after: int | None = None
 
-    async def open_sse(
-        self,
-        _source,
-        *,
-        after: int | None = None,
-        on_source_ready=None,
-        on_subscribed=None,
-        transform_event=None,
-        on_run_started=None,
-        on_run_finished=None,
-        on_delivery_not_started=None,
-    ):
-        del on_delivery_not_started
+    async def stream(self, runtime, command, *, after, registration, **kwargs):
         self.after = after
-        if on_source_ready is not None:
-            await on_source_ready()
-        if on_subscribed is not None:
-            await on_subscribed()
+        await registration.confirm(
+            RunAcceptance(
+                runtime.run_identity(command.thread_id, command.run_id), "new"
+            )
+        )
+        from ag_ui.core import RunStartedEvent
 
+        await kwargs["on_committed"](
+            CommittedRunEvent(
+                runtime.run_identity(command.thread_id, command.run_id),
+                RunStartedEvent(thread_id=command.thread_id, run_id=command.run_id),
+            )
+        )
         return _Body()
 
 
 class _Body:
+    def to_sse(self):
+        return self
+
     def __aiter__(self) -> _Body:
         return self
 
@@ -440,6 +448,7 @@ class _FailingTraceCoordinator(_TraceCoordinator):
 
 @pytest.mark.parametrize("image_support", ["supported", "unsupported", "unknown"])
 async def test_chat_accepts_images_and_uses_messaging_only_for_delivery(
+    notifications,
     database,
     session,
     attachments,
@@ -456,7 +465,7 @@ async def test_chat_accepts_images_and_uses_messaging_only_for_delivery(
             image_support=image_support,
         )
     )
-    channel = _Channel()
+    channel = _Gateway()
     trace = _TraceCoordinator()
     resources = cast(
         ApplicationResources,
@@ -472,6 +481,8 @@ async def test_chat_accepts_images_and_uses_messaging_only_for_delivery(
             conversation_channel=channel,
             conversation_trace=trace,
             conversation_titles=AsyncMock(spec=ConversationTitles),
+            notifications=notifications,
+            gateway=channel,
         ),
     )
     service = ConversationChatService(
@@ -504,6 +515,7 @@ async def test_chat_accepts_images_and_uses_messaging_only_for_delivery(
     prepared = await service.start(
         ChatRequest.model_validate(payload), last_event_id=None
     )
+    prepared_body_stream = prepared.stream.to_sse()
 
     assert channel.after is None
     assert len(trace.ensured) == 1
@@ -517,16 +529,17 @@ async def test_chat_accepts_images_and_uses_messaging_only_for_delivery(
         item.id
         for item in await attachments.list_thread(user_id=1, thread_id=thread.thread_id)
     ] == [file.id]
-    assert [chunk async for chunk in prepared.body] == []
+    assert [chunk async for chunk in prepared_body_stream] == []
 
 
 async def test_trace_notification_failure_retains_the_running_conversation(
+    notifications,
     database,
     session,
     attachments,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """摘要跟随后台任务注册失败时释放订阅，保留已开始的会话供重连"""
+    """摘要观察失败不撤销已经受理的运行，后续重连仍可读取"""
 
     await AgentModelService(AgentModelRepository(session, user_id=1)).save_settings(
         AgentModelSave(
@@ -541,14 +554,6 @@ async def test_trace_notification_failure_retains_the_running_conversation(
     async with Messaging() as messaging:
         channel = messaging.agui_channel(name="conversations")
         trace = _FailingTraceCoordinator()
-        detached: list[MessageSubscription[object]] = []
-        close = MessageSubscription.aclose
-
-        async def close_subscription(subscription: MessageSubscription[object]) -> None:
-            await close(subscription)
-            detached.append(subscription)
-
-        monkeypatch.setattr(MessageSubscription, "aclose", close_subscription)
         resources = cast(
             ApplicationResources,
             SimpleNamespace(
@@ -563,6 +568,10 @@ async def test_trace_notification_failure_retains_the_running_conversation(
                 conversation_channel=channel,
                 conversation_trace=trace,
                 conversation_titles=AsyncMock(spec=ConversationTitles),
+                notifications=notifications,
+                gateway=Gateway(
+                    messaging=messaging, notifications=notifications, name=channel.name
+                ),
             ),
         )
         service = ConversationChatService(
@@ -577,11 +586,11 @@ async def test_trace_notification_failure_retains_the_running_conversation(
             resources=resources,
         )
 
-        with pytest.raises(RuntimeError, match="trace follow unavailable"):
-            await service.start(_ordinary_request(), last_event_id=None)
-        assert len(detached) == 1
-        with pytest.raises(RuntimeError, match="subscription is closed"):
-            aiter(detached[0])
+        prepared = await service.start(_ordinary_request(), last_event_id=None)
+        async with prepared.stream as output:
+            events = [item.data.type.value async for item in output]
+        assert events.count("RUN_STARTED") == events.count("RUN_FINISHED") == 1
+        assert "RUN_ERROR" not in events
         identity = trace.ensured[0]
         repository = ConversationRepository(session)
         thread = await repository.get_thread(user_id=1, thread_id=identity.thread_id)
@@ -595,6 +604,7 @@ async def test_trace_notification_failure_retains_the_running_conversation(
 
 
 async def test_previous_head_reconcile_releases_the_request_transaction(
+    notifications,
     database,
     session,
     attachments,
@@ -629,7 +639,7 @@ async def test_previous_head_reconcile_releases_the_request_transaction(
     thread.last_run_id = previous.run_id
     thread.status = "idle"
     await repository.commit()
-    channel = _Channel()
+    channel = _Gateway()
     trace = _TraceCoordinator(session)
     resources = cast(
         ApplicationResources,
@@ -645,6 +655,8 @@ async def test_previous_head_reconcile_releases_the_request_transaction(
             conversation_channel=channel,
             conversation_trace=trace,
             conversation_titles=AsyncMock(spec=ConversationTitles),
+            notifications=notifications,
+            gateway=channel,
         ),
     )
     service = ConversationChatService(
@@ -663,13 +675,15 @@ async def test_previous_head_reconcile_releases_the_request_transaction(
         _ordinary_request(thread_id=thread.thread_id, run_id="run-next"),
         last_event_id=None,
     )
+    prepared_body_stream = prepared.stream.to_sse()
 
     assert trace.reconcile_transaction_states == [False]
-    assert [chunk async for chunk in prepared.body] == []
+    assert [chunk async for chunk in prepared_body_stream] == []
 
 
 @pytest.mark.parametrize("ending", ["title", "finish", "disconnect"])
 async def test_title_survives_main_finish_and_response_disconnect(
+    notifications,
     database,
     session,
     attachments,
@@ -690,6 +704,7 @@ async def test_title_survives_main_finish_and_response_disconnect(
     source_prepares = 0
 
     class Source:
+        error = None
         messaging_cancel_waits_for_first_item = True
         messaging_codec_profile = "agui.event"
         messaging_source_type = BaseEvent
@@ -752,7 +767,10 @@ async def test_title_survives_main_finish_and_response_disconnect(
         httpx.AsyncClient(transport=httpx.MockTransport(model_http)) as client,
     ):
         titles = ConversationTitles(
-            database=database, http_client=client, http_transport=None
+            database=database,
+            http_client=client,
+            http_transport=None,
+            notifications=notifications,
         )
         title_finished = asyncio.Event()
         from tinkerfin_studio.conversation import titles as titles_module
@@ -780,6 +798,12 @@ async def test_title_survives_main_finish_and_response_disconnect(
                 conversation_channel=messaging.agui_channel(name="conversation"),
                 conversation_trace=_TraceCoordinator(),
                 conversation_titles=titles,
+                notifications=notifications,
+                gateway=Gateway(
+                    messaging=messaging,
+                    notifications=notifications,
+                    name="conversation",
+                ),
             ),
         )
         service = ConversationChatService(
@@ -794,29 +818,30 @@ async def test_title_survives_main_finish_and_response_disconnect(
             resources=resources,
         )
         prepared = await service.start(_ordinary_request(), last_event_id=None)
+        prepared_body_stream = prepared.stream.to_sse()
         try:
-            first = await anext(prepared.body)
+            first = await anext(prepared_body_stream)
             assert b'"type":"RUN_STARTED"' in first
             await model_requested.wait()
             # 同Run重连只附着原源；新的响应不拥有标题生成任务
             attached = await service.start(
                 _ordinary_request(thread_id=prepared.thread_id), last_event_id="1"
             )
-            await attached.body.aclose()
+            await attached.stream.aclose()
             assert source_prepares == 1 and model_calls == 1
             if ending == "title":
                 model_release.set()
                 await title_finished.wait()
                 main_release.set()
-                tail = await _collect_body(prepared.body)
+                tail = await _collect_body(prepared_body_stream)
                 assert len(tail) == 1 and b'"type":"RUN_FINISHED"' in tail[0]
             elif ending == "finish":
                 main_release.set()
-                tail = await _collect_body(prepared.body)
+                tail = await _collect_body(prepared_body_stream)
                 assert len(tail) == 1 and b'"type":"RUN_FINISHED"' in tail[0]
                 assert not title_finished.is_set()
             else:
-                await prepared.body.aclose()
+                await prepared.stream.aclose()
                 assert not title_finished.is_set()
                 assert (
                     await resources.conversation_channel.get_run_status(
@@ -840,7 +865,7 @@ async def test_title_survives_main_finish_and_response_disconnect(
         finally:
             main_release.set()
             model_release.set()
-            await prepared.body.aclose()
+            await prepared.stream.aclose()
             await titles.aclose()
 
 
@@ -854,6 +879,7 @@ async def _collect_body(body):
     "failure_type", [ValueError, asyncio.CancelledError, KeyboardInterrupt, SystemExit]
 )
 async def test_pre_delivery_failure_keeps_only_preexisting_business_registration(
+    notifications,
     database,
     session,
     attachments,
@@ -878,7 +904,7 @@ async def test_pre_delivery_failure_keeps_only_preexisting_business_registration
         assert isinstance(intent, StartChatIntent)
         prepared = prepare_run_request(request, user_id=1, thread_id=thread.thread_id)
         await ConversationRunPreparer(
-            session, user_id=1, attachments=attachments
+            session, user_id=1, attachments=attachments, notifications=notifications
         ).register(
             intent=intent,
             prepared=prepared,
@@ -910,6 +936,7 @@ async def test_pre_delivery_failure_keeps_only_preexisting_business_registration
             attachments=attachments,
             conversation_trace=_TraceCoordinator(),
             conversation_titles=AsyncMock(spec=ConversationTitles),
+            notifications=notifications,
         ),
     )
     service = ConversationChatService(
@@ -942,6 +969,7 @@ async def test_pre_delivery_failure_keeps_only_preexisting_business_registration
     "cleanup_failure_type", [None, OSError, KeyboardInterrupt, SystemExit]
 )
 async def test_business_registration_cleanup_settles_before_request_cancellation(
+    notifications,
     database,
     session,
     attachments,
@@ -962,13 +990,13 @@ async def test_business_registration_cleanup_settles_before_request_cancellation
     cleanup_cause = LookupError("cleanup original cause")
     if cleanup_failure is not None:
         cleanup_failure.__cause__ = cleanup_cause
-    original_commit = session.commit
+    original_commit = ConversationRepository.commit
 
-    async def commit() -> None:
+    async def commit(repository) -> None:
         if build_failed.is_set():
             cleanup_started.set()
             await release.wait()
-        await original_commit()
+        await original_commit(repository)
         if build_failed.is_set() and cleanup_failure is not None:
             raise cleanup_failure
 
@@ -976,7 +1004,7 @@ async def test_business_registration_cleanup_settles_before_request_cancellation
         build_failed.set()
         raise build_failure
 
-    monkeypatch.setattr(session, "commit", commit)
+    monkeypatch.setattr(ConversationRepository, "commit", commit)
     monkeypatch.setattr(service_module, "build_conversation_runtime", reject_runtime)
     service = ConversationChatService(
         session,
@@ -990,6 +1018,7 @@ async def test_business_registration_cleanup_settles_before_request_cancellation
                 attachments=attachments,
                 conversation_trace=_TraceCoordinator(),
                 conversation_titles=AsyncMock(spec=ConversationTitles),
+                notifications=notifications,
             ),
         ),
     )
@@ -1061,7 +1090,7 @@ pytestmark = pytest.mark.usefixtures("model_connections")
 
 
 async def test_initialization_error_is_logged_once_and_replay_does_not_log_again(
-    database, session, attachments, monkeypatch, caplog
+    notifications, database, session, attachments, monkeypatch, caplog
 ):
     """初始化失败记录原始异常和会话身份，历史重放不再次记录错误"""
     import logging
@@ -1095,6 +1124,12 @@ async def test_initialization_error_is_logged_once_and_replay_does_not_log_again
                 conversation_channel=messaging.agui_channel(name="failure-logging"),
                 conversation_trace=_TraceCoordinator(),
                 conversation_titles=AsyncMock(spec=ConversationTitles),
+                notifications=notifications,
+                gateway=Gateway(
+                    messaging=messaging,
+                    notifications=notifications,
+                    name=messaging.agui_channel(name="failure-logging").name,
+                ),
             ),
         )
         service = ConversationChatService(
@@ -1111,9 +1146,11 @@ async def test_initialization_error_is_logged_once_and_replay_does_not_log_again
         with caplog.at_level(logging.ERROR):
             request = _ordinary_request(thread_id="thread-log", run_id="run-log")
             first = await service.start(request, last_event_id=None)
-            first_body = b"".join([chunk async for chunk in first.body])
+            first_body_stream = first.stream.to_sse()
+            first_body = b"".join([chunk async for chunk in first_body_stream])
             replay = await service.start(request, last_event_id="0")
-            replay_body = b"".join([chunk async for chunk in replay.body])
+            replay_body_stream = replay.stream.to_sse()
+            replay_body = b"".join([chunk async for chunk in replay_body_stream])
         assert b'"type":"RUN_ERROR"' in first_body
         assert b'"type":"RUN_ERROR"' in replay_body
         records = [
@@ -1129,6 +1166,7 @@ async def test_initialization_error_is_logged_once_and_replay_does_not_log_again
 
 
 async def test_manual_compaction_uses_registered_run_replay_without_chat_or_title(
+    notifications,
     database,
     session,
     attachments,
@@ -1196,6 +1234,12 @@ async def test_manual_compaction_uses_registered_run_replay_without_chat_or_titl
                 conversation_channel=messaging.agui_channel(name="compact"),
                 conversation_trace=_TraceCoordinator(),
                 conversation_titles=titles,
+                notifications=notifications,
+                gateway=Gateway(
+                    messaging=messaging,
+                    notifications=notifications,
+                    name=messaging.agui_channel(name="compact").name,
+                ),
             ),
         )
         service = ConversationChatService(
@@ -1215,10 +1259,11 @@ async def test_manual_compaction_uses_registered_run_replay_without_chat_or_titl
             prepared = await service.start(
                 request, thread_id="compact-thread", last_event_id="0"
             )
+            prepared_body_stream = prepared.stream.to_sse()
             try:
-                bodies.append(b"".join([chunk async for chunk in prepared.body]))
+                bodies.append(b"".join([chunk async for chunk in prepared_body_stream]))
             finally:
-                await prepared.body.aclose()
+                await prepared.stream.aclose()
         assert bodies[0] == bodies[1]
         assert b'"type":"RUN_FINISHED"' in bodies[0]
         assert b"TEXT_MESSAGE_" not in bodies[0]
@@ -1261,6 +1306,7 @@ async def test_manual_compaction_uses_registered_run_replay_without_chat_or_titl
 
 @pytest.mark.parametrize("condition", ["missing", "another-user", "busy", "approval"])
 async def test_compaction_respects_conversation_ownership_and_pending_work(
+    notifications,
     database,
     session,
     attachments,
@@ -1290,6 +1336,7 @@ async def test_compaction_respects_conversation_ownership_and_pending_work(
             database=database,
             attachments=attachments,
             conversation_trace=_TraceCoordinator(),
+            notifications=notifications,
         ),
     )
     service = ConversationChatService(
@@ -1314,3 +1361,59 @@ async def test_compaction_respects_conversation_ownership_and_pending_work(
             "approval": ConversationErrorCode.PENDING_INTERRUPT,
         }[condition]
     )
+
+
+async def test_retried_registration_survives_first_submission_cleanup(
+    notifications, database, session, attachments
+) -> None:
+    """并发提交已经共享登记时，最初请求失败不能删除另一提交的运行"""
+    request = _ordinary_request(run_id="shared-registration")
+    intent = classify_intent(request)
+    first = ConversationRunPreparer(
+        session, user_id=1, attachments=attachments, notifications=notifications
+    )
+    resolved = await first.resolve_thread(
+        thread_id="", run_id=request.run_id, intent=intent
+    )
+    prepared = prepare_run_request(
+        request, user_id=1, thread_id=resolved.thread.thread_id
+    )
+    execution = await first.register(
+        intent=intent,
+        prepared=prepared,
+        model=_model(),
+        thread=resolved.thread,
+        thread_created=resolved.created,
+    )
+    saved_before_retry = await ConversationRepository(session).get_run(
+        thread_pk=execution.thread.id, run_id=request.run_id
+    )
+    assert saved_before_retry is not None
+    await session.commit()
+    async with database.session() as retry_session:
+        retry = ConversationRunPreparer(
+            retry_session,
+            user_id=1,
+            attachments=attachments,
+            notifications=notifications,
+        )
+        retry_thread = await retry.resolve_thread(
+            thread_id=prepared.identity.thread_id, run_id=request.run_id, intent=intent
+        )
+        attached = await retry.register(
+            intent=intent, prepared=prepared, model=_model(), thread=retry_thread.thread
+        )
+        assert not attached.registered.created
+    await first.cleanup_unstarted(
+        thread_pk=execution.thread.id,
+        thread_id=prepared.identity.thread_id,
+        identity_run_id=request.run_id,
+        registered=execution.registered,
+        thread_created=execution.thread_created,
+    )
+    async with database.session() as check:
+        saved = await ConversationRepository(check).get_run(
+            thread_pk=execution.thread.id, run_id=request.run_id
+        )
+        assert saved is not None
+        assert saved.preparation_id != execution.registered.preparation_id

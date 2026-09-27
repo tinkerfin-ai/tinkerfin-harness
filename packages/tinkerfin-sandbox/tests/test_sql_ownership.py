@@ -92,8 +92,7 @@ async def test_sql_shared_lifecycle_retains_cancelled_waiter_and_original_failur
         first = asyncio.create_task(invoke())
         second: asyncio.Task[BaseException | None] | None = None
         try:
-            async with asyncio.timeout(5):
-                await entered.wait()
+            await entered.wait()
             second = asyncio.create_task(invoke(second=True))
             await second_entered.wait()
             first.cancel("cancelled waiter")

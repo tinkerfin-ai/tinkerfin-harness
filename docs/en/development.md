@@ -48,7 +48,7 @@ pnpm exec playwright test tests/browser/todo-trace.spec.ts --workers=1
 
 ## Build wheels
 
-The shared build command produces the ten framework wheels and the Studio server wheel:
+The shared build command produces the twelve framework wheels and the Studio server wheel:
 
 ```bash
 uv run --no-project --python 3.11 python scripts/build_wheels.py --out-dir dist

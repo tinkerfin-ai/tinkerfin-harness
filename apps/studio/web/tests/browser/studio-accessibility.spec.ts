@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { installLiveRun } from './fixtures/liveRun'
 import { fulfillExpectedHttpError, logBrowserDiagnostics } from './support/diagnostics'
 import { toolReviewInterrupts, planInterrupt } from '../../src/test/aguiFixtures'
@@ -924,6 +925,7 @@ async function mockStudio(page: Page, {
   })
 
   if (runningActivity) await installLiveRun(page, buildTraceDetail())
+  await installNotificationStream(page)
   await page.goto('/')
   if (approval) await expect(page.getByRole('region', { name: '等待审批' })).toBeVisible()
   else if (planQuestion) await expect(page.getByRole('region', { name: 'Plan 澄清问题' })).toBeVisible()

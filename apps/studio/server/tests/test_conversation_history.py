@@ -460,7 +460,7 @@ async def test_trace_graph_follow_sends_snapshot_update_and_closes(session) -> N
         )
     )
 
-    update = await asyncio.wait_for(pending, timeout=2)
+    update = await pending
     assert update.type == "update"
     assert any(
         node.kind is TraceGraphNodeKind.MODEL
@@ -660,7 +660,7 @@ async def test_trace_follow_sends_snapshot_then_semantic_update_and_closes(
         )
     )
 
-    update = await asyncio.wait_for(pending, timeout=2)
+    update = await pending
     assert update.type == "update"
     assert update.update.messages.upserts[0].content == "delta"
     retained = update.update.messages.upserts[0]
@@ -784,7 +784,7 @@ async def test_trace_follow_replaces_task_trace_only_after_authoritative_state(
 
     replacement = None
     for _index in range(5):
-        update = await asyncio.wait_for(anext(events), timeout=2)
+        update = await anext(events)
         assert update.type == "update"
         if update.task_trace is not None:
             replacement = update.task_trace
@@ -807,7 +807,7 @@ async def test_trace_follow_replaces_task_trace_only_after_authoritative_state(
     await trace_session.force(ObservationBoundary.TERMINAL)
     completed = None
     for _index in range(5):
-        update = await asyncio.wait_for(anext(events), timeout=2)
+        update = await anext(events)
         assert update.type == "update"
         if update.task_trace is not None:
             completed = update.task_trace
@@ -859,7 +859,7 @@ async def test_detached_follow_can_skip_task_trace_without_losing_base_updates(
             monotonic_ns=3,
         )
     )
-    update = await asyncio.wait_for(pending, timeout=2)
+    update = await pending
 
     assert update.type == "update"
     assert update.update.messages.upserts[0].content == "后台恢复"
@@ -943,7 +943,7 @@ async def test_history_follow_publishes_ownership_without_fabricating_graph_even
         initial = await anext(events)
         assert initial.type == "snapshot"
         await trace_session.aclose()
-        update = await asyncio.wait_for(anext(events), 2)
+        update = await anext(events)
         assert update.type == "update"
         assert update.update.as_of_seq == initial.snapshot.as_of_seq
         assert update.update.generation == initial.snapshot.generation

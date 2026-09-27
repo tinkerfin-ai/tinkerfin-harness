@@ -759,7 +759,7 @@ async def test_upstream_timeout_error_remains_a_runtime_error() -> None:
         raise TimeoutError("provider request timed out")
         yield  # pragma: no cover - keeps the function an async generator
 
-    stream = _agui_stream(parts, timeout=1)
+    stream = _agui_stream(parts)
 
     events = await _collect_events(stream)
 

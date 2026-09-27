@@ -13,11 +13,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_PATHS = (
     "packages/tinkerfin-contracts",
+    "packages/tinkerfin-notifications",
     "packages/tinkerfin-native-stream",
     "packages/tinkerfin-agui-adapter",
     "packages/tinkerfin",
     "packages/tinkerfin-automation",
     "packages/tinkerfin-messaging",
+    "packages/tinkerfin-gateway",
     "packages/tinkerfin-tracing",
     "packages/tinkerfin-sandbox",
     "packages/tinkerfin-langgraph-store",

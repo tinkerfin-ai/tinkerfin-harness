@@ -22,6 +22,7 @@ from sqlalchemy import (
     delete,
     func,
     insert,
+    literal,
     or_,
     select,
     update,
@@ -34,6 +35,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.exc import TimeoutError as SqlTimeoutError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from tinkerfin_notifications import Notifications
 from tinkerfin_sqlalchemy import (
     SqlTransaction,
     database_capabilities,
@@ -52,6 +54,7 @@ from ._codec import (
     encode_operation_result,
     encode_task,
 )
+from ._notifications import _ChangedResources
 from ._query_cursor import decode_cursor, encode_cursor, query_scope
 from ._tasks import Cancellation, TaskOutcome, capture, join_owned_task
 from .errors import (
@@ -85,9 +88,11 @@ from .sql_schema import (
     work_items,
 )
 from .store import (
+    ClaimRenewal,
     MaterializationResult,
     ScheduledExecution,
     StartAuthorization,
+    WorkClaimBatch,
     WorkItemClaim,
     WorkKind,
 )
@@ -167,6 +172,7 @@ def _run_values(
         "run_id": execution.identity.run_id,
         "status": execution.status.value,
         "attempt": execution.attempt,
+        "max_concurrent_runs": execution.limits.max_concurrent_runs,
         "retry_of": execution.retry_of,
         "scheduled_for": _database_datetime(execution.scheduled_for),
         "queued_at": _database_datetime(execution.queued_at),
@@ -208,16 +214,30 @@ class SqlAlchemyAutomationStore:
         ValueError: The database dialect is unsupported.
     """
 
-    def __init__(self, engine: AsyncEngine) -> None:
-        """Validate the borrowed Engine without opening a connection."""
+    def __init__(
+        self, engine: AsyncEngine, *, notifications: Notifications | None = None
+    ) -> None:
+        """Validate borrowed resources without opening a connection.
+
+        Args:
+            engine: Host-owned asynchronous SQLAlchemy Engine.
+            notifications: Borrowed, started change service for post-commit hints;
+                keep it open until workers and observers have stopped.
+        """
 
         SqlTransaction(engine)
         self._engine = engine
+        self._notifications = notifications
         self._dialect = engine_dialect(engine)
         self._setup_task: asyncio.Task[TaskOutcome[None]] | None = None
         self._close_task: asyncio.Task[TaskOutcome[None]] | None = None
         self._active: set[asyncio.Task[object]] = set()
         self._closed = False
+
+    @property
+    def notifications(self) -> Notifications | None:
+        """Return the borrowed, application-owned change service."""
+        return self._notifications
 
     async def setup(self) -> None:
         """Create an empty schema or validate all existing Automation tables.
@@ -281,7 +301,11 @@ class SqlAlchemyAutomationStore:
 
     @asynccontextmanager
     async def _transaction(
-        self, cancellation: Cancellation, *, read_only: bool = False
+        self,
+        cancellation: Cancellation,
+        *,
+        read_only: bool = False,
+        changes: _ChangedResources | None = None,
     ) -> AsyncGenerator[AsyncConnection]:
         transaction = SqlTransaction(self._engine, read_only=read_only)
         try:
@@ -297,6 +321,10 @@ class SqlAlchemyAutomationStore:
             if transaction.cleanup_failed or transaction.commit_uncertain:
                 raise self._store_error("transaction", error) from error
             raise
+        if changes is not None:
+            # SqlTransaction has committed and returned its connection before any
+            # advisory transport I/O or host-owned diagnostic logging can occur.
+            await changes.publish(self._notifications)
 
     async def current_time(self) -> datetime:
         """Return the database authority's UTC time."""
@@ -328,8 +356,11 @@ class SqlAlchemyAutomationStore:
         self._ensure_open()
 
         async def operation(cancellation: Cancellation) -> AutomationTask:
+            changes = _ChangedResources()
             try:
-                async with self._transaction(cancellation) as connection:
+                async with self._transaction(
+                    cancellation, changes=changes
+                ) as connection:
                     previous = await self._operation_result(
                         connection,
                         task.namespace,
@@ -358,6 +389,7 @@ class SqlAlchemyAutomationStore:
                         task,
                         now,
                     )
+                    changes.task(task)
                     return task
             except asyncio.CancelledError:
                 raise
@@ -395,8 +427,11 @@ class SqlAlchemyAutomationStore:
         self._ensure_open()
 
         async def operation(cancellation: Cancellation) -> AutomationTask:
+            changes = _ChangedResources()
             try:
-                async with self._transaction(cancellation) as connection:
+                async with self._transaction(
+                    cancellation, changes=changes
+                ) as connection:
                     previous = await self._operation_result(
                         connection,
                         task.namespace,
@@ -451,6 +486,7 @@ class SqlAlchemyAutomationStore:
                         task,
                         now,
                     )
+                    changes.task(task)
                     return task
             except asyncio.CancelledError:
                 raise
@@ -491,8 +527,11 @@ class SqlAlchemyAutomationStore:
         self._ensure_open()
 
         async def operation(cancellation: Cancellation) -> None:
+            changes = _ChangedResources()
             try:
-                async with self._transaction(cancellation) as connection:
+                async with self._transaction(
+                    cancellation, changes=changes
+                ) as connection:
                     previous = await self._operation_result(
                         connection,
                         namespace,
@@ -540,6 +579,7 @@ class SqlAlchemyAutomationStore:
                             connection,
                             cancelled,
                             admitted=bool(row["admitted"]),
+                            changes=changes,
                         )
                         await self._complete_work(
                             connection, cancelled.execution_id, now
@@ -548,6 +588,7 @@ class SqlAlchemyAutomationStore:
                     await connection.execute(
                         delete(tasks).where(tasks.c.task_id == task_id)
                     )
+                    changes.task(task)
                     await self._save_operation(
                         connection,
                         namespace,
@@ -894,8 +935,11 @@ class SqlAlchemyAutomationStore:
         self._ensure_open()
 
         async def operation(cancellation: Cancellation) -> MaterializationResult:
+            changes = _ChangedResources()
             try:
-                async with self._transaction(cancellation) as connection:
+                async with self._transaction(
+                    cancellation, changes=changes
+                ) as connection:
                     current = await self._locked_task(
                         connection, task.namespace, task.owner_id, task.task_id
                     )
@@ -971,7 +1015,9 @@ class SqlAlchemyAutomationStore:
                                 updated_at=_database_datetime(now),
                             )
                         )
+                        changes.execution(execution)
                         created.append(execution)
+                    changes.task(task)
                     return MaterializationResult(task=task, executions=tuple(created))
             except asyncio.CancelledError:
                 raise
@@ -1002,8 +1048,11 @@ class SqlAlchemyAutomationStore:
         self._ensure_open()
 
         async def operation(cancellation: Cancellation) -> AutomationExecution:
+            changes = _ChangedResources()
             try:
-                async with self._transaction(cancellation) as connection:
+                async with self._transaction(
+                    cancellation, changes=changes
+                ) as connection:
                     existing = await self._enqueued_result(
                         connection, execution, occurrence_key, request_id, input_digest
                     )
@@ -1091,6 +1140,7 @@ class SqlAlchemyAutomationStore:
                         execution,
                         now,
                     )
+                    changes.execution(execution)
                     return execution
             except asyncio.CancelledError:
                 raise
@@ -1249,48 +1299,64 @@ class SqlAlchemyAutomationStore:
         limit: int,
         lease_duration: timedelta,
         global_concurrency: int,
-    ) -> tuple[WorkItemClaim, ...]:
+    ) -> WorkClaimBatch:
         """Claim due work using database time, row locks, tokens, and fences."""
 
         _validate_persisted_text(namespace, name="namespace", maximum=128)
         _validate_persisted_text(worker_id, name="worker_id", maximum=191)
-        if limit < 1:
-            raise ValueError("limit must be at least 1")
+        if limit < 0:
+            raise ValueError("limit must be non-negative")
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
         if global_concurrency < 1:
             raise ValueError("global_concurrency must be at least 1")
         self._ensure_open()
 
-        async def operation(cancellation: Cancellation) -> tuple[WorkItemClaim, ...]:
+        async def operation(cancellation: Cancellation) -> WorkClaimBatch:
+            changes = _ChangedResources()
+            scan_limit = max(limit * 4, 64 if limit == 0 else limit)
             try:
-                async with self._transaction(cancellation) as connection:
+                async with self._transaction(
+                    cancellation, changes=changes
+                ) as connection:
                     now = await self._now(connection)
-                    await self._recover_expired_claims(connection, namespace, now)
+                    scan_started_at = now
+                    recovery_continues = await self._recover_expired_claims(
+                        connection, namespace, now, changes=changes
+                    )
                     rows = (
-                        await connection.execute(
-                            select(work_items)
-                            .where(
-                                work_items.c.namespace == namespace,
-                                work_items.c.status == _PENDING,
-                                work_items.c.available_at <= _database_datetime(now),
-                            )
-                            .order_by(
-                                work_items.c.available_at,
-                                work_items.c.created_at,
-                                work_items.c.work_item_id,
-                            )
-                            .limit(max(limit * 4, limit))
-                            .with_for_update(
-                                skip_locked=database_capabilities(
-                                    connection
-                                ).skip_locked
+                        (
+                            await connection.execute(
+                                select(work_items)
+                                .where(
+                                    work_items.c.namespace == namespace,
+                                    work_items.c.status == _PENDING,
+                                    work_items.c.available_at
+                                    <= _database_datetime(now),
+                                    self._eligible_work(
+                                        now, global_concurrency, admit=limit > 0
+                                    ),
+                                )
+                                .order_by(
+                                    work_items.c.available_at,
+                                    work_items.c.created_at,
+                                    work_items.c.work_item_id,
+                                )
+                                .limit(scan_limit)
+                                .with_for_update(
+                                    skip_locked=database_capabilities(
+                                        connection
+                                    ).skip_locked
+                                )
                             )
                         )
-                    ).mappings()
+                        .mappings()
+                        .all()
+                    )
                     selected: list[tuple[RowMapping, AutomationExecution]] = []
+                    cleaned = False
                     for row in rows:
-                        if len(selected) >= limit:
+                        if limit > 0 and len(selected) >= limit:
                             break
                         execution, admitted = await self._locked_execution_by_id(
                             connection, self._text(row["execution_id"])
@@ -1305,7 +1371,21 @@ class SqlAlchemyAutomationStore:
                                 admitted=admitted,
                                 now=now,
                                 row=row,
+                                changes=changes,
                             )
+                            cleaned = True
+                            continue
+                        if limit == 0:
+                            if kind is WorkKind.EXPIRE_INTERRUPT:
+                                await self._apply_transition(
+                                    connection,
+                                    _rules.expire_interrupted(execution, now),
+                                    admitted=admitted,
+                                    now=now,
+                                    row=row,
+                                    changes=changes,
+                                )
+                                cleaned = True
                             continue
                         if kind is WorkKind.EXECUTE and not await self._reserve_scopes(
                             connection,
@@ -1324,8 +1404,14 @@ class SqlAlchemyAutomationStore:
                         kind = WorkKind(self._text(row["kind"]))
                         if kind is WorkKind.EXECUTE and execution.queue_deadline <= now:
                             await self._expire_queued(
-                                connection, row, execution, admitted=True, now=now
+                                connection,
+                                row,
+                                execution,
+                                admitted=True,
+                                now=now,
+                                changes=changes,
                             )
+                            cleaned = True
                             continue
                         token = secrets.token_hex(16)
                         fence = int(row["fence"]) + 1
@@ -1353,7 +1439,24 @@ class SqlAlchemyAutomationStore:
                                 lease_until=lease_until,
                             )
                         )
-                    return tuple(claims)
+                    now = await self._now(connection)
+                    return WorkClaimBatch(
+                        claims=tuple(claims),
+                        next_check_after_seconds=(
+                            0.0
+                            if recovery_continues
+                            or claims
+                            or (cleaned and len(rows) == scan_limit)
+                            else await self._next_check_delay(
+                                connection,
+                                namespace,
+                                now,
+                                scan_started_at=scan_started_at,
+                                global_concurrency=global_concurrency,
+                                admit=limit > 0,
+                            )
+                        ),
+                    )
             except asyncio.CancelledError:
                 raise
             except AutomationError:
@@ -1363,19 +1466,199 @@ class SqlAlchemyAutomationStore:
 
         return await self._run_operation(operation)
 
+    @staticmethod
+    def _eligible_work(
+        now: datetime, global_concurrency: int, *, admit: bool
+    ) -> ColumnElement[bool]:
+        # Filter before LIMIT so one saturated scope cannot hide unrelated ready
+        # work. This snapshot never grants ownership: locked capacity updates and
+        # the execution's saved policy still make the authoritative decision.
+        candidate = runs.alias("candidate_run")
+        global_scope = scopes.alias("global_capacity")
+        execution_scope = scopes.alias("execution_capacity")
+        global_blocked = (
+            select(1)
+            .select_from(global_scope)
+            .where(
+                global_scope.c.namespace == candidate.c.namespace,
+                global_scope.c.kind == "global",
+                global_scope.c.scope_key == "global",
+                global_scope.c.allocated >= global_concurrency,
+            )
+            .correlate(candidate)
+            .exists()
+        )
+        execution_blocked = (
+            select(1)
+            .select_from(execution_scope)
+            .where(
+                execution_scope.c.namespace == candidate.c.namespace,
+                or_(
+                    and_(
+                        candidate.c.task_id.is_not(None),
+                        execution_scope.c.kind == "task",
+                        execution_scope.c.scope_key == candidate.c.task_id,
+                    ),
+                    and_(
+                        candidate.c.task_id.is_(None),
+                        execution_scope.c.kind == "owner",
+                        execution_scope.c.scope_key == candidate.c.owner_id,
+                    ),
+                ),
+                execution_scope.c.allocated >= candidate.c.max_concurrent_runs,
+            )
+            .correlate(candidate)
+            .exists()
+        )
+        candidate_allowed = (
+            select(1)
+            .select_from(candidate)
+            .where(
+                candidate.c.execution_id == work_items.c.execution_id,
+                candidate.c.namespace == work_items.c.namespace,
+                or_(
+                    candidate.c.status != ExecutionStatus.QUEUED.value,
+                    candidate.c.queue_deadline <= _database_datetime(now),
+                    and_(
+                        literal(admit),
+                        or_(
+                            candidate.c.admitted.is_(True),
+                            and_(~global_blocked, ~execution_blocked),
+                        ),
+                    ),
+                ),
+            )
+            .correlate(work_items)
+            .exists()
+        )
+        return or_(
+            work_items.c.kind == WorkKind.EXPIRE_INTERRUPT.value,
+            and_(work_items.c.kind == WorkKind.EXECUTE.value, candidate_allowed),
+        )
+
+    async def _next_check_delay(
+        self,
+        connection: AsyncConnection,
+        namespace: str,
+        now: datetime,
+        *,
+        scan_started_at: datetime,
+        global_concurrency: int,
+        admit: bool,
+    ) -> float | None:
+        observed = _database_datetime(now)
+        # Deadlines crossed during this scan need another bounded pass. Comparing
+        # only with the final time would lose an expired lease's wakeup entirely.
+        # Earlier due rows remain contention retries, never zero-delay loops.
+        scanned = _database_datetime(scan_started_at)
+        row = (
+            await connection.execute(
+                select(
+                    func.min(
+                        case(
+                            (
+                                and_(
+                                    work_items.c.status == _PENDING,
+                                    work_items.c.available_at > scanned,
+                                    or_(
+                                        literal(admit),
+                                        work_items.c.kind
+                                        == WorkKind.EXPIRE_INTERRUPT.value,
+                                    ),
+                                ),
+                                work_items.c.available_at,
+                            )
+                        )
+                    ),
+                    func.min(
+                        case(
+                            (
+                                and_(
+                                    work_items.c.status == _CLAIMED,
+                                    work_items.c.lease_until > scanned,
+                                ),
+                                work_items.c.lease_until,
+                            )
+                        )
+                    ),
+                    func.min(
+                        case(
+                            (
+                                and_(
+                                    work_items.c.status == _PENDING,
+                                    runs.c.status == ExecutionStatus.QUEUED.value,
+                                    runs.c.queue_deadline > scanned,
+                                ),
+                                runs.c.queue_deadline,
+                            )
+                        )
+                    ),
+                    func.max(
+                        case(
+                            (
+                                or_(
+                                    and_(
+                                        work_items.c.status == _PENDING,
+                                        work_items.c.available_at <= observed,
+                                        self._eligible_work(
+                                            now, global_concurrency, admit=admit
+                                        ),
+                                    ),
+                                    and_(
+                                        work_items.c.status == _CLAIMED,
+                                        work_items.c.lease_until <= observed,
+                                    ),
+                                ),
+                                1,
+                            ),
+                            else_=0,
+                        )
+                    ),
+                )
+                .select_from(
+                    work_items.join(
+                        runs, work_items.c.execution_id == runs.c.execution_id
+                    )
+                )
+                .where(
+                    work_items.c.namespace == namespace,
+                    work_items.c.status.in_((_PENDING, _CLAIMED)),
+                )
+            )
+        ).one()
+        delays: list[float] = []
+        for value in row[:3]:
+            if value is None:
+                continue
+            if not isinstance(value, datetime):
+                raise AutomationStoreProtocolError(
+                    "Work deadline has an invalid timestamp"
+                )
+            delays.append(max(0.0, (_utc_datetime(value) - now).total_seconds()))
+        if row[3]:
+            # A qualifying row still exists but this attempt made no progress,
+            # for example because another transaction holds it. Bound contention
+            # rechecks without turning a skipped row into a zero-delay loop.
+            delays.append(1.0)
+        return min(delays, default=None)
+
     async def renew_claim(
         self, claim: WorkItemClaim, *, lease_duration: timedelta
-    ) -> WorkItemClaim:
+    ) -> ClaimRenewal:
         """Extend a valid fenced claim using database time."""
 
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
         self._ensure_open()
 
-        async def operation(cancellation: Cancellation) -> WorkItemClaim:
+        async def operation(cancellation: Cancellation) -> ClaimRenewal:
             try:
                 async with self._transaction(cancellation) as connection:
-                    _, now = await self._valid_claim(connection, claim)
+                    row, _ = await self._valid_claim(connection, claim)
+                    execution, _ = await self._locked_execution_by_id(
+                        connection, claim.execution_id
+                    )
+                    now = await self._claim_time(connection, claim, row)
                     lease_until = now + lease_duration
                     await connection.execute(
                         update(work_items)
@@ -1385,7 +1668,11 @@ class SqlAlchemyAutomationStore:
                             updated_at=_database_datetime(now),
                         )
                     )
-                    return replace(claim, lease_until=lease_until)
+                    return ClaimRenewal(
+                        claim=replace(claim, lease_until=lease_until),
+                        cancellation_requested=execution.status
+                        is ExecutionStatus.CANCEL_REQUESTED,
+                    )
             except asyncio.CancelledError:
                 raise
             except AutomationError:
@@ -1408,8 +1695,11 @@ class SqlAlchemyAutomationStore:
         self._ensure_open()
 
         async def operation(cancellation: Cancellation) -> StartAuthorization:
+            changes = _ChangedResources()
             try:
-                async with self._transaction(cancellation) as connection:
+                async with self._transaction(
+                    cancellation, changes=changes
+                ) as connection:
                     row, now = await self._valid_claim(connection, claim)
                     execution, admitted = await self._locked_execution_by_id(
                         connection, claim.execution_id
@@ -1424,7 +1714,10 @@ class SqlAlchemyAutomationStore:
                         start_token=secrets.token_hex(24),
                     )
                     await self._update_execution(
-                        connection, authorization.execution, admitted=True
+                        connection,
+                        authorization.execution,
+                        admitted=True,
+                        changes=changes,
                     )
                     return authorization
             except asyncio.CancelledError:
@@ -1449,8 +1742,11 @@ class SqlAlchemyAutomationStore:
         self._ensure_open()
 
         async def operation(cancellation: Cancellation) -> AutomationExecution:
+            changes = _ChangedResources()
             try:
-                async with self._transaction(cancellation) as connection:
+                async with self._transaction(
+                    cancellation, changes=changes
+                ) as connection:
                     row, now = await self._valid_claim(connection, claim)
                     execution, admitted = await self._locked_execution_by_id(
                         connection, claim.execution_id
@@ -1460,7 +1756,12 @@ class SqlAlchemyAutomationStore:
                         execution, interrupt_ids=interrupt_ids, now=now
                     )
                     return await self._apply_transition(
-                        connection, transition, admitted=admitted, now=now, row=row
+                        connection,
+                        transition,
+                        admitted=admitted,
+                        now=now,
+                        row=row,
+                        changes=changes,
                     )
             except asyncio.CancelledError:
                 raise
@@ -1487,8 +1788,11 @@ class SqlAlchemyAutomationStore:
         self._ensure_open()
 
         async def operation(cancellation: Cancellation) -> AutomationExecution:
+            changes = _ChangedResources()
             try:
-                async with self._transaction(cancellation) as connection:
+                async with self._transaction(
+                    cancellation, changes=changes
+                ) as connection:
                     row, now = await self._valid_claim(connection, claim)
                     execution, admitted = await self._locked_execution_by_id(
                         connection, claim.execution_id
@@ -1503,7 +1807,12 @@ class SqlAlchemyAutomationStore:
                         now=now,
                     )
                     return await self._apply_transition(
-                        connection, transition, admitted=admitted, now=now, row=row
+                        connection,
+                        transition,
+                        admitted=admitted,
+                        now=now,
+                        row=row,
+                        changes=changes,
                     )
             except asyncio.CancelledError:
                 raise
@@ -1529,8 +1838,11 @@ class SqlAlchemyAutomationStore:
         self._ensure_open()
 
         async def operation(cancellation: Cancellation) -> AutomationExecution:
+            changes = _ChangedResources()
             try:
-                async with self._transaction(cancellation) as connection:
+                async with self._transaction(
+                    cancellation, changes=changes
+                ) as connection:
                     previous = await self._operation_result(
                         connection,
                         namespace,
@@ -1546,7 +1858,11 @@ class SqlAlchemyAutomationStore:
                     now = await self._now(connection)
                     transition = _rules.cancel_execution(execution, now)
                     updated_execution = await self._apply_transition(
-                        connection, transition, admitted=admitted, now=now
+                        connection,
+                        transition,
+                        admitted=admitted,
+                        now=now,
+                        changes=changes,
                     )
                     await self._save_operation(
                         connection,
@@ -1597,8 +1913,11 @@ class SqlAlchemyAutomationStore:
         self._ensure_open()
 
         async def operation(cancellation: Cancellation) -> AutomationExecution:
+            changes = _ChangedResources()
             try:
-                async with self._transaction(cancellation) as connection:
+                async with self._transaction(
+                    cancellation, changes=changes
+                ) as connection:
                     previous = await self._operation_result(
                         connection,
                         namespace,
@@ -1616,7 +1935,11 @@ class SqlAlchemyAutomationStore:
                         execution, resolution=resolution, reason=reason, now=now
                     )
                     resolved = await self._apply_transition(
-                        connection, transition, admitted=admitted, now=now
+                        connection,
+                        transition,
+                        admitted=admitted,
+                        now=now,
+                        changes=changes,
                     )
                     await self._save_operation(
                         connection,
@@ -1938,12 +2261,15 @@ class SqlAlchemyAutomationStore:
         connection: AsyncConnection,
         transition: _rules.ExecutionTransition,
         *,
+        changes: _ChangedResources,
         admitted: bool,
         now: datetime,
         row: RowMapping | None = None,
     ) -> AutomationExecution:
         execution = transition.execution
-        await self._update_execution(connection, execution, admitted=admitted)
+        await self._update_execution(
+            connection, execution, admitted=admitted, changes=changes
+        )
         if transition.complete_work == "all":
             await self._complete_work(connection, execution.execution_id, now)
         elif transition.complete_work == "current":
@@ -1995,6 +2321,7 @@ class SqlAlchemyAutomationStore:
         row: RowMapping,
         execution: AutomationExecution,
         *,
+        changes: _ChangedResources,
         admitted: bool,
         now: datetime,
     ) -> None:
@@ -2004,24 +2331,36 @@ class SqlAlchemyAutomationStore:
             admitted=admitted,
             now=now,
             row=row,
+            changes=changes,
         )
 
     async def _recover_expired_claims(
-        self, connection: AsyncConnection, namespace: str, now: datetime
-    ) -> None:
+        self,
+        connection: AsyncConnection,
+        namespace: str,
+        now: datetime,
+        *,
+        changes: _ChangedResources,
+    ) -> bool:
         rows = (
-            await connection.execute(
-                select(work_items)
-                .where(
-                    work_items.c.namespace == namespace,
-                    work_items.c.status == _CLAIMED,
-                    work_items.c.lease_until <= _database_datetime(now),
-                )
-                .with_for_update(
-                    skip_locked=database_capabilities(connection).skip_locked
+            (
+                await connection.execute(
+                    select(work_items)
+                    .where(
+                        work_items.c.namespace == namespace,
+                        work_items.c.status == _CLAIMED,
+                        work_items.c.lease_until <= _database_datetime(now),
+                    )
+                    .order_by(work_items.c.lease_until, work_items.c.work_item_id)
+                    .limit(128)
+                    .with_for_update(
+                        skip_locked=database_capabilities(connection).skip_locked
+                    )
                 )
             )
-        ).mappings()
+            .mappings()
+            .all()
+        )
         for row in rows:
             execution, admitted = await self._locked_execution_by_id(
                 connection, self._text(row["execution_id"])
@@ -2031,11 +2370,12 @@ class SqlAlchemyAutomationStore:
             )
             if transition.complete_work == "current":
                 await self._update_execution(
-                    connection, transition.execution, admitted=admitted
+                    connection, transition.execution, admitted=admitted, changes=changes
                 )
                 status = _COMPLETED
             else:
                 status = _PENDING
+                changes.execution(transition.execution)
             await connection.execute(
                 update(work_items)
                 .where(work_items.c.work_item_id == row["work_item_id"])
@@ -2047,6 +2387,7 @@ class SqlAlchemyAutomationStore:
                     updated_at=_database_datetime(now),
                 )
             )
+        return len(rows) == 128
 
     async def _reserve_scopes(
         self,
@@ -2220,6 +2561,7 @@ class SqlAlchemyAutomationStore:
         connection: AsyncConnection,
         execution: AutomationExecution,
         *,
+        changes: _ChangedResources,
         admitted: bool,
     ) -> None:
         values = _run_values(execution, admitted=admitted)
@@ -2240,6 +2582,7 @@ class SqlAlchemyAutomationStore:
             raise AutomationStoreProtocolError(
                 "Execution update did not affect one row"
             )
+        changes.execution(execution)
 
     async def _complete_work(
         self, connection: AsyncConnection, execution_id: str, now: datetime

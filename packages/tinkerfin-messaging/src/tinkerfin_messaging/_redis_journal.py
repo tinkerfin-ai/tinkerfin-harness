@@ -21,7 +21,12 @@ from uuid import uuid4
 
 from tinkerfin_contracts import RunIdentity
 
-from ._identity import required_identifier, required_identity, thread_key
+from ._identity import (
+    required_identifier,
+    required_identity,
+    thread_key,
+    validate_request_digest,
+)
 from ._messaging_ledger import (
     BackendRunHandle,
     PreparedRun,
@@ -43,6 +48,7 @@ from .errors import (
     MessagingQuotaExceeded,
     PublicationRejected,
     RunAlreadyActive,
+    RunRequestConflict,
     StreamDeleted,
     StreamExpired,
 )
@@ -61,6 +67,7 @@ async def prepare(
     after: int | None,
     cancellable: bool,
     recoverable: bool,
+    request_digest: str | None = None,
 ) -> PreparedRun:
     """Atomically start, recover, or attach within one thread generation.
 
@@ -76,6 +83,8 @@ async def prepare(
         after: Optional exclusive replay cursor.
         cancellable: Whether the new owner exposes remote cancellation.
         recoverable: Whether the source can restart from a committed checkpoint.
+        request_digest: Optional immutable command binding; mismatches reject both
+            attachment and recovery without modifying retained run ownership.
 
     Returns:
         Owner or attachment preparation bound to one current generation.
@@ -88,6 +97,7 @@ async def prepare(
     required_identifier("channel", channel)
     required_identity(identity)
     required_identifier("codec", codec)
+    validate_request_digest(request_digest)
     if after is not None and (isinstance(after, bool) or not isinstance(after, int)):
         raise TypeError("after must be an integer or None")
     scope = self._scope(channel, identity)
@@ -153,9 +163,16 @@ async def prepare(
                 str(self._retention_ms),
                 str(self._limits.max_total_bytes),
                 str(self._limits.max_total_records),
+                request_digest or "",
             ],
         )
         code = self._text(response[0])
+        if code == "REQUEST_CONFLICT":
+            raise RunRequestConflict(identity=identity)
+        if code == "INVALID_REQUEST_BINDING":
+            raise _redis_protocol_error(
+                "Redis run has no current request binding field"
+            )
         if code == "GENERATION_CHANGED":
             continue
         if code == "STREAM_EXPIRING":

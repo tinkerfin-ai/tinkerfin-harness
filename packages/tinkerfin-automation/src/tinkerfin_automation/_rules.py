@@ -240,6 +240,25 @@ def cancel_execution(
     return ExecutionTransition(execution)
 
 
+def expire_interrupted(
+    execution: AutomationExecution, now: datetime
+) -> ExecutionTransition:
+    """Settle an interrupted execution after its pending deadline work becomes due."""
+    if (
+        execution.status is not ExecutionStatus.INTERRUPTED
+        or execution.execution_deadline is None
+        or execution.execution_deadline > now
+    ):
+        raise ClaimLostError("Interrupted execution is not due for expiry")
+    return finish_execution(
+        execution,
+        status=ExecutionStatus.TIMED_OUT,
+        now=now,
+        failure_code="automation.execution_timeout",
+        failure_message="Interrupted execution exceeded its deadline",
+    )
+
+
 def resolve_execution(
     execution: AutomationExecution,
     *,

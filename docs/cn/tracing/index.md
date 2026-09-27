@@ -71,8 +71,10 @@ async with history.follow() as updates:
         await handle(update)
 ```
 
-其他 Store 实例提交的变化默认每 0.5 秒检查一次，可通过
-`TraceStoreOptions.follow_poll_seconds` 调整。Writer 关闭或租约到期，但缺少已记录终态时，
+通过 Store 的 `notifications` 参数传入已启动的 `tinkerfin_notifications.Notifications`，
+可在提交后通知其他实例；跨进程使用其 Redis 后端。应在所有 Writer 和跟随订阅关闭后再关闭通知服务。
+遗漏的通知每 30 秒或在最近的 Writer 租约到期时通过权威读取修正。未配置通知时默认每 0.5 秒
+检查一次，可通过 `TraceStoreOptions.follow_poll_seconds` 调整。Writer 关闭或租约到期，但缺少已记录终态时，
 运行显示 `unknown` 与 `missing_tail=True`，不能据此判断 Agent 成功。有效接管可以在相同
 事件序号恢复为 `running`。
 

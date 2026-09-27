@@ -20,7 +20,7 @@ from tinkerfin_automation.clock import ManualClock
 from tinkerfin_automation.engine import AutomationEngine
 from tinkerfin_automation.scheduler import MemoryScheduler
 from tinkerfin_automation.service import AutomationService
-from tinkerfin_automation.store import WorkItemClaim
+from tinkerfin_automation.store import ClaimRenewal, WorkItemClaim
 
 NOW = datetime(2026, 9, 9, 8, tzinfo=UTC)
 _T = TypeVar("_T")
@@ -93,7 +93,7 @@ class _Store(MemoryAutomationStore):
 
     async def renew_claim(
         self, claim: WorkItemClaim, *, lease_duration: timedelta
-    ) -> WorkItemClaim:
+    ) -> ClaimRenewal:
         if self.fail_renewal:
             self.renewal_failed.set()
             raise self.failure
@@ -158,8 +158,7 @@ async def test_renewal_failure_joins_extension_and_keeps_unconfirmed_capacity(
                 lease_duration=timedelta(seconds=30),
                 global_concurrency=1,
             )
-            == ()
-        )
+        ).claims == ()
     finally:
         release.set()
         result = await _capture(engine.close())

@@ -103,17 +103,16 @@ async def test_sql_message_write_settles_before_cancel_or_failure(
         )
     )
     try:
-        async with asyncio.timeout(10):
-            await entered.wait()
-            if cancel:
-                task.cancel("caller stopped")
-                queued = asyncio.Event()
-                asyncio.get_running_loop().call_soon(queued.set)
-                await queued.wait()
-                task.cancel("caller stopped again")
-            assert not task.done()
-            release.set()
-            outcome = await task
+        await entered.wait()
+        if cancel:
+            task.cancel("caller stopped")
+            queued = asyncio.Event()
+            asyncio.get_running_loop().call_soon(queued.set)
+            await queued.wait()
+            task.cancel("caller stopped again")
+        assert not task.done()
+        release.set()
+        outcome = await task
         if isinstance(failure, ProcessControl):
             assert outcome is failure
         elif cancel:

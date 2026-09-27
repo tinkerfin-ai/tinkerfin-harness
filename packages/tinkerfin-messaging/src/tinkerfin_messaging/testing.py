@@ -11,6 +11,7 @@ from uuid import uuid4
 from tinkerfin_contracts import RunIdentity
 
 from .backend_contract import MessagingBackend
+from .errors import RunRequestConflict
 from .messaging import Messaging
 from .sources import FiniteMessageSource
 
@@ -176,6 +177,48 @@ async def verify_messaging_backend(
                 "generation-sequence-reset",
                 replacement_messages,
             )
+            bound_identity = RunIdentity(
+                namespace="messaging-verification",
+                thread_id=f"{thread_id}-command",
+                run_id="bound-command",
+            )
+            bound = await channel.wrap(
+                FiniteMessageSource[str].from_events(("accepted",)),
+                identity=bound_identity,
+                request_digest="a" * 64,
+                after=0,
+            )
+            assert [item.data async for item in bound] == ["accepted"], "bound-command"
+            attached = await channel.wrap(
+                FiniteMessageSource[str].from_events(("must not execute",)),
+                identity=bound_identity,
+                request_digest="a" * 64,
+                after=0,
+            )
+            assert [item.data async for item in attached] == ["accepted"], (
+                "bound-attachment"
+            )
+            for requested in (None, "b" * 64):
+                try:
+                    await channel.wrap(
+                        FiniteMessageSource[str].from_events(("must not execute",)),
+                        identity=bound_identity,
+                        request_digest=requested,
+                    )
+                except RunRequestConflict:
+                    pass
+                else:
+                    raise AssertionError("request-binding-conflict")
+            try:
+                await channel.wrap(
+                    FiniteMessageSource[str].from_events(("must not execute",)),
+                    identity=replacement_identity,
+                    request_digest="a" * 64,
+                )
+            except RunRequestConflict:
+                pass
+            else:
+                raise AssertionError("unbound-run-cannot-be-adopted")
 
 
 __all__ = ["MessagingBackendFactory", "verify_messaging_backend"]

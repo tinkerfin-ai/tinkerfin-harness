@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { startNotificationFeed } from '../../api/notifications'
 import { useDrawerLayout } from '../../components/ui/useDrawerLayout'
 import { DrawerResizeHandle } from '../../components/ui/DrawerResizeHandle'
 import { isConversationRunning } from '../../lib/workspace'
@@ -149,6 +150,7 @@ export function WorkspaceScreen({
   onToast: ToastHandler
 }) {
   const { t } = useI18n()
+  useEffect(() => startNotificationFeed(), [])
   const {
     workspace,
     setWorkspace,

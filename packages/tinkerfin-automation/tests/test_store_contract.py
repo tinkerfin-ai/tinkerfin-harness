@@ -238,13 +238,15 @@ async def test_taskless_concurrency_is_scoped_per_owner(
             input_digest=f"execution-{index}",
         )
 
-    claims = await store.claim_work(
-        "app",
-        "worker",
-        limit=3,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=3,
-    )
+    claims = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=3,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=3,
+        )
+    ).claims
     assert len(claims) == 2
     claimed = {
         (await store.get_scheduled_execution("app", claim.execution_id)).owner_id
@@ -260,13 +262,15 @@ async def test_taskless_concurrency_is_scoped_per_owner(
     await store.finish_execution(
         owner_one_claim, status=ExecutionStatus.SUCCEEDED, result={"ok": True}
     )
-    (next_claim,) = await store.claim_work(
-        "app",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=3,
-    )
+    (next_claim,) = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=3,
+        )
+    ).claims
     assert (
         await store.get_scheduled_execution("app", next_claim.execution_id)
     ).owner_id == "owner-1"
@@ -288,13 +292,15 @@ async def test_taskless_uncertainty_holds_owner_capacity_until_resolution(
             input_digest=f"execution-{index}",
         )
 
-    (first_claim,) = await store.claim_work(
-        "app",
-        "worker",
-        limit=2,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=2,
-    )
+    (first_claim,) = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=2,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=2,
+        )
+    ).claims
     pending_execution_id = next(
         execution.execution_id
         for execution in (first, second)
@@ -307,13 +313,15 @@ async def test_taskless_uncertainty_holds_owner_capacity_until_resolution(
         failure_code="host.unknown",
         failure_message="External state is unknown",
     )
-    assert not await store.claim_work(
-        "app",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=2,
-    )
+    assert not (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=2,
+        )
+    ).claims
 
     await store.resolve_execution(
         "app",
@@ -324,13 +332,15 @@ async def test_taskless_uncertainty_holds_owner_capacity_until_resolution(
         input_digest="resolution",
         reason="Operator confirmed the external run stopped",
     )
-    (second_claim,) = await store.claim_work(
-        "app",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=2,
-    )
+    (second_claim,) = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=2,
+        )
+    ).claims
     assert second_claim.execution_id == pending_execution_id
 
 
@@ -349,13 +359,15 @@ async def test_claim_authorization_is_fenced_and_issued_once(
         input_digest="execution",
     )
 
-    claims = await store.claim_work(
-        "app",
-        "worker-1",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=16,
-    )
+    claims = (
+        await store.claim_work(
+            "app",
+            "worker-1",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=16,
+        )
+    ).claims
     assert len(claims) == 1
     authorization = await store.authorize_start(
         claims[0], execution_timeout=timedelta(minutes=30)
@@ -365,13 +377,15 @@ async def test_claim_authorization_is_fenced_and_issued_once(
         await store.authorize_start(claims[0], execution_timeout=timedelta(minutes=30))
 
     await clock.advance(timedelta(minutes=2))
-    assert not await store.claim_work(
-        "app",
-        "worker-2",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=16,
-    )
+    assert not (
+        await store.claim_work(
+            "app",
+            "worker-2",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=16,
+        )
+    ).claims
     uncertain = await store.get_execution("app", "owner-1", execution.execution_id)
     assert uncertain.status is ExecutionStatus.NEEDS_ATTENTION
 
@@ -391,13 +405,15 @@ async def test_task_concurrency_releases_only_after_terminal_settlement(
             input_digest=f"execution-{ordinal}",
         )
 
-    first_claims = await store.claim_work(
-        "app",
-        "worker",
-        limit=2,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=16,
-    )
+    first_claims = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=2,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=16,
+        )
+    ).claims
     assert len(first_claims) == 1
     first_execution_id = first_claims[0].execution_id
     await store.authorize_start(
@@ -407,13 +423,15 @@ async def test_task_concurrency_releases_only_after_terminal_settlement(
         first_claims[0], status=ExecutionStatus.SUCCEEDED, result={"ok": True}
     )
 
-    second_claims = await store.claim_work(
-        "app",
-        "worker",
-        limit=2,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=16,
-    )
+    second_claims = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=2,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=16,
+        )
+    ).claims
     assert len(second_claims) == 1
     assert second_claims[0].execution_id != first_execution_id
     assert {second_claims[0].execution_id, first_execution_id} == {
@@ -436,25 +454,29 @@ async def test_interrupt_waits_without_restart_and_expires_original_deadline(
         request_id=None,
         input_digest="execution",
     )
-    (claim,) = await store.claim_work(
-        "app",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(hours=1),
-        global_concurrency=16,
-    )
+    (claim,) = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(hours=1),
+            global_concurrency=16,
+        )
+    ).claims
     await store.authorize_start(claim, execution_timeout=timedelta(minutes=30))
     interrupted = await store.mark_interrupted(claim, interrupt_ids=("interrupt-1",))
     assert interrupted.status is ExecutionStatus.INTERRUPTED
 
     await clock.advance(timedelta(minutes=30))
-    (expiry,) = await store.claim_work(
-        "app",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=16,
-    )
+    (expiry,) = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=16,
+        )
+    ).claims
     assert expiry.kind is WorkKind.EXPIRE_INTERRUPT
     timed_out = await store.finish_execution(
         expiry,
@@ -480,13 +502,15 @@ async def test_uncertain_execution_requires_explicit_audited_resolution(
         request_id=None,
         input_digest="execution",
     )
-    (claim,) = await store.claim_work(
-        "app",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=16,
-    )
+    (claim,) = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=16,
+        )
+    ).claims
     await store.authorize_start(claim, execution_timeout=timedelta(minutes=30))
     uncertain = await store.finish_execution(
         claim,
@@ -517,22 +541,26 @@ async def test_expired_unstarted_claim_releases_capacity_after_queue_timeout(
     await store.enqueue_execution(
         execution, occurrence_key="expired", request_id=None, input_digest="expired"
     )
-    (claim,) = await store.claim_work(
-        "app",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=1,
-    )
+    (claim,) = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=1,
+        )
+    ).claims
     assert claim.execution_id == execution.execution_id
     await clock.advance(timedelta(hours=2))
-    assert not await store.claim_work(
-        "app",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=1,
-    )
+    assert not (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=1,
+        )
+    ).claims
     assert (
         await store.get_execution("app", "owner-1", execution.execution_id)
     ).status is ExecutionStatus.TIMED_OUT
@@ -546,11 +574,13 @@ async def test_expired_unstarted_claim_releases_capacity_after_queue_timeout(
     await store.enqueue_execution(
         later, occurrence_key="later", request_id=None, input_digest="later"
     )
-    (next_claim,) = await store.claim_work(
-        "app",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=1,
-    )
+    (next_claim,) = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=1,
+        )
+    ).claims
     assert next_claim.execution_id == later.execution_id

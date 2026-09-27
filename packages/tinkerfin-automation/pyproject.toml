@@ -17,6 +17,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "tinkerfin-notifications==0.1.0",
     "langchain>=1.3.14,<=1.4.0",
     "langchain-core>=1.5.3,<=1.6.3",
     "pydantic>=2.12,<3",
@@ -48,6 +49,7 @@ where = ["src"]
 tinkerfin_automation = ["py.typed"]
 
 [tool.uv.sources]
+tinkerfin-notifications = { workspace = true }
 tinkerfin-contracts = { workspace = true }
 tinkerfin-native-stream = { workspace = true }
 tinkerfin = { workspace = true }

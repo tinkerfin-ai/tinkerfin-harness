@@ -6,11 +6,12 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 from backend_harness import MessagingBackendHarness
-from sqlalchemy import inspect, select, text, update
+from sql_messaging_support import database_time
+from sqlalchemy import inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from tinkerfin_contracts import RunIdentity
@@ -23,7 +24,7 @@ from tinkerfin_messaging import (
     SqlAlchemyBackend,
     StreamDeleted,
 )
-from tinkerfin_messaging._sql_schema import capacity, generations, messages, metadata
+from tinkerfin_messaging._sql_schema import capacity, messages, metadata
 from tinkerfin_messaging.backend_contract import (
     CommittedMessageQuery,
     MessagingBackend,
@@ -302,38 +303,37 @@ async def test_sql_backend_preserves_all_legal_text_and_checkpoint_sizes(
 async def test_sql_expiry_reclaims_a_large_other_thread_before_admission(
     messaging_sql_engine: AsyncEngine,
 ) -> None:
-    backend = MessagingBackendHarness(
-        SqlAlchemyBackend(
-            messaging_sql_engine,
-            limits=MessagingLimits(max_total_bytes=130),
-            retention_policy=MessagingRetentionPolicy.expire_after(3600),
+    now = datetime(2030, 1, 1)
+    with database_time(messaging_sql_engine, lambda: now):
+        backend = MessagingBackendHarness(
+            SqlAlchemyBackend(
+                messaging_sql_engine,
+                limits=MessagingLimits(max_total_bytes=130),
+                retention_policy=MessagingRetentionPolicy.expire_after(3600),
+            )
         )
-    )
-    old = await prepare(backend, identity())
-    for index in range(130):
+        old = await prepare(backend, identity())
+        for index in range(130):
+            await backend.append(
+                old.handle, message_id=str(index), codec="test.bytes", payload=b"x"
+            )
+        await backend.finish(old.handle, status="completed")
+        now += timedelta(seconds=3601)
+        current = await backend.prepare(
+            channel="another",
+            identity=identity(thread="new"),
+            codec="test.bytes",
+            after=0,
+            cancellable=False,
+            recoverable=False,
+        )
         await backend.append(
-            old.handle, message_id=str(index), codec="test.bytes", payload=b"x"
+            current.handle, message_id="full", codec="test.bytes", payload=b"x" * 130
         )
-    await backend.finish(old.handle, status="completed")
-    async with messaging_sql_engine.begin() as connection:
-        await connection.execute(
-            update(generations).values(retention_deadline=datetime(2000, 1, 1))
-        )
-    current = await backend.prepare(
-        channel="another",
-        identity=identity(thread="new"),
-        codec="test.bytes",
-        after=0,
-        cancellable=False,
-        recoverable=False,
-    )
-    await backend.append(
-        current.handle, message_id="full", codec="test.bytes", payload=b"x" * 130
-    )
-    async with messaging_sql_engine.connect() as connection:
-        row = (await connection.execute(select(capacity))).mappings().one()
-    assert row["total_bytes"] == 130
-    assert row["total_records"] == 8
+        async with messaging_sql_engine.connect() as connection:
+            row = (await connection.execute(select(capacity))).mappings().one()
+        assert row["total_bytes"] == 130
+        assert row["total_records"] == 8
 
 
 @pytest.mark.parametrize(

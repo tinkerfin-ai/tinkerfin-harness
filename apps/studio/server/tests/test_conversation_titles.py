@@ -24,7 +24,7 @@ async def create_thread(database: Database):
 
 @pytest.mark.parametrize("phase", ["claim", "settlement"])
 async def test_title_repeated_cancellation_finishes_committed_claim(
-    database, monkeypatch, phase: str
+    notifications, database, monkeypatch, phase: str
 ) -> None:
     thread_pk = await create_thread(database)
     claim_entered, model_entered, finish_entered, release = (
@@ -60,7 +60,11 @@ async def test_title_repeated_cancellation_finishes_committed_claim(
     model.ainvoke.side_effect = invoke
     request = asyncio.create_task(
         summarize_conversation_title(
-            database=database, thread_pk=thread_pk, text="测试标题", model=model
+            database=database,
+            thread_pk=thread_pk,
+            text="测试标题",
+            model=model,
+            notifications=notifications,
         )
     )
     await (claim_entered if phase == "claim" else model_entered).wait()
@@ -199,7 +203,7 @@ def test_default_title_uses_first_16_characters(character):
     assert intent.title == character * 16
 
 
-async def test_title_uses_one_bounded_nonreasoning_request(database):
+async def test_title_uses_one_bounded_nonreasoning_request(notifications, database):
     import json
 
     import httpx
@@ -271,6 +275,7 @@ async def test_title_uses_one_bounded_nonreasoning_request(database):
             thread_pk=thread_pk,
             text="介绍新能源汽车" * 5000,
             model=model,
+            notifications=notifications,
         )
         assert result is not None and result.title == "新能源汽车分析"
         assert (
@@ -279,7 +284,11 @@ async def test_title_uses_one_bounded_nonreasoning_request(database):
         )
         assert (
             await summarize_conversation_title(
-                database=database, thread_pk=thread_pk, text="后续发言", model=model
+                database=database,
+                thread_pk=thread_pk,
+                text="后续发言",
+                model=model,
+                notifications=notifications,
             )
             is None
         )
@@ -291,7 +300,9 @@ async def test_title_uses_one_bounded_nonreasoning_request(database):
 
 
 @pytest.mark.parametrize("outcome", ["error", "timeout", "manual", "cancel"])
-async def test_title_failures_and_manual_rename_never_retry(database, outcome):
+async def test_title_failures_and_manual_rename_never_retry(
+    notifications, database, outcome
+):
     import httpx
     from pydantic import SecretStr
 
@@ -330,6 +341,7 @@ async def test_title_failures_and_manual_rename_never_retry(database, outcome):
                 thread_pk=thread_pk,
                 text="介绍新能源汽车",
                 model=model,
+                notifications=notifications,
             )
         )
         try:
@@ -352,7 +364,11 @@ async def test_title_failures_and_manual_rename_never_retry(database, outcome):
                 assert await task is None
             assert (
                 await summarize_conversation_title(
-                    database=database, thread_pk=thread_pk, text="再次请求", model=model
+                    database=database,
+                    thread_pk=thread_pk,
+                    text="再次请求",
+                    model=model,
+                    notifications=notifications,
                 )
                 is None
             )
@@ -369,7 +385,9 @@ async def test_title_failures_and_manual_rename_never_retry(database, outcome):
         )
 
 
-async def test_title_save_commit_failure_settles_claim(database, monkeypatch):
+async def test_title_save_commit_failure_settles_claim(
+    notifications, database, monkeypatch
+):
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
     from tinkerfin_studio.conversation.titles import summarize_conversation_title
@@ -392,6 +410,7 @@ async def test_title_save_commit_failure_settles_claim(database, monkeypatch):
             thread_pk=thread_pk,
             text="a",
             model=FakeListChatModel(responses=["title"]),
+            notifications=notifications,
         )
         is None
     )
@@ -401,7 +420,9 @@ async def test_title_save_commit_failure_settles_claim(database, monkeypatch):
         assert (thread.title, thread.title_generation_status) == ("临时标题", "failed")
 
 
-async def test_cancellation_joins_claim_commit_before_settlement(database, monkeypatch):
+async def test_cancellation_joins_claim_commit_before_settlement(
+    notifications, database, monkeypatch
+):
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
     from tinkerfin_studio.conversation.titles import summarize_conversation_title
@@ -426,6 +447,7 @@ async def test_cancellation_joins_claim_commit_before_settlement(database, monke
             thread_pk=thread_pk,
             text="a",
             model=FakeListChatModel(responses=["title"]),
+            notifications=notifications,
         )
     )
     try:
@@ -444,7 +466,7 @@ async def test_cancellation_joins_claim_commit_before_settlement(database, monke
 
 
 @pytest.mark.parametrize("text", ["中" * 40, "a" * 40, "😀" * 40, "短"])
-async def test_generated_title_is_at_most_32_characters(database, text):
+async def test_generated_title_is_at_most_32_characters(notifications, database, text):
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
     from tinkerfin_studio.conversation.titles import summarize_conversation_title
@@ -455,13 +477,14 @@ async def test_generated_title_is_at_most_32_characters(database, text):
         thread_pk=thread_pk,
         text="a",
         model=FakeListChatModel(responses=[text]),
+        notifications=notifications,
     )
     assert result is not None and result.title == text[:32]
 
 
 @pytest.mark.parametrize("started", [False, True])
 async def test_application_close_settles_queued_and_running_titles(
-    database, monkeypatch, started
+    notifications, database, monkeypatch, started
 ):
     import httpx
     from pydantic import SecretStr
@@ -490,7 +513,10 @@ async def test_application_close_settles_queued_and_running_titles(
     )
     async with httpx.AsyncClient() as client:
         titles = module.ConversationTitles(
-            database=database, http_client=client, http_transport=None
+            database=database,
+            http_client=client,
+            http_transport=None,
+            notifications=notifications,
         )
         await titles.start(thread_pk=thread_pk, text="标题", model=config)
         await titles.start(thread_pk=thread_pk, text="重复请求", model=config)
@@ -504,7 +530,7 @@ async def test_application_close_settles_queued_and_running_titles(
     assert model.ainvoke.call_count == (1 if started else 0)
 
 
-async def test_title_queue_overflow_settles(database, monkeypatch):
+async def test_title_queue_overflow_settles(notifications, database, monkeypatch):
     import httpx
     from pydantic import SecretStr
 
@@ -524,7 +550,10 @@ async def test_title_queue_overflow_settles(database, monkeypatch):
     monkeypatch.setattr(module, "_TITLE_MAX_PENDING", 0)
     async with httpx.AsyncClient() as client:
         titles = module.ConversationTitles(
-            database=database, http_client=client, http_transport=None
+            database=database,
+            http_client=client,
+            http_transport=None,
+            notifications=notifications,
         )
         await titles.start(thread_pk=thread_pk, text="标题", model=config)
         await titles.aclose()

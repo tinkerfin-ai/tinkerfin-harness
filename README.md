@@ -57,11 +57,12 @@ Requires Python 3.11 or newer. Set your model credentials, then build an `AgentR
 
 ## Core concepts
 
-- **Compose your agent harness** — Configure models, tools, skills, and subagents. Add execution management, messaging, tracing, and sandbox capabilities as needed.
+- **Compose your agent harness** — Configure models, tools, skills, and subagents. Add execution management, messaging, notifications, tracing, and sandbox capabilities as needed.
 - **Connect agents and workflows** — Invoke agents from application workflows, or register compiled LangGraph workflows as subagents to combine predefined steps with model-directed tool use.
 - **Multimodal input and file delivery** — Pass images, audio, video, and documents to models and tools that support their formats, and return generated files.
 - **Review plans and tool operations** — Clarify requirements and approve a plan before execution. Selected tool operations can require separate approval.
 - **Stream and replay events** — Deliver AG-UI events through persistent message channels and replay after reconnection. Application events can use the same channels.
+- **Accept commands and refresh clients** — Use [Gateway](docs/en/gateway/index.md) for run commands and durable output, and [Notifications](docs/en/notifications/index.md) to refresh resources across connected clients.
 - **Trace each call** — Inspect model, tool, and subagent relationships, inputs, outputs, and timing, live or from past runs.
 - **Manage isolated workspaces** — Read and write files, execute commands, and reuse, prewarm, pause, or resume environments.
 - **Persist state and coordinate runs** — Retain conversation state and continue after approval. Coordinate run ownership, duplicate requests, and cancellation across processes.

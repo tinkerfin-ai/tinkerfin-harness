@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 import type { AgentModelCatalogItem } from '../../src/api/models/types'
 
@@ -27,6 +28,7 @@ async function prepare(page: Page, theme: string) {
     else if (path === '/api/automation/tasks/counts') data = { enabled: 0, paused: 0 }
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
+  await installNotificationStream(page)
   await page.goto('/')
   await expect(page.getByRole('button', { name: '选择模型', exact: true })).toBeEnabled()
 }

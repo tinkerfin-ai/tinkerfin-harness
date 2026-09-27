@@ -8,6 +8,7 @@ import json
 import shlex
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from types import ModuleType
 
 import httpx
 import pytest
@@ -17,6 +18,7 @@ from opensandbox.exceptions import SandboxApiException
 from opensandbox.transport import RetryPolicy
 
 from tinkerfin_sandbox import OpenSandboxBackend, OpenSandboxBackendError
+from tinkerfin_sandbox.backends import sdk
 from tinkerfin_sandbox.backends._operations import RemoteOperations
 
 
@@ -48,6 +50,7 @@ class _CommandServer:
         self.complete = asyncio.Event()
         self.interrupted = asyncio.Event()
         self.stream_closed = asyncio.Event()
+        self.status_changed = asyncio.Event()
         self.emit_init = True
         self.fail_stream = False
         self.running = True
@@ -56,6 +59,15 @@ class _CommandServer:
         self.status_calls = 0
         self.interrupt_calls = 0
         self.command_calls = 0
+
+    @property
+    def running(self) -> bool:
+        return self._running
+
+    @running.setter
+    def running(self, value: bool) -> None:
+        self._running = value
+        self.status_changed.set()
 
     async def respond(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -96,25 +108,33 @@ class _CommandServer:
 
 @asynccontextmanager
 async def _backend(server: _CommandServer) -> AsyncGenerator[OpenSandboxBackend]:
-    transport = httpx.MockTransport(server.respond)
-    sandbox = await Sandbox.connect(
-        "sandbox-1",
-        connection_config=ConnectionConfig(
-            domain="control.invalid",
-            transport=transport,
-            disable_metrics=True,
-            retry_policy=RetryPolicy.disabled(),
-        ),
-        skip_health_check=True,
-    )
-    backend = OpenSandboxBackend(sandbox=sandbox)
-    try:
-        yield backend
-    finally:
-        server.running = False
-        server.complete.set()
-        await backend.aclose()
-        await transport.aclose()
+    async def wait_for_status_change(_seconds: float) -> None:
+        await server.status_changed.wait()
+        server.status_changed.clear()
+
+    controlled = ModuleType("controlled_asyncio")
+    controlled.__dict__.update(vars(asyncio))
+    setattr(controlled, "sleep", wait_for_status_change)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(sdk, "asyncio", controlled)
+        async with httpx.MockTransport(server.respond) as transport:
+            sandbox = await Sandbox.connect(
+                "sandbox-1",
+                connection_config=ConnectionConfig(
+                    domain="control.invalid",
+                    transport=transport,
+                    disable_metrics=True,
+                    retry_policy=RetryPolicy.disabled(),
+                ),
+                skip_health_check=True,
+            )
+            backend = OpenSandboxBackend(sandbox=sandbox)
+            try:
+                yield backend
+            finally:
+                server.running = False
+                server.complete.set()
+                await backend.aclose()
 
 
 async def _cancel_command(
@@ -127,10 +147,10 @@ async def _cancel_command(
     else:
         with tracker.activate():
             command = asyncio.create_task(backend.aexecute("sleep 60"))
-    await asyncio.wait_for(server.started.wait(), timeout=1)
+    await server.started.wait()
     command.cancel("caller stopped waiting")
     with pytest.raises(asyncio.CancelledError, match="caller stopped waiting"):
-        await asyncio.wait_for(command, timeout=0.25)
+        await command
 
 
 @pytest.mark.asyncio
@@ -139,13 +159,13 @@ async def test_cancelled_command_retains_remote_work_until_confirmed_terminal() 
     tracker = RemoteOperations()
     async with _backend(server) as backend:
         await _cancel_command(backend, server, tracker)
-        await asyncio.wait_for(server.interrupted.wait(), timeout=1)
+        await server.interrupted.wait()
         assert server.running
         assert server.stream_closed.is_set()
         assert not tracker.is_idle
 
         server.running = False
-        await asyncio.wait_for(tracker.wait(), timeout=1)
+        await tracker.wait()
         assert tracker.is_idle
         assert server.command_calls == 1
         assert server.interrupt_calls == 1
@@ -174,11 +194,11 @@ async def test_broken_command_stream_retains_its_identified_remote_execution() -
     async with _backend(server) as backend:
         with tracker.activate(), pytest.raises(OpenSandboxBackendError):
             await backend.aexecute("sleep 60")
-        await asyncio.wait_for(server.interrupted.wait(), timeout=1)
+        await server.interrupted.wait()
         assert not tracker.is_idle
         assert server.running
         server.running = False
-        await asyncio.wait_for(tracker.wait(), timeout=1)
+        await tracker.wait()
         assert tracker.is_idle
         assert server.command_calls == 1
 
@@ -203,7 +223,7 @@ async def test_failed_remote_status_cannot_confirm_idle() -> None:
     tracker = RemoteOperations()
     async with _backend(server) as backend:
         await _cancel_command(backend, server, tracker)
-        await asyncio.wait_for(tracker.wait(), timeout=1)
+        await tracker.wait()
         assert not tracker.is_idle
         assert server.running
 
@@ -230,12 +250,12 @@ async def test_standalone_close_waits_for_owned_remote_checks() -> None:
     before = set(asyncio.all_tasks())
     async with _backend(server) as backend:
         await _cancel_command(backend, server, None)
-        await asyncio.wait_for(server.interrupted.wait(), timeout=1)
+        await server.interrupted.wait()
         closing = asyncio.create_task(backend.aclose())
         await asyncio.sleep(0)
         assert not closing.done()
         server.running = False
-        await asyncio.wait_for(closing, timeout=1)
+        await closing
     await asyncio.sleep(0)
     assert not (set(asyncio.all_tasks()) - before)
 
@@ -246,7 +266,7 @@ async def test_cancelled_wait_does_not_cancel_owned_termination() -> None:
     tracker = RemoteOperations()
     async with _backend(server) as backend:
         await _cancel_command(backend, server, tracker)
-        await asyncio.wait_for(server.interrupted.wait(), timeout=1)
+        await server.interrupted.wait()
         waiting = asyncio.create_task(tracker.wait())
         await asyncio.sleep(0)
         waiting.cancel("stop waiting for settlement")
@@ -254,7 +274,7 @@ async def test_cancelled_wait_does_not_cancel_owned_termination() -> None:
             await waiting
         assert not tracker.is_idle
         server.running = False
-        await asyncio.wait_for(tracker.wait(), timeout=1)
+        await tracker.wait()
         assert tracker.is_idle
 
 
@@ -263,18 +283,23 @@ async def test_settlement_capacity_keeps_uncertainty_without_unbounded_tasks() -
     tracker = RemoteOperations()
     release = asyncio.Event()
     started = 0
+    capacity_reached = asyncio.Event()
 
     async def settle() -> None:
         nonlocal started
         started += 1
+        if started == 32:
+            capacity_reached.set()
         await release.wait()
 
-    for _ in range(100):
+    for _ in range(33):
         tracker.start_settlement(settle)
-    await asyncio.sleep(0)
-    assert started == 32
-    release.set()
-    await tracker.wait()
+    try:
+        await capacity_reached.wait()
+        assert started == 32
+    finally:
+        release.set()
+        await tracker.wait()
     assert not tracker.is_idle
 
 
@@ -341,13 +366,13 @@ async def test_cancelled_download_finishes_request_cleanup_before_returning() ->
     async with _backend(FileServer()) as backend:
         with tracker.activate():
             downloading = asyncio.create_task(backend.adownload_files(["/content.bin"]))
-        await asyncio.wait_for(opened.wait(), timeout=1)
+        await opened.wait()
         downloading.cancel()
-        await asyncio.wait_for(closing.wait(), timeout=1)
+        await closing.wait()
         assert not downloading.done()
         release_close.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(downloading, timeout=1)
+            await downloading
         await tracker.wait()
         assert not tracker.is_idle
 

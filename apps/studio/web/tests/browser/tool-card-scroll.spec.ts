@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
 import type { ConversationHistoryDetail } from '../../src/api/conversation/history'
@@ -82,6 +83,7 @@ async function openStudio(page: Page, theme = 'light', reducedMotion: 'reduce' |
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
   const run = await installLiveRun(page, initial)
+  await installNotificationStream(page)
   await page.goto(`/?thread=${THREAD}`)
   await expect(page.getByText('检查工具输入与研究结果', { exact: true })).toBeVisible()
   return { ...run, setHistory: (value: ConversationHistoryDetail) => { history = value } }

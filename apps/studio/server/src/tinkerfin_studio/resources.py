@@ -21,9 +21,12 @@ from redis.asyncio import Redis
 
 from tinkerfin import TinkerFin
 from tinkerfin_automation import Automation, SqlAlchemyAutomationStore
+from tinkerfin_gateway import Gateway
 from tinkerfin_messaging import AgUiChannel, MessagingLimits, MessagingRetentionPolicy
 from tinkerfin_messaging.messaging import Messaging
 from tinkerfin_messaging.redis import RedisBackend
+from tinkerfin_notifications import Notifications
+from tinkerfin_notifications.redis import RedisBackend as NotificationRedisBackend
 from tinkerfin_sandbox.lifecycle.client import OpenSandboxClient
 from tinkerfin_sandbox.lifecycle.manager import OpenSandboxManager
 from tinkerfin_sandbox.lifecycle.sqlalchemy import SQLAlchemyOpenSandboxState
@@ -48,7 +51,10 @@ from tinkerfin_studio.conversation.todo_groups import TodoGroupProjection
 from tinkerfin_studio.health import ReadinessService
 from tinkerfin_studio.infrastructure.database import Database
 from tinkerfin_studio.infrastructure.redis_client import create_redis_client
-from tinkerfin_studio.infrastructure.redis_keys import MESSAGING_KEY_PREFIX
+from tinkerfin_studio.infrastructure.redis_keys import (
+    MESSAGING_KEY_PREFIX,
+    NOTIFICATIONS_CHANNEL,
+)
 from tinkerfin_studio.infrastructure.sandbox_events import SandboxEventLogger
 from tinkerfin_studio.models.transport import ModelTransport
 from tinkerfin_tracing import (
@@ -161,6 +167,8 @@ class ApplicationResources:
     tracer: Tracer
     history_queries: HistoryQueryAdmission
     messaging: Messaging
+    notifications: Notifications
+    gateway: Gateway
     conversation_channel: AgUiChannel
     sandbox_manager: OpenSandboxManager[str]
     conversation_trace: ConversationTraceCoordinator
@@ -241,6 +249,17 @@ def build_lifespan():
                 if not await cast(Awaitable[bool], redis_runtime.ping()):
                     raise RuntimeError("Redis PING 未返回成功")
 
+                # 会话、轨迹和调度共用变化通知，生产者关闭后再归还通知连接
+                notifications = await _enter_lifespan_context(
+                    stack,
+                    outcome,
+                    Notifications(
+                        backend=NotificationRedisBackend(
+                            redis_runtime, channel=NOTIFICATIONS_CHANNEL
+                        )
+                    ),
+                )
+
                 persistence = await _enter_lifespan_context(
                     stack,
                     outcome,
@@ -248,7 +267,9 @@ def build_lifespan():
                         components_database.engine, redis_runtime_settings
                     ),
                 )
-                trace_store = SqlAlchemyTraceStore(components_database.engine)
+                trace_store = SqlAlchemyTraceStore(
+                    components_database.engine, notifications=notifications
+                )
                 # 接收请求前检查轨迹存储，数据库连接仍由应用统一管理
                 await trace_store.setup()
                 tracer = Tracer(
@@ -307,6 +328,7 @@ def build_lifespan():
                 )
                 conversation_titles = ConversationTitles(
                     database=database,
+                    notifications=notifications,
                     http_client=model_http_client,
                     http_transport=model_http_transport,
                 )
@@ -323,15 +345,23 @@ def build_lifespan():
                     stack, outcome, Messaging(backend=messaging_backend)
                 )
                 channel = messaging.agui_channel(name="studio-conversation-agui")
+                gateway = Gateway(
+                    messaging=messaging,
+                    notifications=notifications,
+                    name=channel.name,
+                )
                 conversation_trace = ConversationTraceCoordinator(
                     database=database,
+                    notifications=notifications,
                     tracer=tracer,
                     conversation_channel=channel,
                 )
                 stack.push_async_callback(conversation_trace.aclose)
                 await conversation_trace.recover_preparing()
                 agent_subagents = await load_subagents()
-                automation_store = SqlAlchemyAutomationStore(components_database.engine)
+                automation_store = SqlAlchemyAutomationStore(
+                    components_database.engine, notifications=notifications
+                )
                 stack.push_async_callback(automation_store.close)
                 automation = Automation(
                     namespace="studio_automation", store=automation_store
@@ -345,7 +375,9 @@ def build_lifespan():
                     automation=automation,
                     model_http_client=model_http_client,
                     model_http_transport=model_http_transport,
-                    attachments=AttachmentService(database, attachment_storage),
+                    attachments=AttachmentService(
+                        database, attachment_storage, notifications=notifications
+                    ),
                     database=database,
                     components_database=components_database,
                     redis_runtime=redis_runtime,
@@ -355,6 +387,8 @@ def build_lifespan():
                     tracer=tracer,
                     history_queries=history_queries,
                     messaging=messaging,
+                    notifications=notifications,
+                    gateway=gateway,
                     conversation_channel=channel,
                     sandbox_manager=sandbox_manager,
                     conversation_trace=conversation_trace,

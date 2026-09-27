@@ -1,15 +1,16 @@
 import { useState } from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AutomationHistory } from './AutomationHistory'
 import { AutomationRunDialog } from './AutomationRunDialog'
 import { AUTOMATION_TEST_NOW, createAutomationFixture, runFixture } from '../../test/automationFixtures'
-import { fetchRunDetail } from './api'
+import { fetchRunDetail, type RunDetail } from './api'
+import { mockResourceNotices } from '../../test/resourceNotices'
 import automationStyles from './automation.css?raw'
 
 vi.mock('./api', () => ({ fetchRunDetail: vi.fn() }))
 beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(AUTOMATION_TEST_NOW)) })
-afterEach(() => vi.useRealTimers())
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers() })
 
 function HistoryExample() {
   const [offset, setOffset] = useState(0)
@@ -50,7 +51,7 @@ describe('自动化运行历史', () => {
   })
   it('结果对话框读取服务端事实且不提供审批或执行操作', async () => {
     const run = runFixture()
-    vi.mocked(fetchRunDetail).mockResolvedValue({ ...run, resultAvailable: true, messages: [], outputFiles: [{ id: 'report', name: 'report.md', mime_type: 'text/markdown', size_bytes: 12 }] })
+    vi.mocked(fetchRunDetail).mockResolvedValue({ ...run, threadId: 'automation-thread', runId: 'automation-run', resultAvailable: true, messages: [], outputFiles: [{ id: 'report', name: 'report.md', mime_type: 'text/markdown', size_bytes: 12 }] })
     render(<AutomationRunDialog run={run} trigger={null} onToast={vi.fn()} onClose={vi.fn()} />)
     await waitFor(() => expect(fetchRunDetail).toHaveBeenCalledWith(run.id, expect.any(AbortSignal)))
     expect(await screen.findByRole('button', { name: 'report.md' })).toBeInTheDocument()
@@ -59,7 +60,7 @@ describe('自动化运行历史', () => {
   it('结果读取失败通知全局提示，重试成功后恢复内容', async () => {
     const run = runFixture()
     const onToast = vi.fn()
-    vi.mocked(fetchRunDetail).mockRejectedValueOnce(new Error('unavailable')).mockResolvedValueOnce({ ...run, resultAvailable: false, messages: [], outputFiles: [] })
+    vi.mocked(fetchRunDetail).mockRejectedValueOnce(new Error('unavailable')).mockResolvedValueOnce({ ...run, threadId: 'automation-thread', runId: 'automation-run', resultAvailable: false, messages: [], outputFiles: [] })
     render(<AutomationRunDialog run={run} trigger={null} onToast={onToast} onClose={vi.fn()} />)
     expect(await screen.findByRole('alert')).toHaveTextContent('运行结果加载失败')
     expect(onToast).toHaveBeenCalledExactlyOnceWith('error', '运行结果加载失败')
@@ -67,9 +68,9 @@ describe('自动化运行历史', () => {
     expect(await screen.findByText('暂时没有可显示的结果')).toBeInTheDocument()
     expect(onToast).toHaveBeenCalledOnce()
   })
-  it('轮询失败保留已读取的结果和文件，重试期间仍可查看', async () => {
+  it('重新读取失败保留已读取的结果和文件，重试期间仍可查看', async () => {
     const run = runFixture({ status: 'running', finishedAt: null })
-    const detail = { ...run, resultAvailable: true, messages: [], outputFiles: [{ id: 'report', name: 'report.md', mime_type: 'text/markdown', size_bytes: 12 }] }
+    const detail = { ...run, threadId: 'automation-thread', runId: 'automation-run', resultAvailable: true, messages: [], outputFiles: [{ id: 'report', name: 'report.md', mime_type: 'text/markdown', size_bytes: 12 }] }
     vi.mocked(fetchRunDetail).mockResolvedValueOnce(detail).mockRejectedValueOnce(new Error('unavailable')).mockResolvedValueOnce(detail)
     const onToast = vi.fn()
     render(<AutomationRunDialog run={run} trigger={null} onToast={onToast} onClose={vi.fn()} />)
@@ -82,4 +83,33 @@ describe('自动化运行历史', () => {
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
     expect(onToast).toHaveBeenCalledOnce()
   })
+})
+
+
+it('运行状态不变时刷新正文，终态后的迟到附件仍能显示', async () => {
+  vi.useFakeTimers()
+  const notices = mockResourceNotices()
+  const run = runFixture({ status: 'running', finishedAt: null })
+  const detail: RunDetail = {
+    ...run, threadId: 'result-thread', runId: 'result-run', resultAvailable: true, outputFiles: [],
+    messages: [{ id: 'reply', role: 'assistant', content: '第一段', traceSeq: 1, graphNamespace: [], runId: 'result-run', contentOmitted: false, status: 'streaming', createdAt: AUTOMATION_TEST_NOW, agui: null }],
+  }
+  vi.mocked(fetchRunDetail).mockReset().mockResolvedValue(detail)
+  const { unmount } = render(<AutomationRunDialog run={run} trigger={null} onToast={vi.fn()} onClose={vi.fn()} />)
+  await act(async () => vi.advanceTimersByTimeAsync(0))
+  expect(screen.getByText('第一段')).toBeInTheDocument()
+  vi.mocked(fetchRunDetail).mockResolvedValue({ ...detail, messages: [{ ...detail.messages[0], content: '完整正文' }] })
+  act(() => notices.changed('trace.changed', 'result-thread'))
+  await act(async () => vi.advanceTimersByTimeAsync(1999))
+  expect(fetchRunDetail).toHaveBeenCalledTimes(1)
+  await act(async () => vi.advanceTimersByTimeAsync(1))
+  expect(screen.getByText('完整正文')).toBeInTheDocument()
+  vi.mocked(fetchRunDetail).mockResolvedValue({ ...detail, status: 'succeeded' })
+  act(() => notices.changed('automation.execution.changed', run.id))
+  await act(async () => vi.advanceTimersByTimeAsync(2000))
+  vi.mocked(fetchRunDetail).mockResolvedValue({ ...detail, status: 'succeeded', outputFiles: [{ id: 'late-file', name: 'late.md', mime_type: 'text/markdown', size_bytes: 20 }] })
+  act(() => notices.changed('studio.attachments.changed', run.id, { collection_id: run.id }))
+  await act(async () => vi.advanceTimersByTimeAsync(2000))
+  expect(screen.getByRole('button', { name: 'late.md' })).toBeInTheDocument()
+  unmount()
 })

@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page, type Route } from '@playwright/test'
 import { resolve } from 'node:path'
 
@@ -495,6 +496,7 @@ async function mockChainTraceStudio(
     await route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
   })
 
+  await installNotificationStream(page)
   await page.goto(`/?thread=${THREAD_ID}`)
   const conversationLabel = language === 'en' ? 'Conversation' : '对话'
   const traceLabel = language === 'en' ? 'Trace' : '链路'

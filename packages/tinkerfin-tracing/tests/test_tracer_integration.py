@@ -1791,7 +1791,7 @@ async def test_real_subagent_cancellation_settles_every_child_graph_node() -> No
             pass
 
     consumer = asyncio.create_task(consume())
-    await asyncio.wait_for(entered.wait(), timeout=1)
+    await entered.wait()
     consumer.cancel()
     with pytest.raises(asyncio.CancelledError):
         await consumer
@@ -1986,7 +1986,7 @@ async def test_event_pages_are_fixed_as_of_and_follow_returns_semantic_deltas() 
     follow = thread.follow()
     waiting = asyncio.ensure_future(anext(follow))
     await _record_run(tracer, run_id="second")
-    update = await asyncio.wait_for(waiting, timeout=2)
+    update = await waiting
 
     second_page = await thread.events(cursor=first_page.next_cursor, limit=100)
     assert all(

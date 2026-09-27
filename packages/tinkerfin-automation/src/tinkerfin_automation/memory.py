@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -13,7 +15,10 @@ from uuid import uuid4
 
 from pydantic import JsonValue
 
+from tinkerfin_notifications import Notifications
+
 from . import _rules
+from ._notifications import _ChangedResources
 from ._query_cursor import decode_cursor, encode_cursor, query_scope
 from .clock import AutomationClock, SystemClock
 from .errors import (
@@ -36,9 +41,11 @@ from .models import (
 )
 from .queries import ExecutionFilter, TaskFilter
 from .store import (
+    ClaimRenewal,
     MaterializationResult,
     ScheduledExecution,
     StartAuthorization,
+    WorkClaimBatch,
     WorkItemClaim,
     WorkKind,
 )
@@ -149,11 +156,20 @@ class MemoryAutomationStore:
         *,
         clock: AutomationClock | None = None,
         limits: MemoryStoreLimits | None = None,
+        notifications: Notifications | None = None,
     ) -> None:
-        """Create an open store with explicit record capacity limits."""
+        """Create an open store with explicit record capacity limits.
+
+        Args:
+            clock: Optional controlled clock for storage time.
+            limits: Maximum retained task, execution, work, and operation counts.
+            notifications: Borrowed, started change service. Close it only after
+                source operations, workers, and observers have stopped.
+        """
 
         self._clock = clock or SystemClock()
         self._limits = limits or MemoryStoreLimits()
+        self._notifications = notifications
         self._tasks: dict[str, AutomationTask] = {}
         self._executions: dict[str, AutomationExecution] = {}
         self._occurrences: dict[tuple[str, str], str] = {}
@@ -164,6 +180,18 @@ class MemoryAutomationStore:
         self._admitted: set[str] = set()
         self._lock = asyncio.Lock()
         self._closed = False
+
+    @property
+    def notifications(self) -> Notifications | None:
+        """Return the borrowed, application-owned change service."""
+        return self._notifications
+
+    @asynccontextmanager
+    async def _mutation(self) -> AsyncGenerator[_ChangedResources, None]:
+        changes = _ChangedResources()
+        async with self._lock:
+            yield changes
+        await changes.publish(self._notifications)
 
     async def setup(self) -> None:
         """Confirm that this ready-by-construction Store remains open."""
@@ -186,7 +214,7 @@ class MemoryAutomationStore:
         """Create one task with optional command idempotency."""
 
         task = _snapshot(task)
-        async with self._lock:
+        async with self._mutation() as changes:
             self._ensure_open()
             previous = self._operation_result(
                 task.namespace, task.owner_id, request_id, input_digest
@@ -201,6 +229,7 @@ class MemoryAutomationStore:
             self._ensure_capacity("tasks", len(self._tasks), self._limits.max_tasks)
             self._require_operation_capacity(request_id)
             self._tasks[task.task_id] = task
+            changes.task(task)
             self._save_operation(
                 task.namespace,
                 task.owner_id,
@@ -221,7 +250,7 @@ class MemoryAutomationStore:
         """Replace one task after an atomic revision check."""
 
         task = _snapshot(task)
-        async with self._lock:
+        async with self._mutation() as changes:
             self._ensure_open()
             previous = self._operation_result(
                 task.namespace, task.owner_id, request_id, input_digest
@@ -245,6 +274,7 @@ class MemoryAutomationStore:
                 )
             self._require_operation_capacity(request_id)
             self._tasks[task.task_id] = task
+            changes.task(task)
             self._save_operation(
                 task.namespace,
                 task.owner_id,
@@ -267,7 +297,7 @@ class MemoryAutomationStore:
         """Delete a task and cancel only executions that have not started."""
 
         _validate_scope(namespace, owner_id)
-        async with self._lock:
+        async with self._mutation() as changes:
             self._ensure_open()
             previous = self._operation_result(
                 namespace, owner_id, request_id, input_digest
@@ -287,6 +317,7 @@ class MemoryAutomationStore:
                 )
             self._require_operation_capacity(request_id)
             del self._tasks[task_id]
+            changes.task(task)
             now = self._clock.now()
             for execution in tuple(self._executions.values()):
                 if (
@@ -294,7 +325,9 @@ class MemoryAutomationStore:
                     or execution.status is not ExecutionStatus.QUEUED
                 ):
                     continue
-                self._apply_transition(_rules.cancel_execution(execution, now))
+                self._apply_transition(
+                    _rules.cancel_execution(execution, now), changes=changes
+                )
             self._save_operation(namespace, owner_id, request_id, input_digest, task_id)
 
     async def get_task(
@@ -434,7 +467,7 @@ class MemoryAutomationStore:
         executions = tuple(
             replace(item, execution=_snapshot(item.execution)) for item in executions
         )
-        async with self._lock:
+        async with self._mutation() as changes:
             self._ensure_open()
             current = self._owned_task(task.namespace, task.owner_id, task.task_id)
             if not _rules.materialization_is_current(
@@ -473,10 +506,12 @@ class MemoryAutomationStore:
                     self._limits.max_work_items,
                 )
             self._tasks[task.task_id] = task
+            changes.task(task)
             created: list[AutomationExecution] = []
             for item in pending:
                 execution = item.execution
                 self._executions[execution.execution_id] = execution
+                changes.execution(execution)
                 self._occurrences[(task.namespace, item.occurrence_key)] = (
                     execution.execution_id
                 )
@@ -503,7 +538,7 @@ class MemoryAutomationStore:
         """Create one queued execution and its executable work item atomically."""
 
         execution = _snapshot(execution)
-        async with self._lock:
+        async with self._mutation() as changes:
             self._ensure_open()
             previous = self._operation_result(
                 execution.namespace,
@@ -552,6 +587,7 @@ class MemoryAutomationStore:
                 "work_items", len(self._work), self._limits.max_work_items
             )
             self._executions[execution.execution_id] = execution
+            changes.execution(execution)
             self._occurrences[occurrence] = execution.execution_id
             self._create_work(
                 execution,
@@ -643,21 +679,21 @@ class MemoryAutomationStore:
         limit: int,
         lease_duration: timedelta,
         global_concurrency: int,
-    ) -> tuple[WorkItemClaim, ...]:
+    ) -> WorkClaimBatch:
         """Claim due work and reserve global and task capacity atomically."""
 
         _validate_persisted_text(namespace, name="namespace", maximum=128)
         _validate_persisted_text(worker_id, name="worker_id", maximum=191)
-        if limit < 1:
-            raise ValueError("limit must be at least 1")
+        if limit < 0:
+            raise ValueError("limit must be non-negative")
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
         if global_concurrency < 1:
             raise ValueError("global_concurrency must be at least 1")
-        async with self._lock:
+        async with self._mutation() as changes:
             self._ensure_open()
             now = self._clock.now()
-            self._recover_expired_claims(namespace, now)
+            self._recover_expired_claims(namespace, now, changes=changes)
             candidates = sorted(
                 (
                     item
@@ -674,12 +710,20 @@ class MemoryAutomationStore:
             )
             claims: list[WorkItemClaim] = []
             for item in candidates:
-                if len(claims) >= limit:
+                if limit > 0 and len(claims) >= limit:
                     break
                 execution = self._executions[item.execution_id]
                 transition = _rules.claim_candidate(execution, item.kind, now)
                 if transition is not None:
-                    self._apply_transition(transition, item)
+                    self._apply_transition(transition, item, changes=changes)
+                    continue
+                if limit == 0:
+                    if item.kind is WorkKind.EXPIRE_INTERRUPT:
+                        self._apply_transition(
+                            _rules.expire_interrupted(execution, now),
+                            item,
+                            changes=changes,
+                        )
                     continue
                 if item.kind is WorkKind.EXECUTE and not self._reserve_scopes(
                     execution, global_concurrency
@@ -692,11 +736,43 @@ class MemoryAutomationStore:
                 item.fence += 1
                 item.lease_until = now + lease_duration
                 claims.append(self._claim_from(item))
-            return tuple(claims)
+            return WorkClaimBatch(
+                claims=tuple(claims),
+                next_check_after_seconds=(
+                    0.0
+                    if limit > 0
+                    and len(claims) == limit
+                    and len(candidates) > len(claims)
+                    else self._next_check_delay(namespace, now, admit=limit > 0)
+                ),
+            )
+
+    def _next_check_delay(
+        self, namespace: str, now: datetime, *, admit: bool
+    ) -> float | None:
+        deadlines: list[datetime] = []
+        for item in self._work.values():
+            if item.namespace != namespace or item.status is _WorkStatus.COMPLETED:
+                continue
+            if item.status is _WorkStatus.CLAIMED and item.lease_until is not None:
+                deadlines.append(item.lease_until)
+            elif item.available_at > now and (
+                admit or item.kind is WorkKind.EXPIRE_INTERRUPT
+            ):
+                deadlines.append(item.available_at)
+            execution = self._executions[item.execution_id]
+            if (
+                item.status is _WorkStatus.PENDING
+                and execution.status is ExecutionStatus.QUEUED
+            ):
+                deadlines.append(execution.queue_deadline)
+        return (
+            None if not deadlines else max(0.0, (min(deadlines) - now).total_seconds())
+        )
 
     async def renew_claim(
         self, claim: WorkItemClaim, *, lease_duration: timedelta
-    ) -> WorkItemClaim:
+    ) -> ClaimRenewal:
         """Extend a valid claim without changing its fence."""
 
         if lease_duration <= timedelta(0):
@@ -704,7 +780,11 @@ class MemoryAutomationStore:
         async with self._lock:
             item = self._valid_claim(claim)
             item.lease_until = self._clock.now() + lease_duration
-            return self._claim_from(item)
+            return ClaimRenewal(
+                claim=self._claim_from(item),
+                cancellation_requested=self._executions[item.execution_id].status
+                is ExecutionStatus.CANCEL_REQUESTED,
+            )
 
     async def authorize_start(
         self,
@@ -716,7 +796,7 @@ class MemoryAutomationStore:
 
         if execution_timeout <= timedelta(0):
             raise ValueError("execution_timeout must be positive")
-        async with self._lock:
+        async with self._mutation() as changes:
             item = self._valid_claim(claim)
             execution = self._executions[item.execution_id]
             authorization = _rules.authorize_start(
@@ -728,6 +808,7 @@ class MemoryAutomationStore:
                 start_token=secrets.token_hex(24),
             )
             self._executions[execution.execution_id] = authorization.execution
+            changes.execution(authorization.execution)
             return replace(authorization, execution=_snapshot(authorization.execution))
 
     async def mark_interrupted(
@@ -740,13 +821,13 @@ class MemoryAutomationStore:
 
         if not interrupt_ids:
             raise ValueError("interrupt_ids must not be empty")
-        async with self._lock:
+        async with self._mutation() as changes:
             item = self._valid_claim(claim)
             execution = self._executions[item.execution_id]
             transition = _rules.interrupt_execution(
                 execution, interrupt_ids=interrupt_ids, now=self._clock.now()
             )
-            return _snapshot(self._apply_transition(transition, item))
+            return _snapshot(self._apply_transition(transition, item, changes=changes))
 
     async def finish_execution(
         self,
@@ -762,7 +843,7 @@ class MemoryAutomationStore:
         if not status.is_terminal and status is not ExecutionStatus.NEEDS_ATTENTION:
             raise ValueError("finish status must be terminal or needs_attention")
         result = deepcopy(result)
-        async with self._lock:
+        async with self._mutation() as changes:
             item = self._valid_claim(claim)
             execution = self._executions[item.execution_id]
             transition = _rules.finish_execution(
@@ -773,7 +854,7 @@ class MemoryAutomationStore:
                 failure_message=failure_message,
                 now=self._clock.now(),
             )
-            return _snapshot(self._apply_transition(transition, item))
+            return _snapshot(self._apply_transition(transition, item, changes=changes))
 
     async def cancel_execution(
         self,
@@ -787,7 +868,7 @@ class MemoryAutomationStore:
         """Cancel queued/interrupted work or persist running cancellation intent."""
 
         _validate_scope(namespace, owner_id)
-        async with self._lock:
+        async with self._mutation() as changes:
             self._ensure_open()
             previous = self._operation_result(
                 namespace, owner_id, request_id, input_digest
@@ -797,7 +878,7 @@ class MemoryAutomationStore:
             execution = self._owned_execution(namespace, owner_id, execution_id)
             transition = _rules.cancel_execution(execution, self._clock.now())
             self._require_operation_capacity(request_id)
-            updated = self._apply_transition(transition)
+            updated = self._apply_transition(transition, changes=changes)
             self._save_operation(namespace, owner_id, request_id, input_digest, updated)
             return _snapshot(updated)
 
@@ -816,7 +897,7 @@ class MemoryAutomationStore:
 
         _validate_scope(namespace, owner_id)
         _validate_persisted_text(reason, name="reason")
-        async with self._lock:
+        async with self._mutation() as changes:
             self._ensure_open()
             previous = self._operation_result(
                 namespace, owner_id, request_id, input_digest
@@ -828,7 +909,7 @@ class MemoryAutomationStore:
                 execution, resolution=resolution, reason=reason, now=self._clock.now()
             )
             self._require_operation_capacity(request_id)
-            updated = self._apply_transition(transition)
+            updated = self._apply_transition(transition, changes=changes)
             self._save_operation(namespace, owner_id, request_id, input_digest, updated)
             return _snapshot(updated)
 
@@ -952,7 +1033,11 @@ class MemoryAutomationStore:
         self._work_keys[key] = work_item_id
 
     def _apply_transition(
-        self, transition: _rules.ExecutionTransition, item: _WorkItem | None = None
+        self,
+        transition: _rules.ExecutionTransition,
+        item: _WorkItem | None = None,
+        *,
+        changes: _ChangedResources,
     ) -> AutomationExecution:
         execution = transition.execution
         if transition.deadline_work_at is not None:
@@ -967,6 +1052,7 @@ class MemoryAutomationStore:
                     "work_items", len(self._work), self._limits.max_work_items
                 )
         self._executions[execution.execution_id] = execution
+        changes.execution(execution)
         if transition.complete_work == "all":
             self._complete_execution_work(execution.execution_id)
         elif transition.complete_work == "current":
@@ -985,7 +1071,9 @@ class MemoryAutomationStore:
             )
         return execution
 
-    def _recover_expired_claims(self, namespace: str, now: datetime) -> None:
+    def _recover_expired_claims(
+        self, namespace: str, now: datetime, *, changes: _ChangedResources
+    ) -> None:
         for item in self._work.values():
             if (
                 item.namespace == namespace
@@ -995,7 +1083,7 @@ class MemoryAutomationStore:
             ):
                 execution = self._executions[item.execution_id]
                 transition = _rules.recover_expired_claim(execution, item.kind, now)
-                self._apply_transition(transition, item)
+                self._apply_transition(transition, item, changes=changes)
                 if transition.complete_work == "none":
                     item.status = _WorkStatus.PENDING
                 item.worker_id = None

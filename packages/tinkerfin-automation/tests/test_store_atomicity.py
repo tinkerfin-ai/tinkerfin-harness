@@ -36,13 +36,15 @@ async def test_memory_operation_capacity_rejection_leaves_all_facts_unchanged(
             execution, occurrence_key="run", request_id=None, input_digest="run"
         )
         if command == "resolve":
-            (claim,) = await store.claim_work(
-                "app",
-                "worker",
-                limit=1,
-                lease_duration=timedelta(minutes=1),
-                global_concurrency=1,
-            )
+            (claim,) = (
+                await store.claim_work(
+                    "app",
+                    "worker",
+                    limit=1,
+                    lease_duration=timedelta(minutes=1),
+                    global_concurrency=1,
+                )
+            ).claims
             execution = await store.finish_execution(
                 claim, status=ExecutionStatus.NEEDS_ATTENTION
             )
@@ -121,13 +123,15 @@ async def test_memory_work_capacity_rejection_does_not_leave_execution_or_occurr
                 )
             with pytest.raises(ExecutionNotFoundError):
                 await store.get_execution("app", "two", "second")
-        (claim,) = await store.claim_work(
-            "app",
-            "worker",
-            limit=2,
-            lease_duration=timedelta(minutes=1),
-            global_concurrency=2,
-        )
+        (claim,) = (
+            await store.claim_work(
+                "app",
+                "worker",
+                limit=2,
+                lease_duration=timedelta(minutes=1),
+                global_concurrency=2,
+            )
+        ).claims
         assert claim.execution_id == "first"
     finally:
         await store.close()
@@ -144,13 +148,15 @@ async def test_memory_failed_interrupt_retains_running_execution_and_valid_claim
         await store.enqueue_execution(
             execution, occurrence_key="run", request_id=None, input_digest="run"
         )
-        (claim,) = await store.claim_work(
-            "app",
-            "worker",
-            limit=1,
-            lease_duration=timedelta(hours=1),
-            global_concurrency=1,
-        )
+        (claim,) = (
+            await store.claim_work(
+                "app",
+                "worker",
+                limit=1,
+                lease_duration=timedelta(hours=1),
+                global_concurrency=1,
+            )
+        ).claims
         started = await store.authorize_start(
             claim, execution_timeout=timedelta(minutes=1)
         )
@@ -159,7 +165,7 @@ async def test_memory_failed_interrupt_retains_running_execution_and_valid_claim
         assert await store.get_execution("app", "owner-1", "run") == started.execution
         assert (
             await store.renew_claim(claim, lease_duration=timedelta(hours=1))
-        ).fence == claim.fence
+        ).claim.fence == claim.fence
         assert (
             await store.finish_execution(claim, status=ExecutionStatus.FAILED)
         ).status is ExecutionStatus.FAILED
@@ -179,33 +185,39 @@ async def test_claim_recovery_only_changes_the_selected_namespace(
     await store.enqueue_execution(
         execution, occurrence_key="occurrence", request_id=None, input_digest="run"
     )
-    (claim,) = await store.claim_work(
-        "other",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=1,
-    )
+    (claim,) = (
+        await store.claim_work(
+            "other",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=1,
+        )
+    ).claims
     started = await store.authorize_start(claim, execution_timeout=timedelta(hours=1))
     await clock.advance(timedelta(minutes=2))
-    assert not await store.claim_work(
-        "app",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=1,
-    )
+    assert not (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=1,
+        )
+    ).claims
     assert (
         await store.get_execution("other", "owner-1", execution.execution_id)
         == started.execution
     )
-    assert not await store.claim_work(
-        "other",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=1,
-    )
+    assert not (
+        await store.claim_work(
+            "other",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=1,
+        )
+    ).claims
     assert (
         await store.get_execution("other", "owner-1", execution.execution_id)
     ).status is ExecutionStatus.NEEDS_ATTENTION
@@ -219,13 +231,15 @@ async def test_claim_cannot_authorize_an_execution_different_from_its_persisted_
     await store.enqueue_execution(
         execution, occurrence_key="run", request_id=None, input_digest="run"
     )
-    (claim,) = await store.claim_work(
-        "app",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=1,
-    )
+    (claim,) = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=1,
+        )
+    ).claims
     with pytest.raises(ClaimLostError):
         await store.authorize_start(
             replace(claim, execution_id="different"),

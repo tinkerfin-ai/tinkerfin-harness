@@ -24,7 +24,7 @@ from tinkerfin_automation import (
 )
 from tinkerfin_automation.clock import ManualClock
 from tinkerfin_automation.sql_schema import runs, scopes, work_items
-from tinkerfin_automation.store import WorkItemClaim
+from tinkerfin_automation.store import WorkClaimBatch, WorkItemClaim
 from tinkerfin_contracts import RunIdentity
 
 
@@ -37,6 +37,123 @@ async def _enqueue(
         request_id=None,
         input_digest=execution.execution_id,
     )
+
+
+@pytest.mark.parametrize(
+    ("deadline", "limit"),
+    [("lease", 1), ("lease", 0), ("ready", 1), ("queue", 0), ("interrupt", 0)],
+)
+async def test_claim_batch_reports_deadline_crossed_during_database_read(
+    automation_sql_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    deadline: str,
+    limit: int,
+) -> None:
+    engine = automation_sql_engine
+    clock = ManualClock(datetime(2030, 1, 1, tzinfo=UTC))
+    control_database_clock(engine, clock, monkeypatch)
+    store = SqlAlchemyAutomationStore(engine)
+    await store.setup()
+    execution = _taskless_execution(clock.now(), execution_id=str(uuid4()))
+    if deadline == "ready":
+        execution = replace(execution, queued_at=clock.now() + timedelta(seconds=1))
+    elif deadline == "queue":
+        execution = replace(
+            execution, queue_deadline=clock.now() + timedelta(seconds=1)
+        )
+
+    async def claim(capacity: int = limit) -> WorkClaimBatch:
+        return await store.claim_work(
+            "app",
+            "worker",
+            limit=capacity,
+            lease_duration=timedelta(seconds=1),
+            global_concurrency=1,
+        )
+
+    try:
+        await _enqueue(store, execution)
+        if deadline in {"lease", "interrupt"}:
+            (initial,) = (await claim(1)).claims
+            if deadline == "interrupt":
+                await store.authorize_start(
+                    initial, execution_timeout=timedelta(seconds=1)
+                )
+                await store.mark_interrupted(initial, interrupt_ids=("review",))
+
+        original_scalar = AsyncConnection.scalar
+        advance_after_observation = True
+
+        async def scalar(
+            connection: AsyncConnection, statement: Any, *args: Any, **kwargs: Any
+        ) -> Any:
+            nonlocal advance_after_observation
+            value = await original_scalar(connection, statement, *args, **kwargs)
+            if (
+                connection.engine is engine
+                and isinstance(value, datetime)
+                and advance_after_observation
+            ):
+                # The transaction starts before the deadline and finishes after it.
+                # Domain reads and row locks still run against the real database.
+                advance_after_observation = False
+                await clock.advance(timedelta(seconds=2))
+            return value
+
+        with monkeypatch.context() as patch:
+            patch.setattr(AsyncConnection, "scalar", scalar)
+            batch = await claim()
+        assert batch.claims == ()
+        assert batch.next_check_after_seconds == 0
+        if deadline in {"lease", "ready"}:
+            assert len((await claim(1)).claims) == 1
+        else:
+            assert (await claim()).claims == ()
+            current = await store.get_execution(
+                "app", "owner-1", execution.execution_id
+            )
+            assert current.status is ExecutionStatus.TIMED_OUT
+    finally:
+        await store.close()
+
+
+async def test_claim_batch_bounds_recheck_for_locked_expired_lease(
+    automation_sql_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = automation_sql_engine
+    if engine.dialect.name == "sqlite":
+        pytest.skip("SQLite has no SKIP LOCKED row ownership")
+    clock = ManualClock(datetime(2030, 1, 1, tzinfo=UTC))
+    control_database_clock(engine, clock, monkeypatch)
+    store = SqlAlchemyAutomationStore(engine)
+    await store.setup()
+    execution = _taskless_execution(clock.now(), execution_id=str(uuid4()))
+
+    async def claim() -> WorkClaimBatch:
+        return await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(seconds=1),
+            global_concurrency=1,
+        )
+
+    try:
+        await _enqueue(store, execution)
+        (initial,) = (await claim()).claims
+        await clock.advance(timedelta(seconds=2))
+        async with engine.begin() as blocker:
+            await blocker.execute(
+                select(work_items)
+                .where(work_items.c.work_item_id == initial.work_item_id)
+                .with_for_update()
+            )
+            batch = await claim()
+            assert batch.claims == ()
+            assert batch.next_check_after_seconds == 1
+        assert len((await claim()).claims) == 1
+    finally:
+        await store.close()
 
 
 @pytest.mark.parametrize(
@@ -75,13 +192,15 @@ async def test_lease_decision_after_real_row_lock_wait(
     await _enqueue(store, execution)
 
     async def claim(limit: int = 1) -> tuple[WorkItemClaim, ...]:
-        return await store.claim_work(
-            "app",
-            "worker",
-            limit=limit,
-            lease_duration=timedelta(minutes=1),
-            global_concurrency=2,
-        )
+        return (
+            await store.claim_work(
+                "app",
+                "worker",
+                limit=limit,
+                lease_duration=timedelta(minutes=1),
+                global_concurrency=2,
+            )
+        ).claims
 
     if case == "new_scope":
         (initial,) = await claim()

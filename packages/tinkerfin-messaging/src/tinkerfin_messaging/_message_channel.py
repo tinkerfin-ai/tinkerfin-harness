@@ -22,7 +22,7 @@ from uuid import uuid4
 
 from tinkerfin_contracts import RunIdentity
 
-from ._identity import required_identifier, required_identity
+from ._identity import required_identifier, required_identity, validate_request_digest
 from ._messaging_boundary import (
     _await_backend,
     _ContextCancelCallback,
@@ -745,10 +745,12 @@ async def wrap(
     ),
     *,
     identity: RunIdentity | None = None,
+    request_digest: str | None = None,
     after: int | None = None,
     cancel: (CancelCallback[SourceT] | CancelCallback[ProfileSourceT] | None) = None,
     on_committed: CommittedCallback | None = None,
     on_source_ready: _DeliveryCallback | None = None,
+    on_subscribed: Callable[[], Awaitable[None]] | None = None,
     on_delivery_not_started: _DeliveryCallback | None = None,
 ) -> MessageSubscription[ReplayT] | MessageSubscription[ProfileReplayT]:
     """Open a replayable subscription while preserving the source profile type."""
@@ -759,9 +761,11 @@ async def wrap(
             cast(MessageSource[object], source),
             identity=identity,
             after=after,
+            request_digest=request_digest,
             cancel=cast("CancelCallback[object] | None", cancel),
             on_committed=on_committed,
             on_source_ready=on_source_ready,
+            on_subscribed=on_subscribed,
             on_delivery_not_started=on_delivery_not_started,
         ),
     )
@@ -772,6 +776,7 @@ async def _wrap(
     source: MessageSource[object],
     *,
     identity: RunIdentity | None = None,
+    request_digest: str | None = None,
     after: int | None = None,
     cancel: CancelCallback[object] | None = None,
     on_committed: CommittedCallback | None = None,
@@ -828,6 +833,7 @@ async def _wrap(
                 source,
                 identity=identity,
                 after=after,
+                request_digest=request_digest,
                 cancel=cancel,
                 on_committed=on_committed,
                 on_source_ready=on_source_ready,
@@ -864,6 +870,7 @@ async def _wrap_once(
     source: MessageSource[object],
     *,
     identity: RunIdentity | None,
+    request_digest: str | None,
     after: int | None,
     cancel: CancelCallback[object] | None,
     on_committed: CommittedCallback | None,
@@ -887,7 +894,9 @@ async def _wrap_once(
     replay_renderer: SseRenderer[object] | None = None
     subscription: MessageSubscription[object] | None = None
     try:
+        validate_request_digest(request_digest)
         _validate_delivery_callback("on_source_ready", on_source_ready)
+        _validate_delivery_callback("on_subscribed", on_subscribed)
         _validate_delivery_callback(
             "on_delivery_not_started",
             on_delivery_not_started,
@@ -923,6 +932,7 @@ async def _wrap_once(
                 identity=resolved_identity,
                 codec=codec_id,
                 after=after,
+                request_digest=request_digest,
                 cancellable=normalized_cancel is not None,
                 recoverable=False,
             ),
@@ -1065,6 +1075,7 @@ async def open_sse(
     source: MessageSource[object],
     *,
     identity: RunIdentity | None = None,
+    request_digest: str | None = None,
     after: int | Callable[[], int | None] | None = None,
     cancel: CancelCallback[object] | None = None,
     on_committed: CommittedCallback | None = None,
@@ -1112,12 +1123,20 @@ async def open_sse(
         source,
         identity=identity,
         after=resolved_after,
+        request_digest=request_digest,
         cancel=cancel,
         on_committed=on_committed,
         on_source_ready=on_source_ready,
         on_subscribed=on_subscribed,
         on_delivery_not_started=on_delivery_not_started,
     )
+    return await _render_subscription_sse(subscription)
+
+
+async def _render_subscription_sse(
+    subscription: MessageSubscription[ReplayT],
+) -> AsyncGenerator[bytes, None]:
+    """Transfer one accepted subscription to SSE or settle rendering failure."""
     try:
         return subscription.to_sse()
     except BaseException as error:  # noqa: BLE001 - preserve rendering and cleanup failures
@@ -1137,6 +1156,7 @@ async def wrap_recoverable(
     source: RecoverableSource[SourceT],
     *,
     identity: RunIdentity | None = None,
+    request_digest: str | None = None,
     after: int | None = None,
     cancel: CancelCallback[RecoverableMessage[SourceT]] | None = None,
     on_committed: CommittedCallback | None = None,
@@ -1186,6 +1206,7 @@ async def wrap_recoverable(
                 source,
                 identity=identity,
                 after=after,
+                request_digest=request_digest,
                 cancel=cancel,
                 on_committed=on_committed,
                 on_source_ready=on_source_ready,
@@ -1221,6 +1242,7 @@ async def _wrap_recoverable_once(
     source: RecoverableSource[SourceT],
     *,
     identity: RunIdentity | None,
+    request_digest: str | None,
     after: int | None,
     cancel: CancelCallback[RecoverableMessage[SourceT]] | None,
     on_committed: CommittedCallback | None,
@@ -1242,6 +1264,7 @@ async def _wrap_recoverable_once(
     codec: MessageCodec[SourceT, ReplayT] | None = None
     renderer: SseRenderer[ReplayT] | None = None
     try:
+        validate_request_digest(request_digest)
         _validate_delivery_callback("on_source_ready", on_source_ready)
         _validate_delivery_callback(
             "on_delivery_not_started",
@@ -1265,6 +1288,7 @@ async def _wrap_recoverable_once(
                 identity=resolved_identity,
                 codec=codec_id,
                 after=after,
+                request_digest=request_digest,
                 cancellable=normalized_cancel is not None,
                 recoverable=True,
             ),

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Conversation, WorkspaceState } from '../../../types'
 import { Sidebar } from './Sidebar'
@@ -73,6 +73,11 @@ const baseProps = {
   onOpenSettings: vi.fn(),
   onLogout: vi.fn(),
 }
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-09-28T12:00:00Z'))
+})
 
 afterEach(() => {
   vi.unstubAllGlobals()

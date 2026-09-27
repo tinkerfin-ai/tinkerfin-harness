@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 
@@ -13,6 +14,7 @@ from .backend import (
     TraceEventPageRequest,
     TraceLedgerBackend,
 )
+from .errors import TraceStoreProtocolError
 from .store import TraceThreadKey
 
 _MAX_CACHED_BYTES = 64 * 1024 * 1024
@@ -134,9 +136,20 @@ class _FollowReads:
             for record in page.events
         )
         self._read_order += 1
+        lease = page.next_writer_lease_remaining_seconds
+        if lease is not None and (
+            isinstance(lease, bool)
+            or not isinstance(lease, int | float)
+            or not math.isfinite(lease)
+            or lease < 0
+        ):
+            raise TraceStoreProtocolError(
+                "Trace event page has an invalid writer deadline"
+            )
         return _FollowPage(
             page=replace(page, events=records),
-            expires_at=started_at + self._poll_seconds,
+            expires_at=started_at
+            + (self._poll_seconds if lease is None else min(self._poll_seconds, lease)),
             read_order=order,
             completed_order=self._read_order,
         )

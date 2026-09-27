@@ -1,3 +1,4 @@
+import { SseError } from '../shared/sse'
 import { translateCurrent, type TranslationKey } from '../../i18n'
 
 const conversationErrorMessageKeys = {
@@ -50,11 +51,11 @@ export const conversationErrorMessage = (
   fallback: ConversationErrorCode,
 ) => translateCurrent(
   conversationErrorMessageKeys[
-    error instanceof ConversationError ? error.code : fallback
+    error instanceof ConversationError || error instanceof SseError ? error.code : fallback
   ],
 )
 
 export const hasConversationErrorCode = (
   error: unknown,
   code: ConversationErrorCode,
-) => error instanceof ConversationError && error.code === code
+) => (error instanceof ConversationError || error instanceof SseError) && error.code === code

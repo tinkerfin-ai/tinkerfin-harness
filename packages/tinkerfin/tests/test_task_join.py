@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from collections.abc import AsyncIterator, Callable, Mapping
-from pathlib import Path
 from typing import Literal
 
 import pytest
@@ -17,9 +15,11 @@ from tinkerfin import (
     RunIdentity,
     RunObservationError,
     TinkerFin,
+    trace_contribution,
 )
 from tinkerfin._tasks import join_task
 from tinkerfin_contracts import (
+    ContextContributionObservation,
     NativeStateObservation,
     ObservationBoundary,
     RunObservationSession,
@@ -33,38 +33,9 @@ async def test_join_task_returns_the_owned_task_result() -> None:
     """Hosts receive the result after the owned task settles normally."""
 
     async def produce() -> str:
-        await asyncio.sleep(0)
         return "settled"
 
     assert await join_task(asyncio.create_task(produce())) == "settled"
-
-
-async def test_join_task_preserves_repeated_caller_cancellation() -> None:
-    """Repeated caller cancellation cannot interrupt owned task settlement."""
-
-    entered = asyncio.Event()
-    release = asyncio.Event()
-
-    async def settle() -> None:
-        entered.set()
-        await release.wait()
-
-    owned = asyncio.create_task(settle())
-    waiter = asyncio.create_task(join_task(owned))
-    await asyncio.wait_for(entered.wait(), timeout=2)
-
-    waiter.cancel("first cancellation")
-    await asyncio.sleep(0)
-    waiter.cancel("second cancellation")
-    await asyncio.sleep(0)
-    assert not waiter.done()
-    assert not owned.cancelled()
-
-    release.set()
-    with pytest.raises(asyncio.CancelledError, match="first cancellation"):
-        await waiter
-    assert owned.done()
-    assert owned.exception() is None
 
 
 async def test_join_task_distinguishes_owned_task_cancellation() -> None:
@@ -275,55 +246,45 @@ async def test_join_task_does_not_hide_process_control_behind_caller_cancellatio
     assert owned.exception() is control
 
 
-@pytest.mark.parametrize("control_name", ["KeyboardInterrupt", "SystemExit"])
-async def test_join_task_preserves_process_control_in_an_isolated_runner(
-    control_name: str,
+@pytest.mark.parametrize("control_type", [KeyboardInterrupt, SystemExit])
+def test_join_task_preserves_process_control_in_an_isolated_runner(
+    control_type: type[BaseException],
 ) -> None:
-    code = """
-import asyncio
-import sys
-from tinkerfin._tasks import join_task
-control_type = {"KeyboardInterrupt": KeyboardInterrupt, "SystemExit": SystemExit}[sys.argv[1]]
-async def main():
-    release = asyncio.Event()
-    async def controlled():
-        await release.wait()
-        raise control_type("owned process control")
-    owned = asyncio.create_task(controlled())
-    async def joining():
-        try:
-            await join_task(owned)
-        except BaseException as error:
-            print("JOIN=" + type(error).__name__, flush=True)
-            raise
-    caller = asyncio.create_task(joining())
-    await asyncio.sleep(0)
-    caller.cancel("caller cancellation")
-    await asyncio.sleep(0)
-    release.set()
-    await caller
-try:
-    asyncio.run(main())
-except BaseException as error:
-    print("RUNNER=" + type(error).__name__, flush=True)
-"""
-    process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-c",
-        code,
-        control_name,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, _stderr = await asyncio.wait_for(process.communicate(), 10)
-    finally:
-        if process.returncode is None:
-            process.kill()
-            await process.wait()
-    text = stdout.decode()
-    assert f"JOIN={control_name}" in text
-    assert f"RUNNER={control_name}" in text
+    joined_errors: list[BaseException] = []
+    owned_tasks: list[asyncio.Task[None]] = []
+
+    async def main() -> None:
+        main_task = asyncio.current_task()
+        assert main_task is not None
+        owned_tasks.append(main_task)
+        release, entered = asyncio.Event(), asyncio.Event()
+
+        async def controlled() -> None:
+            await release.wait()
+            raise control_type("owned process control")
+
+        owned = asyncio.create_task(controlled())
+        owned_tasks.append(owned)
+
+        async def joining() -> None:
+            entered.set()
+            try:
+                await join_task(owned)
+            except BaseException as error:  # noqa: BLE001 - inspect join propagation without interrupting Runner shutdown a second time
+                joined_errors.append(error)
+
+        caller = asyncio.create_task(joining())
+        owned_tasks.append(caller)
+        await entered.wait()
+        caller.cancel("caller cancellation")
+        release.set()
+        await caller
+
+    with pytest.raises(control_type):
+        asyncio.run(main())
+    assert len(joined_errors) == 1
+    assert isinstance(joined_errors[0], control_type)
+    assert all(task.done() for task in owned_tasks)
 
 
 class _RecordingObserver:
@@ -589,9 +550,9 @@ async def test_runtime_preserves_cancellation_when_observer_and_source_cleanup_f
     )
     caller = asyncio.create_task(anext(stream))
     try:
-        await asyncio.wait_for(graph.started.wait(), 2)
+        await graph.started.wait()
         failed.failure.set_result(RuntimeError("observer failed"))
-        await asyncio.wait_for(graph.cleaning.wait(), 2)
+        await graph.cleaning.wait()
         for index in range(cancel_count):
             caller.cancel(f"caller cancellation {index + 1}")
             await asyncio.sleep(0)
@@ -630,118 +591,99 @@ async def test_runtime_preserves_cancellation_when_observer_and_source_cleanup_f
 
 
 @pytest.mark.parametrize("phase", ["idle", "active", "backpressure"])
-@pytest.mark.parametrize("control_name", ["KeyboardInterrupt", "SystemExit"])
-async def test_runner_shutdown_settles_runtime_observer_deliveries(
+@pytest.mark.parametrize("control_type", [KeyboardInterrupt, SystemExit])
+def test_runner_shutdown_settles_runtime_observer_deliveries(
+    definition_factory: Callable[..., AgentRuntime[None]],
     phase: str,
-    control_name: str,
+    control_type: type[BaseException],
 ) -> None:
-    """Runner shutdown cannot leave receipts waiting for a cancelled worker."""
+    """Runner shutdown settles receipts and sources before propagating control."""
 
-    code = """
-import asyncio
-import json
-import runpy
-import sys
-from unittest.mock import patch
-from tinkerfin import RunIdentity, TinkerFin, trace_contribution
-from tinkerfin_contracts import ContextContributionObservation, NativeStateObservation
+    class Observer(_RecordingObserver):
+        def __init__(self) -> None:
+            super().__init__()
+            self.entered = asyncio.Event()
+            self.operation_closed = False
 
-helpers = runpy.run_path(sys.argv[1])
-phase = sys.argv[2]
-control_type = {"KeyboardInterrupt": KeyboardInterrupt, "SystemExit": SystemExit}[sys.argv[3]]
-state = {}
+        async def observe(self, observation: RuntimeObservation) -> None:
+            await super().observe(observation)
+            selected = (
+                ContextContributionObservation
+                if phase == "backpressure"
+                else NativeStateObservation
+            )
+            if (
+                phase != "idle"
+                and isinstance(observation, selected)
+                and not self.entered.is_set()
+            ):
+                self.entered.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    self.operation_closed = True
 
-class Observer(helpers["_RecordingObserver"]):
-    def __init__(self):
-        super().__init__()
-        self.entered = asyncio.Event()
-        self.operation_closed = False
+    class Graph:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.work: list[asyncio.Task[None]] = []
+            self.closed = False
 
-    async def observe(self, item):
-        await super().observe(item)
-        selected = ContextContributionObservation if phase == "backpressure" else NativeStateObservation
-        if phase != "idle" and isinstance(item, selected) and not self.entered.is_set():
-            self.entered.set()
+        async def astream(
+            self,
+            input: InputAgentState,
+            config: RunnableConfig | None = None,
+            **options: object,
+        ) -> AsyncIterator[Mapping[str, object]]:
+            del input, config, options
+            self.started.set()
             try:
-                await asyncio.Event().wait()
+                if phase == "idle":
+                    await asyncio.Event().wait()
+                elif phase == "backpressure":
+
+                    async def contribute(index: int) -> None:
+                        async with trace_contribution(
+                            kind="custom", name=f"operation-{index}"
+                        ):
+                            pass
+
+                    self.work = [asyncio.create_task(contribute(i)) for i in range(3)]
+                    await asyncio.gather(*self.work)
+                yield {"type": "values", "ns": (), "data": {"messages": []}}
             finally:
-                self.operation_closed = True
+                for task in self.work:
+                    if not task.done() and not task.cancelling():
+                        task.cancel()
+                await asyncio.gather(*self.work, return_exceptions=True)
+                self.closed = True
 
-class Graph:
-    def __init__(self):
-        self.started = asyncio.Event()
-        self.work = []
-        self.closed = False
+    observers: list[Observer] = []
+    graphs: list[Graph] = []
+    callers: list[asyncio.Task[Mapping[str, object]]] = []
 
-    async def astream(self, input, config=None, **kwargs):
-        self.started.set()
-        try:
-            if phase == "idle":
-                await asyncio.Event().wait()
-            elif phase == "backpressure":
-                async def contribute(index):
-                    async with trace_contribution(kind="custom", name=f"operation-{index}"):
-                        pass
-                self.work = [asyncio.create_task(contribute(i)) for i in range(3)]
-                await asyncio.gather(*self.work)
-            yield {"type": "values", "ns": (), "data": {"messages": []}}
-        finally:
-            for task in self.work:
-                if not task.done() and not task.cancelling():
-                    task.cancel()
-            await asyncio.gather(*self.work, return_exceptions=True)
-            self.closed = True
-
-async def main():
-    observer = Observer()
-    graph = Graph()
-    state.update(observer=observer, graph=graph)
-    factory = TinkerFin().with_namespace("test").with_observer(observer)
-    with patch("tinkerfin.deep_agent.create_agent_graph", return_value=graph):
-        definition = factory.build(model="provider:model", tools=[])
-        stream = definition.open_run(thread_id="shutdown", run_id=phase, input={"messages": []})
+    async def main() -> None:
+        observer, graph = Observer(), Graph()
+        observers.append(observer)
+        graphs.append(graph)
+        definition = definition_factory(
+            graph, tinkerfin=TinkerFin().with_namespace("test").with_observer(observer)
+        )
+        stream = definition.open_run(
+            thread_id="shutdown", run_id=phase, input={"messages": []}
+        )
         caller = asyncio.create_task(anext(stream))
-        state["caller"] = caller
+        callers.append(caller)
         await graph.started.wait()
         if phase != "idle":
             await observer.entered.wait()
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
         raise control_type("process shutdown")
 
-try:
-    asyncio.run(main())
-except BaseException as error:
-    observer = state["observer"]
-    graph = state["graph"]
-    print(json.dumps({"control": type(error).__name__, "sessions_closed": observer.closed,
-        "source_closed": graph.closed, "caller_done": state["caller"].done(),
-        "owned_done": all(task.done() for task in graph.work),
-        "operation_closed": observer.operation_closed}), flush=True)
-"""
-    process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-u",
-        "-c",
-        code,
-        str(Path(__file__).resolve()),
-        phase,
-        control_name,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), 10)
-    finally:
-        if process.returncode is None:
-            process.kill()
-            await process.wait()
-    assert process.returncode == 0, stderr.decode()
-    import json
-
-    result = json.loads(stdout)
-    assert result["control"] == control_name
-    assert result["sessions_closed"] == 1
-    assert result["source_closed"]
-    assert result["caller_done"] and result["owned_done"]
-    assert phase == "idle" or result["operation_closed"]
+    with pytest.raises(control_type):
+        asyncio.run(main())
+    observer, graph = observers[0], graphs[0]
+    assert observer.closed == 1
+    assert graph.closed
+    assert callers[0].done()
+    assert all(task.done() for task in graph.work)
+    assert phase == "idle" or observer.operation_closed

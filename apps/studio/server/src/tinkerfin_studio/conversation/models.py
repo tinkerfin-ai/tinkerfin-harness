@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import JsonValue
 from sqlalchemy import (
@@ -190,6 +191,12 @@ class ConversationRunRegistration(Base):
     )
     input_json: Mapped[dict[str, JsonValue]] = mapped_column(
         JSON, nullable=False, comment="用于同 runId 幂等核验的标准请求"
+    )
+    preparation_id: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=lambda: uuid4().hex,
+        comment="本次准备登记的随机标识，清理时比较以保护并发提交",
     )
     terminal_outcome: Mapped[str | None] = mapped_column(
         String(32), nullable=True, comment="Trace 终态结果"

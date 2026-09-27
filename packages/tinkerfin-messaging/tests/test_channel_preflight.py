@@ -349,7 +349,7 @@ async def test_close_waits_for_preflight_not_the_callers_later_work() -> None:
     release_callback.set()
     await request_continued.wait()
 
-    await asyncio.wait_for(asyncio.shield(close_task), timeout=1)
+    await asyncio.shield(close_task)
     assert not request_task.done()
 
     release_request.set()
@@ -366,13 +366,10 @@ async def test_source_ready_can_close_messaging_without_preflight_deadlock() -> 
         await messaging.aclose()
 
     with pytest.raises(MessagingClosed):
-        await asyncio.wait_for(
-            channel.wrap(
-                source,
-                identity=_identity(),
-                on_source_ready=source_ready,
-            ),
-            timeout=1,
+        await channel.wrap(
+            source,
+            identity=_identity(),
+            on_source_ready=source_ready,
         )
 
     assert source.close_calls == 1
@@ -501,7 +498,7 @@ async def test_same_run_attaches_and_closes_the_unused_candidate_source(
             identity=_identity(),
             after=0,
         )
-        await asyncio.wait_for(owner.started.wait(), timeout=1)
+        await owner.started.wait()
 
         second = await channel.wrap(
             candidate,
@@ -608,7 +605,7 @@ async def test_wrap_rejects_an_active_run_conflict_before_returning(
             identity=_identity(),
             after=0,
         )
-        await asyncio.wait_for(owner.started.wait(), timeout=1)
+        await owner.started.wait()
 
         with pytest.raises(RunAlreadyActive):
             await channel.wrap(

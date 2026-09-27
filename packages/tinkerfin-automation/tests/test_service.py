@@ -241,13 +241,15 @@ async def test_execute_once_is_taskless_idempotent_and_retries_as_taskless() -> 
             request_id="once-1",
         )
 
-    (claim,) = await store.claim_work(
-        "app",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=16,
-    )
+    (claim,) = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=16,
+        )
+    ).claims
     await store.authorize_start(claim, execution_timeout=timedelta(minutes=30))
     await store.finish_execution(
         claim,

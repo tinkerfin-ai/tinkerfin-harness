@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import Subquery
 
+from tinkerfin_notifications import Notifications
 from tinkerfin_sqlalchemy import (
     SqlTransaction,
     engine_dialect,
@@ -434,6 +435,7 @@ class _SqlAlchemyTraceLedgerBackend:
                         select(
                             threads,
                             writers.c.run_id.label("active_run_id"),
+                            writers.c.lease_expires_at.label("active_lease_expires_at"),
                             now.label("observed_at"),
                         )
                         .select_from(
@@ -473,6 +475,17 @@ class _SqlAlchemyTraceLedgerBackend:
                     if row["active_run_id"] is not None
                 )
             )
+            next_writer_lease_remaining_seconds = min(
+                (
+                    (
+                        _as_utc(_database_timestamp(row["active_lease_expires_at"]))
+                        - observed_at
+                    ).total_seconds()
+                    for row in rows
+                    if row["active_run_id"] is not None
+                ),
+                default=None,
+            )
             criteria = [
                 events.c.namespace_hash == _digest(request.key.namespace),
                 events.c.thread_hash == _digest(request.key.thread_id),
@@ -489,6 +502,7 @@ class _SqlAlchemyTraceLedgerBackend:
                         events=(),
                         active_run_ids=active_run_ids,
                         observed_at=observed_at,
+                        next_writer_lease_remaining_seconds=next_writer_lease_remaining_seconds,
                     )
                 criteria.extend(
                     (events.c.trace_seq > after, events.c.trace_seq <= as_of)
@@ -515,6 +529,7 @@ class _SqlAlchemyTraceLedgerBackend:
                 events=tuple(_stored_event_from_row(row) for row in rows),
                 active_run_ids=active_run_ids,
                 observed_at=observed_at,
+                next_writer_lease_remaining_seconds=next_writer_lease_remaining_seconds,
             )
 
     @_owned_database_operation
@@ -1906,6 +1921,7 @@ class SqlAlchemyTraceStore(DurableTraceStore):
         limits: TraceLimits | None = None,
         options: TraceStoreOptions | None = None,
         codec: CanonicalTracePayloadCodec | None = None,
+        notifications: Notifications | None = None,
     ) -> None:
         """Initialize a Store over a borrowed asynchronous SQLAlchemy Engine.
 
@@ -1914,6 +1930,7 @@ class SqlAlchemyTraceStore(DurableTraceStore):
                 limits: Optional capacity limits.
             options: Optional writer and retry settings.
             codec: Optional canonical payload codec.
+            notifications: Borrowed, started cross-instance change service.
         """
 
         resolved_limits = limits or TraceLimits()
@@ -1928,6 +1945,7 @@ class SqlAlchemyTraceStore(DurableTraceStore):
             limits=resolved_limits,
             options=resolved_options,
             codec=resolved_codec,
+            notifications=notifications,
         )
 
 

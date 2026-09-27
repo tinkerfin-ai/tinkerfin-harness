@@ -900,7 +900,7 @@ async def test_runtime_cancellation_closes_an_unmatched_tool_execution(
             pass
 
     task = asyncio.create_task(consume())
-    await asyncio.wait_for(entered.wait(), timeout=1)
+    await entered.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task

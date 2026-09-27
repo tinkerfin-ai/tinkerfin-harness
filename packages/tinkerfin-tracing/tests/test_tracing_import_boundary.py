@@ -40,7 +40,7 @@ print(json.dumps(sorted(
     assert json.loads(completed.stdout) == []
 
 
-def test_distribution_declares_only_contracts_and_pydantic() -> None:
+def test_distribution_requires_only_protocol_neutral_packages() -> None:
     try:
         metadata = distribution("tinkerfin-tracing")
     except PackageNotFoundError:
@@ -50,6 +50,7 @@ def test_distribution_declares_only_contracts_and_pydantic() -> None:
     assert {item for item in requirements if "extra ==" not in item} == {
         "pydantic<3,>=2.12",
         "tinkerfin-contracts==0.1.0",
+        "tinkerfin-notifications==0.1.0",
     }
     assert 'sqlalchemy[asyncio]==2.0.52; extra == "sqlalchemy"' in requirements
     assert 'tinkerfin-sqlalchemy==0.1.0; extra == "sqlalchemy"' in requirements

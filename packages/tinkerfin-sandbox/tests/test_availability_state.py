@@ -66,7 +66,7 @@ async def test_binding_and_warm_consumption_publish_running_availability(
             available.sequence,
             available.connection_generation,
         ) == ("running", 0, 0)
-        assert await asyncio.wait_for(state.read_availability("owner"), 1) == available
+        assert await state.read_availability("owner") == available
     finally:
         await state.release_owner(claim)
 
@@ -99,9 +99,9 @@ async def test_all_holders_must_acknowledge_before_dispatch(
         assert not await state.holders_are_idle(claim, draining)
         with pytest.raises(OpenSandboxStateOwnershipError):
             await state.change_availability(claim, draining, phase="pausing")
-        updates = await asyncio.wait_for(state.get_holder_updates("manager-a"), 1)
+        updates = await state.get_holder_updates("manager-a")
         assert updates[0].availability == draining
-        assert await asyncio.wait_for(state.acknowledge_idle("manager-a", draining), 1)
+        assert await state.acknowledge_idle("manager-a", draining)
         assert await state.acknowledge_idle("manager-a", draining)
         assert not await state.holders_are_idle(claim, draining)
         assert await state.acknowledge_idle("manager-b", draining)
@@ -385,15 +385,11 @@ async def test_sqlite_other_state_acknowledges_while_owner_claim_remains_active(
         await owner.bind_owner(claim, "sandbox")
         running = await owner.register_holder(claim, "observer")
         draining = await owner.change_availability(claim, running, phase="draining")
-        assert (
-            await asyncio.wait_for(observer.read_availability("owner"), 1) == draining
-        )
-        assert (await asyncio.wait_for(observer.get_holder_updates("observer"), 1))[
+        assert await observer.read_availability("owner") == draining
+        assert (await observer.get_holder_updates("observer"))[
             0
         ].availability == draining
-        assert await asyncio.wait_for(
-            observer.acknowledge_idle("observer", draining), 1
-        )
+        assert await observer.acknowledge_idle("observer", draining)
         assert await owner.holders_are_idle(claim, draining)
     finally:
         await owner.release_owner(claim)

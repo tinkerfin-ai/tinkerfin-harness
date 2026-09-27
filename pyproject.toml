@@ -57,6 +57,8 @@ tinkerfin-sandbox = { workspace = true }
 tinkerfin-agui-adapter = { workspace = true }
 tinkerfin-messaging = { workspace = true }
 tinkerfin-automation = { workspace = true }
+tinkerfin-notifications = { workspace = true }
+tinkerfin-gateway = { workspace = true }
 
 [[tool.uv.index]]
 name = "pypi"
@@ -120,6 +122,10 @@ include = [
     "packages/tinkerfin-sandbox/tests",
     "packages/tinkerfin-automation/src",
     "packages/tinkerfin-automation/tests",
+    "packages/tinkerfin-notifications/src",
+    "packages/tinkerfin-notifications/tests",
+    "packages/tinkerfin-gateway/src",
+    "packages/tinkerfin-gateway/tests",
     "apps/studio/server/src",
     "apps/studio/server/tests",
 ]
@@ -169,6 +175,8 @@ source = [
     "tinkerfin_messaging",
     "tinkerfin_sandbox",
     "tinkerfin_automation",
+    "tinkerfin_notifications",
+    "tinkerfin_gateway",
 ]
 
 [tool.coverage.report]

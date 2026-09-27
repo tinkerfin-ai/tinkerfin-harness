@@ -1,10 +1,40 @@
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, tzinfo
+from typing import Self
 
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tinkerfin_notifications import Notifications
 from tinkerfin_studio.infrastructure.database import Base, Database
+
+
+@pytest.fixture
+def fixed_utc_time(monkeypatch: pytest.MonkeyPatch) -> datetime:
+    """固定业务期限判断，避免运行速度和自然时间影响过期场景"""
+    current = datetime(2030, 1, 1, 12, tzinfo=UTC)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> Self:
+            return cls.fromtimestamp(current.timestamp(), tz)
+
+    for module in (
+        "tinkerfin_studio.auth.service",
+        "tinkerfin_studio.auth.repository",
+        "tinkerfin_studio.attachments.service",
+        "tinkerfin_studio.conversation.repository",
+    ):
+        monkeypatch.setattr(f"{module}.datetime", FixedDateTime)
+    return current
+
+
+@pytest_asyncio.fixture
+async def notifications() -> AsyncIterator[Notifications]:
+    """每项测试独占的通知服务，退出时等待全部自有任务关闭"""
+    async with Notifications() as service:
+        yield service
 
 
 @pytest_asyncio.fixture
@@ -36,11 +66,11 @@ async def session(database: Database) -> AsyncIterator[AsyncSession]:
 
 
 @pytest_asyncio.fixture
-async def attachments(database, attachment_storage):
+async def attachments(notifications, database, attachment_storage):
     """提供使用内存对象存储和业务仓储的附件服务"""
     from tinkerfin_studio.attachments.service import AttachmentService
 
-    return AttachmentService(database, attachment_storage)
+    return AttachmentService(database, attachment_storage, notifications=notifications)
 
 
 @pytest_asyncio.fixture

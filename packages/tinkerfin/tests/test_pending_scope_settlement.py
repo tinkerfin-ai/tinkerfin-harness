@@ -152,7 +152,7 @@ async def test_checkpoint_pending_child_is_not_cancelled_by_its_sibling(
 
     consumer = asyncio.create_task(consume())
     try:
-        await asyncio.wait_for(waiting.wait(), timeout=5)
+        await waiting.wait()
         if cancel:
             consumer.cancel()
             with pytest.raises(asyncio.CancelledError):

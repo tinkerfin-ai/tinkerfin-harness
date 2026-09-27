@@ -21,6 +21,7 @@ from tinkerfin_messaging import (
     MessagingError,
     MessagingErrorCode,
     RedisBackend,
+    RunRequestConflict,
     UnexpectedMessagingBackendError,
 )
 from tinkerfin_messaging.backend_contract import (
@@ -29,6 +30,15 @@ from tinkerfin_messaging.backend_contract import (
     MessagingStateQuery,
     MessagingStateSnapshot,
 )
+
+
+def test_request_conflict_is_a_safe_stable_messaging_failure() -> None:
+    identity = RunIdentity(namespace="tenant", thread_id="thread", run_id="request")
+    error = RunRequestConflict(identity=identity)
+    assert isinstance(error, MessagingError)
+    assert error.code == MessagingErrorCode.RUN_REQUEST_CONFLICT
+    assert error.context == {"thread_id": "thread", "run_id": "request"}
+    assert error.identity == identity
 
 
 class _FailingBackend(MemoryBackend):

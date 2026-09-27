@@ -16,6 +16,7 @@ from tinkerfin_studio.api.errors import (
     ConversationErrorCode,
     SystemException,
 )
+from tinkerfin_studio.changes import notify_change
 from tinkerfin_studio.conversation.history import _history_item
 from tinkerfin_studio.conversation.models import ConversationThread
 from tinkerfin_studio.conversation.repository import ConversationRepository
@@ -55,7 +56,24 @@ class ConversationCommandService:
             pinned=pinned,
         )
         await self._repository.commit()
-        return _history_item(await self._require_thread(thread_id))
+        await notify_change(
+            self._resources.notifications,
+            user_id=self._user_id,
+            topic="studio.conversation.changed",
+            key=thread_id,
+        )
+        updated = await self._require_thread(thread_id)
+        if title is not None:
+            sequence = updated.title_seq
+            await self._repository.commit()
+            await notify_change(
+                self._resources.notifications,
+                user_id=self._user_id,
+                topic="studio.conversation.title.changed",
+                key=thread_id,
+                details={"title_seq": sequence},
+            )
+        return _history_item(updated)
 
     async def delete(self, *, thread_id: str) -> None:
         """先删权威 Trace，再删恢复、传输与 Studio 业务记录"""
@@ -96,6 +114,12 @@ class ConversationCommandService:
                 raise RuntimeError("会话删除标记期间出现了新的 running Run")
             await self._repository.delete_thread_cascade(thread_pk)
             await self._repository.commit()
+            await notify_change(
+                self._resources.notifications,
+                user_id=self._user_id,
+                topic="studio.conversation.changed",
+                key=thread_id,
+            )
         except (TraceRunConflict, StreamDeleteConflict) as error:
             if not destruction_started:
                 await self._restore_delete_status(thread_pk, previous_status)
@@ -143,7 +167,14 @@ class ConversationCommandService:
             await self._repository.rollback()
             raise BusinessException(ConversationErrorCode.DELETE_CONFLICT)
         locked.status = "deleting"
+        thread_id = locked.thread_id
         await self._repository.commit()
+        await notify_change(
+            self._resources.notifications,
+            user_id=self._user_id,
+            topic="studio.conversation.changed",
+            key=thread_id,
+        )
         return previous_status
 
     async def _restore_delete_status(
@@ -158,6 +189,13 @@ class ConversationCommandService:
         if locked is not None and locked.status == "deleting":
             locked.status = previous_status
         await self._repository.commit()
+        if locked is not None:
+            await notify_change(
+                self._resources.notifications,
+                user_id=self._user_id,
+                topic="studio.conversation.changed",
+                key=locked.thread_id,
+            )
 
     async def _require_thread(self, thread_id: str) -> ConversationThread:
         thread = await self._repository.get_thread(

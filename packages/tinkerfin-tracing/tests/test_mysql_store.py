@@ -774,7 +774,7 @@ async def test_mysql_cross_instance_sequence_follow_and_expired_writer_fencing()
             (_fact("run-a", "terminal"), _fact("run-a", "closed")),
             mandatory=True,
         )
-        assert (await asyncio.wait_for(waiting, timeout=2)).events == terminal
+        assert (await waiting).events == terminal
         await follower.aclose()
 
         async with second_engine.begin() as connection:
@@ -1235,13 +1235,11 @@ async def test_mysql_writer_lease_starts_after_namespace_lock_wait(
                     {"namespace": json.dumps(namespace, ensure_ascii=False)},
                 )
                 open_writer = asyncio.create_task(store.open_writer(identity))
-                await _wait_for_mysql_lock(
-                    await asyncio.wait_for(connection_ready, timeout=5)
-                )
+                await _wait_for_mysql_lock(await connection_ready)
                 released_at = await blocker.scalar(text("SELECT UTC_TIMESTAMP(6)"))
                 assert isinstance(released_at, datetime)
                 assert not open_writer.done()
-        writer = await asyncio.wait_for(open_writer, timeout=5)
+        writer = await open_writer
         async with engine.connect() as connection:
             expiry = await connection.scalar(
                 text(

@@ -174,7 +174,7 @@ const filteredPage = (filter: TraceGraphFilter): TraceGraphPage => {
 const row = (name: string | RegExp) => screen.getByRole('button', { name })
 
 describe('ChainTraceView', () => {
-  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
   beforeEach(() => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
     useChainTrace.mockReset()
@@ -464,6 +464,7 @@ describe('ChainTraceView', () => {
   })
 
   it('queries hidden Model responses through modelCallId without a type filter', async () => {
+    vi.useFakeTimers()
     queryTraceGraph.mockResolvedValue(graphPage(
       nodes.filter((item) => item.modelCallId === 'model-2'),
     ))
@@ -473,13 +474,14 @@ describe('ChainTraceView', () => {
     fireEvent.change(screen.getByRole('searchbox', { name: '搜索链路节点' }), {
       target: { value: 'deepseek-chat' },
     })
-    await waitFor(() => expect(useChainTrace.mock.calls.at(-1)?.[0].filter.query)
-      .toBe('deepseek-chat'))
+    await act(async () => { await vi.advanceTimersByTimeAsync(250) })
+    expect(useChainTrace.mock.calls.at(-1)?.[0].filter.query).toBe('deepseek-chat')
     fireEvent.click(row('模型，deepseek-chat，已完成，查看详情'))
     const details = screen.getByRole('complementary', { name: '链路详情' })
     fireEvent.click(within(details).getByRole('tab', { name: '响应' }))
 
-    expect(await within(details).findByText('完成')).toBeVisible()
+    await act(async () => {})
+    expect(within(details).getByText('完成')).toBeVisible()
     expect(queryTraceGraph).toHaveBeenCalledWith(
       'thread-1',
       {

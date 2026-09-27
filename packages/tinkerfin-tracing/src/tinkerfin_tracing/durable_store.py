@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 from asyncio import wait_for as _wait_for_follow_change
 from collections.abc import AsyncGenerator, Mapping
 from dataclasses import dataclass, field, replace
@@ -13,6 +14,12 @@ from uuid import uuid4
 from pydantic import JsonValue
 
 from tinkerfin_contracts import RunIdentity, ThreadIdentity
+from tinkerfin_notifications import (
+    Notification,
+    NotificationError,
+    Notifications,
+    NotificationScope,
+)
 
 from ._follow_reads import _FollowPage, _FollowReads
 from ._graph_projection import (
@@ -28,7 +35,13 @@ from ._graph_reducer import (
     graph_revision_mutations,
 )
 from ._prepared import prepare_trace_facts
-from ._tasks import TaskOutcome, capture, join_owned_task, select_failure
+from ._tasks import (
+    TaskOutcome,
+    cancellation_only,
+    capture,
+    join_owned_task,
+    select_failure,
+)
 from .backend import (
     StoredTraceCheckpoint,
     StoredTraceEvent,
@@ -55,6 +68,7 @@ from .backend import (
 from .codec import CanonicalTracePayloadCodec
 from .errors import (
     TraceQuotaExceeded,
+    TraceStoreError,
     TraceStoreProtocolError,
     TraceThreadNotFound,
 )
@@ -83,6 +97,11 @@ _ASCII_LOWER_TRANSLATION = str.maketrans(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
     "abcdefghijklmnopqrstuvwxyz",
 )
+logger = logging.getLogger("tinkerfin.tracing.notifications")
+
+
+async def _wait_for_writer_renewal(seconds: float) -> None:
+    await asyncio.sleep(seconds)
 
 
 class _GraphIndexChanged(Exception):
@@ -163,25 +182,23 @@ class _DurableTraceWriter:
                 cause=self._failure,
             )
         prepared = prepare_trace_facts(facts, codec=self._store._codec)
-        async with self._mutation_lock:
-            result = await self._store._commit_ledger_change(
-                TraceLedgerChange(
-                    kind="append_events",
-                    namespace=self._key.namespace,
-                    limits=self._store.limits,
-                    options=self._store.options,
-                    key=self._key,
-                    run_id=self._run_id,
-                    owner_token=self._owner_token,
-                    fence=self._fence,
-                    facts=prepared,
-                    mandatory=mandatory,
-                    enforce_writer_lease=self._store._enforce_writer_leases,
-                    persist_canonical_event_records=(
-                        self._store._enforce_writer_leases
-                    ),
-                )
-            )
+        result = await self._store._commit_ledger_change(
+            TraceLedgerChange(
+                kind="append_events",
+                namespace=self._key.namespace,
+                limits=self._store.limits,
+                options=self._store.options,
+                key=self._key,
+                run_id=self._run_id,
+                owner_token=self._owner_token,
+                fence=self._fence,
+                facts=prepared,
+                mandatory=mandatory,
+                enforce_writer_lease=self._store._enforce_writer_leases,
+                persist_canonical_event_records=(self._store._enforce_writer_leases),
+            ),
+            mutation_lock=self._mutation_lock,
+        )
         return result.events
 
     async def aclose(self) -> None:
@@ -199,22 +216,22 @@ class _DurableTraceWriter:
     async def _heartbeat_forever(self) -> None:
         try:
             while True:
-                await asyncio.sleep(
+                await _wait_for_writer_renewal(
                     self._store.options.writer_heartbeat_interval_seconds
                 )
-                async with self._mutation_lock:
-                    await self._store._commit_ledger_change(
-                        TraceLedgerChange(
-                            kind="renew_writer",
-                            namespace=self._key.namespace,
-                            limits=self._store.limits,
-                            options=self._store.options,
-                            key=self._key,
-                            run_id=self._run_id,
-                            owner_token=self._owner_token,
-                            fence=self._fence,
-                        )
-                    )
+                await self._store._commit_ledger_change(
+                    TraceLedgerChange(
+                        kind="renew_writer",
+                        namespace=self._key.namespace,
+                        limits=self._store.limits,
+                        options=self._store.options,
+                        key=self._key,
+                        run_id=self._run_id,
+                        owner_token=self._owner_token,
+                        fence=self._fence,
+                    ),
+                    mutation_lock=self._mutation_lock,
+                )
         except asyncio.CancelledError as error:
             if not self._closed:
                 self._failure = error
@@ -229,20 +246,20 @@ class _DurableTraceWriter:
             heartbeat.cancel()
             await asyncio.gather(heartbeat, return_exceptions=True)
         try:
-            async with self._mutation_lock:
-                await self._store._commit_ledger_change(
-                    TraceLedgerChange(
-                        kind="close_writer",
-                        namespace=self._key.namespace,
-                        limits=self._store.limits,
-                        options=self._store.options,
-                        key=self._key,
-                        run_id=self._run_id,
-                        owner_token=self._owner_token,
-                        fence=self._fence,
-                        enforce_writer_lease=self._store._enforce_writer_leases,
-                    )
-                )
+            await self._store._commit_ledger_change(
+                TraceLedgerChange(
+                    kind="close_writer",
+                    namespace=self._key.namespace,
+                    limits=self._store.limits,
+                    options=self._store.options,
+                    key=self._key,
+                    run_id=self._run_id,
+                    owner_token=self._owner_token,
+                    fence=self._fence,
+                    enforce_writer_lease=self._store._enforce_writer_leases,
+                ),
+                mutation_lock=self._mutation_lock,
+            )
         except BaseException as close_error:
             if self._failure is not None:
                 raise select_failure(self._failure, close_error)
@@ -258,6 +275,10 @@ class _FollowChange:
         self.condition = asyncio.Condition()
         self.revision = 0
         self.followers = 0
+        self.ready = asyncio.Event()
+        self.failure: BaseException | None = None
+        self.listener: asyncio.Task[TaskOutcome[None]] | None = None
+        self.closing: asyncio.Task[TaskOutcome[None]] | None = None
 
 
 class DurableTraceStore:
@@ -273,6 +294,7 @@ class DurableTraceStore:
         limits: Ledger, event, thread, reserve, and follow capacity limits.
         options: Writer lease, heartbeat, polling, and commit retry settings.
         codec: Canonical fact and Projection-state codec.
+        notifications: Borrowed change service, already started by the host.
 
     Raises:
         TypeError: An argument has the wrong public type.
@@ -286,6 +308,7 @@ class DurableTraceStore:
         limits: TraceLimits | None = None,
         options: TraceStoreOptions | None = None,
         codec: CanonicalTracePayloadCodec | None = None,
+        notifications: Notifications | None = None,
     ) -> None:
         """Initialize a Store over a borrowed durable Backend.
 
@@ -294,6 +317,7 @@ class DurableTraceStore:
             limits: Optional capacity limits.
             options: Optional writer and retry settings.
             codec: Optional canonical payload codec.
+            notifications: Borrowed, started service for cross-instance wakeups.
         """
 
         if not isinstance(backend, TraceLedgerBackend):
@@ -308,12 +332,21 @@ class DurableTraceStore:
         self._limits = limits or TraceLimits()
         self._options = options or TraceStoreOptions()
         self._codec = codec or CanonicalTracePayloadCodec()
+        self._notifications = notifications
         self._setup_task: asyncio.Task[TaskOutcome[None]] | None = None
         self._follow_changes: dict[TraceThreadKey, _FollowChange] = {}
         self._follow_reads = _FollowReads(
-            backend, poll_seconds=self._options.follow_poll_seconds
+            backend,
+            poll_seconds=30.0
+            if notifications is not None
+            else self._options.follow_poll_seconds,
         )
         self._enforce_writer_leases = True
+
+    @property
+    def notifications(self) -> Notifications | None:
+        """Return the borrowed change service used by commits and followers."""
+        return self._notifications
 
     @property
     def limits(self) -> TraceLimits:
@@ -375,7 +408,7 @@ class DurableTraceStore:
         if not isinstance(identity, RunIdentity):
             raise TypeError("identity must be a RunIdentity")
         owner_token = uuid4().hex
-        result = await self._commit_ledger_change(
+        result = await self._apply_ledger_change(
             TraceLedgerChange(
                 kind="open_writer",
                 namespace=identity.namespace,
@@ -390,13 +423,24 @@ class DurableTraceStore:
             raise TraceStoreProtocolError(
                 "Trace Ledger backend returned an invalid writer result"
             )
-        return _DurableTraceWriter(
+        writer = _DurableTraceWriter(
             self,
             key=result.key,
             run_id=identity.run_id,
             owner_token=owner_token,
             fence=result.fence,
         )
+        try:
+            # Begin owned renewals before optional transport I/O can consume the
+            # newly committed lease. A cancelled caller never inherits this writer.
+            await self._notify_commit(result)
+        except BaseException as error:
+            try:
+                await writer.aclose()
+            except BaseException as cleanup_error:  # noqa: BLE001 - preserve control and failed writer settlement
+                raise select_failure(error, cleanup_error)
+            raise
+        return writer
 
     async def snapshot(self, identity: ThreadIdentity) -> StoreThreadSnapshot:
         """Return one consistent prefix for the current generation."""
@@ -990,10 +1034,11 @@ class DurableTraceStore:
     ) -> AsyncGenerator[TraceStoreUpdate, None]:
         """Follow committed events and active Runs within one exact generation.
 
-        Each subscriber keeps its own cursor and mutable event values. Local commits
-        wake waiting subscribers; changes from other Store instances are checked at
-        the configured follow interval. Closing or cancelling the subscription
-        releases its owned reads without closing the borrowed backend.
+        Each subscriber keeps its own cursor and mutable event values. Local and
+        configured Notifications wake waiting subscribers. Authoritative reads
+        repair missed hints every 30 seconds or at the next writer lease deadline.
+        Without Notifications, the configured poll interval applies. Closing or
+        cancelling releases owned reads without closing borrowed resources.
 
         Args:
             key: Exact thread generation to follow.
@@ -1014,15 +1059,33 @@ class DurableTraceStore:
         async def iterate() -> AsyncGenerator[TraceStoreUpdate, None]:
             await self.setup()
             signal = self._follow_changes.get(key)
+            while signal is not None and signal.closing is not None:
+                # The previous final follower still owns the transport slot. Join
+                # its close before opening a replacement for the same generation.
+                await join_owned_task(signal.closing, cancel_operation=False)
+                signal = self._follow_changes.get(key)
             if signal is None:
                 signal = _FollowChange()
                 self._follow_changes[key] = signal
+                if self._notifications is not None:
+                    signal.listener = asyncio.create_task(
+                        capture(self._listen_for_changes(key, signal)),
+                        name="tinkerfin-trace-notifications",
+                    )
+                else:
+                    signal.ready.set()
             signal.followers += 1
             cursor = after_seq
             active_run_ids: tuple[str, ...] | None = None
             previous_page: _FollowPage | None = None
+            primary_error: BaseException | None = None
             try:
+                # Establish the shared transport subscription before reading the
+                # baseline. A hint arriving during that read changes its revision.
+                await signal.ready.wait()
                 while True:
+                    if signal.failure is not None:
+                        raise signal.failure
                     revision = signal.revision
                     request = TraceEventPageRequest(
                         key=key,
@@ -1065,13 +1128,51 @@ class DurableTraceStore:
                             )
                         except TimeoutError:
                             pass
+            except BaseException as error:
+                primary_error = error
+                raise
             finally:
                 signal.followers -= 1
                 if not signal.followers:
-                    self._follow_changes.pop(key, None)
-                    self._follow_reads.discard(key)
+                    signal.closing = asyncio.create_task(
+                        capture(self._close_follow_change(key, signal)),
+                        name="tinkerfin-trace-follow-change-close",
+                    )
+                    cleanup_failure: BaseException | None = None
+                    try:
+                        await join_owned_task(signal.closing, cancel_operation=False)
+                    except BaseException as error:  # noqa: BLE001 - preserve caller cancellation and independent listener failures
+                        cleanup_failure = error
+                    if cleanup_failure is not None:
+                        # GeneratorExit is an ordinary request to close iteration;
+                        # it must not hide a failed cleanup behind a successful aclose.
+                        if primary_error is None or isinstance(
+                            primary_error, GeneratorExit
+                        ):
+                            raise cleanup_failure
+                        raise select_failure(primary_error, cleanup_failure)
 
         return iterate()
+
+    async def _close_follow_change(
+        self, key: TraceThreadKey, signal: _FollowChange
+    ) -> None:
+        try:
+            if signal.listener is not None:
+                signal.listener.cancel()
+                try:
+                    await join_owned_task(signal.listener, cancel_operation=False)
+                except asyncio.CancelledError as error:
+                    # Only the explicitly stopped listener is cancelled. The
+                    # shared close task is shielded and joined by all callers.
+                    current = asyncio.current_task()
+                    if (
+                        current is not None and current.cancelling()
+                    ) or not cancellation_only(error):
+                        raise
+        finally:
+            self._follow_changes.pop(key, None)
+            self._follow_reads.discard(key)
 
     async def delete(self, key: TraceThreadKey) -> None:
         """Delete one exact inactive generation through the atomic change boundary."""
@@ -1087,12 +1188,18 @@ class DurableTraceStore:
             )
         )
 
-    async def _commit_ledger_change(
+    async def _apply_ledger_change(
         self,
         change: TraceLedgerChange,
+        *,
+        mutation_lock: asyncio.Lock | None = None,
     ) -> TraceLedgerCommitResult:
         await self.setup()
-        result = await self._backend.commit_ledger_change(change)
+        if mutation_lock is None:
+            result = await self._backend.commit_ledger_change(change)
+        else:
+            async with mutation_lock:
+                result = await self._backend.commit_ledger_change(change)
         if (
             not isinstance(result, TraceLedgerCommitResult)
             or result.kind != change.kind
@@ -1101,19 +1208,95 @@ class DurableTraceStore:
                 "Trace Ledger backend returned an invalid commit result"
             )
         _validate_commit_result(change, result)
-        signal = (
-            None
-            if result.key is None
-            or change.kind in {"renew_writer", "save_projection_checkpoint"}
-            else self._follow_changes.get(result.key)
-        )
-        if signal is not None:
-            assert result.key is not None
-            async with signal.condition:
-                signal.revision += 1
-                self._follow_reads.discard(result.key)
-                signal.condition.notify_all()
         return result
+
+    async def _commit_ledger_change(
+        self,
+        change: TraceLedgerChange,
+        *,
+        mutation_lock: asyncio.Lock | None = None,
+    ) -> TraceLedgerCommitResult:
+        result = await self._apply_ledger_change(change, mutation_lock=mutation_lock)
+        await self._notify_commit(result)
+        return result
+
+    async def _notify_commit(self, result: TraceLedgerCommitResult) -> None:
+        if result.key is None or result.kind in {
+            "renew_writer",
+            "save_projection_checkpoint",
+        }:
+            return
+        signal = self._follow_changes.get(result.key)
+        if signal is not None:
+            await self._wake_followers(result.key, signal)
+        await self._publish_change(result)
+
+    async def _wake_followers(self, key: TraceThreadKey, signal: _FollowChange) -> None:
+        async with signal.condition:
+            signal.revision += 1
+            self._follow_reads.discard(key)
+            signal.condition.notify_all()
+
+    async def _publish_change(self, result: TraceLedgerCommitResult) -> None:
+        if self._notifications is None or result.key is None:
+            return
+        key = result.key
+        details: dict[str, JsonValue] = {"generation": key.generation}
+        if result.events:
+            details["trace_seq"] = result.events[-1].trace_seq
+        if result.run_id is not None:
+            details["run_id"] = result.run_id
+        try:
+            await self._notifications.publish(
+                Notification(
+                    scope=NotificationScope(key.namespace),
+                    topic="trace.changed",
+                    key=key.thread_id,
+                    details=details,
+                )
+            )
+        except NotificationError as error:
+            # The ledger has committed. Loss is repaired by followers' periodic
+            # authoritative reads; reporting this as a failed write invites retries.
+            try:
+                logger.warning(
+                    "Trace change notification could not be published",
+                    extra={"tinkerfin_code": error.code.value},
+                )
+            except Exception:  # noqa: BLE001 - host logging must not affect committed facts
+                pass
+
+    async def _listen_for_changes(
+        self, key: TraceThreadKey, signal: _FollowChange
+    ) -> None:
+        assert self._notifications is not None
+        try:
+            async with self._notifications.subscribe(
+                scope=NotificationScope(key.namespace),
+                topics={"trace.changed"},
+                key=key.thread_id,
+            ) as changes:
+                signal.ready.set()
+                async for _change in changes:
+                    # Hints coalesce by thread, including delete/recreate. A hint
+                    # for a new generation also invalidates this old-generation
+                    # view; only the authoritative exact-key read may reject it.
+                    await self._wake_followers(key, signal)
+        except NotificationError as error:
+            signal.failure = TraceStoreError(
+                "Trace change notifications are unavailable", cause=error
+            )
+        except BaseException as error:
+            signal.failure = error
+            raise
+        finally:
+            signal.ready.set()
+            if signal.followers:
+                if signal.failure is None:
+                    signal.failure = TraceStoreError(
+                        "Trace change notifications stopped"
+                    )
+                await self._wake_followers(key, signal)
 
     def _decode_event_page(
         self,
@@ -1398,6 +1581,17 @@ class _InMemoryTraceLedgerBackend:
                     )
                 ),
                 observed_at=now,
+                next_writer_lease_remaining_seconds=min(
+                    (
+                        (writer.lease_expires_at - now).total_seconds()
+                        for writer in thread.writers.values()
+                        if writer.active
+                        and now
+                        < writer.lease_expires_at
+                        < datetime.max.replace(tzinfo=UTC)
+                    ),
+                    default=None,
+                ),
             )
 
     async def query_trace_graph(
@@ -1734,16 +1928,19 @@ class InMemoryTraceStore(DurableTraceStore):
         self,
         *,
         limits: TraceLimits | None = None,
+        notifications: Notifications | None = None,
     ) -> None:
         """Initialize a bounded process-local Store.
 
         Args:
             limits: Optional capacity limits.
+            notifications: Borrowed, started change service.
         """
 
         super().__init__(
             _InMemoryTraceLedgerBackend(),
             limits=limits,
+            notifications=notifications,
         )
         self._enforce_writer_leases = False
 

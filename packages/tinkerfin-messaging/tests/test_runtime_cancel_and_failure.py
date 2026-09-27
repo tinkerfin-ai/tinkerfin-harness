@@ -263,7 +263,7 @@ async def test_channel_uses_deferred_source_owned_cancel_callback() -> None:
             identity=_identity(),
             after=0,
         )
-        await asyncio.wait_for(opened.started.wait(), timeout=1)
+        await opened.started.wait()
 
         assert await channel.cancel(identity=_identity()) is True
         assert [message.data async for message in subscription] == [
@@ -312,7 +312,7 @@ async def test_channel_reuses_equivalent_source_owned_cancel_callback(
             after=0,
             cancel=deferred.cancel,
         )
-        await asyncio.wait_for(opened.started.wait(), timeout=1)
+        await opened.started.wait()
 
         assert await channel.cancel(identity=_identity()) is True
         assert [message.data async for message in subscription] == expected
@@ -418,12 +418,9 @@ async def test_cancel_invokes_callback_once_and_commits_callback_output(
             after=0,
             cancel=cancel_run,
         )
-        await asyncio.wait_for(source.started.wait(), timeout=1)
+        await source.started.wait()
 
-        cancelled = await asyncio.wait_for(
-            channel.cancel(identity=_identity()),
-            timeout=1,
-        )
+        cancelled = await channel.cancel(identity=_identity())
 
         assert cancelled is True
         assert await _data(subscription) == ["started", "cancelled-payload"]
@@ -452,7 +449,7 @@ async def test_cancel_callback_receives_the_owned_run_context(
             after=0,
             cancel=cancel_run,
         )
-        await asyncio.wait_for(source.started.wait(), timeout=1)
+        await source.started.wait()
 
         assert await channel.cancel(identity=_identity()) is True
         assert await _data(subscription) == ["started", "context-cancelled-tail"]
@@ -595,7 +592,7 @@ async def test_sync_cancel_callback_can_return_tail_messages(
             after=0,
             cancel=cancel_run,
         )
-        await asyncio.wait_for(source.started.wait(), timeout=1)
+        await source.started.wait()
 
         assert await channel.cancel(identity=_identity()) is True
         assert await _data(subscription) == ["started", "sync-cancelled-tail"]
@@ -659,15 +656,15 @@ async def test_cancel_commits_an_in_flight_message_before_callback_tail() -> Non
                 after=0,
                 cancel=source.abort,
             )
-            await asyncio.wait_for(backend.append_started.wait(), timeout=1)
+            await backend.append_started.wait()
 
             cancelling = asyncio.create_task(channel.cancel(identity=_identity()))
-            await asyncio.wait_for(source.aborted.wait(), timeout=1)
+            await source.aborted.wait()
             await asyncio.sleep(0)
             assert not cancelling.done()
 
             backend.release_append.set()
-            assert await asyncio.wait_for(cancelling, timeout=1) is True
+            assert await cancelling is True
             assert await _data(subscription) == ["in-flight", "cancelled-tail"]
     finally:
         backend.release_append.set()
@@ -691,7 +688,7 @@ async def test_cancel_without_callback_is_rejected_without_stopping_source(
             identity=_identity(),
             after=0,
         )
-        await asyncio.wait_for(source.started.wait(), timeout=1)
+        await source.started.wait()
 
         with pytest.raises(CancellationUnsupported):
             await channel.cancel(identity=_identity())
@@ -850,16 +847,15 @@ async def test_cancel_callback_can_join_the_source_consumer_without_deadlock(
         )
         delivery = aiter(subscription)
         assert (await anext(delivery)).data == "started"
-        await asyncio.wait_for(source.started.wait(), timeout=1)
+        await source.started.wait()
 
         cancelling = asyncio.create_task(channel.cancel(identity=_identity()))
         try:
             # A source that joins its consumer must close without a forced release.
             # Database round-trip latency is unrelated to this ownership guarantee.
-            async with asyncio.timeout(10):
-                await source.closed.wait()
-                assert not source.force_join_return.is_set()
-                assert await cancelling is True
+            await source.closed.wait()
+            assert not source.force_join_return.is_set()
+            assert await cancelling is True
         finally:
             source.force_join_return.set()
             await asyncio.gather(cancelling, return_exceptions=True)
@@ -912,12 +908,12 @@ async def test_commit_failure_remains_primary_when_finish_loses_ownership(
             identity=_identity(),
             after=0,
         )
-        await asyncio.wait_for(backend.append_started.wait(), timeout=1)
+        await backend.append_started.wait()
         producer = _active_producer("run-1")
 
         with caplog.at_level(logging.ERROR, logger="tinkerfin.messaging"):
             backend.release_append.set()
-            await asyncio.wait_for(backend.finish_started.wait(), timeout=1)
+            await backend.finish_started.wait()
             backend.release_finish.set()
             with pytest.raises(UnexpectedMessagingBackendError) as captured:
                 await producer
@@ -957,7 +953,7 @@ async def test_finish_ownership_loss_is_primary_without_an_earlier_failure() -> 
             identity=_identity(),
             after=0,
         )
-        await asyncio.wait_for(backend.finish_started.wait(), timeout=1)
+        await backend.finish_started.wait()
         producer = _active_producer("run-1")
         backend.release_finish.set()
 

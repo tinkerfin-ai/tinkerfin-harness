@@ -256,7 +256,7 @@ async def test_follow_emits_reasoning_entity_deltas() -> None:
         await session.observe(
             _reasoning(context, "live", snapshot=False, monotonic_ns=3)
         )
-        update = await asyncio.wait_for(pending, timeout=1)
+        update = await pending
         assert update.reasoning.removes == ()
         assert len(update.reasoning.upserts) == 1
         assert update.reasoning.upserts[0].content == "live"

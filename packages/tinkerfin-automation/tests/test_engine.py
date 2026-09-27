@@ -20,7 +20,7 @@ from tinkerfin_automation import (
 from tinkerfin_automation.clock import ManualClock
 from tinkerfin_automation.engine import AutomationEngine
 from tinkerfin_automation.service import AutomationService
-from tinkerfin_automation.store import WorkItemClaim
+from tinkerfin_automation.store import ClaimRenewal, WorkClaimBatch, WorkItemClaim
 from tinkerfin_automation.targets import normalize_target_result
 from tinkerfin_native_stream import NativeRuntimeInterrupt
 
@@ -34,7 +34,7 @@ class _RenewalStore(MemoryAutomationStore):
 
     async def renew_claim(
         self, claim: WorkItemClaim, *, lease_duration: timedelta
-    ) -> WorkItemClaim:
+    ) -> ClaimRenewal:
         renewed = await super().renew_claim(claim, lease_duration=lease_duration)
         self.renewed.set()
         return renewed
@@ -127,7 +127,7 @@ async def test_idle_wait_settles_claims_before_their_local_publication() -> None
             limit: int,
             lease_duration: timedelta,
             global_concurrency: int,
-        ) -> tuple[WorkItemClaim, ...]:
+        ) -> WorkClaimBatch:
             claims = await super().claim_work(
                 namespace,
                 worker_id,
@@ -135,7 +135,7 @@ async def test_idle_wait_settles_claims_before_their_local_publication() -> None
                 lease_duration=lease_duration,
                 global_concurrency=global_concurrency,
             )
-            if claims and not claimed.is_set():
+            if claims.claims and not claimed.is_set():
                 claimed.set()
                 await publish.wait()
             elif claimed.is_set():

@@ -3,7 +3,7 @@ import { conversationChatUrl } from './config'
 import { ConversationError } from './errors'
 import { parseConversationAgUiEvent } from './eventParser'
 import { requestEventStream, requestJson } from '../shared/http'
-import { parseJsonSseStream } from './sse'
+import { parseJsonSseStream } from '../shared/sse'
 
 export interface StreamedAgUiEvent {
   event: ConversationAgUiEvent

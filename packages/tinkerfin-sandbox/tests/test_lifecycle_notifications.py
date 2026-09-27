@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import ModuleType
 from typing import cast
 from unittest.mock import AsyncMock
 
@@ -55,6 +56,7 @@ from tinkerfin_sandbox import (
 from tinkerfin_sandbox import (
     OpenSandboxLifecycleReason as Reason,
 )
+from tinkerfin_sandbox.lifecycle import _notifications
 
 
 class _Recorder:
@@ -69,7 +71,7 @@ class _Recorder:
             self.changed.notify_all()
 
     async def wait_for(self, kind: Kind, count: int = 1) -> None:
-        async with asyncio.timeout(3), self.changed:
+        async with self.changed:
             await self.changed.wait_for(
                 lambda: sum(event.type is kind for event in self.events) >= count
             )
@@ -487,7 +489,12 @@ async def test_observer_failure_and_cancellation_are_isolated(
 @pytest.mark.asyncio
 async def test_full_queue_drops_new_events_and_does_not_delay_other_observers(
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    controlled = ModuleType("controlled_asyncio")
+    controlled.__dict__.update(vars(asyncio))
+    setattr(controlled, "timeout", lambda _seconds: asyncio.timeout(None))
+    monkeypatch.setattr(_notifications, "asyncio", controlled)
     entered = asyncio.Event()
     release = asyncio.Event()
 

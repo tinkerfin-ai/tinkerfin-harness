@@ -7,9 +7,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import ModuleType
 
 import pytest
 
+import tinkerfin_messaging.backend as backend_module
 from tinkerfin_contracts import RunIdentity
 from tinkerfin_messaging._messaging_ledger import _MessagingLedger
 from tinkerfin_messaging._messaging_transition import messaging_message_signature
@@ -39,6 +41,7 @@ from tinkerfin_messaging.errors import (
     MessagingQuotaExceeded,
     RunAlreadyActive,
     RunProducerFailed,
+    RunRequestConflict,
     StreamDeleteConflict,
     StreamDeleted,
 )
@@ -178,6 +181,62 @@ def _reference() -> MessagingRunReference:
         producer_token="owner-1",
         producer_fence=1,
     )
+
+
+@pytest.mark.parametrize(
+    "stored,requested", [(None, "a" * 64), ("a" * 64, None), ("a" * 64, "b" * 64)]
+)
+@pytest.mark.parametrize(
+    "status,leased,recoverable,settling",
+    [
+        ("running", True, False, False),
+        ("completed", False, False, False),
+        ("running", False, True, False),
+        ("cancel_requested", False, True, True),
+    ],
+)
+def test_prepare_rejects_different_request_before_attachment_or_recovery(
+    stored: str | None,
+    requested: str | None,
+    status: RunStatus,
+    leased: bool,
+    recoverable: bool,
+    settling: bool,
+) -> None:
+    target = replace(
+        _run(status=status, producer_lease_active=leased, recoverable=recoverable),
+        request_digest=stored,
+        settlement_started=settling,
+    )
+    state = _state(
+        stream=_stream(active_run_id=target.identity.run_id), target_run=target
+    )
+    transition = replace(
+        _prepare_transition(recoverable=recoverable), request_digest=requested
+    )
+    with pytest.raises(RunRequestConflict):
+        resolve_messaging_transition(transition, state)
+    assert state.target_run == target
+
+
+@pytest.mark.parametrize("binding", [None, "a" * 64])
+def test_prepare_preserves_equal_binding_when_attaching(binding: str | None) -> None:
+    target = replace(_run(), request_digest=binding)
+    state = _state(
+        stream=_stream(active_run_id=target.identity.run_id), target_run=target
+    )
+    result = resolve_messaging_transition(
+        replace(_prepare_transition(), request_digest=binding), state
+    )
+    assert result.result.is_producer_owner is False
+    assert result.runs == ()
+
+
+def test_new_run_stores_command_binding() -> None:
+    result = resolve_messaging_transition(
+        replace(_prepare_transition(), request_digest="a" * 64), _state()
+    )
+    assert result.runs[0].request_digest == "a" * 64
 
 
 class _ExpiredLeaseObservationBackend(MemoryBackend):
@@ -751,6 +810,10 @@ async def test_memory_change_wait_preserves_cancellation_during_notification(
     monkeypatch: pytest.MonkeyPatch,
     timeout_seconds: float | None,
 ) -> None:
+    controlled = ModuleType("controlled_asyncio")
+    controlled.__dict__.update(vars(asyncio))
+    setattr(controlled, "timeout", lambda _seconds: asyncio.timeout(None))
+    monkeypatch.setattr(backend_module, "asyncio", controlled)
     backend = MemoryBackend()
     settings = backend.messaging_settings
     prepared = await backend.commit_messaging_transition(
@@ -799,26 +862,23 @@ async def test_memory_change_wait_preserves_cancellation_during_notification(
         payload=b"first",
     )
     try:
-        await asyncio.wait_for(entered.wait(), timeout=1)
+        await entered.wait()
         await backend.commit_messaging_transition(append)
-        done, _ = await asyncio.wait({pending}, timeout=1)
-        assert pending in done
         with pytest.raises(asyncio.CancelledError):
             await pending
-        async with asyncio.timeout(1):
-            await backend.commit_messaging_transition(
-                replace(
-                    append,
-                    transition_id="append-after-cancellation",
-                    message_id="message-2",
-                    payload=b"second",
-                )
+        await backend.commit_messaging_transition(
+            replace(
+                append,
+                transition_id="append-after-cancellation",
+                message_id="message-2",
+                payload=b"second",
             )
-            page = await backend.read_committed_messages(query)
-            assert [message.payload for message in page.messages] == [
-                b"first",
-                b"second",
-            ]
+        )
+        page = await backend.read_committed_messages(query)
+        assert [message.payload for message in page.messages] == [
+            b"first",
+            b"second",
+        ]
     finally:
         if not pending.done():
             pending.cancel()

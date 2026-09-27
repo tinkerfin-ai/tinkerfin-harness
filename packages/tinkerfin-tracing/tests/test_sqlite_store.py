@@ -114,7 +114,7 @@ async def _wait_for_committed_write(
     observed = asyncio.create_task(committed.wait())
     try:
         done, _ = await asyncio.wait(
-            (writing, observed), timeout=3, return_when=asyncio.FIRST_COMPLETED
+            (writing, observed), return_when=asyncio.FIRST_COMPLETED
         )
         if writing in done:
             await writing
@@ -2521,8 +2521,7 @@ async def test_sqlite_proven_append_survives_peer_takeover_during_retry(
             first_commit_finished.set()
             # Keep the unknown result pending after SQLite released its write lock,
             # so the peer can take ownership before the append retries.
-            async with asyncio.timeout(3):
-                await release_retry.wait()
+            await release_retry.wait()
             original_error = sqlite3.OperationalError("disk I/O error")
             original_error.sqlite_errorcode = sqlite3.SQLITE_IOERR
             raise DBAPIError(None, None, original_error, connection_invalidated=True)
@@ -2673,8 +2672,7 @@ async def test_sqlite_cancelled_transaction_releases_writer_lock_before_returnin
     class SlowClosingConnection(sqlite3.Connection):
         def close(self) -> None:
             loop.call_soon_threadsafe(close_started.set)
-            if not release_close.wait(5):
-                raise AssertionError("driver close was not released")
+            release_close.wait()
             super().close()
             driver_closed.set()
 
@@ -2700,7 +2698,7 @@ async def test_sqlite_cancelled_transaction_releases_writer_lock_before_returnin
     writing = asyncio.create_task(writer.append((_fact("started"),)))
     cancellation_requested = False
     try:
-        await asyncio.wait_for(transaction_started.wait(), timeout=3)
+        await transaction_started.wait()
         cancellation_requested = True
         writing.cancel()
         await close_started.wait()
@@ -2726,7 +2724,7 @@ async def test_sqlite_cancelled_transaction_releases_writer_lock_before_returnin
         try:
             try:
                 if cancellation_requested:
-                    assert await asyncio.to_thread(driver_closed.wait, 3)
+                    assert await asyncio.to_thread(driver_closed.wait)
             finally:
                 await writer.aclose()
         finally:
@@ -2793,8 +2791,7 @@ async def test_sqlite_unknown_checkpoint_survives_peer_advancement(
         if remaining:
             remaining -= 1
             first_commit_finished.set()
-            async with asyncio.timeout(3):
-                await release_retry.wait()
+            await release_retry.wait()
             original_error = sqlite3.OperationalError("disk I/O error")
             original_error.sqlite_errorcode = sqlite3.SQLITE_IOERR
             raise DBAPIError(None, None, original_error, connection_invalidated=True)

@@ -213,6 +213,12 @@ runs = Table(
         comment="Thread tail observed before this run started",
     ),
     Column(
+        "request_digest",
+        String(64),
+        nullable=True,
+        comment="Immutable lowercase SHA-256 command binding; NULL identifies an ordinary object stream",
+    ),
+    Column(
         "end_sequence",
         BigInteger,
         nullable=False,

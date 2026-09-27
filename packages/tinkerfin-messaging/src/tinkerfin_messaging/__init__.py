@@ -32,6 +32,7 @@ from .errors import RecoveryUnsupported as RecoveryUnsupported
 from .errors import RunAlreadyActive as RunAlreadyActive
 from .errors import RunNotFound as RunNotFound
 from .errors import RunProducerFailed as RunProducerFailed
+from .errors import RunRequestConflict as RunRequestConflict
 from .errors import SourceProfileMismatch as SourceProfileMismatch
 from .errors import SseRenderingUnsupported as SseRenderingUnsupported
 from .errors import StreamDeleteConflict as StreamDeleteConflict
@@ -126,6 +127,7 @@ __all__ = [
     "RunAlreadyActive",
     "RunNotFound",
     "RunProducerFailed",
+    "RunRequestConflict",
     "RunStatus",
     "SourceProfileMismatch",
     "SqlAlchemyBackend",

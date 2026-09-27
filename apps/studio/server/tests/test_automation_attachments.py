@@ -1,6 +1,6 @@
 """任务和运行通过持久引用保存文件，不依赖页面或草稿生命周期"""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import update
@@ -11,7 +11,9 @@ from tinkerfin_studio.attachments.service import byte_chunks
 
 
 async def test_task_and_run_keep_reference_through_cleanup_and_reconfiguration(
-    attachments, database
+    attachments,
+    database,
+    fixed_utc_time: datetime,
 ) -> None:
     file = await attachments.upload(
         user_id=1, name="参考.md", chunks=byte_chunks(b"# reference")
@@ -37,7 +39,7 @@ async def test_task_and_run_keep_reference_through_cleanup_and_reconfiguration(
     async with database.session() as session:
         await session.execute(
             update(AttachmentFile).values(
-                created_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=2)
+                created_at=fixed_utc_time.replace(tzinfo=None) - timedelta(days=2)
             )
         )
         await session.commit()

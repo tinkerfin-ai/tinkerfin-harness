@@ -134,6 +134,7 @@ class MessageSubscription(Generic[ReplayT]):
     _backend_iterator: AsyncIterator[object] | None
     _backend_close_task: asyncio.Task[None] | None
     _close_task: asyncio.Task[None] | None
+    _context_entered: bool
 
     def __init__(self) -> None:
         """Reject construction that bypasses MessageChannel binding.
@@ -167,7 +168,32 @@ class MessageSubscription(Generic[ReplayT]):
         subscription._backend_iterator = None
         subscription._backend_close_task = None
         subscription._close_task = None
+        subscription._context_entered = False
         return subscription
+
+    async def __aenter__(self) -> Self:
+        """Own this accepted reader for one explicit asynchronous context."""
+        if self._context_entered or self._close_task is not None:
+            raise MessagingClosed("Message subscription is already entered or closed")
+        self._context_entered = True
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Detach on every context exit without cancelling the producer."""
+        failure: BaseException | None = None
+        try:
+            await self.aclose()
+        except BaseException as cleanup_error:  # noqa: BLE001 - preserve control and causes without Python restoring a cyclic context
+            failure = (
+                cleanup_error if exc is None else select_failure(exc, cleanup_error)
+            )
+        if failure is not None:
+            raise failure
 
     def __aiter__(self) -> AsyncIterator[DecodedMessage[ReplayT]]:
         """Claim and return the subscription's one decoded iterator."""
@@ -452,10 +478,12 @@ class MessageChannel(Generic[SourceT, ReplayT]):
         source: MessageSource[SourceT],
         *,
         identity: RunIdentity,
+        request_digest: str | None = None,
         after: int | None = None,
         cancel: CancelCallback[SourceT] | None = None,
         on_committed: CommittedCallback | None = None,
         on_source_ready: Callable[[], Awaitable[None]] | None = None,
+        on_subscribed: Callable[[], Awaitable[None]] | None = None,
         on_delivery_not_started: Callable[[], Awaitable[None]] | None = None,
     ) -> MessageSubscription[ReplayT]: ...
 
@@ -465,10 +493,12 @@ class MessageChannel(Generic[SourceT, ReplayT]):
         source: ProfiledMessageSource[ProfileSourceT, ProfileReplayT],
         *,
         identity: RunIdentity | None = None,
+        request_digest: str | None = None,
         after: int | None = None,
         cancel: CancelCallback[ProfileSourceT] | None = None,
         on_committed: CommittedCallback | None = None,
         on_source_ready: Callable[[], Awaitable[None]] | None = None,
+        on_subscribed: Callable[[], Awaitable[None]] | None = None,
         on_delivery_not_started: Callable[[], Awaitable[None]] | None = None,
     ) -> MessageSubscription[ProfileReplayT]: ...
 
@@ -480,12 +510,14 @@ class MessageChannel(Generic[SourceT, ReplayT]):
         ),
         *,
         identity: RunIdentity | None = None,
+        request_digest: str | None = None,
         after: int | None = None,
         cancel: (
             CancelCallback[SourceT] | CancelCallback[ProfileSourceT] | None
         ) = None,
         on_committed: CommittedCallback | None = None,
         on_source_ready: Callable[[], Awaitable[None]] | None = None,
+        on_subscribed: Callable[[], Awaitable[None]] | None = None,
         on_delivery_not_started: Callable[[], Awaitable[None]] | None = None,
     ) -> MessageSubscription[ReplayT] | MessageSubscription[ProfileReplayT]:
         """Start or attach one source and return its run-bounded subscription.
@@ -503,6 +535,9 @@ class MessageChannel(Generic[SourceT, ReplayT]):
             source: Custom source with explicit identity, or profiled TinkerFin source.
             identity: Required custom-source identity or optional equality check for a
                 profiled source.
+            request_digest: Optional lowercase SHA-256 binding for the complete
+                command; mismatches reject attachment and recovery. Binding lasts
+                while the run record is retained. None denotes an ordinary stream.
             after: Exclusive replay cursor, or current committed tail when omitted.
             cancel: Optional at-most-once cancellation owner; omit when the source
                 already declares its own matching callback.
@@ -511,6 +546,8 @@ class MessageChannel(Generic[SourceT, ReplayT]):
                 producer outcome.
             on_source_ready: Owner-only async callback after the source is ready and
                 before the producer task is created.
+            on_subscribed: Reader-ready notification settled before returning;
+                failure detaches the reader without cancelling the producer.
             on_delivery_not_started: Async cleanup callback used only when source readiness and a
                 valid attachment were both absent.
 
@@ -528,9 +565,11 @@ class MessageChannel(Generic[SourceT, ReplayT]):
             source,
             identity=identity,
             after=after,
+            request_digest=request_digest,
             cancel=cancel,
             on_committed=on_committed,
             on_source_ready=on_source_ready,
+            on_subscribed=on_subscribed,
             on_delivery_not_started=on_delivery_not_started,
         )
 
@@ -539,10 +578,12 @@ class MessageChannel(Generic[SourceT, ReplayT]):
         source: MessageSource[object],
         *,
         identity: RunIdentity | None = None,
+        request_digest: str | None = None,
         after: int | None = None,
         cancel: CancelCallback[object] | None = None,
         on_committed: CommittedCallback | None = None,
         on_source_ready: Callable[[], Awaitable[None]] | None = None,
+        on_subscribed: Callable[[], Awaitable[None]] | None = None,
         on_delivery_not_started: Callable[[], Awaitable[None]] | None = None,
     ) -> MessageSubscription[object]:
         """Validate and start-or-attach before an HTTP response is constructed.
@@ -579,9 +620,11 @@ class MessageChannel(Generic[SourceT, ReplayT]):
             source,
             identity=identity,
             after=after,
+            request_digest=request_digest,
             cancel=cancel,
             on_committed=on_committed,
             on_source_ready=on_source_ready,
+            on_subscribed=on_subscribed,
             on_delivery_not_started=on_delivery_not_started,
         )
 
@@ -591,6 +634,7 @@ class MessageChannel(Generic[SourceT, ReplayT]):
         source: MessageSource[SourceT],
         *,
         identity: RunIdentity,
+        request_digest: str | None = None,
         after: int | Callable[[], int | None] | None = None,
         cancel: CancelCallback[SourceT] | None = None,
         on_committed: CommittedCallback | None = None,
@@ -605,6 +649,7 @@ class MessageChannel(Generic[SourceT, ReplayT]):
         source: ProfiledMessageSource[ProfileSourceT, ProfileReplayT],
         *,
         identity: RunIdentity | None = None,
+        request_digest: str | None = None,
         after: int | Callable[[], int | None] | None = None,
         cancel: CancelCallback[ProfileSourceT] | None = None,
         on_committed: CommittedCallback | None = None,
@@ -618,6 +663,7 @@ class MessageChannel(Generic[SourceT, ReplayT]):
         source: MessageSource[object],
         *,
         identity: RunIdentity | None = None,
+        request_digest: str | None = None,
         after: int | Callable[[], int | None] | None = None,
         cancel: CancelCallback[object] | None = None,
         on_committed: CommittedCallback | None = None,
@@ -631,6 +677,9 @@ class MessageChannel(Generic[SourceT, ReplayT]):
             source: Single-use object source owned and eventually closed by Messaging.
             identity: Explicit run identity for a custom source, or an optional
                 equality check for a profiled TinkerFin source.
+            request_digest: Optional lowercase SHA-256 binding for the complete
+                command; mismatches reject attachment and recovery. Binding lasts
+                while the run record is retained. None denotes an ordinary stream.
             after: Exclusive replay cursor, a zero-argument synchronous resolver
                 returning one, or `None` to start at the current tail. A resolver is
                 invoked exactly once before durable preparation.
@@ -664,6 +713,7 @@ class MessageChannel(Generic[SourceT, ReplayT]):
             source,
             identity=identity,
             after=after,
+            request_digest=request_digest,
             cancel=cancel,
             on_committed=on_committed,
             on_source_ready=on_source_ready,
@@ -676,6 +726,7 @@ class MessageChannel(Generic[SourceT, ReplayT]):
         source: RecoverableSource[SourceT],
         *,
         identity: RunIdentity | None = None,
+        request_digest: str | None = None,
         after: int | None = None,
         cancel: CancelCallback[RecoverableMessage[SourceT]] | None = None,
         on_committed: CommittedCallback | None = None,
@@ -688,6 +739,9 @@ class MessageChannel(Generic[SourceT, ReplayT]):
             source: Factory that rebuilds one owned source from a checkpoint.
             identity: Explicit run identity for a custom source, or an optional
                 equality check for a profiled source factory.
+            request_digest: Optional lowercase SHA-256 binding for the complete
+                command; mismatches reject attachment and recovery. Binding lasts
+                while the run record is retained. None denotes an ordinary stream.
             after: Exclusive durable replay cursor, or the current tail when omitted.
             cancel: At-most-once synchronous or asynchronous callback. Returned tail
                 values must be `RecoverableMessage` instances with stable IDs and
@@ -716,6 +770,7 @@ class MessageChannel(Generic[SourceT, ReplayT]):
             source,
             identity=identity,
             after=after,
+            request_digest=request_digest,
             cancel=cancel,
             on_committed=on_committed,
             on_source_ready=on_source_ready,

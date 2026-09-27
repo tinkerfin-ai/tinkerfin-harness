@@ -16,6 +16,10 @@ Python 3.11 or newer is required.
 | In-memory semantic tracing | `pip install tinkerfin-tracing` |
 | SQL Trace persistence | `pip install "tinkerfin-tracing[sqlalchemy]"` + your async database driver |
 | LangGraph memory with SQLAlchemy | `pip install "tinkerfin-langgraph-store[sqlalchemy]"` plus an async database driver |
+| Process-local resource notifications | `pip install tinkerfin-notifications` |
+| Cross-process resource notifications | `pip install "tinkerfin-notifications[redis]"` |
+| Runtime commands and durable output | `pip install tinkerfin-gateway` |
+| Gateway HTTP responses | `pip install "tinkerfin-gateway[starlette]"` |
 | Protocol-neutral in-memory messaging | `pip install tinkerfin-messaging` |
 | AG-UI messaging codec | `pip install "tinkerfin-messaging[agui]"` |
 | Native messaging codec | `pip install "tinkerfin-messaging[native]"` |

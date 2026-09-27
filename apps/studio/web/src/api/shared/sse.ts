@@ -1,4 +1,10 @@
-import { ConversationError } from './errors'
+/** 实时传输错误只携带稳定错误码，诊断信息不得直接作为界面提示 */
+export class SseError extends Error {
+  constructor(readonly code: 'stream_limit_exceeded' | 'stream_data_invalid', cause?: unknown) {
+    super(code, { cause })
+    this.name = 'SseError'
+  }
+}
 
 export interface JsonSseFrame {
   id: string | null
@@ -14,7 +20,7 @@ const MAX_SSE_FRAME_LINES = 4096
 /**
  * 有界解析一个 JSON SSE 字节流，并在提前结束或取消时释放 reader
  *
- * AG-UI 与 Trace 使用同一传输语法；各自的事件模型校验仍由上层协议边界负责
+ * 对话、轨迹和资源通知使用同一传输语法，事件内容由各自接口校验
  */
 export async function* parseJsonSseStream(
   body: ReadableStream<Uint8Array>,
@@ -45,7 +51,7 @@ export async function* parseJsonSseStream(
   else signal?.addEventListener('abort', onAbort)
 
   const rejectLimit = (): never => {
-    throw new ConversationError('stream_limit_exceeded')
+    throw new SseError('stream_limit_exceeded')
   }
 
   const appendLineText = (text: string) => {
@@ -157,6 +163,6 @@ function parseFrame(lines: string[]): JsonSseFrame | null {
       data: JSON.parse(dataLines.join('\n')) as unknown,
     }
   } catch (error) {
-    throw new ConversationError('stream_data_invalid', error)
+    throw new SseError('stream_data_invalid', error)
   }
 }

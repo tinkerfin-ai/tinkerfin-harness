@@ -396,7 +396,7 @@ async def test_cancelled_initialization_preserves_cancellation_and_next_run(
     )
     pending = asyncio.create_task(stream.messaging_owner_preflight())
     try:
-        await asyncio.wait_for(entered.wait(), timeout=2)
+        await entered.wait()
         for attempt in range(6):
             if pending.done():
                 break

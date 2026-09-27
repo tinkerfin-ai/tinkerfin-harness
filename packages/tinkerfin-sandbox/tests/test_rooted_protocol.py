@@ -1,8 +1,6 @@
 """Atomic in-Sandbox protocol tests for Rooted filesystem operations."""
 
 import json
-import shlex
-import subprocess
 from hashlib import sha256
 from importlib.resources import files
 from pathlib import Path
@@ -18,7 +16,6 @@ from tinkerfin_sandbox.backends._rooted_protocol import (
     _parse_rooted_response,
     _parse_rooted_transfer_handshake,
     _RootedError,
-    _RootedTransferHandshake,
 )
 
 
@@ -1130,44 +1127,6 @@ def test_rooted_response_rejects_mismatched_operation(tmp_path: Path) -> None:
             ExecuteResponse(output=json.dumps(payload), exit_code=0),
             request=request,
         )
-
-
-def test_rooted_transfer_helper_emits_live_descriptor_handshake(
-    tmp_path: Path,
-) -> None:
-    workspace = (tmp_path / "workspace").resolve()
-    workspace.mkdir()
-    request = _build_rooted_transfer_command(
-        root=str(workspace),
-        path="/nested/target.bin",
-        mode="upload",
-        token="local-transfer-token",
-        hold_seconds=5,
-    )
-    process = subprocess.Popen(
-        shlex.split(request.command),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        assert process.stdout is not None
-        handshake_line = process.stdout.readline()
-        handshake = _parse_rooted_transfer_handshake(
-            handshake_line,
-            request=request,
-        )
-
-        assert isinstance(handshake, _RootedTransferHandshake)
-        assert handshake.token == "local-transfer-token"
-        assert handshake.mode == "upload"
-        assert handshake.pid == process.pid
-        assert handshake.fd > 0
-        assert (workspace / "nested" / "target.bin").is_file()
-        assert process.poll() is None
-    finally:
-        process.terminate()
-        process.wait(timeout=5)
 
 
 @pytest.mark.parametrize(

@@ -43,8 +43,8 @@ def office_container(member: str, content: bytes) -> bytes:
 
 
 @pytest.fixture
-async def attachments(database, attachment_storage):
-    return AttachmentService(database, attachment_storage)
+async def attachments(notifications, database, attachment_storage):
+    return AttachmentService(database, attachment_storage, notifications=notifications)
 
 
 async def test_upload_keeps_original_and_rejects_other_users(attachments):
@@ -240,7 +240,7 @@ async def test_generated_workbook_and_pdf_have_valid_content(attachments):
 
 
 async def test_cancelled_storage_write_removes_staging_record_and_bytes(
-    database, tmp_path
+    notifications, database, tmp_path
 ):
     """取消不得留下可见附件或无法按记录清理的文件"""
     import asyncio
@@ -255,7 +255,7 @@ async def test_cancelled_storage_write_removes_staging_record_and_bytes(
             await super().put(key, interrupted())
 
     storage = InterruptedStorage()
-    service = AttachmentService(database, storage)
+    service = AttachmentService(database, storage, notifications=notifications)
     with pytest.raises(asyncio.CancelledError):
         await service.upload(user_id=1, name="cancelled.png", chunks=byte_chunks(png()))
     async with database.session() as session:
@@ -281,7 +281,7 @@ async def test_workbook_preserves_numbers_and_treats_formula_like_text_as_text(
 
 
 async def test_same_name_attachments_remain_distinct_after_service_restart(
-    attachments, database, attachment_storage
+    notifications, attachments, database, attachment_storage
 ):
     """同名报告按 ID 区分，重新创建服务后原件和会话引用仍可读取"""
     files = []
@@ -321,7 +321,9 @@ async def test_same_name_attachments_remain_distinct_after_service_restart(
             message_id="question",
         )
         await session.commit()
-    restored = AttachmentService(database, attachment_storage)
+    restored = AttachmentService(
+        database, attachment_storage, notifications=notifications
+    )
     assert len(await restored.list_thread(user_id=1, thread_id="reports")) == 2
     results = []
     for file in files:
@@ -567,7 +569,12 @@ async def test_invalid_markdown_is_not_published(attachments, database, data):
 
 @pytest.mark.parametrize("extension", ["md", "markdown"])
 async def test_markdown_tools_generate_deliver_import_and_reopen(
-    attachments, database, attachment_storage, extension, work_file_runtime
+    notifications,
+    attachments,
+    database,
+    attachment_storage,
+    extension,
+    work_file_runtime,
 ):
     """Markdown 生成、交付和重新导入保留原件，服务重建后仍校验会话权限"""
     import json
@@ -643,7 +650,9 @@ async def test_markdown_tools_generate_deliver_import_and_reopen(
     assert isinstance(result.content, list)
     file = attachment_from_block(result.content[0])
     assert file is not None and file.mime_type == "text/markdown"
-    restored = AttachmentService(database, attachment_storage)
+    restored = AttachmentService(
+        database, attachment_storage, notifications=notifications
+    )
     _, original = await restored.read(file.id, user_id=1, thread_id="markdown-report")
     assert original == text.encode()
     imported = json.loads(

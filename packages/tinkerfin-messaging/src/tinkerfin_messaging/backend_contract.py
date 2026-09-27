@@ -196,6 +196,8 @@ class StoredMessagingRun:
         failure_class: Bounded trusted failure class name for remote diagnostics.
         failure_message: Bounded trusted failure message for remote diagnostics.
         local_failure: Original in-process failure when the backend can retain it safely.
+        request_digest: Immutable command-content binding, or None for an ordinary
+            object stream. Empty and nonempty bindings never attach to each other.
     """
 
     identity: RunIdentity
@@ -216,6 +218,7 @@ class StoredMessagingRun:
     producer_lease_remaining_seconds: float | None = None
     publication_closed: bool = False
     publication_ready: bool = False
+    request_digest: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,6 +302,8 @@ class MessagingTransition:
         after_sequence: Optional exclusive replay cursor used by preparation.
         cancellable: Whether a new or recovered producer accepts cancellation.
         recoverable: Whether a lost producer can reopen from its checkpoint.
+        request_digest: Optional command-content binding compared atomically during
+            prepare, before ownership or attachment can be granted.
         message_id: Stable semantic message identity for append.
         payload: Encoded message bytes for append.
         checkpoint: Recovery position committed atomically with append.
@@ -324,6 +329,7 @@ class MessagingTransition:
     after_sequence: int | None = None
     cancellable: bool = False
     recoverable: bool = False
+    request_digest: str | None = None
     message_id: str | None = None
     payload: bytes | None = None
     checkpoint: RecoveryCheckpoint | None = None

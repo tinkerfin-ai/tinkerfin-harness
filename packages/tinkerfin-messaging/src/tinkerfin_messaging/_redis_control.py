@@ -34,7 +34,12 @@ from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from tinkerfin_contracts import RunIdentity
 
-from ._identity import required_identifier, required_identity, thread_key
+from ._identity import (
+    required_identifier,
+    required_identity,
+    stored_request_digest,
+    thread_key,
+)
 from ._messaging_ledger import BackendRunHandle
 from ._redis_scripts import (
     _BEGIN_DELETE_SCRIPT,
@@ -305,6 +310,7 @@ class _RunSnapshot:
     settling: bool
     publication_closed: bool
     publication_ready: bool
+    request_digest: str | None
     cancellable: bool
     recoverable: bool
     owner_token: str
@@ -1158,7 +1164,7 @@ async def _run_snapshot(
         raise _redis_protocol_error(
             "Redis run snapshot has an invalid message boundary"
         )
-    if code != "OK" or len(response) != 34:
+    if code != "OK" or len(response) != 35:
         raise _redis_protocol_error(f"unexpected Redis run snapshot response: {code}")
 
     status_text = self._snapshot_text(response[1], field="status")
@@ -1294,6 +1300,9 @@ async def _run_snapshot(
         minimum=0,
     )
     return _RunSnapshot(
+        request_digest=stored_request_digest(
+            self._snapshot_text(response[34], field="request_digest") or None
+        ),
         status=cast(RunStatus, status_text),
         end_seq=end_seq,
         error_class=error_class,

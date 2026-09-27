@@ -99,6 +99,7 @@ def test_public_namespace_exposes_the_default_tinkerfin_facade() -> None:
         "RunAlreadyActive",
         "RunNotFound",
         "RunProducerFailed",
+        "RunRequestConflict",
         "RunStatus",
         "SqlAlchemyBackend",
         "SourceProfileMismatch",

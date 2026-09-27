@@ -274,6 +274,8 @@ class RunList(Boundary):
 class RunDetail(RunView):
     """经过归属校验的只读消息和运行附件"""
 
+    thread_id: str = Field(description="结果所属会话，用于匹配轨迹变化通知")
+    run_id: str = Field(description="结果所属运行，用于匹配轨迹变化通知")
     messages: list[AgUiTraceMessage] = Field(default_factory=list)
     output_files: list[Attachment] = Field(
         default_factory=list, description="本次执行已交付的文件，不包含参考附件"

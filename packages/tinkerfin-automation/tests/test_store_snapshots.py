@@ -113,13 +113,15 @@ async def test_execution_and_authorization_outputs_cannot_mutate_saved_json(
     ):
         assert value.input == original.input
         _alter(value)
-    (claim,) = await store.claim_work(
-        "app",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(hours=1),
-        global_concurrency=1,
-    )
+    (claim,) = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(hours=1),
+            global_concurrency=1,
+        )
+    ).claims
     authorization = await store.authorize_start(
         claim, execution_timeout=timedelta(minutes=10)
     )

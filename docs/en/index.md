@@ -19,6 +19,8 @@ Build agent applications for enterprise workflows that people can interact with,
 | Connect live execution to a chat interface | [AG-UI](agui/index.md) |
 | Query conversations and execution records | [Tracing](tracing/index.md) |
 | Persist events and reconnect to receive output | [Messaging](messaging/index.md) |
+| Broadcast resource changes to independent listeners | [Notifications](notifications/index.md) |
+| Accept commands and notify connected clients | [Gateway](gateway/index.md) |
 | Work with files and commands in isolation | [Sandbox](sandbox/index.md) |
 | Run or schedule Agent tasks | [Automation](automation/index.md) |
 

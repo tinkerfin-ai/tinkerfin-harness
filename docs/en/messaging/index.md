@@ -77,7 +77,12 @@ If a source has a RunIdentity profile and an explicit different RunIdentity is s
 | `RunIdentity.run_id` | Semantic producer and caller idempotency key |
 | `seq` | One-based committed position in the thread log |
 
-The same RunIdentity always means the same semantic run. Reuse it for retries and attachment; use a new run_id for new input. Messaging does not compare request bodies—authorization and business idempotency belong to the caller.
+Reuse the complete `RunIdentity` for retries and attachment; use a new `run_id`
+for new input. An optional `request_digest` binds a canonical lowercase SHA-256
+digest to a run while its record is retained. Different digests, or mixing a bound
+command with an unbound stream, raise `RunRequestConflict` before ownership
+changes. [Gateway](../gateway/index.md) derives this binding from complete commands.
+Direct Messaging callers own digest calculation and input authorization.
 
 ## `after`
 

@@ -108,24 +108,23 @@ async def test_write_close_and_cancellation_preserve_atomicity(
     operation = asyncio.create_task(_capture(_enqueue(store, execution)))
     closer: asyncio.Task[None | BaseException] | None = None
     try:
-        async with asyncio.timeout(10):
-            await entered.wait()
-            if cancel:
-                operation.cancel("caller stopped")
-            closer = asyncio.create_task(_capture(store.close()))
-            # The queued marker runs after close admission, without a timed sleep.
-            admitted = asyncio.Event()
-            asyncio.get_running_loop().call_soon(admitted.set)
-            await admitted.wait()
-            with pytest.raises(AutomationStoreError, match="closed"):
-                await store.current_time()
-            assert not closer.done()
-            if cancel:
-                operation.cancel("caller stopped again")
-                closer.cancel("close waiter stopped")
-            release.set()
-            result = await operation
-            close_result = await closer
+        await entered.wait()
+        if cancel:
+            operation.cancel("caller stopped")
+        closer = asyncio.create_task(_capture(store.close()))
+        # The queued marker runs after close admission, without a timed sleep.
+        admitted = asyncio.Event()
+        asyncio.get_running_loop().call_soon(admitted.set)
+        await admitted.wait()
+        with pytest.raises(AutomationStoreError, match="closed"):
+            await store.current_time()
+        assert not closer.done()
+        if cancel:
+            operation.cancel("caller stopped again")
+            closer.cancel("close waiter stopped")
+        release.set()
+        result = await operation
+        close_result = await closer
         if isinstance(failure, ProcessControl):
             assert result is failure
         elif cancel:

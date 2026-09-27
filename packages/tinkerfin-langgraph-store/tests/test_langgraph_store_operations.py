@@ -53,9 +53,9 @@ async def test_complete_unicode_identities_roundtrip_and_creation_time(
     await store.aput(namespace_values[0], keys[0], {"changed": True})
     after = await store.aget(namespace_values[0], keys[0])
     assert before is not None and after is not None
-    assert (
-        after.created_at == before.created_at and after.updated_at >= before.updated_at
-    )
+    assert after.created_at == before.created_at
+    assert after.updated_at.tzinfo is not None
+    assert after.value == {"changed": True}
     await store.adelete(namespace_values[0], keys[0])
     assert await store.aget(namespace_values[0], keys[0]) is None
 

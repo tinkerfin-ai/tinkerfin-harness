@@ -190,7 +190,8 @@ class Automation:
             global_concurrency: Maximum unfinished executions across workers.
             claim_batch_size: Maximum work items considered per dispatch.
             lease_duration: Ownership interval renewed while executing.
-            poll_interval: Maximum interval between durable work checks.
+            poll_interval: Maximum interval between durable work checks when the
+                Store has no Notifications service.
             drain_timeout: Grace period before cancelling remaining owned work.
             on_interrupt: Optional host classifier; cannot approve or resume a graph.
 
@@ -323,9 +324,13 @@ class Automation:
             raise AutomationLifecycleError(
                 "Enter an Automation lifecycle before operating"
             )
-        if schedule_write and self._state != "worker":
+        if (
+            schedule_write
+            and self._state != "worker"
+            and self._service._execution_store.notifications is None
+        ):
             raise AutomationLifecycleError(
-                "Manage schedules inside automation.worker()"
+                "Schedule management requires a worker or a Store with Notifications"
             )
         self._operations += 1
         self._idle.clear()

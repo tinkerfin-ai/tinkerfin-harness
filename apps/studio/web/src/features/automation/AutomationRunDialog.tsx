@@ -8,7 +8,8 @@ import { MarkdownContent } from '../conversation/components/MarkdownContent'
 import { messageText, type Attachment } from '../conversation/attachments/content'
 import { useAttachmentDownload } from '../conversation/attachments/useAttachmentDownload'
 import { fetchRunDetail, type RunDetail } from './api'
-import { isActiveRun, presentRun, type AutomationRun } from './model'
+import { watchResource } from '../../api/shared/watchResource'
+import { presentRun, type AutomationRun } from './model'
 import { RunStatus } from './AutomationHistory'
 
 function ResultFile({ file }: { file: Attachment }) {
@@ -16,7 +17,7 @@ function ResultFile({ file }: { file: Attachment }) {
   return <Button variant="ghost" leadingIcon={<Download size={16} />} loading={download.pending} onClick={() => void download.download()}>{file.name}</Button>
 }
 
-/** 只读取已授权结果；关闭后取消请求，运行中按服务端状态刷新 */
+/** 只读取已授权结果；关闭后取消请求，接收运行、轨迹和附件变化后刷新 */
 export function AutomationRunDialog({ run, trigger, onToast, onClose }: {
   run: AutomationRun | null
   trigger: HTMLElement | null
@@ -33,36 +34,27 @@ export function AutomationRunDialog({ run, trigger, onToast, onClose }: {
   const id = run?.id
   useEffect(() => {
     if (!id) return
-    let controller: AbortController | null = null
-    let closed = false
-    let timer: ReturnType<typeof setTimeout> | undefined
     if (loadedRunId.current !== id) {
       loadedRunId.current = id
       setDetail(null)
     }
     setFailure(false)
-    const read = async () => {
-      if (closed || document.hidden) return
-      controller?.abort()
-      const request = new AbortController()
-      controller = request
-      try {
-        const result = await fetchRunDetail(id, request.signal)
-        if (closed || request.signal.aborted) return
-        setDetail(result)
-        setFailure(false)
-        if (isActiveRun(result.status) && !document.hidden) timer = setTimeout(() => void read(), 2000)
-      } catch {
-        if (!closed && !request.signal.aborted) {
-          setFailure(true)
-          latestNotification.current.onToast('error', latestNotification.current.t('运行结果加载失败'))
-        }
-      }
-    }
-    const visibility = () => { clearTimeout(timer); if (document.hidden) controller?.abort(); else void read() }
-    void read()
-    document.addEventListener('visibilitychange', visibility)
-    return () => { closed = true; controller?.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', visibility) }
+    let observed: RunDetail | null = null
+    const watch = watchResource({
+      minRefreshMs: 2000,
+      matches: change => (
+        (change.topic === 'automation.execution.changed' && change.key === id)
+        || (change.topic === 'studio.attachments.changed' && change.details.collection_id === id)
+        || (change.topic === 'trace.changed' && (!observed || change.key === observed.threadId))
+      ),
+      read: signal => fetchRunDetail(id, signal),
+      update: result => { observed = result; setDetail(result); setFailure(false) },
+      onError: () => {
+        setFailure(true)
+        latestNotification.current.onToast('error', latestNotification.current.t('运行结果加载失败'))
+      },
+    })
+    return watch.close
   }, [id, revision])
   const current = detail ? presentRun(detail) : run
   return <Dialog open={run !== null} title={t('运行结果')} className="automation-result-dialog" restoreFocusTo={trigger} onClose={onClose}>

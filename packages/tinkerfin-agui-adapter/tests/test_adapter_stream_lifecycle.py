@@ -171,10 +171,6 @@ def _tool_part() -> dict[str, object]:
     )
 
 
-async def _wait_for(event: asyncio.Event) -> None:
-    await asyncio.wait_for(event.wait(), timeout=1)
-
-
 async def _collect_through(
     stream: AsyncIterator[BaseEvent], event_type: str
 ) -> list[BaseEvent]:
@@ -271,7 +267,7 @@ async def test_consumer_close_abandons_open_child_lifecycle_without_run_error(
     events = await _collect_through(stream, open_event)
     await stream.aclose()
 
-    await _wait_for(parts.closed)
+    await parts.closed.wait()
     assert parts.close_calls == 1
     assert parts.active_pulls == 0
     assert not any(event.type.value == "RUN_ERROR" for event in events)
@@ -300,12 +296,12 @@ async def test_cancellation_during_blocked_upstream_pull_propagates_and_closes(
     events = await _collect_through(stream, open_event)
 
     pending_event = asyncio.ensure_future(anext(stream))
-    await _wait_for(parts.pull_started)
+    await parts.pull_started.wait()
     pending_event.cancel()
 
     with pytest.raises(asyncio.CancelledError):
         await pending_event
-    await _wait_for(parts.closed)
+    await parts.closed.wait()
     assert parts.close_calls == 1
     assert parts.active_pulls == 0
     assert not any(event.type.value == "RUN_ERROR" for event in events)
@@ -662,7 +658,7 @@ async def test_consumer_close_after_start_closes_upstream_iterator() -> None:
     await anext(stream)
     await stream.aclose()
 
-    await _wait_for(parts.closed)
+    await parts.closed.wait()
     assert parts.close_calls == 1
 
 
@@ -709,10 +705,10 @@ async def test_cancelled_terminal_pull_finishes_interrupted_upstream_close() -> 
     assert isinstance(stream, AsyncGenerator)
     assert (await anext(stream)).type.value == "RUN_STARTED"
     terminal_pull = asyncio.create_task(anext(stream))
-    await _wait_for(parts.close_started)
+    await parts.close_started.wait()
 
     terminal_pull.cancel("request cancelled during adapter parts close")
-    await _wait_for(parts.close_cancelled)
+    await parts.close_cancelled.wait()
     parts.release_close.set()
 
     try:

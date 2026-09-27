@@ -249,7 +249,7 @@ async def test_recoverable_cancel_callback_returns_checkpointed_tail(
             after=0,
             cancel=cancel_run,
         )
-        await asyncio.wait_for(source.started.wait(), timeout=1)
+        await source.started.wait()
 
         assert await channel.cancel(identity=_identity()) is True
         replay = [message async for message in subscription]

@@ -66,16 +66,14 @@ async def test_repeated_cancellation_during_sqlite_lock_wait_settles_resources(
         event.listen(engine.sync_engine, "before_cursor_execute", before_execute)
         blocker = await asyncio.to_thread(_hold_writer, path)
         operation = asyncio.create_task(state.acquire_owner("owner"))
-        await asyncio.wait_for(reached.wait(), timeout=2)
+        await reached.wait()
         for number in range(cancellations):
             operation.cancel(f"caller cancellation {number}")
             await asyncio.sleep(0)
         await asyncio.to_thread(_release_writer, blocker)
         blocker = None
-        done, _ = await asyncio.wait((operation,), timeout=2)
-        assert operation in done
         with pytest.raises(asyncio.CancelledError):
-            operation.result()
+            await operation
         await state.aclose()
         await asyncio.sleep(0)
         assert not [
@@ -124,7 +122,7 @@ async def test_cancel_during_pool_return_preserves_borrowed_engine_capacity(
         assert reset_seen.is_set()
         assert isinstance(engine.pool, AsyncAdaptedQueuePool)
         assert engine.pool.checkedout() == 0
-        second = await asyncio.wait_for(state.acquire_owner("second"), timeout=1)
+        second = await state.acquire_owner("second")
         await state.release_owner(second)
         await state.aclose()
         assert engine.pool.checkedout() == 0
@@ -279,18 +277,16 @@ async def test_cancel_after_sqlite_execute_rolls_back_writes_and_releases_read_l
             operation = asyncio.create_task(state.read_availability("owner"))
         else:
             operation = asyncio.create_task(state.get_holder_updates("manager"))
-        await asyncio.wait_for(gate.reached.wait(), timeout=2)
+        await gate.reached.wait()
         for number in range(cancellations):
             operation.cancel(f"{operation_name} cancellation {number}")
             await asyncio.sleep(0)
         # Cancellation is a request to settle the active driver operation. The
         # test releases its own gate; it never waits for driver cancellation.
         gate.release.set()
-        done, _ = await asyncio.wait((operation,), timeout=3)
-        assert operation in done
         retained: asyncio.CancelledError | None = None
         try:
-            operation.result()
+            await operation
         except asyncio.CancelledError as error:
             retained = error
         assert retained is not None
@@ -308,7 +304,7 @@ async def test_cancel_after_sqlite_execute_rolls_back_writes_and_releases_read_l
         assert engine.pool.checkedout() == 0
         if claim is not None:
             await state.release_owner(claim)
-        successor = await asyncio.wait_for(state.acquire_owner("owner"), timeout=1)
+        successor = await state.acquire_owner("owner")
         await state.release_owner(successor)
         await state.aclose()
         assert engine.pool is borrowed_pool

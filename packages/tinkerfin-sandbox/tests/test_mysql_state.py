@@ -195,7 +195,7 @@ async def test_mysql57_borrowed_settlement_restores_or_invalidates_session(
     assert await _mysql_pool_lock_wait_values(engine) == {37}
 
     operation = asyncio.create_task(state._run_write_transaction(block_operation))
-    await asyncio.wait_for(entered.wait(), timeout=2)
+    await entered.wait()
     operation.cancel("borrowed MySQL operation cancelled")
     await asyncio.sleep(0)
     # Complete the operation owned by the test so State can roll it back and
@@ -270,7 +270,7 @@ async def test_mysql57_cancelled_failed_commit_invalidates_without_warning(
     loop.set_exception_handler(capture_loop_error)
     operation = asyncio.create_task(state._run_write_transaction(no_op))
     try:
-        await asyncio.wait_for(commit_entered.wait(), timeout=2)
+        await commit_entered.wait()
         operation.cancel("caller cancelled during MySQL commit")
         release_commit.set()
         with pytest.raises(
@@ -348,7 +348,7 @@ async def test_mysql8_export_and_runtime_claims_are_compatible(
         await owner_queried.wait()
         assert not waiting_owner.done()
         await first.release_owner(initial_owner)
-        successor_owner = await asyncio.wait_for(waiting_owner, timeout=2)
+        successor_owner = await waiting_owner
         assert successor_owner.generation > initial_owner.generation
         await second.release_owner(successor_owner)
 

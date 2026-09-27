@@ -270,10 +270,10 @@ async def test_mysql_workers_share_global_admission_and_fenced_claims(
                 global_concurrency=1,
             ),
         )
-        claims = (*first_claims, *second_claims)
+        claims = (*first_claims.claims, *second_claims.claims)
         assert len(claims) == 1
         claim = claims[0]
-        owner = first_store if first_claims else second_store
+        owner = first_store if first_claims.claims else second_store
         authorization = await owner.authorize_start(
             claim, execution_timeout=timedelta(minutes=30)
         )
@@ -282,13 +282,15 @@ async def test_mysql_workers_share_global_admission_and_fenced_claims(
         )
         assert authorization.execution.start_authorized_at is not None
 
-        next_claims = await first_store.claim_work(
-            "mysql-test",
-            "worker-1",
-            limit=1,
-            lease_duration=timedelta(minutes=1),
-            global_concurrency=1,
-        )
+        next_claims = (
+            await first_store.claim_work(
+                "mysql-test",
+                "worker-1",
+                limit=1,
+                lease_duration=timedelta(minutes=1),
+                global_concurrency=1,
+            )
+        ).claims
         assert len(next_claims) == 1
         assert next_claims[0].fence == 1
     finally:
@@ -351,7 +353,7 @@ async def test_mysql_workers_enforce_taskless_concurrency_per_owner(
                 global_concurrency=3,
             ),
         )
-        claims = (*first_claims, *second_claims)
+        claims = (*first_claims.claims, *second_claims.claims)
         claimed_owners = [
             (
                 await first_store.get_scheduled_execution(

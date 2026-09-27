@@ -7,37 +7,21 @@ import inspect
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar, Token
-from types import ModuleType
 from typing import Literal
 
 import pytest
 from deepagents.backends import StateBackend
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from lease_test_support import LeaseClock
 from redis.asyncio import Redis
 from test_runtime_api import _open
 from test_runtime_observation import _ControlSession, _Observer
 
-import tinkerfin.redis._lease_lock as lease_module
 from tinkerfin import TinkerFin
 from tinkerfin.coordination import RunCoordinationOwnershipLostError, RunCoordinator
 from tinkerfin.redis import RedisRunCoordinator
 from tinkerfin_contracts import PreparedWorkspace, RunIdentity, RunTerminalObservation
-
-
-class _LeaseClock:
-    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self.waiting = asyncio.Event()
-        self.tick = asyncio.Event()
-        controlled = ModuleType("controlled_asyncio")
-        controlled.__dict__.update(vars(asyncio))
-        setattr(controlled, "sleep", self.sleep)
-        monkeypatch.setattr(lease_module, "asyncio", controlled)
-
-    async def sleep(self, seconds: float) -> None:
-        self.waiting.set()
-        await self.tick.wait()
-        self.tick.clear()
 
 
 class _LeaseRedis(Redis):
@@ -83,7 +67,7 @@ def _builder(
     return TinkerFin(run_coordinator=coordinator).with_namespace("company")
 
 
-async def _lose_lease(clock: _LeaseClock, client: _LeaseRedis) -> None:
+async def _lose_lease(clock: LeaseClock, client: _LeaseRedis) -> None:
     await clock.waiting.wait()
     clock.tick.set()
     await client.renewed.wait()
@@ -100,7 +84,7 @@ async def test_lease_loss_cancels_graph_and_preserves_failure_through_close(
     observer: bool,
     external_close: bool,
 ) -> None:
-    clock, client = _LeaseClock(monkeypatch), _LeaseRedis()
+    clock, client = LeaseClock(monkeypatch), _LeaseRedis()
     coordinator = RedisRunCoordinator.from_client(client)
     entered, work, cleanup_started, cleanup_release = (
         asyncio.Event() for _ in range(4)
@@ -460,7 +444,7 @@ async def test_lease_loss_before_resource_release_downgrades_success(
     monkeypatch: pytest.MonkeyPatch,
     protocol: Literal["native", "agui"],
 ) -> None:
-    clock, client = _LeaseClock(monkeypatch), _LeaseRedis()
+    clock, client = LeaseClock(monkeypatch), _LeaseRedis()
     coordinator = RedisRunCoordinator.from_client(client)
     source = _ClosingIterator()
     terminals: list[RunTerminalObservation] = []

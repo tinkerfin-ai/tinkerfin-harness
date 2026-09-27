@@ -6,8 +6,11 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator, Awaitable, Mapping
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
+from types import ModuleType
 from typing import Literal, TypeVar
+from weakref import WeakKeyDictionary
 
 import httpx
 import pytest
@@ -20,6 +23,7 @@ from tests.support.sql_engines import SqlEngineFactory
 
 from tinkerfin_sandbox import (
     OpenSandboxAvailability,
+    OpenSandboxAvailabilityPhase,
     OpenSandboxBackend,
     OpenSandboxBackendError,
     OpenSandboxBackendUnavailableError,
@@ -39,9 +43,38 @@ from tinkerfin_sandbox import (
     RootedOpenSandboxBackend,
     SQLAlchemyOpenSandboxState,
 )
+from tinkerfin_sandbox.backends import sdk
+from tinkerfin_sandbox.lifecycle import (
+    _manager_availability,
+    _manager_recovery,
+    _sql_state_ops,
+)
 
 _ResultT = TypeVar("_ResultT")
 _Backend = OpenSandboxHandle | RootedOpenSandboxBackend
+
+
+class _StateChanges:
+    """Wake each polling task once per committed fixture change, without timers."""
+
+    def __init__(self) -> None:
+        self.sequence = 0
+        self.changed = asyncio.Event()
+        self.observed: WeakKeyDictionary[asyncio.Task[object], int] = (
+            WeakKeyDictionary()
+        )
+
+    def publish(self) -> None:
+        self.sequence += 1
+        self.changed.set()
+        self.changed = asyncio.Event()
+
+    async def wait(self, _seconds: float) -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        if self.observed.get(task, -1) == self.sequence:
+            await self.changed.wait()
+        self.observed[task] = self.sequence
 
 
 class _HeldCommand(httpx.AsyncByteStream):
@@ -57,6 +90,7 @@ class _HeldCommand(httpx.AsyncByteStream):
         self.remote.command_started.set()
         await self.remote.command_release.wait()
         self.remote.active_commands -= 1
+        self.remote.changes.publish()
         yield b'data: {"type":"execution_complete","timestamp":2}\n\n'
 
 
@@ -64,6 +98,7 @@ class _Remote:
     """Control SDK-visible endpoints and lifecycle effects for shared clients."""
 
     def __init__(self) -> None:
+        self.changes = _StateChanges()
         self.states: dict[str, str] = {}
         self.connection_generations: dict[str, int] = {}
         self.endpoints: dict[str, tuple[str, int]] = {}
@@ -179,6 +214,7 @@ class _Remote:
                 await self.upload_release.wait()
             finally:
                 self.active_uploads -= 1
+                self.changes.publish()
             return httpx.Response(200)
         if path == "/command/status/held-command":
             return httpx.Response(
@@ -192,6 +228,7 @@ class _Remote:
         if request.method == "DELETE" and path == "/command":
             self.command_release.set()
             self.active_commands = 0
+            self.changes.publish()
             return httpx.Response(204)
         raise AssertionError(f"Unexpected SDK request: {request.method} {path}")
 
@@ -287,8 +324,10 @@ class _Client:
 class _ControlledState(SQLAlchemyOpenSandboxState):
     """Delay public coordination responses while retaining real SQL transitions."""
 
-    def __init__(self, engine: AsyncEngine) -> None:
+    def __init__(self, engine: AsyncEngine, changes: _StateChanges) -> None:
         super().__init__(engine=engine, namespace="pause-resume", poll_interval=0.01)
+        self.changes = changes
+        self.acknowledged: set[tuple[str, int, int]] = set()
         self.outage = False
         self.delay_ack = False
         self.ack_started = asyncio.Event()
@@ -311,6 +350,7 @@ class _ControlledState(SQLAlchemyOpenSandboxState):
                 "Holder registration is temporarily unavailable"
             )
         result = await super().register_holder(claim, holder_id)
+        self.changes.publish()
         if failure == "after":
             self.registration_failed.set()
             raise OpenSandboxStateError("Holder registration response is unavailable")
@@ -340,7 +380,35 @@ class _ControlledState(SQLAlchemyOpenSandboxState):
         accepted = await super().acknowledge_idle(holder_id, availability)
         if not accepted:
             self.stale_ack_rejected.set()
+        key = (holder_id, availability.binding_generation, availability.sequence)
+        if accepted and key not in self.acknowledged:
+            self.acknowledged.add(key)
+            self.changes.publish()
         return accepted
+
+    async def change_availability(
+        self,
+        claim: OpenSandboxOwnerClaim,
+        expected: OpenSandboxAvailability,
+        *,
+        phase: OpenSandboxAvailabilityPhase,
+        refresh_connection: bool = False,
+    ) -> OpenSandboxAvailability:
+        result = await super().change_availability(
+            claim, expected, phase=phase, refresh_connection=refresh_connection
+        )
+        self.changes.publish()
+        return result
+
+    async def release_owner(self, claim: OpenSandboxOwnerClaim) -> None:
+        await super().release_owner(claim)
+        self.changes.publish()
+
+    async def unregister_holder(
+        self, holder_id: str, availability: OpenSandboxAvailability
+    ) -> None:
+        await super().unregister_holder(holder_id, availability)
+        self.changes.publish()
 
 
 class _Observer:
@@ -359,6 +427,7 @@ class _World:
         self.engines = SqlEngineFactory()
         self.workspace_root = workspace_root
         self.remote = _Remote()
+        self.changes = self.remote.changes
         self.managers: list[OpenSandboxManager[str]] = []
         self.states: list[_ControlledState] = []
         self.clients: list[_Client] = []
@@ -366,12 +435,13 @@ class _World:
 
     async def add(self, observer: _Observer | None = None) -> OpenSandboxManager[str]:
         client = _Client(self.remote, workspace_root=self.workspace_root)
-        state = _ControlledState(self.engines(self.url))
+        state = _ControlledState(self.engines(self.url), self.changes)
         manager = OpenSandboxManager[str](
             client=client,
             key_resolver=str,
             state=state,
             warm_pool_size=0,
+            settlement_timeout=None,
             recovery_policy=OpenSandboxRecoveryPolicy(max_attempts=1, timeout=1),
             observers=() if observer is None else (observer,),
         )
@@ -402,10 +472,7 @@ class _World:
                 task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
         try:
-            await asyncio.wait_for(
-                asyncio.gather(*(manager.aclose() for manager in self.managers)),
-                timeout=10,
-            )
+            await asyncio.gather(*(manager.aclose() for manager in self.managers))
         finally:
             await self.engines.aclose()
 
@@ -415,10 +482,23 @@ async def _world(
     tmp_path: Path, *, workspace_root: str | None = None
 ) -> AsyncGenerator[_World]:
     world = _World(tmp_path, workspace_root)
-    try:
-        yield world
-    finally:
-        await world.close()
+    controlled = ModuleType("controlled_asyncio")
+    controlled.__dict__.update(vars(asyncio))
+    setattr(controlled, "sleep", world.changes.wait)
+    setattr(controlled, "timeout", lambda _delay: asyncio.timeout(None))
+    setattr(controlled, "timeout_at", lambda _deadline: asyncio.timeout(None))
+    with pytest.MonkeyPatch.context() as patch:
+        for module in (_manager_availability, _manager_recovery, _sql_state_ops, sdk):
+            patch.setattr(module, "asyncio", controlled)
+        patch.setattr(
+            SQLAlchemyOpenSandboxState,
+            "_now",
+            staticmethod(lambda: datetime(2030, 1, 1)),
+        )
+        try:
+            yield world
+        finally:
+            await world.close()
 
 
 @pytest.mark.parametrize("failure", ["before", "after"])
@@ -462,12 +542,12 @@ async def test_cancelled_registration_settles_ownership_before_manager_close(
         state = world.states[0]
         state.delay_registration = True
         operation = world.spawn(first.get("owner"))
-        await asyncio.wait_for(state.registration_committed.wait(), timeout=2)
+        await state.registration_committed.wait()
         for _ in range(cancellations):
             operation.cancel("cancelled registration caller")
             await asyncio.sleep(0)
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(operation, timeout=2)
+            await operation
         state.registration_release.set()
         await first.aclose()
         second = await world.add()
@@ -488,7 +568,7 @@ async def test_peer_resume_registration_failure_recovers_through_get(
         await first.pause("owner", timeout=2)
         world.states[1].registration_failure = "before"
         await first.resume("owner", timeout=2)
-        await asyncio.wait_for(world.states[1].registration_failed.wait(), timeout=2)
+        await world.states[1].registration_failed.wait()
         assert await second.get("owner") is backend
         assert (await backend.aexecute("probe")).exit_code == 0
         assert world.remote.created == 1

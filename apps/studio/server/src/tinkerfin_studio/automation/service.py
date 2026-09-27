@@ -324,20 +324,25 @@ class StudioAutomationService:
         """先核验执行归属，再读取框架的只读消息与当前执行附件"""
         run = (await self._automation.get_run(execution_id)).snapshot
         view = run_view(run)
+        details = {
+            **view.model_dump(),
+            "thread_id": run.identity.thread_id,
+            "run_id": run.identity.run_id,
+        }
         if run.execution_started_at is None:
-            return RunDetail(**view.model_dump(), result_available=False)
+            return RunDetail(**details, result_available=False)
         try:
             history = await AgUiHistory(
                 self._resources.tracer, namespace=run.identity.namespace
             ).get(run.identity.thread_id, head_run_id=run.identity.run_id, limit=100)
         except TraceThreadNotFound:
-            return RunDetail(**view.model_dump(), result_available=False)
+            return RunDetail(**details, result_available=False)
         files = await self._resources.attachments.list_collection(
             user_id=self._user_id, collection_id=execution_id
         )
         original_ids = set(task_configuration(run).attachments)
         return RunDetail(
-            **view.model_dump(),
+            **details,
             result_available=True,
             messages=[
                 message

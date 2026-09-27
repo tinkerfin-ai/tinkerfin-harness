@@ -109,7 +109,7 @@ async def test_detach_does_not_stop_the_producer_and_cursor_reconnects(
         await first.aclose()
         assert not source.closed.is_set()
         release.set()
-        await asyncio.wait_for(source.closed.wait(), timeout=1)
+        await source.closed.wait()
 
         unused = _Source(("must-not-run",))
         resumed = await channel.wrap(
@@ -137,7 +137,7 @@ async def test_close_settles_an_active_pull_without_stopping_the_producer(
         pending = asyncio.ensure_future(anext(delivery))
         await asyncio.sleep(0)
         try:
-            await asyncio.wait_for(subscription.aclose(), timeout=2)
+            await subscription.aclose()
             assert pending.done()
             with pytest.raises(asyncio.CancelledError):
                 await pending
@@ -146,7 +146,7 @@ async def test_close_settles_an_active_pull_without_stopping_the_producer(
                 await anext(delivery)
             assert not source.closed.is_set()
             release.set()
-            await asyncio.wait_for(source.closed.wait(), timeout=2)
+            await source.closed.wait()
             replay = await channel.follow(identity=_identity(), after=1)
             assert await _data(replay) == ["second"]
         finally:
@@ -370,9 +370,7 @@ async def test_payload_that_looks_terminal_does_not_finish_the_producer(
         await asyncio.sleep(0)
         assert not next_message.done()
         release.set()
-        assert (await asyncio.wait_for(next_message, timeout=1)).data == (
-            "after-terminal-looking-payload"
-        )
+        assert (await next_message).data == ("after-terminal-looking-payload")
         with pytest.raises(StopAsyncIteration):
             await anext(delivery)
 
@@ -420,8 +418,8 @@ async def test_different_streams_can_produce_concurrently(
             identity=_identity(thread_id="conversation-2", run_id="run-2"),
             after=0,
         )
-        await asyncio.wait_for(first.started.wait(), timeout=1)
-        await asyncio.wait_for(second.started.wait(), timeout=1)
+        await first.started.wait()
+        await second.started.wait()
         release.set()
 
         assert await _data(first_subscription) == ["first"]

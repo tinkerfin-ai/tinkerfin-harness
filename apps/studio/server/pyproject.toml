@@ -41,6 +41,8 @@ dependencies = [
     "tinkerfin-automation[sqlalchemy]==0.1.0",
     "tinkerfin-langgraph-store[sqlalchemy]==0.1.0",
     "tinkerfin-messaging[agui,redis]==0.1.0",
+    "tinkerfin-gateway[starlette]==0.1.0",
+    "tinkerfin-notifications[redis]==0.1.0",
     "tinkerfin-sandbox[sqlalchemy]==0.1.0",
     "tinkerfin-tracing[sqlalchemy]==0.1.0",
     "uvicorn[standard]>=0.52,<1",

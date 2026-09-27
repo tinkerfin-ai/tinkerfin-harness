@@ -5,7 +5,7 @@ import base64
 import json
 import shlex
 import threading
-from collections.abc import Iterator
+from collections.abc import Coroutine, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import timedelta
@@ -632,8 +632,7 @@ class _BlockingGuardBackend(_RecordingBackend):
     ) -> ExecuteResponse:
         if "commonpath" in command:
             self.guard_started.set()
-            if not self.guard_release.wait(timeout=2):
-                raise TimeoutError("guard release timed out")
+            self.guard_release.wait()
         return super().execute(command, timeout=timeout)
 
     async def aexecute(
@@ -1425,10 +1424,12 @@ def test_validation_and_operation_share_one_handle_lease() -> None:
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         operation = executor.submit(rooted.read, "/leased.txt")
-        assert old_backend.guard_started.wait(timeout=1)
-        replaced = handle._replace_backend(cast(OpenSandboxBackend, new_backend))
-        old_backend.guard_release.set()
-        result = operation.result(timeout=2)
+        try:
+            assert old_backend.guard_started.wait()
+            replaced = handle._replace_backend(cast(OpenSandboxBackend, new_backend))
+        finally:
+            old_backend.guard_release.set()
+        result = operation.result()
 
     assert replaced is old_backend
     assert result.error is None
@@ -1437,46 +1438,48 @@ def test_validation_and_operation_share_one_handle_lease() -> None:
 
 
 @pytest.mark.asyncio
-async def test_queued_async_cancellation_never_starts_on_replacement_backend() -> None:
+async def test_cancelled_pending_async_call_cannot_use_a_replacement_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     loop = asyncio.get_running_loop()
-    executor = ThreadPoolExecutor(max_workers=1)
-    loop.set_default_executor(executor)
-    blocker_started = threading.Event()
-    blocker_release = threading.Event()
-
-    def occupy_only_worker() -> None:
-        blocker_started.set()
-        blocker_release.wait(timeout=2)
-
-    blocker = loop.run_in_executor(None, occupy_only_worker)
-    while not blocker_started.is_set():
-        await asyncio.sleep(0)
-
+    queued, release = asyncio.Event(), asyncio.Event()
+    create_task = loop.create_task
+    owned: list[asyncio.Task[WriteResult]] = []
     old_backend = _RecordingBackend()
     new_backend = _RecordingBackend()
-    new_backend.guard_results.append([True])
     handle = OpenSandboxHandle(cast(OpenSandboxBackend, old_backend))
     rooted = RootedOpenSandboxBackend(handle)
+
+    def queue(
+        coroutine: Coroutine[None, None, WriteResult],
+    ) -> asyncio.Task[WriteResult]:
+        async def delayed() -> WriteResult:
+            queued.set()
+            await release.wait()
+            return await coroutine
+
+        child = create_task(delayed())
+        # The callback closes the accepted coroutine even if the wrapper is
+        # cancelled before its first step. The test owns both task and input.
+        child.add_done_callback(lambda _task: coroutine.close())
+        owned.append(child)
+        return child
+
     operation = asyncio.create_task(rooted.awrite("/late.txt", "content"))
     try:
-        while not rooted._background_tasks:
-            await asyncio.sleep(0)
-        operation.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await operation
-        _ = handle._replace_backend(cast(OpenSandboxBackend, new_backend))
-
-        for _ in range(100):
-            if not rooted._background_tasks:
-                break
-            await asyncio.sleep(0)
-        assert not rooted._background_tasks
-
-        blocker_release.set()
-        await blocker
+        with monkeypatch.context() as patch:
+            patch.setattr(loop, "create_task", queue)
+            await queued.wait()
+            operation.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await operation
+        handle._replace_backend(cast(OpenSandboxBackend, new_backend))
+        release.set()
+        await asyncio.gather(*owned, return_exceptions=True)
         assert old_backend.write_calls == []
         assert new_backend.write_calls == []
     finally:
-        blocker_release.set()
-        await blocker
-        executor.shutdown(wait=True)
+        release.set()
+        if not operation.done():
+            operation.cancel()
+        await asyncio.gather(operation, *owned, return_exceptions=True)

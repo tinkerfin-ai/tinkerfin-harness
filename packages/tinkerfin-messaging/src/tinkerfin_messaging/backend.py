@@ -82,6 +82,7 @@ class _RunRecord:
         owner_token: str,
         cancellable: bool,
         recoverable: bool,
+        request_digest: str | None = None,
     ) -> None:
         self.identity = identity
         self.start_seq = start_seq
@@ -90,6 +91,7 @@ class _RunRecord:
         self.fence = 1
         self.cancellable = cancellable
         self.recoverable = recoverable
+        self.request_digest = request_digest
         self.status: RunStatus = "running"
         self.settling = False
         self.publication_closed = False
@@ -675,6 +677,7 @@ class MemoryBackend:
             identity=record.identity,
             generation=generation,
             start_sequence=record.start_seq,
+            request_digest=record.request_digest,
             end_sequence=record.end_seq,
             status=record.status,
             settlement_started=record.settling,
@@ -765,6 +768,7 @@ class MemoryBackend:
                         owner_token=stored_run.producer_token or "",
                         cancellable=stored_run.cancellable,
                         recoverable=stored_run.recoverable,
+                        request_digest=stored_run.request_digest,
                     )
                     stream_state.runs[stored_run.identity.run_id] = record
                 record.start_seq = stored_run.start_sequence
@@ -773,6 +777,7 @@ class MemoryBackend:
                 record.fence = stored_run.producer_fence
                 record.cancellable = stored_run.cancellable
                 record.recoverable = stored_run.recoverable
+                record.request_digest = stored_run.request_digest
                 record.status = stored_run.status
                 record.settling = stored_run.settlement_started
                 record.publication_closed = stored_run.publication_closed

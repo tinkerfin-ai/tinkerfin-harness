@@ -127,9 +127,9 @@ async def test_blocked_on_committed_keeps_first_sse_frame_available() -> None:
             after=0,
             on_committed=observe,
         )
-        await asyncio.wait_for(hook_started.wait(), timeout=1)
+        await hook_started.wait()
 
-        first = await asyncio.wait_for(anext(body), timeout=1)
+        first = await anext(body)
         assert first == b"id: 1\ndata: one\n\n"
         assert source.pulled == ["one"]
 
@@ -203,9 +203,9 @@ async def test_on_committed_observes_the_accepted_cancellation_tail() -> None:
             on_committed=observe,
         )
         delivery = asyncio.create_task(_collect(body))
-        await asyncio.wait_for(source.started.wait(), timeout=1)
+        await source.started.wait()
         assert await channel.cancel(identity=_identity()) is True
-        frames = await asyncio.wait_for(delivery, timeout=1)
+        frames = await delivery
 
     assert frames == [
         b"id: 1\ndata: started\n\n",

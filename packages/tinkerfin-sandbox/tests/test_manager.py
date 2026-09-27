@@ -38,6 +38,9 @@ from tinkerfin_sandbox import (
     OpenSandboxDiagnosticContent,
     OpenSandboxHandle,
     OpenSandboxHandleOwnershipError,
+    OpenSandboxLifecycleEvent,
+    OpenSandboxLifecycleEventType,
+    OpenSandboxLifecycleObserver,
     OpenSandboxManager,
     OpenSandboxManagerClosedError,
     OpenSandboxOwnerClaim,
@@ -93,6 +96,33 @@ class _ExecuteResponse:
         self.exit_code = exit_code
 
 
+class _OperationGate:
+    """Release sync and async fake operations explicitly from the test loop."""
+
+    def __init__(self) -> None:
+        self._thread = threading.Event()
+        self._async = asyncio.Event()
+
+    def set(self) -> None:
+        self._thread.set()
+        self._async.set()
+
+    def wait(self) -> bool:
+        return self._thread.wait()
+
+    async def wait_async(self) -> None:
+        await self._async.wait()
+
+
+class _ReplacementObserver:
+    def __init__(self) -> None:
+        self.replaced = asyncio.Event()
+
+    async def on_sandbox_event(self, event: OpenSandboxLifecycleEvent) -> None:
+        if event.type is OpenSandboxLifecycleEventType.REPLACED:
+            self.replaced.set()
+
+
 class _FakeBackend:
     def __init__(
         self,
@@ -109,18 +139,17 @@ class _FakeBackend:
         self.close_calls = 0
         self.kill_calls = 0
         self.close_entered = threading.Event()
-        self.close_gate: threading.Event | None = None
+        self.close_gate: _OperationGate | None = None
         self.runtime_info_calls = 0
         self.block_command: str | None = None
         self.execute_entered = threading.Event()
-        self.execute_gate = threading.Event()
+        self.execute_gate = _OperationGate()
 
     def execute(self, command: str, *, timeout: int | None = None) -> _ExecuteResponse:
         self.execute_calls.append((command, timeout))
         if command == self.block_command:
             self.execute_entered.set()
-            if not self.execute_gate.wait(timeout=1):
-                raise TimeoutError("test execution gate was not released")
+            self.execute_gate.wait()
         return _ExecuteResponse(0 if self.healthy else 1)
 
     async def aexecute(
@@ -132,9 +161,7 @@ class _FakeBackend:
         self.execute_calls.append((command, timeout))
         if command == self.block_command:
             self.execute_entered.set()
-            released = await asyncio.to_thread(self.execute_gate.wait, 1)
-            if not released:
-                raise TimeoutError("test execution gate was not released")
+            await self.execute_gate.wait_async()
         return _ExecuteResponse(0 if self.healthy else 1)
 
     def renew(self, timeout: timedelta) -> None:
@@ -146,11 +173,14 @@ class _FakeBackend:
     def close(self) -> None:
         self.close_calls += 1
         self.close_entered.set()
-        if self.close_gate is not None and not self.close_gate.wait(timeout=1):
-            raise TimeoutError("test close gate was not released")
+        if self.close_gate is not None:
+            self.close_gate.wait()
 
     async def aclose(self) -> None:
-        await asyncio.to_thread(self.close)
+        self.close_calls += 1
+        self.close_entered.set()
+        if self.close_gate is not None:
+            await self.close_gate.wait_async()
 
     async def akill(self) -> None:
         self.kill_calls += 1
@@ -200,6 +230,12 @@ class _FakeClient:
         self.create_gate: asyncio.Event | None = None
         self.release_after_create_count: int | None = None
         self.close_calls = 0
+        self.closed = asyncio.Event()
+
+    async def wait_for_creates(self, count: int) -> None:
+        while self.create_calls < count:
+            self.create_entered.clear()
+            await self.create_entered.wait()
 
     async def create(
         self,
@@ -268,6 +304,7 @@ class _FakeClient:
 
     async def aclose(self) -> None:
         self.close_calls += 1
+        self.closed.set()
 
 
 class _FakeState(InMemoryOpenSandboxState):
@@ -490,16 +527,6 @@ def _runtime_info(
     )
 
 
-async def _eventually(
-    predicate: Callable[[], bool],
-    *,
-    timeout: float = 1.0,
-) -> None:
-    async with asyncio.timeout(timeout):
-        while not predicate():
-            await asyncio.sleep(0)
-
-
 class _NotificationLoop:
     def __init__(self, *, close_during_notification: bool) -> None:
         self._closed = False
@@ -583,8 +610,15 @@ async def test_waiter_notification_suppresses_only_confirmed_loop_close(
 class OpenSandboxManagerTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.managers: list[OpenSandboxManager] = []
+        self.clients: list[_FakeClient] = []
 
     async def asyncTearDown(self) -> None:
+        for client in self.clients:
+            for backend in (*client.backends, *client.connected.values()):
+                if isinstance(backend, _FakeBackend):
+                    backend.execute_gate.set()
+                    if backend.close_gate is not None:
+                        backend.close_gate.set()
         for manager in self.managers:
             await manager.aclose()
 
@@ -595,12 +629,15 @@ class OpenSandboxManagerTest(unittest.IsolatedAsyncioTestCase):
         *,
         warm_pool_size: int = 0,
         recovery_policy: OpenSandboxRecoveryPolicy | None = None,
+        observers: Sequence[OpenSandboxLifecycleObserver] = (),
     ) -> OpenSandboxManager:
+        self.clients.append(client)
         manager = _new_manager(
             client=client,
             state=store,
             warm_pool_size=warm_pool_size,
             recovery_policy=recovery_policy,
+            observers=observers,
         )
         self.managers.append(manager)
         await manager.start()
@@ -630,9 +667,8 @@ class OpenSandboxManagerTest(unittest.IsolatedAsyncioTestCase):
         client.release_after_create_count = 2
         manager = await self._manager(client, _FakeState())
 
-        first_handle, second_handle = await asyncio.wait_for(
-            asyncio.gather(manager.get(_key("user-1")), manager.get(_key("user-2"))),
-            timeout=1,
+        first_handle, second_handle = await asyncio.gather(
+            manager.get(_key("user-1")), manager.get(_key("user-2"))
         )
 
         self.assertEqual(client.create_calls, 2)
@@ -679,7 +715,7 @@ class OpenSandboxManagerTest(unittest.IsolatedAsyncioTestCase):
         manager = await self._manager(client, store, warm_pool_size=1)
 
         handle = await manager.get(_key("user-1"))
-        await _eventually(lambda: client.create_calls == 2)
+        await client.wait_for_creates(2)
 
         self.assertEqual(handle.id, "sandbox-1")
         self.assertEqual(store.consume_calls, [(_resource_key("user-1"), "sandbox-1")])
@@ -804,10 +840,12 @@ class OpenSandboxManagerTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_hot_replacement_waits_for_in_flight_backend_call(self) -> None:
+        replacement = _ReplacementObserver()
         client = _FakeClient()
         manager = await self._manager(
             client,
             _FakeState(),
+            observers=(replacement,),
             recovery_policy=OpenSandboxRecoveryPolicy(
                 max_attempts=1, on_failure="recreate"
             ),
@@ -819,11 +857,11 @@ class OpenSandboxManagerTest(unittest.IsolatedAsyncioTestCase):
         execute_task = asyncio.create_task(
             asyncio.to_thread(handle.execute, "long-running")
         )
-        entered = await asyncio.to_thread(old_backend.execute_entered.wait, 1)
+        entered = await asyncio.to_thread(old_backend.execute_entered.wait)
         self.assertTrue(entered)
         old_backend.healthy = False
         replace_task = asyncio.create_task(manager.get(_key("user-1")))
-        await _eventually(lambda: handle.id == "sandbox-2")
+        await replacement.replaced.wait()
 
         self.assertFalse(replace_task.done())
         self.assertEqual(client.destroy_calls, [])
@@ -843,11 +881,13 @@ class OpenSandboxManagerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.backends[1].close_calls, 0)
 
     async def test_cancelled_hot_replacement_tracks_old_backend_cleanup(self) -> None:
+        replacement = _ReplacementObserver()
         client = _FakeClient()
         store = _FakeState()
         manager = await self._manager(
             client,
             store,
+            observers=(replacement,),
             recovery_policy=OpenSandboxRecoveryPolicy(
                 max_attempts=1, on_failure="recreate"
             ),
@@ -859,11 +899,11 @@ class OpenSandboxManagerTest(unittest.IsolatedAsyncioTestCase):
         execute_task = asyncio.create_task(
             asyncio.to_thread(handle.execute, "long-running")
         )
-        entered = await asyncio.to_thread(old_backend.execute_entered.wait, 1)
+        entered = await asyncio.to_thread(old_backend.execute_entered.wait)
         self.assertTrue(entered)
         old_backend.healthy = False
         replace_task = asyncio.create_task(manager.get(_key("user-1")))
-        await _eventually(lambda: handle.id == "sandbox-2")
+        await replacement.replaced.wait()
 
         replace_task.cancel()
         with self.assertRaises(asyncio.CancelledError):
@@ -1039,7 +1079,7 @@ class OpenSandboxManagerTest(unittest.IsolatedAsyncioTestCase):
         store = _FakeState()
         manager = await self._manager(client, store, warm_pool_size=1)
         handle = await manager.get(_key("user-1"))
-        await _eventually(lambda: client.create_calls == 2)
+        await client.wait_for_creates(2)
         bound_backend, warm_backend = client.backends
 
         await manager.aclose()
@@ -1095,10 +1135,10 @@ class OpenSandboxManagerTest(unittest.IsolatedAsyncioTestCase):
         client = _FakeClient()
         manager = await self._manager(client, warm_pool_size=1)
         backend = client.backends[0]
-        backend.close_gate = threading.Event()
+        backend.close_gate = _OperationGate()
 
         first_close = asyncio.create_task(manager.aclose())
-        entered = await asyncio.to_thread(backend.close_entered.wait, 1)
+        entered = await asyncio.to_thread(backend.close_entered.wait)
         self.assertTrue(entered)
         first_close.cancel()
         with self.assertRaises(asyncio.CancelledError):
@@ -1122,7 +1162,7 @@ class OpenSandboxManagerTest(unittest.IsolatedAsyncioTestCase):
         backend.block_command = "echo ok"
 
         get_task = asyncio.create_task(manager.get(_key("user-1")))
-        entered = await asyncio.to_thread(backend.execute_entered.wait, 1)
+        entered = await asyncio.to_thread(backend.execute_entered.wait)
         self.assertTrue(entered)
         get_task.cancel()
         with self.assertRaises(asyncio.CancelledError):
@@ -1146,7 +1186,7 @@ class OpenSandboxManagerTest(unittest.IsolatedAsyncioTestCase):
         )
 
         get_task = asyncio.create_task(manager.get(_key("user-1")))
-        entered = await asyncio.to_thread(restored.execute_entered.wait, 1)
+        entered = await asyncio.to_thread(restored.execute_entered.wait)
         self.assertTrue(entered)
         get_task.cancel()
         with self.assertRaises(asyncio.CancelledError):
@@ -1162,8 +1202,15 @@ class OpenSandboxManagerTest(unittest.IsolatedAsyncioTestCase):
 class OpenSandboxDetailsTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.managers: list[OpenSandboxManager] = []
+        self.clients: list[_FakeClient] = []
 
     async def asyncTearDown(self) -> None:
+        for client in self.clients:
+            for backend in (*client.backends, *client.connected.values()):
+                if isinstance(backend, _FakeBackend):
+                    backend.execute_gate.set()
+                    if backend.close_gate is not None:
+                        backend.close_gate.set()
         for manager in self.managers:
             await manager.aclose()
 
@@ -1696,7 +1743,7 @@ async def test_strict_startup_replaces_a_published_but_missing_warm_sandbox() ->
         await manager.check_ready()
         assert client.connect_calls == ["missing-warm"]
         assert client.create_calls == 1
-        await _eventually(lambda: client.destroy_calls == ["missing-warm"])
+        await client.destroy_entered.wait()
         assert client.destroy_calls == ["missing-warm"]
     finally:
         await manager.aclose()
@@ -1825,7 +1872,7 @@ async def test_terminal_status_after_timeout_replaces_published_warm(
         assert client.connect_calls == ["failed-warm"]
         assert client.inspect_calls == ["failed-warm"]
         assert client.create_calls == 1
-        await _eventually(lambda: client.destroy_calls == ["failed-warm"])
+        await client.destroy_entered.wait()
         assert client.destroy_calls == ["failed-warm"]
     finally:
         await manager.aclose()
@@ -2051,7 +2098,7 @@ async def test_manager_close_timeout_retains_shared_cleanup_for_second_close() -
     )
     await manager.start()
     backend = cast(_FakeBackend, client.backends[0])
-    backend.close_gate = threading.Event()
+    backend.close_gate = _OperationGate()
     timeout_type = getattr(
         tinkerfin_sandbox,
         "OpenSandboxSettlementTimeoutError",
@@ -2064,7 +2111,7 @@ async def test_manager_close_timeout_retains_shared_cleanup_for_second_close() -
             await manager.aclose()
 
         assert captured.value.timeout == settlement_timeout
-        close_entered = await asyncio.to_thread(backend.close_entered.wait, 1)
+        close_entered = await asyncio.to_thread(backend.close_entered.wait)
         assert close_entered
         assert backend.close_calls == 1
         assert client.destroy_calls == [backend.id]
@@ -2073,8 +2120,8 @@ async def test_manager_close_timeout_retains_shared_cleanup_for_second_close() -
 
         backend.close_gate.set()
         # Each close caller has its own wait budget. Completion of the released
-        # worker thread and dependent resources is observed explicitly.
-        await _eventually(lambda: client.close_calls == 1)
+        # cleanup operation and dependent resources is observed explicitly.
+        await client.closed.wait()
         await manager.aclose()
 
         assert backend.close_calls == 1
@@ -2098,15 +2145,15 @@ async def test_manager_context_caller_cancellation_retains_body_failure() -> Non
     async def use_manager() -> None:
         async with manager:
             backend = cast(_FakeBackend, client.backends[0])
-            backend.close_gate = threading.Event()
+            backend.close_gate = _OperationGate()
             raise body_error
 
     operation = asyncio.create_task(use_manager())
     backend: _FakeBackend | None = None
     try:
-        await asyncio.wait_for(client.create_entered.wait(), timeout=1)
+        await client.create_entered.wait()
         backend = cast(_FakeBackend, client.backends[0])
-        entered = await asyncio.to_thread(backend.close_entered.wait, 1)
+        entered = await asyncio.to_thread(backend.close_entered.wait)
         assert entered
 
         operation.cancel("context cleanup cancelled")
@@ -2138,7 +2185,7 @@ async def test_manager_start_cleanup_caller_cancellation_retains_start_error() -
     )
     opening = asyncio.create_task(manager.__aenter__())
     try:
-        await asyncio.wait_for(client.close_entered.wait(), timeout=1)
+        await client.close_entered.wait()
         opening.cancel("startup cleanup cancelled")
 
         with pytest.raises(asyncio.CancelledError) as captured:
@@ -2175,10 +2222,7 @@ async def test_repeated_cancellation_cannot_interrupt_owner_claim_release() -> N
         with pytest.raises(asyncio.CancelledError):
             await operation
         assert not state.release_cancelled.is_set()
-        successor = await asyncio.wait_for(
-            state.acquire_owner(_resource_key("owner-1")),
-            timeout=0.2,
-        )
+        successor = await state.acquire_owner(_resource_key("owner-1"))
     finally:
         state.release_gate.set()
         await asyncio.gather(operation, return_exceptions=True)
@@ -2323,7 +2367,7 @@ async def test_sql_states_share_one_global_warm_pool(
         assert client.create_calls == 1
 
         handle = await second_manager.get(_key("user-1"))
-        await _eventually(lambda: client.create_calls == 2)
+        await client.wait_for_creates(2)
 
         assert handle.id == "sandbox-1"
         assert client.create_calls == 2
@@ -2603,10 +2647,12 @@ async def test_state_recreate_preserves_remote_without_authoritative_ownership()
 
 @pytest.mark.asyncio
 async def test_cancelled_recreate_tracks_distinct_authoritative_old_id() -> None:
+    replacement = _ReplacementObserver()
     client = _ReconnectableFakeClient()
     store = _FakeState()
     manager = _new_manager(
         client=client,
+        observers=(replacement,),
         state=store,
         warm_pool_size=0,
     )
@@ -2622,11 +2668,11 @@ async def test_cancelled_recreate_tracks_distinct_authoritative_old_id() -> None
         execute_task = asyncio.create_task(
             asyncio.to_thread(handle.execute, "long-running")
         )
-        assert await asyncio.to_thread(old_backend.execute_entered.wait, 1)
+        assert await asyncio.to_thread(old_backend.execute_entered.wait)
         store.bindings[_resource_key("user-1")] = "sandbox-external"
 
         recreate_task = asyncio.create_task(manager.recreate(_key("user-1")))
-        await _eventually(lambda: handle.id == "sandbox-2")
+        await replacement.replaced.wait()
         recreate_task.cancel("caller stopped waiting for replacement cleanup")
         with pytest.raises(asyncio.CancelledError):
             await recreate_task
@@ -2840,7 +2886,7 @@ async def test_registration_failure_retains_old_resource_cleanup(
         state.failure = failure
         action = manager.reconnect if operation == "reconnect" else manager.recreate
         task = asyncio.create_task(action("owner"))
-        await asyncio.wait_for(state.entered.wait(), 1)
+        await state.entered.wait()
         if failure == "cancel":
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -2848,7 +2894,7 @@ async def test_registration_failure_retains_old_resource_cleanup(
         else:
             with pytest.raises(OpenSandboxStateError):
                 await task
-        await _eventually(lambda: original.close_calls == 1)
+        await asyncio.to_thread(original.close_entered.wait)
         binding = await state.read_binding(_resource_key("owner"))
         assert binding is not None
         assert binding.sandbox_id == handle.id

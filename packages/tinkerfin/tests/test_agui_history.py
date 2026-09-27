@@ -1205,13 +1205,13 @@ async def test_public_history_follow_settles_source_and_borrows_store(
                     await anext(follower)
 
             pending = asyncio.create_task(read_until_deadline())
-            await asyncio.wait_for(entered.wait(), timeout=2)
+            await entered.wait()
             timeout_scope.reschedule(asyncio.get_running_loop().time())
             with pytest.raises(TimeoutError):
                 await pending
         else:
             pending = asyncio.create_task(anext(follower))
-            await asyncio.wait_for(entered.wait(), timeout=2)
+            await entered.wait()
             with pytest.raises(TraceFollowLifecycleError, match="already active"):
                 await anext(follower)
             assert not pending.done()

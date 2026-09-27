@@ -15,7 +15,9 @@ from tinkerfin_tracing import Tracer, TraceThreadNotFound
 
 
 @pytest.mark.parametrize("cancel_waiters", [False, True])
-async def test_concurrent_closers_wait_for_follow_cleanup(cancel_waiters: bool) -> None:
+async def test_concurrent_closers_wait_for_follow_cleanup(
+    notifications, cancel_waiters: bool
+) -> None:
     entered, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
     cleaned = False
 
@@ -35,6 +37,7 @@ async def test_concurrent_closers_wait_for_follow_cleanup(cancel_waiters: bool) 
         database=create_autospec(Database, instance=True),
         tracer=tracer,
         conversation_channel=create_autospec(MessageChannel, instance=True),
+        notifications=notifications,
     )
     coordinator.ensure(
         thread_pk=1,
@@ -78,6 +81,7 @@ async def test_concurrent_closers_wait_for_follow_cleanup(cancel_waiters: bool) 
 
 @pytest.mark.parametrize("failure_type", [OSError, TraceThreadNotFound])
 async def test_close_retains_follow_cleanup_failure_on_repeated_calls(
+    notifications,
     failure_type: type[OSError] | type[TraceThreadNotFound],
 ) -> None:
     entered = asyncio.Event()
@@ -99,6 +103,7 @@ async def test_close_retains_follow_cleanup_failure_on_repeated_calls(
         database=create_autospec(Database, instance=True),
         tracer=tracer,
         conversation_channel=create_autospec(MessageChannel, instance=True),
+        notifications=notifications,
     )
     coordinator.ensure(
         thread_pk=1,
@@ -112,7 +117,9 @@ async def test_close_retains_follow_cleanup_failure_on_repeated_calls(
     assert calls == 1
 
 
-async def test_follow_callback_cannot_close_its_own_coordinator() -> None:
+async def test_follow_callback_cannot_close_its_own_coordinator(
+    notifications,
+) -> None:
     rejected = asyncio.Event()
 
     async def read_trace(*_args: object, **_kwargs: object) -> None:
@@ -127,6 +134,7 @@ async def test_follow_callback_cannot_close_its_own_coordinator() -> None:
         database=create_autospec(Database, instance=True),
         tracer=tracer,
         conversation_channel=create_autospec(MessageChannel, instance=True),
+        notifications=notifications,
     )
     coordinator.ensure(
         thread_pk=1,
@@ -138,6 +146,7 @@ async def test_follow_callback_cannot_close_its_own_coordinator() -> None:
 
 @pytest.mark.parametrize("cancel_close", [False, True])
 async def test_close_keeps_all_cleanup_failures_after_settlement(
+    notifications,
     cancel_close: bool,
 ) -> None:
     entered, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
@@ -166,6 +175,7 @@ async def test_close_keeps_all_cleanup_failures_after_settlement(
         database=create_autospec(Database, instance=True),
         tracer=tracer,
         conversation_channel=create_autospec(MessageChannel, instance=True),
+        notifications=notifications,
     )
     for number in range(len(failures)):
         coordinator.ensure(
@@ -200,7 +210,7 @@ async def test_close_keeps_all_cleanup_failures_after_settlement(
     "chain", ["cause", "context", "cycle", "pure_cycle", "pure_group"]
 )
 async def test_shutdown_preserves_cancellation_cleanup_evidence(
-    cancel_close: bool, chain: str
+    notifications, cancel_close: bool, chain: str
 ) -> None:
     entered, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
     failure = OSError("cleanup evidence")
@@ -238,6 +248,7 @@ async def test_shutdown_preserves_cancellation_cleanup_evidence(
         database=create_autospec(Database, instance=True),
         tracer=tracer,
         conversation_channel=create_autospec(MessageChannel, instance=True),
+        notifications=notifications,
     )
     coordinator.ensure(
         thread_pk=1,
@@ -274,11 +285,14 @@ async def test_shutdown_preserves_cancellation_cleanup_evidence(
         await coordinator.aclose()
 
 
-async def test_empty_coordinator_close_is_repeatable() -> None:
+async def test_empty_coordinator_close_is_repeatable(
+    notifications,
+) -> None:
     coordinator = ConversationTraceCoordinator(
         database=create_autospec(Database, instance=True),
         tracer=create_autospec(Tracer, instance=True),
         conversation_channel=create_autospec(MessageChannel, instance=True),
+        notifications=notifications,
     )
     await asyncio.gather(coordinator.aclose(), coordinator.aclose())
     await coordinator.aclose()

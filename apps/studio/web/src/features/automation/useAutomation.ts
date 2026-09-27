@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { fetchCounts, fetchRunPage, fetchTaskPage, type Page } from './api'
-import { dateBoundary, isActiveRun, shiftDate, type AutomationRun, type AutomationTask } from './model'
+import { watchResource } from '../../api/shared/watchResource'
+import { dateBoundary, shiftDate, type AutomationRun, type AutomationTask } from './model'
 
 interface Snapshot {
   tasks: AutomationTask[]
@@ -34,22 +35,15 @@ export function useAutomation({ page, query, status, dates, view, onLoadError }:
   useEffect(() => {
     const days = dateKey.split(',')
     const counts = JSON.parse(pageCounts) as Record<string, number>
-    let closed = false
-    let pending: AbortController | null = null
-    let timer: ReturnType<typeof setTimeout> | undefined
     let first = true
-
-    const load = async () => {
-      if (closed || document.hidden) return
-      pending?.abort()
-      const controller = new AbortController()
-      pending = controller
-      if (first) {
-        if (displayedKey.current !== key) setSnapshot({ ...initial })
-        else setSnapshot(current => ({ ...current, loading: true, error: false }))
-        displayedKey.current = key
-      }
-      try {
+    const watch = watchResource({
+      matches: change => change.topic === 'automation.task.changed' || change.topic === 'automation.execution.changed',
+      read: async (signal) => {
+        if (first) {
+          if (displayedKey.current !== key) setSnapshot({ ...initial })
+          else setSnapshot(current => ({ ...current, loading: true, error: false }))
+          displayedKey.current = key
+        }
         async function readPages<T>(read: (cursor: string | undefined) => Promise<Page<T>>, count: number) {
           const items: T[] = []
           let cursor: string | undefined
@@ -65,33 +59,23 @@ export function useAutomation({ page, query, status, dates, view, onLoadError }:
         }
         const selectedStatus = status === 'all' ? undefined : status
         const base = { query: query.trim() || undefined, from: dateBoundary(days[0]), until: dateBoundary(shiftDate(days[6], 1)) }
-        const taskRead = page === 'tasks' ? readPages(cursor => fetchTaskPage({ query: base.query, status: selectedStatus, cursor }, controller.signal), counts.tasks ?? 1) : Promise.resolve({ items: [], nextCursor: null })
+        const taskRead = page === 'tasks' ? readPages(cursor => fetchTaskPage({ query: base.query, status: selectedStatus, cursor }, signal), counts.tasks ?? 1) : Promise.resolve({ items: [], nextCursor: null })
         const runKeys = page === 'history' ? view === 'week' ? days : [days[0]] : []
         const [tasks, runs, totals] = await Promise.all([
           taskRead,
-          Promise.all(runKeys.map(async day => ({ day, ...await readPages(cursor => fetchRunPage({ ...base, from: dateBoundary(day), until: view === 'week' ? dateBoundary(shiftDate(day, 1)) : base.until, status: selectedStatus, cursor }, controller.signal), counts[day] ?? 1) }))),
-          fetchCounts(page === 'tasks' ? 'tasks' : 'runs', page === 'tasks' ? { query: base.query } : base, controller.signal),
+          Promise.all(runKeys.map(async day => ({ day, ...await readPages(cursor => fetchRunPage({ ...base, from: dateBoundary(day), until: view === 'week' ? dateBoundary(shiftDate(day, 1)) : base.until, status: selectedStatus, cursor }, signal), counts[day] ?? 1) }))),
+          fetchCounts(page === 'tasks' ? 'tasks' : 'runs', page === 'tasks' ? { query: base.query } : base, signal),
         ])
-        if (closed || controller.signal.aborted) return
-        setSnapshot({ tasks: tasks.items, runs: runs.flatMap(group => group.items), counts: totals, cursors: Object.fromEntries([['tasks', tasks.nextCursor], ...runs.map(group => [group.day, group.nextCursor])]), loading: false, error: false })
-        first = false
-        const active = runs.some(group => group.items.some(run => isActiveRun(run.status)))
-        timer = setTimeout(() => void load(), active ? 2000 : 10000)
-      } catch {
-        if (closed || controller.signal.aborted) return
-        controller.abort()
+        return { tasks: tasks.items, runs: runs.flatMap(group => group.items), counts: totals,
+          cursors: Object.fromEntries([['tasks', tasks.nextCursor], ...runs.map(group => [group.day, group.nextCursor])]), loading: false, error: false }
+      },
+      update: value => { setSnapshot(value); first = false },
+      onError: () => {
         setSnapshot(current => ({ ...current, loading: false, error: true }))
         latestLoadError.current?.()
-      }
-    }
-    const visibility = () => {
-      clearTimeout(timer)
-      if (document.hidden) pending?.abort()
-      else void load()
-    }
-    void load()
-    document.addEventListener('visibilitychange', visibility)
-    return () => { closed = true; pending?.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', visibility) }
+      },
+    })
+    return watch.close
   }, [key, pageCounts, revision, page, query, status, dateKey, view])
 
   return useMemo(() => ({ ...snapshot,

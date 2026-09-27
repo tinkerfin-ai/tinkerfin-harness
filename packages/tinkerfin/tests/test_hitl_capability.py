@@ -446,7 +446,7 @@ async def test_failed_tool_retry_with_new_tracer_preserves_previous_prefix(
 
     consumer = asyncio.create_task(consume())
     try:
-        await asyncio.wait_for(entered.wait(), timeout=5)
+        await entered.wait()
         running = await tracer.query(runtime.thread_identity("thread"), limit=100)
         delivery = next(node for node in running.nodes if node.name == "deliver_report")
         assert delivery.status == "running"

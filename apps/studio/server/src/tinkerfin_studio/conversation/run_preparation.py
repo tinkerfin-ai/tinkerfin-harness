@@ -6,20 +6,13 @@ from dataclasses import dataclass
 from typing import Literal, cast
 from uuid import NAMESPACE_URL, uuid5
 
-from ag_ui.core import (
-    BaseEvent,
-    RunErrorEvent,
-    RunStartedEvent,
-)
 from ag_ui.core.types import ResumeEntry
-from langchain_core.runnables import RunnableConfig
 from pydantic import JsonValue
 
 from tinkerfin import AgentMode, RunIdentity
 from tinkerfin_contracts.media import Attachment
 from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
-from tinkerfin_studio.conversation.models import TitleGenerationStatus, TitleSource
 from tinkerfin_studio.conversation.request import ChatRequest, CompactRequest
 
 
@@ -62,7 +55,7 @@ class PreparedRunRequest:
     messages: tuple[dict[str, JsonValue], ...]
     identity: RunIdentity
     parent_run_id: str | None
-    graph_config: RunnableConfig
+    parameters: dict[str, JsonValue]
     message_ids: tuple[str, ...]
     mode: AgentMode
     access_mode: AccessMode = "full"
@@ -75,6 +68,7 @@ class RegisteredRun:
 
     run_id: int
     created: bool
+    preparation_id: str
 
 
 def classify_intent(request: ChatRequest) -> ChatIntent:
@@ -113,7 +107,7 @@ def prepare_run_request(
             messages=(),
             identity=conversation_identity(thread_id, request.run_id, user_id=user_id),
             parent_run_id=None,
-            graph_config={},
+            parameters={},
             message_ids=(),
             mode="default",
             access_mode=access_mode,
@@ -135,62 +129,21 @@ def prepare_run_request(
         message_ids=message_ids,
     )
     identity = conversation_identity(thread_id, request.run_id, user_id=user_id)
-    graph_config: RunnableConfig = {
-        "configurable": {
-            "forwarded_props": request.forwarded_props.model_dump(
-                mode="json",
-                by_alias=True,
-            ),
-        }
+    parameters: dict[str, JsonValue] = {
+        "forwarded_props": request.forwarded_props.model_dump(
+            mode="json", by_alias=True
+        ),
     }
     return PreparedRunRequest(
         input_json=input_json,
         messages=tuple(cast(list[dict[str, JsonValue]], input_json["messages"])),
         identity=identity,
         parent_run_id=request.parent_run_id,
-        graph_config=graph_config,
+        parameters=parameters,
         message_ids=message_ids,
         mode=request.forwarded_props.agent_mode,
         access_mode=request.forwarded_props.access_mode,
     )
-
-
-def decorate_main_event(
-    event: BaseEvent,
-    *,
-    prepared: PreparedRunRequest,
-    title: str,
-    title_source: TitleSource = "default",
-    title_generation_status: TitleGenerationStatus = "idle",
-    title_seq: int = 0,
-) -> BaseEvent:
-    """只补充 Studio 标题和取消文案"""
-
-    run_id = prepared.identity.run_id
-    if isinstance(event, RunStartedEvent) and event.run_id == run_id:
-        return event.model_copy(
-            update={
-                "title": title,
-                "titleSource": title_source,
-                "titleGenerationStatus": title_generation_status,
-                "titleSeq": title_seq,
-            }
-        )
-    if isinstance(event, RunErrorEvent):
-        raw_event = event.raw_event
-        if not isinstance(raw_event, dict):
-            return event
-        if raw_event.get("runId") != run_id:
-            return event
-        if event.code == "cancelled":
-            return event.model_copy(
-                update={
-                    "message": "上下文压缩已停止"
-                    if prepared.operation == "compact"
-                    else "聊天生成已取消"
-                }
-            )
-    return event
 
 
 __all__ = [
@@ -202,6 +155,5 @@ __all__ = [
     "StartChatIntent",
     "classify_intent",
     "conversation_identity",
-    "decorate_main_event",
     "prepare_run_request",
 ]

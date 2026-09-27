@@ -49,6 +49,8 @@ jobs:
         run: uv sync --locked --all-packages --no-default-groups --group test --group lint --group integration
       - name: Check repository and Studio formatting
         run: ./scripts/verify-studio-server.sh
+      - name: Verify storage preparation against disposable databases
+        run: uv run pytest tests/test_prepare_gateway_storage.py -m docker_integration
 
   web:
     runs-on: ubuntu-24.04
@@ -171,6 +173,8 @@ jobs:
           --cov=tinkerfin_messaging
           --cov=tinkerfin_sandbox
           --cov=tinkerfin_automation
+          --cov=tinkerfin_notifications
+          --cov=tinkerfin_gateway
           --cov-branch
           --cov-report=term-missing
           --cov-fail-under=80

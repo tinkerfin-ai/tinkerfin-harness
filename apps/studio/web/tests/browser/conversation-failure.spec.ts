@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { expect, test } from '@playwright/test'
 import type { ConversationHistoryDetail, TraceMessage } from '../../src/api/conversation/history'
 import { emptyTraceGraph } from '../../src/test/traceFixtures'
@@ -43,6 +44,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
       else if (path === '/api/conversation/chat') { posts.push(route.request().postDataJSON()); await route.abort('connectionreset'); return }
       await route.fulfill({ json: { code: 0, message: 'success', data } })
     })
+    await installNotificationStream(page)
     await page.goto('/?thread=' + threadId)
     await expect(page.getByRole('region', { name: '会话异常' })).toHaveCount(3)
     await expect(page.getByRole('list', { name: '系统提示' })).toHaveCount(0)
@@ -123,6 +125,7 @@ test('首次历史与当前会话读取失败分别保留居中重试和全局 T
     }
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
+  await installNotificationStream(page)
   await page.goto('/')
   const conversation = page.getByRole('region', { name: '对话内容', exact: true })
   const historyAlert = conversation.getByRole('alert')
@@ -160,6 +163,7 @@ test('侧栏更多历史读取失败保留原位重试和全局 Toast', async ({
     } else if (path === `/api/conversation/${threadId}/history`) data = detail
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
+  await installNotificationStream(page)
   await page.goto('/')
   await page.getByRole('button', { name: '打开导航' }).click()
   const sidebar = page.getByRole('region', { name: '最近对话' })

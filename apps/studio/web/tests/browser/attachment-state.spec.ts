@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { expect, test } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
@@ -62,6 +63,7 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
     })
     try {
       if (source === 'picker') await page.setViewportSize({ width: 320, height: 960 })
+      await installNotificationStream(page)
       await page.goto('/')
       const input = page.getByRole('textbox', { name: '消息输入' })
       const send = page.getByRole('button', { name: '发送消息', exact: true })
@@ -265,6 +267,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await route.fulfill({ json: { code: 0, message: 'success', data } })
     })
     await mockDownloadPermits(page)
+    await installNotificationStream(page)
     await page.goto('/')
     await expect(page.locator('html')).toHaveAttribute('lang', locale)
     const input = page.getByRole('textbox', { name: english ? 'Message input' : '消息输入' })

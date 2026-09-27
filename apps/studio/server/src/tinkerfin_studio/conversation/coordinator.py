@@ -14,7 +14,9 @@ from ag_ui.core import BaseEvent
 from tinkerfin import AgUiResumeReceipt, RunIdentity
 from tinkerfin_messaging import AgUiChannel, RunNotFound, is_active_run_status
 from tinkerfin_messaging.messaging import MessageChannel
+from tinkerfin_notifications import Notifications
 from tinkerfin_studio.api.errors import ConversationErrorCode, SystemException
+from tinkerfin_studio.changes import notify_change
 from tinkerfin_studio.infrastructure._failures import _cleanup_failure_priority
 from tinkerfin_studio.infrastructure.database import Database
 from tinkerfin_tracing import (
@@ -40,9 +42,12 @@ class _StalePreparingRun:
     """跨外部存活检查携带的无连接 Run 身份"""
 
     thread_pk: int
+    user_id: int
     run_pk: int
     identity: RunIdentity
     expected_updated_at: datetime
+    expected_status: Literal["preparing", "starting"]
+    preparation_id: str
 
 
 class ConversationTraceCoordinator:
@@ -52,10 +57,12 @@ class ConversationTraceCoordinator:
         self,
         *,
         database: Database,
+        notifications: Notifications,
         tracer: Tracer,
         conversation_channel: MessageChannel[BaseEvent, BaseEvent] | AgUiChannel,
     ) -> None:
         self._database = database
+        self._notifications = notifications
         self._tracer = tracer
         self._conversation_channel = conversation_channel
         self._tasks: dict[tuple[int, str], asyncio.Task[None]] = {}
@@ -149,6 +156,7 @@ class ConversationTraceCoordinator:
                 candidates.append(
                     _StalePreparingRun(
                         thread_pk=thread.id,
+                        user_id=thread.user_id,
                         run_pk=registration.id,
                         identity=RunIdentity(
                             namespace=f"ns_{thread.user_id}",
@@ -156,6 +164,12 @@ class ConversationTraceCoordinator:
                             run_id=registration.run_id,
                         ),
                         expected_updated_at=registration.updated_at,
+                        expected_status=(
+                            "preparing"
+                            if registration.status == "preparing"
+                            else "starting"
+                        ),
+                        preparation_id=registration.preparation_id,
                     )
                 )
             # Trace 与 Redis 检查不占用 Studio 的业务连接或事务
@@ -188,18 +202,29 @@ class ConversationTraceCoordinator:
                 )
 
         if deletions:
+            changed: list[_StalePreparingRun] = []
             async with self._database.session() as session:
                 repository = ConversationRepository(session)
                 for candidate in deletions:
-                    await repository.delete_unstarted_run(
+                    result = await repository.delete_unstarted_run(
                         thread_pk=candidate.thread_pk,
                         run_pk=candidate.run_pk,
                         run_id=candidate.identity.run_id,
+                        preparation_id=candidate.preparation_id,
                         delete_empty_thread=True,
                         expected_updated_at=candidate.expected_updated_at,
-                        allow_starting=True,
+                        expected_status=candidate.expected_status,
                     )
+                    if result.run_deleted:
+                        changed.append(candidate)
                 await repository.commit()
+            for candidate in changed:
+                await notify_change(
+                    self._notifications,
+                    user_id=candidate.user_id,
+                    topic="studio.conversation.changed",
+                    key=candidate.identity.thread_id,
+                )
         return frozenset(recovered_threads)
 
     async def aclose(self) -> None:
@@ -353,14 +378,21 @@ class ConversationTraceCoordinator:
                 trace_as_of_seq=view.as_of_seq,
                 trace_observed_at=_database_time(view.observed_at),
             )
-            if result == "applied" and outcome == "abandoned":
+            if result.status == "applied" and outcome == "abandoned":
                 await repository.cancel_claims(
                     thread_pk=thread_pk,
                     run_id=run_id,
                     resolution_id=f"trace:{generation}:{view.as_of_seq}",
                 )
             await repository.commit()
-        return result
+        if result.changed_thread is not None:
+            await notify_change(
+                self._notifications,
+                user_id=result.changed_thread.user_id,
+                topic="studio.conversation.changed",
+                key=result.changed_thread.thread_id,
+            )
+        return result.status
 
     def _finished(
         self,

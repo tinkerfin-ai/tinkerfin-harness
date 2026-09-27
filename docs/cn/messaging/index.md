@@ -79,7 +79,7 @@ subscription = await channel.wrap(
 | `RunIdentity.run_id` | 一次语义生产者，也是调用方的幂等 key |
 | `seq` | thread 日志内从 1 开始的连续提交位置 |
 
-同一个 `RunIdentity` 永远表示同一次语义运行。网络重试、附着和回放复用它；新输入使用新的 `run_id`。Messaging 不比较请求正文，权限、正文一致性和业务幂等由调用方负责。
+网络重试和附着复用完整的 `RunIdentity`，新输入使用新的 `run_id`。可选的 `request_digest` 在记录保留期间将规范的小写 SHA-256 摘要绑定到运行。摘要不同，或尝试把已绑定命令与未绑定流混用，都会在修改所有权前抛出 `RunRequestConflict`。[Gateway](../gateway/index.md) 根据完整命令计算该绑定；直接使用 Messaging 的调用方负责摘要计算和输入授权。
 
 ## `after` 游标
 

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -664,6 +664,7 @@ describe('PlanQuestionComposer', () => {
   })
 
   it('does not auto-focus untouched answer controls on entry', async () => {
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame'] })
     const firstView = render(
       <PlanQuestionComposer onClose={vi.fn()}
         threadId="thread-a"
@@ -673,7 +674,7 @@ describe('PlanQuestionComposer', () => {
       />,
     )
     const firstOption = screen.getByRole('radio', { name: /预发布/ })
-    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+    await act(async () => { vi.advanceTimersToNextFrame() })
     expect(firstOption).not.toHaveFocus()
     firstView.unmount()
 
@@ -687,7 +688,7 @@ describe('PlanQuestionComposer', () => {
     )
 
     const answer = screen.getByRole('textbox', { name: '自定义回答：还有其他补充吗？' })
-    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+    await act(async () => { vi.advanceTimersToNextFrame() })
     expect(answer).not.toHaveFocus()
     expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument()
   })

@@ -93,6 +93,7 @@ local max_thread_payload_bytes = ARGV[14]
 local retention_ms = tonumber(ARGV[15])
 local max_total_bytes = ARGV[16]
 local max_total_records = ARGV[17]
+local requested_digest = ARGV[18]
 
 local function set_retention_deadline()
     if retention_ms == 0 then
@@ -200,6 +201,14 @@ if redis.call('EXISTS', capacity) == 1 then
     end
 end
 local new_run = redis.call('EXISTS', run_key) == 0
+if not new_run then
+    local stored_digest = redis.call('HGET', run_key, 'request_digest')
+    if not stored_digest or (stored_digest ~= '' and
+        (#stored_digest ~= 64 or not string.match(stored_digest, '^[0-9a-f]+$'))) then
+        return {'INVALID_REQUEST_BINDING'}
+    end
+    if stored_digest ~= requested_digest then return {'REQUEST_CONFLICT'} end
+end
 if new_run then
     local active_key = redis.call('HGET', meta, 'active_key')
     local active_lease = redis.call('HGET', meta, 'active_lease')
@@ -343,6 +352,7 @@ local fence = redis.call('HINCRBY', meta, 'fence_counter', 1)
 redis.call('SADD', key_index, run_key, lease_key)
 redis.call('HSET', run_key,
     'run', requested_run,
+    'request_digest', requested_digest,
     'status', 'running',
     'settling', '0',
     'publication_closed', '0',
@@ -648,6 +658,11 @@ end
 if redis.call('EXISTS', run_key) == 0 then
     return {'NOT_FOUND'}
 end
+local request_digest = redis.call('HGET', run_key, 'request_digest')
+if not request_digest or (request_digest ~= '' and
+    (#request_digest ~= 64 or not string.match(request_digest, '^[0-9a-f]+$'))) then
+    return {'INVALID_REQUEST_BINDING'}
+end
 local status = redis.call('HGET', run_key, 'status')
 if status == 'completed' or status == 'cancelled' or status == 'failed' or status == 'owner_lost' then
     return {'FINAL'}
@@ -713,6 +728,11 @@ end
 local status = redis.call('HGET', run_key, 'status')
 if status ~= 'running' and status ~= 'cancel_requested' and status ~= 'completed' and status ~= 'cancelled' and status ~= 'failed' and status ~= 'owner_lost' then
     return {'INVALID_STATUS', status or ''}
+end
+local request_digest = redis.call('HGET', run_key, 'request_digest')
+if not request_digest or (request_digest ~= '' and
+    (#request_digest ~= 64 or not string.match(request_digest, '^[0-9a-f]+$'))) then
+    return {'INVALID_REQUEST_BINDING'}
 end
 local lease_ttl_ms = -1
 if status ~= 'completed' and status ~= 'cancelled' and status ~= 'failed' and status ~= 'owner_lost' then
@@ -797,7 +817,8 @@ return {
     redis.call('HGET', channel_meta, 'max_thread_payload_bytes') or '',
     redis.call('HGET', channel_meta, 'retention_ms') or '',
     redis.call('HGET', run_key, 'publication_closed') or '',
-    redis.call('HGET', run_key, 'publication_ready') or ''
+    redis.call('HGET', run_key, 'publication_ready') or '',
+    request_digest
 }
 """
 )

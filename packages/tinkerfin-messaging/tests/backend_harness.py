@@ -94,6 +94,7 @@ class MessagingBackendHarness:
         after: int | None,
         cancellable: bool,
         recoverable: bool,
+        request_digest: str | None = None,
     ) -> PreparedRun:
         return await self._ledger.prepare(
             channel=channel,
@@ -102,6 +103,7 @@ class MessagingBackendHarness:
             after=after,
             cancellable=cancellable,
             recoverable=recoverable,
+            request_digest=request_digest,
         )
 
     async def append(

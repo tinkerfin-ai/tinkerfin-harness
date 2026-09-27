@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { expect, test } from '@playwright/test'
 import fixture from './fixtures/multimodal-history.json' with { type: 'json' }
 
@@ -33,6 +34,7 @@ for (const theme of ['light','dark']) test(`输入框及菜单滚动不移动会
     }
     await route.fulfill({json:{code:0,message:'success',data}})
   })
+  await installNotificationStream(page)
   await page.goto('/')
   await page.getByRole('button',{name:'打开会话：滚动边界验收',exact:true}).click()
   const pane = page.getByRole('region',{name:'对话内容',exact:true})

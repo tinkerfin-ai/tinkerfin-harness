@@ -572,7 +572,7 @@ async def test_parallel_tools_have_independent_callback_lifecycles() -> None:
         entered.append(value)
         if len(entered) == 2:
             both_entered.set()
-        await asyncio.wait_for(both_entered.wait(), timeout=1)
+        await both_entered.wait()
         return value
 
     model = _ToolBindingModel(
@@ -672,7 +672,7 @@ async def test_runtime_must_close_a_tool_callback_left_open_by_cancellation() ->
             pass
 
     task = asyncio.create_task(consume())
-    await asyncio.wait_for(tool_entered.wait(), timeout=1)
+    await tool_entered.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task

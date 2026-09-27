@@ -14,7 +14,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from tinkerfin_contracts import RunIdentity
 
-from ._identity import thread_key
+from ._identity import stored_request_digest, thread_key
 from ._messaging_transition import messaging_message_signature
 from .backend import is_active_run_status, is_final_run_status
 from .backend_contract import StoredMessageEvidence, StoredMessagingRun
@@ -181,6 +181,7 @@ def stored_run(row: RowMapping, scope: Scope, now: datetime) -> StoredMessagingR
     token = optional_decoded_text(row["producer_token"])
     return StoredMessagingRun(
         identity=identity,
+        request_digest=stored_request_digest(row["request_digest"]),
         generation=integer(row["generation"]),
         start_sequence=integer(row["start_sequence"]),
         end_sequence=integer(row["end_sequence"]),

@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { expect, test } from '@playwright/test'
 
 import { fulfillExpectedHttpError, logBrowserDiagnostics } from './support/diagnostics'
@@ -22,6 +23,7 @@ test('预期 HTTP 异常只记录一次，同地址的未知失败和脚本异�
       if (requests === 1) await fulfillExpectedHttpError(route, 503, '验证错误反馈')
       else await route.fulfill({ status: 503, body: '{}' })
     })
+    await installNotificationStream(page)
     await page.goto('/diagnostics')
     await page.evaluate(async () => {
       await fetch('/diagnostic-api')

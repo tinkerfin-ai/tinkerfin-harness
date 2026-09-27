@@ -27,6 +27,14 @@ class UnstartedRunCleanup:
     thread_deleted: bool
 
 
+@dataclass(frozen=True, slots=True)
+class TraceSummaryWrite:
+    """摘要应用结果及需要刷新列表的会话，逐字输出不触发列表刷新"""
+
+    status: Literal["applied", "stale", "ambiguous", "generation_conflict"]
+    changed_thread: ConversationThread | None = None
+
+
 class ConversationRepository:
     """在调用方事务内维护 Studio 自有会话数据"""
 
@@ -187,6 +195,7 @@ class ConversationRepository:
                 ConversationRunRegistration.run_id == run_id,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
 
     async def list_claims_for_update(
@@ -443,24 +452,24 @@ class ConversationRepository:
         trace_generation: str,
         trace_as_of_seq: int,
         trace_observed_at: datetime,
-    ) -> Literal["applied", "stale", "ambiguous", "generation_conflict"]:
+    ) -> TraceSummaryWrite:
         """按 Trace 前缀和存储观测时间拒绝迟到的旧摘要"""
 
         thread = await self.lock_thread(thread_pk)
         if thread is None:
-            return "applied"
+            return TraceSummaryWrite("applied")
         registration = await self.get_run_for_update(thread_pk=thread_pk, run_id=run_id)
         if registration is not None:
             generation = registration.trace_generation
             if generation is not None and generation != trace_generation:
-                return "generation_conflict"
+                return TraceSummaryWrite("generation_conflict")
             previous_seq = registration.trace_as_of_seq
             previous_time = registration.trace_observed_at
             if previous_seq is not None and previous_time is not None:
                 current_order = (previous_seq, previous_time)
                 incoming_order = (trace_as_of_seq, trace_observed_at)
                 if incoming_order < current_order:
-                    return "stale"
+                    return TraceSummaryWrite("stale")
                 if incoming_order == current_order:
                     same_result = (
                         registration.status
@@ -479,7 +488,7 @@ class ConversationRepository:
                         )
                     # 数据库时间精度内可能发生两次不同观测；不猜先后，调用方需重新读取
                     if not same_result:
-                        return "ambiguous"
+                        return TraceSummaryWrite("ambiguous")
             registration.trace_generation = trace_generation
             registration.trace_as_of_seq = trace_as_of_seq
             registration.trace_observed_at = trace_observed_at
@@ -493,7 +502,16 @@ class ConversationRepository:
         # 较早 Run 的延迟终态不能覆盖已经注册的新 head 摘要
         if thread.last_run_id not in (None, run_id):
             await self._session.flush()
-            return "applied"
+            return TraceSummaryWrite("applied")
+        # 更新时间随逐字输出推进；只有列表内容变化才发送列表失效提示
+        visible_changed = (
+            thread.last_run_id != run_id
+            or thread.status != status
+            or thread.message_count != message_count
+            or thread.tool_call_count != tool_call_count
+            or thread.has_pending_interrupt != has_pending_interrupt
+            or thread.pending_interaction_kind != pending_interaction_kind
+        )
         thread.last_run_id = run_id
         thread.status = status
         thread.message_count = message_count
@@ -502,7 +520,7 @@ class ConversationRepository:
         thread.pending_interaction_kind = pending_interaction_kind
         thread.updated_at = max(thread.updated_at, updated_at)
         await self._session.flush()
-        return "applied"
+        return TraceSummaryWrite("applied", thread if visible_changed else None)
 
     async def lock_thread(self, thread_pk: int) -> ConversationThread | None:
         """锁定会话业务记录"""
@@ -511,6 +529,7 @@ class ConversationRepository:
             select(ConversationThread)
             .where(ConversationThread.id == thread_pk)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
 
     async def has_running_run(self, thread_pk: int) -> bool:
@@ -566,9 +585,10 @@ class ConversationRepository:
         thread_pk: int,
         run_pk: int,
         run_id: str,
+        preparation_id: str,
         delete_empty_thread: bool,
         expected_updated_at: datetime | None = None,
-        allow_starting: bool = False,
+        expected_status: Literal["preparing", "starting"] = "preparing",
     ) -> UnstartedRunCleanup:
         """删除未启动注册、未结算认领和可选空会话"""
 
@@ -577,15 +597,14 @@ class ConversationRepository:
             return UnstartedRunCleanup(run_deleted=False, thread_deleted=False)
         run = await self.get_run_for_update(thread_pk=thread_pk, run_id=run_id)
         deleted = False
-        allowed_statuses = (
-            {"preparing", "starting"} if allow_starting else {"preparing"}
-        )
+        # 激活可发生在同一时间精度内，清理必须同时匹配检查时的业务状态
         if (
             run is not None
             and run.id == run_pk
             and run.conversation_thread_id == thread_pk
             and run.run_id == run_id
-            and run.status in allowed_statuses
+            and run.preparation_id == preparation_id
+            and run.status == expected_status
             and (expected_updated_at is None or run.updated_at == expected_updated_at)
         ):
             await self.release_claims(thread_pk=thread_pk, run_id=run_id)

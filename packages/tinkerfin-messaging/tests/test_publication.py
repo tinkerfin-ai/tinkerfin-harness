@@ -40,10 +40,10 @@ async def test_publish_during_source_wait_is_replayed_and_idempotent(
             source(), identity=identity, after=0, on_committed=observe
         )
         try:
-            await asyncio.wait_for(ready.wait(), 2)
+            await ready.wait()
             event = CustomEvent(name="progress", value={"percent": 50})
-            envelope = await asyncio.wait_for(
-                channel.publish(event, identity=identity, message_id="progress"), 2
+            envelope = await channel.publish(
+                event, identity=identity, message_id="progress"
             )
             assert envelope.seq == 2
             assert (
@@ -104,7 +104,7 @@ async def test_main_terminal_seals_publication_before_source_finishes(
             source(), identity=identity, after=0, on_committed=observe
         )
         try:
-            await asyncio.wait_for(terminal.wait(), 2)
+            await terminal.wait()
             assert await channel.get_run_status(identity=identity) == "running"
             with pytest.raises(PublicationRejected):
                 await channel.publish(
@@ -137,7 +137,7 @@ async def test_other_facade_publishes_after_child_terminal_without_owning_source
             source(), identity=identity, after=0, on_committed=observe
         )
         try:
-            await asyncio.wait_for(ready.wait(), 2)
+            await ready.wait()
             async with Messaging(backend=messaging_backend.storage_backend) as observer:
                 publisher = observer.channel(name="events", codec=AgUiCodec())
                 results = await asyncio.gather(
@@ -179,7 +179,7 @@ async def test_publish_requires_first_source_commit(
             source(), identity=identity, after=0, on_committed=observe
         )
         try:
-            await asyncio.wait_for(child_committed.wait(), 2)
+            await child_committed.wait()
             with pytest.raises(PublicationRejected) as raised:
                 await channel.publish(
                     CustomEvent(name="early", value=1), identity=identity

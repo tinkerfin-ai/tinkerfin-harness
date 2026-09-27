@@ -19,6 +19,8 @@
 | 将执行过程连接到聊天界面 | [AG-UI](agui/index.md) |
 | 查询对话历史与执行记录 | [Tracing](tracing/index.md) |
 | 保存事件，断线后继续接收 | [Messaging](messaging/index.md) |
+| 向独立监听者广播资源变化 | [Notifications](notifications/index.md) |
+| 统一受理命令并通知客户端 | [Gateway](gateway/index.md) |
 | 让智能体在隔离环境中处理文件与命令 | [Sandbox](sandbox/index.md) |
 | 运行或调度智能体任务 | [Automation](automation/index.md) |
 

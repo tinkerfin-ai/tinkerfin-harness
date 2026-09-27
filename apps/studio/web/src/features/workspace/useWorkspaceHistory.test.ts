@@ -10,6 +10,7 @@ import type { Conversation } from '../../types'
 import { restoreConversationFromTrace } from '../conversation/trace/runtime'
 import { useChainTrace } from '../conversation/chainTrace/useChainTrace'
 import { useWorkspaceState } from './useWorkspaceState'
+import { mockResourceNotices } from '../../test/resourceNotices'
 import {
   historyItemFromDetail,
   mergeHistoryConversations,
@@ -128,6 +129,7 @@ function queueHistoryResponse() {
 function useHarness(
   initial: ConversationHistoryDetail,
   options: {
+    catalogReady?: boolean
     initiallyHydrated?: boolean
     onToast?: (kind: 'error', message: string) => void
     prepareTaskTraceOwner?: (threadId: string) => Promise<void>
@@ -150,7 +152,7 @@ function useHarness(
     setWorkspace,
     retainConversationDetails,
     defaultModelId: 'main',
-    modelCatalogStatus: 'loading',
+    modelCatalogStatus: options.catalogReady ? 'ready' : 'loading',
     refreshOnActivation: options.traceActive,
     followDetachedConversation,
     prepareTaskTraceOwner: options.prepareTaskTraceOwner ?? defaultPrepareTaskTraceOwner,
@@ -1209,5 +1211,59 @@ describe('所选会话与链路共享激活刷新', () => {
     expect(historyMocks.followGraph).toHaveBeenCalledOnce()
     hook.unmount()
     await act(async () => { await closed.promise })
+  })
+})
+
+
+describe('会话列表变化通知', () => {
+  let notices: ReturnType<typeof mockResourceNotices>
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.resetAllMocks()
+    notices = mockResourceNotices()
+    historyMocks.groupConfig.mockResolvedValue({ dayRanges: [] })
+    historyMocks.detail.mockResolvedValue(detail())
+  })
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers() })
+
+  it('基线查询期间新增会话会追加读取，外部创建和删除在列表生效', async () => {
+    const initial = historyItemFromDetail(detail())
+    const remote = { ...initial, threadId: 'remote-thread', title: '另一窗口的会话' }
+    const pending = deferred<{ items: typeof initial[]; nextCursor: null }>()
+    historyMocks.list.mockImplementationOnce(() => pending.promise)
+      .mockResolvedValue({ items: [remote, initial], nextCursor: null })
+    const { result } = renderHook(() => useHarness(detail(), { catalogReady: true }))
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(historyMocks.list).toHaveBeenCalledTimes(1)
+    act(() => {
+      notices.changed('studio.conversation.changed', remote.threadId)
+      notices.changed('studio.conversation.changed', remote.threadId)
+    })
+    expect(historyMocks.list).toHaveBeenCalledTimes(1)
+    await act(async () => { pending.resolve({ items: [initial], nextCursor: null }); await vi.advanceTimersByTimeAsync(0) })
+    expect(historyMocks.list).toHaveBeenCalledTimes(2)
+    expect(result.current.history.historyConversations.map(item => item.threadId)).toEqual([remote.threadId, initial.threadId])
+    historyMocks.list.mockResolvedValue({ items: [initial], nextCursor: null })
+    await act(async () => { notices.changed('studio.conversation.changed', remote.threadId); await vi.advanceTimersByTimeAsync(0) })
+    expect(result.current.history.historyConversations.map(item => item.threadId)).toEqual([initial.threadId])
+  })
+
+  it('搜索结果接收改名变化，逐字轨迹不会刷新会话列表', async () => {
+    const initial = historyItemFromDetail(detail())
+    let renamed = false
+    historyMocks.list.mockImplementation(async (options: { query?: string }) => ({
+      items: options.query && !renamed ? [] : [{ ...initial, title: renamed ? '新的标题' : initial.title, titleSeq: renamed ? 1 : 0 }], nextCursor: null,
+    }))
+    const { result } = renderHook(() => useHarness(detail(), { catalogReady: true }))
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => result.current.history.setHistoryQuery('新的标题'))
+    await act(async () => vi.advanceTimersByTimeAsync(300))
+    expect(result.current.history.historyConversations).toEqual([])
+    const calls = historyMocks.list.mock.calls.length
+    await act(async () => { notices.changed('trace.changed', initial.threadId); await vi.advanceTimersByTimeAsync(0) })
+    expect(historyMocks.list).toHaveBeenCalledTimes(calls)
+    renamed = true
+    await act(async () => { notices.changed('studio.conversation.title.changed', initial.threadId); await vi.advanceTimersByTimeAsync(0) })
+    expect(result.current.history.historyConversations.map(item => item.title)).toEqual(['新的标题'])
   })
 })

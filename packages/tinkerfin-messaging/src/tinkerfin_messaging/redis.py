@@ -13,7 +13,12 @@ from redis.asyncio import Redis
 from tinkerfin_contracts import RunIdentity
 
 from . import _redis_capacity, _redis_control, _redis_journal
-from ._identity import required_identifier, required_identity
+from ._identity import (
+    required_identifier,
+    required_identity,
+    stored_request_digest,
+    validate_request_digest,
+)
 from ._messaging_ledger import BackendRunHandle as _BackendRunHandle
 from ._redis_control import (
     _AsyncRedisClient,
@@ -186,6 +191,8 @@ class RedisBackend:
         if not isinstance(transition, MessagingTransition):
             raise TypeError("transition must be a MessagingTransition")
         kind = transition.kind
+        if kind == "prepare_run":
+            validate_request_digest(transition.request_digest)
         if kind in {"prepare_run", "append_message", "publish_message"}:
             await _redis_capacity.reclaim_expired(self)
         if kind == "prepare_run":
@@ -201,6 +208,7 @@ class RedisBackend:
                 after=transition.after_sequence,
                 cancellable=transition.cancellable,
                 recoverable=transition.recoverable,
+                request_digest=transition.request_digest,
             )
             return MessagingTransitionResult(
                 kind=kind,
@@ -929,6 +937,7 @@ class RedisBackend:
             identity=identity,
             generation=generation,
             start_sequence=snapshot.start_seq,
+            request_digest=snapshot.request_digest,
             end_sequence=snapshot.end_seq,
             status=snapshot.status,
             settlement_started=snapshot.settling,
@@ -1103,6 +1112,9 @@ class RedisBackend:
             identity=identity,
             generation=generation,
             start_sequence=self._hash_integer(values, "start_seq", default=0),
+            request_digest=stored_request_digest(
+                self._hash_text(values, "request_digest") or None
+            ),
             end_sequence=self._hash_integer(values, "end_seq", default=0),
             status=status,
             publication_ready=self._snapshot_boolean(

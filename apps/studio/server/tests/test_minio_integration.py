@@ -51,7 +51,7 @@ def minio_settings(docker_test_client, docker_test_run_id):
 
 
 async def test_real_direct_upload_download_and_reopening(
-    minio_settings, database, monkeypatch
+    notifications, minio_settings, database, monkeypatch
 ):
     for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
         monkeypatch.setenv(name, "http://127.0.0.1:9")
@@ -61,7 +61,7 @@ async def test_real_direct_upload_download_and_reopening(
     async with MinioAttachmentStorage.open(minio_settings) as storage:
         await storage.initialize()
         await storage.initialize()
-        service = AttachmentService(database, storage)
+        service = AttachmentService(database, storage, notifications=notifications)
         app = create_application(lifespan=None)
         app.state.resources = SimpleNamespace(attachments=service)
         app.dependency_overrides[get_user_context] = lambda: UserContext(

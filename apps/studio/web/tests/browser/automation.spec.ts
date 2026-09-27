@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 import { createAutomationFixture, runFixture, taskFixture } from '../../src/test/automationFixtures'
 import type { AutomationDraft } from '../../src/features/automation/model'
@@ -66,10 +67,11 @@ async function prepare(page: Page, language = 'zh-CN') {
     } else if (path === '/api/automation/runs') data = { items: matchingRuns.filter(run => !status || run.status === status), nextCursor: null }
     else if (path.startsWith('/api/automation/runs/')) {
       const run = state.runs.find(run => run.id === path.split('/').at(-1))!
-      data = { ...run, messages: [], outputFiles: [], resultAvailable: true }
+      data = { ...run, threadId: `thread-${run.id}`, runId: `run-${run.id}`, messages: [], outputFiles: [], resultAvailable: true }
     } else throw new Error(`Unexpected request: ${method} ${path}`)
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
+  await installNotificationStream(page)
   await page.goto('/')
   await expect(page.getByRole('textbox', { name: language === 'en' ? 'Message input' : '消息输入', exact: true })).toBeVisible()
   if ((page.viewportSize()?.width ?? 1440) < 768) {

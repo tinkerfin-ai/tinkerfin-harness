@@ -195,13 +195,15 @@ async def test_store_implementations_reject_invalid_direct_scope(
             "execution",
         )
     with pytest.raises((TypeError, ValueError)):
-        await store.claim_work(
-            "app",
-            value,
-            limit=1,
-            lease_duration=timedelta(minutes=1),
-            global_concurrency=1,
-        )
+        (
+            await store.claim_work(
+                "app",
+                value,
+                limit=1,
+                lease_duration=timedelta(minutes=1),
+                global_concurrency=1,
+            )
+        ).claims
 
 
 @pytest.mark.asyncio
@@ -332,13 +334,15 @@ async def test_nonfinite_completion_keeps_the_claim_and_execution_unchanged(
     await store.enqueue_execution(
         execution, occurrence_key="run", request_id=None, input_digest="run"
     )
-    (claim,) = await store.claim_work(
-        "app",
-        "worker",
-        limit=1,
-        lease_duration=timedelta(minutes=1),
-        global_concurrency=1,
-    )
+    (claim,) = (
+        await store.claim_work(
+            "app",
+            "worker",
+            limit=1,
+            lease_duration=timedelta(minutes=1),
+            global_concurrency=1,
+        )
+    ).claims
     with pytest.raises(ValueError):
         await store.finish_execution(
             claim, status=ExecutionStatus.SUCCEEDED, result={"nested": [float("nan")]}

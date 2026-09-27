@@ -21,6 +21,13 @@ from tests.support.sql_engines import SqlEngineFactory
 from tinkerfin_automation import MemoryAutomationStore, SqlAlchemyAutomationStore
 from tinkerfin_automation.clock import ManualClock
 from tinkerfin_automation.store import AutomationStore
+from tinkerfin_notifications import Notifications
+
+
+@pytest.fixture
+async def notification_service() -> AsyncGenerator[Notifications, None]:
+    async with Notifications() as service:
+        yield service
 
 
 @pytest.fixture
@@ -101,27 +108,57 @@ async def _sql_engine(
         await admin.dispose()
 
 
-@pytest.fixture(
-    params=[
-        "memory",
-        "sqlite",
-        pytest.param("mysql", marks=pytest.mark.docker_integration),
-        pytest.param("postgresql", marks=pytest.mark.docker_integration),
-    ]
-)
+_STORE_FAMILIES = [
+    "memory",
+    "sqlite",
+    pytest.param("mysql", marks=pytest.mark.docker_integration),
+    pytest.param("postgresql", marks=pytest.mark.docker_integration),
+]
+
+
+@pytest.fixture(params=_STORE_FAMILIES)
 async def store_with_clock(
-    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncIterator[tuple[AutomationStore, ManualClock]]:
+    async with _store_with_clock(
+        request, tmp_path, monkeypatch, notifications=None
+    ) as pair:
+        yield pair
+
+
+@pytest.fixture(params=_STORE_FAMILIES)
+async def notifying_store_with_clock(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    notification_service: Notifications,
+) -> AsyncIterator[tuple[AutomationStore, ManualClock]]:
+    async with _store_with_clock(
+        request, tmp_path, monkeypatch, notifications=notification_service
+    ) as pair:
+        yield pair
+
+
+@asynccontextmanager
+async def _store_with_clock(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    notifications: Notifications | None,
+) -> AsyncGenerator[tuple[AutomationStore, ManualClock], None]:
     clock = ManualClock(datetime(2026, 9, 9, 8, tzinfo=UTC))
     if request.param == "memory":
-        store = MemoryAutomationStore(clock=clock)
+        store = MemoryAutomationStore(clock=clock, notifications=notifications)
         try:
             yield store, clock
         finally:
             await store.close()
         return
     async with _sql_engine(request.param, request, tmp_path) as engine:
-        sql_store = SqlAlchemyAutomationStore(engine)
+        sql_store = SqlAlchemyAutomationStore(engine, notifications=notifications)
         await sql_store.setup()
         control_database_clock(engine, clock, monkeypatch)
         try:

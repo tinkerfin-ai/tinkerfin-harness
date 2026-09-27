@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import Counter
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -16,6 +16,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
+import tinkerfin_tracing._follow_reads as follow_reads_module
+import tinkerfin_tracing.durable_store as durable_store_module
 from tinkerfin_contracts import RunIdentity, ThreadIdentity
 from tinkerfin_tracing import (
     RunFact,
@@ -23,7 +25,6 @@ from tinkerfin_tracing import (
     ToolFact,
     Tracer,
     TraceStoreError,
-    TraceStoreOptions,
 )
 from tinkerfin_tracing.backend import TraceEventPageRequest
 
@@ -286,7 +287,7 @@ async def test_mysql_interrupted_read_start_discards_pending_settings(
         store.snapshot(ThreadIdentity(namespace="test", thread_id="absent"))
     )
     try:
-        await asyncio.wait_for(entered.wait(), timeout=2)
+        await entered.wait()
         for attempt in range(8):
             if pending.done():
                 break
@@ -355,7 +356,7 @@ async def test_mysql_autocommit_read_cleanup_settles_before_pool_return(
         )
         pending = asyncio.create_task(store.snapshot(identity.thread))
         try:
-            await asyncio.wait_for(entered.wait(), timeout=2)
+            await entered.wait()
             if rollback_fails:
                 with pytest.raises(TraceStoreError) as captured:
                     await pending
@@ -397,12 +398,29 @@ async def test_mysql_autocommit_read_cleanup_settles_before_pool_return(
 
 
 async def test_mysql_graph_follow_observes_next_remote_run_and_releases_pool(
-    trace_mysql_url: str,
+    trace_mysql_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     reader_engine = create_async_engine(trace_mysql_url, pool_size=1, max_overflow=0)
     producer_engine = create_async_engine(trace_mysql_url)
-    options = TraceStoreOptions(follow_poll_seconds=0.02)
-    reader = SqlAlchemyTraceStore(reader_engine, options=options)
+    clock = 0.0
+    polls: asyncio.Queue[asyncio.Event] = asyncio.Queue(maxsize=1)
+
+    async def controlled_poll(
+        wait: Coroutine[object, object, bool], *, timeout: float
+    ) -> bool:
+        nonlocal clock
+        wait.close()
+        release = asyncio.Event()
+        await polls.put(release)
+        await release.wait()
+        clock += timeout
+        raise TimeoutError
+
+    monkeypatch.setattr(follow_reads_module, "_monotonic", lambda: clock)
+    monkeypatch.setattr(
+        durable_store_module, "_wait_for_follow_change", controlled_poll
+    )
+    reader = SqlAlchemyTraceStore(reader_engine)
     producer = SqlAlchemyTraceStore(producer_engine)
     first = RunIdentity(namespace="test", thread_id="graph", run_id="first")
     writer = await producer.open_writer(first)
@@ -411,19 +429,14 @@ async def test_mysql_graph_follow_observes_next_remote_run_and_releases_pool(
         await writer.append((_fact(first, "terminal"),), mandatory=True)
         await writer.aclose()
         graph = await Tracer(store=reader).query(first.thread)
-        returned = asyncio.Event()
-
-        def observe_pool_return(_connection: object, _entry: object) -> None:
-            returned.set()
-
-        event.listen(reader_engine.sync_engine, "checkin", observe_pool_return)
         follower = graph.follow()
         pending = asyncio.create_task(anext(follower))
         try:
-            for _ in range(3):
-                returned.clear()
-                await asyncio.wait_for(returned.wait(), timeout=2)
-                _assert_pool_returned(reader_engine)
+            release = await polls.get()
+            _assert_pool_returned(reader_engine)
+            release.set()
+            release = await polls.get()
+            _assert_pool_returned(reader_engine)
             assert not pending.done()
             second = RunIdentity(
                 namespace="test", thread_id=first.thread_id, run_id="second"
@@ -444,7 +457,8 @@ async def test_mysql_graph_follow_observes_next_remote_run_and_releases_pool(
                     ),
                 )
             )
-            delta = await asyncio.wait_for(pending, timeout=2)
+            release.set()
+            delta = await pending
             assert delta.as_of_seq == 4
             assert {node.run_id for node in delta.node_upserts} == {second.run_id}
             await follower.aclose()
@@ -454,7 +468,6 @@ async def test_mysql_graph_follow_observes_next_remote_run_and_releases_pool(
                 pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
             await follower.aclose()
-            event.remove(reader_engine.sync_engine, "checkin", observe_pool_return)
     finally:
         await writer.aclose()
         await reader_engine.dispose()

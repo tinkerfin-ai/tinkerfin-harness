@@ -17,6 +17,11 @@ async function setup(page: Page, theme: string, pauseClock = false) {
     localStorage.setItem('tinkerfin:theme', theme)
     localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'test-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
     const original = window.fetch
+    const notificationReaders = new Set<ReadableStreamDefaultController<Uint8Array>>()
+    const notify = (topic: string, key: string) => {
+      const data = { scope: { namespace: 'ns_1', owner_id: null }, topic, key, details: {} }
+      for (const reader of notificationReaders) reader.enqueue(new TextEncoder().encode(`event: change\ndata: ${JSON.stringify(data)}\n\n`))
+    }
     const streams: { controller: ReadableStreamDefaultController<Uint8Array>; threadId: string; runId: string; seq: number; execution: 'running' | 'succeeded' | 'cancelled'; messages: Record<string, unknown>[] }[] = []
     const titles = new Map<string, { threadId: string; title: string; titleSource: string; titleGenerationStatus: string; titleSeq: number }>()
     const requests: string[] = []
@@ -31,12 +36,14 @@ async function setup(page: Page, theme: string, pauseClock = false) {
       if (event.type === 'RUN_FINISHED') stream.execution = 'succeeded'
       if (event.type === 'RUN_ERROR' && event.code === 'cancelled') stream.execution = 'cancelled'
       stream.controller.enqueue(new TextEncoder().encode(`id: ${++stream.seq}\ndata: ${JSON.stringify(event)}\n\n`))
+      if (event.type === 'RUN_STARTED' || event.type === 'RUN_FINISHED' || event.type === 'RUN_ERROR') notify('studio.conversation.changed', stream.threadId)
     }
     Object.assign(window, { titleHarness: {
       emit, aborted, cancelled, requests, count: () => streams.length,
       title: (index: number, title: string, titleSeq: number) => {
         const threadId = `title-thread-${index}`
         titles.set(threadId, { threadId, title, titleSeq, titleSource: 'generated', titleGenerationStatus: 'succeeded' })
+        notify('studio.conversation.title.changed', threadId)
       },
       finish: (index: number) => {
         const stream = streams[index]
@@ -50,10 +57,27 @@ async function setup(page: Page, theme: string, pauseClock = false) {
       requests.push(url.pathname)
       if (!url.pathname.startsWith('/api/')) return original(input, init)
       const json = (data: unknown) => new Response(JSON.stringify({ code: 0, message: 'success', data }), { headers: { 'Content-Type': 'application/json' } })
+      if (url.pathname === '/api/notifications') {
+        let detach: () => void
+        return new Response(new ReadableStream<Uint8Array>({
+          start(reader) {
+            notificationReaders.add(reader)
+            const abort = () => { if (notificationReaders.delete(reader)) reader.close(); detach() }
+            detach = () => { notificationReaders.delete(reader); request.signal.removeEventListener('abort', abort) }
+            request.signal.addEventListener('abort', abort, { once: true })
+            reader.enqueue(new TextEncoder().encode('event: ready\ndata: {}\n\n'))
+          },
+          cancel() { detach() },
+        }), { headers: { 'Content-Type': 'text/event-stream' } })
+      }
       if (url.pathname === '/api/auth/me') return json({ expires_at: '2099-01-01T00:00:00Z', user })
       if (url.pathname === '/api/models') return json({ items: [{ modelId: 'main', displayName: 'Main',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' })
       if (url.pathname === '/api/conversation/config') return json({ dayRanges: [7, 30] })
-      if (url.pathname === '/api/conversation/history') return json({ items: [], nextCursor: null })
+      if (url.pathname === '/api/conversation/history') return json({ items: [...new Map(streams.map(stream => [stream.threadId, stream])).values()].map((stream, index) => ({
+        ...titles.get(stream.threadId), id: index + 1, status: stream.execution === 'running' ? 'running' : 'idle',
+        lastRunId: stream.runId, lastModel: 'main', accessMode: 'full', messageCount: stream.messages.length, toolCallCount: 0,
+        hasPendingInterrupt: false, pendingInteractionKind: null, pinned: false, createdAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-20T00:00:00Z',
+      })), nextCursor: null })
       if (url.pathname === '/api/conversation/chat') {
         const payload = await request.json()
         const index = streams.length
@@ -74,6 +98,7 @@ async function setup(page: Page, theme: string, pauseClock = false) {
         const patch = await request.json()
         const title = { ...current, title: patch.title, titleSource: 'user', titleGenerationStatus: 'skipped', titleSeq: 3 }
         titles.set(threadId, title)
+        notify('studio.conversation.title.changed', threadId)
         return json(title)
       }
       if (url.pathname.endsWith('/cancel')) {
@@ -114,7 +139,6 @@ async function titleEvent(page: Page, index: number, title: string, titleSeq = 2
   await page.evaluate(({ index, title, titleSeq }) => {
     (window as typeof window & { titleHarness: TitleHarness }).titleHarness.title(index, title, titleSeq)
   }, { index, title, titleSeq })
-  await page.clock.runFor(1000)
 }
 
 for (const theme of ['light', 'dark']) {

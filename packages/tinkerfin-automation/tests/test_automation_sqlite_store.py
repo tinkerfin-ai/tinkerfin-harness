@@ -138,13 +138,15 @@ async def test_sqlite_schema_store_contract_and_borrowed_engine(
             request_id="run-1",
             input_digest="run-digest",
         )
-        (claim,) = await concrete.claim_work(
-            "app",
-            "worker-1",
-            limit=1,
-            lease_duration=timedelta(minutes=1),
-            global_concurrency=16,
-        )
+        (claim,) = (
+            await concrete.claim_work(
+                "app",
+                "worker-1",
+                limit=1,
+                lease_duration=timedelta(minutes=1),
+                global_concurrency=16,
+            )
+        ).claims
         authorization = await concrete.authorize_start(
             claim, execution_timeout=timedelta(minutes=30)
         )
@@ -512,13 +514,15 @@ async def test_sqlite_stale_started_claim_becomes_uncertain(tmp_path: Path) -> N
             request_id=None,
             input_digest="execution",
         )
-        (claim,) = await store.claim_work(
-            "app",
-            "worker-1",
-            limit=1,
-            lease_duration=timedelta(minutes=1),
-            global_concurrency=16,
-        )
+        (claim,) = (
+            await store.claim_work(
+                "app",
+                "worker-1",
+                limit=1,
+                lease_duration=timedelta(minutes=1),
+                global_concurrency=16,
+            )
+        ).claims
         await store.authorize_start(claim, execution_timeout=timedelta(minutes=30))
         async with engine.begin() as connection:
             await connection.execute(
@@ -526,13 +530,15 @@ async def test_sqlite_stale_started_claim_becomes_uncertain(tmp_path: Path) -> N
                 .where(work_items.c.work_item_id == claim.work_item_id)
                 .values(lease_until=datetime(2000, 1, 1))
             )
-        assert not await store.claim_work(
-            "app",
-            "worker-2",
-            limit=1,
-            lease_duration=timedelta(minutes=1),
-            global_concurrency=16,
-        )
+        assert not (
+            await store.claim_work(
+                "app",
+                "worker-2",
+                limit=1,
+                lease_duration=timedelta(minutes=1),
+                global_concurrency=16,
+            )
+        ).claims
         assert (
             await store.get_execution("app", "owner-1", execution.execution_id)
         ).status is ExecutionStatus.NEEDS_ATTENTION
@@ -608,13 +614,15 @@ async def test_sqlite_taskless_execution_uses_owner_admission_without_task_row(
         assert not (
             await store.list_tasks("app", "owner-1", limit=10, cursor=None)
         ).items
-        claims = await store.claim_work(
-            "app",
-            "worker",
-            limit=3,
-            lease_duration=timedelta(minutes=1),
-            global_concurrency=3,
-        )
+        claims = (
+            await store.claim_work(
+                "app",
+                "worker",
+                limit=3,
+                lease_duration=timedelta(minutes=1),
+                global_concurrency=3,
+            )
+        ).claims
         assert len(claims) == 2
         claims_by_owner = {
             (
@@ -629,13 +637,15 @@ async def test_sqlite_taskless_execution_uses_owner_admission_without_task_row(
             status=ExecutionStatus.SUCCEEDED,
             result={"ok": True},
         )
-        (next_claim,) = await store.claim_work(
-            "app",
-            "worker",
-            limit=1,
-            lease_duration=timedelta(minutes=1),
-            global_concurrency=3,
-        )
+        (next_claim,) = (
+            await store.claim_work(
+                "app",
+                "worker",
+                limit=1,
+                lease_duration=timedelta(minutes=1),
+                global_concurrency=3,
+            )
+        ).claims
         assert (
             await store.get_scheduled_execution("app", next_claim.execution_id)
         ).owner_id == "owner-1"

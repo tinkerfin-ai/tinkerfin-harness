@@ -88,8 +88,10 @@ relationships or incomplete call history are reported explicitly.
 Graph cursors belong to the selected thread, branch, filter, and current history tail.
 A new commit invalidates an earlier Graph cursor. `graph.follow()` is available on the
 current first page; history cursors retain their original fixed view. Follow streams
-release database connections while waiting. Changes from another Store instance are
-checked every 0.5 seconds by default, configurable through
+release database connections while waiting. Pass an open `Notifications` service
+to the Store's `notifications` argument for cross-instance wakeups. Missed hints are
+repaired every 30 seconds or at the next writer lease deadline. Without this service,
+changes are checked every 0.5 seconds, configurable through
 `TraceStoreOptions.follow_poll_seconds`.
 
 Query limits bound matches, searched content, expanded subagents, and response bytes.
@@ -140,6 +142,14 @@ SQLite file databases work with the default pool. In-memory SQLite requires
 `AsyncAdaptedQueuePool` with `pool_size=1, max_overflow=0`; `StaticPool` does not isolate
 concurrent borrowers. The Store never disposes the Engine or changes its pool size.
 MySQL Graph queries require MySQL 8 or newer.
+
+`SqlAlchemyTraceStore(engine, notifications=notifications)` borrows a started
+[`tinkerfin-notifications`](https://github.com/tinkerfin-ai/tinkerfin-harness/tree/main/packages/tinkerfin-notifications)
+service. Configure its Redis backend on every process for shared wakeups and keep it
+open until writers and followers have closed. The Store publishes `trace.changed`
+after writer open/close, event append, and generation deletion; notifications contain
+resource identity, never captured content. `InMemoryTraceStore` and custom-backend
+`DurableTraceStore` accept the same argument.
 
 The `max_tracer_threads` and `max_tracer_bytes` limits apply separately to each namespace.
 Graph indexes can be rebuilt with `await tracer.rebuild_graph(thread)` without

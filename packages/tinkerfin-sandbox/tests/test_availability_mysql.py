@@ -65,17 +65,13 @@ async def test_mysql_all_holders_acknowledge_while_pause_claim_is_held(
         assert await observer.read_availability("owner") == draining
         with pytest.raises(OpenSandboxStateOwnershipError):
             await observer.register_holder(claim, "late-manager")
-        assert (
-            await asyncio.wait_for(observer.read_availability("owner"), 2) == draining
-        )
-        updates = await asyncio.wait_for(observer.get_holder_updates("manager-b"), 2)
+        assert await observer.read_availability("owner") == draining
+        updates = await observer.get_holder_updates("manager-b")
         assert updates[0].availability == draining
         assert not await owner.holders_are_idle(claim, draining)
         with pytest.raises(OpenSandboxStateOwnershipError):
             await owner.change_availability(claim, draining, phase="pausing")
-        assert await asyncio.wait_for(
-            observer.acknowledge_idle("manager-b", draining), 2
-        )
+        assert await observer.acknowledge_idle("manager-b", draining)
         assert await observer.acknowledge_idle("manager-b", draining)
         assert not await owner.holders_are_idle(claim, draining)
         assert await owner.acknowledge_idle("manager-a", draining)

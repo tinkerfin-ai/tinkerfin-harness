@@ -22,6 +22,7 @@ from .errors import (
     InvalidScheduleError,
     QueueFullError,
     RetryNotAllowedError,
+    TaskNotFoundError,
 )
 from .identity import canonical_digest, execution_identity, occurrence_key
 from .memory import MemoryAutomationStore
@@ -83,6 +84,8 @@ class AutomationService:
         self._wake_worker: _WakeWorker | None = None
         self._closed = False
         self._close_task: asyncio.Task[TaskOutcome[None]] | None = None
+        self._scheduled_ids: set[str] = set()
+        self._schedule_revision = 0
 
     @property
     def namespace(self) -> str:
@@ -420,7 +423,7 @@ class AutomationService:
             request_id=request_id,
             input_digest=digest,
         )
-        await self._scheduler.remove_task(task_id)
+        await self._forget_task(task_id)
 
     async def preview_schedule(
         self,
@@ -841,9 +844,13 @@ class AutomationService:
         await self.close()
 
     async def _materialize_due_task(self, task_id: str) -> None:
-        task = await self._store.get_scheduled_task(self._namespace, task_id)
+        try:
+            task = await self._store.get_scheduled_task(self._namespace, task_id)
+        except TaskNotFoundError:
+            await self._forget_task(task_id)
+            return
         if task.status is not TaskStatus.ENABLED or task.next_run_at is None:
-            await self._scheduler.remove_task(task_id)
+            await self._forget_task(task_id)
             return
         now = await self._store.current_time()
         materialized = materialize_schedule(
@@ -892,22 +899,51 @@ class AutomationService:
             )
         except QueueFullError:
             await self._scheduler.schedule_task(task_id, now + timedelta(minutes=1))
+            self._scheduled_ids.add(task_id)
+            self._schedule_revision += 1
+            return
+        except TaskNotFoundError:
+            await self._forget_task(task_id)
             return
         if result.executions:
             self._notify_work_available()
         await self._sync_task(result.task)
 
     async def _sync_all_tasks(self) -> None:
-        cursor: str | None = None
         while True:
-            page = await self._store.list_scheduled_tasks(
-                self._namespace, limit=100, cursor=cursor
-            )
-            for task in page.items:
-                await self._sync_task(task)
-            if page.next_cursor is None:
+            revision = self._schedule_revision
+            seen: set[str] = set()
+            cursor: str | None = None
+            while True:
+                page = await self._store.list_scheduled_tasks(
+                    self._namespace, limit=100, cursor=cursor
+                )
+                for task in page.items:
+                    seen.add(task.task_id)
+                    await self._apply_task_schedule(task)
+                if page.next_cursor is None:
+                    break
+                cursor = page.next_cursor
+            # Remote deletions and local mutations can cross page boundaries.
+            # Repeat a dirty inventory before treating absent IDs as deleted.
+            if revision != self._schedule_revision:
+                continue
+            for task_id in self._scheduled_ids - seen:
+                await self._scheduler.remove_task(task_id)
+                self._scheduled_ids.discard(task_id)
+            if revision == self._schedule_revision:
                 return
-            cursor = page.next_cursor
+
+    def _invalidate_schedule(self) -> None:
+        self._schedule_revision += 1
+
+    async def _sync_task_id(self, task_id: str) -> None:
+        try:
+            task = await self._store.get_scheduled_task(self._namespace, task_id)
+        except TaskNotFoundError:
+            await self._forget_task(task_id)
+            return
+        await self._sync_task(task)
 
     async def _setup_store(self) -> None:
         """Prepare storage before any service or engine operation can observe it."""
@@ -934,10 +970,23 @@ class AutomationService:
             self._wake_worker()
 
     async def _sync_task(self, task: AutomationTask) -> None:
+        self._schedule_revision += 1
+        await self._apply_task_schedule(task)
+        self._schedule_revision += 1
+
+    async def _forget_task(self, task_id: str) -> None:
+        self._schedule_revision += 1
+        await self._scheduler.remove_task(task_id)
+        self._scheduled_ids.discard(task_id)
+        self._schedule_revision += 1
+
+    async def _apply_task_schedule(self, task: AutomationTask) -> None:
         if task.status is TaskStatus.ENABLED and task.next_run_at is not None:
             await self._scheduler.schedule_task(task.task_id, task.next_run_at)
+            self._scheduled_ids.add(task.task_id)
         else:
             await self._scheduler.remove_task(task.task_id)
+            self._scheduled_ids.discard(task.task_id)
 
     @property
     def _execution_store(self) -> AutomationStore:

@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import os
-import sys
 import threading
 from collections.abc import Awaitable, Callable, Sequence
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -93,7 +89,7 @@ async def _case(profile_name: str, scenario: str) -> dict[str, object]:
     calls: list[str] = []
     entered = asyncio.Event()
     release = threading.Event()
-    parallel = threading.Barrier(2, timeout=3)
+    parallel = threading.Barrier(2)
     loop = asyncio.get_running_loop()
 
     @tool
@@ -101,8 +97,8 @@ async def _case(profile_name: str, scenario: str) -> dict[str, object]:
         """Echo a value after recording that execution actually began."""
         calls.append(value)
         loop.call_soon_threadsafe(entered.set)
-        if scenario == "cancel" and not release.wait(timeout=5):
-            raise TimeoutError("test Tool was not released")
+        if scenario == "cancel":
+            release.wait()
         if scenario == "parallel":
             parallel.wait()
         if scenario == "scope":
@@ -111,7 +107,7 @@ async def _case(profile_name: str, scenario: str) -> dict[str, object]:
                 async with trace_contribution(kind="custom", name="echo service"):
                     pass
 
-            asyncio.run_coroutine_threadsafe(contribute(), loop).result(timeout=2)
+            asyncio.run_coroutine_threadsafe(contribute(), loop).result()
         return value
 
     @tool
@@ -198,7 +194,7 @@ async def _case(profile_name: str, scenario: str) -> dict[str, object]:
     outcome = "success"
     try:
         if scenario == "cancel":
-            await asyncio.wait_for(entered.wait(), timeout=2)
+            await entered.wait()
             task.cancel("cancel synchronous Tool")
         await task
     except RunObservationError:
@@ -207,6 +203,7 @@ async def _case(profile_name: str, scenario: str) -> dict[str, object]:
         outcome = "cancelled"
     finally:
         release.set()
+        parallel.abort()
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -234,38 +231,14 @@ _SCENARIOS = (
 
 
 @pytest.mark.parametrize("profile", ("v2", "v3"))
-async def test_sync_tool_callback_lifecycle_in_an_isolated_process(
+@pytest.mark.parametrize("scenario", _SCENARIOS)
+def test_sync_tool_callback_lifecycle_in_an_isolated_runner(
     profile: str,
+    scenario: str,
 ) -> None:
-    # Each scenario gets a fresh Runner, including executor shutdown. Sharing only
-    # imports also verifies that completed runs leave subsequent runs usable.
-    process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        str(Path(__file__).resolve()),
-        profile,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, "LANGSMITH_TRACING": "false"},
-    )
-    assert process.stdout is not None and process.stderr is not None
-    stderr = asyncio.create_task(process.stderr.read())
-    try:
-        for scenario in _SCENARIOS:
-            # Keep each scenario's watchdog independent of imports and prior cases.
-            # A result is sent only after its Runner and executor have shut down.
-            line = await asyncio.wait_for(process.stdout.readline(), timeout=8)
-            assert line, (await stderr).decode()
-            name, result = json.loads(line)
-            assert name == scenario
-            _assert_result(scenario, result)
-        await asyncio.wait_for(process.wait(), timeout=8)
-        assert process.returncode == 0, (await stderr).decode()
-        assert await process.stdout.read() == b""
-    finally:
-        if process.returncode is None:
-            process.kill()
-            await process.wait()
-        await stderr
+    # Runner shutdown joins the synchronous Tool executor before the assertions.
+    result = asyncio.run(_case(profile, scenario))
+    _assert_result(scenario, result)
 
 
 def _assert_result(scenario: str, result: dict[str, Any]) -> None:
@@ -296,9 +269,3 @@ def _assert_result(scenario: str, result: dict[str, Any]) -> None:
             assert result["contribution_parents"] == [result["call_ids"][0]] * 2
     if scenario != "no_observer":
         assert result["closed"] is True
-
-
-if __name__ == "__main__":
-    for scenario in _SCENARIOS:
-        result = asyncio.run(_case(sys.argv[1], scenario))
-        print(json.dumps([scenario, result]), flush=True)

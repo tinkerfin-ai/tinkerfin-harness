@@ -1,4 +1,4 @@
-"""Subscription notifications and their owned cleanup through public SSE APIs."""
+"""Subscription notifications and owned cleanup through public channel APIs."""
 
 from __future__ import annotations
 
@@ -134,9 +134,11 @@ async def test_subscription_notification_runs_once_per_owner_and_attachment(
 
 
 @pytest.mark.parametrize("agui", [False, True])
+@pytest.mark.parametrize("objects", [False, True])
 @pytest.mark.parametrize("callback", [42])
 async def test_invalid_subscription_callback_precedes_cursor_and_source_side_effects(
     agui: bool,
+    objects: bool,
     callback,
 ) -> None:
     source = _Events()
@@ -156,12 +158,26 @@ async def test_invalid_subscription_callback_precedes_cursor_and_source_side_eff
             else messaging.channel(name="events")
         )
         with pytest.raises(TypeError, match="on_subscribed must be an async callable"):
-            await channel.open_sse(
-                source,
-                after=after,
-                on_subscribed=callback,
-                on_delivery_not_started=delivery_not_started,
-            )
+            if objects:
+                if agui:
+                    await messaging.agui_channel(name="events").open_run(
+                        source,
+                        on_subscribed=callback,
+                        on_delivery_not_started=delivery_not_started,
+                    )
+                else:
+                    await messaging.channel(name="events").wrap(
+                        source,
+                        on_subscribed=callback,
+                        on_delivery_not_started=delivery_not_started,
+                    )
+            else:
+                await channel.open_sse(
+                    source,
+                    after=after,
+                    on_subscribed=callback,
+                    on_delivery_not_started=delivery_not_started,
+                )
         with pytest.raises(RunNotFound):
             await channel.get_run_status(identity=source.messaging_identity)
 

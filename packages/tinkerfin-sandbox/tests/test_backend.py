@@ -1377,7 +1377,7 @@ class OpenSandboxClientTests(unittest.IsolatedAsyncioTestCase):
             side_effect=delayed_create,
         ):
             create_task = asyncio.create_task(client.create())
-            await asyncio.wait_for(create_entered.wait(), timeout=1)
+            await create_entered.wait()
             create_task.cancel()
             create_gate.set()
             with self.assertRaises(asyncio.CancelledError):
@@ -1466,10 +1466,10 @@ class OpenSandboxClientTests(unittest.IsolatedAsyncioTestCase):
             side_effect=delayed_connect,
         ):
             connect_task = asyncio.create_task(client.connect("existing"))
-            await asyncio.wait_for(connect_entered.wait(), timeout=1)
+            await connect_entered.wait()
             connect_task.cancel()
             connect_gate.set()
-            await asyncio.wait_for(connect_finished.wait(), timeout=1)
+            await connect_finished.wait()
             with self.assertRaises(asyncio.CancelledError):
                 await connect_task
 
@@ -1636,7 +1636,7 @@ class OpenSandboxClientTests(unittest.IsolatedAsyncioTestCase):
             return_value=sandbox,
         ):
             destroying = asyncio.create_task(client.destroy("existing"))
-            await asyncio.wait_for(kill_started.wait(), timeout=1)
+            await kill_started.wait()
             destroying.cancel("caller stopped waiting")
             await asyncio.sleep(0)
             self.assertFalse(destroying.done())
@@ -1645,7 +1645,7 @@ class OpenSandboxClientTests(unittest.IsolatedAsyncioTestCase):
                 asyncio.CancelledError,
                 "caller stopped waiting",
             ):
-                await asyncio.wait_for(destroying, timeout=1)
+                await destroying
 
         self.assertTrue(sandbox.killed)
         self.assertTrue(sandbox.closed)
@@ -1759,7 +1759,7 @@ async def test_inspect_cancellation_retains_owned_transport_until_client_close(
         config=OpenSandboxConfig(warm_pool_size=0),
     )
     inspection = asyncio.create_task(client.inspect("existing"))
-    await asyncio.wait_for(entered.wait(), timeout=1)
+    await entered.wait()
     inspection.cancel()
 
     with pytest.raises(asyncio.CancelledError):
@@ -1798,7 +1798,7 @@ async def test_client_close_retains_owned_transport_across_waiter_cancellation(
         config=OpenSandboxConfig(warm_pool_size=0),
     )
     first = asyncio.create_task(client.aclose())
-    await asyncio.wait_for(transport.close_entered.wait(), timeout=1)
+    await transport.close_entered.wait()
     first.cancel()
     second = asyncio.create_task(client.aclose())
     await asyncio.sleep(0)

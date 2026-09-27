@@ -147,8 +147,7 @@ async def test_sql_cancelled_start_waits_for_registration_and_close_removes_it(
     with after_sql_commit(sandbox_sql_engine, committed):
         starting = asyncio.create_task(state.start(warm_pool_size=1))
         try:
-            async with asyncio.timeout(5):
-                await reached.wait()
+            await reached.wait()
             starting.cancel("caller stopped")
             release.set()
             with pytest.raises(asyncio.CancelledError, match="caller stopped"):

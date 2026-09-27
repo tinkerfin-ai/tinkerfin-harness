@@ -9,6 +9,8 @@ from typing import Protocol
 
 from pydantic import JsonValue
 
+from tinkerfin_notifications import Notifications
+
 from .models import (
     AttentionResolution,
     AutomationExecution,
@@ -42,6 +44,28 @@ class WorkItemClaim:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkClaimBatch:
+    """Return claimed work and the next storage-clock check delay in seconds.
+
+    None means no known deadline. Zero requests another bounded scan after progress
+    or a deadline crossed during the call, including maintenance with zero capacity.
+    Ready work blocked by capacity must not force a zero-delay retry. The caller
+    deducts its local read duration.
+    """
+
+    claims: tuple[WorkItemClaim, ...]
+    next_check_after_seconds: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimRenewal:
+    """Renew ownership and observe authoritative cancellation in the same operation."""
+
+    claim: WorkItemClaim
+    cancellation_requested: bool
+
+
+@dataclass(frozen=True, slots=True)
 class StartAuthorization:
     """The only permission to invoke a target for one execution."""
 
@@ -71,6 +95,11 @@ class AutomationStore(Protocol):
     Page cursors belong to the same ownership scope and filter selection as the
     requested page. A missing, deleted, or excluded anchor returns an empty page.
     """
+
+    @property
+    def notifications(self) -> Notifications | None:
+        """Return the borrowed service used for committed task/execution changes."""
+        ...
 
     async def setup(self) -> None:
         """Prepare the Store for use or reject incompatible persisted state.
@@ -256,14 +285,20 @@ class AutomationStore(Protocol):
         limit: int,
         lease_duration: timedelta,
         global_concurrency: int,
-    ) -> tuple[WorkItemClaim, ...]:
-        """Claim due work and atomically reserve required concurrency scopes."""
+    ) -> WorkClaimBatch:
+        """Maintain due work and claim up to limit new items atomically.
+
+        A zero limit performs expired-claim recovery and due pending-work cleanup
+        without creating any claim or reserving execution capacity. Interrupted
+        deadline work can settle directly because it invokes no execution target.
+        Valid live claims are never taken over by this maintenance operation.
+        """
 
         ...
 
     async def renew_claim(
         self, claim: WorkItemClaim, *, lease_duration: timedelta
-    ) -> WorkItemClaim:
+    ) -> ClaimRenewal:
         """Extend a valid claim without changing its fence."""
 
         ...

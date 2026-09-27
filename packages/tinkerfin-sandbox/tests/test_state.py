@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Never, cast
 
 import aiosqlite
@@ -21,7 +21,7 @@ from tests.support.sql_engines import SqlEngineFactory
 from tests.support.sql_faults import after_sql_commit
 
 import tinkerfin_sandbox
-from tinkerfin_sandbox.lifecycle import _sql_transactions
+from tinkerfin_sandbox.lifecycle import _sql_state_ops, _sql_transactions
 
 
 @contextmanager
@@ -41,11 +41,16 @@ def _lock_signal(engine: AsyncEngine, command: str) -> Iterator[asyncio.Event]:
 
 @contextmanager
 def _retry_clock(
-    monkeypatch: pytest.MonkeyPatch, *, blocked: asyncio.Event | None = None
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    blocked: asyncio.Event | None = None,
+    released: asyncio.Event | None = None,
 ) -> Iterator[list[float]]:
     delays: list[float] = []
 
     async def sleep(seconds: float) -> None:
+        if released is not None:
+            await released.wait()
         delays.append(seconds)
         if blocked is not None:
             blocked.set()
@@ -323,7 +328,7 @@ async def test_borrowed_sqlite_restores_session_setting_after_failure_and_cancel
         assert await _sqlite_busy_timeout(engine) == 4321
 
         operation = asyncio.create_task(state._run_write_transaction(block_operation))
-        await asyncio.wait_for(entered.wait(), timeout=2)
+        await entered.wait()
         operation.cancel("borrowed operation cancelled")
         # The transaction owns database work through cancellation and rolls back
         # before COMMIT once that work has completed.
@@ -428,7 +433,7 @@ async def test_borrowed_sqlite_cancelled_failed_commit_invalidates_without_warni
     loop.set_exception_handler(capture_loop_error)
     operation = asyncio.create_task(state._run_write_transaction(no_op))
     try:
-        await asyncio.wait_for(commit_entered.wait(), timeout=2)
+        await commit_entered.wait()
         operation.cancel("caller cancelled during commit")
         release_commit.set()
         with pytest.raises(
@@ -524,6 +529,7 @@ def test_sqlite_state_rejects_an_invalid_retry_timeout(
 async def test_sqlite_state_retries_a_short_real_write_lock(
     sql_engine: SqlEngineFactory,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     state_type = _public_type("SQLAlchemyOpenSandboxState")
     database_path = tmp_path / "short-write-lock.db"
@@ -544,14 +550,20 @@ async def test_sqlite_state_retries_a_short_real_write_lock(
     await second.start(warm_pool_size=0)
     holder = await _hold_sqlite_write_lock(database_path)
 
+    released = asyncio.Event()
+
     async def release_lock(locked: asyncio.Event) -> None:
         await locked.wait()
         await holder.rollback()
+        released.set()
 
-    with _lock_signal(second._engine, "BEGIN IMMEDIATE") as locked:
+    with (
+        _retry_clock(monkeypatch, released=released),
+        _lock_signal(second._engine, "BEGIN IMMEDIATE") as locked,
+    ):
         releasing = asyncio.create_task(release_lock(locked))
         try:
-            claim = await asyncio.wait_for(second.acquire_owner("user-A"), timeout=2)
+            claim = await second.acquire_owner("user-A")
             await second.release_owner(claim)
             await releasing
 
@@ -645,7 +657,7 @@ async def test_sqlite_state_lock_backoff_is_immediately_cancellable(
             with pytest.raises(
                 asyncio.CancelledError, match="caller stopped waiting for SQLite"
             ):
-                await asyncio.wait_for(acquiring, timeout=2)
+                await acquiring
         finally:
             if not acquiring.done():
                 acquiring.cancel()
@@ -718,7 +730,8 @@ async def test_sqlite_state_retries_only_after_statement_rollback_and_close(
     monkeypatch.setattr(AsyncConnection, "rollback", observe_rollback)
     monkeypatch.setattr(AsyncConnection, "close", observe_close)
     try:
-        binding = await state.bind_owner(claim, "sandbox-1")
+        with _retry_clock(monkeypatch):
+            binding = await state.bind_owner(claim, "sandbox-1")
     finally:
         monkeypatch.setattr(AsyncConnection, "execute", original_execute)
         monkeypatch.setattr(AsyncConnection, "rollback", original_rollback)
@@ -836,17 +849,20 @@ async def test_sqlite_state_retries_commit_without_replaying_the_transaction(
     cursor = await reader.execute("SELECT sandbox_id FROM tinkerfin_opensandbox_owners")
     await cursor.fetchall()
 
+    released = asyncio.Event()
+
     async def release_reader(locked: asyncio.Event) -> None:
         await locked.wait()
         await reader.commit()
+        released.set()
 
-    with _lock_signal(state._engine, "COMMIT") as locked:
+    with (
+        _retry_clock(monkeypatch, released=released),
+        _lock_signal(state._engine, "COMMIT") as locked,
+    ):
         releasing = asyncio.create_task(release_reader(locked))
         try:
-            binding = await asyncio.wait_for(
-                state.bind_owner(claim, "sandbox-1"),
-                timeout=1,
-            )
+            binding = await state.bind_owner(claim, "sandbox-1")
             await releasing
         finally:
             if not releasing.done():
@@ -1445,7 +1461,18 @@ async def test_sqlite_state_rejects_a_missing_table_from_current_schema(
 async def test_sqlite_states_serialize_the_same_owner_across_instances(
     sql_engine: SqlEngineFactory,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _StateClock(monkeypatch)
+    released = asyncio.Event()
+    controlled = ModuleType("controlled_asyncio")
+    controlled.__dict__.update(vars(asyncio))
+
+    async def wait_for_release(_seconds: float) -> None:
+        await released.wait()
+
+    setattr(controlled, "sleep", wait_for_release)
+    monkeypatch.setattr(_sql_state_ops, "asyncio", controlled)
     state_type = _public_type("SQLAlchemyOpenSandboxState")
     url = _sqlite_url(tmp_path / "shared.db")
     first = state_type(engine=sql_engine(url), namespace="test", poll_interval=0.01)
@@ -1480,7 +1507,8 @@ async def test_sqlite_states_serialize_the_same_owner_across_instances(
     assert not waiting.done()
     committed = await first.bind_owner(first_claim, "sandbox-1")
     await first.release_owner(first_claim)
-    second_claim = await asyncio.wait_for(waiting, timeout=1)
+    released.set()
+    second_claim = await waiting
 
     assert second_claim.binding == committed
     await second.release_owner(second_claim)

@@ -382,7 +382,7 @@ async def test_storage_setup_survives_enter_caller_cancellation() -> None:
     backend = _StorageSetupBackend()
     messaging = Messaging(backend=backend)
     entering = asyncio.create_task(messaging.__aenter__())
-    await asyncio.wait_for(backend.started.wait(), timeout=1)
+    await backend.started.wait()
 
     entering.cancel("caller stopped waiting for setup")
     with pytest.raises(
@@ -391,7 +391,7 @@ async def test_storage_setup_survives_enter_caller_cancellation() -> None:
         await entering
     assert backend.cancelled is False
     backend.release.set()
-    await asyncio.wait_for(backend.finished.wait(), timeout=1)
+    await backend.finished.wait()
 
     await messaging.__aenter__()
     assert backend.calls == 1
@@ -402,13 +402,13 @@ async def test_concurrent_storage_setup_enter_is_rejected() -> None:
     backend = _StorageSetupBackend()
     messaging = Messaging(backend=backend)
     first_enter = asyncio.create_task(messaging.__aenter__())
-    await asyncio.wait_for(backend.started.wait(), timeout=1)
+    await backend.started.wait()
 
     with pytest.raises(MessagingClosed, match="already open"):
         await messaging.__aenter__()
 
     backend.release.set()
-    assert await asyncio.wait_for(first_enter, timeout=1) is messaging
+    assert await first_enter is messaging
     assert backend.calls == 1
     await messaging.aclose()
 
@@ -417,7 +417,7 @@ async def test_close_during_storage_setup_prevents_reopening() -> None:
     backend = _StorageSetupBackend()
     messaging = Messaging(backend=backend)
     entering = asyncio.create_task(messaging.__aenter__())
-    await asyncio.wait_for(backend.started.wait(), timeout=1)
+    await backend.started.wait()
 
     closing = asyncio.create_task(messaging.aclose())
     await asyncio.sleep(0)
@@ -426,8 +426,8 @@ async def test_close_during_storage_setup_prevents_reopening() -> None:
 
     backend.release.set()
     with pytest.raises(MessagingClosed, match="closed during storage preparation"):
-        await asyncio.wait_for(entering, timeout=1)
-    await asyncio.wait_for(closing, timeout=1)
+        await entering
+    await closing
 
     assert backend.cancelled is False
     assert backend.finished.is_set()
@@ -485,7 +485,7 @@ async def test_backend_subscription_closes_on_early_detach() -> None:
         assert backend.follow_close_calls == 1
         assert not source.closed.is_set()
         release.set()
-        await asyncio.wait_for(source.closed.wait(), timeout=1)
+        await source.closed.wait()
 
 
 async def test_subscription_close_survives_caller_cancellation() -> None:
@@ -502,19 +502,19 @@ async def test_subscription_close_survives_caller_cancellation() -> None:
         assert (await anext(aiter(subscription))).data == "one"
 
         closing = asyncio.create_task(subscription.aclose())
-        await asyncio.wait_for(backend.close_started.wait(), timeout=1)
+        await backend.close_started.wait()
         closing.cancel("subscriber stopped waiting")
         await asyncio.sleep(0)
         assert not closing.done()
         backend.close_release.set()
         with pytest.raises(asyncio.CancelledError, match="subscriber stopped waiting"):
-            await asyncio.wait_for(closing, timeout=1)
+            await closing
 
         await subscription.aclose()
         assert backend.close_finished.is_set()
         assert backend.follow_close_calls == 1
         release.set()
-        await asyncio.wait_for(source.closed.wait(), timeout=1)
+        await source.closed.wait()
 
 
 async def test_never_iterated_subscription_closes_without_claiming_delivery() -> None:
@@ -552,14 +552,14 @@ async def test_close_waiter_cancellation_settles_the_active_pull_and_backend() -
         await asyncio.sleep(0)
         closing = asyncio.create_task(subscription.aclose())
         try:
-            await asyncio.wait_for(backend.close_started.wait(), timeout=1)
+            await backend.close_started.wait()
             closing.cancel("stop waiting for close")
             await asyncio.sleep(0)
             closing.cancel("stop waiting again")
             assert not closing.done()
             backend.close_release.set()
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(closing, timeout=1)
+                await closing
             with pytest.raises(asyncio.CancelledError):
                 await pending
             await subscription.aclose()
@@ -582,9 +582,9 @@ async def test_messaging_close_settles_a_waiting_subscription() -> None:
         pending = asyncio.ensure_future(anext(delivery))
         await asyncio.sleep(0)
         try:
-            await asyncio.wait_for(messaging.aclose(), timeout=1)
+            await messaging.aclose()
             with pytest.raises(RunProducerFailed) as failed:
-                await asyncio.wait_for(pending, timeout=1)
+                await pending
             assert isinstance(failed.value.cause, asyncio.CancelledError)
             await subscription.aclose()
             assert source.closed.is_set()
@@ -636,7 +636,7 @@ async def test_wrap_repeated_cancellation_settles_before_producer_start() -> Non
                 on_delivery_not_started=delivery_not_started,
             )
         )
-        await asyncio.wait_for(backend.entered.wait(), timeout=1)
+        await backend.entered.wait()
         wrapping.cancel()
         await asyncio.sleep(0)
         wrapping.cancel()
@@ -665,7 +665,7 @@ async def test_shutdown_waits_for_inflight_prepare_and_rejects_late_producer() -
             after=0,
         )
     )
-    await asyncio.wait_for(backend.entered.wait(), timeout=1)
+    await backend.entered.wait()
 
     closing = asyncio.create_task(messaging.__aexit__(None, None, None))
     await asyncio.sleep(0)
@@ -697,7 +697,7 @@ async def test_shutdown_waits_for_recoverable_open_and_rejects_late_producer() -
             after=0,
         )
     )
-    await asyncio.wait_for(factory.entered.wait(), timeout=1)
+    await factory.entered.wait()
 
     closing = asyncio.create_task(messaging.__aexit__(None, None, None))
     await asyncio.sleep(0)
@@ -731,7 +731,7 @@ async def test_recoverable_preflight_settles_owner_when_source_close_fails() -> 
             after=0,
         )
     )
-    await asyncio.wait_for(factory.entered.wait(), timeout=1)
+    await factory.entered.wait()
 
     closing = asyncio.create_task(messaging.__aexit__(None, None, None))
     await asyncio.sleep(0)
@@ -766,7 +766,7 @@ async def test_messaging_shutdown_closes_active_source_and_owned_tasks(
 ) -> None:
     release = asyncio.Event()
     source = _Source("one", release=release)
-    messaging = Messaging(backend=messaging_backend, settlement_timeout=2)
+    messaging = Messaging(backend=messaging_backend, settlement_timeout=None)
 
     async def cancel() -> None:
         release.set()
@@ -779,10 +779,9 @@ async def test_messaging_shutdown_closes_active_source_and_owned_tasks(
         after=0,
         cancel=cancel,
     )
-    await asyncio.wait_for(source.started.wait(), timeout=1)
+    await source.started.wait()
     await messaging.__aexit__(None, None, None)
 
-    await asyncio.sleep(0)
     live_names = {
         task.get_name()
         for task in asyncio.all_tasks()
@@ -807,16 +806,13 @@ async def test_immediate_shutdown_after_wrap_closes_source_and_settles_run() -> 
     await messaging.__aexit__(None, None, None)
 
     assert source.close_calls == 1
-    status = await asyncio.wait_for(
-        messaging._runtime_backend.wait_finished(
-            BackendRunHandle(
-                channel="events",
-                identity=_identity(),
-                owner_token=None,
-                fence=None,
-            )
-        ),
-        timeout=1,
+    status = await messaging._runtime_backend.wait_finished(
+        BackendRunHandle(
+            channel="events",
+            identity=_identity(),
+            owner_token=None,
+            fence=None,
+        )
     )
     assert status == "failed"
 
@@ -847,14 +843,14 @@ async def test_shutdown_waits_for_an_accepted_cancel_callback_tail(
     delivery = aiter(subscription)
     first = await anext(delivery)
     cancelling = asyncio.create_task(channel.cancel(identity=_identity()))
-    await asyncio.wait_for(callback_started.wait(), timeout=1)
+    await callback_started.wait()
 
     closing = asyncio.create_task(messaging.__aexit__(None, None, None))
     await asyncio.sleep(0)
     shutdown_waited = not closing.done()
     callback_release.set()
-    cancel_result = await asyncio.wait_for(cancelling, timeout=1)
-    await asyncio.wait_for(closing, timeout=1)
+    cancel_result = await cancelling
+    await closing
     replay = [first.data, *[message.data async for message in delivery]]
 
     assert shutdown_waited
@@ -888,23 +884,20 @@ async def test_shutdown_honors_durable_cancel_before_watcher_returns() -> None:
     delivery = aiter(subscription)
     first = await anext(delivery)
     cancelling = asyncio.create_task(channel.cancel(identity=_identity()))
-    await asyncio.wait_for(backend.cancel_is_durable.wait(), timeout=1)
+    await backend.cancel_is_durable.wait()
 
     closing = asyncio.create_task(messaging.__aexit__(None, None, None))
-    status = await asyncio.wait_for(
-        messaging._runtime_backend.wait_finished(
-            BackendRunHandle(
-                channel="events",
-                identity=_identity(),
-                owner_token=None,
-                fence=None,
-            )
-        ),
-        timeout=1,
+    status = await messaging._runtime_backend.wait_finished(
+        BackendRunHandle(
+            channel="events",
+            identity=_identity(),
+            owner_token=None,
+            fence=None,
+        )
     )
     backend.release_observer.set()
-    cancel_result = await asyncio.wait_for(cancelling, timeout=1)
-    await asyncio.wait_for(closing, timeout=1)
+    cancel_result = await cancelling
+    await closing
     replay = [first.data, *[message.data async for message in delivery]]
 
     assert status == "cancelled"
@@ -937,10 +930,10 @@ async def test_cancel_callback_starts_only_after_settlement_is_claimed() -> None
         delivery = aiter(subscription)
         first = await anext(delivery)
         cancelling = asyncio.create_task(channel.cancel(identity=_identity()))
-        await asyncio.wait_for(backend.settlement_entered.wait(), timeout=1)
+        await backend.settlement_entered.wait()
         calls_before_claim = callback_calls
         backend.release_settlement.set()
-        cancel_result = await asyncio.wait_for(cancelling, timeout=1)
+        cancel_result = await cancelling
         replay = [first.data, *[message.data async for message in delivery]]
 
     assert calls_before_claim == 0
@@ -970,14 +963,14 @@ async def test_messaging_shutdown_waits_for_cancel_tail_settlement() -> None:
     delivery = aiter(subscription)
     assert (await anext(delivery)).data == "one"
     cancelling = asyncio.create_task(channel.cancel(identity=_identity()))
-    await asyncio.wait_for(backend.append_started.wait(), timeout=1)
+    await backend.append_started.wait()
 
     closing = asyncio.create_task(messaging.__aexit__(None, None, None))
     await asyncio.sleep(0)
     shutdown_waited = not closing.done()
     backend.release_append.set()
     if shutdown_waited:
-        assert await asyncio.wait_for(cancelling, timeout=1) is True
+        assert await cancelling is True
     else:
         cancelling.cancel()
         await asyncio.gather(cancelling, return_exceptions=True)
@@ -989,7 +982,7 @@ async def test_messaging_shutdown_waits_for_cancel_tail_settlement() -> None:
         for task in orphan_committers:
             task.cancel()
         await asyncio.gather(*orphan_committers, return_exceptions=True)
-    await asyncio.wait_for(closing, timeout=1)
+    await closing
 
     assert shutdown_waited
     assert source.close_calls == 1
@@ -1030,7 +1023,7 @@ async def test_close_only_failure_propagates_and_is_idempotent() -> None:
         identity=_identity(),
         after=0,
     )
-    await asyncio.wait_for(source.started.wait(), timeout=1)
+    await source.started.wait()
     backend.release_finish.set()
 
     with pytest.raises(BackendOwnershipLost) as first:
@@ -1069,7 +1062,7 @@ async def test_context_body_failure_outranks_close_failure(
                 identity=_identity(),
                 after=0,
             )
-            await asyncio.wait_for(source.started.wait(), timeout=1)
+            await source.started.wait()
             raise body_error
 
     notes = "\n".join(getattr(captured.value, "__notes__", ()))
@@ -1089,9 +1082,9 @@ async def test_caller_cancellation_outranks_late_close_failure() -> None:
         identity=_identity(),
         after=0,
     )
-    await asyncio.wait_for(source.started.wait(), timeout=1)
+    await source.started.wait()
     closing = asyncio.create_task(messaging.aclose())
-    await asyncio.wait_for(backend.finish_started.wait(), timeout=1)
+    await backend.finish_started.wait()
 
     closing.cancel("caller cancelled close")
     cancellation_delivered = asyncio.Event()

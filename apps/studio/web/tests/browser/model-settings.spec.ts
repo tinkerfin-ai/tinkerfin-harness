@@ -1,3 +1,4 @@
+import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 
 const user = { user_id: 17, username: 'settings-test', display_name: '配置验收', avatar_url: null, roles: [], disabled: false }
@@ -33,6 +34,7 @@ async function openSettings(page: Page, language: 'zh-CN'|'en', theme: 'light'|'
     localStorage.setItem('tinkerfin:language',language)
     localStorage.setItem('tinkerfin:theme',theme)
   }, {user,language,theme})
+  await installNotificationStream(page)
   await page.goto('/')
   if ((page.viewportSize()?.width ?? 1440) < 768) {
     await page.getByRole('button', {name: language === 'en' ? 'Open navigation' : '打开导航', exact: true}).click()

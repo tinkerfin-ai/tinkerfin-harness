@@ -44,7 +44,7 @@ pnpm exec playwright test tests/browser/todo-trace.spec.ts --workers=1
 
 ## 构建 wheel
 
-统一构建命令生成十个框架包和 Studio 服务端的 wheel：
+统一构建命令生成十二个框架包和 Studio 服务端的 wheel：
 
 ```bash
 uv run --no-project --python 3.11 python scripts/build_wheels.py --out-dir dist
