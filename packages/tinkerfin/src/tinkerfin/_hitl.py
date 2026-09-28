@@ -15,7 +15,7 @@ from langchain.agents.middleware import (
     HumanInTheLoopMiddleware,
     InterruptOnConfig,
 )
-from langchain.agents.middleware.human_in_the_loop import Decision, HITLRequest
+from langchain.agents.middleware.human_in_the_loop import Action, Decision, HITLRequest
 from langchain.agents.middleware.types import ToolCallRequest
 from langchain_core.messages import AIMessage, ToolCall, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -264,10 +264,10 @@ class ToolReviewMiddleware(HumanInTheLoopMiddleware):
     ) -> dict[str, object] | None:
         """Save each review and reject changed tool selection before consuming decisions.
 
-        Request construction and decision processing follow LangChain 1.3.14's
-        HumanInTheLoopMiddleware.after_model. The additional saver record preserves
-        exact tool IDs across Runtime rebuilds; tests cover policy changes, nested
-        interrupts, retries, and all native decision types.
+        LangChain's HumanInTheLoopMiddleware applies reviewer edits during tool
+        execution using hitl_edited_tool_calls. Preserve that state contract and
+        the model's original message. The additional saver record binds decisions
+        to exact tool IDs across Runtime rebuilds and policy changes.
         """
 
         configurable = get_config().get("configurable", {})
@@ -341,7 +341,7 @@ class ToolReviewMiddleware(HumanInTheLoopMiddleware):
                     "tool review changed while awaiting a decision"
                 )
         if not selected:
-            return None
+            return {"hitl_edited_tool_calls": {}}
         try:
             response: object = interrupt(request)
         except GraphInterrupt as paused:
@@ -376,23 +376,28 @@ class ToolReviewMiddleware(HumanInTheLoopMiddleware):
             )
         revised: list[ToolCall] = []
         tool_messages: list[ToolMessage] = []
+        edited_tool_calls: dict[str, Action] = {}
         decision_index = 0
         for index, tool_call in enumerate(tool_calls):
             policy = selected.get(index)
             if policy is None:
                 revised.append(tool_call)
                 continue
-            updated, result = self._process_decision(
-                decisions[decision_index], tool_call, policy
-            )
+            decision = decisions[decision_index]
+            updated, result = self._process_decision(decision, tool_call, policy)
             decision_index += 1
             if updated is not None:
                 revised.append(updated)
+                if decision["type"] == "edit" and (edited_id := updated.get("id")):
+                    edited_tool_calls[edited_id] = decision["edited_action"]
             if result is not None:
                 tool_messages.append(result)
         assert message is not None
         message.tool_calls = revised
-        return {"messages": [message, *tool_messages]}
+        return {
+            "messages": [message, *tool_messages],
+            "hitl_edited_tool_calls": edited_tool_calls,
+        }
 
     @staticmethod
     def _process_decision(

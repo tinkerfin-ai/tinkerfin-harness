@@ -30,6 +30,7 @@ from tinkerfin_studio.attachments.service import byte_chunks
 from tinkerfin_studio.automation.schemas import SaveTask, TaskConfiguration
 from tinkerfin_studio.automation.service import StudioAutomationService
 from tinkerfin_studio.automation.tools import build_automation_tools
+from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
 
 
 @pytest.fixture
@@ -163,6 +164,9 @@ async def test_existing_output_is_a_downloadable_file_in_live_and_replayed_messa
         runtime_module, "create_chat_model", lambda *args, **kwargs: model
     )
     runtime = build_conversation_runtime(
+        skill_snapshot=SkillSnapshotPayload(
+            directory_id="00000000-0000-0000-0000-000000000000", skills=()
+        ),
         resources=automation_resources,
         user_id=1,
         thread_id="result-chat",

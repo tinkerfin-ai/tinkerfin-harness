@@ -55,7 +55,8 @@ const isChatRequestPayload = (value: unknown): value is ChatRequestPayload => {
     && typeof message.id === 'string'
     && Boolean(message.id.trim())
     && message.role === 'user'
-    && typeof message.content === 'string'
+    && (typeof message.content === 'string'
+      || (Array.isArray(message.content) && message.content.every(isJsonObject)))
   ))) return false
   return value.resume === undefined
     || (Array.isArray(value.resume) && value.resume.every(isResumeEntry))

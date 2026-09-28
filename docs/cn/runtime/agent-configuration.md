@@ -48,6 +48,27 @@ middleware；`task` 和已配置远程智能体使用的委派工具名称也不
 
 ## 持久化与审批
 
+在智能体运行之外预置或读取数据时，使用已绑定 namespace 的 Store。应用负责 Store
+的开启与关闭；应用操作和智能体工具在同一隔离范围内使用相对 namespace。
+
+```python
+from deepagents.backends import StoreBackend
+from deepagents.backends.utils import create_file_data
+
+scoped = TinkerFin(store=store, checkpointer=checkpointer).with_namespace("support")
+await scoped.store.aput(
+    ("files",), "/skills/reporting/SKILL.md",
+    dict(create_file_data("---\nname: reporting\ndescription: Prepare reports\n---\nVerify sources.")),
+)
+runtime = scoped.build(
+    model=model, skills=["/skills/"],
+    backend=StoreBackend(namespace=lambda _: ("files",)),
+)
+```
+
+技能来源路径指向包含技能子目录的父目录。已有会话在来源路径改变后重新发现技能，
+路径不变时保留元数据缓存。需要在审批和恢复期间固定技能时，使用内容不可变的目录。
+
 可恢复的工具审批和 Plan 必须使用具体 checkpointer。checkpointer 已保存 thread 历史时，只提交新的用户消息。
 
 ```python

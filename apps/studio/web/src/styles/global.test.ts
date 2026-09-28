@@ -218,7 +218,9 @@ describe('前端视觉契约', () => {
       if (path.endsWith('/fonts.css')) continue
       for (const [, selector, block] of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
         const weight = block.match(/font-weight:\s*([^;]+);/)?.[1].trim()
-        if (weight && weight !== 'var(--weight-ui)') {
+        if (selector.trim() === '.skills-icon') {
+          expect(weight).toBe('var(--weight-semibold)')
+        } else if (weight && weight !== 'var(--weight-ui)') {
           expect(selector, `${path}: 非界面字重只能用于语义内容`).toMatch(contentBoundary)
         }
         const family = block.match(/font-family:\s*([^;]+);/)?.[1].trim()

@@ -501,13 +501,32 @@ class AttachmentService:
         user_id: int,
         thread_id: str | None = None,
         collection_id: str | None = None,
+        allow_unbound: bool = False,
     ) -> Attachment:
-        """检查用户与会话归属，失效或未发布附件不提供内容"""
+        """检查附件归属，仅消息提交前的校验可接收尚未绑定会话的草稿
+
+        Args:
+            attachment_id: 需要读取的附件 ID
+            user_id: 已认证的用户 ID
+            thread_id: 指定时仅允许该会话的附件
+            collection_id: 指定时必须存在该集合中的引用
+            allow_unbound: 消息提交前允许校验待绑定草稿；模型读取不得开启
+
+        Returns:
+            已发布附件的公开描述
+
+        Raises:
+            BusinessException: 附件不存在、未就绪或不属于指定范围
+        """
         async with self._database.session() as session:
             row = await session.get(AttachmentFile, attachment_id)
             if row is None or row.user_id != user_id or row.status != "ready":
                 raise BusinessException(AttachmentErrorCode.NOT_FOUND)
-            if thread_id is not None and row.thread_id not in (None, thread_id):
+            if (
+                thread_id is not None
+                and row.thread_id != thread_id
+                and not (allow_unbound and row.thread_id is None)
+            ):
                 raise BusinessException(AttachmentErrorCode.NOT_FOUND)
             if collection_id is not None:
                 await self._require_collection(session, user_id, collection_id)

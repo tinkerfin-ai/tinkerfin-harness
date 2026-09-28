@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal, cast
+from typing import Annotated, Literal, cast
 
 from ag_ui.core import RunAgentInput
 from ag_ui.core.types import (
@@ -62,6 +62,20 @@ class ConversationForwardedProps(BaseModel):
     """前端传给一次 run 的扩展属性"""
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    skill_ids: list[Annotated[str, Field(min_length=1, max_length=36)]] = Field(
+        default_factory=list,
+        alias="skillIds",
+        max_length=8,
+        description="本轮明确选择的启用技能安装 ID，最多 8 项",
+    )
+
+    @field_validator("skill_ids")
+    @classmethod
+    def distinct_skills(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("所选技能不得重复")
+        return value
 
     access_mode: AccessMode = Field(
         default="full",
@@ -158,6 +172,8 @@ class ChatRequest(BaseModel):
         if self.resume is not None:
             if self.messages:
                 raise ValueError("恢复运行不得同时提交新消息")
+            if self.forwarded_props.skill_ids:
+                raise ValueError("恢复运行沿用原技能选择，不得提交新的技能")
             return self
         if len(self.messages) != 1 or self.messages[0].get("role") != "user":
             raise ValueError("普通运行必须且只能提交一条 user 消息")

@@ -5,6 +5,8 @@ import { DrawerResizeHandle } from '../../components/ui/DrawerResizeHandle'
 import { isConversationRunning } from '../../lib/workspace'
 import { AccessModePicker } from "../../components/AccessModePicker"
 import { AutomationPage } from '../automation/AutomationPage'
+import { SkillsPage } from '../skills/SkillsPage'
+import { readRunSkillSelection } from '../skills/api'
 import { AttachmentReferenceContext } from '../conversation/attachments/context'
 import { TextRevealProgressContext } from '../conversation/components/textRevealProgress'
 import { messageText, messageAttachments } from '../conversation/attachments/content'
@@ -32,6 +34,7 @@ import { PlanReviewCard } from '../conversation/components/PlanReviewCard'
 import { parseComposerSubmission } from '../conversation/composerCommand'
 import { useContextCompaction } from '../conversation/compaction/useContextCompaction'
 import { useAttachments } from '../conversation/useAttachments'
+import { useComposerSkills } from '../conversation/useComposerSkills'
 import { ComposerModelPicker } from './components/ComposerModelPicker'
 import { Sidebar } from './components/Sidebar'
 import {
@@ -51,7 +54,6 @@ import { conversationTurns } from '../conversation/navigation/turns'
 import { useConversationWidth } from '../conversation/width/useConversationWidth'
 import { ConversationWidthHandles } from '../conversation/width/ConversationWidthHandles'
 import { useConversationScroll } from './useConversationScroll'
-import { useConversationTitles } from './useConversationTitles'
 import { usePendingConversations } from './usePendingConversations'
 import { useConversationManagement } from './useConversationManagement'
 import { useConversationMessageWindow } from './useConversationMessageWindow'
@@ -158,7 +160,6 @@ export function WorkspaceScreen({
     setComposerPreference,
     acknowledgeComposerPreferences,
   } = useWorkspaceState()
-  useConversationTitles(workspace, setWorkspace)
   const pendingConversations = usePendingConversations()
   const selectPendingConversation = pendingConversations.select
   const [newSubmission, setNewSubmission] = useState<string | null>(null)
@@ -187,7 +188,11 @@ export function WorkspaceScreen({
   const [pendingResume, setPendingResume] = useState<PendingResume | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [activePage, setActivePage] = useState(readPageFromLocation)
+  const composerSkills = useComposerSkills(activePage === 'conversation')
+  const retrySkillRequest = useRef<AbortController | null>(null)
+  useEffect(() => () => retrySkillRequest.current?.abort(), [])
   const [automationModalOpen, setAutomationModalOpen] = useState(false)
+  const [skillsModalOpen, setSkillsModalOpen] = useState(false)
   const [workspaceView, setWorkspaceView] = useState<'conversation' | 'trace'>('conversation')
   const settingsRestoreFocus = useRef<HTMLElement | null>(null)
   const theme = useThemePreference()
@@ -314,8 +319,8 @@ export function WorkspaceScreen({
   }, [conversation, notifyConversation])
 
   useEffect(() => {
-    if (activePage === 'automation') {
-      document.title = `TinkerFin - ${t('自动化')}`
+    if (activePage !== 'conversation') {
+      document.title = `TinkerFin - ${activePage === 'skills' ? t('技能库') : t('自动化')}`
       return
     }
     document.title = conversation.threadId && conversation.title.trim()
@@ -550,6 +555,8 @@ export function WorkspaceScreen({
 
   const beginSend = useCallback((content: string, modeOverride?: AgentMode, resubmission?: Message) => {
     const trimmed = content.trim()
+    if (!resubmission && composerSkills.selected.length > 0
+      && (composerSkills.status !== 'ready' || composerSkills.selected.some(skill => skill.unavailable))) return
     const readyAttachments = resubmission ? resubmission.attachments ?? [] : localAttachments.attachments.flatMap(item => item.attachment ? [item.attachment] : [])
     const submissionKey = workspace.currentThreadId
     if (submissionLocks.current.has(submissionKey) || (submissionKey && isActiveThread(submissionKey))) return
@@ -559,6 +566,8 @@ export function WorkspaceScreen({
     const submittedIds = localAttachments.attachments.map(item => item.id)
     const submittedThreadId = workspace.currentThreadId
     const submittedDraft = draft
+    const submittedSkills = composerSkills.capture()
+    const selectedSkills = resubmission ? resubmission.meta?.selectedSkills ?? [] : submittedSkills.skills.map(({ id, name }) => ({ id, name }))
     const clearedDraftRevision = draftRevision.current + 1
     const releaseSubmission = (runId: string) => {
       // 旧请求只能释放自己的提交入口，不能影响随后开始的新草稿
@@ -568,6 +577,7 @@ export function WorkspaceScreen({
     }
     const onAccepted = () => {
       if (!resubmission) localAttachments.completeSend(submittedIds)
+      if (!resubmission) composerSkills.acknowledge(submittedSkills)
     }
     const onRequestRejected = () => {
       if (!resubmission && draftRevision.current === clearedDraftRevision
@@ -586,7 +596,7 @@ export function WorkspaceScreen({
         mode: effectiveMode,
         accessMode: conversation.accessMode,
       })
-      const payload = buildInitialPayload(nextConversation, trimmed, readyAttachments)
+      const payload = buildInitialPayload(nextConversation, trimmed, readyAttachments, selectedSkills.map(skill => skill.id))
       const requestMessage = payload.messages.at(0)
       if (!requestMessage) return
       const seededConversation: Conversation = {
@@ -598,7 +608,7 @@ export function WorkspaceScreen({
           content: messageText(requestMessage.content),
           attachments: messageAttachments(requestMessage.content),
           createdAt: now,
-          meta: { runId: payload.runId },
+          meta: { runId: payload.runId, selectedSkills },
         }],
         activeRunId: payload.runId,
         runStatus: 'streaming',
@@ -656,7 +666,7 @@ export function WorkspaceScreen({
     const sendingConversation = currentConversation.mode === effectiveMode
       ? currentConversation
       : { ...currentConversation, mode: effectiveMode }
-    const payload = buildInitialPayload(sendingConversation, trimmed, readyAttachments)
+    const payload = buildInitialPayload(sendingConversation, trimmed, readyAttachments, selectedSkills.map(skill => skill.id))
     const requestMessage = payload.messages.at(0)
     if (!requestMessage) return
     if (modeOverride) setComposerPreference(currentConversation.threadId, { mode: modeOverride })
@@ -680,21 +690,34 @@ export function WorkspaceScreen({
           content: messageText(requestMessage.content),
           attachments: messageAttachments(requestMessage.content),
           createdAt: now,
-          meta: { runId: payload.runId },
+          meta: { runId: payload.runId, selectedSkills },
         }],
       }))
     })
     if (!resubmission) setDraft('')
     void streamRun(currentConversation.threadId, payload, 'start', { target: 'workspace', onAccepted, onRequestRejected }).finally(() => releaseSubmission(payload.runId))
-  }, [isActiveThread, t, conversation, localAttachments, draft, draftConversation?.model, draftModel, pendingConversations, discardDraft, setHistoryQuery, hydrateConversation, isRunning, messageWindow, scrollConversationToBottomImmediately, setDraft, setComposerPreference, setWorkspace, streamRun, workspace.conversations, workspace.currentThreadId])
+  }, [isActiveThread, t, conversation, localAttachments, composerSkills, draft, draftConversation?.model, draftModel, pendingConversations, discardDraft, setHistoryQuery, hydrateConversation, isRunning, messageWindow, scrollConversationToBottomImmediately, setDraft, setComposerPreference, setWorkspace, streamRun, workspace.conversations, workspace.currentThreadId])
 
-  const retryRun = useCallback((message: Message) => {
+  const retryRun = useCallback(async (message: Message) => {
     const current = latestWorkspace.current.conversations.find(item => item.threadId === workspace.currentThreadId)
     const original = current?.messages.find(item => item.id === message.id && item.role === 'user')
     if (!current?.isHydrated || !original || original.meta?.contentOmitted) return
     if (!current.runFailures?.some(item => item.runId === original.meta?.runId && item.retryable)) return
-    beginSend(original.content, undefined, original)
-  }, [beginSend, workspace.currentThreadId])
+    const runId = original.meta?.runId
+    if (!runId) return
+    retrySkillRequest.current?.abort()
+    const controller = new AbortController()
+    retrySkillRequest.current = controller
+    try {
+      const selectedSkills = await readRunSkillSelection(current.threadId, runId, controller.signal)
+      if (controller.signal.aborted || latestWorkspace.current.currentThreadId !== current.threadId) return
+      beginSend(original.content, undefined, { ...original, meta: { ...original.meta, selectedSkills } })
+    } catch {
+      if (!controller.signal.aborted) pushToast('error', t('无法读取原技能选择，请重试'))
+    } finally {
+      if (retrySkillRequest.current === controller) retrySkillRequest.current = null
+    }
+  }, [beginSend, workspace.currentThreadId, pushToast, t])
 
   useEffect(() => {
     if (!pendingResume) return
@@ -964,6 +987,7 @@ export function WorkspaceScreen({
       releaseDraft()
       draftRevision.current += 1
       localAttachments.clearAttachments()
+      composerSkills.clear()
       setWorkspaceView('conversation')
     },
   })
@@ -1060,7 +1084,7 @@ export function WorkspaceScreen({
   }, [messageWindow, pushToast, t, taskDetailPageOpen, closeTaskDrawer])
 
   // Portal 对话框打开时整块工作区退出辅助技术与键盘路径，只保留最上层操作
-  const portalModalActive = settingsOpen || dialog != null || directoryOpen || automationModalOpen
+  const portalModalActive = settingsOpen || dialog != null || directoryOpen || automationModalOpen || skillsModalOpen
   const taskTraceLauncher = taskTraceBlocked ? undefined : (
     <TodoTraceLauncher
       ref={taskDrawer.launcherRef}
@@ -1127,6 +1151,14 @@ export function WorkspaceScreen({
         onRequestExpanded={navigation.requestExpanded}
         onCloseOverlay={navigation.closeOverlay}
         automationActive={activePage === 'automation'}
+        skillsActive={activePage === 'skills'}
+        onOpenSkills={() => {
+          messageWindow.captureReadingPosition()
+          taskDrawer.close(false)
+          changeDirectoryOpen(false)
+          navigation.closeOverlay(false)
+          setActivePage('skills')
+        }}
         onOpenAutomation={() => {
           messageWindow.captureReadingPosition()
           taskDrawer.close(false)
@@ -1170,7 +1202,12 @@ export function WorkspaceScreen({
         aria-hidden={taskDetailPageOpen || (navigation.mode === 'overlay' && navigation.overlayOpen) || undefined}
         inert={taskDetailPageOpen || (navigation.mode === 'overlay' && navigation.overlayOpen) || undefined}
       >
-        {activePage === 'automation' ? (
+        {activePage === 'skills' ? (
+          <ErrorBoundary onError={() => pushToast('error', t('技能区域无法显示'))}
+            fallback={({ reset }) => <div className="skills-empty"><p>{t('技能区域无法显示')}</p><Button type="button" onClick={reset}>{t('重新加载')}</Button></div>}>
+            <SkillsPage navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay} onModalChange={setSkillsModalOpen} onToast={pushToast} />
+          </ErrorBoundary>
+        ) : activePage === 'automation' ? (
           <ErrorBoundary onError={() => pushToast('error', t('自动化区域无法显示'))}
             fallback={({ reset }) => <div className="automation-empty"><p>{t('自动化区域无法显示')}</p><Button type="button" onClick={reset}>{t('重新加载')}</Button></div>}>
             <AutomationPage navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay}
@@ -1245,6 +1282,12 @@ export function WorkspaceScreen({
             />
             <Composer
               value={draft}
+              skills={composerSkills.skills}
+              selectedSkills={composerSkills.selected}
+              skillsStatus={composerSkills.status}
+              onSelectSkill={composerSkills.choose}
+              onRemoveSkill={composerSkills.remove}
+              onRetrySkills={composerSkills.retry}
               isRunning={isRunning}
               canStop={Boolean(conversation.threadId) && !compaction.saving}
               stopDisabledReason={compaction.saving ? t('正在保存压缩结果') : undefined}

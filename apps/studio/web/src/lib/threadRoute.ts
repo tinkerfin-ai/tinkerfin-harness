@@ -49,16 +49,15 @@ export function normalizeAppLocation(): void {
 
 /** 从当前 URL 读取 `?thread=` 指定的会话 id，无则返回空串 */
 export function readThreadFromLocation(): string {
-  if (readPageFromLocation() === 'automation') return ''
+  if (readPageFromLocation() !== 'conversation') return ''
   return new URLSearchParams(window.location.search).get(THREAD_PARAM) ?? ''
 }
 
-export type WorkspacePage = 'conversation' | 'automation'
+export type WorkspacePage = 'conversation' | 'automation' | 'skills'
 
 export function readPageFromLocation(): WorkspacePage {
-  return new URLSearchParams(window.location.search).get('page') === 'automation'
-    ? 'automation'
-    : 'conversation'
+  const page = new URLSearchParams(window.location.search).get('page')
+  return page === 'automation' || page === 'skills' ? page : 'conversation'
 }
 
 /** 按当前页面一次性同步地址；自动化不携带后台会话身份，草稿不携带 thread */
@@ -69,8 +68,9 @@ export function writeWorkspaceToLocation(
 ): void {
   const url = new URL(window.location.href)
   url.pathname = APP_PATHNAME
-  if (page === 'automation') url.searchParams.set('page', page)
+  if (page !== 'conversation') url.searchParams.set('page', page)
   else url.searchParams.delete('page')
+  if (page !== 'skills') for (const key of ['skillView', 'skillSource', 'skillQuery', 'skillSort', 'skillStatus', 'skillCategory']) url.searchParams.delete(key)
   if (page === 'conversation' && threadId) url.searchParams.set(THREAD_PARAM, threadId)
   else url.searchParams.delete(THREAD_PARAM)
   const desired = relativeLocation(url)

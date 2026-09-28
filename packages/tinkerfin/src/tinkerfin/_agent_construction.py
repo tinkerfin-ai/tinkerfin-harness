@@ -48,6 +48,7 @@ from ._attachment_agents import _AttachmentMiddleware, preserve_media
 from ._durable_delegation import prepare_delegation_retry
 from ._hitl import create_tool_review
 from ._middleware_resources import prepare_middleware_resources
+from ._skills import SourceSkillsMiddleware
 from ._state_schema import private_state_fields
 from ._summarization import ObservedCompactionTool, observe_summarization
 from ._tool_runtime import _ToolRuntimeMiddleware
@@ -150,7 +151,7 @@ def _role_defaults(
     if review is not None:
         defaults.append(review)
     if skills is not None:
-        defaults.append(SkillsMiddleware(backend=backend, sources=list(skills)))
+        defaults.append(SourceSkillsMiddleware(backend=backend, sources=list(skills)))
     return defaults
 
 
@@ -275,7 +276,9 @@ def create_agent_graph(
     )
     defaults: list[AgentMiddlewareType] = []
     if spec.skills is not None:
-        defaults.append(SkillsMiddleware(backend=backend, sources=list(spec.skills)))
+        defaults.append(
+            SourceSkillsMiddleware(backend=backend, sources=list(spec.skills))
+        )
     defaults.extend(
         [
             _filesystem(backend, spec.permissions, workspace),

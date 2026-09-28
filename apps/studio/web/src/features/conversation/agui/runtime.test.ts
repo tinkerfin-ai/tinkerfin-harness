@@ -439,7 +439,7 @@ it('keeps reject and cancel in Plan mode while only approval exits', () => {
 
   const rejected = buildPlanResumePayload(conversation)
 
-  expect(rejected.forwardedProps).toEqual({ accessMode: 'full', model: 'main', command: { plan: 'on' } })
+  expect(rejected.forwardedProps).toEqual({ skillIds: [], accessMode: 'full', model: 'main', command: { plan: 'on' } })
   expect(rejected.resume?.[0]).toEqual({
     interruptId: 'plan-review-decision',
     status: 'resolved',
@@ -461,7 +461,7 @@ it('keeps reject and cancel in Plan mode while only approval exits', () => {
       message: undefined,
     },
   })
-  expect(cancelled.forwardedProps).toEqual({ accessMode: 'full', model: 'main', command: { plan: 'on' } })
+  expect(cancelled.forwardedProps).toEqual({ skillIds: [], accessMode: 'full', model: 'main', command: { plan: 'on' } })
   expect(cancelled.resume?.[0]).toEqual({
     interruptId: 'plan-review-decision',
     status: 'resolved',
@@ -471,7 +471,7 @@ it('keeps reject and cancel in Plan mode while only approval exits', () => {
     ...conversation,
     planInteraction: { ...review, action: 'approve', message: undefined },
   })
-  expect(approved.forwardedProps).toEqual({ accessMode: 'full', model: 'main', command: { plan: 'off' } })
+  expect(approved.forwardedProps).toEqual({ skillIds: [], accessMode: 'full', model: 'main', command: { plan: 'off' } })
   expect(approved.resume?.[0]?.payload).toEqual({ type: 'approve', baseRevision: 2 })
 })
 
@@ -1510,7 +1510,7 @@ describe('AG-UI runtime reducer', () => {
       approval: approval ? { ...approval, items } : approval,
     })
 
-    expect(payload.forwardedProps).toEqual({ accessMode: 'write_approval', model: 'GPT-5.5', command: { plan: 'off' } })
+    expect(payload.forwardedProps).toEqual({ skillIds: [], accessMode: 'write_approval', model: 'GPT-5.5', command: { plan: 'off' } })
     expect(payload.resume?.map((entry) => entry.interruptId)).toEqual([
       'interrupt-b',
       'interrupt-a#0',

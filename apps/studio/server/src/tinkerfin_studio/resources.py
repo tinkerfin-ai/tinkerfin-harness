@@ -57,6 +57,12 @@ from tinkerfin_studio.infrastructure.redis_keys import (
 )
 from tinkerfin_studio.infrastructure.sandbox_events import SandboxEventLogger
 from tinkerfin_studio.models.transport import ModelTransport
+from tinkerfin_studio.skills.content import SkillContentStore
+from tinkerfin_studio.skills.downloads import GitHubSkillImporter
+from tinkerfin_studio.skills.github_source import GitHubSkillSource
+from tinkerfin_studio.skills.library import SkillLibrary
+from tinkerfin_studio.skills.packages import SkillArchiveReader
+from tinkerfin_studio.skills.sources import ClawHubSkillSource, SkillSources
 from tinkerfin_tracing import (
     CapturePolicy,
     SqlAlchemyTraceStore,
@@ -155,6 +161,7 @@ class ApplicationResources:
     """请求处理期间借用的应用级资源"""
 
     settings: Settings
+    skills: SkillLibrary
     model_http_client: httpx.AsyncClient
     model_http_transport: ModelTransport
     attachments: AttachmentService
@@ -370,14 +377,36 @@ def build_lifespan():
                 async def check_automation() -> None:
                     await automation_worker.check_ready()
 
+                skill_archives = SkillArchiveReader()
+                skill_github = GitHubSkillImporter(http_client, skill_archives)
+                skill_sources = SkillSources(
+                    [
+                        GitHubSkillSource(source, http_client)
+                        if source.kind == "github"
+                        else ClawHubSkillSource(
+                            source, http_client, skill_archives, skill_github
+                        )
+                        for source in settings.skill_sources
+                    ]
+                )
+                attachments = AttachmentService(
+                    database, attachment_storage, notifications=notifications
+                )
                 resources = ApplicationResources(
                     settings=settings,
+                    skills=SkillLibrary(
+                        database,
+                        SkillContentStore(tinkerfin),
+                        sources=skill_sources,
+                        github=skill_github,
+                        archives=skill_archives,
+                        attachments=attachments,
+                        notifications=notifications,
+                    ),
                     automation=automation,
                     model_http_client=model_http_client,
                     model_http_transport=model_http_transport,
-                    attachments=AttachmentService(
-                        database, attachment_storage, notifications=notifications
-                    ),
+                    attachments=attachments,
                     database=database,
                     components_database=components_database,
                     redis_runtime=redis_runtime,

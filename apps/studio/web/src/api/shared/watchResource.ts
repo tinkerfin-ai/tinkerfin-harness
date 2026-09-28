@@ -8,8 +8,6 @@ interface ResourceWatch<T> {
   matches: (change: ResourceChange) => boolean
   onError?: (error: unknown) => void
   minRefreshMs?: number
-  initialRead?: boolean
-  repairWhen?: () => boolean
 }
 
 /**
@@ -19,7 +17,7 @@ interface ResourceWatch<T> {
  */
 export function watchResource<T>(options: ResourceWatch<T>): { refresh: () => void; close: () => void } {
   let closed = false
-  let dirty = options.initialRead !== false
+  let dirty = true
   let pending: AbortController | null = null
   let latest: AbortController | null = null
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -38,10 +36,7 @@ export function watchResource<T>(options: ResourceWatch<T>): { refresh: () => vo
   function refresh() { dirty = true; schedule() }
   function scheduleRepair() {
     clearTimeout(repair)
-    if (!closed && !document.hidden) repair = setTimeout(() => {
-      if (options.repairWhen?.() ?? true) refresh()
-      else scheduleRepair()
-    }, 30_000)
+    if (!closed && !document.hidden) repair = setTimeout(refresh, 30_000)
   }
   async function read() {
     dirty = false

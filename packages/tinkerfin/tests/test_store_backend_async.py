@@ -11,6 +11,22 @@ from test_runtime_store import _runtime_store
 from tinkerfin._store_backend import _AsyncStoreBackend
 
 
+@pytest.mark.parametrize(
+    "content", [b"", b"ASCII\n", "中文😀\n".encode(), b"\x00\xff\x80"]
+)
+async def test_listing_and_glob_report_original_file_byte_length(
+    content: bytes,
+) -> None:
+    backend = _AsyncStoreBackend(namespace=lambda _: ("files",), store=InMemoryStore())
+    assert (await backend.aupload_files([("/sample", content)]))[0].error is None
+    listing = await backend.als("/")
+    glob = await backend.aglob("*", "/")
+    assert listing.entries is not None and glob.matches is not None
+    assert listing.entries[0].get("size") == len(content)
+    assert glob.matches[0].get("size") == len(content)
+    assert (await backend.adownload_files(["/sample"]))[0].content == content
+
+
 async def test_file_operations_isolate_namespaces_and_preserve_text_and_bytes() -> None:
     shared = InMemoryStore()
     alpha = _AsyncStoreBackend(

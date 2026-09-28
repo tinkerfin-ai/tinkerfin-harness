@@ -1231,6 +1231,27 @@ class TinkerFin:
             raise ValueError("set with_namespace(...) before build()")
         return self._namespace
 
+    @property
+    def store(self) -> BaseStore:
+        """Access asynchronous persistent data in this builder's namespace.
+
+        Bind a namespace with with_namespace() before using this property. Keys
+        and namespace tuples are relative and match those visible to agent tools.
+        The host retains ownership of the supplied Store and its open/close cycle.
+
+        Returns:
+            An isolated view supporting the LangGraph Store async API.
+
+        Raises:
+            ValueError: No namespace or persistent Store was configured.
+        """
+        from ._store import NamespaceStore
+
+        namespace = self._require_namespace()
+        if self._store is None:
+            raise ValueError("configure store= on TinkerFin() before accessing store")
+        return NamespaceStore(self._store, namespace)
+
 
 class AgentRuntime(Generic[ContextT]):
     """Execute the agent configuration captured by TinkerFin.build().

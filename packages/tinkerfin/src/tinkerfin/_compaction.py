@@ -1,6 +1,6 @@
 """Run explicit compression inside the same checkpoint and backend scope.
 
-Deep Agents 0.7.13 keeps messages immutable and applies a private summary event
+Deep Agents 0.7.19 keeps messages immutable and applies a private summary event
 to model input. This module shares that event and its archive format and
 uses the native tool's eligibility and the configured summary retention policy.
 """

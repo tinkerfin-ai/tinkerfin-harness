@@ -73,6 +73,53 @@ async def attachments(notifications, database, attachment_storage):
     return AttachmentService(database, attachment_storage, notifications=notifications)
 
 
+@pytest.fixture
+def skill_catalog():
+    from skill_fakes import MemorySkillSource
+
+    from tinkerfin_studio.skills.packages import SkillFile, parse_package
+
+    return MemorySkillSource(
+        {
+            "first": parse_package(
+                (
+                    SkillFile(
+                        "SKILL.md",
+                        b"---\nname: reports\ndescription: Reports\n---\nOriginal",
+                    ),
+                )
+            )
+        }
+    )
+
+
+@pytest_asyncio.fixture
+async def skill_library(database, attachments, notifications, skill_catalog):
+    import httpx
+    from langgraph.store.memory import InMemoryStore
+
+    from tinkerfin import TinkerFin
+    from tinkerfin_studio.skills.content import SkillContentStore
+    from tinkerfin_studio.skills.downloads import GitHubSkillImporter
+    from tinkerfin_studio.skills.library import SkillLibrary
+    from tinkerfin_studio.skills.packages import SkillArchiveReader
+    from tinkerfin_studio.skills.sources import SkillSources
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(404))
+    ) as client:
+        archives = SkillArchiveReader()
+        yield SkillLibrary(
+            database,
+            SkillContentStore(TinkerFin(store=InMemoryStore())),
+            sources=SkillSources([skill_catalog]),
+            archives=archives,
+            github=GitHubSkillImporter(client, archives),
+            attachments=attachments,
+            notifications=notifications,
+        )
+
+
 @pytest_asyncio.fixture
 async def model_connections(database):
     """为模型调用测试准备已保存的用户连接，测试仍通过当前模型接口操作"""

@@ -59,6 +59,109 @@ class _ContinuationState(DeepAgentState, total=False):
     note: str
 
 
+@pytest.mark.parametrize("native", [False, True])
+async def test_root_review_executes_edited_name_and_arguments_after_rebuild(
+    native: bool,
+) -> None:
+    executed: list[tuple[str, str]] = []
+
+    @tool
+    async def work(value: str) -> str:
+        """Record the approved value."""
+        executed.append(("work", value))
+        return value
+
+    @tool
+    async def alternate(value: str) -> str:
+        """Record the value using the alternate action."""
+        executed.append(("alternate", value))
+        return value
+
+    model = _Model(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "work", "id": "work-call", "args": {"value": "original"}}
+                ],
+            ),
+            AIMessage(content="done"),
+        ]
+    )
+    builder = TinkerFin(checkpointer=InMemorySaver()).with_namespace("review")
+    runtime = builder.build(
+        model=model, tools=[work, alternate], interrupt_on={"work": True}
+    )
+    if native:
+        await runtime.ainvoke(
+            thread_id="thread",
+            run_id="initial",
+            input={"messages": [HumanMessage(content="Work")]},
+        )
+        rebuilt = builder.build(
+            model=model, tools=[work, alternate], interrupt_on={"work": True}
+        )
+        await rebuilt.ainvoke(
+            thread_id="thread",
+            run_id="resumed",
+            input=Command(
+                resume={
+                    "decisions": [
+                        {
+                            "type": "edit",
+                            "edited_action": {
+                                "name": "alternate",
+                                "args": {"value": "edited"},
+                            },
+                        }
+                    ]
+                }
+            ),
+        )
+        assert executed == [("alternate", "edited")]
+        return
+    initial = [
+        event
+        async for event in runtime.open_agui_run(
+            thread_id="thread",
+            run_id="initial",
+            messages=[{"id": "user", "role": "user", "content": "Work"}],
+        )
+    ]
+    terminal = initial[-1]
+    assert isinstance(terminal, RunFinishedEvent)
+    assert isinstance(terminal.outcome, RunFinishedInterruptOutcome)
+    rebuilt = builder.build(
+        model=model, tools=[work, alternate], interrupt_on={"work": True}
+    )
+    stream = rebuilt.open_agui_run(
+        thread_id="thread",
+        run_id="resumed",
+        parent_run_id="initial",
+        resume=AgUiResumeRequest.model_validate(
+            {
+                "entries": [
+                    {
+                        "interruptId": terminal.outcome.interrupts[0].id,
+                        "status": "resolved",
+                        "payload": {
+                            "type": "edit",
+                            "edited_action": {
+                                "name": "work",
+                                "args": {"value": "edited"},
+                            },
+                        },
+                    }
+                ]
+            }
+        ),
+    )
+    events = [event async for event in stream]
+    assert stream.error is None
+    assert isinstance(events[-1], RunFinishedEvent)
+    assert executed == [("work", "edited")]
+
+
 @pytest.mark.parametrize("update", [False, True])
 async def test_native_continuation_keeps_dynamic_review_pending(update: bool) -> None:
     executed: list[str] = []

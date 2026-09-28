@@ -1,0 +1,8 @@
+ClawHub icon: https://clawhub.ai/logo192.png
+Used to identify the ClawHub skill source. The icon and name belong to their respective owner.
+
+Anthropic and Vercel SVG paths: Simple Icons (CC0-1.0)
+https://simpleicons.org/
+https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md
+
+Brand names and trademarks belong to their respective owners.

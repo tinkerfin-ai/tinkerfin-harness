@@ -1,6 +1,6 @@
 # TinkerFin Studio 后端
 
-提供用户认证、模型配置、Agent 会话、自动化任务、附件、运行历史和 Sandbox 工作区。
+提供用户认证、模型配置、Agent 会话、技能库、自动化任务、附件、运行历史和 Sandbox 工作区。
 首次使用见 [Studio 上手指南](../../../docs/cn/studio/quick_start.md)；后端启动后可查看 [Swagger 接口文档](http://127.0.0.1:8090/docs)。
 
 ## 快速部署
@@ -63,6 +63,13 @@ Docker 项目为 `tinkerfin`，依赖容器为 `mysql8`、`redis-runtime`、`min
 | `OPEN_SANDBOX_MEMORY_MIB` | `1024` | 每个新建执行沙箱的内存上限，单位为 MiB，必须为正整数 |
 | `OPEN_SANDBOX_WARM_POOL_SIZE` | `0` | 全局预热沙箱数量；设为 `1` 可提前准备一个工作区 |
 | `LOG_LEVEL` | `INFO` | 后端日志等级 |
+| `SKILL_SOURCES` | ClawHub、Anthropic、Vercel | 技能来源 JSON 列表；空列表关闭远程目录，保留个人导入 |
+
+技能来源由服务端配置，浏览器只选择已注册的来源。`kind` 支持 `clawhub` 和 `github`，
+每项包含唯一 `id`、显示 `name` 和 `url`；GitHub URL 指向公开仓库根目录，读取其 `skills/` 下的技能。
+可选 `token` 只在服务端请求来源时使用。GitHub 未认证请求受其公开 API 限流约束。
+例如 `SKILL_SOURCES='[{"kind":"github","id":"anthropic","name":"Anthropic","url":"https://github.com/anthropics/skills"}]'`。
+不设置此项时保留三个默认来源。
 
 中间件端口默认仅绑定宿主机的 `127.0.0.1`。远程使用附件时，将
 `S3_STORAGE_PUBLIC_ENDPOINT` 设置为浏览器可达的地址，并通过反向代理公开 MinIO API，

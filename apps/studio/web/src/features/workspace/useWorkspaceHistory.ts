@@ -37,6 +37,7 @@ import { useI18n } from '../../i18n'
 import type { RetainConversationDetails } from './useWorkspaceState'
 import type { ModelCatalogStatus } from './useModelCatalog'
 import { pruneSearchOnlyConversations } from './workspaceHistoryCache'
+import { useConversationTitle } from './useConversationTitle'
 
 // 单页覆盖一次惯性滑动的浏览距离，避免用户在同一批数据内反复触底
 const HISTORY_PAGE_SIZE = 100
@@ -1217,6 +1218,13 @@ export function useWorkspaceHistory({
     (item) => item.threadId === workspace.currentThreadId,
   )
   const selectedThreadId = selectedConversation?.threadId
+  // 普通列表和搜索结果都携带标题；仅当前会话不在两者中时单独保持更新
+  useConversationTitle(
+    isHistoryBootstrapped && selectedThreadId
+      && !historyThreadIds.includes(selectedThreadId) && !searchThreadIds.includes(selectedThreadId)
+      ? selectedThreadId : undefined,
+    setWorkspace,
+  )
   const selectedIsHydrated = selectedConversation?.isHydrated
   const selectedRunStatus = selectedConversation?.runStatus
   const selectedRunId = selectedConversation?.activeRunId

@@ -748,6 +748,7 @@ const forwardedPropsFor = (
   model,
   accessMode,
   command: { plan: mode === "plan" ? "on" : "off" },
+  skillIds: [],
 })
 
 const syncEffectiveModeFromState = (
@@ -764,6 +765,7 @@ export const buildInitialPayload = (
   conversation: Conversation,
   content: string,
   attachments: readonly Attachment[] = [],
+  skillIds: readonly string[] = [],
 ): ChatRequestPayload => {
   const runId = createRunId()
   return {
@@ -779,7 +781,7 @@ export const buildInitialPayload = (
     ],
     tools: [],
     context: [],
-    forwardedProps: forwardedPropsFor(conversation.model, conversation.mode, conversation.accessMode),
+    forwardedProps: { ...forwardedPropsFor(conversation.model, conversation.mode, conversation.accessMode), skillIds: [...skillIds] },
   }
 }
 

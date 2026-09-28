@@ -120,9 +120,10 @@ export function useAttachments(onError?: (message: string) => void) {
             'pptx',
             'md',
             'markdown',
+            'zip',
           ].includes(ext)
         ) {
-          failure = '仅支持图片、Markdown、PDF、DOCX、XLSX 和 PPTX'
+          failure = '仅支持图片、Markdown、PDF、Office 文档和技能 ZIP'
           continue
         }
         if (

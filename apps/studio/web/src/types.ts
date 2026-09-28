@@ -51,6 +51,7 @@ export interface Message {
   content: string
   createdAt: string
   meta?: {
+    selectedSkills?: { id: string; name: string }[]
     /** 历史消息的 Trace 关联键，用于将任务定位到对应的会话消息 */
     planHistory?: PlanInteraction
     traceMessageId?: string

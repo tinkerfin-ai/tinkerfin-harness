@@ -52,6 +52,29 @@ are reserved for delegation.
 
 ## Persistence and approval
 
+Use the namespace-bound Store to seed or read data outside an agent run. The host
+opens and closes the supplied Store; host operations and agent tools use the same
+relative namespaces within this isolation boundary.
+
+```python
+from deepagents.backends import StoreBackend
+from deepagents.backends.utils import create_file_data
+
+scoped = TinkerFin(store=store, checkpointer=checkpointer).with_namespace("support")
+await scoped.store.aput(
+    ("files",), "/skills/reporting/SKILL.md",
+    dict(create_file_data("---\nname: reporting\ndescription: Prepare reports\n---\nVerify sources.")),
+)
+runtime = scoped.build(
+    model=model, skills=["/skills/"],
+    backend=StoreBackend(namespace=lambda _: ("files",)),
+)
+```
+
+Skill source paths are parent directories containing skill subdirectories. Changed
+paths refresh discovery in an existing thread; unchanged paths retain cached metadata.
+Use immutable content directories to keep skills fixed during approval and resume.
+
 A concrete checkpointer is required for resumable tool approval and Plan. Submit only
 new user messages when the checkpointer already contains the thread history.
 

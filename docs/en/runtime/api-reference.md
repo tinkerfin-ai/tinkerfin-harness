@@ -9,6 +9,7 @@ AG-UI entry points require `pip install "tinkerfin[agui]"`.
 | API | Purpose |
 | --- | --- |
 | `TinkerFin(checkpointer=..., run_coordinator=..., store=..., runtime_profile=...)` | Configure shared borrowed resources |
+| `configured.store` | Async Store bound by `with_namespace()`; host owns its lifecycle |
 | `.with_namespace(namespace)` | Select the application's isolation scope; required before `build()` |
 | `.with_observer(observer)` | Add a Runtime observer |
 | `.with_observer(on_terminal=callback)` | Add one asynchronous terminal callback |

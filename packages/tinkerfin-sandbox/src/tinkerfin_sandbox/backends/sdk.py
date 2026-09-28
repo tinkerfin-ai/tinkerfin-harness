@@ -924,6 +924,7 @@ class OpenSandboxBackend(BaseSandbox):
         result = parsed.result
         return ExecuteOffloadResult(
             offloaded=result["offloaded"],
+            preview_has_truncation_marker=result["preview_has_truncation_marker"],
             response=ExecuteResponse(
                 output=result["output"],
                 exit_code=result["exit_code"],

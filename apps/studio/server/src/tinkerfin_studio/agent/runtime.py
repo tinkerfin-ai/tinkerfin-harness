@@ -23,6 +23,13 @@ from tinkerfin_studio.attachments.workspace_tools import build_sandbox_attachmen
 from tinkerfin_studio.automation.tools import build_automation_tools
 from tinkerfin_studio.models.chat import create_chat_model
 from tinkerfin_studio.models.schemas import AgentModelConfig
+from tinkerfin_studio.skills.execution import (
+    SelectedSkillInstructions,
+    SkillsWorkspace,
+    skill_source_path,
+)
+from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
+from tinkerfin_studio.skills.tools import build_skill_tools
 
 if TYPE_CHECKING:
     from tinkerfin_studio.resources import ApplicationResources
@@ -48,6 +55,7 @@ def _build_runtime(
     namespace: str,
     collection_id: str | None,
     plan_enabled: bool,
+    skill_snapshot: SkillSnapshotPayload,
 ) -> AgentRuntime[None]:
     """为已授权会话或后台任务绑定执行能力，实际运行时准备用户工作区
 
@@ -61,6 +69,7 @@ def _build_runtime(
         namespace: 已授权业务运行的隔离范围
         collection_id: 后台执行的附件集合，普通会话不设置
         plan_enabled: 是否允许会话计划与人工交互
+        skill_snapshot: 本次运行已固定的技能内容，恢复沿用原快照
 
     Returns:
         绑定用户 namespace、模型、Plan 和附件能力的 Runtime
@@ -106,6 +115,19 @@ def _build_runtime(
             collection_id=collection_id,
         ),
     )
+    skill_paths = [
+        skill_source_path(skill_snapshot, skill) for skill in skill_snapshot.skills
+    ]
+    selected = tuple(skill for skill in skill_snapshot.skills if skill.selected)
+    skill_middleware = (
+        [
+            SelectedSkillInstructions(
+                resources.skills.content, user_id, skill_snapshot, selected
+            )
+        ]
+        if selected
+        else []
+    )
     tool_registry = {web_search.name: web_search}
     subagents: list[SubAgent] = [
         {
@@ -115,6 +137,7 @@ def _build_runtime(
             "interrupt_on": file_review_policy(access_mode),
             "middleware": tool_execution_policy(),
             "tools": [web_search, *attachment_tools],
+            "skills": skill_paths,
         },
     ]
     subagents.extend(
@@ -124,6 +147,11 @@ def _build_runtime(
             "system_prompt": definition.system_prompt,
             "interrupt_on": file_review_policy(access_mode),
             "middleware": tool_execution_policy(),
+            "skills": [
+                skill_source_path(skill_snapshot, skill)
+                for skill in skill_snapshot.skills
+                if skill.name in definition.skills
+            ],
             "tools": [
                 *(tool_registry[tool] for tool in definition.tools),
                 *attachment_tools,
@@ -140,6 +168,20 @@ def _build_runtime(
         )
         if collection_id is None
         else ()
+    )
+    skill_tools = (
+        build_skill_tools(resources.skills, user_id=user_id, thread_id=thread_id)
+        if collection_id is None
+        else ()
+    )
+    skill_instructions = (
+        "\n用户明确要求时可用 manage_skill 安装、更新、卸载技能，set_skill_enabled 启用或停用技能。"
+        "管理前通过 list_skills 或 search_skills 确定真实身份；来源不明确先 list_skill_sources。"
+        "GitHub 或 ZIP 先用 preview_skills，多个候选只选择用户要求的项目。ZIP 附件只交给技能预览，不运行包内代码。"
+        "目标明确时无需再次确认，指代不清先询问，不自动改用其他来源。"
+        "仅按工具成功结果报告完成；安装、更新和状态变化只对下一次新运行生效，本轮及恢复继续使用原快照。\n"
+        if skill_tools
+        else ""
     )
     automation_instructions = (
         "\n用户明确要求时可直接创建、修改、暂停、启用、删除或立即运行自动化任务，无须再次确认。"
@@ -176,18 +218,25 @@ def _build_runtime(
         )
     else:
         configured = configured.with_plan(enabled=False)
+    workspace = resources.sandbox_manager.workspace(
+        f"users/{user_id}",
+        routes={"/memories/": StoreBackend(namespace=lambda _runtime: ("memories",))},
+    )
     return configured.build(
         model=model,
-        tools=[web_search, *attachment_tools, *conversation_tools],
-        system_prompt=_SYSTEM_PROMPT + automation_instructions,
-        middleware=(TodoListMiddleware(), *tool_execution_policy()),
+        tools=[web_search, *attachment_tools, *conversation_tools, *skill_tools],
+        system_prompt=_SYSTEM_PROMPT + automation_instructions + skill_instructions,
+        middleware=(TodoListMiddleware(), *tool_execution_policy(), *skill_middleware),
         subagents=subagents,
-        backend=resources.sandbox_manager.workspace(
-            f"users/{user_id}",
-            routes={
-                "/memories/": StoreBackend(namespace=lambda _runtime: ("memories",))
-            },
-        ),
+        skills=skill_paths,
+        backend=SkillsWorkspace(
+            workspace,
+            content=resources.skills.content,
+            user_id=user_id,
+            snapshot=skill_snapshot,
+        )
+        if skill_snapshot.skills
+        else workspace,
         interrupt_on=file_review_policy(access_mode),
     )
 
@@ -199,6 +248,7 @@ def build_conversation_runtime(
     thread_id: str,
     model_config: AgentModelConfig,
     image_model: AgentModelConfig | None,
+    skill_snapshot: SkillSnapshotPayload,
     access_mode: AccessMode = "full",
 ) -> AgentRuntime[None]:
     """绑定会话模型、用户工作区与文件审批选择，资源由运行时按需准备"""
@@ -212,6 +262,7 @@ def build_conversation_runtime(
         namespace=f"ns_{user_id}",
         collection_id=None,
         plan_enabled=True,
+        skill_snapshot=skill_snapshot,
     )
 
 
@@ -224,6 +275,7 @@ def build_automation_runtime(
     model_config: AgentModelConfig,
     image_model: AgentModelConfig | None,
     access_mode: AccessMode,
+    skill_snapshot: SkillSnapshotPayload,
 ) -> AgentRuntime[None]:
     """为独立后台执行绑定产物集合，沿用该用户的沙箱与长期记忆"""
     return _build_runtime(
@@ -236,6 +288,7 @@ def build_automation_runtime(
         namespace=f"ns_{user_id}",
         collection_id=execution_id,
         plan_enabled=False,
+        skill_snapshot=skill_snapshot,
     )
 
 

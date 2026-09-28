@@ -239,7 +239,8 @@ async def record_failure_recovery(
         ]
         assert len(cancelled) == 1
         assert cancelled[0].tool_call_id == ("delegate" if nested else "delivery-call")
-        assert "was cancelled - another message came in" in str(cancelled[0].content)
+        assert cancelled[0].status == "error"
+        assert "did not complete - no result was recorded" in str(cancelled[0].content)
         assert any(
             isinstance(message, HumanMessage) and message.id == "user-two"
             for message in root.inputs[-1]
@@ -573,7 +574,7 @@ async def record_pending_replacement(
     results = [event for event in events if isinstance(event, ToolCallResultEvent)]
     assert (
         len(results) == 1
-        and "was cancelled - another message came in" in results[0].content
+        and "did not complete - no result was recorded" in results[0].content
     )
     assert any(
         isinstance(parsed := validate_native_stream_part(part), NativeMessageStreamPart)

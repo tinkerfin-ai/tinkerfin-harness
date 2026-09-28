@@ -205,7 +205,7 @@ def _callable_identity(value: object) -> str:
 
 
 def _tool_filter(policy: ToolRetryMiddleware[Any, Any]) -> list[str] | None:
-    # LangChain 1.3.18 ToolRetryMiddleware.__init__ keeps the normalized `tools`
+    # LangChain 1.4.2 ToolRetryMiddleware.__init__ keeps the normalized `tools`
     # argument only in _tool_filter. The public `tools` attribute means tools added
     # by a middleware and is always empty here. Keep this locked dependency access
     # in one boundary; no fallback or duplicate host configuration is permitted.

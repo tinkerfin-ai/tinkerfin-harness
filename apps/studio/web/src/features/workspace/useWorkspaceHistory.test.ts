@@ -23,7 +23,10 @@ const historyMocks = vi.hoisted(() => ({
   list: vi.fn(),
   graph: vi.fn(),
   followGraph: vi.fn(),
+  title: vi.fn(),
 }))
+
+vi.mock('../../api/conversation/titles', () => ({ fetchConversationTitle: historyMocks.title }))
 
 vi.mock(import('../../api/conversation/traceGraph'), async (importOriginal) => ({
   ...await importOriginal(),
@@ -1279,12 +1282,50 @@ describe('会话列表变化通知', () => {
     notices = mockResourceNotices()
     historyMocks.groupConfig.mockResolvedValue({ dayRanges: [] })
     historyMocks.detail.mockResolvedValue(detail())
+    historyMocks.title.mockResolvedValue(detail())
   })
   afterEach(() => {
     cleanup()
     window.history.replaceState(null, '', '/')
     vi.restoreAllMocks()
     vi.useRealTimers()
+  })
+
+  it.each(['normal', 'search'] as const)('列表外当前会话单独读取标题，进入%s列表后取消读取并拒绝迟到结果', async coverage => {
+    const initial = historyItemFromDetail(detail())
+    const response = deferred<ConversationHistoryDetail>()
+    historyMocks.title.mockImplementationOnce(() => response.promise)
+    historyMocks.list.mockResolvedValue({ items: [initial], nextCursor: null })
+    const { result, unmount } = renderHook(() => useHarness(detail(), { catalogReady: true }))
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(historyMocks.title).not.toHaveBeenCalled()
+    historyMocks.list.mockResolvedValue({ items: [], nextCursor: null })
+    await act(async () => { notices.resync(); await vi.advanceTimersByTimeAsync(0) })
+    expect(historyMocks.title).toHaveBeenCalledOnce()
+    expect(historyMocks.title.mock.calls[0]?.[0]).toBe(initial.threadId)
+    const signal = historyMocks.title.mock.calls[0]?.[1] as AbortSignal
+    expect(signal.aborted).toBe(false)
+    const refreshed = { ...initial, title: '列表内最新标题', titleSource: 'user' as const, titleGenerationStatus: 'skipped' as const, titleSeq: 2 }
+    historyMocks.list.mockImplementation(async (options: { query?: string }) => ({
+      items: coverage === 'normal' || options.query ? [refreshed] : [], nextCursor: null,
+    }))
+    if (coverage === 'normal') {
+      await act(async () => { notices.resync(); await vi.advanceTimersByTimeAsync(0) })
+    } else {
+      act(() => result.current.history.setHistoryQuery('最新标题'))
+      await act(async () => vi.advanceTimersByTimeAsync(300))
+    }
+    expect(signal.aborted).toBe(true)
+    await act(async () => {
+      response.resolve(detail({ title: '失效查询', titleSeq: 9 }))
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(historyMocks.title).toHaveBeenCalledOnce()
+    expect(result.current.workspace.conversations[0]?.title).toBe('列表内最新标题')
+    expect(result.current.workspace.conversations[0]?.messages[0]?.content).toBe('初始内容')
+    expect(result.current.workspace.currentThreadId).toBe(initial.threadId)
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it.each([

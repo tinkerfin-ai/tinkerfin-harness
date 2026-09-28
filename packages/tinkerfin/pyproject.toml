@@ -18,9 +18,9 @@ classifiers = [
 
 dependencies = [
     "anyio>=4,<5",
-    "deepagents>=0.7.5,<=0.7.13",
-    "langchain>=1.3.14,<=1.4.0",
-    "langchain-core>=1.5.3,<=1.6.3",
+    "deepagents>=0.7.19",
+    "langchain>=1.4.2,<2",
+    "langchain-core>=1.6.4,<2",
     "langgraph>=1.2.10,<=1.2.11",
     "jsonschema>=4.25,<5",
     "pydantic>=2,<3",

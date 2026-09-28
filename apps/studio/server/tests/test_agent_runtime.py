@@ -43,6 +43,7 @@ from tinkerfin_studio.models import providers as providers_module
 from tinkerfin_studio.models.chat import create_chat_model
 from tinkerfin_studio.models.schemas import AgentModelConfig
 from tinkerfin_studio.resources import ApplicationResources
+from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
 
 
 class _CommandBackend(StateBackend, SandboxBackendProtocol):
@@ -217,6 +218,7 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
     monkeypatch: pytest.MonkeyPatch,
     attachments,
     model_http_client,
+    skill_library,
     workspace_failure: bool,
 ) -> None:
     """构建只绑定配置，执行才借用用户工作区且始终结束本轮借用"""
@@ -248,6 +250,7 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
     resources = create_autospec(ApplicationResources, instance=True)
     resources.configure_mock(
         automation=Automation(namespace="studio_automation"),
+        skills=skill_library,
         attachments=attachments,
         model_http_transport=None,
         model_http_client=model_http_client,
@@ -265,6 +268,9 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
         }
     )
     runtime = build_conversation_runtime(
+        skill_snapshot=SkillSnapshotPayload(
+            directory_id="00000000-0000-0000-0000-000000000000", skills=()
+        ),
         resources=resources,
         user_id=7,
         thread_id="thread-1",
@@ -319,6 +325,7 @@ async def test_file_access_choice_controls_root_and_subagent_review(
     monkeypatch: pytest.MonkeyPatch,
     attachments,
     model_http_client,
+    skill_library,
     access_mode,
     delegated: bool,
 ) -> None:
@@ -382,6 +389,7 @@ async def test_file_access_choice_controls_root_and_subagent_review(
     resources = create_autospec(ApplicationResources, instance=True)
     resources.configure_mock(
         automation=Automation(namespace="studio_automation"),
+        skills=skill_library,
         attachments=attachments,
         model_http_transport=None,
         model_http_client=model_http_client,
@@ -391,6 +399,9 @@ async def test_file_access_choice_controls_root_and_subagent_review(
         settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
     )
     runtime = build_conversation_runtime(
+        skill_snapshot=SkillSnapshotPayload(
+            directory_id="00000000-0000-0000-0000-000000000000", skills=()
+        ),
         resources=resources,
         user_id=7,
         thread_id="thread-1",
@@ -409,7 +420,7 @@ async def test_file_access_choice_controls_root_and_subagent_review(
 
 @pytest.mark.parametrize("delegated", [False, True])
 async def test_product_tool_failure_allows_root_and_researcher_to_reply(
-    monkeypatch, attachments, model_http_client, delegated
+    monkeypatch, attachments, model_http_client, skill_library, delegated
 ):
     """文件工具校验失败返回对应角色，委派本身可以正常完成"""
     from langchain_core.language_models.fake_chat_models import (
@@ -467,6 +478,7 @@ async def test_product_tool_failure_allows_root_and_researcher_to_reply(
     resources = create_autospec(ApplicationResources, instance=True)
     resources.configure_mock(
         automation=Automation(namespace="studio_automation"),
+        skills=skill_library,
         attachments=attachments,
         model_http_transport=None,
         model_http_client=model_http_client,
@@ -476,6 +488,9 @@ async def test_product_tool_failure_allows_root_and_researcher_to_reply(
         settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
     )
     runtime = build_conversation_runtime(
+        skill_snapshot=SkillSnapshotPayload(
+            directory_id="00000000-0000-0000-0000-000000000000", skills=()
+        ),
         resources=resources,
         user_id=7,
         thread_id="tool-error",
@@ -506,6 +521,7 @@ async def test_product_tool_failure_allows_root_and_researcher_to_reply(
 async def test_analysis_commands_follow_permissions_in_chat_and_plan(
     attachments,
     model_http_client,
+    skill_library,
     monkeypatch: pytest.MonkeyPatch,
     mode,
     access_mode: AccessMode,
@@ -539,6 +555,7 @@ async def test_analysis_commands_follow_permissions_in_chat_and_plan(
     resources = create_autospec(ApplicationResources, instance=True)
     resources.configure_mock(
         automation=Automation(namespace="studio_automation"),
+        skills=skill_library,
         attachments=attachments,
         model_http_transport=None,
         model_http_client=model_http_client,
@@ -548,6 +565,9 @@ async def test_analysis_commands_follow_permissions_in_chat_and_plan(
         settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
     )
     runtime = build_conversation_runtime(
+        skill_snapshot=SkillSnapshotPayload(
+            directory_id="00000000-0000-0000-0000-000000000000", skills=()
+        ),
         resources=resources,
         user_id=7,
         thread_id="analysis",

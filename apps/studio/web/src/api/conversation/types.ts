@@ -13,6 +13,7 @@ export interface ConversationForwardedProps extends JsonObject {
   model: string
   accessMode: AccessMode
   command: ConversationCommandMap
+  skillIds: string[]
 }
 
 export interface ChatMessageInput {

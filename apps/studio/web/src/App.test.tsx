@@ -16,6 +16,7 @@ import { ToastViewport } from './components/ui/ToastViewport'
 import type { ToastItem, ToastKind } from './components/ui/ToastViewport'
 import { WorkspaceScreen } from './features/workspace/WorkspaceScreen'
 import { readActiveRunSessions } from './features/conversation/stream/activeRunSession'
+import type { InstalledSkill } from './features/skills/model'
 import {
   emptyTraceGraph,
   traceGraphNode,
@@ -178,6 +179,7 @@ function installFetch(options: {
       : new Request(new URL(String(input), window.location.origin), init)
     const url = new URL(request.url)
     if (url.pathname.endsWith('/api/models')) return jsonResponse(MODEL_CATALOG)
+    if (url.pathname.endsWith('/api/skills/installations') || url.pathname.endsWith('/api/skills/selection')) return jsonResponse([])
     if (url.pathname.endsWith('/api/conversation/config')) {
       return jsonResponse({ dayRanges: [7, 30] })
     }
@@ -253,6 +255,65 @@ describe('Studio Trace history integration', () => {
 
     expect(await screen.findByRole('heading', { name: '暂无消息' })).toBeInTheDocument()
     expect(screen.queryByRole('tablist', { name: '会话视图' })).not.toBeInTheDocument()
+  })
+
+  it('停用已选技能后返回对话，权威列表核验期间不发包并保留草稿', async () => {
+    let installed: InstalledSkill = { id: 'reports', name: 'reports', description: '整理报告', source_kind: 'zip',
+      source_id: null, source_name: 'ZIP', external_id: null, enabled: true, author: null, topics: [],
+      file_count: 1, byte_size: 3, created_at: BASE_TIME, updated_at: BASE_TIME }
+    const onChat = vi.fn()
+    const fetch = installFetch({ list: [historyItem()], details: { [THREAD_ID]: traceDetail() }, onChat })
+    const defaultFetch = fetch.getMockImplementation()!
+    let heldRead: Promise<Response> | undefined
+    fetch.mockImplementation(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(new URL(String(input), window.location.origin), init)
+      const path = new URL(request.url).pathname
+      if (path === '/api/skills/sources') return jsonResponse([])
+      if (path === '/api/skills/installations') return heldRead ?? jsonResponse([installed])
+      if (path === '/api/skills/installations/reports' && request.method === 'PATCH') {
+        installed = { ...installed, enabled: false }
+        return jsonResponse(installed)
+      }
+      return defaultFetch(input, init)
+    })
+    window.history.replaceState({}, '', '/?thread=' + THREAD_ID)
+    render(<App />)
+    await screen.findByText('来自 Trace 的历史回复')
+    fireEvent.change(screen.getByRole('textbox', { name: '消息输入' }), { target: { value: '保留正文' } })
+    fireEvent.click(screen.getByRole('button', { name: '打开命令和技能' }))
+    fireEvent.click(await screen.findByRole('option', { name: /reports 整理报告/ }))
+    fireEvent.click(screen.getByRole('button', { name: '技能库' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '我的' }))
+    fireEvent.click(await screen.findByRole('switch', { name: '启用技能：reports' }))
+    await waitFor(() => expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'false'))
+
+    let rejectRead: (reason: Error) => void = () => undefined
+    heldRead = new Promise((_, reject) => { rejectRead = reject })
+    act(() => {
+      window.history.replaceState({}, '', '/?thread=' + THREAD_ID)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    const input = screen.getByRole('textbox', { name: '消息输入' })
+    expect(input).toHaveValue('保留正文')
+    expect(screen.getByRole('button', { name: '移除技能：reports' })).not.toHaveTextContent('不可用')
+    expect(screen.getByText('正在加载技能')).toBeVisible()
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChat).not.toHaveBeenCalled()
+
+    await act(async () => rejectRead(new Error('offline')))
+    expect(await screen.findByText('技能列表暂不可用')).toBeVisible()
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
+    heldRead = undefined
+    fireEvent.click(screen.getByRole('button', { name: '打开命令和技能' }))
+    fireEvent.click(screen.getByRole('option', { name: /重试加载技能/ }))
+    expect(await screen.findByText('所选技能已停用或卸载，请移除后再发送')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '打开命令和技能' }))
+    fireEvent.click(screen.getByRole('button', { name: '移除技能：reports' }))
+    expect(input).toHaveValue('保留正文')
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+    await waitFor(() => expect(onChat).toHaveBeenCalledOnce())
+    expect(onChat.mock.calls[0][0]).toMatchObject({ messages: [{ content: '保留正文' }], forwardedProps: { skillIds: [] } })
   })
 
   it.each([false, true])('提交时清空输入，迟到的开始事件保留新草稿（已有会话：%s）', async (existing) => {

@@ -5,6 +5,7 @@ declare global {
   interface Window {
     notificationTest: {
       emit: (topic: string, key: string) => void
+      resync: () => void
       disconnect: () => void
       visibility: (hidden: boolean) => void
       active: () => number
@@ -39,6 +40,7 @@ async function prepare(page: Page) {
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden })
     const encoder = new TextEncoder()
     window.notificationTest = {
+      resync: () => { for (const reader of readers) reader.enqueue(encoder.encode('event: resync\ndata: {}\n\n')) },
       emit: (topic, key) => {
         const payload = { scope: { namespace: 'ns_1', owner_id: null }, topic, key, details: {} }
         for (const reader of readers) reader.enqueue(encoder.encode(`event: change\ndata: ${JSON.stringify(payload)}\n\n`))
@@ -164,3 +166,71 @@ test('两个独立窗口通过通知同步会话，断连和隐藏期间的变�
     await Promise.all(contexts.map(context => context.close()))
   }
 })
+
+for (const titleState of ['succeeded', 'running'] as const) {
+  test(`四十个会话刷新、校准和通知重连不逐项查询标题：${titleState}`, async ({ page }) => {
+    const threads = Array.from({ length: 40 }, (_, index) => ({
+      ...conversation(`listed-${index}`, `run-${index}`, `列表会话${index}`), id: index + 1,
+      titleSource: titleState === 'succeeded' ? 'generated' as const : 'default' as const,
+      titleGenerationStatus: titleState,
+    }))
+    const requests: string[] = []
+    const errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    await prepare(page)
+    await page.exposeFunction('readNotificationApi', async ({ path }: { path: string }) => {
+      requests.push(path)
+      if (path === '/api/auth/me') return { data: { expires_at: '2099-01-01T00:00:00Z', user: { user_id: 1, username: 'notifications', display_name: '通知验收', avatar_url: null, roles: [], disabled: false } } }
+      if (path === '/api/models') return { data: { items: [{ modelId: 'main', displayName: 'Main', connectionId: 'provider', connectionDisplayName: '模型', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' } }
+      if (path === '/api/skills/installations') return { data: [] }
+      if (path === '/api/conversation/config') return { data: { dayRanges: [7, 30] } }
+      if (path === '/api/conversation/history') return { data: { items: threads.map(item => ({
+        ...item, status: 'idle', lastRunId: item.headRunId, hasPendingInterrupt: false, pendingInteractionKind: null,
+      })), nextCursor: null } }
+      const item = threads.find(item => item.threadId === path.split('/')[3])
+      if (item && (path.endsWith('/history') || path.endsWith('/title'))) return { data: item }
+      throw new Error(`未预期的接口：${path}`)
+    })
+    const titleReads = () => requests.filter(path => path.endsWith('/title'))
+    const historyReads = () => requests.filter(path => path === '/api/conversation/history').length
+    await page.goto('/')
+    await expect(page.getByRole('button', { name: /^打开会话：列表会话/ })).toHaveCount(40)
+    await expect(page.getByRole('textbox', { name: '消息输入' })).toBeEnabled()
+    expect(titleReads()).toEqual([])
+    await page.reload()
+    await expect(page.getByRole('button', { name: /^打开会话：列表会话/ })).toHaveCount(40)
+    await expect(page.getByRole('textbox', { name: '消息输入' })).toBeEnabled()
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000))
+    expect(titleReads()).toEqual([])
+
+    threads[1]!.title = '重同步后的标题'
+    threads[1]!.titleSeq += 1
+    await page.evaluate(() => window.notificationTest.resync())
+    await expect(page.getByRole('button', { name: '打开会话：重同步后的标题', exact: true })).toBeVisible()
+    expect(titleReads()).toEqual([])
+    const beforeRepair = historyReads()
+    threads[1]!.title = '校准后的标题'
+    threads[1]!.titleSeq += 1
+    await page.clock.runFor(30_000)
+    await expect(page.getByRole('button', { name: '打开会话：校准后的标题', exact: true })).toBeVisible()
+    expect(historyReads() - beforeRepair).toBe(1)
+    expect(titleReads()).toEqual([])
+
+    threads[1]!.title = '断连期间的标题'
+    threads[1]!.titleSeq += 1
+    await page.evaluate(() => window.notificationTest.disconnect())
+    await page.clock.runFor(1000)
+    await expect(page.getByRole('button', { name: '打开会话：断连期间的标题', exact: true })).toBeVisible()
+    expect(titleReads()).toEqual([])
+    await page.evaluate(() => window.notificationTest.visibility(true))
+    const beforeHidden = historyReads()
+    await page.clock.runFor(60_000)
+    expect(historyReads()).toBe(beforeHidden)
+    threads[1]!.title = '恢复可见后的标题'
+    threads[1]!.titleSeq += 1
+    await page.evaluate(() => window.notificationTest.visibility(false))
+    await expect(page.getByRole('button', { name: '打开会话：恢复可见后的标题', exact: true })).toBeVisible()
+    expect(titleReads()).toEqual([])
+    expect(errors).toEqual([])
+  })
+}

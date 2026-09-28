@@ -39,6 +39,8 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
       if (path === '/api/auth/me') data = { user, expires_at: '2099-01-01T00:00:00Z' }
       else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
       else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
+      else if (path === '/api/skills/installations') data = []
+      else if (path === '/api/skills/selection') data = [{ id: 'original-skill', name: 'reports' }]
       else if (path === '/api/conversation/history') data = { items: [{ ...detail, status: 'error', lastRunId: 'run-3', hasPendingInterrupt: false, pendingInteractionKind: null }], nextCursor: null }
       else if (path.endsWith('/history')) data = { ...detail, taskTrace: url.searchParams.get('includeTaskTrace') === 'false' ? null : detail.taskTrace }
       else if (path === '/api/conversation/chat') { posts.push(route.request().postDataJSON()); await route.abort('connectionreset'); return }
@@ -97,7 +99,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
     await draft.fill('保留这个草稿')
     await page.getByRole('button', { name: '重试', exact: true }).first().click()
     await expect.poll(() => posts.length).toBe(1)
-    expect(posts[0]).toMatchObject({ threadId, messages: [{ role: 'user', content: '你好 1' }] })
+    expect(posts[0]).toMatchObject({ threadId, messages: [{ role: 'user', content: '你好 1' }], forwardedProps: { skillIds: ['original-skill'] } })
     await expect(draft).toHaveValue('保留这个草稿')
   })
 }

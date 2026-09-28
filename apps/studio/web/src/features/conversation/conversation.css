@@ -1816,6 +1816,16 @@
   .composer-toolbar-button:active:not(:disabled),
   .composer-toolbar-button:focus-visible { border: 0; background: var(--color-hover); box-shadow: none; }
   .composer-toolbar .ui-tooltip { top: auto; bottom: calc(100% + var(--space-1)); }
+  .composer-skill-chip[data-unavailable] { color: var(--color-danger-text); }
+  .composer-skill-error { margin: var(--space-2) var(--space-4); color: var(--color-danger-text); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
+  .composer-skill-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-3) var(--space-4) 0; max-height: calc(var(--control-lg) * 2); overflow-y: auto; }
+  .composer-skill-chip { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 180px; min-height: var(--control-plan-chip); padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius-button); background: var(--color-subtle); color: var(--color-text-secondary); font-size: var(--type-meta-size); line-height: var(--type-meta-line); cursor: pointer; }
+  .composer-skill-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .composer-skill-chip > svg { flex-shrink: 0; }
+  .composer-skill-chip:hover:not(:disabled), .composer-skill-chip:active:not(:disabled) { background: var(--color-hover); color: var(--color-text-primary); box-shadow: var(--shadow-1); }
+  .composer-skill-chip:focus-visible { outline: 2px solid var(--color-border-strong); outline-offset: 2px; }
+  .composer-skill-chip:disabled { cursor: not-allowed; opacity: .6; }
+  @media (any-hover: none), (any-pointer: coarse) { .composer-skill-chip { min-height: var(--control-lg); min-width: var(--control-lg); } }
   .composer-plan-chip { display: inline-flex; align-items: center; gap: var(--space-1); min-width: var(--control-composer); height: var(--control-plan-chip); min-height: var(--control-plan-chip); padding: 2px var(--space-2); border: 0; border-radius: var(--radius-button); background: var(--color-warning-soft); color: var(--color-warning-text); font-size: var(--type-meta-size); font-weight: var(--weight-ui); line-height: var(--type-meta-line); cursor: pointer; box-shadow: none; transform: none; transition: color var(--motion-fast) var(--ease-out); }
   .composer-plan-chip:hover:not(:disabled),
   .composer-plan-chip:active:not(:disabled) { background: var(--color-warning-soft); color: color-mix(in srgb, var(--color-warning-text) 84%, var(--color-text-primary)); box-shadow: none; transform: none; }

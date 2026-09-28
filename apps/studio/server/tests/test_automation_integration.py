@@ -36,7 +36,7 @@ from tinkerfin_tracing import Tracer
 
 @pytest.fixture
 async def automation_environment(
-    database, components_database, attachments, monkeypatch
+    database, components_database, attachments, skill_library, monkeypatch
 ):
     async with database.session() as session:
         session.add(
@@ -97,6 +97,7 @@ async def automation_environment(
                     database=database,
                     components_database=components_database,
                     attachments=attachments,
+                    skills=skill_library,
                     automation=automation,
                     tracer=tracer,
                     tinkerfin=TinkerFin(

@@ -240,6 +240,7 @@ class ConversationChatService:
                 model_config=model,
                 image_model=image_model,
                 access_mode=prepared.access_mode,
+                skill_snapshot=execution.skills,
             )
             command: RunCommand
             if isinstance(intent, CompactIntent):
@@ -281,6 +282,11 @@ class ConversationChatService:
                     "titleSource": execution.thread.title_source,
                     "titleSeq": execution.thread.title_seq,
                     "titleGenerationStatus": execution.thread.title_generation_status,
+                    "selectedSkills": [
+                        {"id": skill.installation_id, "name": skill.name}
+                        for skill in execution.skills.skills
+                        if skill.selected
+                    ],
                 },
                 cancelled_message="上下文压缩已停止"
                 if isinstance(intent, CompactIntent)
@@ -328,6 +334,7 @@ class ConversationChatService:
                 attachment_id,
                 user_id=self._user.user_id,
                 thread_id=request.thread_id or None,
+                allow_unbound=True,
             )
             total += attachment.size_bytes
             attachments.append(attachment)

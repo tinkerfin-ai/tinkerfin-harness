@@ -54,6 +54,8 @@ const baseProps = {
   onRequestExpanded: vi.fn(),
   onCloseOverlay: vi.fn(),
   onOpenAutomation: vi.fn(),
+  onOpenSkills: vi.fn(),
+  skillsActive: false,
   automationActive: false,
   onNew: vi.fn(),
   onSelect: vi.fn(),
@@ -199,7 +201,7 @@ describe('Sidebar', () => {
     expect(memoryButton).not.toHaveClass('is-selected')
     expect(memoryButton).toBeDisabled()
     expect(screen.queryByRole('button', { name: '工作区' })).not.toBeInTheDocument()
-    for (const label of ['技能库', '更多']) {
+    for (const label of ['更多']) {
       expect(screen.getByRole('button', { name: label })).toBeDisabled()
     }
 

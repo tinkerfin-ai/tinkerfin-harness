@@ -5,6 +5,9 @@ export interface ComposerSuggestionItem {
   disabled: boolean
 }
 
+export interface ComposerSkill { id: string; name: string; description: string; unavailable?: boolean }
+export type ComposerSkillsStatus = 'loading' | 'ready' | 'error'
+
 export interface ComposerSuggestionGroup {
   id: 'command' | 'skill'
   label: string
@@ -31,9 +34,9 @@ const COMMAND_ITEMS: readonly ComposerSuggestionItem[] = [
 
 const SKILL_ITEMS: readonly ComposerSuggestionItem[] = [
   {
-    id: 'skills-unavailable',
-    name: '技能暂未开放',
-    description: '当前版本暂不支持从输入框调用技能',
+    id: 'skills-empty',
+    name: '暂无启用的技能',
+    description: '到技能库安装并启用技能',
     disabled: true,
   },
 ]
@@ -56,10 +59,10 @@ const leadingSlashCommand = (value: string) => {
   return { query, remainder: value.slice(tokenEnd) }
 }
 
-export const isAllowedComposerDraft = (value: string) => {
+export const isAllowedComposerDraft = (value: string, skills: readonly ComposerSkill[] = []) => {
   const command = leadingSlashCommand(value)
   if (!command || !command.query) return true
-  const matchingNames = ENABLED_SLASH_NAMES.filter((name) => name.startsWith(command.query))
+  const matchingNames = [...ENABLED_SLASH_NAMES, ...skills.map(skill => skill.name)].filter((name) => name.startsWith(command.query))
   if (matchingNames.length === 0) return false
   return command.remainder === ''
     || (/^\s/.test(command.remainder) && (command.query === 'plan' || command.query === 'compact'))
@@ -145,10 +148,18 @@ export const detectLeadingSlashToken = (
 
 export const filterComposerSuggestionGroups = (
   query: string,
+  skills: readonly ComposerSkill[] = [],
+  status: ComposerSkillsStatus = 'ready',
 ): readonly ComposerSuggestionGroup[] => {
+  const groups: readonly ComposerSuggestionGroup[] = [COMPOSER_SUGGESTION_GROUPS[0], {
+    id: 'skill', label: '技能', items: status === 'loading'
+      ? [{ id: 'skills-loading', name: '正在加载技能', description: '读取已安装并启用的技能', disabled: true }]
+      : status === 'error' ? [{ id: 'skills-retry', name: '重试加载技能', description: '技能列表暂不可用', disabled: false }]
+      : skills.length ? skills.map(skill => ({ ...skill, disabled: false })) : SKILL_ITEMS,
+  }]
   const normalized = query.trim().toLowerCase()
-  if (!normalized) return COMPOSER_SUGGESTION_GROUPS
-  return COMPOSER_SUGGESTION_GROUPS
+  if (!normalized) return groups
+  return groups
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => (

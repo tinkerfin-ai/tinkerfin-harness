@@ -16,6 +16,67 @@ const composerChromeProps = () => ({
 })
 
 describe('Composer', () => {
+  it('从真实技能菜单多选，保留正文并支持逐项移除', () => {
+    const skills = [{ id: 'one', name: 'reports', description: 'Prepare reports' }, { id: 'two', name: 'research', description: 'Research sources' }]
+    function SkillComposer() {
+      const [value, setValue] = useState('保留正文')
+      const [selected, setSelected] = useState<typeof skills>([])
+      return <Composer {...composerChromeProps()} value={value} onChange={setValue} isRunning={false} onSend={vi.fn()} onStop={vi.fn()}
+        skills={skills} selectedSkills={selected} onSelectSkill={id => setSelected(previous => [...previous, skills.find(skill => skill.id === id)!])}
+        onRemoveSkill={id => setSelected(previous => previous.filter(skill => skill.id !== id))} />
+    }
+    render(<SkillComposer />)
+    fireEvent.click(screen.getByRole('button', { name: '打开命令和技能' }))
+    fireEvent.click(screen.getByRole('option', { name: /reports Prepare reports/ }))
+    fireEvent.click(screen.getByRole('button', { name: '打开命令和技能' }))
+    expect(screen.getByRole('option', { name: /reports Prepare reports/ })).toBeDisabled()
+    fireEvent.click(screen.getByRole('option', { name: /research Research sources/ }))
+    expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('保留正文')
+    expect(screen.getByRole('button', { name: '移除技能：reports' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '移除技能：reports' }))
+    expect(screen.queryByRole('button', { name: '移除技能：reports' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '移除技能：research' })).toBeVisible()
+  })
+
+  it('允许输入已安装技能的斜杠前缀并用 Enter 选择', () => {
+    const chosen = vi.fn()
+    function SkillComposer() {
+      const [value, setValue] = useState('')
+      return <Composer {...composerChromeProps()} value={value} onChange={setValue} isRunning={false} onSend={vi.fn()} onStop={vi.fn()}
+        skills={[{ id: 'one', name: 'reports', description: 'Prepare reports' }]} onSelectSkill={chosen} />
+    }
+    render(<SkillComposer />)
+    const input = screen.getByRole('textbox', { name: '消息输入' })
+    fireEvent.change(input, { target: { value: '/repo', selectionStart: 5 } })
+    expect(input).toHaveValue('/repo')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(chosen).toHaveBeenCalledWith('one')
+    expect(input).toHaveValue('')
+  })
+
+  it('技能不可用时保留草稿并阻止发送，移除后恢复', () => {
+    const onSend = vi.fn()
+    function SkillComposer() {
+      const [selected, setSelected] = useState([{ id: 'reports', name: 'reports', description: '整理报告', unavailable: true }])
+      return <Composer {...composerChromeProps()} value="保留正文" onChange={vi.fn()} isRunning={false} onSend={onSend} onStop={vi.fn()}
+        selectedSkills={selected} onRemoveSkill={id => setSelected(items => items.filter(item => item.id !== id))} />
+    }
+    render(<SkillComposer />)
+    const input = screen.getByRole('textbox', { name: '消息输入' })
+    const send = screen.getByRole('button', { name: '发送消息' })
+    expect(screen.getByRole('button', { name: '移除技能：reports' })).toHaveTextContent('不可用')
+    expect(screen.getByRole('status')).toHaveTextContent('所选技能已停用或卸载，请移除后再发送')
+    expect(send).toBeDisabled()
+    fireEvent.click(send)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(input).toHaveValue('保留正文')
+    fireEvent.click(screen.getByRole('button', { name: '移除技能：reports' }))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(send).toBeEnabled()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledOnce()
+  })
   it('图片上传就绪后允许发送并保留正文与附件', () => {
     const attachment: DraftAttachment = {
       id: 'image', name: '截图.png', kind: 'image', size: 3, state: 'ready', progress: 100,
@@ -32,6 +93,40 @@ describe('Composer', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledOnce()
     expect(input).toHaveValue('保留正文')
+  })
+
+  it.each(['loading', 'error'] as const)('技能列表为 %s 时保留标签和草稿，阻止普通发送直到读取完成', skillsStatus => {
+    const onSend = vi.fn()
+    const props = { ...composerChromeProps(), value: '保留正文', onChange: vi.fn(), isRunning: false, onSend, onStop: vi.fn(),
+      selectedSkills: [{ id: 'reports', name: 'reports', description: '整理报告' }] }
+    const { rerender } = render(<Composer {...props} skillsStatus={skillsStatus} />)
+    const input = screen.getByRole('textbox', { name: '消息输入' })
+    const send = screen.getByRole('button', { name: '发送消息' })
+    expect(screen.getByRole('button', { name: '移除技能：reports' })).not.toHaveTextContent('不可用')
+    expect(screen.getByRole('status')).toHaveTextContent(skillsStatus === 'loading' ? '正在加载技能' : '技能列表暂不可用')
+    expect(send).toBeDisabled()
+    fireEvent.click(send)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(input).toHaveValue('保留正文')
+
+    rerender(<Composer {...props} skillsStatus="ready" />)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(send).toBeEnabled()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledOnce()
+  })
+
+  it('技能列表加载不阻断无选择的普通发送或沿用原运行的压缩', () => {
+    const onSend = vi.fn()
+    const props = { ...composerChromeProps(), value: '普通正文', onChange: vi.fn(), isRunning: false, onSend, onStop: vi.fn() }
+    const { rerender } = render(<Composer {...props} skillsStatus="loading" />)
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+    expect(onSend).toHaveBeenCalledOnce()
+
+    rerender(<Composer {...props} value="/compact " skillsStatus="loading" selectedSkills={[{ id: 'reports', name: 'reports', description: '整理报告' }]} />)
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+    expect(onSend).toHaveBeenCalledTimes(2)
   })
 
   it.each(['queued', 'uploading', 'error'] as const)('附件为 %s 时禁用发送并阻止 Enter，全部就绪后恢复', (state) => {

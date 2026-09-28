@@ -73,6 +73,43 @@ class AutomationErrorCode(ErrorCode):
     UNAVAILABLE = _ErrorCodeValue(1_001_007_004, 503, "自动化服务暂不可用，请稍后重试")
 
 
+class SkillErrorCode(ErrorCode):
+    """技能目录、安装与执行准备错误"""
+
+    NOT_FOUND = _ErrorCodeValue(1_001_008_000, 404, "技能或来源不存在")
+    INVALID_PACKAGE = _ErrorCodeValue(1_001_008_001, 422, "技能包格式不正确")
+    TOO_LARGE = _ErrorCodeValue(1_001_008_002, 413, "技能包超过大小或文件数量限制")
+    NAME_CONFLICT = _ErrorCodeValue(
+        1_001_008_003, 409, "已安装同名技能，请更新已有技能或选择其他技能"
+    )
+    UNAVAILABLE = _ErrorCodeValue(1_001_008_004, 503, "技能来源暂不可用，请稍后重试")
+    RATE_LIMITED = _ErrorCodeValue(
+        1_001_008_005, 429, "技能来源请求过于频繁，请稍后重试"
+    )
+    DISABLED = _ErrorCodeValue(1_001_008_006, 409, "所选技能已停用或卸载，请重新选择")
+    CONTENT_UNAVAILABLE = _ErrorCodeValue(
+        1_001_008_007, 503, "技能文件不可用，执行已停止"
+    )
+    IMPORT_CONFLICT = _ErrorCodeValue(
+        1_001_008_008, 409, "该导入已确认，请重新预览后再选择"
+    )
+    SNAPSHOT_CONFLICT = _ErrorCodeValue(
+        1_001_008_009, 409, "运行技能选择与原请求不一致"
+    )
+    OPERATION_CONFLICT = _ErrorCodeValue(
+        1_001_008_010, 409, "操作标识已用于其他参数，请重新发起操作"
+    )
+    UPDATE_CONFLICT = _ErrorCodeValue(
+        1_001_008_011, 409, "技能内容已变化，请重新加载后再更新"
+    )
+    REPLACEMENT_REQUIRED = _ErrorCodeValue(
+        1_001_008_012, 422, "请上传并预览包含同名技能的 ZIP 文件"
+    )
+    UPDATE_TARGET_MISSING = _ErrorCodeValue(
+        1_001_008_013, 422, "更新来源中没有唯一匹配的同名技能，原技能已保留"
+    )
+
+
 class AuthErrorCode(ErrorCode):
     """认证模块错误"""
 

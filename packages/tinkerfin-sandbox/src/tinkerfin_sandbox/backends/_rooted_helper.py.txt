@@ -1115,12 +1115,12 @@ def cleanup_offload_capture(state):
 def offload_preview(raw):
     lines = raw.splitlines(keepends=True)
     if len(lines) <= 10:
-        return raw[:4000]
+        return raw[:4000], False
     head = b"".join(lines[:5])[:2000]
     tail = b"".join(lines[-5:])[-2000:]
     omitted = len(lines) - 10
     marker = ("... [" + str(omitted) + " lines truncated] ...\n").encode()
-    return head + marker + tail
+    return head + marker + tail, True
 
 
 def publish_offload_capture(state):
@@ -1248,20 +1248,23 @@ def offload_command(root, arguments):
                 "output": raw.decode("utf-8", errors="replace"),
                 "exit_code": exit_code,
                 "truncated": capped,
+                "preview_has_truncation_marker": False,
             }
-        preview = offload_preview(raw)
+        preview, has_marker = offload_preview(raw)
         if capture["safe"] and publish_offload_capture(capture):
             return {
                 "offloaded": True,
                 "output": preview.decode("utf-8", errors="replace"),
                 "exit_code": exit_code,
                 "truncated": capped,
+                "preview_has_truncation_marker": has_marker,
             }
         return {
             "offloaded": False,
             "output": raw.decode("utf-8", errors="replace"),
             "exit_code": exit_code,
             "truncated": capped,
+            "preview_has_truncation_marker": False,
         }
     finally:
         if process is not None and process.poll() is None:

@@ -9,6 +9,7 @@ AG-UI 入口需要安装 `tinkerfin[agui]`。
 | API | 用途 |
 | --- | --- |
 | `TinkerFin(checkpointer=..., run_coordinator=..., store=..., runtime_profile=...)` | 配置共享的借用资源 |
+| `configured.store` | 使用 `with_namespace()` 绑定的异步 Store；生命周期由应用管理 |
 | `.with_namespace(namespace)` | 选择应用隔离范围；调用 `build()` 前必须设置 |
 | `.with_observer(observer)` | 添加 Runtime observer |
 | `.with_observer(on_terminal=callback)` | 添加一个异步终态回调 |

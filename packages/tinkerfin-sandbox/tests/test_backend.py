@@ -372,6 +372,7 @@ class _FakeOffloadCommands(_FakeCommands):
     def __init__(self) -> None:
         super().__init__()
         self.malformed = False
+        self.preview_has_truncation_marker = True
         self.request: dict[str, Any] | None = None
 
     async def run(
@@ -403,6 +404,7 @@ class _FakeOffloadCommands(_FakeCommands):
                         "output": "preview",
                         "exit_code": 7,
                         "truncated": True,
+                        "preview_has_truncation_marker": self.preview_has_truncation_marker,
                     },
                 }
             )
@@ -1132,9 +1134,11 @@ async def test_rooted_descriptor_cancellation_settles_without_replay() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rooted_offload_sdk_parses_single_helper_result() -> None:
+@pytest.mark.parametrize("has_marker", [False, True])
+async def test_rooted_offload_sdk_parses_single_helper_result(has_marker: bool) -> None:
     sandbox = _FakeSandbox()
     commands = _FakeOffloadCommands()
+    commands.preview_has_truncation_marker = has_marker
     sandbox.commands = commands
     backend = OpenSandboxBackend(
         sandbox=cast(Sandbox, sandbox),
@@ -1143,8 +1147,8 @@ async def test_rooted_offload_sdk_parses_single_helper_result() -> None:
         enable_capture_offload=True,
     )
 
-    result = await backend._aexecute_rooted_offload(
-        root="/workspace",
+    rooted = RootedOpenSandboxBackend(OpenSandboxHandle(backend), root="/workspace")
+    result = await rooted.aexecute_with_offload(
         command="generate-output",
         capture_path="/captures/call-1",
         max_inline_bytes=100,
@@ -1153,6 +1157,7 @@ async def test_rooted_offload_sdk_parses_single_helper_result() -> None:
     )
 
     assert result.offloaded is True
+    assert result.preview_has_truncation_marker is has_marker
     assert result.response == ExecuteResponse(
         output="preview",
         exit_code=7,

@@ -134,6 +134,8 @@ export interface SidebarProps {
   onCloseOverlay: (restoreFocus?: boolean) => void
   onOpenAutomation: () => void
   automationActive: boolean
+  onOpenSkills: () => void
+  skillsActive: boolean
   onNew: () => void
   onSelect: (threadId: string) => void
   onPin: (threadId: string) => void
@@ -174,6 +176,8 @@ export function Sidebar({
   onCloseOverlay,
   onOpenAutomation,
   automationActive,
+  onOpenSkills,
+  skillsActive,
   onNew,
   onSelect,
   onPin,
@@ -587,7 +591,7 @@ export function Sidebar({
       key={pending ? `pending:${pending.runId}` : conversation.threadId}
       conversation={conversation}
       pendingRunId={pending?.runId}
-      isActive={!automationActive && (pending
+      isActive={!automationActive && !skillsActive && (pending
         ? selectedPendingRunId === pending.runId
         : conversation.threadId === workspace.currentThreadId)}
       isMenuOpen={!pending && openMenu?.threadId === conversation.threadId}
@@ -726,7 +730,8 @@ export function Sidebar({
             >
               <nav className="primary-nav" aria-label={t('工作区功能')}>
                 <Button size="sm" variant="ghost" leadingIcon={<BrainCircuit size={18} />} disabled>{t('记忆管理')}</Button>
-                <Button size="sm" variant="ghost" leadingIcon={<BookOpenCheck size={18} />} disabled>{t('技能库')}</Button>
+                <Button type="button" size="sm" variant="ghost" leadingIcon={<BookOpenCheck size={18} />} selected={skillsActive}
+                  aria-current={skillsActive ? 'page' : undefined} onClick={onOpenSkills}>{t('技能库')}</Button>
                 <Button type="button" size="sm" variant="ghost" leadingIcon={<AlarmClock size={18} />} selected={automationActive}
                   aria-current={automationActive ? 'page' : undefined} onClick={onOpenAutomation}>{t('自动化')}</Button>
                 <Button size="sm" variant="ghost" leadingIcon={<CircleEllipsis size={18} />} disabled>{t('更多')}</Button>

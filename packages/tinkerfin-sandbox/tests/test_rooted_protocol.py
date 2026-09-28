@@ -29,7 +29,7 @@ def test_rooted_helper_resource_remains_byte_stable() -> None:
     )
     assert resource == _rooted_protocol._ROOTED_HELPER_SCRIPT
     assert sha256(resource.encode()).hexdigest() == (
-        "962d62c0d2837a9a96ab2a5d4bea109120b4428b80ca2038d57284ac59f2873b"
+        "ed730f9af3772ad1f108370739e6a1b7a33413507a1e8876a33c537f954abf18"
     )
 
 
@@ -1191,6 +1191,7 @@ def test_rooted_helper_offload_returns_small_output_inline(tmp_path: Path) -> No
         "output": "inline outputwarning",
         "exit_code": 7,
         "truncated": False,
+        "preview_has_truncation_marker": False,
     }
     assert not (workspace / "captures" / "call-1.txt").exists()
 
@@ -1225,6 +1226,7 @@ def test_rooted_helper_offload_publishes_large_output_with_preview(
     assert response.result["offloaded"] is True
     assert response.result["exit_code"] == 0
     assert response.result["truncated"] is False
+    assert response.result["preview_has_truncation_marker"] is True
     assert "line-01-output" in response.result["output"]
     assert "lines truncated" in response.result["output"]
     assert "line-20-output" in response.result["output"]
@@ -1256,6 +1258,7 @@ def test_rooted_helper_offload_enforces_hard_capture_cap(tmp_path: Path) -> None
     assert response.operation == "offload"
     assert response.result["offloaded"] is True
     assert response.result["truncated"] is True
+    assert response.result["preview_has_truncation_marker"] is False
     assert (workspace / "captures" / "capped.txt").stat().st_size == 100
 
 
@@ -1293,6 +1296,7 @@ def test_rooted_helper_offload_unsafe_capture_executes_command_once(
         "output": "large output",
         "exit_code": 0,
         "truncated": False,
+        "preview_has_truncation_marker": False,
     }
     assert marker.read_text(encoding="utf-8") == "x"
     assert outside.read_text(encoding="utf-8") == "outside sentinel"

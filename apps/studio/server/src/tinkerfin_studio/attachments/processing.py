@@ -1,4 +1,4 @@
-"""有界图片预处理、Markdown 文本与 Office 文件容器校验"""
+"""有界图片预处理与文档、技能 ZIP 内容校验"""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import warnings
 from zipfile import BadZipFile, ZipFile
 
 from PIL import Image, ImageOps
+
+from tinkerfin_studio.skills.packages import parse_archive
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_TOTAL_BYTES = 25 * 1024 * 1024
@@ -24,6 +26,7 @@ MIME_TYPES = {
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "md": "text/markdown",
     "markdown": "text/markdown",
+    "zip": "application/zip",
 }
 
 
@@ -51,13 +54,13 @@ def image_variant(data: bytes, max_side: int) -> bytes:
 
 
 def validate_file(name: str, data: bytes) -> str:
-    """结合文件内容和扩展名核验类型，限制 Office 解压容量"""
+    """按内容核验附件类型，并限制文档与技能包的解压容量"""
     if not data or len(data) > MAX_FILE_BYTES:
         raise ValueError("附件不能为空，且单个不能超过 10 MiB")
     extension = name.rsplit(".", 1)[-1].lower()
     mime = MIME_TYPES.get(extension)
     if mime is None:
-        raise ValueError("仅支持图片、Markdown、PDF、DOCX、XLSX 和 PPTX")
+        raise ValueError("仅支持图片、Markdown、PDF、Office 文档和技能 ZIP")
     if mime.startswith("image/"):
         with Image.open(io.BytesIO(data)) as image:
             actual = Image.MIME.get(image.format or "")
@@ -66,6 +69,8 @@ def validate_file(name: str, data: bytes) -> str:
         image_variant(data, 2048)
     elif mime == "text/markdown":
         markdown_text(data)
+    elif mime == "application/zip":
+        parse_archive(data)
     elif extension == "pdf":
         if not data.startswith(b"%PDF-"):
             raise ValueError("PDF 文件内容不正确")

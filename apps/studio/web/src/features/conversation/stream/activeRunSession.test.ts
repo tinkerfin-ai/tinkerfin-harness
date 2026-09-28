@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ChatRequestPayload } from '../../../api/conversation/types'
+import { attachmentInput } from '../attachments/content'
 import {
   clearActiveRunSession,
   readActiveRunSession,
+  readActiveRunSessions,
   writeActiveRunSession,
 } from './activeRunSession'
 
@@ -14,7 +16,7 @@ const payload: ChatRequestPayload = {
   messages: [{ id: 'request-run-active', role: 'user', content: '继续输出' }],
   tools: [],
   context: [],
-  forwardedProps: { accessMode: 'write_approval', model: 'main', command: { plan: 'off' } },
+  forwardedProps: { skillIds: [], accessMode: 'write_approval', model: 'main', command: { plan: 'off' } },
 }
 
 describe('active run session', () => {
@@ -53,6 +55,45 @@ describe('active run session', () => {
     }]))
 
     expect(readActiveRunSession('thread-active')).toBeNull()
+    expect(window.sessionStorage.getItem('tinkerfin:active-conversation-run')).toBeNull()
+  })
+
+  it('文本和技能 ZIP 运行共同保存时保留完整请求、技能选择和游标', () => {
+    const text = { threadId: payload.threadId, payload, mode: 'start' as const, lastSeq: 3 }
+    const zipPayload: ChatRequestPayload = {
+      ...payload,
+      threadId: '',
+      runId: 'run-zip',
+      forwardedProps: { ...payload.forwardedProps, skillIds: ['selected-skill'] },
+      messages: [{ id: 'request-run-zip', role: 'user', content: [
+        { type: 'text', text: '安装这个技能' },
+        attachmentInput({ id: 'zip', name: 'reports.zip', mime_type: 'application/zip', size_bytes: 3 }),
+      ] }],
+    }
+    const zip = { threadId: '', payload: zipPayload, mode: 'start' as const, lastSeq: 0 }
+    writeActiveRunSession(text)
+    writeActiveRunSession(zip)
+
+    expect(readActiveRunSessions()).toEqual([text, zip])
+    clearActiveRunSession(zipPayload.runId)
+    expect(readActiveRunSessions()).toEqual([text])
+  })
+
+  it('拒绝附件数组中的非对象内容块', () => {
+    window.sessionStorage.setItem('tinkerfin:active-conversation-run', JSON.stringify([{
+      threadId: payload.threadId,
+      payload: {
+        ...payload,
+        messages: [{ id: 'request-run-active', role: 'user', content: [
+          attachmentInput({ id: 'zip', name: 'reports.zip', mime_type: 'application/zip', size_bytes: 3 }),
+          null,
+        ] }],
+      },
+      mode: 'start',
+      lastSeq: 1,
+    }]))
+
+    expect(readActiveRunSession(payload.threadId)).toBeNull()
     expect(window.sessionStorage.getItem('tinkerfin:active-conversation-run')).toBeNull()
   })
 

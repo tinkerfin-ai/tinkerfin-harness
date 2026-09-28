@@ -29,6 +29,7 @@ from pydantic_settings.sources.utils import parse_env_vars
 from sqlalchemy.engine import URL, make_url
 
 from tinkerfin_studio.models.transport import normalize_model_origin
+from tinkerfin_studio.skills.sources import SkillSourceSettings
 
 _DEFAULT_ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
 _DEFAULT_LOG_FILE_PATH = Path("server/logs/studio.log")
@@ -107,6 +108,34 @@ class Settings(BaseSettings):
     """按构造参数、环境变量、指定配置文件、默认值的优先级读取并校验配置"""
 
     model_config = SettingsConfigDict(extra="ignore", env_file_encoding="utf-8")
+
+    skill_sources: list[SkillSourceSettings] = Field(
+        default_factory=lambda: [
+            SkillSourceSettings(),
+            SkillSourceSettings(
+                kind="github",
+                id="anthropic",
+                name="Anthropic",
+                url="https://github.com/anthropics/skills",
+            ),
+            SkillSourceSettings(
+                kind="github",
+                id="vercel",
+                name="Vercel",
+                url="https://github.com/vercel-labs/agent-skills",
+            ),
+        ],
+        description="服务端注册的 ClawHub 或 GitHub 技能来源，认证信息不发送前端",
+    )
+
+    @field_validator("skill_sources")
+    @classmethod
+    def unique_skill_sources(
+        cls, value: list[SkillSourceSettings]
+    ) -> list[SkillSourceSettings]:
+        if len({source.id for source in value}) != len(value):
+            raise ValueError("技能来源标识不得重复")
+        return value
 
     @classmethod
     def settings_customise_sources(

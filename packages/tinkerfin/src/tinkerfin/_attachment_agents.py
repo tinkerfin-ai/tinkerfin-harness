@@ -92,7 +92,7 @@ def _native_messages(
 ) -> list[_MessageT]:
     """Hide native media only while one middleware prepares its request.
 
-    Deep Agents 0.7.13's system-prompt helpers normalize source formats, and its
+    Deep Agents 0.7.19's system-prompt helpers normalize source formats, and its
     filesystem scrubs before downstream model routing. Keep original blocks in
     this call's local mapping, never inside placeholders. Restore only surviving
     placeholders, carrying prompt-cache changes made during preparation.

@@ -1,4 +1,4 @@
-import { ArrowUp, Paperclip, Plus, Square } from 'lucide-react'
+import { ArrowUp, Paperclip, Plus, Square, X } from 'lucide-react'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 
@@ -18,6 +18,7 @@ import {
   replaceSlashTokenWithPlan,
 } from '../composerSuggestions'
 import type { DraftAttachment } from '../useAttachments'
+import type { ComposerSkill, ComposerSkillsStatus } from '../composerSuggestions'
 import { ComposerPlanChip } from './ComposerPlanChip'
 import { ComposerSuggestionMenu } from './ComposerSuggestionMenu'
 
@@ -64,6 +65,12 @@ export function Composer({
   onRemoveAttachment,
   onRetryAttachment,
   onAttachmentError,
+  skills = [],
+  selectedSkills = [],
+  skillsStatus = 'ready',
+  onSelectSkill,
+  onRemoveSkill,
+  onRetrySkills,
 }: {
   value: string
   isRunning: boolean
@@ -94,6 +101,12 @@ export function Composer({
   onRemoveAttachment: (id: string) => void
   onRetryAttachment?: (id: string) => void
   onAttachmentError?: () => void
+  skills?: readonly ComposerSkill[]
+  selectedSkills?: readonly ComposerSkill[]
+  skillsStatus?: ComposerSkillsStatus
+  onSelectSkill?: (id: string) => void
+  onRemoveSkill?: (id: string) => void
+  onRetrySkills?: () => void
 }) {
   const { t } = useI18n()
   const input = useRef<HTMLTextAreaElement>(null)
@@ -116,14 +129,16 @@ export function Composer({
     [caret, isDisabled, value],
   )
   const suggestionGroups = useMemo(
-    () => filterComposerSuggestionGroups(menuRequested ? '' : slashHit?.query ?? '').map(group => ({
+    () => filterComposerSuggestionGroups(menuRequested ? '' : slashHit?.query ?? '', skills, skillsStatus).map(group => ({
       ...group,
       items: group.items.map(item => item.id === 'compact' ? {
         ...item, disabled: !onCompact || isRunning || Boolean(compactDisabledReason),
         description: compactDisabledReason ?? item.description,
+      } : group.id === 'skill' && !item.id.startsWith('skills-') ? {
+        ...item, disabled: selectedSkills.some(skill => skill.id === item.id) || selectedSkills.length >= 8,
       } : item),
     })),
-    [menuRequested, slashHit?.query, onCompact, isRunning, compactDisabledReason],
+    [menuRequested, slashHit?.query, onCompact, isRunning, compactDisabledReason, skills, skillsStatus, selectedSkills],
   )
   const enabledIds = useMemo(
     () => enabledSuggestionIds(suggestionGroups),
@@ -139,7 +154,12 @@ export function Composer({
     : enabledIds[0]
   const planClaim = planClaimParts(value)
   const isCompactCommand = /^\/compact(?:\s|$)/.test(value.trim())
-  const canSubmitDraft = (Boolean(value.trim()) || attachments.length > 0) && (!value.trim() || isSubmittableComposerDraft(value)) && (isCompactCommand ? !compactDisabledReason : attachments.every(item => item.state === 'ready'))
+  const hasUnavailableSkills = selectedSkills.some(skill => skill.unavailable)
+  const skillSelectionPending = selectedSkills.length > 0 && skillsStatus !== 'ready'
+  const skillSelectionMessage = skillSelectionPending
+    ? skillsStatus === 'loading' ? t('正在加载技能') : t('技能列表暂不可用')
+    : hasUnavailableSkills ? t('所选技能已停用或卸载，请移除后再发送') : undefined
+  const canSubmitDraft = (isCompactCommand || (!skillSelectionPending && !hasUnavailableSkills)) && (Boolean(value.trim()) || attachments.length > 0) && (!value.trim() || isSubmittableComposerDraft(value)) && (isCompactCommand ? !compactDisabledReason : attachments.every(item => item.state === 'ready'))
   const cancelSuggestionMenu = useCallback(() => {
     if (menuRequested) {
       setMenuRequested(false)
@@ -195,6 +215,15 @@ export function Composer({
   }, [attachments])
 
   const pickSuggestion = (id: string) => {
+    if (id === 'skill-skills-retry') { onRetrySkills?.(); return }
+    if (id.startsWith('skill-')) {
+      const skill = skills.find(item => `skill-${item.id}` === id)
+      if (!skill || selectedSkills.length >= 8 || selectedSkills.some(item => item.id === skill.id)) return
+      onSelectSkill?.(skill.id)
+      cancelSuggestionMenu()
+      input.current?.focus()
+      return
+    }
     if (id === 'command-compact') {
       if (isRunning || compactDisabledReason || !onCompact?.()) return
       setMenuRequested(false)
@@ -331,6 +360,11 @@ export function Composer({
             ))}
           </div>
         )}
+        {selectedSkills.length > 0 && <div className="composer-skill-chips" aria-label={t('已选择的技能')}>
+          {selectedSkills.map(skill => <button type="button" key={skill.id} className="composer-skill-chip" data-unavailable={skill.unavailable || undefined} disabled={isDisabled || isRunning}
+            aria-label={t('移除技能：{name}', { name: skill.name })} onClick={() => onRemoveSkill?.(skill.id)}><span>{skill.name}</span>{skill.unavailable && <span>{t('不可用')}</span>}<X size={12} aria-hidden="true" /></button>)}
+        </div>}
+        {skillSelectionMessage && <p className="composer-skill-error" role="status">{skillSelectionMessage}</p>}
         <div ref={inputScroll} className="composer-input-scroll">
           <div className="composer-input-grow">
             <div className={`composer-input-backdrop${isDisabled ? ' is-disabled' : ''}`} aria-hidden="true">
@@ -363,10 +397,10 @@ export function Composer({
                 const keepsEnabledSuggestion = Boolean(
                   nextSlashHit
                   && enabledSuggestionIds(
-                    filterComposerSuggestionGroups(nextSlashHit.query),
+                    filterComposerSuggestionGroups(nextSlashHit.query, skills, skillsStatus),
                   ).length > 0,
                 )
-                if (!isAllowedComposerDraft(nextValue) && !keepsEnabledSuggestion) {
+                if (!isAllowedComposerDraft(nextValue, skills) && !keepsEnabledSuggestion) {
                   const previousCaret = acceptedCaret.current
                   window.requestAnimationFrame(() => {
                     input.current?.setSelectionRange(previousCaret, previousCaret)
@@ -421,7 +455,7 @@ export function Composer({
               type="file"
               hidden
               multiple
-              accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.md,.markdown"
+              accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.md,.markdown,.zip"
               onChange={(event) => {
                 onAddAttachments(Array.from(event.target.files ?? []))
                 event.target.value = ''

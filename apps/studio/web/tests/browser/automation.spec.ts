@@ -28,6 +28,7 @@ async function prepare(page: Page, language = 'zh-CN') {
     if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00.000Z', user }
     else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: '主模型',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true }], defaultModelId: 'main' }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
+    else if (path === '/api/skills/installations') data = []
     else if (path === '/api/conversation/history') data = { items: [], nextCursor: null }
     else if (path === '/api/automation/tasks/counts') data = { enabled: matchingTasks.filter(task => task.enabled).length, paused: matchingTasks.filter(task => !task.enabled).length }
     else if (path === '/api/automation/tasks' && method === 'GET') data = { items: matchingTasks.filter(task => !status || task.enabled === (status === 'enabled')), nextCursor: null }

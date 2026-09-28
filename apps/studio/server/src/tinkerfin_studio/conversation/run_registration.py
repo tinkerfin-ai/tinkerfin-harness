@@ -26,14 +26,18 @@ from tinkerfin_studio.conversation.models import (
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.run_preparation import (
     ChatIntent,
+    CompactIntent,
     PreparedRunRequest,
     RegisteredRun,
     ResumeChatIntent,
     StartChatIntent,
+    conversation_identity,
 )
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import AgentModelConfig
 from tinkerfin_studio.models.service import model_settings, resolved_model
+from tinkerfin_studio.skills.repository import SkillRepository
+from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +55,7 @@ class PreparedExecution:
     thread: ConversationThread
     registered: RegisteredRun
     resume: AgUiResumeRequest | None
+    skills: SkillSnapshotPayload
     thread_created: bool = False
 
 
@@ -213,6 +218,32 @@ class ConversationRunPreparer:
                 # 共享登记后的失败请求不再拥有独占清理权；过期恢复同样比较此标识
                 existing.preparation_id = uuid4().hex
                 existing.updated_at = datetime.now(UTC).replace(tzinfo=None)
+            skills = SkillRepository(self._session, self._user_id)
+            if created:
+                source_id = (
+                    source_run_id
+                    if isinstance(intent, ResumeChatIntent)
+                    else (
+                        thread.last_run_id
+                        if isinstance(intent, CompactIntent)
+                        else None
+                    )
+                )
+                skill_snapshot = await skills.capture(
+                    prepared.identity,
+                    selected_ids=intent.skill_ids
+                    if isinstance(intent, StartChatIntent)
+                    else (),
+                    source=None
+                    if source_id is None
+                    else conversation_identity(
+                        thread.thread_id,
+                        source_id,
+                        user_id=self._user_id,
+                    ),
+                )
+            else:
+                skill_snapshot = await skills.snapshot(prepared.identity)
             await self._repository.commit()
             if isinstance(intent, StartChatIntent) and intent.attachments:
                 await notify_change(
@@ -224,6 +255,7 @@ class ConversationRunPreparer:
                 )
             return PreparedExecution(
                 thread=thread,
+                skills=skill_snapshot,
                 registered=RegisteredRun(
                     run_id=existing.id,
                     created=created,

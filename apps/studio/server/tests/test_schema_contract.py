@@ -11,6 +11,12 @@ from tinkerfin_studio.conversation.models import (
 )
 from tinkerfin_studio.infrastructure.database import Base
 from tinkerfin_studio.models.entity import AgentModel, ModelConnection
+from tinkerfin_studio.skills.entity import (
+    SkillImportDraft,
+    SkillInstallation,
+    SkillOperationReceipt,
+    SkillRunSnapshot,
+)
 
 
 def test_business_schema_contains_no_foreign_keys() -> None:
@@ -26,6 +32,10 @@ def test_business_schema_contains_no_foreign_keys() -> None:
         ConversationThread,
         ConversationRunRegistration,
         ConversationInterruptClaim,
+        SkillInstallation,
+        SkillImportDraft,
+        SkillOperationReceipt,
+        SkillRunSnapshot,
     )
     assert {model.__tablename__ for model in registered} == set(Base.metadata.tables)
     assert Base.metadata.tables

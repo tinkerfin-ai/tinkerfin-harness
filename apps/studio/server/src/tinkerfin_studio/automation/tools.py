@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Awaitable
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Literal
-from uuid import NAMESPACE_URL, uuid5
 
-from langchain_core.tools import BaseTool, ToolException, tool
+from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, JsonValue
 
 from tinkerfin.tools import ToolRuntime
 from tinkerfin_automation import AutomationError, ExecutionStatus, TaskStatus
 from tinkerfin_studio.agent.access import AccessMode
+from tinkerfin_studio.agent.tool_requests import tool_request_id
 
 from .schemas import SaveTask, ScheduleInput, TaskCommand, TaskConfiguration
 from .service import StudioAutomationService, automation_error
@@ -41,21 +40,6 @@ def build_automation_tools(
         任务管理、执行查询及已有产物交付工具；写操作保留明确任务版本
     """
     service = StudioAutomationService(resources, user_id=user_id)
-
-    def request_id(runtime: ToolRuntime, operation: str) -> str:
-        info = runtime.execution_info
-        if info is None or not runtime.tool_call_id:
-            raise ToolException("任务操作缺少调用标识，请重新发起对话")
-        # 原生执行任务与工具调用在 checkpoint 恢复中保持不变；不同节点即使
-        # 使用相同工具调用 ID 也属于不同命令，不能使用恢复后变化的 run_id
-        identity = [
-            str(user_id),
-            runtime.identity.thread_id,
-            operation,
-            info.task_id,
-            runtime.tool_call_id,
-        ]
-        return str(uuid5(NAMESPACE_URL, json.dumps(identity, ensure_ascii=False)))
 
     async def result(operation: Awaitable[BaseModel | None]) -> str:
         try:
@@ -108,7 +92,12 @@ def build_automation_tools(
         )
         return await result(
             service.save(
-                SaveTask(configuration=config, request_id=request_id(runtime, "create"))
+                SaveTask(
+                    configuration=config,
+                    request_id=tool_request_id(
+                        runtime, user_id=user_id, operation="create"
+                    ),
+                )
             )
         )
 
@@ -139,7 +128,9 @@ def build_automation_tools(
                 SaveTask(
                     configuration=configuration,
                     expected_revision=expected_revision,
-                    request_id=request_id(runtime, "update"),
+                    request_id=tool_request_id(
+                        runtime, user_id=user_id, operation="update"
+                    ),
                 ),
                 task_id=task_id,
             )
@@ -157,7 +148,9 @@ def build_automation_tools(
                 operation,
                 TaskCommand(
                     expected_revision=expected_revision,
-                    request_id=request_id(runtime, operation),
+                    request_id=tool_request_id(
+                        runtime, user_id=user_id, operation=operation
+                    ),
                 ),
             )
         )

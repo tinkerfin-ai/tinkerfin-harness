@@ -124,7 +124,7 @@ class ObservedCompactionTool(SummarizationToolMiddleware):
         )
         token = _CURRENT_COMPACTION.set(operation)
         try:
-            # Deep Agents 0.7.13 omits Command's node-name and ToolRuntime's
+            # Deep Agents 0.7.19 omits Command's node-name and ToolRuntime's
             # state generics; the native result and its update stay unchanged.
             command = cast(
                 Command[object],

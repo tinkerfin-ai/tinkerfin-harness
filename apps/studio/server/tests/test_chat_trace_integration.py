@@ -24,6 +24,7 @@ from tinkerfin_studio.api.errors import (
     ModelErrorCode,
 )
 from tinkerfin_studio.attachments.service import byte_chunks
+from tinkerfin_studio.auth.models import User
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.conversation import service as service_module
 from tinkerfin_studio.conversation.delivery import ConversationAdmission
@@ -53,6 +54,8 @@ from tinkerfin_studio.models.schemas import (
 )
 from tinkerfin_studio.models.service import AgentModelService
 from tinkerfin_studio.resources import ApplicationResources
+from tinkerfin_studio.skills.repository import SkillRepository
+from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
 from tinkerfin_tracing import Tracer
 
 
@@ -72,6 +75,17 @@ def _model(model_id: str = "model-main") -> AgentModelConfig:
 @pytest.fixture(autouse=True)
 async def stored_model_configs(session):
     """登记测试使用的真实模型配置，运行登记校验当前配置未变化"""
+    session.add(
+        User(
+            id=1,
+            username="test",
+            display_name="测试用户",
+            password_hash="unused",
+            roles=[],
+            disabled=False,
+        )
+    )
+    await session.flush()
     service = AgentModelService(AgentModelRepository(session, user_id=1))
     await service.save_connection(
         ModelConnectionSave(
@@ -113,6 +127,7 @@ def conversation_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
         model_config: AgentModelConfig,
         image_model: AgentModelConfig | None,
         access_mode: AccessMode,
+        skill_snapshot: SkillSnapshotPayload,
     ) -> AgentRuntime[None]:
         del thread_id, model_config, image_model, access_mode
         return resources.tinkerfin.with_namespace(f"ns_{user_id}").build(
@@ -411,6 +426,11 @@ async def test_resume_registration_stores_only_claim_identity(
         input_json={"runId": "run-interrupted"},
     )
     thread.last_run_id = "run-interrupted"
+    await SkillRepository(session, 1).capture(
+        RunIdentity(
+            namespace="ns_1", thread_id=thread.thread_id, run_id="run-interrupted"
+        )
+    )
     thread.status = "waiting_approval"
     thread.has_pending_interrupt = True
     thread.pending_interaction_kind = "tool_approval"

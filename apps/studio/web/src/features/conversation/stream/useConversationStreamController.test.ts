@@ -56,7 +56,7 @@ const payload: ChatRequestPayload = {
   messages: [],
   tools: [],
   context: [],
-  forwardedProps: { accessMode: 'write_approval', model: 'main', command: { plan: 'off' } },
+  forwardedProps: { skillIds: [], accessMode: 'write_approval', model: 'main', command: { plan: 'off' } },
 }
 
 const traceDetail = (

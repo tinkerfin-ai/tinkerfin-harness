@@ -142,10 +142,16 @@ class _AsyncStoreBackend(StoreBackend):
 
 
 def _file_info(path: str, file: FileData) -> FileInfo:
+    content = file_data_to_string(file)
+    size = len(
+        base64.standard_b64decode(content)
+        if file["encoding"] == "base64"
+        else content.encode("utf-8")
+    )
     return FileInfo(
         path=path,
         is_dir=False,
-        size=len(file_data_to_string(file)),
+        size=size,
         modified_at=file.get("modified_at", ""),
     )
 

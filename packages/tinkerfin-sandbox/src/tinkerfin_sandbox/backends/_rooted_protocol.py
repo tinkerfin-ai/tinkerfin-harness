@@ -167,6 +167,7 @@ class _RootedOffloadResult(TypedDict):
     output: str
     exit_code: int
     truncated: bool
+    preview_has_truncation_marker: bool
 
 
 class _RootedResetResult(TypedDict):
@@ -318,8 +319,14 @@ class _RootedOffloadOkResponse(_RootedResponseBase):
             "output",
             "exit_code",
             "truncated",
+            "preview_has_truncation_marker",
         }:
             raise ValueError("offload result fields are incomplete")
+        if (
+            not self.result["offloaded"]
+            and self.result["preview_has_truncation_marker"]
+        ):
+            raise ValueError("inline output cannot carry a preview truncation marker")
         return self
 
 

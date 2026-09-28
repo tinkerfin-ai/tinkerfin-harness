@@ -162,3 +162,59 @@ CREATE INDEX ix_attachment_references_file ON attachment_references (attachment_
 
 INSERT INTO users (username, display_name, avatar_url, password_hash, roles, disabled)
 VALUES ('tinkerfin', 'TinkerFin', NULL, '$pbkdf2-sha256$600000$1ZFendL8broCk5OyW_zBQA$FHwGHqHzxz2n3-ksjSWYySw1tq6sE3X83sIsAGB1REI', '[]', FALSE);
+
+CREATE TABLE skill_installations (
+	id VARCHAR(36) NOT NULL COMMENT '安装 UUID',
+	user_id INTEGER NOT NULL COMMENT '安装所属用户 ID',
+	name VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT 'SKILL.md 声明的技能名，同一用户按原字符唯一',
+	description VARCHAR(1024) NOT NULL COMMENT '技能声明的功能描述',
+	digest VARCHAR(64) NOT NULL COMMENT '技能完整目录的 SHA-256 内容摘要',
+	source_kind VARCHAR(16) NOT NULL COMMENT '安装来源类别：catalog、github 或 zip',
+	source_id VARCHAR(64) COMMENT '服务端来源 ID，个人导入为空',
+	source_name VARCHAR(128) NOT NULL COMMENT '安装时的来源展示名称',
+	external_id VARCHAR(256) COMMENT '来源中的发布者限定标识',
+	source_revision VARCHAR(128) COMMENT '第三方固定发行内容标识',
+	source_url VARCHAR(2048) COMMENT '公开来源页面或 GitHub 地址',
+	author VARCHAR(256) COMMENT '来源实际提供的作者',
+	topics JSON NOT NULL COMMENT '来源提供的分类名称列表',
+	enabled BOOL NOT NULL COMMENT '是否允许新运行使用',
+	file_count INTEGER NOT NULL COMMENT '技能目录中文件数量',
+	byte_size INTEGER NOT NULL COMMENT '原始文件合计大小，单位字节',
+	created_at DATETIME NOT NULL COMMENT 'UTC 安装时间',
+	updated_at DATETIME NOT NULL COMMENT 'UTC 安装状态更新时间',
+	PRIMARY KEY (id),
+	CONSTRAINT uq_skill_installations_owner_name UNIQUE (user_id, name)
+)COMMENT='用户技能安装关系与内容引用' ENGINE=InnoDB CHARSET=utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE INDEX ix_skill_installations_owner_updated ON skill_installations (user_id, updated_at);
+
+CREATE TABLE skill_import_drafts (
+	id VARCHAR(36) NOT NULL COMMENT '导入预览 UUID',
+	user_id INTEGER NOT NULL COMMENT '导入所属用户 ID',
+	source VARCHAR(16) NOT NULL COMMENT 'github 或 zip',
+	source_url VARCHAR(2048) COMMENT 'GitHub 导入地址，ZIP 导入为空',
+	candidates JSON NOT NULL COMMENT '已保存内容的预览条目及摘要',
+	selected_digests JSON COMMENT '已确认的内容摘要列表，未确认为空',
+	installation_ids JSON COMMENT '确认生成的安装 UUID 列表',
+	created_at DATETIME NOT NULL COMMENT 'UTC 预览创建时间',
+	PRIMARY KEY (id)
+)COMMENT='技能导入预览及幂等确认结果' ENGINE=InnoDB CHARSET=utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE INDEX ix_skill_import_drafts_owner ON skill_import_drafts (user_id);
+
+CREATE TABLE skill_run_snapshots (
+	id VARCHAR(36) NOT NULL COMMENT '由用户和完整运行身份派生的 UUID',
+	user_id INTEGER NOT NULL COMMENT '技能内容所属用户 ID',
+	payload JSON NOT NULL COMMENT '技能安装 ID、名称、内容摘要及本轮手选标记',
+	created_at DATETIME NOT NULL COMMENT 'UTC 快照捕获时间',
+	PRIMARY KEY (id)
+)COMMENT='按运行身份固定的技能内容集合' ENGINE=InnoDB CHARSET=utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE INDEX ix_skill_run_snapshots_owner ON skill_run_snapshots (user_id);
+
+CREATE TABLE skill_operation_receipts (
+	user_id INTEGER NOT NULL COMMENT '操作所属用户 ID',
+	request_id VARCHAR(128) NOT NULL COMMENT '同一用户下稳定的操作标识，重放时保持不变',
+	fingerprint VARCHAR(64) NOT NULL COMMENT '规范化操作参数的 SHA-256 摘要',
+	result JSON NOT NULL COMMENT '已提交操作的公开结果，供相同请求重放',
+	created_at DATETIME NOT NULL COMMENT 'UTC 操作提交时间',
+	PRIMARY KEY (user_id, request_id)
+)COMMENT='技能管理的幂等操作回执' CHARSET=utf8mb4 COLLATE utf8mb4_0900_ai_ci ENGINE=InnoDB;
+CREATE INDEX ix_skill_operation_receipts_owner_created ON skill_operation_receipts (user_id, created_at);

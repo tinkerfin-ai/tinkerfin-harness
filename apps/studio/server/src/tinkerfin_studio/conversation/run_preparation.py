@@ -28,6 +28,7 @@ class StartChatIntent:
 
     attachments: tuple[Attachment, ...]
     title: str
+    skill_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +86,7 @@ def classify_intent(request: ChatRequest) -> ChatIntent:
     return StartChatIntent(
         attachments=submission.attachments,
         title=submission.text.strip()[:16] or "附件提问",
+        skill_ids=tuple(request.forwarded_props.skill_ids),
     )
 
 

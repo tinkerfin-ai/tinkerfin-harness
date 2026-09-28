@@ -12,7 +12,7 @@ const requestPayload: ChatRequestPayload = {
   messages: [{ id: 'request-run-conflict', role: 'user', content: '继续执行' }],
   tools: [],
   context: [],
-  forwardedProps: { accessMode: 'write_approval', model: 'main', command: { plan: 'off' } },
+  forwardedProps: { skillIds: [], accessMode: 'write_approval', model: 'main', command: { plan: 'off' } },
 }
 
 async function consumeStream(): Promise<void> {

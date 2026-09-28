@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 
 import type { ComposerSuggestionGroup } from '../composerSuggestions'
 import { useI18n, type TranslationKey } from '../../../i18n'
+import { isTranslationKey } from '../../../i18n/messages'
 
 export function ComposerSuggestionMenu({
   id,
@@ -66,8 +67,8 @@ export function ComposerSuggestionMenu({
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => onPick(itemId)}
                 >
-                  <span className="composer-suggestion-name">{item.id === 'skills-unavailable' ? t(item.name as TranslationKey) : item.name}</span>
-                  <span className="composer-suggestion-description">{t(item.description as TranslationKey)}</span>
+                  <span className="composer-suggestion-name">{item.id.startsWith('skills-') && isTranslationKey(item.name) ? t(item.name) : item.name}</span>
+                  <span className="composer-suggestion-description">{(group.id === 'command' || item.id.startsWith('skills-')) && isTranslationKey(item.description) ? t(item.description) : item.description}</span>
                 </button>
               )
             })}

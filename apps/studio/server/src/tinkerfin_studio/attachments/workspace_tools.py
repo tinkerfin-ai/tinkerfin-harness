@@ -78,7 +78,7 @@ async def describe_work_file(
         workspace: 当前用户工作区
         processor: 应用拥有的有界文档处理器
         path: 已保存原文件的工作区路径
-        name: 原文件显示名称，支持图片、Markdown、PDF、DOCX、XLSX 和 PPTX
+        name: 原文件显示名称，支持图片、Markdown、PDF、DOCX、XLSX、PPTX 和技能 ZIP
         data: 原文件内容
 
     Returns:
@@ -212,7 +212,7 @@ def build_sandbox_attachment_tools(
         后续编辑不会改变已交付附件，附件保存成功后才返回可展示的引用。
 
         Args:
-            file_path: 用户工作区内的图片、Markdown、PDF、DOCX、XLSX 或 PPTX 路径
+            file_path: 用户工作区内的图片、Markdown、PDF、DOCX、XLSX、PPTX 或技能 ZIP 路径
             name: 下载文件名，扩展名须与内容一致
 
         Returns:

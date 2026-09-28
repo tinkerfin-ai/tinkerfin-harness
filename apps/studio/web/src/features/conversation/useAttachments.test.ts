@@ -9,6 +9,13 @@ vi.mock('./attachments/client', () => ({
 }))
 
 describe('attachment uploads', () => {
+  it('uploads skill ZIP files through the existing attachment channel', async () => {
+    vi.mocked(uploadAttachment).mockResolvedValueOnce({ id: 'zip', name: 'reports.zip', mime_type: 'application/zip', size_bytes: 3 })
+    const { result } = renderHook(() => useAttachments())
+    act(() => result.current.addFiles([new File(['zip'], 'reports.zip', { type: 'application/zip' })]))
+    await waitFor(() => expect(result.current.attachments[0]?.state).toBe('ready'))
+    expect(result.current.attachments[0].attachment?.mime_type).toBe('application/zip')
+  })
   it('retains a failed file and retries it into a ready attachment', async () => {
     vi.mocked(uploadAttachment)
       .mockRejectedValueOnce(new Error('network'))

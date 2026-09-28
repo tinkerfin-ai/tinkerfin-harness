@@ -33,6 +33,12 @@ from tinkerfin_studio.conversation.models import (
 )
 from tinkerfin_studio.infrastructure.database import Base
 from tinkerfin_studio.models.entity import AgentModel, ModelConnection
+from tinkerfin_studio.skills.entity import (
+    SkillImportDraft,
+    SkillInstallation,
+    SkillOperationReceipt,
+    SkillRunSnapshot,
+)
 from tinkerfin_tracing import SqlAlchemyTraceStore
 
 _SCHEMA_PATH = Path(__file__).parents[1] / "database" / "mysql" / "schema.sql"
@@ -40,6 +46,10 @@ _DATABASE_NAME_PATTERN = re.compile(r"\Atinkerfin_schema_[a-f0-9]{16}_(sql|runti
 _EXPECTED_TABLES = frozenset(
     {
         "users",
+        "skill_installations",
+        "skill_import_drafts",
+        "skill_run_snapshots",
+        "skill_operation_receipts",
         "attachment_collections",
         "attachment_references",
         *AUTOMATION_TABLE_NAMES,
@@ -77,6 +87,10 @@ _BUSINESS_MODELS = (
     ConversationThread,
     ConversationRunRegistration,
     ConversationInterruptClaim,
+    SkillInstallation,
+    SkillImportDraft,
+    SkillOperationReceipt,
+    SkillRunSnapshot,
 )
 _BUSINESS_TABLES = frozenset(model.__tablename__ for model in _BUSINESS_MODELS)
 
@@ -376,13 +390,18 @@ async def test_business_sql_and_framework_setups_compose_the_current_mysql_schem
         async with sql_engine.connect() as connection:
             business_schema = await connection.run_sync(_reflect_schema)
         assert set(business_schema.tables) == _BUSINESS_TABLES
-        for table in business_schema.tables.values():
+        for table_name, table in business_schema.tables.items():
             assert table.engine == "InnoDB"
             assert table.collation == "utf8mb4_0900_ai_ci"
-            for column in table.columns.values():
+            for column_name, column in table.columns.items():
                 if column.character_set is not None:
                     assert column.character_set == "utf8mb4"
-                    assert column.collation == "utf8mb4_0900_ai_ci"
+                    expected_collation = (
+                        "utf8mb4_bin"
+                        if (table_name, column_name) == ("skill_installations", "name")
+                        else "utf8mb4_0900_ai_ci"
+                    )
+                    assert column.collation == expected_collation
 
         for engine in (sql_engine, runtime_engine):
             await _execute_ddl(engine, "ALTER DATABASE COLLATE utf8mb4_0900_ai_ci")

@@ -18,6 +18,7 @@ from tinkerfin_studio.api.errors import BusinessException
 from tinkerfin_studio.auth.models import User
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.service import AgentModelService
+from tinkerfin_studio.skills.repository import SkillRepository
 
 from .service import NAMESPACE, collection_id, task_configuration
 
@@ -65,6 +66,10 @@ class StudioAutomationTarget:
             try:
                 model = await models.resolve(config.model_id)
                 image_model = await models.resolve_image_model()
+                skill_snapshot = await SkillRepository(session, user_id).capture(
+                    execution.identity
+                )
+                await session.commit()
             except BusinessException:
                 return ExecutionFailed(
                     ExecutionFailure(
@@ -98,6 +103,7 @@ class StudioAutomationTarget:
                 model_config=model,
                 image_model=image_model,
                 access_mode=config.access_mode,
+                skill_snapshot=skill_snapshot,
             )
             prepared = replace(
                 execution, input={"messages": [{"role": "user", "content": content}]}

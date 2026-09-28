@@ -20,6 +20,7 @@ from deepagents.middleware.summarization import (
 )
 from langchain.agents.middleware import AgentMiddleware
 
+from ._skills import SourceSkillsMiddleware
 from ._store import validate_store_backend
 from ._store_backend import async_store_backend
 from ._subagents import validate_subagent_resources
@@ -104,10 +105,11 @@ def prepare_middleware_resources(
             result._backend = async_store_backend(item._backend)
             result.sources = list(item.sources)
         elif type(item) is SkillsMiddleware:
-            result = copy(item)
-            result._backend = async_store_backend(item._backend)
-            result.sources = list(item.sources)
-            result.source_labels = list(item.source_labels)
+            result = SourceSkillsMiddleware(
+                backend=async_store_backend(item._backend),
+                sources=list(zip(item.sources, item.source_labels, strict=True)),
+                system_prompt=item.system_prompt_template,
+            )
         elif type(item) is SummarizationMiddleware:
             result = observe_summarization(item)
             result._backend = async_store_backend(item._backend)

@@ -650,6 +650,9 @@
 
   .header-navigation { align-items: center; }
   .header-actions { justify-self: end; }
+  .workspace-header-action,
+  .workspace-header-action:hover,
+  .workspace-header-action:active { flex-shrink: 0; transform: none; }
   .menu-toggle { display: none; }
 
   .workspace-title {
@@ -842,6 +845,7 @@
     .sidebar-rail { display: none; }
     .menu-toggle { display: inline-flex; }
     .chat-header { padding-inline: var(--layout-page-gutter); }
+    .workspace-header-action-label { display: none; }
     .chat-header:has(.header-navigation) {
       grid-template-columns: auto minmax(0, 1fr) auto;
       column-gap: 0;

@@ -71,6 +71,7 @@ async function setup(page: Page, theme: string, pauseClock = false) {
         }), { headers: { 'Content-Type': 'text/event-stream' } })
       }
       if (url.pathname === '/api/auth/me') return json({ expires_at: '2099-01-01T00:00:00Z', user })
+      if (url.pathname === '/api/skills/installations') return json([])
       if (url.pathname === '/api/models') return json({ items: [{ modelId: 'main', displayName: 'Main',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' })
       if (url.pathname === '/api/conversation/config') return json({ dayRanges: [7, 30] })
       if (url.pathname === '/api/conversation/history') return json({ items: [...new Map(streams.map(stream => [stream.threadId, stream])).values()].map((stream, index) => ({
@@ -199,7 +200,7 @@ for (const theme of ['light', 'dark']) {
       expect(await page.evaluate(() => (window as typeof window & { titleHarness: TitleHarness }).titleHarness.cancelled)).toEqual(['title-thread-0', 'title-thread-0'])
     })
 
-    test(`独立标题查询与四点加载 ${theme} ${width}`, async ({ page }, testInfo) => {
+    test(`标题更新与四点加载 ${theme} ${width}`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 1000 })
       await page.emulateMedia({ reducedMotion: 'reduce' })
       await setup(page, theme)

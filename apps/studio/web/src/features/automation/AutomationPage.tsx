@@ -148,8 +148,8 @@ export function AutomationPage({ navigationTriggerRef, onOpenNavigation, onModal
             aria-expanded={searchOpen} aria-controls="automation-search" onClick={() => setSearchOpen(true)} />
           {searchOpen && <SearchField className="automation-search-field" id="automation-search" ref={searchRef} appearance="plain" label={t('搜索任务或运行历史')} value={query} onChange={setQuery} onClose={closeSearch} closeLabel={t('关闭搜索')} placeholder={t('搜索任务或运行历史')} />}
         </div>
-        <Button type="button" size="sm" variant="primary" leadingIcon={<Plus size={16} />} aria-label={t('新建自动化')}
-          onClick={event => setDialog({ kind: 'editor', trigger: event.currentTarget })}><span className="automation-create-label">{t('新建')}</span></Button>
+        <Button type="button" size="sm" variant="primary" className="workspace-header-action" leadingIcon={<Plus size={16} />} aria-label={t('新建自动化')}
+          onClick={event => setDialog({ kind: 'editor', trigger: event.currentTarget })}><span className="workspace-header-action-label">{t('新建')}</span></Button>
       </div>} />
     <div className="automation-scroll ui-scrollbar">
       <section className="automation-content">

@@ -17,6 +17,10 @@ class SubagentSettings(BaseModel):
     description: str = Field(min_length=1)
     system_prompt: str = Field(min_length=1)
     tools: list[str] = Field(default_factory=list)
+    skills: list[str] = Field(
+        default_factory=list,
+        description="从当前用户启用技能中按名称选择，未列出的技能不提供给该子智能体",
+    )
 
 
 class _SubagentFile(RootModel[dict[str, SubagentSettings]]):

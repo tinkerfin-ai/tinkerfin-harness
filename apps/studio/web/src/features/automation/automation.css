@@ -416,7 +416,6 @@
 
   @media (max-width: 767px) {
     .automation-header-actions { gap: var(--space-1); }
-    .automation-create-label { display: none; }
     .automation-create { width: var(--control-lg); padding: 0; }
     .chat-header:has(.automation-header-actions.is-search-open) .header-navigation { display: none; }
     .chat-header:has(.automation-header-actions.is-search-open) .header-actions { grid-column: 2 / -1; width: 100%; }
