@@ -78,6 +78,33 @@ async def _get_detail(
     )
 
 
+@pytest.mark.parametrize("query", [None, "Trace"])
+@pytest.mark.parametrize("pinned", [False, True])
+async def test_preparing_conversations_do_not_fill_history_pages(
+    session, query, pinned
+):
+    """准备中的记录在查询与分页限制前排除，不占用历史页名额"""
+    repository = ConversationRepository(session)
+    for index in range(5):
+        thread = await repository.create_thread(
+            user_id=1, thread_id=f"thread-{index}", title="Trace 会话", model_id="main"
+        )
+        thread.updated_at = datetime(2030, 1, 1)
+        thread.pinned = pinned and index > 0
+        if index < 3:
+            thread.last_run_id = f"run-{index}"
+    await repository.commit()
+    service = _service(repository, tracer=Tracer())
+    first = await service.list_history(page_size=2, cursor=None, query=query)
+    assert [item.thread_id for item in first.items] == ["thread-2", "thread-1"]
+    assert first.next_cursor is not None
+    second = await service.list_history(
+        page_size=2, cursor=first.next_cursor, query=query
+    )
+    assert [item.thread_id for item in second.items] == ["thread-0"]
+    assert second.next_cursor is None
+
+
 def _context(thread_id: str, run_id: str) -> RunSourceContext:
     return RunSourceContext(
         identity=RunIdentity(namespace="ns_1", thread_id=thread_id, run_id=run_id),

@@ -247,6 +247,7 @@ export function WorkspaceScreen({
     onNotice: notifyConversation,
   })
   const {
+    cancelInitialSelection,
     historyConversations,
     historyDayRanges,
     historyQuery,
@@ -425,6 +426,7 @@ export function WorkspaceScreen({
   // 历史导航释放草稿的页面选择权，迟到的首帧只能更新原会话
   useEffect(() => {
     const onPopState = () => {
+      cancelInitialSelection()
       selectPendingConversation(null)
       submissionLocks.current.delete('')
       releaseDraft()
@@ -441,7 +443,7 @@ export function WorkspaceScreen({
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
-  }, [releaseDraft, selectPendingConversation, setWorkspace])
+  }, [cancelInitialSelection, releaseDraft, selectPendingConversation, setWorkspace])
 
   useEffect(() => {
     if (!workspace.currentThreadId || !selectedConversation?.isHydrated) return
@@ -954,6 +956,7 @@ export function WorkspaceScreen({
     isActiveThread,
     onToast: pushToast,
     onConversationBoundary: () => {
+      cancelInitialSelection()
       messageWindow.captureReadingPosition()
       setActivePage('conversation')
       pendingConversations.select(null)

@@ -14,13 +14,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from test_attachments import png
 
 from tinkerfin import AgentRuntime, AgUiResumeRequest, RunIdentity, TinkerFin
-from tinkerfin_gateway import CommittedRunEvent, Gateway, RunAcceptance
+from tinkerfin_gateway import CommittedRunEvent, Gateway, RunAcceptance, StartRun
 from tinkerfin_messaging import Messaging
+from tinkerfin_notifications import Notification, NotificationScope
 from tinkerfin_studio.agent.access import AccessMode
-from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
+from tinkerfin_studio.api.errors import (
+    BusinessException,
+    ConversationErrorCode,
+    ModelErrorCode,
+)
 from tinkerfin_studio.attachments.service import byte_chunks
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.conversation import service as service_module
+from tinkerfin_studio.conversation.delivery import ConversationAdmission
+from tinkerfin_studio.conversation.failures import ConversationFailureProjection
+from tinkerfin_studio.conversation.history import ConversationHistoryService
+from tinkerfin_studio.conversation.history_queries import HistoryQueryAdmission
 from tinkerfin_studio.conversation.models import (
     ConversationRunRegistration,
     ConversationThread,
@@ -44,6 +53,7 @@ from tinkerfin_studio.models.schemas import (
 )
 from tinkerfin_studio.models.service import AgentModelService
 from tinkerfin_studio.resources import ApplicationResources
+from tinkerfin_tracing import Tracer
 
 
 def _model(model_id: str = "model-main") -> AgentModelConfig:
@@ -163,6 +173,174 @@ def _resume_request(
             ],
         }
     )
+
+
+@pytest.mark.parametrize("caller", ["preparer", "service"])
+async def test_rejected_first_registration_rolls_back_its_new_conversation(
+    notifications, database, session, attachments, monkeypatch, caller
+):
+    """模型快照失效时，新会话与首条登记一起回滚"""
+    request = _ordinary_request()
+    changed = _model().model_copy(update={"model_name": "changed"})
+    with pytest.raises(BusinessException) as caught:
+        if caller == "preparer":
+            preparer = ConversationRunPreparer(
+                session, user_id=1, attachments=attachments, notifications=notifications
+            )
+            intent = classify_intent(request)
+            resolved = await preparer.resolve_thread(
+                thread_id="", run_id=request.run_id, intent=intent
+            )
+            await preparer.register(
+                intent=intent,
+                prepared=prepare_run_request(
+                    request, user_id=1, thread_id=resolved.thread.thread_id
+                ),
+                model=changed,
+                thread=resolved.thread,
+                thread_created=resolved.created,
+            )
+        else:
+            monkeypatch.setattr(
+                AgentModelService, "resolve", AsyncMock(return_value=changed)
+            )
+            service = ConversationChatService(
+                session,
+                user=UserContext(1, "user", "用户", (), False),
+                resources=cast(
+                    ApplicationResources,
+                    SimpleNamespace(
+                        database=database,
+                        attachments=attachments,
+                        notifications=notifications,
+                        conversation_trace=_TraceCoordinator(),
+                    ),
+                ),
+            )
+            await service.start(request, last_event_id=None)
+    assert caught.value.error_code is ModelErrorCode.CONFIGURATION_CHANGED
+    async with database.session() as verification:
+        assert list(await verification.scalars(select(ConversationThread))) == []
+        assert (
+            list(await verification.scalars(select(ConversationRunRegistration))) == []
+        )
+
+
+async def test_conversation_is_announced_only_when_independent_history_can_read_it(
+    notifications, database, session, attachments
+):
+    """准备中不公开会话，受理通知时其他读取者已能读取首条输入"""
+
+    class ReplyModel(FakeListChatModel):
+        def bind_tools(self, tools: Sequence[object], **kwargs: object) -> ReplyModel:
+            return self
+
+    writer = Tracer(projections=(ConversationFailureProjection(),))
+    reader = Tracer(store=writer.store, projections=(ConversationFailureProjection(),))
+    runtime = (
+        TinkerFin()
+        .with_namespace("ns_1")
+        .with_observer(writer)
+        .build(ReplyModel(responses=["答复"]))
+    )
+    request = _ordinary_request()
+    scope = NotificationScope("ns_1")
+    async with (
+        notifications.subscribe(scope=scope) as changes,
+        Messaging() as messaging,
+    ):
+        preparer = ConversationRunPreparer(
+            session, user_id=1, attachments=attachments, notifications=notifications
+        )
+        intent = classify_intent(request)
+        resolved = await preparer.resolve_thread(
+            thread_id="", run_id=request.run_id, intent=intent
+        )
+        prepared = prepare_run_request(
+            request, user_id=1, thread_id=resolved.thread.thread_id
+        )
+        execution = await preparer.register(
+            intent=intent,
+            prepared=prepared,
+            model=_model(),
+            thread=resolved.thread,
+            thread_created=resolved.created,
+        )
+        async with database.session() as check:
+            history = ConversationHistoryService(
+                ConversationRepository(check),
+                user_id=1,
+                tracer=reader,
+                history_queries=HistoryQueryAdmission(),
+            )
+            assert (await history.list_history(page_size=10, cursor=None)).items == []
+        await notifications.publish(
+            Notification(scope=scope, topic="test.boundary", key="prepared")
+        )
+        boundary = await anext(changes)
+        assert isinstance(boundary, Notification) and boundary.topic == "test.boundary"
+        admission = ConversationAdmission(
+            cast(
+                ApplicationResources,
+                SimpleNamespace(
+                    database=database,
+                    attachments=attachments,
+                    notifications=notifications,
+                ),
+            ),
+            user_id=1,
+            thread_pk=execution.thread.id,
+            identity=prepared.identity,
+            registered=execution.registered,
+            thread_created=execution.thread_created,
+        )
+        observed: list[str] = []
+
+        class ReadableAdmission:
+            async def confirm(self, acceptance: RunAcceptance) -> None:
+                assert acceptance.kind == "new"
+                await admission.confirm(acceptance)
+                async with database.session() as check:
+                    history = ConversationHistoryService(
+                        ConversationRepository(check),
+                        user_id=1,
+                        tracer=reader,
+                        history_queries=HistoryQueryAdmission(),
+                    )
+                    listed = await history.list_history(page_size=10, cursor=None)
+                    assert [item.thread_id for item in listed.items] == [
+                        prepared.identity.thread_id
+                    ]
+                    detail = await history.get_detail(
+                        prepared.identity.thread_id, include_task_trace=False
+                    )
+                    assert detail.head_run_id == request.run_id
+                    assert detail.messages[0].content == "完成任务"
+                    observed.append(detail.status.execution)
+
+            async def release(self) -> None:
+                await admission.release()
+
+        gateway = Gateway(messaging=messaging, notifications=notifications)
+        stream = await gateway.stream(
+            runtime,
+            StartRun(
+                thread_id=prepared.identity.thread_id,
+                run_id=request.run_id,
+                messages=prepared.messages,
+            ),
+            registration=ReadableAdmission(),
+        )
+        async with stream:
+            events = [delivery.data.type async for delivery in stream]
+        assert observed == ["running"]
+        assert events[0] == "RUN_STARTED" and events[-1] == "RUN_FINISHED"
+        announced = await anext(changes)
+        assert isinstance(announced, Notification)
+        assert (announced.topic, announced.key) == (
+            "studio.conversation.changed",
+            prepared.identity.thread_id,
+        )
 
 
 async def test_run_registration_persists_model_and_input(

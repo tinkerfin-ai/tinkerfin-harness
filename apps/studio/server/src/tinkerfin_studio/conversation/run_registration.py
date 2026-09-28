@@ -104,14 +104,14 @@ class ConversationRunPreparer:
             return ResolvedThread(thread=thread, created=False)
         created = False
         try:
-            async with self._session.begin_nested():
-                thread = await self._repository.create_thread(
-                    user_id=self._user_id,
-                    thread_id=generated_thread_id,
-                    title=intent.title,
-                    model_id=None,
-                )
-                created = True
+            # 新会话与首条运行登记一起提交，校验失败不能留下无法读取的空会话
+            thread = await self._repository.create_thread(
+                user_id=self._user_id,
+                thread_id=generated_thread_id,
+                title=intent.title,
+                model_id=None,
+            )
+            created = True
         except IntegrityError:
             await self._repository.rollback()
             thread = await self._repository.get_thread(
@@ -120,14 +120,6 @@ class ConversationRunPreparer:
             )
             if thread is None:
                 raise
-        await self._repository.commit()
-        if created:
-            await notify_change(
-                self._notifications,
-                user_id=self._user_id,
-                topic="studio.conversation.changed",
-                key=thread.thread_id,
-            )
         return ResolvedThread(thread=thread, created=created)
 
     async def register(

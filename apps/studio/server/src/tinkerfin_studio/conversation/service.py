@@ -361,26 +361,27 @@ class ConversationChatService:
             intent=intent,
         )
         thread = resolved_thread.thread
-        # 释放 thread 查询产生的只读事务，恢复检查不得占用请求连接或数据库锁
-        await self._repository.commit()
-        await self._resources.conversation_trace.recover_preparing(
-            thread_pk=thread.id,
-        )
-        refreshed = await self._repository.reload_thread(
-            user_id=self._user.user_id,
-            thread_id=thread.thread_id,
-        )
-        if refreshed is None:
-            if thread_id:
-                raise BusinessException(ConversationErrorCode.NOT_FOUND)
-            resolved_thread = await run_preparer.resolve_thread(
-                thread_id=thread_id,
-                run_id=request.run_id,
-                intent=intent,
+        if not resolved_thread.created:
+            # 已有会话先释放查询事务再恢复；本次新会话保留到首条登记一并提交
+            await self._repository.commit()
+            await self._resources.conversation_trace.recover_preparing(
+                thread_pk=thread.id,
             )
-            thread = resolved_thread.thread
-        else:
-            thread = refreshed
+            refreshed = await self._repository.reload_thread(
+                user_id=self._user.user_id,
+                thread_id=thread.thread_id,
+            )
+            if refreshed is None:
+                if thread_id:
+                    raise BusinessException(ConversationErrorCode.NOT_FOUND)
+                resolved_thread = await run_preparer.resolve_thread(
+                    thread_id=thread_id,
+                    run_id=request.run_id,
+                    intent=intent,
+                )
+                thread = resolved_thread.thread
+            else:
+                thread = refreshed
         if thread.last_run_id and thread.last_run_id != request.run_id:
             # 新请求登记前先刷新上一 head，不能用 Messaging 传输状态推断 Agent 结果
             # Trace reconcile 会借用同一共享 Engine；先结束 reload 产生的只读事务

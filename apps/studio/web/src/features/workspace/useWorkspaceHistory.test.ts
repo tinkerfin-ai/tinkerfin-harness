@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConversationHistoryDetail } from '../../api/conversation/history'
 import { ApiError } from '../../api/shared/http'
-import { upsertConversation } from '../../lib/workspace'
+import { createNewConversation, upsertConversation } from '../../lib/workspace'
 import { emptyTraceGraph } from '../../test/traceFixtures'
 import type { Conversation } from '../../types'
 import { restoreConversationFromTrace } from '../conversation/trace/runtime'
@@ -138,6 +138,7 @@ function useHarness(
 ) {
   const followDetachedConversation = useRef(vi.fn()).current
   const defaultPrepareTaskTraceOwner = useRef(vi.fn(async () => undefined)).current
+  const defaultOnToast = useRef(vi.fn()).current
   const { workspace, setWorkspace, retainConversationDetails } = useWorkspaceState()
   const initialWorkspace = useRef({
     conversations: [{
@@ -156,7 +157,7 @@ function useHarness(
     refreshOnActivation: options.traceActive,
     followDetachedConversation,
     prepareTaskTraceOwner: options.prepareTaskTraceOwner ?? defaultPrepareTaskTraceOwner,
-    onToast: options.onToast ?? vi.fn(),
+    onToast: options.onToast ?? defaultOnToast,
   })
   const selected = workspace.conversations.find((item) => item.threadId === workspace.currentThreadId)
   const graph = useChainTrace({
@@ -184,6 +185,7 @@ function useHarness(
           ? {
               ...conversation,
               runStatus: 'streaming',
+              isHydrated: true,
               activeRunId: 'run-owned-new',
               messages: [{
                 id: 'message-owned-new',
@@ -218,6 +220,7 @@ function useHarness(
     }))
   }
   const switchThread = (threadId: string) => {
+    history.cancelInitialSelection()
     setWorkspace((state) => ({ ...state, currentThreadId: threadId }))
   }
   return {
@@ -298,17 +301,24 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
     }
   })
 
-  it('重新激活的历史详情不能覆盖等待期间新启动的本地 Run', async () => {
+  it.each([
+    { initialLoad: true, failed: false },
+    { initialLoad: true, failed: true },
+    { initialLoad: false, failed: false },
+    { initialLoad: false, failed: true },
+  ])('本地运行接管后丢弃旧详情，首次读取=$initialLoad、请求失败=$failed', async ({ initialLoad, failed }) => {
     const { response, requested } = queueHistoryResponse()
     const initial = detail({ status: { execution: 'succeeded', headRunId: RUN_ID } })
-    const { result } = renderHook(() => useHarness(initial))
+    const onToast = vi.fn()
+    const { result } = renderHook(() => useHarness(initial, { initiallyHydrated: !initialLoad, onToast }))
     let refreshing: Promise<void> = Promise.resolve()
     act(() => { refreshing = result.current.history.hydrateConversation(THREAD_ID, { refresh: true }) })
     await act(async () => { await requested.promise })
     expect(historyMocks.detail).toHaveBeenCalledOnce()
     act(() => result.current.startOwnedRun())
     await act(async () => {
-      response.resolve(detail({ observedAt: '2026-09-05T00:00:02.000000Z' }))
+      if (failed) response.reject(new ApiError('会话 Trace 暂不可用', { status: 503, code: 1001004023 }))
+      else response.resolve(detail({ observedAt: '2026-09-05T00:00:02.000000Z' }))
       await refreshing
     })
     const current = result.current.workspace.conversations[0]!
@@ -316,6 +326,7 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
     expect(current.activeRunId).toBe('run-owned-new')
     expect(current.messages[0]!.content).toBe('本次新输入')
     expect(result.current.history.hydrationState).toBeNull()
+    expect(onToast).not.toHaveBeenCalled()
     await act(() => result.current.history.hydrateConversation(THREAD_ID, { refresh: true }))
     expect(historyMocks.detail).toHaveBeenCalledOnce()
   })
@@ -352,6 +363,35 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
     })
     expect(result.current.workspace.conversations[0]?.trace?.asOfSeq).toBe(6)
     expect(result.current.history.hydrationState).toBeNull()
+  })
+
+  it.each(['status', 'head'] as const)('初次详情在途时远端%s变化，读取新状态并丢弃旧响应', async change => {
+    const first = queueHistoryResponse()
+    const second = queueHistoryResponse()
+    const initial = detail()
+    const onToast = vi.fn()
+    const { result } = renderHook(() => useHarness(initial, { initiallyHydrated: false, onToast }))
+    await act(async () => { await first.requested.promise })
+    const next = detail({
+      asOfSeq: 6,
+      observedAt: '2030-01-01T00:00:00.000000Z',
+      headRunId: change === 'head' ? 'remote-run' : RUN_ID,
+      status: { execution: change === 'status' ? 'succeeded' : 'running', headRunId: change === 'head' ? 'remote-run' : RUN_ID },
+      updatedAt: '2030-01-01T00:00:00Z',
+    })
+    act(() => result.current.setWorkspace(state => ({
+      ...state,
+      conversations: mergeHistoryConversations(state.conversations, [historyItemFromDetail(next)], 'main'),
+    })))
+    await act(async () => {})
+    expect(historyMocks.detail).toHaveBeenCalledTimes(2)
+    expect((await first.requested.promise).aborted).toBe(true)
+    await act(async () => { first.response.resolve(initial) })
+    expect(result.current.history.hydrationState?.status).toBe('loading')
+    await act(async () => { second.response.resolve(next) })
+    expect(result.current.workspace.conversations[0]?.isHydrated).toBe(true)
+    expect(result.current.workspace.conversations[0]?.trace?.headRunId).toBe(next.headRunId)
+    expect(onToast).not.toHaveBeenCalled()
   })
 
   it('刷新失败保持已有会话并提示可重试，下一次刷新可以恢复', async () => {
@@ -1215,6 +1255,22 @@ describe('所选会话与链路共享激活刷新', () => {
 })
 
 
+function useBootstrapHarness(catalogReady = true) {
+  const { workspace, setWorkspace, retainConversationDetails } = useWorkspaceState()
+  const callbacks = useRef({
+    followDetachedConversation: vi.fn(),
+    prepareTaskTraceOwner: vi.fn(async () => undefined),
+    onToast: vi.fn(),
+  }).current
+  const history = useWorkspaceHistory({
+    workspace, setWorkspace, retainConversationDetails,
+    defaultModelId: 'main',
+    modelCatalogStatus: catalogReady ? 'ready' : 'loading',
+    ...callbacks,
+  })
+  return { workspace, setWorkspace, history }
+}
+
 describe('会话列表变化通知', () => {
   let notices: ReturnType<typeof mockResourceNotices>
   beforeEach(() => {
@@ -1224,7 +1280,117 @@ describe('会话列表变化通知', () => {
     historyMocks.groupConfig.mockResolvedValue({ dayRanges: [] })
     historyMocks.detail.mockResolvedValue(detail())
   })
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers() })
+  afterEach(() => {
+    cleanup()
+    window.history.replaceState(null, '', '/')
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  it.each([
+    { deepLink: false, retry: false }, { deepLink: true, retry: false },
+    { deepLink: false, retry: true }, { deepLink: true, retry: true },
+  ])('首屏恢复会话：深链接=$deepLink、首次列表失败=$retry', async ({ deepLink, retry }) => {
+    const first = historyItemFromDetail(detail())
+    const deep = detail({ threadId: 'deep-thread' })
+    if (deepLink) window.history.replaceState(null, '', '/?thread=deep-thread')
+    if (retry) historyMocks.list.mockRejectedValueOnce(new Error('列表不可用'))
+    historyMocks.list.mockResolvedValue({ items: [first], nextCursor: null })
+    historyMocks.detail.mockImplementation(async (threadId: string) => threadId === deep.threadId ? deep : detail())
+    const { result } = renderHook(() => useBootstrapHarness(), { reactStrictMode: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    if (retry) {
+      expect(result.current.history.historyBootstrapStatus).toBe('error')
+      await act(async () => {
+        result.current.history.retryHistoryBootstrap()
+        await vi.advanceTimersByTimeAsync(0)
+      })
+    }
+    expect(result.current.workspace.currentThreadId).toBe(deepLink ? deep.threadId : first.threadId)
+    expect(result.current.history.historyBootstrapStatus).toBe('ready')
+  })
+
+  it.each(['', 'another-thread'])('初始深链接在途时明确选择%s，迟到响应只更新列表', async threadId => {
+    window.history.replaceState(null, '', '/?thread=deep-thread')
+    const first = historyItemFromDetail(detail())
+    const response = deferred<{ items: typeof first[]; nextCursor: null }>()
+    historyMocks.list.mockImplementation(() => response.promise)
+    historyMocks.detail.mockImplementation(async (id: string) => detail({ threadId: id }))
+    const { result } = renderHook(() => useBootstrapHarness(), { reactStrictMode: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => {
+      result.current.history.cancelInitialSelection()
+      result.current.setWorkspace(threadId
+        ? { currentThreadId: threadId, conversations: [{ ...restoreConversationFromTrace(detail({ threadId }), { model: 'main', includeTaskTrace: true }), isHydrated: true }] }
+        : createNewConversation)
+    })
+    await act(async () => { response.resolve({ items: [first], nextCursor: null }); await vi.advanceTimersByTimeAsync(0) })
+    expect(result.current.workspace.currentThreadId).toBe(threadId)
+    expect(result.current.history.historyConversations.map(item => item.threadId)).toContain(first.threadId)
+  })
+
+  it('模型目录重新加载不会重复恢复初始会话', async () => {
+    window.history.replaceState(null, '', `/?thread=${THREAD_ID}`)
+    historyMocks.list.mockResolvedValue({ items: [historyItemFromDetail(detail())], nextCursor: null })
+    const { result, rerender } = renderHook(({ ready }) => useBootstrapHarness(ready), { initialProps: { ready: true } })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => { result.current.history.cancelInitialSelection(); result.current.setWorkspace(createNewConversation) })
+    historyMocks.detail.mockClear()
+    rerender({ ready: false })
+    rerender({ ready: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.workspace.currentThreadId).toBe('')
+    expect(historyMocks.detail).not.toHaveBeenCalled()
+  })
+
+  it.each(['changed', 'resync', 'repair'] as const)('新会话视图在%s刷新后仍由用户选择保持', async reason => {
+    const initial = historyItemFromDetail(detail())
+    historyMocks.list.mockResolvedValue({ items: [initial], nextCursor: null })
+    const { result } = renderHook(() => useHarness(detail(), { catalogReady: true }))
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => result.current.setWorkspace(createNewConversation))
+    expect(result.current.workspace.currentThreadId).toBe('')
+    historyMocks.detail.mockClear()
+    const reads = historyMocks.list.mock.calls.length
+    await act(async () => {
+      if (reason === 'changed') notices.changed('studio.conversation.changed', THREAD_ID)
+      if (reason === 'resync') notices.resync()
+      await vi.advanceTimersByTimeAsync(reason === 'repair' ? 30_000 : 0)
+    })
+    expect(historyMocks.list.mock.calls.length).toBeGreaterThan(reads)
+    expect(result.current.workspace.currentThreadId).toBe('')
+    expect(historyMocks.detail).not.toHaveBeenCalled()
+  })
+
+  it('列表读取期间点击新会话，迟到的列表不能恢复旧会话选择', async () => {
+    const initial = historyItemFromDetail(detail())
+    historyMocks.list.mockResolvedValue({ items: [initial], nextCursor: null })
+    const { result } = renderHook(() => useHarness(detail(), { catalogReady: true }))
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    const response = deferred<{ items: typeof initial[]; nextCursor: null }>()
+    historyMocks.list.mockImplementationOnce(() => response.promise)
+    await act(async () => { notices.resync(); await vi.advanceTimersByTimeAsync(0) })
+    act(() => result.current.setWorkspace(createNewConversation))
+    historyMocks.detail.mockClear()
+    await act(async () => { response.resolve({ items: [initial], nextCursor: null }); await vi.advanceTimersByTimeAsync(0) })
+    expect(result.current.workspace.currentThreadId).toBe('')
+    expect(historyMocks.detail).not.toHaveBeenCalled()
+  })
+
+  it('首帧尚未到达时收到运行就绪通知，保留草稿视图且不提前加载历史', async () => {
+    const initial = historyItemFromDetail(detail())
+    const preparing = { ...initial, threadId: 'preparing-thread', lastRunId: 'accepted-run', status: 'running', messageCount: 1, updatedAt: '2030-01-01T00:00:00Z' }
+    historyMocks.list.mockResolvedValueOnce({ items: [initial], nextCursor: null })
+      .mockResolvedValue({ items: [preparing, initial], nextCursor: null })
+    const { result } = renderHook(() => useHarness(detail(), { catalogReady: true }))
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => result.current.setWorkspace(createNewConversation))
+    historyMocks.detail.mockClear()
+    historyMocks.detail.mockResolvedValue(detail({ threadId: preparing.threadId, headRunId: preparing.lastRunId }))
+    await act(async () => { notices.changed('studio.conversation.changed', preparing.threadId); await vi.advanceTimersByTimeAsync(0) })
+    expect(result.current.workspace.currentThreadId).toBe('')
+    expect(historyMocks.detail).not.toHaveBeenCalled()
+  })
 
   it('基线查询期间新增会话会追加读取，外部创建和删除在列表生效', async () => {
     const initial = historyItemFromDetail(detail())

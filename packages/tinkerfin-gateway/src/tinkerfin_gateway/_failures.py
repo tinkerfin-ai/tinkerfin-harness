@@ -102,4 +102,25 @@ def _select_failure(primary: BaseException, secondary: BaseException) -> BaseExc
     return primary
 
 
-__all__ = ["_select_failure"]
+def _cancellation_only(error: BaseException) -> bool:
+    """Recognize cancellation without discarding independent cleanup failures."""
+    pending = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if _is_group(current):
+            pending.extend(current.exceptions)
+        elif not isinstance(current, asyncio.CancelledError):
+            return False
+        pending.extend(
+            item
+            for item in (current.__cause__, current.__context__, _stored_cause(current))
+            if item is not None
+        )
+    return True
+
+
+__all__ = ["_cancellation_only", "_select_failure"]

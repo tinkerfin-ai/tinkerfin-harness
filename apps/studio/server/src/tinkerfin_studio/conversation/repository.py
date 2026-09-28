@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from pydantic import JsonValue
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, delete, false, func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.dml import Update
@@ -326,11 +326,12 @@ class ConversationRepository:
         cursor: tuple[bool, datetime, int] | None,
         query: str | None = None,
     ) -> list[ConversationThread]:
-        """按置顶与最近 Trace 活动执行稳定 keyset 分页"""
+        """按置顶与最近 Trace 活动分页，仅公开已有历史读取入口的会话"""
 
         statement = select(ConversationThread).where(
             ConversationThread.user_id == user_id,
             ConversationThread.deleted_at.is_(None),
+            ConversationThread.last_run_id.is_not(None),
         )
         if query is not None:
             escaped = (
@@ -343,7 +344,7 @@ class ConversationRepository:
             pinned, updated_at, row_id = cursor
             statement = statement.where(
                 or_(
-                    ConversationThread.pinned < pinned,
+                    ConversationThread.pinned.is_(False) if pinned else false(),
                     and_(
                         ConversationThread.pinned == pinned,
                         ConversationThread.updated_at < updated_at,

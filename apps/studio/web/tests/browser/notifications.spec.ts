@@ -79,6 +79,9 @@ test('两个独立窗口通过通知同步会话，断连和隐藏期间的变�
   const pages = await Promise.all(contexts.map(context => context.newPage()))
   const threads = new Map<string, ConversationHistoryDetail>()
   const errors: string[] = []
+  const historyReads: string[] = []
+  let acceptRun = () => {}
+  const acceptance = new Promise<void>(resolve => { acceptRun = resolve })
   const broadcast = (topic: string, key: string) => Promise.all(pages.map(page => page.evaluate(({ topic, key }) => window.notificationTest.emit(topic, key), { topic, key })))
   try {
     for (const page of pages) {
@@ -99,6 +102,7 @@ test('两个独立窗口通过通知同步会话，断连和隐藏期间的变�
           const item = conversation('shared-thread', command.runId, command.messages[0].content)
           threads.set(item.threadId, item)
           await broadcast('studio.conversation.changed', item.threadId)
+          await acceptance
           return { stream: [
             { type: 'RUN_STARTED', threadId: item.threadId, runId: item.headRunId, title: item.title, titleSource: item.titleSource, titleSeq: item.titleSeq, titleGenerationStatus: item.titleGenerationStatus },
             { type: 'RUN_FINISHED', threadId: item.threadId, runId: item.headRunId },
@@ -106,7 +110,10 @@ test('两个独立窗口通过通知同步会话，断连和隐藏期间的变�
         }
         const item = threads.get(request.path.split('/')[3])
         if (item && request.path.endsWith('/title')) return { data: { threadId: item.threadId, title: item.title, titleSource: item.titleSource, titleGenerationStatus: item.titleGenerationStatus, titleSeq: item.titleSeq } }
-        if (item && request.path.endsWith('/history')) return { data: item }
+        if (item && request.path.endsWith('/history')) {
+          historyReads.push(item.threadId)
+          return { data: item }
+        }
         throw new Error(`未预期的接口：${request.path}`)
       })
       await page.goto(baseURL!)
@@ -117,11 +124,22 @@ test('两个独立窗口通过通知同步会话，断连和隐藏期间的变�
     await first.getByRole('textbox', { name: '消息输入' }).fill('跨窗口会话')
     await first.getByRole('button', { name: '发送消息', exact: true }).click()
     await expect(second.getByRole('button', { name: '打开会话：跨窗口会话', exact: true })).toBeVisible()
+    await expect(first.getByRole('button', { name: '打开会话：跨窗口会话', exact: true })).toBeVisible()
+    expect(new URL(first.url()).searchParams.get('thread')).toBeNull()
+    expect(new URL(second.url()).searchParams.get('thread')).toBeNull()
+    expect(historyReads).toEqual([])
+    acceptRun()
+    await expect(first).toHaveURL(/thread=shared-thread/)
+    await second.getByRole('button', { name: '打开会话：跨窗口会话', exact: true }).click()
+    await expect(second).toHaveURL(/thread=shared-thread/)
+    await second.getByRole('button', { name: '新会话', exact: true }).filter({ hasText: '新会话' }).click()
+    await expect(second).not.toHaveURL(/thread=/)
     const item = threads.get('shared-thread')!
     item.title = '通知后的标题'
     item.titleSeq += 1
     await broadcast('studio.conversation.title.changed', item.threadId)
     await expect(second.getByRole('button', { name: '打开会话：通知后的标题', exact: true })).toBeVisible()
+    expect(new URL(second.url()).searchParams.get('thread')).toBeNull()
 
     item.title = '断连期间的标题'
     item.titleSeq += 1
@@ -129,6 +147,8 @@ test('两个独立窗口通过通知同步会话，断连和隐藏期间的变�
     await second.clock.runFor(1000)
     await expect(second.getByRole('button', { name: '打开会话：断连期间的标题', exact: true })).toBeVisible()
     await expect.poll(() => second.evaluate(() => window.notificationTest.active())).toBe(1)
+    expect(new URL(second.url()).searchParams.get('thread')).toBeNull()
+    await expect(second.getByText('会话加载失败，请重试', { exact: true })).toHaveCount(0)
 
     await second.evaluate(() => window.notificationTest.visibility(true))
     await expect.poll(() => second.evaluate(() => window.notificationTest.active())).toBe(0)
@@ -140,6 +160,7 @@ test('两个独立窗口通过通知同步会话，断连和隐藏期间的变�
     await expect.poll(() => second.evaluate(() => window.notificationTest.active())).toBe(1)
     expect(errors).toEqual([])
   } finally {
+    acceptRun()
     await Promise.all(contexts.map(context => context.close()))
   }
 })
