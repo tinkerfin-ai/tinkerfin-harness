@@ -63,6 +63,7 @@ test('生成文件使用紧凑类型卡片并沿用图片预览工具栏', async
     let data: unknown = {}
     if (path === '/api/auth/me')
       data = { expires_at: '2099-01-01T00:00:00.000Z', user }
+    else if (path === '/api/skills/installations') data = []
     else if (path === '/api/models')
       data = {
         items: [{

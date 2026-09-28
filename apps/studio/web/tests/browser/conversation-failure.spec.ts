@@ -116,6 +116,7 @@ test('首次历史与当前会话读取失败分别保留居中重试和全局 T
     const path = new URL(route.request().url()).pathname
     let data: unknown = {}
     if (path === '/api/auth/me') data = { user, expires_at: '2099-01-01T00:00:00Z' }
+    else if (path === '/api/skills/installations') data = []
     else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history') {
@@ -155,6 +156,7 @@ test('侧栏更多历史读取失败保留原位重试和全局 Toast', async ({
     const path = url.pathname
     let data: unknown = {}
     if (path === '/api/auth/me') data = { user, expires_at: '2099-01-01T00:00:00Z' }
+    else if (path === '/api/skills/installations') data = []
     else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history') {

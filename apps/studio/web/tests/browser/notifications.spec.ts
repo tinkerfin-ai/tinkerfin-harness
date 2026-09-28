@@ -92,6 +92,7 @@ test('两个独立窗口通过通知同步会话，断连和隐藏期间的变�
       await page.exposeFunction('readNotificationApi', async (request: { path: string; method: string; body: string; authorization: string | null }) => {
         expect(request.authorization).toBe('Bearer browser-token')
         if (request.path === '/api/auth/me') return { data: { expires_at: '2099-01-01T00:00:00Z', user: { user_id: 1, username: 'notifications', display_name: '通知验收', avatar_url: null, roles: [], disabled: false } } }
+        if (request.path === '/api/skills/installations') return { data: [] }
         if (request.path === '/api/models') return { data: { items: [{ modelId: 'main', displayName: 'Main', connectionId: 'provider', connectionDisplayName: '模型', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' } }
         if (request.path === '/api/conversation/config') return { data: { dayRanges: [7, 30] } }
         if (request.path === '/api/conversation/history') return { data: { items: [...threads.values()].map(item => ({

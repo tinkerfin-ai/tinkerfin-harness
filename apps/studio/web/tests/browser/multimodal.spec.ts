@@ -51,6 +51,7 @@ test('附件发送失败保留输入与待发送图片', async ({ page }) => {
     let data: unknown = {}
     if (path === '/api/auth/me')
       data = { expires_at: '2099-01-01T00:00:00.000Z', user }
+    else if (path === '/api/skills/installations') data = []
     else if (path === '/api/models')
       data = {
         items: models.map((model) => ({
@@ -119,6 +120,7 @@ test('历史消息中用户图片在提示词前、工具图片在工具行后�
     const path = url.pathname
     let data: unknown = {}
     if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00.000Z', user }
+    else if (path === '/api/skills/installations') data = []
     else if (path === '/api/models') data = { items: [{ modelId: history.lastModel, displayName: 'DeepSeek Vision',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true }], defaultModelId: history.lastModel }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history') data = { items: [{ ...history, status: 'idle', hasPendingInterrupt: false, updatedAt: new Date().toISOString() }], nextCursor: null }

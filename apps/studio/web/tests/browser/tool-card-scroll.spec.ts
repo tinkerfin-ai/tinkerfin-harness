@@ -69,6 +69,7 @@ async function openStudio(page: Page, theme = 'light', reducedMotion: 'reduce' |
     const path = new URL(route.request().url()).pathname
     let data: unknown
     if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00Z', user }
+    else if (path === '/api/skills/installations') data = []
     else if (path === '/api/models') data = { defaultModelId: 'test-model', items: [{ modelId: 'test-model', displayName: 'Test model', connectionId: 'test', connectionDisplayName: '测试', isDefault: true, reasoningEnabled: false }] }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history') data = { items: [{ ...history, status: history.status.execution === 'running' ? 'running' : 'idle', lastRunId: RUN, hasPendingInterrupt: false, pendingInteractionKind: null }], nextCursor: null }

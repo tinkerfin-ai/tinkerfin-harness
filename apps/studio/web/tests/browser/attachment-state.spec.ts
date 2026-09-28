@@ -35,6 +35,7 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
       const path = url.pathname
       let data: unknown = {}
       if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00.000Z', user }
+      else if (path === '/api/skills/installations') data = []
       else if (path === '/api/models') data = modelCatalog
       else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
       else if (path === '/api/conversation/history') data = { items: [], nextCursor: null }
@@ -248,6 +249,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
       const path = url.pathname
       let data: unknown = {}
       if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00.000Z', user }
+      else if (path === '/api/skills/installations') data = []
       else if (path === '/api/models') data = modelCatalog
       else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
       else if (path === '/api/conversation/history') data = { items: [], nextCursor: null }

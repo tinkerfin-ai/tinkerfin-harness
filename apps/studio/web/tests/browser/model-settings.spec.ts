@@ -22,6 +22,7 @@ async function setup(page: Page, crowded = false) {
     const path = new URL(route.request().url()).pathname
     let data: unknown = {}
     if (path === '/api/auth/me') data = {expires_at:'2099-01-01T00:00:00.000Z',user}
+    else if (path === '/api/skills/installations') data = []
     else if (path === '/api/models') data = {items:models.map(model=>({modelId:model.model_id,displayName:model.display_name,connectionId:model.connection_id,connectionDisplayName:connections.find(connection=>connection.connection_id===model.connection_id)!.display_name,reasoningEnabled:model.reasoning_enabled,isDefault:model.is_default})),defaultModelId:'pro'}
     else if (path === '/api/models/settings') data = { models: savedModels, connections, providers:[{provider_id:'custom',display_name:'自定义提供方',api_type:'openai_chat_completions',base_url:'',auth_type:'api_key',models:[]},...connections.map(connection=>({...connection,models:[]})), ...Array.from({length:15}, (_, index) => ({provider_id:`test-${index}`,display_name:`Provider ${index}`,api_type:'openai_chat_completions',base_url:'https://example.invalid',auth_type:'api_key',models:[]}))] }
     else if (path.endsWith('/models')) data = {outcome:'success',code:'models_received',items:[{model_name:'qwen3:14b',display_name:'Qwen3 14B'},{model_name:'qwen3:8b',display_name:'Qwen3 8B'}]}

@@ -424,6 +424,10 @@ async function mockChainTraceStudio(
       await fulfillJson(route, { expires_at: '2099-01-01T00:00:00.000Z', user })
       return
     }
+    if (url.pathname === '/api/skills/installations') {
+      await fulfillJson(route, [])
+      return
+    }
     if (url.pathname === '/api/models') {
       await fulfillJson(route, {
         items: [{

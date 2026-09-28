@@ -26,6 +26,7 @@ for (const theme of ['light', 'dark']) {
         if (path.endsWith('/cancel')) cancelled += 1
         let data: unknown = {}
         if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00.000Z', user }
+        else if (path === '/api/skills/installations') data = []
         else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: 'Main',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true }], defaultModelId: 'main' }
         else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
         else if (path === '/api/conversation/history') data = { items: [], nextCursor: null }

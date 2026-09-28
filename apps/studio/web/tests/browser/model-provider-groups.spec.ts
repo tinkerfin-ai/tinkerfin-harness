@@ -22,6 +22,7 @@ async function prepare(page: Page, theme: string) {
     const path = new URL(route.request().url()).pathname
     let data: unknown = {}
     if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00Z', user }
+    else if (path === '/api/skills/installations') data = []
     else if (path === '/api/models') data = { items: models, defaultModelId: 'model-0' }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history' || path === '/api/automation/tasks' || path === '/api/automation/runs') data = { items: [], nextCursor: null }

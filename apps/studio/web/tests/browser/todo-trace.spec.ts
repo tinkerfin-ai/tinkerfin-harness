@@ -215,6 +215,10 @@ async function mockTodoTraceStudio(page: Page, {
       await fulfillJson(route, { threadId: THREAD_ID, title: '任务轨迹浏览器会话', titleSource: 'default', titleGenerationStatus: 'idle', titleSeq: 0 })
       return
     }
+    if (url.pathname === '/api/skills/installations') {
+      await fulfillJson(route, [])
+      return
+    }
     if (url.pathname === '/api/models') {
       await fulfillJson(route, {
         items: [{
