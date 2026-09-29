@@ -15,6 +15,7 @@ from ag_ui.core.types import (
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from tinkerfin_contracts import MessageSource
 from tinkerfin_contracts.media import Attachment, attachment_from_block
 
 
@@ -63,14 +64,24 @@ def content_attachments(content: object) -> list[dict[str, JsonValue]]:
 
 
 def user_message_to_langchain(message: UserMessage) -> HumanMessage:
-    """Convert AG-UI input while retaining durable file references.
+    """Convert authorized user input with file references and message provenance.
 
     A source URI ``attachment:<id>`` requires an Attachment descriptor in metadata.
     The host must validate access before invoking an agent. Other source URIs are
     standard provider inputs; this conversion never fetches URLs or grants access.
     """
+    raw_source = (message.model_extra or {}).get("source")
+    source = None if raw_source is None else MessageSource.model_validate(raw_source)
+    additional_kwargs = (
+        {} if source is None else {"tinkerfin_source": source.model_dump(mode="json")}
+    )
     if isinstance(message.content, str):
-        return HumanMessage(content=message.content, id=message.id, name=message.name)
+        return HumanMessage(
+            content=message.content,
+            id=message.id,
+            name=message.name,
+            additional_kwargs=additional_kwargs,
+        )
     blocks: list[str | dict[str, JsonValue]] = []
     for part in message.content:
         if part.type == "text":
@@ -106,7 +117,12 @@ def user_message_to_langchain(message: UserMessage) -> HumanMessage:
                 raise ValueError("documents require a durable attachment reference")
         else:
             raise ValueError(f"unsupported input content: {part.type}")
-    return HumanMessage(content=blocks, id=message.id, name=message.name)
+    return HumanMessage(
+        content=blocks,
+        id=message.id,
+        name=message.name,
+        additional_kwargs=additional_kwargs,
+    )
 
 
 def user_content_to_agui(content: object) -> str | list[dict[str, JsonValue]]:

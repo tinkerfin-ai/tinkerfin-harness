@@ -1,6 +1,9 @@
-import { ArrowUp, Paperclip, Plus, Square, X } from 'lucide-react'
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { ArrowUp, Paperclip, Plus, Square } from 'lucide-react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
+import type { EditorState, Transaction } from '@codemirror/state'
+import { changeComposerText, composerSkillReferences, deleteComposerAtom, insertComposerSkill } from '../composerDraft'
+import { ComposerInput } from './ComposerInput'
 
 import { DraftAttachmentCard } from '../attachments/DraftAttachmentCard'
 import { useAttachmentPicker } from '../attachments/useAttachmentPicker'
@@ -9,9 +12,11 @@ import { useI18n } from '../../../i18n'
 import {
   applyAtomicPlanDeletion,
   cancelComposerSuggestion,
+  detectComposerSlashToken,
   detectLeadingSlashToken,
   enabledSuggestionIds,
   filterComposerSuggestionGroups,
+  hasLeadingSkillReference,
   isAllowedComposerDraft,
   isSubmittableComposerDraft,
   planClaimParts,
@@ -37,7 +42,7 @@ const deleteToLogicalLineStart = (
 }
 
 export function Composer({
-  value,
+  draft,
   isRunning,
   canStop = true,
   stopDisabledReason,
@@ -68,11 +73,9 @@ export function Composer({
   skills = [],
   selectedSkills = [],
   skillsStatus = 'ready',
-  onSelectSkill,
-  onRemoveSkill,
   onRetrySkills,
 }: {
-  value: string
+  draft: EditorState
   isRunning: boolean
   canStop?: boolean
   stopDisabledReason?: string
@@ -89,7 +92,7 @@ export function Composer({
   planActive: boolean
   planLocked?: boolean
   attachments: readonly DraftAttachment[]
-  onChange: (value: string) => void
+  onChange: (transaction: Transaction) => void
   onSend: () => void
   onStop: () => void
   onExitPlan: () => void
@@ -104,32 +107,29 @@ export function Composer({
   skills?: readonly ComposerSkill[]
   selectedSkills?: readonly ComposerSkill[]
   skillsStatus?: ComposerSkillsStatus
-  onSelectSkill?: (id: string) => void
-  onRemoveSkill?: (id: string) => void
   onRetrySkills?: () => void
 }) {
   const { t } = useI18n()
+  const value = draft.doc.toString()
+  const references = draft.field(composerSkillReferences)
+  const caret = draft.selection.main.head
   const input = useRef<HTMLTextAreaElement>(null)
-  const inputScroll = useRef<HTMLDivElement>(null)
   const attachmentScroll = useRef<HTMLDivElement>(null)
   const previousAttachmentIds = useRef(new Set(attachments.map(attachment => attachment.id)))
   const attachmentPicker = useAttachmentPicker(onAttachmentError)
   const previousAttachments = useRef(attachments)
-  const pendingCaret = useRef<number | null>(null)
-  const acceptedCaret = useRef(value.length)
   const menuId = `composer-suggestions-${useId()}`
-  const [caret, setCaret] = useState(value.length)
   const [menuRequested, setMenuRequested] = useState(false)
   const [activeSuggestionId, setActiveSuggestionId] = useState<string>()
   const takeoverWasActive = useRef(Boolean(takeover))
   const focusAfterTakeover = useRef(false)
   const isDisabled = isHydrating || Boolean(disabledReason)
   const slashHit = useMemo(
-    () => isDisabled ? null : detectLeadingSlashToken(value, caret),
-    [caret, isDisabled, value],
+    () => isDisabled ? null : detectComposerSlashToken(value, caret, references),
+    [caret, isDisabled, value, references],
   )
   const suggestionGroups = useMemo(
-    () => filterComposerSuggestionGroups(menuRequested ? '' : slashHit?.query ?? '', skills, skillsStatus).map(group => ({
+    () => filterComposerSuggestionGroups(menuRequested ? '' : slashHit?.query ?? '', skills, skillsStatus).filter(group => menuRequested || !slashHit || slashHit.start === value.search(/\S/) || group.id === 'skill').map(group => ({
       ...group,
       items: group.items.map(item => item.id === 'compact' ? {
         ...item, disabled: !onCompact || isRunning || Boolean(compactDisabledReason),
@@ -138,7 +138,7 @@ export function Composer({
         ...item, disabled: selectedSkills.some(skill => skill.id === item.id) || selectedSkills.length >= 8,
       } : item),
     })),
-    [menuRequested, slashHit?.query, onCompact, isRunning, compactDisabledReason, skills, skillsStatus, selectedSkills],
+    [menuRequested, onCompact, isRunning, compactDisabledReason, skills, skillsStatus, selectedSkills, slashHit, value],
   )
   const enabledIds = useMemo(
     () => enabledSuggestionIds(suggestionGroups),
@@ -152,32 +152,23 @@ export function Composer({
   const resolvedActiveId = enabledIds.includes(activeSuggestionId ?? '')
     ? activeSuggestionId
     : enabledIds[0]
-  const planClaim = planClaimParts(value)
-  const isCompactCommand = /^\/compact(?:\s|$)/.test(value.trim())
+  const planClaim = hasLeadingSkillReference(value, references) ? null : planClaimParts(value)
+  const isCompactCommand = !hasLeadingSkillReference(value, references) && /^\/compact(?:\s|$)/.test(value.trim())
   const hasUnavailableSkills = selectedSkills.some(skill => skill.unavailable)
   const skillSelectionPending = selectedSkills.length > 0 && skillsStatus !== 'ready'
   const skillSelectionMessage = skillSelectionPending
     ? skillsStatus === 'loading' ? t('正在加载技能') : t('技能列表暂不可用')
     : hasUnavailableSkills ? t('所选技能已停用或卸载，请移除后再发送') : undefined
-  const canSubmitDraft = (isCompactCommand || (!skillSelectionPending && !hasUnavailableSkills)) && (Boolean(value.trim()) || attachments.length > 0) && (!value.trim() || isSubmittableComposerDraft(value)) && (isCompactCommand ? !compactDisabledReason : attachments.every(item => item.state === 'ready'))
+  const canSubmitDraft = (isCompactCommand || (!skillSelectionPending && !hasUnavailableSkills)) && (Boolean(value.trim()) || attachments.length > 0) && (!value.trim() || isSubmittableComposerDraft(value, references)) && (isCompactCommand ? !compactDisabledReason : attachments.every(item => item.state === 'ready'))
   const cancelSuggestionMenu = useCallback(() => {
     if (menuRequested) {
       setMenuRequested(false)
       return
     }
     const cancellation = cancelComposerSuggestion(value, slashHit ?? undefined)
-    pendingCaret.current = cancellation.caret
-    onChange(cancellation.value)
-  }, [menuRequested, onChange, slashHit, value])
+    onChange(changeComposerText(draft, cancellation.value, cancellation.caret))
+  }, [menuRequested, onChange, slashHit, value, draft])
 
-  useLayoutEffect(() => {
-    if (pendingCaret.current == null) return
-    const nextCaret = pendingCaret.current
-    pendingCaret.current = null
-    input.current?.setSelectionRange(nextCaret, nextCaret)
-    acceptedCaret.current = nextCaret
-    setCaret(nextCaret)
-  }, [menuRequested, value])
 
   useEffect(() => {
     const wasActive = takeoverWasActive.current
@@ -219,8 +210,8 @@ export function Composer({
     if (id.startsWith('skill-')) {
       const skill = skills.find(item => `skill-${item.id}` === id)
       if (!skill || selectedSkills.length >= 8 || selectedSkills.some(item => item.id === skill.id)) return
-      onSelectSkill?.(skill.id)
-      cancelSuggestionMenu()
+      onChange(insertComposerSkill(draft, skill, menuRequested ? null : slashHit, t('用 {skill} 技能帮我', { skill: `/${skill.name}` })))
+      setMenuRequested(false)
       input.current?.focus()
       return
     }
@@ -229,8 +220,7 @@ export function Composer({
       setMenuRequested(false)
       if (slashHit) {
         const edit = cancelComposerSuggestion(value)
-        pendingCaret.current = edit.caret
-        onChange(edit.value)
+        onChange(changeComposerText(draft, edit.value, edit.caret))
       }
       input.current?.focus()
       return
@@ -248,8 +238,7 @@ export function Composer({
     }
     const replacement = replaceSlashTokenWithPlan(value, hit)
     setMenuRequested(false)
-    pendingCaret.current = replacement.caret
-    onChange(replacement.value)
+    onChange(changeComposerText(draft, replacement.value, replacement.caret))
     input.current?.focus()
   }
 
@@ -296,21 +285,19 @@ export function Composer({
         event.currentTarget.selectionStart,
         event.currentTarget.selectionEnd,
       )
-      pendingCaret.current = edit.caret
-      onChange(edit.value)
+      onChange(changeComposerText(draft, edit.value, edit.caret))
       return
     }
     if (event.key === 'Backspace' || event.key === 'Delete') {
-      const atomicEdit = applyAtomicPlanDeletion(
-        value,
+      const atomicEdit = deleteComposerAtom(
+        draft,
         event.currentTarget.selectionStart,
         event.currentTarget.selectionEnd,
         event.key === 'Backspace' ? 'backward' : 'forward',
       )
       if (atomicEdit) {
         event.preventDefault()
-        pendingCaret.current = atomicEdit.caret
-        onChange(atomicEdit.value)
+        onChange(atomicEdit)
         return
       }
     }
@@ -360,72 +347,23 @@ export function Composer({
             ))}
           </div>
         )}
-        {selectedSkills.length > 0 && <div className="composer-skill-chips" aria-label={t('已选择的技能')}>
-          {selectedSkills.map(skill => <button type="button" key={skill.id} className="composer-skill-chip" data-unavailable={skill.unavailable || undefined} disabled={isDisabled || isRunning}
-            aria-label={t('移除技能：{name}', { name: skill.name })} onClick={() => onRemoveSkill?.(skill.id)}><span>{skill.name}</span>{skill.unavailable && <span>{t('不可用')}</span>}<X size={12} aria-hidden="true" /></button>)}
-        </div>}
         {skillSelectionMessage && <p className="composer-skill-error" role="status">{skillSelectionMessage}</p>}
-        <div ref={inputScroll} className="composer-input-scroll">
-          <div className="composer-input-grow">
-            <div className={`composer-input-backdrop${isDisabled ? ' is-disabled' : ''}`} aria-hidden="true">
-              {planClaim ? (
-                <>
-                  {planClaim.leading}
-                  <mark>{planClaim.token}</mark>
-                  {planClaim.content || <span>{t('描述你的任务以生成计划')}</span>}
-                </>
-              ) : value}
-            </div>
-            <textarea
-              ref={input}
-              className="composer-input"
-              aria-label={t('消息输入')}
-              aria-busy={isHydrating}
-              aria-controls={menuOpen ? menuId : undefined}
-              aria-activedescendant={menuOpen && resolvedActiveId ? `${menuId}-${resolvedActiveId}` : undefined}
-              aria-autocomplete="list"
-              disabled={isDisabled}
-              value={value}
-              onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); onAddAttachments(files) } }}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => { event.preventDefault(); onAddAttachments([...event.dataTransfer.files]) }}
-              onChange={(event) => {
-                setMenuRequested(false)
-                const nextValue = event.target.value
-                const nextCaret = event.target.selectionStart
-                const nextSlashHit = detectLeadingSlashToken(nextValue, nextCaret)
-                const keepsEnabledSuggestion = Boolean(
-                  nextSlashHit
-                  && enabledSuggestionIds(
-                    filterComposerSuggestionGroups(nextSlashHit.query, skills, skillsStatus),
-                  ).length > 0,
-                )
-                if (!isAllowedComposerDraft(nextValue, skills) && !keepsEnabledSuggestion) {
-                  const previousCaret = acceptedCaret.current
-                  window.requestAnimationFrame(() => {
-                    input.current?.setSelectionRange(previousCaret, previousCaret)
-                    setCaret(previousCaret)
-                  })
-                  return
-                }
-                acceptedCaret.current = nextCaret
-                pendingCaret.current = nextCaret
-                setCaret(nextCaret)
-                onChange(nextValue)
-              }}
-              onSelect={(event) => {
-                const nextCaret = event.currentTarget.selectionStart
-                acceptedCaret.current = nextCaret
-                setCaret(nextCaret)
-              }}
-              onKeyDown={handleKeyDown}
-              onBlur={() => setMenuRequested(false)}
-              rows={1}
-              placeholder={isHydrating ? t('正在加载会话…') : disabledReason ?? t('给 TinkerFin 发消息')}
-            />
-            <div className="composer-input-mirror" aria-hidden="true">{`${value}\n`}</div>
-          </div>
-        </div>
+        <ComposerInput ref={input} draft={draft} disabled={isDisabled} busy={isHydrating}
+          menuId={menuOpen ? menuId : undefined}
+          activeId={menuOpen && resolvedActiveId ? `${menuId}-${resolvedActiveId}` : undefined}
+          unavailableIds={selectedSkills.filter(skill => skill.unavailable).map(skill => skill.id)}
+          onChange={onChange} onKeyDown={handleKeyDown} onBlur={() => setMenuRequested(false)}
+          onAddAttachments={onAddAttachments}
+          placeholder={isHydrating ? t('正在加载会话…') : disabledReason ?? t('给 TinkerFin 发消息')}
+          acceptDraft={nextDraft => {
+            const nextValue = nextDraft.doc.toString()
+            const nextCaret = nextDraft.selection.main.head
+            const nextReferences = nextDraft.field(composerSkillReferences)
+            setMenuRequested(false)
+            const nextSlashHit = detectComposerSlashToken(nextValue, nextCaret, nextReferences)
+            return isAllowedComposerDraft(nextValue, skills, nextReferences) || Boolean(nextSlashHit
+              && enabledSuggestionIds(filterComposerSuggestionGroups(nextSlashHit.query, skills, skillsStatus)).length > 0)
+          }} />
         <div className="composer-toolbar-container">
         <div className="composer-toolbar">
           <div className="composer-toolbar-leading">

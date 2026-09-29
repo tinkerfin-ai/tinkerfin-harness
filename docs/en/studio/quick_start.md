@@ -65,7 +65,9 @@ Open the user menu at the bottom left, select Models, and choose Add provider. S
 
 Select that connection and use Fetch models, or enter the provider's Model ID manually. Enable a chat model, make it the default, and send “Hello” to check the connection.
 
-For Ollama, start the service and install a model first. Select the native Ollama API; no placeholder key is needed. Container deployments need an address reachable from the container. An administrator must add local, private-network, and HTTP origins to `MODEL_ALLOWED_ORIGINS`; see the [server guide](../../../apps/studio/server/README.md).
+For Ollama, start the service and install a model first. Select the native Ollama API; no placeholder key is needed. Public, local, and private-network HTTP/HTTPS addresses are supported when reachable from the backend. Container deployments need an address reachable from the container; see the [server guide](../../../apps/studio/server/README.md).
+
+To use web search or an image generation service, configure it under Settings → Services. Saving applies the configuration immediately; Test search and Test image make real requests that may consume credits.
 
 ## Change the initial password
 

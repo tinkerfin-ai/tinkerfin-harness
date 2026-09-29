@@ -10,12 +10,11 @@ from fastapi import FastAPI, Request
 from pydantic import ValidationError
 from sqlalchemy import event
 
-from tinkerfin_studio.api import model_router
+from tinkerfin_studio.api import dependencies, model_router
 from tinkerfin_studio.api.errors import BusinessException, application_exception_handler
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.models.schemas import ModelDiscoveryResult
 from tinkerfin_studio.models.transport import (
-    ModelEndpointNotAllowed,
     ModelResponseTooLarge,
 )
 
@@ -24,15 +23,19 @@ from tinkerfin_studio.models.transport import (
 def discovery_app(database, monkeypatch, model_connections):
     app = FastAPI()
     app.include_router(model_router.router)
-    app.dependency_overrides[model_router._discovery_user] = lambda: UserContext(
-        user_id=1, username="tester", display_name="Tester", roles=(), disabled=False
+    app.dependency_overrides[dependencies.get_network_user_context] = lambda: (
+        UserContext(
+            user_id=1,
+            username="tester",
+            display_name="Tester",
+            roles=(),
+            disabled=False,
+        )
     )
     monkeypatch.setattr(
         model_router,
         "get_resources",
-        lambda app: SimpleNamespace(
-            database=database, settings=SimpleNamespace(model_allowed_origins=())
-        ),
+        lambda app: SimpleNamespace(database=database, settings=SimpleNamespace()),
     )
 
     async def business_error(request, error):
@@ -59,7 +62,7 @@ def discovery_app(database, monkeypatch, model_connections):
         (302, {}, "inconclusive", "models_unavailable"),
     ],
 )
-async def test_discovery_returns_unique_names_without_claiming_input_capability(
+async def test_discovery_returns_unique_names_with_unknown_input_capability(
     discovery_app, monkeypatch, status, body, outcome, code
 ):
     requests = []
@@ -85,15 +88,31 @@ async def test_discovery_returns_unique_names_without_claiming_input_capability(
     assert "private-draft-key" not in response.text
     if outcome == "success":
         assert result["items"] == [
-            {"model_name": "first", "display_name": "first"},
-            {"model_name": "second", "display_name": "second"},
+            {
+                "model_name": "first",
+                "display_name": "first",
+                "image_input_capability": {
+                    "automatic": "unknown",
+                    "effective": "unknown",
+                    "source": "unknown",
+                },
+            },
+            {
+                "model_name": "second",
+                "display_name": "second",
+                "image_input_capability": {
+                    "automatic": "unknown",
+                    "effective": "unknown",
+                    "source": "unknown",
+                },
+            },
         ]
 
 
 async def test_discovery_does_not_borrow_another_users_connection(
     discovery_app, monkeypatch
 ):
-    discovery_app.dependency_overrides[model_router._discovery_user] = lambda: (
+    discovery_app.dependency_overrides[dependencies.get_network_user_context] = lambda: (
         UserContext(
             user_id=3,
             username="missing",
@@ -121,7 +140,6 @@ async def test_discovery_does_not_borrow_another_users_connection(
         (socket.gaierror("private-draft-key"), "network_error"),
         (httpx.ConnectError("private-draft-key"), "network_error"),
         (httpx.ReadTimeout("private-draft-key"), "timeout"),
-        (ModelEndpointNotAllowed("private-draft-key"), "endpoint_not_allowed"),
         (ModelResponseTooLarge("private-draft-key"), "response_too_large"),
         (ValueError("private-draft-key"), "invalid_response"),
         (RuntimeError("private-draft-key"), "service_error"),
@@ -236,13 +254,16 @@ async def test_discovery_authenticates_before_network_without_holding_database_s
         assert connections == 0
         return httpx.Response(200, json={"data": [{"id": "draft-model"}]})
 
-    monkeypatch.setattr(model_router, "get_auth_service", auth_service)
+    monkeypatch.setattr(dependencies, "get_auth_service", auth_service)
+    monkeypatch.setattr(
+        dependencies,
+        "get_resources",
+        lambda app: SimpleNamespace(database=database),
+    )
     monkeypatch.setattr(
         model_router,
         "get_resources",
-        lambda app: SimpleNamespace(
-            database=database, settings=SimpleNamespace(model_allowed_origins=())
-        ),
+        lambda app: SimpleNamespace(database=database, settings=SimpleNamespace()),
     )
     monkeypatch.setattr(
         model_router, "ModelTransport", lambda **kwargs: httpx.MockTransport(handle)
@@ -277,15 +298,19 @@ async def test_http_cancellation_waits_for_client_close_after_repeated_cancel(
 
     app = FastAPI()
     app.include_router(model_router.router)
-    app.dependency_overrides[model_router._discovery_user] = lambda: UserContext(
-        user_id=1, username="tester", display_name="Tester", roles=(), disabled=False
+    app.dependency_overrides[dependencies.get_network_user_context] = lambda: (
+        UserContext(
+            user_id=1,
+            username="tester",
+            display_name="Tester",
+            roles=(),
+            disabled=False,
+        )
     )
     monkeypatch.setattr(
         model_router,
         "get_resources",
-        lambda app: SimpleNamespace(
-            database=database, settings=SimpleNamespace(model_allowed_origins=())
-        ),
+        lambda app: SimpleNamespace(database=database, settings=SimpleNamespace()),
     )
     monkeypatch.setattr(model_router, "ModelTransport", lambda **kwargs: Transport())
     async with httpx.AsyncClient(
@@ -410,7 +435,6 @@ def test_discovery_result_rejects_unrecognized_code():
     ) == {
         "models_received",
         "models_unavailable",
-        "endpoint_not_allowed",
         "response_too_large",
         "timeout",
         "authentication_failed",

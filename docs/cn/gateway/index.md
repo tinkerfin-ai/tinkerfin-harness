@@ -38,6 +38,37 @@ async def answer(model):
 
 每次用户操作生成一个运行 ID，重试时复用。Messaging 记录保留期间，同一运行身份绑定完整命令，包括消息或审批决定、父运行、模式和 JSON 执行参数；内容不一致时抛出 `RunRequestConflict`。记录删除或保留期结束后，这项保证也随之结束。模型、工具、命名空间与输入资源的授权仍由宿主负责。
 
+## 提供已授权的上下文
+
+在 `StartRun.messages` 中分别放入用户原文和应用提供的指令，并将后者标记为
+`source.kind="context"`：
+
+```python
+from tinkerfin_gateway import StartRun
+
+
+async def answer_with_context(gateway, runtime, user_text, instructions):
+    run = await gateway.start(runtime, StartRun(
+        thread_id="conversation",
+        run_id="request-with-context",
+        messages=(
+            {"id": "question", "role": "user", "content": user_text},
+            {"id": "reference", "role": "user", "content": instructions,
+             "source": {"kind": "context", "name": "retrieval",
+                        "metadata": {"document": "authorized-report"}}},
+        ),
+    ))
+    async with run.subscribe() as replies:
+        async for reply in replies:
+            print(reply.data.type)
+```
+
+应用负责授权正文并提供稳定的消息 ID。框架将两条消息及其来源保留在 checkpoint
+和历史中，Plan 和会话轮次关联用户原文。上下文随正常的历史清理或压缩移除，
+模型角色仍为 `user`。省略来源或使用 `source.kind="user"` 表示用户消息；
+`name` 和 `metadata` 是可选的公开来源信息，由 `tinkerfin_contracts.MessageSource`
+校验，不应包含密钥。重复请求使用相同的完整消息，恢复暂停任务时只提交恢复决定。
+
 ## 选择操作
 
 | API | 结果 |

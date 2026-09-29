@@ -1,6 +1,7 @@
 """技能内容准备、手动选择和执行资源归还"""
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,20 +24,22 @@ from test_skills_library import skill_files
 from tinkerfin import TinkerFin
 from tinkerfin_contracts import PreparedWorkspace, RunIdentity
 from tinkerfin_sandbox import RootedOpenSandboxBackend
-from tinkerfin_studio.api.errors import BusinessException
+from tinkerfin_studio.api.errors import BusinessException, SkillErrorCode
 from tinkerfin_studio.skills.content import SkillContentStore
 from tinkerfin_studio.skills.execution import (
-    SelectedSkillInstructions,
+    MAX_SELECTED_INSTRUCTIONS_BYTES,
     SkillsWorkspace,
+    build_selected_skill_message,
     skill_source_path,
 )
-from tinkerfin_studio.skills.packages import parse_package
+from tinkerfin_studio.skills.packages import SkillFile, parse_package
 from tinkerfin_studio.skills.schemas import SkillReference, SkillSnapshotPayload
 from tinkerfin_tracing import Tracer
 
 
 class RecordingModel(FakeMessagesListChatModel):
     prompts: list[str] = Field(default_factory=list)
+    inputs: list[list[BaseMessage]] = Field(default_factory=list)
 
     def bind_tools(
         self,
@@ -52,6 +55,7 @@ class RecordingModel(FakeMessagesListChatModel):
         run_manager: AsyncCallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
+        self.inputs.append(messages)
         self.prompts.append("\n".join(str(message.content) for message in messages))
         return ChatResult(
             generations=[ChatGeneration(message=AIMessage(content="done"))]
@@ -128,21 +132,46 @@ async def test_selected_skill_instructions_and_binary_resources_reach_the_run(
                 workspace, content=content, user_id=1, snapshot=snapshot
             ),
             skills=[skill_source_path(snapshot, snapshot.skills[0])],
-            middleware=[
-                SelectedSkillInstructions(content, 1, snapshot, snapshot.skills)
-            ],
         )
     )
-    await runtime.ainvoke(
+    context = await build_selected_skill_message(
+        content,
+        user_id=1,
+        identity=RunIdentity(namespace="ns_1", thread_id="thread", run_id="run"),
+        snapshot=snapshot,
+    )
+    assert context is not None
+    stream = runtime.open_agui_run(
         thread_id="thread",
         run_id="run",
-        input={"messages": [HumanMessage(content="生成报告")]},
+        messages=[
+            {"id": "question", "role": "user", "content": "用 /reports 技能帮我"},
+            context,
+        ],
     )
+    _ = [event async for event in stream]
+    assert stream.error is None
     assert workspace.opened == workspace.closed == 1
-    assert "用户本轮明确选择技能 reports" in model.prompts[0]
+    assert "用户本次请求明确选择技能 reports" in model.prompts[0]
+    human = [
+        message for message in model.inputs[0] if isinstance(message, HumanMessage)
+    ]
+    assert [message.content for message in human] == [
+        "用 /reports 技能帮我",
+        context["content"],
+    ]
+    assert all(
+        "用户本次请求明确选择技能" not in str(message.content)
+        for message in model.inputs[0]
+        if message.type == "system"
+    )
     assert "读取 references/data.bin 并执行 scripts/run.py" in model.prompts[0]
     history = await tracer.get(runtime.thread_identity("thread"))
-    assert any(node.name == "应用技能：reports" for node in history.graph.nodes)
+    selected = [message for message in history.messages if message.source]
+    assert len(selected) == 1 and selected[0].content == context["content"]
+    assert (
+        selected[0].source is not None and selected[0].source.name == "skill-invocation"
+    )
     path = (
         skill_source_path(snapshot, snapshot.skills[0]) + "reports/references/data.bin"
     )
@@ -193,3 +222,118 @@ async def test_failed_or_cancelled_skill_preparation_releases_workspace_without_
         await task
     assert workspace.opened == workspace.closed == 1
     assert model.prompts == []
+
+
+async def test_skill_message_is_stable_combines_only_selected_skills_and_checks_owner() -> (
+    None
+):
+    content, snapshot = await content_and_snapshot()
+    other = parse_package(skill_files("analysis"))
+    await content.save(1, other)
+    snapshot = snapshot.model_copy(
+        update={
+            "skills": (
+                *snapshot.skills,
+                SkillReference(
+                    installation_id="other",
+                    name=other.name,
+                    digest=other.digest,
+                    selected=True,
+                ),
+            )
+        }
+    )
+    identity = RunIdentity(namespace="ns_1", thread_id="thread", run_id="run")
+    first = await build_selected_skill_message(
+        content, user_id=1, identity=identity, snapshot=snapshot
+    )
+    assert first == await build_selected_skill_message(
+        content, user_id=1, identity=identity, snapshot=snapshot
+    )
+    assert first is not None
+    text = first["content"]
+    assert isinstance(text, str) and text.index("技能 reports") < text.index(
+        "技能 analysis"
+    )
+    assert first["source"] == {
+        "kind": "context",
+        "name": "skill-invocation",
+        "metadata": {
+            "skills": [
+                {
+                    "id": skill.installation_id,
+                    "name": skill.name,
+                    "digest": skill.digest,
+                }
+                for skill in snapshot.skills
+            ]
+        },
+    }
+    unselected = snapshot.model_copy(
+        update={
+            "skills": tuple(
+                skill.model_copy(update={"selected": False})
+                for skill in snapshot.skills
+            )
+        }
+    )
+    assert (
+        await build_selected_skill_message(
+            content, user_id=1, identity=identity, snapshot=unselected
+        )
+        is None
+    )
+    with pytest.raises(BusinessException) as failure:
+        await build_selected_skill_message(
+            content, user_id=2, identity=identity, snapshot=snapshot
+        )
+    assert failure.value.error_code == SkillErrorCode.CONTENT_UNAVAILABLE
+
+
+@pytest.mark.parametrize("extra", [0, 1])
+async def test_skill_message_capacity_preserves_the_complete_body(extra: int) -> None:
+    content, snapshot = await content_and_snapshot()
+    identity = RunIdentity(namespace="ns_1", thread_id="thread", run_id="run")
+    baseline = await build_selected_skill_message(
+        content, user_id=1, identity=identity, snapshot=snapshot
+    )
+    assert baseline is not None
+    size = len(
+        json.dumps(
+            baseline["content"], ensure_ascii=False, separators=(",", ":")
+        ).encode()
+    )
+    original = skill_files()
+    padding = b"x" * (MAX_SELECTED_INSTRUCTIONS_BYTES - size + extra)
+    package = parse_package(
+        (SkillFile("SKILL.md", original[0].content + padding), *original[1:])
+    )
+    await content.save(1, package)
+    snapshot = snapshot.model_copy(
+        update={
+            "skills": (
+                snapshot.skills[0].model_copy(update={"digest": package.digest}),
+            )
+        }
+    )
+    if extra:
+        with pytest.raises(BusinessException) as failure:
+            await build_selected_skill_message(
+                content, user_id=1, identity=identity, snapshot=snapshot
+            )
+        assert failure.value.error_code == SkillErrorCode.INSTRUCTIONS_TOO_LARGE
+    else:
+        message = await build_selected_skill_message(
+            content, user_id=1, identity=identity, snapshot=snapshot
+        )
+        assert message is not None and str(message["content"]).endswith(
+            package.markdown
+        )
+        assert (
+            len(
+                json.dumps(
+                    message["content"], ensure_ascii=False, separators=(",", ":")
+                ).encode()
+            )
+            == MAX_SELECTED_INSTRUCTIONS_BYTES
+        )

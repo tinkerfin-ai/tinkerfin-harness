@@ -192,6 +192,12 @@ class ConversationRunRegistration(Base):
     input_json: Mapped[dict[str, JsonValue]] = mapped_column(
         JSON, nullable=False, comment="用于同 runId 幂等核验的标准请求"
     )
+    service_bindings: Mapped[dict[str, JsonValue]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=lambda: {"web_search": None, "image_generation": None},
+        comment="本运行搜索与生图服务的稳定 ID 和配置摘要，不含凭证",
+    )
     preparation_id: Mapped[str] = mapped_column(
         String(32),
         nullable=False,

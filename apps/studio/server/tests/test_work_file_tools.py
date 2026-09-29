@@ -21,6 +21,8 @@ from tinkerfin_studio.attachments.workspace_tools import (
     build_sandbox_attachment_tools,
     save_work_file,
 )
+from tinkerfin_studio.services.schemas import ImageConfig
+from tinkerfin_studio.services.service import ResolvedService
 
 
 @pytest.mark.parametrize("source", ["generate", "capture", "import"])
@@ -43,7 +45,11 @@ async def test_large_images_have_readable_previews_and_deliver_unchanged_origina
                 processor=attachments.documents,
                 user_id=1,
                 collection_id="images",
-                image_model=None,
+                image_service=ResolvedService(
+                    "image", ImageConfig(model="image-model"), "fingerprint", "key"
+                )
+                if source == "generate"
+                else None,
             ),
             *build_sandbox_attachment_tools(
                 service=attachments, user_id=1, collection_id="images"
@@ -78,7 +84,9 @@ async def test_large_images_have_readable_previews_and_deliver_unchanged_origina
         result = await tools["capture_browser"].ainvoke(
             {"runtime": runtime, "url": "https://example.test"}
         )
-    saved = json.loads(result)
+    saved = (
+        json.loads(result)["files"][0] if source == "generate" else json.loads(result)
+    )
     assert saved["shell_path"] == saved["file_path"].lstrip("/")
     assert files[saved["file_path"]] == large_image
     preview = files[saved["preview_file_path"]]
@@ -110,7 +118,7 @@ def generating_tools():
         processor=processor,
         user_id=1,
         thread_id="thread",
-        image_model=None,
+        image_service=None,
     )
     return {tool.name: tool for tool in tools}, service, processor
 
@@ -226,7 +234,7 @@ async def test_import_authorizes_before_copying_and_keeps_original(
             processor=attachments.documents,
             user_id=2,
             collection_id="run",
-            image_model=None,
+            image_service=None,
         )
     }
     with pytest.raises(BusinessException):
@@ -241,7 +249,7 @@ async def test_import_authorizes_before_copying_and_keeps_original(
             processor=attachments.documents,
             user_id=1,
             collection_id="run",
-            image_model=None,
+            image_service=None,
         )
     }
     imported = json.loads(
@@ -270,3 +278,125 @@ async def test_import_authorizes_before_copying_and_keeps_original(
     assert (await attachments.read(output.id, user_id=1, collection_id="run"))[
         1
     ] == b"# changed"
+
+
+async def test_one_image_generation_exports_and_delivers_every_selected_format(
+    attachments, work_file_runtime, monkeypatch
+):
+    runtime, _, files = work_file_runtime
+    await attachments.create_collection(
+        user_id=1,
+        collection_id="formats",
+        purpose="execution",
+        attachment_ids=(),
+        configuration={},
+    )
+    buffer = io.BytesIO()
+    Image.new("RGBA", (24, 18), (255, 0, 0, 0)).save(buffer, "PNG")
+    generate = AsyncMock(return_value=buffer.getvalue())
+    monkeypatch.setattr(
+        "tinkerfin_studio.attachments.tools.generate_image_bytes", generate
+    )
+    config = ResolvedService(
+        id="image",
+        configuration=ImageConfig(
+            model="supplier",
+            endpoint="https://example.test",
+            output_formats=["png", "jpeg", "webp"],
+        ),
+        fingerprint="test",
+        api_key="test",
+    )
+    tools = {
+        tool.name: tool
+        for tool in [
+            *build_attachment_tools(
+                service=attachments,
+                processor=attachments.documents,
+                user_id=1,
+                collection_id="formats",
+                image_service=config,
+            ),
+            *build_sandbox_attachment_tools(
+                service=attachments, user_id=1, collection_id="formats"
+            ),
+        ]
+    }
+    result = json.loads(
+        await tools["generate_image"].ainvoke(
+            {"runtime": runtime, "prompt": "a square"}
+        )
+    )
+    generate.assert_awaited_once()
+    assert [item["mime_type"] for item in result["files"]] == [
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+    ]
+    assert await attachments.list_collection(user_id=1, collection_id="formats") == []
+    for item, expected_format in zip(
+        result["files"], ("PNG", "JPEG", "WEBP"), strict=True
+    ):
+        with Image.open(io.BytesIO(files[item["file_path"]])) as image:
+            assert image.format == expected_format and image.size == (24, 18)
+            if expected_format == "JPEG":
+                assert image.getpixel((0, 0)) == (255, 255, 255)
+        await tools["deliver_file"].ainvoke(
+            {"runtime": runtime, "file_path": item["file_path"], "name": item["name"]}
+        )
+    assert (
+        len(await attachments.list_collection(user_id=1, collection_id="formats")) == 3
+    )
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_failed_export_keeps_paid_original_without_another_generation(
+    work_file_runtime, monkeypatch, cancelled
+):
+    runtime, _, files = work_file_runtime
+    output = io.BytesIO()
+    Image.new("RGB", (16, 12), "blue").save(output, "PNG")
+    data = output.getvalue()
+    generate = AsyncMock(return_value=data)
+    monkeypatch.setattr(
+        "tinkerfin_studio.attachments.tools.generate_image_bytes", generate
+    )
+    processor = MagicMock(spec=DocumentProcessor)
+    processor.run = AsyncMock(
+        side_effect=asyncio.CancelledError()
+        if cancelled
+        else ValueError("processor-private-detail")
+    )
+    service = MagicMock(spec=AttachmentService)
+    image_service = ResolvedService(
+        id="image",
+        configuration=ImageConfig(
+            model="supplier",
+            endpoint="https://example.test",
+            output_formats=["jpeg", "webp"],
+        ),
+        fingerprint="test",
+        api_key="test",
+    )
+    tool = next(
+        item
+        for item in build_attachment_tools(
+            service=service,
+            processor=processor,
+            user_id=1,
+            thread_id="thread",
+            image_service=image_service,
+        )
+        if item.name == "generate_image"
+    )
+    if cancelled:
+        with pytest.raises(asyncio.CancelledError):
+            await tool.ainvoke({"prompt": "image", "runtime": runtime})
+    else:
+        result = await tool.ainvoke({"prompt": "image", "runtime": runtime})
+        assert "不要再次生成" in result
+        assert "processor-private-detail" not in result
+        assert next(iter(files)) in result
+    generate.assert_awaited_once()
+    assert list(files.values()) == [data]
+    service.upload.assert_not_called()

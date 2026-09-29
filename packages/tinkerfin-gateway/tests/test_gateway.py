@@ -16,7 +16,7 @@ from langchain_core.outputs import ChatResult
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool, tool
 from langgraph.checkpoint.memory import InMemorySaver
-from pydantic import Field, ValidationError
+from pydantic import Field, JsonValue, ValidationError
 
 from tinkerfin import AgUiResumeReceipt, AgUiResumeRequest, TinkerFin
 from tinkerfin_gateway import (
@@ -61,6 +61,53 @@ def command(*, run_id: str = "run", text: str = "Hello") -> StartRun:
         run_id=run_id,
         messages=({"id": "user", "role": "user", "content": text},),
     )
+
+
+async def test_user_and_context_command_replays_once_and_binds_provenance() -> None:
+    model = Model(responses=[AIMessage(content="answer")])
+    runtime = (
+        TinkerFin(checkpointer=InMemorySaver()).with_namespace("account").build(model)
+    )
+    context: dict[str, JsonValue] = {
+        "id": "context",
+        "role": "user",
+        "content": "Authorized document",
+        "source": {"kind": "context", "name": "retrieval"},
+    }
+    request = StartRun(
+        thread_id="thread",
+        run_id="context-run",
+        messages=(
+            {"id": "question", "role": "user", "content": "Question"},
+            context,
+        ),
+    )
+    async with Messaging() as messaging, Notifications() as notifications:
+        gateway = Gateway(messaging=messaging, notifications=notifications)
+        first = await gateway.start(runtime, request)
+        async with first.subscribe() as stream:
+            before = [item.data async for item in stream]
+        retry = await gateway.start(runtime, request)
+        async with retry.subscribe() as stream:
+            replay = [item.data async for item in stream]
+        assert replay == before
+        assert len(model.inputs) == 1
+        assert [
+            message.id for message in model.inputs[0] if message.type == "human"
+        ] == ["question", "context"]
+        conflicting = request.model_copy(
+            update={
+                "messages": (
+                    request.messages[0],
+                    {
+                        **context,
+                        "source": {"kind": "context", "name": "another-source"},
+                    },
+                )
+            }
+        )
+        with pytest.raises(RunRequestConflict):
+            await gateway.start(runtime, conflicting)
 
 
 class Registration:

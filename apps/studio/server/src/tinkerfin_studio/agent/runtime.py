@@ -23,8 +23,8 @@ from tinkerfin_studio.attachments.workspace_tools import build_sandbox_attachmen
 from tinkerfin_studio.automation.tools import build_automation_tools
 from tinkerfin_studio.models.chat import create_chat_model
 from tinkerfin_studio.models.schemas import AgentModelConfig
+from tinkerfin_studio.services.service import ResolvedService
 from tinkerfin_studio.skills.execution import (
-    SelectedSkillInstructions,
     SkillsWorkspace,
     skill_source_path,
 )
@@ -33,6 +33,18 @@ from tinkerfin_studio.skills.tools import build_skill_tools
 
 if TYPE_CHECKING:
     from tinkerfin_studio.resources import ApplicationResources
+
+_IMAGE_FILE_INSTRUCTIONS = """
+数据图表、流程图和版式海报可用文件与 execute 工具制作，不需要 AI 图片生成服务。
+图表可运行 Python / Pillow / Matplotlib；海报优先写含内嵌样式的工作区 HTML，
+再用 capture_browser(file_path=..., viewport_width=..., viewport_height=..., full_page=True) 渲染 PNG。
+脚本路径使用工作文件返回的 shell_path，不能把虚拟 file_path 当作命令中的绝对路径。
+检查文件格式、尺寸和内容后再 deliver_file；有视觉输入时可读预览，没有视觉输入时不声称看过画面。
+只有需要 AI 绘画的任务才调用 generate_image；该工具返回 files 列表，按用户要求交付所选格式。
+未配置 AI 图片生成服务时如实说明该类任务限制，不把程序图表冒充写实照片或生成式编辑。
+每个文件只有 deliver_file 成功后才算交付，不把工作文件路径当作已发布附件。
+"""
+
 
 _SYSTEM_PROMPT = """你是 TinkerFin Studio 的主 Agent。
 
@@ -50,7 +62,8 @@ def _build_runtime(
     user_id: int,
     thread_id: str,
     model_config: AgentModelConfig,
-    image_model: AgentModelConfig | None,
+    search_service: ResolvedService | None,
+    image_service: ResolvedService | None,
     access_mode: AccessMode,
     namespace: str,
     collection_id: str | None,
@@ -64,7 +77,8 @@ def _build_runtime(
         user_id: 已认证用户的数据库 ID，决定会话与记忆隔离范围
         thread_id: 已校验归属的会话 ID
         model_config: 已解密的聊天模型配置
-        image_model: 可选的图片生成模型配置
+        search_service: 本次运行可用的个人网页搜索服务
+        image_service: 本次运行可用的个人图片生成服务
         access_mode: 脚本与文件写入的审批选择，不改变用户工作区范围
         namespace: 已授权业务运行的隔离范围
         collection_id: 后台执行的附件集合，普通会话不设置
@@ -84,10 +98,7 @@ def _build_runtime(
         http_async_transport=resources.model_http_transport,
         http_async_client=resources.model_http_client,
     )
-    api_key = resources.settings.tavily_api_key
-    web_search = build_web_search_tool(
-        None if api_key is None else api_key.get_secret_value()
-    )
+    web_search = build_web_search_tool(search_service)
 
     attachment_tools = [
         *build_attachment_tools(
@@ -96,8 +107,7 @@ def _build_runtime(
             user_id=user_id,
             thread_id=None if collection_id is not None else thread_id,
             collection_id=collection_id,
-            image_model=image_model,
-            model_allowed_origins=resources.settings.model_allowed_origins,
+            image_service=image_service,
         ),
         *build_sandbox_attachment_tools(
             service=resources.attachments,
@@ -118,24 +128,18 @@ def _build_runtime(
     skill_paths = [
         skill_source_path(skill_snapshot, skill) for skill in skill_snapshot.skills
     ]
-    selected = tuple(skill for skill in skill_snapshot.skills if skill.selected)
-    skill_middleware = (
-        [
-            SelectedSkillInstructions(
-                resources.skills.content, user_id, skill_snapshot, selected
-            )
-        ]
-        if selected
-        else []
-    )
     tool_registry = {web_search.name: web_search}
     subagents: list[SubAgent] = [
         {
             "name": "general-purpose",
             "description": "处理主 Agent 委派的资料整理、分析与文件任务",
-            "system_prompt": "完成委派任务并返回结果；自动化任务的管理由主 Agent 处理。",
+            "system_prompt": "完成委派任务并返回结果；自动化任务的管理由主 Agent 处理。"
+            + _IMAGE_FILE_INSTRUCTIONS,
             "interrupt_on": file_review_policy(access_mode),
-            "middleware": tool_execution_policy(),
+            "middleware": tool_execution_policy(
+                web_search_available=search_service is not None,
+                image_generation_available=image_service is not None,
+            ),
             "tools": [web_search, *attachment_tools],
             "skills": skill_paths,
         },
@@ -144,9 +148,12 @@ def _build_runtime(
         {
             "name": name,
             "description": definition.description,
-            "system_prompt": definition.system_prompt,
+            "system_prompt": definition.system_prompt + _IMAGE_FILE_INSTRUCTIONS,
             "interrupt_on": file_review_policy(access_mode),
-            "middleware": tool_execution_policy(),
+            "middleware": tool_execution_policy(
+                web_search_available=search_service is not None,
+                image_generation_available=image_service is not None,
+            ),
             "skills": [
                 skill_source_path(skill_snapshot, skill)
                 for skill in skill_snapshot.skills
@@ -225,8 +232,17 @@ def _build_runtime(
     return configured.build(
         model=model,
         tools=[web_search, *attachment_tools, *conversation_tools, *skill_tools],
-        system_prompt=_SYSTEM_PROMPT + automation_instructions + skill_instructions,
-        middleware=(TodoListMiddleware(), *tool_execution_policy(), *skill_middleware),
+        system_prompt=_SYSTEM_PROMPT
+        + _IMAGE_FILE_INSTRUCTIONS
+        + automation_instructions
+        + skill_instructions,
+        middleware=(
+            TodoListMiddleware(),
+            *tool_execution_policy(
+                web_search_available=search_service is not None,
+                image_generation_available=image_service is not None,
+            ),
+        ),
         subagents=subagents,
         skills=skill_paths,
         backend=SkillsWorkspace(
@@ -247,7 +263,8 @@ def build_conversation_runtime(
     user_id: int,
     thread_id: str,
     model_config: AgentModelConfig,
-    image_model: AgentModelConfig | None,
+    search_service: ResolvedService | None,
+    image_service: ResolvedService | None,
     skill_snapshot: SkillSnapshotPayload,
     access_mode: AccessMode = "full",
 ) -> AgentRuntime[None]:
@@ -257,7 +274,8 @@ def build_conversation_runtime(
         user_id=user_id,
         thread_id=thread_id,
         model_config=model_config,
-        image_model=image_model,
+        search_service=search_service,
+        image_service=image_service,
         access_mode=access_mode,
         namespace=f"ns_{user_id}",
         collection_id=None,
@@ -273,7 +291,8 @@ def build_automation_runtime(
     thread_id: str,
     execution_id: str,
     model_config: AgentModelConfig,
-    image_model: AgentModelConfig | None,
+    search_service: ResolvedService | None,
+    image_service: ResolvedService | None,
     access_mode: AccessMode,
     skill_snapshot: SkillSnapshotPayload,
 ) -> AgentRuntime[None]:
@@ -283,7 +302,8 @@ def build_automation_runtime(
         user_id=user_id,
         thread_id=thread_id,
         model_config=model_config,
-        image_model=image_model,
+        search_service=search_service,
+        image_service=image_service,
         access_mode=access_mode,
         namespace=f"ns_{user_id}",
         collection_id=execution_id,

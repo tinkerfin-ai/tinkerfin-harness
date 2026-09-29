@@ -93,7 +93,6 @@ def test_load_settings_groups_external_resource_configuration(
                 "OPEN_SANDBOX_MEMORY_MIB=2048",
                 "OPEN_SANDBOX_WARM_POOL_SIZE=3",
                 "AUTH_TOKEN_EXPIRE_SECONDS=86400",
-                "TAVILY_API_KEY=tavily-secret",
             )
         ),
         encoding="utf-8",
@@ -115,9 +114,7 @@ def test_load_settings_groups_external_resource_configuration(
     assert settings.auth_token_expire_seconds == 86400
     assert settings.database_connection_budget == 20
     assert settings.database_management_connection_reserve == 10
-    assert settings.tavily_api_key is not None
     assert "runtime-secret" not in repr(settings)
-    assert "tavily-secret" not in repr(settings)
     monkeypatch.setenv("OPEN_SANDBOX_CPU", "0.5")
     monkeypatch.setenv("OPEN_SANDBOX_MEMORY_MIB", "512")
     overridden = load_settings(env_file=env_file).sandbox

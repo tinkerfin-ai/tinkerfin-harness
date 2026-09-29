@@ -21,3 +21,8 @@ it('裸 compact 执行操作，附加文字返回使用提示', () => {
   expect(parseComposerSubmission('  /compact  ')).toEqual({ kind: 'compact' })
   expect(parseComposerSubmission('/compact 保留')).toEqual({ kind: 'compact-arguments-unsupported' })
 })
+
+
+it('普通消息保留首尾空白与技能原文', () => {
+  expect(parseComposerSubmission('  用 /reports 技能帮我\n')).toEqual({ kind: 'message', content: '  用 /reports 技能帮我\n' })
+})

@@ -15,17 +15,18 @@ let models: ModelSettings[]
 let connections: ModelConnection[]
 let failWrite: boolean
 let discoveryCode: string | undefined
-function writes() { return vi.mocked(requestJson).mock.calls.filter(([, options]) => options?.method && options.method !== 'GET') }
+function writes() { return vi.mocked(requestJson).mock.calls.filter(([path, options]) => !path.endsWith('/input-capabilities') && options?.method && options.method !== 'GET') }
 
 beforeEach(() => {
   models = [{ ...newModel('shared'), model_id: 'mine', display_name: '我的模型', model_name: 'provider-model' }]
   connections = [connection]; failWrite = false; discoveryCode = undefined
   vi.mocked(requestJson).mockReset()
   vi.mocked(requestJson).mockImplementation(async (path, options) => {
+    if (path.endsWith('/input-capabilities')) return { image_input_capability: { automatic: 'unknown', effective: 'unknown', source: 'unknown' } }
     if (!options?.method) return { models, connections, providers: presets }
     if (failWrite) throw new Error('保存失败')
     if (path.endsWith('/models') && discoveryCode) return { outcome: 'failed', code: discoveryCode, items: [] }
-    if (path.endsWith('/models')) return { outcome: 'success', code: 'models_received', items: [{ model_name: 'provider-model', display_name: 'provider-model' }, { model_name: 'new-model', display_name: '新模型' }] }
+    if (path.endsWith('/models')) return { outcome: 'success', code: 'models_received', items: [{ model_name: 'provider-model', display_name: 'provider-model', image_input_capability: { automatic: 'unknown', effective: 'unknown', source: 'unknown' } }, { model_name: 'new-model', display_name: '新模型', image_input_capability: { automatic: 'unknown', effective: 'unknown', source: 'unknown' } }] }
     if (path.endsWith('/default')) models = models.map(model => ({ ...model, is_default: true, enabled: true }))
     else if (path.includes('/connections/')) {
       const value = options.body as ConnectionWrite
@@ -205,9 +206,18 @@ describe('提供方与模型设置', () => {
   })
   it('设默认不要求再次输入密钥', async () => {
     render(<ModelSettingsPanel />)
-    fireEvent.click(await screen.findByRole('button', { name: '设为默认' }))
-    await screen.findByText('默认', { exact: true })
+    fireEvent.click(await screen.findByRole('button', { name: '设为默认对话 我的模型' }))
+    await screen.findByText('默认对话', { exact: true })
     expect(writes()[0][0]).toBe('/api/models/configurations/mine/default')
     expect(writes()[0][1]?.body).toBeUndefined()
   })
+})
+
+
+it('模型配置只展示唯一默认对话徽章', async () => {
+  models[0].is_default = true
+  render(<ModelSettingsPanel />)
+  const chat = await screen.findByRole('region', { name: '对话模型' })
+  expect(within(chat).getByText('默认对话', { exact: true })).toBeVisible()
+  expect(within(chat).getByRole('button', { name: '设为默认对话 我的模型' })).toBeDisabled()
 })

@@ -1931,3 +1931,29 @@ it.each(['questions', 'review'] as const)('关闭计划卡片不提交未完成�
   expect(accepted.planInteraction).toBeUndefined()
   expect(accepted.messages.filter(message => message.meta?.planHistory)).toHaveLength(1)
 })
+
+
+it('消息快照补齐可见提问的技能上下文，重放不重复且不会带入窗口外正文', () => {
+  const source = { kind: 'context' as const, name: 'skill-invocation', metadata: { skills: [{ id: 'report', name: 'reports' }] } }
+  const initial = { ...buildEmptyConversation({ threadId: THREAD_ID, now: '2026-09-29T00:00:00Z' }), messages: [
+    { id: 'question', role: 'user' as const, content: '用 /reports 技能帮我', createdAt: '2026-09-29T00:00:00Z', meta: { runId: RUN_ID } },
+    { id: 'answer', role: 'assistant' as const, content: '答复', createdAt: '2026-09-29T00:00:00Z' },
+  ] }
+  const event = parseConversationAgUiEvent({ type: 'MESSAGES_SNAPSHOT', messages: [
+    { id: 'old-question', role: 'user', content: '窗口外提问' },
+    { id: 'old-context', role: 'user', content: '窗口外上下文', source },
+    { id: 'question', role: 'user', content: '用 /reports 技能帮我' },
+    { id: 'context', role: 'user', content: '固定技能指令', source },
+    { id: 'answer', role: 'assistant', content: '答复' },
+  ] })
+  const current = applyConversationEvent(initial, event)
+  expect(current.messages.map(message => [message.id, message.role])).toEqual([['question', 'user'], ['context', 'context'], ['answer', 'assistant']])
+  expect(current.messages[1].meta?.source).toEqual(source)
+  expect(applyConversationEvent(current, event).messages).toEqual(current.messages)
+  const empty = buildEmptyConversation({ threadId: THREAD_ID, now: '2026-09-29T00:00:00Z' })
+  expect(applyConversationEvent(empty, event).messages.filter(message => message.role === 'context')).toHaveLength(2)
+})
+
+it.each([{ kind: 'invalid' }, { kind: 'context', metadata: [] }, { kind: 'context', hidden: true }])('消息快照拒绝无效来源 %j', source => {
+  expect(() => parseConversationAgUiEvent({ type: 'MESSAGES_SNAPSHOT', messages: [{ id: 'context', role: 'user', content: '指令', source }] })).toThrow()
+})

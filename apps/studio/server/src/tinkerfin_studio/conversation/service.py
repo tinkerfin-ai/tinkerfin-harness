@@ -59,6 +59,7 @@ from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import AgentModelConfig
 from tinkerfin_studio.models.service import AgentModelService
 from tinkerfin_studio.resources import ApplicationResources
+from tinkerfin_studio.skills.execution import build_selected_skill_message
 from tinkerfin_tracing import TraceThreadNotFound, TracingError
 
 _MESSAGING_ERRORS: dict[
@@ -210,12 +211,10 @@ class ConversationChatService:
         intent: ChatIntent
         if isinstance(request, CompactRequest):
             model = await models.resolve(request.model)
-            image_model = None
             intent = CompactIntent(thread_id=thread_id)
         else:
             model = await models.resolve(request.forwarded_props.model)
             request = await self._resolve_attachments(request)
-            image_model = await models.resolve_image_model()
             intent = classify_intent(request)
             thread_id = request.thread_id
         prepared, execution = await self._prepare_execution(
@@ -224,6 +223,8 @@ class ConversationChatService:
             model=model,
             thread_id=thread_id,
         )
+        search_service = execution.search_service
+        image_service = execution.image_service
         admission = ConversationAdmission(
             self._resources,
             user_id=self._user.user_id,
@@ -233,12 +234,25 @@ class ConversationChatService:
             thread_created=execution.thread_created,
         )
         try:
+            messages = prepared.messages
+            if isinstance(intent, StartChatIntent) and any(
+                skill.selected for skill in execution.skills.skills
+            ):
+                skill_message = await build_selected_skill_message(
+                    self._resources.skills.content,
+                    user_id=self._user.user_id,
+                    identity=prepared.identity,
+                    snapshot=execution.skills,
+                )
+                if skill_message is not None:
+                    messages = (*messages, skill_message)
             runtime = build_conversation_runtime(
                 resources=self._resources,
                 user_id=self._user.user_id,
                 thread_id=prepared.identity.thread_id,
                 model_config=model,
-                image_model=image_model,
+                search_service=search_service,
+                image_service=image_service,
                 access_mode=prepared.access_mode,
                 skill_snapshot=execution.skills,
             )
@@ -252,7 +266,7 @@ class ConversationChatService:
                 command = StartRun(
                     thread_id=prepared.identity.thread_id,
                     run_id=prepared.identity.run_id,
-                    messages=prepared.messages,
+                    messages=messages,
                     parent_run_id=prepared.parent_run_id,
                     mode=prepared.mode,
                     parameters=prepared.parameters,
@@ -314,7 +328,8 @@ class ConversationChatService:
                     thread_pk=execution.thread.id,
                     title_text=title_text,
                     model=model,
-                    image_model=image_model,
+                    search_service=search_service,
+                    image_service=image_service,
                 ),
                 presentation=presentation,
             )
@@ -371,7 +386,7 @@ class ConversationChatService:
         if not resolved_thread.created:
             # 已有会话先释放查询事务再恢复；本次新会话保留到首条登记一并提交
             await self._repository.commit()
-            await self._resources.conversation_trace.recover_preparing(
+            await self._resources.conversation_trace.recover(
                 thread_pk=thread.id,
             )
             refreshed = await self._repository.reload_thread(

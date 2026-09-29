@@ -947,18 +947,59 @@ describe('useWorkspaceHistory Trace pagination authority', () => {
     expect(merged?.trace?.asOfSeq).toBe(6)
   })
 
+  it.each(['succeeded', 'cancelled', 'failed', 'abandoned'] as const)(
+    '同一运行已确认 %s 后，重复的运行中列表不使详情失效', execution => {
+      const terminal = detail({ status: { execution, headRunId: RUN_ID } })
+      let current = restoreConversationFromTrace(terminal, { model: 'main', includeTaskTrace: true })
+      const stale = { ...historyItemFromDetail(terminal), status: 'running', pinned: true }
+
+      for (const [index, title] of ['列表标题', '更新的标题'].entries()) {
+        current = mergeHistoryConversations([current], [{ ...stale, title, titleSource: 'user', titleSeq: index + 3 }], 'main')[0]
+        expect(current.runStatus).toBe(execution === 'failed' ? 'error' : 'idle')
+        expect(current.isHydrated).toBe(true)
+        expect(current.activeRunId).toBeUndefined()
+        expect(current.title).toBe(title)
+        expect(current.pinned).toBe(true)
+      }
+    },
+  )
+
+  it.each(['running', 'waiting_approval'])('相同更新时间的新运行处于 %s 时仍重新加载', status => {
+    const terminal = detail({ status: { execution: 'cancelled', headRunId: RUN_ID } })
+    const current = restoreConversationFromTrace(terminal, { model: 'main', includeTaskTrace: true })
+    const nextRun = { ...historyItemFromDetail(terminal), status, lastRunId: 'next-run' }
+
+    const merged = mergeHistoryConversations([current], [nextRun], 'main')[0]
+
+    expect(merged).toMatchObject({ runStatus: status === 'running' ? 'detached' : 'waiting_approval', isHydrated: false })
+  })
+
+  it('终态摘要结算后推进列表时间和排序，保持已加载详情', () => {
+    const terminal = detail({ status: { execution: 'cancelled', headRunId: RUN_ID } })
+    const current = restoreConversationFromTrace(terminal, { model: 'main', includeTaskTrace: true })
+    const updatedAt = '2026-09-29T00:00:02Z'
+    const sibling = { ...current, threadId: 'another-thread', updatedAt: '2026-09-29T00:00:01Z' }
+    const summary = { ...historyItemFromDetail(terminal), status: 'idle', updatedAt }
+
+    const merged = mergeHistoryConversations([sibling, current], [summary], 'main')
+
+    expect(merged[0]).toMatchObject({ threadId: THREAD_ID, updatedAt, isHydrated: true, runStatus: 'idle' })
+    expect(merged[0]?.trace).toBe(current.trace)
+    expect(merged[0]?.messages).toBe(current.messages)
+  })
+
   it('accepts a newer waiting summary and requires fresh Trace hydration', () => {
-    const terminal = detail({
+    const running = detail({
       asOfSeq: 6,
-      status: { execution: 'succeeded', headRunId: RUN_ID },
+      status: { execution: 'running', headRunId: RUN_ID },
       updatedAt: '2026-08-28T00:00:10.000Z',
     })
     const current = {
-      ...restoreConversationFromTrace(terminal, { model: 'fallback', includeTaskTrace: true }),
+      ...restoreConversationFromTrace(running, { model: 'fallback', includeTaskTrace: true }),
       isHydrated: true,
     }
     const waiting = {
-      ...historyItemFromDetail(terminal),
+      ...historyItemFromDetail(running),
       status: 'waiting_approval',
       pendingInteractionKind: 'plan_review' as const,
       hasPendingInterrupt: true,

@@ -6,6 +6,7 @@ from .graph import SubagentRequestReference as SubagentRequestReference
 from .graph import subagent_request_id as subagent_request_id
 from .identity import RunIdentity as RunIdentity
 from .identity import ThreadIdentity as ThreadIdentity
+from .messages import MessageSource as MessageSource
 from .observations import RUNTIME_OBSERVATION_ADAPTER as RUNTIME_OBSERVATION_ADAPTER
 from .observations import (
     ContextContributionObservation as ContextContributionObservation,
@@ -51,6 +52,7 @@ __all__ = [
     "ContextKind",
     "GraphOrigin",
     "GraphTaskReference",
+    "MessageSource",
     "ModelCallObservation",
     "NativeExtraMode",
     "NativeExtraObservation",

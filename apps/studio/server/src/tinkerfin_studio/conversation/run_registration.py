@@ -16,6 +16,7 @@ from tinkerfin_studio.api.errors import (
     BusinessException,
     ConversationErrorCode,
     ModelErrorCode,
+    ServiceErrorCode,
 )
 from tinkerfin_studio.attachments.service import AttachmentService
 from tinkerfin_studio.changes import notify_change
@@ -36,6 +37,13 @@ from tinkerfin_studio.conversation.run_preparation import (
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import AgentModelConfig
 from tinkerfin_studio.models.service import model_settings, resolved_model
+from tinkerfin_studio.services.repository import ServiceConfigRepository
+from tinkerfin_studio.services.schemas import ServiceBindings
+from tinkerfin_studio.services.service import (
+    ResolvedService,
+    ServiceConfigService,
+    bindings_for,
+)
 from tinkerfin_studio.skills.repository import SkillRepository
 from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
 
@@ -56,6 +64,8 @@ class PreparedExecution:
     registered: RegisteredRun
     resume: AgUiResumeRequest | None
     skills: SkillSnapshotPayload
+    search_service: ResolvedService | None
+    image_service: ResolvedService | None
     thread_created: bool = False
 
 
@@ -175,6 +185,7 @@ class ConversationRunPreparer:
                 prepared=prepared,
                 thread=thread,
             )
+            source_run: ConversationRunRegistration | None = None
             if source_run_id is not None:
                 source_run = await self._repository.get_run_for_update(
                     thread_pk=thread.id,
@@ -185,6 +196,48 @@ class ConversationRunPreparer:
                 self._require_source_model(source_run, model=model)
                 if source_run.access_mode != prepared.access_mode:
                     raise BusinessException(ConversationErrorCode.RUN_IDENTITY_CONFLICT)
+            services = ServiceConfigService(
+                ServiceConfigRepository(self._session, user_id=self._user_id)
+            )
+            if isinstance(intent, CompactIntent):
+                search_service = None
+                image_service = None
+            elif isinstance(intent, ResumeChatIntent):
+                if source_run is None:
+                    raise BusinessException(ConversationErrorCode.RUN_NOT_FOUND)
+                source_bindings = ServiceBindings.model_validate(
+                    source_run.service_bindings
+                )
+                search_service = (
+                    None
+                    if source_bindings.web_search is None
+                    else await services.require_bound(
+                        "web_search",
+                        id=source_bindings.web_search.id,
+                        fingerprint=source_bindings.web_search.fingerprint,
+                    )
+                )
+                image_service = (
+                    None
+                    if source_bindings.image_generation is None
+                    else await services.require_bound(
+                        "image_generation",
+                        id=source_bindings.image_generation.id,
+                        fingerprint=source_bindings.image_generation.fingerprint,
+                    )
+                )
+            else:
+                search_service = await services.resolve("web_search", for_update=True)
+                image_service = await services.resolve(
+                    "image_generation", for_update=True
+                )
+            bindings = bindings_for(search_service, image_service)
+            if (
+                existing is not None
+                and ServiceBindings.model_validate(existing.service_bindings)
+                != bindings
+            ):
+                raise BusinessException(ServiceErrorCode.CONFIGURATION_CHANGED)
             if isinstance(intent, ResumeChatIntent):
                 if source_run_id is None:
                     raise BusinessException(ConversationErrorCode.RESUME_REQUIRED)
@@ -212,8 +265,11 @@ class ConversationRunPreparer:
                     prepared=prepared,
                     model=model,
                     thread=thread,
+                    bindings=bindings,
                 )
             self._require_same_registration(existing, prepared=prepared, model=model)
+            if ServiceBindings.model_validate(existing.service_bindings) != bindings:
+                raise BusinessException(ServiceErrorCode.CONFIGURATION_CHANGED)
             if not created and existing.status in {"preparing", "starting"}:
                 # 共享登记后的失败请求不再拥有独占清理权；过期恢复同样比较此标识
                 existing.preparation_id = uuid4().hex
@@ -256,6 +312,8 @@ class ConversationRunPreparer:
             return PreparedExecution(
                 thread=thread,
                 skills=skill_snapshot,
+                search_service=search_service,
+                image_service=image_service,
                 registered=RegisteredRun(
                     run_id=existing.id,
                     created=created,
@@ -444,6 +502,7 @@ class ConversationRunPreparer:
         prepared: PreparedRunRequest,
         model: AgentModelConfig,
         thread: ConversationThread,
+        bindings: ServiceBindings,
     ) -> tuple[ConversationRunRegistration, bool]:
         """创建或读取同一幂等 Run 注册"""
 
@@ -456,6 +515,7 @@ class ConversationRunPreparer:
                     parent_run_id=prepared.parent_run_id,
                     model_id=model.model_id,
                     input_json=prepared.input_json,
+                    service_bindings=bindings,
                     access_mode=prepared.access_mode,
                 )
                 return created, True
@@ -474,6 +534,8 @@ class ConversationRunPreparer:
             if existing is None:
                 raise
             self._require_same_registration(existing, prepared=prepared, model=model)
+            if ServiceBindings.model_validate(existing.service_bindings) != bindings:
+                raise BusinessException(ServiceErrorCode.CONFIGURATION_CHANGED)
             return existing, False
 
     @staticmethod

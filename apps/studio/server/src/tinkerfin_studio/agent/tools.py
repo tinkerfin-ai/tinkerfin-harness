@@ -1,19 +1,21 @@
-"""Studio 提供给 Deep Agents 的业务 Tool"""
+"""Studio 提供给 Deep Agents 的网页搜索 Tool"""
 
 from __future__ import annotations
 
 import logging
-from typing import Literal, cast
+from typing import Literal
 
 from langchain_core.tools import BaseTool, ToolException, tool
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, JsonValue
-from tavily import AsyncTavilyClient
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter
+
+from tinkerfin_studio.services.http import SearchRequest, search_web
+from tinkerfin_studio.services.service import ResolvedService
 
 logger = logging.getLogger(__name__)
 
 
 class WebSearchInput(BaseModel):
-    """网页搜索 Tool 输入"""
+    """网页搜索 Tool 的模型可见输入"""
 
     query: str = Field(
         min_length=2, max_length=500, description="具体、明确的搜索关键词"
@@ -24,31 +26,8 @@ class WebSearchInput(BaseModel):
     )
 
 
-class WebSearchItem(BaseModel):
-    """单条标准化搜索结果"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    title: str = Field(min_length=1, description="搜索结果标题")
-    url: AnyHttpUrl = Field(description="搜索结果来源 URL")
-    content: str = Field(default="", description="搜索结果摘要")
-    score: float | None = Field(default=None, description="外部服务相关性分数")
-
-
-class WebSearchPayload(BaseModel):
-    """Tavily 外部响应校验模型"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    answer: str | None = Field(default=None, description="外部服务生成的摘要答案")
-    results: list[WebSearchItem] = Field(
-        default_factory=list, description="标准化搜索结果"
-    )
-    response_time: float | None = Field(default=None, description="外部接口耗时秒数")
-
-
-def build_web_search_tool(api_key: str | None) -> BaseTool:
-    """创建只捕获当前应用配置的异步网页搜索 Tool"""
+def build_web_search_tool(service: ResolvedService | None) -> BaseTool:
+    """搜索工具使用本次运行绑定的个人服务"""
 
     @tool(
         "web_search",
@@ -62,7 +41,7 @@ def build_web_search_tool(api_key: str | None) -> BaseTool:
         max_results: int = 5,
         topic: Literal["general", "news"] = "general",
     ) -> tuple[str, dict[str, JsonValue]]:
-        """搜索实时网页信息，返回标题、来源 URL 与内容摘要。
+        """搜索实时网页信息，返回标题、来源 URL 与内容摘要
 
         Args:
             query: 具体、明确的搜索关键词
@@ -73,40 +52,30 @@ def build_web_search_tool(api_key: str | None) -> BaseTool:
             可供模型读取的 JSON 内容和结构化搜索结果
 
         Raises:
-            ToolException: 未配置搜索密钥或外部搜索调用失败
+            ToolException: 本次运行未配置搜索服务或服务请求失败
         """
-
-        if api_key is None:
+        if service is None:
             raise ToolException(
                 '{"status":"error","error":"Web search is not configured"}'
             )
-        search_input = WebSearchInput(
-            query=query,
-            max_results=max_results,
-            topic=topic,
-        )
+        request = WebSearchInput(query=query, max_results=max_results, topic=topic)
         try:
-            # 每次 Tool 调用独占一个短生命周期连接池，取消和异常也由上下文完成关闭
-            async with AsyncTavilyClient(api_key=api_key) as client:
-                raw = await client.search(
-                    query=search_input.query,
-                    max_results=search_input.max_results,
-                    topic=search_input.topic,
-                )
-            payload = WebSearchPayload.model_validate(raw)
-        except ToolException:
-            raise
+            result = await search_web(
+                service,
+                SearchRequest(
+                    query=request.query,
+                    max_results=request.max_results,
+                    topic=request.topic,
+                ),
+            )
         except Exception as error:
-            logger.warning("Tavily 搜索失败: error_type=%s", type(error).__name__)
+            logger.warning("网页搜索失败: error_type=%s", type(error).__name__)
             raise ToolException(
                 '{"status":"error","error":"Web search failed"}'
             ) from error
-        artifact = cast(
-            dict[str, JsonValue],
-            payload.model_dump(mode="json", exclude_none=True),
-        )
-        content = payload.model_dump_json(exclude_none=True)
-        return content, artifact
+        return result.model_dump_json(exclude_none=True), TypeAdapter(
+            dict[str, JsonValue]
+        ).validate_python(result.model_dump(mode="json", exclude_none=True))
 
     web_search.handle_tool_error = True
     return web_search

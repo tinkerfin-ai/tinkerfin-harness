@@ -258,7 +258,7 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
         agent_subagents=await load_subagents(),
         tinkerfin=TinkerFin(checkpointer=InMemorySaver()),
         sandbox_manager=Sandboxes(),
-        settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
+        settings=SimpleNamespace(),
     )
     config = _model_config().model_copy(
         update={
@@ -275,7 +275,8 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
         user_id=7,
         thread_id="thread-1",
         model_config=config,
-        image_model=None,
+        search_service=None,
+        image_service=None,
     )
     assert isinstance(runtime, AgentRuntime)
     assert runtime.namespace == "ns_7"
@@ -309,12 +310,12 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
         assert final_message.content == "root"
         assert {
             "compact_conversation",
-            "web_search",
             "import_attachment",
             "deliver_file",
             "capture_browser",
             "write_todos",
         } <= root_model.seen_tools[-1]
+        assert {"web_search", "generate_image"}.isdisjoint(root_model.seen_tools[-1])
     assert workspace.opened == [runtime.run_identity("thread-1", "run-1")]
     assert workspace.closed == workspace.opened
 
@@ -396,7 +397,7 @@ async def test_file_access_choice_controls_root_and_subagent_review(
         agent_subagents=await load_subagents(),
         tinkerfin=TinkerFin(checkpointer=InMemorySaver()),
         sandbox_manager=Sandboxes(),
-        settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
+        settings=SimpleNamespace(),
     )
     runtime = build_conversation_runtime(
         skill_snapshot=SkillSnapshotPayload(
@@ -406,7 +407,8 @@ async def test_file_access_choice_controls_root_and_subagent_review(
         user_id=7,
         thread_id="thread-1",
         model_config=_model_config(),
-        image_model=None,
+        search_service=None,
+        image_service=None,
         access_mode=access_mode,
     )
     result = await runtime.ainvoke(
@@ -485,7 +487,7 @@ async def test_product_tool_failure_allows_root_and_researcher_to_reply(
         agent_subagents=await load_subagents(),
         tinkerfin=TinkerFin(checkpointer=InMemorySaver()).with_observer(tracer),
         sandbox_manager=Sandboxes(),
-        settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
+        settings=SimpleNamespace(),
     )
     runtime = build_conversation_runtime(
         skill_snapshot=SkillSnapshotPayload(
@@ -495,7 +497,8 @@ async def test_product_tool_failure_allows_root_and_researcher_to_reply(
         user_id=7,
         thread_id="tool-error",
         model_config=_model_config(),
-        image_model=None,
+        search_service=None,
+        image_service=None,
     )
     result = await runtime.ainvoke(
         thread_id="tool-error",
@@ -562,7 +565,7 @@ async def test_analysis_commands_follow_permissions_in_chat_and_plan(
         agent_subagents={},
         tinkerfin=TinkerFin(checkpointer=InMemorySaver()),
         sandbox_manager=Sandboxes(),
-        settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
+        settings=SimpleNamespace(),
     )
     runtime = build_conversation_runtime(
         skill_snapshot=SkillSnapshotPayload(
@@ -572,7 +575,8 @@ async def test_analysis_commands_follow_permissions_in_chat_and_plan(
         user_id=7,
         thread_id="analysis",
         model_config=_model_config(),
-        image_model=None,
+        search_service=None,
+        image_service=None,
         access_mode=access_mode,
     )
     result = await runtime.ainvoke(

@@ -9,6 +9,7 @@ from anyio.to_thread import run_sync
 
 from tinkerfin import RunIdentity
 from tinkerfin_studio.models.schemas import AgentModelConfig
+from tinkerfin_studio.services.service import ResolvedService
 
 logger = logging.getLogger(__name__)
 _FORMAT_LIMITER = CapacityLimiter(2)
@@ -33,7 +34,8 @@ async def log_conversation_error(
     *,
     identity: RunIdentity,
     model: AgentModelConfig,
-    image_model: AgentModelConfig | None,
+    search_service: ResolvedService | None,
+    image_service: ResolvedService | None,
     code: str | None,
     error: Exception | None,
 ) -> None:
@@ -42,13 +44,16 @@ async def log_conversation_error(
     Args:
         identity: 当前用户作用域内的会话与运行身份
         model: 本次聊天模型及其需要脱敏的凭据
-        image_model: 本次生图配置，用于脱敏相关异常
+        search_service: 本次搜索服务，用于脱敏相关异常
+        image_service: 本次生图服务，用于脱敏相关异常
         code: 框架提供的失败分类
         error: 公开运行流保留的原始异常
     """
     keys = (model.api_key.get_secret_value(),)
-    if image_model is not None:
-        keys += (image_model.api_key.get_secret_value(),)
+    if search_service is not None:
+        keys += (search_service.api_key,)
+    if image_service is not None:
+        keys += (image_service.api_key,)
     detail = await run_sync(_failure_detail, error, keys, limiter=_FORMAT_LIMITER)
     logger.error(
         "会话执行失败 namespace=%s thread_id=%s run_id=%s model_id=%s "

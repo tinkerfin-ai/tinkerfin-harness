@@ -19,6 +19,8 @@ from tinkerfin_studio.infrastructure.redis_keys import AUTH_TOKEN_KEY_PREFIX
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.service import AgentModelService
 from tinkerfin_studio.resources import get_resources
+from tinkerfin_studio.services.repository import ServiceConfigRepository
+from tinkerfin_studio.services.service import ServiceConfigService
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -108,6 +110,28 @@ async def get_model_service(
 
 
 ModelServiceDep = Annotated[AgentModelService, Depends(get_model_service)]
+
+
+async def get_network_user_context(request: Request, token: RawTokenDep) -> UserContext:
+    """主动网络请求前完成认证并归还认证数据库连接"""
+
+    async with get_resources(request.app).database.session() as session:
+        service = await get_auth_service(request, session)
+        return (await get_auth_session(token, service)).user
+
+
+NetworkUserDep = Annotated[UserContext, Depends(get_network_user_context)]
+
+
+async def get_service_config_service(
+    session: SessionDep, user: UserContextDep
+) -> ServiceConfigService:
+    """按认证用户构造个人搜索与生图配置服务"""
+
+    return ServiceConfigService(ServiceConfigRepository(session, user_id=user.user_id))
+
+
+ServiceConfigDep = Annotated[ServiceConfigService, Depends(get_service_config_service)]
 
 
 async def get_conversation_history_service(

@@ -3,6 +3,7 @@ import { isAttachment } from '../../features/conversation/attachments/content'
 import type { JsonObject, JsonValue } from '../../types'
 import type {
   ConversationAgUiEvent,
+  MessageSource,
   EventSourceInfo,
   RawEventContext,
 } from './types'
@@ -132,10 +133,19 @@ const hasOptionalRawEvent = (value: Record<string, unknown>) => (
   value.rawEvent === undefined || isRawEventContext(value.rawEvent)
 )
 
+export const isMessageSource = (value: unknown): value is MessageSource => (
+  isRecord(value)
+  && (value.kind === 'user' || value.kind === 'context')
+  && (value.name == null || (typeof value.name === 'string' && value.name.length > 0 && value.name.length <= 128))
+  && (value.metadata === undefined || isJsonObject(value.metadata))
+  && Object.keys(value).every(key => ['kind', 'name', 'metadata'].includes(key))
+)
+
 const isMessageSnapshot = (value: unknown) => (
   isRecord(value)
   && typeof value.id === 'string'
   && typeof value.role === 'string'
+  && (value.source == null || isMessageSource(value.source))
   && (value.role !== 'tool' || (typeof value.toolCallId === 'string' && value.toolCallId.length > 0 && typeof value.content === 'string'))
   && hasOptionalString(value, 'toolCallId')
   && hasOptionalString(value, 'error')

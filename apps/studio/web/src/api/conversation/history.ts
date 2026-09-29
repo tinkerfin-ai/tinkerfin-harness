@@ -1,6 +1,6 @@
 import type { AccessMode } from "../../types"
-import { isInterrupt, parseConversationAgUiEvent } from './eventParser'
-import type { InterruptEvent, ConversationAgUiEvent } from './types'
+import { isInterrupt, isMessageSource, parseConversationAgUiEvent } from './eventParser'
+import type { InterruptEvent, ConversationAgUiEvent, MessageSource } from './types'
 import type { ConversationTitleSnapshot } from "./titles"
 import type { PendingInteractionKind, JsonObject, JsonValue } from '../../types'
 import { requestEventStream, requestJson } from '../shared/http'
@@ -47,6 +47,7 @@ export type TraceMessageReference =
   | { kind: 'tool_message'; messageId: string; toolCallId: string }
 
 export interface TraceMessage {
+  source?: MessageSource | null
   agui: TraceMessageReference | null
   id: string
   traceSeq: number
@@ -281,6 +282,7 @@ const validateMessageReferences = (value: unknown) => {
     if (!isRecord(message) || !Object.hasOwn(message, 'agui')) {
       throw new ConversationError('stream_event_invalid')
     }
+    if (message.source != null && !isMessageSource(message.source)) throw new ConversationError('stream_event_invalid')
     const ref = message.agui
     if (ref === null) continue
     if (!isRecord(ref) || typeof ref.messageId !== 'string' || !ref.messageId

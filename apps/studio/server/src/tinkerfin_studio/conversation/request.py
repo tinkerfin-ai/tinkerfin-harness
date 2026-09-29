@@ -147,14 +147,16 @@ class ChatRequest(BaseModel):
 
     @field_validator("messages")
     @classmethod
-    def messages_exclude_client_ids(
+    def messages_keep_host_owned_fields(
         cls,
         value: list[dict[str, JsonValue]],
     ) -> list[dict[str, JsonValue]]:
-        """客户端消息 ID 只在 HTTP 协议边界使用，不进入业务身份"""
+        """用户提交只保留正文及附件，身份和上下文来源由服务端确定"""
 
         if any("id" in message for message in value):
             raise ValueError("ChatRequest.messages 不得保留客户端消息 ID")
+        if any("source" in message for message in value):
+            raise ValueError("用户消息来源由服务端确定")
         return value
 
     @model_validator(mode="after")

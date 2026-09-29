@@ -434,7 +434,7 @@ async def test_recover_preparing_deletes_empty_thread_without_trace(
         notifications=notifications,
     )
 
-    await coordinator.recover_preparing(thread_pk=thread_pk)
+    await coordinator.recover(thread_pk=thread_pk)
 
     assert await _thread(database, thread_pk) is None
     await coordinator.aclose()
@@ -477,7 +477,7 @@ async def test_recover_preparing_removes_only_a_missing_new_run_from_existing_tr
         notifications=notifications,
     )
 
-    await coordinator.recover_preparing(thread_pk=thread_pk)
+    await coordinator.recover(thread_pk=thread_pk)
 
     async with database.session() as session:
         repository = ConversationRepository(session)
@@ -542,7 +542,7 @@ async def test_owner_preflight_cas_fences_a_stale_recovery_delete(
         ),
         notifications=notifications,
     )
-    recovery = asyncio.create_task(coordinator.recover_preparing(thread_pk=thread_pk))
+    recovery = asyncio.create_task(coordinator.recover(thread_pk=thread_pk))
     await barrier.checked.wait()
     async with database.session() as session:
         repository = ConversationRepository(session)

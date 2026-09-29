@@ -13,6 +13,7 @@ from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.run_preparation import RegisteredRun
 from tinkerfin_studio.conversation.run_registration import ConversationRunPreparer
 from tinkerfin_studio.models.schemas import AgentModelConfig
+from tinkerfin_studio.services.service import ResolvedService
 
 if TYPE_CHECKING:
     from tinkerfin_studio.resources import ApplicationResources
@@ -117,13 +118,15 @@ class ConversationRunObserver:
         thread_pk: int,
         title_text: str,
         model: AgentModelConfig,
-        image_model: AgentModelConfig | None,
+        search_service: ResolvedService | None,
+        image_service: ResolvedService | None,
     ) -> None:
         self._resources = resources
         self._thread_pk = thread_pk
         self._title_text = title_text
         self._model = model
-        self._image_model = image_model
+        self._search_service = search_service
+        self._image_service = image_service
 
     async def __call__(self, committed: CommittedRunEvent) -> None:
         """接收主运行已提交的开始或终止事件"""
@@ -145,7 +148,8 @@ class ConversationRunObserver:
             await log_conversation_error(
                 identity=committed.identity,
                 model=self._model,
-                image_model=self._image_model,
+                search_service=self._search_service,
+                image_service=self._image_service,
                 code=event.code,
                 error=committed.diagnostic_error,
             )

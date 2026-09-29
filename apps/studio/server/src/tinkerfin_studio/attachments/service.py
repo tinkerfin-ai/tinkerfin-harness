@@ -425,6 +425,16 @@ class AttachmentService:
             if saved_ids != set(attachment_ids):
                 raise BusinessException(AttachmentErrorCode.REFERENCE_CONFLICT)
 
+    async def collection_configuration(
+        self, *, user_id: int, collection_id: str
+    ) -> dict[str, JsonValue] | None:
+        """读取本人执行集合的不可变业务配置；缺失时返回空值"""
+        async with self._database.session() as session:
+            row = await session.get(AttachmentCollection, collection_id)
+            if row is None or row.user_id != user_id or row.purpose != "execution":
+                return None
+            return dict(row.configuration)
+
     async def list_collection(
         self, *, user_id: int, collection_id: str
     ) -> list[Attachment]:

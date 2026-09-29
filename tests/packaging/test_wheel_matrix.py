@@ -456,6 +456,55 @@ def _is_local_import(source_root: Path, module: str) -> bool:
     return module_path.is_dir() or module_path.with_suffix(".py").is_file()
 
 
+def _absolute_imports(node: ast.AST, python_version: tuple[int, int]) -> set[str]:
+    """Collect dependencies active under explicit minimum-Python guards."""
+    match node:
+        case ast.Import(names=names):
+            return {alias.name for alias in names}
+        case ast.ImportFrom(level=0, module=str() as module):
+            return {module}
+        case ast.If(
+            test=ast.Compare(
+                left=ast.Attribute(value=ast.Name(id="sys"), attr="version_info"),
+                ops=[ast.GtE()],
+                comparators=[
+                    ast.Tuple(
+                        elts=[
+                            ast.Constant(value=int() as major),
+                            ast.Constant(value=int() as minor),
+                        ]
+                    )
+                ],
+            ),
+            body=body,
+            orelse=orelse,
+        ):
+            children = body if python_version >= (major, minor) else orelse
+        case _:
+            children = list(ast.iter_child_nodes(node))
+    return set().union(
+        *(_absolute_imports(child, python_version) for child in children)
+    )
+
+
+@pytest.mark.parametrize("python_version", [(3, 11), (3, 14)])
+def test_dependency_imports_respect_minimum_python_guard(
+    python_version: tuple[int, int],
+) -> None:
+    source = ast.parse(
+        "import sys\nimport httpx\n"
+        "if sys.version_info >= (3, 14):\n"
+        "    from compression.zstd import ZstdError\n"
+    )
+    expected = {"sys", "httpx"}
+    if python_version >= (3, 14):
+        expected.add("compression.zstd")
+    assert _absolute_imports(source, python_version) == expected
+    assert _absolute_imports(
+        ast.parse("from compression.zstd import ZstdError"), python_version
+    ) == {"compression.zstd"}
+
+
 @pytest.mark.packaging_e2e
 def test_first_party_projects_declare_every_direct_import_distribution() -> None:
     module_distributions = importlib.metadata.packages_distributions()
@@ -479,15 +528,7 @@ def test_first_party_projects_declare_every_direct_import_distribution() -> None
         imports: set[str] = set()
         for source in source_root.rglob("*.py"):
             tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    imports.update(alias.name for alias in node.names)
-                elif (
-                    isinstance(node, ast.ImportFrom)
-                    and node.level == 0
-                    and node.module is not None
-                ):
-                    imports.add(node.module)
+            imports.update(_absolute_imports(tree, sys.version_info[:2]))
 
         for module in sorted(imports):
             root_module = module.partition(".")[0]

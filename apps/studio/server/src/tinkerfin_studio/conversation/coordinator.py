@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from ag_ui.core import BaseEvent
@@ -38,15 +38,16 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class _StalePreparingRun:
-    """跨外部存活检查携带的无连接 Run 身份"""
+class _PendingRun:
+    """跨权威状态查询携带的未完成登记，不持有业务连接"""
 
     thread_pk: int
     user_id: int
     run_pk: int
     identity: RunIdentity
     expected_updated_at: datetime
-    expected_status: Literal["preparing", "starting"]
+    status: str
+    preparation_started_at: datetime
     preparation_id: str
 
 
@@ -132,100 +133,126 @@ class ConversationTraceCoordinator:
             await repository.commit()
         await self.reconcile(thread_pk=thread_pk, identity=receipt.identity)
 
-    async def recover_preparing(
+    async def recover(
         self,
         *,
         thread_pk: int | None = None,
     ) -> frozenset[int]:
-        """清理没有 Trace 的过期 preparing 注册并恢复已有 Trace 摘要"""
+        """恢复未完成的启动登记，并按 Trace 校准运行状态和摘要跟随"""
 
-        candidates: list[_StalePreparingRun] = []
-        async with self._database.session() as session:
-            repository = ConversationRepository(session)
-            registrations = await repository.list_stale_unstarted_runs(
-                older_than_seconds=_STALE_PREPARING_SECONDS,
-                thread_pk=thread_pk,
-            )
-            recovered_threads: set[int] = set()
-            for registration in registrations:
-                thread = await repository.get_thread_by_pk(
-                    registration.conversation_thread_id
-                )
-                if thread is None:
-                    continue
-                candidates.append(
-                    _StalePreparingRun(
-                        thread_pk=thread.id,
-                        user_id=thread.user_id,
-                        run_pk=registration.id,
-                        identity=RunIdentity(
-                            namespace=f"ns_{thread.user_id}",
-                            thread_id=thread.thread_id,
-                            run_id=registration.run_id,
-                        ),
-                        expected_updated_at=registration.updated_at,
-                        expected_status=(
-                            "preparing"
-                            if registration.status == "preparing"
-                            else "starting"
-                        ),
-                        preparation_id=registration.preparation_id,
-                    )
-                )
-            # Trace 与 Redis 检查不占用 Studio 的业务连接或事务
-            await repository.commit()
-
-        recovered_threads: set[int] = set()
-        deletions: list[_StalePreparingRun] = []
-        for candidate in candidates:
+        recovered, unstarted = await self._reconcile_pending(thread_pk=thread_pk)
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+            seconds=_STALE_PREPARING_SECONDS
+        )
+        for candidate in unstarted:
+            if candidate.preparation_started_at >= cutoff:
+                continue
             try:
-                await self._tracer.get(
-                    candidate.identity.thread,
-                    head_run_id=candidate.identity.run_id,
+                producer_status = await self._conversation_channel.get_run_status(
+                    identity=candidate.identity
                 )
-            except (TraceRunNotFound, TraceThreadNotFound):
-                try:
-                    producer_status = await self._conversation_channel.get_run_status(
-                        identity=candidate.identity
-                    )
-                except RunNotFound:
-                    producer_status = None
-                # Messaging 只证明当前 owner 是否存活，终态不能替代 Trace 的 Agent 结果
-                if is_active_run_status(producer_status):
-                    continue
-                deletions.append(candidate)
-            else:
-                recovered_threads.add(candidate.thread_pk)
-                self.ensure(
-                    thread_pk=candidate.thread_pk,
-                    identity=candidate.identity,
-                )
-
-        if deletions:
-            changed: list[_StalePreparingRun] = []
+            except RunNotFound:
+                producer_status = None
+            # Messaging 只证明当前执行是否存活，不能替代 Trace 的 Agent 结果
+            if is_active_run_status(producer_status):
+                continue
             async with self._database.session() as session:
                 repository = ConversationRepository(session)
-                for candidate in deletions:
-                    result = await repository.delete_unstarted_run(
-                        thread_pk=candidate.thread_pk,
-                        run_pk=candidate.run_pk,
-                        run_id=candidate.identity.run_id,
-                        preparation_id=candidate.preparation_id,
-                        delete_empty_thread=True,
-                        expected_updated_at=candidate.expected_updated_at,
-                        expected_status=candidate.expected_status,
-                    )
-                    if result.run_deleted:
-                        changed.append(candidate)
+                result = await repository.delete_unstarted_run(
+                    thread_pk=candidate.thread_pk,
+                    run_pk=candidate.run_pk,
+                    run_id=candidate.identity.run_id,
+                    preparation_id=candidate.preparation_id,
+                    delete_empty_thread=True,
+                    expected_updated_at=candidate.expected_updated_at,
+                    expected_status=(
+                        "preparing" if candidate.status == "preparing" else "starting"
+                    ),
+                )
                 await repository.commit()
-            for candidate in changed:
+            if result.run_deleted:
                 await notify_change(
                     self._notifications,
                     user_id=candidate.user_id,
                     topic="studio.conversation.changed",
                     key=candidate.identity.thread_id,
                 )
-        return frozenset(recovered_threads)
+        return recovered
+
+    async def settle(self) -> None:
+        """在执行关闭后校准未完成登记；不使用已关闭的传输服务"""
+
+        await self._reconcile_pending()
+
+    async def _reconcile_pending(
+        self, *, thread_pk: int | None = None
+    ) -> tuple[frozenset[int], tuple[_PendingRun, ...]]:
+        async with self._database.session() as session:
+            repository = ConversationRepository(session)
+            candidates = tuple(
+                _PendingRun(
+                    thread_pk=thread.id,
+                    user_id=thread.user_id,
+                    run_pk=run.id,
+                    identity=RunIdentity(
+                        namespace=f"ns_{thread.user_id}",
+                        thread_id=thread.thread_id,
+                        run_id=run.run_id,
+                    ),
+                    expected_updated_at=run.updated_at,
+                    status=run.status,
+                    preparation_started_at=(
+                        run.created_at if run.status == "preparing" else run.updated_at
+                    ),
+                    preparation_id=run.preparation_id,
+                )
+                for thread, run in await repository.list_pending_runs(
+                    thread_pk=thread_pk
+                )
+            )
+            # 外部查询不占用业务连接，随后写入仍由仓储核对当前归属和前缀
+            await repository.commit()
+        recovered: set[int] = set()
+        unstarted: list[_PendingRun] = []
+        for candidate in candidates:
+            try:
+                trace = await self._reconcile_view(
+                    thread_pk=candidate.thread_pk, identity=candidate.identity
+                )
+            except (TraceRunNotFound, TraceThreadNotFound):
+                # 删除可在候选读取后完成；仅忽略已确认失去业务归属的候选
+                if not await self._registration_exists(
+                    thread_pk=candidate.thread_pk, identity=candidate.identity
+                ):
+                    continue
+                if candidate.status == "running":
+                    raise
+                unstarted.append(candidate)
+            else:
+                recovered.add(candidate.thread_pk)
+                if trace.summary.status.execution == "running":
+                    self.ensure(
+                        thread_pk=candidate.thread_pk, identity=candidate.identity
+                    )
+        return frozenset(recovered), tuple(unstarted)
+
+    async def _registration_exists(
+        self, *, thread_pk: int, identity: RunIdentity
+    ) -> bool:
+        async with self._database.session() as session:
+            repository = ConversationRepository(session)
+            thread = await repository.get_thread_by_pk(thread_pk)
+            return (
+                thread is not None
+                and thread.deleted_at is None
+                and thread.status != "deleting"
+                and thread.thread_id == identity.thread_id
+                and f"ns_{thread.user_id}" == identity.namespace
+                and await repository.get_run(
+                    thread_pk=thread_pk, run_id=identity.run_id
+                )
+                is not None
+            )
 
     async def aclose(self) -> None:
         """等待全部摘要跟随结束；并发关闭共用清理，调用者取消在清理后传播
@@ -323,7 +350,16 @@ class ConversationTraceCoordinator:
     ) -> bool:
         """从一个最新固定前缀恢复，并报告是否已经到达终态"""
 
-        trace = await self._reconcile_view(thread_pk=thread_pk, identity=identity)
+        try:
+            trace = await self._reconcile_view(thread_pk=thread_pk, identity=identity)
+        except (TraceRunNotFound, TraceThreadNotFound):
+            if self._closed:
+                raise
+            if not await self._registration_exists(
+                thread_pk=thread_pk, identity=identity
+            ):
+                return True
+            raise
         if trace.summary.status.execution != "running":
             return True
         async with trace.follow() as updates:

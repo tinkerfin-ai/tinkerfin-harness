@@ -81,7 +81,7 @@ Docker 项目为 `tinkerfin`，依赖容器为 `mysql8`、`redis-runtime`、`min
 需要独立数据库地址时可设置 `BUSINESS_DATABASE_URL`、`COMPONENTS_DATABASE_URL`。
 配置值按字面填写，不在 `.env` 中引用其他变量。密码包含 `$` 等特殊字符时使用单引号；进程环境变量可覆盖本机配置，部署所用的组件凭据也会同步传给后端容器。
 
-HTTP、本机或内网模型服务需要在 `.env` 的 `MODEL_ALLOWED_ORIGINS` 中列出精确的协议、主机和端口，修改后重启后端。例如本机 Ollama 使用 `MODEL_ALLOWED_ORIGINS=["http://localhost:11434","http://127.0.0.1:11434"]`；后端容器访问宿主机 Ollama 时使用 `http://host.docker.internal:11434`，并将该来源加入允许列表。该列表控制模型服务访问，与浏览器 CORS 无关。
+模型与服务连接支持后端可达的公网、本机和内网 HTTP/HTTPS 地址。后端容器访问宿主机 Ollama 时可使用 `http://host.docker.internal:11434`；实际地址需能从后端网络访问。服务地址不能内嵌账号密码，HTTPS 连接保留证书校验。
 
 执行沙箱与控制服务的资源限制相互独立；控制服务的限制不包含它创建的沙箱。
 这些值是上限，不是启动时预留的占用，也不代表整套部署的最低主机规格。

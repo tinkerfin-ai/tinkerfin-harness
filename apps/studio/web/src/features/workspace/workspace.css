@@ -738,6 +738,7 @@
     .assistant-message,
     .subagent-card,
     .tool-card,
+    .context-message,
     .tool-batch,
     .todo-trace-update-row,
     .conversation-run-failure,
@@ -754,6 +755,7 @@
     .assistant-message,
     .subagent-card,
     .tool-card,
+    .context-message,
     .tool-batch,
     .todo-trace-update-row,
     .conversation-run-failure,
@@ -766,6 +768,7 @@
     .assistant-message,
     .subagent-card,
     .tool-card,
+    .context-message,
     .tool-batch,
     .todo-trace-update-row,
     .conversation-run-failure,
@@ -972,4 +975,13 @@
     .spin,
     .conversation-attention-dot { animation: none; }
   }
+}
+
+@layer workspace {
+  .composer-model-option-label { min-width: max-content; white-space: nowrap; }
+  .composer-model-picker .ui-compact-picker-options { width: max-content; min-width: min(250px, calc(100cqw - var(--control-lg) - var(--space-2))); max-width: calc(100cqw - var(--control-lg) - var(--space-2)); overflow-x: auto; }
+  .composer-model-picker .ui-compact-picker-options [role="option"] { min-width: max-content; }
+  .composer-model-default { display: inline-block; margin-inline-start: var(--space-2); padding: 0 var(--space-1-5); border-radius: var(--radius-xs); color: var(--color-brand-text); background: var(--color-brand-soft); font-size: var(--type-caption-size); line-height: var(--type-caption-line); vertical-align: middle; }
+  .composer-model-picker .ui-compact-picker-trigger { height: auto; }
+  .composer-model-picker .ui-compact-picker-trigger > span { overflow-x: auto; text-overflow: clip; white-space: nowrap; text-align: left; }
 }

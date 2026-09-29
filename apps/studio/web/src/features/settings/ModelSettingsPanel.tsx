@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { ChevronRight, Cpu, KeyRound, Link2, MessageSquare, Monitor, Plus, RefreshCw, Search, Settings2, SlidersHorizontal, Star } from 'lucide-react'
 import { Button, OverlayScrollbar, TextField } from '../../components/ui'
 import { useI18n } from '../../i18n'
+import { ImageInputStatus } from './ImageInputCapability'
 import { ModelConnectionForm } from './ModelConnectionForm'
 import { ModelConfigurationForm } from './ModelConfigurationForm'
 import { ModelDiscoveryPanel } from './ModelDiscoveryPanel'
@@ -31,7 +32,7 @@ export function ModelSettingsPanel({ onChanged }: { onChanged?: () => void }) {
   const matchingModels = activeProvider?.matches ?? []
   const close = () => { setView('list'); setEditing(undefined) }
   const editModel = (model: ModelSettings) => { setEditing(model); setView('model') }
-  const defaultModel = state.models.find(model => model.purpose === 'chat' && model.is_default)
+  const defaultModel = state.models.find(model => model.is_default)
   return <section className="settings-section settings-models settings-model-connections">
     <div className="settings-models__toolbar">
       <nav className="settings-models__breadcrumbs" aria-label={t('模型配置导航')}>
@@ -68,9 +69,25 @@ export function ModelSettingsPanel({ onChanged }: { onChanged?: () => void }) {
                 </nav></>}>{connection ? <section className="settings-models__detail" aria-label={connection.display_name}>
                   <div className="settings-models__provider-heading"><h4>{connection.display_name}</h4><Button type="button" size="xs" variant="text" leadingIcon={<Settings2 size={14} />} onClick={() => setView('connection')}>{t('连接设置')}</Button></div>
                   <div className="settings-models__connection-meta"><span><Link2 size={13} />{connection.base_url}</span><span><KeyRound size={13} />{t(connection.auth_type === 'none' ? '无需认证' : '已配置密钥')}</span></div>
-                  <div className="settings-models__list-heading"><h4>{t('模型')}</h4><div className="settings-models__row-actions"><Button type="button" size="xs" leadingIcon={<RefreshCw size={13} />} onClick={() => setView('discovery')}>{t('获取模型')}</Button><Button type="button" size="xs" variant="text" leadingIcon={<Plus size={14} />} onClick={() => editModel(newModel(connection.connection_id))}>{t('手动添加')}</Button></div></div>
+                  <div className="settings-models__list-heading"><h4>{t('模型')}</h4><div className="settings-models__row-actions"><Button type="button" size="xs" leadingIcon={<RefreshCw size={13} />} onClick={() => setView('discovery')}>{t('获取模型')}</Button><Button type="button" size="xs" leadingIcon={<Plus size={13} />} onClick={() => editModel(newModel(connection.connection_id))}>{t('手动添加')}</Button></div></div>
                   <div className="settings-models__list-shell"><div className="settings-models__list-scroll ui-scrollbar" role="region" aria-label={t('模型列表')} tabIndex={0} ref={modelViewport}>
-                  {matchingModels.map(model => <div key={model.model_id} className="settings-models__row"><div className="settings-models__identity"><strong>{model.display_name}{model.is_default && <span className="settings-models__badge">{t('默认')}</span>}</strong><small>{model.model_name}</small><small>{t(model.purpose === 'image' ? '图片生成' : '对话模型')}{model.reasoning_enabled ? ` · ${t('推理')}` : ''}{!model.enabled ? ` · ${t('已停用')}` : ''}</small></div><div className="settings-models__row-actions"><Button type="button" variant="ghost" size="xs" aria-label={t('设为默认')} title={t('设为默认')} disabled={state.saving || model.is_default} onClick={() => { void state.makeDefault(model.model_id) }}><Star size={15} /></Button><Button type="button" variant="ghost" size="xs" aria-label={t('配置模型 {name}', { name: model.display_name })} title={t('模型设置')} disabled={state.saving} onClick={() => editModel(model)}><SlidersHorizontal size={15} /></Button><Button type="button" variant="ghost" size="xs" role="switch" aria-checked={model.enabled} aria-label={t('启用模型 {name}', { name: model.display_name })} disabled={state.saving || model.is_default} onClick={() => { void state.save({ ...model, enabled: !model.enabled }) }}><span className={`settings-models__switch${model.enabled ? ' is-enabled' : ''}`} /></Button></div></div>)}
+                  <section className="settings-models__group" aria-label={t('对话模型')}>
+                      {matchingModels.map(model => {
+                        const action = '设为默认对话'
+                        return <div key={model.model_id} className="settings-models__row">
+                          <div className="settings-models__identity">
+                            <strong>{model.display_name}{model.is_default && <span className="settings-models__badge">{t('默认对话')}</span>}</strong>
+                            <small>{model.model_name}</small>
+                            <small>{model.image_input_capability && <ImageInputStatus capability={model.image_input_capability} />}{model.reasoning_enabled ? ` · ${t('推理')}` : ''}{!model.enabled ? ` · ${t('已停用')}` : ''}</small>
+                          </div>
+                          <div className="settings-models__row-actions">
+                            <Button type="button" variant="ghost" size="xs" aria-label={`${t(action)} ${model.display_name}`} title={t(action)} disabled={state.saving || model.is_default} onClick={() => { void state.makeDefault(model.model_id) }}><Star size={15} /></Button>
+                            <Button type="button" variant="ghost" size="xs" aria-label={t('配置模型 {name}', { name: model.display_name })} title={t('模型设置')} disabled={state.saving} onClick={() => editModel(model)}><SlidersHorizontal size={15} /></Button>
+                            <Button type="button" variant="ghost" size="xs" role="switch" aria-checked={model.enabled} aria-label={t('启用模型 {name}', { name: model.display_name })} disabled={state.saving || model.is_default} onClick={() => { void state.save({ ...model, enabled: !model.enabled }) }}><span className={`settings-models__switch${model.enabled ? ' is-enabled' : ''}`} /></Button>
+                          </div>
+                        </div>
+                      })}
+                  </section>
                   {models.length === 0 && <div className="settings-models__empty"><p>{t('还没有添加模型')}</p><span>{t('获取可用模型，或手动填写 Model ID')}</span></div>}
                   </div><OverlayScrollbar viewportRef={modelViewport} /></div>
                 </section> : <div className="settings-models__empty" role="status"><p>{t('没有匹配的提供方或模型')}</p><Button type="button" onClick={() => setSearch('')}>{t('清除搜索')}</Button></div>}</ModelProviderSplit>

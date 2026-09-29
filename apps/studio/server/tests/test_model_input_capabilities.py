@@ -90,3 +90,93 @@ async def test_manual_image_declaration_does_not_change_the_provider_catalog(
     assert result.profile.get("pdf_inputs") is False
     assert result.profile.get("video_inputs") is False
     assert source == {"image_inputs": True, "pdf_inputs": True, "video_inputs": True}
+
+
+@pytest.mark.parametrize(
+    ("provider", "api", "url", "name", "expected"),
+    [
+        (
+            "openai",
+            "openai_chat_completions",
+            "https://api.openai.com/v1",
+            "gpt-4o",
+            "supported",
+        ),
+        (
+            "openai",
+            "openai_chat_completions",
+            "https://API.OPENAI.COM:443/v1/",
+            "gpt-4o",
+            "supported",
+        ),
+        (
+            "openai",
+            "openai_chat_completions",
+            "https://api.openai.com/v1",
+            "gpt-3.5-turbo",
+            "unsupported",
+        ),
+        (
+            "openai",
+            "openai_chat_completions",
+            "https://api.openai.com/v1",
+            "gpt-4o-alias",
+            "unknown",
+        ),
+        (
+            "openai",
+            "openai_chat_completions",
+            "https://api.openai.com/v1?proxy=true",
+            "gpt-4o",
+            "unknown",
+        ),
+        (
+            "openai",
+            "openai_chat_completions",
+            "https://api.openai.com.evil.test/v1",
+            "gpt-4o",
+            "unknown",
+        ),
+        ("openai", "ollama", "https://api.openai.com/v1", "gpt-4o", "unknown"),
+        (
+            "custom",
+            "openai_chat_completions",
+            "https://api.openai.com/v1",
+            "gpt-4o",
+            "unknown",
+        ),
+        (
+            "dashscope",
+            "openai_chat_completions",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "qwen-vl-max",
+            "supported",
+        ),
+    ],
+)
+def test_image_capability_requires_exact_trusted_connection(
+    provider, api, url, name, expected
+):
+    from tinkerfin_studio.models.capabilities import resolve_image_input
+
+    result = resolve_image_input(
+        provider_id=provider, api_type=api, base_url=url, model_name=name
+    )
+    assert result.automatic == result.effective == expected
+    assert result.source == ("unknown" if expected == "unknown" else "catalog")
+
+
+@pytest.mark.parametrize("declaration", ["supported", "unsupported"])
+def test_manual_capability_keeps_the_automatic_evidence(declaration):
+    from tinkerfin_studio.models.capabilities import resolve_image_input
+
+    result = resolve_image_input(
+        provider_id="openai",
+        api_type="openai_chat_completions",
+        base_url="https://api.openai.com/v1",
+        model_name="gpt-4o",
+        image_support=declaration,
+    )
+    assert result.automatic == "supported"
+    assert result.effective == declaration
+    assert result.source == "manual"

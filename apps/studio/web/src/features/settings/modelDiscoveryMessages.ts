@@ -9,5 +9,4 @@ export const modelDiscoveryMessages: Record<string, TranslationKey> = {
   rate_limited: '服务请求受限，请稍后重试',
   service_error: '模型服务返回错误，请检查配置和服务状态',
   network_error: '无法连接模型服务，请检查地址和网络',
-  endpoint_not_allowed: '该地址不在管理员允许的访问范围内',
 }

@@ -279,7 +279,8 @@ async def test_runtime_injects_command_identity_and_records_tool_result(
         user_id=1,
         thread_id="chat",
         model_config=_model_config(),
-        image_model=None,
+        search_service=None,
+        image_service=None,
     )
     stream = runtime.open_agui_run(
         thread_id="chat",
@@ -399,7 +400,8 @@ async def test_automation_management_is_bound_to_main_roles(
         user_id=1,
         thread_id="limited",
         model_config=_model_config(),
-        image_model=None,
+        search_service=None,
+        image_service=None,
     )
     stream = runtime.open_agui_run(
         thread_id="limited",

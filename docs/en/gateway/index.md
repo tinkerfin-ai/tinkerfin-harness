@@ -47,6 +47,40 @@ decisions, parent run, mode, and JSON execution parameters. Changed content rais
 `RunRequestConflict`. Deletion or retention expiry ends this guarantee. The host
 continues to authorize model choices, tools, namespaces, and input resources.
 
+## Include authorized context
+
+Keep the person's text and host-provided instructions as separate entries in
+`StartRun.messages`. Mark the latter with `source.kind="context"`:
+
+```python
+from tinkerfin_gateway import StartRun
+
+
+async def answer_with_context(gateway, runtime, user_text, instructions):
+    run = await gateway.start(runtime, StartRun(
+        thread_id="conversation",
+        run_id="request-with-context",
+        messages=(
+            {"id": "question", "role": "user", "content": user_text},
+            {"id": "reference", "role": "user", "content": instructions,
+             "source": {"kind": "context", "name": "retrieval",
+                        "metadata": {"document": "authorized-report"}}},
+        ),
+    ))
+    async with run.subscribe() as replies:
+        async for reply in replies:
+            print(reply.data.type)
+```
+
+The host authorizes the content and supplies stable message IDs. Runtime preserves
+both messages and their provenance in checkpoints and recorded history; Plan and
+Turn association use the person's request. Context remains until normal history
+removal or compaction. The model role is still `user`. An absent source or
+`source.kind="user"` denotes a person's message; `name` and `metadata` are optional,
+public origin details validated by `tinkerfin_contracts.MessageSource`. Do not put
+secrets in provenance. Pass the same complete messages on retries and only resume
+decisions when continuing interrupted work.
+
 ## Select an operation
 
 | API | Result |

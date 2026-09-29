@@ -535,7 +535,7 @@
     white-space: nowrap;
   }
 
-  .tool-row {
+  .conversation-detail-row {
     display: flex;
     width: 100%;
     min-width: 0;
@@ -544,12 +544,12 @@
     scroll-margin-block-end: calc(var(--composer-height) + var(--space-4));
   }
 
-  .workspace-main:has(.composer-dock.is-taken-over) .tool-row {
+  .workspace-main:has(.composer-dock.is-taken-over) .conversation-detail-row {
     scroll-margin-block-end: var(--space-4);
   }
 
-  .tool-row > .tool-row-heading,
-  .tool-row > summary {
+  .conversation-detail-row > .conversation-detail-heading,
+  .conversation-detail-row > summary {
     position: relative;
     display: flex;
     align-items: center;
@@ -563,16 +563,16 @@
     cursor: pointer;
   }
 
-  .tool-row > .tool-row-heading { cursor: default; }
+  .conversation-detail-row > .conversation-detail-heading { cursor: default; }
 
-  .tool-row > summary::-webkit-details-marker { display: none; }
+  .conversation-detail-row > summary::-webkit-details-marker { display: none; }
 
-  .tool-row > summary:focus-visible {
+  .conversation-detail-row > summary:focus-visible {
     outline: 2px solid var(--color-border-strong);
     outline-offset: 2px;
   }
 
-  .tool-row-leading {
+  .conversation-detail-leading {
     position: relative;
     display: inline-flex;
     width: var(--icon-sm);
@@ -584,8 +584,8 @@
     color: var(--color-text-tertiary);
   }
 
-  .tool-row-icon,
-  .tool-row-chevron {
+  .conversation-detail-icon,
+  .conversation-detail-chevron {
     position: absolute;
     inset: 0;
     display: inline-flex;
@@ -598,26 +598,26 @@
     transition: opacity var(--motion-fast) var(--ease-out);
   }
 
-  .tool-row-chevron {
+  .conversation-detail-chevron {
     color: var(--color-text-secondary);
     opacity: 0;
   }
 
-  .tool-row > summary:hover .tool-row-icon,
-  .tool-row > summary:focus-visible .tool-row-icon,
-  .tool-row[open] .tool-row-icon,
-  .subagent-card-head:hover .tool-row-icon,
-  .subagent-card-head:focus-visible .tool-row-icon,
-  .subagent-card[open] > .subagent-card-head .tool-row-icon { opacity: 0; }
+  .conversation-detail-row > summary:hover .conversation-detail-icon,
+  .conversation-detail-row > summary:focus-visible .conversation-detail-icon,
+  .conversation-detail-row[open] .conversation-detail-icon,
+  .subagent-card-head:hover .conversation-detail-icon,
+  .subagent-card-head:focus-visible .conversation-detail-icon,
+  .subagent-card[open] > .subagent-card-head .conversation-detail-icon { opacity: 0; }
 
-  .tool-row > summary:hover .tool-row-chevron,
-  .tool-row > summary:focus-visible .tool-row-chevron,
-  .tool-row[open] .tool-row-chevron,
-  .subagent-card-head:hover .tool-row-chevron,
-  .subagent-card-head:focus-visible .tool-row-chevron,
-  .subagent-card[open] > .subagent-card-head .tool-row-chevron { opacity: 1; }
+  .conversation-detail-row > summary:hover .conversation-detail-chevron,
+  .conversation-detail-row > summary:focus-visible .conversation-detail-chevron,
+  .conversation-detail-row[open] .conversation-detail-chevron,
+  .subagent-card-head:hover .conversation-detail-chevron,
+  .subagent-card-head:focus-visible .conversation-detail-chevron,
+  .subagent-card[open] > .subagent-card-head .conversation-detail-chevron { opacity: 1; }
 
-  .tool-row-title {
+  .conversation-detail-title {
     flex: 0 0 auto;
     color: var(--color-text-secondary);
     font-size: var(--type-ui-size);
@@ -626,7 +626,7 @@
     white-space: nowrap;
   }
 
-  .tool-row-separator {
+  .conversation-detail-separator {
     width: var(--space-0-5);
     height: var(--space-0-5);
     flex: 0 0 auto;
@@ -635,7 +635,7 @@
     background: var(--color-text-caption);
   }
 
-  .tool-row-summary {
+  .conversation-detail-summary {
     flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
@@ -646,7 +646,7 @@
     white-space: nowrap;
   }
 
-  .tool-row-summary.is-error { color: var(--color-danger-text); }
+  .tool-row-error-summary { color: var(--color-danger-text); }
 
   .tool-row-state-dot {
     width: var(--space-1-5);
@@ -660,8 +660,8 @@
   .tool-row-state-dot.is-cancelled { background: var(--color-text-tertiary); }
 
   /* 尚未终止的 Tool 与 SubAgent 共用扫光，审批暂停仍保留准确的业务状态 */
-  .tool-row.running > .tool-row-heading::after,
-  .tool-row.paused > .tool-row-heading::after,
+  .tool-row.running > .conversation-detail-heading::after,
+  .tool-row.paused > .conversation-detail-heading::after,
   .tool-row.running > summary::after,
   .tool-row.paused > summary::after,
   .subagent-card.running > summary::after,
@@ -823,14 +823,7 @@
     animation: conversation-tool-result-pulse var(--motion-tool-result-cycle) cubic-bezier(.2, .7, .2, 1) infinite;
   }
 
-  .tool-row-visually-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
-  }
+
 
   .subagent-card-body {
     min-width: 0;
@@ -1816,16 +1809,10 @@
   .composer-toolbar-button:active:not(:disabled),
   .composer-toolbar-button:focus-visible { border: 0; background: var(--color-hover); box-shadow: none; }
   .composer-toolbar .ui-tooltip { top: auto; bottom: calc(100% + var(--space-1)); }
-  .composer-skill-chip[data-unavailable] { color: var(--color-danger-text); }
+  .composer-input-backdrop .composer-skill-reference { color: var(--color-brand-text); }
+  .composer-input-backdrop .composer-skill-reference[data-unavailable] { color: var(--color-danger-text); text-decoration: line-through; }
   .composer-skill-error { margin: var(--space-2) var(--space-4); color: var(--color-danger-text); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
-  .composer-skill-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-3) var(--space-4) 0; max-height: calc(var(--control-lg) * 2); overflow-y: auto; }
-  .composer-skill-chip { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 180px; min-height: var(--control-plan-chip); padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius-button); background: var(--color-subtle); color: var(--color-text-secondary); font-size: var(--type-meta-size); line-height: var(--type-meta-line); cursor: pointer; }
-  .composer-skill-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .composer-skill-chip > svg { flex-shrink: 0; }
-  .composer-skill-chip:hover:not(:disabled), .composer-skill-chip:active:not(:disabled) { background: var(--color-hover); color: var(--color-text-primary); box-shadow: var(--shadow-1); }
-  .composer-skill-chip:focus-visible { outline: 2px solid var(--color-border-strong); outline-offset: 2px; }
-  .composer-skill-chip:disabled { cursor: not-allowed; opacity: .6; }
-  @media (any-hover: none), (any-pointer: coarse) { .composer-skill-chip { min-height: var(--control-lg); min-width: var(--control-lg); } }
+
   .composer-plan-chip { display: inline-flex; align-items: center; gap: var(--space-1); min-width: var(--control-composer); height: var(--control-plan-chip); min-height: var(--control-plan-chip); padding: 2px var(--space-2); border: 0; border-radius: var(--radius-button); background: var(--color-warning-soft); color: var(--color-warning-text); font-size: var(--type-meta-size); font-weight: var(--weight-ui); line-height: var(--type-meta-line); cursor: pointer; box-shadow: none; transform: none; transition: color var(--motion-fast) var(--ease-out); }
   .composer-plan-chip:hover:not(:disabled),
   .composer-plan-chip:active:not(:disabled) { background: var(--color-warning-soft); color: color-mix(in srgb, var(--color-warning-text) 84%, var(--color-text-primary)); box-shadow: none; transform: none; }
@@ -1959,8 +1946,8 @@
     }
     .subagent-card-head { height: var(--control-lg); }
     .subagent-task-summary { min-height: var(--control-lg); }
-    .tool-row > .tool-row-heading,
-    .tool-row > summary { height: var(--control-lg); }
+    .conversation-detail-row > .conversation-detail-heading,
+    .conversation-detail-row > summary { height: var(--control-lg); }
     .plan-question-option,
     .plan-question-custom,
     .plan-question-date,
@@ -1998,7 +1985,7 @@
     .plan-question-composer-footer::before,
     .plan-review-composer-footer::before { background: Canvas; }
     .subagent-card-head:focus-visible,
-    .tool-row > summary:focus-visible,
+    .conversation-detail-row > summary:focus-visible,
     .tool-detail-viewport:focus-visible,
     .subagent-trace-output:focus-visible,
     .plan-interaction-toggle-surface:focus-visible,
@@ -2057,8 +2044,8 @@
   @media (prefers-reduced-motion: reduce) {
     .activity-dots i,
     .subagent-output-pulse,
-    .tool-row.running > .tool-row-heading::after,
-    .tool-row.paused > .tool-row-heading::after,
+    .tool-row.running > .conversation-detail-heading::after,
+    .tool-row.paused > .conversation-detail-heading::after,
     .tool-row.running > summary::after,
     .tool-row.paused > summary::after,
     .subagent-card.running > summary::after,
@@ -2074,8 +2061,8 @@
       box-shadow: none;
     }
 
-    .tool-row-icon,
-    .tool-row-chevron,
+    .conversation-detail-icon,
+    .conversation-detail-chevron,
     .interaction-card-resize-handle::after,
     .composer {
       transition: none;
@@ -2090,4 +2077,8 @@
     width: 100%;
     min-height: calc(var(--control-xl) + var(--space-2));
   }
+}
+
+@layer conversation {
+  .context-message-content { min-width: 0; margin-top: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-xl); background: var(--color-layer-1); overflow-wrap: anywhere; }
 }

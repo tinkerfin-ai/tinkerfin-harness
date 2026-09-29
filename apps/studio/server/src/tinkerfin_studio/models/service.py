@@ -3,15 +3,18 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Literal
 
 import anyio
-from pydantic import SecretStr, ValidationError
+from pydantic import SecretStr, TypeAdapter, ValidationError
 
 from tinkerfin_studio.api.errors import (
     BusinessException,
     ModelErrorCode,
     SystemException,
+)
+from tinkerfin_studio.models.capabilities import (
+    ImageInputCapability,
+    resolve_image_input,
 )
 from tinkerfin_studio.models.entity import AgentModel, ModelConnection
 from tinkerfin_studio.models.repository import AgentModelRepository
@@ -22,6 +25,8 @@ from tinkerfin_studio.models.schemas import (
     AgentModelSave,
     AgentModelSettings,
     AgentModelWrite,
+    InputCapabilityRequest,
+    ModelAPI,
     ModelConnectionSave,
     ModelConnectionSettings,
     ModelProvider,
@@ -29,8 +34,8 @@ from tinkerfin_studio.models.schemas import (
 from tinkerfin_studio.models.transport import validate_model_url
 
 
-def model_settings(row: AgentModel) -> AgentModelSettings:
-    return AgentModelSettings.model_validate(row, from_attributes=True)
+def model_settings(row: AgentModel) -> AgentModelWrite:
+    return AgentModelWrite.model_validate(row, from_attributes=True)
 
 
 def connection_provider(connection: ModelConnection) -> ModelProvider:
@@ -49,10 +54,6 @@ def resolved_model(
         or connection_provider(connection) == "deepseek"
     ) and not connection.api_key.strip():
         raise BusinessException(ModelErrorCode.KEY_REQUIRED)
-    if value.purpose == "image" and connection.api_type != "openai_chat_completions":
-        raise BusinessException(
-            ModelErrorCode.INVALID_CONFIGURATION, message="图片生成需要 OpenAI 兼容接口"
-        )
     options = value.chat_options
     if connection.api_type != "ollama" and (
         options.context_window is not None or options.keep_alive is not None
@@ -117,17 +118,13 @@ class AgentModelService:
             ),
         )
 
-    async def resolve(
-        self, model_id: str, *, purpose: Literal["chat", "image"] = "chat"
-    ) -> AgentModelConfig:
-        """核验本人模型的用途和启用状态，固定本次调用的连接与生成参数"""
+    async def resolve(self, model_id: str) -> AgentModelConfig:
+        """核验本人模型的启用状态，固定本次调用的连接与生成参数"""
         row = await self._repository.get(model_id)
         if row is None:
             raise BusinessException(ModelErrorCode.NOT_FOUND)
         if not row.enabled:
             raise BusinessException(ModelErrorCode.DISABLED)
-        if row.purpose != purpose:
-            raise BusinessException(ModelErrorCode.PURPOSE_MISMATCH)
         try:
             return resolved_model(
                 model_settings(row), await self.require_connection(row.connection_id)
@@ -136,7 +133,41 @@ class AgentModelService:
             raise SystemException(ModelErrorCode.CATALOG_UNAVAILABLE) from error
 
     async def settings(self) -> list[AgentModelSettings]:
-        return [model_settings(row) for row in await self._repository.list_settings()]
+        connections = {
+            row.connection_id: row for row in await self._repository.connections()
+        }
+        result: list[AgentModelSettings] = []
+        for row in await self._repository.list_settings():
+            connection = connections.get(row.connection_id)
+            if connection is None:
+                raise SystemException(ModelErrorCode.CATALOG_UNAVAILABLE)
+            capability = resolve_image_input(
+                provider_id=connection.provider_id,
+                api_type=TypeAdapter(ModelAPI).validate_python(connection.api_type),
+                base_url=connection.base_url,
+                model_name=row.model_name,
+                image_support=model_settings(row).image_support,
+            )
+            result.append(
+                AgentModelSettings(
+                    **model_settings(row).model_dump(),
+                    image_input_capability=capability,
+                )
+            )
+        return result
+
+    async def input_capability(
+        self, value: InputCapabilityRequest
+    ) -> ImageInputCapability:
+        """只读预览本人连接的精确型号资料，不获取凭证或发送模型请求"""
+        connection = await self.require_connection(value.connection_id)
+        return resolve_image_input(
+            provider_id=connection.provider_id,
+            api_type=TypeAdapter(ModelAPI).validate_python(connection.api_type),
+            base_url=connection.base_url,
+            model_name=value.model_name,
+            image_support=value.image_support,
+        )
 
     async def connections(self) -> list[ModelConnectionSettings]:
         return [
@@ -191,14 +222,6 @@ class AgentModelService:
             for row in rows:
                 if await self._repository.in_use(row.model_id):
                     raise BusinessException(ModelErrorCode.IN_USE)
-            if (
-                any(row.purpose == "image" for row in rows)
-                and value.api_type != "openai_chat_completions"
-            ):
-                raise BusinessException(
-                    ModelErrorCode.INVALID_CONFIGURATION,
-                    message="连接下已有生图模型，请先移除后再更改接口",
-                )
             if (
                 value.provider_id == "deepseek"
                 and value.api_type == "openai_chat_completions"
@@ -265,12 +288,12 @@ class AgentModelService:
                     await self.require_connection(value.connection_id, for_update=True),
                 )
                 if value.is_default:
-                    await self._repository.clear_default(value.purpose)
+                    await self._repository.clear_default()
                 await self._repository.upsert(value)
             await self._repository.commit()
 
     async def set_default(self, model_id: str) -> None:
-        """启用本人模型并设为同用途默认项，不改变连接或进行中的运行"""
+        """启用本人模型并设为默认项，不改变连接或进行中的运行"""
         async with self._write_transaction():
             await self._repository.lock_owner()
             model = await self._repository.get_for_update(model_id)
@@ -280,7 +303,7 @@ class AgentModelService:
                 model_settings(model),
                 await self.require_connection(model.connection_id, for_update=True),
             )
-            await self._repository.set_default(model_id, purpose=model.purpose)
+            await self._repository.set_default(model_id)
             await self._repository.commit()
 
     async def delete_settings(self, model_id: str) -> None:
@@ -346,18 +369,3 @@ class AgentModelService:
                 except BaseException:  # noqa: BLE001 - 保留各异常既有cause，以context交付另一项失败
                     raise chosen
             raise chosen
-
-    async def resolve_image_model(self) -> AgentModelConfig | None:
-        """返回本人启用的默认生图服务，未设置默认项时不调用其他服务"""
-        rows = await self._repository.list_settings()
-        selected = next(
-            (
-                row
-                for row in rows
-                if row.purpose == "image" and row.enabled and row.is_default
-            ),
-            None,
-        )
-        if selected is None:
-            return None
-        return await self.resolve(selected.model_id, purpose="image")

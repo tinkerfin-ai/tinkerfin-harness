@@ -18,12 +18,10 @@ function revealOption(listbox: HTMLElement, option: HTMLElement | null) {
   else if (optionBounds.bottom > bounds.bottom) listbox.scrollTop += optionBounds.bottom - bounds.bottom
 }
 
-export interface ListboxPickerProps<T extends string> {
-  value: T
+interface ListboxPickerBaseProps<T extends string> {
   options: readonly T[]
   open: boolean
   onOpenChange: (open: boolean) => void
-  onChange: (value: T) => void
   triggerLabel: string
   triggerTooltip?: string
   listboxLabel: string
@@ -36,17 +34,21 @@ export interface ListboxPickerProps<T extends string> {
   listboxPortalTarget?: Element | null
   listboxStyle?: CSSProperties
   disabled?: boolean
-  renderTrigger: (value: T) => ReactNode
   renderOption: (option: T, selected: boolean) => ReactNode
 }
 
+/** 单选选择后关闭，多选保持打开并通过 Escape、Tab 或外部点击结束 */
+export type ListboxPickerProps<T extends string> = ListboxPickerBaseProps<T> & (
+  | { multiple?: false; value: T; onChange: (value: T) => void; renderTrigger: (value: T) => ReactNode }
+  | { multiple: true; value: readonly T[]; onChange: (value: T[]) => void; renderTrigger: (value: readonly T[]) => ReactNode }
+)
+
 /** 为不同业务选择器提供一致的 ARIA listbox 键盘与焦点模型 */
-export function ListboxPicker<T extends string>({
-  value,
+export function ListboxPicker<T extends string>(props: ListboxPickerProps<T>) {
+  const {
   options,
   open,
   onOpenChange,
-  onChange,
   triggerLabel,
   triggerTooltip,
   listboxLabel,
@@ -58,9 +60,8 @@ export function ListboxPicker<T extends string>({
   listboxPortalTarget,
   listboxStyle,
   disabled = false,
-  renderTrigger,
   renderOption,
-}: ListboxPickerProps<T>) {
+  } = props
   const generatedId = useId()
   const listboxId = `listbox-${generatedId}`
   const rootRef = useRef<HTMLDivElement>(null)
@@ -78,7 +79,9 @@ export function ListboxPicker<T extends string>({
   const orderedOptions = getOptionGroup
     ? Array.from(groups.values()).flatMap(group => group.options)
     : options
-  const selectedIndex = Math.max(0, orderedOptions.indexOf(value))
+  const isSelected = (option: T) => props.multiple ? props.value.includes(option) : props.value === option
+  const selectedIndex = Math.max(0, orderedOptions.findIndex(isSelected))
+  const wasOpen = useRef(false)
   const [activeIndex, setActiveIndex] = useState(selectedIndex)
 
   const closeAndFocusTrigger = () => {
@@ -91,10 +94,12 @@ export function ListboxPicker<T extends string>({
   }, [disabled, onOpenChange, open])
 
   useLayoutEffect(() => {
-    if (!open) return
-    setActiveIndex(selectedIndex)
-    listboxRef.current?.focus({ preventScroll: true })
-  }, [open, options.length, selectedIndex])
+    if (open && (!wasOpen.current || !props.multiple)) {
+      setActiveIndex(selectedIndex)
+      listboxRef.current?.focus({ preventScroll: true })
+    }
+    wasOpen.current = open
+  }, [open, options.length, selectedIndex, props.multiple])
 
   useLayoutEffect(() => {
     const listbox = listboxRef.current
@@ -175,9 +180,15 @@ export function ListboxPicker<T extends string>({
 
   const choose = (index: number) => {
     const option = orderedOptions[index]
-    if (!option) return
-    onChange(option)
-    closeAndFocusTrigger()
+    if (option === undefined) return
+    if (props.multiple) {
+      setActiveIndex(index)
+      listboxRef.current?.focus({ preventScroll: true })
+      props.onChange(props.value.includes(option) ? props.value.filter(item => item !== option) : [...props.value, option])
+    } else {
+      props.onChange(option)
+      closeAndFocusTrigger()
+    }
   }
 
   const handleListboxKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -199,6 +210,9 @@ export function ListboxPicker<T extends string>({
     } else if (event.key === 'Escape') {
       event.preventDefault()
       closeAndFocusTrigger()
+    } else if (event.key === 'Tab') {
+      // 从触发器继续浏览器的顺序导航，浮层挂载位置不改变表单焦点顺序
+      closeAndFocusTrigger()
     }
   }
 
@@ -209,14 +223,14 @@ export function ListboxPicker<T extends string>({
       className={optionClassName}
       role="option"
       tabIndex={-1}
-      aria-selected={value === option}
+      aria-selected={isSelected(option)}
       data-active={activeIndex === index}
       onClick={() => choose(index)}
       onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') choose(index)
+        if (event.key === 'Enter' || event.key === ' ') { event.stopPropagation(); event.preventDefault(); choose(index) }
       }}
     >
-      {renderOption(option, value === option)}
+      {renderOption(option, isSelected(option))}
     </div>
   )
   let optionIndex = 0
@@ -228,6 +242,7 @@ export function ListboxPicker<T extends string>({
       style={listboxStyle}
       role="listbox"
       aria-label={listboxLabel}
+      aria-multiselectable={props.multiple || undefined}
       aria-activedescendant={`${listboxId}-option-${activeIndex}`}
       tabIndex={-1}
       onKeyDown={handleListboxKeyDown}
@@ -258,7 +273,7 @@ export function ListboxPicker<T extends string>({
         disabled={disabled}
         onClick={() => onOpenChange(!open)}
       >
-        {renderTrigger(value)}
+        {props.multiple ? props.renderTrigger(props.value) : props.renderTrigger(props.value)}
       </button>
       {triggerTooltip && <span id={`${listboxId}-tooltip`} className="ui-tooltip" role="tooltip">{triggerTooltip}</span>}
       {listboxPortalTarget && listbox

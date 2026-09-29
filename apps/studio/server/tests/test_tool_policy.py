@@ -324,3 +324,91 @@ async def test_approval_resume_preserves_distinct_user_requests():
         assert len(calls) == index + 1
         assert sum(event.type == "TOOL_CALL_RESULT" for event in after) == 1
         assert sum(event.type == "RUN_FINISHED" for event in after) == 1
+
+
+@pytest.mark.parametrize("available", [True, False])
+async def test_image_service_visibility_keeps_generic_tools(available):
+    from pydantic import Field
+
+    class VisibleModel(Model):
+        bindings: list[set[str]] = Field(default_factory=list)
+
+        def bind_tools(self, tools, **kwargs):
+            self.bindings.append({item.name for item in tools})
+            return self
+
+    @tool
+    async def generate_image() -> str:
+        """生成图片"""
+        return "image"
+
+    @tool
+    async def capture_browser() -> str:
+        """渲染工作文件"""
+        return "file"
+
+    model = VisibleModel(responses=[AIMessage(content="可执行任务")])
+    runtime = (
+        TinkerFin()
+        .with_namespace("visibility")
+        .build(
+            model=model,
+            tools=[generate_image, capture_browser],
+            middleware=tool_execution_policy(image_generation_available=available),
+        )
+    )
+    events, error = await collect(runtime)
+    assert error is None
+    assert model.bindings
+    assert all(("generate_image" in names) is available for names in model.bindings)
+    assert all(
+        "capture_browser" in names and "write_file" in names for names in model.bindings
+    )
+    assert events[-1].type == "RUN_FINISHED"
+
+
+async def test_removed_image_service_resumes_pending_tool_with_actionable_error():
+    from tinkerfin_studio.api.errors import BusinessException, ServiceErrorCode
+
+    @tool
+    async def generate_image() -> str:
+        """调用本次配置的生图服务"""
+        raise BusinessException(ServiceErrorCode.IMAGE_UNAVAILABLE)
+
+    configured = TinkerFin(checkpointer=InMemorySaver()).with_namespace("removed-image")
+    pending = configured.build(
+        model=Model(responses=[proposal(1, name="generate_image")]),
+        tools=[generate_image],
+        middleware=tool_execution_policy(image_generation_available=True),
+        interrupt_on={"generate_image": True},
+    )
+    events, error = await collect(pending)
+    assert error is None
+    outcome = events[-1].outcome
+    assert isinstance(outcome, RunFinishedInterruptOutcome)
+    resume = AgUiResumeRequest.model_validate(
+        {
+            "entries": [
+                {
+                    "interruptId": item.id,
+                    "status": "resolved",
+                    "payload": {"type": "approve"},
+                }
+                for item in outcome.interrupts
+            ]
+        }
+    )
+    resumed = configured.build(
+        model=Model(responses=[AIMessage(content="请配置图片生成服务")]),
+        tools=[generate_image],
+        middleware=tool_execution_policy(image_generation_available=False),
+        interrupt_on={"generate_image": True},
+    )
+    result, error = await collect(resumed, run_id="resumed", resume=resume)
+    assert error is None
+    outputs = [item for item in result if item.type == "TOOL_CALL_RESULT"]
+    assert len(outputs) == 1
+    assert "尚未配置可用的 AI 图片生成服务" in outputs[0].content
+    assert "not a valid tool" not in outputs[0].content
+    assert sum(item.type == "RUN_FINISHED" for item in result) == 1
+    assert not any(item.type == "RUN_ERROR" for item in result)

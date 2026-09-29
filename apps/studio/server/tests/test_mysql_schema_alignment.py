@@ -33,6 +33,7 @@ from tinkerfin_studio.conversation.models import (
 )
 from tinkerfin_studio.infrastructure.database import Base
 from tinkerfin_studio.models.entity import AgentModel, ModelConnection
+from tinkerfin_studio.services.entity import ServiceConfig
 from tinkerfin_studio.skills.entity import (
     SkillImportDraft,
     SkillInstallation,
@@ -56,6 +57,7 @@ _EXPECTED_TABLES = frozenset(
         "conversation_attachments",
         "agent_models",
         "model_connections",
+        "service_configs",
         "conversation_threads",
         "conversation_run_registrations",
         "conversation_interrupt_claims",
@@ -84,6 +86,7 @@ _BUSINESS_MODELS = (
     AttachmentReference,
     AgentModel,
     ModelConnection,
+    ServiceConfig,
     ConversationThread,
     ConversationRunRegistration,
     ConversationInterruptClaim,

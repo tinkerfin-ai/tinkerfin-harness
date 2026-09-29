@@ -22,6 +22,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 from tinkerfin_studio.attachments.processing import (
     MAX_FILE_BYTES,
+    MAX_PIXELS,
     image_variant,
 )
 
@@ -53,12 +54,46 @@ class _ImagePreview(BaseModel):
     )
 
 
+class _ConvertImage(BaseModel):
+    """将一次生成的首帧导出为选定格式，不再次调用生图服务"""
+
+    model_config = ConfigDict(extra="forbid")
+    operation: Literal["convert_image"]
+    data: str = Field(max_length=14_000_000, description="原图片的 Base64 内容")
+    format: Literal["png", "jpeg", "webp"]
+
+
 _DOCUMENT_REQUEST = TypeAdapter(
     Annotated[
-        _GenerateDocument | _ImagePreview,
+        _GenerateDocument | _ImagePreview | _ConvertImage,
         Field(discriminator="operation"),
     ]
 )
+
+
+def convert_image(payload: _ConvertImage) -> dict[str, JsonValue]:
+    """保留尺寸，透明图片导出 JPEG 时使用白色背景"""
+    data = base64.b64decode(payload.data, validate=True)
+    if len(data) > MAX_FILE_BYTES:
+        raise ValueError("原图片超过大小限制")
+    output = io.BytesIO()
+    with Image.open(io.BytesIO(data)) as original:
+        if original.width * original.height > MAX_PIXELS:
+            raise ValueError("图片像素超过限制")
+        original.load()
+        with original.convert("RGBA") as rgba:
+            if payload.format == "jpeg":
+                with Image.new("RGB", rgba.size, "white") as rgb:
+                    rgb.paste(rgba, mask=rgba.getchannel("A"))
+                    rgb.save(output, "JPEG", quality=95)
+            elif payload.format == "webp":
+                rgba.save(output, "WEBP", lossless=True)
+            else:
+                rgba.save(output, "PNG")
+    result = output.getvalue()
+    if len(result) > MAX_FILE_BYTES:
+        raise ValueError("导出图片超过 10 MiB")
+    return {"data": base64.b64encode(result).decode("ascii")}
 
 
 def preview_image(payload: _ImagePreview) -> dict[str, JsonValue]:
@@ -155,6 +190,8 @@ def main() -> None:
         )
         if isinstance(payload, _ImagePreview):
             result = preview_image(payload)
+        elif isinstance(payload, _ConvertImage):
+            result = convert_image(payload)
         else:
             result = generate(payload)
         encoded = json.dumps(result, ensure_ascii=False)

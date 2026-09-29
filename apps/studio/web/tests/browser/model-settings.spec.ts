@@ -9,23 +9,25 @@ const connections = [
   { connection_id:'ollama', display_name:'本地 Ollama', provider_id:'ollama', api_type:'ollama', base_url:'http://localhost:11434', auth_type:'none', has_key:false },
 ]
 const models = [
-  {model_id:'pro',connection_id:'deepseek',display_name:'DeepSeek V4 Pro',purpose:'chat',model_name:'deepseek-v4-pro',image_support:'unknown',reasoning_enabled:true,enabled:true,is_default:true,sort_order:0,generation_options:{},chat_options},
-  {model_id:'flash',connection_id:'deepseek',display_name:'DeepSeek V4 Flash',purpose:'chat',model_name:'deepseek-v4-flash',image_support:'unknown',reasoning_enabled:true,enabled:true,is_default:false,sort_order:1,generation_options:{},chat_options},
-  {model_id:'qwen',connection_id:'qwen',display_name:'Qwen Plus',purpose:'chat',model_name:'qwen-plus',image_support:'unknown',reasoning_enabled:false,enabled:true,is_default:false,sort_order:0,generation_options:{},chat_options},
-  {model_id:'local',connection_id:'ollama',display_name:'Qwen3 14B',purpose:'chat',model_name:'qwen3:14b',image_support:'unknown',reasoning_enabled:true,enabled:true,is_default:false,sort_order:0,generation_options:{},chat_options},
+  {model_id:'pro',connection_id:'deepseek',display_name:'DeepSeek V4 Pro',model_name:'deepseek-v4-pro',image_support:'unknown',reasoning_enabled:true,enabled:true,is_default:true,sort_order:0,chat_options},
+  {model_id:'flash',connection_id:'deepseek',display_name:'DeepSeek V4 Flash',model_name:'deepseek-v4-flash',image_support:'unknown',reasoning_enabled:true,enabled:true,is_default:false,sort_order:1,chat_options},
+  {model_id:'qwen',connection_id:'qwen',display_name:'Qwen Plus',model_name:'qwen-plus',image_support:'unknown',reasoning_enabled:false,enabled:true,is_default:false,sort_order:0,chat_options},
+  {model_id:'local',connection_id:'ollama',display_name:'Qwen3 14B',model_name:'qwen3:14b',image_support:'unknown',reasoning_enabled:true,enabled:true,is_default:false,sort_order:0,chat_options},
 ]
 async function setup(page: Page, crowded = false) {
   // 布局测量使用静态画面，避免把弹窗入场过程记录为尺寸基线
   await page.emulateMedia({ reducedMotion: 'reduce' })
-  const savedModels = crowded ? [...models, ...Array.from({length: 20}, (_, index) => ({...models[1], model_id: `extra-${index}`, display_name: `Model ${index}`, model_name: `model-${index}`}))] : models
+  const unknown = { automatic: 'unknown', effective: 'unknown', source: 'unknown' }
+  const savedModels = (crowded ? [...models, ...Array.from({length: 20}, (_, index) => ({...models[1], model_id: `extra-${index}`, display_name: `Model ${index}`, model_name: `model-${index}`}))] : models).map(model => ({ ...model, image_input_capability: unknown }))
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname
     let data: unknown = {}
     if (path === '/api/auth/me') data = {expires_at:'2099-01-01T00:00:00.000Z',user}
     else if (path === '/api/skills/installations') data = []
     else if (path === '/api/models') data = {items:models.map(model=>({modelId:model.model_id,displayName:model.display_name,connectionId:model.connection_id,connectionDisplayName:connections.find(connection=>connection.connection_id===model.connection_id)!.display_name,reasoningEnabled:model.reasoning_enabled,isDefault:model.is_default})),defaultModelId:'pro'}
+    else if (path === '/api/models/input-capabilities') data = { image_input_capability: unknown }
     else if (path === '/api/models/settings') data = { models: savedModels, connections, providers:[{provider_id:'custom',display_name:'自定义提供方',api_type:'openai_chat_completions',base_url:'',auth_type:'api_key',models:[]},...connections.map(connection=>({...connection,models:[]})), ...Array.from({length:15}, (_, index) => ({provider_id:`test-${index}`,display_name:`Provider ${index}`,api_type:'openai_chat_completions',base_url:'https://example.invalid',auth_type:'api_key',models:[]}))] }
-    else if (path.endsWith('/models')) data = {outcome:'success',code:'models_received',items:[{model_name:'qwen3:14b',display_name:'Qwen3 14B'},{model_name:'qwen3:8b',display_name:'Qwen3 8B'}]}
+    else if (path.endsWith('/models')) data = {outcome:'success',code:'models_received',items:[{model_name:'qwen3:14b',display_name:'Qwen3 14B',image_input_capability:unknown},{model_name:'qwen3:8b',display_name:'Qwen3 8B',image_input_capability:unknown}]}
     else if (path === '/api/conversation/config') data = {dayRanges:[7,30]}
     else if (path === '/api/conversation/history') data = {items:[],nextCursor:null}
     await route.fulfill({json:{code:0,message:'success',data}})
@@ -96,7 +98,7 @@ for (const language of ['zh-CN','en'] as const) for (const theme of ['light','da
     await dialog.getByRole('navigation',{name:language==='en'?'Model settings navigation':'模型配置导航'}).getByRole('button',{name:language==='en'?'Models':'模型配置',exact:true}).click()
     await dialog.getByRole('button',{name:language==='en'?'Configure Qwen3 14B':'配置模型 Qwen3 14B'}).click()
     await expect(dialog.getByLabel('Model ID',{exact:true})).toHaveValue('qwen3:14b')
-    await expect(dialog.getByRole('button',{name:language==='en'?'Image input capability':'图片输入能力',exact:true})).toHaveText(language==='en'?'Use model default':'使用模型默认值')
+    await expect(dialog.getByRole('button',{name:language==='en'?'Image input':'图片输入',exact:true})).toContainText(language==='en'?'Auto · Unknown':'自动 · 未识别')
     await page.screenshot({path:testInfo.outputPath('model-form.png'),animations:'disabled'})
     expect(failures).toEqual([])
   })
@@ -208,24 +210,6 @@ for (const language of ['zh-CN', 'en'] as const) for (const theme of ['light', '
     await expect(stop).toHaveAttribute('aria-invalid','true')
     await page.screenshot({path:testInfo.outputPath('parameter-error.png'),animations:'disabled'})
     await stop.fill('')
-    await dialog.getByRole('radio', {name:en?'Image generation':'图片生成', exact:true}).check()
-    const advanced = dialog.locator('details').filter({has:page.getByText(en?'Advanced parameters':'高级参数', {exact:true})})
-    await advanced.locator('summary').click()
-    const editor = dialog.getByRole('textbox', {name:en?'Advanced parameters JSON':'高级参数 JSON', exact:true})
-    await expect(editor).toBeVisible()
-    await expect(editor).toHaveCSS('font-weight', '400')
-    await expect(editor).toHaveCSS('font-family', /JetBrains Mono/)
-    for (const heading of await dialog.getByRole('heading').all()) await expect(heading).toHaveCSS('font-weight', '400')
-    await editor.fill('{')
-    await expect(editor).toHaveAttribute('aria-invalid','true')
-    for (const width of [320,1440]) {
-      await page.setViewportSize({width,height:960})
-      await advanced.scrollIntoViewIfNeeded()
-      const box = (await advanced.boundingBox())!
-      const text = (await advanced.locator('p').first().boundingBox())!
-      expect(text.x - box.x).toBeGreaterThanOrEqual(12)
-      await page.screenshot({path:testInfo.outputPath(`image-error-${width}.png`),animations:'disabled'})
-    }
     await dialog.getByRole('navigation',{name:en?'Model settings navigation':'模型配置导航'}).getByRole('button',{name:en?'Models':'模型配置',exact:true}).click()
     await dialog.getByRole('button', {name:en?'Connection settings':'连接设置',exact:true}).click()
     const form = dialog.getByRole('region', {name:en?'Models':'模型配置',exact:true})
@@ -300,4 +284,86 @@ for (const theme of ['light','dark'] as const) test(`语言选择与外观选项
     await dialog.getByRole('listbox',{name:'界面语言',exact:true}).press('Escape')
     await page.screenshot({path:testInfo.outputPath(`language-${width}.png`),animations:'disabled'})
   }
+})
+
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`模型默认标识与控件尺度 ${theme}`, async ({ page }, testInfo) => {
+    await setup(page)
+    await openSettings(page, 'zh-CN', theme)
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByText('默认对话', { exact: true })).toBeVisible()
+    const providerItems = dialog.getByRole('navigation', { name: '提供方', exact: true }).getByRole('button')
+    const first = await providerItems.nth(0).boundingBox()
+    const second = await providerItems.nth(1).boundingBox()
+    expect(first).not.toBeNull()
+    expect(second).not.toBeNull()
+    expect(second!.y - (first!.y + first!.height)).toBeGreaterThanOrEqual(8)
+    expect(first!.height).toBe(46)
+    const borders = await providerItems.nth(0).evaluate(element => {
+      const style = getComputedStyle(element)
+      return [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth]
+    })
+    expect(borders).toEqual(['0px', '0px', '0px', '0px'])
+    const fetchButton = dialog.getByRole('button', { name: '获取模型', exact: true })
+    const addButton = dialog.getByRole('button', { name: '手动添加', exact: true })
+    const buttonStyle = (element: HTMLElement) => {
+      const style = getComputedStyle(element)
+      return [style.height, style.padding, style.border, style.borderRadius, style.backgroundColor]
+    }
+    expect(await fetchButton.evaluate(buttonStyle)).toEqual(await addButton.evaluate(buttonStyle))
+    expect((await dialog.getByRole('textbox', { name: '搜索提供方或模型' }).evaluate(element => element.closest('.ui-text-field__control')!.getBoundingClientRect().height))).toBe(40)
+    await providerItems.nth(1).hover()
+    await page.screenshot({ path: testInfo.outputPath('grouped-models.png'), animations: 'disabled' })
+    await dialog.getByRole('button', { name: '配置模型 DeepSeek V4 Pro' }).click()
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 960 })
+      const bounds = await dialog.evaluate(element => ({ scroll: element.scrollWidth, width: element.clientWidth }))
+      expect(bounds.scroll).toBeLessThanOrEqual(bounds.width + 1)
+      const inputHeight = await dialog.getByRole('textbox', { name: 'Model ID', exact: true }).evaluate(element => element.closest('.ui-text-field__control')!.getBoundingClientRect().height)
+      await expect(dialog.getByRole('radiogroup', { name: '用途' })).toHaveCount(0)
+      expect((await dialog.getByRole('button', { name: '图片输入', exact: true }).boundingBox())!.height).toBe(inputHeight)
+      const summary = dialog.getByText('生成参数', { exact: true })
+      expect(await summary.evaluate(element => element.closest('details')!.getBoundingClientRect().height)).toBe(inputHeight)
+      await summary.hover()
+      expect(await summary.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+      await page.screenshot({ path: testInfo.outputPath(`capability-${width}.png`), animations: 'disabled' })
+    }
+    await dialog.getByText('生成参数', { exact: true }).click()
+    const reasoning = dialog.getByRole('button', { name: '推理强度', exact: true })
+    await reasoning.click()
+    await dialog.getByRole('option', { name: '高', exact: true }).click()
+    await expect(reasoning).toHaveText('高')
+    await reasoning.click()
+    await dialog.getByRole('listbox', { name: '推理强度' }).press('Home')
+    await dialog.getByRole('listbox', { name: '推理强度' }).press('Enter')
+    await expect(reasoning).toHaveText('使用模型默认值')
+    await dialog.getByText('生成参数', { exact: true }).click()
+    await page.emulateMedia({ forcedColors: 'active', reducedMotion: 'reduce' })
+    expect(await dialog.evaluate(element => { let opacity = 1; for (let current: Element | null = element; current; current = current.parentElement) opacity *= Number(getComputedStyle(current).opacity); return opacity })).toBe(1)
+    await page.screenshot({ path: testInfo.outputPath('forced-colors.png'), animations: 'disabled' })
+  })
+}
+
+test.describe('模型表单统一触控尺度', () => {
+  test.use({ hasTouch: true, viewport: { width: 320, height: 960 } })
+  test('英文人工图片能力保持一行和48px高度', async ({ page }, testInfo) => {
+    await setup(page)
+    await openSettings(page, 'en', 'dark')
+    const dialog = page.getByRole('dialog')
+    const searchHeight = await dialog.getByRole('textbox', { name: 'Search providers or models' }).evaluate(element => element.closest('.ui-text-field__control')!.getBoundingClientRect().height)
+    expect(searchHeight).toBe(48)
+    await expect(dialog.getByText('Chat default', { exact: true })).toBeVisible()
+    await dialog.getByRole('button', { name: 'Configure DeepSeek V4 Pro' }).click()
+    const capability = dialog.getByRole('button', { name: 'Image input', exact: true })
+    await capability.click()
+    await page.getByRole('option', { name: 'Does not support image input', exact: true }).click()
+    await expect(capability).toHaveText('Unsupported')
+    expect((await capability.boundingBox())!.height).toBe(48)
+    const labelBox = (await dialog.getByText('Image input', { exact: true }).boundingBox())!
+    const controlBox = (await capability.boundingBox())!
+    expect(labelBox.y + labelBox.height / 2).toBe(controlBox.y + controlBox.height / 2)
+    expect(controlBox.x + controlBox.width).toBeLessThanOrEqual(320)
+    await page.screenshot({ path: testInfo.outputPath('english-manual-capability.png'), animations: 'disabled' })
+  })
 })

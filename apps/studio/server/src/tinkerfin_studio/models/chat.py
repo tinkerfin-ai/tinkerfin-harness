@@ -6,6 +6,7 @@ from typing import Literal
 import httpx
 from langchain_core.language_models import BaseChatModel, ModelProfile
 
+from tinkerfin_studio.models.capabilities import resolve_image_input
 from tinkerfin_studio.models.providers import (
     ChatModelOptions,
     create_deepseek_model,
@@ -53,9 +54,16 @@ def _input_profile(
         profile.pop("audio_outputs", None)
         profile.pop("video_outputs", None)
     profile["image_inputs"] = (
-        profile.get("image_inputs") is True
-        if config.image_support == "unknown"
-        else config.image_support == "supported"
+        resolve_image_input(
+            provider_id=config.provider_id,
+            api_type="ollama"
+            if config.provider == "ollama"
+            else "openai_chat_completions",
+            base_url=config.base_url,
+            model_name=config.model_name,
+            image_support=config.image_support,
+        ).effective
+        == "supported"
     )
     # 未确认的媒体字段显式为 False，使原生文件工具与附件读取遵循相同声明
     profile["pdf_inputs"] = profile.get("pdf_inputs") is True

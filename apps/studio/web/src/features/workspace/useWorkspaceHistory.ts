@@ -285,10 +285,15 @@ export const mergeHistoryConversations = (
       && item.lastRunId !== existing.trace?.headRunId
     const pendingChanged = summary.pendingInteractionKind !== existing.pendingInteractionKind
     const statusChanged = summary.runStatus !== existing.runStatus
-    // 浏览器自有 live stream 优先；已水化快照只拒绝较旧摘要，不能屏蔽更新的权威状态
+    // 同一主运行的确定终态不会重新执行；新主运行和未终止的审批状态仍需重验
+    const sameTerminalHead = existing.trace
+      && item.lastRunId === existing.trace.headRunId
+      && ['succeeded', 'failed', 'cancelled', 'abandoned'].includes(existing.trace.status.execution)
+    // 浏览器正在接收的流优先；其他未确认终态的详情按摘要新鲜度重验
     const advanceHydratedRuntime = Boolean(
       existing.isHydrated
       && existing.runStatus !== 'streaming'
+      && !sameTerminalHead
       && summaryIsNotOlder
       && (headChanged || pendingChanged || statusChanged || summaryTime > existingTime),
     )
@@ -298,7 +303,7 @@ export const mergeHistoryConversations = (
       ...existing,
       ...mergeConversationTitle(existing, item),
       pinned: item.pinned,
-      updatedAt: preserveRuntime ? existing.updatedAt : item.updatedAt,
+      updatedAt: summaryIsNotOlder ? item.updatedAt : existing.updatedAt,
       model: preserveRuntime ? existing.model : summary.model,
       accessMode: preserveRuntime ? existing.accessMode : summary.accessMode,
       activeRunId: preserveRuntime ? existing.activeRunId : summary.activeRunId,

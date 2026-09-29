@@ -70,7 +70,7 @@ describe('ToolCallRow presentation', () => {
       </ToolCallRow>,
     )
 
-    expect(screen.getByText('Todos', { selector: '.tool-row-title' }))
+    expect(screen.getByText('Todos', { selector: '.conversation-detail-title' }))
       .toBeInTheDocument()
     expect(screen.getByText('1/2')).toBeInTheDocument()
     expect(screen.queryByText('/workspace/report.md')).not.toBeInTheDocument()
@@ -83,7 +83,7 @@ describe('ToolCallRow presentation', () => {
       </ToolCallRow>,
     )
 
-    expect(screen.getByText('Todos', { selector: '.tool-row-title' }))
+    expect(screen.getByText('Todos', { selector: '.conversation-detail-title' }))
       .toBeInTheDocument()
     expect(screen.queryByText('/workspace/report.md')).not.toBeInTheDocument()
   })

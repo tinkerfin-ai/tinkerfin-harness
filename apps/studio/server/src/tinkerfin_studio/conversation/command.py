@@ -79,6 +79,23 @@ class ConversationCommandService:
         """先删权威 Trace，再删恢复、传输与 Studio 业务记录"""
 
         thread = await self._require_thread(thread_id)
+        if thread.status != "deleting":
+            await self._repository.commit()
+            try:
+                await self._resources.conversation_trace.recover(thread_pk=thread.id)
+            except TracingError as error:
+                raise SystemException(
+                    ConversationErrorCode.TRACE_UNAVAILABLE
+                ) from error
+            except MessagingError as error:
+                raise SystemException(
+                    ConversationErrorCode.MESSAGING_UNAVAILABLE
+                ) from error
+            thread = await self._repository.reload_thread(
+                user_id=self._user_id, thread_id=thread_id
+            )
+            if thread is None:
+                raise BusinessException(ConversationErrorCode.NOT_FOUND)
         if thread.last_run_id is None:
             raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
         thread_pk = thread.id
@@ -87,7 +104,9 @@ class ConversationCommandService:
         )
         retrying = thread.status == "deleting"
         await self._repository.commit()
-        previous_status = await self._mark_deleting(thread_pk)
+        previous_status = await self._mark_deleting(
+            thread_pk, expected_run_id=identity.run_id
+        )
         destruction_started = retrying
         try:
             await self._require_inactive_transport(identity)
@@ -152,7 +171,7 @@ class ConversationCommandService:
         if status in {"running", "cancel_requested"}:
             raise BusinessException(ConversationErrorCode.DELETE_CONFLICT)
 
-    async def _mark_deleting(self, thread_pk: int) -> str:
+    async def _mark_deleting(self, thread_pk: int, *, expected_run_id: str) -> str:
         """短事务检查运行状态并阻止新的 Run 注册"""
 
         locked = await self._repository.lock_thread(thread_pk)
@@ -160,6 +179,9 @@ class ConversationCommandService:
             await self._repository.rollback()
             raise BusinessException(ConversationErrorCode.NOT_FOUND)
         previous_status = locked.status
+        if locked.last_run_id != expected_run_id:
+            await self._repository.rollback()
+            raise BusinessException(ConversationErrorCode.DELETE_CONFLICT)
         if previous_status != "deleting" and (
             previous_status == "running"
             or await self._repository.has_running_run(thread_pk)

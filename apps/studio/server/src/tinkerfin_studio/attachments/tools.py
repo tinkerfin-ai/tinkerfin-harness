@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import base64
 import json
+from dataclasses import asdict
 from typing import Literal
 
-from langchain_core.tools import BaseTool, tool
+from langchain_core.tools import BaseTool, ToolException, tool
 from pydantic import JsonValue, TypeAdapter
 
 from tinkerfin.tools import ToolRuntime
 from tinkerfin_sandbox import RootedOpenSandboxBackend
+from tinkerfin_studio.api.errors import BusinessException, ServiceErrorCode
 from tinkerfin_studio.attachments.documents import DocumentProcessor
-from tinkerfin_studio.attachments.generation import generate_image_bytes
 from tinkerfin_studio.attachments.service import AttachmentService
 from tinkerfin_studio.attachments.workspace_tools import save_work_file
-from tinkerfin_studio.models.schemas import AgentModelConfig
+from tinkerfin_studio.services.http import generate_image_bytes, image_extension
+from tinkerfin_studio.services.schemas import ImageConfig
+from tinkerfin_studio.services.service import ResolvedService
 
 
 def build_attachment_tools(
@@ -25,8 +28,7 @@ def build_attachment_tools(
     user_id: int,
     thread_id: str | None = None,
     collection_id: str | None = None,
-    image_model: AgentModelConfig | None,
-    model_allowed_origins: tuple[str, ...] = (),
+    image_service: ResolvedService | None,
 ) -> list[BaseTool]:
     """把当前用户和会话权限固定到文件工具，不接受模型传入归属信息"""
 
@@ -139,38 +141,70 @@ def build_attachment_tools(
     async def generate_image(
         prompt: str, runtime: ToolRuntime[None, RootedOpenSandboxBackend]
     ) -> str:
-        """使用本人默认生图服务生成工作图片，不自动交付或重复收费请求
+        """使用本次运行绑定的图片生成服务生成工作图片，不自动交付或重复收费请求
 
+        只请求一次生图服务，再按设置导出所选格式。返回 files 中的每个文件均可独立交付。
         检查图片时可先使用 preview_file_path，交付时使用 file_path 原图。
 
         Args:
             prompt: 图片描述，长度为 1 到 4000 字符
 
         Returns:
-            工作文件描述；大图片另含 preview_file_path，交付使用 file_path 原图
+            包含 files 列表的 JSON；各项为工作文件描述，大图片另含预览路径
 
         Raises:
-            ValueError: 未设置默认生图服务、描述或供应商响应不合法
+            BusinessException: 未配置可用的图片生成服务
+            ToolException: 原图已保存，但所选格式未全部导出，结果包含原图路径
+            ValueError: 描述或供应商响应不合法
             OSError: 工作文件保存失败
             OpenSandboxError: 工作区不可用或传输失败
             httpx.HTTPError: 生图或下载发生网络错误
             TimeoutError: 图片预览生成超时"""
-        data = await generate_image_bytes(
-            image_model, prompt, allowed_origins=model_allowed_origins
-        )
-        if data.startswith(b"\x89PNG\r\n\x1a\n"):
-            extension = "png"
-        elif data.startswith(b"\xff\xd8\xff"):
-            extension = "jpg"
-        elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-            extension = "webp"
-        else:
-            raise ValueError("生图服务须返回 PNG、JPEG 或 WebP 图片")
-        saved = await save_work_file(
+        if image_service is None:
+            raise BusinessException(ServiceErrorCode.IMAGE_UNAVAILABLE)
+        image_config = image_service.configuration
+        if not isinstance(image_config, ImageConfig):
+            raise TypeError("当前服务不能用于图片生成")
+        data = await generate_image_bytes(image_service, prompt)
+        extension = image_extension(data)
+        formats = image_config.output_formats
+        original = await save_work_file(
             runtime.workspace, processor, name=f"生成图片.{extension}", data=data
         )
-        return saved.tool_result()
+        results = []
+        for output_format in formats or ["jpeg" if extension == "jpg" else extension]:
+            exported = data
+            if output_format != ("jpeg" if extension == "jpg" else extension):
+                try:
+                    converted = await processor.run(
+                        {
+                            "operation": "convert_image",
+                            "data": base64.b64encode(data).decode("ascii"),
+                            "format": output_format,
+                        }
+                    )
+                except (ValueError, TimeoutError) as error:
+                    raise ToolException(
+                        "图片已生成并保存，但所选格式未全部导出。请继续处理已有原图，不要再次生成："
+                        + original.tool_result()
+                    ) from error
+                encoded = converted.get("data")
+                if not isinstance(encoded, str):
+                    raise TypeError("图片转换未返回文件")
+                exported = base64.b64decode(encoded, validate=True)
+                saved = await save_work_file(
+                    runtime.workspace,
+                    processor,
+                    name=f"生成图片.{output_format}",
+                    data=exported,
+                )
+            else:
+                saved = original
+            results.append(asdict(saved))
+        return json.dumps({"files": results}, ensure_ascii=False)
 
+    # 只回显本工具构造的恢复说明和工作文件路径，不包含供应商或处理器异常正文
+    generate_image.handle_tool_error = True
     return [
         list_attachments,
         import_attachment,

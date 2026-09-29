@@ -7,6 +7,8 @@ from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field, JsonValue, computed_field, field_validator
 
+from tinkerfin_contracts import MessageSource
+
 from ._models import TraceModel
 from .facts import TraceEvent, TraceSemanticFact
 from .graph import TraceGraphDelta
@@ -23,6 +25,9 @@ class TraceMessage(TraceModel, frozen=True):
     id: str
     trace_seq: int = Field(ge=1)
     source_id: str | None = None
+    source: MessageSource | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     graph_namespace: tuple[str, ...] = ()
     run_id: str
     role: Literal["user", "assistant", "tool", "system", "other"]

@@ -1246,39 +1246,42 @@ const reduceConversationEvent = (
       }))
     }
 
-    case "MESSAGES_SNAPSHOT":
-      // 快照按工具调用 ID 同步附件；已有卡片的文本、运行状态和来源仍由实时事件维护
-      return {
-        ...conversation,
-        messages: conversation.messages.length === 0
-          ? event.messages
-            .filter((message) => message.role === "user" || message.role === "assistant" || message.role === "tool")
-            .map((message): Message => message.role === "tool" ? {
-              id: message.toolCallId!,
-              role: "tool",
-              content: "tool",
-              attachments: message.attachments ?? messageAttachments(message.content),
-              createdAt: nowIso(),
-              meta: { toolCallId: message.toolCallId, result: messageText(message.content), status: message.error ? "failed" : "completed" },
-            } : {
-              id: message.id,
-              role: message.role === "user" ? "user" : "assistant",
-              content: messageText(message.content),
-              attachments: message.attachments ?? messageAttachments(message.content),
-              createdAt: nowIso(),
-            })
-          : conversation.messages.map(message => {
-              const snapshot = event.messages.find(item => item.role === message.role && (
-                message.role === "tool"
-                  ? item.toolCallId === message.meta?.toolCallId
-                  : item.id === message.id
-              ))
-              return snapshot ? {
-                ...message,
-                attachments: snapshot.attachments ?? messageAttachments(snapshot.content),
-              } : message
-            }),
+    case "MESSAGES_SNAPSHOT": {
+      const snapshot = event.messages.filter(message => message.role === 'user' || message.role === 'assistant' || message.role === 'tool')
+      const asMessage = (message: typeof snapshot[number]): Message => message.role === 'tool' ? {
+        id: message.toolCallId!, role: 'tool', content: 'tool',
+        attachments: message.attachments ?? messageAttachments(message.content), createdAt: nowIso(),
+        meta: { toolCallId: message.toolCallId, result: messageText(message.content), status: message.error ? 'failed' : 'completed' },
+      } : {
+        id: message.id,
+        role: message.role === 'user' ? message.source?.kind === 'context' ? 'context' : 'user' : 'assistant',
+        content: messageText(message.content),
+        attachments: message.attachments ?? messageAttachments(message.content), createdAt: nowIso(),
+        meta: message.source ? { source: message.source, runId: conversation.activeRunId } : undefined,
       }
+      if (conversation.messages.length === 0) return { ...conversation, messages: snapshot.map(asMessage) }
+      const messages = conversation.messages.map(message => {
+        const saved = snapshot.find(item => message.role === 'tool'
+          ? item.role === 'tool' && item.toolCallId === message.meta?.toolCallId
+          : item.id === message.id)
+        return saved ? {
+          ...message,
+          attachments: saved.attachments ?? messageAttachments(saved.content),
+          ...(saved.source ? { meta: { ...message.meta, source: saved.source } } : {}),
+        } : message
+      })
+      // 中断快照补齐可见提问的上下文；不把窗口外的旧消息重新塞入当前分页
+      for (const [index, message] of snapshot.entries()) {
+        if (message.role !== 'user' || message.source?.kind !== 'context' || messages.some(item => item.id === message.id)) continue
+        const owner = snapshot.slice(0, index).reverse().find(item => item.role === 'user' && item.source?.kind !== 'context')
+        const ownerIndex = owner ? messages.findIndex(item => item.role === 'user' && item.id === owner.id) : -1
+        if (ownerIndex < 0) continue
+        let insertion = ownerIndex + 1
+        while (messages[insertion]?.role === 'context') insertion += 1
+        messages.splice(insertion, 0, { ...asMessage(message), meta: { source: message.source, runId: messages[ownerIndex].meta?.runId } })
+      }
+      return { ...conversation, messages }
+    }
 
     case "STATE_SNAPSHOT":
       return syncCompactionState(syncEffectiveModeFromState(syncTodosFromState({

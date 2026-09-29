@@ -63,6 +63,10 @@ def _message(record: NativeMessageRecord) -> BaseMessage:
         "content": record.content,
         "response_metadata": record.response_metadata,
     }
+    if record.source is not None:
+        values["additional_kwargs"] = {
+            "tinkerfin_source": record.source.model_dump(mode="json")
+        }
     if record.message_type in {"assistant", "assistant_chunk"}:
         values["usage_metadata"] = record.usage_metadata
         if record.message_type == "assistant_chunk":

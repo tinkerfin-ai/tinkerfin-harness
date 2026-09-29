@@ -72,6 +72,7 @@ from tinkerfin_studio.conversation.trace_responses import (
 from tinkerfin_tracing import (
     InvalidTraceCursor,
     TraceGraphFilter,
+    TraceMessage,
     Tracer,
     TraceThread,
     TraceThreadNotFound,
@@ -82,6 +83,17 @@ _HISTORY_PAGE_SIZE_MAX = 100
 _HISTORY_DAY_RANGES = (7, 30)
 logger = logging.getLogger(__name__)
 _PENDING_KIND = TypeAdapter(PendingInteractionKind | None)
+
+
+# user 角色还承载应用上下文；失败提示只关联真实提问
+
+
+def _is_user_question(message: TraceMessage) -> bool:
+    return (
+        message.role == "user"
+        and not message.graph_namespace
+        and (message.source is None or message.source.kind == "user")
+    )
 
 
 class _HistoryCursorPayload(BaseModel):
@@ -361,7 +373,7 @@ class ConversationHistoryService:
             user_runs = {
                 item.id: item.run_id
                 for item in trace.messages
-                if item.role == "user" and not item.graph_namespace
+                if _is_user_question(item)
             }
             last_status = trace.status
             last_completeness = trace.completeness
@@ -372,7 +384,7 @@ class ConversationHistoryService:
                         for message_id in update.messages.removes:
                             user_runs.pop(message_id, None)
                         for item in update.messages.upserts:
-                            if item.role == "user" and not item.graph_namespace:
+                            if _is_user_question(item):
                                 user_runs[item.id] = item.run_id
                         task_trace_update = None
                         if include_task_trace:
@@ -603,11 +615,7 @@ class ConversationHistoryService:
             messages=snapshot.messages,
             runFailures=visible_run_failures(
                 trace.projections[FAILURE_PROJECTION],
-                {
-                    item.run_id
-                    for item in snapshot.messages
-                    if item.role == "user" and not item.graph_namespace
-                },
+                {item.run_id for item in snapshot.messages if _is_user_question(item)},
             ),
             reasoning=snapshot.reasoning,
             graph=ConversationGraph.from_graph(snapshot.graph),

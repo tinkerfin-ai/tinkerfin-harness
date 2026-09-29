@@ -5,7 +5,7 @@ import type { AgentModelCatalogItem } from '../../src/api/models/types'
 const user = { user_id: 1, username: 'provider-test', display_name: '提供方分组验收', avatar_url: null, roles: [], disabled: false }
 const models: AgentModelCatalogItem[] = Array.from({ length: 15 }, (_, index) => ({
   modelId: `model-${index}`,
-  displayName: index < 3 ? ['DeepSeek-V4-Pro', 'DeepSeek-V4-Flash', 'DeepSeek-V4-Flash-Vision'][index] : `Qwen ${index} 长名称模型用于验证菜单中的文字省略`,
+  displayName: index < 3 ? ['DeepSeek-V4-Pro', 'DeepSeek-V4-Flash', 'DeepSeek-V4-Flash-Vision'][index] : `Qwen ${index} 长名称模型用于验证菜单中的完整名称`,
   connectionId: index < 3 ? 'deepseek' : 'custom',
   connectionDisplayName: index < 3 ? 'DeepSeek' : '自定义提供方连接名称较长时保留完整可访问名称',
 reasoningEnabled: false, isDefault: index === 0,
@@ -57,7 +57,11 @@ for (const theme of ['light', 'dark']) {
         const box = (await menu.boundingBox())!
         expect(box.x).toBeGreaterThanOrEqual(0)
         expect(box.x + box.width).toBeLessThanOrEqual(width)
-        expect(await menu.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
+        const label = menu.getByText(models[2].displayName, { exact: true })
+        const labelStyle = await label.evaluate(element => ({ whiteSpace: getComputedStyle(element).whiteSpace, overflow: getComputedStyle(element).textOverflow }))
+        expect(labelStyle.whiteSpace).toBe('nowrap')
+        expect(labelStyle.overflow).not.toBe('ellipsis')
+        await expect(menu.getByText('默认', { exact: true })).toBeVisible()
         const first = groups.nth(0).getByRole('option').first()
         await expect(first).toBeInViewport()
         expect(await first.evaluate(el => {
@@ -70,6 +74,13 @@ for (const theme of ['light', 'dark']) {
           return title.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2))
         })).toBe(true)
         await page.screenshot({ path: testInfo.outputPath(`${entry}-${theme}-${width}.png`) })
+        if (width === 320) {
+          expect(await menu.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
+          await menu.evaluate(element => { element.scrollLeft = element.scrollWidth })
+          expect(await menu.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
+          await page.screenshot({ path: testInfo.outputPath(`${entry}-${theme}-${width}-scrolled.png`) })
+          await menu.evaluate(element => { element.scrollLeft = 0 })
+        }
         await menu.press('End')
         await menu.press('Enter')
         await expect(trigger).toContainText(models.at(-1)!.displayName)

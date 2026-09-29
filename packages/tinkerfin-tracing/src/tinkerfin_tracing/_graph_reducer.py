@@ -192,6 +192,9 @@ def graph_node_mutations(
             if fact.role == "tool" or fact.role == "other" or fact.role == "system":
                 continue
             if fact.role == "user":
+                # Context is retained as a message, never as another user request.
+                if fact.source is not None and fact.source.kind == "context":
+                    continue
                 if fact.graph_namespace or fact.phase == "content":
                     continue
                 mutations.append(

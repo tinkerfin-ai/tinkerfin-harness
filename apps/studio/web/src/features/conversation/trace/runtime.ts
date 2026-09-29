@@ -246,7 +246,7 @@ const traceMessages = (trace: TraceSnapshot): Message[] => {
       sequence: item.traceSeq,
       value: {
         id: item.agui?.messageId ?? item.id,
-        role: item.role,
+        role: item.role === 'user' && item.source?.kind === 'context' ? 'context' : item.role,
         content: messageText(item.content),
         attachments: messageAttachments(item.content),
         createdAt: item.createdAt,
@@ -258,7 +258,7 @@ const traceMessages = (trace: TraceSnapshot): Message[] => {
               completedAt: item.completedAt ?? undefined,
               durationMs: elapsedMs(item.createdAt, item.completedAt),
             }
-          : { runId: item.runId, contentOmitted: item.contentOmitted, traceMessageId: item.id },
+          : { runId: item.runId, contentOmitted: item.contentOmitted, traceMessageId: item.id, source: item.source ?? undefined },
       },
     }]
   })

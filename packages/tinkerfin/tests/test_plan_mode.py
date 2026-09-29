@@ -1602,7 +1602,10 @@ async def test_default_todos_use_the_native_root_without_correlation_extensions(
 
 
 @pytest.mark.asyncio
-async def test_planner_creates_review_without_a_deep_agent_parent_graph() -> None:
+@pytest.mark.parametrize("with_context", [False, True])
+async def test_planner_creates_review_without_a_deep_agent_parent_graph(
+    with_context: bool,
+) -> None:
     saver = InMemorySaver()
     definition = (
         TinkerFin(checkpointer=saver)
@@ -1612,7 +1615,27 @@ async def test_planner_creates_review_without_a_deep_agent_parent_graph() -> Non
     )
     parts = await _parts(
         definition,
-        {"messages": [HumanMessage(content="Implement", id="request-1")]},
+        {
+            "messages": [
+                HumanMessage(content="Implement", id="request-1"),
+                *(
+                    [
+                        HumanMessage(
+                            content="Relevant instructions",
+                            id="context-1",
+                            additional_kwargs={
+                                "tinkerfin_source": {
+                                    "kind": "context",
+                                    "name": "retrieval",
+                                }
+                            },
+                        )
+                    ]
+                    if with_context
+                    else []
+                ),
+            ]
+        },
         run_id="review",
         config={"configurable": {"thread_id": "plan-thread"}},
     )

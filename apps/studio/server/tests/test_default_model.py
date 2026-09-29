@@ -2,7 +2,6 @@
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Literal
 
 import anyio
 import pytest
@@ -20,14 +19,13 @@ from tinkerfin_studio.conversation.models import (
 )
 from tinkerfin_studio.models.entity import AgentModel, ModelConnection
 from tinkerfin_studio.models.repository import AgentModelRepository
-from tinkerfin_studio.models.schemas import AgentModelSave
+from tinkerfin_studio.models.schemas import AgentModelSave, ChatOptions
 from tinkerfin_studio.models.service import AgentModelService
 
 
 def configuration(
     model_id: str,
     *,
-    purpose: Literal["chat", "image"] = "chat",
     enabled: bool = True,
     default: bool = False,
 ) -> AgentModelSave:
@@ -36,8 +34,7 @@ def configuration(
         model_id=model_id,
         display_name=f"模型 {model_id}",
         model_name="provider-model",
-        generation_options={"temperature": 0.3, "custom": {"values": [1, 2]}},
-        purpose=purpose,
+        chat_options=ChatOptions(temperature=0.3),
         image_support="supported",
         reasoning_enabled=False,
         sort_order=17,
@@ -46,21 +43,16 @@ def configuration(
     )
 
 
-@pytest.mark.parametrize("purpose", ["chat", "image"])
-async def test_default_switch_preserves_configuration_and_isolates_owner_and_purpose(
-    session: AsyncSession, purpose: Literal["chat", "image"]
+async def test_default_switch_preserves_configuration_and_isolates_owner(
+    session: AsyncSession,
 ) -> None:
     repository = AgentModelRepository(session, user_id=1)
     service = AgentModelService(repository)
     other = AgentModelService(AgentModelRepository(session, user_id=2))
-    opposite = "image" if purpose == "chat" else "chat"
-    await service.save_settings(configuration("old", purpose=purpose, default=True))
-    await service.save_settings(configuration("target", purpose=purpose, enabled=False))
-    await service.save_settings(
-        configuration("opposite", purpose=opposite, default=True)
-    )
-    await other.save_settings(configuration("old", purpose=purpose, default=True))
-    await other.save_settings(configuration("target", purpose=purpose, enabled=False))
+    await service.save_settings(configuration("old", default=True))
+    await service.save_settings(configuration("target", enabled=False))
+    await other.save_settings(configuration("old", default=True))
+    await other.save_settings(configuration("target", enabled=False))
     target = await repository.get("target")
     assert target is not None
     preserved = {
@@ -77,7 +69,6 @@ async def test_default_switch_preserves_configuration_and_isolates_owner_and_pur
         assert {name: getattr(target, name) for name in preserved} == preserved
         states = {row.model_id: row for row in await service.settings()}
         assert states["old"].enabled and not states["old"].is_default
-        assert states["opposite"].is_default
         other_states = {row.model_id: row for row in await other.settings()}
         assert other_states["old"].is_default
         assert not other_states["target"].enabled

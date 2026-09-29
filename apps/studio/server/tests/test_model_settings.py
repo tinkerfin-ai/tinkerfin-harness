@@ -208,23 +208,6 @@ async def test_active_run_protects_model_and_its_shared_connection(session, stat
     assert (await owner.resolve("main")).api_key.get_secret_value() == "secret"
 
 
-async def test_image_and_chat_defaults_are_independent_and_missing_image_has_no_fallback(
-    session,
-):
-    owner = service(session)
-    await owner.save_connection(connection())
-    await owner.save_settings(model(is_default=True))
-    await owner.save_settings(model(model_id="image", purpose="image"))
-    assert await owner.resolve_image_model() is None
-    await owner.set_default("image")
-    image = await owner.resolve_image_model()
-    assert image is not None and image.model_id == "image"
-    assert [m.model_id for m in (await owner.list_catalog()).items] == ["main"]
-    with pytest.raises(BusinessException) as rejected:
-        await owner.resolve("image")
-    assert rejected.value.error_code == ModelErrorCode.PURPOSE_MISMATCH
-
-
 async def test_invalid_model_parameters_do_not_change_existing_default(session):
     owner = service(session)
     await owner.save_connection(connection())
@@ -273,46 +256,7 @@ async def test_cancelled_connection_save_rolls_back_and_propagates(
     assert (await owner.require_connection("shared")).api_key == "secret"
 
 
-@pytest.mark.parametrize(
-    "options",
-    [
-        [],
-        "{}",
-        {"model": "override"},
-        {"Authorization": "secret"},
-        {"size": 123},
-        {"output_format": None},
-        {"unknown": float("nan")},
-        {"unknown": float("inf")},
-        {"nested": [float("nan")]},
-        {"unknown": "中" * 22000},
-    ],
-)
-def test_generation_options_reject_invalid_values(options):
+def test_model_display_name_is_bounded_without_changing_supplier_id():
+    assert model(display_name="名" * 40, model_name="x" * 128).model_name == "x" * 128
     with pytest.raises(ValidationError):
-        model(generation_options=options)
-
-
-def test_generation_options_preserve_unknown_json_values():
-    options = {
-        "size": "custom-size",
-        "output_format": "custom-format",
-        "custom": {"nested": [True, 1, 1.5, None, "value"]},
-    }
-    assert model(generation_options=options).generation_options == options
-
-
-@pytest.mark.parametrize("arrays", [False, True])
-@pytest.mark.parametrize("depth", [64, 65])
-def test_generation_options_limit_container_depth_with_root_at_one(arrays, depth):
-    from pydantic import JsonValue
-
-    value: JsonValue = {}
-    for _ in range(depth - 2):
-        value = [value] if arrays else {"nested": value}
-    options = {"root": value}
-    if depth == 64:
-        assert model(generation_options=options).generation_options == options
-    else:
-        with pytest.raises(ValidationError):
-            model(generation_options=options)
+        model(display_name="名" * 41)

@@ -10,7 +10,7 @@ import { readRunSkillSelection } from '../skills/api'
 import { AttachmentReferenceContext } from '../conversation/attachments/context'
 import { TextRevealProgressContext } from '../conversation/components/textRevealProgress'
 import { messageText, messageAttachments } from '../conversation/attachments/content'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import type { AgentMode, ChatRequestPayload } from '../../api/conversation/types'
 import type { TodoGroup } from '../../api/conversation/taskTrace'
@@ -32,6 +32,7 @@ import { Composer } from '../conversation/components/Composer'
 import { PlanQuestionComposer } from '../conversation/components/PlanQuestionComposer'
 import { PlanReviewCard } from '../conversation/components/PlanReviewCard'
 import { parseComposerSubmission } from '../conversation/composerCommand'
+import { useComposerDraft } from '../conversation/useComposerDraft'
 import { useContextCompaction } from '../conversation/compaction/useContextCompaction'
 import { useAttachments } from '../conversation/useAttachments'
 import { useComposerSkills } from '../conversation/useComposerSkills'
@@ -177,18 +178,16 @@ export function WorkspaceScreen({
   }, [workspace.conversations, draftConversation, textRevealProgress])
   const [draftModel, setDraftModel] = useState('')
   const [draftAccessMode, setDraftAccessMode] = useState<Conversation['accessMode']>('full')
-  const [draft, setDraftValue] = useState('')
+  const composerDraft = useComposerDraft()
+  const draft = composerDraft.text
+  const setDraft = composerDraft.setText
+  const draftRevision = composerDraft.revision
   const submissionLocks = useRef(new Map<string, string>())
-  const draftRevision = useRef(0)
-  const setDraft = useCallback((value: SetStateAction<string>) => {
-    draftRevision.current += 1
-    setDraftValue(value)
-  }, [])
   const [isModelPickerOpen, setModelPickerOpen] = useState(false)
   const [pendingResume, setPendingResume] = useState<PendingResume | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [activePage, setActivePage] = useState(readPageFromLocation)
-  const composerSkills = useComposerSkills(activePage === 'conversation')
+  const composerSkills = useComposerSkills(activePage === 'conversation', composerDraft.references)
   const retrySkillRequest = useRef<AbortController | null>(null)
   useEffect(() => () => retrySkillRequest.current?.abort(), [])
   const [automationModalOpen, setAutomationModalOpen] = useState(false)
@@ -565,9 +564,9 @@ export function WorkspaceScreen({
     if (resubmission && (conversation.runStatus === 'detached' || conversation.pendingInteractionKind || conversation.approval || conversation.planInteraction)) return
     const submittedIds = localAttachments.attachments.map(item => item.id)
     const submittedThreadId = workspace.currentThreadId
-    const submittedDraft = draft
-    const submittedSkills = composerSkills.capture()
-    const selectedSkills = resubmission ? resubmission.meta?.selectedSkills ?? [] : submittedSkills.skills.map(({ id, name }) => ({ id, name }))
+    const submittedDraft = composerDraft.state
+    const submittedSkills = composerSkills.selected
+    const selectedSkills = resubmission ? resubmission.meta?.selectedSkills ?? [] : submittedSkills.map(({ id, name }) => ({ id, name }))
     const clearedDraftRevision = draftRevision.current + 1
     const releaseSubmission = (runId: string) => {
       // 旧请求只能释放自己的提交入口，不能影响随后开始的新草稿
@@ -577,12 +576,11 @@ export function WorkspaceScreen({
     }
     const onAccepted = () => {
       if (!resubmission) localAttachments.completeSend(submittedIds)
-      if (!resubmission) composerSkills.acknowledge(submittedSkills)
     }
     const onRequestRejected = () => {
       if (!resubmission && draftRevision.current === clearedDraftRevision
         && latestWorkspace.current.currentThreadId === submittedThreadId) {
-        setDraft(submittedDraft)
+        composerDraft.restore(submittedDraft)
       }
     }
     messageWindow.restoreTail()
@@ -596,7 +594,7 @@ export function WorkspaceScreen({
         mode: effectiveMode,
         accessMode: conversation.accessMode,
       })
-      const payload = buildInitialPayload(nextConversation, trimmed, readyAttachments, selectedSkills.map(skill => skill.id))
+      const payload = buildInitialPayload(nextConversation, content, readyAttachments, selectedSkills.map(skill => skill.id))
       const requestMessage = payload.messages.at(0)
       if (!requestMessage) return
       const seededConversation: Conversation = {
@@ -666,7 +664,7 @@ export function WorkspaceScreen({
     const sendingConversation = currentConversation.mode === effectiveMode
       ? currentConversation
       : { ...currentConversation, mode: effectiveMode }
-    const payload = buildInitialPayload(sendingConversation, trimmed, readyAttachments, selectedSkills.map(skill => skill.id))
+    const payload = buildInitialPayload(sendingConversation, content, readyAttachments, selectedSkills.map(skill => skill.id))
     const requestMessage = payload.messages.at(0)
     if (!requestMessage) return
     if (modeOverride) setComposerPreference(currentConversation.threadId, { mode: modeOverride })
@@ -696,7 +694,7 @@ export function WorkspaceScreen({
     })
     if (!resubmission) setDraft('')
     void streamRun(currentConversation.threadId, payload, 'start', { target: 'workspace', onAccepted, onRequestRejected }).finally(() => releaseSubmission(payload.runId))
-  }, [isActiveThread, t, conversation, localAttachments, composerSkills, draft, draftConversation?.model, draftModel, pendingConversations, discardDraft, setHistoryQuery, hydrateConversation, isRunning, messageWindow, scrollConversationToBottomImmediately, setDraft, setComposerPreference, setWorkspace, streamRun, workspace.conversations, workspace.currentThreadId])
+  }, [isActiveThread, t, conversation, localAttachments, composerSkills, composerDraft, draftRevision, draftConversation?.model, draftModel, pendingConversations, discardDraft, setHistoryQuery, hydrateConversation, isRunning, messageWindow, scrollConversationToBottomImmediately, setDraft, setComposerPreference, setWorkspace, streamRun, workspace.conversations, workspace.currentThreadId])
 
   const retryRun = useCallback(async (message: Message) => {
     const current = latestWorkspace.current.conversations.find(item => item.threadId === workspace.currentThreadId)
@@ -987,7 +985,6 @@ export function WorkspaceScreen({
       releaseDraft()
       draftRevision.current += 1
       localAttachments.clearAttachments()
-      composerSkills.clear()
       setWorkspaceView('conversation')
     },
   })
@@ -1052,7 +1049,7 @@ export function WorkspaceScreen({
   }
 
   const send = () => {
-    const submission = parseComposerSubmission(draft)
+    const submission = parseComposerSubmission(draft, composerDraft.references)
     if (!submission) return
     if (submission.kind === 'compact') {
       if (executeCompaction()) setDraft('')
@@ -1281,12 +1278,10 @@ export function WorkspaceScreen({
               onLoadEarlierMessages={(trigger) => void messageWindow.loadEarlierMessages(trigger)}
             />
             <Composer
-              value={draft}
+              draft={composerDraft.state}
               skills={composerSkills.skills}
               selectedSkills={composerSkills.selected}
               skillsStatus={composerSkills.status}
-              onSelectSkill={composerSkills.choose}
-              onRemoveSkill={composerSkills.remove}
               onRetrySkills={composerSkills.retry}
               isRunning={isRunning}
               canStop={Boolean(conversation.threadId) && !compaction.saving}
@@ -1382,7 +1377,7 @@ export function WorkspaceScreen({
                         : isInitialHistoryUnavailable
                           ? t('历史会话加载失败，请先重试')
                           : undefined}
-              onChange={setDraft}
+              onChange={composerDraft.apply}
               onSend={send}
               onStop={() => void stop()}
               onExitPlan={exitPlanMode}

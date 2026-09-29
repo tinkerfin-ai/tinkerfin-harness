@@ -23,6 +23,9 @@ class StartRun(_Command):
 
     Parameters are JSON execution settings passed to the Runtime's configurable
     options. Include choices that affect this command; never include credentials.
+    User-role context can carry ``source={"kind": "context", "name": ...}``.
+    Runtime retains that provenance and excludes context from user-request
+    association. Omitted source identifies an ordinary user message.
     Model and tool authorization remain host-owned. The Gateway freezes this
     command before admission and rejects conflicting retries of the same run.
     """

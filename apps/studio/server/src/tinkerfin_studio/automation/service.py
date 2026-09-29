@@ -87,6 +87,8 @@ def run_view(run: AutomationExecution) -> RunView:
     failure = None
     if run.failure_code == "studio.interaction_required":
         failure = "任务需要人工处理，自动化不会继续执行"
+    elif run.failure_code == "studio.service_changed":
+        failure = "原执行使用的服务配置已变化，请新建一次运行"
     elif run.status == ExecutionStatus.FAILED:
         failure = "任务执行失败，请检查模型、指令和参考文件"
     elif run.status == ExecutionStatus.TIMED_OUT:

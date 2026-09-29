@@ -49,6 +49,7 @@ from tinkerfin_studio.conversation.history_queries import HistoryQueryAdmission
 from tinkerfin_studio.conversation.titles import ConversationTitles
 from tinkerfin_studio.conversation.todo_groups import TodoGroupProjection
 from tinkerfin_studio.health import ReadinessService
+from tinkerfin_studio.infrastructure._failures import _cleanup_failure_priority
 from tinkerfin_studio.infrastructure.database import Database
 from tinkerfin_studio.infrastructure.redis_client import create_redis_client
 from tinkerfin_studio.infrastructure.redis_keys import (
@@ -117,6 +118,67 @@ async def _enter_lifespan_context(
     return entered
 
 
+async def _enter_conversation_resources(
+    stack: AsyncExitStack,
+    outcome: _LifespanOutcome,
+    *,
+    messaging: Messaging,
+    database: Database,
+    notifications: Notifications,
+    tracer: Tracer,
+) -> tuple[AgUiChannel, Gateway, ConversationTraceCoordinator]:
+    """保持摘要服务可用，直到执行关闭及最后的业务状态校准完成"""
+
+    conversations = await _enter_lifespan_context(stack, outcome, AsyncExitStack())
+    await _enter_lifespan_context(conversations, outcome, messaging)
+    channel = messaging.agui_channel(name="studio-conversation-agui")
+    gateway = Gateway(
+        messaging=messaging, notifications=notifications, name=channel.name
+    )
+    coordinator = ConversationTraceCoordinator(
+        database=database,
+        notifications=notifications,
+        tracer=tracer,
+        conversation_channel=channel,
+    )
+    # 转移已登记的关闭职责；初始化失败也保留相同的资源所有权与异常结算
+    execution = conversations.pop_all()
+    conversations.push_async_callback(
+        _close_conversation_resources, execution, coordinator
+    )
+    await coordinator.recover()
+    return channel, gateway, coordinator
+
+
+async def _close_conversation_resources(
+    execution: AsyncExitStack, coordinator: ConversationTraceCoordinator
+) -> None:
+    """依次结束执行、校准摘要并关闭跟随，任何失败都不能跳过后续清理"""
+
+    failures: list[BaseException] = []
+    for close in (execution.aclose, coordinator.settle, coordinator.aclose):
+        try:
+            await close()
+        except BaseException as error:  # noqa: BLE001 - 全部清理后交付失败
+            failures.append(error)
+    cancellation = next(
+        (error for error in failures if isinstance(error, asyncio.CancelledError)), None
+    )
+    failures = [error for error in failures if error is not cancellation]
+    cleanup_error = (
+        failures[0]
+        if len(failures) == 1
+        else BaseExceptionGroup("会话关闭失败", failures)
+        if failures
+        else None
+    )
+    outcome = _LifespanOutcome()
+    if cancellation is not None:
+        outcome.capture(cancellation)
+    if cancellation is not None or cleanup_error is not None:
+        _raise_lifespan_outcome(outcome, cleanup_error)
+
+
 def _raise_lifespan_outcome(
     outcome: _LifespanOutcome,
     cleanup_error: BaseException | None,
@@ -125,11 +187,20 @@ def _raise_lifespan_outcome(
 
     primary = outcome.error
     if primary is not None:
+        if cleanup_error is None:
+            raise primary.with_traceback(outcome.traceback)
+        if primary.__cause__ is not None and primary.__cause__ is not cleanup_error:
+            cleanup_error = BaseExceptionGroup(
+                "原异常原因与资源清理失败", [primary.__cause__, cleanup_error]
+            )
         if (
-            cleanup_error is not None
-            and isinstance(primary, Exception)
-            and not isinstance(cleanup_error, Exception)
+            _cleanup_failure_priority(primary) < 2
+            and _cleanup_failure_priority(cleanup_error) == 2
         ):
+            if isinstance(primary, asyncio.CancelledError):
+                raise BaseExceptionGroup(
+                    "关闭取消与进程控制同时发生", [cleanup_error, primary]
+                )
             raise cleanup_error.with_traceback(cleanup_error.__traceback__) from primary
         raise primary.with_traceback(outcome.traceback) from cleanup_error
     assert cleanup_error is not None
@@ -140,18 +211,39 @@ async def _settle_lifespan_stack(
     stack: AsyncExitStack,
     outcome: _LifespanOutcome,
 ) -> None:
-    """尝试全部退出回调，并在完成后恢复生命周期的权威异常"""
+    """拥有全部资源退出任务，调用者取消须等待清理结束后传播"""
 
-    cleanup_error: BaseException | None = None
     primary = outcome.error
-    try:
-        await stack.__aexit__(
-            None if primary is None else type(primary),
-            primary,
-            outcome.traceback,
+
+    async def close() -> BaseException | None:
+        try:
+            await stack.__aexit__(
+                None if primary is None else type(primary), primary, outcome.traceback
+            )
+        except BaseException as error:  # noqa: BLE001 - 将进程控制也交回生命周期调用者
+            return error
+        return None
+
+    closing = asyncio.create_task(close(), name="studio-resources-close")
+    cancellation: asyncio.CancelledError | None = None
+    while not closing.done():
+        try:
+            await asyncio.shield(closing)
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
+    cleanup_error = closing.result()
+    if cancellation is not None:
+        failures = [error for error in (primary, cleanup_error) if error is not None]
+        interruption = _LifespanOutcome()
+        interruption.capture(cancellation)
+        _raise_lifespan_outcome(
+            interruption,
+            failures[0]
+            if len(failures) == 1
+            else BaseExceptionGroup("生命周期与清理失败", failures)
+            if failures
+            else None,
         )
-    except BaseException as error:  # noqa: BLE001 - 清理完毕后统一决定主因
-        cleanup_error = error
     if primary is not None or cleanup_error is not None:
         _raise_lifespan_outcome(outcome, cleanup_error)
 
@@ -240,9 +332,7 @@ def build_lifespan():
                 http_client = await _enter_lifespan_context(
                     stack, outcome, httpx.AsyncClient(trust_env=False)
                 )
-                model_http_transport = ModelTransport(
-                    allowed_origins=settings.model_allowed_origins
-                )
+                model_http_transport = ModelTransport()
                 model_http_client = await _enter_lifespan_context(
                     stack,
                     outcome,
@@ -348,23 +438,19 @@ def build_lifespan():
                     # Messaging 只承担短期断线续播；长期正文由 Trace 提供
                     retention_policy=_STUDIO_MESSAGING_RETENTION,
                 )
-                messaging = await _enter_lifespan_context(
-                    stack, outcome, Messaging(backend=messaging_backend)
-                )
-                channel = messaging.agui_channel(name="studio-conversation-agui")
-                gateway = Gateway(
+                messaging = Messaging(backend=messaging_backend)
+                (
+                    channel,
+                    gateway,
+                    conversation_trace,
+                ) = await _enter_conversation_resources(
+                    stack,
+                    outcome,
                     messaging=messaging,
-                    notifications=notifications,
-                    name=channel.name,
-                )
-                conversation_trace = ConversationTraceCoordinator(
                     database=database,
                     notifications=notifications,
                     tracer=tracer,
-                    conversation_channel=channel,
                 )
-                stack.push_async_callback(conversation_trace.aclose)
-                await conversation_trace.recover_preparing()
                 agent_subagents = await load_subagents()
                 automation_store = SqlAlchemyAutomationStore(
                     components_database.engine, notifications=notifications

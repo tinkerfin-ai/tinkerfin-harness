@@ -40,6 +40,7 @@ from ._observation_values import (
     append_json_content,
     classify_interaction,
     discard_private_state,
+    extract_input_messages,
     extract_user_message,
     fingerprint,
     interaction_tool_call_ids,
@@ -728,8 +729,11 @@ class _TracingSession:
             )
             if source.call_tracking_enabled:
                 facts.append(make_fact(CallTrackingFact, common))
-            if user_message is not None and source.input_kind in {"ordinary", "branch"}:
-                user_message_id, user_content = user_message
+            for input_message in extract_input_messages(public_input):
+                if source.input_kind not in {"ordinary", "branch"}:
+                    break
+                user_message_id, user_content = input_message.id, input_message.content
+                assert user_message_id is not None
                 scoped_message_id = _scope_id("message", (), user_message_id)
                 user_key = ((), user_message_id)
                 self._message_seen.add(user_key)
@@ -754,6 +758,7 @@ class _TracingSession:
                         source_message_id=user_message_id,
                         role="user",
                         content=captured_user_content,
+                        source=input_message.source,
                     )
                 )
             if source.input_kind == "abandon":
@@ -1562,6 +1567,7 @@ class _TracingSession:
                     message_id=message_id,
                     source_message_id=message.id,
                     role="user",
+                    source=message.source,
                     content=captured,
                     fingerprint=fingerprint,
                     name=message.name,
@@ -2027,6 +2033,7 @@ class _TracingSession:
                     ),
                     fingerprint=fingerprint,
                     from_state_snapshot=True,
+                    source=message.source,
                     name=message.name,
                     tool_call_id=message.tool_call_id,
                 )

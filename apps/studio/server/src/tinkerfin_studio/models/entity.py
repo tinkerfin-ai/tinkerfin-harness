@@ -83,25 +83,15 @@ class AgentModel(Base):
             "ix_agent_models_enabled_order", "user_id", "enabled", "sort_order", "id"
         ),
         Index("ix_agent_models_connection", "user_id", "connection_id"),
-        Index("ix_agent_models_default", "user_id", "purpose", "is_default", "enabled"),
+        Index("ix_agent_models_default", "user_id", "is_default", "enabled"),
         {**MYSQL_TABLE_OPTIONS, "comment": "可由前端选择的 Agent 模型与连接配置"},
     )
 
     id: Mapped[int] = mapped_column(
         Integer, primary_key=True, autoincrement=True, comment="模型配置主键"
     )
-    generation_options: Mapped[dict[str, JsonValue]] = mapped_column(
-        JSON, nullable=False, default=dict, comment="生图接口附加参数，不包含认证信息"
-    )
     user_id: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="模型配置所属用户 ID"
-    )
-    purpose: Mapped[str] = mapped_column(
-        String(16),
-        nullable=False,
-        default="chat",
-        server_default="chat",
-        comment="chat 对话模型或 image 生图服务",
     )
     model_id: Mapped[str] = mapped_column(
         String(64), nullable=False, comment="前后端使用的稳定模型 ID"

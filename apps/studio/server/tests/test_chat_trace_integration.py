@@ -8,13 +8,21 @@ from unittest.mock import AsyncMock
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langgraph.store.memory import InMemoryStore
 from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from test_attachments import png
+from test_skills_library import skill_files
 
 from tinkerfin import AgentRuntime, AgUiResumeRequest, RunIdentity, TinkerFin
-from tinkerfin_gateway import CommittedRunEvent, Gateway, RunAcceptance, StartRun
+from tinkerfin_gateway import (
+    CommittedRunEvent,
+    Gateway,
+    RunAcceptance,
+    RunCommand,
+    StartRun,
+)
 from tinkerfin_messaging import Messaging
 from tinkerfin_notifications import Notification, NotificationScope
 from tinkerfin_studio.agent.access import AccessMode
@@ -22,6 +30,7 @@ from tinkerfin_studio.api.errors import (
     BusinessException,
     ConversationErrorCode,
     ModelErrorCode,
+    ServiceErrorCode,
 )
 from tinkerfin_studio.attachments.service import byte_chunks
 from tinkerfin_studio.auth.models import User
@@ -54,7 +63,12 @@ from tinkerfin_studio.models.schemas import (
 )
 from tinkerfin_studio.models.service import AgentModelService
 from tinkerfin_studio.resources import ApplicationResources
-from tinkerfin_studio.skills.repository import SkillRepository
+from tinkerfin_studio.services.repository import ServiceConfigRepository
+from tinkerfin_studio.services.schemas import SearchConfig, ServiceBindings, ServiceSave
+from tinkerfin_studio.services.service import ResolvedService, ServiceConfigService
+from tinkerfin_studio.skills.content import SkillContentStore
+from tinkerfin_studio.skills.packages import parse_package
+from tinkerfin_studio.skills.repository import SkillOrigin, SkillRepository
 from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
 from tinkerfin_tracing import Tracer
 
@@ -125,11 +139,12 @@ def conversation_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
         user_id: int,
         thread_id: str,
         model_config: AgentModelConfig,
-        image_model: AgentModelConfig | None,
+        search_service: ResolvedService | None,
+        image_service: ResolvedService | None,
         access_mode: AccessMode,
         skill_snapshot: SkillSnapshotPayload,
     ) -> AgentRuntime[None]:
-        del thread_id, model_config, image_model, access_mode
+        del thread_id, model_config, search_service, image_service, access_mode
         return resources.tinkerfin.with_namespace(f"ns_{user_id}").build(
             model=ReplyModel(responses=["unused"])
         )
@@ -408,6 +423,68 @@ async def test_run_registration_persists_model_and_input(
     assert registration.status == "starting"
 
 
+@pytest.mark.parametrize("configured", [False, True])
+async def test_resume_keeps_original_service_choice_and_rejects_changed_key(
+    notifications, session, attachments, configured
+) -> None:
+    services = ServiceConfigService(ServiceConfigRepository(session, user_id=1))
+    if configured:
+        await services.save(
+            "web_search",
+            ServiceSave(
+                configuration=SearchConfig(), api_key=SecretStr("original-key")
+            ),
+        )
+    repository = ConversationRepository(session)
+    thread = await repository.create_thread(
+        user_id=1, thread_id="service-bindings", title="服务绑定", model_id="model-main"
+    )
+    request = _ordinary_request(thread_id=thread.thread_id, run_id="source")
+    preparer = ConversationRunPreparer(
+        session, user_id=1, attachments=attachments, notifications=notifications
+    )
+    captured = await preparer.register(
+        intent=classify_intent(request),
+        prepared=prepare_run_request(request, user_id=1, thread_id=thread.thread_id),
+        model=_model(),
+        thread=thread,
+    )
+    source = await repository.get_run(thread_pk=thread.id, run_id="source")
+    assert source is not None
+    bindings = ServiceBindings.model_validate(source.service_bindings)
+    assert (bindings.web_search is not None) == configured
+    assert "original-key" not in str(source.service_bindings)
+    thread.last_run_id = "source"
+    thread.status = "waiting_approval"
+    thread.has_pending_interrupt = True
+    thread.pending_interaction_kind = "tool_approval"
+    await repository.commit()
+    await services.save(
+        "web_search",
+        ServiceSave(configuration=SearchConfig(), api_key=SecretStr("replacement-key")),
+    )
+    if captured.search_service is not None:
+        assert captured.search_service.api_key == "original-key"
+    resume = _resume_request(thread_id=thread.thread_id, run_id="resume")
+
+    async def register_resume():
+        return await preparer.register(
+            intent=classify_intent(resume),
+            prepared=prepare_run_request(resume, user_id=1, thread_id=thread.thread_id),
+            model=_model(),
+            thread=thread,
+        )
+
+    if configured:
+        with pytest.raises(BusinessException) as error:
+            await register_resume()
+        assert error.value.error_code == ServiceErrorCode.CONFIGURATION_CHANGED
+    else:
+        restored = await register_resume()
+        assert restored.search_service is None
+        assert restored.image_service is None
+
+
 async def test_resume_registration_stores_only_claim_identity(
     notifications, session, attachments
 ) -> None:
@@ -584,9 +661,11 @@ async def test_same_run_rejects_a_changed_registered_model(
 class _Gateway:
     def __init__(self) -> None:
         self.after: int | None = None
+        self.commands: list[RunCommand] = []
 
     async def stream(self, runtime, command, *, after, registration, **kwargs):
         self.after = after
+        self.commands.append(command)
         await registration.confirm(
             RunAcceptance(
                 runtime.run_identity(command.thread_id, command.run_id), "new"
@@ -623,7 +702,7 @@ class _TraceCoordinator:
         self._session = session
         self.reconcile_transaction_states: list[bool] = []
 
-    async def recover_preparing(self, *, thread_pk: int | None = None):
+    async def recover(self, *, thread_pk: int | None = None):
         del thread_pk
         return frozenset()
 
@@ -645,12 +724,14 @@ class _FailingTraceCoordinator(_TraceCoordinator):
 
 
 @pytest.mark.parametrize("image_support", ["supported", "unsupported", "unknown"])
+@pytest.mark.parametrize("with_skill", [False, True])
 async def test_chat_accepts_images_and_uses_messaging_only_for_delivery(
     notifications,
     database,
     session,
     attachments,
     image_support,
+    with_skill,
 ) -> None:
     await AgentModelService(AgentModelRepository(session, user_id=1)).save_settings(
         AgentModelSave(
@@ -663,19 +744,30 @@ async def test_chat_accepts_images_and_uses_messaging_only_for_delivery(
             image_support=image_support,
         )
     )
+    content = SkillContentStore(TinkerFin(store=InMemoryStore()))
+    selected_ids: list[str] = []
+    if with_skill:
+        package = parse_package(skill_files())
+        await content.save(1, package)
+        installed = await SkillRepository(session, 1).install(
+            package, SkillOrigin(kind="zip", name="ZIP")
+        )
+        selected_ids = [installed.id]
+        await session.commit()
     channel = _Gateway()
     trace = _TraceCoordinator()
     resources = cast(
         ApplicationResources,
         SimpleNamespace(
             database=database,
+            skills=SimpleNamespace(content=content),
             attachments=attachments,
             model_http_transport=None,
             model_http_client=None,
             agent_persistence=object(),
             sandbox_manager=object(),
             tinkerfin=TinkerFin(),
-            settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
+            settings=SimpleNamespace(),
             conversation_channel=channel,
             conversation_trace=trace,
             conversation_titles=AsyncMock(spec=ConversationTitles),
@@ -698,15 +790,18 @@ async def test_chat_accepts_images_and_uses_messaging_only_for_delivery(
     file = await attachments.upload(
         user_id=1, name="image.png", chunks=byte_chunks(png())
     )
-    payload = _ordinary_request().model_dump()
+    request = _ordinary_request()
+    request.forwarded_props.skill_ids = selected_ids
+    payload = request.model_dump()
     payload["messages"] = [
         {
             "role": "user",
             "content": [
+                {"type": "text", "text": "  用 /reports 技能帮我\n"},
                 {
                     "type": "image",
                     "source": {"type": "url", "value": f"attachment:{file.id}"},
-                }
+                },
             ],
         }
     ]
@@ -716,6 +811,20 @@ async def test_chat_accepts_images_and_uses_messaging_only_for_delivery(
     prepared_body_stream = prepared.stream.to_sse()
 
     assert channel.after is None
+    command = channel.commands[0]
+    assert isinstance(command, StartRun)
+    assert len(command.messages) == (2 if with_skill else 1)
+    blocks = command.messages[0]["content"]
+    assert isinstance(blocks, list) and len(blocks) == 2
+    assert blocks[0] == {"type": "text", "text": "  用 /reports 技能帮我\n"}
+    assert isinstance(blocks[1], dict)
+    source = blocks[1]["source"]
+    assert isinstance(source, dict) and source["value"] == f"attachment:{file.id}"
+    if with_skill:
+        assert command.messages[1]["role"] == "user"
+        source = command.messages[1]["source"]
+        assert isinstance(source, dict) and source["kind"] == "context"
+        assert "读取 references/data.bin" in str(command.messages[1]["content"])
     assert len(trace.ensured) == 1
     assert trace.ensured[0].run_id == "run-1"
     repository = ConversationRepository(session)
@@ -762,7 +871,7 @@ async def test_trace_notification_failure_retains_the_running_conversation(
                 agent_persistence=object(),
                 sandbox_manager=object(),
                 tinkerfin=TinkerFin(),
-                settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
+                settings=SimpleNamespace(),
                 conversation_channel=channel,
                 conversation_trace=trace,
                 conversation_titles=AsyncMock(spec=ConversationTitles),
@@ -849,7 +958,7 @@ async def test_previous_head_reconcile_releases_the_request_transaction(
             agent_persistence=object(),
             sandbox_manager=object(),
             tinkerfin=TinkerFin(),
-            settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
+            settings=SimpleNamespace(),
             conversation_channel=channel,
             conversation_trace=trace,
             conversation_titles=AsyncMock(spec=ConversationTitles),
@@ -992,7 +1101,7 @@ async def test_title_survives_main_finish_and_response_disconnect(
                 agent_persistence=object(),
                 sandbox_manager=object(),
                 tinkerfin=TinkerFin(),
-                settings=SimpleNamespace(tavily_api_key=None, model_allowed_origins=()),
+                settings=SimpleNamespace(),
                 conversation_channel=messaging.agui_channel(name="conversation"),
                 conversation_trace=_TraceCoordinator(),
                 conversation_titles=titles,
@@ -1072,7 +1181,7 @@ async def _collect_body(body):
 
 
 @pytest.mark.parametrize("existing", [False, True])
-@pytest.mark.parametrize("stage", ["image-model", "runtime"])
+@pytest.mark.parametrize("stage", ["service-resolution", "runtime"])
 @pytest.mark.parametrize(
     "failure_type", [ValueError, asyncio.CancelledError, KeyboardInterrupt, SystemExit]
 )
@@ -1086,7 +1195,7 @@ async def test_pre_delivery_failure_keeps_only_preexisting_business_registration
     stage: str,
     failure_type: type[BaseException],
 ) -> None:
-    """模型读取或运行构建失败时，只清理本次新建的会话与运行登记"""
+    """服务读取或运行构建失败时，只清理本次新建的会话与运行登记"""
     request = _ordinary_request(run_id="setup-failure")
     if existing:
         repository = ConversationRepository(session)
@@ -1114,9 +1223,10 @@ async def test_pre_delivery_failure_keeps_only_preexisting_business_registration
     def reject_runtime(**_kwargs: object) -> AgentRuntime[None]:
         raise failure
 
-    async def reject_image_model(
-        _service: AgentModelService,
-    ) -> AgentModelConfig | None:
+    async def reject_service(
+        _service: ServiceConfigService, _capability: str, *, for_update: bool = False
+    ) -> ResolvedService | None:
+        del for_update
         raise failure
 
     if stage == "runtime":
@@ -1124,9 +1234,7 @@ async def test_pre_delivery_failure_keeps_only_preexisting_business_registration
             service_module, "build_conversation_runtime", reject_runtime
         )
     else:
-        monkeypatch.setattr(
-            AgentModelService, "resolve_image_model", reject_image_model
-        )
+        monkeypatch.setattr(ServiceConfigService, "resolve", reject_service)
     resources = cast(
         ApplicationResources,
         SimpleNamespace(
@@ -1318,7 +1426,7 @@ async def test_initialization_error_is_logged_once_and_replay_does_not_log_again
                 model_http_transport=None,
                 model_http_client=None,
                 tinkerfin=TinkerFin(),
-                settings=SimpleNamespace(model_allowed_origins=()),
+                settings=SimpleNamespace(),
                 conversation_channel=messaging.agui_channel(name="failure-logging"),
                 conversation_trace=_TraceCoordinator(),
                 conversation_titles=AsyncMock(spec=ConversationTitles),

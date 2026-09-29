@@ -1,3 +1,4 @@
+import { conversationTurns } from '../navigation/turns'
 import { applyConversationEvent, prepareResumeSubmission } from '../agui'
 import { buildConversationDisplayEntries } from '../todoTrace/displayEntries'
 import type { JsonValue } from '../../../types'
@@ -1306,4 +1307,27 @@ it('澄清和计划审阅后的历史保留只读工具及计划业务工具', (
     'clarify-second:ls', 'clarify-second:read_file', 'clarify-second:ask_user_question',
     'review:ls', 'review:read_file', 'review:submit_plan',
   ])
+})
+
+
+it('技能消息在实时增量和刷新后均按来源展示，并只保留一个用户提问', () => {
+  const history = detail()
+  const origin = { kind: 'context' as const, name: 'skill-invocation', metadata: { skills: [{ id: 'report', name: 'reports', digest: 'fixed' }] } }
+  history.messages[0].content = '用 /reports 技能帮我'
+  const initial = restoreConversationFromTrace(history, { model: 'main', includeTaskTrace: false })
+  const context = { ...history.messages[0], id: 'message:context', sourceId: 'context', traceSeq: 2, agui: { kind: 'message' as const, messageId: 'public-context' }, content: '完整技能正文', source: origin }
+  const update: ConversationTraceUpdate = {
+    asOfSeq: 9, generation: history.generation, observedAt: '2026-09-05T00:00:00.000001Z', hasEvents: true,
+    messages: { upserts: [context], removes: [] }, reasoning: { upserts: [], removes: [] }, interactions: { upserts: [], removes: [] },
+    graph: { asOfSeq: 9, nextCursor: null, turnUpserts: [], turnRemoves: [], nodeUpserts: [], nodeRemoves: [], orderedNodeIds: history.graph.orderedNodeIds, matchedNodeIds: history.graph.matchedNodeIds, completeness: history.graph.completeness },
+    state: history.state, status: history.status, completeness: history.completeness, messageCount: 3, toolCallCount: history.toolCallCount, runFailures: [],
+  }
+  const live = applyConversationTraceUpdate(initial, update, null, false)
+  const replayed = applyConversationTraceUpdate(live, update, null, false)
+  expect(replayed.messages.filter(message => message.role === 'context')).toMatchObject([{ content: '完整技能正文', meta: { source: origin } }])
+  expect(conversationTurns(replayed.messages).map(turn => turn.prompt)).toEqual(['用 /reports 技能帮我'])
+  history.messages.splice(1, 0, context)
+  const refreshed = restoreConversationFromTrace(history, { model: 'main', includeTaskTrace: false })
+  expect(refreshed.messages.filter(message => message.role === 'context')).toMatchObject([{ content: '完整技能正文', meta: { source: origin } }])
+  expect(conversationTurns(refreshed.messages)).toHaveLength(1)
 })

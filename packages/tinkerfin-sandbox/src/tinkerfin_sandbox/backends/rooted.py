@@ -46,6 +46,8 @@ class RootedOpenSandboxBackend(BaseSandbox):
 
     The view owns no remote lifecycle. Native OpenSandbox remote I/O is asynchronous;
     synchronous protocol methods propagate the backend's explicit async-only error.
+    Cancelled uploads await native transfer cleanup before returning control;
+    writes that completed before cancellation are not rolled back.
     """
 
     def __init__(
@@ -138,7 +140,7 @@ class RootedOpenSandboxBackend(BaseSandbox):
         self,
         operation: Callable[[OpenSandboxBackend], Awaitable[_ResultT]],
     ) -> _ResultT:
-        """Await native async I/O without abandoning a started Handle lease."""
+        """Forward cancellation and await native cleanup before releasing the caller."""
 
         return await _rooted_transfer._run_async(
             self,

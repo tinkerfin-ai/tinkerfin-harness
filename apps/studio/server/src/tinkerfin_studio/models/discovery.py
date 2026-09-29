@@ -12,7 +12,6 @@ from tinkerfin_studio.models.schemas import (
     ModelProvider,
 )
 from tinkerfin_studio.models.transport import (
-    ModelEndpointNotAllowed,
     ModelResponseTooLarge,
 )
 
@@ -21,8 +20,6 @@ def discovery_failure_code(error: Exception) -> ModelDiscoveryFailureCode:
     """将模型目录请求的异常归为固定原因，不向浏览器传递供应商正文"""
     cause: BaseException | None = error
     for _ in range(8):
-        if isinstance(cause, ModelEndpointNotAllowed):
-            return "endpoint_not_allowed"
         if isinstance(cause, ModelResponseTooLarge):
             return "response_too_large"
         if isinstance(cause, (TimeoutError, httpx.TimeoutException)):

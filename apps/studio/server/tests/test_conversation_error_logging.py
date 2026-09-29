@@ -7,10 +7,16 @@ from pydantic import SecretStr
 from tinkerfin import RunIdentity
 from tinkerfin_studio.conversation.error_logging import log_conversation_error
 from tinkerfin_studio.models.schemas import AgentModelConfig
+from tinkerfin_studio.services.schemas import ImageConfig, SearchConfig
+from tinkerfin_studio.services.service import ResolvedService
 
 
 async def test_failure_log_keeps_cause_and_stack_without_model_keys(caplog):
-    chat_key, image_key = "chat-private-credential", "image-private-credential"
+    chat_key, search_key, image_key = (
+        "chat-private-credential",
+        "search-private-credential",
+        "image-private-credential",
+    )
     model = AgentModelConfig(
         model_id="configured-model",
         display_name="模型",
@@ -20,10 +26,13 @@ async def test_failure_log_keeps_cause_and_stack_without_model_keys(caplog):
         api_key=SecretStr(chat_key),
         reasoning_enabled=False,
     )
-    image_model = model.model_copy(update={"api_key": SecretStr(image_key)})
+    search_service = ResolvedService("search", SearchConfig(), "search", search_key)
+    image_service = ResolvedService(
+        "image", ImageConfig(model="image-model"), "image", image_key
+    )
     try:
         try:
-            raise ValueError(f"provider rejected {chat_key} {image_key}")
+            raise ValueError(f"provider rejected {chat_key} {search_key} {image_key}")
         except ValueError as cause:
             raise RuntimeError("initialization failed") from cause
     except RuntimeError as error:
@@ -33,7 +42,8 @@ async def test_failure_log_keeps_cause_and_stack_without_model_keys(caplog):
                     namespace="ns_1", thread_id="thread-a", run_id="run-a"
                 ),
                 model=model,
-                image_model=image_model,
+                search_service=search_service,
+                image_service=image_service,
                 code="runtime_initialization_error",
                 error=error,
             )
@@ -50,5 +60,6 @@ async def test_failure_log_keeps_cause_and_stack_without_model_keys(caplog):
     ]:
         assert expected in caplog.text
     assert chat_key not in caplog.text
+    assert search_key not in caplog.text
     assert image_key not in caplog.text
     assert "[redacted]" in caplog.text

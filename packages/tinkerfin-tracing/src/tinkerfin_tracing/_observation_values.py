@@ -10,6 +10,7 @@ from typing import cast
 from pydantic import JsonValue
 
 from tinkerfin_contracts import (
+    MessageSource,
     NativeMessageRecord,
     NativeToolCall,
 )
@@ -58,35 +59,62 @@ def make_fact(
     )
 
 
-def extract_user_message(value: JsonValue) -> tuple[str, JsonValue] | None:
-    """Return the final user message from the authoritative top-level channel."""
+def extract_input_messages(value: JsonValue) -> tuple[NativeMessageRecord, ...]:
+    """Read authorized user-role input, including explicitly sourced context."""
 
     if not isinstance(value, dict):
-        return None
+        return ()
     raw_messages = value.get("messages")
     if isinstance(raw_messages, dict) and raw_messages.get("$type") == "tuple":
         raw_messages = raw_messages.get("items")
     if not isinstance(raw_messages, list):
-        return None
-    candidates: list[tuple[str, JsonValue]] = []
+        return ()
+    result: list[NativeMessageRecord] = []
     for item in raw_messages:
         if not isinstance(item, dict):
             continue
         if item.get("$type") == "langchain.message":
             wrapped = item.get("value")
-            if isinstance(wrapped, dict) and wrapped.get("type") in {"human", "user"}:
-                data = wrapped.get("data")
-                message_id = data.get("id") if isinstance(data, dict) else None
-                content = data.get("content") if isinstance(data, dict) else None
-                if isinstance(message_id, str) and message_id and content is not None:
-                    candidates.append((message_id, cast(JsonValue, content)))
+            if not isinstance(wrapped, dict) or wrapped.get("type") not in {
+                "human",
+                "user",
+            }:
+                continue
+            data = wrapped.get("data")
+            if not isinstance(data, dict):
+                continue
+            kwargs = data.get("additional_kwargs")
+            raw_source = (
+                kwargs.get("tinkerfin_source") if isinstance(kwargs, dict) else None
+            )
+        elif item.get("role") == "user":
+            data = item
+            raw_source = data.get("source")
+        else:
             continue
-        if item.get("role") == "user":
-            message_id = item.get("id")
-            content = item.get("content")
-            if isinstance(message_id, str) and message_id and content is not None:
-                candidates.append((message_id, content))
-    return candidates[-1] if candidates else None
+        message_id, content = data.get("id"), data.get("content")
+        if isinstance(message_id, str) and message_id and content is not None:
+            result.append(
+                NativeMessageRecord(
+                    message_type="human",
+                    id=message_id,
+                    content=content,
+                    source=None
+                    if raw_source is None
+                    else MessageSource.model_validate(raw_source),
+                )
+            )
+    return tuple(result)
+
+
+def extract_user_message(value: JsonValue) -> tuple[str, JsonValue] | None:
+    """Return the final person's request, excluding host-provided context."""
+
+    for message in reversed(extract_input_messages(value)):
+        if message.source is None or message.source.kind == "user":
+            assert message.id is not None
+            return message.id, message.content
+    return None
 
 
 def parsed_json(value: str) -> JsonValue | None:

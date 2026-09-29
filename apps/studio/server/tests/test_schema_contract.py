@@ -11,6 +11,7 @@ from tinkerfin_studio.conversation.models import (
 )
 from tinkerfin_studio.infrastructure.database import Base
 from tinkerfin_studio.models.entity import AgentModel, ModelConnection
+from tinkerfin_studio.services.entity import ServiceConfig
 from tinkerfin_studio.skills.entity import (
     SkillImportDraft,
     SkillInstallation,
@@ -29,6 +30,7 @@ def test_business_schema_contains_no_foreign_keys() -> None:
         AttachmentReference,
         AgentModel,
         ModelConnection,
+        ServiceConfig,
         ConversationThread,
         ConversationRunRegistration,
         ConversationInterruptClaim,

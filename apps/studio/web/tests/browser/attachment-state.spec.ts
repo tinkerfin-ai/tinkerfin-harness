@@ -282,8 +282,8 @@ for (const locale of ['zh-CN', 'en'] as const) {
     await expect(card).not.toHaveAttribute('aria-busy')
     for (const [index, candidate] of modelCatalog.items.entries()) {
       await model.click()
-      await expect(page.getByRole('option')).toHaveText(modelCatalog.items.map(item => item.displayName))
-      await page.getByRole('option', { name: candidate.displayName, exact: true }).click()
+      await expect(page.getByRole('option')).toHaveText(modelCatalog.items.map(item => item.displayName + (item.isDefault ? (english ? 'Default' : '默认') : '')))
+      await page.getByRole('option', { name: candidate.displayName + (candidate.isDefault ? (english ? ' Default' : ' 默认') : ''), exact: true }).click()
       await expect(send).toBeEnabled()
       await expect(input).toHaveAccessibleDescription('')
       await expect(send).toHaveAccessibleDescription('')

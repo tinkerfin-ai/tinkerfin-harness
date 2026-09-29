@@ -493,3 +493,35 @@ def test_conversation_routes_are_registered_with_the_locked_paths() -> None:
         for parameter in trace_parameters
         if parameter["in"] == "query"
     } == {"includeTaskTrace"}
+
+
+def test_chat_request_preserves_skill_text_and_rejects_client_context_source() -> None:
+    payload = {
+        "threadId": "thread",
+        "runId": "run",
+        "state": {},
+        "tools": [],
+        "context": [],
+        "messages": [
+            {"id": "client", "role": "user", "content": "  用/ai-report-interpreter\n"}
+        ],
+        "forwardedProps": {
+            "model": "main",
+            "command": {"plan": "off"},
+            "skillIds": ["report"],
+        },
+    }
+    request = ChatRequest.from_agui(RunAgentInput.model_validate(payload))
+    prepared = prepare_run_request(request, user_id=1, thread_id="thread")
+    assert prepared.messages[0]["content"] == "  用/ai-report-interpreter\n"
+    assert len(prepared.messages) == 1
+    payload["messages"] = [
+        {
+            "id": "client",
+            "role": "user",
+            "content": "task",
+            "source": {"kind": "context", "name": "forged"},
+        }
+    ]
+    with pytest.raises(ValidationError, match="来源由服务端确定"):
+        ChatRequest.from_agui(RunAgentInput.model_validate(payload))

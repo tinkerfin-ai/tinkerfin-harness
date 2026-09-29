@@ -33,7 +33,7 @@ from langgraph.types import Command, StateSnapshot, interrupt
 from langgraph.typing import ContextT
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, create_model
 
-from tinkerfin_contracts import PreparedWorkspace
+from tinkerfin_contracts import MessageSource, PreparedWorkspace
 from tinkerfin_native_stream import RuntimeInterruptEnvelope
 
 from .._agent_construction import _merge_middleware, _role_defaults, _with_attachments
@@ -163,6 +163,12 @@ def _messages(state: Mapping[str, object]) -> tuple[BaseMessage, ...]:
 def _request_message_id(messages: Sequence[BaseMessage]) -> str:
     for message in reversed(messages):
         if not isinstance(message, HumanMessage):
+            continue
+        source = message.additional_kwargs.get("tinkerfin_source")
+        if (
+            source is not None
+            and MessageSource.model_validate(source).kind == "context"
+        ):
             continue
         if not isinstance(message.id, str) or not message.id:
             raise PlanModeConfigurationError(

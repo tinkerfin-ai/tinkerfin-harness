@@ -1,3 +1,5 @@
+import type { ComposerSkillReference } from './composerDraft'
+
 export interface ComposerSuggestionItem {
   id: string
   name: string
@@ -59,7 +61,11 @@ const leadingSlashCommand = (value: string) => {
   return { query, remainder: value.slice(tokenEnd) }
 }
 
-export const isAllowedComposerDraft = (value: string, skills: readonly ComposerSkill[] = []) => {
+export const hasLeadingSkillReference = (value: string, references: readonly ComposerSkillReference[]) =>
+  references.some(reference => reference.from === value.search(/\S/) && value.slice(reference.from, reference.to) === `/${reference.skill.name}`)
+
+export const isAllowedComposerDraft = (value: string, skills: readonly ComposerSkill[] = [], references: readonly ComposerSkillReference[] = []) => {
+  if (hasLeadingSkillReference(value, references)) return true
   const command = leadingSlashCommand(value)
   if (!command || !command.query) return true
   const matchingNames = [...ENABLED_SLASH_NAMES, ...skills.map(skill => skill.name)].filter((name) => name.startsWith(command.query))
@@ -68,7 +74,8 @@ export const isAllowedComposerDraft = (value: string, skills: readonly ComposerS
     || (/^\s/.test(command.remainder) && (command.query === 'plan' || command.query === 'compact'))
 }
 
-export const isSubmittableComposerDraft = (value: string) => {
+export const isSubmittableComposerDraft = (value: string, references: readonly ComposerSkillReference[] = []) => {
+  if (hasLeadingSkillReference(value, references)) return true
   const command = leadingSlashCommand(value)
   if (!command) return true
   if (command.query === 'compact') return true
@@ -195,4 +202,13 @@ export const planClaimParts = (value: string) => {
     token: match[2] ?? '',
     content: match[3] ?? '',
   }
+}
+
+
+export const detectComposerSlashToken = (value: string, caret: number, references: readonly ComposerSkillReference[]): SlashTokenHit | null => {
+  if (references.some(reference => reference.from < caret && caret <= reference.to)) return null
+  const leading = detectLeadingSlashToken(value, caret)
+  if (leading) return leading
+  const match = /\/([a-zA-Z0-9_-]*)$/.exec(value.slice(0, caret))
+  return match ? { start: caret - match[0].length, end: caret, query: match[1] } : null
 }

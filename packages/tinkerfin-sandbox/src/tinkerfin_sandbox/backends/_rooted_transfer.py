@@ -70,14 +70,36 @@ async def _run_async(
     self: RootedOpenSandboxBackend,
     operation: Callable[[OpenSandboxBackend], Awaitable[_ResultT]],
 ) -> _ResultT:
-    """Await native async I/O without abandoning a started Handle lease."""
-    task, state = self._start_async_task(operation)
+    """Forward cancellation and await native cleanup before releasing the caller."""
+    task, _ = self._start_async_task(operation)
     try:
         return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        if not state.has_started:
-            task.cancel()
-        raise
+    except asyncio.CancelledError as error:
+        cancellation = error
+
+    # A caller may immediately remove or replace the files it was writing.
+    # The native call must receive cancellation and finish its cleanup first;
+    # retaining its lease alone would still permit a late write after removal.
+    task.cancel()
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # Repeated caller cancellation must not interrupt native cleanup.
+            continue
+        except Exception:  # noqa: BLE001 - retrieve the owned task failure below
+            break
+    # Read the outcome outside the caller cancellation's except block so Python
+    # does not replace the native exception's existing diagnostic context.
+    try:
+        task.result()
+    except asyncio.CancelledError as native_cancellation:
+        # SDK cleanup failures may be attached to its cancellation as notes.
+        if native_cancellation is not cancellation:
+            raise cancellation from native_cancellation
+    except Exception as error:
+        raise cancellation from error
+    raise cancellation
 
 
 def _lease_backend(

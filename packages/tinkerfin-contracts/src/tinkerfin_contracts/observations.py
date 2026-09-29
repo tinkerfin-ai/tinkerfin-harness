@@ -11,6 +11,7 @@ from ._json import FiniteJsonValue
 from ._models import ContractModel, ObservationModel
 from .graph import GraphOrigin, SubagentRequestReference
 from .identity import RunIdentity
+from .messages import MessageSource
 
 RunInputKind: TypeAlias = Literal[
     "ordinary", "branch", "continuation", "resume", "abandon", "compaction"
@@ -139,6 +140,9 @@ class NativeToolCallChunk(ContractModel):
 class NativeMessageRecord(ContractModel):
     """Represent a LangChain message without exposing its concrete Python class."""
 
+    source: MessageSource | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     message_type: NativeMessageType
     id: str | None = Field(default=None, min_length=1, max_length=1024)
     name: str | None = Field(default=None, min_length=1, max_length=1024)

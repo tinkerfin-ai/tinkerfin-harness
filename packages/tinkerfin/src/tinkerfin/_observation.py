@@ -27,6 +27,7 @@ from pydantic import JsonValue
 
 from tinkerfin_contracts import (
     ContextContributionObservation,
+    MessageSource,
     ModelCallObservation,
     NativeExtraObservation,
     NativeInterruptRecord,
@@ -137,7 +138,8 @@ def _message_record(message: BaseMessage) -> NativeMessageRecord:
     """Detach one LangChain message into the stable protocol-neutral record.
 
     Full IDs and every Tool fragment are preserved for correlation. Provider-specific
-    ``additional_kwargs`` are intentionally absent; verified reasoning uses a separate
+    ``additional_kwargs`` are absent except for validated ``tinkerfin_source``;
+    verified reasoning uses a separate
     extractor and Observation so private metadata cannot leak through this core record.
     """
 
@@ -180,6 +182,11 @@ def _message_record(message: BaseMessage) -> NativeMessageRecord:
     raw_tool_status = message.status if isinstance(message, ToolMessage) else None
     tool_status = raw_tool_status if raw_tool_status in {"success", "error"} else None
     return NativeMessageRecord(
+        source=(
+            MessageSource.model_validate(message.additional_kwargs["tinkerfin_source"])
+            if "tinkerfin_source" in message.additional_kwargs
+            else None
+        ),
         message_type=_message_type(message),
         id=message.id,
         name=message.name,

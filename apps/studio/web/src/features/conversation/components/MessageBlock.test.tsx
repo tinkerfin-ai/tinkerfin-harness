@@ -68,7 +68,7 @@ describe('MessageBlock subagent card', () => {
 
   it('keeps Tool and SubAgent summaries within touch target sizing', () => {
     expect(conversationStyles).toMatch(/@media \(any-hover:\s*none\), \(any-pointer:\s*coarse\)[\s\S]*\.subagent-card-head\s*{\s*height:\s*var\(--control-lg\)/s)
-    expect(conversationStyles).toMatch(/@media \(any-hover:\s*none\), \(any-pointer:\s*coarse\)[\s\S]*\.tool-row > summary\s*{\s*height:\s*var\(--control-lg\)/s)
+    expect(conversationStyles).toMatch(/@media \(any-hover:\s*none\), \(any-pointer:\s*coarse\)[\s\S]*\.conversation-detail-row > summary\s*{\s*height:\s*var\(--control-lg\)/s)
   })
 
   it('renders Task and SubAgent like a Tool row while keeping the Tool count trailing', async () => {
@@ -81,8 +81,8 @@ describe('MessageBlock subagent card', () => {
     expect(card).not.toBeNull()
     expect(card?.open).toBe(false)
     const header = card?.querySelector('.subagent-card-head')
-    expect(within(header as HTMLElement).getByText('Task')).toHaveClass('tool-row-title')
-    expect(within(header as HTMLElement).getByText('SubAgent')).toHaveClass('tool-row-summary')
+    expect(within(header as HTMLElement).getByText('Task')).toHaveClass('conversation-detail-title')
+    expect(within(header as HTMLElement).getByText('SubAgent')).toHaveClass('conversation-detail-summary')
     expect(within(header as HTMLElement).getByText('1 个工具')).toBeVisible()
     expect(header?.querySelector('.subagent-card-chevron')).toBeNull()
     expect(header).not.toHaveTextContent('访问两个 URL 并总结业务')
@@ -117,7 +117,7 @@ describe('MessageBlock subagent card', () => {
     expect(toolDetails?.open).toBe(true)
     expect(container.querySelector('.subagent-trace-marker')).not.toBeInTheDocument()
     expect(toolDetails?.querySelector('time')).not.toBeInTheDocument()
-    expect(screen.getByText('{"file_path":"/research/url.json"}')).toBeVisible()
+    expect(screen.getByRole('region', { name: '输入' }).textContent).toBe('{\n  "file_path": "/research/url.json"\n}')
     expect(screen.getByText('https://www.baidu.com')).toBeVisible()
 
     await user.click(toolDetails!.querySelector('summary')!)
@@ -223,7 +223,7 @@ describe('MessageBlock subagent card', () => {
     expect(summaries[1]).not.toHaveTextContent('tool:internal-unknown-id')
   })
 
-  it('keeps an expanded row open while streamed arguments and the final result update', async () => {
+  it('keeps an expanded row open and formats complete streamed JSON arguments', async () => {
     const user = userEvent.setup()
     const running: Message = {
       id: 'tool-search-stream',
@@ -260,6 +260,13 @@ describe('MessageBlock subagent card', () => {
 
     rerender(<MessageBlock message={{
       ...running,
+      meta: { ...running.meta, params: '{"query":"LangGraph"}' },
+    }} />)
+    const formattedInput = '{\n  "query": "LangGraph"\n}'
+    expect(screen.getByRole('region', { name: '输入' }).textContent).toBe(formattedInput)
+
+    rerender(<MessageBlock message={{
+      ...running,
       meta: {
         ...running.meta,
         params: '{"query":"LangGraph"}',
@@ -270,7 +277,7 @@ describe('MessageBlock subagent card', () => {
 
     expect(row.open).toBe(true)
     expect(row.querySelector('summary')).toHaveTextContent('SearchLangGraph')
-    expect(screen.getByText('{"query":"LangGraph"}')).toBeVisible()
+    expect(screen.getByRole('region', { name: '输入' }).textContent).toBe(formattedInput)
     expect(screen.getByRole('link', { name: '文档' })).toHaveAttribute('href', 'https://example.com')
   })
 
@@ -339,7 +346,7 @@ describe('MessageBlock subagent card', () => {
     await userEvent.click(row.querySelector('summary')!)
     const rendered = row.querySelector('.tool-code-field code')?.textContent
 
-    expect(rendered).toBe(params)
+    expect(rendered).toBe(JSON.stringify(JSON.parse(params), null, 2))
     expect(() => JSON.parse(rendered ?? '')).not.toThrow()
   })
 
@@ -416,7 +423,7 @@ describe('MessageBlock subagent card', () => {
     expect(tool.open).toBe(true)
     expect(agent.querySelector('.tool-row-state-dot')).toBeNull()
     expect(agent.querySelector('.subagent-output-node')).toHaveClass('is-completed')
-    expect(screen.getByText('{"file_path":"/research/url.json"}')).toBeVisible()
+    expect(screen.getByRole('region', { name: '输入' }).textContent).toBe('{\n  "file_path": "/research/url.json"\n}')
     expect(screen.getByText('读取完成')).toBeVisible()
     expect(screen.getByRole('link', { name: '报告' })).toHaveAttribute('href', 'https://example.com/report')
   })
@@ -642,4 +649,21 @@ describe('MessageBlock assistant composition', () => {
     expect(writeText).toHaveBeenCalledWith('这是**最终回答**')
     expect(screen.getByText('已复制')).toBeInTheDocument()
   })
+})
+
+
+it('技能上下文默认折叠，展开保留正文，不显示工具完成状态或用户消息操作', async () => {
+  const user = userEvent.setup()
+  render(<MessageBlock message={{ id: 'skill-context', role: 'context', content: '## 固定技能正文\n保留本次实际注入的指令', createdAt: '2026-09-29T00:00:00Z',
+    meta: { source: { kind: 'context', name: 'skill-invocation', metadata: { skills: [{ id: 'report', name: 'ai-report-interpreter', digest: 'fixed' }] } } } }} />)
+  expect(screen.getByText('技能指令')).toBeVisible()
+  expect(screen.getByText('ai-report-interpreter')).toBeVisible()
+  expect(screen.queryByText('固定技能正文')).not.toBeInTheDocument()
+  expect(screen.queryByText('已完成')).not.toBeInTheDocument()
+  expect(screen.queryByRole('group', { name: '消息操作' })).not.toBeInTheDocument()
+  await user.click(screen.getByText('技能指令'))
+  expect(await screen.findByRole('heading', { name: '固定技能正文' })).toBeVisible()
+  expect(screen.getByText('保留本次实际注入的指令')).toBeVisible()
+  await user.click(screen.getByText('技能指令'))
+  expect(screen.queryByRole('heading', { name: '固定技能正文' })).not.toBeInTheDocument()
 })

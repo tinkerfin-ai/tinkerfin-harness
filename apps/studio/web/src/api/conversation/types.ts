@@ -158,7 +158,15 @@ export interface RunStartedEvent extends Partial<Pick<ConversationTitleSnapshot,
   title?: string
 }
 
+/** 消息角色与来源独立：应用上下文使用 user 角色，但不代表用户再次提问 */
+export interface MessageSource {
+  kind: 'user' | 'context'
+  name?: string | null
+  metadata?: JsonObject
+}
+
 export interface MessageSnapshotItem {
+  source?: MessageSource | null
   toolCallId?: string
   error?: string
   attachments?: import('../../features/conversation/attachments/content').Attachment[]

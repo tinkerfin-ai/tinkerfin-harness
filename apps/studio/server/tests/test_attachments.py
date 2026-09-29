@@ -349,6 +349,8 @@ async def test_generated_image_tool_preserves_actual_format_and_typed_result(
     from tinkerfin_studio.attachments.workspace_tools import (
         build_sandbox_attachment_tools,
     )
+    from tinkerfin_studio.services.schemas import ImageConfig
+    from tinkerfin_studio.services.service import ResolvedService
 
     runtime, _, files = work_file_runtime
 
@@ -356,8 +358,8 @@ async def test_generated_image_tool_preserves_actual_format_and_typed_result(
     Image.new("RGB", (32, 24), "blue").save(output, format_name)
     data = output.getvalue()
 
-    async def generate(model, prompt, *, allowed_origins):
-        assert allowed_origins == ("http://localhost:11434",)
+    async def generate(service, prompt):
+        assert service.api_key == "test-key"
         return data
 
     monkeypatch.setattr(media_tools, "generate_image_bytes", generate)
@@ -378,8 +380,9 @@ async def test_generated_image_tool_preserves_actual_format_and_typed_result(
         processor=attachments.documents,
         user_id=1,
         thread_id="generated",
-        image_model=None,
-        model_allowed_origins=("http://localhost:11434",),
+        image_service=ResolvedService(
+            "image", ImageConfig(model="image-model"), "fingerprint", "test-key"
+        ),
     )
     generator = next(item for item in tools if item.name == "generate_image")
     result = await generator.ainvoke(
@@ -392,7 +395,7 @@ async def test_generated_image_tool_preserves_actual_format_and_typed_result(
     )
     assert isinstance(result, ToolMessage)
     assert isinstance(result.content, str)
-    work_file = json.loads(result.content)
+    work_file = json.loads(result.content)["files"][0]
     assert work_file["mime_type"] == mime
     assert files[work_file["file_path"]] == data
     assert await attachments.list_thread(user_id=1, thread_id="generated") == []
@@ -411,7 +414,7 @@ async def test_generated_image_tool_preserves_actual_format_and_typed_result(
         for item in events
         if item.type == "TOOL_CALL_RESULT"
     )
-    assert json.loads(wire["content"]) == work_file
+    assert json.loads(wire["content"]) == {"files": [work_file]}
     assert wire["attachments"] == []
     deliver = build_sandbox_attachment_tools(
         service=attachments, user_id=1, thread_id="generated"
@@ -527,7 +530,7 @@ def test_attachment_tools_describe_all_model_visible_parameters(attachments):
         processor=attachments.documents,
         user_id=1,
         thread_id="schema-only",
-        image_model=None,
+        image_service=None,
     )
     for tool in tools:
         schema_type = tool.tool_call_schema
@@ -608,7 +611,7 @@ async def test_markdown_tools_generate_deliver_import_and_reopen(
             processor=attachments.documents,
             user_id=1,
             thread_id="markdown-report",
-            image_model=None,
+            image_service=None,
         )
     }
     text = "# 门店月报\n\n- 营收：128 万元\n- 下月安排：优化排班\n"

@@ -1032,7 +1032,7 @@
     }
 
     .modal-dialog { border-color: ButtonText; background: Canvas; color: CanvasText; }
-    .modal-backdrop { background: Canvas; opacity: .68; }
+    .modal-backdrop { background: Canvas; opacity: 1; }
   }
 
   @media (prefers-reduced-motion: reduce) {

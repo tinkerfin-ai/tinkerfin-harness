@@ -17,6 +17,7 @@ import { MarkdownContent } from './MarkdownContent'
 import { CodeText } from '../../../components/ui/CodeText'
 import { useTypewriterText } from './useTypewriterText'
 import { ToolCallRow } from './ToolCallRow'
+import { ContextMessage } from './ContextMessage'
 import { COPY_FEEDBACK_DURATION_MS } from './copyFeedback'
 import { useI18n } from '../../../i18n'
 import { useStreamingContentScroll } from './useStreamingContentScroll'
@@ -56,18 +57,18 @@ function RichField({ value, status, className = 'tool-rich-field', contentRef }:
     : <PlaceholderField status={status} />
 }
 
+function formatStructuredJson(value?: string): string | null {
+  if (!value || !['{', '['].includes(value.trimStart()[0])) return null
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return parsed !== null && typeof parsed === 'object' ? JSON.stringify(parsed, null, 2) : null
+  } catch {
+    return null
+  }
+}
+
 function ToolResultField({ value, status }: { value?: string; status?: MessageStatus }) {
-  const formatted = useMemo(() => {
-    if (!value || status === 'running') return null
-    const first = value.trimStart()[0]
-    if (first !== '{' && first !== '[') return null
-    try {
-      const parsed: unknown = JSON.parse(value)
-      return parsed !== null && typeof parsed === 'object' ? JSON.stringify(parsed, null, 2) : null
-    } catch {
-      return null
-    }
-  }, [value, status])
+  const formatted = useMemo(() => status === 'running' ? null : formatStructuredJson(value), [value, status])
   return formatted !== null
     ? <CodeField value={formatted} status={status} />
     : <RichField value={value} status={status} />
@@ -97,6 +98,10 @@ function ToolDetails({ message, visible }: { message: Message; visible: boolean 
   const outputLabelId = useId()
   const showInput = !shouldHideToolInput(message)
   const showOutput = Boolean(message.meta?.result || !message.attachments?.length)
+  const formattedParams = useMemo(
+    () => formatStructuredJson(message.meta?.params) ?? message.meta?.params,
+    [message.meta?.params],
+  )
   const { viewportRef, contentRef } = useStreamingContentScroll({
     identity: message.id,
     value: message.meta?.params,
@@ -108,7 +113,7 @@ function ToolDetails({ message, visible }: { message: Message; visible: boolean 
       {showInput && <div className="tool-detail-section tool-detail-section--params">
         <span id={inputLabelId} className="tool-field-label">{t('输入')}</span>
         <div ref={viewportRef} className="tool-detail-viewport" role="region" aria-labelledby={inputLabelId} tabIndex={0}>
-          <CodeField contentRef={contentRef} value={message.meta?.params} status={message.meta?.status} />
+          <CodeField contentRef={contentRef} value={formattedParams} status={message.meta?.status} />
         </div>
       </div>}
       {showInput && showOutput && <span className="tool-detail-divider" aria-hidden="true" />}
@@ -299,17 +304,17 @@ function SubagentCard({ message, childTools }: { message: Message; childTools: M
   return (
     <details id={message.id} className={`subagent-card ${status}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="subagent-card-head">
-        <span className="tool-row-leading" aria-hidden="true">
-          <span className="tool-row-icon">
+        <span className="conversation-detail-leading" aria-hidden="true">
+          <span className="conversation-detail-icon">
             {status === 'failed' || status === 'paused' || status === 'cancelled'
               ? <span className={`tool-row-state-dot is-${status}`} />
               : <Bot size={14} strokeWidth={2} />}
           </span>
-          <ChevronDown className="tool-row-chevron" size={14} strokeWidth={2} />
+          <ChevronDown className="conversation-detail-chevron" size={14} strokeWidth={2} />
         </span>
-        <span className="tool-row-title">Task</span>
-        <span className="tool-row-separator" aria-hidden="true" />
-        <span className="tool-row-summary">SubAgent</span>
+        <span className="conversation-detail-title">Task</span>
+        <span className="conversation-detail-separator" aria-hidden="true" />
+        <span className="conversation-detail-summary">SubAgent</span>
         {childTools.length > 0 && (
           <span className="subagent-card-meta">
             <span className="subagent-tool-count">{t('{count} 个工具', { count: childTools.length })}</span>
@@ -378,6 +383,7 @@ function MessageBlockView({
   childTools?: Message[]
   showActions?: boolean
 }) {
+  if (message.role === 'context') return <ContextMessage message={message} />
   if (message.role === 'user') {
     return (
       <article id={message.id} className="message user-message">

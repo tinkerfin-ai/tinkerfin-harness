@@ -1,3 +1,5 @@
+import type { ConversationHistoryDetail, TraceMessage } from '../../src/api/conversation/history'
+import { emptyTraceGraph } from '../../src/test/traceFixtures'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { strToU8, zipSync } from 'fflate'
 import { installNotificationStream } from './fixtures/notifications'
@@ -69,16 +71,14 @@ for (const accepted of [false, true]) {
       const menu = page.getByRole('listbox', { name: '命令和技能建议' })
       await expect(menu.getByRole('option', { name: /disabled/ })).toHaveCount(0)
       await menu.getByRole('option', { name: new RegExp(name) }).click()
-      await expect(draft).toHaveValue('整理本周资料')
+      await expect(draft).toHaveValue(name === 'reports' ? '整理本周资料/reports' : '整理本周资料/reports/research')
     }
     await page.getByRole('button', { name: '发送消息', exact: true }).click()
     await expect(page.locator('body')).toHaveAttribute('data-skill-request', /reports-id/)
     const payload = JSON.parse((await page.locator('body').getAttribute('data-skill-request'))!) as ChatRequestPayload
     expect(payload.forwardedProps.skillIds).toEqual(['reports-id', 'research-id'])
-    expect(payload.messages[0]).toMatchObject({ role: 'user', content: '整理本周资料' })
-    await expect(page.getByRole('button', { name: '移除技能：reports', exact: true })).toHaveCount(accepted ? 0 : 1)
-    await expect(page.getByRole('button', { name: '移除技能：research', exact: true })).toHaveCount(accepted ? 0 : 1)
-    if (!accepted) await expect(draft).toHaveValue('整理本周资料')
+    expect(payload.messages[0]).toMatchObject({ role: 'user', content: '整理本周资料/reports/research' })
+    await expect(draft).toHaveValue(accepted ? '' : '整理本周资料/reports/research')
   })
 }
 
@@ -470,8 +470,7 @@ test('通知同步技能页和对话选择，停用后的草稿保留并提示�
     installed[0] = { ...installed[0], enabled: false }
     for (const view of [page, chat]) expect(await view.evaluate(() => window.emitResourceChange('studio.skills.changed', 'reports-id'))).toBe(1)
     await expect(page.getByRole('switch')).toHaveAttribute('aria-checked', 'false')
-    await expect(chat.getByRole('button', { name: '移除技能：reports', exact: true })).toContainText('不可用')
-    await expect(input).toHaveValue('保留这段分析草稿')
+    await expect(input).toHaveValue('保留这段分析草稿/reports')
     await expect(chat.getByRole('button', { name: '发送消息', exact: true })).toBeDisabled()
     await expect(chat.getByText('所选技能已停用或卸载，请移除后再发送', { exact: true })).toBeVisible()
     for (const theme of ['light', 'dark'] as const) {
@@ -479,16 +478,130 @@ test('通知同步技能页和对话选择，停用后的草稿保留并提示�
       await expect(chat.locator('html')).toHaveAttribute('data-theme', theme)
       for (const width of [320, 768, 1024, 1440]) {
         await chat.setViewportSize({ width, height: 960 })
-        await expect(input).toHaveValue('保留这段分析草稿')
+        await expect(input).toHaveValue('保留这段分析草稿/reports')
         await expect(chat.getByText('所选技能已停用或卸载，请移除后再发送', { exact: true })).toBeInViewport()
         expect(await chat.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
         await chat.screenshot({ path: testInfo.outputPath(`composer-unavailable-skill-${theme}-${width}.png`), fullPage: true })
       }
     }
-    await chat.getByRole('button', { name: '移除技能：reports', exact: true }).click()
+    await input.evaluate(element => { const field = element as HTMLTextAreaElement; field.setSelectionRange(field.value.length, field.value.length) })
+    await input.press('Backspace')
     await expect(input).toHaveValue('保留这段分析草稿')
     await expect(chat.getByRole('button', { name: '发送消息', exact: true })).toBeEnabled()
   } finally {
     await context.close()
   }
 })
+
+
+for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440]) {
+  test(`行内技能引用支持中文编辑、删除和撤销 ${theme} ${width}`, async ({ page }, testInfo) => {
+    const skill = { ...composerSkill, name: 'ai-report-interpreter', description: '解读报告' }
+    await page.setViewportSize({ width, height: 900 })
+    await prepare(page, [skill])
+    await page.addInitScript(theme => localStorage.setItem('tinkerfin:theme', theme), theme)
+    let submitted: ChatRequestPayload | undefined
+    await page.route('**/api/conversation/chat', async route => {
+      submitted = route.request().postDataJSON() as ChatRequestPayload
+      await route.fulfill({ status: 422, json: { code: 1_001_008_014, message: '诊断信息不进入界面', data: null } })
+    })
+    await page.goto('/')
+    const input = page.getByRole('textbox', { name: '消息输入' })
+    await page.getByRole('button', { name: '打开命令和技能', exact: true }).click()
+    await page.getByRole('option', { name: /ai-report-interpreter 解读报告/ }).click()
+    await expect(input).toHaveValue('用 /ai-report-interpreter 技能帮我')
+    await page.evaluate(() => document.fonts.ready)
+    await testInfo.attach(`composer-${theme}-${width}`, { body: await page.locator('.composer-dock').screenshot(), contentType: 'image/png' })
+    const colors = await page.locator('.composer-skill-reference').evaluate(element => {
+      const probe = document.createElement('span')
+      probe.style.color = 'var(--color-brand-text)'
+      element.append(probe)
+      const expected = getComputedStyle(probe).color
+      probe.remove()
+      return { actual: getComputedStyle(element).color, expected }
+    })
+    expect(colors.actual).toBe(colors.expected)
+    await input.evaluate(element => { const field = element as HTMLTextAreaElement; field.setSelectionRange(24, field.value.length) })
+    await input.press('Backspace')
+    await expect(input).toHaveValue('用 /ai-report-interpreter')
+    await input.evaluate(element => (element as HTMLTextAreaElement).setSelectionRange(1, 2))
+    await input.press('Backspace')
+    await expect(input).toHaveValue('用/ai-report-interpreter')
+    await input.evaluate(element => (element as HTMLTextAreaElement).setSelectionRange(0, 1))
+    await input.press('Backspace')
+    await expect(input).toHaveValue('/ai-report-interpreter')
+    await expect(page.getByRole('button', { name: '发送消息', exact: true })).toBeEnabled()
+    await input.press('Delete')
+    await expect(input).toHaveValue('')
+    await input.press('ControlOrMeta+z')
+    await expect(input).toHaveValue('/ai-report-interpreter')
+    await page.getByRole('button', { name: '发送消息', exact: true }).click()
+    await expect(page.getByRole('status')).toHaveText('所选技能正文合计超过 512 KiB，请减少所选技能后重试')
+    expect(submitted?.messages).toMatchObject([{ content: '/ai-report-interpreter' }])
+    expect(submitted?.forwardedProps.skillIds).toEqual(['reports-id'])
+    await expect(input).toHaveValue('/ai-report-interpreter')
+  })
+}
+
+test('中文组合输入不会拆散技能引用或触发发送', async ({ page }) => {
+  await prepare(page, [composerSkill])
+  await page.goto('/')
+  const input = page.getByRole('textbox', { name: '消息输入' })
+  await page.getByRole('button', { name: '打开命令和技能', exact: true }).click()
+  await page.getByRole('option', { name: /reports 整理报告/ }).click()
+  const session = await page.context().newCDPSession(page)
+  await session.send('Input.imeSetComposition', { text: '分析', selectionStart: 2, selectionEnd: 2 })
+  await session.send('Input.insertText', { text: '分析' })
+  await expect(input).toHaveValue('用 /reports 技能帮我分析')
+  await expect(input).toHaveAttribute('aria-describedby')
+  await expect(page.getByRole('button', { name: '发送消息', exact: true })).toBeEnabled()
+  await session.detach()
+})
+
+
+for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440]) {
+  test(`技能历史按来源折叠展示，刷新保留正文 ${theme} ${width}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 })
+    await prepare(page)
+    await page.addInitScript(theme => localStorage.setItem('tinkerfin:theme', theme), theme)
+    const time = '2026-09-29T00:00:00Z'
+    const request: TraceMessage = { id: 'question', agui: { kind: 'message', messageId: 'question' }, traceSeq: 1, graphNamespace: [], runId: 'run', role: 'user', content: '用 /ai-report-interpreter 技能帮我', contentOmitted: false, status: 'completed', createdAt: time }
+    const history: ConversationHistoryDetail = {
+      id: 1, threadId: 'skill-history', title: '报告分析', accessMode: 'full', titleSource: 'user', titleGenerationStatus: 'idle', titleSeq: 1,
+      lastModel: 'main', pinned: false, asOfSeq: 4, generation: 'skills', observedAt: time, headRunId: 'run', availableHeads: ['run'], historyCursor: null,
+      messageCount: 3, toolCallCount: 0, messages: [request,
+        { ...request, id: 'skill-context', agui: { kind: 'message', messageId: 'skill-context' }, traceSeq: 2, content: '## 固定技能正文\n\n先阅读报告，核对资料来源，保留可追溯的计算依据。\n\n- 区分已确认的信息和推断\n- 使用用户提供的数据\n- 明确列出需要核验的内容', source: { kind: 'context', name: 'skill-invocation', metadata: { skills: [{ id: 'removed-skill', name: 'ai-report-interpreter', digest: 'fixed' }] } } },
+        { ...request, id: 'answer', agui: { kind: 'message', messageId: 'answer' }, traceSeq: 3, role: 'assistant', content: '请提供需要解读的报告' },
+      ], reasoning: [], interactions: [], graph: emptyTraceGraph(4), state: { root: {}, subgraphs: {} }, status: { execution: 'succeeded', headRunId: 'run' },
+      completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false }, taskTrace: null, runFailures: [], createdAt: time, updatedAt: time,
+    }
+    await page.route('**/api/conversation/**', async route => {
+      const url = new URL(route.request().url())
+      let data: unknown
+      if (url.pathname === '/api/conversation/history') data = { items: [{ ...history, status: 'idle', lastRunId: 'run', hasPendingInterrupt: false, pendingInteractionKind: null }], nextCursor: null }
+      else if (url.pathname === '/api/conversation/skill-history/history') data = { ...history, taskTrace: url.searchParams.get('includeTaskTrace') === 'false' ? null : { status: 'ready', todoGroups: [] } }
+      else { await route.fallback(); return }
+      await route.fulfill({ json: { code: 0, message: 'success', data } })
+    })
+    await page.goto('/?thread=skill-history')
+    await expect(page.getByText('技能指令', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '固定技能正文' })).toHaveCount(0)
+    await expect(page.locator('.user-message')).toHaveCount(1)
+    await page.getByText('技能指令', { exact: true }).click()
+    await expect(page.getByRole('heading', { name: '固定技能正文' })).toBeVisible()
+    await page.evaluate(() => document.fonts.ready)
+    const spacing = await page.locator('.context-message').evaluate(element => {
+      const answer = document.querySelector('.assistant-message')!
+      return { gap: answer.getBoundingClientRect().top - element.getBoundingClientRect().bottom,
+        expected: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--space-4')) }
+    })
+    expect(spacing.gap).toBe(spacing.expected)
+    await testInfo.attach(`skill-history-${theme}-${width}`, { body: await page.screenshot(), contentType: 'image/png' })
+    await page.reload()
+    await expect(page.getByText('技能指令', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '固定技能正文' })).toHaveCount(0)
+    await page.getByText('技能指令', { exact: true }).click()
+    await expect(page.getByText('使用用户提供的数据', { exact: true })).toBeVisible()
+    await expect(page.locator('.user-message')).toHaveCount(1)
+  })
+}

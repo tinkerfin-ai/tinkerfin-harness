@@ -2879,7 +2879,7 @@ test('Tool 与回答复制图标严格对齐正文左缘', async ({ page }) => {
   const copyIcon = lastAssistant.locator('.message-action-row .ui-icon-button svg')
   const subagent = page.locator('#browser-subagent > summary')
   const tool = page.locator('.tool-card > summary')
-  const toolIcon = tool.locator('.tool-row-icon svg')
+  const toolIcon = tool.locator('.conversation-detail-icon svg')
   const messageList = page.locator('.message-list')
 
   await expect(page.locator('.message-action-row')).toHaveCount(1)
@@ -2921,7 +2921,7 @@ test('全部 Tool 图标与等待动画共用最小误差光学左缘', async ({
     expectedMessageText: '/icon-audit/task',
   })
   const messageList = page.locator('.message-list')
-  const icons = page.locator('.message-list .tool-row-icon svg')
+  const icons = page.locator('.message-list .conversation-detail-icon svg')
   await expect(icons).toHaveCount(toolIconAuditMessages.length)
 
   const messageListBounds = await messageList.boundingBox()
@@ -2945,8 +2945,8 @@ test('运行中 SubAgent 与普通 Tool 共用扫光且标题保持稳定', asyn
   const subagentHeader = page.locator('.subagent-card.running > summary')
   const toolHeader = page.locator('.tool-card.running > summary')
   const assistantBody = page.locator('#browser-running-stage .message-markdown > :first-child')
-  const subagentIcon = subagentHeader.locator('.tool-row-icon svg')
-  const toolIcon = toolHeader.locator('.tool-row-icon svg')
+  const subagentIcon = subagentHeader.locator('.conversation-detail-icon svg')
+  const toolIcon = toolHeader.locator('.conversation-detail-icon svg')
   const messageList = page.locator('.message-list')
 
   await expect(page.locator('.message-action-row--assistant')).toHaveCount(1)
@@ -3665,10 +3665,10 @@ test('工具图标、展开箭头和错误状态点共用第一行图标中心�
           // 同一次布局中取样，避免窗口重排夹在不同图标的坐标读取之间
           const positions = await page.evaluate(prefix => {
             const rect = (suffix: string) => document.querySelector(`#${prefix}-${suffix}`)!.getBoundingClientRect()
-            const icon = rect('0 > summary .tool-row-icon svg')
-            const leading = rect('0 > summary .tool-row-leading')
+            const icon = rect('0 > summary .conversation-detail-icon svg')
+            const leading = rect('0 > summary .conversation-detail-leading')
             const others = [
-              rect('0 > summary .tool-row-chevron'),
+              rect('0 > summary .conversation-detail-chevron'),
               rect('1 .tool-row-state-dot'),
               rect('2 .tool-row-state-dot'),
             ]
@@ -3684,7 +3684,7 @@ test('工具图标、展开箭头和错误状态点共用第一行图标中心�
         }
         await expectAligned()
         await normal.hover()
-        const arrow = normal.locator('.tool-row-chevron')
+        const arrow = normal.locator('.conversation-detail-chevron')
         await expect(arrow).toHaveCSS('opacity', '1')
         await expectAligned()
         await normal.click()

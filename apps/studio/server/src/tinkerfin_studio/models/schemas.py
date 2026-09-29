@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -10,13 +9,15 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    JsonValue,
     SecretStr,
     StringConstraints,
     TypeAdapter,
     field_validator,
     model_validator,
 )
+
+from tinkerfin_studio.models.capabilities import ImageInputCapability
+from tinkerfin_studio.models.capability_data import ImageSupport
 
 ModelId = Annotated[
     str,
@@ -32,7 +33,6 @@ ModelId = Annotated[
 ModelProvider = Literal["openai", "deepseek", "ollama"]
 ModelAPI = Literal["openai_chat_completions", "ollama"]
 ModelDiscoveryFailureCode = Literal[
-    "endpoint_not_allowed",
     "response_too_large",
     "timeout",
     "authentication_failed",
@@ -124,6 +124,25 @@ class DiscoveredModel(BaseModel):
 
     model_name: str = Field(min_length=1, max_length=128)
     display_name: str
+    image_input_capability: ImageInputCapability = Field(
+        default_factory=lambda: ImageInputCapability("unknown", "unknown", "unknown"),
+        description="从可信目录补充的图片输入能力，不代表账户调用验证",
+    )
+
+
+class InputCapabilityRequest(BaseModel):
+    """预览本人已保存连接的模型能力，不修改配置或发起推理"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    connection_id: ModelId
+    model_name: str = Field(min_length=1, max_length=128)
+    image_support: ImageSupport = "unknown"
+
+
+class InputCapabilityResult(BaseModel):
+    """模型编辑时的只读图片输入能力"""
+
+    image_input_capability: ImageInputCapability
 
 
 class ModelDiscoveryResult(BaseModel):
@@ -139,13 +158,10 @@ class AgentModelWrite(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    generation_options: dict[str, JsonValue] = Field(
-        default_factory=dict,
-        description="生图接口附加参数，不得覆盖 model、prompt 或 n",
-    )
-    purpose: Literal["chat", "image"] = "chat"
     model_id: ModelId = Field(description="前后端使用的稳定模型 ID")
-    display_name: str = Field(min_length=1, max_length=128, description="前端展示名称")
+    display_name: str = Field(
+        min_length=1, max_length=40, description="前端展示名称，最多 40 个字符"
+    )
     connection_id: ModelId = Field(description="所属提供方连接 ID")
     chat_options: ChatOptions = Field(default_factory=ChatOptions)
     model_name: str = Field(
@@ -161,41 +177,6 @@ class AgentModelWrite(BaseModel):
     enabled: bool = Field(default=True, description="是否允许创建新 run")
     is_default: bool = Field(default=False, description="是否设为唯一默认模型")
     sort_order: int = Field(default=0, description="模型目录升序排序值")
-
-    @field_validator("generation_options")
-    @classmethod
-    def validate_generation_options(
-        cls, value: dict[str, JsonValue]
-    ) -> dict[str, JsonValue]:
-        """限制生成参数的大小、数值和受控字段"""
-        if {key.casefold() for key in value}.intersection(
-            {"model", "prompt", "n", "api_key", "authorization"}
-        ):
-            raise ValueError("附加参数不能覆盖模型、提示词、数量或认证字段")
-        for key in ("size", "output_format"):
-            option = value.get(key)
-            if key in value and (not isinstance(option, str) or not option.strip()):
-                raise ValueError("尺寸和输出格式必须是非空字符串")
-        containers: list[tuple[dict[str, JsonValue] | list[JsonValue], int]] = [
-            (value, 1)
-        ]
-        while containers:
-            current, depth = containers.pop()
-            if depth > 64:
-                raise ValueError("附加参数嵌套不能超过 64 层")
-            children = current.values() if isinstance(current, dict) else current
-            for child in children:
-                if isinstance(child, (dict, list)):
-                    containers.append((child, depth + 1))
-        try:
-            encoded = json.dumps(
-                value, ensure_ascii=False, allow_nan=False, separators=(",", ":")
-            ).encode("utf-8")
-        except (ValueError, UnicodeError) as error:
-            raise ValueError("附加参数必须是有效 JSON，不允许非有限数值") from error
-        if len(encoded) > 64 * 1024:
-            raise ValueError("附加参数不能超过 64 KiB")
-        return value
 
     @model_validator(mode="after")
     def validate_default_is_enabled(self) -> AgentModelWrite:
@@ -250,16 +231,15 @@ class AgentModelConfig(BaseModel):
     api_key: SecretStr
     reasoning_enabled: bool
     chat_options: ChatOptions = Field(default_factory=ChatOptions)
-    generation_options: dict[str, JsonValue] = Field(
-        default_factory=dict,
-        description="生图接口附加参数，不得覆盖 model、prompt 或 n",
-    )
-    purpose: Literal["chat", "image"] = "chat"
     image_support: Literal["supported", "unsupported", "unknown"] = "unknown"
 
 
 class AgentModelSettings(AgentModelWrite):
     """当前用户保存的模型设置，连接与密钥单独管理"""
+
+    image_input_capability: ImageInputCapability = Field(
+        description="对话模型的只读图片输入判定"
+    )
 
 
 class AgentModelSave(AgentModelWrite):

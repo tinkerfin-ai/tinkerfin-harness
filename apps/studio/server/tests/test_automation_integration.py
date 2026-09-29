@@ -8,6 +8,7 @@ import httpx
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
+from pydantic import SecretStr
 from test_agent_runtime import _ToolModel, _Workspace
 from test_attachments import png
 
@@ -20,9 +21,11 @@ from tinkerfin_automation import (
 from tinkerfin_studio.agent import runtime as runtime_module
 from tinkerfin_studio.api.dependencies import get_user_context
 from tinkerfin_studio.application import create_application
+from tinkerfin_studio.attachments.entity import AttachmentCollection
 from tinkerfin_studio.attachments.service import byte_chunks
 from tinkerfin_studio.auth.models import User
 from tinkerfin_studio.auth.types import UserContext
+from tinkerfin_studio.automation import target as target_module
 from tinkerfin_studio.automation.schemas import SaveTask, TaskConfiguration
 from tinkerfin_studio.automation.service import NAMESPACE, StudioAutomationService
 from tinkerfin_studio.automation.target import (
@@ -31,6 +34,9 @@ from tinkerfin_studio.automation.target import (
 )
 from tinkerfin_studio.models.entity import AgentModel, ModelConnection
 from tinkerfin_studio.resources import ApplicationResources
+from tinkerfin_studio.services.repository import ServiceConfigRepository
+from tinkerfin_studio.services.schemas import SearchConfig, ServiceSave
+from tinkerfin_studio.services.service import ServiceConfigService
 from tinkerfin_tracing import Tracer
 
 
@@ -107,9 +113,7 @@ async def automation_environment(
                     model_http_client=client,
                     sandbox_manager=Sandboxes(),
                     agent_subagents={},
-                    settings=SimpleNamespace(
-                        tavily_api_key=None, model_allowed_origins=()
-                    ),
+                    settings=SimpleNamespace(),
                 ),
             )
             automation.target("studio_agent", StudioAutomationTarget(resources))
@@ -146,6 +150,66 @@ def configuration():
         "startsOn": None,
         "endsOn": None,
     }
+
+
+@pytest.mark.parametrize("missing_binding", [False, True])
+async def test_explicit_retry_preserves_service_binding_and_new_run_uses_current_config(
+    automation_resources, automation_worker, monkeypatch, missing_binding
+):
+    resources = automation_resources
+    async with resources.database.session() as session:
+        services = ServiceConfigService(ServiceConfigRepository(session, user_id=1))
+        await services.save(
+            "web_search",
+            ServiceSave(
+                configuration=SearchConfig(), api_key=SecretStr("original-key")
+            ),
+        )
+    service = StudioAutomationService(resources, user_id=1)
+    task = await service.save(
+        SaveTask(
+            request_id="bound-task",
+            configuration=TaskConfiguration.model_validate(configuration()),
+        )
+    )
+    builder = target_module.build_automation_runtime
+
+    def fail_runtime(**kwargs):
+        raise ValueError("runtime setup failed")
+
+    monkeypatch.setattr(target_module, "build_automation_runtime", fail_runtime)
+    handle = await resources.automation.for_owner("1").task(task.id)
+    original = await handle.run()
+    await automation_worker.wait_until_idle()
+    snapshot = await resources.attachments.collection_configuration(
+        user_id=1, collection_id=original.id
+    )
+    assert snapshot is not None and snapshot["services"] is not None
+    assert "original-key" not in str(snapshot)
+    async with resources.database.session() as session:
+        services = ServiceConfigService(ServiceConfigRepository(session, user_id=1))
+        await services.save(
+            "web_search",
+            ServiceSave(
+                configuration=SearchConfig(), api_key=SecretStr("replacement-key")
+            ),
+        )
+    if missing_binding:
+        async with resources.database.session() as session:
+            row = await session.get(AttachmentCollection, original.id)
+            assert row is not None
+            row.configuration = {**row.configuration, "services": None}
+            await session.commit()
+    monkeypatch.setattr(target_module, "build_automation_runtime", builder)
+    original = await resources.automation.for_owner("1").get_run(original.id)
+    retried = await original.retry()
+    await automation_worker.wait_until_idle()
+    retry_result = await service.result(retried.id)
+    assert retry_result.status == "failed"
+    assert retry_result.error == "原执行使用的服务配置已变化，请新建一次运行"
+    fresh = await handle.run()
+    await automation_worker.wait_until_idle()
+    assert (await service.result(fresh.id)).status == "succeeded"
 
 
 @pytest.mark.parametrize("clock_offset", [-400_000, 400_000])

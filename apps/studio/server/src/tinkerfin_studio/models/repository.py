@@ -1,7 +1,6 @@
 """Agent 模型配置数据访问"""
 
 from datetime import UTC, datetime
-from typing import Literal
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,7 +34,6 @@ class AgentModelRepository:
             select(AgentModel)
             .where(
                 AgentModel.user_id == self._user_id,
-                AgentModel.purpose == "chat",
                 AgentModel.enabled.is_(True),
             )
             .order_by(AgentModel.sort_order, AgentModel.id)
@@ -60,14 +58,13 @@ class AgentModelRepository:
             .execution_options(populate_existing=True)
         )
 
-    async def clear_default(self, purpose: Literal["chat", "image"] = "chat") -> None:
+    async def clear_default(self) -> None:
         """在当前事务中清除既有默认标记"""
 
         await self._session.execute(
             update(AgentModel)
             .where(
                 AgentModel.user_id == self._user_id,
-                AgentModel.purpose == purpose,
                 AgentModel.is_default.is_(True),
             )
             .values(is_default=False, updated_at=datetime.now(UTC).replace(tzinfo=None))
@@ -86,8 +83,6 @@ class AgentModelRepository:
                 updated_at=now,
             )
             self._session.add(entity)
-        entity.generation_options = value.generation_options
-        entity.purpose = value.purpose
         entity.display_name = value.display_name
         entity.connection_id = value.connection_id
         entity.chat_options = value.chat_options.model_dump(
@@ -103,14 +98,13 @@ class AgentModelRepository:
         await self._session.flush()
         return entity
 
-    async def set_default(self, model_id: str, *, purpose: str) -> None:
-        """在已持有用户锁的事务内启用目标，并替换本人同用途默认项"""
+    async def set_default(self, model_id: str) -> None:
+        """在已持有用户锁的事务内启用目标，并替换本人默认项"""
         now = datetime.now(UTC).replace(tzinfo=None)
         await self._session.execute(
             update(AgentModel)
             .where(
                 AgentModel.user_id == self._user_id,
-                AgentModel.purpose == purpose,
                 AgentModel.model_id != model_id,
                 AgentModel.is_default.is_(True),
             )
@@ -121,7 +115,6 @@ class AgentModelRepository:
             .where(
                 AgentModel.user_id == self._user_id,
                 AgentModel.model_id == model_id,
-                AgentModel.purpose == purpose,
             )
             .values(enabled=True, is_default=True, updated_at=now)
         )
@@ -147,7 +140,7 @@ class AgentModelRepository:
         return row is not None
 
     async def list_settings(self) -> list[AgentModel]:
-        """返回当前用户的全部配置，包括禁用模型和生图服务"""
+        """返回当前用户的全部配置，包括禁用模型"""
         rows = await self._session.scalars(
             select(AgentModel)
             .where(AgentModel.user_id == self._user_id)

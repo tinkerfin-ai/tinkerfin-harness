@@ -15,7 +15,6 @@ from dotenv import dotenv_values
 from pydantic import (
     Field,
     SecretStr,
-    TypeAdapter,
     field_validator,
     model_validator,
 )
@@ -28,7 +27,6 @@ from pydantic_settings import (
 from pydantic_settings.sources.utils import parse_env_vars
 from sqlalchemy.engine import URL, make_url
 
-from tinkerfin_studio.models.transport import normalize_model_origin
 from tinkerfin_studio.skills.sources import SkillSourceSettings
 
 _DEFAULT_ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
@@ -239,23 +237,6 @@ class Settings(BaseSettings):
             secret_key=self.s3_storage_secret_key,
         )
 
-    model_allowed_origins: tuple[str, ...] = Field(
-        default=(),
-        description="管理员允许访问的 HTTP、本机或内网模型服务来源，精确匹配协议、主机和端口",
-    )
-
-    @field_validator("model_allowed_origins", mode="before")
-    @classmethod
-    def validate_model_allowed_origins(cls, value: object) -> tuple[str, ...]:
-        """从环境 JSON 数组或配置序列读取允许的模型服务来源"""
-        adapter = TypeAdapter(tuple[str, ...])
-        origins = (
-            adapter.validate_json(value)
-            if isinstance(value, str)
-            else adapter.validate_python(value)
-        )
-        return tuple(dict.fromkeys(normalize_model_origin(item) for item in origins))
-
     business_database_url: str = Field(
         default="",
         repr=False,
@@ -332,9 +313,6 @@ class Settings(BaseSettings):
 
     auth_token_expire_seconds: int = Field(
         default=86400, ge=60, description="访问令牌有效秒数"
-    )
-    tavily_api_key: SecretStr | None = Field(
-        default=None, repr=False, description="Tavily API 密钥"
     )
 
     @model_validator(mode="after")

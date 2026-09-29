@@ -36,7 +36,6 @@ dependencies = [
     "redis>=6,<9",
     "sqlalchemy[asyncio]==2.0.52",
     "starlette>=1.3.1,<2",
-    "tavily-python>=0.7,<1",
     "tinkerfin[agui,redis,tracing]==0.1.0",
     "tinkerfin-contracts==0.1.0",
     "tinkerfin-automation[sqlalchemy]==0.1.0",
@@ -73,4 +72,4 @@ version = { attr = "tinkerfin_studio.version.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-tinkerfin_studio = ["agent/*.yaml"]
+tinkerfin_studio = ["agent/*.yaml", "models/capability_catalog.json", "models/MODELS_DEV_LICENSE.txt"]

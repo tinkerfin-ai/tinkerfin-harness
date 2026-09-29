@@ -109,6 +109,10 @@ class SkillErrorCode(ErrorCode):
         1_001_008_013, 422, "更新来源中没有唯一匹配的同名技能，原技能已保留"
     )
 
+    INSTRUCTIONS_TOO_LARGE = _ErrorCodeValue(
+        1_001_008_014, 422, "所选技能正文合计超过 512 KiB，请减少所选技能后重试"
+    )
+
 
 class AuthErrorCode(ErrorCode):
     """认证模块错误"""
@@ -132,11 +136,31 @@ class ModelErrorCode(ErrorCode):
     KEY_ENDPOINT_CHANGED = _ErrorCodeValue(
         1_001_005_006, 422, "更换服务地址时需要重新填写对应密钥"
     )
-    PURPOSE_MISMATCH = _ErrorCodeValue(
-        1_001_005_007, 409, "模型用途不匹配，请选择对应用途的模型"
-    )
     CONFIGURATION_CHANGED = _ErrorCodeValue(
         1_001_005_008, 409, "模型配置已变化，请重新发送"
+    )
+
+
+class ServiceErrorCode(ErrorCode):
+    """个人搜索与图片生成服务配置错误"""
+
+    NOT_FOUND = _ErrorCodeValue(1_001_009_000, 404, "服务配置不存在")
+    DISABLED = _ErrorCodeValue(1_001_009_001, 409, "服务已停用，请启用后重试")
+    INVALID_CONFIGURATION = _ErrorCodeValue(1_001_009_002, 422, "服务配置不正确")
+    KEY_REQUIRED = _ErrorCodeValue(1_001_009_003, 422, "请填写服务密钥")
+    KEY_ENDPOINT_CHANGED = _ErrorCodeValue(
+        1_001_009_004, 422, "服务地址或认证方式改变，请重新填写密钥"
+    )
+    CONFIGURATION_CHANGED = _ErrorCodeValue(
+        1_001_009_005, 409, "本次运行使用的服务配置已变化，请重新发起"
+    )
+    UNAVAILABLE = _ErrorCodeValue(
+        1_001_009_006, 503, "服务请求失败，请检查配置或服务状态"
+    )
+    IMAGE_UNAVAILABLE = _ErrorCodeValue(
+        1_001_009_007,
+        409,
+        "尚未配置可用的 AI 图片生成服务，请在服务连接中配置；代码绘图仍可使用",
     )
 
 

@@ -1,33 +1,15 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useMemo } from 'react'
 import { useInstalledSkills } from '../skills/useInstalledSkills'
 import type { ComposerSkill } from './composerSuggestions'
+import type { ComposerSkillReference } from './composerDraft'
 
-export interface SubmittedSkills { revision: number; skills: readonly ComposerSkill[] }
-
-/** 本轮技能选择只在发送受理后清空；失败和迟到响应不会改写新的草稿 */
-export function useComposerSkills(active: boolean) {
+/** 目录刷新只更新可用性，已插入的引用名称和原文保持不变 */
+export function useComposerSkills(active: boolean, references: readonly ComposerSkillReference[]) {
   const library = useInstalledSkills(active)
   const skills = useMemo<ComposerSkill[]>(() => library.items.filter(item => item.enabled).map(({ id, name, description }) => ({ id, name, description })), [library.items])
-  const [selected, setSelected] = useState<ComposerSkill[]>([])
-  const visibleSelected = useMemo<ComposerSkill[]>(() => selected.map(item => skills.find(skill => skill.id === item.id) ?? { ...item, unavailable: true }), [selected, skills])
-  const revision = useRef(0)
-  const choose = useCallback((id: string) => {
-    const skill = skills.find(item => item.id === id)
-    if (!skill) return
-    revision.current += 1
-    setSelected(current => current.some(item => item.id === id) || current.length >= 8 ? current : [...current, skill])
-  }, [skills])
-  const remove = useCallback((id: string) => {
-    revision.current += 1
-    setSelected(current => current.filter(item => item.id !== id))
-  }, [])
-  const clear = useCallback(() => { revision.current += 1; setSelected([]) }, [])
-  const acknowledge = useCallback((submitted: SubmittedSkills) => {
-    if (revision.current !== submitted.revision) return
-    revision.current += 1; setSelected([])
-  }, [])
-  return { skills, selected: visibleSelected, status: library.status, choose, remove, clear, acknowledge,
-    capture: (): SubmittedSkills => ({ revision: revision.current, skills: visibleSelected }),
-    retry: library.refresh,
-  }
+  const selected = useMemo<ComposerSkill[]>(() => references.map(({ skill }) => {
+    const current = skills.find(item => item.id === skill.id && item.name === skill.name)
+    return current ? { ...skill, description: current.description } : { ...skill, unavailable: library.status === 'ready' || skill.unavailable }
+  }), [references, skills, library.status])
+  return { skills, selected, status: library.status, retry: library.refresh }
 }

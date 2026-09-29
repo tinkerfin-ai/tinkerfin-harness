@@ -1,20 +1,21 @@
-"""通过真实回环 HTTP 验证聊天模型与生图的地址授权和认证边界"""
+"""通过测试独占回环 HTTP 验证聊天模型与生图的可达性和认证边界"""
 
 import asyncio
 import json
 from collections.abc import AsyncIterator
 
 import httpx
-import pytest
 import pytest_asyncio
 from pydantic import SecretStr
 
-from tinkerfin_studio.attachments.generation import generate_image_bytes
 from tinkerfin_studio.models.chat import create_chat_model
 from tinkerfin_studio.models.schemas import (
     AgentModelConfig,
 )
 from tinkerfin_studio.models.transport import ModelTransport
+from tinkerfin_studio.services.http import generate_image_bytes
+from tinkerfin_studio.services.schemas import ImageConfig
+from tinkerfin_studio.services.service import ResolvedService
 
 
 @pytest_asyncio.fixture
@@ -86,10 +87,10 @@ def model_config(origin: str) -> AgentModelConfig:
     )
 
 
-async def test_chat_model_uses_allowed_local_http_client(model_server):
+async def test_chat_model_uses_local_http_client(model_server):
     origin, requests = model_server
     async with httpx.AsyncClient(
-        transport=ModelTransport(allowed_origins=(origin,)),
+        transport=ModelTransport(),
         trust_env=False,
         follow_redirects=False,
         timeout=5,
@@ -104,12 +105,18 @@ async def test_chat_model_uses_allowed_local_http_client(model_server):
     assert json.loads(body)["messages"] == [{"role": "user", "content": "你好"}]
 
 
-async def test_generation_and_download_use_allowed_local_http_without_key_leak(
+async def test_generation_and_download_use_local_http_without_key_leak(
     model_server,
 ):
     origin, requests = model_server
     result = await generate_image_bytes(
-        model_config(origin), "a chart", allowed_origins=(origin,)
+        ResolvedService(
+            "image",
+            ImageConfig(endpoint=origin + "/v1", model="local-model"),
+            "test",
+            "ollama",
+        ),
+        "a chart",
     )
     assert result == b"local-image-bytes"
     assert len(requests) == 2
@@ -119,18 +126,11 @@ async def test_generation_and_download_use_allowed_local_http_without_key_leak(
     assert "authorization" not in requests[1][1]
 
 
-async def test_unlisted_local_generation_never_reaches_server(model_server):
-    origin, requests = model_server
-    with pytest.raises(ValueError, match="MODEL_ALLOWED_ORIGINS"):
-        await generate_image_bytes(model_config(origin), "a chart")
-    assert not requests
-
-
-async def test_allowed_localhost_connects_to_ipv4_only_service(model_server):
+async def test_localhost_connects_to_ipv4_only_service(model_server):
     origin, requests = model_server
     origin = origin.replace("127.0.0.1", "localhost")
     async with httpx.AsyncClient(
-        transport=ModelTransport(allowed_origins=(origin,)), trust_env=False, timeout=2
+        transport=ModelTransport(), trust_env=False, timeout=2
     ) as client:
         assert (await client.get(origin + "/image.png")).status_code == 200
     assert len(requests) == 1

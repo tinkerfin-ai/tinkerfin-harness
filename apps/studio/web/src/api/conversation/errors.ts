@@ -1,4 +1,5 @@
 import { SseError } from '../shared/sse'
+import { ApiError } from '../shared/http'
 import { translateCurrent, type TranslationKey } from '../../i18n'
 
 const conversationErrorMessageKeys = {
@@ -50,7 +51,9 @@ export const conversationErrorMessage = (
   error: unknown,
   fallback: ConversationErrorCode,
 ) => translateCurrent(
-  conversationErrorMessageKeys[
+  error instanceof ApiError && error.code === 1_001_008_014
+    ? '所选技能正文合计超过 512 KiB，请减少所选技能后重试'
+    : conversationErrorMessageKeys[
     error instanceof ConversationError || error instanceof SseError ? error.code : fallback
   ],
 )

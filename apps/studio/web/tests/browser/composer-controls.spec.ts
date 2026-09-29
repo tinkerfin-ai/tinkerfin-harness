@@ -251,7 +251,8 @@ for (const locale of ['zh-CN', 'en']) {
       for (const width of [320, 768, 1024, 1440]) {
         await page.setViewportSize({ width, height: 900 })
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-        await expect(model.locator('span').first()).toHaveCSS('text-overflow', 'ellipsis')
+        await expect(model.locator('span').first()).toHaveCSS('text-overflow', 'clip')
+        await expect(model.locator('span').first()).toHaveCSS('white-space', 'nowrap')
         if (width === 320) expect(await model.locator('span').first().evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
         const bounds = await access.boundingBox()
         const modelBounds = await model.boundingBox()

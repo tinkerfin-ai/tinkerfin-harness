@@ -1,7 +1,7 @@
 """会话归属、Run 注册、恢复认领与列表摘要数据访问"""
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import JsonValue
@@ -17,6 +17,7 @@ from tinkerfin_studio.conversation.models import (
     ConversationRunRegistration,
     ConversationThread,
 )
+from tinkerfin_studio.services.schemas import ServiceBindings
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +81,7 @@ class ConversationRepository:
         parent_run_id: str | None,
         model_id: str,
         input_json: dict[str, JsonValue],
+        service_bindings: ServiceBindings = ServiceBindings.empty(),
         access_mode: AccessMode = "full",
     ) -> ConversationRunRegistration:
         """创建固定模型与请求快照的主 Run 注册"""
@@ -93,6 +95,7 @@ class ConversationRepository:
             access_mode=access_mode,
             status="preparing",
             input_json=input_json,
+            service_bindings=service_bindings.model_dump(mode="json"),
             terminal_outcome=None,
             error_code=None,
             started_at=now,
@@ -457,7 +460,7 @@ class ConversationRepository:
         """按 Trace 前缀和存储观测时间拒绝迟到的旧摘要"""
 
         thread = await self.lock_thread(thread_pk)
-        if thread is None:
+        if thread is None or thread.status == "deleting":
             return TraceSummaryWrite("applied")
         registration = await self.get_run_for_update(thread_pk=thread_pk, run_id=run_id)
         if registration is not None:
@@ -548,37 +551,31 @@ class ConversationRepository:
         )
         return bool(count)
 
-    async def list_stale_unstarted_runs(
-        self,
-        *,
-        older_than_seconds: int,
-        thread_pk: int | None = None,
-    ) -> tuple[ConversationRunRegistration, ...]:
-        """读取超过启动宽限期且尚无 Trace 的注册"""
+    async def list_pending_runs(
+        self, *, thread_pk: int | None = None
+    ) -> tuple[tuple[ConversationThread, ConversationRunRegistration], ...]:
+        """读取需要与 Trace 校准的运行登记，不占用会话写锁"""
 
-        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(
-            seconds=older_than_seconds
-        )
-        statement = select(ConversationRunRegistration).where(
-            or_(
-                and_(
-                    ConversationRunRegistration.status == "preparing",
-                    ConversationRunRegistration.created_at < cutoff,
-                ),
-                and_(
-                    ConversationRunRegistration.status == "starting",
-                    ConversationRunRegistration.updated_at < cutoff,
+        statement = (
+            select(ConversationThread, ConversationRunRegistration)
+            .join(
+                ConversationRunRegistration,
+                ConversationRunRegistration.conversation_thread_id
+                == ConversationThread.id,
+            )
+            .where(
+                ConversationThread.deleted_at.is_(None),
+                ConversationThread.status != "deleting",
+                ConversationRunRegistration.status.in_(
+                    ("preparing", "starting", "running")
                 ),
             )
+            .order_by(ConversationRunRegistration.id)
         )
         if thread_pk is not None:
-            statement = statement.where(
-                ConversationRunRegistration.conversation_thread_id == thread_pk
-            )
-        rows = await self._session.scalars(
-            statement.order_by(ConversationRunRegistration.id)
-        )
-        return tuple(rows)
+            statement = statement.where(ConversationThread.id == thread_pk)
+        rows = await self._session.execute(statement)
+        return tuple((thread, run) for thread, run in rows)
 
     async def delete_unstarted_run(
         self,

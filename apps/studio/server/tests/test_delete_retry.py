@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import create_autospec
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
@@ -21,6 +22,7 @@ from tinkerfin_contracts import (
 )
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
 from tinkerfin_studio.conversation.command import ConversationCommandService
+from tinkerfin_studio.conversation.coordinator import ConversationTraceCoordinator
 from tinkerfin_studio.conversation.failures import ConversationFailureProjection
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.resources import ApplicationResources
@@ -133,6 +135,9 @@ async def test_delete_retries_each_destructive_stage_without_restoring_old_autho
     resources = cast(
         ApplicationResources,
         SimpleNamespace(
+            conversation_trace=create_autospec(
+                ConversationTraceCoordinator, instance=True
+            ),
             tracer=tracer,
             notifications=notifications,
             conversation_channel=Channel(),
@@ -225,7 +230,12 @@ async def test_delete_refuses_an_active_trace_and_restores_summary_status(
     resources = cast(
         ApplicationResources,
         SimpleNamespace(
-            tracer=tracer, conversation_channel=Channel(), notifications=notifications
+            conversation_trace=create_autospec(
+                ConversationTraceCoordinator, instance=True
+            ),
+            tracer=tracer,
+            conversation_channel=Channel(),
+            notifications=notifications,
         ),
     )
     service = ConversationCommandService(repository, user_id=7, resources=resources)

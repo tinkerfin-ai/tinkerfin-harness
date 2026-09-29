@@ -25,6 +25,7 @@ def fixed_utc_time(monkeypatch: pytest.MonkeyPatch) -> datetime:
         "tinkerfin_studio.auth.repository",
         "tinkerfin_studio.attachments.service",
         "tinkerfin_studio.conversation.repository",
+        "tinkerfin_studio.conversation.coordinator",
     ):
         monkeypatch.setattr(f"{module}.datetime", FixedDateTime)
     return current
@@ -169,7 +170,7 @@ def work_file_runtime():
     """以隔离内存文件验证工作区读写和工具交付，不连接共享沙箱"""
     from unittest.mock import AsyncMock, MagicMock
 
-    from deepagents.backends.protocol import FileUploadResponse
+    from deepagents.backends.protocol import DeleteResult, FileUploadResponse
 
     from tinkerfin.tools import ToolRuntime
     from tinkerfin_sandbox import OpenSandboxFileTooLargeError, RootedOpenSandboxBackend
@@ -190,6 +191,14 @@ def work_file_runtime():
 
     workspace.aupload_files = AsyncMock(side_effect=upload)
     workspace.aread_bytes = AsyncMock(side_effect=read)
+
+    async def delete(path):
+        if path not in files:
+            return DeleteResult(error="not found")
+        del files[path]
+        return DeleteResult(path=path)
+
+    workspace.adelete = AsyncMock(side_effect=delete)
     workspace.to_shell_path.side_effect = lambda path: path.lstrip("/")
 
     class WorkspaceRuntime(ToolRuntime[None, RootedOpenSandboxBackend]):

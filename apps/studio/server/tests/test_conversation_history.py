@@ -4,12 +4,14 @@ import asyncio
 import json
 from datetime import UTC, datetime
 from typing import cast
+from unittest.mock import create_autospec
 
 import pytest
 from starlette.types import Message as AsgiMessage
 from starlette.types import Scope
 
 from tinkerfin_contracts import (
+    MessageSource,
     ModelCallObservation,
     NativeInterruptRecord,
     NativeMessageObservation,
@@ -32,6 +34,10 @@ from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
 from tinkerfin_studio.conversation.failures import ConversationFailureProjection
 from tinkerfin_studio.conversation.history import ConversationHistoryService
 from tinkerfin_studio.conversation.history_queries import HistoryQueryAdmission
+from tinkerfin_studio.conversation.models import (
+    ConversationRunRegistration,
+    ConversationThread,
+)
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.schemas import (
     ConversationHistoryDetail,
@@ -1388,3 +1394,95 @@ async def test_live_replay_authorizes_run_and_keeps_sse_cursor_separate(
             release.set()
             await owner.aclose()
             await _finish_trace(context, trace_session)
+
+
+@pytest.mark.parametrize("keep_question", [False, True])
+@pytest.mark.parametrize("context_already_visible", [False, True])
+async def test_context_never_replaces_the_question_for_visible_failures(
+    keep_question, context_already_visible
+):
+    """上下文仍保留时，失败提示也只能关联当前窗口内真实存在的提问"""
+    tracer = Tracer(
+        projections=(ConversationFailureProjection(), TodoGroupProjection())
+    )
+    repository = create_autospec(ConversationRepository, instance=True)
+    repository.get_thread.return_value = ConversationThread(
+        id=1,
+        user_id=1,
+        thread_id="context-failure",
+        title="上下文归属",
+        title_source="user",
+        title_seq=1,
+        title_generation_status="idle",
+        pinned=False,
+        status="idle",
+        last_run_id="run",
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    repository.get_run.return_value = ConversationRunRegistration(
+        run_id="run",
+        model_id="model-main",
+        access_mode="full",
+    )
+    context, source = await _open_trace(
+        tracer, thread_id="context-failure", run_id="run"
+    )
+    observations = [
+        NativeMessageObservation(
+            identity=context.identity,
+            graph_namespace=(),
+            observed_at=datetime.now(UTC),
+            monotonic_ns=3,
+            message=NativeMessageRecord(
+                message_type="human",
+                id="skill-context",
+                content="技能正文",
+                source=MessageSource(kind="context", name="skill-invocation"),
+            ),
+        )
+    ]
+    if not keep_question:
+        observations.append(
+            NativeMessageObservation(
+                identity=context.identity,
+                graph_namespace=(),
+                observed_at=datetime.now(UTC),
+                monotonic_ns=4,
+                message=NativeMessageRecord(
+                    message_type="remove", id="user-run", content=""
+                ),
+            )
+        )
+    if context_already_visible:
+        for observation in observations:
+            await source.observe(observation)
+    await source.force(ObservationBoundary.CALL_STARTED)
+    service = _service(repository, tracer=tracer)
+    stream = await service.follow_trace("context-failure", include_task_trace=False)
+    try:
+        initial = await anext(stream)
+        assert initial.type == "snapshot"
+        if context_already_visible:
+            assert any(message.source for message in initial.snapshot.messages)
+        else:
+            for observation in observations:
+                await source.observe(observation)
+        await source.observe(
+            RunTerminalObservation(
+                identity=context.identity,
+                outcome="failed",
+                code="tool_error",
+                observed_at=datetime.now(UTC),
+                monotonic_ns=5,
+            )
+        )
+        await source.force(ObservationBoundary.TERMINAL)
+        update = await anext(stream)
+        assert update.type == "update"
+        assert len(update.run_failures) == int(keep_question)
+        detail = await service.get_detail("context-failure", include_task_trace=False)
+        assert detail.run_failures == update.run_failures
+    finally:
+        await stream.aclose()
+        await source.aclose()

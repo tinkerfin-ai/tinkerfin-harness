@@ -30,9 +30,7 @@ CREATE TABLE model_connections (
 
 CREATE TABLE agent_models (
   id INTEGER NOT NULL COMMENT '模型配置主键' AUTO_INCREMENT,
-  generation_options JSON NOT NULL COMMENT '生图接口附加参数，不包含认证信息',
   user_id INTEGER NOT NULL COMMENT '模型配置所属用户 ID',
-  purpose VARCHAR(16) NOT NULL COMMENT 'chat 对话模型或 image 生图服务' DEFAULT 'chat',
   model_id VARCHAR(64) NOT NULL COMMENT '前后端使用的稳定模型 ID',
   display_name VARCHAR(128) NOT NULL COMMENT '前端展示名称',
   connection_id VARCHAR(64) NOT NULL COMMENT '所属连接 ID，与 user_id 共同确定连接',
@@ -51,9 +49,29 @@ CREATE TABLE agent_models (
 
 CREATE INDEX ix_agent_models_connection ON agent_models (user_id, connection_id);
 
-CREATE INDEX ix_agent_models_default ON agent_models (user_id, purpose, is_default, enabled);
+CREATE INDEX ix_agent_models_default ON agent_models (user_id, is_default, enabled);
 
 CREATE INDEX ix_agent_models_enabled_order ON agent_models (user_id, enabled, sort_order, id);
+
+CREATE TABLE service_configs (
+  id VARCHAR(64) NOT NULL COMMENT '稳定服务配置 ID；清除后重建分配新值',
+  user_id INTEGER NOT NULL COMMENT '配置所属用户 ID',
+  capability VARCHAR(32) NOT NULL COMMENT 'web_search 网页搜索或 image_generation 图片生成',
+  provider_id VARCHAR(32) NOT NULL COMMENT 'tavily、openai、fal 或 custom 接入方式',
+  enabled BOOL NOT NULL COMMENT '是否允许新运行使用本服务',
+  config JSON NOT NULL COMMENT '经能力类型校验的请求及结果配置，不含凭证',
+  api_key TEXT NOT NULL COMMENT '服务密钥原文，不进入响应、日志或运行绑定',
+  test_status VARCHAR(16) COMMENT '最近主动测试的 success 或 failed；配置改变时清空',
+  test_code VARCHAR(32) COMMENT '最近主动测试的安全结果码',
+  test_fingerprint VARCHAR(64) COMMENT '最近测试所针对的执行配置摘要',
+  tested_at DATETIME COMMENT '最近主动测试时间，UTC',
+  created_at DATETIME NOT NULL COMMENT 'UTC 创建时间',
+  updated_at DATETIME NOT NULL COMMENT 'UTC 更新时间',
+  PRIMARY KEY (id, user_id),
+  CONSTRAINT uq_service_configs_owner_capability UNIQUE (user_id, capability)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用户搜索与图片生成服务配置';
+
+CREATE INDEX ix_service_configs_owner_enabled ON service_configs (user_id, enabled);
 
 CREATE TABLE conversation_threads (
   id BIGINT NOT NULL AUTO_INCREMENT COMMENT '会话主键',
@@ -91,6 +109,7 @@ CREATE TABLE conversation_run_registrations (
   model_id VARCHAR(64) NOT NULL COMMENT '主 Run 使用的稳定模型 ID',
   status VARCHAR(32) NOT NULL COMMENT 'preparing/starting/running/waiting/succeeded/failed/cancelled/abandoned',
   input_json JSON NOT NULL COMMENT '用于同 runId 幂等核验的标准请求',
+  service_bindings JSON NOT NULL COMMENT '本运行搜索与生图服务的稳定 ID 和配置摘要，不含凭证',
   preparation_id VARCHAR(32) NOT NULL COMMENT '本次准备登记的随机标识，清理时比较以保护并发提交',
   terminal_outcome VARCHAR(32) COMMENT 'Trace 终态结果',
   error_code VARCHAR(128) COMMENT '客户端安全的终态错误码',

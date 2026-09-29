@@ -1,17 +1,15 @@
 """把已捕获的技能内容准备到沙箱，并应用用户本轮的明确选择"""
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 from deepagents.backends.protocol import BackendProtocol
-from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.middleware.types import ModelRequest, ModelResponse
-from langchain_core.messages import SystemMessage
+from pydantic import JsonValue
 
-from tinkerfin import trace_contribution
-from tinkerfin_contracts import PreparedWorkspace, RunIdentity, Workspace
+from tinkerfin_contracts import MessageSource, PreparedWorkspace, RunIdentity, Workspace
 from tinkerfin_sandbox import RootedOpenSandboxBackend
 from tinkerfin_studio.api.errors import BusinessException, SkillErrorCode
 from tinkerfin_studio.skills.content import SkillContentStore
@@ -74,47 +72,64 @@ class SkillsWorkspace:
             )
 
 
-class SelectedSkillInstructions(AgentMiddleware):
-    """将用户明确选择的固定技能指令加入本轮模型上下文，不改写用户消息"""
+# 与公开历史单条正文的 512 KiB 预算保持一致，避免已注入的正文在刷新后被省略
+MAX_SELECTED_INSTRUCTIONS_BYTES = 512 * 1024
 
-    def __init__(
-        self,
-        content: SkillContentStore,
-        user_id: int,
-        snapshot: SkillSnapshotPayload,
-        skills: tuple[SkillReference, ...],
-    ) -> None:
-        self._content = content
-        self._user_id = user_id
-        self._snapshot = snapshot
-        self._skills = skills
 
-    async def awrap_model_call(
-        self,
-        request: ModelRequest[Any],
-        handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse]],
-    ) -> ModelResponse:
-        blocks: list[str] = []
-        # 公共轨迹能力记录本轮实际应用的技能，实时和历史都能定位该上下文步骤
-        async with trace_contribution(
-            kind="custom",
-            name="应用技能：" + "、".join(skill.name for skill in self._skills),
-        ):
-            for skill in self._skills:
-                package = await self._content.load(self._user_id, skill.digest)
-                blocks.append(
-                    f"用户本轮明确选择技能 {skill.name}。技能目录：{skill_source_path(self._snapshot, skill)}{skill.name}\n{package.markdown}"
-                )
-        addition = "\n\n".join(blocks)
-        current = request.system_message
-        current_content = "" if current is None else current.content
-        if isinstance(current_content, str):
-            content = current_content + "\n\n" + addition
-        else:
-            content = [*current_content, {"type": "text", "text": addition}]
-        message = (
-            SystemMessage(content=content)
-            if current is None
-            else current.model_copy(update={"content": content})
+async def build_selected_skill_message(
+    content: SkillContentStore,
+    *,
+    user_id: int,
+    identity: RunIdentity,
+    snapshot: SkillSnapshotPayload,
+) -> dict[str, JsonValue] | None:
+    """从运行固定快照生成一条可随会话保留的技能指令
+
+    Args:
+        content: 当前应用的技能内容仓储
+        user_id: 已认证且拥有该快照的用户
+        identity: 当前普通提问的稳定运行身份
+        snapshot: 已完成授权并固定的技能选择和内容摘要
+
+    Returns:
+        带稳定身份及公开来源的用户角色消息；未选择技能时返回 None
+
+    Raises:
+        BusinessException: 固定技能内容缺失、不一致，或完整正文超过历史容量
+    """
+    selected = tuple(skill for skill in snapshot.skills if skill.selected)
+    if not selected:
+        return None
+    blocks: list[str] = []
+    references: list[JsonValue] = []
+    for skill in selected:
+        package = await content.load(user_id, skill.digest)
+        if package.name != skill.name:
+            raise BusinessException(SkillErrorCode.CONTENT_UNAVAILABLE)
+        blocks.append(
+            f"用户本次请求明确选择技能 {skill.name}。技能目录：{skill_source_path(snapshot, skill)}{skill.name}\n{package.markdown}"
         )
-        return await handler(request.override(system_message=message))
+        references.append(
+            {"id": skill.installation_id, "name": skill.name, "digest": skill.digest}
+        )
+    instructions = "\n\n".join(blocks)
+    encoded = json.dumps(
+        instructions, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    if len(encoded) > MAX_SELECTED_INSTRUCTIONS_BYTES:
+        raise BusinessException(SkillErrorCode.INSTRUCTIONS_TOO_LARGE)
+    source = MessageSource(
+        kind="context", name="skill-invocation", metadata={"skills": references}
+    )
+    return {
+        "id": "message-"
+        + str(
+            uuid5(
+                NAMESPACE_URL,
+                f"tinkerfin-studio:skill-instructions:{identity.namespace}:{identity.thread_id}:{identity.run_id}",
+            )
+        ),
+        "role": "user",
+        "content": instructions,
+        "source": source.model_dump(mode="json"),
+    }

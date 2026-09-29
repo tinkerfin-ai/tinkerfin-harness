@@ -2,36 +2,91 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import shlex
+import struct
 from dataclasses import asdict, dataclass
+from typing import Annotated
 from urllib.parse import urlsplit
 from uuid import uuid4
 
+import anyio
 from deepagents.backends.sandbox import MAX_BINARY_BYTES
 from langchain_core.tools import BaseTool, ToolException, tool
-from pydantic import JsonValue
+from pydantic import Field, JsonValue
 
 from tinkerfin.tools import ToolRuntime
 from tinkerfin_sandbox import RootedOpenSandboxBackend
 from tinkerfin_studio.attachments.documents import DocumentProcessor
-from tinkerfin_studio.attachments.processing import MAX_FILE_BYTES, MIME_TYPES
+from tinkerfin_studio.attachments.processing import (
+    MAX_FILE_BYTES,
+    MAX_PIXELS,
+    MIME_TYPES,
+)
 from tinkerfin_studio.attachments.service import AttachmentService, byte_chunks
 
-_BROWSER_SCRIPT = """import asyncio,os,sys
+_BROWSER_SCRIPT = r"""import asyncio
+import io
+import json
+import os
+import sys
+from urllib.parse import urlsplit
+
+from PIL import Image
 from playwright.async_api import async_playwright
+
+MAX_BYTES = 10 * 1024 * 1024
+MAX_PIXELS = 40_000_000
+
 async def main():
-    async with async_playwright() as p:
-        browser=await p.chromium.launch(headless=True,args=['--no-sandbox'])
+    request_path, output_path = sys.argv[1:]
+    with os.fdopen(os.open(request_path, os.O_RDONLY | os.O_NOFOLLOW), 'r') as stream:
+        request = json.loads(stream.read(6 * MAX_BYTES + 65536))
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True, args=['--no-sandbox'])
         try:
-            page=await browser.new_page(viewport={'width':1280,'height':800})
-            await page.goto(sys.argv[1],wait_until='domcontentloaded',timeout=30000)
-            data=await page.screenshot(type='png',timeout=10000)
-            with os.fdopen(os.open(sys.argv[2],os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600),'wb') as stream:
-                stream.write(data)
+            async with asyncio.timeout(40):
+                context = await browser.new_context(
+                    viewport={'width': request['width'], 'height': request['height']},
+                    device_scale_factor=1, service_workers='block', accept_downloads=False,
+                )
+                async def route_resource(route):
+                    if urlsplit(route.request.url).scheme in {'http', 'https', 'data', 'blob', 'about'}:
+                        await route.continue_()
+                    else:
+                        await route.abort()
+                await context.route('**/*', route_resource)
+                page = await context.new_page()
+                if request['url'] is not None:
+                    await page.goto(request['url'], wait_until='domcontentloaded', timeout=30000)
+                else:
+                    await page.set_content(request['html'], wait_until='domcontentloaded', timeout=30000)
+                await page.evaluate('''async () => {
+                    await document.fonts.ready;
+                    await Promise.all(Array.from(document.images, image => image.decode().catch(() => undefined)));
+                }''')
+                bounds = await page.evaluate('''() => ({
+                    width: Math.max(innerWidth, document.documentElement.scrollWidth, document.body?.scrollWidth || 0),
+                    height: Math.max(innerHeight, document.documentElement.scrollHeight, document.body?.scrollHeight || 0)
+                })''')
+                pixels = bounds['width'] * bounds['height'] if request['full_page'] else request['width'] * request['height']
+                if pixels > MAX_PIXELS:
+                    raise ValueError('截图像素超过限制')
+                data = await page.screenshot(type='png', full_page=request['full_page'], animations='disabled', timeout=10000)
+                if not data or len(data) > MAX_BYTES:
+                    raise ValueError('截图超过大小限制')
+                with Image.open(io.BytesIO(data)) as image:
+                    if image.width * image.height > MAX_PIXELS:
+                        raise ValueError('截图像素超过限制')
+                    image.verify()
+                with os.fdopen(os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'wb') as stream:
+                    stream.write(data)
         finally:
             await browser.close()
+
+
 asyncio.run(main())
 """
 
@@ -170,6 +225,48 @@ async def save_work_file(
     )
 
 
+async def _discard_browser_request(
+    workspace: RootedOpenSandboxBackend, path: str
+) -> None:
+    """删除本次截图的参数副本，完成清理后继续传播取消
+
+    框架负责命令取消与资源归还；这里只拥有本次创建的临时文件。
+    删除任务由当前调用等待，重复取消不会把后台清理遗留给下一次运行。
+
+    Args:
+        workspace: 当前调用借用的用户工作区
+        path: 本次创建且不交付给用户的独立参数文件
+
+    Raises:
+        OSError: 公开删除操作未确认成功
+        CancelledError: 调用已取消，清理结束后继续传播
+    """
+
+    async def remove() -> None:
+        result = await workspace.adelete(path)
+        if result.error is not None:
+            raise OSError("未能确认截图参数文件已清理")
+
+    cleanup = asyncio.create_task(remove(), name="discard-browser-request")
+    cancelled: asyncio.CancelledError | None = None
+    with anyio.CancelScope(shield=True):
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError as error:
+                cancelled = cancelled or error
+            except Exception:  # noqa: BLE001 - 删除失败由任务结果继续传播
+                break
+    try:
+        cleanup.result()
+    except BaseException as error:
+        if cancelled is not None and error is not cancelled:
+            raise cancelled from error
+        raise
+    if cancelled is not None:
+        raise cancelled
+
+
 def build_sandbox_attachment_tools(
     *,
     service: AttachmentService,
@@ -228,16 +325,25 @@ def build_sandbox_attachment_tools(
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
     async def capture_browser(
-        url: str, runtime: ToolRuntime[None, RootedOpenSandboxBackend]
+        runtime: ToolRuntime[None, RootedOpenSandboxBackend],
+        url: str | None = None,
+        file_path: str | None = None,
+        viewport_width: Annotated[int, Field(strict=True, gt=0, le=MAX_PIXELS)] = 1280,
+        viewport_height: Annotated[int, Field(strict=True, gt=0, le=MAX_PIXELS)] = 800,
+        full_page: Annotated[bool, Field(strict=True)] = False,
     ) -> str:
-        """在用户工作区生成网页视口截图，不自动交付
+        """将网页或工作区 HTML 渲染为 PNG，不自动交付
 
         如有 preview_file_path，可先读取预览；也可使用工作区工具处理原图。
         决定交给用户时再调用 deliver_file；截图始终作为独立工作文件保留。
         运行取消或连接失败时不报告成功，工作区可能保留已生成的产物。
 
         Args:
-            url: 不含账户信息的 HTTP 或 HTTPS 网页地址
+            url: HTTP 或 HTTPS 网页地址，不含账户信息，与 file_path 恰好填写一项
+            file_path: 当前工作区 HTML 文件路径，样式和图片须内嵌或使用 HTTP(S)，不读取本地子资源
+            viewport_width: 视口宽度，单位 CSS 像素，与高度乘积不超过 4000 万
+            viewport_height: 视口高度，单位 CSS 像素，截图使用 1 倍像素比例
+            full_page: 是否截取完整页面；完整内容也受 4000 万像素和 10 MiB 限制
 
         Returns:
             工作文件描述；大图片另含 preview_file_path，交付使用 file_path 原图
@@ -248,31 +354,83 @@ def build_sandbox_attachment_tools(
             OSError: 截图不存在、不可读或不是普通文件
             TimeoutError: 图片预览生成超时
         """
-        parsed = urlsplit(url)
-        if (
-            parsed.scheme not in {"https", "http"}
-            or not parsed.hostname
-            or parsed.username
-            or parsed.password
-        ):
-            raise ValueError("网页地址须为不含账户信息的 HTTP 或 HTTPS URL")
+        if (url is None) == (file_path is None):
+            raise ValueError("网页地址与 HTML 路径必须恰好填写一项")
+        if viewport_width * viewport_height > MAX_PIXELS:
+            raise ValueError("截图像素超过 4000 万")
+        if url is not None:
+            parsed = urlsplit(url)
+            if (
+                parsed.scheme not in {"https", "http"}
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+            ):
+                raise ValueError("网页地址须为不含账户信息的 HTTP 或 HTTPS URL")
         sandbox = runtime.workspace
+        html = None
+        if file_path is not None:
+            if not file_path.lower().endswith((".html", ".htm")):
+                raise ValueError("请指定工作区中的 HTML 文件")
+            html = (
+                await sandbox.aread_bytes(file_path, max_bytes=MAX_FILE_BYTES)
+            ).decode("utf-8")
+            if not html.strip():
+                raise ValueError("HTML 文件不能为空")
         path = f"/browser-capture-{uuid4().hex}.png"
-        command = (
-            "python -c "
-            + shlex.quote(_BROWSER_SCRIPT)
-            + " "
-            + shlex.quote(url)
-            + " "
-            + shlex.quote(sandbox.to_shell_path(path))
-        )
+        request_path = f"/browser-request-{uuid4().hex}.json"
+        payload = json.dumps(
+            {
+                "url": url,
+                "html": html,
+                "width": viewport_width,
+                "height": viewport_height,
+                "full_page": full_page,
+            },
+            ensure_ascii=False,
+        ).encode()
+        primary: BaseException | None = None
+        try:
+            uploaded = await sandbox.aupload_files([(request_path, payload)])
+            if (
+                len(uploaded) != 1
+                or uploaded[0].path != request_path
+                or uploaded[0].error is not None
+            ):
+                raise OSError("截图参数保存失败")
+            command = " ".join(
+                shlex.quote(part)
+                for part in (
+                    "python",
+                    "-c",
+                    _BROWSER_SCRIPT,
+                    sandbox.to_shell_path(request_path),
+                    sandbox.to_shell_path(path),
+                )
+            )
 
-        result = await sandbox.aexecute(command, timeout=45)
+            result = await sandbox.aexecute(command, timeout=45)
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            try:
+                await _discard_browser_request(sandbox, request_path)
+            except BaseException as cleanup_error:
+                if primary is not None and (
+                    not isinstance(primary, Exception)
+                    or not isinstance(cleanup_error, asyncio.CancelledError)
+                ):
+                    raise primary from cleanup_error
+                raise
         if result.exit_code != 0:
             raise ValueError("网页截图失败，请检查浏览器依赖和网页是否可用")
         data = await sandbox.aread_bytes(path, max_bytes=MAX_FILE_BYTES)
-        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        if len(data) < 24 or not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise ValueError("网页截图未生成有效的 PNG 文件")
+        width, height = struct.unpack(">II", data[16:24])
+        if not width or not height or width * height > MAX_PIXELS:
+            raise ValueError("网页截图尺寸不合法或超过像素限制")
         saved = await describe_work_file(
             sandbox, service.documents, path=path, name="浏览器截图.png", data=data
         )

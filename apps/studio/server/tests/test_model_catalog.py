@@ -102,12 +102,11 @@ async def test_catalog_groups_by_owned_connections_and_preserves_model_order(
                 base_url="https://models.example/v1",
             )
         )
-    for model_id, connection_id, order, enabled, purpose in (
-        ("second-provider", "deepseek", 0, True, "chat"),
-        ("later", "configured", 20, True, "chat"),
-        ("earlier", "configured", 10, True, "chat"),
-        ("disabled", "configured", 0, False, "chat"),
-        ("image", "configured", 0, True, "image"),
+    for model_id, connection_id, order, enabled in (
+        ("second-provider", "deepseek", 0, True),
+        ("later", "configured", 20, True),
+        ("earlier", "configured", 10, True),
+        ("disabled", "configured", 0, False),
     ):
         await service.save_settings(
             AgentModelSave.model_validate(
@@ -118,7 +117,6 @@ async def test_catalog_groups_by_owned_connections_and_preserves_model_order(
                     "model_name": model_id,
                     "sort_order": order,
                     "enabled": enabled,
-                    "purpose": purpose,
                 }
             )
         )

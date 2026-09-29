@@ -1,15 +1,15 @@
 import { Check, ChevronDown } from 'lucide-react'
 
 import { Button, ListboxPicker } from '../../../components/ui'
-import { OverflowMarquee } from './OverflowMarquee'
 import { useI18n } from '../../../i18n'
 import type { ModelCatalogStatus } from '../useModelCatalog'
 import type { AgentModelCatalogItem } from '../../../api/models/types'
 
-function ModelOption({ label, selected }: { label: string; selected: boolean }) {
+function ModelOption({ label, selected, isDefault }: { label: string; selected: boolean; isDefault: boolean }) {
+  const { t } = useI18n()
   return (
     <>
-      <OverflowMarquee className="ui-compact-option-label">{label}</OverflowMarquee>
+      <span className="composer-model-option-label">{label}{isDefault && <span className="composer-model-default">{t('默认')}</span>}</span>
       <span className="ui-compact-option-check" aria-hidden="true">{selected && <Check size={14} />}</span>
     </>
   )
@@ -70,10 +70,10 @@ export function ComposerModelPicker({
       disabled={status !== 'ready' || modelIds.length === 0}
       triggerLabel={t('选择模型')}
       listboxLabel={t('模型选项')}
-      rootClassName="ui-compact-picker"
+      rootClassName="ui-compact-picker composer-model-picker"
       triggerClassName="ui-compact-picker-trigger"
       listboxClassName="ui-compact-picker-options"
-      optionClassName="overflow-marquee-trigger"
+      optionClassName="composer-model-option"
       renderTrigger={(selected) => (
         <>
           <span>{modelDisplayName(selected) || t('加载模型…')}</span>
@@ -81,7 +81,7 @@ export function ComposerModelPicker({
         </>
       )}
       renderOption={(option, selected) => (
-        <ModelOption label={modelDisplayName(option)} selected={selected} />
+        <ModelOption label={modelDisplayName(option)} selected={selected} isDefault={byId.get(option)?.isDefault === true} />
       )}
     />
   )

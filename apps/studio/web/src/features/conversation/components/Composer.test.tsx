@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { Composer } from './Composer'
+import { Composer as ComposerView } from './Composer'
+import { useComposerDraft } from '../useComposerDraft'
 import type { DraftAttachment } from '../useAttachments'
 
 const composerChromeProps = () => ({
@@ -15,75 +17,65 @@ const composerChromeProps = () => ({
   onRemoveAttachment: vi.fn(),
 })
 
+function DraftComposer({ text, onDraftChange, ...props }: Omit<ComponentProps<typeof ComposerView>, 'draft' | 'onChange'> & {
+  text: string
+  onDraftChange: (text: string) => void
+}) {
+  const draft = useComposerDraft(text)
+  const latest = useRef(draft.state)
+  latest.current = draft.state
+  const { setText } = draft
+  useEffect(() => {
+    if (latest.current.doc.toString() !== text) setText(text)
+  }, [text, setText])
+  return <ComposerView {...props} draft={draft.state}
+    selectedSkills={props.selectedSkills ?? draft.references.map(reference => reference.skill)}
+    onChange={transaction => { draft.apply(transaction); if (transaction.docChanged) onDraftChange(transaction.newDoc.toString()) }} />
+}
+
 describe('Composer', () => {
-  it('从真实技能菜单多选，保留正文并支持逐项移除', () => {
+  it('选择技能在光标处插入主题引用，删除和撤销同步所选身份', () => {
     const skills = [{ id: 'one', name: 'reports', description: 'Prepare reports' }, { id: 'two', name: 'research', description: 'Research sources' }]
-    function SkillComposer() {
-      const [value, setValue] = useState('保留正文')
-      const [selected, setSelected] = useState<typeof skills>([])
-      return <Composer {...composerChromeProps()} value={value} onChange={setValue} isRunning={false} onSend={vi.fn()} onStop={vi.fn()}
-        skills={skills} selectedSkills={selected} onSelectSkill={id => setSelected(previous => [...previous, skills.find(skill => skill.id === id)!])}
-        onRemoveSkill={id => setSelected(previous => previous.filter(skill => skill.id !== id))} />
-    }
-    render(<SkillComposer />)
+    render(<DraftComposer {...composerChromeProps()} text="保留正文" onDraftChange={vi.fn()} isRunning={false} onSend={vi.fn()} onStop={vi.fn()} skills={skills} />)
+    const input = screen.getByRole('textbox', { name: '消息输入' }) as HTMLTextAreaElement
     fireEvent.click(screen.getByRole('button', { name: '打开命令和技能' }))
     fireEvent.click(screen.getByRole('option', { name: /reports Prepare reports/ }))
+    expect(input).toHaveValue('保留正文/reports')
     fireEvent.click(screen.getByRole('button', { name: '打开命令和技能' }))
     expect(screen.getByRole('option', { name: /reports Prepare reports/ })).toBeDisabled()
-    fireEvent.click(screen.getByRole('option', { name: /research Research sources/ }))
-    expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('保留正文')
-    expect(screen.getByRole('button', { name: '移除技能：reports' })).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: '移除技能：reports' }))
-    expect(screen.queryByRole('button', { name: '移除技能：reports' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '移除技能：research' })).toBeVisible()
+    fireEvent.keyDown(input, { key: 'Escape' })
+    fireEvent.keyDown(input, { key: 'Backspace' })
+    expect(input).toHaveValue('保留正文')
+    fireEvent.keyDown(input, { key: 'z', ctrlKey: true })
+    expect(input).toHaveValue('保留正文/reports')
   })
 
-  it('允许输入已安装技能的斜杠前缀并用 Enter 选择', () => {
-    const chosen = vi.fn()
-    function SkillComposer() {
-      const [value, setValue] = useState('')
-      return <Composer {...composerChromeProps()} value={value} onChange={setValue} isRunning={false} onSend={vi.fn()} onStop={vi.fn()}
-        skills={[{ id: 'one', name: 'reports', description: 'Prepare reports' }]} onSelectSkill={chosen} />
-    }
-    render(<SkillComposer />)
+  it('输入技能前缀后用 Enter 选择，并保留用户原文', () => {
+    render(<DraftComposer {...composerChromeProps()} text="" onDraftChange={vi.fn()} isRunning={false} onSend={vi.fn()} onStop={vi.fn()}
+      skills={[{ id: 'one', name: 'reports', description: 'Prepare reports' }]} />)
     const input = screen.getByRole('textbox', { name: '消息输入' })
     fireEvent.change(input, { target: { value: '/repo', selectionStart: 5 } })
-    expect(input).toHaveValue('/repo')
     fireEvent.keyDown(input, { key: 'Enter' })
-    expect(chosen).toHaveBeenCalledWith('one')
-    expect(input).toHaveValue('')
+    expect(input).toHaveValue('用 /reports 技能帮我')
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
   })
 
-  it('技能不可用时保留草稿并阻止发送，移除后恢复', () => {
+  it('技能不可用时保留草稿并阻止发送', () => {
     const onSend = vi.fn()
-    function SkillComposer() {
-      const [selected, setSelected] = useState([{ id: 'reports', name: 'reports', description: '整理报告', unavailable: true }])
-      return <Composer {...composerChromeProps()} value="保留正文" onChange={vi.fn()} isRunning={false} onSend={onSend} onStop={vi.fn()}
-        selectedSkills={selected} onRemoveSkill={id => setSelected(items => items.filter(item => item.id !== id))} />
-    }
-    render(<SkillComposer />)
-    const input = screen.getByRole('textbox', { name: '消息输入' })
-    const send = screen.getByRole('button', { name: '发送消息' })
-    expect(screen.getByRole('button', { name: '移除技能：reports' })).toHaveTextContent('不可用')
+    render(<DraftComposer {...composerChromeProps()} text="保留正文 /reports" onDraftChange={vi.fn()} isRunning={false} onSend={onSend} onStop={vi.fn()}
+      selectedSkills={[{ id: 'reports', name: 'reports', description: '整理报告', unavailable: true }]} />)
     expect(screen.getByRole('status')).toHaveTextContent('所选技能已停用或卸载，请移除后再发送')
-    expect(send).toBeDisabled()
-    fireEvent.click(send)
-    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
+    fireEvent.keyDown(screen.getByRole('textbox', { name: '消息输入' }), { key: 'Enter' })
     expect(onSend).not.toHaveBeenCalled()
-    expect(input).toHaveValue('保留正文')
-    fireEvent.click(screen.getByRole('button', { name: '移除技能：reports' }))
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
-    expect(send).toBeEnabled()
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledOnce()
   })
   it('图片上传就绪后允许发送并保留正文与附件', () => {
     const attachment: DraftAttachment = {
       id: 'image', name: '截图.png', kind: 'image', size: 3, state: 'ready', progress: 100,
     }
     const onSend = vi.fn()
-    render(<Composer {...composerChromeProps()} value="保留正文" isRunning={false} attachments={[attachment]}
-      onChange={vi.fn()} onSend={onSend} onStop={vi.fn()} />)
+    render(<DraftComposer {...composerChromeProps()} text="保留正文" isRunning={false} attachments={[attachment]}
+      onDraftChange={vi.fn()} onSend={onSend} onStop={vi.fn()} />)
     const input = screen.getByRole('textbox', { name: '消息输入' })
     const send = screen.getByRole('button', { name: '发送消息' })
     expect(input).not.toHaveAccessibleDescription()
@@ -97,12 +89,11 @@ describe('Composer', () => {
 
   it.each(['loading', 'error'] as const)('技能列表为 %s 时保留标签和草稿，阻止普通发送直到读取完成', skillsStatus => {
     const onSend = vi.fn()
-    const props = { ...composerChromeProps(), value: '保留正文', onChange: vi.fn(), isRunning: false, onSend, onStop: vi.fn(),
+    const props = { ...composerChromeProps(), text: '保留正文', onDraftChange: vi.fn(), isRunning: false, onSend, onStop: vi.fn(),
       selectedSkills: [{ id: 'reports', name: 'reports', description: '整理报告' }] }
-    const { rerender } = render(<Composer {...props} skillsStatus={skillsStatus} />)
+    const { rerender } = render(<DraftComposer {...props} skillsStatus={skillsStatus} />)
     const input = screen.getByRole('textbox', { name: '消息输入' })
     const send = screen.getByRole('button', { name: '发送消息' })
-    expect(screen.getByRole('button', { name: '移除技能：reports' })).not.toHaveTextContent('不可用')
     expect(screen.getByRole('status')).toHaveTextContent(skillsStatus === 'loading' ? '正在加载技能' : '技能列表暂不可用')
     expect(send).toBeDisabled()
     fireEvent.click(send)
@@ -110,7 +101,7 @@ describe('Composer', () => {
     expect(onSend).not.toHaveBeenCalled()
     expect(input).toHaveValue('保留正文')
 
-    rerender(<Composer {...props} skillsStatus="ready" />)
+    rerender(<DraftComposer {...props} skillsStatus="ready" />)
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(send).toBeEnabled()
     fireEvent.keyDown(input, { key: 'Enter' })
@@ -119,12 +110,12 @@ describe('Composer', () => {
 
   it('技能列表加载不阻断无选择的普通发送或沿用原运行的压缩', () => {
     const onSend = vi.fn()
-    const props = { ...composerChromeProps(), value: '普通正文', onChange: vi.fn(), isRunning: false, onSend, onStop: vi.fn() }
-    const { rerender } = render(<Composer {...props} skillsStatus="loading" />)
+    const props = { ...composerChromeProps(), text: '普通正文', onDraftChange: vi.fn(), isRunning: false, onSend, onStop: vi.fn() }
+    const { rerender } = render(<DraftComposer {...props} skillsStatus="loading" />)
     fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
     expect(onSend).toHaveBeenCalledOnce()
 
-    rerender(<Composer {...props} value="/compact " skillsStatus="loading" selectedSkills={[{ id: 'reports', name: 'reports', description: '整理报告' }]} />)
+    rerender(<DraftComposer {...props} text="/compact " skillsStatus="loading" selectedSkills={[{ id: 'reports', name: 'reports', description: '整理报告' }]} />)
     fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
     expect(onSend).toHaveBeenCalledTimes(2)
   })
@@ -138,10 +129,10 @@ describe('Composer', () => {
     }
     const pending: DraftAttachment = { ...ready, id: 'pending', name: '待处理.pdf', state, progress: 25, attachment: undefined }
     const props = {
-      ...composerChromeProps(), value: '保留正文', isRunning: false,
-      onChange: vi.fn(), onSend, onStop: vi.fn(),
+      ...composerChromeProps(), text: '保留正文', isRunning: false,
+      onDraftChange: vi.fn(), onSend, onStop: vi.fn(),
     }
-    const { rerender } = render(<Composer {...props} attachments={[ready, pending]} />)
+    const { rerender } = render(<DraftComposer {...props} attachments={[ready, pending]} />)
     const send = screen.getByRole('button', { name: '发送消息' })
     const input = screen.getByRole('textbox', { name: '消息输入' })
     expect(send).toBeDisabled()
@@ -149,7 +140,7 @@ describe('Composer', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onSend).not.toHaveBeenCalled()
     expect(input).toHaveValue('保留正文')
-    rerender(<Composer {...props} attachments={[ready, { ...pending, state: 'ready', attachment: ready.attachment }]} />)
+    rerender(<DraftComposer {...props} attachments={[ready, { ...pending, state: 'ready', attachment: ready.attachment }]} />)
     expect(send).toBeEnabled()
     fireEvent.click(send)
     fireEvent.keyDown(input, { key: 'Enter' })
@@ -164,36 +155,36 @@ describe('Composer', () => {
     const onRetryAttachment = vi.fn()
     const onRemoveAttachment = vi.fn()
     const props = {
-      ...composerChromeProps(), value: '保留正文', isRunning: false,
-      onChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn(), onRetryAttachment, onRemoveAttachment,
+      ...composerChromeProps(), text: '保留正文', isRunning: false,
+      onDraftChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn(), onRetryAttachment, onRemoveAttachment,
     }
-    const { rerender } = render(<Composer {...props} attachments={[failed]} />)
+    const { rerender } = render(<DraftComposer {...props} attachments={[failed]} />)
     const card = screen.getByRole('group', { name: '报告.pdf' })
     expect(within(card).getByText('PDF')).toBeInTheDocument()
     expect(within(card).getByRole('status')).toHaveTextContent('上传失败')
     expect(within(card).getByRole('status')).toHaveAttribute('title', failed.error)
     fireEvent.click(within(card).getByRole('button', { name: '重试附件：报告.pdf' }))
     expect(onRetryAttachment).toHaveBeenCalledWith('failed')
-    rerender(<Composer {...props} attachments={[{ ...failed, state: 'uploading', progress: 42 }]} />)
+    rerender(<DraftComposer {...props} attachments={[{ ...failed, state: 'uploading', progress: 42 }]} />)
     expect(card).toHaveAttribute('aria-busy', 'true')
     expect(within(card).getByRole('status')).toHaveTextContent('上传中 42%')
     expect(within(card).queryByText('上传失败')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
-    rerender(<Composer {...props} attachments={[failed]} />)
+    rerender(<DraftComposer {...props} attachments={[failed]} />)
     fireEvent.click(within(card).getByRole('button', { name: '移除附件：报告.pdf' }))
     expect(onRemoveAttachment).toHaveBeenCalledWith('failed')
-    rerender(<Composer {...props} attachments={[]} />)
+    rerender(<DraftComposer {...props} attachments={[]} />)
     expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
     expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('保留正文')
   })
 
   it('按传入控件显示返回底部和轨迹入口，移除后不再提供入口', () => {
     const props = {
-      ...composerChromeProps(), value: '', isRunning: false,
-      onChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn(),
+      ...composerChromeProps(), text: '', isRunning: false,
+      onDraftChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn(),
     }
     const { rerender } = render(
-      <Composer
+      <DraftComposer
         {...props}
         scrollToBottomControl={<button type="button">回到底部</button>}
         taskTraceControl={<button type="button">任务轨迹 2</button>}
@@ -201,7 +192,7 @@ describe('Composer', () => {
     )
     expect(screen.getByRole('button', { name: '回到底部' })).toBeVisible()
     expect(screen.getByRole('button', { name: '任务轨迹 2' })).toBeVisible()
-    rerender(<Composer {...props} />)
+    rerender(<DraftComposer {...props} />)
     expect(screen.queryByRole('button', { name: '回到底部' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '任务轨迹 2' })).not.toBeInTheDocument()
   })
@@ -212,12 +203,12 @@ describe('Composer', () => {
       return 1
     })
     const { rerender } = render(
-      <Composer
+      <DraftComposer
         {...composerChromeProps()}
         takeover={<section aria-label="澄清接管">等待回答</section>}
-        value="保留的草稿"
+        text="保留的草稿"
         isRunning={false}
-        onChange={vi.fn()}
+        onDraftChange={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
       />,
@@ -231,11 +222,11 @@ describe('Composer', () => {
     expect(note).toBeVisible()
 
     rerender(
-      <Composer
+      <DraftComposer
         {...composerChromeProps()}
-        value="保留的草稿"
+        text="保留的草稿"
         isRunning={false}
-        onChange={vi.fn()}
+        onDraftChange={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
       />,
@@ -249,11 +240,11 @@ describe('Composer', () => {
 
   it('空草稿显示输入提示并禁用发送', () => {
     render(
-      <Composer
+      <DraftComposer
         {...composerChromeProps()}
-        value=""
+        text=""
         isRunning={false}
-        onChange={vi.fn()}
+        onDraftChange={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
       />,
@@ -267,15 +258,15 @@ describe('Composer', () => {
   it('提供命令、附件、权限和模型入口，并支持关闭 Plan', () => {
     const onExitPlan = vi.fn()
     render(
-      <Composer
+      <DraftComposer
         {...composerChromeProps()}
         modelControl={<button type="button">GPT-5.5</button>}
         accessControl={<button type="button">选择访问权限</button>}
         planActive
         onExitPlan={onExitPlan}
-        value=""
+        text=""
         isRunning={false}
-        onChange={vi.fn()}
+        onDraftChange={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
       />,
@@ -300,14 +291,14 @@ describe('Composer', () => {
       kind: 'document' as const, name: 'brief.pdf', size: 3, state: 'ready' as const, progress: 100,
     }
     const { container } = render(
-      <Composer
+      <DraftComposer
         {...composerChromeProps()}
         attachments={[attachment]}
         onAddAttachments={onAddAttachments}
         onRemoveAttachment={onRemoveAttachment}
-        value="正文"
+        text="正文"
         isRunning={false}
-        onChange={vi.fn()}
+        onDraftChange={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
       />,
@@ -331,11 +322,11 @@ describe('Composer', () => {
       function ComposerHarness() {
         const [value, setValue] = useState('第一行\n第二行内容')
         return (
-          <Composer
+          <DraftComposer
             {...composerChromeProps()}
-            value={value}
+            text={value}
             isRunning={false}
-            onChange={setValue}
+            onDraftChange={setValue}
             onSend={vi.fn()}
             onStop={vi.fn()}
           />
@@ -370,11 +361,11 @@ describe('Composer', () => {
       function ComposerHarness() {
         const [value, setValue] = useState('保留内容')
         return (
-          <Composer
+          <DraftComposer
             {...composerChromeProps()}
-            value={value}
+            text={value}
             isRunning={false}
-            onChange={setValue}
+            onDraftChange={setValue}
             onSend={vi.fn()}
             onStop={vi.fn()}
           />
@@ -407,11 +398,11 @@ describe('Composer', () => {
     function ComposerHarness() {
       const [value, setValue] = useState('已有内容')
       return (
-        <Composer
+        <DraftComposer
           {...composerChromeProps()}
-          value={value}
+          text={value}
           isRunning={false}
-          onChange={setValue}
+          onDraftChange={setValue}
           onSend={vi.fn()}
           onStop={vi.fn()}
         />
@@ -440,7 +431,7 @@ describe('Composer', () => {
   it('keeps wheel input inside the composer even when the input does not overflow', () => {
     const outerWheel = vi.fn()
     render(<div onWheel={outerWheel}>
-      <Composer {...composerChromeProps()} value="" isRunning={false} onChange={vi.fn()} onSend={vi.fn()} onStop={vi.fn()} />
+      <DraftComposer {...composerChromeProps()} text="" isRunning={false} onDraftChange={vi.fn()} onSend={vi.fn()} onStop={vi.fn()} />
     </div>)
     const input = screen.getByLabelText('消息输入')
     fireEvent.wheel(input, { deltaY: -120 })
@@ -452,11 +443,11 @@ describe('Composer', () => {
   it('运行期间提供停止操作', () => {
     const onStop = vi.fn()
     render(
-      <Composer
+      <DraftComposer
         {...composerChromeProps()}
-        value="正在发送"
+        text="正在发送"
         isRunning
-        onChange={vi.fn()}
+        onDraftChange={vi.fn()}
         onSend={vi.fn()}
         onStop={onStop}
       />,
@@ -474,11 +465,11 @@ describe('Composer', () => {
   ])('does not send while Enter confirms an IME %s', (_name, nativeFields) => {
     const onSend = vi.fn()
     render(
-      <Composer
+      <DraftComposer
         {...composerChromeProps()}
-        value="拼音输入"
+        text="拼音输入"
         isRunning={false}
-        onChange={vi.fn()}
+        onDraftChange={vi.fn()}
         onSend={onSend}
         onStop={vi.fn()}
       />,
@@ -495,11 +486,11 @@ describe('Composer', () => {
   it('sends with Enter while leaving Shift+Enter to native multiline editing', () => {
     const onSend = vi.fn()
     render(
-      <Composer
+      <DraftComposer
         {...composerChromeProps()}
-        value="可发送内容"
+        text="可发送内容"
         isRunning={false}
-        onChange={vi.fn()}
+        onDraftChange={vi.fn()}
         onSend={onSend}
         onStop={vi.fn()}
       />,
@@ -514,12 +505,12 @@ describe('Composer', () => {
 
   it('disables input and send while the selected history is hydrating', () => {
     render(
-      <Composer
+      <DraftComposer
         {...composerChromeProps()}
-        value="暂存内容"
+        text="暂存内容"
         isRunning={false}
         isHydrating
-        onChange={vi.fn()}
+        onDraftChange={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
       />,
@@ -533,11 +524,11 @@ describe('Composer', () => {
 
   it('加号开关命令菜单并支持 Escape，保留草稿和输入焦点且不显示提示', () => {
     render(
-      <Composer
+      <DraftComposer
         {...composerChromeProps()}
-        value="已有内容"
+        text="已有内容"
         isRunning={false}
-        onChange={vi.fn()}
+        onDraftChange={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
       />,
@@ -568,11 +559,11 @@ describe('Composer', () => {
     function ComposerHarness() {
       const [value, setValue] = useState(initialValue)
       return (
-        <Composer
+        <DraftComposer
           {...composerChromeProps()}
-          value={value}
+          text={value}
           isRunning={false}
-          onChange={setValue}
+          onDraftChange={setValue}
           onSend={onSend}
           onStop={vi.fn()}
         />
@@ -592,11 +583,11 @@ describe('Composer', () => {
   it('显示四条指令及数量，Plan 与模型选择可用', () => {
     const onChange = vi.fn()
     render(
-      <Composer
+      <DraftComposer
         {...composerChromeProps()}
-        value="/"
+        text="/"
         isRunning={false}
-        onChange={onChange}
+        onDraftChange={onChange}
         onSend={vi.fn()}
         onStop={vi.fn()}
       />,
@@ -627,8 +618,8 @@ describe('Composer', () => {
     const onChooseModel = vi.fn()
     const onChange = vi.fn()
     const onSend = vi.fn()
-    render(<Composer {...composerChromeProps()} value="保留正文" isRunning={false}
-      onChange={onChange} onSend={onSend} onStop={vi.fn()} onChooseModel={onChooseModel} />)
+    render(<DraftComposer {...composerChromeProps()} text="保留正文" isRunning={false}
+      onDraftChange={onChange} onSend={onSend} onStop={vi.fn()} onChooseModel={onChooseModel} />)
     fireEvent.click(screen.getByRole('button', { name: '打开命令和技能' }))
     fireEvent.click(screen.getByRole('option', { name: /model 选择本会话使用的模型/ }))
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
@@ -643,8 +634,8 @@ describe('Composer', () => {
     const onSend = vi.fn()
     function ComposerHarness() {
       const [value, setValue] = useState('保留正文')
-      return <Composer {...composerChromeProps()} value={value} isRunning={false}
-        onChange={setValue} onSend={onSend} onStop={vi.fn()} onChooseModel={onChooseModel} />
+      return <DraftComposer {...composerChromeProps()} text={value} isRunning={false}
+        onDraftChange={setValue} onSend={onSend} onStop={vi.fn()} onChooseModel={onChooseModel} />
     }
     render(<ComposerHarness />)
     const input = screen.getByRole('textbox', { name: '消息输入' })
@@ -662,11 +653,11 @@ describe('Composer', () => {
     function ComposerHarness() {
       const [value, setValue] = useState('')
       return (
-        <Composer
+        <DraftComposer
           {...composerChromeProps()}
-          value={value}
+          text={value}
           isRunning={false}
-          onChange={setValue}
+          onDraftChange={setValue}
           onSend={vi.fn()}
           onStop={vi.fn()}
         />
@@ -693,17 +684,17 @@ describe('Composer', () => {
   it.each(['/plan', '/plan ', '  /plan \n\t'])('Plan 任务正文为空时禁用发送并阻止 Enter：%j', (value) => {
     const onSend = vi.fn()
     const props = {
-      ...composerChromeProps(), value, isRunning: false,
-      onChange: vi.fn(), onSend, onStop: vi.fn(),
+      ...composerChromeProps(), text: value, isRunning: false,
+      onDraftChange: vi.fn(), onSend, onStop: vi.fn(),
     }
-    const { rerender } = render(<Composer {...props} />)
+    const { rerender } = render(<DraftComposer {...props} />)
     const input = screen.getByRole('textbox', { name: '消息输入' })
     const send = screen.getByRole('button', { name: '发送消息' })
     expect(send).toBeDisabled()
     fireEvent.click(send)
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onSend).not.toHaveBeenCalled()
-    rerender(<Composer {...props} value="/plan 制定方案" />)
+    rerender(<DraftComposer {...props} text="/plan 制定方案" />)
     expect(send).toBeEnabled()
     fireEvent.click(send)
     fireEvent.keyDown(input, { key: 'Enter' })
@@ -719,14 +710,14 @@ describe('Composer', () => {
     const onSend = vi.fn()
     const props = {
       ...composerChromeProps(), attachments: [ready], isRunning: false,
-      onChange: vi.fn(), onSend, onStop: vi.fn(),
+      onDraftChange: vi.fn(), onSend, onStop: vi.fn(),
     }
-    const { rerender } = render(<Composer {...props} value="/plan " />)
+    const { rerender } = render(<DraftComposer {...props} text="/plan " />)
     const send = screen.getByRole('button', { name: '发送消息' })
     expect(send).toBeDisabled()
     fireEvent.keyDown(screen.getByRole('textbox', { name: '消息输入' }), { key: 'Enter' })
     expect(onSend).not.toHaveBeenCalled()
-    rerender(<Composer {...props} value="" />)
+    rerender(<DraftComposer {...props} text="" />)
     expect(send).toBeEnabled()
     fireEvent.click(send)
     expect(onSend).toHaveBeenCalledOnce()
@@ -736,11 +727,11 @@ describe('Composer', () => {
     function ComposerHarness() {
       const [value, setValue] = useState(initialValue)
       return (
-        <Composer
+        <DraftComposer
           {...composerChromeProps()}
-          value={value}
+          text={value}
           isRunning={false}
-          onChange={setValue}
+          onDraftChange={setValue}
           onSend={vi.fn()}
           onStop={vi.fn()}
         />
@@ -762,11 +753,11 @@ describe('Composer', () => {
     function ComposerHarness() {
       const [value, setValue] = useState('')
       return (
-        <Composer
+        <DraftComposer
           {...composerChromeProps()}
-          value={value}
+          text={value}
           isRunning={false}
-          onChange={setValue}
+          onDraftChange={setValue}
           onSend={onSend}
           onStop={vi.fn()}
         />
@@ -796,11 +787,11 @@ describe('Composer', () => {
     function ComposerHarness() {
       const [value, setValue] = useState('/')
       return (
-        <Composer
+        <DraftComposer
           {...composerChromeProps()}
-          value={value}
+          text={value}
           isRunning={false}
-          onChange={setValue}
+          onDraftChange={setValue}
           onSend={vi.fn()}
           onStop={vi.fn()}
         />
@@ -821,11 +812,11 @@ describe('Composer', () => {
     function ComposerHarness() {
       const [value, setValue] = useState('/')
       return (
-        <Composer
+        <DraftComposer
           {...composerChromeProps()}
-          value={value}
+          text={value}
           isRunning={false}
-          onChange={setValue}
+          onDraftChange={setValue}
           onSend={vi.fn()}
           onStop={vi.fn()}
         />
@@ -855,11 +846,11 @@ describe('Composer', () => {
       const [value, setValue] = useState('/')
       return (
         <>
-          <Composer
+          <DraftComposer
             {...composerChromeProps()}
-            value={value}
+            text={value}
             isRunning={false}
-            onChange={setValue}
+            onDraftChange={setValue}
             onSend={vi.fn()}
             onStop={vi.fn()}
           />
@@ -879,9 +870,9 @@ describe('Composer', () => {
 })
 
 it('引用附件后保留草稿并聚焦输入框', async () => {
-  const props = { ...composerChromeProps(), value: '继续说明图中的内容', isRunning: false, onChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn() }
-  const { rerender } = render(<Composer {...props} />)
-  rerender(<Composer {...props} attachments={[{ id: 'reference', name: '报告.pdf', size: 12, kind: 'document', state: 'ready', progress: 100, reference: true }]} />)
+  const props = { ...composerChromeProps(), text: '继续说明图中的内容', isRunning: false, onDraftChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn() }
+  const { rerender } = render(<DraftComposer {...props} />)
+  rerender(<DraftComposer {...props} attachments={[{ id: 'reference', name: '报告.pdf', size: 12, kind: 'document', state: 'ready', progress: 100, reference: true }]} />)
   await waitFor(() => expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveFocus())
   expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('继续说明图中的内容')
   expect(props.onSend).not.toHaveBeenCalled()
@@ -889,13 +880,13 @@ it('引用附件后保留草稿并聚焦输入框', async () => {
 
 
 it('卡片关闭结算后显示输入框并恢复焦点', async () => {
-  const props = { ...composerChromeProps(), value: '继续讨论', isRunning: false,
-    onChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn() }
-  const { rerender } = render(<Composer {...props} takeover={<section aria-label="计划卡片">等待审阅</section>} />)
+  const props = { ...composerChromeProps(), text: '继续讨论', isRunning: false,
+    onDraftChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn() }
+  const { rerender } = render(<DraftComposer {...props} takeover={<section aria-label="计划卡片">等待审阅</section>} />)
   expect(screen.getByRole('region', { name: '计划卡片' })).toBeVisible()
   expect(screen.queryByRole('textbox', { name: '消息输入' })).not.toBeInTheDocument()
-  rerender(<Composer {...props} isRunning />)
-  rerender(<Composer {...props} />)
+  rerender(<DraftComposer {...props} isRunning />)
+  rerender(<DraftComposer {...props} />)
   await waitFor(() => expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveFocus())
   expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('继续讨论')
   expect(props.onSend).not.toHaveBeenCalled()
@@ -907,7 +898,7 @@ it.each(['click', 'Enter', 'Tab'])('命令内光标选中 compact 立即执行�
   const attachment: DraftAttachment = { id: 'draft-file', name: '草稿.pdf', kind: 'document', size: 3, state: 'uploading', progress: 20 }
   function Harness() {
     const [value, setValue] = useState(' 后续草稿')
-    return <Composer {...composerChromeProps()} value={value} onChange={setValue} isRunning={false} onSend={onSend} onStop={vi.fn()} onCompact={onCompact} attachments={[attachment]} />
+    return <DraftComposer {...composerChromeProps()} text={value} onDraftChange={setValue} isRunning={false} onSend={onSend} onStop={vi.fn()} onCompact={onCompact} attachments={[attachment]} />
   }
   render(<Harness />)
   const input = screen.getByRole('textbox', { name: '消息输入' }) as HTMLTextAreaElement
@@ -924,14 +915,45 @@ it.each(['click', 'Enter', 'Tab'])('命令内光标选中 compact 立即执行�
 
 it('从加号执行 compact 保留整个草稿，执行期间不可重复触发且仍能编辑', () => {
   const onCompact = vi.fn(() => true)
-  const props = { ...composerChromeProps(), value: '后续草稿', onChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn(), onCompact }
-  const { rerender } = render(<Composer {...props} isRunning={false} />)
+  const props = { ...composerChromeProps(), text: '后续草稿', onDraftChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn(), onCompact }
+  const { rerender } = render(<DraftComposer {...props} isRunning={false} />)
   fireEvent.click(screen.getByRole('button', { name: '打开命令和技能' }))
   fireEvent.click(screen.getByRole('option', { name: /compact/ }))
   expect(onCompact).toHaveBeenCalledOnce()
-  expect(props.onChange).not.toHaveBeenCalled()
-  rerender(<Composer {...props} isRunning />)
+  expect(props.onDraftChange).not.toHaveBeenCalled()
+  rerender(<DraftComposer {...props} isRunning />)
   fireEvent.click(screen.getByRole('button', { name: '打开命令和技能' }))
   expect(screen.getByRole('option', { name: /compact/ })).toBeDisabled()
   expect(screen.getByRole('textbox', { name: '消息输入' })).toBeEnabled()
+})
+
+
+it('删除技能前后的中文后仍可发送，引用本体删除和撤销与草稿一致', () => {
+  const onSend = vi.fn()
+  render(<DraftComposer {...composerChromeProps()} text="" onDraftChange={vi.fn()} isRunning={false} onSend={onSend} onStop={vi.fn()}
+    skills={[{ id: 'report', name: 'ai-report-interpreter', description: '解读报告' }]} />)
+  fireEvent.click(screen.getByRole('button', { name: '打开命令和技能' }))
+  fireEvent.click(screen.getByRole('option', { name: /ai-report-interpreter 解读报告/ }))
+  const input = screen.getByRole('textbox', { name: '消息输入' }) as HTMLTextAreaElement
+  expect(input).toHaveAccessibleDescription('技能引用可整段删除，撤销可恢复')
+  input.setSelectionRange(24, input.value.length)
+  fireEvent.select(input)
+  fireEvent.change(input, { target: { value: '用 /ai-report-interpreter', selectionStart: 24 } })
+  expect(input).toHaveAccessibleDescription('技能引用可整段删除，撤销可恢复')
+  input.setSelectionRange(1, 2)
+  fireEvent.select(input)
+  fireEvent.change(input, { target: { value: '用/ai-report-interpreter', selectionStart: 1 } })
+  expect(input).toHaveValue('用/ai-report-interpreter')
+  expect(input).toHaveAccessibleDescription('技能引用可整段删除，撤销可恢复')
+  input.setSelectionRange(0, 1)
+  fireEvent.select(input)
+  fireEvent.change(input, { target: { value: '/ai-report-interpreter', selectionStart: 0 } })
+  expect(input).toHaveValue('/ai-report-interpreter')
+  expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
+  fireEvent.keyDown(input, { key: 'Delete' })
+  expect(input).toHaveValue('')
+  fireEvent.keyDown(input, { key: 'z', ctrlKey: true })
+  expect(input).toHaveValue('/ai-report-interpreter')
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+  expect(onSend).toHaveBeenCalledOnce()
 })

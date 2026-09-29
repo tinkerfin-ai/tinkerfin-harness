@@ -63,6 +63,7 @@ from langchain_core.messages import (
 )
 from pydantic import JsonValue
 
+from tinkerfin_contracts import MessageSource
 from tinkerfin_contracts.media import Attachment, attachment_from_block
 from tinkerfin_native_stream import NativeMessageStreamPart as MessageStreamPart
 from tinkerfin_native_stream import NativeStreamMode as StreamMode
@@ -1037,11 +1038,20 @@ def _convert_messages(
         )
         message_id = self._message_id(namespace, raw_message_id)
         if isinstance(message, HumanMessage):
+            raw_source = message.additional_kwargs.get("tinkerfin_source")
+            source = (
+                None if raw_source is None else MessageSource.model_validate(raw_source)
+            )
             converted.append(
                 UserMessage.model_validate(
                     {
                         "id": message_id,
                         "content": user_content_to_agui(message.content),
+                        **(
+                            {"source": source.model_dump(mode="json")}
+                            if source is not None
+                            else {}
+                        ),
                         "name": message.name,
                     }
                 )

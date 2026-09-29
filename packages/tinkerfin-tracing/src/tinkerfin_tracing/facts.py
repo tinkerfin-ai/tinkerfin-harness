@@ -7,7 +7,12 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import Field, TypeAdapter, model_validator
 
-from tinkerfin_contracts import RunIdentity, RunInputKind, RunTerminalOutcome
+from tinkerfin_contracts import (
+    MessageSource,
+    RunIdentity,
+    RunInputKind,
+    RunTerminalOutcome,
+)
 
 from ._models import TimedTraceModel, TraceModel
 from .capture import CapturedValue
@@ -149,6 +154,9 @@ class MessageFact(TraceFactBase, frozen=True):
     ]
     message_id: str = Field(min_length=1, max_length=2048)
     source_message_id: str | None = Field(default=None, min_length=1, max_length=1024)
+    source: MessageSource | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     role: Literal["user", "assistant", "tool", "system", "other"]
     content: CapturedValue | None = None
     fingerprint: str | None = Field(default=None, min_length=64, max_length=64)

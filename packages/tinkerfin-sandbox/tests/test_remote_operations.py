@@ -17,7 +17,12 @@ from opensandbox.config import ConnectionConfig
 from opensandbox.exceptions import SandboxApiException
 from opensandbox.transport import RetryPolicy
 
-from tinkerfin_sandbox import OpenSandboxBackend, OpenSandboxBackendError
+from tinkerfin_sandbox import (
+    OpenSandboxBackend,
+    OpenSandboxBackendError,
+    OpenSandboxHandle,
+    RootedOpenSandboxBackend,
+)
 from tinkerfin_sandbox.backends import sdk
 from tinkerfin_sandbox.backends._operations import RemoteOperations
 
@@ -251,12 +256,17 @@ async def test_standalone_close_waits_for_owned_remote_checks() -> None:
     async with _backend(server) as backend:
         await _cancel_command(backend, server, None)
         await server.interrupted.wait()
-        closing = asyncio.create_task(backend.aclose())
-        await asyncio.sleep(0)
+        close_started = asyncio.Event()
+
+        async def close_backend() -> None:
+            close_started.set()
+            await backend.aclose()
+
+        closing = asyncio.create_task(close_backend())
+        await close_started.wait()
         assert not closing.done()
         server.running = False
         await closing
-    await asyncio.sleep(0)
     assert not (set(asyncio.all_tasks()) - before)
 
 
@@ -267,8 +277,14 @@ async def test_cancelled_wait_does_not_cancel_owned_termination() -> None:
     async with _backend(server) as backend:
         await _cancel_command(backend, server, tracker)
         await server.interrupted.wait()
-        waiting = asyncio.create_task(tracker.wait())
-        await asyncio.sleep(0)
+        wait_started = asyncio.Event()
+
+        async def wait_for_termination() -> None:
+            wait_started.set()
+            await tracker.wait()
+
+        waiting = asyncio.create_task(wait_for_termination())
+        await wait_started.wait()
         waiting.cancel("stop waiting for settlement")
         with pytest.raises(asyncio.CancelledError, match="stop waiting"):
             await waiting
@@ -378,7 +394,10 @@ async def test_cancelled_download_finishes_request_cleanup_before_returning() ->
 
 
 @pytest.mark.asyncio
-async def test_rooted_transfer_failure_cannot_confirm_helper_termination() -> None:
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_rooted_transfer_failure_cannot_confirm_helper_termination(
+    cancelled: bool,
+) -> None:
     class RootedServer(_CommandServer):
         def __init__(self) -> None:
             super().__init__()
@@ -411,6 +430,9 @@ async def test_rooted_transfer_failure_cannot_confirm_helper_termination() -> No
             if path == "/files/upload":
                 self.uploads += 1
                 await request.aread()
+                if cancelled:
+                    self.started.set()
+                    await self.complete.wait()
                 return httpx.Response(200)
             if request.method == "DELETE" and path == "/command":
                 return httpx.Response(
@@ -421,12 +443,35 @@ async def test_rooted_transfer_failure_cannot_confirm_helper_termination() -> No
     server = RootedServer()
     tracker = RemoteOperations()
     async with _backend(server) as backend:
-        with tracker.activate(), pytest.raises(SandboxApiException):
-            await backend._aupload_rooted_file(
-                root="/workspace", path="/content.bin", content=b"content"
+        if cancelled:
+            workspace = RootedOpenSandboxBackend(OpenSandboxHandle(backend))
+            uploading = asyncio.create_task(
+                workspace.aupload_files([("/content.bin", b"content")])
             )
-        await tracker.wait()
-        assert not tracker.is_idle
+            try:
+                await server.started.wait()
+                uploading.cancel("caller stopped waiting")
+                with pytest.raises(asyncio.CancelledError) as raised:
+                    await uploading
+                assert raised.value.args == ("caller stopped waiting",)
+                native_cancellation = raised.value.__cause__
+                assert isinstance(native_cancellation, asyncio.CancelledError)
+                assert any(
+                    "Rooted descriptor helper settlement also failed" in note
+                    for note in native_cancellation.__notes__
+                )
+            finally:
+                server.complete.set()
+                if not uploading.done():
+                    uploading.cancel()
+                await asyncio.gather(uploading, return_exceptions=True)
+        else:
+            with tracker.activate(), pytest.raises(SandboxApiException):
+                await backend._aupload_rooted_file(
+                    root="/workspace", path="/content.bin", content=b"content"
+                )
+            await tracker.wait()
+            assert not tracker.is_idle
         assert server.uploads == 1
         assert server.running
 

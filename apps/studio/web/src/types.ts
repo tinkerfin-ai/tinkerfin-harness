@@ -1,12 +1,12 @@
 import type { ConversationTitleSnapshot } from "./api/conversation/titles"
-import type { SubagentProvenance } from './api/conversation/types'
+import type { MessageSource, SubagentProvenance } from './api/conversation/types'
 import type { ConversationHistoryCoreDetail } from './api/conversation/history'
 import type {
   ReadyTaskTraceSnapshot,
   UnavailableTaskTraceSnapshot,
 } from './api/conversation/taskTrace'
 
-export type MessageRole = 'user' | 'assistant' | 'process' | 'tool' | 'subagent' | 'approval' | 'error'
+export type MessageRole = 'user' | 'context' | 'assistant' | 'process' | 'tool' | 'subagent' | 'approval' | 'error'
 export type TodoStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
 export type ApprovalDecision = 'approved' | 'rejected'
 export type ConversationRunStatus = 'idle' | 'streaming' | 'waiting_approval' | 'detached' | 'error'
@@ -51,6 +51,7 @@ export interface Message {
   content: string
   createdAt: string
   meta?: {
+    source?: DeepReadonly<MessageSource>
     selectedSkills?: { id: string; name: string }[]
     /** 历史消息的 Trace 关联键，用于将任务定位到对应的会话消息 */
     planHistory?: PlanInteraction

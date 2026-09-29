@@ -171,7 +171,8 @@ async def test_existing_output_is_a_downloadable_file_in_live_and_replayed_messa
         user_id=1,
         thread_id="result-chat",
         model_config=_model_config(),
-        image_model=None,
+        search_service=None,
+        image_service=None,
     )
     stream = runtime.open_agui_run(
         thread_id="result-chat",

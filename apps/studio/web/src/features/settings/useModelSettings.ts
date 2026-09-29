@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { requestJson } from '../../api/shared/http'
-import type { JsonObject } from '../../types'
 
 export interface ChatOptions {
   max_tokens: number | null
@@ -11,19 +10,32 @@ export interface ChatOptions {
   context_window: number | null
   keep_alive: number | null
 }
-export interface ModelSettings {
+export type ImageSupport = 'supported' | 'unsupported' | 'unknown'
+export interface ImageInputCapability {
+  automatic: ImageSupport
+  effective: ImageSupport
+  source: 'catalog' | 'manual' | 'unknown'
+}
+export interface ModelWrite {
   model_id: string
   connection_id: string
   display_name: string
-  purpose: 'chat' | 'image'
   model_name: string
   image_support: 'supported' | 'unsupported' | 'unknown'
   reasoning_enabled: boolean
   enabled: boolean
   is_default: boolean
   sort_order: number
-  generation_options: JsonObject
   chat_options: ChatOptions
+}
+export interface ModelSettings extends ModelWrite {
+  image_input_capability: ImageInputCapability | null
+}
+
+/** 只提交可编辑配置，读取结果中的能力资料不进入写入请求 */
+export function modelWrite(model: ModelWrite): ModelWrite {
+  const { model_id, connection_id, display_name, model_name, image_support, reasoning_enabled, enabled, is_default, sort_order, chat_options } = model
+  return { model_id, connection_id, display_name, model_name, image_support, reasoning_enabled, enabled, is_default, sort_order, chat_options }
 }
 export interface ModelConnection {
   connection_id: string
@@ -44,9 +56,10 @@ export interface ProviderPreset {
 }
 export type ConnectionWrite = Omit<ModelConnection, 'has_key'> & { api_key: string | null }
 export const newModel = (connectionId: string): ModelSettings => ({
-  model_id: crypto.randomUUID(), connection_id: connectionId, display_name: '', purpose: 'chat', model_name: '',
+  model_id: crypto.randomUUID(), connection_id: connectionId, display_name: '', model_name: '',
+  image_input_capability: { automatic: 'unknown', effective: 'unknown', source: 'unknown' },
   image_support: 'unknown', reasoning_enabled: false, enabled: true, is_default: false, sort_order: 0,
-  generation_options: {}, chat_options: { max_tokens: null, temperature: null, top_p: null, stop: null, reasoning_effort: null, context_window: null, keep_alive: null },
+  chat_options: { max_tokens: null, temperature: null, top_p: null, stop: null, reasoning_effort: null, context_window: null, keep_alive: null },
 })
 
 /** 读取本人提供方和模型，串行提交配置并取消失效读取 */
@@ -74,7 +87,7 @@ export function useModelSettings(onChanged?: () => void) {
     return () => controller.abort()
   }, [revision])
 
-  const write = async (path: string, method: 'PUT' | 'POST' | 'DELETE', body?: ModelSettings | ModelSettings[] | ConnectionWrite): Promise<boolean> => {
+  const write = async (path: string, method: 'PUT' | 'POST' | 'DELETE', body?: ModelWrite | ModelWrite[] | ConnectionWrite): Promise<boolean> => {
     if (activeRequest.current) return false
     const controller = new AbortController()
     activeRequest.current = controller; loadRequest.current?.abort(); setSaving(true)
@@ -93,8 +106,8 @@ export function useModelSettings(onChanged?: () => void) {
   return {
     models, connections, presets, loading, loadFailed, saving,
     reload: () => setRevision(value => value + 1),
-    addModels: (models: ModelSettings[]) => write('/api/models/configurations', 'POST', models),
-    save: (model: ModelSettings) => write(`/api/models/configurations/${encodeURIComponent(model.model_id)}`, 'PUT', model),
+    addModels: (models: ModelSettings[]) => write('/api/models/configurations', 'POST', models.map(modelWrite)),
+    save: (model: ModelSettings) => write(`/api/models/configurations/${encodeURIComponent(model.model_id)}`, 'PUT', modelWrite(model)),
     remove: (id: string) => write(`/api/models/configurations/${encodeURIComponent(id)}`, 'DELETE'),
     makeDefault: (id: string) => write(`/api/models/configurations/${encodeURIComponent(id)}/default`, 'PUT'),
     saveConnection: (connection: ConnectionWrite) => write(`/api/models/connections/${encodeURIComponent(connection.connection_id)}`, 'PUT', connection),

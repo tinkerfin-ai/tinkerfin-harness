@@ -1,6 +1,5 @@
 import {
   Bot,
-  ChevronDown,
   CircleHelp,
   FilePenLine,
   FilePlus2,
@@ -22,6 +21,7 @@ import type { ReactNode } from 'react'
 import type { Message } from '../../../types'
 import { useI18n } from '../../../i18n'
 import { isTranslationKey } from '../../../i18n/messages'
+import { ConversationDetailRow } from './ConversationDetailRow'
 
 type MessageStatus = NonNullable<Message['meta']>['status']
 
@@ -156,52 +156,15 @@ export function ToolCallRow({
   const summary = presentationOverride?.summary !== undefined
     ? presentationOverride.summary
     : failure || toolSummary(message, toolName, presentation)
-  const hasDetails = children != null && children !== false
-  const rowProps = {
-    id: message.id,
-    className: `tool-row ${status}${className ? ` ${className}` : ''}`,
-    'data-tool-name': toolName,
-  }
-  const heading = <>
-    <span className="tool-row-visually-hidden">{statusText(status, t)}</span>
-    <span className="tool-row-leading" aria-hidden="true">
-      <span className="tool-row-icon">
-        {status === 'failed' || status === 'cancelled'
-          ? <span className={`tool-row-state-dot is-${status}`} />
-          : presentationOverride?.icon ?? <ToolIcon size={14} strokeWidth={2} />}
-      </span>
-      {hasDetails && <ChevronDown className="tool-row-chevron" size={14} strokeWidth={2} />}
-    </span>
-    <span className="tool-row-title">
-      {presentationOverride?.title ?? (isTranslationKey(title) ? t(title) : title)}
-    </span>
-    {summary
-      ? <>
-          <span className="tool-row-separator" aria-hidden="true" />
-          <span className={`tool-row-summary${failure ? ' is-error' : ''}`}>{summary}</span>
-        </>
-      : null}
-  </>
-
-  if (!hasDetails) return <div {...rowProps}><div className="tool-row-heading">{heading}</div></div>
-
-  return (
-    <details
-      {...rowProps}
-      open={open}
-      onToggle={(event) => {
-        const row = event.currentTarget
-        onOpenChange?.(row.open)
-        if (!row.open) return
-        // 展开后的真实高度下一帧才稳定，只滚动到刚好避开输入区的位置
-        window.requestAnimationFrame(() => {
-          if (!row.open || !row.isConnected) return
-          row.scrollIntoView?.({ behavior: 'auto', block: 'nearest' })
-        })
-      }}
-    >
-      <summary>{heading}</summary>
-      {children}
-    </details>
-  )
+  return <ConversationDetailRow id={message.id}
+    className={`tool-row ${status}${className ? ` ${className}` : ''}`} data-tool-name={toolName}
+    title={presentationOverride?.title ?? (isTranslationKey(title) ? t(title) : title)}
+    summary={summary ? <span className={failure ? 'tool-row-error-summary' : undefined}>{summary}</span> : undefined}
+    statusLabel={statusText(status, t)}
+    icon={status === 'failed' || status === 'cancelled'
+      ? <span className={`tool-row-state-dot is-${status}`} />
+      : presentationOverride?.icon ?? <ToolIcon size={14} strokeWidth={2} />}
+    open={open} onOpenChange={onOpenChange}>
+    {children}
+  </ConversationDetailRow>
 }

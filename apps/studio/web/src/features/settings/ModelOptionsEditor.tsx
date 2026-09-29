@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Compartment, EditorState } from '@codemirror/state'
+import { Annotation, Compartment, EditorState } from '@codemirror/state'
 import { EditorView, highlightActiveLine, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { json } from '@codemirror/lang-json'
@@ -8,6 +8,8 @@ import { tags } from '@lezer/highlight'
 import { lintGutter, setDiagnostics } from '@codemirror/lint'
 import { useI18n } from '../../i18n'
 import type { OptionsIssue } from './modelOptions'
+
+const externalUpdate = Annotation.define<boolean>()
 
 export interface ModelOptionsEditorProps {
   value: string
@@ -18,7 +20,7 @@ export interface ModelOptionsEditorProps {
   descriptionId: string
 }
 
-/** 模型高级参数编辑器；主题取自 Studio 令牌，编辑状态归属当前表单 */
+/** 编辑 JSON 参数并标出校验错误 */
 export default function ModelOptionsEditor({ value, onChange, issues, issueMessage, disabled = false, descriptionId }: ModelOptionsEditorProps) {
   const { t } = useI18n()
   const container = useRef<HTMLDivElement>(null)
@@ -56,7 +58,8 @@ export default function ModelOptionsEditor({ value, onChange, issues, issueMessa
             { tag: tags.punctuation, color: 'var(--color-text-secondary)' },
           ])),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) change.current(update.state.doc.toString())
+            if (update.docChanged && !update.transactions.some(transaction => transaction.annotation(externalUpdate)))
+              change.current(update.state.doc.toString())
           }),
         ],
       }),
@@ -67,7 +70,7 @@ export default function ModelOptionsEditor({ value, onChange, issues, issueMessa
   useEffect(() => {
     const view = editor.current
     if (view && view.state.doc.toString() !== value)
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } })
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value }, annotations: externalUpdate.of(true) })
   }, [value])
   useEffect(() => {
     const view = editor.current

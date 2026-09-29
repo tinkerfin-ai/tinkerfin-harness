@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Cpu, Monitor, MoonStar, Settings2, Sun, UserRound } from 'lucide-react'
+import { Check, ChevronDown, Cpu, Link2, Monitor, MoonStar, Settings2, Sun, UserRound } from 'lucide-react'
 import { useId, useRef, useState } from 'react'
 
 import type { AuthUser } from '../../api/auth/types'
@@ -8,6 +8,8 @@ import type { ThemePreference } from '../../theme'
 import './settings.css'
 import type { ToastKind } from '../../components/ui/ToastViewport'
 import { ModelSettingsPanel } from './ModelSettingsPanel'
+import { ServiceSettingsPanel } from './ServiceSettingsPanel'
+import { useServiceSettings } from './useServiceSettings'
 
 const APPEARANCE_OPTIONS = [
   { value: 'system', label: '跟随系统', icon: Monitor },
@@ -44,7 +46,10 @@ export function SettingsDialog({
 }: SettingsDialogProps) {
   const appearanceName = useId()
   const contentRef = useRef<HTMLDivElement>(null)
-  const [activeSection, setActiveSection] = useState<'user' | 'general' | 'models'>('user')
+  const [activeSection, setActiveSection] = useState<'user' | 'general' | 'models' | 'services'>('user')
+  const [servicesVisited, setServicesVisited] = useState(false)
+  const [confirmClose, setConfirmClose] = useState(false)
+  const services = useServiceSettings(open && servicesVisited)
   const [languageOpen, setLanguageOpen] = useState(false)
   const { preference: languagePreference, setPreference: setLanguagePreference, t } = useI18n()
   const displayName = user.display_name.trim() || user.username
@@ -52,14 +57,23 @@ export function SettingsDialog({
     if (value === 'system') return t('跟随系统')
     return value === 'zh-CN' ? t('简体中文') : 'English'
   }
+  const close = () => {
+    if (servicesVisited && services.dirty) { setActiveSection('services'); setConfirmClose(true); return }
+    onClose()
+  }
+  const decideClose = (discard: boolean) => {
+    setConfirmClose(false)
+    if (discard) { services.reset('web_search'); services.reset('image_generation'); onClose() }
+  }
 
   return (
     <Dialog
       open={open}
       title={t('设置')}
       className="settings-dialog"
+      closeDisabled={services.saving !== null}
       restoreFocusTo={restoreFocusTo}
-      onClose={onClose}
+      onClose={close}
     >
       <div className="settings-layout">
         <nav className="settings-nav" aria-label={t('设置分类')}>
@@ -82,8 +96,11 @@ export function SettingsDialog({
             {t('通用')}
           </button>
           <button type="button" className={`settings-nav__item${activeSection === 'models' ? ' is-selected' : ''}`} aria-current={activeSection === 'models' ? 'page' : undefined} onClick={() => setActiveSection('models')}><Cpu size={18} aria-hidden="true" />{t('模型配置')}</button>
+          <button type="button" className={`settings-nav__item${activeSection === 'services' ? ' is-selected' : ''}`} aria-current={activeSection === 'services' ? 'page' : undefined} onClick={() => { setServicesVisited(true); setActiveSection('services') }}><Link2 size={18} aria-hidden="true" />{t('服务连接')}</button>
         </nav>
-        {activeSection === 'models' ? <div className="settings-models-host">
+        {activeSection === 'services' ? <div className="settings-models-host">
+          <ErrorBoundary fallback={({ reset }) => <Button type="button" onClick={reset}>{t('重新加载服务配置')}</Button>}><ServiceSettingsPanel state={services} confirmClose={confirmClose} onCloseDecision={decideClose} /></ErrorBoundary>
+        </div> : activeSection === 'models' ? <div className="settings-models-host">
           <ErrorBoundary onError={() => onToast('error', t('模型加载失败，请先重试'))} fallback={({ reset }) => <Button type="button" onClick={reset}>{t('重新加载模型')}</Button>}><ModelSettingsPanel onChanged={onModelsChanged} /></ErrorBoundary>
         </div> : <div
           ref={contentRef}
@@ -159,7 +176,7 @@ export function SettingsDialog({
           </section>
           </>}
         </div>}
-        {activeSection !== 'models' && <OverlayScrollbar viewportRef={contentRef} />}
+        {activeSection !== 'models' && activeSection !== 'services' && <OverlayScrollbar viewportRef={contentRef} />}
       </div>
     </Dialog>
   )

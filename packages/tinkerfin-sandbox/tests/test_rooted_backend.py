@@ -1439,6 +1439,111 @@ def test_validation_and_operation_share_one_handle_lease() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_cancelled_upload_settles_before_caller_can_continue(
+    cleanup_fails: bool,
+) -> None:
+    class UploadBackend(_RecordingBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+            self.release_upload = asyncio.Event()
+            self.release_cleanup = asyncio.Event()
+            self.finished = asyncio.Event()
+            self.cleanup_finished = False
+            self.files: dict[str, bytes] = {}
+
+        async def _aupload_rooted_file(
+            self, *, root: str, path: str, content: bytes
+        ) -> FileUploadResponse:
+            self.started.set()
+            try:
+                await self.release_upload.wait()
+                self.files[path] = content
+                return FileUploadResponse(path=path, error=None)
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                await self.release_cleanup.wait()
+                self.cleanup_finished = True
+                if cleanup_fails:
+                    raise OSError("upload cleanup failed") from None
+                raise
+            finally:
+                self.finished.set()
+
+    backend = UploadBackend()
+    rooted = _rooted(backend)
+    operation = asyncio.create_task(rooted.aupload_files([("/pending.bin", b"data")]))
+    cancellation = asyncio.create_task(backend.cancelled.wait())
+    try:
+        await backend.started.wait()
+        operation.cancel("caller cancelled")
+        await asyncio.wait(
+            (operation, cancellation), return_when=asyncio.FIRST_COMPLETED
+        )
+        assert backend.cancelled.is_set()
+        assert not operation.done()
+        operation.cancel("repeated cancellation")
+        backend.release_cleanup.set()
+        with pytest.raises(asyncio.CancelledError) as raised:
+            await operation
+        assert raised.value.args == ("caller cancelled",)
+        assert backend.cleanup_finished
+        assert backend.finished.is_set()
+        assert backend.files == {}
+        if cleanup_fails:
+            assert isinstance(raised.value.__cause__, OSError)
+        backend.release_upload.set()
+        response = await rooted.aupload_files([("/replacement.bin", b"replacement")])
+        assert response[0].error is None
+        assert backend.files == {"/replacement.bin": b"replacement"}
+    finally:
+        backend.release_upload.set()
+        backend.release_cleanup.set()
+        await backend.finished.wait()
+        if not operation.done():
+            operation.cancel()
+        cancellation.cancel()
+        await asyncio.gather(operation, cancellation, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_upload_preserves_native_error_context() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    failure = OSError("upload failed before cleanup")
+
+    class UploadBackend(_RecordingBackend):
+        async def _aupload_rooted_file(
+            self, *, root: str, path: str, content: bytes
+        ) -> FileUploadResponse:
+            try:
+                raise failure
+            except OSError:
+                started.set()
+                await release.wait()
+                raise
+
+    workspace = _rooted(UploadBackend())
+    uploading = asyncio.create_task(workspace.aupload_files([("/file.bin", b"data")]))
+    try:
+        await started.wait()
+        uploading.cancel("caller stopped waiting")
+        with pytest.raises(asyncio.CancelledError) as raised:
+            await uploading
+        assert raised.value.args == ("caller stopped waiting",)
+        native_cancellation = raised.value.__cause__
+        assert isinstance(native_cancellation, asyncio.CancelledError)
+        assert native_cancellation.__context__ is failure
+    finally:
+        release.set()
+        if not uploading.done():
+            uploading.cancel()
+        await asyncio.gather(uploading, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_cancelled_pending_async_call_cannot_use_a_replacement_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -11,7 +11,7 @@ from typing import Any, Literal, Protocol, TypeAlias, TypeVar, cast, runtime_che
 
 from pydantic import BaseModel, Field, JsonValue
 
-from tinkerfin_contracts import RunTerminalOutcome
+from tinkerfin_contracts import MessageSource, RunTerminalOutcome
 
 from ._models import TraceModel
 from .capture import CapturedValue
@@ -107,6 +107,7 @@ class _MutableMessage:
     id: str
     trace_seq: int
     source_id: str | None
+    source: MessageSource | None
     graph_namespace: tuple[str, ...]
     run_id: str
     role: MessageRole
@@ -905,6 +906,7 @@ def _advance_messages(
             id=fact.message_id,
             trace_seq=trace_seq,
             source_id=fact.source_message_id,
+            source=fact.source,
             graph_namespace=fact.graph_namespace,
             run_id=fact.identity.run_id,
             role=fact.role,
@@ -1470,6 +1472,7 @@ def _messages(
                 id=fact.message_id,
                 trace_seq=fact_sequences[id(fact)],
                 source_id=fact.source_message_id,
+                source=fact.source,
                 graph_namespace=fact.graph_namespace,
                 run_id=fact.identity.run_id,
                 role=fact.role,
@@ -1511,6 +1514,7 @@ def _messages(
             id=message.id,
             trace_seq=message.trace_seq,
             source_id=message.source_id,
+            source=message.source,
             graph_namespace=message.graph_namespace,
             run_id=message.run_id,
             role=message.role,
