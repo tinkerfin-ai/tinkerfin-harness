@@ -14,6 +14,8 @@ export function useComposerDraft(initialText = '') {
     setState(next)
   }, [])
   const apply = useCallback((transaction: Transaction) => {
+    // 清空、恢复或切换草稿后，旧输入事件不能覆盖当前内容
+    if (transaction.startState !== current.current) return
     if (transaction.docChanged || transaction.startState.field(composerSkillReferences) !== transaction.state.field(composerSkillReferences)) revision.current += 1
     current.current = transaction.state
     setState(transaction.state)

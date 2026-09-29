@@ -99,7 +99,8 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, {
           const current = latest.current.draft
           const selection = beforeEdit.current
           beforeEdit.current = null
-          const state = selection ? current.update({ selection }).state : current
+          if (selection && !current.selection.eq(selection)) apply(current.update({ selection }))
+          const state = latest.current.draft
           const transaction = changeComposerText(state, element.value, element.selectionStart, composing.current ? 'input.type.compose' : 'input.type', selection?.main)
           if (!composing.current && !acceptDraft(transaction.state)) {
             element.value = current.doc.toString()
