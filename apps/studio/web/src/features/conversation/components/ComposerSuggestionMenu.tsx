@@ -50,7 +50,9 @@ export function ComposerSuggestionMenu({
         {groups.map((group) => (
           <div key={group.id} className="ui-listbox-group" role="group" aria-label={t(group.label as TranslationKey)}>
             <div className="ui-listbox-group-label" role="presentation">
-              {group.id === 'command' ? t('指令（{count}）', { count: group.items.length }) : t(group.label as TranslationKey)}
+              {group.id === 'command'
+                ? t('指令（{count}）', { count: group.items.length })
+                : t('技能（{count}）', { count: group.items.filter(item => !item.id.startsWith('skills-')).length })}
             </div>
             {group.items.map((item) => {
               const itemId = `${group.id}-${item.id}`

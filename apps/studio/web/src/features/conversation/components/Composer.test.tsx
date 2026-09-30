@@ -39,6 +39,7 @@ describe('Composer', () => {
     render(<DraftComposer {...composerChromeProps()} text="保留正文" onDraftChange={vi.fn()} isRunning={false} onSend={vi.fn()} onStop={vi.fn()} skills={skills} />)
     const input = screen.getByRole('textbox', { name: '消息输入' }) as HTMLTextAreaElement
     fireEvent.click(screen.getByRole('button', { name: '打开命令和技能' }))
+    expect(screen.getByText('技能（2）')).toBeVisible()
     fireEvent.click(screen.getByRole('option', { name: /reports Prepare reports/ }))
     expect(input).toHaveValue('保留正文/reports')
     fireEvent.click(screen.getByRole('button', { name: '打开命令和技能' }))
@@ -597,6 +598,7 @@ describe('Composer', () => {
     const commandGroup = within(menu).getByRole('group', { name: '指令' })
     const skillGroup = within(menu).getByRole('group', { name: '技能' })
     expect(within(commandGroup).getByText('指令（4）')).toBeVisible()
+    expect(within(skillGroup).getByText('技能（0）')).toBeVisible()
     expect(within(commandGroup).getAllByRole('option')).toHaveLength(4)
     expect(within(commandGroup).queryByRole('option', { name: /permission/ })).not.toBeInTheDocument()
     expect(within(skillGroup).getAllByRole('option')).toHaveLength(1)

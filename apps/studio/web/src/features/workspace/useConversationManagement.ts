@@ -25,6 +25,8 @@ export function useConversationManagement({
   setDraft,
   setDraftConversation,
   setDraftModel,
+  setDraftAccessMode,
+  defaultModelId,
   followDetachedConversation,
   abandonPlanInteraction,
   cancelRun,
@@ -38,6 +40,8 @@ export function useConversationManagement({
   setDraft: Dispatch<SetStateAction<string>>
   setDraftConversation: Dispatch<SetStateAction<Conversation | null>>
   setDraftModel: Dispatch<SetStateAction<string>>
+  setDraftAccessMode: Dispatch<SetStateAction<Conversation['accessMode']>>
+  defaultModelId: string
   followDetachedConversation: (threadId: string) => Promise<void>
   abandonPlanInteraction: (threadId: string) => void
   cancelRun: (threadId: string) => Promise<boolean>
@@ -77,7 +81,8 @@ export function useConversationManagement({
     onConversationBoundary()
     setDraft('')
     setDraftConversation(null)
-    setDraftModel(latest.current.conversation.model)
+    setDraftModel(defaultModelId)
+    setDraftAccessMode('full')
     setWorkspace((state) => createNewConversation(state))
   }
 

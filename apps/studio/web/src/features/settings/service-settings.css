@@ -30,6 +30,7 @@
   .settings-services__test { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); border-top: 1px solid var(--color-border-subtle); margin-top: var(--space-4); padding-top: var(--space-4); }
   .settings-services__test-status { display: inline-flex; align-items: center; gap: var(--space-2); flex: 1; min-width: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--color-text-secondary); }
   .settings-services__test-status > svg { flex-shrink: 0; }
+  .settings-services__test-spinner { animation: ui-spin var(--motion-slow) linear infinite; }
   .settings-services__test-status.is-error { color: var(--color-danger-text); }
   .settings-services__test > .ui-button { flex-shrink: 0; }
   .settings-services__footer { flex-shrink: 0; padding: var(--space-3) var(--settings-content-inset); border-top: 1px solid var(--color-border-subtle); }
@@ -48,5 +49,8 @@
   @media (pointer: coarse) {
     .settings-services .settings-choice-option { min-height: var(--control-xl); }
     .settings-services__form .ui-text-field__trailing .ui-button { min-height: var(--control-lg); height: var(--control-lg); min-width: var(--control-lg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .settings-services__test-spinner { animation: none; }
   }
 }

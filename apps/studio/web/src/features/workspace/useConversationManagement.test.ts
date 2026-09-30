@@ -64,6 +64,8 @@ function useHarness() {
     setDraft: vi.fn(),
     setDraftConversation: vi.fn(),
     setDraftModel: vi.fn(),
+    setDraftAccessMode: vi.fn(),
+    defaultModelId: 'GPT-5.5',
     followDetachedConversation: vi.fn(async () => undefined),
     abandonPlanInteraction: vi.fn(),
     cancelRun: vi.fn(async () => false),

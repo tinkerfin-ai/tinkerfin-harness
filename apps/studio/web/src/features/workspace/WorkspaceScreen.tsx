@@ -971,6 +971,8 @@ export function WorkspaceScreen({
     setDraft,
     setDraftConversation,
     setDraftModel,
+    setDraftAccessMode,
+    defaultModelId,
     followDetachedConversation,
     abandonPlanInteraction,
     cancelRun,

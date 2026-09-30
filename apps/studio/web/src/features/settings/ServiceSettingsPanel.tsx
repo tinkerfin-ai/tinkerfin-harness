@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react'
-import { CheckCircle2, ChevronDown, CircleAlert, Eye, EyeOff, Image, Search, Square, Trash2 } from 'lucide-react'
+import { CheckCircle2, ChevronDown, CircleAlert, Eye, EyeOff, Image, LoaderCircle, Search, Square, Trash2 } from 'lucide-react'
 import { Button, ErrorBoundary, IconButton, TextField, ValidatedForm, ViewTabs } from '../../components/ui'
 import { isTranslationKey, useI18n } from '../../i18n'
 import { ImageOutputFormats } from './ImageOutputFormats'
@@ -63,7 +63,7 @@ function ServiceEditor({ state, confirmClose, onCloseDecision }: {
   const outcome = test?.outcome ?? saved?.test_status
   const testMessage = !saved ? '保存后可测试' : dirty ? '先保存修改' : !draft.enabled ? '启用并保存后可测试'
     : outcome === 'running' ? '等待服务响应' : outcome === 'stopped' ? '已停止等待，可能已消耗额度'
-      : outcome === 'success' ? '测试通过 · 再测可能计费' : outcome === 'failed' ? testFailureMessages[test?.code ?? saved?.test_code ?? ''] ?? '测试失败，请检查配置' : '测试可能消耗额度'
+      : outcome === 'success' ? '测试通过' : outcome === 'failed' ? testFailureMessages[test?.code ?? saved?.test_code ?? ''] ?? '测试失败，请检查配置' : '测试可能消耗额度'
   useEffect(() => { if (confirmClose) continueRef.current?.focus({ preventScroll: true }) }, [confirmClose])
   useEffect(() => {
     if (confirmClear) keepRef.current?.focus({ preventScroll: true })
@@ -118,7 +118,7 @@ function ServiceEditor({ state, confirmClose, onCloseDecision }: {
           </div> : capability === 'image_generation' && <details className="settings-services__parameters" open={attempt && errors.options ? true : undefined}><summary>{t('生成参数')}<ChevronDown size={15} aria-hidden="true" /></summary><ServiceJsonField disabled={busy} label={t('附加参数')} value={draft.options} onChange={value => change('options', value)} hint={t('仅在服务提供方要求额外参数时填写')} error={error('options')} reserved={serviceReservedKeys(draft)} /></details>}
           <label className="settings-models__check"><input type="checkbox" checked={draft.enabled} onChange={event => change('enabled', event.target.checked)} />{t(saved ? '启用服务' : '保存后启用服务')}</label>
         </fieldset>
-        <div className="settings-services__test"><span className={`settings-services__test-status${outcome === 'failed' ? ' is-error' : ''}`} role={outcome === 'failed' ? 'alert' : 'status'}>{outcome === 'success' ? <CheckCircle2 size={16} aria-hidden="true" /> : outcome === 'failed' ? <CircleAlert size={16} aria-hidden="true" /> : null}{text(testMessage)}</span><Button type="button" size="md" disabled={!testing && (!saved || dirty || !draft.enabled || state.saving !== null)} title={t('每次测试可能消耗服务额度')} onClick={() => { void state.test(capability) }} leadingIcon={testing ? <Square size={14} /> : capability === 'web_search' ? <Search size={15} /> : <Image size={15} />}>{t(testing ? '停止' : capability === 'web_search' ? '测试搜索' : '试生成')}</Button></div>
+        <div className="settings-services__test"><span className={`settings-services__test-status${outcome === 'failed' ? ' is-error' : ''}`} role={outcome === 'failed' ? 'alert' : 'status'}>{testing ? <LoaderCircle className="settings-services__test-spinner" size={16} aria-hidden="true" /> : outcome === 'success' ? <CheckCircle2 size={16} aria-hidden="true" /> : outcome === 'failed' ? <CircleAlert size={16} aria-hidden="true" /> : null}{text(testMessage)}</span><Button type="button" size="md" disabled={!testing && (!saved || dirty || !draft.enabled || state.saving !== null)} title={t('每次测试可能消耗服务额度')} onClick={() => { void state.test(capability) }} leadingIcon={testing ? <Square size={14} /> : capability === 'web_search' ? <Search size={15} /> : <Image size={15} />}>{t(testing ? '停止' : capability === 'web_search' ? '测试搜索' : '试生成')}</Button></div>
       </ValidatedForm>
     </div>
     <footer className="settings-services__footer">
