@@ -84,6 +84,7 @@ async def test_client_submits_and_cancels_but_cannot_write_schedules(
 ) -> None:
     store, clock = store_with_clock
     app = Automation(namespace="app", store=store, clock=clock)
+    app.remote_target("remote", execution_namespace="app")
     async with app:
         owner = app.for_owner("subject")
         with pytest.raises(AutomationLifecycleError):

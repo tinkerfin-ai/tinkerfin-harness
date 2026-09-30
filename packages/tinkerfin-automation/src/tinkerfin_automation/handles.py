@@ -156,7 +156,8 @@ class TaskHandle:
         Args:
             expected_revision: Original observed revision; None uses this handle's.
             name: Replacement name; None leaves it unchanged.
-            target: Replacement host-authorized target; None leaves it unchanged.
+            target: Replacement host-authorized target using the saved execution
+                namespace; None leaves it unchanged.
             schedule: Complete replacement schedule, including active bounds.
             input: Replacement JSON; {} clears input and None leaves it unchanged.
             misfire_policy: Replacement missed-occurrence policy, if supplied.
@@ -169,18 +170,25 @@ class TaskHandle:
         Raises:
             TaskConflictError: The requested revision is no longer current.
             RequestConflictError: The request key identifies different parameters.
+            TargetNotFoundError: A replacement target has not been declared.
+            TargetNamespaceError: A replacement target changes the execution space.
         """
         revision = _revision(
             self.revision if expected_revision is None else expected_revision
         )
         return await self._change(
             partial(
-                self._owner._automation._service.update_task,
+                self._owner._automation._service._update_task,
                 owner_id=self._owner.owner_id,
                 task_id=self.id,
                 expected_revision=revision,
                 name=name,
                 target=target,
+                target_namespace=lambda name: (
+                    self._owner._automation._execution_namespace(
+                        name, self._owner.owner_id
+                    )
+                ),
                 schedule=schedule,
                 input=None if input is None else deepcopy(dict(input)),
                 misfire_policy=misfire_policy,

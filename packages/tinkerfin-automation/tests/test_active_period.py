@@ -77,7 +77,11 @@ async def test_window_and_name_survive_storage_edit_manual_run_and_delete(
     )
     async with AutomationService(namespace="app", store=store, clock=clock) as service:
         task = await service.create_task(
-            owner_id="owner", name="Original", schedule=schedule, target="summary"
+            execution_namespace=service.namespace,
+            owner_id="owner",
+            name="Original",
+            schedule=schedule,
+            target="summary",
         )
         saved = await service.get_task(owner_id="owner", task_id=task.task_id)
         assert saved.schedule == schedule
@@ -105,6 +109,7 @@ async def test_once_outside_window_is_not_saved() -> None:
     ) as service:
         with pytest.raises(InvalidScheduleError):
             await service.create_task(
+                execution_namespace=service.namespace,
                 owner_id="owner",
                 name="Outside",
                 target="summary",

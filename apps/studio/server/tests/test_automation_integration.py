@@ -116,7 +116,11 @@ async def automation_environment(
                     settings=SimpleNamespace(),
                 ),
             )
-            automation.target("studio_agent", StudioAutomationTarget(resources))
+            automation.target(
+                "studio_agent",
+                StudioAutomationTarget(resources),
+                execution_namespace=lambda owner_id: f"ns_{int(owner_id)}",
+            )
             async with automation.worker(
                 on_interrupt=fail_interactive_execution
             ) as worker:

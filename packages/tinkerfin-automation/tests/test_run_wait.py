@@ -33,7 +33,9 @@ NOW = datetime(2026, 9, 22, tzinfo=UTC)
 async def test_wait_returns_finished_and_attention_states(status, monkeypatch) -> None:
     clock = ManualClock(NOW)
     store = MemoryAutomationStore(clock=clock)
-    async with Automation(store=store, clock=clock) as app:
+    app = Automation(store=store, clock=clock)
+    app.remote_target("remote", execution_namespace="default")
+    async with app:
         run = await app.for_owner("subject").run("remote")
 
         async def observe(*args, **kwargs):
@@ -60,7 +62,9 @@ async def test_wait_timeout_preserves_unfinished_state_without_cancelling(
     clock = ManualClock(NOW)
     store = MemoryAutomationStore(clock=clock)
     observed = asyncio.Event()
-    async with Automation(store=store, clock=clock) as app:
+    app = Automation(store=store, clock=clock)
+    app.remote_target("remote", execution_namespace="default")
+    async with app:
         run = await app.for_owner("subject").run("remote")
 
         async def observe(*args, **kwargs):
@@ -90,6 +94,7 @@ async def test_wait_settles_pending_read_and_preserves_failure(
     clock = ManualClock(NOW)
     store = MemoryAutomationStore(clock=clock)
     app = Automation(store=store, clock=clock)
+    app.remote_target("remote", execution_namespace="default")
     await app.__aenter__()
     run = await app.for_owner("subject").run("remote")
     entered = asyncio.Event()
@@ -142,7 +147,9 @@ async def test_wait_does_not_hold_handle_lock_between_reads(monkeypatch) -> None
         return result
 
     monkeypatch.setattr(store, "get_execution", observe)
-    async with Automation(store=store, clock=clock) as app:
+    app = Automation(store=store, clock=clock)
+    app.remote_target("remote", execution_namespace="default")
+    async with app:
         run = await app.for_owner("subject").run("remote")
         waiting = asyncio.create_task(run.wait())
         await observed.wait()
@@ -176,7 +183,9 @@ async def test_wait_deadline_includes_another_refresh_without_cancelling_it(
     monkeypatch.setattr(store, "get_execution", observe)
     monkeypatch.setattr(clock, "wait_until", wait)
     try:
-        async with Automation(store=store, clock=clock) as app:
+        app = Automation(store=store, clock=clock)
+        app.remote_target("remote", execution_namespace="default")
+        async with app:
             run = await app.for_owner("subject").run("remote")
             refreshing = asyncio.create_task(run.refresh())
             waiting = None
@@ -213,7 +222,9 @@ async def test_remote_worker_result_is_visible_through_shared_store(
         return {"result": "ready"}
 
     async with worker_app.worker() as worker:
-        async with Automation(namespace="shared", store=store, clock=clock) as client:
+        client = Automation(namespace="shared", store=store, clock=clock)
+        client.remote_target("report", execution_namespace="shared")
+        async with client:
             run = await client.for_owner("subject").run("report")
             await worker.wait_until_idle()
             assert await run.wait() is run
@@ -223,7 +234,9 @@ async def test_remote_worker_result_is_visible_through_shared_store(
 
 @pytest.mark.parametrize("duration", [0, -1, True, float("nan"), float("inf")])
 async def test_wait_rejects_invalid_seconds(duration) -> None:
-    async with Automation() as app:
+    app = Automation()
+    app.remote_target("remote", execution_namespace="default")
+    async with app:
         run = await app.for_owner("subject").run("remote")
         with pytest.raises(ValueError):
             await run.wait(timeout=duration)
@@ -256,9 +269,9 @@ async def test_wait_observes_a_separate_worker_process(
     process = None
     waiting = None
     try:
-        async with Automation(
-            namespace="process-test", store=store, clock=clock
-        ) as client:
+        client = Automation(namespace="process-test", store=store, clock=clock)
+        client.remote_target("report", execution_namespace="process-test")
+        async with client:
             run = await client.for_owner("subject").run("report")
             process = await asyncio.create_subprocess_exec(
                 sys.executable,

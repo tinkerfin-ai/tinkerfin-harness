@@ -519,7 +519,12 @@ def build_lifespan():
                         http_client=http_client,
                     ),
                 )
-                automation.target("studio_agent", StudioAutomationTarget(resources))
+                # 自动化沿用当前用户的会话资源范围，任务提交后由框架保存并校验
+                automation.target(
+                    "studio_agent",
+                    StudioAutomationTarget(resources),
+                    execution_namespace=lambda owner_id: f"ns_{int(owner_id)}",
+                )
                 automation_worker = await _enter_lifespan_context(
                     stack,
                     outcome,

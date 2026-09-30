@@ -480,6 +480,7 @@ async def test_service_automatically_sets_up_sql_store(
     service = AutomationService(namespace="app", store=store)
     try:
         execution = await service.execute_once(
+            execution_namespace=service.namespace,
             owner_id="owner-1",
             target="summary",
             input={"project_id": "project-1"},

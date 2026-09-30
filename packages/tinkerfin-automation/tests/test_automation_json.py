@@ -63,6 +63,7 @@ async def test_service_rejects_invalid_identifier_inputs(
         with pytest.raises(error):
             if field == "owner_id":
                 await service.create_task(
+                    execution_namespace=service.namespace,
                     owner_id=value,
                     name="Task",
                     schedule=schedule,
@@ -71,6 +72,7 @@ async def test_service_rejects_invalid_identifier_inputs(
                 )
             elif field == "name":
                 await service.create_task(
+                    execution_namespace=service.namespace,
                     owner_id="owner",
                     name=value,
                     schedule=schedule,
@@ -79,6 +81,7 @@ async def test_service_rejects_invalid_identifier_inputs(
                 )
             elif field == "target":
                 await service.create_task(
+                    execution_namespace=service.namespace,
                     owner_id="owner",
                     name="Task",
                     schedule=schedule,
@@ -87,6 +90,7 @@ async def test_service_rejects_invalid_identifier_inputs(
                 )
             else:
                 await service.create_task(
+                    execution_namespace=service.namespace,
                     owner_id="owner",
                     name="Task",
                     schedule=schedule,
@@ -311,6 +315,7 @@ async def test_service_rejects_nonfinite_json_before_persisting_execution() -> N
     try:
         with pytest.raises(ValueError):
             await service.execute_once(
+                execution_namespace=service.namespace,
                 owner_id="owner",
                 target="target",
                 input={"nested": [float("nan")]},

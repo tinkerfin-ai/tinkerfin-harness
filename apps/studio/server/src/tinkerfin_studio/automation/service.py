@@ -114,9 +114,7 @@ class StudioAutomationService:
     def __init__(self, resources: ApplicationResources, *, user_id: int) -> None:
         self._resources = resources
         self._user_id = user_id
-        self._automation = resources.automation.for_owner(
-            str(user_id), execution_namespace=f"ns_{user_id}"
-        )
+        self._automation = resources.automation.for_owner(str(user_id))
 
     async def _task_view(self, task: AutomationTask) -> TaskView:
         config = task_configuration(task)

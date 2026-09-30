@@ -26,6 +26,7 @@ class AutomationErrorCode(StrEnum):
     RETRY_NOT_ALLOWED = "automation.retry_not_allowed"
     RESOLUTION_NOT_ALLOWED = "automation.resolution_not_allowed"
     TARGET_NOT_FOUND = "automation.target_not_found"
+    TARGET_NAMESPACE = "automation.target_namespace"
     TARGET_FAILED = "automation.target_failed"
     INTERRUPT_CALLBACK_FAILED = "automation.interrupt_callback_failed"
     STORE_UNAVAILABLE = "automation.store_unavailable"
@@ -140,6 +141,12 @@ class TargetExecutionError(AutomationError, RuntimeError):
     """A registered target failed through the public execution boundary."""
 
     code = AutomationErrorCode.TARGET_FAILED
+
+
+class TargetNamespaceError(TargetExecutionError):
+    """A target cannot select or preserve its authorized execution namespace."""
+
+    code = AutomationErrorCode.TARGET_NAMESPACE
 
 
 class InterruptCallbackError(TargetExecutionError):

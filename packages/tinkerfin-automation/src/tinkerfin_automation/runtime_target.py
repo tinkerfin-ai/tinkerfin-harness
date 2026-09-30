@@ -50,6 +50,12 @@ class TinkerFinTarget:
         self._mode: AgentMode | None = mode
 
     @property
+    def execution_namespace(self) -> str:
+        """Return the execution space already owned by the borrowed Runtime."""
+
+        return self._runtime.namespace
+
+    @property
     def cancellation_is_final(self) -> bool:
         """Return false because arbitrary external tool effects may outlive cancellation."""
 

@@ -146,11 +146,20 @@ shows a complete task, manual execution, filtering, and aggregation.
 ### Interrupts
 
 Register Agent work with `automation.target("agent", TinkerFinTarget(runtime))`.
-The execution identity must match the Runtime's namespace. By default, new work
-uses the Automation namespace. To share one scheduler across Runtime scopes, bind
-`automation.for_owner(owner_id, execution_namespace=runtime.namespace)` before
-creating tasks or submitting one-time work. Each task and retry retains its saved
-Runtime scope. Task input cannot replace the Runtime's model, tools, or namespace.
+The target supplies its Runtime's namespace automatically, independently of the
+Automation scheduling namespace. Bind only ownership with `for_owner(owner_id)`.
+Owners sharing one Runtime also share that Runtime's memory and workspace.
+
+For a target that constructs Runtimes dynamically, register
+`automation.target("agent", target, execution_namespace=namespace_for_owner)`.
+The host's mapping takes an authenticated owner ID and returns its authorized
+namespace without I/O or side effects; a fixed string is also accepted.
+Ordinary function targets default to the scheduling namespace.
+
+Tasks and retries retain their saved execution space. Changing a task's target
+requires the replacement to use the same space. Repeating a command keeps its
+original binding even if target configuration changes. Task input cannot replace
+the Runtime's model, tools, or namespace.
 
 `automation.worker(on_interrupt=...)` can classify an unfinished graph execution.
 The async callback receives `InterruptedExecution` and returns `None` to retain the
@@ -190,6 +199,12 @@ Shutdown joins accepted operations and owned cleanup, including on cancellation.
 `async with automation` starts a query/submission client without local targets.
 It can submit immediate work, query, manually run existing tasks, cancel, retry,
 and resolve executions through a shared persistent Store and a remote worker.
+Before entering, declare each target used for new work with
+`automation.remote_target("agent", execution_namespace=namespace_for_owner)`.
+The namespace may also be a fixed string. This loads no Runtime and does not route
+workers; the host keeps declarations consistent with the worker configuration.
+Reading, cancelling, retrying, or manually running saved work needs no declaration.
+Remote declarations cannot be used in a local worker lifecycle.
 Creating, editing, pausing, enabling, or deleting schedules requires a local
 `automation.worker()` context or a Store bound to Notifications. For remote schedule
 management, use shared storage and the same Redis notification channel on clients

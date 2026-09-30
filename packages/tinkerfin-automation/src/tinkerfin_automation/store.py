@@ -31,6 +31,18 @@ class WorkKind(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class CommandReceipt:
+    """Return the original command digest and a detached committed result.
+
+    Reading a receipt grants no new authorization and does not reserve a request
+    ID. A subsequent mutation must still enforce command idempotency atomically.
+    """
+
+    input_digest: str
+    result: AutomationTask | AutomationExecution | str
+
+
+@dataclass(frozen=True, slots=True)
 class WorkItemClaim:
     """Fenced ownership of one short-lived Automation work item."""
 
@@ -116,6 +128,17 @@ class AutomationStore(Protocol):
 
     async def current_time(self) -> datetime:
         """Return the store authority's timezone-aware UTC time."""
+
+        ...
+
+    async def get_command_receipt(
+        self, namespace: str, owner_id: str, request_id: str
+    ) -> CommandReceipt | None:
+        """Read one committed command inside an authorized ownership scope.
+
+        Return a detached historical snapshot even if its resource was subsequently
+        changed or deleted. This read never recreates a resource or a schedule.
+        """
 
         ...
 
@@ -372,6 +395,7 @@ class AutomationStore(Protocol):
 
 __all__ = [
     "AutomationStore",
+    "CommandReceipt",
     "MaterializationResult",
     "ScheduledExecution",
     "StartAuthorization",
