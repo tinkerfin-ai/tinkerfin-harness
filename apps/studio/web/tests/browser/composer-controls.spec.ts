@@ -297,11 +297,11 @@ for (const locale of ['zh-CN', 'en']) {
         await commands.click()
         const menu = page.getByRole('listbox', { name: locale === 'en' ? 'Command and skill suggestions' : '命令和技能建议' })
         await expect(menu).toBeVisible()
-        for (const label of locale === 'en' ? ['Commands (4)', 'Skills'] : ['指令（4）', '技能']) {
+        for (const label of locale === 'en' ? ['Commands (4)', 'Skills (0)'] : ['指令（4）', '技能（0）']) {
           expect(await menu.getByText(label, { exact: true }).evaluate(textStyle)).toEqual(providerTypography)
         }
         const commandGroup = menu.getByRole('group', { name: locale === 'en' ? 'Commands' : '指令', exact: true })
-        const skillHeading = menu.getByText(locale === 'en' ? 'Skills' : '技能', { exact: true })
+        const skillHeading = menu.getByText(locale === 'en' ? 'Skills (0)' : '技能（0）', { exact: true })
         const lastCommandBounds = (await commandGroup.getByRole('option').last().boundingBox())!
         const skillHeadingBounds = (await skillHeading.boundingBox())!
         expect(skillHeadingBounds.y - lastCommandBounds.y - lastCommandBounds.height)
