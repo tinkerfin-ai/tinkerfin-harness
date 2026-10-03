@@ -31,6 +31,9 @@ Isolated workspaces require the matching TinkerFin
 [Server](https://github.com/tinkerfin-ai/sandbox-runtime/blob/main/opensandbox-server/README.md#deploy)
 and [execd](https://github.com/tinkerfin-ai/sandbox-runtime/blob/main/opensandbox-execd/README.md#deploy)
 deployment. The framework handles run setup, credentials, environment, and cleanup.
+Project storage must remain on the container's private writable `overlay` root;
+volumes cannot cover workspace storage or its control paths. See the
+[runtime deployment constraints](https://github.com/tinkerfin-ai/sandbox-runtime#opensandbox).
 
 `ttl=None` creates instances without automatic expiry and skips remote renewal.
 It retains health checks and State ownership rules. Connecting does not change an

@@ -26,6 +26,7 @@ from tinkerfin_sandbox import (
     OpenSandboxBackendUnavailableError,
     OpenSandboxBusyError,
     OpenSandboxInitializationError,
+    OpenSandboxLifecycleUncertainError,
     OpenSandboxManager,
     OpenSandboxManagerClosedError,
     OpenSandboxPurposeError,
@@ -94,8 +95,31 @@ class _WorkspaceRemote(_Remote):
         self.environments: list[dict[str, JsonValue]] = []
         self.network_live: set[tuple[str, str, str]] = set()
         self.network_revoked: set[tuple[str, str, str]] = set()
+        self.restart_stopped: set[tuple[str, str, str]] = set()
         self.network_status = 0
+        self.network_output: dict[str, str] = {}
         self.late_network: list[tuple[str, str, str, str]] = []
+
+    def restart_parent(self, sandbox_id: str) -> None:
+        """End all parent processes and retain receipts for its recorded owners."""
+        self.restart_stopped = {
+            identity for identity in self.restart_stopped if identity[0] != sandbox_id
+        }
+        self.restart_stopped.update(
+            (sandbox_id, namespace, session_id)
+            for (record_parent, _project), record in self.records.items()
+            if record_parent == sandbox_id
+            for session_id, namespace in record.sessions
+        )
+        self.cancelled.update(self.restart_stopped)
+        self.live = {identity for identity in self.live if identity[0] != sandbox_id}
+        self.network_live = {
+            identity for identity in self.network_live if identity[0] != sandbox_id
+        }
+        self.network_revoked = {
+            identity for identity in self.network_revoked if identity[0] != sandbox_id
+        }
+        self.namespaces[sandbox_id] = str(uuid4())
 
     @staticmethod
     def rejection(reason: str) -> tuple[int, JsonValue]:
@@ -157,7 +181,7 @@ class _WorkspaceRemote(_Remote):
         assert record is not None
         if operation == "release":
             self.cancelled.add(identity)
-            assert identity in self.stopped
+            assert identity in self.stopped or identity in self.restart_stopped
             assert identity in self.network_revoked
             if (
                 record.incarnation == arguments["incarnation"]
@@ -169,6 +193,7 @@ class _WorkspaceRemote(_Remote):
             record.incarnation != arguments["incarnation"]
             or record.phase != "active"
             or identity in self.cancelled
+            or namespace != self.namespaces[sandbox_id]
         ):
             return self.rejection("stale")
         if operation == "reserve":
@@ -232,17 +257,20 @@ class _WorkspaceRemote(_Remote):
         if operation == "revoke":
             self.network_revoked.add(identity)
             self.network_live.discard(identity)
-            result = "{}"
+            result = json.dumps({"stopped": identity in self.restart_stopped})
         else:
             assert operation == "grant"
-            if identity in self.network_revoked:
+            if (
+                namespace != self.namespaces[sandbox_id]
+                or identity in self.network_revoked
+            ):
                 return self.command_response('{"error":"denied"}', exit_code=1)
             self.network_live.add(identity)
             result = json.dumps({"token": "a" * 64})
         if self.lose_response == f"network_{operation}":
             self.lose_response = None
             raise httpx.ReadError("Network control response was lost")
-        return self.command_response(result)
+        return self.command_response(self.network_output.get(operation, result))
 
     async def respond(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -436,6 +464,7 @@ async def test_declaration_is_lazy_and_runs_share_only_the_project(
             )
         assert record.phase == "active" and record.sessions == []
         assert remote.live == set() and remote.destroy_calls == []
+        assert len(remote.stopped) == 2
         assert all(stream.closed for stream in remote.streams)
         assert first.is_closed and second.is_closed
 
@@ -572,15 +601,25 @@ async def test_lost_creation_response_keeps_known_cleanup_identity(
         assert all(stream.closed for stream in remote.streams)
 
 
+@pytest.mark.parametrize(
+    ("stop_status", "error"),
+    [
+        (503, OpenSandboxBackendUnavailableError),
+        (404, OpenSandboxBackendUnavailableError),
+        (409, OpenSandboxBackendProtocolError),
+    ],
+)
 async def test_failed_cleanup_retains_record_until_retry_confirms_delete(
     tmp_path: Path,
+    stop_status: int,
+    error: type[Exception],
 ) -> None:
     async with _projects(tmp_path) as (world, remote):
         first_manager = await world.add()
         first_project = _project(first_manager)
-        with pytest.raises(OpenSandboxBackendUnavailableError):
+        with pytest.raises(error):
             async with first_project.open():
-                remote.stop_status = 503
+                remote.stop_status = stop_status
         record = next(iter(remote.records.values()))
         assert (
             record.phase == "active" and len(record.sessions) == len(remote.live) == 1
@@ -612,6 +651,122 @@ async def test_network_cleanup_failure_preserves_ownership_after_native_stop(
         assert record.phase == "deleted"
         assert remote.network_live == set()
         assert handle._is_idle()
+
+
+async def test_parent_restart_receipt_releases_open_run_ownership(
+    tmp_path: Path,
+) -> None:
+    async with _projects(tmp_path) as (world, remote):
+        manager = await world.add()
+        project = manager.workspace("owner", workspace_key="project-a")
+        async with project.open() as backend:
+            remote.restart_parent(backend.id)
+        record = next(iter(remote.records.values()))
+        assert record.phase == "active" and record.sessions == []
+        assert remote.live == remote.network_live == remote.stopped == set()
+        assert manager._handles[_resource_key("owner")]._is_idle()
+
+
+@pytest.mark.parametrize("cancel_delete", [False, True])
+async def test_parent_restart_receipt_settles_retained_owner_and_allows_pause(
+    tmp_path: Path,
+    cancel_delete: bool,
+) -> None:
+    async with _projects(tmp_path) as (world, remote):
+        manager = await world.add()
+        project = manager.workspace("owner", workspace_key="project-a")
+        with pytest.raises(OpenSandboxBackendUnavailableError):
+            async with project.open() as backend:
+                remote.stop_status = 503
+        record = next(iter(remote.records.values()))
+        retained = tuple(record.sessions)
+        handle = manager._handles[_resource_key("owner")]
+        assert retained and not handle._is_idle()
+        deletions = [
+            request for request in remote.native_requests if request.method == "DELETE"
+        ]
+        remote.restart_parent(backend.id)
+        assert tuple(record.sessions) == retained
+        if cancel_delete:
+            gate = remote.gates["network_revoke"] = _Gate()
+            deletion = world.spawn(project.delete())
+            await gate.entered.wait()
+            deletion.cancel()
+            gate.release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await deletion
+        else:
+            await project.delete()
+        assert record.phase == "deleted" and record.sessions == []
+        assert remote.live == remote.network_live == set()
+        assert [
+            request for request in remote.native_requests if request.method == "DELETE"
+        ] == deletions
+        assert manager._handles[_resource_key("owner")] is handle
+        assert handle._is_idle()
+        await manager.pause("owner")
+        assert remote.pause_calls == [(backend.id, 0, 0)]
+        assert all(stream.closed for stream in remote.streams)
+
+
+async def test_lost_restart_receipt_preserves_failures_and_unknown_command(
+    tmp_path: Path,
+) -> None:
+    """A Run receipt cannot settle an unacknowledged command in its current parent."""
+    async with _projects(tmp_path) as (world, remote):
+        manager = await world.add()
+        project = manager.workspace("owner", workspace_key="project-a")
+        with pytest.raises(OpenSandboxBackendUnavailableError):
+            async with project.open() as backend:
+                remote.stop_status = 503
+        record = next(iter(remote.records.values()))
+        retained = tuple(record.sessions)
+        handle = manager._handles[_resource_key("owner")]
+        remote.restart_parent(backend.id)
+        remote.lose_response = "network_revoke"
+        with pytest.raises(OpenSandboxLifecycleUncertainError) as captured:
+            await project.delete()
+        cause = captured.value.cause
+        assert isinstance(cause, ExceptionGroup)
+        assert {type(error) for error in cause.exceptions} == {
+            OpenSandboxBackendUnavailableError,
+            OpenSandboxBackendProtocolError,
+        }
+        assert record.phase == "deleting" and tuple(record.sessions) == retained
+        assert not handle._is_idle()
+        await project.delete()
+        assert record.phase == "deleted" and record.sessions == []
+        assert not handle._is_idle()
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "{}",
+        '{"stopped":1}',
+        '{"stopped":"true"}',
+        '{"stopped":null}',
+        '{"stopped":true,"extra":0}',
+        "not json",
+    ],
+)
+async def test_invalid_revoke_result_stops_native_but_retains_ownership(
+    tmp_path: Path,
+    output: str,
+) -> None:
+    async with _projects(tmp_path) as (world, remote):
+        manager = await world.add()
+        project = manager.workspace("owner", workspace_key="project-a")
+        with pytest.raises(OpenSandboxBackendProtocolError):
+            async with project.open():
+                remote.network_output["revoke"] = output
+        record = next(iter(remote.records.values()))
+        handle = manager._handles[_resource_key("owner")]
+        assert record.sessions and not handle._is_idle()
+        assert remote.live == set() and len(remote.stopped) == 1
+        remote.network_output.clear()
+        await project.delete()
+        assert record.phase == "deleted" and handle._is_idle()
 
 
 async def test_command_cancellation_settles_network_before_returning(
@@ -784,6 +939,7 @@ async def test_old_native_namespace_prevents_project_data_deletion(
         with pytest.raises(OpenSandboxBackendProtocolError):
             await project.delete()
         assert record.phase == "deleting" and len(record.sessions) == 1
+        assert not manager._handles[_resource_key("owner")]._is_idle()
         remote.namespaces[backend.id] = namespace
         await project.delete()
         assert record.phase == "deleted"

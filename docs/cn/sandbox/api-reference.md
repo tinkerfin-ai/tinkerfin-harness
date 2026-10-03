@@ -31,6 +31,8 @@
 [Server](https://github.com/tinkerfin-ai/sandbox-runtime/blob/main/opensandbox-server/README.md#deploy)
 和 [execd](https://github.com/tinkerfin-ai/sandbox-runtime/blob/main/opensandbox-execd/README.md#deploy)
 部署。框架负责运行准备、凭据、环境和清理。
+项目数据必须保留在容器私有、可写的 `overlay` 根文件系统中，数据卷不能覆盖工作区存储或控制路径。
+具体限制见[运行时部署说明](https://github.com/tinkerfin-ai/sandbox-runtime/blob/main/README.zh-CN.md#接入-opensandbox)。
 
 `ttl=None` 创建的实例没有自动到期时间，Manager 不会为其续期，但仍执行健康检查并遵守 State
 资源所有权规则。重连不会改变已有实例的到期时间。关闭和文件存储行为见[远端实例生存时间](lifecycle.md#远端实例生存时间)。

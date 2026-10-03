@@ -168,11 +168,12 @@ class _BoundedEventStream(httpx.AsyncByteStream):
 class _WorkspaceConnection:
     """Borrow the parent transport without borrowing its command or file routes.
 
-    Execution contexts retain the parent Handle lease until namespaced DELETE has
-    confirmed namespace exit and remote file-lease drainage. File-change observers
-    instead own a separate parent connection until their stream closes. This object
-    owns only its HTTP client. Every exchange bypasses SDK retries and closes its
-    response; neither response text nor authentication headers enter public errors.
+    Execution contexts retain the parent Handle lease until namespaced DELETE or
+    the parent supervisor's exact restart receipt confirms that their processes and
+    remote file operations have ended. File-change observers instead own a separate
+    parent connection until their stream closes. This object owns only its HTTP
+    client. Every exchange bypasses SDK retries and closes its response; neither
+    response text nor authentication headers enter public errors.
     """
 
     def __init__(

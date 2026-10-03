@@ -13,7 +13,7 @@ import shlex
 from collections.abc import AsyncGenerator, AsyncIterator, Coroutine, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar, overload
 from uuid import uuid4
 
 from deepagents.backends.protocol import ExecuteResponse
@@ -215,8 +215,9 @@ class _ProjectCoordinator(Generic[_KeyT]):
 
     The parent lease covers admission, native creation, user work, and settlement.
     Pause may hold the owner claim while waiting for that lease, so every cleanup
-    call uses only its fixed parent and connection. Registry cancellation fences
-    delayed reservations; namespaced native DELETE fences delayed session POSTs.
+    call uses only its fixed parent and connection. Registry cancellation and
+    native namespace identities fence delayed work. Exact parent restart receipts
+    can confirm termination without an old-namespace DELETE.
     See the registry CLI and cancellation contracts in test_workspace_lifecycle.
     """
 
@@ -328,12 +329,28 @@ class _ProjectCoordinator(Generic[_KeyT]):
             "Workspace registry is unavailable", context={"reason": reason}
         )
 
+    @overload
+    async def _network(
+        self,
+        parent: OpenSandboxBackend,
+        owner: _SessionOwner,
+        operation: Literal["grant"],
+    ) -> str: ...
+
+    @overload
+    async def _network(
+        self,
+        parent: OpenSandboxBackend,
+        owner: _SessionOwner,
+        operation: Literal["revoke"],
+    ) -> bool: ...
+
     async def _network(
         self,
         parent: OpenSandboxBackend,
         owner: _SessionOwner,
         operation: Literal["grant", "revoke"],
-    ) -> str | None:
+    ) -> str | bool:
         command = (
             f"{_NETWORK_COMMAND} {operation} "
             f"{shlex.quote(owner.session_id)} {shlex.quote(owner.session_namespace)}"
@@ -358,8 +375,13 @@ class _ProjectCoordinator(Generic[_KeyT]):
             raise OpenSandboxBackendProtocolError(
                 "Workspace network control returned invalid JSON", cause=error
             ) from error
-        if operation == "revoke" and payload == {}:
-            return None
+        if (
+            operation == "revoke"
+            and isinstance(payload, dict)
+            and set(payload) == {"stopped"}
+            and isinstance(stopped := payload["stopped"], bool)
+        ):
+            return stopped
         if (
             operation == "grant"
             and isinstance(payload, dict)
@@ -378,16 +400,23 @@ class _ProjectCoordinator(Generic[_KeyT]):
         connection: _WorkspaceConnection,
         owner: _SessionOwner,
     ) -> None:
-        """Confirm both parent-side network settlement and native namespace exit."""
+        """Confirm network revocation and termination before releasing ownership.
+
+        The supervisor can attest that this exact owner ended during a complete
+        parent restart. Otherwise native DELETE must confirm the recorded namespace;
+        a nonce mismatch alone never proves exit. See test_workspace_lifecycle.
+        """
         failures: list[Exception] = []
+        stopped = False
         try:
-            await self._network(parent, owner, "revoke")
+            stopped = await self._network(parent, owner, "revoke")
         except OpenSandboxError as error:
             failures.append(error)
-        try:
-            await connection.stop(owner.session_id, owner.session_namespace)
-        except OpenSandboxError as error:
-            failures.append(error)
+        if not stopped:
+            try:
+                await connection.stop(owner.session_id, owner.session_namespace)
+            except OpenSandboxError as error:
+                failures.append(error)
         _raise_failures(failures)
 
     @asynccontextmanager
@@ -428,7 +457,6 @@ class _ProjectCoordinator(Generic[_KeyT]):
                         "Workspace reservation did not confirm its ownership"
                     )
                 egress_token = await self._network(parent, owner, "grant")
-                assert egress_token is not None
                 request = await self._registry(parent, "session_request", arguments)
                 if not isinstance(request, dict) or any(
                     request.get(field) != value
