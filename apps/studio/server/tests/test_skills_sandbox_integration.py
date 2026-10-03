@@ -81,7 +81,10 @@ async def test_skill_scripts_resources_rebuild_and_cancel_in_owned_sandbox(
     sandbox_ids: list[str] = []
     async with OpenSandboxManager[str](client=client) as manager:
         workspace = SkillsWorkspace(
-            manager.workspace("user"), content=content, user_id=1, snapshot=snapshot
+            manager.workspace("user", workspace_key="default"),
+            content=content,
+            user_id=1,
+            snapshot=snapshot,
         )
         try:
             for _ in range(2):
@@ -106,7 +109,7 @@ async def test_skill_scripts_resources_rebuild_and_cancel_in_owned_sandbox(
                         max_inline_bytes=8,
                     )
                     assert offload.offloaded and offload.preview_has_truncation_marker
-                await manager.destroy("user", namespace=identity.namespace)
+                await manager.destroy("user")
             assert sandbox_ids[0] != sandbox_ids[1]
             entered = asyncio.Event()
             release = asyncio.Event()
@@ -129,7 +132,7 @@ async def test_skill_scripts_resources_rebuild_and_cancel_in_owned_sandbox(
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
         finally:
-            await manager.destroy("user", namespace=identity.namespace)
+            await manager.destroy("user")
     owned = await run_sync(
         partial(
             opensandbox_docker_runtime.client.containers.list,

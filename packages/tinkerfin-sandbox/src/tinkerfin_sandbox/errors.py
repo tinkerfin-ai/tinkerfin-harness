@@ -22,6 +22,7 @@ class OpenSandboxErrorCode(StrEnum):
     STATE_PROTOCOL_ERROR = "sandbox.state_protocol_error"
     STATE_COMMIT_UNCERTAIN = "sandbox.state_commit_uncertain"
     STATE_UNEXPECTED_FAILURE = "sandbox.state_unexpected_failure"
+    PURPOSE_MISMATCH = "sandbox.purpose_mismatch"
     BACKEND_ERROR = "sandbox.backend_error"
     FILE_TOO_LARGE = "sandbox.file_too_large"
     BACKEND_UNAVAILABLE = "sandbox.backend_unavailable"
@@ -87,6 +88,17 @@ class OpenSandboxError(Exception):
         self.diagnostic_context = MappingProxyType(
             {**self.diagnostic_context, **context}
         )
+
+
+class OpenSandboxPurposeError(OpenSandboxError):
+    """The requested capability does not match a Sandbox's committed purpose.
+
+    A binding keeps its purpose through recovery and replacement. Only explicit
+    unbinding permits a later allocation to select a different purpose. Unknown
+    or conflicting remote purpose metadata never authorizes access.
+    """
+
+    code = OpenSandboxErrorCode.PURPOSE_MISMATCH
 
 
 class OpenSandboxStateError(OpenSandboxError, RuntimeError):

@@ -43,6 +43,7 @@ from tinkerfin_sandbox import (
     OpenSandboxNotificationOptions,
     OpenSandboxObserverReentryError,
     OpenSandboxOwnerClaim,
+    OpenSandboxPurpose,
     OpenSandboxResetError,
     OpenSandboxRuntimeInfo,
     OpenSandboxStateError,
@@ -146,11 +147,15 @@ async def test_replacement_waits_for_binding_and_handle_publication() -> None:
 
     class GatedState(_FakeState):
         async def bind_owner(
-            self, claim: OpenSandboxOwnerClaim, sandbox_id: str
+            self,
+            claim: OpenSandboxOwnerClaim,
+            sandbox_id: str,
+            *,
+            purpose: OpenSandboxPurpose,
         ) -> OpenSandboxBinding:
             entered.set()
             await release.wait()
-            return await super().bind_owner(claim, sandbox_id)
+            return await super().bind_owner(claim, sandbox_id, purpose=purpose)
 
     recorder = _Recorder()
     state = GatedState({_resource_key("owner"): "missing"})
@@ -407,7 +412,10 @@ async def test_uncached_inspection_does_not_announce_recovery_before_handle_publ
     ) as manager:
         await manager.get_details("owner")
         client.inspection_results["original"] = OpenSandboxRuntimeInfo(
-            sandbox_id="original", available=True, healthy=True
+            sandbox_id="original",
+            available=True,
+            healthy=True,
+            metadata={"tinkerfin.ai/purpose": "commands"},
         )
         details = await manager.get_details("owner")
         assert details is not None and details.healthy and not details.cached

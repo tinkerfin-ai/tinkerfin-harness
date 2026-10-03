@@ -13,6 +13,7 @@ from tinkerfin_sandbox import (
     OpenSandboxConfig,
     OpenSandboxDiagnosticContent,
     OpenSandboxManager,
+    OpenSandboxPurpose,
     OpenSandboxRuntimeInfo,
 )
 
@@ -61,16 +62,24 @@ class _Client:
     async def create(
         self,
         *,
+        purpose: OpenSandboxPurpose = "commands",
         metadata: Mapping[str, str] | None = None,
     ) -> OpenSandboxBackend:
         del metadata
         self.create_calls += 1
         return cast(OpenSandboxBackend, _Backend(f"sandbox-{self.create_calls}"))
 
-    async def connect(self, sandbox_id: str) -> OpenSandboxBackend:
+    async def connect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxBackend:
         return cast(OpenSandboxBackend, _Backend(sandbox_id))
 
-    async def inspect(self, sandbox_id: str) -> OpenSandboxRuntimeInfo:
+    async def _connect_observer(self, sandbox_id: str) -> OpenSandboxBackend:
+        return await self.connect(sandbox_id, purpose="workspaces")
+
+    async def inspect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxRuntimeInfo:
         raise AssertionError(f"unexpected inspect for {sandbox_id}")
 
     async def get_runtime_info(self, sandbox_id: str) -> OpenSandboxRuntimeInfo:

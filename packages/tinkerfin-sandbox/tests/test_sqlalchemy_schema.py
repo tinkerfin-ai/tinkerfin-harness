@@ -85,11 +85,11 @@ def test_public_schema_descriptor_is_frozen_and_stable() -> None:
     [
         (
             "mysql",
-            "03cad907c46f384ea6328d6b0ad16881d77727bb4b3c8bf9f98d650b037cbf8e",
+            "6801c06836965efd8dfb40d0c6a91738ecd6b03be18c4d3ab31e9cbc0b37a9e8",
         ),
         (
             "sqlite",
-            "a892b592c861102a82a6ff0de1ccdbd93005b2cc5df55a805eefed6873bfe400",
+            "d4acea3d4b979204dafd4793fb53636197811a8ff6e7328973e421946827b4f1",
         ),
     ],
 )
@@ -192,7 +192,7 @@ def test_schema_ddl_has_complete_deterministic_statement_order(
 def test_mysql_ddl_uses_only_the_common_mysql_57_contract() -> None:
     ddl = tinkerfin_sandbox.get_sqlalchemy_opensandbox_state_schema(dialect="mysql").ddl
 
-    assert ddl.count(" COMMENT ") == 41
+    assert ddl.count(" COMMENT ") == 42
     assert ddl.count(")COMMENT='") == 6
     assert "schema version" not in ddl
     assert "COMMENT 'UTC expiry of the current cleanup lease'" in ddl

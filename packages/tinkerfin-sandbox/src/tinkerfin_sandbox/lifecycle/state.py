@@ -11,11 +11,14 @@ from typing import Protocol, cast, runtime_checkable
 from uuid import uuid4
 
 from ..errors import (
+    OpenSandboxError,
     OpenSandboxStateConfigurationError,
     OpenSandboxStateError,
     OpenSandboxStateOwnershipError,
     UnexpectedOpenSandboxStateError,
 )
+from ..models import OpenSandboxPurpose
+from ._purpose import require_purpose, validate_purpose
 from .availability import (
     OpenSandboxAvailability,
     OpenSandboxAvailabilityPhase,
@@ -35,10 +38,15 @@ def _owner_digest(namespace: str, owner_key: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class OpenSandboxBinding:
-    """Committed mapping from one owner to one remote Sandbox generation."""
+    """Committed remote identity, generation, and immutable capability purpose.
+
+    Replacement preserves purpose even when the remote instance is unavailable.
+    Explicit unbinding is required before the owner selects another purpose.
+    """
 
     sandbox_id: str
     generation: int
+    purpose: OpenSandboxPurpose
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,12 +154,15 @@ class OpenSandboxState(Protocol):
         self,
         claim: OpenSandboxOwnerClaim,
         sandbox_id: str,
+        *,
+        purpose: OpenSandboxPurpose,
     ) -> OpenSandboxBinding:
         """Commit a remote Sandbox as the claimed owner's authoritative binding.
 
         Args:
             claim: Current exclusive owner claim.
             sandbox_id: Canonical remote Sandbox identifier to publish.
+            purpose: Capability retained until this owner is explicitly unbound.
 
         Returns:
             Newly authoritative binding and owner generation.
@@ -159,6 +170,7 @@ class OpenSandboxState(Protocol):
         Raises:
             OpenSandboxStateOwnershipError: The claim is stale or no longer current.
             OpenSandboxStateError: The binding cannot be committed durably.
+            OpenSandboxPurposeError: An existing binding has a different purpose.
         """
 
         ...
@@ -433,7 +445,7 @@ class OpenSandboxState(Protocol):
         claim: OpenSandboxWarmClaim,
         sandbox_id: str,
     ) -> None:
-        """Publish a created Sandbox into the claimed warm slot.
+        """Publish a created command-purpose Sandbox into the claimed warm slot.
 
         Args:
             claim: Current warm-slot fencing claim.
@@ -477,10 +489,11 @@ class OpenSandboxState(Protocol):
         self,
         claim: OpenSandboxOwnerClaim,
     ) -> OpenSandboxBinding | None:
-        """Atomically consume a slot and commit its Sandbox as the owner binding.
+        """Atomically consume command capacity and commit its owner binding.
 
         A non-``None`` result is already authoritative. Callers must publish that
         exact binding without invoking ``bind_owner()`` again.
+        A workspace-purpose owner cannot consume or change a warm slot.
 
         Args:
             claim: Current owner claim receiving an available warm Sandbox.
@@ -490,6 +503,7 @@ class OpenSandboxState(Protocol):
 
         Raises:
             OpenSandboxStateError: Claim ownership or durable State access fails.
+            OpenSandboxPurposeError: The owner is bound to workspace capability.
         """
 
         ...
@@ -607,7 +621,7 @@ async def _call_state(
 
     try:
         return await cast(Awaitable[object], awaitable)
-    except OpenSandboxStateError:
+    except OpenSandboxError:
         raise
     except Exception as error:
         translated = UnexpectedOpenSandboxStateError(
@@ -687,13 +701,15 @@ class _OpenSandboxStateBoundary(  # pyright: ignore[reportUnusedClass]
         self,
         claim: OpenSandboxOwnerClaim,
         sandbox_id: str,
+        *,
+        purpose: OpenSandboxPurpose,
     ) -> OpenSandboxBinding:
         return cast(
             OpenSandboxBinding,
             await _call_state(
                 self._state,
                 "bind_owner",
-                self._state.bind_owner(claim, sandbox_id),
+                self._state.bind_owner(claim, sandbox_id, purpose=purpose),
             ),
         )
 
@@ -1099,25 +1115,33 @@ class InMemoryOpenSandboxState(OpenSandboxState):
         self,
         claim: OpenSandboxOwnerClaim,
         sandbox_id: str,
+        *,
+        purpose: OpenSandboxPurpose,
     ) -> OpenSandboxBinding:
         """Commit a Sandbox ID only for the current fencing claim."""
         record = self._claimed_record(claim)
-        return self._commit_binding(record, claim, sandbox_id)
+        return self._commit_binding(record, claim, sandbox_id, purpose=purpose)
 
     @staticmethod
     def _commit_binding(
         record: _MemoryOwnerRecord,
         claim: OpenSandboxOwnerClaim,
         sandbox_id: str,
+        *,
+        purpose: OpenSandboxPurpose,
     ) -> OpenSandboxBinding:
         """Publish binding and intent without yielding or invoking public overrides.
 
         Warm consumption commits its own binding atomically with slot removal.
         It must not call the replaceable standalone binding operation.
         """
+        validate_purpose(purpose)
+        if record.binding is not None:
+            require_purpose(record.binding.purpose, purpose)
         binding = OpenSandboxBinding(
             sandbox_id=sandbox_id,
             generation=claim.generation,
+            purpose=purpose,
         )
         if record.binding == binding and record.availability is not None:
             return binding
@@ -1405,10 +1429,14 @@ class InMemoryOpenSandboxState(OpenSandboxState):
     ) -> OpenSandboxBinding | None:
         """Atomically consume and authoritatively bind one ready warm Sandbox."""
         record = self._claimed_record(claim)
+        if record.binding is not None:
+            require_purpose(record.binding.purpose, "commands")
         for slot in self._warm_slots:
             if slot.sandbox_id is None or slot.active_token is not None:
                 continue
-            binding = self._commit_binding(record, claim, slot.sandbox_id)
+            binding = self._commit_binding(
+                record, claim, slot.sandbox_id, purpose="commands"
+            )
             slot.sandbox_id = None
             return binding
         return None

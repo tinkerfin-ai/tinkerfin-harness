@@ -124,9 +124,9 @@ class NotificationSubscription(AsyncIterator[Notification | ResyncRequired]):
         finally:
             self._pulling = False
 
-    def _accept(self, notification: Notification, payload: bytes) -> None:
+    def _matches(self, notification: Notification) -> bool:
         if self._state != "open":
-            return
+            return False
         scope = self._scope
         if scope is not None and (
             scope.namespace != notification.scope.namespace
@@ -135,10 +135,15 @@ class NotificationSubscription(AsyncIterator[Notification | ResyncRequired]):
                 and scope.owner_id != notification.scope.owner_id
             )
         ):
-            return
+            return False
         if self._topics is not None and notification.topic not in self._topics:
-            return
+            return False
         if self._key is not None and notification.key != self._key:
+            return False
+        return True
+
+    def _accept(self, notification: Notification, payload: bytes) -> None:
+        if not self._matches(notification):
             return
         key = (notification.scope, notification.topic, notification.key)
         if (
@@ -298,6 +303,10 @@ class Notifications:
                 try:
                     await self._backend.publish(payload)
                 except NotificationError as error:
+                    notification = Notification.model_validate_json(payload)
+                    for subscription in tuple(self._subscriptions):
+                        if subscription._matches(notification):
+                            subscription._invalidate(ResyncRequired("disconnected"))
                     # Advisory delivery cannot change the already committed source.
                     # The service owns this transport outcome; source callers only
                     # observe admission to the bounded publication queue.

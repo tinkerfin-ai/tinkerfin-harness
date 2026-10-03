@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tests.support.sql_engines import SqlEngineFactory
 
 from tinkerfin_sandbox.errors import (
+    OpenSandboxPurposeError,
     OpenSandboxStateError,
     OpenSandboxStateOwnershipError,
     UnexpectedOpenSandboxStateError,
@@ -28,6 +29,7 @@ from tinkerfin_sandbox.lifecycle.state import (
     OpenSandboxState,
     _OpenSandboxStateBoundary,
 )
+from tinkerfin_sandbox.models import OpenSandboxPurpose
 
 
 @pytest.fixture(params=["memory", "sqlite"])
@@ -49,13 +51,69 @@ async def state(
         await instance.aclose()
 
 
+@pytest.mark.parametrize("purpose", ["commands", "workspaces"])
+async def test_binding_purpose_survives_claims_and_requires_explicit_unbinding(
+    state: OpenSandboxState, purpose: OpenSandboxPurpose
+) -> None:
+    other: OpenSandboxPurpose = "workspaces" if purpose == "commands" else "commands"
+    claim = await state.acquire_owner("purpose-owner")
+    try:
+        original = await state.bind_owner(claim, "original", purpose=purpose)
+        with pytest.raises(OpenSandboxPurposeError):
+            await state.bind_owner(claim, "forbidden", purpose=other)
+        repeated = await state.bind_owner(claim, "original", purpose=purpose)
+        assert repeated == original
+    finally:
+        await state.release_owner(claim)
+    assert await state.read_binding("purpose-owner") == original
+
+    successor = await state.acquire_owner("purpose-owner")
+    try:
+        assert successor.binding == original
+        replacement = await state.bind_owner(successor, "replacement", purpose=purpose)
+        assert replacement.purpose == purpose
+        assert replacement.generation == successor.generation
+        with pytest.raises(OpenSandboxPurposeError):
+            await state.bind_owner(successor, "forbidden", purpose=other)
+        await state.unbind_owner(successor)
+        changed = await state.bind_owner(successor, "new-purpose", purpose=other)
+        assert changed.purpose == other
+    finally:
+        await state.release_owner(successor)
+    assert await state.read_binding("purpose-owner") == changed
+
+
+async def test_warm_consumption_cannot_change_workspace_purpose_or_consume_capacity(
+    state: OpenSandboxState,
+) -> None:
+    warm = await state.claim_warm_slot()
+    assert warm is not None
+    await state.publish_warm(warm, "warm-command-sandbox")
+    owner = await state.acquire_owner("workspace-owner")
+    try:
+        bound = await state.bind_owner(owner, "workspace-parent", purpose="workspaces")
+        with pytest.raises(OpenSandboxPurposeError):
+            await state.consume_warm(owner)
+    finally:
+        await state.release_owner(owner)
+    assert await state.read_binding("workspace-owner") == bound
+    recipient = await state.acquire_owner("command-owner")
+    try:
+        consumed = await state.consume_warm(recipient)
+        assert consumed is not None
+        assert consumed.sandbox_id == "warm-command-sandbox"
+        assert consumed.purpose == "commands"
+    finally:
+        await state.release_owner(recipient)
+
+
 async def test_binding_and_warm_consumption_publish_running_availability(
     state: OpenSandboxState,
 ) -> None:
     assert await state.read_availability("owner") is None
     claim = await state.acquire_owner("owner")
     try:
-        binding = await state.bind_owner(claim, "sandbox")
+        binding = await state.bind_owner(claim, "sandbox", purpose="commands")
         available = await state.register_holder(claim, "manager")
         assert (available.sandbox_id, available.binding_generation) == (
             binding.sandbox_id,
@@ -90,7 +148,7 @@ async def test_all_holders_must_acknowledge_before_dispatch(
 ) -> None:
     claim = await state.acquire_owner("owner")
     try:
-        await state.bind_owner(claim, "sandbox")
+        await state.bind_owner(claim, "sandbox", purpose="commands")
         running = await state.register_holder(claim, "manager-a")
         await state.register_holder(claim, "manager-b")
         draining = await state.change_availability(claim, running, phase="draining")
@@ -121,7 +179,7 @@ async def test_cancelled_drain_cannot_accept_late_ack_or_rollback_after_dispatch
 ) -> None:
     claim = await state.acquire_owner("owner")
     try:
-        await state.bind_owner(claim, "sandbox")
+        await state.bind_owner(claim, "sandbox", purpose="commands")
         running = await state.register_holder(claim, "manager")
         first = await state.change_availability(claim, running, phase="draining")
         assert await state.acknowledge_idle("manager", first)
@@ -145,7 +203,7 @@ async def test_resume_publishes_connection_refresh_and_fences_full_snapshot(
 ) -> None:
     claim = await state.acquire_owner("owner")
     try:
-        await state.bind_owner(claim, "sandbox")
+        await state.bind_owner(claim, "sandbox", purpose="commands")
         running = await state.read_availability("owner")
         assert running is not None
         for stale in (
@@ -182,13 +240,13 @@ async def test_replacement_rejects_old_ack_and_old_holder_release(
     state: OpenSandboxState,
 ) -> None:
     first = await state.acquire_owner("owner")
-    await state.bind_owner(first, "same-remote-id")
+    await state.bind_owner(first, "same-remote-id", purpose="commands")
     old = await state.register_holder(first, "manager")
     old_drain = await state.change_availability(first, old, phase="draining")
     await state.release_owner(first)
     current = await state.acquire_owner("owner")
     try:
-        await state.bind_owner(current, "same-remote-id")
+        await state.bind_owner(current, "same-remote-id", purpose="commands")
         observed = await state.get_holder_updates("manager")
         assert observed[0].binding_generation == old.binding_generation
         assert observed[0].availability.binding_generation == current.generation
@@ -217,7 +275,7 @@ async def test_rejected_remote_requests_can_restore_the_confirmed_preceding_stat
     """A manager with rejection evidence may undo only its exact dispatched intent."""
     claim = await state.acquire_owner("owner")
     try:
-        await state.bind_owner(claim, "sandbox")
+        await state.bind_owner(claim, "sandbox", purpose="commands")
         running = await state.read_availability("owner")
         assert running is not None
         draining = await state.change_availability(claim, running, phase="draining")
@@ -242,10 +300,10 @@ async def test_repeated_binding_does_not_reset_current_drain(
 ) -> None:
     claim = await state.acquire_owner("owner")
     try:
-        binding = await state.bind_owner(claim, "sandbox")
+        binding = await state.bind_owner(claim, "sandbox", purpose="commands")
         running = await state.register_holder(claim, "manager")
         draining = await state.change_availability(claim, running, phase="draining")
-        assert await state.bind_owner(claim, "sandbox") == binding
+        assert await state.bind_owner(claim, "sandbox", purpose="commands") == binding
         assert await state.read_availability("owner") == draining
     finally:
         await state.release_owner(claim)
@@ -257,7 +315,7 @@ async def test_explicit_resume_can_restore_an_externally_paused_running_binding(
     """Confirmed external pause permits an explicit resume without a new binding."""
     claim = await state.acquire_owner("owner")
     try:
-        binding = await state.bind_owner(claim, "sandbox")
+        binding = await state.bind_owner(claim, "sandbox", purpose="commands")
         running = await state.read_availability("owner")
         assert running is not None
         resuming = await state.change_availability(claim, running, phase="resuming")
@@ -277,7 +335,7 @@ async def test_explicit_pause_drains_an_externally_resumed_paused_binding(
     """Confirmed external resume requires a fresh drain before explicit pause."""
     claim = await state.acquire_owner("owner")
     try:
-        await state.bind_owner(claim, "sandbox")
+        await state.bind_owner(claim, "sandbox", purpose="commands")
         running = await state.register_holder(claim, "manager")
         draining = await state.change_availability(claim, running, phase="draining")
         assert await state.acknowledge_idle("manager", draining)
@@ -299,7 +357,7 @@ async def test_registration_and_drain_have_one_atomic_order(
 ) -> None:
     claim = await state.acquire_owner("owner")
     try:
-        await state.bind_owner(claim, "sandbox")
+        await state.bind_owner(claim, "sandbox", purpose="commands")
         running = await state.read_availability("owner")
         assert running is not None
         register = state.register_holder(claim, "manager")
@@ -324,7 +382,7 @@ async def test_released_owner_fence_cannot_change_availability(
     state: OpenSandboxState,
 ) -> None:
     old = await state.acquire_owner("owner")
-    await state.bind_owner(old, "sandbox")
+    await state.bind_owner(old, "sandbox", purpose="commands")
     running = await state.register_holder(old, "manager")
     await state.release_owner(old)
     current = await state.acquire_owner("owner")
@@ -348,7 +406,7 @@ async def test_sqlite_close_and_reopen_do_not_fabricate_holder_idle(
     first = SQLAlchemyOpenSandboxState(engine=sql_engine(url))
     await first.start(warm_pool_size=0)
     claim = await first.acquire_owner("owner")
-    await first.bind_owner(claim, "sandbox")
+    await first.bind_owner(claim, "sandbox", purpose="commands")
     running = await first.register_holder(claim, "lost-manager")
     await first.release_owner(claim)
     await first.aclose()
@@ -382,7 +440,7 @@ async def test_sqlite_other_state_acknowledges_while_owner_claim_remains_active(
     await observer.start(warm_pool_size=0)
     claim = await owner.acquire_owner("owner")
     try:
-        await owner.bind_owner(claim, "sandbox")
+        await owner.bind_owner(claim, "sandbox", purpose="commands")
         running = await owner.register_holder(claim, "observer")
         draining = await owner.change_availability(claim, running, phase="draining")
         assert await observer.read_availability("owner") == draining
@@ -404,7 +462,7 @@ async def test_sqlite_expired_claim_cannot_dispatch_or_cancel_drain(
     await state.start(warm_pool_size=0)
     claim = await state.acquire_owner("owner")
     try:
-        await state.bind_owner(claim, "sandbox")
+        await state.bind_owner(claim, "sandbox", purpose="commands")
         running = await state.read_availability("owner")
         assert running is not None
         draining = await state.change_availability(claim, running, phase="draining")
@@ -463,7 +521,7 @@ async def test_sqlite_missing_availability_fails_closed_for_an_existing_binding(
     await state.start(warm_pool_size=0)
     claim = await state.acquire_owner("owner")
     try:
-        await state.bind_owner(claim, "sandbox")
+        await state.bind_owner(claim, "sandbox", purpose="commands")
         async with engine.begin() as connection:
             await connection.execute(
                 text("DELETE FROM tinkerfin_opensandbox_availability")
@@ -511,7 +569,7 @@ async def test_sqlite_binding_and_availability_commit_or_rollback_together(
                 )
             )
         with pytest.raises(OpenSandboxStateError):
-            await state.bind_owner(claim, "sandbox")
+            await state.bind_owner(claim, "sandbox", purpose="commands")
         assert await state.read_binding("owner") is None
         with pytest.raises(OpenSandboxStateError):
             await state.consume_warm(claim)
@@ -551,7 +609,7 @@ async def test_unbinding_retires_all_holder_generations_without_touching_other_o
     ]:
         claim = await state.acquire_owner(owner)
         try:
-            await state.bind_owner(claim, sandbox)
+            await state.bind_owner(claim, sandbox, purpose="commands")
             await state.register_holder(claim, holder)
         finally:
             await state.release_owner(claim)
@@ -562,7 +620,7 @@ async def test_unbinding_retires_all_holder_generations_without_touching_other_o
         await state.release_owner(claim)
     claim = await state.acquire_owner("owner")
     try:
-        await state.bind_owner(claim, "future-sandbox")
+        await state.bind_owner(claim, "future-sandbox", purpose="commands")
     finally:
         await state.release_owner(claim)
     assert await state.get_holder_updates("lost-holder") == ()

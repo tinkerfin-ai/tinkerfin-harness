@@ -9,6 +9,7 @@ real test failures.
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import sys
@@ -55,8 +56,12 @@ _REDIS_STACK_IMAGE = (
     "798ab84d9f266936b034ab11c4d04a2b8e4b441884c5aa7d17ac951eefdf742a"
 )
 _OPENSANDBOX_SERVER_IMAGE = (
-    "opensandbox/server:v0.2.3@sha256:"
-    "ae8dfbb277f40a39ff01ef35e5e1c10675acfe0fa9db15259b8f323e5efab778"
+    "ghcr.io/tinkerfin-ai/opensandbox-server:0.2.3-tinkerfin.1@sha256:"
+    "238060e23a14ebd22e437b15100e8c939f6865de60075d2edd488977c24c1fda"
+)
+_OPENSANDBOX_EXECD_IMAGE = (
+    "ghcr.io/tinkerfin-ai/opensandbox-execd:1.0.22-tinkerfin.1@sha256:"
+    "50fcc0386fb893e56eee047c87b3bae40ed2451629606feeaa605ab283df06ce"
 )
 _DIND_IMAGE = (
     "docker:28.3.3-dind@sha256:"
@@ -488,7 +493,7 @@ file_enabled = false
 
 [runtime]
 type = "docker"
-execd_image = "opensandbox/execd:v1.0.22"
+execd_image = "tinkerfin-execd-e2e:isolated"
 
 [storage]
 allowed_host_paths = []
@@ -612,6 +617,7 @@ def _copy_runtime_image(
     repository: str,
     tag: str,
     export_budget_seconds: float = 300.0,
+    source_archive: Path | None = None,
 ) -> None:
     """Stream one immutable image between owned sessions, then verify its tag.
 
@@ -622,6 +628,8 @@ def _copy_runtime_image(
     by that check. Requests streams the iterable upload with backpressure, without
     a host archive or a whole-image buffer. Both HTTP responses and the upload
     iterator close on failure. Import retains the target SDK's request timeout.
+    An explicitly prepared archive bypasses daemon export, but must still load the
+    exact source image ID. It remains borrowed and is never removed by this helper.
     """
     if export_budget_seconds <= 0:
         raise ValueError("Image export budget must be positive")
@@ -637,14 +645,21 @@ def _copy_runtime_image(
         raise RuntimeError("The selected source image has no immutable content ID")
     endpoint = f"{source.api.base_url}/v{source.api.api_version}/images/{source_id}/get"
     deadline = time.monotonic() + export_budget_seconds
-    response: Response
-    with source.api.get(
-        endpoint, stream=True, timeout=min(30.0, export_budget_seconds)
-    ) as response:
-        response.raise_for_status()
+    with ExitStack() as export:
+        if source_archive is None:
+            response: Response = export.enter_context(
+                source.api.get(
+                    endpoint, stream=True, timeout=min(30.0, export_budget_seconds)
+                )
+            )
+            response.raise_for_status()
+            content = response.iter_content(chunk_size=1024 * 1024)
+        else:
+            archive = export.enter_context(source_archive.open("rb"))
+            content = iter(lambda: archive.read(1024 * 1024), b"")
 
         def chunks() -> Generator[bytes, None, None]:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
+            for chunk in content:
                 if time.monotonic() >= deadline:
                     raise TimeoutError("Docker image export exceeded its budget")
                 yield chunk
@@ -739,11 +754,17 @@ def opensandbox_docker_runtime(
             )
         for reference, repository, tag in (
             (
-                OpenSandboxConfig().image,
+                os.environ.get(
+                    "TINKERFIN_RUNTIME_TEST_IMAGE", OpenSandboxConfig().image
+                ),
                 "tinkerfin-sandbox-e2e",
                 docker_test_run_id,
             ),
-            ("opensandbox/execd:v1.0.22", "opensandbox/execd", "v1.0.22"),
+            (
+                os.environ.get("TINKERFIN_EXECD_TEST_IMAGE", _OPENSANDBOX_EXECD_IMAGE),
+                "tinkerfin-execd-e2e",
+                "isolated",
+            ),
         ):
             _copy_runtime_image(
                 docker_test_client,
@@ -751,6 +772,12 @@ def opensandbox_docker_runtime(
                 reference=reference,
                 repository=repository,
                 tag=tag,
+                source_archive=(
+                    Path(os.environ["TINKERFIN_RUNTIME_TEST_ARCHIVE"])
+                    if repository == "tinkerfin-sandbox-e2e"
+                    and "TINKERFIN_RUNTIME_TEST_ARCHIVE" in os.environ
+                    else None
+                ),
             )
         container_id = daemon.get_wrapped_container().id
         if not isinstance(container_id, str):
@@ -779,7 +806,9 @@ def opensandbox_test_service(
     )
     metadata_dir = tmp_path_factory.mktemp("opensandbox-metadata")
     container = (
-        DockerContainer(_OPENSANDBOX_SERVER_IMAGE)
+        DockerContainer(
+            os.environ.get("TINKERFIN_SERVER_TEST_IMAGE", _OPENSANDBOX_SERVER_IMAGE)
+        )
         .with_env("OPENSANDBOX_SERVER_API_KEY", api_key)
         .with_volume_mapping(
             str(metadata_dir),

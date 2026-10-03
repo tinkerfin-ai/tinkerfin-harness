@@ -2,7 +2,8 @@
 
 [Sandbox 入门](index.md) · [English](../../en/sandbox/lifecycle.md)
 
-`OpenSandboxManager` 为每个业务 key 保存一个稳定 handle。远端 Sandbox 失效或被替换后，调用方仍可继续使用同一个 handle 对象。
+`OpenSandboxManager` 将每个所有者 key 绑定到一个物理 Sandbox。`SandboxWorkspace` 选择其中的
+项目，并为每次运行借用隔离访问。原始命令 Sandbox 使用稳定 handle，重连或替换实例后仍保持该对象。
 
 ## Manager 配置
 
@@ -17,6 +18,7 @@ manager = OpenSandboxManager(
     recovery_policy=None,
     observers=(),
     notification_options=None,
+    notifications=None,
 )
 ```
 
@@ -31,21 +33,29 @@ manager = OpenSandboxManager(
 | `recovery_policy` | `None` | 原实例的恢复策略；默认失败后保留实例 |
 | `observers` | `()` | 借用的异步生命周期观察者 |
 | `notification_options` | `None` | 每个观察者的待投递容量和执行时限 |
+| `notifications` | `None` | 项目文件变化提示；默认自建进程内服务，也可借用已启动的 `Notifications` |
 
 warm-pool 数量必须是严格整数。命令与生命周期 timeout 必须是有限数值；布尔值会在 State 启动或
 创建 task 前被拒绝。
+
+跨工作进程接收项目文件提示时，需要共享 State，并向各 Manager 传入已启动、使用同一 Redis 频道的
+`Notifications`。Manager 只管理自己的订阅，不关闭传入的服务或 Redis 客户端；应先关闭 Manager，
+再关闭这些外部资源。通过 `project.watch()` 订阅项目即可，应用无需拼接通知主题或安装文件采集器。
 
 ## 常用操作
 
 | 方法 | 作用 | 远端 ID 是否通常变化 |
 | --- | --- | --- |
-| `get(key)` | 首次创建 Sandbox，或恢复已有绑定 | 仅显式允许重建时变化 |
-| `reconnect(key)` | 重连已有绑定；没有绑定时报错 | 不变化 |
-| `recreate(key)` | 创建替代实例，并安全退役旧实例 | 会变化 |
-| `reset(key)` | 清空 workspace root 的内容 | 不变化 |
-| `pause(key, timeout=30.0)` | 排空登记持有者的工作，并确认远端暂停 | 不变化 |
-| `resume(key, timeout=30.0)` | 恢复原实例并返回可用 backend | 不变化 |
-| `destroy(key)` | 销毁已知实例并移除绑定 | 被删除 |
+| `workspace(key, workspace_key=...)` | 返回惰性项目声明 | 不执行 I/O |
+| `project.open()` | 在异步上下文中借用隔离文件和命令访问 | 仅显式允许重建时变化 |
+| `project.delete()` | 停止该项目的运行并删除其全部数据 | 不变化 |
+| `get(key)` | 创建或恢复原始命令 Sandbox | 仅显式允许重建时变化 |
+| `reconnect(key)` | 重连原始命令 Sandbox；没有绑定时报错 | 不变化 |
+| `recreate(key)` | 替换原始命令 Sandbox，并安全退役旧实例 | 会变化 |
+| `reset(key)` | 清空原始命令 Sandbox 配置的文件根目录 | 不变化 |
+| `pause(key, timeout=30.0)` | 排空登记持有者的工作，并暂停所有者的整个 Sandbox | 不变化 |
+| `resume(key, timeout=30.0)` | 原实例恢复可用后返回 `None` | 不变化 |
+| `destroy(key)` | 销毁所有者的 Sandbox、全部项目及其绑定 | 被删除 |
 | `delete(key)` | `destroy()` 的同义入口 | 被删除 |
 | `is_healthy(key)` | 检查当前实例是否健康 | 不变化 |
 | `get_details(key)` | 返回运行状态和 owner 信息 | 不变化 |
@@ -54,29 +64,46 @@ warm-pool 数量必须是严格整数。命令与生命周期 timeout 必须是�
 | `check_ready()` | 预热容量未通过真实验证时抛出异常 | 不变化 |
 
 ```python
-backend = await manager.get(project_key)
+project = manager.workspace("users/7", workspace_key="project-a")
+async with project.open() as files:
+    await files.awrite("/notes.txt", "hello")
 
-details = await manager.get_details(project_key)
+await project.delete()
+details = await manager.get_details("users/7")
 ```
 
-大多数请求只需要 `get()`。不要在每次请求前主动 `recreate()`，否则会失去复用和预热的意义。
+`project.delete()` 先停止所有工作进程中属于该项目的运行，再删除其文件、HOME、缓存和依赖环境，
+保留其他项目和物理 Sandbox。旧访问随之失效，下次 `open()` 会创建空项目。删除不存在的项目不会创建
+项目，并正常返回。Runtime checkpoint、Store 数据及单独配置的文件路由 backend 不在删除范围内。
+
+无法确认运行已经终止时，删除会保留项目数据，并禁止新访问，直到重试成功。重试前需解决已报告的
+可用性或清理错误。取消会等待已接管的删除清理结束后再传播。
+
+`get()`、`reconnect()`、`recreate()` 和 `reset()` 仅用于原始命令 Sandbox；所有者已绑定隔离工作区时，
+这些方法会抛出 `OpenSandboxPurposeError`。项目访问使用 `project.open()`，项目删除使用
+`project.delete()`。
 
 ## 暂停与恢复
 
 ```python
-backend = await manager.get(project_key)
-await manager.pause(project_key, timeout=30.0)
-backend = await manager.resume(project_key, timeout=30.0)
+await manager.pause("users/7", timeout=30.0)
+await manager.resume("users/7", timeout=30.0)
 ```
 
-`pause()` 保留远端 ID、文件和已有 handle，并等待共享同一 State 的各 Manager 中的工作结束。
+`pause()` 影响所有者 Sandbox 中的全部项目，保留远端 ID、文件和已有原始 handle，并等待共享同一
+State 的各 Manager 中的工作结束，包括尚未退出的项目访问上下文。
 失联的工作进程或结果未确认的远端操作可能使暂停无法完成。
+控制连接中断后，项目删除可能成功，但其他远端操作的结果仍未知，暂停仍会被阻止。决定是否销毁整个
+Sandbox 前应先检查诊断信息；并非所有控制故障都能在保留全部项目的前提下自动恢复。
 
 `timeout` 默认为 30 秒，必须为正有限数值；必要清理可能延长总等待时间。
 远端结果未确认时保持关闭访问，不能根据超时判断实例已暂停。
 
-通过 Manager 暂停的实例必须显式调用 `resume()`；`get()`、`reconnect()` 和 `reset()` 不会唤醒它。
-恢复返回原实例的可用 backend，并重新执行连接初始化函数，因此初始化必须幂等。
+通过 Manager 暂停的实例必须显式调用 `resume()`；`get()`、`reconnect()`、`reset()` 和
+`project.open()` 不会唤醒它。
+暂停和恢复均保留实例的命令或工作区用途，并返回 `None`。各 Manager 完成自身连接刷新后，
+已有 handle 才可继续使用。
+连接初始化函数会重新执行，因此初始化必须幂等。
 连接刷新失败的 handle 暂时不可用。
 
 官方 OpenSandbox Server 0.2.3 使用 Docker pause/unpause。`resume()` 不能启动通过 Docker 停止的
@@ -85,8 +112,8 @@ backend = await manager.resume(project_key, timeout=30.0)
 ## 诊断查询
 
 ```python
-logs = await manager.get_diagnostic_logs(project_key, scope="container")
-events = await manager.get_diagnostic_events(project_key, scope="runtime")
+logs = await manager.get_diagnostic_logs("users/7", scope="container")
+events = await manager.get_diagnostic_events("users/7", scope="runtime")
 ```
 
 两种查询都使用已有绑定和控制面，不创建、连接、初始化、续期或唤醒 Sandbox。没有绑定时抛出
@@ -111,7 +138,8 @@ config = OpenSandboxConfig(ttl=None)
 
 绑定需要在 Manager 正常关闭后继续使用时，应选择持久 State。默认内存 State 仍在关闭时
 销毁所属实例。手动清理不会持久化或备份文件，外部删除和存储故障仍可能导致文件丢失。
-文件必须跨实例故障保留时，应配置持久卷和备份策略。
+隔离项目数据只随物理 Sandbox 保留；需要跨实例故障保留的文件应另行备份。项目工作区不创建持久卷，
+也不提供项目存储配额。
 
 ## 启动和关闭
 
@@ -120,7 +148,9 @@ config = OpenSandboxConfig(ttl=None)
 ```python
 await manager.start()
 try:
-    backend = await manager.get(key)
+    project = manager.workspace("users/7", workspace_key="project-a")
+    async with project.open() as files:
+        result = await files.aexecute("pwd")
 finally:
     await manager.aclose()
 ```
@@ -143,7 +173,7 @@ finally:
 上限为 2 秒。重试耗尽后抛出 `OpenSandboxBackendUnavailableError`，保留原实例和绑定。
 已确认实例不存在时会跳过无效重试。
 
-对于允许丢弃文件的工作区，可以显式选择自动重建：
+允许丢弃整个 Sandbox 内容时，可以显式选择自动重建：
 
 ```python
 from tinkerfin_sandbox import OpenSandboxManager, OpenSandboxRecoveryPolicy
@@ -164,8 +194,9 @@ manager = OpenSandboxManager(
 必要的取消和资源结算完成后才释放所有者租约，因此调用耗时可能超过工作预算。下一次恢复不会与
 上一次仍在结算的初始化函数并发执行。阻塞或吞掉取消的回调无法被强制停止。
 
-重建会先提交新实例，再退役当前绑定的旧实例，不复制文件。持久 State 保存绑定，不保存容器内容。
-保留绑定无法恢复已因外部删除或 TTL 到期而丢失的文件；需要文件跨实例存续时，应配置持久卷或其他存储策略。
+重建会先提交新实例，再退役当前绑定的旧实例，不复制任何项目的文件、HOME、缓存或依赖环境。
+持久 State 保存绑定，不保存容器内容。保留绑定无法恢复已因外部删除或 TTL 到期而丢失的文件；
+需要文件跨实例存续时，应在 Sandbox 外保留备份。
 
 正在执行的操作会继续使用它开始时取得的 backend。替换完成前，旧 backend 不会被提前关闭；替换调用会等旧实例安全退役后才返回。
 
@@ -196,10 +227,10 @@ manager = OpenSandboxManager(
 | `recovered` | 原实例重新可用 |
 | `replaced` | 已绑定不同实例，并已发布通过验证的 handle |
 | `recovery_failed` | 恢复或显式替换失败；原操作仍会报告异常 |
-| `workspace_reset` | 显式重置已完成，配置的工作区内容已清空 |
+| `workspace_reset` | 显式重置已完成，原始命令 Sandbox 配置的文件根目录已清空 |
 | `destroyed` | 显式销毁和绑定移除均已完成 |
 | `paused` | 已确认绑定实例的显式暂停 |
-| `resumed` | 显式恢复已为原实例返回可用的本地 handle |
+| `resumed` | 显式恢复已为原实例建立可用的本地连接 |
 | `warm_capacity_degraded` / `warm_capacity_restored` | 已验证的未绑定容量变为不可用或重新可用 |
 
 事件包含唯一 `event_id`、`type`、宿主解析的 `owner_key`、UTC 时间 `occurred_at` 和

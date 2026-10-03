@@ -46,6 +46,7 @@ from .errors import (
 from .errors import OpenSandboxManagerClosedError as OpenSandboxManagerClosedError
 from .errors import OpenSandboxObserverReentryError as OpenSandboxObserverReentryError
 from .errors import OpenSandboxPausedError as OpenSandboxPausedError
+from .errors import OpenSandboxPurposeError as OpenSandboxPurposeError
 from .errors import OpenSandboxResetError as OpenSandboxResetError
 from .errors import (
     OpenSandboxSettlementTimeoutError as OpenSandboxSettlementTimeoutError,
@@ -90,6 +91,8 @@ from .lifecycle import OpenSandboxReadyWarmClaim as OpenSandboxReadyWarmClaim
 from .lifecycle import OpenSandboxRecoveryPolicy as OpenSandboxRecoveryPolicy
 from .lifecycle import OpenSandboxState as OpenSandboxState
 from .lifecycle import OpenSandboxWarmClaim as OpenSandboxWarmClaim
+from .lifecycle import SandboxWorkspace as SandboxWorkspace
+from .lifecycle import WorkspaceChange as WorkspaceChange
 from .lifecycle.availability import OpenSandboxAvailability as OpenSandboxAvailability
 from .lifecycle.availability import (
     OpenSandboxAvailabilityPhase as OpenSandboxAvailabilityPhase,
@@ -102,6 +105,7 @@ from .models import OpenSandboxConfig as OpenSandboxConfig
 from .models import OpenSandboxDetails as OpenSandboxDetails
 from .models import OpenSandboxDiagnosticContent as OpenSandboxDiagnosticContent
 from .models import OpenSandboxPlatformInfo as OpenSandboxPlatformInfo
+from .models import OpenSandboxPurpose as OpenSandboxPurpose
 from .models import OpenSandboxRuntimeInfo as OpenSandboxRuntimeInfo
 from .models import OpenSandboxStatusInfo as OpenSandboxStatusInfo
 from .models import (

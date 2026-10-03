@@ -29,7 +29,7 @@ def test_rooted_helper_resource_remains_byte_stable() -> None:
     )
     assert resource == _rooted_protocol._ROOTED_HELPER_SCRIPT
     assert sha256(resource.encode()).hexdigest() == (
-        "ed730f9af3772ad1f108370739e6a1b7a33413507a1e8876a33c537f954abf18"
+        "79c7d7f80851b25a77fa57d6ebe9059a0870f6e74cd14c10ef3bb4bad6ff6f5e"
     )
 
 

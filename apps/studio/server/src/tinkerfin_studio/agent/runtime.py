@@ -72,6 +72,9 @@ def _build_runtime(
 ) -> AgentRuntime[None]:
     """为已授权会话或后台任务绑定执行能力，实际运行时准备用户工作区
 
+    同一用户的会话与后台任务共用默认项目文件，每次执行结束时停止其进程
+    业务逻辑范围分别保存会话与记录，不改变所选项目
+
     Args:
         resources: 请求期间借用的应用资源
         user_id: 已认证用户的数据库 ID，决定会话与记忆隔离范围
@@ -80,7 +83,7 @@ def _build_runtime(
         search_service: 本次运行可用的个人网页搜索服务
         image_service: 本次运行可用的个人图片生成服务
         access_mode: 脚本与文件写入的审批选择，不改变用户工作区范围
-        namespace: 已授权业务运行的隔离范围
+        namespace: 已授权业务运行的会话与记录范围
         collection_id: 后台执行的附件集合，普通会话不设置
         plan_enabled: 是否允许会话计划与人工交互
         skill_snapshot: 本次运行已固定的技能内容，恢复沿用原快照
@@ -227,6 +230,7 @@ def _build_runtime(
         configured = configured.with_plan(enabled=False)
     workspace = resources.sandbox_manager.workspace(
         f"users/{user_id}",
+        workspace_key="default",
         routes={"/memories/": StoreBackend(namespace=lambda _runtime: ("memories",))},
     )
     return configured.build(

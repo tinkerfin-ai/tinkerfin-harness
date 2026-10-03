@@ -127,24 +127,30 @@ Pass a `Workspace` declaration as the backend when a run needs a Sandbox or anot
 prepared filesystem:
 
 ```python
+project = sandboxes.workspace("users/7", workspace_key="project-a")
 runtime = (
     TinkerFin()
-    .with_namespace(namespace)
+    .with_namespace("projects/project-a")
     .build(
         model=model,
-        backend=sandboxes.workspace(workspace_key),
+        backend=project,
     )
 )
 ```
 
-The application chooses `workspace_key`; user, session, and project keys are all valid
-policies. The Runtime combines its namespace with that key, prepares the workspace only
-for an admitted run, and releases the run's handle during cleanup.
+For Sandbox workspaces, the first key selects the physical owner, and `workspace_key`
+selects the project within it. Runtime `namespace` scopes logical persistence without
+changing either selection. Each admitted run gets isolated processes and networking;
+cleanup stops them while retaining the project's files, HOME, caches, and dependencies.
+Use `async with project.open() as files` for access outside a run and
+`await project.delete()` to stop and remove only that project. See the
+[Sandbox guide](../sandbox/index.md) for deployment and ownership requirements.
 
 Define tools before execution and annotate their injected runtime:
 
 ```python
 from langchain_core.tools import tool
+
 from tinkerfin.tools import ToolRuntime
 from tinkerfin_sandbox import RootedOpenSandboxBackend
 
@@ -158,11 +164,11 @@ async def read_report(runtime: ToolRuntime[None, RootedOpenSandboxBackend]) -> s
 
 runtime = (
     TinkerFin()
-    .with_namespace(namespace)
+    .with_namespace("projects/project-a")
     .build(
         model=model,
         tools=[read_report],
-        backend=sandboxes.workspace(workspace_key),
+        backend=project,
     )
 )
 ```

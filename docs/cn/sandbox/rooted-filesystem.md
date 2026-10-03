@@ -2,33 +2,39 @@
 
 [Sandbox 生命周期](lifecycle.md) · [English](../../en/sandbox/rooted-filesystem.md)
 
-设置 `workspace_root` 后，Agent 看到的 `/` 会映射到 Sandbox 中指定的物理目录。例如 `/workspace` 配置下，Agent 的 `/src/app.txt` 表示远端 `/workspace/src/app.txt`。
+隔离工作区把项目文件映射为文件工具的 `/`。所有者 key 选择物理 Sandbox，`workspace_key`
+选择其中的项目：
 
 ```python
-config = OpenSandboxConfig(workspace_root="/workspace")
+project = manager.workspace("users/7", workspace_key="project-a")
 ```
 
 ## 为什么使用受限根目录
 
-- 文件工具不能通过 `..` 走出 workspace；
-- 指向 workspace 外部的符号链接会被拒绝；
-- `reset()` 只清空 workspace 内容，不删除根目录本身；
-- Agent 看到的路径更短，也不必知道远端物理目录。
+- 文件工具拒绝走出项目文件范围的路径和链接；
+- Shell 命令、文件传输和输出捕获使用同一项目隔离；
+- 项目文件、HOME、缓存和依赖环境在运行间保留；
+- Agent 使用虚拟路径，不必知道物理存储目录。
 
-Shell 是单独的能力。原始 Shell 命令不会被文件工具的路径边界自动限制，因此仍要通过工具权限和人工审批控制危险命令。
+每次运行拥有独立的进程、`/tmp`、`/proc`、`/dev` 和网络，共用的基础工具只读。运行或 `open()`
+上下文结束时会停止其中的进程和网络活动，包括取消和异常退出。同一项目的并发运行共享文件，写入不具备
+事务保证。
+
+通过 `manager.get()` 打开的原始命令 Sandbox 可以设置 `workspace_root="/workspace"`，把文件工具的
+`/` 映射到该目录，`reset()` 则清空其子项。这个配置只限制文件工具，原始 Shell 仍能访问 Sandbox 内
+其他路径；它不配置隔离工作区，隔离工作区的虚拟文件根始终为 `/`。
 
 ## 常用异步文件操作
 
 ```python
-backend = await manager.get(key)
-
-await backend.awrite("/notes.txt", "hello")
-result = await backend.aread("/notes.txt")
-await backend.aedit("/notes.txt", "hello", "hello world")
-entries = await backend.als("/")
-matches = await backend.aglob("**/*.txt", "/")
-hits = await backend.agrep("hello", "/", glob="*.txt")
-await backend.adelete("/notes.txt")
+async with project.open() as backend:
+    await backend.awrite("/notes.txt", "hello")
+    result = await backend.aread("/notes.txt")
+    await backend.aedit("/notes.txt", "hello", "hello world")
+    entries = await backend.als("/")
+    matches = await backend.aglob("**/*.txt", "/")
+    hits = await backend.agrep("hello", "/", glob="*.txt")
+    await backend.adelete("/notes.txt")
 ```
 
 ### 方法参数
@@ -45,29 +51,57 @@ await backend.adelete("/notes.txt")
 
 每个结果对象都可能包含正常数据和错误说明。批量或搜索场景不要只检查列表是否为空，也要检查结果中的 error。
 
+## 订阅文件变化
+
+项目已存在且正在运行时，先建立订阅，再读取初始文件状态。订阅不会打开命令运行，也不会阻止
+Sandbox 暂停：
+
+```python
+async with project.watch() as changes:
+    async for change in changes:
+        print(change)
+```
+
+迭代结果为 `tinkerfin_sandbox.WorkspaceChange.FILES_CHANGED` 或
+`tinkerfin_notifications.ResyncRequired`。两者都提示整个项目文件根可能发生变化，需要通过文件接口
+读取当前状态；提示可以合并，不包含文件正文、逐条操作或可重放历史。先订阅再读取初始快照，收到
+重新同步提示后再次读取权威状态。
+
+订阅覆盖文件工具、上传和普通 Shell、Python 写入，以及截断、重命名和删除。不观察 HOME、缓存、
+依赖目录，也不覆盖内存映射写入或被新挂载遮住的文件。目录变化后重新建立监听时可能要求重新同步。
+
+订阅不会创建或恢复 Sandbox、项目。暂停、删除、替换实例或源端断连后，当前订阅会给出断连重新同步
+提示并结束；重新订阅前需确认资源可用。退出或取消上下文只释放当前订阅，不影响项目文件和其他监听者。
+
 ## 执行命令
 
 ```python
-result = await backend.aexecute(
-    "python -m pytest",
-    timeout=300,
-)
+async with project.open() as backend:
+    result = await backend.aexecute(
+        "python -m pytest",
+        timeout=300,
+    )
 ```
 
-`timeout=None` 使用 backend 的默认命令超时。命令从配置的工作目录开始，但 Shell 自身可以访问 Sandbox 内其他路径。
+`timeout=None` 使用 backend 的默认命令超时。命令从项目文件目录开始；命令中使用相对路径，或通过
+`backend.to_shell_path(file_path)` 转换虚拟文件路径。命令超时或取消会结束当前运行，已写入的项目
+文件会保留。
 
-如果命令输出可能很大，可以启用 capture offload：
+公网 HTTP 80 和 HTTPS 443 通过受控代理访问，支持 `pip`、`npm`、HTTPS Git 和浏览器请求，应用
+无需自行配置代理。私有目标地址、SSH Git 和其他目标端口不可用。一次运行启动的服务器不会持续到后续运行。
+
+如果命令输出可能很大，创建 Manager 时为 Client 传入
+`OpenSandboxConfig(enable_capture_offload=True)`，然后保存命令输出：
 
 ```python
-config = OpenSandboxConfig(enable_capture_offload=True)
-
-result = await backend.aexecute_with_offload(
-    "python -m pytest -vv",
-    "/captures/tests.txt",
-    max_inline_bytes=32_000,
-    max_capture_bytes=5_000_000,
-    timeout=300,
-)
+async with project.open() as backend:
+    result = await backend.aexecute_with_offload(
+        "python -m pytest -vv",
+        "/captures/tests.txt",
+        max_inline_bytes=32_000,
+        max_capture_bytes=5_000_000,
+        timeout=300,
+    )
 ```
 
 | 参数 | 作用 |
@@ -80,18 +114,24 @@ result = await backend.aexecute_with_offload(
 ## 上传和下载
 
 ```python
-uploads = await backend.aupload_files([("/input/data.csv", csv_bytes)])
-downloads = await backend.adownload_files(["/output/report.json"])
+async with project.open() as backend:
+    uploads = await backend.aupload_files([("/input/data.csv", csv_bytes)])
+    downloads = await backend.adownload_files(["/output/report.json"])
 ```
 
 输入顺序和响应顺序一致。某个明确无效的路径只影响对应项；网络失败或结果不确定时会直接抛出异常，不会自动重放可能已经完成的写操作。
 
-受限上传和下载要求 Sandbox 镜像提供 Python 3、Linux procfs，并允许命令服务与文件服务共享进程视图。默认 TinkerFin Sandbox 镜像满足该要求。
+隔离项目的 `adownload_files()` 默认每个文件最多 64 MiB；需要其他明确上限时，使用
+`aread_bytes(..., max_bytes=...)`。命令响应最多 32 MiB，超出时会结束本次运行；大输出应使用文件捕获。
+
+隔离项目的文件传输与命令使用同一次运行的边界。原始命令 Sandbox 的受限传输要求镜像提供 Python 3、
+Linux procfs，并允许命令服务与文件服务共享进程视图。
 
 ## 接入 AgentRuntime
 
 ```python
 from deepagents import FilesystemPermission
+
 from tinkerfin import TinkerFin
 
 permissions = [
@@ -104,15 +144,17 @@ permissions = [
 
 runtime = (
     TinkerFin(checkpointer=checkpointer)
-    .with_namespace(namespace)
+    .with_namespace("projects/project-a")
     .build(
         model=model,
-        backend=manager.workspace(workspace_key),
+        backend=project,
         permissions=permissions,
     )
 )
 ```
 
-Runtime 在运行开始时一起准备 rooted backend 和文件 middleware。权限规则需要 interrupt 而非 deny 时，必须配置 checkpointer。只有由调用方自行管理的 Deep Agents Graph 才需要直接使用 `build_rooted_filesystem_middleware()`。
+Runtime 在运行开始时一起准备项目隔离访问和文件 middleware。权限规则需要 interrupt 而非 deny 时，
+必须配置 checkpointer。只有由调用方自行管理的 Deep Agents Graph 才需要直接使用
+`build_rooted_filesystem_middleware()`。
 
 下一篇：[多进程持久化与自定义扩展](persistence-and-extensions.md)。

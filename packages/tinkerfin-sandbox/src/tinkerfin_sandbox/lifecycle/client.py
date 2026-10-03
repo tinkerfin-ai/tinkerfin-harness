@@ -10,7 +10,9 @@ import asyncio
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
+from datetime import timedelta
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from opensandbox import Sandbox
@@ -18,6 +20,7 @@ from opensandbox import SandboxManager as OpenSandboxSDKManager
 from opensandbox.config import ConnectionConfig
 from opensandbox.exceptions import SandboxApiException, SandboxReadyTimeoutException
 from opensandbox.models import WriteEntry
+from opensandbox.models.execd import RunCommandOpts
 from opensandbox.models.sandboxes import SandboxFilter, SandboxInfo
 from opensandbox.transport import RetryPolicy
 
@@ -27,19 +30,22 @@ from ..backends.sdk import (
     unavailable_reason,
 )
 from ..errors import (
-    OpenSandboxBackendError,
     OpenSandboxBackendProtocolError,
     OpenSandboxBackendTimeoutError,
     OpenSandboxBackendUnavailableError,
+    OpenSandboxError,
     OpenSandboxInitializationError,
+    OpenSandboxPurposeError,
     UnexpectedOpenSandboxBackendError,
 )
 from ..models import (
     OpenSandboxConfig,
     OpenSandboxDiagnosticContent,
+    OpenSandboxPurpose,
     OpenSandboxRuntimeInfo,
 )
 from ._protocols import _SandboxClient
+from ._purpose import PURPOSE_METADATA_KEY, require_remote_purpose, validate_purpose
 from ._transport import _join_owned_task, _SDKRequestTracker
 
 _CREATE_TOKEN_METADATA_KEY = "tinkerfin.ai/create-token"
@@ -54,12 +60,12 @@ _connection_deadline: ContextVar[float | None] = ContextVar(
 def _backend_error(
     operation: str,
     error: Exception,
-) -> OpenSandboxBackendError:
+) -> OpenSandboxError:
     diagnostic_context = {
         "implementation": "opensandbox_sdk",
         "operation": operation,
     }
-    if isinstance(error, OpenSandboxBackendError):
+    if isinstance(error, OpenSandboxError):
         error._enrich_diagnostic_context(diagnostic_context)
         return error
     if isinstance(error, SandboxReadyTimeoutException | TimeoutError):
@@ -102,6 +108,9 @@ class OpenSandboxClient(_SandboxClient):
     local connection, ``inspect`` is read-only, and ``destroy`` is idempotent when
     the remote instance is absent. Initializers run in declaration order and may be
     native async callbacks or non-blocking synchronous callbacks.
+
+    Workspace-purpose connections have full parent-instance access. Keep them in
+    trusted lifecycle code; project workloads require isolated workspace sessions.
     """
 
     _tinkerfin_error_boundary = True
@@ -238,6 +247,22 @@ class OpenSandboxClient(_SandboxClient):
             [WriteEntry(path=workspace_root, mode=755)]
         )
 
+    async def _workspace_health(self, sandbox: Sandbox) -> bool:
+        """Wait for the trusted proxy's explicit readiness, not merely execd's ping."""
+        try:
+            result = await sandbox.commands.run(
+                "/opt/sandbox-runtime/venv/bin/python -I -S "
+                "/opt/sandbox-runtime/workspaces/network.py status",
+                opts=RunCommandOpts(timeout=timedelta(seconds=30)),
+            )
+        except SandboxApiException:
+            return False
+        return (
+            result.error is None
+            and "".join(message.text for message in result.logs.stdout).strip()
+            == '{"ready":true}'
+        )
+
     @staticmethod
     async def _close_quietly(
         backend: OpenSandboxBackend,
@@ -259,6 +284,7 @@ class OpenSandboxClient(_SandboxClient):
     async def _create(
         self,
         metadata: Mapping[str, str] | None,
+        purpose: OpenSandboxPurpose,
     ) -> OpenSandboxBackend:
         """Create and initialize a sandbox, reclaiming it on initialization failure."""
         async with self._sdk_requests.operation():
@@ -266,17 +292,38 @@ class OpenSandboxClient(_SandboxClient):
             creation_metadata = dict(self.config.metadata)
             creation_metadata.update(metadata or {})
             creation_metadata[_CREATE_TOKEN_METADATA_KEY] = uuid4().hex
+            creation_metadata[PURPOSE_METADATA_KEY] = purpose
+            environment = dict(self.config.env)
+            if purpose == "workspaces":
+                control_host = urlsplit(
+                    self._sdk_connection_config.get_base_url()
+                ).hostname
+                if control_host is None:
+                    raise ValueError("OpenSandbox control-plane hostname is required")
+                environment.update(
+                    {
+                        "TINKERFIN_WORKSPACES": "1",
+                        "TINKERFIN_CONTROL_HOST": control_host,
+                        "EXECD_ISOLATION_CONFIG": "/opt/sandbox-runtime/workspaces/isolation.toml",
+                    }
+                )
             try:
                 sandbox = await Sandbox.create(
                     self.config.image,
                     entrypoint=list(self.config.entrypoint),
-                    env=dict(self.config.env),
+                    env=environment,
                     metadata=creation_metadata,
                     resource=dict(self.config.resource),
                     volumes=volumes or None,
                     timeout=self.config.ttl,
                     ready_timeout=self.config.ready_timeout,
                     connection_config=self._sdk_connection_config,
+                    health_check=self._workspace_health
+                    if purpose == "workspaces"
+                    else None,
+                    extensions={"bootstrap.execd.isolation": "enable"}
+                    if purpose == "workspaces"
+                    else None,
                 )
             except Exception as error:
                 try:
@@ -321,6 +368,7 @@ class OpenSandboxClient(_SandboxClient):
     ) -> Sandbox | None:
         """Recover a possibly created instance through its unique creation token."""
         token = creation_metadata[_CREATE_TOKEN_METADATA_KEY]
+        purpose = validate_purpose(creation_metadata[PURPOSE_METADATA_KEY])
         manager: OpenSandboxSDKManager | None = None
         try:
             manager = await OpenSandboxSDKManager.create(
@@ -341,6 +389,7 @@ class OpenSandboxClient(_SandboxClient):
                         info.metadata is not None
                         and info.metadata.get(_CREATE_TOKEN_METADATA_KEY) == token
                     ):
+                        require_remote_purpose(info.metadata, purpose)
                         candidates_by_id.setdefault(info.id, info)
                 if not page.pagination.has_next_page:
                     break
@@ -353,6 +402,9 @@ class OpenSandboxClient(_SandboxClient):
                         candidate.id,
                         connection_config=self._sdk_connection_config,
                         connect_timeout=self.config.connect_timeout,
+                        health_check=self._workspace_health
+                        if purpose == "workspaces"
+                        else None,
                     )
                 except Exception:  # noqa: BLE001 - unknown create result is reclaimed
                     await self._kill_discovered_candidates(manager, candidates)
@@ -427,6 +479,7 @@ class OpenSandboxClient(_SandboxClient):
     async def create(
         self,
         *,
+        purpose: OpenSandboxPurpose = "commands",
         metadata: Mapping[str, str] | None = None,
     ) -> OpenSandboxBackend:
         """Create a Sandbox, attach metadata, and run every initializer.
@@ -437,14 +490,22 @@ class OpenSandboxClient(_SandboxClient):
         response; ambiguous candidates are destroyed instead of being adopted.
 
         Args:
+            purpose: Select command execution or isolated project workspaces.
+                Workspaces request the provider's isolation capability. This
+                choice must match any binding committed for the new instance.
             metadata: Additional internal metadata for this creation. Keys are merged
-                over host configuration before the reserved create token is added.
+                over host configuration before reserved ownership fields are added.
 
         Returns:
             An initialized asynchronous backend owned by the caller.
+
+        Raises:
+            OpenSandboxPurposeError: The requested purpose is unknown.
+            OpenSandboxBackendError: Creation or initialization fails.
         """
+        validate_purpose(purpose)
         with self._sdk_requests.owned_call():
-            creation_task = asyncio.create_task(self._create(metadata))
+            creation_task = asyncio.create_task(self._create(metadata, purpose))
             try:
                 # Waiting does not cancel the owned operation. Unlike shield on
                 # Python 3.14, it does not report a late failure before reclamation
@@ -466,6 +527,9 @@ class OpenSandboxClient(_SandboxClient):
     async def _connect(
         self,
         sandbox_id: str,
+        purpose: OpenSandboxPurpose,
+        *,
+        initialize: bool = True,
     ) -> OpenSandboxBackend:
         """Bound lookup and initialization while preserving their recovery semantics.
 
@@ -494,6 +558,20 @@ class OpenSandboxClient(_SandboxClient):
             backend = self._wrap(sandbox)
             try:
                 async with asyncio.timeout_at(deadline):
+                    info = await sandbox.get_info()
+                    require_remote_purpose(info.metadata, purpose)
+            except BaseException as error:
+                await self._close_quietly(backend)
+                if not isinstance(error, Exception) or isinstance(
+                    error, OpenSandboxError
+                ):
+                    raise
+                translated = _backend_error("connect", error)
+                raise translated from error
+            if not initialize:
+                return backend
+            try:
+                async with asyncio.timeout_at(deadline):
                     await self._initialize_workspace(sandbox)
                     await self._initialize(backend)
             except BaseException as error:
@@ -507,10 +585,37 @@ class OpenSandboxClient(_SandboxClient):
                 ) from error
             return backend
 
-    async def connect(self, sandbox_id: str) -> OpenSandboxBackend:
-        """Connect to an existing Sandbox without creating a replacement."""
+    async def connect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxBackend:
+        """Connect only when remote ownership matches the requested capability.
+
+        Args:
+            sandbox_id: Existing remote Sandbox identity.
+            purpose: Expected committed purpose, checked before initialization.
+
+        Returns:
+            A caller-owned connection without creating a replacement.
+
+        Raises:
+            OpenSandboxPurposeError: Reserved purpose metadata is absent or differs.
+            OpenSandboxBackendError: Connection or initialization fails.
+        """
+        validate_purpose(purpose)
+        return await self._connect_owned(sandbox_id, purpose, initialize=True)
+
+    async def _connect_observer(self, sandbox_id: str) -> OpenSandboxBackend:
+        """Observe a workspace parent without changing its filesystem or lifetime."""
+        return await self._connect_owned(sandbox_id, "workspaces", initialize=False)
+
+    async def _connect_owned(
+        self, sandbox_id: str, purpose: OpenSandboxPurpose, *, initialize: bool
+    ) -> OpenSandboxBackend:
+        """Retain connection ownership until delivery or cancelled-call settlement."""
         with self._sdk_requests.owned_call():
-            connection_task = asyncio.create_task(self._connect(sandbox_id))
+            connection_task = asyncio.create_task(
+                self._connect(sandbox_id, purpose, initialize=initialize)
+            )
             try:
                 # The late-result cleanup owns any failure after caller cancellation;
                 # asyncio.wait keeps that task alive without shield's extra error log.
@@ -732,8 +837,22 @@ class OpenSandboxClient(_SandboxClient):
                 if manager is not None:
                     await manager.close()
 
-    async def inspect(self, sandbox_id: str) -> OpenSandboxRuntimeInfo:
-        """Read remote details without initialization or lifecycle mutation."""
+    async def inspect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxRuntimeInfo:
+        """Inspect an existing Sandbox with verified capability ownership.
+
+        Args:
+            sandbox_id: Existing remote Sandbox identity.
+            purpose: Expected committed purpose, checked before any health command.
+
+        Returns:
+            Current details without initialization or lifecycle mutation.
+
+        Raises:
+            OpenSandboxPurposeError: Reserved purpose metadata is absent or differs.
+        """
+        validate_purpose(purpose)
         async with self._sdk_requests.operation():
             sandbox: Sandbox | None = None
             try:
@@ -743,8 +862,12 @@ class OpenSandboxClient(_SandboxClient):
                     connect_timeout=self.config.connect_timeout,
                     skip_health_check=True,
                 )
+                info = await sandbox.get_info()
+                require_remote_purpose(info.metadata, purpose)
                 backend = self._wrap(sandbox)
                 return await backend.aget_runtime_info()
+            except OpenSandboxPurposeError:
+                raise
             except Exception as exc:  # noqa: BLE001 - inspection returns unavailable details
                 return OpenSandboxRuntimeInfo.unavailable(
                     sandbox_id,

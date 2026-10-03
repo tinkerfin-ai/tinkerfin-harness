@@ -85,8 +85,8 @@ class _ServiceTransport(httpx.AsyncBaseTransport):
                     "warnings": None,
                 },
             )
-        if path == "/v1/sandboxes/existing":
-            return httpx.Response(200, json=_sandbox_info("existing"))
+        if path.startswith("/v1/sandboxes/") and path.count("/") == 3:
+            return httpx.Response(200, json=_sandbox_info(path.rsplit("/", 1)[1]))
         if path == "/command":
             return httpx.Response(503, json={"code": "BUSY", "message": "Busy"})
         return httpx.Response(200, json={})
@@ -101,6 +101,7 @@ def _sandbox_info(sandbox_id: str) -> dict[str, object]:
         "status": {"state": "Running"},
         "createdAt": "2026-09-07T00:00:00Z",
         "entrypoint": ["sleep", "infinity"],
+        "metadata": {"tinkerfin.ai/purpose": "commands"},
     }
 
 
@@ -274,6 +275,8 @@ async def test_owned_transport_disables_only_implicit_retry_defaults(
                     payload = {"code": "BUSY", "message": "Synthetic busy response"}
                 else:
                     payload = {"endpoint": endpoint}
+            elif path == "/v1/sandboxes/existing":
+                payload = _sandbox_info("existing")
             body = json.dumps(payload).encode()
             writer.write(
                 f"HTTP/1.1 {status} Synthetic\r\nContent-Type: application/json\r\n"

@@ -251,7 +251,7 @@ async def test_cancel_after_sqlite_execute_rolls_back_writes_and_releases_read_l
                 "CREATE TABLE cancellation_probe (marker INTEGER PRIMARY KEY)"
             )
         seed = await state.acquire_owner("owner")
-        binding = await state.bind_owner(seed, "original-sandbox")
+        binding = await state.bind_owner(seed, "original-sandbox", purpose="commands")
         availability = await state.register_holder(seed, "manager")
         await state.release_owner(seed)
         claim = (
@@ -269,7 +269,7 @@ async def test_cancel_after_sqlite_execute_rolls_back_writes_and_releases_read_l
         if operation_name == "bind_owner":
             assert claim is not None
             operation = asyncio.create_task(
-                state.bind_owner(claim, "cancelled-sandbox")
+                state.bind_owner(claim, "cancelled-sandbox", purpose="commands")
             )
         elif operation_name == "acquire_owner":
             operation = asyncio.create_task(state.acquire_owner("owner"))

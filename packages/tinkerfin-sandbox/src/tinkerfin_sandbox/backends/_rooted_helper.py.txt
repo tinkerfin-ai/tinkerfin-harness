@@ -5,6 +5,7 @@ import errno
 import fnmatch
 import json
 import os
+import re
 import signal
 import stat
 import subprocess
@@ -403,27 +404,45 @@ def write_all(descriptor, content):
         written += count
 
 
-def consume_edit_payload(path, expected_suffix):
+def consume_edit_payload(root, path, expected_suffix):
     if type(path) is not str:
         invalid_request()
     basename = os.path.basename(path)
     if (
-        os.path.dirname(path) != "/tmp"
-        or not basename.startswith(".tinkerfin-rooted-edit-")
-        or not basename.endswith(expected_suffix)
-        or "/" in basename
+        os.path.dirname(path) not in {"/tmp", root}
+        or re.fullmatch(
+            r"\.tinkerfin-rooted-edit-[0-9a-f]{32}" + re.escape(expected_suffix),
+            basename,
+        ) is None
     ):
         invalid_request()
     descriptor = None
+    parent_descriptor = None
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        parent_descriptor = (
+            open_root(root)
+            if os.path.dirname(path) == root
+            else os.open("/tmp", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        )
+        descriptor = os.open(
+            basename,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=parent_descriptor,
+        )
         payload_stat = os.fstat(descriptor)
         if not stat.S_ISREG(payload_stat.st_mode):
             raise RootedFailure(
                 "operation_failed",
                 "edit staging payload is not a regular file",
             )
-        os.unlink(path)
+        current_stat = os.stat(
+            basename, dir_fd=parent_descriptor, follow_symlinks=False
+        )
+        if (current_stat.st_dev, current_stat.st_ino) != (
+            payload_stat.st_dev, payload_stat.st_ino
+        ):
+            raise RootedFailure("operation_failed", "edit staging payload changed")
+        os.unlink(basename, dir_fd=parent_descriptor)
         try:
             return read_all(descriptor).decode("utf-8")
         except UnicodeDecodeError:
@@ -439,6 +458,8 @@ def consume_edit_payload(path, expected_suffix):
     finally:
         if descriptor is not None:
             os.close(descriptor)
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
 
 
 def edit_file(root, arguments):
@@ -460,16 +481,8 @@ def edit_file(root, arguments):
     else:
         old_path = arguments["old_path"]
         new_path = arguments["new_path"]
-        try:
-            old = consume_edit_payload(old_path, "-old")
-            new = consume_edit_payload(new_path, "-new")
-        finally:
-            for staged_path in (old_path, new_path):
-                if type(staged_path) is str:
-                    try:
-                        os.unlink(staged_path)
-                    except OSError:
-                        pass
+        old = consume_edit_payload(root, old_path, "-old")
+        new = consume_edit_payload(root, new_path, "-new")
 
     root_descriptor = open_root(root)
     parent_descriptor = None

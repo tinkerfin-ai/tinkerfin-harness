@@ -2,12 +2,15 @@
 
 ## What it is
 
-`tinkerfin-sandbox` provides asynchronous Sandbox access, persistent bindings,
-workspace files, commands, pause/resume, warm capacity, and cleanup. Its OpenSandbox
+`tinkerfin-sandbox` provides isolated project workspaces, asynchronous files and
+commands, persistent Sandbox bindings, pause/resume, warm capacity, and cleanup. Its OpenSandbox
 integration uses SDK 0.1.16 and Server 0.2.3.
 
-The default [Sandbox image](https://github.com/tinkerfin-ai/sandbox-runtime) includes
-Playwright and headless Chromium. Select another image with `OpenSandboxConfig(image=...)`.
+The [Sandbox runtime image](https://github.com/tinkerfin-ai/sandbox-runtime) includes
+Playwright and headless Chromium. Isolated workspaces require the matching
+[Server](https://github.com/tinkerfin-ai/sandbox-runtime/blob/main/opensandbox-server/README.md#deploy)
+and [execd](https://github.com/tinkerfin-ai/sandbox-runtime/blob/main/opensandbox-execd/README.md#deploy)
+deployment. Select a runtime image with `OpenSandboxConfig(image=...)`.
 
 ## Installation
 
@@ -28,40 +31,44 @@ ownership remain with your application.
 
 ## Quick Start
 
-Start an OpenSandbox server, then create a manager and choose a Sandbox key:
+Deploy the Server and runtime, then choose a Sandbox owner and a project:
 
 ```python
 import asyncio
 
 from opensandbox.config import ConnectionConfig
-from tinkerfin_sandbox import OpenSandboxClient, OpenSandboxConfig, OpenSandboxManager
+
+from tinkerfin_sandbox import OpenSandboxClient, OpenSandboxManager
 
 
 async def main() -> None:
     client = OpenSandboxClient(
         connection_config=ConnectionConfig(domain="127.0.0.1:8091"),
-        config=OpenSandboxConfig(workspace_root="/workspace"),
     )
     async with OpenSandboxManager(client=client) as sandboxes:
-        backend = await sandboxes.get("projects/project-1")
-        result = await backend.aexecute("pwd")
-        print(result.output)
+        project = sandboxes.workspace("users/7", workspace_key="project-a")
+        async with project.open() as files:
+            await files.aupload_files([("/hello.txt", b"hello")])
+            result = await files.aexecute("cat hello.txt")
+            print(result.output)
 
 
 asyncio.run(main())
 ```
 
-A manager owns its client and State. Handles are borrowed and remain valid until the
-manager closes or their Sandbox is destroyed. A caller-supplied HTTP transport remains
-caller-owned.
+A manager owns its client and State and must outlive workspace access. Leaving
+`project.open()` stops that access's processes and network activity; project files
+remain in the Sandbox. A caller-supplied HTTP transport remains caller-owned.
 
 ## Keys and Runtime workspaces
 
-Strings work directly as keys. Use user, session, project, or other business identifiers
-to choose which calls share a Sandbox. Custom objects require `key_resolver`:
+The first key selects the physical Sandbox owner, such as a user. `workspace_key`
+selects a project inside that Sandbox. Projects with the same owner share one physical
+instance while keeping separate files, HOME, caches, and dependencies. String owner
+keys work directly; custom objects require `key_resolver`:
 
 ```python
-sandboxes = OpenSandboxManager(client=client, key_resolver=lambda project: project.id)
+sandboxes = OpenSandboxManager(client=client, key_resolver=lambda user: user.id)
 ```
 
 With `tinkerfin` installed, a Runtime can prepare and release workspace access for each
@@ -70,47 +77,56 @@ run:
 ```python
 from tinkerfin import TinkerFin
 
+project = sandboxes.workspace("users/7", workspace_key="project-a")
 runtime = (
     TinkerFin()
-    .with_namespace("company-a")
+    .with_namespace("projects/project-a")
     .build(
         model=model,
-        backend=sandboxes.workspace("users/user-7"),
+        backend=project,
     )
 )
 ```
 
-The Runtime namespace and resolved key together select the Sandbox. Direct manager
-calls select the same resource with `await sandboxes.get(key, namespace="company-a")`.
-A workspace is borrowed for the run; finishing a run does not destroy a persistent
-Sandbox or close the manager.
+The returned `SandboxWorkspace` is a lazy declaration. The Runtime prepares and closes
+isolated access for each run, while the same project retains files across conversations.
+The Runtime namespace scopes logical persistence; changing it does not select another
+Sandbox or project. Finishing a run does not destroy the Sandbox or close the manager.
 
 ## Lifecycle
 
 | Task | Method |
 | --- | --- |
-| Create, reconnect, or reuse | `get(key)` |
-| Connect an existing binding | `reconnect(key)` |
-| Replace an instance | `recreate(key)` |
-| Clear workspace contents | `reset(key)` |
-| Pause after active work settles | `pause(key, timeout=30.0)` |
-| Resume the same instance | `resume(key, timeout=30.0)` |
-| Destroy and remove the binding | `destroy(key)` |
+| Borrow project files and commands | `async with project.open() as files` |
+| Observe an existing project's file-root changes | `async with project.watch() as changes` |
+| Stop a project's runs and delete its files, HOME, caches, and dependencies | `await project.delete()` |
+| Open or reuse a raw command Sandbox | `get(key)` |
+| Reconnect a raw command Sandbox | `reconnect(key)` |
+| Replace a raw command Sandbox | `recreate(key)` |
+| Clear a raw command Sandbox's configured file root | `reset(key)` |
+| Pause the owner's entire Sandbox after active work settles | `pause(key, timeout=30.0)` |
+| Resume the owner's entire Sandbox | `resume(key, timeout=30.0)` |
+| Destroy the owner's Sandbox and all its projects | `destroy(key)` |
 | Inspect status | `get_details(key)` |
 | Read provider diagnostics | `get_diagnostic_logs(key)`, `get_diagnostic_events(key)` |
 | Check warm capacity | `check_ready()` |
 | Close local resources | `aclose()` |
 
+`project.delete()` leaves other projects and the physical Sandbox intact. Raw command
+methods reject an owner already used for isolated workspaces. Pause and resume return
+`None`; `project.open()` does not automatically resume a paused Sandbox.
+
 Recovery preserves the existing binding by default. Use
-`OpenSandboxRecoveryPolicy(on_failure="recreate")` only when replacing the workspace
-is acceptable; files are not copied. Commands, writes, and reset operations are never
+`OpenSandboxRecoveryPolicy(on_failure="recreate")` only when losing all data in the
+physical Sandbox is acceptable; files are not copied. Commands, writes, and reset operations are never
 replayed. Resource operations retain cleanup ownership when cancelled. Cancelling a
 manager-close waiter leaves close running; call `aclose()` again to await its result.
 
 The default remote TTL is two hours. `OpenSandboxConfig(ttl=None)` keeps newly created
 instances until explicit destruction. In-memory State destroys its remote instances
-on manager close; persistent State retains them. Use volumes and backups for files
-that must survive instance loss. Pause does not stop or extend a finite TTL.
+on manager close; persistent State retains them. Project data lasts only as long as
+the physical Sandbox. Back up files that must survive instance loss. Pause does not
+stop or extend a finite TTL.
 
 Pause waits for every registered holder to acknowledge idle. An unreachable holder
 without idle evidence prevents pause. Diagnostic results are trusted operational data;
@@ -124,18 +140,44 @@ for recovery and notification settings.
 
 ## Files and commands
 
-`workspace_root="/workspace"` makes file-tool `/` refer to that directory. File tools
-reject paths and links escaping the root; `reset()` clears its children and requires
-a safe configured root. Shell commands are a separate unrestricted Sandbox capability,
-so control command access through your tool and approval policy.
+An isolated workspace exposes its project files at file-tool `/`. Shell commands,
+uploads, downloads, and output captures use the same project isolation. Each run has
+private processes, temporary files, devices, and networking, with shared tools mounted
+read-only. Public HTTP on port 80 and HTTPS on port 443 use a managed proxy; processes
+and network activity end with the run. HOME, caches, and installed project dependencies
+remain available to later runs of that project.
+
+`workspace_root` only configures file-path mapping for raw command Sandboxes obtained
+with `get()`. It does not restrict their Shell commands or configure isolated projects.
 
 Use `await backend.aread_bytes("/report.pdf", max_bytes=10 * 1024 * 1024)` for a complete
 bounded binary read. Oversized files raise `OpenSandboxFileTooLargeError`. Remote file
 and command operations require asynchronous APIs.
 
-Rooted transfers require Python 3, Linux procfs, and shared process visibility in the
-Sandbox image. See [rooted files and commands](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/sandbox/rooted-filesystem.md)
+See [rooted files and commands](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/sandbox/rooted-filesystem.md)
 for permissions, transfer limits, and direct Deep Agents integration.
+
+For an existing running project, subscribe before reading the initial file state:
+
+```python
+async with project.watch() as changes:
+    async for change in changes:
+        print(change)
+```
+
+The iterator yields `WorkspaceChange.FILES_CHANGED` from `tinkerfin_sandbox` or
+`ResyncRequired` from `tinkerfin_notifications`. These are root-wide hints: read the
+current directory or file state after a change, and reread it whenever resynchronization
+is required. Hints can be combined and do not contain file contents or operation history.
+Ordinary writes, truncations, renames, deletions, and directory changes are observed;
+memory-mapped writes are outside this coverage.
+
+Watching creates no Sandbox, resumes none, and runs no initialization. Pausing, deleting,
+or losing the selected instance yields a disconnected resync and ends that watch; enter
+a new context after the project is available. A compatible runtime collector is required.
+The manager owns its default in-process notification service. To share hints among workers,
+pass an already started `Notifications` service as `OpenSandboxManager(..., notifications=...)`
+and close that service after its managers.
 
 ## Persistent state
 
@@ -143,6 +185,7 @@ SQLite, MySQL, and PostgreSQL use the same State API:
 
 ```python
 from sqlalchemy.ext.asyncio import create_async_engine
+
 from tinkerfin_sandbox import SQLAlchemyOpenSandboxState
 
 engine = create_async_engine("sqlite+aiosqlite:////var/lib/app/sandboxes.db")
@@ -151,14 +194,18 @@ sandboxes = OpenSandboxManager(client=client, state=state)
 
 try:
     async with sandboxes:
-        backend = await sandboxes.get("projects/project-1")
+        project = sandboxes.workspace("users/7", workspace_key="project-a")
+        async with project.open() as files:
+            await files.awrite("/notes.txt", "hello")
 finally:
     await engine.dispose()
 ```
 
-State stores bindings, leases, warm slots, availability, and pending cleanup. It does
-not store container files. Its `namespace` separates deployments sharing a database;
-all workers in that deployment must agree on warm capacity.
+State stores physical Sandbox bindings and their purpose, leases, warm slots,
+availability, and pending cleanup. It does not store project files. Its `namespace`
+separates deployments sharing a database; all workers in that deployment must agree on
+warm capacity. Warm instances serve raw command Sandboxes; isolated workspaces create
+their own instances.
 
 Startup creates an empty schema or validates the existing tables, indexes, and database
 comments. The first startup needs DDL permissions. Generate the complete schema with

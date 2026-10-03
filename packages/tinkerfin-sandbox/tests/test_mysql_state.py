@@ -4,7 +4,7 @@ import asyncio
 from typing import Never
 
 import pytest
-from sqlalchemy import event, inspect
+from sqlalchemy import event, inspect, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
@@ -13,9 +13,44 @@ from tests.support.sql_faults import after_sql_commit
 
 import tinkerfin_sandbox
 from tinkerfin_sandbox import (
+    OpenSandboxPurposeError,
     SQLAlchemyOpenSandboxState,
     get_sqlalchemy_opensandbox_state_schema,
 )
+
+
+@pytest.mark.docker_integration
+async def test_mysql57_rejects_invalid_purpose_when_check_constraints_are_ignored(
+    sql_engine: SqlEngineFactory, mysql57_sandbox_url: str
+) -> None:
+    engine = sql_engine(mysql57_sandbox_url)
+    state = SQLAlchemyOpenSandboxState(engine=engine)
+    await state.start(warm_pool_size=0)
+    try:
+        claim = await state.acquire_owner("owner")
+        try:
+            await state.bind_owner(claim, "sandbox", purpose="workspaces")
+        finally:
+            await state.release_owner(claim)
+        for sandbox_id, purpose in (
+            ("sandbox", "unknown"),
+            ("sandbox", None),
+            (None, "workspaces"),
+        ):
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "UPDATE tinkerfin_opensandbox_owners "
+                        "SET sandbox_id = :sandbox_id, purpose = :purpose"
+                    ),
+                    {"sandbox_id": sandbox_id, "purpose": purpose},
+                )
+            with pytest.raises(OpenSandboxPurposeError):
+                await state.read_binding("owner")
+            with pytest.raises(OpenSandboxPurposeError):
+                await state.acquire_owner("owner")
+    finally:
+        await state.aclose()
 
 
 def _ddl_statements(ddl: str) -> tuple[str, ...]:
@@ -469,7 +504,7 @@ async def test_mysql8_export_and_runtime_claims_are_compatible(
     )
     assert len(table_comments) == 6
     assert all(table_comments)
-    assert len(column_comments) == 41
+    assert len(column_comments) == 42
     assert all(column_comments)
     claim_sql = tuple(sql for sql in observed_sql if " FOR UPDATE" in sql)
     assert claim_sql

@@ -81,9 +81,9 @@ async def _check_clock(
     elif case == "renew_owner":
         operation = state.renew_owner(owner)
     elif case == "bind_owner":
-        operation = state.bind_owner(owner, "new")
+        operation = state.bind_owner(owner, "new", purpose="commands")
     elif case == "unbind_owner":
-        await state.bind_owner(owner, "existing")
+        await state.bind_owner(owner, "existing", purpose="commands")
         operation = state.unbind_owner(owner)
     elif case in {"renew_warm", "publish_warm", "discard_warm"}:
         table = "tinkerfin_opensandbox_warm_slots"
@@ -110,7 +110,7 @@ async def _check_clock(
         await state.publish_warm(warm, "ready")
         operation = state.consume_warm(owner)
     else:
-        await state.bind_owner(owner, "existing")
+        await state.bind_owner(owner, "existing", purpose="commands")
         running = await state.register_holder(owner, "holder")
         operation = (
             state.change_availability(owner, running, phase="draining")
@@ -161,7 +161,7 @@ async def _check_clock(
             if case == "acquire_owner":
                 current = await pending
                 assert isinstance(current, OpenSandboxOwnerClaim)
-                await state.bind_owner(current, "resumed")
+                await state.bind_owner(current, "resumed", purpose="commands")
                 async with engine.connect() as connection:
                     expiry = await connection.scalar(
                         text(
@@ -234,7 +234,7 @@ async def _check_subsecond_leases(
                 assert expiry == now + timedelta(seconds=0.1)
         assert await state.renew_cleanup(cleanup)
         assert await state.renew_owner(owner)
-        await state.bind_owner(owner, "bound")
+        await state.bind_owner(owner, "bound", purpose="commands")
         await state.publish_warm(warm, "ready")
     finally:
         await state.aclose()

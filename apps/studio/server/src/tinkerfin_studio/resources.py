@@ -419,6 +419,7 @@ def build_lifespan():
                         ),
                         warm_pool_size=sandbox_settings.warm_pool_size,
                         fail_on_startup_warmup_error=True,
+                        notifications=notifications,
                         # 已确认的沙箱与预热容量变化复用应用日志输出
                         observers=(SandboxEventLogger(),),
                     ),

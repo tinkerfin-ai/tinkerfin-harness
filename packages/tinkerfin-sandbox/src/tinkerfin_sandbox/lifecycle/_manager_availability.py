@@ -29,9 +29,10 @@ from ..errors import (
 )
 from ._manager_recovery import recover_binding
 from ._notifications import failure_reason
+from ._purpose import validate_purpose
 from .availability import OpenSandboxAvailability, OpenSandboxAvailabilityPhase
 from .client import _connection_deadline
-from .state import OpenSandboxOwnerClaim
+from .state import OpenSandboxBinding, OpenSandboxOwnerClaim
 
 if TYPE_CHECKING:
     from .manager import OpenSandboxManager
@@ -217,6 +218,8 @@ class _SandboxAvailability(Generic[KeyT]):
         try:
             async with manager._operation():
                 async with manager._claim_owner(owner_key) as claim:
+                    if claim.binding is None:
+                        return
                     snapshot = await self.require_running(owner_key)
                     if snapshot is None:
                         return
@@ -224,7 +227,12 @@ class _SandboxAvailability(Generic[KeyT]):
                     if local is not None and local.availability == snapshot:
                         return
                     handle = await recover_binding(
-                        manager, owner_key, claim, reconnect=True, allow_recreate=False
+                        manager,
+                        owner_key,
+                        claim,
+                        purpose=claim.binding.purpose,
+                        reconnect=True,
+                        allow_recreate=False,
                     )
                     await self.register(owner_key, claim, handle)
         except OpenSandboxError as error:
@@ -254,6 +262,20 @@ class _SandboxAvailability(Generic[KeyT]):
             if local.owner_key == owner_key:
                 self._holders.pop(digest, None)
                 self._refresh_attempts.pop(digest, None)
+
+    def confirms_binding(self, owner_key: str, binding: OpenSandboxBinding) -> bool:
+        """Require reconnect validation after an owner commits a different binding.
+
+        A repeated remote ID cannot reuse the previous generation's connection
+        and skip its provider purpose check. The existing holder registration
+        supplies this evidence without copying purpose into local handle state.
+        """
+        return any(
+            local.owner_key == owner_key
+            and local.availability.sandbox_id == binding.sandbox_id
+            and local.availability.binding_generation == binding.generation
+            for local in self._holders.values()
+        )
 
     async def require_resolved(
         self, owner_key: str, claim: OpenSandboxOwnerClaim
@@ -422,6 +444,7 @@ class _SandboxAvailability(Generic[KeyT]):
                     )
                     if snapshot.phase == "paused":
                         if await self._remote_state(snapshot.sandbox_id) == "paused":
+                            manager._workspace_watches.stop(owner_key)
                             return
                     else:
                         _require_running(snapshot)
@@ -429,6 +452,7 @@ class _SandboxAvailability(Generic[KeyT]):
                     request_started = False
                     try:
                         snapshot = await self._change(claim, snapshot, phase="draining")
+                        manager._workspace_watches.stop(owner_key)
                         while True:
                             await self.synchronize()
                             if await manager._state.holders_are_idle(claim, snapshot):
@@ -465,7 +489,7 @@ class _SandboxAvailability(Generic[KeyT]):
         finally:
             _connection_deadline.reset(token)
 
-    async def resume(self, owner_key: str, timeout: float) -> OpenSandboxHandle:
+    async def resume(self, owner_key: str, timeout: float) -> None:
         """Resume the original instance and publish a ready local connection."""
         deadline = asyncio.get_running_loop().time() + _validate_timeout(timeout)
         manager = self._manager
@@ -473,6 +497,12 @@ class _SandboxAvailability(Generic[KeyT]):
         try:
             async with manager._operation(), asyncio.timeout_at(deadline):
                 async with manager._claim_owner(owner_key) as claim:
+                    if claim.binding is None:
+                        raise OpenSandboxBackendUnavailableError(
+                            "No Sandbox is bound to this owner",
+                            context={"reason": "not_bound"},
+                        )
+                    purpose = validate_purpose(claim.binding.purpose)
                     snapshot = await self._confirm_pending(
                         claim, await self._snapshot(owner_key)
                     )
@@ -508,12 +538,12 @@ class _SandboxAvailability(Generic[KeyT]):
                             manager,
                             owner_key,
                             claim,
+                            purpose=purpose,
                             reconnect=True,
                             allow_recreate=False,
                         )
                         await self.register(owner_key, claim, handle)
                         manager._notifications.resumed(owner_key, snapshot.sandbox_id)
-                        return handle
                     except _StateChangeCancelled as error:
                         if error.current.phase == "resuming" and not request_started:
                             await self._settle_failed_drain(

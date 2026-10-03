@@ -240,9 +240,10 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
 
     class Sandboxes:
         def workspace(
-            self, key: str, *, routes: dict[str, BackendProtocol]
+            self, key: str, *, workspace_key: str, routes: dict[str, BackendProtocol]
         ) -> _Workspace:
             assert key == "users/7"
+            assert workspace_key == "default"
             assert set(routes) == {"/memories/"}
             return workspace
 
@@ -382,7 +383,7 @@ async def test_file_access_choice_controls_root_and_subagent_review(
 
     class Sandboxes:
         def workspace(
-            self, key: str, *, routes: dict[str, BackendProtocol]
+            self, key: str, *, workspace_key: str, routes: dict[str, BackendProtocol]
         ) -> _Workspace:
             assert key == "users/7"
             return workspace
@@ -473,7 +474,7 @@ async def test_product_tool_failure_allows_root_and_researcher_to_reply(
     workspace = _Workspace()
 
     class Sandboxes:
-        def workspace(self, key, *, routes):
+        def workspace(self, key, *, workspace_key, routes):
             return workspace
 
     tracer = Tracer()
@@ -552,7 +553,7 @@ async def test_analysis_commands_follow_permissions_in_chat_and_plan(
     )
 
     class Sandboxes:
-        def workspace(self, key, *, routes):
+        def workspace(self, key, *, workspace_key, routes):
             return workspace
 
     resources = create_autospec(ApplicationResources, instance=True)

@@ -7,8 +7,11 @@ from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
+from ..errors import OpenSandboxBusyError
+
 _SETTLEMENT_TIMEOUT_SECONDS = 5.0
 _MAX_PENDING_SETTLEMENTS = 32
+_MAX_RETAINED_RESOURCES = 65536
 _current_operations: ContextVar[RemoteOperations | None] = ContextVar(
     "tinkerfin_sandbox_remote_operations", default=None
 )
@@ -26,6 +29,7 @@ class RemoteOperations:
     def __init__(self) -> None:
         self._pending: set[asyncio.Task[None]] = set()
         self._unresolved = False
+        self._resources: set[str] = set()
 
     @contextmanager
     def activate(self) -> Generator[None]:
@@ -39,7 +43,24 @@ class RemoteOperations:
     @property
     def is_idle(self) -> bool:
         """Return whether no pending or unconfirmed remote work remains."""
-        return not self._pending and not self._unresolved
+        return not self._pending and not self._unresolved and not self._resources
+
+    def retain_resource(self, identity: str) -> None:
+        """Keep a known remote resource non-idle until its exact termination is confirmed.
+
+        The bounded set matches the native session ledger's per-instance capacity.
+        Unlike an unknown command outcome, an identified resource can be settled
+        by a later operation that proves termination of that same identity.
+        """
+        if identity in self._resources:
+            return
+        if len(self._resources) >= _MAX_RETAINED_RESOURCES:
+            raise OpenSandboxBusyError("Sandbox has too many unsettled resources")
+        self._resources.add(identity)
+
+    def confirm_resource_stopped(self, identity: str) -> None:
+        """Discharge only this identity, preserving all unrelated uncertainty."""
+        self._resources.discard(identity)
 
     def mark_unresolved(self) -> None:
         """Preserve an outcome that cannot establish remote termination."""

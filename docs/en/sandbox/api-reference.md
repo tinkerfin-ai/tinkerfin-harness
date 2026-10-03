@@ -19,13 +19,18 @@
 | `ready_timeout` | 5 minutes | Wait for a new Sandbox to become ready |
 | `connect_timeout` | 30 seconds | Data-plane connection limit |
 | `command_timeout` | 3600 seconds | Default non-negative command timeout |
-| `workspace_root` | `/workspace` | Rooted file-tool directory; `None` disables rooted view |
+| `workspace_root` | `/workspace` | File-tool root for raw command Sandboxes; `None` disables that mapping; isolated projects always use virtual `/` |
 | `health_command` | `printf ok` | Data-plane health command |
-| `warm_pool_size` | `1` | Non-negative warm capacity |
+| `warm_pool_size` | `1` | Non-negative warm capacity for raw command Sandboxes |
 | `command_env` | `{}` | Environment added to each Shell command |
 | `enable_capture_offload` | `False` | Allow large command output to be saved to a file |
 
 The default image pins an immutable [TinkerFin Sandbox Runtime](https://github.com/tinkerfin-ai/sandbox-runtime) digest and includes Playwright with headless Chromium. Image configuration affects newly created remote instances; reconnecting does not update an existing runtime.
+
+Isolated workspaces require the matching TinkerFin
+[Server](https://github.com/tinkerfin-ai/sandbox-runtime/blob/main/opensandbox-server/README.md#deploy)
+and [execd](https://github.com/tinkerfin-ai/sandbox-runtime/blob/main/opensandbox-execd/README.md#deploy)
+deployment. The framework handles run setup, credentials, environment, and cleanup.
 
 `ttl=None` creates instances without automatic expiry and skips remote renewal.
 It retains health checks and State ownership rules. Connecting does not change an
@@ -40,21 +45,28 @@ storage behavior.
 | `config` | `None` | TinkerFin Sandbox settings |
 | `initializers` | `()` | Idempotent callbacks run in order after creation or connection |
 
-The client uses OpenSandbox SDK 0.1.16 and official Server 0.2.3. All methods below
+The client uses OpenSandbox SDK 0.1.16 and Server 0.2.3. All methods below
 are asynchronous; client methods accept remote IDs, while manager methods accept
 application keys.
 
 | Method | Behavior |
 | --- | --- |
-| `create(metadata=None)` | Create an initialized backend and transfer ownership to the caller |
-| `connect(sandbox_id)` | Connect and initialize an existing instance |
-| `inspect(sandbox_id)` | Read details and execution health through a temporary connection; unreadable details return an unavailable snapshot |
+| `create(purpose="commands", metadata=None)` | Create an initialized backend for the selected capability and transfer ownership to the caller |
+| `connect(sandbox_id, purpose="commands")` | Connect, verify the purpose, and initialize an existing instance |
+| `inspect(sandbox_id, purpose="commands")` | Verify the purpose, then read details and execution health through a temporary connection; unreadable details return an unavailable snapshot |
 | `get_runtime_info(sandbox_id)` | Read control-plane details without endpoint discovery, initialization, health checks, or renewal |
 | `pause(sandbox_id)`, `resume(sandbox_id)` | Submit the official control-plane state change; manager methods coordinate holders and readiness |
 | `get_diagnostic_logs(sandbox_id, scope="container")` | Read provider log diagnostics |
 | `get_diagnostic_events(sandbox_id, scope="runtime")` | Read provider event diagnostics |
 | `destroy(sandbox_id)` | Idempotently destroy the instance and close its temporary connection |
 | `aclose()` | Finish owned work and close only the transport created by the client |
+
+`OpenSandboxPurpose` is `Literal["commands", "workspaces"]`. The client records it in
+reserved `tinkerfin.ai/purpose` metadata. `commands` keeps the provider's default permissions;
+`workspaces` requests the provider's isolation capability. A returned parent backend
+has full instance access and must remain in trusted lifecycle code. `connect()` and
+`inspect()` raise `OpenSandboxPurposeError` for absent, unknown, or conflicting purpose
+metadata before initialization or command execution.
 
 `get_runtime_info()` raises a backend error when the read fails. Its `healthy=False`
 means no health probe was performed, rather than a failed probe. The low-level
@@ -77,13 +89,76 @@ and cannot interrupt blocking synchronous work. Initialization failures raise
 ## Manager
 
 See [Sandbox lifecycle](lifecycle.md) for constructor parameters and operations.
-`workspace(key)` returns the lazy declaration used by `TinkerFin.build(backend=...)`.
+`workspace(key, *, workspace_key, routes=None)` returns a `SandboxWorkspace[KeyT]`
+for `TinkerFin.build(backend=...)`, application file access, and project deletion.
+`SandboxWorkspace` is exported from `tinkerfin_sandbox`.
+
+| Parameter | Purpose |
+| --- | --- |
+| `key` | Physical Sandbox owner; strings work directly, custom objects use the manager's `key_resolver` |
+| `workspace_key` | Required nonempty project identity within that owner; an opaque string, not a path |
+| `routes` | Optional file-path mapping to borrowed backends for Runtime file tools |
+
+```python
+from tinkerfin import TinkerFin
+
+project = sandboxes.workspace("users/7", workspace_key="project-a")
+runtime = (
+    TinkerFin().with_namespace("projects/project-a").build(model=model, backend=project)
+)
+
+async with project.open() as files:
+    await files.aupload_files([("/notes.txt", b"hello")])
+    result = await files.aexecute("cat notes.txt")
+
+await project.delete()
+```
+
+Creating the declaration performs no I/O. Invalid identity types raise `TypeError`;
+invalid values raise `ValueError`. Runtime namespaces scope logical persistence and
+do not alter the Sandbox owner or project. The manager must outlive all workspace use.
+
+`open()` yields a borrowed `RootedOpenSandboxBackend` for one isolated run. It stops
+the run's processes and network activity when the context exits, including on errors
+and cancellation, while retaining project files, HOME, caches, and dependencies.
+Use the backend only inside its context. Concurrent runs of one project share files
+without transactional write guarantees.
+
+`watch()` returns an asynchronous context yielding an
+`AsyncIterator[WorkspaceChange | ResyncRequired]` for an existing running project.
+`WorkspaceChange.FILES_CHANGED` is exported from `tinkerfin_sandbox`;
+`ResyncRequired` is the type from `tinkerfin_notifications`. These are coalescible
+file-root hints, not file contents or an operation log. Enter before reading initial
+state. Missing, paused, deleting, or unavailable resources raise `OpenSandboxError`
+subclasses rather than being created or resumed. An established watch ends with a
+disconnected resync when its source becomes unavailable. Close the context to release
+its resources; it does not hold a command run open. See
+[Watch file changes](rooted-filesystem.md#watch-file-changes) for observation limits.
+
+`delete()` returns `None` after stopping the project's runs across workers and deleting
+its files, HOME, caches, and dependencies. Other projects and the physical Sandbox
+remain intact. Old access becomes invalid; reopening starts an empty project. An
+absent project is a no-op. If termination cannot be confirmed, data is preserved and
+new access stays blocked until deletion succeeds. Resolve the reported failure before
+retrying. Cancellation waits for owned cleanup before propagating.
+
+Runtime file tools use `routes`; `open()` and Shell commands access only the isolated
+project. Routed backends remain caller-owned, are not mounted into Shell, and are not
+deleted by `project.delete()`. Runtime calls the workspace's `prepare(identity)`
+protocol automatically.
+
+Workspace admission, setup, and cleanup failures raise `OpenSandboxError` subclasses.
+A paused parent requires explicit `resume(key)`; `open()` does not resume it.
+`get()`, `reconnect()`, `recreate()`, and `reset()` serve raw command Sandboxes and
+raise `OpenSandboxPurposeError` for an owner bound to isolated workspaces.
 `build_rooted_filesystem_middleware(backend, ...)` is the standalone integration for
 caller-managed Deep Agents Graphs.
 
 `pause(key, timeout=30.0)` returns `None` after all registered holders finish work and
-the remote pause is confirmed. `resume(key, timeout=30.0)` returns a ready backend for
-the same instance. Both use a positive finite work budget in seconds. Scoped diagnostics
+the remote pause is confirmed. `resume(key, timeout=30.0)` returns `None` after the same
+instance is ready. Both preserve the binding's command or workspace purpose and use a
+positive finite work budget in seconds. They affect the owner's entire Sandbox, as
+does `destroy(key)`, which also removes every project's data. Scoped diagnostics
 are available through `get_diagnostic_logs(key, scope="container")` and
 `get_diagnostic_events(key, scope="runtime")` without waking the instance.
 
@@ -111,7 +186,7 @@ semantics. `diagnostic_context` is trusted-only and is not a client response.
 | --- | --- |
 | `OpenSandboxBackend` | One connected asynchronous OpenSandbox data plane |
 | `OpenSandboxHandle` | Stable borrowed handle across remote replacement |
-| `RootedOpenSandboxBackend` | Maps virtual `/` into the configured workspace root |
+| `RootedOpenSandboxBackend` | Maps virtual `/` into project files or a raw command Sandbox's configured root |
 | `build_rooted_filesystem_middleware(...)` | Builds matching middleware without a manager |
 
 For a custom client that constructs these values directly, `OpenSandboxBackend` accepts the native `sandbox`, `default_timeout=60`, optional `command_env`, optional `working_directory`, `health_command="printf ok"`, and `enable_capture_offload=False`. `OpenSandboxHandle` accepts a backend; `RootedOpenSandboxBackend` accepts a handle and `root="/workspace"`.
@@ -124,7 +199,11 @@ Common asynchronous methods:
 | Files | `aread`, `awrite`, `aedit`, `adelete`, `als`, `aglob`, `agrep` |
 | Transfer | `aupload_files`, `adownload_files` |
 | Large output | `aexecute_with_offload` |
-| Lifecycle | `arenew(timeout)`, `aget_runtime_info()`, `akill()`, `aclose()` |
+| Raw backend lifecycle | `arenew(timeout)`, `aget_runtime_info()`, `akill()`, `aclose()` |
+
+Project access is borrowed from the Runtime or `project.open()`; do not close it or
+use backend lifecycle methods to operate on the physical Sandbox. Use the manager
+with the owner key for whole-Sandbox lifecycle operations.
 
 `RootedOpenSandboxBackend.to_shell_path(file_path)` converts a virtual path to a Shell path relative to the workspace root, for commands passed to `aexecute`.
 
@@ -147,7 +226,7 @@ returns `Awaitable[None] | None`; synchronous callbacks must be non-blocking.
 
 | Type | Fields |
 | --- | --- |
-| `OpenSandboxBinding` | `sandbox_id`, `generation` |
+| `OpenSandboxBinding` | `sandbox_id`, `generation`, required `purpose` |
 | `OpenSandboxOwnerClaim` | owner key, digest, token, generation, optional binding |
 | `OpenSandboxWarmClaim` | slot, token, generation |
 | `OpenSandboxReadyWarmClaim` | warm claim fields plus the published Sandbox ID |
@@ -219,6 +298,7 @@ operators under host-controlled access.
 | `OpenSandboxStateError` | Base state failure |
 | `OpenSandboxStateOwnershipError` | Claim expired, was replaced, or belongs to another worker |
 | `OpenSandboxStateConfigurationError` | Unsupported state, database, or schema configuration |
+| `OpenSandboxPurposeError` | Requested capability conflicts with the binding or reserved remote purpose metadata; code `sandbox.purpose_mismatch` |
 | `OpenSandboxDestroyError` | Remote destruction could not settle reliably |
 | `OpenSandboxInitializationError` | Workspace setup or an initializer failed; not eligible for recovery retries |
 | `OpenSandboxBackendUnavailableError` | Existing instance recovery failed or a provider rejected access |

@@ -47,7 +47,9 @@ def opensandbox_control(docker_test_client, docker_test_run_id, tmp_path):
         domain = f"127.0.0.1:{daemon.get_exposed_port(8090)}"
         config = tmp_path / "opensandbox.toml"
         config.write_text(_opensandbox_config(docker_host="127.0.0.1"))
-        server = DockerContainer(_OPENSANDBOX_SERVER_IMAGE)
+        server = DockerContainer(
+            os.environ.get("TINKERFIN_SERVER_TEST_IMAGE", _OPENSANDBOX_SERVER_IMAGE)
+        )
         server.with_env("DOCKER_HOST", "tcp://127.0.0.1:2375")
         server.with_env("OPENSANDBOX_SERVER_API_KEY", "isolated-test-key")
         server.with_copy_into_container(config, "/etc/opensandbox/config.toml")

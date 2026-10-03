@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable
+import os
+from collections.abc import Awaitable, Iterator
+from pathlib import Path
 from typing import Any, cast
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 from urllib.request import ProxyHandler
 
 import pytest
 from docker import DockerClient
+from docker.errors import ImageLoadError
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
@@ -18,13 +21,89 @@ from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import WaitStrategyTarget
 
 from tests.support.docker_services import (
+    _OPENSANDBOX_EXECD_IMAGE,
     MySQLTestService,
     OpenSandboxDockerRuntime,
     OpenSandboxTestService,
     RedisTestService,
+    _copy_runtime_image,
     _MappedPortHttpWaitStrategy,
     _with_loopback_port,
 )
+
+
+@pytest.mark.parametrize("failure", [None, "import", "identity", "tag"])
+def test_runtime_archive_preserves_source_and_verifies_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str | None,
+) -> None:
+    archive = tmp_path / "runtime.tar"
+    payload = b"a" * (1024 * 1024 + 17)
+    archive.write_bytes(payload)
+    source_id = "sha256:" + "a" * 64
+    source = Mock(spec=DockerClient)
+    source.api = Mock()
+    source.images.get.return_value.id = source_id
+    source.api.base_url = "http://source"
+    source.api.api_version = "1.48"
+    target = Mock(spec=DockerClient)
+    target.api = Mock()
+    target.api.base_url = "http://target"
+    target.api.api_version = "1.48"
+    target.api.timeout = 30
+    imported = Mock()
+    imported.id = "sha256:" + "b" * 64 if failure == "identity" else source_id
+    imported.tag.return_value = True
+    tagged = Mock()
+    tagged.id = "sha256:" + "c" * 64 if failure == "tag" else source_id
+    target.images.get.side_effect = [imported, tagged]
+    response = MagicMock()
+    response.__enter__.return_value = response
+    response.iter_lines.return_value = (
+        [b'{"errorDetail":{"message":"rejected archive"}}']
+        if failure == "import"
+        else [b'{"stream":"loaded"}']
+    )
+    received: list[bytes] = []
+
+    def upload(url: str, *, data: Iterator[bytes], **kwargs: object) -> MagicMock:
+        del url, kwargs
+        received.extend(data)
+        return response
+
+    target.api.post.side_effect = upload
+    monkeypatch.setattr("tests.support.docker_services.time.monotonic", lambda: 0)
+
+    if failure is None:
+        _copy_runtime_image(
+            source,
+            target,
+            reference="source:tag",
+            repository="runtime",
+            tag="test",
+            source_archive=archive,
+        )
+    else:
+        error = ImageLoadError if failure == "import" else RuntimeError
+        with pytest.raises(error):
+            _copy_runtime_image(
+                source,
+                target,
+                reference="source:tag",
+                repository="runtime",
+                tag="test",
+                source_archive=archive,
+            )
+
+    source.api.get.assert_not_called()
+    source.images.pull.assert_not_called()
+    assert archive.read_bytes() == payload
+    assert received == [payload[: 1024 * 1024], payload[1024 * 1024 :]]
+    response.__exit__.assert_called_once()
+    target.api.post.assert_called_once()
+    assert target.api.post.call_args.args == ("http://target/v1.48/images/load",)
+    assert target.api.post.call_args.kwargs["timeout"] == 30
 
 
 class _MissingMappedPort:
@@ -270,11 +349,15 @@ def test_opensandbox_fixture_uses_an_independent_daemon_and_owned_mounts(
             binding["HostIp"] == "127.0.0.1" for binding in bindings
         )
     assert opensandbox_test_service.domain == runtime.domain
-    source_id = docker_test_client.images.get(OpenSandboxConfig().image).id
+    source_id = docker_test_client.images.get(
+        os.environ.get("TINKERFIN_RUNTIME_TEST_IMAGE", OpenSandboxConfig().image)
+    ).id
     assert runtime.client.images.get(runtime.image).id == source_id
     assert (
-        runtime.client.images.get("opensandbox/execd:v1.0.22").id
-        == docker_test_client.images.get("opensandbox/execd:v1.0.22").id
+        runtime.client.images.get("tinkerfin-execd-e2e:isolated").id
+        == docker_test_client.images.get(
+            os.environ.get("TINKERFIN_EXECD_TEST_IMAGE", _OPENSANDBOX_EXECD_IMAGE)
+        ).id
     )
     servers = [
         container

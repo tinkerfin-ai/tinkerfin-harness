@@ -210,4 +210,4 @@ async def test_programmatic_images_reach_downloadable_attachments(
             artifact.write_bytes(data)
             print("rendered artifact:", artifact)
         finally:
-            await manager.destroy("users/1", namespace=runtime.namespace)
+            await manager.destroy("users/1")

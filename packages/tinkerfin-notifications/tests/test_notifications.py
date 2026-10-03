@@ -33,6 +33,35 @@ def change(key: str = "one", *, owner: str | None = None) -> Notification:
     )
 
 
+async def test_failed_publication_requires_resync_for_affected_listeners() -> None:
+    failed = asyncio.Event()
+
+    class FailingPublisher(MemoryBackend):
+        async def publish(self, payload: bytes) -> None:
+            notification = Notification.model_validate_json(payload)
+            if notification.key == "missing":
+                failed.set()
+                raise NotificationUnavailable("Controlled publication failure")
+            await super().publish(payload)
+
+    async with Notifications(backend=FailingPublisher()) as notifications:
+        async with (
+            notifications.subscribe(
+                scope=NotificationScope("project", "first")
+            ) as affected,
+            notifications.subscribe(
+                scope=NotificationScope("project", "second")
+            ) as other,
+        ):
+            await notifications.publish(change("missing", owner="first"))
+            await failed.wait()
+            await notifications.publish(change("next", owner="first"))
+            await notifications.publish(change("next", owner="second"))
+            assert await anext(affected) == ResyncRequired("disconnected")
+            assert await anext(affected) == change("next", owner="first")
+            assert await anext(other) == change("next", owner="second")
+
+
 async def test_each_listener_receives_an_independent_snapshot() -> None:
     source = change().model_copy(update={"details": {"ids": ["original"]}})
     async with Notifications() as notifications:

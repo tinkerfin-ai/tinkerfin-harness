@@ -20,11 +20,46 @@ from opensandbox.transport import RetryPolicy
 from tinkerfin_sandbox import (
     OpenSandboxBackend,
     OpenSandboxBackendError,
+    OpenSandboxBusyError,
     OpenSandboxHandle,
     RootedOpenSandboxBackend,
 )
 from tinkerfin_sandbox.backends import sdk
 from tinkerfin_sandbox.backends._operations import RemoteOperations
+
+
+def test_known_resource_cleanup_cannot_clear_other_remote_uncertainty() -> None:
+    operations = RemoteOperations()
+    operations.retain_resource("session-a")
+    operations.retain_resource("session-b")
+    operations.confirm_resource_stopped("session-a")
+    assert not operations.is_idle
+    operations.confirm_resource_stopped("session-b")
+    assert operations.is_idle
+    operations.retain_resource("session-a")
+    operations.mark_unresolved()
+    operations.confirm_resource_stopped("session-a")
+    assert not operations.is_idle
+
+
+def test_known_resource_capacity_never_forgets_an_unsettled_identity(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "tinkerfin_sandbox.backends._operations._MAX_RETAINED_RESOURCES", 2
+    )
+    operations = RemoteOperations()
+    operations.retain_resource("session-a")
+    operations.retain_resource("session-b")
+    operations.retain_resource("session-a")
+    with pytest.raises(OpenSandboxBusyError):
+        operations.retain_resource("session-c")
+    operations.confirm_resource_stopped("session-a")
+    operations.retain_resource("session-c")
+    operations.confirm_resource_stopped("session-b")
+    assert not operations.is_idle
+    operations.confirm_resource_stopped("session-c")
+    assert operations.is_idle
 
 
 class _CommandStream(httpx.AsyncByteStream):

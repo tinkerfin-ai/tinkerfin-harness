@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import secrets
 import shlex
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from docker import DockerClient
 from opensandbox.config import ConnectionConfig
 from testcontainers.core.container import DockerContainer
 from tests.support.docker_services import (
+    _OPENSANDBOX_SERVER_IMAGE,
     OpenSandboxDockerRuntime,
     OpenSandboxTestService,
     _opensandbox_config,
@@ -263,8 +265,7 @@ def _recreated_opensandbox_server(
 
     return runtime.configure_server(
         DockerContainer(
-            "opensandbox/server:v0.2.3@sha256:"
-            "ae8dfbb277f40a39ff01ef35e5e1c10675acfe0fa9db15259b8f323e5efab778"
+            os.environ.get("TINKERFIN_SERVER_TEST_IMAGE", _OPENSANDBOX_SERVER_IMAGE)
         )
         .with_env("OPENSANDBOX_SERVER_API_KEY", api_key)
         .with_volume_mapping(

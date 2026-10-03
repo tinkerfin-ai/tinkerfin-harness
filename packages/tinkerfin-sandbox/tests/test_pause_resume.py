@@ -36,6 +36,8 @@ from tinkerfin_sandbox import (
     OpenSandboxManager,
     OpenSandboxOwnerClaim,
     OpenSandboxPausedError,
+    OpenSandboxPurpose,
+    OpenSandboxPurposeError,
     OpenSandboxRecoveryPolicy,
     OpenSandboxRuntimeInfo,
     OpenSandboxStateError,
@@ -100,6 +102,7 @@ class _Remote:
     def __init__(self) -> None:
         self.changes = _StateChanges()
         self.states: dict[str, str] = {}
+        self.purposes: dict[str, OpenSandboxPurpose] = {}
         self.connection_generations: dict[str, int] = {}
         self.endpoints: dict[str, tuple[str, int]] = {}
         self.created = 0
@@ -127,6 +130,7 @@ class _Remote:
             available=True,
             healthy=state == "Running",
             status=OpenSandboxStatusInfo(state=state),
+            metadata={"tinkerfin.ai/purpose": self.purposes[sandbox_id]},
         )
 
     def require_running(self, sandbox_id: str) -> None:
@@ -176,6 +180,7 @@ class _Remote:
                     "status": {"state": self.states[sandbox_id]},
                     "createdAt": "2026-09-07T00:00:00Z",
                     "entrypoint": ["/entrypoint.sh"],
+                    "metadata": {"tinkerfin.ai/purpose": self.purposes[sandbox_id]},
                 },
             )
         sandbox_id, generation = self.endpoints[request.url.host]
@@ -246,17 +251,25 @@ class _Client:
         self.diagnostics: list[tuple[str, str, str]] = []
 
     async def create(
-        self, *, metadata: Mapping[str, str] | None = None
+        self,
+        *,
+        purpose: OpenSandboxPurpose = "commands",
+        metadata: Mapping[str, str] | None = None,
     ) -> OpenSandboxBackend:
         del metadata
         self.remote.created += 1
         sandbox_id = f"sandbox-{self.remote.created}"
         self.remote.states[sandbox_id] = "Running"
+        self.remote.purposes[sandbox_id] = purpose
         self.remote.connection_generations[sandbox_id] = 0
-        return await self.connect(sandbox_id)
+        return await self.connect(sandbox_id, purpose=purpose)
 
-    async def connect(self, sandbox_id: str) -> OpenSandboxBackend:
+    async def connect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxBackend:
         self.remote.require_running(sandbox_id)
+        if self.remote.purposes[sandbox_id] != purpose:
+            raise OpenSandboxPurposeError("Remote purpose differs")
         sandbox = await Sandbox.connect(
             sandbox_id,
             connection_config=ConnectionConfig(
@@ -273,8 +286,18 @@ class _Client:
         )
         return OpenSandboxBackend(sandbox=sandbox)
 
-    async def inspect(self, sandbox_id: str) -> OpenSandboxRuntimeInfo:
+    async def inspect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxRuntimeInfo:
+        if (
+            sandbox_id in self.remote.states
+            and self.remote.purposes[sandbox_id] != purpose
+        ):
+            raise OpenSandboxPurposeError("Remote purpose differs")
         return self.remote.info(sandbox_id)
+
+    async def _connect_observer(self, sandbox_id: str) -> OpenSandboxBackend:
+        return await self.connect(sandbox_id, purpose="workspaces")
 
     async def get_runtime_info(self, sandbox_id: str) -> OpenSandboxRuntimeInfo:
         return self.remote.info(sandbox_id)

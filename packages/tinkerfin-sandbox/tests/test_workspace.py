@@ -1,16 +1,18 @@
-"""Namespace-bound workspace access through the public resource lifecycle."""
+"""Public project selection, isolated borrowing and physical resource lifetimes."""
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from typing import cast
 
 import pytest
 from deepagents.backends import CompositeBackend, FilesystemBackend
 from test_lifecycle_notifications import _Recorder
-from test_manager import _FakeClient, _FakeState, _resource_key
+from test_manager import _FakeClient, _resource_key
 from test_pause_resume import _Client, _Remote
+from test_workspace_lifecycle import _projects
 
 from tinkerfin_contracts import PreparedWorkspace, RunIdentity
 from tinkerfin_sandbox import (
@@ -18,8 +20,8 @@ from tinkerfin_sandbox import (
     OpenSandboxManager,
     OpenSandboxManagerClosedError,
     OpenSandboxResetError,
-    OpenSandboxSettlementTimeoutError,
     RootedOpenSandboxBackend,
+    SandboxWorkspace,
 )
 
 
@@ -79,7 +81,8 @@ async def test_all_management_operations_target_the_selected_namespace() -> None
             standalone_id: "Running",
         }
         resumed = await manager.resume("owner", namespace="one")
-        assert resumed is first and remote.states[first_id] == "Running"
+        assert resumed is None and remote.states[first_id] == "Running"
+        assert await manager.get("owner", namespace="one") is first
         replaced = await manager.recreate("owner", namespace="one")
         assert replaced is first and first.id != first_id
         await manager.destroy("owner", namespace="one")
@@ -95,84 +98,96 @@ async def test_all_management_operations_target_the_selected_namespace() -> None
     }
 
 
-async def test_workspace_declaration_is_lazy_and_borrow_preserves_shared_resources(
+async def test_workspace_declaration_binds_project_independently_of_runtime_namespace(
     tmp_path: Path,
 ) -> None:
-    client = _FakeClient()
-    client.config = client.config.model_copy(update={"workspace_root": "/workspace"})
-    state = _FakeState()
-    manager = OpenSandboxManager(client=client, state=state)
-    route = FilesystemBackend(root_dir=tmp_path, virtual_mode=True)
-    routes = {"/reference/": route}
-    declaration = manager.workspace("users/7", routes=routes)
-    routes.clear()
-    assert client.create_calls == client.close_calls == 0
-    assert state.get_calls == []
-    async with manager:
-        async with declaration.prepare(_identity()) as prepared:
-            assert isinstance(prepared.workspace, RootedOpenSandboxBackend)
-            assert isinstance(prepared.backend, CompositeBackend)
-            assert prepared.backend.default is prepared.workspace
-            assert prepared.backend.routes == {"/reference/": route}
-            assert prepared.workspace.to_shell_path("/report.txt") == "report.txt"
-            assert prepared.filesystem_instructions
-            assert set(prepared.tool_descriptions) == {"execute"}
-            other = await manager.get("users/7", namespace="company-b")
-            assert other.id != prepared.workspace.id
-            async with declaration.prepare(_identity()) as repeated:
-                assert repeated.workspace is prepared.workspace
-            assert not prepared.workspace.is_closed
-        assert client.close_calls == 0 and client.destroy_calls == []
-        assert await manager.get("users/7", namespace="company-a") is prepared.workspace
-    assert client.close_calls == 1
-    assert client.destroy_calls == []
+    async with _projects(tmp_path) as (world, remote):
+        manager = await world.add()
+        route = FilesystemBackend(root_dir=tmp_path, virtual_mode=True)
+        routes = {"/reference/": route}
+        declaration = manager.workspace(
+            "users/7", workspace_key="project-a", routes=routes
+        )
+        assert isinstance(declaration, SandboxWorkspace)
+        routes.clear()
+        assert remote.created == 0
+        async with (
+            declaration.prepare(_identity("one")) as first,
+            declaration.prepare(_identity("two")) as second,
+        ):
+            assert isinstance(first.workspace, RootedOpenSandboxBackend)
+            assert isinstance(first.backend, CompositeBackend)
+            assert first.backend.default is first.workspace
+            assert first.backend.routes == {"/reference/": route}
+            assert first.workspace.to_shell_path("/report.txt") == "report.txt"
+            assert first.filesystem_instructions
+            assert set(first.tool_descriptions) == {"execute"}
+            assert first.workspace is not second.workspace
+            assert first.workspace.id == second.workspace.id
+            assert remote.created == 1 and len(remote.records) == 1
+        assert first.workspace.is_closed and second.workspace.is_closed
+        assert not remote.live and not remote.network_live
+        assert remote.destroy_calls == []
+        async with declaration.open() as files:
+            assert files.id == first.workspace.id
+            assert not isinstance(files, CompositeBackend)
+        await declaration.delete()
+        assert next(iter(remote.records.values())).phase == "deleted"
 
 
-async def test_manager_close_waits_for_open_workspace_borrow() -> None:
-    client = _FakeClient()
-    client.config = client.config.model_copy(update={"workspace_root": "/workspace"})
-    manager = OpenSandboxManager(
-        client=client, state=_FakeState(), settlement_timeout=0
-    )
-    await manager.start()
-    async with manager.workspace("owner").prepare(_identity()) as prepared:
-        with pytest.raises(OpenSandboxSettlementTimeoutError):
+async def test_public_open_delete_select_only_the_named_project(tmp_path: Path) -> None:
+    async with _projects(tmp_path) as (world, remote):
+        manager = await world.add()
+        first = manager.workspace("users/7", workspace_key="project-a")
+        second = manager.workspace("users/7", workspace_key="project-b")
+        async with first.open() as first_files, second.open() as second_files:
+            assert first_files.id == second_files.id
+            await first.delete()
+            assert len(remote.live) == len(remote.network_live) == 1
+            assert (await second_files.aexecute("second")).output == "second"
+        assert remote.destroy_calls == []
+        await second.delete()
+
+
+async def test_manager_close_waits_for_public_workspace_context(tmp_path: Path) -> None:
+    async with _projects(tmp_path) as (world, remote):
+        manager = await world.add()
+        declaration = manager.workspace("owner", workspace_key="project-a")
+        close_started = asyncio.Event()
+
+        async def close() -> None:
+            close_started.set()
             await manager.aclose()
-        assert client.close_calls == 0 and not prepared.workspace.is_closed
-        with pytest.raises(OpenSandboxManagerClosedError):
-            await manager.get("owner", namespace="company-a")
-    # A close caller may cancel its wait; the manager still owns final cleanup.
-    closed = asyncio.Event()
-    original_close = client.aclose
 
-    async def record_close() -> None:
-        await original_close()
-        closed.set()
-
-    client.aclose = record_close
-    await closed.wait()
-    await manager.aclose()
-    assert prepared.workspace.is_closed
+        async with declaration.open() as files:
+            closing = world.spawn(close())
+            await close_started.wait()
+            assert not closing.done() and not files.is_closed
+            with pytest.raises(OpenSandboxManagerClosedError):
+                async with declaration.open():
+                    pytest.fail("Closing managers cannot admit another Run")
+            assert remote.live
+        await closing
+        assert files.is_closed and not remote.live and not remote.network_live
 
 
 @pytest.mark.parametrize("failure", ["error", "cancel"])
-async def test_workspace_body_failure_releases_borrow_without_destroying_sandbox(
-    failure: str,
+async def test_workspace_body_failure_stops_only_its_run(
+    tmp_path: Path, failure: str
 ) -> None:
-    client = _FakeClient()
-    client.config = client.config.model_copy(update={"workspace_root": "/workspace"})
-    manager = OpenSandboxManager(client=client, state=_FakeState())
-    entered = asyncio.Event()
+    async with _projects(tmp_path) as (world, remote):
+        manager = await world.add()
+        declaration = manager.workspace("owner", workspace_key="project-a")
+        entered = asyncio.Event()
 
-    async def run() -> None:
-        async with manager.workspace("owner").prepare(_identity()):
-            entered.set()
-            if failure == "error":
-                raise ValueError("workspace use failed")
-            await asyncio.Event().wait()
+        async def run() -> None:
+            async with declaration.prepare(_identity()):
+                entered.set()
+                if failure == "error":
+                    raise ValueError("workspace use failed")
+                await asyncio.Event().wait()
 
-    async with manager:
-        task = asyncio.create_task(run())
+        task = world.spawn(run())
         await entered.wait()
         if failure == "cancel":
             task.cancel()
@@ -180,43 +195,31 @@ async def test_workspace_body_failure_releases_borrow_without_destroying_sandbox
             ValueError if failure == "error" else asyncio.CancelledError
         ):
             await task
-        assert client.destroy_calls == [] and client.close_calls == 0
-        assert (await manager.get("owner", namespace="company-a")).id == "sandbox-1"
-    assert client.close_calls == 1 and client.destroy_calls == []
+        assert not remote.live and not remote.network_live
+        assert remote.destroy_calls == []
+        assert next(iter(remote.records.values())).phase == "active"
 
 
-async def test_cancelled_preparation_releases_manager_operation() -> None:
-    client = _FakeClient()
-    client.config = client.config.model_copy(update={"workspace_root": "/workspace"})
-    client.create_gate = asyncio.Event()
-    manager = OpenSandboxManager(client=client, state=_FakeState())
+async def test_workspace_identity_validation_precedes_io(tmp_path: Path) -> None:
+    async with _projects(tmp_path) as (world, remote):
+        manager = await world.add()
+        with pytest.raises(ValueError, match="workspace_key"):
+            manager.workspace("owner", workspace_key="")
+        declaration = manager.workspace("owner", workspace_key="project-a")
+        with pytest.raises(TypeError, match="RunIdentity"):
+            async with declaration.prepare(cast(RunIdentity, None)):
+                pytest.fail("Invalid execution identities cannot prepare resources")
+        assert remote.created == 0
 
-    async def run() -> None:
-        async with manager.workspace("owner").prepare(_identity()):
-            pytest.fail("Cancelled preparation cannot enter the body")
-
-    async with manager:
-        task = asyncio.create_task(run())
-        await client.create_entered.wait()
-        task.cancel()
-        client.create_gate.set()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-    assert client.close_calls == 1
-
-
-async def test_workspace_and_resource_identity_validation_precede_io() -> None:
     client = _FakeClient()
     manager = OpenSandboxManager(client=client)
-    with pytest.raises(ValueError, match="workspace_root"):
-        manager.workspace("owner")
     for namespace in ["", " leading", "trailing ", "\ud800"]:
         with pytest.raises(ValueError):
             await manager.get("owner", namespace=namespace)
         with pytest.raises(ValueError):
             await manager.reconnect("owner", namespace=namespace)
     with pytest.raises(TypeError, match="key_resolver"):
-        await OpenSandboxManager[int](client=client).get(3)
+        OpenSandboxManager[int](client=client).workspace(3, workspace_key="project-a")
     assert client.create_calls == client.close_calls == 0
 
 

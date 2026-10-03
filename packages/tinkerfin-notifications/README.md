@@ -64,7 +64,9 @@ subscription acknowledgement. Disconnects and resubscriptions produce
 `ResyncRequired`; Pub/Sub cannot recover messages sent while disconnected.
 The service owns bounded transport waits and reports failed delivery through its
 diagnostics. Accepted hints can be lost without changing already-committed source
-state. Closing discards queued hints and waits for a send already in progress before
+state. A failed publication requires matching local listeners to resynchronize;
+remote listeners still rely on their own transport signals and repair reads.
+Closing discards queued hints and waits for a send already in progress before
 the host closes the borrowed client. Consumers must keep their authoritative repair reads.
 
 ## Documentation and license

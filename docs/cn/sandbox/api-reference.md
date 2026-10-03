@@ -19,13 +19,18 @@
 | `ready_timeout` | 5 分钟 | 等待新 Sandbox ready 的时限 |
 | `connect_timeout` | 30 秒 | 连接数据面的时限 |
 | `command_timeout` | 3600 秒 | 默认命令超时，必须大于等于 0 |
-| `workspace_root` | `/workspace` | 文件工具映射的受限根；`None` 表示不创建 rooted view |
+| `workspace_root` | `/workspace` | 原始命令 Sandbox 的文件工具根目录；`None` 表示不映射；隔离项目始终使用虚拟 `/` |
 | `health_command` | `printf ok` | 健康检查命令 |
-| `warm_pool_size` | `1` | 预热实例数，必须大于等于 0 |
+| `warm_pool_size` | `1` | 原始命令 Sandbox 的预热实例数，必须大于等于 0 |
 | `command_env` | `{}` | 每次 Shell 命令附加的环境变量 |
 | `enable_capture_offload` | `False` | 是否允许大输出写入文件 |
 
 默认镜像固定到 [TinkerFin Sandbox Runtime](https://github.com/tinkerfin-ai/sandbox-runtime) 的不可变摘要，包含 Playwright 和无界面 Chromium。镜像配置只影响随后创建的远端实例，重连不会更新已有实例的运行环境。
+
+隔离工作区需要配套的 TinkerFin
+[Server](https://github.com/tinkerfin-ai/sandbox-runtime/blob/main/opensandbox-server/README.md#deploy)
+和 [execd](https://github.com/tinkerfin-ai/sandbox-runtime/blob/main/opensandbox-execd/README.md#deploy)
+部署。框架负责运行准备、凭据、环境和清理。
 
 `ttl=None` 创建的实例没有自动到期时间，Manager 不会为其续期，但仍执行健康检查并遵守 State
 资源所有权规则。重连不会改变已有实例的到期时间。关闭和文件存储行为见[远端实例生存时间](lifecycle.md#远端实例生存时间)。
@@ -38,20 +43,26 @@
 | `config` | `None` | TinkerFin Sandbox 配置 |
 | `initializers` | `()` | 创建或连接完成后依次执行的幂等初始化函数 |
 
-Client 使用 OpenSandbox SDK 0.1.16 和官方 Server 0.2.3。下表方法均为异步方法；Client 接收
+Client 使用 OpenSandbox SDK 0.1.16 和 Server 0.2.3。下表方法均为异步方法；Client 接收
 远端实例 ID，Manager 接收应用 key。
 
 | 方法 | 行为 |
 | --- | --- |
-| `create(metadata=None)` | 创建并初始化 backend，把所有权交给调用方 |
-| `connect(sandbox_id)` | 连接并初始化已有实例 |
-| `inspect(sandbox_id)` | 通过临时连接读取详情和执行健康状态；详情不可读时返回不可用快照 |
+| `create(purpose="commands", metadata=None)` | 按选定用途创建并初始化 backend，把所有权交给调用方 |
+| `connect(sandbox_id, purpose="commands")` | 连接并核验用途后，初始化已有实例 |
+| `inspect(sandbox_id, purpose="commands")` | 核验用途后通过临时连接读取详情和执行健康状态；详情不可读时返回不可用快照 |
 | `get_runtime_info(sandbox_id)` | 只读控制面详情，不查询端点、不初始化、不检查健康或续期 |
 | `pause(sandbox_id)`、`resume(sandbox_id)` | 提交官方控制面状态变更；持有者协调和就绪检查由 Manager 负责 |
 | `get_diagnostic_logs(sandbox_id, scope="container")` | 读取供应商日志诊断 |
 | `get_diagnostic_events(sandbox_id, scope="runtime")` | 读取供应商事件诊断 |
 | `destroy(sandbox_id)` | 幂等销毁实例，并关闭临时连接 |
 | `aclose()` | 等待所属工作结束，只关闭由 Client 创建的 transport |
+
+`OpenSandboxPurpose` 为 `Literal["commands", "workspaces"]`，Client 将其写入保留的
+`tinkerfin.ai/purpose` 元数据。`commands` 保留供应商默认权限，`workspaces` 请求供应商提供的
+隔离能力。返回的父实例 backend 拥有整个实例的访问权限，只能用于可信生命周期代码。
+用途元数据缺失、未知或不匹配时，`connect()` 和 `inspect()` 会在初始化或执行命令前抛出
+`OpenSandboxPurposeError`。
 
 `get_runtime_info()` 读取失败时抛出 backend 错误。它的 `healthy=False` 表示未执行健康探测，
 不能据此判断探测失败。底层 pause/resume 不会连接或初始化 backend；普通暂停、恢复流程应使用 Manager。
@@ -69,12 +80,65 @@ Client 禁用 SDK 隐式的 transport 重试。显式设置的 `ConnectionConfig
 ## Manager
 
 `OpenSandboxManager` 的构造参数和操作见 [Sandbox 生命周期](lifecycle.md)。
-`workspace(key)` 返回供 `TinkerFin.build(backend=...)` 使用的惰性声明。
+`workspace(key, *, workspace_key, routes=None)` 返回 `SandboxWorkspace[KeyT]`，用于
+`TinkerFin.build(backend=...)`、应用文件访问和项目删除。`SandboxWorkspace` 从
+`tinkerfin_sandbox` 导出。
+
+| 参数 | 用途 |
+| --- | --- |
+| `key` | 物理 Sandbox 所有者；字符串可直接使用，自定义对象通过 Manager 的 `key_resolver` 解析 |
+| `workspace_key` | 必填的非空项目标识，在所有者内区分项目；作为不透明字符串使用，不是文件路径 |
+| `routes` | 可选的文件路径到借用 backend 的映射，仅用于 Runtime 文件工具 |
+
+```python
+from tinkerfin import TinkerFin
+
+project = sandboxes.workspace("users/7", workspace_key="project-a")
+runtime = (
+    TinkerFin().with_namespace("projects/project-a").build(model=model, backend=project)
+)
+
+async with project.open() as files:
+    await files.aupload_files([("/notes.txt", b"hello")])
+    result = await files.aexecute("cat notes.txt")
+
+await project.delete()
+```
+
+创建声明不执行 I/O。身份类型不正确时抛出 `TypeError`，值无效时抛出 `ValueError`。Runtime namespace
+限定逻辑持久化范围，不改变 Sandbox 所有者或项目。Manager 必须在全部工作区使用期间保持开启。
+
+`open()` 为一次隔离运行提供借用的 `RootedOpenSandboxBackend`。上下文退出时停止该次运行的进程和
+网络活动，包括异常和取消退出，同时保留项目文件、HOME、缓存和依赖环境。backend 只能在上下文内使用。
+同一项目的并发运行共享文件，写入不具备事务保证。
+
+`watch()` 返回异步上下文，为已存在且正在运行的项目提供
+`AsyncIterator[WorkspaceChange | ResyncRequired]`。
+`WorkspaceChange.FILES_CHANGED` 从 `tinkerfin_sandbox` 导出，`ResyncRequired` 复用
+`tinkerfin_notifications` 中的类型。结果是可合并的文件根变化提示，不是文件正文或操作日志；
+应先订阅再读取初始状态。资源不存在、暂停、删除中或不可用时抛出 `OpenSandboxError` 子类，
+不会隐式创建或恢复。已建立的订阅在源端不可用时给出断连重新同步提示并结束。
+关闭上下文会释放订阅资源，不会保持命令运行。观察范围见
+[订阅文件变化](rooted-filesystem.md#订阅文件变化)。
+
+`delete()` 停止所有工作进程中属于该项目的运行，删除其文件、HOME、缓存和依赖环境后返回 `None`，
+保留其他项目和物理 Sandbox。旧访问随之失效，重新打开时创建空项目；项目不存在时直接成功。
+无法确认运行已经终止时保留数据，并禁止新访问，直到删除成功。重试前需解决已报告的错误。
+取消会等待已接管的清理结束后再传播。
+
+Runtime 文件工具使用 `routes`；`open()` 和 Shell 命令只访问隔离项目。路由 backend 仍归调用方所有，
+不会挂载到 Shell，也不会被 `project.delete()` 删除。Runtime 自动调用工作区的 `prepare(identity)` 协议。
+
+工作区准入、准备和清理失败会抛出 `OpenSandboxError` 的子类。父 Sandbox 暂停后必须显式调用
+`resume(key)`，`open()` 不会自动恢复。`get()`、`reconnect()`、`recreate()` 和 `reset()` 用于原始
+命令 Sandbox；所有者已绑定隔离工作区时会抛出 `OpenSandboxPurposeError`。
 直接使用 Deep Agents 时，通过独立的 `build_rooted_filesystem_middleware(backend, ...)`
 配置工作区文件工具。
 
 `pause(key, timeout=30.0)` 在全部登记的持有者完成工作、且远端暂停已确认后返回 `None`。
-`resume(key, timeout=30.0)` 返回同一实例的可用 backend。两者的工作预算均以秒计，必须为正有限数值。
+`resume(key, timeout=30.0)` 在同一实例可用后返回 `None`。两者均保留绑定的命令或工作区用途，
+工作预算以秒计，必须为正有限数值。暂停、恢复和 `destroy(key)` 都影响所有者的整个 Sandbox，
+其中销毁还会删除所有项目数据。
 `get_diagnostic_logs(key, scope="container")` 和 `get_diagnostic_events(key, scope="runtime")`
 按范围读取诊断内容，不会唤醒实例。
 
@@ -101,7 +165,7 @@ Manager 通过 `observers=()` 和 `notification_options=None` 配置通知。事
 | --- | --- |
 | `OpenSandboxBackend` | 一条已连接的异步 OpenSandbox 数据面 |
 | `OpenSandboxHandle` | 在远端实例替换后仍保持身份稳定的借用 handle |
-| `RootedOpenSandboxBackend` | 把虚拟 `/` 映射到配置的 workspace root |
+| `RootedOpenSandboxBackend` | 把虚拟 `/` 映射到项目文件或原始命令 Sandbox 配置的根目录 |
 | `build_rooted_filesystem_middleware(...)` | 不使用 manager 时创建匹配的文件 middleware |
 
 如果自定义 client 需要直接创建这些对象：`OpenSandboxBackend` 接收原生 `sandbox`、`default_timeout=60`、可选 `command_env`、可选 `working_directory`、`health_command="printf ok"` 和 `enable_capture_offload=False`；`OpenSandboxHandle` 接收 backend；`RootedOpenSandboxBackend` 接收 handle 和 `root="/workspace"`。
@@ -114,7 +178,10 @@ Manager 通过 `observers=()` 和 `notification_options=None` 配置通知。事
 | 文件 | `aread`、`awrite`、`aedit`、`adelete`、`als`、`aglob`、`agrep` |
 | 传输 | `aupload_files`、`adownload_files` |
 | 大输出 | `aexecute_with_offload` |
-| 生命周期 | `arenew(timeout)`、`aget_runtime_info()`、`akill()`、`aclose()` |
+| 原始 backend 生命周期 | `arenew(timeout)`、`aget_runtime_info()`、`akill()`、`aclose()` |
+
+项目访问由 Runtime 或 `project.open()` 借出，不应自行关闭，也不能通过 backend 生命周期方法操作
+物理 Sandbox。整个 Sandbox 的生命周期操作应通过 Manager 和所有者 key 完成。
 
 `RootedOpenSandboxBackend.to_shell_path(file_path)` 把虚拟路径转换成相对于工作区根目录的 Shell 路径，供 `aexecute` 中的命令使用。
 
@@ -137,7 +204,7 @@ Manager 通过 `observers=()` 和 `notification_options=None` 配置通知。事
 
 | 类型 | 字段 |
 | --- | --- |
-| `OpenSandboxBinding` | `sandbox_id`、`generation` |
+| `OpenSandboxBinding` | `sandbox_id`、`generation`、必填 `purpose` |
 | `OpenSandboxOwnerClaim` | owner key、摘要、token、generation、可选 binding |
 | `OpenSandboxWarmClaim` | slot、token、generation |
 | `OpenSandboxReadyWarmClaim` | warm claim 字段和已发布 Sandbox ID |
@@ -202,6 +269,7 @@ Docker 支持 `container`/`all` 日志范围和 `runtime`/`all` 事件范围。�
 | `OpenSandboxStateError` | 状态层错误基类 |
 | `OpenSandboxStateOwnershipError` | claim 已过期、被替换或不属于当前 worker |
 | `OpenSandboxStateConfigurationError` | 状态配置、数据库或 schema 不支持 |
+| `OpenSandboxPurposeError` | 请求用途与绑定或远端保留的用途元数据不符，错误码为 `sandbox.purpose_mismatch` |
 | `OpenSandboxDestroyError` | 远端销毁未能可靠完成 |
 | `OpenSandboxInitializationError` | 工作区准备或初始化函数失败，不适用恢复重试 |
 | `OpenSandboxBackendUnavailableError` | 原实例恢复失败，或供应商拒绝访问 |
