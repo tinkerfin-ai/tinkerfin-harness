@@ -77,7 +77,7 @@ services:
     cpus: 0.5
     mem_limit: 512m
     profiles: [bundled, opensandbox]
-    image: opensandbox/server:v0.2.3@sha256:ae8dfbb277f40a39ff01ef35e5e1c10675acfe0fa9db15259b8f323e5efab778
+    image: ghcr.io/tinkerfin-ai/opensandbox-server:0.2.3-tinkerfin.1@sha256:238060e23a14ebd22e437b15100e8c939f6865de60075d2edd488977c24c1fda
     entrypoint: [/bin/sh, -ec]
     environment:
       OPENSANDBOX_SERVER_API_KEY: ${OPEN_SANDBOX_API_KEY:-}
@@ -123,7 +123,7 @@ configs:
 
       [runtime]
       type = "docker"
-      execd_image = "opensandbox/execd:v1.0.22"
+      execd_image = "ghcr.io/tinkerfin-ai/opensandbox-execd:1.0.22-tinkerfin.1@sha256:50fcc0386fb893e56eee047c87b3bae40ed2451629606feeaa605ab283df06ce"
 
       [storage]
       allowed_host_paths = []

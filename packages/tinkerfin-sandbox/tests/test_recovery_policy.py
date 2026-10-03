@@ -18,6 +18,7 @@ from tinkerfin_sandbox import (
     OpenSandboxBackendTimeoutError,
     OpenSandboxBackendUnavailableError,
     OpenSandboxInitializationError,
+    OpenSandboxPurpose,
     OpenSandboxRecoveryPolicy,
     OpenSandboxStateOwnershipError,
     UnexpectedOpenSandboxBackendError,
@@ -31,12 +32,14 @@ class _RecoveringClient(_FakeClient):
         self.connect_entered = asyncio.Event()
         self.connected["original"] = _FakeBackend("original")
 
-    async def connect(self, sandbox_id: str) -> OpenSandboxBackend:
+    async def connect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxBackend:
         self.connect_entered.set()
         if self.failures:
             self.connect_calls.append(sandbox_id)
             raise self.failures.pop(0)
-        return await super().connect(sandbox_id)
+        return await super().connect(sandbox_id, purpose=purpose)
 
 
 def _fast_policy(*, recreate: bool = False) -> OpenSandboxRecoveryPolicy:

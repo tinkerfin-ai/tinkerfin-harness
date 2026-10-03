@@ -8,8 +8,6 @@ from typing import Generic, Self, TypeVar
 
 from pydantic import JsonValue
 
-from tinkerfin_contracts.identity import validate_namespace
-
 from .facade import Automation
 from .handles import RunHandle, TaskHandle
 from .models import AttentionResolution, ExecutionStatus, TaskStatus
@@ -37,25 +35,17 @@ class AutomationOwner:
 
     _automation: Automation
     _owner_id: str
-    _execution_namespace: str
 
     def __init__(self) -> None:
         """Require Automation.for_owner() to bind an ownership scope."""
         raise TypeError("Use Automation.for_owner()")
 
     @classmethod
-    def _bind(
-        cls, automation: Automation, owner_id: str, execution_namespace: str | None
-    ) -> Self:
+    def _bind(cls, automation: Automation, owner_id: str) -> Self:
         automation._service._validate_owner(owner_id)
         owner = cls.__new__(cls)
         owner._automation = automation
         owner._owner_id = owner_id
-        owner._execution_namespace = validate_namespace(
-            automation._service.namespace
-            if execution_namespace is None
-            else execution_namespace
-        )
         return owner
 
     @property
@@ -67,11 +57,6 @@ class AutomationOwner:
     def owner_id(self) -> str:
         """Return the host identity bound to every operation on this view."""
         return self._owner_id
-
-    @property
-    def execution_namespace(self) -> str:
-        """Return the Runtime namespace selected for new tasks and taskless work."""
-        return self._execution_namespace
 
     async def create_task(
         self,
@@ -102,11 +87,15 @@ class AutomationOwner:
             AutomationLifecycleError: No active local worker manages schedules.
             InvalidScheduleError: The schedule has no future occurrence.
             RequestConflictError: The request key describes different input.
+            TargetNotFoundError: No local target or remote declaration selects new work.
+            TargetNamespaceError: The target cannot select an authorized execution space.
         """
         async with self._automation._operation(schedule_write=True):
-            snapshot = await self._automation._service.create_task(
+            snapshot = await self._automation._service._create_task(
                 owner_id=self.owner_id,
-                execution_namespace=self.execution_namespace,
+                execution_namespace=lambda: self._automation._execution_namespace(
+                    target, self.owner_id
+                ),
                 name=name,
                 target=target,
                 schedule=schedule,
@@ -162,13 +151,31 @@ class AutomationOwner:
         limits: ExecutionLimits | None = None,
         request_id: str | None = None,
     ) -> RunHandle:
-        """Submit immediate work without creating a task or waiting for its outcome."""
+        """Submit immediate work in the space selected by its registered target.
+
+        Args:
+            target: Local target or remote declaration registered before entry.
+            input: Secret-free input passed to the target.
+            limits: Optional limits shared by this owner's taskless work.
+            request_id: Stable key for repeating this exact submission.
+
+        Returns:
+            The new execution handle or the original committed command result.
+
+        Raises:
+            TargetNotFoundError: No declaration selects this target's execution space.
+            TargetNamespaceError: The target's namespace policy fails validation.
+            RequestConflictError: The request key describes different input.
+            QueueFullError: This owner's taskless queue is full.
+        """
         async with self._automation._operation():
             return RunHandle._from_snapshot(
                 self,
-                await self._automation._service.execute_once(
+                await self._automation._service._execute_once(
                     owner_id=self.owner_id,
-                    execution_namespace=self.execution_namespace,
+                    execution_namespace=lambda: self._automation._execution_namespace(
+                        target, self.owner_id
+                    ),
                     target=target,
                     input=input,
                     limits=limits,

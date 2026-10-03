@@ -2,7 +2,10 @@
 
 [Sandbox basics](index.md) · [中文](../../cn/sandbox/lifecycle.md)
 
-`OpenSandboxManager` keeps one stable handle for each business key. The same handle remains usable when its remote Sandbox reconnects or is replaced.
+`OpenSandboxManager` binds each owner key to a physical Sandbox. A
+`SandboxWorkspace` selects a project inside that Sandbox and borrows isolated access
+for each run. Raw command Sandboxes use stable handles that survive reconnection or
+replacement.
 
 ## Manager configuration
 
@@ -17,6 +20,7 @@ manager = OpenSandboxManager(
     recovery_policy=None,
     observers=(),
     notification_options=None,
+    notifications=None,
 )
 ```
 
@@ -31,21 +35,31 @@ manager = OpenSandboxManager(
 | `recovery_policy` | `None` | Existing-instance retries; defaults preserve the instance on failure |
 | `observers` | `()` | Borrowed asynchronous lifecycle observers |
 | `notification_options` | `None` | Per-observer pending capacity and callback timeout |
+| `notifications` | `None` | Project file hints; defaults to an owned process-local service, or borrows a supplied started `Notifications` |
 
 Warm-pool sizes are strict integers. Command and lifecycle timeouts are finite numeric
 values; booleans are rejected before State startup or task creation.
+
+For project file hints across workers, use shared State and pass each worker's started
+`Notifications` service backed by the same Redis channel. The manager owns its
+subscriptions, not the supplied service or Redis client. Keep them open until after
+manager close. Project subscriptions are exposed by `project.watch()`; application
+code does not assemble notification topics or file collectors.
 
 ## Common operations
 
 | Method | Behavior | Does the remote ID normally change? |
 | --- | --- | --- |
-| `get(key)` | Create an initial Sandbox or recover the existing binding | Only with explicit recreation policy |
-| `reconnect(key)` | Reconnect an existing binding; fail if none exists | No |
-| `recreate(key)` | Commit a replacement and retire the old instance | Yes |
-| `reset(key)` | Clear workspace-root contents | No |
-| `pause(key, timeout=30.0)` | Drain registered holders and confirm remote pause | No |
-| `resume(key, timeout=30.0)` | Resume and return a ready backend for the original instance | No |
-| `destroy(key)` | Destroy known instances and remove the binding | Binding is removed |
+| `workspace(key, workspace_key=...)` | Return a lazy project declaration | No I/O |
+| `project.open()` | Borrow isolated files and commands in an async context | Only with explicit recreation policy |
+| `project.delete()` | Stop that project's runs and delete all its data | No |
+| `get(key)` | Create or recover a raw command Sandbox | Only with explicit recreation policy |
+| `reconnect(key)` | Reconnect a raw command Sandbox; fail if none exists | No |
+| `recreate(key)` | Replace a raw command Sandbox and retire the old instance | Yes |
+| `reset(key)` | Clear a raw command Sandbox's configured file root | No |
+| `pause(key, timeout=30.0)` | Drain registered holders and pause the owner's entire Sandbox | No |
+| `resume(key, timeout=30.0)` | Return `None` after the original instance is resumed and ready | No |
+| `destroy(key)` | Destroy the owner's Sandbox, all its projects, and the binding | Binding is removed |
 | `delete(key)` | Alias for `destroy()` | Binding is removed |
 | `is_healthy(key)` | Probe the current instance | No |
 | `get_details(key)` | Return runtime and owner information | No |
@@ -54,32 +68,53 @@ values; booleans are rejected before State startup or task creation.
 | `check_ready()` | Raise unless configured warm capacity is verified | No |
 
 ```python
-backend = await manager.get(project_key)
+project = manager.workspace("users/7", workspace_key="project-a")
+async with project.open() as files:
+    await files.awrite("/notes.txt", "hello")
 
-details = await manager.get_details(project_key)
+await project.delete()
+details = await manager.get_details("users/7")
 ```
 
-Most requests only need `get()`. Recreating on every request defeats reuse and warm capacity.
+`project.delete()` stops that project's runs across workers before removing its files,
+HOME, caches, and dependencies. Other projects and the physical Sandbox remain intact.
+Old access becomes invalid; the next `open()` starts an empty project. Deleting an
+absent project succeeds without creating it. Runtime checkpoints, Store data, and
+separately routed backends are outside this deletion scope.
+
+If termination cannot be confirmed, deletion preserves project data and blocks new
+access until a retry succeeds. Resolve the reported availability or cleanup failure
+before retrying. Cancellation waits for owned deletion cleanup before propagating.
+
+`get()`, `reconnect()`, `recreate()`, and `reset()` only serve raw command Sandboxes.
+They raise `OpenSandboxPurposeError` for an owner bound to isolated workspaces. Use
+`project.open()` for project access and `project.delete()` for project removal.
 
 ## Pause and resume
 
 ```python
-backend = await manager.get(project_key)
-await manager.pause(project_key, timeout=30.0)
-backend = await manager.resume(project_key, timeout=30.0)
+await manager.pause("users/7", timeout=30.0)
+await manager.resume("users/7", timeout=30.0)
 ```
 
-`pause()` preserves the remote ID, files, and existing handles. It waits for work
-across managers sharing the same State to finish before pausing the instance.
+`pause()` affects every project in the owner's Sandbox and preserves its remote ID,
+files, and existing raw handles. It waits for work across managers sharing the same
+State to finish, including open project contexts, before pausing the instance.
 A lost worker or an unresolved remote operation can prevent pause from completing.
+After a lost control connection, project deletion may succeed while pause remains
+blocked by other remote work with an unknown outcome. Inspect diagnostics before
+deciding whether to destroy the entire Sandbox; automatic recovery cannot preserve
+all projects after every control failure.
 
 The default `timeout` is 30 seconds and must be finite and positive. Cleanup may
 extend the total wait. An unconfirmed remote result keeps access closed until the
 outcome can be established; do not assume that a timeout means the instance paused.
 
 Instances paused through the manager require explicit `resume()`; `get()`,
-`reconnect()`, and `reset()` do not wake them. Resume returns a ready backend for
-the original instance. Connection initializers run again, so they must be idempotent.
+`reconnect()`, `reset()`, and `project.open()` do not wake them. Pause and resume preserve the instance's
+command or workspace purpose and return `None`. Each manager refreshes its connection
+before existing handles accept work again. Connection initializers run again, so they
+must be idempotent.
 A failed connection refresh leaves the affected handle unavailable.
 
 Official OpenSandbox Server 0.2.3 uses Docker pause/unpause. `resume()` cannot start a
@@ -89,8 +124,8 @@ or extend the remote TTL; a paused instance with a finite lifetime can expire.
 ## Diagnostics
 
 ```python
-logs = await manager.get_diagnostic_logs(project_key, scope="container")
-events = await manager.get_diagnostic_events(project_key, scope="runtime")
+logs = await manager.get_diagnostic_logs("users/7", scope="container")
+events = await manager.get_diagnostic_events("users/7", scope="runtime")
 ```
 
 Both queries use the existing binding and the control plane. They do not create,
@@ -122,7 +157,9 @@ use `destroy(key)` when they are no longer needed.
 Use persistent State when bindings must survive a normal manager close. Default
 in-memory State still destroys owned instances at close. Manual cleanup does not
 persist or back up files: external deletion and storage failure can still lose
-them. Configure volumes and a backup policy for files that must survive instance loss.
+them. Isolated project data lasts only as long as the physical Sandbox; back up files
+that must survive instance loss. Project workspaces do not create persistent volumes
+or provide per-project storage quotas.
 
 ## Start and close
 
@@ -131,7 +168,9 @@ them. Configure volumes and a backup policy for files that must survive instance
 ```python
 await manager.start()
 try:
-    backend = await manager.get(key)
+    project = manager.workspace("users/7", workspace_key="project-a")
+    async with project.open() as files:
+        result = await files.aexecute("pwd")
 finally:
     await manager.aclose()
 ```
@@ -159,7 +198,7 @@ the initial check, with a 30-second work budget. Retry delays start at 0.5 secon
 each retry, and stop at 2 seconds. Exhaustion raises `OpenSandboxBackendUnavailableError`
 and preserves the instance and its binding. Confirmed absence skips futile retries.
 
-For disposable workspaces, opt into recreation:
+For Sandboxes whose entire contents can be discarded, opt into recreation:
 
 ```python
 from tinkerfin_sandbox import OpenSandboxManager, OpenSandboxRecoveryPolicy
@@ -186,9 +225,10 @@ still settling from the previous call. Blocking or cancellation-suppressing call
 cannot be forcibly stopped.
 
 Recreation commits a new instance and then retires the authoritative old instance;
-it does not copy files. Persistent State stores bindings, not container contents.
+it does not copy files, HOME, caches, or dependencies from any project. Persistent
+State stores bindings, not container contents.
 Preserving a binding cannot recover files already lost to external deletion or TTL
-expiry. Configure volumes or another storage policy when files must survive those events.
+expiry. Keep backups outside the Sandbox when files must survive those events.
 
 In-flight operations finish against the backend they acquired. The old instance is not closed underneath them, and replacement waits for safe retirement before returning.
 
@@ -220,10 +260,10 @@ manager = OpenSandboxManager(
 | `recovered` | The same instance is usable again |
 | `replaced` | A different instance is bound and its verified handle is published |
 | `recovery_failed` | Recovery or requested replacement failed; the operation still reports its error |
-| `workspace_reset` | An explicit reset finished clearing the configured workspace |
+| `workspace_reset` | An explicit reset finished clearing a raw command Sandbox's configured file root |
 | `destroyed` | Explicit destruction and binding removal completed |
 | `paused` | Explicit pause was confirmed for the bound instance |
-| `resumed` | Explicit resume returned a ready local handle for the same instance |
+| `resumed` | Explicit resume established a ready local connection for the same instance |
 | `warm_capacity_degraded` / `warm_capacity_restored` | Verified unbound capacity became unavailable or available |
 
 Events contain a unique `event_id`, `type`, host-resolved `owner_key`, UTC

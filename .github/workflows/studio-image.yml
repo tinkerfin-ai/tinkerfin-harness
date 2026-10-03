@@ -77,13 +77,12 @@ jobs:
             --env EXPECTED_VERSION studio-server:test python -c '
           import os
           from pathlib import Path
-          from tinkerfin_studio.__main__ import app
+          from tinkerfin_studio.__main__ import create_app
           from tinkerfin_studio.version import __version__
           assert os.getuid() == 10001
           assert __version__ == os.environ["EXPECTED_VERSION"]
           assert Path("/run/secrets/test").read_text() == "fixture-secret"
-          assert app.title
-          assert os.access("/app/attachments", os.W_OK)
+          assert create_app().title
           '
       - name: Export tested platform image
         if: startsWith(github.ref, 'refs/tags/studio-v')

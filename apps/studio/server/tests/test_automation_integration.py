@@ -86,8 +86,9 @@ async def automation_environment(
     workspace = _Workspace()
 
     class Sandboxes:
-        def workspace(self, key, *, routes):
+        def workspace(self, key, *, workspace_key, routes):
             assert key == "users/1"
+            assert workspace_key == "default"
             return workspace
 
     store = SqlAlchemyAutomationStore(components_database.engine)
@@ -116,7 +117,11 @@ async def automation_environment(
                     settings=SimpleNamespace(),
                 ),
             )
-            automation.target("studio_agent", StudioAutomationTarget(resources))
+            automation.target(
+                "studio_agent",
+                StudioAutomationTarget(resources),
+                execution_namespace=lambda owner_id: f"ns_{int(owner_id)}",
+            )
             async with automation.worker(
                 on_interrupt=fail_interactive_execution
             ) as worker:

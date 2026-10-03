@@ -15,7 +15,9 @@ from ..errors import (
     OpenSandboxStateOwnershipError,
     UnexpectedOpenSandboxBackendError,
 )
+from ..models import OpenSandboxPurpose
 from ._notifications import failure_reason
+from ._purpose import require_binding_purpose
 from .client import _connection_deadline
 from .notifications import OpenSandboxLifecycleReason
 from .state import OpenSandboxOwnerClaim
@@ -71,9 +73,11 @@ async def _connect_existing(
     sandbox_id: str,
     handle: OpenSandboxHandle | None,
     claim: OpenSandboxOwnerClaim,
+    *,
+    purpose: OpenSandboxPurpose,
 ) -> OpenSandboxHandle:
     """Publish a verified local connection without ever deleting a remote instance."""
-    backend = await self._client.connect(sandbox_id)
+    backend = await self._client.connect(sandbox_id, purpose=purpose)
     try:
         if backend.id != sandbox_id:
             raise OpenSandboxStateOwnershipError(
@@ -105,10 +109,12 @@ async def recover_binding(
     owner_key: str,
     claim: OpenSandboxOwnerClaim,
     *,
+    purpose: OpenSandboxPurpose,
     reconnect: bool = False,
     allow_recreate: bool = True,
 ) -> OpenSandboxHandle:
     """Bound retries to one authoritative ID and preserve it on uncertain failures."""
+    require_binding_purpose(claim.binding, purpose)
     binding = claim.binding
     if binding is None:
         raise OpenSandboxBackendUnavailableError(
@@ -139,6 +145,7 @@ async def recover_binding(
                         and not handle.is_closed
                         and handle.id == sandbox_id
                         and handle._accepts_calls()
+                        and self._availability.confirms_binding(owner_key, binding)
                     ):
                         await _check_health(self, handle)
                     else:
@@ -149,7 +156,7 @@ async def recover_binding(
                         self._notifications.recovery_started(owner_key, sandbox_id)
                         connecting = True
                         handle = await _connect_existing(
-                            self, owner_key, sandbox_id, handle, claim
+                            self, owner_key, sandbox_id, handle, claim, purpose=purpose
                         )
                         connecting = False
                     reason = None
@@ -214,7 +221,9 @@ async def recover_binding(
     if allow_recreate and not uncertain_connection and policy.on_failure == "recreate":
         self._notifications.recovering(owner_key, sandbox_id, failure_reason(failure))
         try:
-            return await self._replace(owner_key, claim, handle, old_id=sandbox_id)
+            return await self._replace(
+                owner_key, claim, handle, old_id=sandbox_id, purpose=purpose
+            )
         except Exception as error:
             self._notifications.failed(owner_key, sandbox_id, failure_reason(error))
             raise

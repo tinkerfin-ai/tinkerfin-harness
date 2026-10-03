@@ -59,6 +59,7 @@ from .errors import (
 from .errors import (
     TargetExecutionError as TargetExecutionError,
 )
+from .errors import TargetNamespaceError as TargetNamespaceError
 from .errors import (
     TargetNotFoundError as TargetNotFoundError,
 )
@@ -187,6 +188,7 @@ __all__ = [
     "SqlAlchemyAutomationStore",
     "StartAlreadyAuthorizedError",
     "TargetExecutionError",
+    "TargetNamespaceError",
     "TargetNotFoundError",
     "TaskConflictError",
     "TaskFilter",

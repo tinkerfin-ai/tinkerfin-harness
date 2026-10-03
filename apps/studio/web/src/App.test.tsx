@@ -53,6 +53,9 @@ function App() {
   )
 }
 
+const newChatButton = () => screen.getAllByRole('button', { name: '新会话' })
+  .find(button => button.getAttribute('aria-keyshortcuts') === 'Meta+K')!
+
 const THREAD_ID = 'thread-app'
 const RUN_ID = 'run-app'
 const BASE_TIME = '2026-08-28T00:00:00.000Z'
@@ -257,6 +260,41 @@ describe('Studio Trace history integration', () => {
     expect(screen.queryByRole('tablist', { name: '会话视图' })).not.toBeInTheDocument()
   })
 
+  it('每次进入新会话使用完全访问和默认模型', async () => {
+    const user = userEvent.setup()
+    const fetch = installFetch({ list: [], details: {} })
+    const originalFetch = fetch.getMockImplementation()!
+    fetch.mockImplementation((input, init) => {
+      const request = input instanceof Request ? input : new Request(new URL(String(input), window.location.origin), init)
+      if (new URL(request.url).pathname === '/api/models') return Promise.resolve(jsonResponse({
+        ...MODEL_CATALOG,
+        items: [...MODEL_CATALOG.items, {
+          modelId: 'other', displayName: 'Other Model', connectionId: 'test-provider',
+          connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: false,
+        }],
+      }))
+      return originalFetch(input, init)
+    })
+    render(<App />)
+
+    const access = await screen.findByRole('button', { name: '选择访问权限' })
+    const model = screen.getByRole('button', { name: '选择模型' })
+    await waitFor(() => expect(model).toBeEnabled())
+    expect(access).toHaveTextContent('完全访问')
+    expect(model).toHaveTextContent('Main Model')
+
+    await user.click(access)
+    await user.click(screen.getByRole('option', { name: '写入需审批' }))
+    await user.click(model)
+    await user.click(screen.getByRole('option', { name: 'Other Model' }))
+    expect(access).toHaveTextContent('写入需审批')
+    expect(model).toHaveTextContent('Other Model')
+
+    await user.click(newChatButton())
+    expect(access).toHaveTextContent('完全访问')
+    expect(model).toHaveTextContent('Main Model')
+  })
+
   it('停用已选技能后返回对话，权威列表核验期间不发包并保留草稿', async () => {
     let installed: InstalledSkill = { id: 'reports', name: 'reports', description: '整理报告', source_kind: 'zip',
       source_id: null, source_name: 'ZIP', external_id: null, enabled: true, author: null, topics: [],
@@ -389,7 +427,7 @@ describe('Studio Trace history integration', () => {
       })
       await waitFor(() => expect(new URL(window.location.href).searchParams.get('thread')).toBe('thread-a'))
       }
-      await user.click(screen.getByText('新会话', { exact: true }))
+      await user.click(newChatButton())
       await user.type(input, '会话B{Enter}')
       await waitFor(() => expect(requests).toHaveLength(2))
       const second = requests[1]!
@@ -451,7 +489,7 @@ describe('Studio Trace history integration', () => {
     const view = render(<App />)
     try {
       await screen.findByText('来自 Trace 的历史回复')
-      await user.click(screen.getByText('新会话', { exact: true }))
+      await user.click(newChatButton())
       await user.type(screen.getByRole('textbox', { name: '消息输入' }), '后台会话{Enter}')
       await waitFor(() => expect(submitted).toBeDefined())
       const running = traceDetail({
@@ -514,7 +552,7 @@ describe('Studio Trace history integration', () => {
     const { unmount } = render(<App />)
     try {
       await screen.findByText('来自 Trace 的历史回复')
-      await user.click(screen.getByText('新会话', { exact: true }))
+      await user.click(newChatButton())
       const input = screen.getByRole('textbox', { name: '消息输入' })
       await user.type(input, '新草稿{Enter}')
       await waitFor(() => expect(submitted).toBeDefined())
@@ -798,7 +836,7 @@ describe('Studio Trace history integration', () => {
 
     expect(await screen.findByText('第二个会话的聊天内容')).toBeVisible()
     expect(screen.getByRole('tab', { name: '对话' })).toHaveAttribute('aria-selected', 'true')
-    await user.click(screen.getByText('新会话', { exact: true }))
+    await user.click(newChatButton())
     expect(screen.queryByRole('tablist', { name: '会话视图' })).not.toBeInTheDocument()
   })
 

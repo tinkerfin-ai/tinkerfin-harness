@@ -57,11 +57,11 @@ async def test_mysql_all_holders_acknowledge_while_pause_claim_is_held(
     await observer.start(warm_pool_size=0)
     claim = await owner.acquire_owner("owner")
     try:
-        await owner.bind_owner(claim, "sandbox")
+        await owner.bind_owner(claim, "sandbox", purpose="commands")
         running = await owner.register_holder(claim, "manager-a")
         await observer.register_holder(claim, "manager-b")
         draining = await owner.change_availability(claim, running, phase="draining")
-        await owner.bind_owner(claim, "sandbox")
+        await owner.bind_owner(claim, "sandbox", purpose="commands")
         assert await observer.read_availability("owner") == draining
         with pytest.raises(OpenSandboxStateOwnershipError):
             await observer.register_holder(claim, "late-manager")
@@ -95,7 +95,7 @@ async def test_mysql_stale_intents_and_binding_releases_cannot_affect_successors
     claim = await first.acquire_owner("owner")
     current_claim = claim
     try:
-        await first.bind_owner(claim, "same-id")
+        await first.bind_owner(claim, "same-id", purpose="commands")
         running = await first.register_holder(claim, "manager")
         old_drain = await first.change_availability(claim, running, phase="draining")
         assert await second.acknowledge_idle("manager", old_drain)
@@ -113,7 +113,7 @@ async def test_mysql_stale_intents_and_binding_releases_cannot_affect_successors
             )
         await first.release_owner(claim)
         current_claim = await second.acquire_owner("owner")
-        await second.bind_owner(current_claim, "same-id")
+        await second.bind_owner(current_claim, "same-id", purpose="commands")
         current = await second.register_holder(current_claim, "manager")
         assert current.binding_generation != running.binding_generation
         await first.unregister_holder("manager", running)
@@ -161,7 +161,7 @@ async def test_mysql_registration_and_drain_are_atomic_across_states(
         for index in range(4):
             claim = await first.acquire_owner(f"owner-{index}")
             try:
-                await first.bind_owner(claim, f"sandbox-{index}")
+                await first.bind_owner(claim, f"sandbox-{index}", purpose="commands")
                 running = await first.read_availability(f"owner-{index}")
                 assert running is not None
                 register = second.register_holder(claim, f"manager-{index}")
@@ -192,7 +192,7 @@ async def test_mysql_reopen_retains_unconfirmed_holders_after_worker_closes(
     await first.start(warm_pool_size=0)
     claim = await first.acquire_owner("owner")
     try:
-        await first.bind_owner(claim, "sandbox")
+        await first.bind_owner(claim, "sandbox", purpose="commands")
         running = await first.register_holder(claim, "lost-manager")
     finally:
         await first.release_owner(claim)
@@ -234,7 +234,7 @@ async def test_mysql_binding_warm_consumption_and_unbinding_are_atomic(
                 "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'availability unavailable'"
             )
         with pytest.raises(OpenSandboxStateError):
-            await state.bind_owner(claim, "sandbox")
+            await state.bind_owner(claim, "sandbox", purpose="commands")
         assert await state.read_binding("owner") is None
         with pytest.raises(OpenSandboxStateError):
             await state.consume_warm(claim)
@@ -270,7 +270,7 @@ async def test_mysql_expired_owner_claim_cannot_dispatch_or_cancel(
     await state.start(warm_pool_size=0)
     claim = await state.acquire_owner("owner")
     try:
-        await state.bind_owner(claim, "sandbox")
+        await state.bind_owner(claim, "sandbox", purpose="commands")
         running = await state.read_availability("owner")
         assert running is not None
         draining = await state.change_availability(claim, running, phase="draining")
@@ -306,8 +306,12 @@ async def test_mysql_distinct_owners_publish_availability_concurrently(
             second_claim = await second.acquire_owner(f"second-{index}")
             try:
                 bindings = await asyncio.gather(
-                    first.bind_owner(first_claim, f"first-sandbox-{index}"),
-                    second.bind_owner(second_claim, f"second-sandbox-{index}"),
+                    first.bind_owner(
+                        first_claim, f"first-sandbox-{index}", purpose="commands"
+                    ),
+                    second.bind_owner(
+                        second_claim, f"second-sandbox-{index}", purpose="commands"
+                    ),
                 )
                 assert bindings[0].sandbox_id == f"first-sandbox-{index}"
                 assert bindings[1].sandbox_id == f"second-sandbox-{index}"
@@ -340,8 +344,8 @@ async def test_mysql_namespaces_keep_holder_registration_and_drain_independent(
     first_claim = await first.acquire_owner("same-owner")
     second_claim = await second.acquire_owner("same-owner")
     try:
-        await first.bind_owner(first_claim, "same-sandbox-id")
-        await second.bind_owner(second_claim, "same-sandbox-id")
+        await first.bind_owner(first_claim, "same-sandbox-id", purpose="commands")
+        await second.bind_owner(second_claim, "same-sandbox-id", purpose="commands")
         first_running = await first.register_holder(first_claim, "same-manager")
         second_running = await second.register_holder(second_claim, "same-manager")
         draining = await first.change_availability(

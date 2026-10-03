@@ -1005,7 +1005,8 @@ test('新会话点击后在浅深主题和四个视口都不显示品牌蓝选�
       await expect(newChat).toBeVisible()
       await expect(newChat).not.toHaveAttribute('title')
       await newChat.hover()
-      await expect(page.getByRole('tooltip', { name: '新会话' })).toHaveCount(0)
+      if (width === 768) await expect(page.getByRole('tooltip', { name: '新会话' })).toBeVisible()
+      else await expect(page.getByRole('tooltip', { name: '新会话' })).toHaveCount(0)
       const logo = page.locator('.sidebar-wide .brand')
       if (colorScheme === 'light' && width === 1024) await logo.click()
       else await newChat.click()
@@ -1044,6 +1045,18 @@ test('折叠侧栏 tooltip 与 Rail 外边界保持稳定间距', async ({ page 
       await expect(shell).toHaveAttribute('data-sidebar-mode', 'rail')
       await searchButton.hover()
       await expect(tooltip).toBeVisible()
+
+      if (width === 768) {
+        const labels = ['打开侧边栏', '搜索会话', '记忆管理', '新会话', '技能库', '自动化']
+        const controls = rail.locator(':scope > .ui-icon-button-wrap')
+        expect(await controls.locator('button').evaluateAll(buttons => buttons.slice(0, 6).map(button => button.getAttribute('aria-label')))).toEqual(labels)
+        for (const label of labels) {
+          const button = rail.getByRole('button', { name: label, exact: true })
+          await button.locator('xpath=..').hover()
+          await expect(button.locator('xpath=..').getByRole('tooltip', { name: label })).toBeVisible()
+        }
+        await searchButton.hover()
+      }
 
       const railBounds = await rail.boundingBox()
       const buttonBounds = await searchButton.boundingBox()
@@ -1117,7 +1130,7 @@ test('侧栏切换控件共享纵向锚点且 tooltip 避开相邻操作区', as
   const rail = page.locator('.sidebar-rail')
   const expandButton = rail.getByRole('button', { name: '打开侧边栏' })
   const expandTooltip = rail.getByRole('tooltip').filter({ hasText: '打开侧边栏' })
-  const nextRailButton = rail.getByRole('button', { name: '新会话' })
+  const nextRailButton = rail.getByRole('button', { name: '搜索会话' })
   await expect.poll(async () => (await rail.boundingBox())?.x).toBe(0)
   const expandBounds = await expandButton.boundingBox()
   const railBounds = await rail.boundingBox()

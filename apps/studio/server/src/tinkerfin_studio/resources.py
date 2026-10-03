@@ -419,6 +419,7 @@ def build_lifespan():
                         ),
                         warm_pool_size=sandbox_settings.warm_pool_size,
                         fail_on_startup_warmup_error=True,
+                        notifications=notifications,
                         # 已确认的沙箱与预热容量变化复用应用日志输出
                         observers=(SandboxEventLogger(),),
                     ),
@@ -519,7 +520,12 @@ def build_lifespan():
                         http_client=http_client,
                     ),
                 )
-                automation.target("studio_agent", StudioAutomationTarget(resources))
+                # 自动化沿用当前用户的会话资源范围，任务提交后由框架保存并校验
+                automation.target(
+                    "studio_agent",
+                    StudioAutomationTarget(resources),
+                    execution_namespace=lambda owner_id: f"ns_{int(owner_id)}",
+                )
                 automation_worker = await _enter_lifespan_context(
                     stack,
                     outcome,

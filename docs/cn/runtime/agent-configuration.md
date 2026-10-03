@@ -116,22 +116,27 @@ backend 支持命令执行时，Plan 可以运行分析脚本；需要审批的�
 一次运行需要 Sandbox 或其他待准备文件系统时，把 `Workspace` 声明传给 backend：
 
 ```python
+project = sandboxes.workspace("users/7", workspace_key="project-a")
 runtime = (
     TinkerFin()
-    .with_namespace(namespace)
+    .with_namespace("projects/project-a")
     .build(
         model=model,
-        backend=sandboxes.workspace(workspace_key),
+        backend=project,
     )
 )
 ```
 
-应用自行决定 `workspace_key`，可以按用户、session 或项目划分。Runtime 将自己的 namespace 与该 key 组合，只为已准入的运行准备 workspace，并在清理时释放本次运行的句柄。
+Sandbox 工作区的首个 key 选择物理所有者，`workspace_key` 选择其中的项目。Runtime `namespace`
+限定逻辑持久化范围，不改变这两个选择。每次已准入的运行都有独立进程和网络，清理时停止它们，并保留
+项目文件、HOME、缓存和依赖环境。运行外通过 `async with project.open() as files` 访问项目；
+`await project.delete()` 只停止并删除该项目。部署和所有权要求见 [Sandbox 指南](../sandbox/index.md)。
 
 工具在执行前定义，通过参数注解取得本次运行信息：
 
 ```python
 from langchain_core.tools import tool
+
 from tinkerfin.tools import ToolRuntime
 from tinkerfin_sandbox import RootedOpenSandboxBackend
 
@@ -145,11 +150,11 @@ async def read_report(runtime: ToolRuntime[None, RootedOpenSandboxBackend]) -> s
 
 runtime = (
     TinkerFin()
-    .with_namespace(namespace)
+    .with_namespace("projects/project-a")
     .build(
         model=model,
         tools=[read_report],
-        backend=sandboxes.workspace(workspace_key),
+        backend=project,
     )
 )
 ```

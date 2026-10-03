@@ -7,7 +7,7 @@ import json
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from datetime import datetime, timedelta
-from typing import TypeAlias
+from typing import TypeAlias, TypeVar
 from uuid import uuid4
 
 from pydantic import JsonValue, TypeAdapter
@@ -19,9 +19,12 @@ from .clock import AutomationClock, SystemClock
 from .errors import (
     AutomationError,
     AutomationLifecycleError,
+    AutomationStoreProtocolError,
     InvalidScheduleError,
     QueueFullError,
+    RequestConflictError,
     RetryNotAllowedError,
+    TargetNamespaceError,
     TaskNotFoundError,
 )
 from .identity import canonical_digest, execution_identity, occurrence_key
@@ -46,11 +49,12 @@ from .schedules import (
     next_run_after,
     preview_schedule,
 )
-from .store import AutomationStore, ScheduledExecution
+from .store import AutomationStore, CommandReceipt, ScheduledExecution
 
 _CancelRunning: TypeAlias = Callable[[str], Awaitable[None]]
 _WakeWorker: TypeAlias = Callable[[], None]
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
+_ReceiptResult = TypeVar("_ReceiptResult", AutomationTask, AutomationExecution)
 
 
 class AutomationService:
@@ -100,11 +104,58 @@ class AutomationService:
         name: str,
         schedule: ScheduleSpec,
         target: str,
+        execution_namespace: str,
         input: Mapping[str, JsonValue] | None = None,
         misfire_policy: MisfirePolicy | None = None,
         limits: ExecutionLimits | None = None,
         request_id: str | None = None,
-        execution_namespace: str | None = None,
+    ) -> AutomationTask:
+        """Save a task with an explicit, host-authorized execution space.
+
+        Args:
+            owner_id: Authenticated task owner.
+            name: User-visible task name.
+            schedule: Schedule with explicit time anchors.
+            target: Host-authorized execution target name.
+            execution_namespace: Space selected by the host for every occurrence.
+                Use Automation.target() to derive it from a Runtime instead.
+            input: Secret-free target input.
+            misfire_policy: Optional missed-occurrence policy.
+            limits: Optional execution and queue limits.
+            request_id: Stable command key, reused only with identical input.
+
+        Returns:
+            The saved task or the original result of this command.
+
+        Raises:
+            InvalidScheduleError: A new task has no future occurrence.
+            RequestConflictError: A request key identifies different input.
+        """
+        validate_namespace(execution_namespace)
+        return await self._create_task(
+            owner_id=owner_id,
+            name=name,
+            schedule=schedule,
+            target=target,
+            execution_namespace=execution_namespace,
+            input=input,
+            misfire_policy=misfire_policy,
+            limits=limits,
+            request_id=request_id,
+        )
+
+    async def _create_task(
+        self,
+        *,
+        owner_id: str,
+        name: str,
+        schedule: ScheduleSpec,
+        target: str,
+        input: Mapping[str, JsonValue] | None = None,
+        misfire_policy: MisfirePolicy | None = None,
+        limits: ExecutionLimits | None = None,
+        request_id: str | None = None,
+        execution_namespace: str | Callable[[], str],
     ) -> AutomationTask:
         """Create an enabled task and schedule its first future wakeup.
 
@@ -117,8 +168,7 @@ class AutomationService:
             misfire_policy: Optional missed-wakeup behavior.
             limits: Optional queue and execution limits.
             request_id: Optional command idempotency key.
-            execution_namespace: Host-selected Runtime scope for every occurrence;
-                None selects this service's scheduling namespace.
+            execution_namespace: Explicit command space or the target's lazy policy.
 
         Returns:
             The persisted task definition.
@@ -134,8 +184,46 @@ class AutomationService:
         self._validate_identifier(target, name="target", maximum=191)
         self._validate_request_id(request_id)
         normalized_input = self._json_input(input)
+        selected_misfire = misfire_policy or MisfirePolicy()
+        selected_limits = limits or ExecutionLimits()
+
+        def digest_for(space: str) -> str:
+            return canonical_digest(
+                {
+                    "operation": "create_task",
+                    "execution_namespace": space,
+                    "owner_id": owner_id,
+                    "name": name,
+                    "target": target,
+                    "input": normalized_input,
+                    "schedule": schedule,
+                    "misfire_policy": self._misfire_json(selected_misfire),
+                    "limits": self._limits_json(selected_limits),
+                }
+            )
+
+        def replay(receipt: CommandReceipt) -> AutomationTask:
+            return self._receipt_result(
+                receipt,
+                owner_id=owner_id,
+                expected=AutomationTask,
+                digest=lambda saved: digest_for(
+                    execution_namespace
+                    if isinstance(execution_namespace, str)
+                    else saved.execution_namespace
+                ),
+            )
+
+        # A target's current configuration is not part of a repeated caller
+        # command. Recover its original space before resolving any new policy.
+        if receipt := await self._command_receipt(owner_id, request_id):
+            created = replay(receipt)
+            await self._sync_task_id(created.task_id)
+            return created
         selected_namespace = validate_namespace(
-            self._namespace if execution_namespace is None else execution_namespace
+            execution_namespace
+            if isinstance(execution_namespace, str)
+            else execution_namespace()
         )
         now = await self._store.current_time()
         next_run_at = next_run_after(schedule, now)
@@ -153,30 +241,23 @@ class AutomationService:
             status=TaskStatus.ENABLED,
             revision=1,
             next_run_at=next_run_at,
-            misfire_policy=misfire_policy or MisfirePolicy(),
-            limits=limits or ExecutionLimits(),
+            misfire_policy=selected_misfire,
+            limits=selected_limits,
             created_at=now,
             updated_at=now,
         )
-        selected_misfire = task.misfire_policy
-        selected_limits = task.limits
-        digest = canonical_digest(
-            {
-                "operation": "create_task",
-                "execution_namespace": selected_namespace,
-                "owner_id": owner_id,
-                "name": name,
-                "target": target,
-                "input": normalized_input,
-                "schedule": schedule,
-                "misfire_policy": self._misfire_json(selected_misfire),
-                "limits": self._limits_json(selected_limits),
-            }
-        )
-        created = await self._store.create_task(
-            task, request_id=request_id, input_digest=digest
-        )
-        await self._sync_task(created)
+        try:
+            created = await self._store.create_task(
+                task, request_id=request_id, input_digest=digest_for(selected_namespace)
+            )
+        except RequestConflictError:
+            # A concurrent first submit can commit a different policy selection.
+            # The winner's receipt, not another execution or a retry, settles intent.
+            receipt = await self._command_receipt(owner_id, request_id)
+            if receipt is None:
+                raise
+            created = replay(receipt)
+        await self._sync_task_id(created.task_id)
         return created
 
     async def get_task(self, *, owner_id: str, task_id: str) -> AutomationTask:
@@ -261,6 +342,62 @@ class AutomationService:
         name: str | None = None,
         schedule: ScheduleSpec | None = None,
         target: str | None = None,
+        target_namespace: str | None = None,
+        input: Mapping[str, JsonValue] | None = None,
+        misfire_policy: MisfirePolicy | None = None,
+        limits: ExecutionLimits | None = None,
+        request_id: str | None = None,
+    ) -> AutomationTask:
+        """Update a task while preserving its saved execution space.
+
+        Args:
+            owner_id: Authenticated task owner.
+            task_id: Saved task to update.
+            expected_revision: Revision originally observed by the caller.
+            name: Replacement name, or None to preserve it.
+            schedule: Replacement schedule, or None to preserve it.
+            target: Replacement authorized target, or None to preserve it.
+            target_namespace: Required for a different target; must match the saved
+                space. Automation handles obtain this fact from target registration.
+            input: Replacement input; None preserves it and an empty mapping clears it.
+            misfire_policy: Replacement missed-occurrence policy.
+            limits: Replacement execution limits.
+            request_id: Stable command key bound to the original revision and input.
+
+        Returns:
+            The updated task or the original committed command result.
+
+        Raises:
+            TaskConflictError: The revision is no longer current.
+            TargetNamespaceError: The new target cannot preserve the saved space.
+            RequestConflictError: The request key describes different input.
+        """
+        if target_namespace is not None:
+            validate_namespace(target_namespace)
+        return await self._update_task(
+            owner_id=owner_id,
+            task_id=task_id,
+            expected_revision=expected_revision,
+            name=name,
+            schedule=schedule,
+            target=target,
+            target_namespace=target_namespace,
+            input=input,
+            misfire_policy=misfire_policy,
+            limits=limits,
+            request_id=request_id,
+        )
+
+    async def _update_task(
+        self,
+        *,
+        owner_id: str,
+        task_id: str,
+        expected_revision: int,
+        name: str | None = None,
+        schedule: ScheduleSpec | None = None,
+        target: str | None = None,
+        target_namespace: str | Callable[[str], str] | None = None,
         input: Mapping[str, JsonValue] | None = None,
         misfire_policy: MisfirePolicy | None = None,
         limits: ExecutionLimits | None = None,
@@ -271,13 +408,62 @@ class AutomationService:
         await self._setup_store()
         self._validate_owner(owner_id)
         self._validate_request_id(request_id)
+        normalized_input = None if input is None else self._json_input(input)
+
+        def digest_for(base: AutomationTask) -> str:
+            return canonical_digest(
+                {
+                    "operation": "update_task",
+                    "task_id": task_id,
+                    "expected_revision": expected_revision,
+                    "name": base.name if name is None else name,
+                    "target": base.target if target is None else target,
+                    "input": base.input
+                    if normalized_input is None
+                    else normalized_input,
+                    "schedule": base.schedule if schedule is None else schedule,
+                    "misfire_policy": self._misfire_json(
+                        misfire_policy or base.misfire_policy
+                    ),
+                    "limits": self._limits_json(limits or base.limits),
+                }
+            )
+
+        def replay(receipt: CommandReceipt) -> AutomationTask:
+            result = self._receipt_result(
+                receipt, owner_id=owner_id, expected=AutomationTask, digest=digest_for
+            )
+            if (
+                isinstance(target_namespace, str)
+                and target_namespace != result.execution_namespace
+            ):
+                raise TargetNamespaceError(
+                    "Target must preserve the task's execution namespace"
+                )
+            return result
+
+        if receipt := await self._command_receipt(owner_id, request_id):
+            stored = replay(receipt)
+            await self._sync_task_id(stored.task_id)
+            return stored
         current = await self.get_task(owner_id=owner_id, task_id=task_id)
         next_name = current.name if name is None else name
         next_target = current.target if target is None else target
-        next_input = current.input if input is None else self._json_input(input)
+        next_input = current.input if normalized_input is None else normalized_input
         next_schedule = current.schedule if schedule is None else schedule
         self._validate_name(next_name)
         self._validate_identifier(next_target, name="target", maximum=191)
+        if next_target != current.target:
+            space = (
+                target_namespace(next_target)
+                if callable(target_namespace)
+                else target_namespace
+            )
+            if space != current.execution_namespace:
+                raise TargetNamespaceError(
+                    "Target must preserve the task's execution namespace",
+                    context={"target": next_target},
+                )
         now = await self._store.current_time()
         if current.status is TaskStatus.ENABLED and schedule is not None:
             next_run_at = next_run_after(next_schedule, now)
@@ -297,26 +483,19 @@ class AutomationService:
             limits=limits or current.limits,
             updated_at=now,
         )
-        digest = canonical_digest(
-            {
-                "operation": "update_task",
-                "task_id": task_id,
-                "expected_revision": expected_revision,
-                "name": next_name,
-                "target": next_target,
-                "input": next_input,
-                "schedule": next_schedule,
-                "misfire_policy": self._misfire_json(updated.misfire_policy),
-                "limits": self._limits_json(updated.limits),
-            }
-        )
-        stored = await self._store.update_task(
-            updated,
-            expected_revision=expected_revision,
-            request_id=request_id,
-            input_digest=digest,
-        )
-        await self._sync_task(stored)
+        try:
+            stored = await self._store.update_task(
+                updated,
+                expected_revision=expected_revision,
+                request_id=request_id,
+                input_digest=digest_for(current),
+            )
+        except RequestConflictError:
+            receipt = await self._command_receipt(owner_id, request_id)
+            if receipt is None:
+                raise
+            stored = replay(receipt)
+        await self._sync_task_id(stored.task_id)
         return stored
 
     async def pause_task(
@@ -443,10 +622,48 @@ class AutomationService:
         *,
         owner_id: str,
         target: str,
+        execution_namespace: str,
         input: Mapping[str, JsonValue] | None = None,
         limits: ExecutionLimits | None = None,
         request_id: str | None = None,
-        execution_namespace: str | None = None,
+    ) -> AutomationExecution:
+        """Submit immediate work with an explicit, authorized execution space.
+
+        Args:
+            owner_id: Authenticated execution owner.
+            target: Authorized target name.
+            execution_namespace: Host-selected space; Automation.target() supplies
+                this automatically for registered Runtime targets.
+            input: Secret-free target input.
+            limits: Optional owner-scoped queue and execution limits.
+            request_id: Stable key for this exact command.
+
+        Returns:
+            The queued execution or the original committed command result.
+
+        Raises:
+            QueueFullError: The owner's taskless queue is full.
+            RequestConflictError: The request key identifies different input.
+        """
+        validate_namespace(execution_namespace)
+        return await self._execute_once(
+            owner_id=owner_id,
+            target=target,
+            execution_namespace=execution_namespace,
+            input=input,
+            limits=limits,
+            request_id=request_id,
+        )
+
+    async def _execute_once(
+        self,
+        *,
+        owner_id: str,
+        target: str,
+        input: Mapping[str, JsonValue] | None = None,
+        limits: ExecutionLimits | None = None,
+        request_id: str | None = None,
+        execution_namespace: str | Callable[[], str],
     ) -> AutomationExecution:
         """Queue one immediate execution without creating a task definition.
 
@@ -459,8 +676,7 @@ class AutomationService:
             input: JSON input to persist for the target; omit credentials and secrets.
             limits: Optional owner-scoped queue and execution limits.
             request_id: Optional command idempotency key.
-            execution_namespace: Host-selected Runtime scope for this attempt;
-                None selects this service's scheduling namespace.
+            execution_namespace: Explicit command space or the target's lazy policy.
 
         Returns:
             The persisted queued execution without a task identity.
@@ -477,8 +693,36 @@ class AutomationService:
         self._validate_request_id(request_id)
         normalized_input = self._json_input(input)
         selected_limits = limits or ExecutionLimits()
+
+        def digest_for(space: str) -> str:
+            return canonical_digest(
+                {
+                    "operation": "execute_once",
+                    "execution_namespace": space,
+                    "target": target,
+                    "input": normalized_input,
+                    "limits": self._limits_json(selected_limits),
+                }
+            )
+
+        def replay(receipt: CommandReceipt) -> AutomationExecution:
+            return self._receipt_result(
+                receipt,
+                owner_id=owner_id,
+                expected=AutomationExecution,
+                digest=lambda saved: digest_for(
+                    execution_namespace
+                    if isinstance(execution_namespace, str)
+                    else saved.identity.namespace
+                ),
+            )
+
+        if receipt := await self._command_receipt(owner_id, request_id):
+            return replay(receipt)
         selected_namespace = validate_namespace(
-            self._namespace if execution_namespace is None else execution_namespace
+            execution_namespace
+            if isinstance(execution_namespace, str)
+            else execution_namespace()
         )
         now = await self._store.current_time()
         request_part = request_id or str(uuid4())
@@ -521,21 +765,18 @@ class AutomationService:
             created_at=now,
             updated_at=now,
         )
-        digest = canonical_digest(
-            {
-                "operation": "execute_once",
-                "execution_namespace": selected_namespace,
-                "target": target,
-                "input": normalized_input,
-                "limits": self._limits_json(selected_limits),
-            }
-        )
-        queued = await self._store.enqueue_execution(
-            execution,
-            occurrence_key=occurrence,
-            request_id=request_id,
-            input_digest=digest,
-        )
+        try:
+            queued = await self._store.enqueue_execution(
+                execution,
+                occurrence_key=occurrence,
+                request_id=request_id,
+                input_digest=digest_for(selected_namespace),
+            )
+        except RequestConflictError:
+            receipt = await self._command_receipt(owner_id, request_id)
+            if receipt is None:
+                raise
+            queued = replay(receipt)
         self._notify_work_available()
         return queued
 
@@ -951,6 +1192,34 @@ class AutomationService:
         self._ensure_open()
         await self._store.setup()
         self._ensure_open()
+
+    async def _command_receipt(
+        self, owner_id: str, request_id: str | None
+    ) -> CommandReceipt | None:
+        if request_id is None:
+            return None
+        return await self._store.get_command_receipt(
+            self._namespace, owner_id, request_id
+        )
+
+    def _receipt_result(
+        self,
+        receipt: CommandReceipt,
+        *,
+        owner_id: str,
+        expected: type[_ReceiptResult],
+        digest: Callable[[_ReceiptResult], str],
+    ) -> _ReceiptResult:
+        result = receipt.result
+        if not isinstance(result, expected):
+            raise RequestConflictError("Request ID belongs to another command")
+        if (result.namespace, result.owner_id) != (self._namespace, owner_id):
+            raise AutomationStoreProtocolError(
+                "Command receipt belongs to another owner"
+            )
+        if receipt.input_digest != digest(result):
+            raise RequestConflictError("Request ID was reused with different input")
+        return result
 
     def _bind_engine(
         self, cancel_running: _CancelRunning, wake_worker: _WakeWorker

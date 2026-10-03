@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     Column,
     DateTime,
     Index,
@@ -68,6 +69,12 @@ _owners = Table(
         comment="Currently committed remote OpenSandbox identifier",
     ),
     Column(
+        "purpose",
+        String(10),
+        nullable=True,
+        comment="Immutable commands or workspaces capability of the current binding; null when unbound",
+    ),
+    Column(
         "binding_generation",
         BigInteger,
         nullable=False,
@@ -100,6 +107,12 @@ _owners = Table(
         comment="UTC time of the latest owner state mutation",
     ),
     PrimaryKeyConstraint("namespace", "owner_digest"),
+    CheckConstraint(
+        "(sandbox_id IS NULL AND purpose IS NULL) OR "
+        "(sandbox_id IS NOT NULL AND purpose IS NOT NULL "
+        "AND purpose IN ('commands', 'workspaces'))",
+        name="ck_tinkerfin_opensandbox_owners_purpose",
+    ),
     comment="Authoritative owner binding and transition fencing state",
 )
 

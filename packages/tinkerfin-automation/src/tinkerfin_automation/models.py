@@ -131,7 +131,7 @@ class AutomationTask:
 class AutomationExecution:
     """A persisted attempt with its scheduling scope and complete Runtime identity.
 
-    identity.namespace selects Runtime memory, checkpoints, workspaces, and Trace;
+    identity.namespace selects Runtime memory, checkpoints, and Trace;
     it can differ from the scheduling Store partition in namespace.
     """
 

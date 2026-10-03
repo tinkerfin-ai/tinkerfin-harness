@@ -1,5 +1,7 @@
 """OpenSandbox creation, reuse, ownership, and lifecycle components."""
 
+from ._workspace import SandboxWorkspace as SandboxWorkspace
+from ._workspace_watch import WorkspaceChange as WorkspaceChange
 from .availability import OpenSandboxAvailability as OpenSandboxAvailability
 from .availability import OpenSandboxAvailabilityPhase as OpenSandboxAvailabilityPhase
 from .availability import OpenSandboxHolderUpdate as OpenSandboxHolderUpdate

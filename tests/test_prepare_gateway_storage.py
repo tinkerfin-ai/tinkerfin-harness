@@ -279,12 +279,14 @@ async def test_automation_conversion_uses_each_saved_execution_limit_and_preserv
     service = AutomationService(namespace="offline", store=store)
     try:
         first = await service.execute_once(
+            execution_namespace=service.namespace,
             owner_id="owner",
             target="work",
             request_id="one",
             limits=ExecutionLimits(max_concurrent_runs=2),
         )
         second = await service.execute_once(
+            execution_namespace=service.namespace,
             owner_id="owner",
             target="work",
             request_id="two",
@@ -428,7 +430,9 @@ async def test_invalid_execution_payload_prevents_any_schema_change(storage_engi
     store = SqlAlchemyAutomationStore(storage_engine)
     service = AutomationService(namespace="offline", store=store)
     try:
-        await service.execute_once(owner_id="owner", target="work")
+        await service.execute_once(
+            execution_namespace=service.namespace, owner_id="owner", target="work"
+        )
     finally:
         await service.close()
         await store.close()

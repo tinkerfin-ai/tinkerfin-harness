@@ -4,10 +4,11 @@ from collections.abc import Awaitable, Mapping
 from typing import Protocol, TypeVar
 
 from ..backends.sdk import OpenSandboxBackend
-from ..errors import OpenSandboxBackendError, UnexpectedOpenSandboxBackendError
+from ..errors import OpenSandboxError, UnexpectedOpenSandboxBackendError
 from ..models import (
     OpenSandboxConfig,
     OpenSandboxDiagnosticContent,
+    OpenSandboxPurpose,
     OpenSandboxRuntimeInfo,
 )
 
@@ -22,12 +23,19 @@ class _SandboxClient(Protocol):
     async def create(
         self,
         *,
+        purpose: OpenSandboxPurpose = "commands",
         metadata: Mapping[str, str] | None = None,
     ) -> OpenSandboxBackend: ...
 
-    async def connect(self, sandbox_id: str) -> OpenSandboxBackend: ...
+    async def connect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxBackend: ...
 
-    async def inspect(self, sandbox_id: str) -> OpenSandboxRuntimeInfo: ...
+    async def _connect_observer(self, sandbox_id: str) -> OpenSandboxBackend: ...
+
+    async def inspect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxRuntimeInfo: ...
 
     async def get_runtime_info(self, sandbox_id: str) -> OpenSandboxRuntimeInfo: ...
 
@@ -60,7 +68,7 @@ async def _call_client(
         return await awaitable
     try:
         return await awaitable
-    except OpenSandboxBackendError:
+    except OpenSandboxError:
         raise
     except Exception as error:
         translated = UnexpectedOpenSandboxBackendError(
@@ -89,26 +97,38 @@ class _SandboxClientBoundary(_SandboxClient):
     async def create(
         self,
         *,
+        purpose: OpenSandboxPurpose = "commands",
         metadata: Mapping[str, str] | None = None,
     ) -> OpenSandboxBackend:
         return await _call_client(
             self._client,
             "create",
-            self._client.create(metadata=metadata),
+            self._client.create(purpose=purpose, metadata=metadata),
         )
 
-    async def connect(self, sandbox_id: str) -> OpenSandboxBackend:
+    async def connect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxBackend:
         return await _call_client(
             self._client,
             "connect",
-            self._client.connect(sandbox_id),
+            self._client.connect(sandbox_id, purpose=purpose),
         )
 
-    async def inspect(self, sandbox_id: str) -> OpenSandboxRuntimeInfo:
+    async def inspect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxRuntimeInfo:
         return await _call_client(
             self._client,
             "inspect",
-            self._client.inspect(sandbox_id),
+            self._client.inspect(sandbox_id, purpose=purpose),
+        )
+
+    async def _connect_observer(self, sandbox_id: str) -> OpenSandboxBackend:
+        return await _call_client(
+            self._client,
+            "observe workspace",
+            self._client._connect_observer(sandbox_id),
         )
 
     async def destroy(self, sandbox_id: str) -> None:

@@ -121,7 +121,7 @@ test('独立保存、单按钮停止、错误恢复和退出草稿确认', async
   expect(api.saved.image_generation).toBeNull()
   await expect(dialog.getByLabel('API Key', { exact: true })).toHaveValue('')
   await dialog.getByRole('button', { name: '测试搜索', exact: true }).click()
-  await expect(dialog.getByText('测试通过 · 再测可能计费')).toBeVisible()
+  await expect(dialog.getByText('测试通过', { exact: true })).toBeVisible()
   await page.screenshot({ path: info.outputPath('success-inline.png'), animations: 'disabled' })
   api.holdTest()
   await dialog.getByRole('button', { name: '测试搜索', exact: true }).click()
@@ -146,6 +146,32 @@ test('独立保存、单按钮停止、错误恢复和退出草稿确认', async
   await page.screenshot({ path: info.outputPath('discard-draft.png'), animations: 'disabled' })
   await dialog.getByRole('button', { name: '放弃修改并关闭', exact: true }).click()
   await expect(dialog).toHaveCount(0)
+})
+
+test('图片试生成等待期间显示加载动效，停止后恢复操作', async ({ page }) => {
+  const api = await openServices(page)
+  const dialog = page.getByRole('dialog', { name: '设置', exact: true })
+  await dialog.getByRole('tab', { name: '图片生成' }).click()
+  await dialog.getByLabel('模型 ID', { exact: true }).fill('image-model')
+  await dialog.getByLabel('API Key', { exact: true }).fill('image-key')
+  await dialog.getByRole('button', { name: '保存', exact: true }).click()
+  await expect(dialog.getByText('已保存', { exact: true })).toBeVisible()
+
+  api.holdTest()
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await dialog.getByRole('button', { name: '试生成', exact: true }).click()
+  const status = dialog.getByRole('status').filter({ hasText: '等待服务响应' })
+  const spinner = status.locator('.settings-services__test-spinner')
+  await expect(spinner).toBeVisible()
+  await expect(spinner).toHaveCSS('animation-name', 'ui-spin')
+  await expect(dialog.getByRole('button', { name: '停止', exact: true })).toBeEnabled()
+
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(spinner).toHaveCSS('animation-name', 'none')
+  await dialog.getByRole('button', { name: '停止', exact: true }).click()
+  api.finishTest()
+  await expect(spinner).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: '试生成', exact: true })).toBeEnabled()
 })
 
 test.describe('触控与放大重排', () => {

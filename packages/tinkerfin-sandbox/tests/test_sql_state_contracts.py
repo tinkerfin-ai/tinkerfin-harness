@@ -120,7 +120,7 @@ async def test_sql_state_unknown_commit_never_replays_a_binding(
 
         with after_sql_commit(sandbox_sql_engine, unknown):
             with pytest.raises(OpenSandboxStateCommitUncertainError) as captured:
-                await state.bind_owner(claim, "sandbox")
+                await state.bind_owner(claim, "sandbox", purpose="commands")
         assert attempts == 1 and captured.value.cause is error
         binding = await state.read_binding("user")
         availability = await state.read_availability("user")

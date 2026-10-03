@@ -42,6 +42,7 @@ from .models import (
 from .queries import ExecutionFilter, TaskFilter
 from .store import (
     ClaimRenewal,
+    CommandReceipt,
     MaterializationResult,
     ScheduledExecution,
     StartAuthorization,
@@ -115,12 +116,6 @@ class _WorkItem:
     lease_until: datetime | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class _Operation:
-    input_digest: str
-    result: AutomationTask | AutomationExecution | str
-
-
 def _matches_tasks(task: AutomationTask, filters: TaskFilter) -> bool:
     return (
         not filters.name_contains
@@ -175,7 +170,7 @@ class MemoryAutomationStore:
         self._occurrences: dict[tuple[str, str], str] = {}
         self._work: dict[str, _WorkItem] = {}
         self._work_keys: dict[tuple[str, str, WorkKind], str] = {}
-        self._operations: dict[tuple[str, str, str], _Operation] = {}
+        self._operations: dict[tuple[str, str, str], CommandReceipt] = {}
         self._scope_allocations: dict[tuple[str, str, str], int] = {}
         self._admitted: set[str] = set()
         self._lock = asyncio.Lock()
@@ -238,6 +233,20 @@ class MemoryAutomationStore:
                 task,
             )
             return _snapshot(task)
+
+    async def get_command_receipt(
+        self, namespace: str, owner_id: str, request_id: str
+    ) -> CommandReceipt | None:
+        """Read a detached committed result without reserving its request ID."""
+
+        _validate_scope(namespace, owner_id)
+        _validate_persisted_text(request_id, name="request_id", maximum=128)
+        async with self._lock:
+            self._ensure_open()
+            receipt = self._operations.get((namespace, owner_id, request_id))
+            if receipt is None:
+                return None
+            return CommandReceipt(receipt.input_digest, _snapshot(receipt.result))
 
     async def update_task(
         self,
@@ -987,7 +996,7 @@ class MemoryAutomationStore:
         self._ensure_capacity(
             "operations", len(self._operations), self._limits.max_operations
         )
-        self._operations[(namespace, owner_id, request_id)] = _Operation(
+        self._operations[(namespace, owner_id, request_id)] = CommandReceipt(
             input_digest=input_digest,
             result=_snapshot(result),
         )

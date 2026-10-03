@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import (
 from tinkerfin_automation import SqlAlchemyAutomationStore
 from tinkerfin_automation.sql_schema import AUTOMATION_TABLE_NAMES
 from tinkerfin_langgraph_store import SqlAlchemyStore
-from tinkerfin_sandbox import get_sqlalchemy_opensandbox_state_schema
+from tinkerfin_sandbox import SQLAlchemyOpenSandboxState
 from tinkerfin_studio.attachments.entity import (
     AttachmentCollection,
     AttachmentFile,
@@ -328,8 +328,11 @@ async def _create_runtime_schema(engine: AsyncEngine) -> None:
         await connection.run_sync(Base.metadata.create_all)
     async with SqlAlchemyStore(engine):
         pass
-    sandbox_schema = get_sqlalchemy_opensandbox_state_schema(dialect="mysql")
-    await _execute_ddl(engine, sandbox_schema.ddl)
+    sandbox_state = SQLAlchemyOpenSandboxState(engine=engine)
+    try:
+        await sandbox_state.start(warm_pool_size=0)
+    finally:
+        await sandbox_state.aclose()
     await SqlAlchemyTraceStore(engine).setup()
     automation = SqlAlchemyAutomationStore(engine)
     try:

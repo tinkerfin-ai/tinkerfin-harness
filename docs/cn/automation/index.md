@@ -102,6 +102,23 @@ finally:
 远端管理需让客户端和 Worker 使用共享存储及相同的 Redis 通知频道；仅共享 SQL 不提供动态日程发现。
 同 namespace 的 Worker 必须能够执行其可能领取的全部目标，领取不按 target 名称路由。
 
+进入客户端生命周期前，为新建任务、立即提交或更换目标声明执行空间：
+
+```python
+client = Automation(namespace="my-application", store=store)
+client.remote_target("agent", execution_namespace=namespace_for_owner)
+async with client:
+    run = await client.for_owner(authenticated_user_id).run(
+        "agent",
+        input={"messages": [{"role": "user", "content": "Summarize the project"}]},
+        request_id="remote-summary",
+    )
+```
+
+`namespace_for_owner` 是宿主提供的所有者到运行空间的确定性映射，也可以直接传入固定字符串。
+声明不加载 Runtime；宿主应保证它与远端配置一致，Worker 会在调用目标前再次检查保存的执行身份。
+含远程声明的实例不能启动本地 Worker。查询、手动执行已有任务、重试等已有工作管理操作无需声明目标。
+
 Store setup 创建空库或校验完整当前结构，不自动修补部分表。空库需 DDL 权限，预建结构必须匹配。
 高级直接使用 Store 的宿主可显式调用 `await store.setup()`；数据库连接池必须保证连接独占借用。
 
@@ -181,7 +198,7 @@ from tinkerfin import TinkerFin
 from tinkerfin_automation import Automation, TinkerFinTarget
 
 runtime = TinkerFin().with_namespace("my-application").build(model=model, tools=tools)
-automation = Automation(namespace=runtime.namespace)
+automation = Automation(namespace="scheduled-jobs")
 automation.target("agent", TinkerFinTarget(runtime))
 async with automation.worker():
     owner = automation.for_owner(authenticated_user_id)
@@ -193,10 +210,16 @@ async with automation.worker():
     await run.wait()
 ```
 
-执行身份的 namespace 必须与 Runtime 一致。新任务默认使用 Automation 的 namespace；
-同一个调度器管理多个 Runtime 范围时，创建任务或提交一次性执行前通过
-`automation.for_owner(owner_id, execution_namespace=runtime.namespace)` 绑定运行范围。
-任务后续执行和重试沿用已经保存的范围；任务输入不能更换模型、工具或 namespace。
+TinkerFinTarget 自动使用所绑定 Runtime 的 namespace。`for_owner()` 只选择任务与执行记录的归属；
+多个所有者共用同一个 Runtime 时，也会共用它的长期记忆与工作区。
+目标需要动态构建 Runtime 时，在注册处使用
+`automation.target("agent", target, execution_namespace=namespace_for_owner)`。
+宿主提供的映射接收已认证的所有者 ID，确定性地返回已授权的运行空间，不执行 I/O 或产生副作用；
+也可以直接传入固定字符串。普通异步函数目标默认使用调度 namespace。
+
+任务后续执行和重试沿用已经保存的范围，更换目标必须保持这个范围。
+重复提交已完成的命令会保留原绑定，不受目标配置变化影响。
+任务输入不能更换模型、工具或 namespace。
 TinkerFinTarget 成功只记录完成状态，result=None；消息从已配置的 Trace 或业务存储读取。
 普通异步 callable 的有限 JSON 返回值会成为结果；默认取消保证为 False。
 只有确实能保证外部工作停止时，才显式使用 FunctionTarget(..., cancellation_is_final=True)。

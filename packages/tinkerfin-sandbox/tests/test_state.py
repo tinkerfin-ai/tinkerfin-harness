@@ -102,7 +102,7 @@ async def test_memory_state_serializes_owner_and_publishes_binding() -> None:
     assert len(first.owner_digest) == 43
     assert "user-A" not in first.owner_digest
 
-    committed = await state.bind_owner(first, "sandbox-1")
+    committed = await state.bind_owner(first, "sandbox-1", purpose="commands")
     await state.release_owner(first)
     second = await waiting
 
@@ -125,7 +125,7 @@ async def test_memory_state_rejects_a_released_owner_claim() -> None:
     current = await state.acquire_owner("user-A")
 
     with pytest.raises(ownership_error):
-        await state.bind_owner(stale, "stale-sandbox")
+        await state.bind_owner(stale, "stale-sandbox", purpose="commands")
 
     await state.release_owner(current)
     assert await state.read_binding("user-A") is None
@@ -209,7 +209,7 @@ async def test_memory_state_unbind_requires_the_current_owner_claim() -> None:
     await state.start(warm_pool_size=0)
 
     claim = await state.acquire_owner("user-A")
-    await state.bind_owner(claim, "sandbox-1")
+    await state.bind_owner(claim, "sandbox-1", purpose="commands")
     await state.unbind_owner(claim)
     await state.release_owner(claim)
 
@@ -731,7 +731,7 @@ async def test_sqlite_state_retries_only_after_statement_rollback_and_close(
     monkeypatch.setattr(AsyncConnection, "close", observe_close)
     try:
         with _retry_clock(monkeypatch):
-            binding = await state.bind_owner(claim, "sandbox-1")
+            binding = await state.bind_owner(claim, "sandbox-1", purpose="commands")
     finally:
         monkeypatch.setattr(AsyncConnection, "execute", original_execute)
         monkeypatch.setattr(AsyncConnection, "rollback", original_rollback)
@@ -784,7 +784,7 @@ async def test_sqlite_state_does_not_retry_when_statement_rollback_fails(
     try:
         state_error = _public_type("UnexpectedOpenSandboxStateError")
         with pytest.raises(state_error, match="settlement failed") as captured:
-            await state.bind_owner(claim, "sandbox-1")
+            await state.bind_owner(claim, "sandbox-1", purpose="commands")
     finally:
         monkeypatch.setattr(AsyncConnection, "execute", original_execute)
         monkeypatch.setattr(AsyncConnection, "rollback", original_rollback)
@@ -862,7 +862,7 @@ async def test_sqlite_state_retries_commit_without_replaying_the_transaction(
     ):
         releasing = asyncio.create_task(release_reader(locked))
         try:
-            binding = await state.bind_owner(claim, "sandbox-1")
+            binding = await state.bind_owner(claim, "sandbox-1", purpose="commands")
             await releasing
         finally:
             if not releasing.done():
@@ -874,6 +874,7 @@ async def test_sqlite_state_retries_commit_without_replaying_the_transaction(
     assert binding == tinkerfin_sandbox.OpenSandboxBinding(
         sandbox_id="sandbox-1",
         generation=claim.generation,
+        purpose="commands",
     )
     assert transaction_body_calls == 1
     assert await state.read_binding("user-A") == binding
@@ -926,7 +927,7 @@ async def test_sqlite_state_does_not_replay_an_uncertain_commit(
         with pytest.raises(
             state_error, match="COMMIT outcome is uncertain"
         ) as captured:
-            await state.bind_owner(claim, "sandbox-1")
+            await state.bind_owner(claim, "sandbox-1", purpose="commands")
     finally:
         monkeypatch.setattr(
             AsyncConnection,
@@ -945,6 +946,7 @@ async def test_sqlite_state_does_not_replay_an_uncertain_commit(
     assert await state.read_binding("user-A") == tinkerfin_sandbox.OpenSandboxBinding(
         sandbox_id="sandbox-1",
         generation=claim.generation,
+        purpose="commands",
     )
     await state.release_owner(claim)
     await state.aclose()
@@ -960,7 +962,7 @@ async def test_sqlite_state_auto_initializes_and_recovers_binding(
     first = state_type(engine=sql_engine(url), namespace="test")
     await first.start(warm_pool_size=0)
     claim = await first.acquire_owner("user-A")
-    committed = await first.bind_owner(claim, "sandbox-1")
+    committed = await first.bind_owner(claim, "sandbox-1", purpose="commands")
     await first.release_owner(claim)
     await first.aclose()
 
@@ -1409,6 +1411,7 @@ async def test_sqlite_state_rejects_an_incorrect_existing_default(
                 namespace VARCHAR(64) NOT NULL,
                 owner_digest VARCHAR(43) NOT NULL,
                 sandbox_id VARCHAR(255),
+                purpose VARCHAR(10),
                 binding_generation BIGINT DEFAULT 7 NOT NULL,
                 generation BIGINT DEFAULT 0 NOT NULL,
                 claim_token VARCHAR(32),
@@ -1505,7 +1508,7 @@ async def test_sqlite_states_serialize_the_same_owner_across_instances(
     event.remove(second._engine.sync_engine, "before_cursor_execute", query_started)
 
     assert not waiting.done()
-    committed = await first.bind_owner(first_claim, "sandbox-1")
+    committed = await first.bind_owner(first_claim, "sandbox-1", purpose="commands")
     await first.release_owner(first_claim)
     released.set()
     second_claim = await waiting
@@ -1542,10 +1545,10 @@ async def test_sqlite_state_fences_an_expired_owner_claim(
     stale = await first.acquire_owner("user-A")
     clock.advance(0.15)
     current = await second.acquire_owner("user-A")
-    committed = await second.bind_owner(current, "sandbox-current")
+    committed = await second.bind_owner(current, "sandbox-current", purpose="commands")
 
     with pytest.raises(ownership_error):
-        await first.bind_owner(stale, "sandbox-stale")
+        await first.bind_owner(stale, "sandbox-stale", purpose="commands")
 
     await first.release_owner(stale)
     await second.release_owner(current)
@@ -1642,7 +1645,7 @@ async def test_sqlite_state_renews_owner_and_warm_claims(
             assert await state.renew_cleanup(cleanup) is True
 
         assert await state.claim_cleanup() is None
-        binding = await state.bind_owner(owner, "bound-sandbox")
+        binding = await state.bind_owner(owner, "bound-sandbox", purpose="commands")
         await state.publish_warm(warm, "warm-sandbox")
         await state.complete_cleanup(cleanup)
         await state.release_owner(owner)
@@ -1662,7 +1665,7 @@ async def test_memory_state_reports_process_owned_shutdown_resources() -> None:
     assert state.lease_renew_interval is None
 
     owner = await state.acquire_owner("user-A")
-    await state.bind_owner(owner, "bound-sandbox")
+    await state.bind_owner(owner, "bound-sandbox", purpose="commands")
     assert await state.renew_owner(owner) is True
     await state.release_owner(owner)
     warm = await state.claim_warm_slot()

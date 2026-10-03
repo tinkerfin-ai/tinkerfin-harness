@@ -134,7 +134,10 @@ async def test_renewal_failure_joins_extension_and_keeps_unconfirmed_capacity(
     try:
         await engine.start()
         execution = await service.execute_once(
-            owner_id="owner", target="target", input={}
+            execution_namespace=service.namespace,
+            owner_id="owner",
+            target="target",
+            input={},
         )
         await entered.wait()
         store.fail_renewal = True
@@ -149,7 +152,12 @@ async def test_renewal_failure_joins_extension_and_keeps_unconfirmed_capacity(
         assert saved.status is ExecutionStatus.RUNNING
         assert saved.failure_code is None
         # A second worker cannot use capacity reserved for unconfirmed work.
-        await service.execute_once(owner_id="owner", target="target", input={})
+        await service.execute_once(
+            execution_namespace=service.namespace,
+            owner_id="owner",
+            target="target",
+            input={},
+        )
         assert (
             await store.claim_work(
                 "app",
@@ -196,7 +204,10 @@ async def test_failed_supervisor_stops_admission_and_close_joins_owned_target(
     try:
         await engine.start()
         execution = await service.execute_once(
-            owner_id="owner", target="target", input={}
+            execution_namespace=service.namespace,
+            owner_id="owner",
+            target="target",
+            input={},
         )
         await entered.wait()
         await clock.poll_waiting.wait()
@@ -261,7 +272,9 @@ async def test_extension_control_is_delivered_after_its_owned_tasks_exit(
     )
     try:
         await engine.start()
-        await service.execute_once(owner_id="owner", target="target")
+        await service.execute_once(
+            execution_namespace=service.namespace, owner_id="owner", target="target"
+        )
         result = await _capture(engine.wait_until_idle())
         assert result is control
     finally:
@@ -305,7 +318,9 @@ async def test_scheduler_failure_cannot_skip_target_cleanup_and_both_causes_surv
     closing = None
     try:
         await engine.start()
-        await service.execute_once(owner_id="owner", target="target")
+        await service.execute_once(
+            execution_namespace=service.namespace, owner_id="owner", target="target"
+        )
         await entered.wait()
         closing = asyncio.create_task(_capture(engine.close()))
         await clock.drain_waiting.wait()

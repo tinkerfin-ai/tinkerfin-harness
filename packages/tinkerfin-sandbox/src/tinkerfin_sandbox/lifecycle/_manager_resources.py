@@ -45,10 +45,12 @@ from ..errors import (
     OpenSandboxBackendTimeoutError,
     OpenSandboxBackendUnavailableError,
     OpenSandboxDestroyError,
+    OpenSandboxPurposeError,
     OpenSandboxStateOwnershipError,
     OpenSandboxWarmPoolUnavailableError,
 )
-from ..models import OpenSandboxRuntimeInfo
+from ..models import OpenSandboxPurpose, OpenSandboxRuntimeInfo
+from ._purpose import require_binding_purpose
 from .state import (
     OpenSandboxBinding,
     OpenSandboxCleanupClaim,
@@ -113,10 +115,10 @@ async def _create_for_warm_claim(
     """Create a remote instance while renewing its warm claim."""
     interval = self._state.lease_renew_interval
     if interval is None:
-        return await self._client.create()
+        return await self._client.create(purpose="commands")
 
     creating = asyncio.create_task(
-        self._client.create(),
+        self._client.create(purpose="commands"),
         name=f"tinkerfin-opensandbox-warm-create:{claim.slot}",
     )
 
@@ -604,13 +606,15 @@ async def _probe_ready_warm_backend(
     backend = await self._take_local_warm_backend(claim.sandbox_id)
     if backend is None:
         try:
-            backend = await self._client.connect(claim.sandbox_id)
+            backend = await self._client.connect(claim.sandbox_id, purpose="commands")
         except Exception as error:
             if _is_confirmed_missing_backend(error):
                 return None
             if isinstance(error, OpenSandboxBackendTimeoutError):
                 try:
-                    runtime = await self._client.inspect(claim.sandbox_id)
+                    runtime = await self._client.inspect(
+                        claim.sandbox_id, purpose="commands"
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception as inspection_error:
@@ -899,23 +903,29 @@ async def _take_local_warm_backend(
 async def _acquire_backend(
     self: OpenSandboxManager[KeyT],
     claim: OpenSandboxOwnerClaim,
+    *,
+    purpose: OpenSandboxPurpose,
 ) -> _BackendAcquisition:
     """Acquire a healthy candidate backend uniquely owned by the caller.
 
-    State first transfers a global warm slot atomically to the owner. Instances
+    Commands first transfer a global warm slot atomically to the owner. Instances
     created by this process reuse their local backend; instances created by other
     workers reconnect by remote ID. Unusable remote IDs are reclaimed only after a
-    healthy candidate becomes authoritative.
+    healthy candidate becomes authoritative. Workspace parents are always created
+    for that purpose and never consume command capacity.
 
     Returns:
         Candidate backend, optional committed binding, warm-slot fact, and remote
         IDs that become reclaimable only after this candidate is authoritative.
     """
+    require_binding_purpose(claim.binding, purpose)
     consumed_warm_slot = False
     current_binding_id: str | None = None
     retire_after_commit_ids: list[str] = []
     while True:
-        binding = await self._state.consume_warm(claim)
+        binding = (
+            await self._state.consume_warm(claim) if purpose == "commands" else None
+        )
         if binding is None:
             try:
                 pending_retire_ids = [*retire_after_commit_ids]
@@ -923,11 +933,12 @@ async def _acquire_backend(
                     pending_retire_ids.append(current_binding_id)
                 return _BackendAcquisition(
                     backend=await self._client.create(
+                        purpose=purpose,
                         metadata={
                             _OWNER_METADATA_KEY: _owner_metadata_label(
                                 claim.owner_digest
                             )
-                        }
+                        },
                     ),
                     committed_binding=None,
                     consumed_warm_slot=consumed_warm_slot,
@@ -945,8 +956,13 @@ async def _acquire_backend(
         backend = await self._take_local_warm_backend(binding.sandbox_id)
         if backend is None:
             try:
-                backend = await self._client.connect(binding.sandbox_id)
+                backend = await self._client.connect(
+                    binding.sandbox_id, purpose=purpose
+                )
             except asyncio.CancelledError:
+                self._schedule_replenish()
+                raise
+            except OpenSandboxPurposeError:
                 self._schedule_replenish()
                 raise
             except Exception:  # noqa: BLE001 - failed reconnect consumes the warm slot

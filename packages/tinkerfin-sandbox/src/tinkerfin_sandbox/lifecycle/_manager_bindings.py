@@ -22,6 +22,7 @@ from ..backends.rooted import RootedOpenSandboxBackend
 from ..backends.sdk import OpenSandboxBackend
 from ..errors import (
     OpenSandboxBackendError,
+    OpenSandboxBackendUnavailableError,
     OpenSandboxDestroyError,
     OpenSandboxResetError,
     OpenSandboxStateError,
@@ -29,6 +30,7 @@ from ..errors import (
 )
 from ..models import (
     OpenSandboxDetails,
+    OpenSandboxPurpose,
     OpenSandboxRuntimeInfo,
     _normalize_workspace_root,
 )
@@ -36,6 +38,7 @@ from ._identity import SandboxResourceIdentity
 from ._manager_recovery import _check_health, recover_binding
 from ._manager_resources import _ManagedBackend
 from ._notifications import failure_reason
+from ._purpose import require_binding_purpose, require_remote_purpose
 from .notifications import OpenSandboxLifecycleReason as Reason
 from .state import OpenSandboxBinding, OpenSandboxOwnerClaim
 
@@ -69,6 +72,8 @@ async def _reconcile_candidate_binding(
         return "unknown"
     if binding == expected:
         return "authoritative"
+    if binding is not None and binding.sandbox_id == expected.sandbox_id:
+        return "unknown"
     return "not_authoritative"
 
 
@@ -78,15 +83,17 @@ async def _bind_on_demand_backend(
     owner_key: str,
     claim: OpenSandboxOwnerClaim,
     backend: OpenSandboxBackend,
+    purpose: OpenSandboxPurpose,
 ) -> OpenSandboxBinding:
     """Commit or reconcile one candidate before deciding its cleanup ownership."""
 
     expected = OpenSandboxBinding(
         sandbox_id=backend.id,
         generation=claim.generation,
+        purpose=purpose,
     )
     try:
-        committed = await self._state.bind_owner(claim, backend.id)
+        committed = await self._state.bind_owner(claim, backend.id, purpose=purpose)
     except asyncio.CancelledError as cancellation:
         resolution = await self._reconcile_candidate_binding(
             owner_key=owner_key,
@@ -139,6 +146,7 @@ async def _replace(
     existing_handle: OpenSandboxHandle | None,
     *,
     old_id: str | None,
+    purpose: OpenSandboxPurpose,
 ) -> OpenSandboxHandle:
     """Commit a new binding and backend before safely reclaiming the old instance.
 
@@ -148,7 +156,8 @@ async def _replace(
     its remote Sandbox is destroyed. After publication, stable handle identity is
     preserved while old leases drain; cancellation retains cleanup.
     """
-    acquisition = await self._acquire_backend(claim)
+    require_binding_purpose(claim.binding, purpose)
+    acquisition = await self._acquire_backend(claim, purpose=purpose)
     backend = acquisition.backend
     try:
         committed = acquisition.committed_binding
@@ -157,10 +166,12 @@ async def _replace(
                 owner_key=owner_key,
                 claim=claim,
                 backend=backend,
+                purpose=purpose,
             )
         elif committed != OpenSandboxBinding(
             sandbox_id=backend.id,
             generation=claim.generation,
+            purpose=purpose,
         ):
             await self._cleanup_owned_backend(backend, destroy=False)
             raise OpenSandboxStateError(
@@ -281,8 +292,9 @@ async def get(
     owner_key = self._resolve_resource_key(key, namespace)
     async with self._operation():
         async with self._claim_owner(owner_key) as claim:
+            require_binding_purpose(claim.binding, "commands")
             await self._availability.require_running(owner_key)
-            handle = await self._get_locked(owner_key, claim)
+            handle = await self._get_locked(owner_key, claim, purpose="commands")
             await self._availability.register(owner_key, claim, handle)
             return self._backend_view(owner_key, handle)
 
@@ -291,23 +303,34 @@ async def _get_locked(
     self: OpenSandboxManager[KeyT],
     owner_key: str,
     claim: OpenSandboxOwnerClaim,
+    *,
+    purpose: OpenSandboxPurpose,
+    allow_recreate: bool = True,
 ) -> OpenSandboxHandle:
     """Resolve the authoritative binding while holding its State owner claim."""
     self._ensure_open()
+    require_binding_purpose(claim.binding, purpose)
     handle = self._handles.get(owner_key)
     stored_id = claim.binding.sandbox_id if claim.binding is not None else None
 
     if stored_id is not None:
-        return await recover_binding(self, owner_key, claim)
+        return await recover_binding(
+            self, owner_key, claim, purpose=purpose, allow_recreate=allow_recreate
+        )
     if handle is not None:
         raise OpenSandboxStateOwnershipError(
             "The local Sandbox no longer has an authoritative owner binding"
+        )
+    if not allow_recreate:
+        raise OpenSandboxBackendUnavailableError(
+            "No Sandbox is bound to this owner", context={"reason": "not_bound"}
         )
     return await self._replace(
         owner_key,
         claim,
         None,
         old_id=None,
+        purpose=purpose,
     )
 
 
@@ -318,9 +341,15 @@ async def reconnect(
     owner_key = self._resolve_resource_key(key, namespace)
     async with self._operation():
         async with self._claim_owner(owner_key) as claim:
+            require_binding_purpose(claim.binding, "commands")
             await self._availability.require_running(owner_key)
             handle = await recover_binding(
-                self, owner_key, claim, reconnect=True, allow_recreate=False
+                self,
+                owner_key,
+                claim,
+                purpose="commands",
+                reconnect=True,
+                allow_recreate=False,
             )
             await self._availability.register(owner_key, claim, handle)
             return self._backend_view(owner_key, handle)
@@ -355,6 +384,7 @@ async def recreate(
     async with self._operation():
         async with self._claim_owner(owner_key) as claim:
             self._ensure_open()
+            require_binding_purpose(claim.binding, "commands")
             await self._availability.require_resolved(owner_key, claim)
             handle = self._handles.get(owner_key)
             if claim.binding is None and handle is not None:
@@ -377,6 +407,7 @@ async def recreate(
                     claim,
                     replaceable_handle,
                     old_id=old_id,
+                    purpose="commands",
                 )
             except Exception as error:
                 if old_id is not None:
@@ -410,8 +441,11 @@ async def reset(
 
     async with self._operation():
         async with self._claim_owner(owner_key) as claim:
+            require_binding_purpose(claim.binding, "commands")
             await self._availability.require_running(owner_key)
-            handle = await recover_binding(self, owner_key, claim, allow_recreate=False)
+            handle = await recover_binding(
+                self, owner_key, claim, purpose="commands", allow_recreate=False
+            )
             await self._availability.register(owner_key, claim, handle)
 
             async def reset_workspace() -> None:
@@ -548,8 +582,12 @@ async def get_details(
                 runtime = await handle.aget_runtime_info()
                 cached = True
             else:
-                runtime = await self._client.inspect(binding.sandbox_id)
+                runtime = await self._client.inspect(
+                    binding.sandbox_id, purpose=binding.purpose
+                )
                 cached = False
+            if runtime.available:
+                require_remote_purpose(runtime.metadata, binding.purpose)
             reason = None
             if not runtime.available:
                 reason = (
@@ -587,6 +625,7 @@ async def _delete_locked(
     destruction failures retain unconfirmed IDs in memory so a manager without an
     external store can retry deletion.
     """
+    self._workspace_watches.stop(owner_key)
     handle = self._handles.get(owner_key)
     stored_id = claim.binding.sandbox_id if claim.binding is not None else None
     self._handles.pop(owner_key, None)

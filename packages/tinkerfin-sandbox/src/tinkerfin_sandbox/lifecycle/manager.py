@@ -17,10 +17,9 @@ from typing import Generic, Self
 from deepagents.backends.protocol import BackendProtocol
 from typing_extensions import TypeVar
 
-from tinkerfin_contracts import Workspace
+from tinkerfin_notifications import Notifications
 
 from ..backends.handle import OpenSandboxHandle
-from ..backends.rooted import RootedOpenSandboxBackend
 from ..backends.sdk import OpenSandboxBackend
 from ..errors import (
     OpenSandboxBackendUnavailableError,
@@ -30,7 +29,11 @@ from ..errors import (
     OpenSandboxStateOwnershipError,
     OpenSandboxWarmPoolUnavailableError,
 )
-from ..models import OpenSandboxDetails, OpenSandboxDiagnosticContent
+from ..models import (
+    OpenSandboxDetails,
+    OpenSandboxDiagnosticContent,
+    OpenSandboxPurpose,
+)
 from . import _manager_bindings, _manager_resources
 from ._identity import SandboxResourceIdentity
 from ._manager_availability import _SandboxAvailability
@@ -42,6 +45,9 @@ from ._manager_resources import (
 )
 from ._notifications import _LifecycleNotifications
 from ._protocols import _SandboxClient, _SandboxClientBoundary
+from ._sql_tasks import capture, select_failure
+from ._workspace import SandboxWorkspace
+from ._workspace_watch import _WorkspaceWatches
 from .notifications import OpenSandboxLifecycleObserver, OpenSandboxNotificationOptions
 from .recovery import OpenSandboxRecoveryPolicy
 from .state import (
@@ -70,6 +76,9 @@ class OpenSandboxManager(Generic[KeyT]):
     Explicit destruction is strict and retryable; cleanup after a successful
     replacement is durable when the configured State is persistent.
 
+    Raw backend operations select ``commands`` purpose and reject bindings reserved
+    for isolated ``workspaces`` before any recovery, replacement, or reset.
+
     Optional observers receive confirmed lifecycle changes without participating in
     resource decisions. Reentering this manager from an observer raises
     ``OpenSandboxObserverReentryError``. The manager drains owned delivery tasks on
@@ -88,6 +97,7 @@ class OpenSandboxManager(Generic[KeyT]):
         recovery_policy: OpenSandboxRecoveryPolicy | None = None,
         observers: Sequence[OpenSandboxLifecycleObserver] = (),
         notification_options: OpenSandboxNotificationOptions | None = None,
+        notifications: Notifications | None = None,
     ) -> None:
         """Configure the manager without opening resources or creating a Sandbox.
 
@@ -113,6 +123,10 @@ class OpenSandboxManager(Generic[KeyT]):
                 Observers must not reenter this manager's resource operations or close.
             notification_options: Per-observer queue capacity and execution timeout.
                 Omit it for 128 pending events and one second per callback.
+            notifications: Started, borrowed service for project file-change hints.
+                Omit it for a manager-owned in-process service. A shared transport
+                can distribute hints among workers; the host closes a borrowed
+                service after every manager that uses it.
 
         Raises:
             TypeError: ``settlement_timeout`` is not numeric or is a boolean.
@@ -141,6 +155,8 @@ class OpenSandboxManager(Generic[KeyT]):
             raise TypeError(
                 "notification_options must be an OpenSandboxNotificationOptions or None"
             )
+        if notifications is not None and not isinstance(notifications, Notifications):
+            raise TypeError("notifications must be Notifications or None")
         resolved_observers = tuple(observers)
         for observer in resolved_observers:
             if not callable(getattr(observer, "on_sandbox_event", None)):
@@ -198,6 +214,7 @@ class OpenSandboxManager(Generic[KeyT]):
         self._started = False
         self._closed = False
         self._availability = _SandboxAvailability(self)
+        self._workspace_watches = _WorkspaceWatches(self, notifications)
 
     def _resolve_resource_key(self, key: KeyT, namespace: str | None) -> str:
         """Bind namespace before every cache, State, claim, or availability lookup."""
@@ -698,13 +715,16 @@ class OpenSandboxManager(Generic[KeyT]):
     async def _acquire_backend(
         self,
         claim: OpenSandboxOwnerClaim,
+        *,
+        purpose: OpenSandboxPurpose,
     ) -> _BackendAcquisition:
         """Acquire a healthy candidate backend uniquely owned by the caller.
 
-        State first transfers a global warm slot atomically to the owner. Instances
+        Commands first transfer a global warm slot atomically to the owner. Instances
         created by this process reuse their local backend; instances created by other
         workers reconnect by remote ID. Unusable remote IDs are reclaimed only after
-        a healthy candidate becomes authoritative.
+        a healthy candidate becomes authoritative. Workspace parents are created
+        separately without consuming command capacity.
 
         Returns:
             Candidate backend, optional committed binding, warm-slot fact, and remote
@@ -714,6 +734,7 @@ class OpenSandboxManager(Generic[KeyT]):
         return await _manager_resources._acquire_backend(
             self,
             claim,
+            purpose=purpose,
         )
 
     async def _reconcile_candidate_binding(
@@ -738,6 +759,7 @@ class OpenSandboxManager(Generic[KeyT]):
         owner_key: str,
         claim: OpenSandboxOwnerClaim,
         backend: OpenSandboxBackend,
+        purpose: OpenSandboxPurpose,
     ) -> OpenSandboxBinding:
         """Commit or reconcile one candidate before deciding its cleanup ownership."""
 
@@ -746,6 +768,7 @@ class OpenSandboxManager(Generic[KeyT]):
             owner_key=owner_key,
             claim=claim,
             backend=backend,
+            purpose=purpose,
         )
 
     async def _replace(
@@ -755,6 +778,7 @@ class OpenSandboxManager(Generic[KeyT]):
         existing_handle: OpenSandboxHandle | None,
         *,
         old_id: str | None,
+        purpose: OpenSandboxPurpose,
     ) -> OpenSandboxHandle:
         """Commit a new binding and backend before safely reclaiming the old instance.
 
@@ -771,6 +795,7 @@ class OpenSandboxManager(Generic[KeyT]):
             claim,
             existing_handle,
             old_id=old_id,
+            purpose=purpose,
         )
 
     async def _retire_replaced_backend(
@@ -807,30 +832,33 @@ class OpenSandboxManager(Generic[KeyT]):
         )
 
     def workspace(
-        self, key: KeyT, *, routes: Mapping[str, BackendProtocol] | None = None
-    ) -> Workspace[RootedOpenSandboxBackend, BackendProtocol]:
-        """Declare a rooted workspace that uses each Runtime's logical namespace.
+        self,
+        key: KeyT,
+        *,
+        workspace_key: str,
+        routes: Mapping[str, BackendProtocol] | None = None,
+    ) -> SandboxWorkspace[KeyT]:
+        """Select an isolated project inside one owner's physical sandbox.
 
         Pass this value as the Runtime's backend. Creation performs no resource
-        I/O. Each Run borrows the manager until its Graph has stopped; finishing a
-        Run neither closes the manager nor destroys the stable remote Sandbox.
+        I/O. Use ``open()`` for file and command access outside a Run, or ``delete()``
+        to stop and remove only this project. Each Run has isolated processes and
+        networking; its files, HOME and dependencies remain project-local.
 
         Args:
-            key: Application key selecting a user, session, project, or other owner.
+            key: Application key selecting the physical sandbox owner, such as a user.
+            workspace_key: Nonempty opaque project identity within that owner.
             routes: Optional filesystem paths served by other borrowed backends.
 
         Returns:
-            A lazy declaration exposing the rooted workspace to Tool preparation.
+            A lazy project declaration independent of the Runtime's namespace.
 
         Raises:
-            ValueError: The client configuration disables rooted workspaces.
+            TypeError: An identity has an unsupported type.
+            ValueError: An identity is invalid.
         """
 
-        from ._workspace import SandboxWorkspace
-
-        if self._workspace_root() is None:
-            raise ValueError("workspace requires a configured workspace_root")
-        return SandboxWorkspace(self, key, routes or {})
+        return SandboxWorkspace(self, key, workspace_key=workspace_key, routes=routes)
 
     async def get(self, key: KeyT, *, namespace: str | None = None) -> _ManagedBackend:
         """Return the healthy stable backend for one caller-defined key.
@@ -863,6 +891,9 @@ class OpenSandboxManager(Generic[KeyT]):
         self,
         owner_key: str,
         claim: OpenSandboxOwnerClaim,
+        *,
+        purpose: OpenSandboxPurpose,
+        allow_recreate: bool = True,
     ) -> OpenSandboxHandle:
         """Resolve the authoritative binding while holding its State owner claim."""
 
@@ -870,6 +901,8 @@ class OpenSandboxManager(Generic[KeyT]):
             self,
             owner_key,
             claim,
+            purpose=purpose,
+            allow_recreate=allow_recreate,
         )
 
     async def _close_replaced_backend(
@@ -973,28 +1006,24 @@ class OpenSandboxManager(Generic[KeyT]):
 
     async def resume(
         self, key: KeyT, *, namespace: str | None = None, timeout: float = 30.0
-    ) -> _ManagedBackend:
-        """Resume the original paused instance and return its ready stable backend.
+    ) -> None:
+        """Resume the original instance for its committed command or workspace use.
 
         A definitely undispatched drain is cancelled. Unconfirmed requests are not
         replayed. Each holder refreshes its connection before reopening admission.
-        No instance is recreated.
+        No instance is created or replaced, and no parent backend is returned.
 
         Args:
             key: Caller-defined identity resolved to an existing binding.
             namespace: Logical resource scope, or None for standalone use.
             timeout: Positive total work budget in seconds, including readiness.
 
-        Returns:
-            The manager-owned backend view for the original instance.
-
         Raises:
             OpenSandboxBackendError: The instance is stopped, missing, or not ready.
             OpenSandboxStateError: Shared ownership cannot be verified.
         """
         owner_key = self._resolve_resource_key(key, namespace)
-        handle = await self._availability.resume(owner_key, timeout)
-        return self._backend_view(owner_key, handle)
+        await self._availability.resume(owner_key, timeout)
 
     async def get_diagnostic_logs(
         self, key: KeyT, *, namespace: str | None = None, scope: str = "container"
@@ -1143,12 +1172,18 @@ class OpenSandboxManager(Generic[KeyT]):
         )
 
     async def _close_resources(self) -> None:
-        try:
-            await _manager_resources._close_resources(self)
-        finally:
-            # Public operations and warm maintenance have settled before delivery
-            # stops accepting events. Observer objects remain owned by the host.
-            await self._notifications.aclose()
+        failure: BaseException | None = None
+        outcome = await capture(self._workspace_watches.aclose())
+        if isinstance(outcome, BaseException):
+            failure = outcome
+        outcome = await capture(_manager_resources._close_resources(self))
+        if isinstance(outcome, BaseException):
+            failure = outcome if failure is None else select_failure(failure, outcome)
+        outcome = await capture(self._notifications.aclose())
+        if isinstance(outcome, BaseException):
+            failure = outcome if failure is None else select_failure(failure, outcome)
+        if failure is not None:
+            raise failure
 
     async def aclose(self) -> None:
         """Idempotently close every resource owned by this manager.
@@ -1166,6 +1201,8 @@ class OpenSandboxManager(Generic[KeyT]):
             OpenSandboxSettlementTimeoutError: The configured caller wait expires
                 before the shared close task settles.
             OpenSandboxObserverReentryError: An observer reenters its own manager.
+            OpenSandboxError: Closing a workspace watch fails. The remaining
+                manager resources are still asked to close before reporting it.
         """
         self._notifications.check_reentry()
         async with self._state_lock:

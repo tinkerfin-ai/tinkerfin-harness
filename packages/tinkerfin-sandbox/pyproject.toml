@@ -24,6 +24,7 @@ dependencies = [
     "opensandbox==0.1.16",
     "pydantic>=2,<3",
     "tinkerfin-contracts==0.1.0",
+    "tinkerfin-notifications==0.1.0",
     "typing-extensions>=4.12.2,<5",
 ]
 

@@ -3711,6 +3711,7 @@ dependencies = [
     { name = "opensandbox" },
     { name = "pydantic" },
     { name = "tinkerfin-contracts" },
+    { name = "tinkerfin-notifications" },
     { name = "typing-extensions" },
 ]
 
@@ -3730,6 +3731,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2,<3" },
     { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'sqlalchemy'", specifier = "==2.0.52" },
     { name = "tinkerfin-contracts", editable = "packages/tinkerfin-contracts" },
+    { name = "tinkerfin-notifications", editable = "packages/tinkerfin-notifications" },
     { name = "tinkerfin-sqlalchemy", marker = "extra == 'sqlalchemy'", editable = "packages/tinkerfin-sqlalchemy" },
     { name = "typing-extensions", specifier = ">=4.12.2,<5" },
 ]

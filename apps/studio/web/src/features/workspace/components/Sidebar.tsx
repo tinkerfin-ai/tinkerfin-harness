@@ -847,7 +847,6 @@ export function Sidebar({
             aria-expanded="false"
             onClick={onToggleMode}
           />
-          <IconButton label={t('新会话')} icon={<SquarePen size={18} />} tabIndex={railInteractive ? 0 : -1} onClick={onNew} />
           <IconButton
             label={historyQuery ? t('搜索会话，当前查询：{query}', { query: historyQuery }) : t('搜索会话')}
             tooltip={t('搜索会话')}
@@ -859,6 +858,13 @@ export function Sidebar({
             onClick={() => openSearch(true)}
           />
           <IconButton label={t('记忆管理')} tooltip={t('记忆管理')} icon={<BrainCircuit size={18} />} tabIndex={railInteractive ? 0 : -1} disabled />
+          <IconButton label={t('新会话')} tooltip={t('新会话')} icon={<SquarePen size={18} />} tabIndex={railInteractive ? 0 : -1} onClick={onNew} />
+          <IconButton label={t('技能库')} tooltip={t('技能库')} icon={<BookOpenCheck size={18} />}
+            selected={skillsActive} aria-current={skillsActive ? 'page' : undefined}
+            tabIndex={railInteractive ? 0 : -1} onClick={onOpenSkills} />
+          <IconButton label={t('自动化')} tooltip={t('自动化')} icon={<AlarmClock size={18} />}
+            selected={automationActive} aria-current={automationActive ? 'page' : undefined}
+            tabIndex={railInteractive ? 0 : -1} onClick={onOpenAutomation} />
           <span className="rail-spacer" />
           <IconButton
             label={t('展开侧边栏以查看账户')}

@@ -45,6 +45,7 @@ from tinkerfin_sandbox import (
     OpenSandboxManagerClosedError,
     OpenSandboxOwnerClaim,
     OpenSandboxPlatformInfo,
+    OpenSandboxPurpose,
     OpenSandboxRecoveryPolicy,
     OpenSandboxResetError,
     OpenSandboxRuntimeInfo,
@@ -220,7 +221,9 @@ class _FakeClient:
         self.inspection_results: dict[str, OpenSandboxRuntimeInfo] = {}
         self.create_calls = 0
         self.create_metadata: list[dict[str, str]] = []
+        self.create_purposes: list[OpenSandboxPurpose] = []
         self.connect_calls: list[str] = []
+        self.connect_purposes: list[OpenSandboxPurpose] = []
         self.inspect_calls: list[str] = []
         self.destroy_calls: list[str] = []
         self.destroy_errors: dict[str, Exception] = {}
@@ -240,10 +243,12 @@ class _FakeClient:
     async def create(
         self,
         *,
+        purpose: OpenSandboxPurpose = "commands",
         metadata: Mapping[str, str] | None = None,
     ) -> OpenSandboxBackend:
         self.create_calls += 1
         self.create_metadata.append(dict(metadata or {}))
+        self.create_purposes.append(purpose)
         create_number = self.create_calls
         self.create_entered.set()
         if (
@@ -255,11 +260,23 @@ class _FakeClient:
         if self.create_gate is not None:
             await self.create_gate.wait()
         backend = self._backend_factory(f"sandbox-{create_number}")
+        if isinstance(backend, _FakeBackend):
+            backend.runtime_info = backend.runtime_info.model_copy(
+                update={
+                    "metadata": {
+                        **backend.runtime_info.metadata,
+                        "tinkerfin.ai/purpose": purpose,
+                    }
+                }
+            )
         self.backends.append(backend)
         return cast(OpenSandboxBackend, backend)
 
-    async def connect(self, sandbox_id: str) -> OpenSandboxBackend:
+    async def connect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxBackend:
         self.connect_calls.append(sandbox_id)
+        self.connect_purposes.append(purpose)
         try:
             backend = self.connected[sandbox_id]
         except KeyError as error:
@@ -270,9 +287,14 @@ class _FakeClient:
             ) from error
         return cast(OpenSandboxBackend, backend)
 
-    async def inspect(self, sandbox_id: str) -> OpenSandboxRuntimeInfo:
+    async def inspect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxRuntimeInfo:
         self.inspect_calls.append(sandbox_id)
         return self.inspection_results[sandbox_id]
+
+    async def _connect_observer(self, sandbox_id: str) -> OpenSandboxBackend:
+        return await self.connect(sandbox_id, purpose="workspaces")
 
     async def get_runtime_info(self, sandbox_id: str) -> OpenSandboxRuntimeInfo:
         return await self.inspect(sandbox_id)
@@ -312,6 +334,9 @@ class _FakeState(InMemoryOpenSandboxState):
         super().__init__()
         self.bindings = dict(bindings or {})
         self.binding_generations = {owner_key: 0 for owner_key in self.bindings}
+        self.binding_purposes: dict[str, OpenSandboxPurpose] = {
+            owner_key: "commands" for owner_key in self.bindings
+        }
         self.get_calls: list[str] = []
         self.save_calls: list[tuple[str, str]] = []
         self.consume_calls: list[tuple[str, str]] = []
@@ -343,7 +368,9 @@ class _FakeState(InMemoryOpenSandboxState):
             self.binding_generations.pop(owner_key, None)
             binding = None
         else:
-            binding = await super().bind_owner(claim, desired_id)
+            binding = await super().bind_owner(
+                claim, desired_id, purpose=self.binding_purposes[owner_key]
+            )
             self.binding_generations[owner_key] = binding.generation
         return replace(claim, binding=binding)
 
@@ -362,22 +389,27 @@ class _FakeState(InMemoryOpenSandboxState):
         return OpenSandboxBinding(
             sandbox_id=sandbox_id,
             generation=self.binding_generations.get(owner_key, 0),
+            purpose=self.binding_purposes[owner_key],
         )
 
-    async def bind_owner(self, claim, sandbox_id: str) -> OpenSandboxBinding:
+    async def bind_owner(
+        self, claim, sandbox_id: str, *, purpose: OpenSandboxPurpose
+    ) -> OpenSandboxBinding:
         self.save_calls.append((claim.owner_key, sandbox_id))
         if self.commit_before_save_error or self.cancel_after_save_commit:
-            binding = await super().bind_owner(claim, sandbox_id)
+            binding = await super().bind_owner(claim, sandbox_id, purpose=purpose)
             self.bindings[claim.owner_key] = sandbox_id
             self.binding_generations[claim.owner_key] = binding.generation
+            self.binding_purposes[claim.owner_key] = binding.purpose
         if self.cancel_after_save_commit:
             raise asyncio.CancelledError("bind response was cancelled after commit")
         if self.save_error is not None:
             raise OpenSandboxStateError("fake state write failed") from self.save_error
         if not self.commit_before_save_error:
-            binding = await super().bind_owner(claim, sandbox_id)
+            binding = await super().bind_owner(claim, sandbox_id, purpose=purpose)
             self.bindings[claim.owner_key] = sandbox_id
             self.binding_generations[claim.owner_key] = binding.generation
+            self.binding_purposes[claim.owner_key] = binding.purpose
         return binding
 
     async def consume_warm(
@@ -389,6 +421,7 @@ class _FakeState(InMemoryOpenSandboxState):
             self.consume_calls.append((claim.owner_key, binding.sandbox_id))
             self.bindings[claim.owner_key] = binding.sandbox_id
             self.binding_generations[claim.owner_key] = binding.generation
+            self.binding_purposes[claim.owner_key] = binding.purpose
         return binding
 
     async def unbind_owner(self, claim) -> None:
@@ -400,6 +433,7 @@ class _FakeState(InMemoryOpenSandboxState):
         await super().unbind_owner(claim)
         self.bindings.pop(claim.owner_key, None)
         self.binding_generations.pop(claim.owner_key, None)
+        self.binding_purposes.pop(claim.owner_key, None)
 
     async def shutdown_sandbox_ids(self) -> tuple[str, ...]:
         return ()
@@ -475,19 +509,21 @@ class _ObservedWarmCreateClient(_FakeClient):
     async def create(
         self,
         *,
+        purpose: OpenSandboxPurpose = "commands",
         metadata: Mapping[str, str] | None = None,
     ) -> OpenSandboxBackend:
         current = asyncio.current_task()
         if current is None:  # pragma: no cover - async methods run in a Task
             raise RuntimeError("warm creation requires an asyncio task")
         self.current_create_task = cast(asyncio.Task[object], current)
-        return await super().create(metadata=metadata)
+        return await super().create(purpose=purpose, metadata=metadata)
 
 
 class _CancelledWarmupClient(_FakeClient):
     async def create(
         self,
         *,
+        purpose: OpenSandboxPurpose = "commands",
         metadata: Mapping[str, str] | None = None,
     ) -> OpenSandboxBackend:
         self.create_calls += 1
@@ -522,7 +558,7 @@ def _runtime_info(
         expires_at=datetime(2026, 8, 8, 3, 2, tzinfo=UTC),
         image="registry.example/sandbox:1",
         platform=OpenSandboxPlatformInfo(os="linux", arch="amd64"),
-        metadata={"region": "local"},
+        metadata={"region": "local", "tinkerfin.ai/purpose": "commands"},
         unavailable_reason=unavailable_reason,
     )
 
@@ -1352,9 +1388,10 @@ class _ReconnectableFakeClient(_FakeClient):
     async def create(
         self,
         *,
+        purpose: OpenSandboxPurpose = "commands",
         metadata: Mapping[str, str] | None = None,
     ) -> OpenSandboxBackend:
-        backend = await super().create(metadata=metadata)
+        backend = await super().create(purpose=purpose, metadata=metadata)
         self.connected[backend.id] = backend
         return backend
 
@@ -1363,6 +1400,7 @@ class _FailingCreateClient(_FakeClient):
     async def create(
         self,
         *,
+        purpose: OpenSandboxPurpose = "commands",
         metadata: Mapping[str, str] | None = None,
     ) -> OpenSandboxBackend:
         self.create_calls += 1
@@ -1373,7 +1411,9 @@ class _FailingCreateClient(_FakeClient):
 class _AuthenticationFailingClient(_FailingCreateClient):
     """Reject every remote operation without claiming that a valid ID is missing."""
 
-    async def connect(self, sandbox_id: str) -> OpenSandboxBackend:
+    async def connect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxBackend:
         self.connect_calls.append(sandbox_id)
         raise UnexpectedOpenSandboxBackendError("authentication rejected")
 
@@ -1381,7 +1421,9 @@ class _AuthenticationFailingClient(_FailingCreateClient):
 class _TimeoutThenInspectClient(_FakeClient):
     """Expose a reconnect timeout followed by one authoritative query result."""
 
-    async def connect(self, sandbox_id: str) -> OpenSandboxBackend:
+    async def connect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxBackend:
         self.connect_calls.append(sandbox_id)
         raise OpenSandboxBackendTimeoutError("reconnect timed out")
 
@@ -2791,6 +2833,7 @@ async def test_replaced_binding_allows_only_the_candidate_to_be_destroyed() -> N
     state.read_override = OpenSandboxBinding(
         sandbox_id="sandbox-authoritative",
         generation=99,
+        purpose="commands",
     )
     manager = _new_manager(client=client, state=state, warm_pool_size=0)
     try:

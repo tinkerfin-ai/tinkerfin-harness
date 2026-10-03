@@ -83,6 +83,7 @@ async def test_service_crud_uses_task_names_and_keeps_scheduler_in_sync() -> Non
     schedule = IntervalSchedule(every_seconds=60, start_at=NOW)
 
     task = await service.create_task(
+        execution_namespace=service.namespace,
         owner_id="owner-1",
         name="Summary",
         schedule=schedule,
@@ -90,6 +91,7 @@ async def test_service_crud_uses_task_names_and_keeps_scheduler_in_sync() -> Non
         request_id="create-1",
     )
     repeated = await service.create_task(
+        execution_namespace=service.namespace,
         owner_id="owner-1",
         name="Summary",
         schedule=schedule,
@@ -100,6 +102,7 @@ async def test_service_crud_uses_task_names_and_keeps_scheduler_in_sync() -> Non
     assert scheduler.scheduled[task.task_id] == NOW + timedelta(minutes=1)
     with pytest.raises(RequestConflictError):
         await service.create_task(
+            execution_namespace=service.namespace,
             owner_id="owner-1",
             name="Different",
             schedule=schedule,
@@ -163,7 +166,9 @@ async def test_service_prepares_store_before_direct_use() -> None:
     store = _RecordingSetupStore(clock=clock)
     service = AutomationService(namespace="app", store=store, clock=clock)
 
-    await service.execute_once(owner_id="owner-1", target="summary")
+    await service.execute_once(
+        execution_namespace=service.namespace, owner_id="owner-1", target="summary"
+    )
     await service.list_executions(owner_id="owner-1")
 
     assert store.events[:2] == ["store.setup", "store.current_time"]
@@ -176,7 +181,9 @@ async def test_service_close_during_setup_prevents_operation() -> None:
     store = _BlockingServiceSetupStore(clock=clock)
     service = AutomationService(namespace="app", store=store, clock=clock)
     operation = asyncio.create_task(
-        service.execute_once(owner_id="owner-1", target="summary")
+        service.execute_once(
+            execution_namespace=service.namespace, owner_id="owner-1", target="summary"
+        )
     )
     await store.setup_started.wait()
     await service.close()
@@ -194,6 +201,7 @@ async def test_task_run_now_is_idempotent_and_keeps_schedule_unchanged() -> None
     store = MemoryAutomationStore(clock=clock)
     service = AutomationService(namespace="app", store=store, clock=clock)
     task = await service.create_task(
+        execution_namespace=service.namespace,
         owner_id="owner-1",
         name="Summary",
         schedule=IntervalSchedule(every_seconds=60, start_at=NOW),
@@ -218,12 +226,14 @@ async def test_execute_once_is_taskless_idempotent_and_retries_as_taskless() -> 
     store = MemoryAutomationStore(clock=clock)
     service = AutomationService(namespace="app", store=store, clock=clock)
     first = await service.execute_once(
+        execution_namespace=service.namespace,
         owner_id="owner-1",
         target="summary",
         input={"project_id": "project-1"},
         request_id="once-1",
     )
     repeated = await service.execute_once(
+        execution_namespace=service.namespace,
         owner_id="owner-1",
         target="summary",
         input={"project_id": "project-1"},
@@ -235,6 +245,7 @@ async def test_execute_once_is_taskless_idempotent_and_retries_as_taskless() -> 
     assert not (await service.list_tasks(owner_id="owner-1")).items
     with pytest.raises(RequestConflictError):
         await service.execute_once(
+            execution_namespace=service.namespace,
             owner_id="owner-1",
             target="summary",
             input={"project_id": "different"},
@@ -274,6 +285,7 @@ async def test_delete_cancels_unstarted_execution_but_retains_history() -> None:
     clock = ManualClock(NOW)
     service = AutomationService(namespace="app", clock=clock)
     task = await service.create_task(
+        execution_namespace=service.namespace,
         owner_id="owner-1",
         name="Summary",
         schedule=IntervalSchedule(every_seconds=60, start_at=NOW),

@@ -89,6 +89,7 @@ from .sql_schema import (
 )
 from .store import (
     ClaimRenewal,
+    CommandReceipt,
     MaterializationResult,
     ScheduledExecution,
     StartAuthorization,
@@ -344,6 +345,44 @@ class SqlAlchemyAutomationStore:
 
         return await self._run_operation(operation)
 
+    async def get_command_receipt(
+        self, namespace: str, owner_id: str, request_id: str
+    ) -> CommandReceipt | None:
+        """Read a committed result without locking or reserving its request ID."""
+
+        _validate_scope(namespace, owner_id)
+        _validate_persisted_text(request_id, name="request_id", maximum=128)
+        self._ensure_open()
+
+        async def operation(cancellation: Cancellation) -> CommandReceipt | None:
+            async with self._transaction(cancellation, read_only=True) as connection:
+                row = (
+                    await connection.execute(
+                        select(
+                            operations.c.input_digest,
+                            operations.c.result_kind,
+                            operations.c.result_payload,
+                        ).where(
+                            operations.c.namespace == namespace,
+                            operations.c.owner_id == owner_id,
+                            operations.c.request_id == request_id,
+                        )
+                    )
+                ).first()
+                if row is None:
+                    return None
+                try:
+                    result = decode_operation_result(
+                        self._text(row.result_kind), self._text(row.result_payload)
+                    )
+                except (TypeError, ValueError) as error:
+                    raise AutomationStoreProtocolError(
+                        "Stored operation result is invalid", cause=error
+                    ) from error
+                return CommandReceipt(self._text(row.input_digest), result)
+
+        return await self._run_operation(operation)
+
     async def create_task(
         self,
         task: AutomationTask,
@@ -444,6 +483,18 @@ class SqlAlchemyAutomationStore:
                     current = await self._locked_task(
                         connection, task.namespace, task.owner_id, task.task_id
                     )
+                    # A competing update can commit this request while we wait
+                    # for the task row. Its receipt must win over the now-stale
+                    # revision, with the same digest check as an immediate replay.
+                    previous = await self._operation_result(
+                        connection,
+                        task.namespace,
+                        task.owner_id,
+                        request_id,
+                        input_digest,
+                    )
+                    if previous is not None:
+                        return self._expect_result(previous, AutomationTask)
                     if current.revision != expected_revision:
                         raise TaskConflictError(
                             "Task revision changed",

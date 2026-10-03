@@ -789,12 +789,28 @@ describe('Sidebar rail and inline search', () => {
     expect(screen.queryByRole('button', { name: '打开会话：最近会话' })).not.toBeInTheDocument()
   })
 
-  it('在 Rail 导航中也禁用记忆管理入口', () => {
+  it('Rail 按工作区顺序显示入口、提示和当前页状态', () => {
+    const onNew = vi.fn()
+    const onOpenSkills = vi.fn()
+    const onOpenAutomation = vi.fn()
     render(
-      <Sidebar {...baseProps} mode="rail" settledMode="rail" wideInteractive={false} railInteractive />,
+      <Sidebar {...baseProps} mode="rail" settledMode="rail" wideInteractive={false} railInteractive
+        skillsActive onNew={onNew} onOpenSkills={onOpenSkills} onOpenAutomation={onOpenAutomation} />,
     )
 
-    expect(screen.getByRole('button', { name: '记忆管理' })).toBeDisabled()
+    const rail = document.querySelector('.sidebar-rail') as HTMLElement
+    const labels = ['打开侧边栏', '搜索会话', '记忆管理', '新会话', '技能库', '自动化']
+    expect(within(rail).getAllByRole('button').slice(0, labels.length).map(button => button.getAttribute('aria-label'))).toEqual(labels)
+    for (const label of labels) expect(within(rail).getByRole('tooltip', { name: label })).toBeInTheDocument()
+    expect(within(rail).getByRole('button', { name: '记忆管理' })).toBeDisabled()
+    expect(within(rail).getByRole('button', { name: '技能库' })).toHaveAttribute('aria-current', 'page')
+
+    fireEvent.click(within(rail).getByRole('button', { name: '新会话' }))
+    fireEvent.click(within(rail).getByRole('button', { name: '技能库' }))
+    fireEvent.click(within(rail).getByRole('button', { name: '自动化' }))
+    expect(onNew).toHaveBeenCalledOnce()
+    expect(onOpenSkills).toHaveBeenCalledOnce()
+    expect(onOpenAutomation).toHaveBeenCalledOnce()
   })
 
   it('在 Rail 底部复用真实用户头像并保持点击后仅展开侧边栏', () => {

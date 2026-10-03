@@ -14,8 +14,10 @@ from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from ..errors import OpenSandboxStateOwnershipError
+from ..errors import OpenSandboxPurposeError, OpenSandboxStateOwnershipError
+from ..models import OpenSandboxPurpose
 from . import _sql_availability
+from ._purpose import require_purpose, validate_purpose
 from ._sql_fencing import current_claim_time
 from ._sql_schema import _cleanup, _owners, _warm_slots
 from ._sql_transactions import _apply_claim_lock, _read_rows
@@ -30,6 +32,21 @@ from .state import (
 
 if TYPE_CHECKING:
     from .sqlalchemy import SQLAlchemyOpenSandboxState
+
+
+def _binding_from_values(
+    sandbox_id: str | None, generation: int, purpose: str | None
+) -> OpenSandboxBinding | None:
+    """Reject inconsistent persisted ownership, including databases without CHECK."""
+    if sandbox_id is None:
+        if purpose is not None:
+            raise OpenSandboxPurposeError("Unbound Sandbox owner has a purpose")
+        return None
+    return OpenSandboxBinding(
+        sandbox_id=sandbox_id,
+        generation=generation,
+        purpose=validate_purpose(purpose),
+    )
 
 
 async def acquire_owner(
@@ -59,6 +76,7 @@ async def acquire_owner(
                         namespace=self._namespace,
                         owner_digest=digest,
                         sandbox_id=None,
+                        purpose=None,
                         binding_generation=0,
                         generation=1,
                         claim_token=token,
@@ -96,13 +114,10 @@ async def acquire_owner(
             if result.rowcount != 1:
                 return None
             sandbox_id = row["sandbox_id"]
-            binding = (
-                OpenSandboxBinding(
-                    sandbox_id=str(sandbox_id),
-                    generation=int(row["binding_generation"]),
-                )
-                if sandbox_id is not None
-                else None
+            binding = _binding_from_values(
+                str(sandbox_id) if sandbox_id is not None else None,
+                int(row["binding_generation"]),
+                row["purpose"],
             )
             return OpenSandboxOwnerClaim(
                 owner_key=owner_key,
@@ -123,10 +138,34 @@ async def acquire_owner(
         await asyncio.sleep(self._poll_interval)
 
 
+async def _require_owner_purpose(
+    self: SQLAlchemyOpenSandboxState,
+    connection: AsyncConnection,
+    claim: OpenSandboxOwnerClaim,
+    purpose: OpenSandboxPurpose,
+) -> None:
+    """Check the locked current row, including earlier writes under this claim."""
+    validate_purpose(purpose)
+    row = (
+        await connection.execute(
+            select(_owners.c.sandbox_id, _owners.c.purpose).where(
+                _owners.c.namespace == self._namespace,
+                _owners.c.owner_digest == claim.owner_digest,
+            )
+        )
+    ).one()
+    if row.sandbox_id is not None:
+        require_purpose(row.purpose, purpose)
+    elif row.purpose is not None:
+        raise OpenSandboxPurposeError("Unbound Sandbox owner has a purpose")
+
+
 async def bind_owner(
     self: SQLAlchemyOpenSandboxState,
     claim: OpenSandboxOwnerClaim,
     sandbox_id: str,
+    *,
+    purpose: OpenSandboxPurpose,
 ) -> OpenSandboxBinding:
     """Commit a binding with claim token, generation, and lease fencing."""
     self._ensure_open()
@@ -135,6 +174,7 @@ async def bind_owner(
         now = await current_claim_time(self, connection, claim)
         if now is None:
             raise OpenSandboxStateOwnershipError("Sandbox claim is no longer current")
+        await _require_owner_purpose(self, connection, claim, purpose)
         result = await connection.execute(
             update(_owners)
             .where(
@@ -146,6 +186,7 @@ async def bind_owner(
             )
             .values(
                 sandbox_id=sandbox_id,
+                purpose=purpose,
                 binding_generation=claim.generation,
                 updated_at=now,
             )
@@ -161,6 +202,7 @@ async def bind_owner(
     return OpenSandboxBinding(
         sandbox_id=sandbox_id,
         generation=claim.generation,
+        purpose=purpose,
     )
 
 
@@ -214,6 +256,7 @@ async def unbind_owner(
             )
             .values(
                 sandbox_id=None,
+                purpose=None,
                 binding_generation=claim.generation,
                 updated_at=now,
             )
@@ -236,17 +279,21 @@ async def read_binding(
     digest = _owner_digest(self._namespace, owner_key)
     rows = await _read_rows(
         self,
-        select(_owners.c.sandbox_id, _owners.c.binding_generation).where(
+        select(
+            _owners.c.sandbox_id, _owners.c.binding_generation, _owners.c.purpose
+        ).where(
             _owners.c.namespace == self._namespace,
             _owners.c.owner_digest == digest,
         ),
     )
     row = rows[0] if rows else None
-    if row is None or row["sandbox_id"] is None:
+    if row is None:
         return None
-    return OpenSandboxBinding(
-        sandbox_id=str(row["sandbox_id"]),
-        generation=int(row["binding_generation"]),
+    sandbox_id = row["sandbox_id"]
+    return _binding_from_values(
+        str(sandbox_id) if sandbox_id is not None else None,
+        int(row["binding_generation"]),
+        row["purpose"],
     )
 
 
@@ -547,6 +594,7 @@ async def consume_warm(
     ) -> OpenSandboxBinding | None:
         if await current_claim_time(self, connection, claim) is None:
             raise OpenSandboxStateOwnershipError("Owner claim is no longer current")
+        await _require_owner_purpose(self, connection, claim, "commands")
         capabilities = self._require_capabilities()
         slot_statement = (
             select(_warm_slots.c.slot, _warm_slots.c.sandbox_id)
@@ -597,6 +645,7 @@ async def consume_warm(
             )
             .values(
                 sandbox_id=sandbox_id,
+                purpose="commands",
                 binding_generation=claim.generation,
                 updated_at=now,
             )
@@ -609,6 +658,7 @@ async def consume_warm(
         return OpenSandboxBinding(
             sandbox_id=sandbox_id,
             generation=claim.generation,
+            purpose="commands",
         )
 
     return await self._run_claim_transaction(consume)

@@ -117,6 +117,27 @@ same Redis notification channel. Shared SQL alone does not provide dynamic sched
 discovery. Workers in one namespace must support all targets
 they can claim; claims are not routed by target name.
 
+Before entering a client lifecycle, declare targets used for new tasks, immediate
+submissions, or replacement targets:
+
+```python
+client = Automation(namespace="my-application", store=store)
+client.remote_target("agent", execution_namespace=namespace_for_owner)
+async with client:
+    run = await client.for_owner(authenticated_user_id).run(
+        "agent",
+        input={"messages": [{"role": "user", "content": "Summarize the project"}]},
+        request_id="remote-summary",
+    )
+```
+
+`namespace_for_owner` is the host's deterministic owner-to-namespace mapping;
+a fixed namespace string is also accepted. No Runtime is loaded. The host must keep
+the declaration consistent with the worker, which checks saved execution identity
+before invoking a target. Remote declarations cannot be entered as local workers.
+Queries and operations on saved work, including manual execution and retries,
+need no target declaration.
+
 Store setup creates empty storage or verifies the complete current structure without
 repairing partial tables. Empty storage requires DDL permission. Direct Store users
 can call `await store.setup()`. Database pool checkouts must be exclusive.
@@ -209,7 +230,7 @@ from tinkerfin import TinkerFin
 from tinkerfin_automation import Automation, TinkerFinTarget
 
 runtime = TinkerFin().with_namespace("my-application").build(model=model, tools=tools)
-automation = Automation(namespace=runtime.namespace)
+automation = Automation(namespace="scheduled-jobs")
 automation.target("agent", TinkerFinTarget(runtime))
 async with automation.worker():
     owner = automation.for_owner(authenticated_user_id)
@@ -221,12 +242,18 @@ async with automation.worker():
     await run.wait()
 ```
 
-The execution identity must match the Runtime's namespace. New work defaults to the
-Automation namespace. To share one scheduler across Runtime scopes, bind
-`automation.for_owner(owner_id, execution_namespace=runtime.namespace)` before
-creating tasks or submitting one-time work. Tasks and retries retain their saved
-Runtime scope. Targets use the assigned execution
-identity; input cannot replace model, tools, or namespace. TinkerFinTarget records
+TinkerFinTarget supplies the configured Runtime's namespace automatically.
+`for_owner()` selects ownership of tasks and executions; owners sharing one Runtime
+also share its memory and workspace. For a target that builds a Runtime dynamically,
+register `automation.target("agent", target, execution_namespace=namespace_for_owner)`.
+The host-provided mapping takes an authenticated owner ID and returns an authorized
+namespace without I/O or side effects; a fixed string is also accepted.
+Ordinary function targets default to the scheduling namespace.
+
+Tasks and retries retain their saved space. A replacement target must select the
+same space; repeating a committed command retains its original binding even after
+target configuration changes. Input cannot replace model, tools, or namespace.
+TinkerFinTarget records
 success with result=None; obtain messages through configured Trace or business storage.
 An ordinary async callable's finite JSON return value becomes its execution result.
 Cancellation guarantees default to false. Use an explicit

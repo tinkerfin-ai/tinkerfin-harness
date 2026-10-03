@@ -17,10 +17,11 @@ from tinkerfin_contracts.identity import validate_namespace
 
 DEFAULT_SANDBOX_IMAGE = (
     "ghcr.io/tinkerfin-ai/sandbox-runtime@"
-    "sha256:babb5d624ebfd0509577dc87a6862e89f8499c4ef7d42a09145db214b9d1e524"
+    "sha256:4778df4f79ac6a0a579d9eaf9beeb05b7357d063c20fec4ab3319e004140e67c"
 )
 _RESERVED_METADATA_PREFIX = "tinkerfin.ai/"
 
+OpenSandboxPurpose = Literal["commands", "workspaces"]
 OpenSandboxUnavailableReason = Literal["not_found", "unreachable"]
 _AccessState = Literal[
     "running", "draining", "pausing", "paused", "resuming", "uncertain"

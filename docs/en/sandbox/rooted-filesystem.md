@@ -2,33 +2,41 @@
 
 [Sandbox lifecycle](lifecycle.md) · [中文](../../cn/sandbox/rooted-filesystem.md)
 
-When `workspace_root` is set, the agent's virtual `/` maps to that physical Sandbox directory. With `/workspace`, an agent path such as `/src/app.txt` maps to `/workspace/src/app.txt` remotely.
+An isolated workspace presents its project files at file-tool `/`. The owner key
+selects a physical Sandbox; `workspace_key` selects the project within it:
 
 ```python
-config = OpenSandboxConfig(workspace_root="/workspace")
+project = manager.workspace("users/7", workspace_key="project-a")
 ```
 
 ## Why use a rooted workspace
 
-- File tools cannot escape through `..`;
-- symbolic links to outside paths are rejected;
-- `reset()` removes children but keeps the root itself;
-- the agent sees shorter virtual paths instead of physical layout.
+- File tools reject paths and links that escape the project's files;
+- Shell commands, transfers, and output capture share the same project isolation;
+- project files, HOME, caches, and dependencies persist across runs;
+- the agent uses virtual paths without knowing the physical storage layout.
 
-Shell is a separate capability. Raw Shell commands are not automatically confined by the file-tool root, so govern dangerous commands with tool permissions and human approval.
+Each run has private processes, `/tmp`, `/proc`, `/dev`, and networking. Shared base
+tools are read-only. Processes and network activity stop when the run or `open()`
+context ends, including cancellation and errors. Concurrent runs in the same project
+share files; writes are not transactional.
+
+For raw command Sandboxes opened with `manager.get()`, `workspace_root="/workspace"`
+maps file-tool `/` to that directory, and `reset()` clears its children. This option
+only limits file tools; raw Shell commands can access other Sandbox paths. It does
+not configure isolated workspaces, whose virtual file root is always `/`.
 
 ## Common asynchronous file operations
 
 ```python
-backend = await manager.get(key)
-
-await backend.awrite("/notes.txt", "hello")
-result = await backend.aread("/notes.txt")
-await backend.aedit("/notes.txt", "hello", "hello world")
-entries = await backend.als("/")
-matches = await backend.aglob("**/*.txt", "/")
-hits = await backend.agrep("hello", "/", glob="*.txt")
-await backend.adelete("/notes.txt")
+async with project.open() as backend:
+    await backend.awrite("/notes.txt", "hello")
+    result = await backend.aread("/notes.txt")
+    await backend.aedit("/notes.txt", "hello", "hello world")
+    entries = await backend.als("/")
+    matches = await backend.aglob("**/*.txt", "/")
+    hits = await backend.agrep("hello", "/", glob="*.txt")
+    await backend.adelete("/notes.txt")
 ```
 
 ### Method parameters
@@ -45,29 +53,65 @@ await backend.adelete("/notes.txt")
 
 Results may contain both normal data and an error description. In search and batch operations, inspect the error field as well as the returned entries.
 
+## Watch file changes
+
+For an existing running project, enter the subscription before reading its initial
+file state. Watching does not open a command run or keep the Sandbox from pausing:
+
+```python
+async with project.watch() as changes:
+    async for change in changes:
+        print(change)
+```
+
+The iterator yields `WorkspaceChange.FILES_CHANGED` from `tinkerfin_sandbox` or
+`ResyncRequired` from `tinkerfin_notifications`. Both concern the whole project file
+root; use the file APIs to read current state. Hints can be combined and do not contain
+file content, individual operations, or a replay history. Subscribe before reading an
+initial snapshot, and repeat authoritative reads after a resync.
+
+File tools, uploads, and ordinary Shell or Python writes, truncation, renames, and
+deletions are observed. HOME, caches, and dependency directories are excluded, as are
+memory-mapped writes and files hidden by new mounts. Directory changes can require
+resynchronization while observation is reestablished.
+
+Watching never creates or resumes a Sandbox or project. Pause, deletion, replacement,
+or source disconnection ends the selected watch with a disconnected resync. Check
+availability before subscribing again. Exiting or cancelling the context releases its
+subscription without affecting project files or other listeners.
+
 ## Run a command
 
 ```python
-result = await backend.aexecute(
-    "python -m pytest",
-    timeout=300,
-)
+async with project.open() as backend:
+    result = await backend.aexecute(
+        "python -m pytest",
+        timeout=300,
+    )
 ```
 
-`timeout=None` uses the backend default. Commands start in the configured working directory, but Shell itself can access other Sandbox paths.
+`timeout=None` uses the backend default. Commands start in the project's files
+directory. Use relative paths in commands or `backend.to_shell_path(file_path)` to
+convert a virtual file path. A command timeout or cancellation ends the current run;
+already written project files are retained.
 
-For large output, enable capture offload:
+Public HTTP on port 80 and HTTPS on port 443 use the managed proxy. This supports
+`pip`, `npm`, HTTPS Git, and browser requests without application-managed proxy setup.
+Private destinations, SSH Git, and other destination ports are unavailable. A server
+started in one run does not remain running for later runs.
+
+For large output, pass `OpenSandboxConfig(enable_capture_offload=True)` to the client
+when creating the manager, then capture command output:
 
 ```python
-config = OpenSandboxConfig(enable_capture_offload=True)
-
-result = await backend.aexecute_with_offload(
-    "python -m pytest -vv",
-    "/captures/tests.txt",
-    max_inline_bytes=32_000,
-    max_capture_bytes=5_000_000,
-    timeout=300,
-)
+async with project.open() as backend:
+    result = await backend.aexecute_with_offload(
+        "python -m pytest -vv",
+        "/captures/tests.txt",
+        max_inline_bytes=32_000,
+        max_capture_bytes=5_000_000,
+        timeout=300,
+    )
 ```
 
 | Parameter | Purpose |
@@ -80,18 +124,26 @@ result = await backend.aexecute_with_offload(
 ## Upload and download
 
 ```python
-uploads = await backend.aupload_files([("/input/data.csv", csv_bytes)])
-downloads = await backend.adownload_files(["/output/report.json"])
+async with project.open() as backend:
+    uploads = await backend.aupload_files([("/input/data.csv", csv_bytes)])
+    downloads = await backend.adownload_files(["/output/report.json"])
 ```
 
 Responses preserve input order. A confirmed invalid path affects only that item. Transport failures and uncertain results propagate instead of retrying a write that may already have happened.
 
-Rooted transfers require Python 3, Linux procfs, and shared process visibility between command and filesystem services. The default TinkerFin Sandbox image provides this environment.
+In isolated projects, `adownload_files()` allows up to 64 MiB per file; use
+`aread_bytes(..., max_bytes=...)` to choose another explicit limit. Command responses
+are bounded to 32 MiB. Exceeding that bound ends the Run; use output offload for large output.
+
+Isolated project transfers use the same run boundary as commands. Rooted transfers
+on raw command Sandboxes require Python 3, Linux procfs, and shared process visibility
+between command and filesystem services.
 
 ## Connect an AgentRuntime
 
 ```python
 from deepagents import FilesystemPermission
+
 from tinkerfin import TinkerFin
 
 permissions = [
@@ -104,17 +156,17 @@ permissions = [
 
 runtime = (
     TinkerFin(checkpointer=checkpointer)
-    .with_namespace(namespace)
+    .with_namespace("projects/project-a")
     .build(
         model=model,
-        backend=manager.workspace(workspace_key),
+        backend=project,
         permissions=permissions,
     )
 )
 ```
 
-The Runtime prepares the rooted backend and its filesystem middleware together when the
-run starts. Permission rules that interrupt instead of deny require a checkpointer.
+The Runtime prepares isolated project access and its filesystem middleware together
+when the run starts. Permission rules that interrupt instead of deny require a checkpointer.
 Use `build_rooted_filesystem_middleware()` only in a caller-managed Deep Agents Graph.
 
 Next: [Persistent state and extensions](persistence-and-extensions.md).

@@ -201,6 +201,27 @@ class OpenSandboxHandle(BaseSandbox):
                     continue
                 raise
 
+    def _confirm_remote_resource(self, sandbox_id: str, identity: str) -> None:
+        """Apply exact cleanup evidence to every retained connection for one instance.
+
+        Reconnection does not erase unresolved work. A namespaced session DELETE
+        can settle that same resource across old connection trackers without
+        clearing unknown commands or obligations belonging to a replacement.
+        """
+        with self._condition:
+            trackers = {
+                operations
+                for remote_id, operations in self._remote_operations.values()
+                if remote_id == sandbox_id
+            }
+            if (
+                isinstance(self._backend, OpenSandboxBackend)
+                and self._backend.id == sandbox_id
+            ):
+                trackers.add(self._backend._remote_operations)
+            for operations in trackers:
+                operations.confirm_resource_stopped(identity)
+
     @staticmethod
     def _complete_waiter(waiter: asyncio.Future[None]) -> None:
         """Complete a live idle waiter after cancellation-safe cross-thread release."""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -10,11 +11,14 @@ from datetime import datetime, timedelta
 from types import TracebackType
 from typing import TYPE_CHECKING, Literal, TypeGuard, TypeVar, overload
 
+from tinkerfin_contracts.identity import validate_namespace
+
 from ._tasks import TaskOutcome, capture, join_owned_task, select_failure
 from .clock import AutomationClock, SystemClock
 from .engine import AutomationEngine, OnInterrupt
-from .errors import AutomationLifecycleError
+from .errors import AutomationLifecycleError, TargetNamespaceError, TargetNotFoundError
 from .models import ExecutionFailure, InterruptedExecution
+from .runtime_target import TinkerFinTarget
 from .scheduler import AutomationScheduler, _require_external_close
 from .schedules import ScheduleSpec
 from .service import AutomationService
@@ -53,8 +57,11 @@ def _is_target(value: object) -> TypeGuard[AutomationTarget]:
 class _ManagedTarget:
     """Prevent a target from joining the lifecycle that is waiting for it."""
 
-    def __init__(self, automation: Automation, target: AutomationTarget) -> None:
+    def __init__(
+        self, automation: Automation, name: str, target: AutomationTarget
+    ) -> None:
         self._automation = automation
+        self._name = name
         self._target = target
 
     @property
@@ -63,6 +70,14 @@ class _ManagedTarget:
 
     async def run(self, request: ExecutionRequest) -> ExecutionOutcome:
         with self._automation._activity():
+            expected = self._automation._execution_namespace(
+                self._name, request.execution.owner_id
+            )
+            if request.execution.identity.namespace != expected:
+                raise TargetNamespaceError(
+                    "Target does not match the saved execution namespace",
+                    context={"target": self._name},
+                )
             return await self._target.run(request)
 
 
@@ -90,6 +105,8 @@ class Automation:
             namespace=namespace, store=store, scheduler=scheduler, clock=self._clock
         )
         self._targets: dict[str, AutomationTarget] = {}
+        self._target_namespaces: dict[str, str | Callable[[str], str]] = {}
+        self._remote_targets: set[str] = set()
         self._state: Literal[
             "new", "starting", "client", "worker", "closing", "closed"
         ] = "new"
@@ -102,21 +119,38 @@ class Automation:
         self._operations = 0
 
     @overload
-    def target(self, name: str) -> Callable[[_TargetT], _TargetT]: ...
+    def target(
+        self,
+        name: str,
+        *,
+        execution_namespace: str | Callable[[str], str] | None = None,
+    ) -> Callable[[_TargetT], _TargetT]: ...
 
     @overload
-    def target(self, name: str, target: _TargetT) -> _TargetT: ...
+    def target(
+        self,
+        name: str,
+        target: _TargetT,
+        *,
+        execution_namespace: str | Callable[[str], str] | None = None,
+    ) -> _TargetT: ...
 
     def target(
         self,
         name: str,
         target: _TargetT | None = None,
+        *,
+        execution_namespace: str | Callable[[str], str] | None = None,
     ) -> _TargetT | Callable[[_TargetT], _TargetT]:
         """Register a target or decorate an async callable, returning the original.
 
         Args:
             name: Canonical target name persisted in task definitions.
             target: A target or callable returning an awaitable; omit to decorate.
+            execution_namespace: Fixed space or a deterministic, side-effect-free
+                owner-to-space mapping that performs no I/O. Ordinary targets
+                default to the scheduling namespace. TinkerFinTarget already owns
+                this choice and rejects an additional declaration.
 
         Returns:
             The unchanged target, or a decorator returning the unchanged callable.
@@ -130,8 +164,9 @@ class Automation:
         self._service._validate_identifier(name, name="target", maximum=191)
 
         def register(value: _TargetT) -> _TargetT:
+            registered = value
             self._require_new()
-            if name in self._targets:
+            if name in self._target_namespaces:
                 raise ValueError(f"Target is already registered: {name}")
             if _is_target(value):
                 executable = value
@@ -141,21 +176,86 @@ class Automation:
                 raise TypeError(
                     "target must implement AutomationTarget or return an awaitable"
                 )
+            if isinstance(value, TinkerFinTarget):
+                if execution_namespace is not None:
+                    raise ValueError("TinkerFinTarget already selects its namespace")
+                policy = value.execution_namespace
+            else:
+                policy = (
+                    self._service.namespace
+                    if execution_namespace is None
+                    else execution_namespace
+                )
+            self._target_namespaces[name] = self._namespace_policy(policy)
             self._targets[name] = executable
-            return value
+            return registered
 
         return register if target is None else register(target)
 
-    def for_owner(
-        self, owner_id: str, *, execution_namespace: str | None = None
-    ) -> AutomationOwner:
-        """Bind an authenticated owner and the Runtime scope for new work.
+    def remote_target(
+        self, name: str, *, execution_namespace: str | Callable[[str], str]
+    ) -> None:
+        """Declare a remote target's execution space without loading its Runtime.
+
+        Use this only with the client lifecycle. The host must keep its declaration
+        consistent with the remote worker; this method does not discover or route
+        workers. Queries and operations on saved executions need no declaration.
+
+        Args:
+            name: Target name accepted by the remote worker.
+            execution_namespace: Fixed space or deterministic owner-to-space mapping,
+                without I/O or side effects.
+
+        Raises:
+            AutomationLifecycleError: Configuration is already frozen.
+            ValueError: The name or space is invalid or the target already exists.
+            TypeError: The space is neither a string nor a synchronous callable.
+        """
+        self._require_new()
+        self._service._validate_identifier(name, name="target", maximum=191)
+        if name in self._target_namespaces:
+            raise ValueError(f"Target is already registered: {name}")
+        self._target_namespaces[name] = self._namespace_policy(execution_namespace)
+        self._remote_targets.add(name)
+
+    @staticmethod
+    def _namespace_policy(
+        policy: str | Callable[[str], str],
+    ) -> str | Callable[[str], str]:
+        if isinstance(policy, str):
+            return validate_namespace(policy)
+        if (
+            not callable(policy)
+            or inspect.iscoroutinefunction(policy)
+            or inspect.iscoroutinefunction(getattr(policy, "__call__", None))
+        ):
+            raise TypeError(
+                "execution_namespace must be text or a synchronous callable"
+            )
+        return policy
+
+    def _execution_namespace(self, target: str, owner_id: str) -> str:
+        policy = self._target_namespaces.get(target)
+        if policy is None:
+            raise TargetNotFoundError(
+                "Target has not been declared", context={"target": target}
+            )
+        try:
+            return validate_namespace(
+                policy if isinstance(policy, str) else policy(owner_id)
+            )
+        except Exception as error:
+            raise TargetNamespaceError(
+                "Target could not select a valid execution namespace",
+                context={"target": target},
+                cause=error,
+            ) from error
+
+    def for_owner(self, owner_id: str) -> AutomationOwner:
+        """Bind an authenticated owner to task and execution operations.
 
         Args:
             owner_id: Host-authorized identity for task and execution access.
-            execution_namespace: Runtime namespace for newly created tasks and
-                taskless executions; None selects this Automation's namespace.
-                Existing tasks and retries retain their saved Runtime scope.
 
         Returns:
             A resource-free owner view borrowing this Automation lifecycle.
@@ -170,7 +270,7 @@ class Automation:
             raise AutomationLifecycleError(
                 "Bind owners before entry or during an active lifecycle"
             )
-        return AutomationOwner._bind(self, owner_id, execution_namespace)
+        return AutomationOwner._bind(self, owner_id)
 
     def worker(
         self,
@@ -201,11 +301,13 @@ class Automation:
         Raises:
             AutomationLifecycleError: This instance has already entered a lifecycle.
         """
-        self._require_new()
+        self._require_worker_configuration()
 
         @asynccontextmanager
         async def lifespan() -> AsyncGenerator[AutomationEngine, None]:
-            self._require_new()
+            # The returned context may be entered after further configuration.
+            # Validate the complete target set immediately before freezing it.
+            self._require_worker_configuration()
             self._state = "starting"
             try:
                 classifier: OnInterrupt | None = None
@@ -222,7 +324,7 @@ class Automation:
                 self._engine = AutomationEngine(
                     self._service,
                     targets={
-                        name: _ManagedTarget(self, value)
+                        name: _ManagedTarget(self, name, value)
                         for name, value in self._targets.items()
                     },
                     worker_id=worker_id,
@@ -302,6 +404,13 @@ class Automation:
         if self._state != "new":
             raise AutomationLifecycleError(
                 "Automation can only be configured and entered once"
+            )
+
+    def _require_worker_configuration(self) -> None:
+        self._require_new()
+        if self._remote_targets:
+            raise AutomationLifecycleError(
+                "Remote target declarations require the client lifecycle"
             )
 
     @contextmanager

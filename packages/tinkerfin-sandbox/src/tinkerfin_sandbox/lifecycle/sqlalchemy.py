@@ -27,11 +27,13 @@ from tinkerfin_sqlalchemy import (
 )
 
 from ..errors import (
+    OpenSandboxError,
     OpenSandboxStateError,
     OpenSandboxStateTimeoutError,
     OpenSandboxStateUnavailableError,
     UnexpectedOpenSandboxStateError,
 )
+from ..models import OpenSandboxPurpose
 from . import _sql_availability, _sql_schema, _sql_state_ops, _sql_transactions
 from ._sql_schema import _cleanup as _cleanup
 from ._sql_schema import _warm_slots as _warm_slots
@@ -76,7 +78,7 @@ def _state_operation(
             }
             try:
                 return await function(*args, **kwargs)
-            except OpenSandboxStateError as error:
+            except OpenSandboxError as error:
                 error._enrich_diagnostic_context(diagnostic_context)
                 raise
             except SQLAlchemyTimeoutError as error:
@@ -333,6 +335,8 @@ class SQLAlchemyOpenSandboxState(OpenSandboxState):
         self,
         claim: OpenSandboxOwnerClaim,
         sandbox_id: str,
+        *,
+        purpose: OpenSandboxPurpose,
     ) -> OpenSandboxBinding:
         """Commit a binding with claim token, generation, and lease fencing."""
 
@@ -340,6 +344,7 @@ class SQLAlchemyOpenSandboxState(OpenSandboxState):
             self,
             claim,
             sandbox_id,
+            purpose=purpose,
         )
 
     @_state_operation("renew_owner")

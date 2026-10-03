@@ -268,7 +268,7 @@ class _FakeSandbox:
             created_at=datetime(2026, 8, 8, tzinfo=UTC),
             image=SimpleNamespace(image="registry.example/sandbox:1"),
             platform=SimpleNamespace(os="linux", arch="amd64"),
-            metadata={"purpose": "test"},
+            metadata={"purpose": "test", "tinkerfin.ai/purpose": "commands"},
         )
 
     async def renew(self, timeout: timedelta) -> None:
@@ -429,7 +429,7 @@ def _sandbox_info(
         status=SandboxStatus(state="RUNNING"),
         entrypoint=["/entrypoint.sh"],
         created_at=datetime(2026, 8, 8, tzinfo=UTC),
-        metadata=metadata,
+        metadata={"tinkerfin.ai/purpose": "commands", **(metadata or {})},
     )
 
 
@@ -1298,6 +1298,7 @@ class OpenSandboxClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["env"], self.config.env)
         metadata = dict(kwargs["metadata"])
         create_token = metadata.pop("tinkerfin.ai/create-token")
+        self.assertEqual(metadata.pop("tinkerfin.ai/purpose"), "commands")
         self.assertEqual(metadata, self.config.metadata)
         self.assertEqual(len(create_token), 32)
         self.assertEqual(kwargs["resource"], self.config.resource)
@@ -1509,7 +1510,9 @@ class OpenSandboxClientTests(unittest.IsolatedAsyncioTestCase):
         assert details.status is not None
         self.assertEqual(details.status.state, "RUNNING")
         self.assertEqual(details.image, "registry.example/sandbox:1")
-        self.assertEqual(details.metadata, {"purpose": "test"})
+        self.assertEqual(
+            details.metadata, {"purpose": "test", "tinkerfin.ai/purpose": "commands"}
+        )
         self.assertTrue(sandbox.closed)
         initializer.assert_not_called()
 

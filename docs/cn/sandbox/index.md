@@ -18,32 +18,38 @@ pip install "tinkerfin-sandbox[sqlalchemy]" aiosqlite
 
 PostgreSQL 使用 `asyncpg`，MySQL 使用 `asyncmy`。
 
+隔离工作区需要部署 TinkerFin [运行镜像](https://github.com/tinkerfin-ai/sandbox-runtime)及配套的
+[Server](https://github.com/tinkerfin-ai/sandbox-runtime/blob/main/opensandbox-server/README.md#deploy)
+和 [execd](https://github.com/tinkerfin-ai/sandbox-runtime/blob/main/opensandbox-execd/README.md#deploy)。
+应用使用 Manager API，框架负责每次运行的环境、认证和清理。
+
 ## 在 AgentRuntime 中使用 Sandbox
 
-两个范围都由应用决定：
+应用决定 Sandbox 所有者和项目：
 
-- Runtime `namespace` 选择业务隔离范围
-- `workspace_key` 选择该范围内哪些运行共享 Sandbox
+- `key` 选择物理 Sandbox，例如 `"users/7"`
+- `workspace_key` 选择其中一个项目的文件、HOME、缓存和依赖环境
 
-key 可以按用户、session、项目或其他业务策略划分。
+Runtime `namespace` 限定逻辑持久化范围，不改变工作区使用的物理 Sandbox 或项目。
 
 ```python
 from opensandbox.config import ConnectionConfig
+
 from tinkerfin import TinkerFin
-from tinkerfin_sandbox import OpenSandboxClient, OpenSandboxConfig, OpenSandboxManager
+from tinkerfin_sandbox import OpenSandboxClient, OpenSandboxManager
 
 client = OpenSandboxClient(
     connection_config=ConnectionConfig(domain="127.0.0.1:8091"),
-    config=OpenSandboxConfig(workspace_root="/workspace"),
 )
 
 async with OpenSandboxManager(client=client) as sandboxes:
+    project = sandboxes.workspace("users/7", workspace_key="project-a")
     runtime = (
         TinkerFin()
-        .with_namespace("company-a")
+        .with_namespace("projects/project-a")
         .build(
             model=model,
-            backend=sandboxes.workspace("users/user-7"),
+            backend=project,
         )
     )
     result = await runtime.ainvoke(
@@ -53,36 +59,48 @@ async with OpenSandboxManager(client=client) as sandboxes:
     )
 ```
 
-`workspace(...)` 不执行 I/O。Runtime 只为已准入的运行创建或重连 Sandbox，并在清理时释放本次运行的句柄。一次运行结束不会销毁持久 Sandbox。
+`workspace(...)` 返回 `SandboxWorkspace`，不执行 I/O。Runtime 只为已准入的运行准备隔离访问，
+并在清理时停止本次运行的进程和网络活动。同一项目跨对话复用时保留文件；一次运行结束不会销毁 Sandbox。
 
 ## 直接管理 Sandbox
 
-应用需要在智能体运行之外操作环境时，使用 manager 方法：
+在智能体运行之外访问文件和执行命令时，使用同一个项目：
 
 ```python
-backend = await sandboxes.get("projects/project-1", namespace="company-a")
-await backend.awrite("/notes.txt", "hello")
-result = await backend.aexecute("python -m pytest", timeout=300)
+project = sandboxes.workspace("users/7", workspace_key="project-a")
+async with project.open() as files:
+    await files.aupload_files([("/notes.txt", b"hello")])
+    result = await files.aexecute("cat notes.txt")
 ```
+
+项目不再需要时，调用 `await project.delete()` 停止该项目的全部运行，并删除其文件、HOME、缓存和
+依赖环境。同一 Sandbox 中的其他项目仍可继续使用。
 
 | 任务 | 方法 |
 | --- | --- |
-| 打开或复用 | `get(key)` |
-| 重连 | `reconnect(key)` |
-| 替换 | `recreate(key)` |
-| 清空 workspace 文件 | `reset(key)` |
-| 暂停或恢复 | `pause(key)`、`resume(key)` |
-| 销毁 | `destroy(key)` |
+| 打开或复用原始命令 Sandbox | `get(key)` |
+| 重连原始命令 Sandbox | `reconnect(key)` |
+| 替换原始命令 Sandbox | `recreate(key)` |
+| 清空原始命令 Sandbox 的文件根目录 | `reset(key)` |
+| 暂停或恢复所有者的整个 Sandbox | `pause(key)`、`resume(key)` |
+| 销毁所有者的 Sandbox 及其全部项目 | `destroy(key)` |
 | 查看状态 | `get_details(key)` |
 | 关闭本地资源 | `aclose()` |
 
+原始命令方法会拒绝已用于隔离工作区的所有者。以上例子中，`await sandboxes.pause("users/7")`
+会暂停该所有者的全部项目。暂停和恢复返回 `None`；`project.open()` 不会自动恢复已暂停的 Sandbox。
+
 ## 持久化与所有权
 
-`SQLAlchemyOpenSandboxState` 通过借用的 SQLAlchemy `AsyncEngine` 支持 SQLite、MySQL 和 PostgreSQL。应用负责创建和释放 Engine。State 保存绑定和生命周期协调状态，文件仍位于 Sandbox 或挂载卷中。
+`SQLAlchemyOpenSandboxState` 通过借用的 SQLAlchemy `AsyncEngine` 支持 SQLite、MySQL 和 PostgreSQL。
+应用负责创建和释放 Engine。State 保存物理 Sandbox 绑定和生命周期协调状态。项目文件随该 Sandbox
+保留；State 不备份文件、不创建项目持久卷，也不提供项目存储配额。
 
 manager 拥有自己的 OpenSandbox client 和 State；调用方传入的 HTTP transport 仍由调用方管理。manager 关闭时，持久 State 保留远程 Sandbox，内存 State 销毁自己创建的实例。
 
-文件工具被限制在 `workspace_root` 内，并拒绝逃逸路径和链接。Shell 命令是独立 Sandbox 能力，不受文件根目录限制。
+Shell 命令、文件工具和传输使用同一项目隔离。每次运行拥有独立的进程、临时文件和网络，共用的基础
+工具只读。项目文件、HOME、缓存和依赖环境在运行间保留。公网 HTTP 80 和 HTTPS 443 通过受控代理
+访问；运行中启动的服务器进程随该次运行结束。
 
 ## 后续阅读
 

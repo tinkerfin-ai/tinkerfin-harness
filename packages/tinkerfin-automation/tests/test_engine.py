@@ -97,6 +97,7 @@ async def _task_and_execution(
     target: str = "target",
 ):
     task = await service.create_task(
+        execution_namespace=service.namespace,
         owner_id="owner-1",
         name="Task",
         schedule=OnceSchedule(at=NOW + timedelta(days=1)),
@@ -148,7 +149,9 @@ async def test_idle_wait_settles_claims_before_their_local_publication() -> None
     service = AutomationService(
         namespace="app", store=PublishingStore(clock=clock), clock=clock
     )
-    execution = await service.execute_once(owner_id="owner", target="report")
+    execution = await service.execute_once(
+        execution_namespace=service.namespace, owner_id="owner", target="report"
+    )
     engine = AutomationEngine(
         service, targets={"report": FunctionTarget(run)}, clock=clock
     )
@@ -370,6 +373,7 @@ async def test_engine_executes_taskless_input_with_generated_runtime_identity() 
     await engine.start()
     try:
         execution = await service.execute_once(
+            execution_namespace=service.namespace,
             owner_id="owner-1",
             target="target",
             input={"question": "meaning"},
@@ -459,13 +463,17 @@ async def test_taskless_interrupt_exposes_no_task_and_cancel_releases_owner_capa
     )
     await engine.start()
     try:
-        first = await service.execute_once(owner_id="owner-1", target="target")
+        first = await service.execute_once(
+            execution_namespace=service.namespace, owner_id="owner-1", target="target"
+        )
         await engine.run_ready()
         await engine.wait_until_idle()
         assert await _status(service, first.execution_id) is ExecutionStatus.INTERRUPTED
         assert interrupted_task_ids == [None]
 
-        second = await service.execute_once(owner_id="owner-1", target="target")
+        second = await service.execute_once(
+            execution_namespace=service.namespace, owner_id="owner-1", target="target"
+        )
         assert await engine.run_ready() == 0
         await service.cancel_execution(
             owner_id="owner-1", execution_id=first.execution_id

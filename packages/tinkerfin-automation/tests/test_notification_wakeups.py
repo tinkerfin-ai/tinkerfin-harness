@@ -97,7 +97,11 @@ async def test_idle_worker_waits_for_repair_and_remote_enqueue_wakes_it_immediat
             try:
                 assert await clock.waits.get() == NOW + timedelta(seconds=30)
                 assert store.claim_calls == 1
-                await remote.execute_once(owner_id="owner", target="task")
+                await remote.execute_once(
+                    execution_namespace=remote.namespace,
+                    owner_id="owner",
+                    target="task",
+                )
                 await started.wait()
                 assert clock.now() == NOW
             finally:
@@ -131,7 +135,11 @@ async def test_remote_cancellation_rereads_authority_and_stops_the_owned_target(
             clock=clock,
         ) as engine:
             try:
-                execution = await remote.execute_once(owner_id="owner", target="task")
+                execution = await remote.execute_once(
+                    execution_namespace=remote.namespace,
+                    owner_id="owner",
+                    target="task",
+                )
                 await started.wait()
                 await remote.cancel_execution(
                     owner_id="owner", execution_id=execution.execution_id
@@ -179,6 +187,7 @@ async def test_remote_cancellation_before_authorization_keeps_worker_available(
             service, targets={"task": FunctionTarget(target)}, clock=clock
         ) as engine:
             task = await remote.create_task(
+                execution_namespace=remote.namespace,
                 owner_id="owner",
                 name="Remote task",
                 target="task",
@@ -203,7 +212,9 @@ async def test_remote_cancellation_before_authorization_keeps_worker_available(
                 release.set()
             await engine.wait_until_idle()
             await engine.check_ready()
-            following = await remote.execute_once(owner_id="owner", target="task")
+            following = await remote.execute_once(
+                execution_namespace=remote.namespace, owner_id="owner", target="task"
+            )
             await engine.wait_until_idle()
             assert started == [following.execution_id]
             assert (
@@ -296,7 +307,9 @@ async def test_observer_subscribes_before_its_read_and_wakes_without_advancing_t
     clock = ObservedClock()
     async with Notifications() as notifications:
         store = ObservedStore(clock, notifications)
-        async with Automation(namespace="app", store=store, clock=clock) as client:
+        client = Automation(namespace="app", store=store, clock=clock)
+        client.remote_target("remote", execution_namespace="app")
+        async with client:
             run = await client.for_owner("owner").run("remote")
             waiting = asyncio.create_task(run.wait(timeout=120))
             await store.reads.get()
@@ -342,6 +355,7 @@ async def test_remote_task_deletion_removes_the_local_wakeup_and_stale_due_ids_a
             service, targets={"task": FunctionTarget(unused)}, clock=clock
         ) as engine:
             task = await remote.create_task(
+                execution_namespace=remote.namespace,
                 owner_id="owner",
                 name="Scheduled",
                 target="task",
@@ -418,7 +432,9 @@ async def test_stopped_notification_service_ends_observation_with_a_store_error(
     clock = ObservedClock()
     async with Notifications() as notifications:
         store = ObservedStore(clock, notifications)
-        async with Automation(namespace="app", store=store, clock=clock) as client:
+        client = Automation(namespace="app", store=store, clock=clock)
+        client.remote_target("remote", execution_namespace="app")
+        async with client:
             run = await client.for_owner("owner").run("remote")
             waiting = asyncio.create_task(run.wait(timeout=120))
             await store.reads.get()
@@ -435,7 +451,9 @@ async def test_notification_bound_client_can_manage_remote_schedule_definitions(
     clock = ManualClock(NOW)
     async with Notifications() as notifications:
         store = MemoryAutomationStore(clock=clock, notifications=notifications)
-        async with Automation(namespace="app", store=store, clock=clock) as client:
+        client = Automation(namespace="app", store=store, clock=clock)
+        client.remote_target("remote", execution_namespace="app")
+        async with client:
             owner = client.for_owner("owner")
             task = await owner.create_task(
                 name="Remote schedule",

@@ -38,6 +38,7 @@ async def _task(
     service: AutomationService, clock: ManualClock, target: str
 ) -> AutomationTask:
     return await service.create_task(
+        execution_namespace=service.namespace,
         owner_id="owner",
         name="Report",
         target=target,
@@ -123,6 +124,7 @@ async def test_concurrent_target_change_cannot_change_authorized_work(
                     task_id=task.task_id,
                     expected_revision=task.revision,
                     target="restricted",
+                    target_namespace=peer.namespace,
                 )
                 release.set()
                 with pytest.raises(TaskConflictError):
