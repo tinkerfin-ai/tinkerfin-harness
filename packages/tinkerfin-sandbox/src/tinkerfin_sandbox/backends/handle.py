@@ -205,8 +205,8 @@ class OpenSandboxHandle(BaseSandbox):
         """Apply exact cleanup evidence to every retained connection for one instance.
 
         Reconnection does not erase unresolved work. A namespaced session DELETE
-        can settle that same resource across old connection trackers without
-        clearing unknown commands or obligations belonging to a replacement.
+        or an exact parent-restart receipt can settle the same resource across
+        old trackers without clearing unknown commands or replacement resources.
         """
         with self._condition:
             trackers = {

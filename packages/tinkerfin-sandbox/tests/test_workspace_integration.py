@@ -102,7 +102,10 @@ async def test_public_project_files_network_and_deletion(
             await project_b.aupload_files([("/secret.txt", b"project-b")])
             bounds = await project_a.aexecute(
                 "test ! -e /root && test ! -e /opt/opensandbox && "
-                "test ! -e /var/lib/tinkerfin-workspaces/records && test ! -e /run/control.sock && "
+                "test ! -e /var/lib/tinkerfin-workspaces/records && "
+                "test ! -e /var/lib/execd/isolation/workspace-control/control.sock && "
+                "test ! -e /var/lib/execd/isolation/workspace-control/lifetime && "
+                "test ! -e /var/lib/execd/isolation/workspace-control/ready && "
                 "test ! -e /workspace/secret.txt && printf isolated"
             )
             assert bounds.exit_code == 0 and bounds.output == "isolated"
@@ -173,7 +176,7 @@ print('browser-passed')
 """
             browser = await project_a.aexecute("python -c " + shlex.quote(browse))
             assert browser.exit_code == 0 and "browser-passed" in browser.output, (
-                browser
+                browser.output
             )
             independent = await project_b.aexecute(
                 "test ! -e /dependencies/node/node_modules/is-number && "

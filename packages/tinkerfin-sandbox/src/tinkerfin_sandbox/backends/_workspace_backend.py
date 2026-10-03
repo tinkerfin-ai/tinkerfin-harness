@@ -64,7 +64,8 @@ class _IsolatedBackend(OpenSandboxBackend):
     The workspace orchestrator owns the fixed parent lease. This adapter admits at
     most sixteen local I/O tasks and serializes foreground commands because execd
     uses one persistent bash process per session. Uncertain operations close local
-    admission and require namespaced DELETE before cancellation or failure escapes.
+    admission and require confirmed Run termination before cancellation or failure
+    escapes.
     It cannot renew, destroy, query, or close the physical parent sandbox.
     """
 
