@@ -7,7 +7,6 @@ import json
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from uuid import uuid4
 
 import httpx
 import pytest
@@ -52,7 +51,11 @@ class _Body(httpx.AsyncByteStream):
 def _ready() -> bytes:
     return (
         json.dumps(
-            {"type": "ready", "source": str(uuid4()), "incarnation": str(uuid4())}
+            {
+                "type": "ready",
+                "source": "00000000-0000-4000-8000-000000000001",
+                "incarnation": "00000000-0000-4000-8000-000000000002",
+            }
         ).encode()
         + b"\n"
     )
