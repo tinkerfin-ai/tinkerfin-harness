@@ -161,6 +161,7 @@ jobs:
       - name: Test package coverage
         if: startsWith(matrix.python-version, '3.11.')
         env:
+          PYTHONPATH: ${{ github.workspace }}
           PYTEST_ADDOPTS: "-vv -p tests.support.ci_diagnostics"
         run: >-
           uv run pytest packages tests/test_package_logging_contract.py
