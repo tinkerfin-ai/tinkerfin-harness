@@ -23,7 +23,7 @@ _STDERR = pytest.StashKey[int]()
 _MAX_TASKS = 16
 _MAX_DEPTH = 24
 _MAX_TEXT = 256
-_MAX_BYTES = 32768
+_MAX_BYTES = 4096
 _Parameters = ParamSpec("_Parameters")
 _Result = TypeVar("_Result")
 
@@ -81,7 +81,9 @@ def _await_chain(awaitable: object) -> tuple[list[dict[str, str | int]], bool]:
 
 def _encode(snapshot: _Snapshot) -> bytes:
     while True:
-        encoded = (json.dumps(snapshot, ensure_ascii=True) + "\n").encode("ascii")
+        encoded = ("\n" + json.dumps(snapshot, ensure_ascii=True) + "\n").encode(
+            "ascii"
+        )
         if len(encoded) <= _MAX_BYTES:
             return encoded
         snapshot["truncated"] = True

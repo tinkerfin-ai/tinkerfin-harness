@@ -122,6 +122,10 @@ async def test_snapshot_bounds_task_count_chain_depth_and_bytes(
     try:
         await entered.wait()
         ci_diagnostics._write_snapshot(123, "n" * 1000, task)
+        assert ci_diagnostics._MAX_BYTES == 4096
+        assert len(b"".join(output)) <= 4096
+        assert b"".join(output).startswith(b"\n{")
+        assert b"".join(output).endswith(b"}\n")
         payload = json.loads(b"".join(output))
         assert len(payload["tasks"]) == 1
         assert len(payload["nodeid"]) == ci_diagnostics._MAX_TEXT
