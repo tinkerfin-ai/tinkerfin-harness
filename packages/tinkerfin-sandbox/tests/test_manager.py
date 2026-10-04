@@ -2344,63 +2344,85 @@ async def test_close_after_cancelled_startup_is_silent_and_closes_resources(
 async def test_shared_state_prevents_cross_manager_duplicate_create(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Share stored claims while each manager owns its own State and Client."""
+    """Share stored claims without advancing unrelated background clocks."""
     from test_pause_resume import _world
 
-    from tinkerfin_sandbox.lifecycle import _sql_state_ops, _sql_transactions
+    from tinkerfin_sandbox.lifecycle import (
+        _manager_availability,
+        _sql_state_ops,
+        _sql_transactions,
+    )
 
     async with _world(tmp_path) as world:
-        controlled = ModuleType("controlled_manager_sql_asyncio")
-        controlled.__dict__.update(vars(asyncio))
-        setattr(controlled, "sleep", world.changes.wait)
-        monkeypatch.setattr(_sql_state_ops, "asyncio", controlled)
-        monkeypatch.setattr(_sql_transactions, "asyncio", controlled)
-        first_manager = await world.add()
-        second_manager = await world.add()
-        create_entered = asyncio.Event()
-        create_release = asyncio.Event()
-        claim_waiting = asyncio.Event()
-        claim_caller: asyncio.Task[object] | None = None
-        create = world.clients[0].create
-        acquire = world.states[1].acquire_owner
+        with monkeypatch.context() as patch:
+            background_tick = asyncio.Event()
 
-        async def blocked_create(
-            *,
-            purpose: OpenSandboxPurpose = "commands",
-            metadata: Mapping[str, str] | None = None,
-        ) -> OpenSandboxBackend:
-            create_entered.set()
-            await create_release.wait()
-            return await create(purpose=purpose, metadata=metadata)
+            async def parked_renewal(_state: SQLAlchemyOpenSandboxState) -> None:
+                await background_tick.wait()
 
-        async def observed_acquire(owner_key: str) -> OpenSandboxOwnerClaim:
-            nonlocal claim_caller
-            claim_caller = asyncio.current_task()
-            return await acquire(owner_key)
+            async def parked_poll(
+                _availability: _manager_availability._SandboxAvailability[str],
+            ) -> None:
+                await background_tick.wait()
 
-        async def observe_wait(seconds: float) -> None:
-            if asyncio.current_task() is claim_caller:
+            patch.setattr(_sql_transactions, "_renew_worker_loop", parked_renewal)
+            patch.setattr(
+                _manager_availability._SandboxAvailability, "_poll", parked_poll
+            )
+            first_manager = await world.add()
+            second_manager = await world.add()
+            create_entered = asyncio.Event()
+            create_release = asyncio.Event()
+            claim_waiting = asyncio.Event()
+            claim_retry = asyncio.Event()
+            claim_caller: asyncio.Task[object] | None = None
+            create = world.clients[0].create
+            acquire = world.states[1].acquire_owner
+
+            async def blocked_create(
+                *,
+                purpose: OpenSandboxPurpose = "commands",
+                metadata: Mapping[str, str] | None = None,
+            ) -> OpenSandboxBackend:
+                create_entered.set()
+                await create_release.wait()
+                return await create(purpose=purpose, metadata=metadata)
+
+            async def observed_acquire(owner_key: str) -> OpenSandboxOwnerClaim:
+                nonlocal claim_caller
+                claim_caller = asyncio.current_task()
+                return await acquire(owner_key)
+
+            async def observe_wait(_seconds: float) -> None:
+                assert asyncio.current_task() is claim_caller
                 claim_waiting.set()
-            await world.changes.wait(seconds)
+                await claim_retry.wait()
 
-        monkeypatch.setattr(world.clients[0], "create", blocked_create)
-        monkeypatch.setattr(world.states[1], "acquire_owner", observed_acquire)
-        monkeypatch.setattr(controlled, "sleep", observe_wait)
-        first_task = world.spawn(first_manager.get("user-1"))
-        try:
-            await create_entered.wait()
-            second_task = world.spawn(second_manager.get("user-1"))
-            await claim_waiting.wait()
-            assert world.remote.created == 0
-            create_release.set()
-            first, second = await asyncio.gather(first_task, second_task)
-            assert first.id == second.id == "sandbox-1"
-            assert world.remote.created == 1
-            await first_manager.aclose()
-            await second_manager.aclose()
-            assert world.remote.destroy_calls == []
-        finally:
-            create_release.set()
+            controlled = ModuleType("controlled_manager_owner_poll")
+            controlled.__dict__.update(vars(asyncio))
+            setattr(controlled, "sleep", observe_wait)
+            patch.setattr(_sql_state_ops, "asyncio", controlled)
+            patch.setattr(world.clients[0], "create", blocked_create)
+            patch.setattr(world.states[1], "acquire_owner", observed_acquire)
+            first_task = world.spawn(first_manager.get("user-1"))
+            try:
+                await create_entered.wait()
+                second_task = world.spawn(second_manager.get("user-1"))
+                await claim_waiting.wait()
+                assert world.remote.created == 0
+                create_release.set()
+                first = await first_task
+                assert not second_task.done()
+                claim_retry.set()
+                second = await second_task
+                assert first.id == second.id == "sandbox-1"
+                assert world.remote.created == 1
+                await first_manager.aclose()
+                await second_manager.aclose()
+                assert world.remote.destroy_calls == []
+            finally:
+                create_release.set()
+                claim_retry.set()
 
 
 @pytest.mark.asyncio
