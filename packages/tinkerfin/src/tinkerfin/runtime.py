@@ -117,6 +117,8 @@ PartT = TypeVar("PartT")
 if TYPE_CHECKING:
     from ag_ui.core import BaseEvent, UserMessage
 
+    from tinkerfin_agui_adapter import DeepAgentAgUiAdapter
+
     from .agui import RuntimeAgUi
     from .agui_resume import (
         AgUiResumeBinding,
@@ -276,11 +278,19 @@ class _GraphRunStream(Generic[PartT]):
     async def __anext__(self) -> PartT:
         """Pull, observe, and return the next native part."""
 
+        return await self._next_before(None)
+
+    async def _next_before(self, deadline: float | None) -> PartT:
+        """Keep a protocol deadline inside the Task owning native settlement."""
+
         resources = self._run_resources
         if resources is not None and not self._closed:
-            return await resources.owner.call(partial(_runtime_streams.__anext__, self))
+            return await resources.owner.call(
+                partial(_runtime_streams.__anext__, self, deadline=deadline)
+            )
         return await _runtime_streams.__anext__(
             self,
+            deadline=deadline,
         )
 
     async def aclose(self) -> None:
@@ -304,6 +314,15 @@ class _GraphRunStream(Generic[PartT]):
         """Open the managed Observation and source boundary without pulling output."""
 
         return await _runtime_streams.ready(self)
+
+    async def _fail_initialization(self, error: Exception) -> None:
+        """Classify a failed workspace or Graph before Native execution begins."""
+
+        self.error = error
+        self._observation._initialization_error = error
+        if self._observation.context.input_kind == "compaction":
+            await self._observation.record_input()
+            await CompactionOperation("manual").fail(error)
 
     def to_sse(
         self,
@@ -499,7 +518,8 @@ class AgUiEventStream:
             prior_tool_call_ids: Scoped calls emitted before a resumed request.
             private_state_keys: Runtime-owned state channels omitted from AG-UI.
             native_frame_resolver: Optional single-normalization sidecar resolver.
-            timeout: Optional total Native pull deadline in seconds.
+            timeout: Optional total deadline from the first Native pull, including
+                lazy preparation and resume resolution. Cleanup is budgeted separately.
             settlement_timeout: Optional caller wait for protected close settlement.
             on_event: Optional borrowed observer awaited before event delivery.
             parent_run_id: Optional branch or resume source in the same thread.
@@ -533,13 +553,19 @@ class AgUiEventStream:
         self._upstream = aiter(parts)
         self._start_parts = parts._ready if isinstance(parts, _GraphRunStream) else None
         self._upstream_closed = False
-        self._adapter = DeepAgentAgUiAdapter(
-            identity=identity,
-            expose_reasoning_events=expose_reasoning_events,
-            expose_subagent_events=expose_subagent_events,
-            prior_tool_call_ids=prior_tool_call_ids,
-            private_state_keys=private_state_keys,
-        )
+        self._prior_tool_call_ids = prior_tool_call_ids
+        self._adapter_instance: DeepAgentAgUiAdapter | None = None
+
+        def create_adapter() -> DeepAgentAgUiAdapter:
+            return DeepAgentAgUiAdapter(
+                identity=identity,
+                expose_reasoning_events=expose_reasoning_events,
+                expose_subagent_events=expose_subagent_events,
+                prior_tool_call_ids=self._prior_tool_call_ids,
+                private_state_keys=private_state_keys,
+            )
+
+        self._adapter_factory = create_adapter
         self._native_frame_resolver = native_frame_resolver
         self._source = aiter(micro_batch(self._convert()))
         self._on_event = on_event
@@ -614,6 +640,33 @@ class AgUiEventStream:
         start_parts = self._start_parts
         if start_parts is not None:
             await start_parts()
+
+    async def _fail_initialization(self, error: Exception) -> None:
+        """Retain a preparation failure without starting another Run lifecycle."""
+
+        self.error = error
+        self._initialization_failed = True
+        self._runtime_error_code = "runtime_initialization_error"
+        if isinstance(self._upstream, _GraphRunStream):
+            await self._upstream._fail_initialization(error)
+
+    @property
+    def _adapter(self) -> DeepAgentAgUiAdapter:
+        if self._adapter_instance is None:
+            self._adapter_instance = self._adapter_factory()
+        return self._adapter_instance
+
+    def _bind_prior_tools(self, tool_ids: frozenset[str]) -> None:
+        """Install verified resume correlation before converting any Native part."""
+
+        if self._adapter_instance is not None:
+            raise TinkerFinLifecycleError("Native conversion already started")
+        self._prior_tool_call_ids = tool_ids
+
+    def _abort_conversion(self) -> list[BaseEvent]:
+        """Close converted lifecycles only when Native conversion actually began."""
+
+        return [] if self._adapter_instance is None else self._adapter_instance.abort()
 
     def to_sse(
         self,
@@ -738,7 +791,7 @@ class AgUiEventStream:
             primary = error
             error_code = (
                 "stream_timeout"
-                if isinstance(error, self._runtime_agui._AgUiStreamDeadlineExceeded)
+                if isinstance(error, _runtime_streams._StreamDeadlineExceeded)
                 else self._runtime_error_code
             )
             if not self._main_started:
@@ -749,7 +802,7 @@ class AgUiEventStream:
             except asyncio.CancelledError as cancellation:
                 primary = cancellation
                 raise
-            for event in self._adapter.abort():
+            for event in self._abort_conversion():
                 yield event
             if not terminal:
                 terminal = True
@@ -1667,7 +1720,10 @@ class AgentRuntime(Generic[ContextT]):
                 is durably saved and before continuation. An equal receipt is sent
                 again on retry; it does not confirm tool execution.
             on_resume_not_saved: Optional settlement when the request was not saved.
-            stream_timeout: Optional total Native pull deadline in seconds.
+            stream_timeout: Optional total deadline in seconds for workspace and Graph
+                preparation, resume resolution, and Native pulls. Starts on the first
+                Native pull after RUN_STARTED and does not reset between pulls.
+                Cleanup is budgeted separately.
             cleanup_timeout: Optional wait limit for protected cleanup in seconds.
             include_reasoning_events: Whether to emit supported public reasoning events.
             include_subagent_events: Whether to emit subagent events.
@@ -1874,8 +1930,13 @@ class AgentRuntime(Generic[ContextT]):
             require_agui()
 
             definition = self._definition
+            abandon_requested = resume is not None and all(
+                entry.status == "cancelled" for entry in resume.entries
+            )
             settlement_checkpointer = (
-                None if resume is None else definition._resume_checkpointer()
+                None
+                if resume is None or abandon_requested
+                else definition._resume_checkpointer()
             )
             settlement_authority_proven = settlement_checkpointer is not None
             requested_mode = (
@@ -2244,6 +2305,7 @@ class AgentRuntime(Generic[ContextT]):
         context: RunSourceContext,
         *,
         initialization_error: Exception | None = None,
+        defer_input: bool = False,
     ) -> RuntimeObservationHub:
         """Bind observers and preserve one known pre-Graph initialization failure."""
 
@@ -2251,6 +2313,7 @@ class AgentRuntime(Generic[ContextT]):
             context=context,
             observers=self._observers,
             initialization_error=initialization_error,
+            defer_input=defer_input,
         )
 
 

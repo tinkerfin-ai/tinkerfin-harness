@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from types import SimpleNamespace
+from typing import Any, Literal
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.engine import CursorResult
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
+from tests.support.sql_faults import after_sql_command
 
 from tinkerfin_contracts import RunIdentity
 from tinkerfin_tracing import (
@@ -214,23 +218,76 @@ async def test_sqlite_backend_satisfies_public_cross_instance_verifier(
 
 async def test_sqlite_concurrent_schema_first_start_uses_one_current_shape(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database = tmp_path / "concurrent-setup.db"
     first_engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
     second_engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
     first = SqlAlchemyTraceStore(first_engine)
     second = SqlAlchemyTraceStore(second_engine)
+    schema_locked = asyncio.Event()
+    release_schema = asyncio.Event()
+    retry_started = asyncio.Event()
+    first_prepared = asyncio.Event()
+
+    async def hold_schema() -> None:
+        schema_locked.set()
+        await release_schema.wait()
+
+    async def wait_for_prepared_schema(_delay: float) -> None:
+        retry_started.set()
+        await first_prepared.wait()
+
+    execute = AsyncConnection.exec_driver_sql
+
+    async def execute_without_peer_lock_wait(
+        connection: AsyncConnection, statement: str, *args: Any, **kwargs: Any
+    ) -> CursorResult[Any]:
+        if connection.engine is second_engine and statement == "BEGIN IMMEDIATE":
+            await execute(connection, "PRAGMA busy_timeout = 0")
+        return await execute(connection, statement, *args, **kwargs)
+
+    monkeypatch.setattr(
+        AsyncConnection, "exec_driver_sql", execute_without_peer_lock_wait
+    )
+    controlled_asyncio = SimpleNamespace(**vars(asyncio))
+    controlled_asyncio.sleep = wait_for_prepared_schema
+    monkeypatch.setattr("tinkerfin_tracing.sql_store.asyncio", controlled_asyncio)
     try:
-        await asyncio.gather(first.setup(), second.setup())
-        writers = await asyncio.gather(
-            first.open_writer(_identity("first")),
-            second.open_writer(_identity("second")),
-        )
-        assert writers[0].key == writers[1].key
-        await asyncio.gather(*(writer.aclose() for writer in writers))
+        with after_sql_command(first_engine, "BEGIN IMMEDIATE", hold_schema):
+            first_setup = asyncio.create_task(first.setup())
+            second_setup: asyncio.Task[None] | None = None
+            try:
+                await schema_locked.wait()
+                second_setup = asyncio.create_task(second.setup())
+                await retry_started.wait()
+                assert not first_setup.done()
+                assert not second_setup.done()
+                release_schema.set()
+                await first_setup
+                first_prepared.set()
+                await second_setup
+            finally:
+                release_schema.set()
+                first_prepared.set()
+                setup_tasks = [first_setup]
+                if second_setup is not None:
+                    setup_tasks.append(second_setup)
+                for setup_task in setup_tasks:
+                    if not setup_task.done():
+                        setup_task.cancel()
+                await asyncio.gather(*setup_tasks, return_exceptions=True)
+        async with AsyncExitStack() as writers:
+            first_writer = await first.open_writer(_identity("first"))
+            writers.push_async_callback(first_writer.aclose)
+            second_writer = await second.open_writer(_identity("second"))
+            writers.push_async_callback(second_writer.aclose)
+            assert first_writer.key == second_writer.key
     finally:
-        await first_engine.dispose()
-        await second_engine.dispose()
+        try:
+            await first_engine.dispose()
+        finally:
+            await second_engine.dispose()
 
 
 def test_trace_store_key_is_the_only_generation_handle() -> None:

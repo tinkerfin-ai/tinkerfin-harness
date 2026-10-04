@@ -49,7 +49,7 @@ const ended = (threadId: string, overrides: Partial<Conversation> = {}): Convers
       agui: { kind: 'message', messageId: `${threadId}:answer` },
     }],
     reasoning: [],
-    interactions: [],
+    interactionAvailability: [], interactions: [],
     runFailures: [],
     graph: emptyTraceGraph(2),
     state: { root: { files: { result: '内容' } }, subgraphs: {} },

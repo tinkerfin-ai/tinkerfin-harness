@@ -183,7 +183,9 @@ async def test_stale_review_does_not_consume_card_and_corrected_request_succeeds
         ),
     )
     _assert_success(corrected)
-    history = await tracer.get(runtime.thread_identity("plan-thread"))
+    history = await tracer.get(
+        runtime.thread_identity("plan-thread"), head_run_id="corrected"
+    )
     assert not history.summary.pending_interactions
     assert len(model.model_inputs) == 1
 
@@ -481,7 +483,9 @@ async def test_semantically_invalid_edit_preserves_pending_card(
         ),
     )
     _assert_success(corrected)
-    history = await tracer.get(runtime.thread_identity("plan-thread"))
+    history = await tracer.get(
+        runtime.thread_identity("plan-thread"), head_run_id="corrected"
+    )
     assert not history.summary.pending_interactions
     assert len(model.model_inputs) == 1
 

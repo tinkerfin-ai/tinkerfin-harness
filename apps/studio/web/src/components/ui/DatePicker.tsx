@@ -6,6 +6,7 @@ import {
   forwardRef,
   useId,
   useContext,
+  useEffect,
   useRef,
   type ButtonHTMLAttributes,
 } from 'react'
@@ -91,10 +92,14 @@ export const DatePicker = forwardRef<HTMLButtonElement, DatePickerProps>(functio
     },
     onValueChange: (details) => {
       const nextValue = details.value[0]?.toString()
-      if (nextValue && nextValue !== value) onChange(nextValue)
+      if (!disabled && nextValue && nextValue !== value) onChange(nextValue)
     },
   })
   const api = datePicker.connect(service, normalizeProps)
+
+  useEffect(() => {
+    if (disabled && api.open) api.setOpen(false)
+  }, [api, disabled])
 
   const setTriggerRef = (node: HTMLButtonElement | null) => {
     triggerRef.current = node

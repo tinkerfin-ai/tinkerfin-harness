@@ -791,6 +791,8 @@ async function mockStudio(page: Page, {
         subgraphs: {},
       },
       interactions,
+      interactionAvailability: interactions.flatMap(interaction => interaction.agui ?? [])
+        .map(action => ({ interruptId: action.id, state: 'available' as const, submissionRunId: null })),
       status: { execution, headRunId: 'browser-run' },
       completeness: {
         missingPrefix: false,
@@ -942,6 +944,7 @@ async function mockStudio(page: Page, {
       await expect(page.getByText(expectedMessageText, { exact: true })).toBeVisible()
     }
   }
+  return buildTraceDetail
 }
 
 const contrastRatios = async (page: Page, selector: string) => page.locator(selector).evaluateAll((elements) => {
@@ -1359,9 +1362,9 @@ for (const required of [false, true]) {
 }
 
 for (const card of ['question', 'review'] as const) {
-  test(`Plan 卡片关闭后才显示对话输入（${card}）`, async ({ page }, testInfo) => {
+  test(`Plan 关闭经历史确认后才显示对话输入（${card}）`, async ({ page }, testInfo) => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
-    await mockStudio(page, { planQuestion: card === 'question', planReview: card === 'review' })
+    const buildHistory = await mockStudio(page, { planQuestion: card === 'question', planReview: card === 'review' })
     const input = page.getByRole('textbox', { name: '消息输入' })
     const close = page.getByRole('button', { name: '关闭卡片，继续对话', exact: true })
     const waiting = page.getByRole('status', { name: card === 'question' ? '等待回答' : '等待审阅', exact: true })
@@ -1386,8 +1389,10 @@ for (const card of ['question', 'review'] as const) {
     const allowed = new Promise<void>(resolve => { release = resolve })
     let received!: () => void
     const requested = new Promise<void>(resolve => { received = resolve })
+    let submittedRunId = ''
     await page.route('**/api/conversation/chat', async route => {
       const payload = route.request().postDataJSON()
+      submittedRunId = payload.runId
       expect(payload.messages).toEqual([])
       expect(payload.resume).toEqual([{
         interruptId: card === 'question' ? 'browser-plan-question' : 'browser-plan-review', status: 'resolved',
@@ -1399,7 +1404,6 @@ for (const card of ['question', 'review'] as const) {
         { type: 'RUN_STARTED', threadId: THREAD_ID, runId: payload.runId },
         { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: payload.runId, outcome: { type: 'success' } },
       ]
-      // 终态历史暂时不可用时，关闭仍应由实时结果正确结算
       await page.route(`**/api/conversation/${THREAD_ID}/history*`, pending => fulfillExpectedHttpError(pending, 503, '验证关闭 Plan 后历史同步失败'))
       await route.fulfill({ status: 200, contentType: 'text/event-stream', body: events.map((event, index) => `id: ${index + 1}\ndata: ${JSON.stringify(event)}\n\n`).join('') })
     })
@@ -1408,6 +1412,25 @@ for (const card of ['question', 'review'] as const) {
     await expect(waiting).toHaveCount(0)
     await expect(input).toHaveCount(0)
     release()
+    const reload = page.getByRole('button', { name: '重新加载', exact: true })
+    await expect(reload).toBeVisible()
+    await expect(close).toBeDisabled()
+    await expect(input).toHaveCount(0)
+    await page.route(`**/api/conversation/${THREAD_ID}/history*`, async route => {
+      const source = buildHistory(new URL(route.request().url()).searchParams.get('includeTaskTrace') !== 'false')
+      await fulfillJson(route, {
+        ...source,
+        asOfSeq: source.asOfSeq + 1,
+        graph: { ...source.graph, asOfSeq: source.asOfSeq + 1 },
+        headRunId: submittedRunId,
+        availableHeads: [submittedRunId],
+        status: { execution: 'succeeded', headRunId: submittedRunId },
+        interactions: source.interactions.map(item => ({ ...item, status: 'resolved', agui: [] })),
+        interactionAvailability: [{ interruptId: card === 'question' ? 'browser-plan-question' : 'browser-plan-review',
+          state: 'resolved', submissionRunId: submittedRunId }],
+      })
+    })
+    await reload.click()
     await expect(input).toBeVisible()
     await expect(input).toBeFocused()
     await expect(page.getByText(/ · 已结束$/)).toBeVisible()

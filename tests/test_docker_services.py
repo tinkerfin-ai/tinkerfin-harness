@@ -32,6 +32,164 @@ from tests.support.docker_services import (
 )
 
 
+def test_platform_dns_preserves_transferable_address_order() -> None:
+    from tests.support.docker_services import _parse_dns_servers
+
+    assert _parse_dns_servers(
+        b"# Docker resolver configuration\nsearch example.invalid\n"
+        b"nameserver 127.0.0.11\nnameserver ::1\n"
+        b"nameserver ::ffff:127.0.0.1\n"
+        b"nameserver 192.0.2.53 # configured IPv4\n"
+        b"nameserver 2001:db8::53\n"
+        b"nameserver 169.254.169.253\n"
+        b"nameserver 192.0.2.53\n"
+    ) == ("192.0.2.53", "2001:db8::53", "169.254.169.253", "192.0.2.53")
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"",
+        b"nameserver 127.0.0.11\nnameserver ::1\n",
+        b"nameserver\n",
+        b"nameserver resolver.invalid\n",
+        b"nameserver 192.0.2.53 unexpected\n",
+        b"nameserver fe80::53%eth0\n",
+        b"nameserver fe80::53\n",
+        b"nameserver 2001:db8::53%eth0\n",
+        b"nameserver 0.0.0.0\n",
+        b"nameserver ::\n",
+        b"nameserver ::ffff:0.0.0.0\n",
+        b"nameserver 224.0.0.251\n",
+        b"nameserver 255.255.255.255\n",
+        b"nameserver ff02::fb\n",
+        b"nameserver 192.0.2.53\nnameserver invalid\n",
+    ],
+)
+def test_platform_dns_rejects_missing_or_unusable_addresses(content: bytes) -> None:
+    from tests.support.docker_services import _parse_dns_servers
+
+    with pytest.raises(ValueError):
+        _parse_dns_servers(content)
+
+
+def test_platform_dns_configuration_has_a_byte_limit() -> None:
+    from tests.support.docker_services import _DNS_CONFIG_MAX_BYTES, _parse_dns_servers
+
+    suffix = b"\nnameserver 192.0.2.53\n"
+    content = b"#" + b"x" * (_DNS_CONFIG_MAX_BYTES - len(suffix) - 1) + suffix
+    assert _parse_dns_servers(content) == ("192.0.2.53",)
+    with pytest.raises(ValueError, match="byte limit"):
+        _parse_dns_servers(content + b"x")
+
+
+@pytest.mark.parametrize("failure", [None, "start", "exit", "read", "parse", "lost"])
+def test_platform_dns_probe_uses_owned_finite_bridge_container(
+    monkeypatch: pytest.MonkeyPatch, failure: str | None
+) -> None:
+    from docker.errors import APIError
+
+    from tests.support import docker_services
+
+    owner = "synthetic-dns-owner"
+    client = Mock(spec=DockerClient)
+    client.api = Mock(timeout=30)
+    client.networks.list.return_value = []
+    native = Mock()
+    native.wait.return_value = {"StatusCode": 0}
+    native.logs.return_value = b"nameserver 192.0.2.53\n"
+    client.containers.list.side_effect = lambda *, all, filters: (
+        [native]
+        if failure == "lost" and filters["label"] == f"tinkerfin.test/run={owner}"
+        else []
+    )
+    transport = Mock()
+    transport.create.return_value = native
+    monkeypatch.setattr(docker_services.docker, "from_env", lambda: client)
+    monkeypatch.setattr(
+        "testcontainers.core.container.DockerClient", lambda **kwargs: transport
+    )
+    monkeypatch.setattr(docker_services.testcontainers_config, "ryuk_disabled", True)
+    if failure == "start":
+        transport.start.side_effect = RuntimeError("synthetic start failure")
+    elif failure == "exit":
+        native.wait.return_value = {"StatusCode": 1}
+    elif failure == "read":
+        native.logs.side_effect = APIError("synthetic read failure")
+    elif failure == "parse":
+        native.logs.return_value = b"nameserver 127.0.0.11\n"
+    elif failure == "lost":
+        transport.create.side_effect = RuntimeError("synthetic lost create response")
+    root = inspect.unwrap(docker_services.docker_test_client)(owner)
+    assert next(root) is client
+    try:
+        probe = inspect.unwrap(docker_services.docker_platform_dns_servers)
+        if failure is None:
+            assert probe(client, owner) == ("192.0.2.53",)
+        else:
+            expected = (
+                APIError
+                if failure == "read"
+                else ValueError
+                if failure == "parse"
+                else RuntimeError
+            )
+            with pytest.raises(expected):
+                probe(client, owner)
+    finally:
+        root.close()
+    creation = transport.create.call_args.kwargs
+    assert transport.create.call_args.args == (docker_services._DIND_IMAGE,)
+    assert creation["entrypoint"] == ["head"]
+    assert creation["command"] == ["-c", "65537", "/etc/resolv.conf"]
+    assert creation["network"] == "bridge"
+    assert creation["ports"] == {} and creation["volumes"] == {}
+    assert creation["labels"] == {"tinkerfin.test/run": owner}
+    assert creation["log_config"]["Type"] == "json-file"
+    native.remove.assert_called_once_with(force=True, v=True)
+    assert transport.client.close.call_count == 2
+    client.close.assert_called_once_with()
+    if failure not in ("start", "lost"):
+        native.wait.assert_called_once_with(timeout=30)
+    assert (
+        docker_services.docker_platform_dns_servers._fixture_function_marker.scope
+        == "session"
+    )
+
+
+def test_runtime_passes_platform_dns_to_its_owned_daemon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.support import docker_services
+
+    container = Mock(spec=DockerContainer)
+    container.ports = {}
+    for method in (
+        "with_exposed_ports",
+        "with_env",
+        "with_command",
+        "with_kwargs",
+        "waiting_for",
+    ):
+        getattr(container, method).return_value = container
+    container.start.side_effect = RuntimeError("stop before daemon startup")
+    monkeypatch.setattr(docker_services, "DockerContainer", lambda image: container)
+    runtime = inspect.unwrap(docker_services.opensandbox_docker_runtime)(
+        Mock(spec=DockerClient), "synthetic-run", ("192.0.2.53", "2001:db8::53")
+    )
+    with pytest.raises(RuntimeError, match="stop before daemon startup"):
+        next(runtime)
+    container.with_command.assert_called_once_with(
+        [
+            "--tls=false",
+            "--storage-driver=overlay2",
+            "--dns=192.0.2.53",
+            "--dns=2001:db8::53",
+        ]
+    )
+    container.stop.assert_called_once_with()
+
+
 @pytest.mark.parametrize("failure", [None, "import", "identity", "tag"])
 def test_runtime_archive_preserves_source_and_verifies_import(
     tmp_path: Path,
@@ -259,7 +417,7 @@ def test_runtime_construction_failure_releases_its_owned_network(
 
     monkeypatch.setattr(docker_services, "DockerContainer", fail_construction)
     runtime = inspect.unwrap(docker_services.opensandbox_docker_runtime)(
-        client, "synthetic-run"
+        client, "synthetic-run", ("192.0.2.53",)
     )
     with pytest.raises(RuntimeError, match="construction failure"):
         next(runtime)
@@ -485,7 +643,7 @@ def test_real_runtime_setup_failure_cleans_daemon_network_and_volumes(
     else:
         monkeypatch.setattr(docker_services, "_copy_runtime_image", after_start)
     generator = inspect.unwrap(docker_services.opensandbox_docker_runtime)(
-        docker_test_client, run_id
+        docker_test_client, run_id, ("192.0.2.53",)
     )
     try:
         with pytest.raises(RuntimeError, match="synthetic"):

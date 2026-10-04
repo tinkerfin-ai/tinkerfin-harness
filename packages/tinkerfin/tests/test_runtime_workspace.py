@@ -7,24 +7,28 @@ from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any
+from types import ModuleType, SimpleNamespace, TracebackType
+from typing import Any, Self
 
 import pytest
+from ag_ui.core import RunErrorEvent
 from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from deepagents.backends.protocol import BackendProtocol
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.tools import tool
 from langchain_core.messages import AIMessage
-from langchain_core.runnables import Runnable
+from langchain_core.runnables import Runnable, RunnableConfig
 from langchain_core.tools import BaseTool
+from langgraph.checkpoint.base import CheckpointTuple
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 from pydantic import Field
 from test_runtime_store import _Model
 
-from tinkerfin import TinkerFin
+from tinkerfin import AgUiResumeRequest, TinkerFin
 from tinkerfin.deep_agent import create_graph
-from tinkerfin_contracts import PreparedWorkspace, RunIdentity
+from tinkerfin_contracts import PreparedWorkspace, RunIdentity, RunTerminalObservation
 from tinkerfin_messaging import MemoryBackend, Messaging
 
 
@@ -62,6 +66,164 @@ class _RecordingModel(_Model):
     ) -> Runnable:
         self.seen.append({tool.name for tool in tools if isinstance(tool, BaseTool)})
         return super().bind_tools(tools, **kwargs)
+
+
+class _PreparationDeadline:
+    def __init__(self) -> None:
+        self.owner: asyncio.Task[object] | None = None
+        self.triggered = False
+        self.cancellation_count = 0
+
+    async def __aenter__(self) -> Self:
+        self.owner = asyncio.current_task()
+        assert self.owner is not None
+        self.cancellation_count = self.owner.cancelling()
+        return self
+
+    async def __aexit__(
+        self,
+        error_type: type[BaseException] | None,
+        error: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        del error_type, traceback
+        if self.triggered and isinstance(error, asyncio.CancelledError):
+            assert self.owner is not None
+            if self.owner.uncancel() <= self.cancellation_count:
+                raise TimeoutError from error
+
+    def expire(self) -> None:
+        assert self.owner is not None
+        self.triggered = True
+        self.owner.cancel()
+
+    def expired(self) -> bool:
+        return self.triggered
+
+
+@pytest.mark.parametrize(
+    ("resume_state", "cancel"),
+    [
+        ("ordinary", False),
+        ("ordinary", True),
+        ("no_saver", False),
+        ("not_saved", False),
+        ("unreadable", False),
+    ],
+)
+async def test_stream_deadline_covers_workspace_preparation_and_matches_trace(
+    monkeypatch: pytest.MonkeyPatch,
+    resume_state: str,
+    cancel: bool,
+) -> None:
+    entered = asyncio.Event()
+    deadline = _PreparationDeadline()
+    deadlines: list[float] = []
+    terminals: list[RunTerminalObservation] = []
+    released: list[str] = []
+
+    class UnreadableSaver(MemorySaver):
+        async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
+            del config
+            raise OSError("checkpoint unavailable")
+
+    class WaitingWorkspace(_Workspace):
+        @asynccontextmanager
+        async def prepare(
+            self, identity: RunIdentity
+        ) -> AsyncGenerator[PreparedWorkspace[Path, BackendProtocol]]:
+            async with super().prepare(identity) as prepared:
+                entered.set()
+                await asyncio.Event().wait()
+                yield prepared
+
+    def timeout_at(when: float) -> _PreparationDeadline:
+        deadlines.append(when)
+        return deadline
+
+    async def record_terminal(observation: RunTerminalObservation) -> None:
+        terminals.append(observation)
+
+    async def not_saved() -> None:
+        released.append("not_saved")
+
+    controlled = ModuleType("controlled_asyncio")
+    controlled.__dict__.update(vars(asyncio))
+    setattr(controlled, "get_running_loop", lambda: SimpleNamespace(time=lambda: 100.0))
+    setattr(controlled, "timeout_at", timeout_at)
+    monkeypatch.setattr("tinkerfin._runtime_agui.asyncio", controlled)
+    monkeypatch.setattr("tinkerfin._runtime_streams.asyncio", controlled)
+    workspace = WaitingWorkspace()
+    model = _RecordingModel(responses=[AIMessage(content="unused")])
+    runtime = (
+        TinkerFin(
+            checkpointer=(
+                UnreadableSaver()
+                if resume_state == "unreadable"
+                else MemorySaver()
+                if resume_state == "not_saved"
+                else None
+            )
+        )
+        .with_namespace("company")
+        .with_observer(on_terminal=record_terminal)
+        .build(model, backend=workspace)
+    )
+    if resume_state == "ordinary":
+        stream = runtime.open_agui_run(
+            thread_id="thread",
+            run_id="run",
+            input={"messages": []},
+            stream_timeout=5,
+        )
+    else:
+        stream = runtime.open_agui_run(
+            thread_id="thread",
+            run_id="run",
+            resume=AgUiResumeRequest.model_validate(
+                {
+                    "entries": [
+                        {
+                            "interruptId": "interrupt#0",
+                            "status": "resolved",
+                            "payload": {"type": "approve"},
+                        }
+                    ]
+                }
+            ),
+            on_resume_not_saved=not_saved,
+            stream_timeout=5,
+        )
+    assert (await anext(stream)).type.value == "RUN_STARTED"
+    assert deadlines == []
+    pending = asyncio.create_task(anext(stream))
+    preparing = asyncio.create_task(entered.wait())
+    try:
+        await asyncio.wait((preparing, pending), return_when=asyncio.FIRST_COMPLETED)
+        if not preparing.done():
+            pytest.fail(f"preparation did not start: {await pending}; {stream.error!r}")
+        if cancel:
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+        else:
+            deadline.expire()
+            terminal = await pending
+            assert isinstance(terminal, RunErrorEvent)
+            assert terminal.code == "stream_timeout"
+        assert deadlines == [105.0]
+        assert len(terminals) == 1
+        assert terminals[0].outcome == ("cancelled" if cancel else "failed")
+        assert terminals[0].code == ("cancelled" if cancel else "stream_timeout")
+        assert released == (["not_saved"] if resume_state == "not_saved" else [])
+        assert workspace.closed == workspace.opened
+        assert model.seen == []
+    finally:
+        preparing.cancel()
+        if not pending.done():
+            pending.cancel()
+        await asyncio.gather(preparing, pending, return_exceptions=True)
+        await stream.aclose()
 
 
 async def test_static_tools_allow_middleware_without_registered_tools() -> None:
@@ -122,7 +284,9 @@ async def test_cancelled_workspace_preparation_releases_without_building(
     stream = (runtime.open_run if protocol == "native" else runtime.open_agui_run)(
         thread_id="thread", run_id="run", input={"messages": []}
     )
-    preparing = asyncio.create_task(stream.messaging_owner_preflight())
+    if protocol == "agui":
+        await anext(stream)
+    preparing = asyncio.create_task(anext(stream))
     try:
         await entered.wait()
         await stream.aclose()

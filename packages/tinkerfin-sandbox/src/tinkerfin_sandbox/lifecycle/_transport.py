@@ -17,6 +17,7 @@ import httpx
 from opensandbox.transport import RetryAsyncTransport, RetryPolicy
 
 from ..errors import OpenSandboxBackendError
+from ._sql_tasks import select_failure
 
 
 async def _join_owned_task(
@@ -53,6 +54,7 @@ async def _join_owned_task(
                 f"{failure_label} also failed: "
                 f"{type(task_error).__name__}: {task_error}"
             )
+            raise select_failure(cancellation, task_error)
         raise cancellation.with_traceback(cancellation.__traceback__)
     if task_error is not None:
         raise task_error.with_traceback(task_error.__traceback__)

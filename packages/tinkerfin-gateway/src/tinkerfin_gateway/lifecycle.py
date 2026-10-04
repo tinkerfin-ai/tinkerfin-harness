@@ -15,7 +15,7 @@ from tinkerfin_contracts import RunIdentity
 
 @dataclass(frozen=True, slots=True)
 class RunAcceptance:
-    """Identify prepared new execution or attachment to a retained command."""
+    """Identify newly admitted execution or attachment to a retained command."""
 
     identity: RunIdentity
     kind: Literal["new", "existing"]
@@ -31,11 +31,12 @@ class RunRegistration(Protocol):
     """
 
     async def confirm(self, acceptance: RunAcceptance) -> None:
-        """Confirm prepared new execution or attachment to the same saved command.
+        """Confirm admitted execution or attachment to the same saved command.
 
-        New execution is prepared but has not consumed its source. An existing
-        delivery does not prove that Runtime preparation has finished. Confirm
-        idempotently and start any host projection needed for either outcome.
+        New execution owns its Run lifecycle but has not consumed its source.
+        Workspace readiness, Graph construction and saved resume decisions are
+        not implied. An existing delivery only confirms the same command.
+        Confirm idempotently and start the required host projection.
         """
         ...
 
@@ -44,7 +45,7 @@ class RunRegistration(Protocol):
 
         Another submission may already own this run, including one with conflicting
         content. Never delete or revert another submission's accepted registration.
-        No release is reported after prepared execution or confirmed attachment.
+        No release is reported after admitted execution or confirmed attachment.
         """
         ...
 

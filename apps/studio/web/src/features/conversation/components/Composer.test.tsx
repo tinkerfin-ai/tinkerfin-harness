@@ -460,6 +460,21 @@ describe('Composer', () => {
     expect(screen.queryByRole('button', { name: '发送消息' })).not.toBeInTheDocument()
   })
 
+  it('审批确认接管输入区时仍可停止当前运行', () => {
+    const onStop = vi.fn()
+    const view = render(<DraftComposer {...composerChromeProps()} text="" isRunning
+      onDraftChange={vi.fn()} onSend={vi.fn()} onStop={onStop}
+      takeover={<section aria-label="审批确认">保留原决定</section>} />)
+    fireEvent.click(screen.getByRole('button', { name: '停止任务' }))
+    expect(onStop).toHaveBeenCalledOnce()
+    expect(screen.getByRole('region', { name: '审批确认' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '发送消息' })).not.toBeInTheDocument()
+    view.rerender(<DraftComposer {...composerChromeProps()} text="" isRunning stopPending
+      onDraftChange={vi.fn()} onSend={vi.fn()} onStop={onStop}
+      takeover={<section aria-label="审批确认">保留原决定</section>} />)
+    expect(screen.getByRole('button', { name: '正在停止任务' })).toBeDisabled()
+  })
+
   it.each([
     ['composition state', { isComposing: true }],
     ['IME compatibility key code', { keyCode: 229 }],

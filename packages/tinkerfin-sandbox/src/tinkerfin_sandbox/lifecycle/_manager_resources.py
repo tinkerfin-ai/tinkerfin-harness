@@ -990,7 +990,7 @@ async def _acquire_backend(
 
 
 async def _close_resources(self: OpenSandboxManager[KeyT]) -> None:
-    """Settle tasks in dependency order before closing pools and connections.
+    """Settle tasks and remote ownership before finalizing State and Client.
 
     Startup, public operations, and derived cleanup tasks must finish before pool
     and handle snapshots because they can still add resources. State determines
@@ -1070,19 +1070,3 @@ async def _close_resources(self: OpenSandboxManager[KeyT]) -> None:
     for sandbox_id in shutdown_ids - destroyed_ids:
         await self._destroy_remote(sandbox_id)
     self._pending_destroy_ids.clear()
-
-    try:
-        await self._availability.release_idle_holders()
-        await self._state.aclose()
-    except Exception as error:  # noqa: BLE001 - close supervisor owns State closure
-        logger.warning(
-            "Sandbox State close failed",
-            extra={"tinkerfin_error_type": type(error).__name__},
-        )
-    try:
-        await self._client.aclose()
-    except Exception as error:  # noqa: BLE001 - close supervisor owns client closure
-        logger.warning(
-            "Sandbox client close failed",
-            extra={"tinkerfin_error_type": type(error).__name__},
-        )

@@ -472,6 +472,7 @@
     "subgraphs": {}
   },
   "interactions": [],
+  "interactionAvailability": [],
   "status": {
     "execution": "succeeded",
     "headRunId": "generate-fc6e94f14a7a4cb6b1f994f86982d7de"

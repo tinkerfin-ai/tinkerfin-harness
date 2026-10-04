@@ -59,8 +59,9 @@ an existing run with `gateway.run(authorized_identity)` without building a Runti
 ## Host business state
 
 The optional `registration` implements `RunRegistration.confirm(acceptance)` and
-`release()`. Confirmation distinguishes prepared new execution from attachment to
-an existing command. Release can only remove the current submission's reservation;
+`release()`. Confirmation distinguishes newly admitted execution from attachment to
+an existing command; neither implies workspace readiness or Graph preparation.
+Release can only remove the current submission's reservation;
 another concurrent submission may already own accepted business state.
 
 Resume decision storage has its own `ResumeSettlement.saved(receipt)` and

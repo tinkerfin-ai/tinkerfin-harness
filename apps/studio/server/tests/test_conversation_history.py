@@ -10,6 +10,7 @@ import pytest
 from starlette.types import Message as AsgiMessage
 from starlette.types import Scope
 
+from tinkerfin import AgUiResumeReceipt, AgUiResumeResponse
 from tinkerfin_contracts import (
     MessageSource,
     ModelCallObservation,
@@ -620,6 +621,98 @@ async def test_history_keeps_pending_interactions_outside_the_visible_turn(
     assert [
         item.source_id for item in detail.interactions if item.status == "pending"
     ] == ["pending-outside-window"]
+
+
+@pytest.mark.parametrize(
+    "settlement", ["unknown", "not_saved", "resolved", "cancelled"]
+)
+async def test_history_exposes_submission_ownership_and_confirmed_settlement(
+    session, settlement: str
+) -> None:
+    """完整公开交互组的认领与回执决定能否再次提交"""
+    tracer = Tracer(
+        projections=(ConversationFailureProjection(), TodoGroupProjection())
+    )
+    repository = ConversationRepository(session)
+    thread = await _register(
+        repository, user_id=1, thread_id="approval-history", run_id="paused-run"
+    )
+    context, source = await _open_trace(
+        tracer, thread_id=thread.thread_id, run_id="paused-run"
+    )
+    await source.observe(
+        NativeStateObservation(
+            identity=context.identity,
+            graph_namespace=(),
+            state={},
+            interrupts=tuple(
+                NativeInterruptRecord(
+                    id=interrupt_id, value={"kind": "input_required", "message": "Wait"}
+                )
+                for interrupt_id in ("approval-first", "approval-second")
+            ),
+            observed_at=datetime.now(UTC),
+            monotonic_ns=3,
+        )
+    )
+    await _finish_trace(context, source, outcome="interrupted")
+    initial = await _get_detail(_service(repository, tracer=tracer), thread.thread_id)
+    interrupt_ids = tuple(
+        item.interrupt_id for item in initial.interaction_availability
+    )
+    assert len(interrupt_ids) == 2
+    await repository.create_run_registration(
+        thread_id=thread.id,
+        run_id="submitted-run",
+        parent_run_id="paused-run",
+        model_id="model-main",
+        input_json={"resume": [{"interruptId": value} for value in interrupt_ids]},
+    )
+    thread.last_run_id = "submitted-run"
+    await repository.create_interrupt_claims(
+        thread_pk=thread.id,
+        source_run_id="paused-run",
+        claimed_run_id="submitted-run",
+        interrupt_ids=interrupt_ids,
+    )
+    await repository.create_interrupt_claims(
+        thread_pk=thread.id,
+        source_run_id="other-branch",
+        claimed_run_id="unrelated-run",
+        interrupt_ids=("unrelated-approval",),
+    )
+    await repository.commit()
+    submitted_context, submitted_source = await _open_trace(
+        tracer, thread_id=thread.thread_id, run_id="submitted-run"
+    )
+    await _finish_trace(submitted_context, submitted_source, outcome="failed")
+    if settlement == "not_saved":
+        await repository.release_claims(thread_pk=thread.id, run_id="submitted-run")
+    elif settlement in {"resolved", "cancelled"}:
+        await repository.settle_claims(
+            thread_pk=thread.id,
+            receipt=AgUiResumeReceipt(
+                identity=submitted_context.identity,
+                parent_run_id="paused-run",
+                receipt_id="confirmed-receipt",
+                responses=tuple(
+                    AgUiResumeResponse(
+                        interrupt_id=value,
+                        status="resolved" if settlement == "resolved" else "cancelled",
+                    )
+                    for value in interrupt_ids
+                ),
+            ),
+        )
+    await repository.commit()
+    detail = await _get_detail(_service(repository, tracer=tracer), thread.thread_id)
+    expected = {"unknown": "confirming", "not_saved": "available"}.get(
+        settlement, settlement
+    )
+    assert {
+        (item.interrupt_id, item.state, item.submission_run_id)
+        for item in detail.interaction_availability
+    } == {(value, expected, "submitted-run") for value in interrupt_ids}
 
 
 async def test_history_rejects_another_users_thread_before_trace_lookup(
@@ -1256,6 +1349,32 @@ async def test_tool_review_uses_same_reference_in_history_graph_and_follow(
     assert review.agui is not None and len(review.agui) == 1
     assert review.agui[0].tool_call_id == tool.agui.tool_call_id
     assert review.agui[0].id == "review-report"
+    assert detail.model_dump(mode="json", by_alias=True)["interactionAvailability"] == [
+        {
+            "interruptId": "review-report",
+            "state": "available",
+            "submissionRunId": None,
+        }
+    ]
+    await repository.create_interrupt_claims(
+        thread_pk=thread.id,
+        source_run_id="run-review-reference",
+        claimed_run_id="run-review-submit",
+        interrupt_ids=("review-report",),
+    )
+    await repository.commit()
+    claimed_detail = await service.get_detail(
+        thread.thread_id, include_task_trace=False
+    )
+    assert claimed_detail.model_dump(mode="json", by_alias=True)[
+        "interactionAvailability"
+    ] == [
+        {
+            "interruptId": "review-report",
+            "state": "confirming",
+            "submissionRunId": "run-review-submit",
+        }
+    ]
     page = await service.query_trace_graph(
         thread.thread_id,
         where=TraceGraphFilter(kinds={TraceGraphNodeKind.TOOL}),
@@ -1424,7 +1543,9 @@ async def test_context_never_replaces_the_question_for_visible_failures(
         run_id="run",
         model_id="model-main",
         access_mode="full",
+        input_json={"runId": "run"},
     )
+    repository.list_interaction_claims.return_value = ()
     context, source = await _open_trace(
         tracer, thread_id="context-failure", run_id="run"
     )

@@ -135,14 +135,14 @@ async def changes(gateway, account_id, expires_at, check_access):
 
 | 扩展点 | 宿主负责的事项 |
 | --- | --- |
-| `RunRegistration.confirm(acceptance)` | 确认准备完成的新执行或已有命令的附着，通过 `acceptance.kind` 区分 |
+| `RunRegistration.confirm(acceptance)` | 确认新执行已受理或已附着到已有命令，通过 `acceptance.kind` 区分 |
 | `RunRegistration.release()` | 只释放本次提交尚未受理的预登记 |
 | `ResumeSettlement.saved(receipt)` | 幂等记录审批决定已保存 |
 | `ResumeSettlement.not_saved()` | 只有 Runtime 明确未保存决定时才释放认领 |
 | `on_committed(event)` | 观察已持久化的主运行开始与终止，重播不重复触发 |
 | `RunPresentation(...)` | 补充固定的开始属性和取消文案，不覆盖协议字段 |
 
-提交前绑定业务身份和预登记的归属。其他请求可能已经使用同一登记，失败请求不能删除共享的已受理状态。附着成功不证明 Runtime 准备已经结束；确认失败时保留业务登记，供后续按权威事实核对。未使用的重试源或无法确认的检查点结果可能不调用任何审批结算方法，不能把没有回调当作未保存。
+提交前绑定业务身份和预登记的归属。其他请求可能已经使用同一登记，失败请求不能删除共享的已受理状态。两种受理结果均不代表工作区已就绪、Graph 已准备完成或恢复决定已保存；确认失败时保留业务登记，供后续按权威事实核对。未使用的重试源或无法确认的检查点结果可能不调用任何审批结算方法，不能把没有回调当作未保存。
 
 观察者可能在请求结束后继续执行，失败也不能撤销已经提交的输出。这些操作应借用应用级资源，并在需要时开启短事务。
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal
 from unittest.mock import AsyncMock
 from uuid import UUID
@@ -40,6 +41,10 @@ async def test_provider_creation_reserves_purpose_and_limits_isolation_extension
     monkeypatch: pytest.MonkeyPatch, purpose: OpenSandboxPurpose
 ) -> None:
     sandbox = _FakeSandbox()
+    if purpose == "workspaces":
+        sandbox.commands.result.error = None
+        sandbox.commands.result.exit_code = 0
+        sandbox.commands.result.logs.stdout = [SimpleNamespace(text='{"ready":true}')]
     created = AsyncMock(return_value=sandbox)
     monkeypatch.setattr("tinkerfin_sandbox.lifecycle.client.Sandbox.create", created)
     client = OpenSandboxClient(

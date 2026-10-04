@@ -77,6 +77,7 @@ from .facts import (
 from .limits import TraceLimits
 from .query import (
     load_core_projection_state,
+    read_lineage_events,
 )
 from .redaction import (
     RedactionContentKind,
@@ -145,7 +146,7 @@ class _TracingSession:
         limits: TraceLimits,
         write_policy: TraceWritePolicy,
         on_closed: Callable[[_TracingSession], None],
-        prior_events: tuple[TraceEvent, ...] = (),
+        lineage_through_seq: int,
     ) -> None:
         """Initialize one request session from the current lineage prefix.
 
@@ -159,7 +160,7 @@ class _TracingSession:
             limits: Store-aligned event and payload capacity limits.
             write_policy: Batching, pending-byte, backpressure, and delay policy.
             on_closed: Callback that removes this session from its Tracer owner.
-            prior_events: Selected lineage facts used only to hydrate dedupe state.
+            lineage_through_seq: Fixed prefix preceding this Run's first observation.
 
         Raises:
             TraceCorruption: Prior facts cannot hydrate one deterministic state.
@@ -168,6 +169,8 @@ class _TracingSession:
         self._writer = writer
         self._store = store
         self._context = context
+        self._lineage_through_seq = lineage_through_seq
+        self._lineage_hydrated = False
         self._policy = capture_policy
         self._capture_pipeline = TraceCapturePipeline(
             policy=capture_policy,
@@ -242,7 +245,31 @@ class _TracingSession:
             policy=write_policy,
             on_committed=self._checkpoint_committed,
         )
+
+    async def _hydrate_context(self, context: RunSourceContext) -> None:
+        """Select the verified parent before processing input or Native evidence."""
+
+        from .projection import select_prior_run_ids
+
+        if self._lineage_hydrated:
+            if context.parent_run_id != self._context.parent_run_id:
+                raise TraceCorruption("Run input changed its hydrated parent")
+            self._context = context
+            return
+        core_state = await load_core_projection_state(
+            self._store, self._writer.key, as_of_seq=self._lineage_through_seq
+        )
+        prior_events = await read_lineage_events(
+            self._store,
+            self._writer.key,
+            run_ids=select_prior_run_ids(
+                core_state, parent_run_id=context.parent_run_id
+            ),
+            as_of_seq=self._lineage_through_seq,
+        )
         self._hydrate(prior_events)
+        self._context = context
+        self._lineage_hydrated = True
 
     def _hydrate(self, events: tuple[TraceEvent, ...]) -> None:
         """Restore dedupe and state baselines from the current semantic Ledger."""
@@ -393,6 +420,10 @@ class _TracingSession:
 
         if self._closed:
             raise RuntimeError("Trace observation session is closed")
+        if isinstance(observation, RunInputObservation):
+            await self._hydrate_context(observation.source)
+        elif not isinstance(observation, RunStartedObservation):
+            await self._hydrate_context(self._context)
         if isinstance(
             observation,
             (
@@ -456,7 +487,7 @@ class _TracingSession:
         )
         await self._append(tuple(facts), mandatory=mandatory)
         self._advance_context_anchors(tuple(facts))
-        if isinstance(observation, RunInputObservation):
+        if isinstance(observation, RunStartedObservation | RunInputObservation):
             await self._batch_writer.force()
 
     def _model_context_started_at(

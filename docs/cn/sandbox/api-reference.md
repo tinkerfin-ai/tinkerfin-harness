@@ -58,7 +58,11 @@ Client 使用 OpenSandbox SDK 0.1.16 和 Server 0.2.3。下表方法均为异步
 | `get_diagnostic_logs(sandbox_id, scope="container")` | 读取供应商日志诊断 |
 | `get_diagnostic_events(sandbox_id, scope="runtime")` | 读取供应商事件诊断 |
 | `destroy(sandbox_id)` | 幂等销毁实例，并关闭临时连接 |
-| `aclose()` | 等待所属工作结束，只关闭由 Client 创建的 transport |
+| `aclose()` | 等待所属工作和资源回收完成，再关闭由 Client 创建的 transport |
+
+创建或连接失败后仍需调用 `aclose()`。它会回收创建失败或取消后留下的实例，并关闭未交付的连接，
+但不会销毁仅通过 `connect()` 打开的已有实例。清理抛出 backend 错误时，应保持调用方提供的
+transport 可用，再次调用 `aclose()` 重试。
 
 `OpenSandboxPurpose` 为 `Literal["commands", "workspaces"]`，Client 将其写入保留的
 `tinkerfin.ai/purpose` 元数据。`commands` 保留供应商默认权限，`workspaces` 请求供应商提供的
@@ -82,6 +86,10 @@ Client 禁用 SDK 隐式的 transport 重试。显式设置的 `ConnectionConfig
 ## Manager
 
 `OpenSandboxManager` 的构造参数和操作见 [Sandbox 生命周期](lifecycle.md)。
+State 或 Client 关闭失败时，`manager.aclose()` 会抛出错误。再次调用只要求未完成关闭的组件继续关闭，
+不会重放已完成的清理，也不会重新开放 Manager。Client 可以重试未确认的销毁；State 则可能保留并继续
+报告原关闭错误。
+
 `workspace(key, *, workspace_key, routes=None)` 返回 `SandboxWorkspace[KeyT]`，用于
 `TinkerFin.build(backend=...)`、应用文件访问和项目删除。`SandboxWorkspace` 从
 `tinkerfin_sandbox` 导出。

@@ -460,7 +460,7 @@ async def test_open_agui_run_manages_a_prebuilt_definition() -> None:
 
 
 @pytest.mark.asyncio
-async def test_open_agui_run_constructs_one_graph_after_preflight(
+async def test_open_agui_run_constructs_one_graph_after_started_is_consumed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls, _ = _install_builder(monkeypatch, parts=(_state_part(),))
@@ -471,6 +471,9 @@ async def test_open_agui_run_constructs_one_graph_after_preflight(
     assert calls == []
     await stream.messaging_owner_preflight()
     await stream.messaging_owner_preflight()
+    assert calls == []
+    assert (await anext(stream)).type.value == "RUN_STARTED"
+    assert calls == []
     await anext(stream)
     await stream.aclose()
     assert len(calls) == 1
@@ -845,9 +848,9 @@ async def test_agui_runtime_defaults_reserved_options_and_stays_lazy(
     assert isinstance(stream, AgUiRunStream)
     assert graphs == []
     assert (await anext(stream)).type.value == "RUN_STARTED"
-    assert len(graphs) == 1
-    assert graphs[0].calls == []
+    assert graphs == []
     assert (await anext(stream)).type.value == "STATE_SNAPSHOT"
+    assert len(graphs) == 1
     assert graphs[0].calls[0][1] == {
         "context": None,
         "stream_mode": ("messages", "tasks", "values"),

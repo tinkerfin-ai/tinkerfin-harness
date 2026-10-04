@@ -134,6 +134,12 @@ export const parseRunFailures = (value: unknown): ConversationRunFailure[] => {
   })
 }
 
+export interface InteractionAvailability {
+  interruptId: string
+  state: 'available' | 'confirming' | 'resolved' | 'cancelled'
+  submissionRunId: string | null
+}
+
 export interface ConversationHistoryDetail extends ConversationTitleSnapshot {
   id: number
   threadId: string
@@ -155,6 +161,7 @@ export interface ConversationHistoryDetail extends ConversationTitleSnapshot {
   graph: ConversationGraph
   state: TraceState
   interactions: TraceInteraction[]
+  interactionAvailability: InteractionAvailability[]
   status: TraceStatus
   completeness: TraceCompleteness
   taskTrace: TaskTraceSnapshot | null
@@ -326,11 +333,30 @@ const parseHistoryDetail = (
   }
   validateMessageReferences(value.messages)
   validateInteractionReferences(value.interactions)
+  const interactionAvailability = parseInteractionAvailability(value.interactionAvailability)
   const graph = parseConversationGraph(value.graph)
   if (graph.asOfSeq !== value.asOfSeq) {
     throw new ConversationError('stream_event_invalid')
   }
-  return { ...value, graph, runFailures: parseRunFailures(value.runFailures) } as unknown as ConversationHistoryDetail
+  return { ...value, graph, interactionAvailability, runFailures: parseRunFailures(value.runFailures) } as unknown as ConversationHistoryDetail
+}
+
+export const parseInteractionAvailability = (value: unknown): InteractionAvailability[] => {
+  if (!Array.isArray(value)) throw new ConversationError('stream_event_invalid')
+  const ids = new Set<string>()
+  return value.map(item => {
+    if (!isRecord(item) || typeof item.interruptId !== 'string' || !item.interruptId.trim()
+      || item.interruptId !== item.interruptId.trim() || ids.has(item.interruptId)
+      || (item.state !== 'available' && item.state !== 'confirming'
+        && item.state !== 'resolved' && item.state !== 'cancelled')
+      || !(item.submissionRunId === null || (typeof item.submissionRunId === 'string'
+        && item.submissionRunId.length > 0 && item.submissionRunId.trim() === item.submissionRunId))
+      || (item.state !== 'available' && item.submissionRunId === null)) {
+      throw new ConversationError('stream_event_invalid')
+    }
+    ids.add(item.interruptId)
+    return item as unknown as InteractionAvailability
+  })
 }
 
 const parseTraceEvent = (

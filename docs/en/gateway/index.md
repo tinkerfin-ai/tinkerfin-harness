@@ -167,7 +167,7 @@ These optional roles apply when a host keeps its own business state:
 
 | Extension | Host responsibility |
 | --- | --- |
-| `RunRegistration.confirm(acceptance)` | Confirm prepared new execution or attachment to a retained command; `acceptance.kind` distinguishes them |
+| `RunRegistration.confirm(acceptance)` | Confirm newly admitted execution or attachment to a retained command; `acceptance.kind` distinguishes them |
 | `RunRegistration.release()` | Release only this submission's unaccepted reservation |
 | `ResumeSettlement.saved(receipt)` | Idempotently record that approval decisions were saved |
 | `ResumeSettlement.not_saved()` | Release claims only when Runtime confirms decisions were not saved |
@@ -176,8 +176,8 @@ These optional roles apply when a host keeps its own business state:
 
 Bind business identity and reservation ownership before submission. Another
 request may already use the same registration, so a failed request must not delete
-shared accepted state. Existing delivery acceptance does not prove Runtime
-preparation has finished. Confirmation failure retains business state for
+shared accepted state. Neither kind of acceptance proves workspace readiness,
+Graph preparation, or saved resume decisions. Confirmation failure retains business state for
 reconciliation. An unused retry source or uncertain checkpoint outcome can
 invoke neither resume settlement method; silence is not proof of a failed save.
 Observers may outlive a request and their failures cannot undo committed output.

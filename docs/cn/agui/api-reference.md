@@ -23,7 +23,7 @@
 | `parent_run_id` | `None` | 已授权的分支或恢复来源 |
 | `mode` | Runtime 默认值 | `default` 或已配置的 `plan` |
 | `config`、`context` | `None` | Graph 设置与带类型调用上下文 |
-| `stream_timeout` | `None` | 原生流时限 |
+| `stream_timeout` | `None` | 工作区与 Graph 准备、恢复请求解析及原生流的总时限，从 `RUN_STARTED` 后首次拉取原生流开始计时 |
 | `cleanup_timeout` | `None` | 调用方等待受保护清理的时限 |
 | `include_reasoning_events` | `False` | 输出已验证公开推理事件 |
 | `include_subagent_events` | `True` | 输出子智能体事件 |

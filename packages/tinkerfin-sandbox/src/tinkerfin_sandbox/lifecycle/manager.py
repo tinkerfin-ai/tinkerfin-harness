@@ -45,7 +45,7 @@ from ._manager_resources import (
 )
 from ._notifications import _LifecycleNotifications
 from ._protocols import _SandboxClient, _SandboxClientBoundary
-from ._sql_tasks import capture, select_failure
+from ._sql_tasks import TaskOutcome, capture, select_failure
 from ._workspace import SandboxWorkspace
 from ._workspace_watch import _WorkspaceWatches
 from .notifications import OpenSandboxLifecycleObserver, OpenSandboxNotificationOptions
@@ -211,6 +211,11 @@ class OpenSandboxManager(Generic[KeyT]):
         self._operations_done.set()
         self._start_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
+        self._watch_close_outcome: TaskOutcome[None] | None = None
+        self._resource_close_outcome: TaskOutcome[None] | None = None
+        self._notification_close_outcome: TaskOutcome[None] | None = None
+        self._state_closed = False
+        self._client_closed = False
         self._started = False
         self._closed = False
         self._availability = _SandboxAvailability(self)
@@ -234,7 +239,7 @@ class OpenSandboxManager(Generic[KeyT]):
         except BaseException as startup_error:  # noqa: BLE001 - preserve startup outcome
             try:
                 await self.aclose()
-            except BaseException as cleanup_error:
+            except BaseException as cleanup_error:  # noqa: BLE001 - retain startup and cleanup failures
                 current = asyncio.current_task()
                 if isinstance(cleanup_error, asyncio.CancelledError) and (
                     current is not None and current.cancelling()
@@ -243,11 +248,12 @@ class OpenSandboxManager(Generic[KeyT]):
                         "OpenSandbox startup also failed: "
                         f"{type(startup_error).__name__}: {startup_error}"
                     )
-                    raise
+                    raise select_failure(startup_error, cleanup_error)
                 startup_error.add_note(
                     "OpenSandbox startup cleanup also failed: "
                     f"{type(cleanup_error).__name__}: {cleanup_error}"
                 )
+                raise select_failure(startup_error, cleanup_error)
             raise startup_error.with_traceback(startup_error.__traceback__)
         return self
 
@@ -271,11 +277,12 @@ class OpenSandboxManager(Generic[KeyT]):
                 cleanup_error.add_note(
                     f"OpenSandbox context body also failed: {type(exc).__name__}: {exc}"
                 )
-                raise
+                raise select_failure(exc, cleanup_error)
             exc.add_note(
                 "OpenSandbox context cleanup also failed: "
                 f"{type(cleanup_error).__name__}: {cleanup_error}"
             )
+            raise select_failure(exc, cleanup_error)
 
     async def start(self) -> None:
         """Idempotently open the State and complete initial warm-pool filling.
@@ -1171,17 +1178,62 @@ class OpenSandboxManager(Generic[KeyT]):
             namespace=namespace,
         )
 
+    async def _close_state(self) -> None:
+        """Release this manager's idle registrations before finalizing its State."""
+        await self._availability.release_idle_holders()
+        await self._state.aclose()
+
     async def _close_resources(self) -> None:
+        """Retain shutdown facts while retrying only incomplete owned finalizers.
+
+        This retained close task owns every phase. Watches, the resource sweep,
+        and notification delivery have one outcome, including failures: replaying
+        them could lose a watch error or destroy a remote instance twice. State
+        and Client own their closure semantics: a later explicit close invokes only
+        unfinished finalizers, which may retain an earlier failure. Failure in
+        either cannot skip the other.
+        """
         failure: BaseException | None = None
-        outcome = await capture(self._workspace_watches.aclose())
-        if isinstance(outcome, BaseException):
-            failure = outcome
-        outcome = await capture(_manager_resources._close_resources(self))
-        if isinstance(outcome, BaseException):
-            failure = outcome if failure is None else select_failure(failure, outcome)
-        outcome = await capture(self._notifications.aclose())
-        if isinstance(outcome, BaseException):
-            failure = outcome if failure is None else select_failure(failure, outcome)
+        if self._watch_close_outcome is None:
+            self._watch_close_outcome = await capture(self._workspace_watches.aclose())
+        if isinstance(self._watch_close_outcome, BaseException):
+            failure = self._watch_close_outcome
+        if self._resource_close_outcome is None:
+            self._resource_close_outcome = await capture(
+                _manager_resources._close_resources(self)
+            )
+        if isinstance(self._resource_close_outcome, BaseException):
+            failure = (
+                self._resource_close_outcome
+                if failure is None
+                else select_failure(failure, self._resource_close_outcome)
+            )
+        if not self._state_closed:
+            outcome = await capture(self._close_state())
+            if isinstance(outcome, BaseException):
+                failure = (
+                    outcome if failure is None else select_failure(failure, outcome)
+                )
+            else:
+                self._state_closed = True
+        if not self._client_closed:
+            outcome = await capture(self._client.aclose())
+            if isinstance(outcome, BaseException):
+                failure = (
+                    outcome if failure is None else select_failure(failure, outcome)
+                )
+            else:
+                self._client_closed = True
+        if self._notification_close_outcome is None:
+            self._notification_close_outcome = await capture(
+                self._notifications.aclose()
+            )
+        if isinstance(self._notification_close_outcome, BaseException):
+            failure = (
+                self._notification_close_outcome
+                if failure is None
+                else select_failure(failure, self._notification_close_outcome)
+            )
         if failure is not None:
             raise failure
 
@@ -1190,9 +1242,15 @@ class OpenSandboxManager(Generic[KeyT]):
 
         All callers await one shielded close task. Process-local State resources are
         destroyed; persistent bindings, shared warm slots, and cleanup work remain
-        available to another worker. The client and State are both closed. A finite
+        available to another worker. Both State and client closure are attempted
+        even if either fails. A finite
         ``settlement_timeout`` limits only the current caller's wait; the same close
         task remains owned and can be awaited by calling ``aclose`` again.
+        State or client close failures remain visible; another explicit call retries
+        only their unfinished closure, without reopening the manager or repeating
+        completed resource cleanup. Watch and notification failures remain visible
+        even when a later finalizer retry succeeds. A State implementation may also
+        retain its original close failure rather than repeat its owned operations.
         Accepted lifecycle notifications are drained after resources settle. Observer
         objects remain borrowed; slow cooperative observers can extend this wait by
         their bounded pending capacity and per-callback timeout.
@@ -1201,13 +1259,16 @@ class OpenSandboxManager(Generic[KeyT]):
             OpenSandboxSettlementTimeoutError: The configured caller wait expires
                 before the shared close task settles.
             OpenSandboxObserverReentryError: An observer reenters its own manager.
-            OpenSandboxError: Closing a workspace watch fails. The remaining
-                manager resources are still asked to close before reporting it.
+            OpenSandboxError: A watch, State, client, or notification fails to close.
+                The remaining owned resources are still asked to close before the
+                error is reported.
         """
         self._notifications.check_reentry()
         async with self._state_lock:
             close_task = self._close_task
-            if close_task is None:
+            if close_task is None or (
+                close_task.done() and not (self._state_closed and self._client_closed)
+            ):
                 self._closed = True
                 self._cleanup_wakeup.set()
                 close_task = asyncio.create_task(

@@ -259,7 +259,7 @@ async def test_rejected_first_registration_rolls_back_its_new_conversation(
 async def test_conversation_is_announced_only_when_independent_history_can_read_it(
     notifications, database, session, attachments
 ):
-    """准备中不公开会话，受理通知时其他读取者已能读取首条输入"""
+    """受理通知时可读取开始事实，实际输入在运行准备完成后可见"""
 
     class ReplyModel(FakeListChatModel):
         def bind_tools(self, tools: Sequence[object], **kwargs: object) -> ReplyModel:
@@ -345,7 +345,7 @@ async def test_conversation_is_announced_only_when_independent_history_can_read_
                         prepared.identity.thread_id, include_task_trace=False
                     )
                     assert detail.head_run_id == request.run_id
-                    assert detail.messages[0].content == "完成任务"
+                    assert detail.messages == ()
                     observed.append(detail.status.execution)
 
             async def release(self) -> None:
@@ -363,6 +363,17 @@ async def test_conversation_is_announced_only_when_independent_history_can_read_
         )
         async with stream:
             events = [delivery.data.type async for delivery in stream]
+        async with database.session() as check:
+            history = ConversationHistoryService(
+                ConversationRepository(check),
+                user_id=1,
+                tracer=reader,
+                history_queries=HistoryQueryAdmission(),
+            )
+            detail = await history.get_detail(
+                prepared.identity.thread_id, include_task_trace=False
+            )
+            assert detail.messages[0].content == "完成任务"
         assert observed == ["running"]
         assert events[0] == "RUN_STARTED" and events[-1] == "RUN_FINISHED"
         announced = await anext(changes)

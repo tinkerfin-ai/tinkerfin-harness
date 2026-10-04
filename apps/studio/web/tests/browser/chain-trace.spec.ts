@@ -289,7 +289,7 @@ const detail = (
   reasoning: [],
   graph: emptyGraph(30),
   state: { root: {}, subgraphs: {} },
-  interactions: [],
+  interactionAvailability: [], interactions: [],
   status: { execution: 'succeeded', headRunId: RUN_ID },
   completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false },
   taskTrace: includeTaskTrace ? {

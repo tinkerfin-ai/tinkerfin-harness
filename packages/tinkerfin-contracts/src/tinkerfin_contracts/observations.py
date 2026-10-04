@@ -67,11 +67,14 @@ class RunResumeSummary(ContractModel):
 
 
 class RunSourceContext(ContractModel):
-    """Describe the real input and lineage used to open one Runtime request.
+    """Describe the actual request or its subsequently resolved Runtime input.
 
     Input and configuration values are finite JSON snapshots produced by the Runtime.
     A continuation operates on existing graph state without resolving an interaction;
     a resume supplies an interaction decision.
+    Observer opening may precede checkpoint resolution. RunInputObservation is
+    the authoritative determined input for later Native and resume observations;
+    an unresolved request contains no invented resume summaries.
     Nested dictionaries and lists remain mutable. Observer implementations must treat
     received evidence as read-only and apply their retention policy before storing it.
     """
@@ -185,7 +188,12 @@ class RunStartedObservation(ObservationModel):
 
 
 class RunInputObservation(ObservationModel):
-    """Record the real ordinary, branch, resume, or abandonment input."""
+    """Record the determined input once before Native execution or a terminal.
+
+    The source may resolve parent lineage and resume summaries that were not
+    available when the Observer opened. A failed binding records its original
+    request without asserting validated decisions or saved checkpoint state.
+    """
 
     kind: Literal["run.input"] = "run.input"
     identity: RunIdentity

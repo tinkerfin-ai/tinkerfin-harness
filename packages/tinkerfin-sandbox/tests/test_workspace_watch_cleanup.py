@@ -18,6 +18,7 @@ from tinkerfin_notifications import (
     ResyncRequired,
 )
 from tinkerfin_sandbox import (
+    OpenSandboxBackendError,
     OpenSandboxBackendProtocolError,
     OpenSandboxBusyError,
     OpenSandboxError,
@@ -258,6 +259,71 @@ async def test_manager_reports_all_cleanup_failures_after_closing_other_resource
                     await context.__aexit__(None, None, None)
                 except OpenSandboxError:
                     pass
+            try:
+                await manager.aclose()
+            except OpenSandboxError:
+                pass
+            world.managers.remove(manager)
+
+
+async def test_manager_keeps_watch_failure_when_client_cleanup_recovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with _watch_world(tmp_path) as (world, remote):
+        manager, state = await _manager(world)
+        await _prepare(manager)
+        client = world.clients[0]
+        close_client, close_state = client.aclose, state.aclose
+        watch_failure = RuntimeError("Controlled sticky watch failure")
+        client_failure = OpenSandboxBackendError("Controlled client close failure")
+        watch_closes = 0
+        client_closes = 0
+        state_closes = 0
+        context = manager.workspace("owner", workspace_key="project-a").watch()
+
+        async def fail_watch() -> None:
+            nonlocal watch_closes
+            watch_closes += 1
+            raise watch_failure
+
+        async def fail_client_once() -> None:
+            nonlocal client_closes
+            client_closes += 1
+            if client_closes == 1:
+                raise client_failure
+            await close_client()
+
+        async def observe_state_close() -> None:
+            nonlocal state_closes
+            state_closes += 1
+            await close_state()
+
+        monkeypatch.setattr(client, "aclose", fail_client_once)
+        monkeypatch.setattr(state, "aclose", observe_state_close)
+        try:
+            await context.__aenter__()
+            stream = await remote.watch_opened.get()
+            monkeypatch.setattr(stream, "aclose", fail_watch)
+            with pytest.raises(OpenSandboxError) as first:
+                await manager.aclose()
+            assert _contains_failure(first.value, watch_failure)
+            assert _contains_failure(first.value, client_failure)
+            assert watch_closes == client_closes == state_closes == 1
+            with pytest.raises(OpenSandboxError) as second:
+                await manager.aclose()
+            assert second.value is first.value
+            assert client_closes == 2
+            assert watch_closes == state_closes == 1
+            with pytest.raises(OpenSandboxError) as third:
+                await manager.aclose()
+            assert third.value is first.value
+            assert client_closes == 2
+            assert watch_closes == state_closes == 1
+        finally:
+            try:
+                await context.__aexit__(None, None, None)
+            except OpenSandboxError:
+                pass
             try:
                 await manager.aclose()
             except OpenSandboxError:

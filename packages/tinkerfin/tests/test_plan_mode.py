@@ -121,7 +121,7 @@ from tinkerfin_contracts import (
     RuntimeObservation,
     ToolExecutionObservation,
 )
-from tinkerfin_tracing import Tracer
+from tinkerfin_tracing import AmbiguousTraceHead, RunFact, Tracer
 
 
 class _FakeModel(FakeMessagesListChatModel):
@@ -5282,7 +5282,29 @@ async def test_blank_discussion_is_rejected_before_accepting_the_card(
         resume=_plan_binding(_terminal(opening), payload=payload),
     )
     _assert_success(accepted)
-    completed = await tracer.get(runtime.thread_identity("plan-thread"))
+    with pytest.raises(AmbiguousTraceHead):
+        await tracer.get(runtime.thread_identity("plan-thread"))
+    completed = await tracer.get(
+        runtime.thread_identity("plan-thread"), head_run_id="valid-discussion"
+    )
+    failed = await tracer.get(
+        runtime.thread_identity("plan-thread"), head_run_id="invalid-discussion"
+    )
+    failed_events = await failed.events(limit=100)
+    completed_events = await completed.events(limit=100)
+    assert {item.fact.identity.run_id for item in failed_events.items} == {
+        "opening",
+        "invalid-discussion",
+    }
+    assert {item.fact.identity.run_id for item in completed_events.items} == {
+        "opening",
+        "valid-discussion",
+    }
+    assert [
+        item.fact.parent_run_id
+        for item in completed_events.items
+        if isinstance(item.fact, RunFact) and item.fact.phase == "resumed"
+    ] == ["opening"]
     assert [item.status for item in completed.interactions] == ["resolved"]
 
 

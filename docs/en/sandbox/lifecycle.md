@@ -185,6 +185,11 @@ in use by a request.
 
 Close waits for active creation, replacement, reset, pause/resume coordination, and cleanup to settle safely. A finite `settlement_timeout` only limits this caller's wait. It raises `OpenSandboxSettlementTimeoutError` without cancelling owned cleanup; call `aclose()` later to continue waiting.
 
+State and client close failures are reported, not treated as successful shutdown.
+Call `aclose()` again to retry unfinished closure without repeating completed
+destruction. A State may keep reporting its original close failure. Watch and
+notification cleanup failures remain visible even after the other resources close.
+
 The default in-memory State owns remote instances for the manager lifetime and
 destroys them during close. Persistent State retains remote bindings for other
 workers. Preserving an instance after a failed recovery does not change these close

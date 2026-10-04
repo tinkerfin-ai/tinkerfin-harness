@@ -158,6 +158,8 @@ jobs:
         run: uv sync --locked --all-packages --no-default-groups --group test --group lint --group integration
       - name: Test package coverage
         if: startsWith(matrix.python-version, '3.11.')
+        env:
+          PYTEST_ADDOPTS: "-vv"
         run: >-
           uv run pytest packages tests/test_package_logging_contract.py
           -n 4 --dist=loadfile

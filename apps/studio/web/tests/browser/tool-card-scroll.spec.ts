@@ -21,7 +21,7 @@ const snapshot: ConversationHistoryDetail = {
     graphNamespace: [], runId: RUN, role: 'user', content: '检查工具输入与研究结果',
     contentOmitted: false, status: 'completed', createdAt: time, completedAt: time,
   }],
-  reasoning: [], graph: emptyTraceGraph(1), state: { root: {}, subgraphs: {} }, interactions: [],
+  reasoning: [], graph: emptyTraceGraph(1), state: { root: {}, subgraphs: {} }, interactionAvailability: [], interactions: [],
   status: { execution: 'running', headRunId: RUN },
   completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false },
   taskTrace: { status: 'ready', todoGroups: [] }, createdAt: time, updatedAt: time,

@@ -38,7 +38,12 @@ class RuntimeObserver(Protocol):
     """Create one managed observation session for each admitted Runtime request."""
 
     async def open_run(self, context: RunSourceContext) -> RunObservationSession:
-        """Open one request-scoped session without taking ownership of the Runtime."""
+        """Open one request-scoped session without taking ownership of the Runtime.
+
+        This context records the actual request before delayed Graph/checkpoint
+        preparation. The session receives determined input and resume lineage in
+        RunInputObservation before any Native observation or terminal.
+        """
 
         ...
 

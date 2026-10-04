@@ -68,6 +68,8 @@ class SandboxWorkspace(Generic[KeyT]):
         keeps project files for later use. It does not resume a paused parent.
         Concurrent contexts for the same project share files without transactional
         write guarantees. Other projects cannot access this project's data.
+        After the owner binding is removed and its former parent is confirmed
+        deleted, a later open creates a new parent without reviving old contexts.
 
         Yields:
             Project-rooted asynchronous file and command operations.

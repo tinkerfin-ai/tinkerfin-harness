@@ -195,9 +195,11 @@ export function ConversationViewport({
                     : []}
                 />)}
             {conversation.approval && !conversation.approval.submitted && <ApprovalStatusRow />}
-            {conversation.planInteraction?.kind === 'questions' && !conversation.planInteraction.submitted && (
+            {conversation.planInteraction?.kind === 'questions' && (
               <div className="plan-interaction-wait-state">
-                <ActivityDots label={t('等待回答')} />
+                {conversation.planInteraction.submitted
+                  ? <span role="status">{t('正在确认提交状态')}</span>
+                  : <ActivityDots label={t('等待回答')} />}
               </div>
             )}
             {conversation.planInteraction?.kind === 'review' && (

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Mapping
+from types import ModuleType
 from typing import Literal
 
 import pytest
@@ -519,6 +520,7 @@ async def test_runtime_close_control_is_independent_of_observer_order(
 async def test_runtime_preserves_cancellation_when_observer_and_source_cleanup_fail(
     definition_factory: Callable[..., AgentRuntime[None]],
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
     cleanup_kind: Literal["normal", "failed", "control"],
     cancel_count: int,
 ) -> None:
@@ -549,13 +551,39 @@ async def test_runtime_preserves_cancellation_when_observer_and_source_cleanup_f
         input={"messages": []},
     )
     caller = asyncio.create_task(anext(stream))
+    cancellation_observed: asyncio.Queue[int] = asyncio.Queue(maxsize=2)
+    real_shield = asyncio.shield
+    real_wait = asyncio.wait
+    controlled = ModuleType("controlled_cancellation")
+    controlled.__dict__.update(vars(asyncio))
+
+    async def shield(*args, **kwargs):
+        try:
+            return await real_shield(*args, **kwargs)
+        except asyncio.CancelledError:
+            if asyncio.current_task() is caller:
+                cancellation_observed.put_nowait(caller.cancelling())
+            raise
+
+    async def wait(*args, **kwargs):
+        try:
+            return await real_wait(*args, **kwargs)
+        except asyncio.CancelledError:
+            if asyncio.current_task() is caller:
+                cancellation_observed.put_nowait(caller.cancelling())
+            raise
+
+    setattr(controlled, "shield", shield)
+    setattr(controlled, "wait", wait)
+    monkeypatch.setattr("tinkerfin._run_owner.asyncio", controlled)
+    monkeypatch.setattr("tinkerfin._tasks.asyncio", controlled)
     try:
         await graph.started.wait()
         failed.failure.set_result(RuntimeError("observer failed"))
         await graph.cleaning.wait()
         for index in range(cancel_count):
             caller.cancel(f"caller cancellation {index + 1}")
-            await asyncio.sleep(0)
+            assert await cancellation_observed.get() == index + 1
         graph.release.set()
         if cleanup_kind == "control":
             with pytest.raises(_ProcessControl) as controlled:

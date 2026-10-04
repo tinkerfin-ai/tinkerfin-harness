@@ -22,6 +22,59 @@ import {
 const THREAD_ID = 'thread-order-check'
 const RUN_ID = 'run-order-check'
 
+it.each([['questions', 'tool'], ['questions', 'questions'], ['questions', 'review'], ['review', 'questions']] as const)('Plan %s 的未确认输入不能被新 %s 交互覆盖', (previousKind, nextKind) => {
+  const current = buildEmptyConversation({ threadId: THREAD_ID, now: '2026-10-04T00:00:00Z' })
+  current.activeRunId = 'resume-plan'
+  current.planInteraction = previousKind === 'questions' ? {
+    kind: 'questions', interruptId: 'old-plan', title: '范围', description: '范围确认', form: {},
+    activeQuestionIndex: 0, questions: [{ id: 'scope', answerType: 'text', prompt: '范围？', required: true, answer: '保留这份答案' }],
+    submitted: true, submissionRunId: 'resume-plan',
+  } : {
+    kind: 'review', interruptId: 'old-review', revision: 1, action: 'reject', message: '保留原拒绝理由',
+    allowedActions: ['approve', 'reject'], submitted: true, submissionRunId: 'resume-plan',
+    draft: { revision: 1, contentSchema: { mediaType: 'text/markdown', fingerprint: 'a'.repeat(64) },
+      content: { description: '原计划', markdown: '# 原计划' } },
+  }
+  const nextInterrupt = nextKind === 'tool' ? interrupt({ id: 'new-tool' }) : planInterrupt('new-plan', {
+    schema: 'tinkerfin.runtime-interrupt',
+    kind: nextKind === 'questions' ? 'tinkerfin:plan_clarification' : 'tinkerfin:plan_review',
+    responseSchema: nextKind === 'questions' ? {} : { discriminator: { propertyName: 'type', mapping: { approve: '#/approve' } } },
+    metadata: { origin: 'plan', ...(nextKind === 'questions' ? { clarification: { form: {
+      title: '新问题', description: '新的范围', questions: [{ id: 'new-scope', answerType: 'text', prompt: '新范围？', required: true }],
+    } } } : { review: { draft: {
+      revision: 1, contentSchema: { mediaType: 'text/markdown', fingerprint: 'a'.repeat(64) }, content: { description: '新计划', markdown: '# 新计划' },
+    } } }) },
+  })
+  const waiting = applyConversationEvent(current, {
+    type: 'RUN_FINISHED', threadId: THREAD_ID, runId: 'resume-plan', outcome: { type: 'interrupt', interrupts: [nextInterrupt] },
+  })
+  expect(waiting.planInteraction).toEqual(current.planInteraction)
+  expect(waiting.approval).toBeUndefined()
+  expect(waiting.messages.some(item => item.meta?.planHistory)).toBe(false)
+})
+
+it('准备失败后保留已提交审批和暂停工具，等待历史确认而非重复授权', () => {
+  const waiting = applyConversationEvent(
+    applyConversationEvent(applyConversationEvent(buildEmptyConversation({ threadId: THREAD_ID, now: '2026-10-04T00:00:00Z' }),
+      { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID }), {
+      type: 'TOOL_CALL_START', toolCallId: 'pending-write', toolCallName: 'write_file',
+    }),
+    { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID, outcome: {
+      type: 'interrupt', interrupts: [interrupt({ id: 'approval-write', toolCallId: 'pending-write' })],
+    } },
+  )
+  const submitted = prepareResumeSubmission(waiting)
+  const started = applyConversationEvent(submitted, { type: 'RUN_STARTED', threadId: THREAD_ID, runId: 'resume-prepare' })
+  const failed = applyConversationEvent(started, {
+    type: 'RUN_ERROR', code: 'runtime_initialization_error', message: '准备失败', rawEvent: { runId: 'resume-prepare' },
+  })
+  expect(started.approval?.submitted).toBe(true)
+  expect(failed.approval).toEqual(started.approval)
+  expect(failed.messages.find(message => message.meta?.toolCallId === 'pending-write')?.meta).toMatchObject({
+    status: 'paused', interruptId: 'approval-write',
+  })
+})
+
 it('忽略的协议事件保留历史确认标记，正文或状态变更使其失效', () => {
   const current = {
     ...buildEmptyConversation({ threadId: THREAD_ID, now: '2026-09-07T00:00:00Z' }),
@@ -1653,14 +1706,14 @@ describe('AG-UI runtime reducer', () => {
     expect(result.approval?.submitted).toBe(false)
   })
 
-  it('restores interrupted tool cards to running when approval submission starts', () => {
+  it('keeps interrupted tool cards paused while approval saving is unconfirmed', () => {
     const interrupted = applyConversationEvent(
       applyConversationEvent(
-        buildEmptyConversation({
+        applyConversationEvent(buildEmptyConversation({
           threadId: 'thread-resume-running',
           now: '2026-08-05T00:00:00.000Z',
           model: 'GPT-5.5',
-        }),
+        }), { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID }),
         {
           type: 'TOOL_CALL_START',
           rawEvent: {
@@ -1702,8 +1755,8 @@ describe('AG-UI runtime reducer', () => {
 
     expect(resumed.runStatus).toBe('streaming')
     expect(resumed.approval?.submitted).toBe(true)
-    expect(toolMessage?.meta?.status).toBe('running')
-    expect(toolMessage?.meta?.interruptId).toBeUndefined()
+    expect(toolMessage?.meta?.status).toBe('paused')
+    expect(toolMessage?.meta?.interruptId).toBe('interrupt-running')
 
     const confirmedByServer = applyConversationEvent(resumed, {
       type: 'RUN_STARTED',
@@ -1711,7 +1764,7 @@ describe('AG-UI runtime reducer', () => {
       runId: `${RUN_ID}-resume`,
     })
 
-    expect(confirmedByServer.approval).toBeUndefined()
+    expect(confirmedByServer.approval).toMatchObject({ submitted: true, submissionRunId: `${RUN_ID}-resume` })
     expect(confirmedByServer.runStatus).toBe('streaming')
   })
 
@@ -1748,7 +1801,7 @@ describe('AG-UI runtime reducer', () => {
     expect(submitted.approval?.submitted).toBe(true)
     expect(submitted.messages.find(
       (message) => message.meta?.toolCallId === 'call-init-failure',
-    )?.meta?.status).toBe('running')
+    )?.meta?.status).toBe('paused')
     const initializationStarted = applyConversationEvent(submitted, {
       type: 'RUN_STARTED',
       threadId: THREAD_ID,
@@ -1762,14 +1815,14 @@ describe('AG-UI runtime reducer', () => {
       rawEvent: { runId: `${RUN_ID}-resume`, initializationFailed: true },
     })
 
-    expect(initializationStarted.runStatus).toBe('waiting_approval')
-    expect(initializationStarted.approval).toEqual(interrupted.approval)
-    expect(failed.runStatus).toBe('waiting_approval')
-    expect(failed.approval).toEqual(interrupted.approval)
+    expect(initializationStarted.runStatus).toBe('streaming')
+    expect(initializationStarted.approval).toMatchObject({ ...interrupted.approval, submitted: true })
+    expect(failed.runStatus).toBe('error')
+    expect(failed.approval).toEqual(initializationStarted.approval)
     expect(failed.messages.find(
       (message) => message.meta?.toolCallId === 'call-init-failure',
     )?.meta?.status).toBe('paused')
-    expect(failed.notice).toMatchObject({ kind: 'error', content: '继续任务失败，请重新提交' })
+    expect(failed.approval?.submissionRunId).toBe(`${RUN_ID}-resume`)
   })
 
   it('marks only the related subagent when its parent task result fails', () => {
@@ -1925,11 +1978,11 @@ it.each(['questions', 'review'] as const)('关闭计划卡片不提交未完成�
     : { type: 'dismiss', baseRevision: 3 } })
   const claimed = { ...conversation, planInteraction: { ...conversation.planInteraction, submitted: true } }
   const rejected = applyConversationEvent(claimed, { type: 'RUN_STARTED', threadId: 'discussion', runId: payload.runId, rawEvent: { initializationFailed: true } })
-  expect(rejected.planInteraction?.submitted).toBe(false)
+  expect(rejected.planInteraction?.submitted).toBe(true)
   expect(rejected.messages.some(message => message.meta?.planHistory)).toBe(false)
   const accepted = applyConversationEvent(claimed, { type: 'RUN_STARTED', threadId: 'discussion', runId: payload.runId })
-  expect(accepted.planInteraction).toBeUndefined()
-  expect(accepted.messages.filter(message => message.meta?.planHistory)).toHaveLength(1)
+  expect(accepted.planInteraction?.submitted).toBe(true)
+  expect(accepted.messages.filter(message => message.meta?.planHistory)).toHaveLength(0)
 })
 
 

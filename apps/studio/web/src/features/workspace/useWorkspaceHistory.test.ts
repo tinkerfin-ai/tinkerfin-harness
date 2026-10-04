@@ -99,7 +99,7 @@ const detail = (
   }],
   reasoning: [],
   state: { root: {}, subgraphs: {} },
-  interactions: [],
+  interactionAvailability: [], interactions: [],
   status: { execution: 'running', headRunId: RUN_ID },
   completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false },
   createdAt: BASE_TIME,

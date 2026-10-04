@@ -296,6 +296,15 @@ class OpenSandboxHandle(BaseSandbox):
         await self._await_until_idle(backend)
         return backend
 
+    def _stop_new_calls(self) -> None:
+        """Permanently close admission before the manager schedules local cleanup.
+
+        Existing leases keep their fixed backend. The manager must retain and
+        await cleanup independently; sealing does not close the connection itself.
+        """
+        with self._condition:
+            self._closed = True
+
     def close(self) -> None:
         """Reject closure that bypasses the owning manager.
 

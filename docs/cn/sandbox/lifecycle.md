@@ -163,6 +163,9 @@ finally:
 
 关闭会等待正在进行的创建、替换、重置、暂停/恢复协调和清理安全结束。有限的 `settlement_timeout` 只限制当前调用方等待，不会取消 manager 已经接管的清理任务。超时会抛出 `OpenSandboxSettlementTimeoutError`，稍后可以再次调用 `aclose()` 继续等待。
 
+State 和 Client 关闭失败会向调用方报告，不能视为关闭成功。再次调用 `aclose()` 会继续尝试未完成的关闭，
+不会重复已完成的销毁。State 可能继续报告原关闭错误；监听和通知清理的错误也不会因其他资源已关闭而消失。
+
 默认内存 State 的远端实例归当前 Manager 生命周期所有，关闭时会销毁。持久 State 则保留绑定，
 供其他 worker 接续使用。恢复失败后保留实例不会改变上述关闭语义，也不会延长实例的 TTL。
 

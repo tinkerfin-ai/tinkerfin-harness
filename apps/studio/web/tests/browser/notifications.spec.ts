@@ -20,7 +20,7 @@ function conversation(threadId: string, runId: string, title: string): Conversat
     id: 1, threadId, title, titleSource: 'generated', titleGenerationStatus: 'succeeded', titleSeq: 1,
     accessMode: 'full', lastModel: 'main', pinned: false, createdAt: '2030-01-01T00:00:00Z', updatedAt: '2030-01-01T00:00:00Z',
     generation: 'test-generation', asOfSeq: 5, observedAt: '2030-01-01T00:00:00.000000Z', headRunId: runId, availableHeads: [runId], historyCursor: null,
-    messageCount: 0, toolCallCount: 0, messages: [], reasoning: [], runFailures: [], state: { root: {}, subgraphs: {} }, interactions: [],
+    messageCount: 0, toolCallCount: 0, messages: [], reasoning: [], runFailures: [], state: { root: {}, subgraphs: {} }, interactionAvailability: [], interactions: [],
     status: { execution: 'succeeded', headRunId: runId }, completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false },
     taskTrace: { status: 'ready', todoGroups: [] },
     graph: { asOfSeq: 5, turns: [], nodes: [], orderedNodeIds: [], matchedNodeIds: [], completeness: { callTrackingMissing: false, relationshipEvidenceMissing: false, detailsOmitted: false } },

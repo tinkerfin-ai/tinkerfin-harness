@@ -15,7 +15,7 @@ export function PlanReviewStatusRow({ interaction }: { interaction: PlanReviewSt
       icon={<Route size={14} aria-hidden="true" />}
       label="Plan"
       pendingStatus={t('等待审阅')}
-      submittedStatus={t('正在处理决定')}
+      submittedStatus={t('正在确认提交状态')}
       submitted={interaction.submitted}
     />
   )
@@ -50,11 +50,14 @@ export function PlanReviewCard({
     return () => window.cancelAnimationFrame(frame)
   }, [interaction.action, interaction.interruptId])
 
-  const update = (patch: Partial<PlanReviewState>) => onChange((current) => ({
-    ...current,
-    ...patch,
-    error: undefined,
-  }))
+  const update = (patch: Partial<PlanReviewState>) => {
+    if (interaction.submitted) return
+    onChange((current) => current.submitted ? current : ({
+      ...current,
+      ...patch,
+      error: undefined,
+    }))
+  }
 
   const actionAllowed = (action: PlanReviewState['allowedActions'][number]) => (
     interaction.allowedActions?.includes(action) ?? false
@@ -68,7 +71,6 @@ export function PlanReviewCard({
 
   return (
     <PlanInteractionCard
-      disabled={interaction.submitted}
       kind="review"
       ariaLabel={t('Plan 审阅')}
       minimized={false}
@@ -107,7 +109,7 @@ export function PlanReviewCard({
               className="plan-review-rejection-form"
               onSubmit={(event) => {
                 event.preventDefault()
-                onSubmit('reject')
+                if (!interaction.submitted) onSubmit('reject')
               }}
             >
               <label htmlFor={`plan-review-reason-${interaction.interruptId}`}>
@@ -119,6 +121,7 @@ export function PlanReviewCard({
                 name="reason"
                 rows={3}
                 value={interaction.message ?? ''}
+                readOnly={interaction.submitted}
                 placeholder={t('说明为什么不执行这份计划…')}
                 onChange={(event) => update({ message: event.currentTarget.value })}
               />
@@ -131,7 +134,7 @@ export function PlanReviewCard({
             <div className="approval-composer-actions">
               {interaction.action === 'reject' ? (
                 <>
-                  <Button size="sm" shape="capsule" onClick={cancelRejection}>
+                  <Button size="sm" shape="capsule" disabled={interaction.submitted} onClick={cancelRejection}>
                     {t('取消')}
                   </Button>
                   <Button
@@ -140,6 +143,7 @@ export function PlanReviewCard({
                     type="submit"
                     form={rejectionFormId}
                     variant="danger"
+                    disabled={interaction.submitted}
                   >
                     {t('确认拒绝')}
                   </Button>
@@ -152,6 +156,7 @@ export function PlanReviewCard({
                       size="sm"
                       shape="capsule"
                       className="approval-reject-button"
+                      disabled={interaction.submitted}
                       onClick={() => update({ action: 'reject' })}
                     >
                       {t('拒绝')}
@@ -162,6 +167,7 @@ export function PlanReviewCard({
                       size="sm"
                       shape="capsule"
                       variant="solid"
+                      disabled={interaction.submitted}
                       onClick={() => onSubmit('approve')}
                     >
                       {t('批准')}

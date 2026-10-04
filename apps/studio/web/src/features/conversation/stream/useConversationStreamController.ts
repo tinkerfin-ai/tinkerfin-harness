@@ -398,7 +398,7 @@ export function useConversationStreamController({
               if (item.type === 'snapshot') {
                 if (item.snapshot.threadId !== threadId || item.snapshot.headRunId !== runId) throw new ConversationError('stream_event_invalid')
                 // 该基线与运行重放起点对应，不能用刷新前的投影或游标拼接
-                projected = restoreConversationFromTrace(item.snapshot, { model: target.model, includeTaskTrace })
+                projected = restoreConversationFromTrace(item.snapshot, { model: target.model, includeTaskTrace, preserveInputFrom: target })
                 completed = !item.replay
                 if (!completed) projected = { ...projected, runStatus: 'streaming' }
                 projector?.close()

@@ -15,6 +15,7 @@ from tinkerfin_contracts import (
     ThreadIdentity,
 )
 
+from ._follow_lineage import PendingTraceLineage, head_selection_pending
 from ._graph_projection import project_trace_graph_records
 from ._projection_cache import ProjectionRegistry
 from ._tasks import capture, join_owned_task, select_failure
@@ -38,14 +39,12 @@ from .projection import (
     RegisteredTraceProjection,
     TraceProjection,
     select_core_projection_window,
-    select_prior_run_ids,
     trace_graph_turns,
 )
 from .query import (
     TraceThread,
     build_trace_thread,
     load_core_projection_state,
-    read_lineage_events,
     resolve_history_request,
 )
 from .redaction import (
@@ -170,20 +169,21 @@ class Tracer:
         """Open one fail-closed request-scoped semantic observation session.
 
         The Store remains borrowed by the Tracer. The returned session owns the exact
-        Run writer, restores only the selected parent lineage for dedupe, and closes the
-        writer on every partial-start failure before propagating the primary error.
+        Run writer and freezes its prior prefix. Parent hydration waits for the
+        resolved input observation, so early Run start cannot select a different
+        ancestor. Partial-open failures close the writer before propagation.
 
         Args:
-            context: Canonical Runtime input, Profile, lineage, mode, and privacy facts.
+            context: Actual request, Profile, mode, and privacy facts. A later
+                RunInputObservation supplies resolved input and parent lineage.
 
         Returns:
             A request-scoped Observer session owned by the Runtime until close.
 
         Raises:
             TypeError: ``context`` has the wrong public type.
-            TraceStoreError: Writer creation or bounded lineage reads fail.
+            TraceStoreError: Writer creation or initial snapshot reads fail.
             TraceStoreProtocolError: The Store returns an invalid writer or snapshot.
-            TraceCorruption: Existing lineage facts violate semantic invariants.
         """
 
         if not isinstance(context, RunSourceContext):
@@ -206,21 +206,6 @@ class Tracer:
                 raise TraceStoreProtocolError(
                     "Trace Store returned an invalid thread snapshot"
                 )
-            core_state = await load_core_projection_state(
-                self._store,
-                writer.key,
-                as_of_seq=snapshot.as_of_seq,
-            )
-            prior_run_ids = select_prior_run_ids(
-                core_state,
-                parent_run_id=context.parent_run_id,
-            )
-            prior_events = await read_lineage_events(
-                self._store,
-                writer.key,
-                run_ids=prior_run_ids,
-                as_of_seq=snapshot.as_of_seq,
-            )
             session = _TracingSession(
                 writer=writer,
                 store=self._store,
@@ -231,7 +216,7 @@ class Tracer:
                 limits=self._limits,
                 write_policy=self._write_policy,
                 on_closed=self._session_closed,
-                prior_events=prior_events,
+                lineage_through_seq=snapshot.as_of_seq,
             )
             self._sessions.setdefault(_thread_scope(context.identity), set()).add(
                 session
@@ -407,6 +392,7 @@ class Tracer:
                 cursor=None,
                 limit=limit,
                 expected_key=key,
+                defer_lineage=True,
             )
             return refreshed
 
@@ -459,6 +445,7 @@ class Tracer:
         cursor: str | None,
         limit: int,
         expected_key: TraceThreadKey | None,
+        defer_lineage: bool = False,
     ) -> tuple[TraceGraphPage, TraceThreadKey]:
         sessions = tuple(self._sessions.get(_thread_scope(identity), ()))
         if sessions:
@@ -483,6 +470,12 @@ class Tracer:
                 snapshot.key,
                 as_of_seq=snapshot.as_of_seq,
             )
+            if (
+                defer_lineage
+                and head_run_id is None
+                and head_selection_pending(core_state, snapshot.active_run_ids)
+            ):
+                raise PendingTraceLineage
             window = select_core_projection_window(
                 core_state,
                 head_run_id=head_run_id,

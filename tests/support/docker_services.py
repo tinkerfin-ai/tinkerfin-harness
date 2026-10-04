@@ -8,6 +8,7 @@ real test failures.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -35,6 +36,7 @@ import pytest_asyncio
 from docker import DockerClient
 from docker.errors import DockerException, ImageLoadError, ImageNotFound, NotFound
 from docker.models.networks import Network
+from docker.types import LogConfig
 from requests import Response
 from sqlalchemy import text
 from sqlalchemy.engine import URL
@@ -67,12 +69,14 @@ _DIND_IMAGE = (
     "docker:28.3.3-dind@sha256:"
     "a56b3bdde89315ed2cc0e4906e582b5033d93bf20d9cb9510c2cdd4e7f7690b1"
 )
+_DNS_CONFIG_MAX_BYTES = 64 * 1024
 _TEST_LABEL = "tinkerfin.test/run"
 _SANDBOX_TEST_LABEL = "tinkerfin.test/sandbox-run"
 _MYSQL_SANDBOX_DATABASE_PATTERN = re.compile(r"\Atinkerfin_sandbox_[a-f0-9]{32}\Z")
 _DOCKER_FIXTURE_NAMES = frozenset(
     {
         "docker_test_client",
+        "docker_platform_dns_servers",
         "mysql_admin_url",
         "mysql_sandbox_url",
         "mysql_test_service",
@@ -703,10 +707,79 @@ def _copy_runtime_image(
         raise RuntimeError("The imported runtime tag resolves to a different image")
 
 
+def _parse_dns_servers(content: bytes) -> tuple[str, ...]:
+    if len(content) > _DNS_CONFIG_MAX_BYTES:
+        raise ValueError("Docker resolver configuration exceeds its byte limit")
+    addresses: list[str] = []
+    for line in content.decode("utf-8").splitlines():
+        fields = line.split("#", 1)[0].split(";", 1)[0].split()
+        if not fields or fields[0] != "nameserver":
+            continue
+        if len(fields) != 2:
+            raise ValueError("A nameserver directive must contain one numeric address")
+        address = ipaddress.ip_address(fields[1])
+        if isinstance(address, ipaddress.IPv6Address):
+            if address.scope_id is not None or address.is_link_local:
+                raise ValueError(
+                    "Interface-dependent DNS cannot cross container namespaces"
+                )
+            effective = address.ipv4_mapped or address
+        else:
+            effective = address
+        if (
+            effective.is_unspecified
+            or effective.is_multicast
+            or effective == ipaddress.IPv4Address("255.255.255.255")
+        ):
+            raise ValueError("A DNS server must have a unicast destination address")
+        if not effective.is_loopback:
+            addresses.append(str(address))
+    if not addresses:
+        raise ValueError("Docker supplies no non-loopback numeric DNS server")
+    return tuple(addresses)
+
+
+@pytest.fixture(scope="session")
+def docker_platform_dns_servers(
+    docker_test_client: DockerClient,
+    docker_test_run_id: str,
+) -> tuple[str, ...]:
+    """Read Docker's bridge DNS once without querying any resolver.
+
+    The owned probe bounds its output before the SDK buffers it. Its default
+    bridge membership is temporary; the shared network is never modified or
+    removed. Interface-dependent addresses cannot be passed to a nested daemon.
+
+    Returns:
+        Transferable numeric resolver addresses in Docker's configured order.
+
+    Raises:
+        RuntimeError: The finite probe fails to read its resolver configuration.
+        ValueError: The file is oversized, malformed, or has no usable address.
+    """
+    probe = (
+        DockerContainer(_DIND_IMAGE)
+        .with_command(["-c", str(_DNS_CONFIG_MAX_BYTES + 1), "/etc/resolv.conf"])
+        .with_kwargs(
+            entrypoint=["head"],
+            network="bridge",
+            labels={_TEST_LABEL: docker_test_run_id},
+            log_config=LogConfig(type="json-file"),
+        )
+    )
+    with _running_container(probe):
+        native = probe.get_wrapped_container()
+        result = native.wait(timeout=docker_test_client.api.timeout)
+        if result["StatusCode"] != 0:
+            raise RuntimeError("The Docker platform DNS probe exited unsuccessfully")
+        return _parse_dns_servers(native.logs(stdout=True, stderr=False))
+
+
 @pytest.fixture(scope="session")
 def opensandbox_docker_runtime(
     docker_test_client: DockerClient,
     docker_test_run_id: str,
+    docker_platform_dns_servers: tuple[str, ...],
 ) -> Iterator[OpenSandboxDockerRuntime]:
     """Own a separate daemon so test Servers cannot restore or delete host Sandboxes.
 
@@ -731,7 +804,10 @@ def opensandbox_docker_runtime(
                 _with_loopback_port(DockerContainer(_DIND_IMAGE), 2375), 8090
             )
             .with_env("DOCKER_TLS_CERTDIR", "")
-            .with_command("--tls=false --storage-driver=overlay2")
+            .with_command(
+                ["--tls=false", "--storage-driver=overlay2"]
+                + [f"--dns={address}" for address in docker_platform_dns_servers]
+            )
             .with_kwargs(
                 privileged=True,
                 network=network_name,

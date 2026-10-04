@@ -34,6 +34,7 @@ from tinkerfin_contracts import (
 )
 from tinkerfin_tracing import (
     AmbiguousTraceHead,
+    CallTrackingFact,
     CapturedValue,
     InMemoryTraceStore,
     InvalidTraceCursor,
@@ -41,11 +42,15 @@ from tinkerfin_tracing import (
     RunFact,
     StateRevisionFact,
     SubagentFact,
+    TraceEvent,
+    TraceLimits,
     TraceProjectionCheckpoint,
     TraceQuotaExceeded,
     Tracer,
     TraceRunNotFound,
+    TraceStoreProtocolError,
     TraceThreadNotFound,
+    TraceUpdate,
     TracingErrorCode,
     TurnFact,
 )
@@ -234,6 +239,38 @@ async def _record(
     )
     session = await _start(tracer, context)
     await _finish(session, context)
+
+
+async def test_resolved_input_selects_its_parent_after_an_early_run_start() -> None:
+    tracer = Tracer(store=InMemoryTraceStore())
+    await _record(tracer, "original")
+    await _record(tracer, "other", parent_run_id="original")
+    request = _context("resume", input_kind="resume")
+    session = await tracer.open_run(request)
+    observed = datetime(2026, 10, 4, tzinfo=UTC)
+    try:
+        await session.observe(
+            RunStartedObservation(
+                identity=request.identity, observed_at=observed, monotonic_ns=1
+            )
+        )
+        preparing = await tracer.get(request.identity.thread, head_run_id="resume")
+        assert preparing.messages == ()
+        resolved = request.model_copy(update={"parent_run_id": "original"})
+        await session.observe(
+            RunInputObservation(
+                identity=request.identity,
+                source=resolved,
+                observed_at=observed,
+                monotonic_ns=2,
+            )
+        )
+        await _finish(session, resolved)
+        result = await tracer.get(request.identity.thread, head_run_id="resume")
+        assert [message.source_id for message in result.messages] == ["user-original"]
+        assert not result.completeness.missing_prefix
+    finally:
+        await session.aclose()
 
 
 async def _seed_completed_turns(
@@ -907,6 +944,292 @@ async def test_event_pages_include_only_the_selected_head_lineage() -> None:
         "root",
         "branch-a",
     }
+
+
+@pytest.mark.parametrize("view_kind", ["history", "graph"])
+@pytest.mark.parametrize(
+    "resolution", ["input", "terminal", "siblings", "cancel", "close", "lost"]
+)
+async def test_unscoped_follow_waits_for_lineage_without_hiding_real_branches(
+    monkeypatch: pytest.MonkeyPatch, view_kind: str, resolution: str
+) -> None:
+    store = InMemoryTraceStore()
+    tracer = Tracer(store=store)
+    await _record(tracer, "root")
+    request = _context("unbound", input_kind="resume")
+    view = (
+        await tracer.get(request.identity.thread)
+        if view_kind == "history"
+        else await tracer.query(request.identity.thread)
+    )
+    source_follow = store.follow
+    processed: asyncio.Queue[None] = asyncio.Queue(maxsize=1)
+    source_closed = asyncio.Event()
+    unowned_processed = asyncio.Event()
+
+    async def followed(
+        key: TraceThreadKey, *, after_seq: int
+    ) -> AsyncGenerator[TraceStoreUpdate, None]:
+        source = source_follow(key, after_seq=after_seq)
+        try:
+            async for update in source:
+                yield update
+                if update.events:
+                    processed.put_nowait(None)
+                if "unbound" not in update.active_run_ids:
+                    unowned_processed.set()
+        finally:
+            await source.aclose()
+            source_closed.set()
+
+    monkeypatch.setattr(store, "follow", followed)
+    follower = view.follow()
+    pending = asyncio.create_task(anext(follower))
+    sessions: list[tuple[RunObservationSession, RunSourceContext]] = []
+    observed = datetime(2026, 10, 4, tzinfo=UTC)
+
+    async def wait_until_processed() -> None:
+        acknowledged = asyncio.create_task(processed.get())
+        try:
+            await asyncio.wait(
+                (acknowledged, pending), return_when=asyncio.FIRST_COMPLETED
+            )
+            if pending.done():
+                pytest.fail(f"Unbound follow completed before input: {await pending}")
+            assert acknowledged.done()
+        finally:
+            acknowledged.cancel()
+            await asyncio.gather(acknowledged, return_exceptions=True)
+
+    async def start(context: RunSourceContext) -> RunObservationSession:
+        session = await tracer.open_run(context)
+        sessions.append((session, context))
+        await session.observe(
+            RunStartedObservation(
+                identity=context.identity, observed_at=observed, monotonic_ns=1
+            )
+        )
+        await wait_until_processed()
+        return session
+
+    async def bind(session: RunObservationSession, context: RunSourceContext) -> None:
+        await session.observe(
+            RunInputObservation(
+                identity=context.identity,
+                source=context.model_copy(update={"parent_run_id": "root"}),
+                observed_at=observed,
+                monotonic_ns=2,
+            )
+        )
+
+    try:
+        session = await start(request)
+        explicit = await tracer.get(request.identity.thread, head_run_id="unbound")
+        assert explicit.status.execution == "running"
+        assert explicit.messages == ()
+        if resolution == "siblings":
+            sibling = _context("sibling", input_kind="resume")
+            sibling_session = await start(sibling)
+            await bind(session, request)
+            await wait_until_processed()
+            await bind(sibling_session, sibling)
+            with pytest.raises(AmbiguousTraceHead):
+                await pending
+        elif resolution == "lost":
+            unowned_processed.clear()
+            inactive = asyncio.create_task(unowned_processed.wait())
+            try:
+                await session.aclose()
+                sessions.remove((session, request))
+                await asyncio.wait(
+                    (inactive, pending), return_when=asyncio.FIRST_COMPLETED
+                )
+                assert pending.done(), "A closed writer cannot resolve pending lineage"
+                with pytest.raises(AmbiguousTraceHead):
+                    await pending
+            finally:
+                inactive.cancel()
+                await asyncio.gather(inactive, return_exceptions=True)
+        elif resolution in {"cancel", "close"}:
+            if resolution == "cancel":
+                pending.cancel()
+            else:
+                await follower.aclose()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+        else:
+            if resolution == "input":
+                await bind(session, request)
+            else:
+                await _finish(session, request)
+                sessions.remove((session, request))
+            update = await pending
+            assert update.as_of_seq > view.as_of_seq
+            if view_kind == "history":
+                assert isinstance(update, TraceUpdate)
+                assert [
+                    event.fact.phase
+                    for event in update.events
+                    if isinstance(event.fact, RunFact)
+                    and event.fact.identity == request.identity
+                ][0] == "started"
+                assert update.facts == tuple(event.fact for event in update.events)
+            resolved = await tracer.get(request.identity.thread)
+            assert resolved.head_run_id == "unbound"
+    finally:
+        if not pending.done():
+            pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        await follower.aclose()
+        for session, context in sessions:
+            await _finish(session, context)
+    assert source_closed.is_set()
+
+
+@pytest.mark.parametrize("settlement", ["deliver", "cancel", "close", "gap"])
+async def test_follow_recovers_deferred_facts_from_bounded_durable_pages(
+    monkeypatch: pytest.MonkeyPatch, settlement: str
+) -> None:
+    store = InMemoryTraceStore(limits=TraceLimits(follow_batch_size=2))
+    tracer = Tracer(store=store)
+    await _record(tracer, "root")
+    child = _context("child", input_kind="resume").identity
+    unrelated = child.model_copy(update={"run_id": "unrelated"})
+    view = await tracer.get(child.thread)
+    source_follow = store.follow
+    source_read = store.read_events
+    processed: asyncio.Queue[None] = asyncio.Queue(maxsize=1)
+    read_entered, read_release, read_closed = (asyncio.Event() for _ in range(3))
+    page_limits: list[int] = []
+    observed = datetime(2026, 10, 4, tzinfo=UTC)
+
+    async def followed(
+        key: TraceThreadKey, *, after_seq: int
+    ) -> AsyncGenerator[TraceStoreUpdate, None]:
+        source = source_follow(key, after_seq=after_seq)
+        try:
+            async for update in source:
+                yield update
+                if update.events:
+                    processed.put_nowait(None)
+        finally:
+            await source.aclose()
+
+    async def read(
+        key: TraceThreadKey, *, after_seq: int, as_of_seq: int, limit: int
+    ) -> tuple[TraceEvent, ...]:
+        page_limits.append(limit)
+        if after_seq == view.as_of_seq:
+            read_entered.set()
+            try:
+                await read_release.wait()
+                if settlement == "gap":
+                    return ()
+            finally:
+                read_closed.set()
+        return await source_read(
+            key, after_seq=after_seq, as_of_seq=as_of_seq, limit=limit
+        )
+
+    monkeypatch.setattr(store, "follow", followed)
+    writer = await store.open_writer(child)
+    unrelated_writer = await store.open_writer(unrelated)
+    follower = view.follow()
+    pending = asyncio.create_task(anext(follower))
+    expected: list[TraceEvent] = []
+    try:
+        expected.extend(
+            await writer.append(
+                (
+                    RunFact(
+                        identity=child,
+                        source_observation_id="child-started",
+                        occurred_at=observed,
+                        monotonic_ns=1,
+                        phase="started",
+                        input_kind="resume",
+                    ),
+                )
+            )
+        )
+        await processed.get()
+        for index, owner in enumerate((writer, unrelated_writer, writer)):
+            events = await owner.append(
+                (
+                    CallTrackingFact(
+                        identity=child if owner is writer else unrelated,
+                        source_observation_id=f"extra:{index}",
+                        occurred_at=observed,
+                        monotonic_ns=index + 2,
+                    ),
+                )
+            )
+            if owner is writer:
+                expected.extend(events)
+            await processed.get()
+        monkeypatch.setattr(store, "read_events", read)
+        captured = CapturedValue(disposition="inline", safe_size_bytes=2, value={})
+        expected.extend(
+            await writer.append(
+                (
+                    RunFact(
+                        identity=child,
+                        source_observation_id="child-input",
+                        occurred_at=observed,
+                        monotonic_ns=5,
+                        phase="resumed",
+                        input_kind="resume",
+                        parent_run_id="root",
+                        input=captured,
+                        config=captured,
+                    ),
+                )
+            )
+        )
+        await read_entered.wait()
+        if settlement in {"deliver", "gap"}:
+            read_release.set()
+            if settlement == "gap":
+                with pytest.raises(TraceStoreProtocolError, match="gap"):
+                    await pending
+            else:
+                update = await pending
+                assert update.events == tuple(expected)
+                assert update.facts == tuple(event.fact for event in expected)
+                assert update.as_of_seq == expected[-1].trace_seq
+                assert len(page_limits) > 1 and set(page_limits) == {2}
+                terminal = await writer.append(
+                    (
+                        RunFact(
+                            identity=child,
+                            source_observation_id="child-terminal",
+                            occurred_at=observed,
+                            monotonic_ns=6,
+                            phase="terminal",
+                            outcome="succeeded",
+                        ),
+                    ),
+                    mandatory=True,
+                )
+                finished = await anext(follower)
+                assert finished.events == terminal
+                assert finished.as_of_seq > update.as_of_seq
+        else:
+            if settlement == "cancel":
+                pending.cancel()
+            else:
+                await follower.aclose()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+        assert read_closed.is_set()
+    finally:
+        read_release.set()
+        if not pending.done():
+            pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        await follower.aclose()
+        await writer.aclose()
+        await unrelated_writer.aclose()
 
 
 async def test_graph_excludes_a_sibling_lineage_and_keeps_one_turn() -> None:
