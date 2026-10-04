@@ -12,7 +12,7 @@ def test_default_sandbox_uses_immutable_standard_runtime() -> None:
 
     assert config.image == (
         "ghcr.io/tinkerfin-ai/sandbox-runtime@"
-        "sha256:fd62b46229630554e8cd21071cdddbc7d79c490109fe0a78580bba7d07942584"
+        "sha256:eec4d9fcedc4f4b7c7e59464cc0bca60b2d0c2a99e019773d98f2ae0b7e8fe00"
     )
     assert config.entrypoint == ["/opt/sandbox-runtime/bin/entrypoint.sh"]
     assert config.env == {}
