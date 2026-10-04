@@ -49,6 +49,8 @@ jobs:
         run: uv sync --locked --all-packages --no-default-groups --group test --group lint --group integration
       - name: Check repository and Studio formatting
         run: ./scripts/verify-studio-server.sh
+      - name: Test CI diagnostic evidence
+        run: uv run pytest tests/test_ci_diagnostics.py
       - name: Verify storage preparation against disposable databases
         run: uv run pytest tests/test_prepare_gateway_storage.py -m docker_integration
 
@@ -158,6 +160,8 @@ jobs:
         run: uv sync --locked --all-packages --no-default-groups --group test --group lint --group integration
       - name: Test package coverage
         if: startsWith(matrix.python-version, '3.11.')
+        env:
+          PYTEST_ADDOPTS: "-vv -p tests.support.ci_diagnostics"
         run: >-
           uv run pytest packages tests/test_package_logging_contract.py
           -n 4 --dist=loadfile
