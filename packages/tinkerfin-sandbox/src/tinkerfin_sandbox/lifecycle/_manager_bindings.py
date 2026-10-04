@@ -22,6 +22,7 @@ from ..backends.rooted import RootedOpenSandboxBackend
 from ..backends.sdk import OpenSandboxBackend
 from ..errors import (
     OpenSandboxBackendError,
+    OpenSandboxBackendTimeoutError,
     OpenSandboxBackendUnavailableError,
     OpenSandboxDestroyError,
     OpenSandboxResetError,
@@ -318,9 +319,11 @@ async def _get_locked(
             self, owner_key, claim, purpose=purpose, allow_recreate=allow_recreate
         )
     if handle is not None:
-        raise OpenSandboxStateOwnershipError(
-            "The local Sandbox no longer has an authoritative owner binding"
-        )
+        if purpose != "workspaces" or not allow_recreate:
+            raise OpenSandboxStateOwnershipError(
+                "The local Sandbox no longer has an authoritative owner binding"
+            )
+        await _retire_deleted_workspace_parent(self, owner_key, handle)
     if not allow_recreate:
         raise OpenSandboxBackendUnavailableError(
             "No Sandbox is bound to this owner", context={"reason": "not_bound"}
@@ -332,6 +335,45 @@ async def _get_locked(
         old_id=None,
         purpose=purpose,
     )
+
+
+async def _retire_deleted_workspace_parent(
+    self: OpenSandboxManager[KeyT], owner_key: str, handle: OpenSandboxHandle
+) -> None:
+    """Let a new workspace admission replace only a confirmed missing parent.
+
+    The caller holds an unbound owner claim. Missing State alone never authorizes
+    disposal: only a typed control-plane not-found response proves this parent is
+    gone. Raw handles remain closed; local cleanup retains existing leases without
+    waiting under the owner claim or destroying an unowned remote instance.
+    """
+    try:
+        async with asyncio.timeout(
+            self._client.config.lifecycle_request_timeout.total_seconds()
+        ):
+            await self._client.get_runtime_info(handle.id)
+    except OpenSandboxBackendUnavailableError as error:
+        if error.context.get("reason") != "not_found":
+            raise
+    except TimeoutError as error:
+        raise OpenSandboxBackendTimeoutError(
+            "Workspace parent deletion could not be confirmed before the deadline",
+            cause=error,
+        ) from error
+    else:
+        raise OpenSandboxStateOwnershipError(
+            "The local Sandbox no longer has an authoritative owner binding"
+        )
+
+    handle._stop_new_calls()
+    self._handles.pop(owner_key, None)
+    self._backend_views.pop(owner_key, None)
+    self._availability.forget(owner_key)
+    self._workspace_watches.stop(owner_key)
+    cleanup = asyncio.create_task(
+        self._close_handle(handle), name="tinkerfin-sandbox-deleted-parent-close"
+    )
+    self._track_cleanup_task(cleanup)
 
 
 async def reconnect(
