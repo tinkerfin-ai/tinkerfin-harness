@@ -1,7 +1,7 @@
 import { conversationTurns } from '../navigation/turns'
 import { applyConversationEvent, prepareResumeSubmission } from '../agui'
 import { buildConversationDisplayEntries } from '../todoTrace/displayEntries'
-import type { JsonValue } from '../../../types'
+import type { JsonObject, JsonValue } from '../../../types'
 import type { ConversationAgUiEvent } from '../../../api/conversation/types'
 import { toolReviewInterrupts, planInterrupt, rootToolId } from '../../../test/aguiFixtures'
 import { describe, expect, it } from 'vitest'
@@ -9,6 +9,172 @@ import mediaFixture from '../agui/contracts/message-attachments.fixture.json'
 
 import type { ConversationHistoryDetail, ConversationTraceUpdate } from '../../../api/conversation/history'
 import { applyConversationTraceUpdate, restoreConversationFromTrace } from './runtime'
+
+const approvalDetail = (): ConversationHistoryDetail => {
+  const source = detail()
+  source.status = { execution: 'waiting', headRunId: source.headRunId }
+  const actions = toolReviewInterrupts('review-group', [
+    { toolCallId: 'call-first', args: { file_path: '/first.txt' } },
+    { toolCallId: 'call-second', args: { file_path: '/second.txt' } },
+  ])
+  source.interactions = [{
+    id: 'group', traceSeq: 5, sourceId: 'review-group', graphNamespace: [], runId: 'run-1',
+    kind: 'tool_approval', toolCallIds: ['call-first', 'call-second'], status: 'pending',
+    payloadOmitted: false, openedAt: '2026-08-28T00:00:04Z', agui: actions,
+  }]
+  source.interactionAvailability = actions.map(action => ({ interruptId: action.id, state: 'available', submissionRunId: null }))
+  return source
+}
+
+it('审批组只要一项待确认就不能重复提交，刷新页面保持同一限制', () => {
+  const source = approvalDetail()
+  source.interactionAvailability[1] = { ...source.interactionAvailability[1], state: 'confirming', submissionRunId: 'resume-run' }
+  const fresh = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+  expect(fresh.approval).toMatchObject({ submitted: true, submissionRunId: 'resume-run' })
+  expect(fresh.approval?.items).toHaveLength(2)
+  expect(fresh.notice?.recovery).toBe('history')
+})
+
+it('只有当前提交的完整未保存确认可恢复审批，原输入无需重填', () => {
+  const source = approvalDetail()
+  const initial = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+  initial.approval!.items[0].decision = 'rejected'
+  initial.approval!.items[0].rejectionReason = '保留该文件'
+  const submitted = applyConversationEvent(prepareResumeSubmission(initial), {
+    type: 'RUN_STARTED', threadId: source.threadId, runId: 'resume-run',
+  })
+  const stale = restoreConversationFromTrace(source, { previous: submitted, model: 'main', includeTaskTrace: false })
+  expect(stale.approval?.submitted).toBe(true)
+  const released = { ...source, interactionAvailability: source.interactionAvailability.map(item => ({ ...item, submissionRunId: 'resume-run' })) }
+  const restored = restoreConversationFromTrace(released, { previous: stale, model: 'main', includeTaskTrace: false })
+  expect(restored.approval?.submitted).toBe(false)
+  expect(restored.approval?.items[0]).toMatchObject({ decision: 'rejected', rejectionReason: '保留该文件' })
+})
+
+it('交互捕获不完整时保留当前输入，但不推断可重新提交', () => {
+  const source = approvalDetail()
+  const previous = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+  previous.approval!.items[0].rejectionReason = '保留原文件'
+  const incomplete = { ...source, asOfSeq: 9, graph: { ...source.graph, asOfSeq: 9 },
+    interactions: source.interactions.map(item => ({ ...item, agui: null, payloadOmitted: true })),
+    interactionAvailability: [],
+  }
+  const restored = restoreConversationFromTrace(incomplete, { previous, model: 'main', includeTaskTrace: false })
+  expect(restored.approval?.submitted).toBe(true)
+  expect(restored.approval?.items[0].rejectionReason).toBe('保留原文件')
+  const complete = { ...source, asOfSeq: 10, graph: { ...source.graph, asOfSeq: 10 } }
+  const recovered = restoreConversationFromTrace(complete, { previous: restored, model: 'main', includeTaskTrace: false })
+  expect(recovered.approval?.submitted).toBe(false)
+  expect(recovered.approval?.items[0].rejectionReason).toBe('保留原文件')
+  const claimed = { ...complete, interactionAvailability: complete.interactionAvailability.map(item => ({
+    ...item, state: 'confirming' as const, submissionRunId: 'remote-submit',
+  })) }
+  const confirmedOwner = restoreConversationFromTrace(claimed, { previous: restored, model: 'main', includeTaskTrace: false })
+  expect(confirmedOwner.approval?.submissionRunId).toBe('remote-submit')
+  const stale = restoreConversationFromTrace(complete, { previous: confirmedOwner, model: 'main', includeTaskTrace: false })
+  expect(stale.approval?.submitted).toBe(true)
+  expect(stale.approval?.submissionRunId).toBe('remote-submit')
+})
+
+it('较旧的Trace正文不回退当前视图，但其独立查询到的提交结算仍生效', () => {
+  const source = approvalDetail()
+  const initial = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+  const submitted = applyConversationEvent(prepareResumeSubmission(initial), {
+    type: 'RUN_STARTED', threadId: source.threadId, runId: 'resume-run',
+  })
+  const advanced = { ...source, asOfSeq: 10, graph: { ...source.graph, asOfSeq: 10 },
+    interactionAvailability: source.interactionAvailability.map(item => ({ ...item, state: 'confirming' as const, submissionRunId: 'resume-run' })),
+  }
+  const confirming = restoreConversationFromTrace(advanced, { previous: submitted, model: 'main', includeTaskTrace: false })
+  const settled = { ...source, interactionAvailability: source.interactionAvailability.map(item => ({ ...item, state: 'resolved' as const, submissionRunId: 'resume-run' })) }
+  const confirmed = restoreConversationFromTrace(settled, { previous: confirming, model: 'main', includeTaskTrace: false })
+  expect(confirmed.trace?.asOfSeq).toBe(10)
+  expect(confirmed.messages).toBe(confirming.messages)
+  expect(confirmed.approval).toBeUndefined()
+})
+
+it('较旧Trace中查询到的认领同样提供明确的历史恢复入口', () => {
+  const source = approvalDetail()
+  const advanced = { ...source, asOfSeq: 10, graph: { ...source.graph, asOfSeq: 10 } }
+  const previous = restoreConversationFromTrace(advanced, { model: 'main', includeTaskTrace: false })
+  const claimed = { ...source, interactionAvailability: source.interactionAvailability.map(item => ({
+    ...item, state: 'confirming' as const, submissionRunId: 'remote-submit',
+  })) }
+  const current = restoreConversationFromTrace(claimed, { previous, model: 'main', includeTaskTrace: false })
+  expect(current.approval).toMatchObject({ submitted: true, submissionRunId: 'remote-submit' })
+  expect(current.notice?.recovery).toBe('history')
+  expect(current.trace?.asOfSeq).toBe(10)
+  expect(current.messages).toBe(previous.messages)
+})
+
+it.each(['resolved', 'cancelled'] as const)('确认 %s 后收束整组，迟到权限快照不能重新开放', state => {
+  const source = approvalDetail()
+  const initial = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+  const submitted = applyConversationEvent(prepareResumeSubmission(initial), {
+    type: 'RUN_STARTED', threadId: source.threadId, runId: 'resume-run',
+  })
+  const settled = { ...source, interactionAvailability: source.interactionAvailability.map(item => ({ ...item, state, submissionRunId: 'resume-run' })) }
+  const confirmed = restoreConversationFromTrace(settled, { previous: submitted, model: 'main', includeTaskTrace: false })
+  expect(confirmed.approval).toBeUndefined()
+  const partial = restoreConversationFromTrace({ ...source, interactionAvailability: [] }, { previous: confirmed, model: 'main', includeTaskTrace: false })
+  expect(partial.approval).toBeUndefined()
+  const late = restoreConversationFromTrace(source, { previous: partial, model: 'main', includeTaskTrace: false })
+  expect(late.approval).toBeUndefined()
+})
+
+it.each(['questions', 'review'] as const)('Plan %s 确认期间保留输入，仅当前未保存确认可以解锁', kind => {
+  const source = detail()
+  const envelope: JsonObject = {
+    schema: 'tinkerfin.runtime-interrupt',
+    kind: kind === 'questions' ? 'tinkerfin:plan_clarification' : 'tinkerfin:plan_review',
+    responseSchema: kind === 'questions' ? {} : { discriminator: { propertyName: 'type', mapping: { approve: '#/approve', reject: '#/reject' } } },
+    metadata: { origin: 'plan', ...(kind === 'questions' ? { clarification: { form: {
+      title: '执行范围', description: '确认范围', questions: [{ id: 'scope', answerType: 'text', prompt: '范围？', required: true }],
+    } } } : { review: { draft: {
+      revision: 1, contentSchema: { mediaType: 'text/markdown', fingerprint: 'a'.repeat(64) }, content: { description: '计划', markdown: '# 计划' },
+    } } }) },
+  }
+  const action = planInterrupt('plan-review', envelope)
+  source.interactions = [{ id: 'plan', traceSeq: 5, sourceId: action.id, graphNamespace: [], runId: 'run-1',
+    kind: action.reason, toolCallIds: [], status: 'pending', payloadOmitted: false, openedAt: '2026-08-28T00:00:04Z', agui: [action] }]
+  source.interactionAvailability = [{ interruptId: action.id, state: 'available', submissionRunId: null }]
+  const initial = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+  const form = initial.planInteraction!
+  if (form.kind === 'questions' && form.questions[0].answerType === 'text') form.questions[0].answer = '仅当前项目'
+  if (form.kind === 'review') { form.action = 'reject'; form.message = '请缩小范围' }
+  form.submitted = true
+  const started = applyConversationEvent(initial, { type: 'RUN_STARTED', threadId: source.threadId, runId: 'plan-submit' })
+  const failed = applyConversationEvent(started, { type: 'RUN_ERROR', code: 'runtime_initialization_error', message: '准备失败', rawEvent: { runId: 'plan-submit' } })
+  expect(failed.planInteraction).toEqual(started.planInteraction)
+  source.interactionAvailability[0] = { interruptId: action.id, state: 'confirming', submissionRunId: 'plan-submit' }
+  const confirming = restoreConversationFromTrace(source, { previous: failed, model: 'main', includeTaskTrace: false })
+  expect(confirming.planInteraction).toEqual(started.planInteraction)
+  source.interactionAvailability[0].state = 'available'
+  const available = restoreConversationFromTrace(source, { previous: confirming, model: 'main', includeTaskTrace: false })
+  expect(available.planInteraction).toEqual({ ...started.planInteraction, submitted: false, submissionRunId: undefined })
+  expect(available.messages.filter(item => item.meta?.planHistory)).toHaveLength(0)
+  source.interactionAvailability[0].state = 'resolved'
+  const completed = restoreConversationFromTrace(source, { previous: confirming, model: 'main', includeTaskTrace: false })
+  expect(completed.planInteraction).toBeUndefined()
+  expect(completed.messages.filter(item => item.meta?.planHistory)).toHaveLength(1)
+  const refreshed = restoreConversationFromTrace(source, { previous: completed, model: 'main', includeTaskTrace: false })
+  expect(refreshed.messages.filter(item => item.meta?.planHistory)).toHaveLength(1)
+  const nextAction = planInterrupt('next-plan', envelope)
+  const next = { ...source, asOfSeq: source.asOfSeq + 1,
+    graph: { ...source.graph, asOfSeq: source.asOfSeq + 1 },
+    headRunId: 'plan-submit', availableHeads: ['plan-submit'],
+    status: { execution: 'waiting' as const, headRunId: 'plan-submit' },
+    interactions: [
+      { ...source.interactions[0], status: 'resolved' as const, agui: [] },
+      { ...source.interactions[0], id: 'next-interaction', sourceId: nextAction.id, runId: 'plan-submit', agui: [nextAction] },
+    ],
+    interactionAvailability: [...source.interactionAvailability,
+      { interruptId: nextAction.id, state: 'available' as const, submissionRunId: null }],
+  }
+  const switched = restoreConversationFromTrace(next, { previous: confirming, model: 'main', includeTaskTrace: false })
+  expect(switched.planInteraction).toMatchObject({ interruptId: nextAction.id, submitted: false })
+  expect(switched.messages.find(item => item.meta?.planHistory)?.meta?.planHistory).toEqual(started.planInteraction)
+})
 
 it.each(['succeeded', 'cancelled'] as const)('历史终态 %s 保留正文，取消时立即停止逐字播放', (execution) => {
   const history = detail()
@@ -161,7 +327,7 @@ const detail = (): ConversationHistoryDetail => ({ accessMode: 'write_approval',
     },
     subgraphs: {},
   },
-  interactions: [],
+  interactionAvailability: [], interactions: [],
   status: { execution: 'succeeded', headRunId: 'run-1' },
   completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false },
   taskTrace: { status: 'ready', todoGroups: [] },

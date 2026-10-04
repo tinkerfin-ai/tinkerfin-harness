@@ -394,6 +394,7 @@ class RuntimeObservationHub:
         context: RunSourceContext,
         observers: tuple[RuntimeObserver, ...],
         initialization_error: Exception | None = None,
+        defer_input: bool = False,
     ) -> None:
         """Bind Run context to ordered borrowed Observer registrations."""
 
@@ -409,6 +410,8 @@ class RuntimeObservationHub:
         self._failure: asyncio.Future[tuple[_SessionSlot, BaseException]] | None = None
         self._reported_failures: list[BaseException] = []
         self._started = False
+        self._defer_input = defer_input
+        self._input_recorded = False
         self._terminal: RunTerminalOutcome | None = None
         self._closed = False
         self._claimed_errors: list[BaseException] = []
@@ -491,7 +494,7 @@ class RuntimeObservationHub:
         return True
 
     async def start(self) -> None:
-        """Open every Observer, then publish ordered Run start and input facts.
+        """Open every Observer and publish the Run before unresolved input is bound.
 
         Cancellation is never converted. Ordinary opening failures are aggregated,
         reported to every healthy session, and fail the Runtime before any Native pull.
@@ -539,6 +542,29 @@ class RuntimeObservationHub:
                 monotonic_ns=monotonic_ns,
             )
         )
+        if not self._defer_input:
+            await self.record_input()
+
+    async def record_input(self, context: RunSourceContext | None = None) -> None:
+        """Publish the determined input once, before any Native continuation.
+
+        A failed binding retains the original request rather than inventing
+        validated resume decisions. Observer sessions receive the resolved
+        context through this observation without being reopened.
+        """
+
+        if self._input_recorded:
+            if context is not None and context != self.context:
+                raise RuntimeError("Run input was already recorded")
+            return
+        if context is not None:
+            if (
+                context.identity != self.context.identity
+                or context.runtime_profile != self.context.runtime_profile
+            ):
+                raise ValueError("Run input belongs to another identity or Profile")
+            self.context = context
+        self._input_recorded = True
         observed_at, monotonic_ns = _stamp()
         await self.observe(
             RunInputObservation(
@@ -952,6 +978,7 @@ class RuntimeObservationHub:
 
         if self._terminal is not None:
             return
+        await self.record_input()
         if (
             outcome == "failed"
             and error is not None

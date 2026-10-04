@@ -35,6 +35,7 @@ from tinkerfin.runtime_profile import (
 from tinkerfin_contracts import (
     NativeStateObservation,
     ObservationBoundary,
+    RunInputObservation,
     RunObservationSession,
     RunResumeSummary,
     RunSourceContext,
@@ -548,7 +549,12 @@ async def test_cancelled_resume_selects_abandoned_terminal(definition_factory) -
     assert terminal.kind == "run.terminal"
     assert terminal.outcome == "abandoned"
     assert [value.outcome for value in terminals] == ["abandoned"]
-    assert observer.contexts[0].resume == (
+    assert observer.contexts[0].resume == ()
+    inputs = [
+        item for item in session.observations if isinstance(item, RunInputObservation)
+    ]
+    assert len(inputs) == 1
+    assert inputs[0].source.resume == (
         RunResumeSummary(interrupt_id=pending.id, status="cancelled"),
     )
     assert executed == []
@@ -566,10 +572,7 @@ async def test_agui_starts_observation_before_delivering_run_started(
     started = await anext(stream)
 
     assert started.type.value == "RUN_STARTED"
-    assert [item.kind for item in session.observations] == [
-        "run.started",
-        "run.input",
-    ]
+    assert [item.kind for item in session.observations] == ["run.started"]
     await stream.aclose()
     assert [item.kind for item in session.observations[-2:]] == [
         "run.terminal",
@@ -861,7 +864,7 @@ async def test_graph_preparation_failure_records_input_terminal_and_close(
     assert terminal.outcome == "failed"
     assert terminal.error_type == "builtins.RuntimeError"
     assert terminal.code == "runtime_initialization_error"
-    assert observer.contexts[0].call_tracking_enabled is False
+    assert observer.contexts[0].call_tracking_enabled is True
 
 
 async def test_initialization_failure_keeps_a_later_observer_failure_distinct(
@@ -1165,10 +1168,7 @@ async def test_open_agui_run_is_observable_before_its_first_public_event(
 
     assert session.observations == []
     await stream.messaging_owner_preflight()
-    assert [item.kind for item in session.observations] == [
-        "run.started",
-        "run.input",
-    ]
+    assert [item.kind for item in session.observations] == ["run.started"]
     assert graph.options is None
     await stream.aclose()
     assert [item.kind for item in session.observations[-2:]] == [

@@ -6,7 +6,7 @@ import asyncio
 import inspect
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 from ag_ui.core import RunFinishedEvent
@@ -57,6 +57,7 @@ from tinkerfin_contracts import (
 )
 from tinkerfin_tracing import (
     AmbiguousTraceHead,
+    CapturedValue,
     InMemoryTraceStore,
     MessageFact,
     ReasoningCapturePolicy,
@@ -1880,6 +1881,77 @@ async def test_incremental_core_checkpoint_reads_only_the_visible_turn_window() 
     assert thread.state == baseline.state
     assert thread.status == baseline.status
     assert thread.completeness == baseline.completeness
+
+
+@pytest.mark.parametrize("ordering", ["completed", "overlapping", "input_bound"])
+async def test_input_free_run_lineage_matches_full_and_incremental_projection(
+    ordering: str,
+) -> None:
+    store = InMemoryTraceStore()
+    thread = ThreadIdentity(namespace="test", thread_id="input-free")
+    first = RunIdentity(
+        namespace=thread.namespace, thread_id=thread.thread_id, run_id="first"
+    )
+    second = RunIdentity(
+        namespace=thread.namespace, thread_id=thread.thread_id, run_id="second"
+    )
+    first_writer = await store.open_writer(first)
+    second_writer = await store.open_writer(second)
+
+    def fact(
+        identity: RunIdentity, phase: Literal["started", "input", "terminal"]
+    ) -> RunFact:
+        return RunFact(
+            identity=identity,
+            source_observation_id=f"{identity.run_id}:{phase}",
+            occurred_at=datetime(2026, 10, 4, tzinfo=UTC),
+            monotonic_ns=1,
+            phase=phase,
+            input_kind="ordinary" if phase != "terminal" else None,
+            input=CapturedValue(disposition="inline", safe_size_bytes=2, value={})
+            if phase == "input"
+            else None,
+            config=CapturedValue(disposition="inline", safe_size_bytes=2, value={})
+            if phase == "input"
+            else None,
+            outcome="succeeded" if phase == "terminal" else None,
+        )
+
+    try:
+        await first_writer.append((fact(first, "started"),))
+        if ordering == "completed":
+            await first_writer.append((fact(first, "terminal"),), mandatory=True)
+        await second_writer.append((fact(second, "started"),))
+        if ordering == "input_bound":
+            await second_writer.append((fact(second, "input"),))
+        if ordering != "completed":
+            await first_writer.append((fact(first, "terminal"),), mandatory=True)
+        await second_writer.append((fact(second, "terminal"),), mandatory=True)
+    finally:
+        await first_writer.aclose()
+        await second_writer.aclose()
+
+    snapshot = await store.snapshot(thread)
+    events = await store.read_events(
+        snapshot.key, after_seq=0, as_of_seq=snapshot.as_of_seq, limit=10
+    )
+    baseline = project_core(
+        events, head_run_id="second", turn_limit=100, active_run_ids=()
+    )
+    expected = ("second",) if ordering == "completed" else ("first", "second")
+    assert baseline.available_heads == expected
+    for split in range(1, len(events)):
+        state = advance_core_projection_state(
+            empty_core_projection_state(), events[:split]
+        )
+        state = type(state).model_validate_json(state.model_dump_json())
+        state = advance_core_projection_state(state, events[split:])
+        projected = project_core_checkpoint(
+            state, head_run_id="second", turn_limit=100, active_run_ids=()
+        )
+        assert projected.available_heads == expected
+        assert projected.selected_run_ids == baseline.selected_run_ids
+        assert projected.status == baseline.status
 
 
 async def test_implicit_resume_matches_full_fold_for_every_incremental_batch() -> None:

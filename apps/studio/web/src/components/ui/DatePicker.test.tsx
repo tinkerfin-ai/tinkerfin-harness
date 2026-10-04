@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -7,6 +7,28 @@ import uiStyles from './ui.css?raw'
 import { DatePicker } from './DatePicker'
 
 describe('DatePicker', () => {
+  it('禁用已打开的日期选择器时关闭月历，恢复可用后不自动重开', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const view = render(<DatePicker value="2026-09-14" label="发布日期" onChange={onChange} />)
+    const trigger = screen.getByRole('button', { name: '发布日期' })
+    await user.click(trigger)
+    expect(await screen.findByRole('application', { name: '选择日期' })).toBeInTheDocument()
+
+    await act(async () => {
+      view.rerender(<DatePicker value="2026-09-14" label="发布日期" onChange={onChange} disabled />)
+    })
+    expect(trigger).toBeDisabled()
+    expect(screen.queryByRole('application', { name: '选择日期' })).not.toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+
+    await act(async () => {
+      view.rerender(<DatePicker value="2026-09-14" label="发布日期" onChange={onChange} />)
+    })
+    expect(trigger).toBeEnabled()
+    expect(screen.queryByRole('application', { name: '选择日期' })).not.toBeInTheDocument()
+  })
+
   it('使用受控日期值并在选择后关闭月历、恢复触发器焦点', async () => {
     const user = userEvent.setup()
     function Harness() {

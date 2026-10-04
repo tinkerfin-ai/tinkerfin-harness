@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, JsonValue, ValidationError, model_validat
 
 from tinkerfin_contracts import ThreadIdentity
 
+from ._follow_lineage import head_selection_pending
 from ._graph_projection import (
     project_trace_graph_records,
     reduce_trace_graph_records,
@@ -426,6 +427,8 @@ class TraceThread:
         The iterator follows the exact generation and selected head. Sibling-branch
         batches advance internal projection state but are not emitted. Writer loss
         updates status and completeness at the same sequence without inventing events.
+        Without an explicit head, newly started Runs wait until ancestry is determined
+        before branch selection; inactive writers cannot prolong that wait.
         Normal exhaustion, cancellation, and explicit close settle the borrowed Store
         follower. Use ``async with`` when the consumer may break early.
 
@@ -435,6 +438,7 @@ class TraceThread:
             early, or call ``aclose()`` explicitly.
 
         Raises:
+            AmbiguousTraceHead: Multiple heads remain after pending lineage is settled.
             TraceFollowLifecycleError: The returned follower is reused concurrently or
                 entered after closing.
             TraceThreadNotFound: The generation is deleted or replaced.
@@ -444,6 +448,13 @@ class TraceThread:
         """
 
         async def updates() -> AsyncIterator[TraceUpdate]:
+            """Keep deferred facts in storage until their selected lineage is known.
+
+            Only a sequence cursor is retained while waiting. Catch-up reads use
+            bounded pages and one fixed prefix; the Store's thread event and byte
+            limits bound the resulting update independently of the wait duration.
+            """
+
             self._ensure_live()
             core_state = self._core_state
             previous = self._core
@@ -451,6 +462,7 @@ class TraceThread:
             # Each follower retains its own exact prefix independently of cache
             # eviction, newer queries, and other followers of this same handle.
             projection_states = dict(self._projection_states)
+            deferred_after_seq: int | None = None
             batches = self._store.follow(self.key, after_seq=self.as_of_seq)
             primary_error: BaseException | None = None
             try:
@@ -471,17 +483,34 @@ class TraceThread:
                         raise TraceStoreProtocolError(
                             "Trace Store follow cursor conflicts with its events"
                         )
+                    if self._head_requested is None and head_selection_pending(
+                        core_state, stored_update.active_run_ids
+                    ):
+                        if deferred_after_seq is None:
+                            deferred_after_seq = previous_seq
+                        continue
                     current = project_core_checkpoint(
                         core_state,
                         head_run_id=self._head_requested,
                         turn_limit=self._turn_limit,
                         active_run_ids=stored_update.active_run_ids,
                     )
-                    selected_batch = tuple(
-                        event
-                        for event in batch
-                        if event.fact.identity.run_id in current.selected_run_ids
+                    selected_batch = (
+                        tuple(
+                            event
+                            for event in batch
+                            if event.fact.identity.run_id in current.selected_run_ids
+                        )
+                        if deferred_after_seq is None
+                        else await _read_events_for_runs(
+                            self._store,
+                            self.key,
+                            run_ids=current.selected_run_ids,
+                            after_seq=deferred_after_seq,
+                            as_of_seq=core_state.as_of_seq,
+                        )
                     )
+                    deferred_after_seq = None
                     projection_views = await _projection_results(
                         self._projection_registry,
                         self._projection_names,

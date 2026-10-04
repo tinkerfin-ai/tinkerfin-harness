@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -28,6 +28,37 @@ describe('PlanReviewCard', () => {
 
   beforeEach(() => {
     window.sessionStorage.clear()
+  })
+
+  it.each([undefined, 'reject'] as const)('确认中保留可读计划和原输入，禁止执行决定：%s', async (action) => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const onSubmit = vi.fn()
+    const onClose = vi.fn()
+    render(<PlanReviewCard
+      interaction={{ ...interaction(), submitted: true, action, message: '保留原范围' }}
+      onChange={onChange} onSubmit={onSubmit} onClose={onClose}
+    />)
+    const card = screen.getByRole('region', { name: 'Plan 审阅' })
+    expect(card).not.toHaveAttribute('inert')
+    expect(card).not.toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('heading', { name: '实现模式切换' })).toBeVisible()
+    for (const name of ['关闭卡片，继续对话', ...(action === 'reject' ? ['取消', '确认拒绝'] : ['拒绝', '批准'])]) {
+      const button = screen.getByRole('button', { name })
+      expect(button).toBeDisabled()
+      await user.click(button)
+    }
+    if (action === 'reject') {
+      const reason = screen.getByRole('textbox', { name: '拒绝原因（可选）' }) as HTMLTextAreaElement
+      expect(reason).toHaveValue('保留原范围')
+      expect(reason).toHaveAttribute('readonly')
+      await user.type(reason, '不能修改')
+      expect(reason).toHaveValue('保留原范围')
+      fireEvent.submit(reason.form!)
+    }
+    expect(onChange).not.toHaveBeenCalled()
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('shows approve, reject, and the independent close action', async () => {
@@ -145,7 +176,7 @@ describe('PlanReviewCard', () => {
     expect(view.container.querySelector('.activity-dots')).toBeInTheDocument()
 
     view.rerender(<PlanReviewStatusRow interaction={{ ...interaction(), submitted: true }} />)
-    expect(screen.getByRole('status')).toHaveTextContent('正在处理决定')
+    expect(screen.getByRole('status')).toHaveTextContent('正在确认提交状态')
     expect(view.container.querySelector('.activity-dots')).not.toBeInTheDocument()
   })
 

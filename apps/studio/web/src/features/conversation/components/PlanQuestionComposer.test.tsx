@@ -45,6 +45,96 @@ describe('PlanQuestionComposer', () => {
   beforeEach(() => window.sessionStorage.clear())
   afterEach(() => vi.useRealTimers())
 
+  const confirmationQuestions: PlanQuestionItem[] = [
+    { id: 'environment', answerType: 'single_choice', prompt: '部署到哪个环境？', required: true,
+      options: [{ id: 'staging', label: '预发布', recommended: true }, { id: 'production', label: '生产', recommended: false }],
+      allowFreeText: true, selectedOptionId: 'staging' },
+    { id: 'features', answerType: 'multiple_choice', prompt: '保留哪些功能？', required: true,
+      options: [{ id: 'first', label: '报表', recommended: true }, { id: 'second', label: '导出', recommended: false }],
+      allowFreeText: true, minSelections: 1, maxSelections: 2, selectedOptionIds: ['first'], customAnswer: '原补充' },
+    { id: 'notes', answerType: 'text', prompt: '还有其他补充吗？', required: false, answer: '保留原输入' },
+    { id: 'date', answerType: 'date', prompt: '发布日期？', required: true, date: '2026-09-14' },
+    { id: 'time', answerType: 'time', prompt: '发布时间？', required: true, time: '09:30', timeZone: 'Asia/Shanghai' },
+    { id: 'datetime', answerType: 'datetime', prompt: '发布时刻？', required: true, dateTime: '2026-09-14T09:30', timeZone: 'Asia/Shanghai' },
+  ]
+
+  it.each(confirmationQuestions)('确认中的 $answerType 保留可读答案并禁止修改和重交', async (question) => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const onSubmit = vi.fn()
+    const onClose = vi.fn()
+    render(<PlanQuestionComposer threadId="confirmation" interaction={{ ...interaction(), submitted: true, questions: [question] }}
+      onChange={onChange} onSubmit={onSubmit} onClose={onClose}
+    />)
+    const card = screen.getByRole('region', { name: 'Plan 澄清问题' })
+    expect(card).not.toHaveAttribute('inert')
+    expect(card).not.toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('region', { name: question.prompt })).toBeVisible()
+    for (const control of [...screen.queryAllByRole('radio'), ...screen.queryAllByRole('checkbox')]) {
+      expect(control).toBeDisabled()
+      await user.click(control)
+      fireEvent.keyDown(control, { key: 'ArrowRight' })
+    }
+    const answer = screen.queryByRole('textbox')
+    if (answer) {
+      expect(answer).toHaveAttribute('readonly')
+      const original = (answer as HTMLTextAreaElement).value
+      await user.type(answer, '不能修改')
+      expect(answer).toHaveValue(original)
+    }
+    for (const control of screen.queryAllByRole('button', { name: /^(日期回答|时间回答)：/ })) {
+      expect(control).toBeDisabled()
+      await user.click(control)
+    }
+    for (const name of ['关闭卡片，继续对话', '提交']) {
+      const button = screen.getByRole('button', { name })
+      expect(button).toBeDisabled()
+      await user.click(button)
+    }
+    expect(screen.queryByRole('application')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('确认中可浏览前后问题及原答案，浏览不修改已提交表单', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<PlanQuestionComposer threadId="confirmation-reading"
+      interaction={{ ...interaction(), submitted: true, activeQuestionIndex: 1, questions: [
+        { id: 'first', answerType: 'text', prompt: '第一题？', required: true, answer: '第一题原答案' },
+        { id: 'second', answerType: 'text', prompt: '第二题？', required: false, answer: '第二题原答案' },
+      ] }} onChange={onChange} onSubmit={vi.fn()} onClose={vi.fn()}
+    />)
+    expect(screen.getByRole('textbox')).toHaveValue('第二题原答案')
+    await user.click(screen.getByRole('button', { name: '浏览上一题' }))
+    expect(screen.getByRole('textbox')).toHaveValue('第一题原答案')
+    await user.click(screen.getByRole('button', { name: '浏览下一题' }))
+    expect(screen.getByRole('textbox')).toHaveValue('第二题原答案')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it.each(['date', 'time', 'datetime'] as const)('已打开的 $0 选择器在开始确认时关闭并保留原值', async (answerType) => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const current = { ...interaction(), questions: [confirmationQuestions.find(question => question.answerType === answerType)!] }
+    const props = { threadId: 'confirmation-picker', onChange, onSubmit: vi.fn(), onClose: vi.fn() }
+    const view = render(<PlanQuestionComposer {...props} interaction={current} />)
+    const label = answerType === 'time' ? /^时间回答：/ : /^日期回答：/
+    const trigger = screen.getByRole('button', { name: label })
+    const original = trigger.textContent
+    await user.click(trigger)
+    expect(await screen.findByRole(answerType === 'time' ? 'dialog' : 'application')).toBeInTheDocument()
+    await act(async () => {
+      view.rerender(<PlanQuestionComposer {...props} interaction={{ ...current, submitted: true }} />)
+    })
+    expect(trigger).toBeDisabled()
+    expect(trigger.textContent).toBe(original)
+    expect(screen.queryByRole(answerType === 'time' ? 'dialog' : 'application')).not.toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it.each(['single_choice', 'multiple_choice'] as const)('长英文标题和说明完整保留，%s 选择语义不变', (answerType) => {
     const options = [
       { id: 'greeter', label: 'Fixed entrance greeter on peak lunch shift: menu guidance and pickup-line flow control', description: 'Existing staff only; directly targets conversion.', recommended: true },

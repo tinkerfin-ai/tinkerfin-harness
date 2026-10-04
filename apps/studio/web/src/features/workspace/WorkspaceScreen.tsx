@@ -332,8 +332,8 @@ export function WorkspaceScreen({
   }, [])
 
   const taskTraceBlocked = Boolean(
-    (conversation.approval && !conversation.approval.submitted)
-    || (conversation.planInteraction && !conversation.planInteraction.submitted)
+    conversation.approval
+    || conversation.planInteraction
     || conversation.pendingInteractionKind,
   )
   const isRunning = isConversationRunning(conversation)
@@ -824,7 +824,8 @@ export function WorkspaceScreen({
         )
         return prepared === item
           ? item
-          : { ...prepared, activeRunId: payload.runId, historySynchronized: false }
+          : { ...prepared, activeRunId: payload.runId, historySynchronized: false,
+              approval: prepared.approval ? { ...prepared.approval, submissionRunId: payload.runId } : undefined }
       },
     ))
     setPendingResume({
@@ -878,6 +879,7 @@ export function WorkspaceScreen({
               ? { action: reviewAction }
               : {}),
             submitted: true,
+            submissionRunId: payload.runId,
             error: undefined,
           }
         : item.planInteraction,
@@ -919,7 +921,7 @@ export function WorkspaceScreen({
       historySynchronized: false,
       activeRunId: payload.runId,
       planInteraction: item.planInteraction
-        ? { ...item.planInteraction, submitted: true, error: undefined }
+        ? { ...item.planInteraction, submitted: true, submissionRunId: payload.runId, error: undefined }
         : item.planInteraction,
     })))
     setPendingResume({
@@ -935,7 +937,7 @@ export function WorkspaceScreen({
     updater: (approval: ApprovalState) => ApprovalState,
   ) => {
     setWorkspace((state) => updateConversation(state, threadId, (item) => (
-      item.approval
+      item.approval && !item.approval.submitted
         ? { ...item, approval: updater(item.approval), historySynchronized: false }
         : item
     )))
@@ -946,7 +948,7 @@ export function WorkspaceScreen({
     updater: (interaction: PlanInteraction) => PlanInteraction,
   ) => {
     setWorkspace((state) => updateConversation(state, threadId, (item) => (
-      item.planInteraction
+      item.planInteraction && !item.planInteraction.submitted
         ? { ...item, planInteraction: updater(item.planInteraction), historySynchronized: false }
         : item
     )))
@@ -1291,7 +1293,7 @@ export function WorkspaceScreen({
               stopPending={cancelPendingRunId === conversation.activeRunId}
               isHydrating={isConversationHydrating}
               hero={showConversationHero ? <EmptyConversationBrand /> : undefined}
-              takeover={conversation.approval && !conversation.approval.submitted
+              takeover={conversation.approval
                 ? (
                   <ApprovalCard
                     key={`${conversation.threadId}:${conversation.approval.items[0]?.interruptId ?? ''}`}

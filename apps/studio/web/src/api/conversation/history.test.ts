@@ -12,8 +12,23 @@ import {
   followConversationTrace,
   followConversationRun,
   patchConversation,
+  parseInteractionAvailability,
   type ConversationHistoryDetail,
 } from './history'
+
+it.each([
+  undefined,
+  [{ interruptId: 'review', state: 'confirming', submissionRunId: null }],
+  [{ interruptId: 'review', state: ['available'], submissionRunId: null }],
+  [{ interruptId: 'review', state: 'available' }],
+  [{ interruptId: ' review', state: 'available', submissionRunId: null }],
+  [
+    { interruptId: 'review', state: 'available', submissionRunId: null },
+    { interruptId: 'review', state: 'resolved', submissionRunId: 'run' },
+  ],
+])('拒绝缺失或冲突的交互可提交状态 %j', value => {
+  expect(() => parseInteractionAvailability(value)).toThrow()
+})
 import { clearAuthSession, saveAuthSession } from '../../auth/session'
 import { emptyTraceGraph, emptyTraceGraphDelta, traceGraphNode, traceGraphWithNodes } from '../../test/traceFixtures'
 
@@ -46,7 +61,7 @@ const detail = (): ConversationHistoryDetail => ({ accessMode: 'write_approval',
   reasoning: [],
   graph: emptyTraceGraph(4),
   state: { root: {}, subgraphs: {} },
-  interactions: [],
+  interactionAvailability: [], interactions: [],
   status: { execution: 'succeeded', headRunId: 'run-1' },
   completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false },
   taskTrace: { status: 'ready', todoGroups: [] },

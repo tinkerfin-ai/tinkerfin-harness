@@ -71,12 +71,14 @@ const PlanDateTimeControl = forwardRef<HTMLButtonElement, {
   prompt: string
   minimum?: string
   maximum?: string
+  disabled: boolean
   onChange: (value: string) => void
 }>(function PlanDateTimeControl({
   value,
   prompt,
   minimum,
   maximum,
+  disabled,
   onChange,
 }, forwardedRef) {
   const { t } = useI18n()
@@ -95,6 +97,7 @@ const PlanDateTimeControl = forwardRef<HTMLButtonElement, {
         value={parts?.date ?? ''}
         min={minimumParts?.date}
         max={maximumParts?.date}
+        disabled={disabled}
         label={t('日期回答：{question}', { question: prompt })}
         onChange={(date) => {
           const nextBounds = timeBoundsForDate(date, minimum, maximum)
@@ -112,7 +115,7 @@ const PlanDateTimeControl = forwardRef<HTMLButtonElement, {
         label={t('时间回答：{question}', { question: prompt })}
         min={bounds.minimum}
         max={bounds.maximum}
-        disabled={!parts}
+        disabled={disabled || !parts}
         onChange={(time) => {
           if (parts) onChange(`${parts.date}T${time}`)
         }}
@@ -244,6 +247,7 @@ export function PlanQuestionComposer({
   const { t } = useI18n()
   const [minimized, setMinimized] = useState(() => readPlanQuestionCollapsed(threadId))
   const [focusedAnswerIndex, setFocusedAnswerIndex] = useState(0)
+  const [readOnlyQuestionIndex, setReadOnlyQuestionIndex] = useState(interaction.activeQuestionIndex)
   const optionRefs = useRef<Array<HTMLElement | null>>([])
   const textAnswerRef = useRef<HTMLTextAreaElement | null>(null)
   const dateAnswerRef = useRef<HTMLButtonElement | null>(null)
@@ -251,7 +255,7 @@ export function PlanQuestionComposer({
   const dateTimeAnswerRef = useRef<HTMLButtonElement | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const activeIndex = Math.min(
-    interaction.activeQuestionIndex,
+    interaction.submitted ? readOnlyQuestionIndex : interaction.activeQuestionIndex,
     interaction.questions.length - 1,
   )
   const question = interaction.questions[activeIndex]
@@ -267,6 +271,10 @@ export function PlanQuestionComposer({
   useEffect(() => {
     setMinimized(readPlanQuestionCollapsed(threadId))
   }, [threadId])
+
+  useEffect(() => {
+    setReadOnlyQuestionIndex(interaction.activeQuestionIndex)
+  }, [interaction.activeQuestionIndex, interaction.interruptId, interaction.submitted])
 
   useEffect(() => {
     const enteredQuestion = questionRef.current
@@ -311,13 +319,17 @@ export function PlanQuestionComposer({
   if (!question) return null
 
   const hasNextQuestion = activeIndex < interaction.questions.length - 1
-  const canAdvance = hasNextQuestion && (!question.required || questionAnswered(question))
-  const canSubmit = interaction.questions.every((item) => {
+  const canAdvance = hasNextQuestion && (interaction.submitted || !question.required || questionAnswered(question))
+  const canSubmit = !interaction.submitted && interaction.questions.every((item) => {
     const state = questionAnswerState(item)
     return state === 'answered' || (!item.required && state === 'missing')
   })
 
   const setActiveQuestion = (index: number) => {
+    if (interaction.submitted) {
+      setReadOnlyQuestionIndex(Math.max(0, Math.min(index, interaction.questions.length - 1)))
+      return
+    }
     onChange((current) => ({
       ...current,
       activeQuestionIndex: Math.max(0, Math.min(index, current.questions.length - 1)),
@@ -334,7 +346,8 @@ export function PlanQuestionComposer({
     update: (current: PlanQuestionItem) => PlanQuestionItem,
     nextIndex?: number,
   ) => {
-    onChange((current) => ({
+    if (interaction.submitted) return
+    onChange((current) => current.submitted ? current : ({
       ...current,
       activeQuestionIndex: nextIndex ?? current.activeQuestionIndex,
       error: undefined,
@@ -380,7 +393,7 @@ export function PlanQuestionComposer({
   }
 
   const selectSingleByIndex = (index: number) => {
-    if (question.answerType !== 'single_choice') return
+    if (interaction.submitted || question.answerType !== 'single_choice') return
     const next = (index + question.options.length) % question.options.length
     const option = question.options[next]
     if (!option) return
@@ -393,7 +406,7 @@ export function PlanQuestionComposer({
     event: KeyboardEvent<HTMLButtonElement>,
     optionId: string,
   ) => {
-    if (question.answerType !== 'single_choice') return
+    if (interaction.submitted || question.answerType !== 'single_choice') return
     if (
       event.key === 'ArrowDown'
       || event.key === 'ArrowRight'
@@ -417,6 +430,7 @@ export function PlanQuestionComposer({
   }
 
   const continueFromText = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (interaction.submitted) return
     if (event.key === 'ArrowUp' && event.currentTarget.value === '') {
       const lastOption = optionRefs.current.at(-1)
       if (lastOption) {
@@ -470,6 +484,7 @@ export function PlanQuestionComposer({
   }
 
   const submit = () => {
+    if (interaction.submitted) return
     const focusCurrentAnswer = () => {
       const optionIndex = preferredOptionIndex(question)
       if (question.answerType === 'single_choice') setFocusedAnswerIndex(optionIndex)
@@ -535,7 +550,6 @@ export function PlanQuestionComposer({
 
   return (
     <PlanInteractionCard
-      disabled={interaction.submitted}
       kind="question"
       ariaLabel={t('Plan 澄清问题')}
       minimized={minimized}
@@ -603,6 +617,7 @@ export function PlanQuestionComposer({
                     type="button"
                     role="radio"
                     aria-checked={question.selectedOptionId === option.id}
+                    disabled={interaction.submitted}
                     tabIndex={focusedAnswerIndex === optionIndex ? 0 : -1}
                     className={`plan-question-option${question.selectedOptionId === option.id ? ' is-selected' : ''}`}
                     onFocus={() => setFocusedAnswerIndex(optionIndex)}
@@ -637,7 +652,7 @@ export function PlanQuestionComposer({
                   {question.options.map((option, optionIndex) => {
                     const selected = question.selectedOptionIds.includes(option.id)
                     const atLimit = multipleSelectionCount(question) >= multipleSelectionMaximum(question)
-                    const disabled = !selected && atLimit
+                    const disabled = interaction.submitted || (!selected && atLimit)
                     return (
                       <label
                         key={option.id}
@@ -677,6 +692,7 @@ export function PlanQuestionComposer({
                   value={customAnswer}
                   placeholder={t('输入你的答案')}
                   disabled={customAnswerDisabled}
+                  readOnly={interaction.submitted}
                   onChange={(event) => {
                     resizeTextAnswer(event.currentTarget)
                     updateTextValue(event.currentTarget.value)
@@ -696,6 +712,7 @@ export function PlanQuestionComposer({
                     ref={dateAnswerRef}
                     controlSize="xs"
                     value={question.date ?? ''}
+                    disabled={interaction.submitted}
                     label={t('日期回答：{question}', { question: question.prompt })}
                     onChange={(value) => {
                       updateQuestion((current) => current.answerType === 'date'
@@ -725,6 +742,7 @@ export function PlanQuestionComposer({
                     ref={timeAnswerRef}
                     controlSize="xs"
                     value={question.time ?? ''}
+                    disabled={interaction.submitted}
                     label={t('时间回答：{question}', { question: question.prompt })}
                     min={question.minimum ?? undefined}
                     max={question.maximum ?? undefined}
@@ -749,6 +767,7 @@ export function PlanQuestionComposer({
                   <PlanDateTimeControl
                     ref={dateTimeAnswerRef}
                     value={question.dateTime}
+                    disabled={interaction.submitted}
                     prompt={question.prompt}
                     minimum={question.minimum ?? undefined}
                     maximum={question.maximum ?? undefined}
@@ -790,7 +809,7 @@ export function PlanQuestionComposer({
           </p>
           <div className="plan-question-composer-actions">
             {!question.required && hasNextQuestion && (
-              <Button size="sm" shape="capsule" variant="secondary" onClick={skipQuestion}>
+              <Button size="sm" shape="capsule" variant="secondary" disabled={interaction.submitted} onClick={skipQuestion}>
                 {t('跳过本题')}
               </Button>
             )}

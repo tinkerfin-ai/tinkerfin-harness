@@ -97,6 +97,18 @@ class ConversationHistoryGroupConfig(BaseModel):
     )
 
 
+class ConversationInteractionAvailability(BaseModel):
+    """公开交互的可提交状态；确认中不得再次提交决定"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    interrupt_id: str = Field(alias="interruptId")
+    state: Literal["available", "confirming", "resolved", "cancelled"]
+    submission_run_id: str | None = Field(
+        alias="submissionRunId", description="当前认领或已完成确认的提交 Run ID"
+    )
+
+
 class ConversationHistoryDetail(ConversationTitle):
     """用户归属校验后的固定前缀 Trace 会话视图"""
 
@@ -120,6 +132,9 @@ class ConversationHistoryDetail(ConversationTitle):
     graph: ConversationGraph
     state: TraceState
     interactions: tuple[AgUiTraceInteraction, ...]
+    interaction_availability: tuple[ConversationInteractionAvailability, ...] = Field(
+        alias="interactionAvailability"
+    )
     status: TraceStatus
     completeness: TraceCompleteness
     task_trace: TaskTraceSnapshot | None = Field(alias="taskTrace")

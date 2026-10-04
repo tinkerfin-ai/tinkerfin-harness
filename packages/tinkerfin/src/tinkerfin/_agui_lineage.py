@@ -87,6 +87,7 @@ class AgUiThreadHead:
 class AgUiResumeContext:
     """Hold trusted pending interrupts and message correlation from one checkpoint."""
 
+    parent_run_id: str | None
     interrupts: tuple[NativeRuntimeInterrupt, ...]
     messages_by_graph_namespace: Mapping[tuple[str, ...], tuple[BaseMessage, ...]]
     interrupt_graph_namespaces: Mapping[str, tuple[str, ...]]
@@ -773,6 +774,7 @@ async def _resume_context(
         ):
             cancellation_interrupt_ids.add(interrupt_id)
     return AgUiResumeContext(
+        parent_run_id=source_marker.run_id,
         interrupts=tuple(interrupts_by_id.values()),
         messages_by_graph_namespace=MappingProxyType(dict(messages_by_graph_namespace)),
         interrupt_graph_namespaces=MappingProxyType(
@@ -976,6 +978,7 @@ def _anchored_resume_context(marker: ResumeIntent) -> AgUiResumeContext:
             namespace, _anchor_config(anchor), anchor.task_id
         )
     return AgUiResumeContext(
+        parent_run_id=marker.parent_run_id,
         interrupts=tuple(interrupts),
         messages_by_graph_namespace=MappingProxyType(messages),
         interrupt_graph_namespaces=MappingProxyType(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import math
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING, TypeVar, cast
 
@@ -48,6 +48,34 @@ if TYPE_CHECKING:
 PartT = TypeVar("PartT")
 
 __all__ = ["_finish", "_finish_once", "_observe", "_start", "ready"]
+
+
+class _StreamDeadlineExceeded(TimeoutError):
+    """Identify expiration of the Runtime-owned total execution deadline."""
+
+
+async def _before_deadline(
+    operation: Callable[[], Awaitable[PartT]], deadline: float | None
+) -> PartT:
+    """Resolve deadline cancellation before the native owner settles its outcome.
+
+    Running the budget inside the existing native Task preserves workspace context
+    and lets terminal Observation distinguish timeout from caller cancellation.
+    Cleanup starts after this context exits and retains its independent lifetime.
+    """
+
+    if deadline is None:
+        return await operation()
+    if asyncio.get_running_loop().time() >= deadline:
+        raise _StreamDeadlineExceeded("AG-UI stream timed out")
+    timeout_context = asyncio.timeout_at(deadline)
+    try:
+        async with timeout_context:
+            return await operation()
+    except TimeoutError as error:
+        if timeout_context.expired():
+            raise _StreamDeadlineExceeded("AG-UI stream timed out") from error
+        raise
 
 
 def _native_contract_error(
@@ -160,7 +188,9 @@ async def _resolve_sse_event_id(
     return await resolved
 
 
-async def __anext__(self: _GraphRunStream[PartT]) -> PartT:
+async def __anext__(
+    self: _GraphRunStream[PartT], *, deadline: float | None = None
+) -> PartT:
     """Own one pull, publish its canonical frame, and preserve terminal ordering.
 
     Lazy startup and Observer failure racing happen inside the same active-operation
@@ -185,13 +215,17 @@ async def __anext__(self: _GraphRunStream[PartT]) -> PartT:
             await self._start()
         source = self._source
         assert source is not None
-        try:
+
+        async def pull() -> PartT:
             with self._owned_operation_failures.capture():
                 while True:
                     part = await _next_or_observer_failure(self, source)
                     await self._observe(part)
                     if self._native_frame is None or not self._native_frame[1].internal:
-                        break
+                        return part
+
+        try:
+            part = await _before_deadline(pull, deadline)
         except StopAsyncIteration:
             outcome: RunTerminalOutcome
             if self._observation.context.input_kind == "abandon":
@@ -703,7 +737,9 @@ def _terminal_code(
 ) -> str | None:
     if outcome == "failed":
         return (
-            "observer_failed"
+            "stream_timeout"
+            if isinstance(error, _StreamDeadlineExceeded)
+            else "observer_failed"
             if isinstance(error, RunObservationError)
             else "runtime_error"
         )

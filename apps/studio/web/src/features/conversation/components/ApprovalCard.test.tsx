@@ -40,6 +40,27 @@ const conversationWithApproval = (
 describe('ApprovalCard', () => {
   beforeEach(() => window.sessionStorage.clear())
 
+  it('提交尚未确认时显示原决定并禁止重复授权', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    const onChange = vi.fn()
+    const conversation = conversationWithApproval({
+      activeIndex: 0, submitted: true, submissionRunId: 'resume-run', mode: 'reject',
+      items: [approvalItem('first', '/first.txt', { decision: 'rejected', rejectionReason: '保留原文件' })],
+    })
+    render(<ApprovalCard conversation={conversation} onChange={onChange} onSubmit={onSubmit} />)
+    expect(screen.getByText('正在确认提交状态')).toHaveAttribute('role', 'status')
+    expect(screen.getByRole('textbox')).toHaveValue('保留原文件')
+    expect(screen.getByRole('textbox')).toBeDisabled()
+    for (const name of ['取消', '确认拒绝']) {
+      const button = screen.getByRole('button', { name })
+      expect(button).toBeDisabled()
+      await user.click(button)
+    }
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('advances one independent card at a time and submits the final group once', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()

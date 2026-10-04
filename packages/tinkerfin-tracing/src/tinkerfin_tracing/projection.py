@@ -363,11 +363,23 @@ def empty_core_projection_state() -> CoreProjectionState:
     return CoreProjectionState()
 
 
+def _settles_input_free_lineage(fact: TraceSemanticFact) -> bool:
+    """Return whether execution or settlement ends input-free ancestry preparation."""
+
+    if isinstance(fact, RunFact):
+        return fact.phase == "terminal"
+    return not isinstance(fact, TurnFact | CallTrackingFact)
+
+
 def advance_core_projection_state(
     state: CoreProjectionState,
     events: tuple[TraceEvent, ...],
 ) -> CoreProjectionState:
     """Apply one contiguous event batch without refolding an earlier Ledger prefix.
+
+    Start and call-tracking facts may precede known input ancestry. The first execution
+    fact or terminal settles an input-free Run against a sole completed predecessor
+    whose last fact predates this Run. Later concurrent completion cannot absorb it.
 
     Args:
         state: Previously validated state ending immediately before ``events``.
@@ -504,11 +516,13 @@ def advance_core_projection_state(
         info = runs.get(run_id)
 
         if isinstance(fact, RunFact) and fact.phase in {"started", "input", "resumed"}:
+            input_bound = fact.phase in {"input", "resumed"}
             parent_run_id = fact.parent_run_id
             candidates = heads - {run_id}
             lineage_already_bound = info is not None and info.lineage_bound
             if (
                 parent_run_id is None
+                and input_bound
                 and not lineage_already_bound
                 and len(candidates) == 1
             ):
@@ -522,14 +536,19 @@ def advance_core_projection_state(
                 if info is None
                 else info.parent_run_id
             )
-            # Runtime lifecycle phases may omit the parent already bound by ``started``.
+            # Later lifecycle phases may omit the parent bound by earlier input.
             # Repeated input evidence must not degrade that lineage, while a continuation
             # with no explicit, inferred, or previously bound parent remains incomplete.
-            if known_parent_run_id is None and fact.input_kind in {
-                "continuation",
-                "resume",
-                "abandon",
-            }:
+            if (
+                input_bound
+                and known_parent_run_id is None
+                and fact.input_kind
+                in {
+                    "continuation",
+                    "resume",
+                    "abandon",
+                }
+            ):
                 info = info or inherited_run(
                     run_id,
                     occurred_at=fact.occurred_at,
@@ -554,7 +573,7 @@ def advance_core_projection_state(
             info = info.model_copy(
                 update={
                     "input_kind": fact.input_kind or info.input_kind,
-                    "lineage_bound": info.lineage_bound or fact.phase == "started",
+                    "lineage_bound": info.lineage_bound or input_bound,
                     "last_seq": event.trace_seq,
                 }
             )
@@ -567,11 +586,16 @@ def advance_core_projection_state(
                 and parent.turn_id is not None
             ):
                 info = assign_turn(info, parent.turn_id, event.trace_seq)
-            elif info.turn_id is None and fact.input_kind in {
-                "continuation",
-                "resume",
-                "abandon",
-            }:
+            elif (
+                input_bound
+                and info.turn_id is None
+                and fact.input_kind
+                in {
+                    "continuation",
+                    "resume",
+                    "abandon",
+                }
+            ):
                 info = assign_turn(
                     info,
                     f"turn-partial:{run_id}",
@@ -589,7 +613,31 @@ def advance_core_projection_state(
         else:
             info = info.model_copy(update={"last_seq": event.trace_seq})
 
+        if not info.lineage_bound and _settles_input_free_lineage(fact):
+            candidates = heads - {run_id}
+            if info.parent_run_id is None and len(candidates) == 1:
+                candidate = next(iter(candidates))
+                parent = runs[candidate]
+                if parent.terminal is not None and parent.last_seq < info.first_seq:
+                    info = bind_parent(info, candidate)
+                    heads.discard(candidate)
+            info = info.model_copy(update={"lineage_bound": True})
+
         if isinstance(fact, TurnFact):
+            parent_run_id = fact.parent_run_id or info.parent_run_id
+            candidates = heads - {run_id}
+            if (
+                not info.lineage_bound
+                and parent_run_id is None
+                and len(candidates) == 1
+            ):
+                candidate = next(iter(candidates))
+                if runs[candidate].terminal is not None:
+                    parent_run_id = candidate
+            info = bind_parent(info, parent_run_id)
+            info = info.model_copy(update={"lineage_bound": True})
+            if parent_run_id is not None:
+                heads.discard(parent_run_id)
             info = assign_turn(
                 info,
                 fact.turn_id,
@@ -1271,6 +1319,11 @@ def _lineage(
     ordinary linear case where Runtime facts omit an explicit parent. Resume and abandon
     inherit their parent's Turn; unresolved ancestry receives a deterministic partial
     Turn and marks the resulting view incomplete rather than inventing history.
+    An input-free Run settles implicit ancestry at its first execution fact or terminal,
+    and only binds a completed head whose last fact precedes this Run's first fact.
+    Start and call-tracking declarations leave preparation open. A settled decision is
+    never reconsidered when another concurrent Run later completes, and conflicting
+    explicit parent evidence is corruption.
     """
 
     runs: dict[str, _RunInfo] = {}
@@ -1279,18 +1332,18 @@ def _lineage(
     turn_order: list[str] = []
     missing_prefix_runs: set[str] = set()
     turn_by_root_run: dict[str, str] = {}
-    for fact in facts:
+    lineage_bound_runs: set[str] = set()
+    first_positions: dict[str, int] = {}
+    last_positions: dict[str, int] = {}
+    for position, fact in enumerate(facts):
         run_id = fact.identity.run_id
+        first_positions.setdefault(run_id, position)
+        last_positions[run_id] = position
         if isinstance(fact, RunFact) and fact.phase == "started":
             info = runs.setdefault(
                 run_id, _RunInfo(run_id=run_id, started_at=fact.occurred_at)
             )
-            candidates = heads - {run_id}
             parent = fact.parent_run_id
-            if parent is None and len(candidates) == 1:
-                candidate = next(iter(candidates))
-                if runs[candidate].terminal is not None:
-                    parent = candidate
             if parent == run_id:
                 raise TraceCorruption("Run lineage cannot reference itself")
             info.parent_run_id = parent
@@ -1301,6 +1354,31 @@ def _lineage(
                     missing_prefix_runs.add(run_id)
             heads.add(run_id)
         elif isinstance(fact, TurnFact):
+            info = runs.setdefault(
+                run_id, _RunInfo(run_id=run_id, started_at=fact.occurred_at)
+            )
+            if fact.parent_run_id == run_id:
+                raise TraceCorruption("Run lineage cannot reference itself")
+            if (
+                fact.parent_run_id is not None
+                and info.parent_run_id is not None
+                and fact.parent_run_id != info.parent_run_id
+            ):
+                raise TraceCorruption("Run lineage parent changed after start")
+            parent = fact.parent_run_id or info.parent_run_id
+            candidates = heads - {run_id}
+            if (
+                parent is None
+                and run_id not in lineage_bound_runs
+                and len(candidates) == 1
+            ):
+                candidate = next(iter(candidates))
+                if runs[candidate].terminal is not None:
+                    parent = candidate
+            if parent is not None:
+                info.parent_run_id = parent
+                heads.discard(parent)
+            lineage_bound_runs.add(run_id)
             turn_by_root_run[run_id] = fact.turn_id
             run_turns[run_id] = fact.turn_id
             if fact.turn_id not in turn_order:
@@ -1323,7 +1401,7 @@ def _lineage(
             ):
                 raise TraceCorruption("Run input kind changed after start")
             parent = fact.parent_run_id or info.parent_run_id
-            if parent is None:
+            if parent is None and run_id not in lineage_bound_runs:
                 candidates = heads - {run_id}
                 if len(candidates) == 1:
                     candidate = next(iter(candidates))
@@ -1336,6 +1414,7 @@ def _lineage(
                     missing_prefix_runs.add(run_id)
             info.parent_run_id = parent
             info.input_kind = fact.input_kind
+            lineage_bound_runs.add(run_id)
             if parent is not None:
                 heads.discard(parent)
                 parent_turn = run_turns.get(parent)
@@ -1355,6 +1434,22 @@ def _lineage(
             )
             info.terminal = fact.outcome
             info.completed_at = fact.occurred_at
+        if (
+            _settles_input_free_lineage(fact)
+            and run_id in runs
+            and run_id not in lineage_bound_runs
+        ):
+            info = runs[run_id]
+            candidates = heads - {run_id}
+            if info.parent_run_id is None and len(candidates) == 1:
+                candidate = next(iter(candidates))
+                if (
+                    runs[candidate].terminal is not None
+                    and last_positions[candidate] < first_positions[run_id]
+                ):
+                    info.parent_run_id = candidate
+                    heads.discard(candidate)
+            lineage_bound_runs.add(run_id)
     for run_id, turn_id in turn_by_root_run.items():
         run_turns[run_id] = turn_id
     for run_id, info in runs.items():

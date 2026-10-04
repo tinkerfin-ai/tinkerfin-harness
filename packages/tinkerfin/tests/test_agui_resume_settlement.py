@@ -317,8 +317,12 @@ async def test_open_agui_run_reuses_one_graph_for_resume_resolution_and_executio
 
 
 @pytest.mark.asyncio
-async def test_open_agui_run_releases_preparation_failure_once() -> None:
-    saver = MemorySaver()
+@pytest.mark.parametrize("abandon", [False, True])
+@pytest.mark.parametrize("has_saver", [False, True])
+async def test_open_agui_run_releases_only_proven_unsaved_preparation(
+    abandon: bool, has_saver: bool
+) -> None:
+    saver = MemorySaver() if has_saver else None
     identity = RunIdentity(
         namespace="test", thread_id="thread-unprepared", run_id="run-resume"
     )
@@ -327,7 +331,8 @@ async def test_open_agui_run_releases_preparation_failure_once() -> None:
             ResumeEntry.model_validate(
                 {
                     "interruptId": "interrupt-1#0",
-                    "status": "cancelled",
+                    "status": "cancelled" if abandon else "resolved",
+                    "payload": None if abandon else {"type": "approve"},
                 }
             ),
         )
@@ -357,7 +362,57 @@ async def test_open_agui_run_releases_preparation_failure_once() -> None:
     events = [event async for event in stream]
 
     assert [event.type.value for event in events] == ["RUN_STARTED", "RUN_ERROR"]
-    assert releases == 1
+    assert releases == int(has_saver and not abandon)
+
+
+async def test_resumed_start_precedes_blocked_workspace_and_native_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    saver, graphs, executions = _install_resume_graph(monkeypatch)
+    builder = TinkerFin(checkpointer=saver).with_namespace("test")
+    interrupt_id = await _create_interrupted_parent(
+        builder.build(model="provider:model"), graphs
+    )
+    identity, request = _resume_request(interrupt_id)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    released: list[str] = []
+
+    async def prepare_workspace() -> None:
+        entered.set()
+        await release.wait()
+        raise OSError("workspace unavailable")
+
+    async def not_saved() -> None:
+        released.append("not_saved")
+
+    runtime = builder.build(
+        model="provider:model", backend=_SetupWorkspace(prepare_workspace)
+    )
+    stream = runtime.open_agui_run(
+        thread_id=identity.thread_id,
+        run_id=identity.run_id,
+        resume=request,
+        on_resume_not_saved=not_saved,
+    )
+    first = asyncio.create_task(anext(stream))
+    preparing = asyncio.create_task(entered.wait())
+    try:
+        await asyncio.wait((first, preparing), return_when=asyncio.FIRST_COMPLETED)
+        assert first.done(), "Resumed RUN_STARTED waited for the workspace"
+        assert (await first).type.value == "RUN_STARTED"
+        pending = asyncio.create_task(anext(stream))
+        await preparing
+        release.set()
+        assert (await pending).type.value == "RUN_ERROR"
+        assert [event async for event in stream] == []
+        assert released == ["not_saved"]
+        assert executions == []
+        assert len(graphs) == 1
+    finally:
+        release.set()
+        await asyncio.gather(first, preparing, return_exceptions=True)
+        await stream.aclose()
 
 
 async def test_resume_preparation_uses_the_configured_saver() -> None:
@@ -370,7 +425,8 @@ async def test_resume_preparation_uses_the_configured_saver() -> None:
             ResumeEntry.model_validate(
                 {
                     "interruptId": "interrupt-1#0",
-                    "status": "cancelled",
+                    "status": "resolved",
+                    "payload": {"type": "approve"},
                 }
             ),
         )
@@ -438,7 +494,8 @@ async def test_open_agui_run_settles_preparation_cancellation_once(
             ResumeEntry.model_validate(
                 {
                     "interruptId": "interrupt-1#0",
-                    "status": "cancelled",
+                    "status": "resolved",
+                    "payload": {"type": "approve"},
                 }
             ),
         )
@@ -478,7 +535,8 @@ async def test_open_agui_run_settles_preparation_cancellation_once(
         resume=request,
         on_resume_not_saved=release_unprepared,
     )
-    task = asyncio.create_task(stream.messaging_owner_preflight())
+    assert (await anext(stream)).type.value == "RUN_STARTED"
+    task = asyncio.create_task(anext(stream))
     await entered.wait()
     task.cancel()
     task.cancel()
@@ -507,8 +565,13 @@ async def test_open_agui_run_settles_preparation_cancellation_once(
                 pending_errors.extend(error.exceptions)
         assert id(release_error) in retained
         assert id(release_cause) in retained
-    await stream.aclose()
-    await stream.aclose()
+    for _ in range(2):
+        if release_kind == "control":
+            with pytest.raises(_ReleaseControl) as closed:
+                await stream.aclose()
+            assert closed.value is release_error
+        else:
+            await stream.aclose()
 
 
 async def test_open_agui_run_retains_marker_probe_across_repeated_cancellation(
@@ -523,7 +586,8 @@ async def test_open_agui_run_retains_marker_probe_across_repeated_cancellation(
             ResumeEntry.model_validate(
                 {
                     "interruptId": "interrupt-1#0",
-                    "status": "cancelled",
+                    "status": "resolved",
+                    "payload": {"type": "approve"},
                 }
             ),
         )
@@ -565,7 +629,8 @@ async def test_open_agui_run_retains_marker_probe_across_repeated_cancellation(
         resume=request,
         on_resume_not_saved=release_unprepared,
     )
-    task = asyncio.create_task(stream.messaging_owner_preflight())
+    assert (await anext(stream)).type.value == "RUN_STARTED"
+    task = asyncio.create_task(anext(stream))
     await factory_started.wait()
     task.cancel("first")
     await probe_started.wait()
@@ -1082,6 +1147,7 @@ async def test_resume_graph_factory_failure_uses_pre_marker_settlement(
         assert first.type.value == "RUN_STARTED"
         assert second.type.value == "RUN_ERROR"
     else:
+        assert (await anext(stream)).type.value == "RUN_STARTED"
         with pytest.raises(type(error)) as captured:
             await anext(stream)
         assert captured.value is error

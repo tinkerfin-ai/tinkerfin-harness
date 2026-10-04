@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 
 from pydantic import Field, ValidationError, field_validator
 
+from ._follow_lineage import PendingTraceLineage
 from ._models import TraceModel
 from .errors import InvalidTraceCursor
 from .facts import (
@@ -289,19 +290,24 @@ class TraceGraphQuery:
         return self._page.completeness.model_copy(deep=True)
 
     def follow(self) -> TraceFollow[TraceGraphDelta]:
-        """Follow changes to the unpaginated current first page."""
+        """Follow the current first page after newly started Run lineage is known.
+
+        An unscoped query waits only while an active writer can resolve a new
+        head. Explicit head selection, cancellation, and close do not wait for it.
+        """
 
         if not self._follow_enabled:
             raise ValueError("Trace Graph follow requires the current first page")
 
         async def updates() -> AsyncIterator[TraceGraphDelta]:
             previous = self._page
+            waiting_for_lineage = False
             batches = self._store.follow(self._key, after_seq=self._page.as_of_seq)
             primary_error: BaseException | None = None
             try:
                 async for batch in batches:
-                    # Graph nodes describe committed call evidence. Ownership-only
-                    # changes affect Run completeness, not this independent model.
+                    # Ownership-only changes normally leave committed Graph nodes
+                    # unchanged; a lost writer must still settle pending head selection.
                     # A consistent refresh can already include later Store pages.
                     # Only evidence beyond that returned prefix can change the page.
                     events = tuple(
@@ -309,16 +315,25 @@ class TraceGraphQuery:
                         for event in batch.events
                         if event.trace_seq > previous.as_of_seq
                     )
-                    if not events:
+                    if not events and not waiting_for_lineage:
                         continue
-                    current = _advance_unchanged_graph(
-                        previous,
-                        key=self._key,
-                        events=events,
-                        max_bytes=self._max_page_bytes,
+                    current = (
+                        None
+                        if waiting_for_lineage
+                        else _advance_unchanged_graph(
+                            previous,
+                            key=self._key,
+                            events=events,
+                            max_bytes=self._max_page_bytes,
+                        )
                     )
                     if current is None:
-                        current = await self._refresh()
+                        try:
+                            current = await self._refresh()
+                        except PendingTraceLineage:
+                            waiting_for_lineage = True
+                            continue
+                    waiting_for_lineage = False
                     delta = graph_delta(
                         previous,
                         current,

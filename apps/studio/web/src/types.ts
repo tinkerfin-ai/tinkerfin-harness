@@ -116,6 +116,7 @@ export interface ApprovalState {
   items: ApprovalItem[]
   activeIndex: number
   submitted: boolean
+  submissionRunId?: string
   mode?: ApprovalMode
   error?: string
 }
@@ -198,6 +199,7 @@ export interface PlanQuestionState {
   form: JsonObject
   questions: PlanQuestionItem[]
   submitted: boolean
+  submissionRunId?: string
   error?: string
 }
 
@@ -226,6 +228,7 @@ export interface PlanReviewState {
   action?: 'approve' | 'reject' | 'cancel'
   message?: string
   submitted: boolean
+  submissionRunId?: string
   error?: string
 }
 

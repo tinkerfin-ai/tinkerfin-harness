@@ -5,7 +5,7 @@ import inspect
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextvars import ContextVar
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from ag_ui.core import (
@@ -195,17 +195,20 @@ async def test_initialization_failure_marker_uses_canonical_identity_and_parent(
 
     events = [event async for event in stream]
 
-    assert events[0].raw_event == {
+    started = events[0]
+    assert isinstance(started, RunStartedEvent)
+    assert started.parent_run_id == "run-parent"
+    assert started.raw_event is None
+    assert events[-1].raw_event == {
         "threadId": "thread-1",
         "runId": "run-1",
         "parentRunId": "run-parent",
         "initializationFailed": True,
     }
-    assert events[-1].raw_event == events[0].raw_event
 
 
 @pytest.mark.asyncio
-async def test_initialization_failure_cancel_tail_keeps_release_marker() -> None:
+async def test_cancellation_before_graph_preparation_has_no_failure_marker() -> None:
     stream = _initialization_failure(
         RuntimeError("cannot initialize runtime"),
         identity=_identity(),
@@ -215,17 +218,15 @@ async def test_initialization_failure_cancel_tail_keeps_release_marker() -> None
     tail = await stream.messaging_cancel_callback()
 
     assert isinstance(started, RunStartedEvent)
-    assert started.raw_event == {
-        "threadId": "thread-1",
-        "runId": "run-1",
-        "initializationFailed": True,
-    }
+    assert started.raw_event is None
     assert [event.type.value for event in tail] == ["RUN_ERROR"]
     assert tail[0].raw_event == {
         "threadId": "thread-1",
         "runId": "run-1",
-        "initializationFailed": True,
     }
+    assert isinstance(tail[0], RunErrorEvent)
+    assert tail[0].code == "cancelled"
+    assert stream.error is None
 
 
 @pytest.mark.asyncio
@@ -751,6 +752,50 @@ async def test_agui_zero_timeout_starts_lifecycle_without_pulling_parts() -> Non
     assert terminal.code == "stream_timeout"
     assert isinstance(stream.error, TimeoutError)
     assert pulls == 0
+
+
+async def test_agui_total_deadline_is_not_reset_after_native_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+    definition_factory: Callable[..., AgentRuntime[None]],
+) -> None:
+    clock = SimpleNamespace(now=100.0)
+    deadlines: list[float] = []
+    pulls: list[int] = []
+
+    def timeout_at(deadline: float) -> asyncio.Timeout:
+        deadlines.append(deadline)
+        return asyncio.timeout(None)
+
+    controlled = ModuleType("controlled_asyncio")
+    controlled.__dict__.update(vars(asyncio))
+    setattr(
+        controlled, "get_running_loop", lambda: SimpleNamespace(time=lambda: clock.now)
+    )
+    setattr(controlled, "timeout_at", timeout_at)
+    monkeypatch.setattr("tinkerfin._runtime_agui.asyncio", controlled)
+    monkeypatch.setattr("tinkerfin._runtime_streams.asyncio", controlled)
+
+    async def parts() -> AsyncIterator[object]:
+        for value in (1, 2, 3):
+            pulls.append(value)
+            clock.now += 3
+            yield {"type": "values", "ns": (), "data": {"value": value}}
+
+    runtime = definition_factory(_SourceGraph(parts))
+    stream = runtime.open_agui_run(
+        thread_id="thread-deadline",
+        run_id="run-deadline",
+        input={"messages": []},
+        stream_timeout=5,
+    )
+    events = await _collect_events(stream)
+
+    assert pulls == [1, 2]
+    assert deadlines == [105.0, 105.0]
+    assert [event.type.value for event in events].count("RUN_STARTED") == 1
+    terminal = events[-1]
+    assert isinstance(terminal, RunErrorEvent)
+    assert terminal.code == "stream_timeout"
 
 
 @pytest.mark.asyncio

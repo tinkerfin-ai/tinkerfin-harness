@@ -62,7 +62,12 @@ application keys.
 | `get_diagnostic_logs(sandbox_id, scope="container")` | Read provider log diagnostics |
 | `get_diagnostic_events(sandbox_id, scope="runtime")` | Read provider event diagnostics |
 | `destroy(sandbox_id)` | Idempotently destroy the instance and close its temporary connection |
-| `aclose()` | Finish owned work and close only the transport created by the client |
+| `aclose()` | Finish owned work and resource reclamation, then close the client-owned transport |
+
+Call `aclose()` even after creation or connection fails. It reclaims instances from
+failed or cancelled creation and closes undelivered connections, without destroying
+instances opened only by `connect()`. If cleanup raises a backend error, keep any
+caller-supplied transport open and call `aclose()` again to retry.
 
 `OpenSandboxPurpose` is `Literal["commands", "workspaces"]`. The client records it in
 reserved `tinkerfin.ai/purpose` metadata. `commands` keeps the provider's default permissions;
@@ -92,6 +97,11 @@ and cannot interrupt blocking synchronous work. Initialization failures raise
 ## Manager
 
 See [Sandbox lifecycle](lifecycle.md) for constructor parameters and operations.
+If State or client closure fails, `manager.aclose()` raises the error. A later call
+asks only unfinished components to close again, without repeating completed cleanup
+or reopening the manager. The Client can retry unconfirmed destruction; a State may
+retain and report its original close failure.
+
 `workspace(key, *, workspace_key, routes=None)` returns a `SandboxWorkspace[KeyT]`
 for `TinkerFin.build(backend=...)`, application file access, and project deletion.
 `SandboxWorkspace` is exported from `tinkerfin_sandbox`.

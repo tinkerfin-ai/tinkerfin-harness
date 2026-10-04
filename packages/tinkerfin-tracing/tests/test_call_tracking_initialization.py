@@ -38,7 +38,6 @@ from tinkerfin_tracing import (
     TraceGraphNodeKind,
     Tracer,
     TraceStore,
-    TraceThreadNotFound,
 )
 
 
@@ -245,7 +244,7 @@ async def test_initialization_failure_keeps_existing_and_future_call_history(
         snapshot.key, after_seq=0, as_of_seq=snapshot.as_of_seq, limit=1000
     )
     failed_facts = [event.fact for event in events if event.fact.identity == failed]
-    assert not any(isinstance(fact, CallTrackingFact) for fact in failed_facts)
+    assert sum(isinstance(fact, CallTrackingFact) for fact in failed_facts) == 1
     assert not any(
         fact.kind in {"model.call", "tool.execution", "tool"} for fact in failed_facts
     )
@@ -394,24 +393,28 @@ async def test_cancelled_initialization_preserves_cancellation_and_next_run(
             thread_id=identity.thread_id, run_id=identity.run_id, input=_input(identity)
         )
     )
-    pending = asyncio.create_task(stream.messaging_owner_preflight())
+    if transport == "agui":
+        await anext(stream)
+    pending = asyncio.create_task(anext(stream))
     try:
         await entered.wait()
-        for attempt in range(6):
-            if pending.done():
-                break
-            pending.cancel(f"initialization cancellation {attempt + 1}")
-            await asyncio.sleep(0)
+        pending.cancel("initialization cancellation")
         with pytest.raises(asyncio.CancelledError) as captured:
             await pending
-        assert captured.value.args == ("initialization cancellation 1",)
+        assert captured.value.args == ("initialization cancellation",)
     finally:
         if not pending.done():
             pending.cancel()
         await asyncio.gather(pending, return_exceptions=True)
         await stream.aclose()
-    with pytest.raises(TraceThreadNotFound):
-        await trace_store.snapshot(identity.thread)
+    snapshot = await trace_store.snapshot(identity.thread)
+    events = await trace_store.read_events(
+        snapshot.key, after_seq=0, as_of_seq=snapshot.as_of_seq, limit=100
+    )
+    facts = [event.fact for event in events if isinstance(event.fact, RunFact)]
+    assert [fact.phase for fact in facts] == ["started", "input", "terminal", "closed"]
+    assert facts[-2].outcome == "cancelled"
+    assert facts[-2].code == "cancelled"
     await _run_healthy(
         runtime,
         RunIdentity(

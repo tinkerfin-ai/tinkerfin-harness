@@ -49,6 +49,7 @@ from tinkerfin_studio.conversation.schemas import (
     ConversationHistoryGroupConfig,
     ConversationHistoryListItem,
     ConversationHistoryListResponse,
+    ConversationInteractionAvailability,
     ConversationRunSnapshotEvent,
     ConversationTraceErrorEvent,
     ConversationTraceGraphErrorEvent,
@@ -594,6 +595,53 @@ class ConversationHistoryService:
         interactions = {item.id: item for item in snapshot.interactions}
         # Pending 项必须跨越可见 Turn 窗口保留，避免历史分页隐藏仍需用户处理的交互
         interactions.update({item.id: item for item in summary.pending_interactions})
+        interrupt_ids = frozenset(
+            action.id
+            for item in interactions.values()
+            if item.status == "pending"
+            for action in item.agui or ()
+        )
+        claims = await self._repository.list_interaction_claims(
+            thread_pk=thread.id,
+            interrupt_ids=interrupt_ids,
+            submission_run_id=snapshot.head_run_id,
+        )
+        claimed_ids = {claim.interrupt_id for claim in claims}
+        resume = registration.input_json.get("resume")
+        submitted_ids = (
+            {
+                interrupt_id
+                for entry in resume
+                if isinstance(entry, dict)
+                and isinstance(interrupt_id := entry.get("interruptId"), str)
+            }
+            if isinstance(resume, list)
+            else set()
+        )
+        availability = [
+            ConversationInteractionAvailability(
+                interruptId=interrupt_id,
+                state="available",
+                submissionRunId=snapshot.head_run_id
+                if interrupt_id in submitted_ids
+                else None,
+            )
+            for interrupt_id in sorted(interrupt_ids - claimed_ids)
+        ]
+        for claim in claims:
+            if claim.status == "claimed":
+                state = "confirming"
+            elif claim.status in {"resolved", "cancelled"} and claim.resolution_id:
+                state = "resolved" if claim.status == "resolved" else "cancelled"
+            else:
+                raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
+            availability.append(
+                ConversationInteractionAvailability(
+                    interruptId=claim.interrupt_id,
+                    state=state,
+                    submissionRunId=claim.claimed_run_id,
+                )
+            )
         return ConversationHistoryDetail(
             id=thread.id,
             threadId=thread.thread_id,
@@ -626,6 +674,7 @@ class ConversationHistoryService:
                     key=lambda item: (item.trace_seq, item.id),
                 )
             ),
+            interactionAvailability=tuple(availability),
             status=summary.status,
             completeness=summary.completeness,
             taskTrace=task_trace,

@@ -12,6 +12,7 @@ import type {
 } from '../../../api/conversation/history'
 import type { ChatRequestPayload } from '../../../api/conversation/types'
 import { emptyTraceGraph, traceGraphNode, traceGraphWithNodes } from '../../../test/traceFixtures'
+import { toolReviewInterrupts } from '../../../test/aguiFixtures'
 import { restoreConversationFromTrace } from '../trace/runtime'
 import { attachmentInput, messageAttachments, messageText } from '../attachments/content'
 import { parseTaskTraceSnapshot } from '../../../api/conversation/taskTrace'
@@ -95,7 +96,7 @@ const traceDetail = (
   }],
   reasoning: [],
   state: { root: {}, subgraphs: {} },
-  interactions: [],
+  interactionAvailability: [], interactions: [],
   status: { execution: 'succeeded', headRunId: RUN_ID },
   completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false },
   createdAt: BASE_TIME,
@@ -332,6 +333,44 @@ describe('useConversationStreamController', () => {
     await act(async () => { await result.current.controller.streamRun(THREAD_ID, payload, 'resume') })
     expect(result.current.workspace.conversations[0]?.trace?.headRunId).toBe(RUN_ID)
     expect(result.current.workspace.conversations[0]?.messages.map(message => message.content)).toEqual(['Trace 最终内容'])
+  })
+
+  it('准备失败且历史暂不可用时保留审批输入，显式恢复只查询保存状态', async () => {
+    const action = toolReviewInterrupts('review-write', [{ toolCallId: 'call-write', args: { file_path: '/notes.txt' } }])[0]
+    const initial = conversation({
+      approval: { activeIndex: 0, submitted: true, submissionRunId: RUN_ID, mode: 'reject', items: [{
+        id: action.id, interruptId: action.id, toolCallId: 'call-write', toolName: 'write_file',
+        params: '{}', input: '/notes.txt', description: '写入文件', originalArgs: { file_path: '/notes.txt' },
+        allowedDecisions: ['approve', 'reject'], decision: 'rejected', rejectionReason: '保留笔记',
+      }] },
+    })
+    clientMocks.resume.mockImplementation(() => streamItems([
+      { seq: 1, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } },
+      { seq: 2, event: { type: 'RUN_ERROR', code: 'runtime_initialization_error', message: '准备失败', rawEvent: { runId: RUN_ID } } },
+    ]))
+    traceMocks.detail.mockRejectedValue(new ApiError('unavailable', { status: 503 }))
+    const { result } = renderHook(() => useControllerHarness(initial))
+    await act(async () => { await result.current.controller.streamRun(THREAD_ID, {
+      ...payload, resume: [{ interruptId: action.id, status: 'resolved', payload: { type: 'reject', message: '保留笔记' } }],
+    }, 'resume') })
+    expect(result.current.workspace.conversations[0]?.approval).toEqual(initial.approval)
+    expect(result.current.workspace.conversations[0]?.notice?.recovery).toBe('history')
+    const authority = traceDetail({
+      status: { execution: 'waiting', headRunId: RUN_ID },
+      interactions: [{ id: 'review', traceSeq: 3, sourceId: action.id, graphNamespace: [], runId: 'paused-run',
+        kind: 'tool_approval', toolCallIds: ['call-write'], status: 'pending', payloadOmitted: false, openedAt: BASE_TIME, agui: [action] }],
+      interactionAvailability: [{ interruptId: action.id, state: 'confirming', submissionRunId: RUN_ID }],
+    })
+    traceMocks.detail.mockResolvedValue(authority)
+    await act(async () => { await result.current.controller.recoverConversation(THREAD_ID) })
+    expect(result.current.workspace.conversations[0]?.approval).toEqual(initial.approval)
+    traceMocks.detail.mockResolvedValue({ ...authority,
+      interactionAvailability: [{ interruptId: action.id, state: 'available', submissionRunId: RUN_ID }],
+    })
+    await act(async () => { await result.current.controller.recoverConversation(THREAD_ID) })
+    expect(result.current.workspace.conversations[0]?.approval).toMatchObject({ submitted: false, items: initial.approval!.items })
+    expect(clientMocks.resume).toHaveBeenCalledOnce()
+    expect(clientMocks.cancel).not.toHaveBeenCalled()
   })
 
   it('accepts the first thread-wide sequence as the baseline when history has no cursor', async () => {

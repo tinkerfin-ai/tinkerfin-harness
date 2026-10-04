@@ -308,15 +308,29 @@ export function Composer({
     }
   }
 
+  const stopControl = (
+    <IconButton
+      className="send-button stop"
+      label={stopPending ? t('正在停止任务') : canStop ? t('停止任务') : stopDisabledReason ?? t('正在创建会话')}
+      icon={<Square size={13} fill="currentColor" />}
+      loading={stopPending}
+      disabled={!canStop || stopPending}
+      onClick={onStop}
+    />
+  )
+
   return (
     <footer className={`composer-dock${hero ? ' is-hero' : ''}${takeover ? ' is-taken-over' : ''}`}>
-      {(!hero || scrollToBottomControl || taskTraceControl) && (
+      {(!hero || scrollToBottomControl || taskTraceControl || (takeover && isRunning)) && (
         <div className="composer-auxiliary-controls">
           {scrollToBottomControl && (
             <div className="composer-scroll-to-bottom-control">{scrollToBottomControl}</div>
           )}
-          {taskTraceControl && (
-            <div className="composer-task-trace-control">{taskTraceControl}</div>
+          {(taskTraceControl || (takeover && isRunning)) && (
+            <div className="composer-task-trace-control" aria-hidden={backgroundInert || undefined} inert={backgroundInert || undefined}>
+              {taskTraceControl}
+              {takeover && isRunning && stopControl}
+            </div>
           )}
         </div>
       )}
@@ -421,14 +435,7 @@ export function Composer({
           <div className="composer-toolbar-trailing">
             {modelControl}
             {isRunning ? (
-              <IconButton
-                className="send-button stop"
-                label={stopPending ? t('正在停止任务') : canStop ? t('停止任务') : stopDisabledReason ?? t('正在创建会话')}
-                icon={<Square size={13} fill="currentColor" />}
-                loading={stopPending}
-                disabled={!canStop || stopPending}
-                onClick={onStop}
-              />
+              !takeover && stopControl
             ) : (
               <IconButton className="send-button" label={t('发送消息')} icon={<ArrowUp size={18} />} disabled={isDisabled || !canSubmitDraft} onClick={onSend} />
             )}

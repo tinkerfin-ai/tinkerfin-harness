@@ -151,12 +151,13 @@ export function ApprovalCard({
   }
 
   const updateApproval = (updater: (current: ApprovalState) => ApprovalState) => {
-    onChange((current) => matchesApprovalGroup(current, interruptIds)
+    onChange((current) => !current.submitted && matchesApprovalGroup(current, interruptIds)
       ? updater(current)
       : current)
   }
 
   const recordDecision = (decision: ApprovalSubmissionDecision) => {
+    if (approval.submitted) return
     const completesGroup = approval.items.every((item) => (
       Boolean(item.decision) || item.interruptId === decision.interruptId
     ))
@@ -236,6 +237,7 @@ export function ApprovalCard({
               id={`approval-reason-${active.id}`}
               name="reason"
               value={rejectionReason}
+              disabled={approval.submitted}
               rows={3}
               placeholder={t('说明拒绝此操作的原因…')}
               onChange={(event) => {
@@ -251,20 +253,21 @@ export function ApprovalCard({
       </div>
       <OverlayScrollbar viewportRef={bodyRef} />
       <footer className="approval-composer-footer">
-        <p className="approval-composer-feedback" role="alert">
-          {approval.error ?? ''}
+        <p className="approval-composer-feedback" role={approval.submitted ? 'status' : 'alert'}>
+          {approval.submitted ? t('正在确认提交状态') : approval.error ?? ''}
         </p>
         <div className="approval-composer-actions">
           {approval.mode === 'reject' ? (
             <>
-              <Button size="sm" shape="capsule" onClick={cancelRejection}>{t('取消')}</Button>
-              <Button size="sm" shape="capsule" type="submit" form={rejectionFormId} variant="danger">
+              <Button size="sm" shape="capsule" disabled={approval.submitted} onClick={cancelRejection}>{t('取消')}</Button>
+              <Button size="sm" shape="capsule" disabled={approval.submitted} type="submit" form={rejectionFormId} variant="danger">
                 {t('确认拒绝')}
               </Button>
             </>
           ) : allDecided ? (
             <Button
               ref={retryButtonRef}
+              disabled={approval.submitted}
               size="sm"
               shape="capsule"
               variant="solid"
@@ -277,6 +280,7 @@ export function ApprovalCard({
               {canReject && (
                 <Button
                   ref={rejectButtonRef}
+                  disabled={approval.submitted}
                   size="sm"
                   shape="capsule"
                   className="approval-reject-button"
@@ -288,6 +292,7 @@ export function ApprovalCard({
               {canApprove && (
                 <Button
                   ref={approveButtonRef}
+                  disabled={approval.submitted}
                   size="sm"
                   shape="capsule"
                   variant="solid"

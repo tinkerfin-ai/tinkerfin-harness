@@ -128,7 +128,7 @@ const traceDetail = (
   }],
   reasoning: [],
   state: { root: {}, subgraphs: {} },
-  interactions: [],
+  interactionAvailability: [], interactions: [],
   status: { execution: 'succeeded', headRunId: RUN_ID },
   completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false },
   createdAt: BASE_TIME,
@@ -1008,6 +1008,7 @@ describe('Studio Trace history integration', () => {
 
   it('restores an approval from public Trace interaction references', async () => {
     const waiting = traceDetail({
+      interactionAvailability: [{ interruptId: 'native-review', state: 'available', submissionRunId: null }],
       status: { execution: 'waiting', headRunId: RUN_ID },
       interactions: [{
       agui: toolReviewInterrupts('native-review', [{ toolCallId: 'call-write', args: { file_path: '/root-hitl.txt', content: 'ROOT_HITL' } }]),
@@ -1070,6 +1071,7 @@ describe('Studio Trace history integration', () => {
   it('keeps a pending child Tool inside its SubAgent instead of the main timeline', async () => {
     const childNamespace = ['tools:child-task']
     const waiting = traceDetail({
+      interactionAvailability: [{ interruptId: 'child-review', state: 'available', submissionRunId: null }],
       status: { execution: 'waiting', headRunId: RUN_ID },
       interactions: [{
       agui: toolReviewInterrupts('child-review', [{ toolCallId: 'call-child-write', args: { file_path: '/ui-subagent-hitl.txt', content: 'UI_SUBAGENT_HITL' } }]),
@@ -1161,6 +1163,8 @@ describe('Studio Trace history integration', () => {
     let releaseHistory!: () => void
     const historyReady = new Promise<void>(resolve => { releaseHistory = resolve })
     const waiting = traceDetail({
+      interactionAvailability: ['native-review-multi#0', 'native-review-multi#1']
+        .map(interruptId => ({ interruptId, state: 'available', submissionRunId: null })),
       status: { execution: 'waiting', headRunId: RUN_ID },
       interactions: [{
       agui: toolReviewInterrupts('native-review-multi', [{ toolCallId: 'call-a', args: { file_path: '/a.txt', content: 'A' }, description: '写入 A' }, { toolCallId: 'call-b', args: { file_path: '/b.txt', content: 'B' }, description: '写入 B' }]),
@@ -1251,11 +1255,14 @@ describe('Studio Trace history integration', () => {
         chatPayloads.push(payload)
         details[THREAD_ID] = traceDetail({
           headRunId: payload.runId,
+          asOfSeq: 6,
           runFailures: [],
           availableHeads: [payload.runId],
           status: { execution: 'succeeded', headRunId: payload.runId },
           interactions: [],
-          graph: emptyTraceGraph(5),
+          interactionAvailability: ['native-review-multi#0', 'native-review-multi#1']
+            .map(interruptId => ({ interruptId, state: 'resolved', submissionRunId: payload.runId })),
+          graph: emptyTraceGraph(6),
         })
       },
     })

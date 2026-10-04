@@ -154,7 +154,7 @@ const detail = ({
       turns: entities.turns,
     },
     state: { root: {}, subgraphs: {} },
-    interactions: [],
+    interactionAvailability: [], interactions: [],
     status: {
       execution: groups[0]?.status === 'running' ? 'running' : 'succeeded',
       headRunId: RUN_ID,

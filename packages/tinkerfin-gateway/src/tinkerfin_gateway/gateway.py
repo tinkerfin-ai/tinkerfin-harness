@@ -182,11 +182,12 @@ class Gateway:
         Returns:
             Caller-owned subscription, even when never consumed. Close it or use
             its async context. Closing detaches without cancelling execution.
+            Admission does not wait for workspace readiness or Graph preparation.
 
         Raises:
             RunRequestConflict: Retained identity is bound to different content.
             MessagingError: Admission, cursor, or durable delivery is unavailable.
-            TinkerFinError: Runtime preparation cannot satisfy its contract.
+            TinkerFinError: Runtime admission cannot satisfy its contract.
             ValueError: Command, presentation, or settlement selection is invalid.
             BaseException: Required host registration or settlement fails.
         """

@@ -51,6 +51,7 @@ async def test_preparation_result_is_received_before_cancelled_caller_exits(
 ) -> None:
     entered, closing, release, repeated = (asyncio.Event() for _ in range(4))
     completed: list[int] = []
+    executions: list[str] = []
     failure = (
         RuntimeError("preparation failed")
         if outcome == "ordinary"
@@ -61,8 +62,14 @@ async def test_preparation_result_is_received_before_cancelled_caller_exits(
     cause = OSError("preparation original cause")
     if failure is not None:
         failure.__cause__ = cause
+
+    def reply(state: MessagesState) -> dict[str, object]:
+        del state
+        executions.append("reply")
+        return {"messages": [AIMessage(content="healthy")]}
+
     graph = StateGraph(MessagesState)
-    graph.add_node("reply", lambda state: {"messages": [AIMessage(content="healthy")]})
+    graph.add_node("reply", reply)
     graph.add_edge(START, "reply")
     graph.add_edge("reply", END)
     compiled = graph.compile()
@@ -102,6 +109,7 @@ async def test_preparation_result_is_received_before_cancelled_caller_exits(
     )
     pending: asyncio.Task[None] | None = None
     real_wait = asyncio.wait
+    real_shield = asyncio.shield
     controlled = ModuleType("controlled_task_wait")
     controlled.__dict__.update(vars(asyncio))
 
@@ -109,13 +117,37 @@ async def test_preparation_result_is_received_before_cancelled_caller_exits(
         try:
             return await real_wait(*args, **kwargs)
         except asyncio.CancelledError:
-            if asyncio.current_task() is pending:
+            if (
+                pending is not None
+                and asyncio.current_task() is pending
+                and pending.cancelling() > 1
+            ):
+                repeated.set()
+            raise
+
+    async def shield(*args, **kwargs):
+        try:
+            return await real_shield(*args, **kwargs)
+        except asyncio.CancelledError:
+            if (
+                pending is not None
+                and asyncio.current_task() is pending
+                and pending.cancelling() > 1
+            ):
                 repeated.set()
             raise
 
     setattr(controlled, "wait", wait)
+    setattr(controlled, "shield", shield)
     monkeypatch.setattr(task_module, "asyncio", controlled)
-    pending = asyncio.create_task(run.messaging_owner_preflight())
+    await run.messaging_owner_preflight()
+    if protocol == "agui":
+        await anext(run)
+
+    async def pull() -> None:
+        await anext(run)
+
+    pending = asyncio.create_task(pull())
     primary: BaseException | None = None
     close_failure: BaseException | None = None
     try:
@@ -135,6 +167,7 @@ async def test_preparation_result_is_received_before_cancelled_caller_exits(
         except BaseException as error:  # noqa: BLE001 - inspect only actually delivered failures
             close_failure = error
         assert completed == [1]
+        assert executions == []
         if outcome == "control":
             assert primary is failure
         else:

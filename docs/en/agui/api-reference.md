@@ -23,7 +23,7 @@
 | `parent_run_id` | `None` | Authorized branch or resume lineage |
 | `mode` | Runtime default | `default` or configured `plan` |
 | `config`, `context` | `None` | Graph settings and typed invocation context |
-| `stream_timeout` | `None` | Native stream deadline |
+| `stream_timeout` | `None` | Total deadline for workspace/Graph preparation, resume resolution, and Native pulls, beginning with the first Native pull after `RUN_STARTED` |
 | `cleanup_timeout` | `None` | Caller wait limit for protected cleanup |
 | `include_reasoning_events` | `False` | Include verified public reasoning events |
 | `include_subagent_events` | `True` | Include subagent events |

@@ -1077,81 +1077,9 @@ export const prepareResumeSubmission = (
     ...conversation,
     runStatus: "streaming",
     notice: undefined,
-    messages: conversation.messages.map((message) => {
-      if (message.role !== "tool") return message
-      const matchesApproval = conversation.approval?.items.some(
-        (item) => item.toolCallId && item.toolCallId === message.meta?.toolCallId,
-      )
-      if (!matchesApproval) return message
-      return {
-        ...message,
-        meta: {
-          ...message.meta,
-          status: "running",
-          interruptId: undefined,
-        },
-      }
-    }),
     approval: conversation.approval
       ? { ...conversation.approval, submitted: true, error: undefined }
       : conversation.approval,
-  }
-}
-
-const restorePendingInteraction = (conversation: Conversation): Conversation => {
-  const approval = conversation.approval
-    ? { ...conversation.approval, submitted: false }
-    : undefined
-  if (approval) delete approval.error
-  const planInteraction = conversation.planInteraction
-    ? { ...conversation.planInteraction, submitted: false }
-    : undefined
-  if (planInteraction) delete planInteraction.error
-  const interruptByToolId = new Map<string, string>()
-  for (const item of approval?.items ?? []) {
-    if (item.toolCallId) interruptByToolId.set(item.toolCallId, item.interruptId)
-  }
-  const interruptedRunIds = new Set(
-    conversation.messages.flatMap((message) => {
-      const meta = message.meta
-      if (
-        message.role !== "tool"
-        || !meta
-        || meta.subRunId != null
-        || typeof meta.runId !== "string"
-        || typeof meta.toolCallId !== "string"
-        || !interruptByToolId.has(meta.toolCallId)
-      ) return []
-      return [meta.runId]
-    }),
-  )
-  return {
-    ...conversation,
-    runStatus: "waiting_approval",
-    activeRunId: undefined,
-    approval,
-    planInteraction,
-    messages: conversation.messages.map((message) => {
-      const toolCallId = message.meta?.toolCallId
-      const interruptId = toolCallId
-        ? interruptByToolId.get(toolCallId)
-        : undefined
-      if (
-        message.role !== "tool"
-        || (message.meta?.status !== "running" && message.meta?.status !== "paused")
-        || message.meta.subRunId != null
-        || typeof message.meta.runId !== "string"
-        || !interruptedRunIds.has(message.meta.runId)
-      ) return message
-      return {
-        ...message,
-        meta: {
-          ...message.meta,
-          status: "paused",
-          interruptId,
-        },
-      }
-    }),
   }
 }
 
@@ -1181,46 +1109,19 @@ const reduceConversationEvent = (
     }
 
     case "RUN_STARTED": {
-      const isResume = Boolean(
-        conversation.approval?.submitted
-        || conversation.planInteraction?.submitted,
-      )
-      const initializationFailed = event.rawEvent?.initializationFailed === true
-      const preservePending = initializationFailed
-        && Boolean(conversation.approval || conversation.planInteraction)
-      const pending = preservePending
-        ? restorePendingInteraction(conversation)
-        : conversation
-      const messages = [...pending.messages]
-      if (isResume && !preservePending && pending.planInteraction) {
-        const closed: Message = {
-          id: `plan-history:${pending.planInteraction.interruptId}`, role: 'process', content: '', createdAt: nowIso(),
-          meta: { planHistory: pending.planInteraction, status: 'completed' },
-        }
-        const questionIndex = messages.findIndex(message => message.role === 'user' && message.meta?.runId === event.runId)
-        messages.splice(questionIndex < 0 ? messages.length : questionIndex, 0, closed)
-      }
       return {
-        ...pending,
+        ...conversation,
         threadId: event.threadId,
         ...(event.title !== undefined ? mergeConversationTitle(conversation, { ...event, title: event.title.trim() || conversation.title }) : {}),
-        activeRunId: preservePending ? undefined : event.runId,
-        runStatus: preservePending ? "waiting_approval" : "streaming",
+        activeRunId: event.runId,
+        runStatus: "streaming",
         notice: undefined,
-        approval: isResume && !preservePending ? undefined : pending.approval,
-        planInteraction: preservePending ? pending.planInteraction : undefined,
-        messages: messages.map((message) => (
-          isResume && !preservePending && message.meta?.status === "paused"
-            ? {
-                ...message,
-                meta: {
-                  ...message.meta,
-                  status: "running" as const,
-                  interruptId: undefined,
-                },
-              }
-            : message
-        )),
+        approval: conversation.approval?.submitted
+          ? { ...conversation.approval, submissionRunId: event.runId }
+          : conversation.approval,
+        planInteraction: conversation.planInteraction?.submitted
+          ? { ...conversation.planInteraction, submissionRunId: event.runId }
+          : conversation.planInteraction,
       }
     }
 
@@ -1528,6 +1429,9 @@ const reduceConversationEvent = (
         }
 
       if (outcome.type === "interrupt") {
+        if (conversation.approval?.submitted || conversation.planInteraction?.submitted) {
+          return { ...conversation, runStatus: 'waiting_approval', activeRunId: undefined }
+        }
         const planInteraction = planInteractionFromInterrupts(outcome.interrupts)
         if (planInteraction) {
           return {
@@ -1559,8 +1463,8 @@ const reduceConversationEvent = (
         threadId: event.threadId,
         runStatus: "idle",
         activeRunId: undefined,
-        approval: undefined,
-        planInteraction: undefined,
+        approval: conversation.approval?.submitted ? conversation.approval : undefined,
+        planInteraction: conversation.planInteraction?.submitted ? conversation.planInteraction : undefined,
       }
       }
 
@@ -1589,20 +1493,6 @@ const reduceConversationEvent = (
         if (conversation.activeRunId && errorRunId && conversation.activeRunId !== errorRunId) {
           return { ...conversation, runFailures }
         }
-        if (
-          rawEvent.initializationFailed === true
-          && (conversation.approval || conversation.planInteraction)
-        ) {
-          return setConversationNotice(
-            restorePendingInteraction(conversation),
-            conversationErrorMessage(
-              new ConversationError('resume_failed', event.message),
-              'resume_failed',
-            ),
-            "error",
-            `${errorRunId}:terminal`,
-          )
-        }
         // 用户主动停止是正常业务终态，不能把未完成工作渲染成系统故障
         return {
             ...conversation,
@@ -1610,9 +1500,11 @@ const reduceConversationEvent = (
             runFailures,
             runStatus: isCancelled ? "idle" : "error",
             activeRunId: undefined,
-            approval: undefined,
-            planInteraction: undefined,
+            approval: conversation.approval?.submitted ? conversation.approval : undefined,
+            planInteraction: conversation.planInteraction?.submitted ? conversation.planInteraction : undefined,
             messages: conversation.messages.map((message) => {
+              if (message.meta?.status === 'paused'
+                && (conversation.approval?.submitted || conversation.planInteraction?.submitted)) return message
               // 停止确认后立即显示已收到的正文，不再播放该轮剩余的逐字动画
               if (isCancelled && errorRunId && message.role === "assistant" && message.meta?.runId === errorRunId) {
                 return {

@@ -133,6 +133,12 @@ async def test_coordination_precedes_graph_preparation_and_lasts_until_close(
     assert graph.builds == 0 and not exited.is_set()
     admitted.set()
     await preflight
+    assert graph.builds == 0 and not exited.is_set()
+    if protocol == "agui":
+        assert isinstance(stream, AgUiRunStream)
+        assert (await anext(stream)).type == "RUN_STARTED"
+        assert graph.builds == 0
+    await anext(stream)
     assert graph.builds == 1 and not exited.is_set()
     await stream.aclose()
     await stream.aclose()
@@ -634,12 +640,12 @@ async def test_terminal_callback_preserves_the_selected_native_outcome(
 
 
 @pytest.mark.parametrize("exit_mode", ["consumer_cancel", "external_close"])
-async def test_initialization_failure_survives_cancel_during_error_stream_startup(
+async def test_cancelled_observer_opening_does_not_prepare_the_graph(
     definition_factory: Callable[..., AgentRuntime[None]], exit_mode: str
 ) -> None:
     entered = asyncio.Event()
     closed = asyncio.Event()
-    original = RuntimeError("initialization failed before observation opened")
+    original = RuntimeError("graph preparation must not precede observation opening")
 
     class BlockingObserver:
         async def open_run(self, context: RunSourceContext) -> RunObservationSession:
@@ -682,17 +688,6 @@ async def test_initialization_failure_survives_cancel_during_error_stream_startu
         except BaseException as error:  # noqa: BLE001 - inspect public cleanup evidence
             public_errors.append(error)
     assert closed.is_set()
-    if stream.error is not None:
-        public_errors.append(stream.error)
-    seen: set[int] = set()
-    evidence: list[str] = []
-    while public_errors:
-        error = public_errors.pop()
-        if id(error) in seen:
-            continue
-        seen.add(id(error))
-        evidence.extend([str(error), *getattr(error, "__notes__", ())])
-        public_errors.extend(
-            item for item in (error.__cause__, error.__context__) if item is not None
-        )
-    assert any(str(original) in text for text in evidence)
+    assert stream.error is None
+    assert public_errors
+    assert all(isinstance(error, asyncio.CancelledError) for error in public_errors)

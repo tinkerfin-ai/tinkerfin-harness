@@ -6,13 +6,14 @@ import asyncio
 import inspect
 import math
 from collections.abc import AsyncGenerator
+from functools import partial
 from typing import TYPE_CHECKING, cast
 
 from ag_ui.core import BaseEvent, RunErrorEvent, RunStartedEvent
 
 from ._failure_evidence import retain_failure, select_failure
 from ._run_callbacks import callback_scope
-from ._runtime_streams import _map_sse_item, _resolve_sse_event_id
+from ._runtime_streams import _before_deadline, _map_sse_item, _resolve_sse_event_id
 from ._tasks import (
     _capture_operation,
     _join_operation,
@@ -43,10 +44,6 @@ __all__ = [
     "_observe",
     "_record_secondary_error_note",
 ]
-
-
-class _AgUiStreamDeadlineExceeded(TimeoutError):
-    """Identify only the total pull deadline owned by `AgUiEventStream`."""
 
 
 async def __anext__(self: AgUiEventStream) -> BaseEvent:
@@ -135,7 +132,7 @@ async def abort(self: AgUiEventStream) -> list[BaseEvent]:
     if self._completed or self._abort_events_delivered:
         return []
     self._abort_events_delivered = True
-    tail = self._adapter.abort()
+    tail = self._abort_conversion()
     if self._main_started:
         tail.append(
             self._decorate_initialization_event(
@@ -434,11 +431,11 @@ def _decorate_initialization_event(
 
 
 async def _next_part(self: AgUiEventStream) -> object:
+    from .runtime import _GraphRunStream
+
     timeout = self._timeout
     if timeout is None:
         return await anext(self._upstream)
-    if timeout == 0:
-        raise _AgUiStreamDeadlineExceeded("AG-UI stream timed out")
     loop = asyncio.get_running_loop()
     deadline = self._deadline
     if deadline is None:
@@ -447,13 +444,6 @@ async def _next_part(self: AgUiEventStream) -> object:
         except OverflowError:
             deadline = math.inf
         self._deadline = deadline
-    if loop.time() >= deadline:
-        raise _AgUiStreamDeadlineExceeded("AG-UI stream timed out")
-    timeout_context = asyncio.timeout_at(deadline)
-    try:
-        async with timeout_context:
-            return await anext(self._upstream)
-    except TimeoutError as error:
-        if timeout_context.expired():
-            raise _AgUiStreamDeadlineExceeded("AG-UI stream timed out") from error
-        raise
+    if isinstance(self._upstream, _GraphRunStream):
+        return await self._upstream._next_before(deadline)
+    return await _before_deadline(partial(anext, self._upstream), deadline)

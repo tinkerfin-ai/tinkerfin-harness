@@ -222,6 +222,29 @@ class ConversationRepository:
         )
         return tuple(rows)
 
+    async def list_interaction_claims(
+        self,
+        *,
+        thread_pk: int,
+        interrupt_ids: frozenset[str],
+        submission_run_id: str,
+    ) -> tuple[ConversationInterruptClaim, ...]:
+        """读取待处理交互和当前提交的认领，不加载其他轮次的审批历史"""
+
+        rows = await self._session.scalars(
+            select(ConversationInterruptClaim)
+            .where(
+                ConversationInterruptClaim.conversation_thread_id == thread_pk,
+                or_(
+                    ConversationInterruptClaim.interrupt_id.in_(interrupt_ids),
+                    ConversationInterruptClaim.claimed_run_id == submission_run_id,
+                ),
+            )
+            .order_by(ConversationInterruptClaim.id)
+            .execution_options(populate_existing=True)
+        )
+        return tuple(rows)
+
     async def create_interrupt_claims(
         self,
         *,
