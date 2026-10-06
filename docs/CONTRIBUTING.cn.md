@@ -2,7 +2,7 @@
 
 [English](../CONTRIBUTING.md)
 
-可复现的问题和功能建议请提交到 [Issues](https://github.com/tinkerfin-ai/tinkerfin-harness/issues)。安全漏洞请私下发送至 **1090116461@qq.com**，参见 [SECURITY.md](../SECURITY.md)。
+可复现的问题和功能建议请提交到 [Issues](https://github.com/tinkerfin-ai/tinkerfin-harness/issues)。安全漏洞请私下发送至 **huyuanshann@gmail.com**，参见 [SECURITY.md](../SECURITY.md)。
 
 ## 提交修改
 
