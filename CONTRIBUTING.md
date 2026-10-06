@@ -2,7 +2,7 @@
 
 [中文](docs/CONTRIBUTING.cn.md)
 
-Use [Issues](https://github.com/tinkerfin-ai/tinkerfin-harness/issues) for reproducible bugs and feature requests. Report security vulnerabilities privately to **1090116461@qq.com**; see [SECURITY.md](SECURITY.md).
+Use [Issues](https://github.com/tinkerfin-ai/tinkerfin-harness/issues) for reproducible bugs and feature requests. Report security vulnerabilities privately to **huyuanshann@gmail.com**; see [SECURITY.md](SECURITY.md).
 
 ## Submit a change
 

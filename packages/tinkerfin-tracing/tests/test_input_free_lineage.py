@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncGenerator
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal, TypedDict
 
 import pytest
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from tinkerfin_contracts import RunIdentity
 from tinkerfin_tracing import (
@@ -23,6 +27,7 @@ from tinkerfin_tracing import (
     PlanRevisionFact,
     ReasoningFact,
     RunFact,
+    SqlAlchemyTraceStore,
     StateRevisionFact,
     SubagentFact,
     ToolExecutionFact,
@@ -110,7 +115,9 @@ def _events(facts: tuple[TraceSemanticFact, ...]) -> tuple[TraceEvent, ...]:
 
 def _checkpoint(events: tuple[TraceEvent, ...], split: int) -> CoreProjectionState:
     state = advance_core_projection_state(empty_core_projection_state(), events[:split])
-    restored = CoreProjectionState.model_validate_json(state.model_dump_json())
+    restored = CoreProjectionState.model_validate_json(
+        json.dumps(state.model_dump(mode="json"), sort_keys=True)
+    )
     return advance_core_projection_state(restored, events[split:])
 
 
@@ -136,6 +143,156 @@ def _completed_parent() -> tuple[TraceSemanticFact, ...]:
         ),
         _run(_FIRST, "terminal"),
     )
+
+
+@pytest.mark.parametrize("parent_has_turn", [False, True])
+def test_partial_turn_window_matches_batch_with_cached_run_order(
+    parent_has_turn: bool,
+) -> None:
+    parent = _FIRST.model_copy(update={"run_id": "z-parent"})
+    child = _SECOND.model_copy(update={"run_id": "a-child"})
+    parent_turn = (
+        (TurnFact(**_source(parent, "turn"), turn_id="parent-turn"),)
+        if parent_has_turn
+        else ()
+    )
+    events = _events(
+        (
+            _run(parent, "started"),
+            *parent_turn,
+            MessageFact(
+                **_source(parent, "message"),
+                phase="completed",
+                message_id="parent-message",
+                role="assistant",
+                content=_CAPTURED,
+            ),
+            _run(parent, "terminal"),
+            _run(child, "started"),
+            _tool(child),
+        )
+    )
+    expected = project_core(
+        events, head_run_id=None, turn_limit=1, active_run_ids=(child.run_id,)
+    )
+    assert expected.completeness.missing_prefix is not parent_has_turn
+    assert expected.has_older is False
+    assert [message.id for message in expected.messages] == ["parent-message"]
+    for split in range(len(events) + 1):
+        assert (
+            project_core_checkpoint(
+                _checkpoint(events, split),
+                head_run_id=None,
+                turn_limit=1,
+                active_run_ids=(child.run_id,),
+            )
+            == expected
+        )
+
+
+def test_late_turn_recomputes_missing_prefix_without_changing_earlier_state() -> None:
+    events = _events(
+        (
+            _run(_FIRST, "started"),
+            _tool(_FIRST),
+            TurnFact(**_source(_FIRST, "turn"), turn_id="turn-partial:first"),
+        )
+    )
+    earlier = _checkpoint(events[:2], 2)
+    current = advance_core_projection_state(earlier, events[2:])
+    for prefix, state, missing in (
+        (events[:2], earlier, True),
+        (events, current, False),
+    ):
+        projected = project_core_checkpoint(
+            state, head_run_id=None, turn_limit=1, active_run_ids=("first",)
+        )
+        assert projected.completeness.missing_prefix is missing
+        assert projected == project_core(
+            prefix, head_run_id=None, turn_limit=1, active_run_ids=("first",)
+        )
+
+
+@pytest.mark.parametrize("head,missing", [("second", False), ("unrelated", True)])
+def test_missing_turn_evidence_is_scoped_to_the_selected_lineage(
+    head: str, missing: bool
+) -> None:
+    unrelated = _FIRST.model_copy(update={"run_id": "unrelated"})
+    events = _events(
+        (
+            *_completed_parent(),
+            _run(_SECOND, "started", parent="first"),
+            _tool(_SECOND),
+            _run(unrelated, "started"),
+            _tool(unrelated),
+        )
+    )
+    expected = project_core(
+        events,
+        head_run_id=head,
+        turn_limit=1,
+        active_run_ids=("second", "unrelated"),
+    )
+    assert expected.completeness.missing_prefix is missing
+    for split in range(len(events) + 1):
+        assert (
+            project_core_checkpoint(
+                _checkpoint(events, split),
+                head_run_id=head,
+                turn_limit=1,
+                active_run_ids=("second", "unrelated"),
+            )
+            == expected
+        )
+
+
+async def test_persisted_partial_turns_follow_late_evidence_at_fixed_prefixes(
+    tmp_path: Path,
+) -> None:
+    url = f"sqlite+aiosqlite:///{tmp_path / 'trace.sqlite'}"
+    async with AsyncExitStack() as resources:
+        first_engine = create_async_engine(url)
+        resources.push_async_callback(first_engine.dispose)
+        second_engine = create_async_engine(url)
+        resources.push_async_callback(second_engine.dispose)
+        store = SqlAlchemyTraceStore(first_engine)
+        reader = Tracer(store=SqlAlchemyTraceStore(second_engine))
+        first_writer = await store.open_writer(_FIRST)
+        resources.push_async_callback(first_writer.aclose)
+        second_writer = await store.open_writer(_SECOND)
+        resources.push_async_callback(second_writer.aclose)
+        await first_writer.append((_run(_FIRST, "started"), _tool(_FIRST)))
+        await second_writer.append(
+            (
+                _run(_SECOND, "started", parent="first"),
+                TurnFact(**_source(_SECOND, "turn"), turn_id="second-turn"),
+                _tool(_SECOND),
+            )
+        )
+        earlier = await Tracer(store=store).get(_FIRST.thread, limit=1)
+        assert earlier.completeness.missing_prefix is True
+        cursor = earlier.history_cursor
+        assert cursor is not None
+        cached = await reader.get(_FIRST.thread, limit=1)
+        assert cached.summary == earlier.summary
+        await first_writer.append(
+            (TurnFact(**_source(_FIRST, "turn"), turn_id="first-turn"),)
+        )
+        current = await reader.get(_FIRST.thread, limit=1)
+        assert current.completeness.missing_prefix is False
+        async with earlier.follow() as updates:
+            update = await anext(updates)
+            assert update.as_of_seq == current.as_of_seq
+            assert update.completeness.missing_prefix is False
+        expanded = await reader.get(_FIRST.thread, history_cursor=cursor, limit=1)
+        assert expanded.as_of_seq == earlier.as_of_seq < current.as_of_seq
+        assert expanded.completeness.missing_prefix is True
+        assert expanded.has_older is False
+        await earlier.load_older(limit=1)
+        assert earlier.summary == expanded.summary
+        assert earlier.completeness.missing_prefix is True
+        graph = await reader.query(_FIRST.thread)
+        assert {turn.id for turn in graph.turns} == {"first-turn", "second-turn"}
 
 
 @pytest.mark.parametrize(
@@ -407,6 +564,7 @@ async def test_active_input_free_writer_is_queryable_and_followable(
             if isinstance(update, TraceUpdate):
                 assert update.events == (*started, *tracking, *execution)
                 assert update.tool_call_count == 1
+                assert update.completeness.missing_prefix is True
             else:
                 assert isinstance(update, TraceGraphDelta)
                 assert {node.run_id for node in update.node_upserts} == {"second"}
@@ -415,6 +573,7 @@ async def test_active_input_free_writer_is_queryable_and_followable(
             assert history.head_run_id == "second"
             assert history.tool_call_count == 1
             assert history.status.execution == "running"
+            assert history.completeness.missing_prefix is True
             assert graph.as_of_seq == history.as_of_seq == execution[-1].trace_seq
             assert {node.run_id for node in graph.nodes} == {"second"}
             assert all(

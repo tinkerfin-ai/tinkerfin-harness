@@ -5,7 +5,7 @@ labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: "Report security vulnerabilities privately to 1090116461@qq.com. Remove credentials and personal data from examples and logs."
+      value: "Report security vulnerabilities privately to huyuanshann@gmail.com. Remove credentials and personal data from examples and logs."
   - type: dropdown
     id: component
     attributes:

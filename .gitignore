@@ -47,3 +47,6 @@ htmlcov/
 **/.mcp.json
 **/AGENTS.md
 **/CLAUDE.md
+
+# Local design prototypes
+/apps/studio/web/designs/

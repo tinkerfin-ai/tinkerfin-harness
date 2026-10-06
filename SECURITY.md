@@ -1,6 +1,6 @@
 # Reporting a security vulnerability
 
-Send vulnerability reports privately to **1090116461@qq.com**. Do not open a public issue or pull request containing exploit details before coordinating disclosure with the maintainer.
+Send vulnerability reports privately to **huyuanshann@gmail.com**. Do not open a public issue or pull request containing exploit details before coordinating disclosure with the maintainer.
 
 Include the affected component and release or commit, impact, reproduction steps, and a minimal example where possible. Remove credentials and personal data from all examples and logs.
 
@@ -8,7 +8,7 @@ The maintainer will investigate and coordinate a fix and disclosure with you. Or
 
 ## 安全漏洞报告
 
-请将安全漏洞私下发送至 **1090116461@qq.com**。在与维护者协调披露前，请勿在公开 Issue 或 PR 中发布可利用的细节。
+请将安全漏洞私下发送至 **huyuanshann@gmail.com**。在与维护者协调披露前，请勿在公开 Issue 或 PR 中发布可利用的细节。
 
 请说明受影响的组件、发布版本或 commit、影响范围、复现步骤，并尽量提供最小示例。示例和日志中请删除凭据与个人数据。
 

@@ -232,7 +232,11 @@ class CoreProjectionState(TraceModel, frozen=True):
 
 @dataclass(frozen=True, slots=True)
 class CoreProjectionWindow:
-    """Describe the selected lineage and bounded Turn window for one query."""
+    """Describe the selected lineage and bounded Turn window for one query.
+
+    Missing Turn evidence is derived at each read so later facts can complete newer
+    views while fixed earlier prefixes remain partial.
+    """
 
     selected_head: str
     available_heads: tuple[str, ...]
@@ -240,6 +244,7 @@ class CoreProjectionWindow:
     visible_run_ids: frozenset[str]
     run_turns: Mapping[str, str]
     visible_turns: frozenset[str]
+    missing_prefix: bool
     first_seq: int
     has_older: bool
 
@@ -731,7 +736,7 @@ def select_core_projection_window(
     head_run_id: str | None,
     turn_limit: int,
 ) -> CoreProjectionWindow:
-    """Select one head lineage and its latest bounded Turn window."""
+    """Resolve missing Turns in first-event order for stable paging and gap signals."""
 
     if turn_limit < 1:
         raise ValueError("turn_limit must be positive")
@@ -775,12 +780,16 @@ def select_core_projection_window(
         if info.turn_id is not None
     }
     turn_order = list(state.turn_order)
-    for run_id in lineage:
-        if run_id not in runs:
-            continue
+    missing_prefix = False
+    selected_runs = sorted(
+        (runs[run_id] for run_id in lineage if run_id in runs),
+        key=lambda info: info.first_seq,
+    )
+    for info in selected_runs:
+        run_id = info.run_id
         if run_id in run_turns:
             continue
-        parent = runs[run_id].parent_run_id
+        parent = info.parent_run_id
         visited: set[str] = set()
         while parent is not None and parent not in visited:
             visited.add(parent)
@@ -793,6 +802,7 @@ def select_core_projection_window(
             run_turns[run_id] = partial
             if partial not in turn_order:
                 turn_order.append(partial)
+            missing_prefix = True
     selected_turn_ids = {run_turns[run_id] for run_id in lineage if run_id in run_turns}
     selected_turns = [value for value in turn_order if value in selected_turn_ids]
     visible_turns = frozenset(selected_turns[-turn_limit:])
@@ -809,6 +819,7 @@ def select_core_projection_window(
         visible_run_ids=visible_runs,
         run_turns=MappingProxyType(run_turns),
         visible_turns=visible_turns,
+        missing_prefix=missing_prefix,
         first_seq=first_seq,
         has_older=len(selected_turns) > len(visible_turns),
     )
@@ -1120,7 +1131,8 @@ def project_core_checkpoint(
         )
     }
     completeness = TraceCompleteness(
-        missing_prefix=any(
+        missing_prefix=window.missing_prefix
+        or any(
             state.runs[run_id].missing_prefix
             for run_id in window.selected_run_ids
             if run_id in state.runs
