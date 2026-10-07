@@ -15,6 +15,7 @@ from ._graph_reducer import (
     graph_node_mutations,
 )
 from ._ids import scope_id
+from ._model_requests import model_request_reference
 from .backend import TraceGraphNodeMutation
 from .capture import CapturedValue
 from .errors import TraceStoreProtocolError
@@ -41,7 +42,6 @@ from .graph import (
     TraceGraphTurn,
     canonical_trace_graph_node_order,
 )
-from .model_requests import _model_request_reference
 from .store import TraceGraphNodeRecord
 
 
@@ -819,7 +819,7 @@ def project_trace_graph_node(
         )
         if not request_omitted:
             assert record.request_event is not None
-            request_reference = _model_request_reference(record.request_event)
+            request_reference = model_request_reference(record.request_event)
         source_id = request_fact.call_id
         if isinstance(result_fact, ModelCallFact):
             usage, _usage_omitted = _captured(result_fact.usage)

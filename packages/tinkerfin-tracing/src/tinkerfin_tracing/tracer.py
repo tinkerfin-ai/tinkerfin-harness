@@ -17,6 +17,7 @@ from tinkerfin_contracts import (
 
 from ._follow_lineage import PendingTraceLineage, head_selection_pending
 from ._graph_projection import project_trace_graph_records
+from ._model_requests import read_model_request
 from ._projection_cache import ProjectionRegistry
 from ._tasks import capture, join_owned_task, select_failure
 from ._tracing_session import _TracingSession
@@ -35,7 +36,7 @@ from .graph import (
 )
 from .graph_query import TraceGraphQuery, decode_graph_cursor, encode_graph_cursor
 from .limits import TraceLimits
-from .model_requests import TraceModelRequest, _read_model_request
+from .model_requests import TraceModelRequest
 from .projection import (
     RegisteredTraceProjection,
     TraceProjection,
@@ -349,7 +350,7 @@ class Tracer:
         """
         if not isinstance(identity, ThreadIdentity):
             raise TypeError("identity must be a ThreadIdentity")
-        return await _read_model_request(self._store, identity, reference)
+        return await read_model_request(self._store, identity, reference)
 
     async def query(
         self,
