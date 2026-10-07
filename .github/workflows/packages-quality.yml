@@ -101,6 +101,10 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/studio/web/pnpm-lock.yaml') }}
+      - name: Use Ubuntu HTTPS mirrors
+        run: |
+          printf 'https://archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://security.ubuntu.com/ubuntu/\tpriority:2\n' |
+            sudo tee /etc/apt/apt-mirrors.txt >/dev/null
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps --only-shell chromium
       - name: Test web HTTP and browser uploads
