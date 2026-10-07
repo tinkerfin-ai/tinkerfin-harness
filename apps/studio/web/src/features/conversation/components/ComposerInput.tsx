@@ -17,11 +17,10 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, {
   activeId?: string
   unavailableIds: readonly string[]
   onChange: (transaction: Transaction) => void
-  acceptDraft: (draft: EditorState) => boolean
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void
   onBlur: () => void
   onAddAttachments: (files: readonly File[]) => void
-}>(function ComposerInput({ draft, disabled, busy, placeholder, menuId, activeId, unavailableIds, onChange, acceptDraft, onKeyDown, onBlur, onAddAttachments }, ref) {
+}>(function ComposerInput({ draft, disabled, busy, placeholder, menuId, activeId, unavailableIds, onChange, onKeyDown, onBlur, onAddAttachments }, ref) {
   const { t } = useI18n()
   const descriptionId = useId()
   const input = useRef<HTMLTextAreaElement>(null)
@@ -102,11 +101,6 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, {
           if (selection && !current.selection.eq(selection)) apply(current.update({ selection }))
           const state = latest.current.draft
           const transaction = changeComposerText(state, element.value, element.selectionStart, composing.current ? 'input.type.compose' : 'input.type', selection?.main)
-          if (!composing.current && !acceptDraft(transaction.state)) {
-            element.value = current.doc.toString()
-            element.setSelectionRange(current.selection.main.from, current.selection.main.to)
-            return
-          }
           apply(transaction)
         }}
         onSelect={event => {

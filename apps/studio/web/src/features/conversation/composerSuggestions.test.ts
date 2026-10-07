@@ -6,7 +6,6 @@ import {
   detectLeadingSlashToken,
   enabledSuggestionIds,
   filterComposerSuggestionGroups,
-  isAllowedComposerDraft,
   isSubmittableComposerDraft,
   planClaimParts,
   replaceSlashTokenWithPlan,
@@ -42,21 +41,14 @@ describe('composerSuggestions', () => {
     expect(planClaimParts('/planner')).toBeNull()
   })
 
-  it('accepts only enabled command prefixes and complete enabled commands', () => {
-    for (const value of ['普通消息', '/compact', '/compact ', '/compact 说明', '/', '/p', '/pl', '/pla', '/plan', '/plan ', '/plan 制定方案', '/m', '/mo', '/model']) {
-      expect(isAllowedComposerDraft(value), value).toBe(true)
-    }
-    for (const value of ['/x', '/permission', '/planner', '/pla 正文', '/plan/child', '/model ', '/model 正文']) {
-      expect(isAllowedComposerDraft(value), value).toBe(false)
-    }
-    expect(isAllowedComposerDraft('正文 /unknown')).toBe(true)
-
-    for (const value of ['/compact', '/compact ', '/plan 制定方案', '/plan\n制定方案']) {
+  it('普通斜杠文本可以发送，已知命令前缀与空Plan继续等待用户完成', () => {
+    for (const value of ['普通消息', '/scripts', '/scripts/run.py', '/planner', '/plan/child', '/compact/files', '/permission', '正文 /unknown', '/compact', '/compact ', '/compact 说明', '/plan 制定方案', '/plan\n制定方案']) {
       expect(isSubmittableComposerDraft(value), value).toBe(true)
     }
-    for (const value of ['/', '/p', '/planner', '/model', '/model 正文', '/plan', '/plan ', '  /plan \n\t']) {
+    for (const value of ['/', '/p', '/pl', '/pla', '/pla 正文', '/com', '/m', '/mo', '/model', '/model 正文', '/MODEL', '/plan', '/plan ', '  /plan \n\t']) {
       expect(isSubmittableComposerDraft(value), value).toBe(false)
     }
+    expect(isSubmittableComposerDraft('/model已有正文', [], 6)).toBe(false)
   })
 
   it('deletes a complete Plan command as one token without leaving partial syntax', () => {

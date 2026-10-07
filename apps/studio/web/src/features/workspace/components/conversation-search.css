@@ -1,6 +1,14 @@
 @layer workspace {
   .conversation-search-dialog { width: min(100%, var(--layout-conversation-search-width)); max-height: calc(100dvh - var(--space-8)); display: flex; flex-direction: column; }
   .conversation-search-body { padding: var(--space-4) var(--dialog-content-padding) 0; }
+  .conversation-search-field { position: relative; }
+  .conversation-search-field .ui-compact-picker { position: static; }
+  /* 菜单跟随完整输入框，右侧内缩包含输入框边线和内边距 */
+  .conversation-search-field .ui-compact-picker-options { right: calc(var(--space-3) + 1px); }
+  /* 两个范围共用文本列，切换到较短译文时保持按钮和菜单对齐 */
+  .conversation-search-scope-label { display: grid; text-align: start; }
+  .conversation-search-scope-label > span { grid-area: 1 / 1; }
+  .conversation-search-scope-label > span[aria-hidden='true'] { visibility: hidden; }
   .conversation-search-heading { margin: var(--space-4) 0 var(--space-2); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--color-text-secondary); }
   .conversation-search-results-shell { position: relative; min-height: 0; }
   .conversation-search-results { overflow-y: auto; max-height: min(40dvh, calc(var(--space-16) * 5)); min-height: var(--space-16); padding: 0 var(--space-3) var(--space-3); }

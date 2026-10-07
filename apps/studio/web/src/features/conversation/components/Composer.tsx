@@ -17,7 +17,6 @@ import {
   enabledSuggestionIds,
   filterComposerSuggestionGroups,
   hasLeadingSkillReference,
-  isAllowedComposerDraft,
   isSubmittableComposerDraft,
   planClaimParts,
   replaceSlashTokenWithPlan,
@@ -159,7 +158,7 @@ export function Composer({
   const skillSelectionMessage = skillSelectionPending
     ? skillsStatus === 'loading' ? t('正在加载技能') : t('技能列表暂不可用')
     : hasUnavailableSkills ? t('所选技能已停用或卸载，请移除后再发送') : undefined
-  const canSubmitDraft = (isCompactCommand || (!skillSelectionPending && !hasUnavailableSkills)) && (Boolean(value.trim()) || attachments.length > 0) && (!value.trim() || isSubmittableComposerDraft(value, references)) && (isCompactCommand ? !compactDisabledReason : attachments.every(item => item.state === 'ready'))
+  const canSubmitDraft = (isCompactCommand || (!skillSelectionPending && !hasUnavailableSkills)) && (Boolean(value.trim()) || attachments.length > 0) && (!value.trim() || isSubmittableComposerDraft(value, references, caret)) && (isCompactCommand ? !compactDisabledReason : attachments.every(item => item.state === 'ready'))
   const cancelSuggestionMenu = useCallback(() => {
     if (menuRequested) {
       setMenuRequested(false)
@@ -366,18 +365,12 @@ export function Composer({
           menuId={menuOpen ? menuId : undefined}
           activeId={menuOpen && resolvedActiveId ? `${menuId}-${resolvedActiveId}` : undefined}
           unavailableIds={selectedSkills.filter(skill => skill.unavailable).map(skill => skill.id)}
-          onChange={onChange} onKeyDown={handleKeyDown} onBlur={() => setMenuRequested(false)}
+          onChange={transaction => {
+            if (transaction.docChanged) setMenuRequested(false)
+            onChange(transaction)
+          }} onKeyDown={handleKeyDown} onBlur={() => setMenuRequested(false)}
           onAddAttachments={onAddAttachments}
-          placeholder={isHydrating ? t('正在加载会话…') : disabledReason ?? t('给 TinkerFin 发消息')}
-          acceptDraft={nextDraft => {
-            const nextValue = nextDraft.doc.toString()
-            const nextCaret = nextDraft.selection.main.head
-            const nextReferences = nextDraft.field(composerSkillReferences)
-            setMenuRequested(false)
-            const nextSlashHit = detectComposerSlashToken(nextValue, nextCaret, nextReferences)
-            return isAllowedComposerDraft(nextValue, skills, nextReferences) || Boolean(nextSlashHit
-              && enabledSuggestionIds(filterComposerSuggestionGroups(nextSlashHit.query, skills, skillsStatus)).length > 0)
-          }} />
+          placeholder={isHydrating ? t('正在加载会话…') : disabledReason ?? t('给 TinkerFin 发消息')} />
         <div className="composer-toolbar-container">
         <div className="composer-toolbar">
           <div className="composer-toolbar-leading">

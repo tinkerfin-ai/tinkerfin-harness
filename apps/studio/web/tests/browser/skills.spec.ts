@@ -6,6 +6,7 @@ import { strToU8, zipSync } from 'fflate'
 import { installNotificationStream } from './fixtures/notifications'
 import type { InstalledSkill } from '../../src/features/skills/model'
 import type { ChatRequestPayload } from '../../src/api/conversation/types'
+import { fulfillExpectedHttpError } from './support/diagnostics'
 
 const user = { user_id: 1, username: 'skill-preview', display_name: '技能预览', avatar_url: null, roles: [], disabled: false }
 
@@ -42,6 +43,33 @@ const composerSkill: InstalledSkill = {project_id: 'project-1', overridden: fals
   author: 'Author', topics: [], file_count: 1, byte_size: 64,
   created_at: '2026-09-28T00:00:00Z', updated_at: '2026-09-28T00:00:00Z',
 }
+
+test('普通斜杠路径完整输入和粘贴后按文本发送，不自动绑定技能', async ({ page }) => {
+  const skill = { ...composerSkill, id: 'find-skills-id', name: 'find-skills', description: 'Search and discover skills from various sources' }
+  await prepare(page, [skill])
+  await page.route('**/api/conversation/chat', route => fulfillExpectedHttpError(route, 503, '隔离输入测试不启动真实运行'))
+  await installProjectScope(page)
+  await page.goto('/')
+  const input = page.getByRole('textbox', { name: '消息输入' })
+  const send = page.getByRole('button', { name: '发送消息', exact: true })
+  await expect(input).toBeEditable()
+  await input.click()
+  await input.pressSequentially('/scripts')
+  await expect(input).toHaveValue('/scripts')
+  await expect(send).toBeEnabled()
+  await expect(page.getByRole('listbox', { name: '命令和技能建议' })).toHaveCount(0)
+
+  await input.fill('')
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.evaluate(() => navigator.clipboard.writeText('/scripts/报告.py'))
+  await input.press('ControlOrMeta+v')
+  await expect(input).toHaveValue('/scripts/报告.py')
+  const plainRequest = page.waitForRequest(request => new URL(request.url()).pathname === '/api/conversation/chat')
+  await input.press('Enter')
+  const plainPayload = (await plainRequest).postDataJSON() as ChatRequestPayload
+  expect(plainPayload.messages).toMatchObject([{ role: 'user', content: '/scripts/报告.py' }])
+  expect(plainPayload.forwardedProps.skillIds).toEqual([])
+})
 
 for (const accepted of [false, true]) {
   test(`对话多选技能随请求发送并${accepted ? '在受理后清空' : '在失败后保留'}`, async ({ page }) => {

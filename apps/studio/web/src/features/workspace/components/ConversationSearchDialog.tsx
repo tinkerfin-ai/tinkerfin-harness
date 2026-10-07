@@ -61,13 +61,15 @@ export function ConversationSearchDialog(props: ConversationSearchDialogProps) {
       <TextField ref={inputRef} type="search" role="combobox" aria-expanded="true" aria-autocomplete="list"
         aria-controls={listId} aria-activedescendant={active ? optionId(activeIndex) : undefined}
         label={<span className="visually-hidden">{t('搜索会话')}</span>} placeholder={t('搜索对话')}
-        shape="standard" value={props.query} onChange={event => props.onQueryChange(event.target.value)}
+        rootClassName="conversation-search-field" shape="standard" value={props.query} onChange={event => props.onQueryChange(event.target.value)}
         leadingContent={<Search size={16} />} trailingContent={
           <ListboxPicker value={props.scope} options={scopes} open={scopeOpen} onOpenChange={setScopeOpen}
             onChange={props.onScopeChange}
             triggerLabel={t('选择搜索范围')} listboxLabel={t('搜索范围')}
             rootClassName="ui-compact-picker ui-compact-picker--flat" triggerClassName="ui-compact-picker-trigger" listboxClassName="ui-compact-picker-options ui-compact-picker-options--down ui-compact-picker-options--compact"
-            renderTrigger={value => <><span>{labels[value]}</span><ChevronDown size={14} /></>}
+            renderTrigger={value => <><span className="conversation-search-scope-label">
+              {scopes.map(scope => <span key={scope} aria-hidden={scope !== value}>{labels[scope]}</span>)}
+            </span><ChevronDown size={16} /></>}
             renderOption={(value, selected) => <><span className="ui-compact-option-label">{labels[value]}</span><span className="ui-compact-option-check">{selected && <Check size={14} />}</span></>} />
         } />
       <p className="conversation-search-heading">{t(props.query.trim() ? '搜索结果' : '最近会话')}</p>
