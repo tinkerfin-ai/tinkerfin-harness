@@ -1,8 +1,9 @@
-import { ListChecks, LoaderCircle, TriangleAlert } from 'lucide-react'
+import { ListChecks, TriangleAlert } from 'lucide-react'
 import { forwardRef } from 'react'
 
 import { useI18n } from '../../../../i18n'
 import type { WebTaskTraceViewState } from '../../../../types'
+import { IconButton } from '../../../../components/ui'
 
 export const TodoTraceLauncher = forwardRef<HTMLButtonElement, {
   taskTrace: WebTaskTraceViewState
@@ -18,33 +19,29 @@ export const TodoTraceLauncher = forwardRef<HTMLButtonElement, {
   onRetry,
 }, ref) {
   const { t } = useI18n()
-  if (taskTrace.phase === 'unloaded' && !loadFailed) return null
+  if (open || (taskTrace.phase === 'unloaded' && !loadFailed)) return null
   if (taskTrace.phase === 'loading') {
     return (
-      <button
+      <IconButton
         ref={ref}
-        type="button"
-        className="composer-auxiliary-control composer-trace-launcher todo-trace-launcher is-loading"
-        aria-label={t('正在加载任务轨迹')}
-        disabled
-      >
-        <LoaderCircle size={16} className="todo-trace-spin" aria-hidden="true" />
-        <span>{t('正在加载任务轨迹')}</span>
-      </button>
+        size="xs" loading
+        className="todo-trace-launcher"
+        label={t('正在加载任务轨迹')}
+        icon={<ListChecks size={17} />}
+      />
     )
   }
   if (taskTrace.phase === 'unavailable' || loadFailed) {
     return (
-      <button
+      <IconButton
         ref={ref}
-        type="button"
-        className="composer-auxiliary-control composer-trace-launcher todo-trace-launcher is-error"
-        aria-label={t('重试任务轨迹')}
+        size="xs"
+        className="todo-trace-launcher"
+        label={t('重试任务轨迹')}
+        tooltip={t('重试任务轨迹')}
+        icon={<TriangleAlert size={17} />}
         onClick={onRetry}
-      >
-        <TriangleAlert size={16} aria-hidden="true" />
-        <span>{t('重试任务轨迹')}</span>
-      </button>
+      />
     )
   }
   if (taskTrace.phase !== 'ready' || taskTrace.snapshot.todoGroups.length === 0) {
@@ -52,17 +49,16 @@ export const TodoTraceLauncher = forwardRef<HTMLButtonElement, {
   }
   const count = taskTrace.snapshot.todoGroups.length
   return (
-    <button
+    <IconButton
       ref={ref}
-      type="button"
-      className={`composer-auxiliary-control composer-trace-launcher todo-trace-launcher${open ? ' is-selected' : ''}`}
+      size="xs"
+      className="todo-trace-launcher"
       aria-expanded={open}
       aria-controls="todo-trace-drawer"
-      aria-label={t('任务轨迹 {count}', { count })}
+      label={t('任务轨迹 {count}', { count })}
+      tooltip={t('任务轨迹')}
+      icon={<><ListChecks size={17} /><span>{count}</span></>}
       onClick={onToggle}
-    >
-      <ListChecks size={16} aria-hidden="true" />
-      <span>{t('任务轨迹 {count}', { count })}</span>
-    </button>
+    />
   )
 })

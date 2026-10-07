@@ -10,13 +10,16 @@ from tinkerfin_sandbox import (
     OpenSandboxBusyError,
     OpenSandboxError,
     OpenSandboxErrorCode,
+    OpenSandboxFileChangedError,
     OpenSandboxFileTooLargeError,
     OpenSandboxInitializationError,
     OpenSandboxLifecycleUncertainError,
+    OpenSandboxNotTextError,
     OpenSandboxPausedError,
     OpenSandboxSettlementTimeoutError,
     OpenSandboxStateUnavailableError,
     OpenSandboxWarmPoolUnavailableError,
+    OpenSandboxWorkspaceNotInitializedError,
 )
 
 
@@ -27,6 +30,12 @@ from tinkerfin_sandbox import (
         (OpenSandboxPausedError, OpenSandboxErrorCode.PAUSED),
         (OpenSandboxBusyError, OpenSandboxErrorCode.BUSY),
         (OpenSandboxLifecycleUncertainError, OpenSandboxErrorCode.LIFECYCLE_UNCERTAIN),
+        (OpenSandboxFileChangedError, OpenSandboxErrorCode.FILE_CHANGED),
+        (OpenSandboxNotTextError, OpenSandboxErrorCode.NOT_TEXT),
+        (
+            OpenSandboxWorkspaceNotInitializedError,
+            OpenSandboxErrorCode.WORKSPACE_NOT_INITIALIZED,
+        ),
     ],
 )
 def test_admission_errors_preserve_the_public_backend_error_contract(

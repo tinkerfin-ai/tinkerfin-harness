@@ -5,10 +5,10 @@ export const MAX_DRAWER_WIDTH = 520
 const DEFAULT_DRAWER_WIDTH = 400
 
 /** 保留主内容所需空间；临时收窄和隐藏不覆盖页面内的用户宽度 */
-export function useDrawerLayout(contentMinWidth: number, resizeContent?: (apply: () => void) => void) {
+export function useDrawerLayout(contentMinWidth: number, resizeContent?: (apply: () => void) => void, initialWidth = DEFAULT_DRAWER_WIDTH) {
   const [host, hostRef] = useState<HTMLDivElement | null>(null)
   const [hostWidth, setHostWidth] = useState(0)
-  const [preferredWidth, setPreferredWidth] = useState(DEFAULT_DRAWER_WIDTH)
+  const [preferredWidth, setPreferredWidth] = useState(() => Math.max(MIN_DRAWER_WIDTH, Math.min(MAX_DRAWER_WIDTH, initialWidth)))
   const [preview, setPreview] = useState<number | null>(null)
 
   useLayoutEffect(() => {

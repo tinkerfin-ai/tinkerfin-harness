@@ -17,6 +17,7 @@ from ..middleware.filesystem import (
     ROOTED_EXECUTE_TOOL_DESCRIPTION,
     ROOTED_FILESYSTEM_SYSTEM_PROMPT,
 )
+from ..workspace_files import WorkspaceDirectoryPage, WorkspaceFileInfo, WorkspaceText
 from ._workspace_access import _ProjectCoordinator
 from ._workspace_watch import WorkspaceChange
 
@@ -95,6 +96,86 @@ class SandboxWorkspace(Generic[KeyT]):
                 be confirmed. Retry deletion after resolving the reported failure.
         """
         await self._project.delete()
+
+    async def list_directory(
+        self, path: str = "/", *, limit: int = 200, cursor: str | None = None
+    ) -> WorkspaceDirectoryPage:
+        """List an existing directory without creating or resuming any resource.
+
+        Args:
+            path: Absolute virtual project path; parent traversal is rejected.
+            limit: Maximum entries per page, from one through 200.
+            cursor: Opaque continuation from the same directory observation.
+
+        Returns:
+            Directories first, then other entries, ordered by exact name.
+
+        Raises:
+            ValueError: Path, limit, or cursor is invalid.
+            FileNotFoundError: The directory does not exist.
+            NotADirectoryError: The selected entry is not a directory.
+            OpenSandboxError: Workspace access, cursor continuity or cleanup fails.
+        """
+        if type(limit) is not int or not 1 <= limit <= 200:
+            raise ValueError("limit must be an integer from 1 through 200")
+        if cursor is not None and len(cursor) > 8192:
+            raise ValueError("cursor exceeds its size limit")
+        result = await self._project.query_files(
+            "list", path, {"limit": limit, "cursor": cursor}
+        )
+        assert result.kind == "directory"
+        return WorkspaceDirectoryPage(
+            result.path,
+            tuple(item.public() for item in result.entries),
+            result.next_cursor,
+        )
+
+    async def get_file_info(self, path: str) -> WorkspaceFileInfo:
+        """Read existing entry metadata without following symbolic links.
+
+        Args:
+            path: Absolute virtual project path; parent traversal is rejected.
+
+        Returns:
+            Entry metadata with an opaque change token and UTC modification time.
+
+        Raises:
+            ValueError: The path is invalid.
+            FileNotFoundError: The selected entry does not exist.
+            OpenSandboxError: Workspace access or resource cleanup fails.
+        """
+        result = await self._project.query_files("stat", path, {})
+        assert result.kind == "info"
+        return result.file.public()
+
+    async def read_text(
+        self, path: str, *, max_bytes: int, max_lines: int = 200
+    ) -> WorkspaceText:
+        """Read a bounded UTF-8 prefix without opening an execution environment.
+
+        Args:
+            path: Absolute virtual path of an existing regular file.
+            max_bytes: Maximum source bytes, from one through one MiB.
+            max_lines: Maximum source lines, from one through 10,000.
+
+        Returns:
+            Text and metadata from one file descriptor, with explicit truncation.
+
+        Raises:
+            ValueError: The path or limits are invalid.
+            FileNotFoundError: The selected file does not exist.
+            OpenSandboxError: Entry is not UTF-8 text, changes during the read,
+                workspace access fails, or owned resource cleanup fails.
+        """
+        if type(max_bytes) is not int or not 1 <= max_bytes <= 1024 * 1024:
+            raise ValueError("max_bytes must be an integer from 1 through one MiB")
+        if type(max_lines) is not int or not 1 <= max_lines <= 10000:
+            raise ValueError("max_lines must be an integer from 1 through 10,000")
+        result = await self._project.query_files(
+            "text", path, {"max_bytes": max_bytes, "max_lines": max_lines}
+        )
+        assert result.kind == "text"
+        return WorkspaceText(result.file.public(), result.text, result.truncated)
 
     @asynccontextmanager
     async def watch(

@@ -434,14 +434,15 @@ test('未水化消息通过可取消的旧 Trace 分页后定位', async ({ page
   })
 
   const desktopLauncher = page.getByRole('button', { name: '任务轨迹 3', exact: true })
-  await desktopLauncher.click()
   await expect(desktopLauncher).toHaveCSS('border-top-width', '0px')
-  await expect(desktopLauncher).not.toHaveCSS('box-shadow', 'none')
+  await expect(desktopLauncher).toHaveCSS('box-shadow', 'none')
   if (process.env.TINKERFIN_VISUAL_QA_DIR) {
     await desktopLauncher.screenshot({
       path: resolve(process.env.TINKERFIN_VISUAL_QA_DIR, 'tinkerfin-task-trace-launcher.png'),
     })
   }
+  await desktopLauncher.click()
+  await expect(desktopLauncher).toBeHidden()
   await page.getByRole('button', { name: '展开任务组：历史任务轨迹 3' }).click()
   await page.getByRole('button', { name: '定位到对话：历史任务轨迹 3' }).click()
 

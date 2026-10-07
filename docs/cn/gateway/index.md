@@ -48,16 +48,26 @@ from tinkerfin_gateway import StartRun
 
 
 async def answer_with_context(gateway, runtime, user_text, instructions):
-    run = await gateway.start(runtime, StartRun(
-        thread_id="conversation",
-        run_id="request-with-context",
-        messages=(
-            {"id": "question", "role": "user", "content": user_text},
-            {"id": "reference", "role": "user", "content": instructions,
-             "source": {"kind": "context", "name": "retrieval",
-                        "metadata": {"document": "authorized-report"}}},
+    run = await gateway.start(
+        runtime,
+        StartRun(
+            thread_id="conversation",
+            run_id="request-with-context",
+            messages=(
+                {"id": "question", "role": "user", "content": user_text},
+                {
+                    "id": "reference",
+                    "role": "user",
+                    "content": instructions,
+                    "source": {
+                        "kind": "context",
+                        "name": "retrieval",
+                        "metadata": {"document": "authorized-report"},
+                    },
+                },
+            ),
         ),
-    ))
+    )
     async with run.subscribe() as replies:
         async for reply in replies:
             print(reply.data.type)
@@ -96,11 +106,13 @@ pip install "tinkerfin-gateway[starlette]"
 from tinkerfin_gateway.starlette import sse_response
 
 
-async def send_command(gateway, authorized_runtime, command):
-    return await sse_response(gateway.stream(authorized_runtime, command))
+async def send_command(gateway, authorized_runtime, command, request):
+    return await sse_response(
+        gateway.stream(authorized_runtime, command), request=request
+    )
 ```
 
-宿主定义路由并授权参数。受理与游标检查在发送响应头前完成。响应在正常结束、响应头发送失败、取消或断连时关闭读取资源；准备好的响应如果不再发送，应调用 `await response.aclose()`。不要在返回响应前关闭它使用的流。
+宿主定义路由并授权参数。受理与游标检查在发送响应头前完成。响应在正常结束、响应头发送失败、取消或断连时关闭读取资源；准备好的响应如果不再发送，应调用 `await response.aclose()`。不要在返回响应前关闭它使用的流。读取完请求体后传入 `request`，准备阶段也会随断连取消；省略时，宿主需取消已放弃的准备操作。请求为借用资源，关闭读取不会取消已接受的持久运行。
 
 ## 通知浏览器读取资源变化
 
@@ -128,6 +140,29 @@ async def changes(gateway, account_id, expires_at, check_access):
 | `resync` | 重新读取可见资源，补齐溢出或连接中断期间的变化 |
 
 宿主要求认证头时，使用携带 Bearer 凭据的 fetch 流。每个可见标签页共享一条通知连接，合并重复失效提示，同一资源的查询依次执行。断连后重建连接并读取基线。通知属于提示，仍需周期校准；智能体回复使用单独的运行输出流。
+
+资源已提供绑定作用域的订阅入口时，使用 `resource_changes`：
+
+```python
+async def workspace_changes(
+    gateway, authorized_project, expires_at, check_access, request
+):
+    return await sse_response(
+        gateway.resource_changes(
+            watch_changes=authorized_project.watch,
+            expires_at=expires_at,
+            authorize=check_access,
+        ),
+        request=request,
+    )
+```
+
+宿主选择已授权的资源，并提供对应的权威查询。`watch_changes` 遵循导出的 `ResourceChangeWatch`
+契约：进入异步上下文即完成订阅，其迭代器返回不超过 1,024 个 UTF-8 字节的字符串提示或
+`ResyncRequired`。Gateway 持有该上下文直到流关闭，沿用资源通知的鉴权、到期、取消及响应清理。
+字符串提示会成为 `change` 事件的数据，例如 `{"kind":"files_changed"}`；客户端应等到 `ready`
+再发起初次查询。资源的管理器由宿主持有，必须在流结束前保持开启；是否允许观察尚不存在或已暂停的
+资源由订阅源决定。Gateway 不依赖 Sandbox。
 
 ## 接入业务登记与观察
 

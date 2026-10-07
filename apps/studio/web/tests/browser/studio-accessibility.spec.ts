@@ -1,3 +1,4 @@
+import { measureBounds } from './support/geometry'
 import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { installLiveRun } from './fixtures/liveRun'
@@ -2324,8 +2325,8 @@ test.describe('消息时间显示', () => {
         expect(buttonBefore.height).toBeCloseTo(32, 5)
         expect(buttonBefore.y - actionBefore.y).toBeCloseTo(4, 5)
         expect(buttonBefore.x + buttonBefore.width).toBeCloseTo(bubbleBefore.x + bubbleBefore.width, 5)
-        expect(iconBefore.width).toBeCloseTo(20, 5)
-        expect(iconBefore.height).toBeCloseTo(20, 5)
+        expect(iconBefore.width).toBeCloseTo(17, 5)
+        expect(iconBefore.height).toBeCloseTo(17, 5)
         expect(answerBefore.y - (bubbleBefore.y + bubbleBefore.height)).toBeCloseTo(40, 5)
         const timeBefore = await timestamp.boundingBox()
         if (!timeBefore) throw new Error('缺少消息时间')
@@ -2959,10 +2960,10 @@ test('Tool 与回答复制图标严格对齐正文左缘', async ({ page }) => {
 
       expect(bodyBounds.x).toBeCloseTo(messageListBounds.x, 5)
       expect(copyBounds.x).toBeCloseTo(bodyBounds.x, 5)
-      expect(copyBounds.width).toBeCloseTo(20, 5)
-      expect(copyBounds.height).toBeCloseTo(20, 5)
+      expect(copyBounds.width).toBeCloseTo(17, 5)
+      expect(copyBounds.height).toBeCloseTo(17, 5)
       expect(toolIconBounds.x).toBeCloseTo(bodyBounds.x, 5)
-      expect(copyBounds.y - (bodyBounds.y + bodyBounds.height)).toBeCloseTo(11, 5)
+      expect(copyBounds.y - (bodyBounds.y + bodyBounds.height)).toBeCloseTo(12.5, 5)
       expect(subagentBounds.y - (previousBodyBounds.y + previousBodyBounds.height)).toBeCloseTo(16, 5)
       expect(toolBounds.y - (subagentBounds.y + subagentBounds.height)).toBeCloseTo(16, 5)
       expect(bodyBounds.y - (toolBounds.y + toolBounds.height)).toBeCloseTo(16, 5)
@@ -3375,96 +3376,18 @@ test('账户菜单、modal 隔离和定时滚动控件保持完整键盘路径',
   const taskTraceButton = page.getByRole('button', { name: '任务轨迹 1' })
   await expect(taskTraceButton).toBeVisible()
   await scrollButton.focus()
-  const auxiliaryAlignment = await page.evaluate(() => {
-    const scroll = document.querySelector<HTMLElement>('.scroll-to-bottom')
-    const taskTrace = document.querySelector<HTMLElement>('.todo-trace-launcher')
-    const composer = document.querySelector<HTMLElement>('.composer')
-    if (!scroll || !taskTrace || !composer) return null
-    const scrollRect = scroll.getBoundingClientRect()
-    const taskTraceRect = taskTrace.getBoundingClientRect()
-    const composerRect = composer.getBoundingClientRect()
-    const visual = (element: HTMLElement) => {
-      const style = getComputedStyle(element)
-      return {
-        minHeight: style.minHeight,
-        borderRadius: style.borderRadius,
-        paddingLeft: style.paddingLeft,
-        paddingRight: style.paddingRight,
-        fontSize: style.fontSize,
-        fontWeight: style.fontWeight,
-        lineHeight: style.lineHeight,
-      }
-    }
-    return {
-      scroll: {
-        top: scrollRect.top,
-        height: scrollRect.height,
-        centerY: scrollRect.top + (scrollRect.height / 2),
-        centerX: scrollRect.left + (scrollRect.width / 2),
-        right: scrollRect.right,
-      },
-      taskTrace: {
-        top: taskTraceRect.top,
-        height: taskTraceRect.height,
-        centerY: taskTraceRect.top + (taskTraceRect.height / 2),
-        left: taskTraceRect.left,
-        right: taskTraceRect.right,
-      },
-      composerTop: composerRect.top,
-      composerCenterX: composerRect.left + (composerRect.width / 2),
-      composerRight: composerRect.right,
-      scrollVisual: visual(scroll),
-      taskTraceVisual: visual(taskTrace),
-    }
-  })
-  expect(auxiliaryAlignment).not.toBeNull()
-  expect(Math.abs((auxiliaryAlignment?.scroll.top ?? 0) - (auxiliaryAlignment?.taskTrace.top ?? 0)))
-    .toBeLessThanOrEqual(0.5)
-  expect(Math.abs((auxiliaryAlignment?.scroll.height ?? 0) - (auxiliaryAlignment?.taskTrace.height ?? 0)))
-    .toBeLessThanOrEqual(0.5)
-  expect(Math.abs((auxiliaryAlignment?.scroll.centerY ?? 0) - (auxiliaryAlignment?.taskTrace.centerY ?? 0)))
-    .toBeLessThanOrEqual(0.5)
-  expect(Math.abs((auxiliaryAlignment?.scroll.centerX ?? 0) - (auxiliaryAlignment?.composerCenterX ?? 0)))
-    .toBeLessThanOrEqual(0.5)
-  expect(Math.abs((auxiliaryAlignment?.taskTrace.right ?? 0) - (auxiliaryAlignment?.composerRight ?? 0)))
-    .toBeLessThanOrEqual(0.5)
-  expect(auxiliaryAlignment?.scroll.right).toBeLessThan(auxiliaryAlignment?.taskTrace.left ?? 0)
-  expect((auxiliaryAlignment?.scroll.top ?? 0) + (auxiliaryAlignment?.scroll.height ?? 0))
-    .toBeLessThanOrEqual(auxiliaryAlignment?.composerTop ?? 0)
-  expect(auxiliaryAlignment?.scrollVisual).toEqual(auxiliaryAlignment?.taskTraceVisual)
-  for (const width of [768, 1023, 1024, 1440]) {
+  const filesButton = page.getByRole('button', { name: '工作区', exact: true })
+  for (const width of [320, 768, 1023, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 })
-    const responsiveAlignment = await page.evaluate(() => {
-      const scroll = document.querySelector<HTMLElement>('.scroll-to-bottom')
-      const taskTrace = document.querySelector<HTMLElement>('.todo-trace-launcher')
-      const composer = document.querySelector<HTMLElement>('.composer')
-      if (!scroll || !taskTrace || !composer) return null
-      const scrollRect = scroll.getBoundingClientRect()
-      const taskTraceRect = taskTrace.getBoundingClientRect()
-      const composerRect = composer.getBoundingClientRect()
-      return {
-        centerDelta: Math.abs(
-          (scrollRect.left + (scrollRect.width / 2))
-          - (composerRect.left + (composerRect.width / 2)),
-        ),
-        rightDelta: Math.abs(taskTraceRect.right - composerRect.right),
-        verticalDelta: Math.abs(
-          (scrollRect.top + (scrollRect.height / 2))
-          - (taskTraceRect.top + (taskTraceRect.height / 2)),
-        ),
-        overlap: Math.max(0, scrollRect.right - taskTraceRect.left),
-        overflow: Math.max(
-          document.documentElement.scrollWidth - document.documentElement.clientWidth,
-          document.body.scrollWidth - document.body.clientWidth,
-        ),
-      }
-    })
-    expect(responsiveAlignment).not.toBeNull()
-    expect(responsiveAlignment?.centerDelta).toBeLessThanOrEqual(0.5)
-    expect(responsiveAlignment?.rightDelta).toBeLessThanOrEqual(0.5)
-    expect(responsiveAlignment?.verticalDelta).toBeLessThanOrEqual(0.5)
-    expect(responsiveAlignment?.overlap).toBe(0)
-    expect(responsiveAlignment?.overflow).toBeLessThanOrEqual(0)
+    const [scrollBox, composerBox, taskBox, filesBox] = await measureBounds(
+      scrollButton, page.locator('.composer'), taskTraceButton, filesButton,
+    )
+    expect(scrollBox.x + scrollBox.width / 2).toBeCloseTo(composerBox.x + composerBox.width / 2, 5)
+    expect(scrollBox.y + scrollBox.height).toBeLessThanOrEqual(composerBox.y)
+    expect(taskBox.y + taskBox.height / 2).toBeCloseTo(filesBox.y + filesBox.height / 2, 5)
+    expect(taskBox.y + taskBox.height).toBeLessThan(scrollBox.y)
+    expect(taskBox.x + taskBox.width).toBeLessThanOrEqual(filesBox.x)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
   }
   await page.clock.fastForward(2_000)
   await expect(scrollButton).toBeVisible()
@@ -3556,16 +3479,16 @@ test.describe('touch/coarse pointer', () => {
       await expect(userAction).toHaveCSS('pointer-events', 'auto')
       expect(userButtonBounds.width).toBeGreaterThanOrEqual(44)
       expect(userButtonBounds.height).toBeGreaterThanOrEqual(44)
-      expect(userIconBounds.width).toBeCloseTo(20, 5)
-      expect(userIconBounds.height).toBeCloseTo(20, 5)
+      expect(userIconBounds.width).toBeCloseTo(17, 5)
+      expect(userIconBounds.height).toBeCloseTo(17, 5)
       expect(userButtonBounds.x + userButtonBounds.width).toBeCloseTo(userBubbleBounds.x + userBubbleBounds.width, 5)
       expect(userActionBounds.y - (userBubbleBounds.y + userBubbleBounds.height)).toBeCloseTo(0, 5)
       expect(bodyBounds.y - (userBubbleBounds.y + userBubbleBounds.height)).toBeCloseTo(52, 5)
       expect(buttonBounds.width).toBeGreaterThanOrEqual(44)
       expect(buttonBounds.height).toBeGreaterThanOrEqual(44)
       expect(iconBounds.x).toBeCloseTo(bodyBounds.x, 5)
-      expect(iconBounds.width).toBeCloseTo(20, 5)
-      expect(iconBounds.height).toBeCloseTo(20, 5)
+      expect(iconBounds.width).toBeCloseTo(17, 5)
+      expect(iconBounds.height).toBeCloseTo(17, 5)
       expect(bubbleBounds.y - (buttonBounds.y + buttonBounds.height)).toBeCloseTo(57, 5)
     }
   })

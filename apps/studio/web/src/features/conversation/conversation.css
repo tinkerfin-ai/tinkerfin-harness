@@ -344,7 +344,7 @@
 
   .message-action-row {
     --message-action-control-size: var(--control-xs);
-    --message-action-icon-size: var(--icon-lg);
+    --message-action-icon-size: var(--icon-action);
     position: relative;
     display: flex;
     align-items: flex-start;
@@ -1620,7 +1620,7 @@
     justify-self: center;
   }
 
-  .composer-task-trace-control {
+  .composer-stop-control {
     grid-column: 3;
     justify-self: end;
     align-items: center;
@@ -1628,7 +1628,7 @@
   }
 
   .composer-scroll-to-bottom-control,
-  .composer-task-trace-control { display: flex; min-width: 0; pointer-events: auto; }
+  .composer-stop-control { display: flex; min-width: 0; pointer-events: auto; }
 
   .composer-auxiliary-control {
     display: inline-flex;
@@ -1682,7 +1682,6 @@
 
   .composer-auxiliary-control:disabled { cursor: not-allowed; opacity: .48; }
 
-  .composer-auxiliary-control.composer-trace-launcher { border: 0; }
   .composer-auxiliary-control.scroll-to-bottom { border: 0; }
 
   .composer-dock.is-taken-over {
@@ -1880,13 +1879,13 @@
     .composer-dock { --composer-inline-inset: var(--layout-page-gutter); }
     .composer-auxiliary-controls { gap: var(--space-4); }
     .composer-auxiliary-control { padding-inline: var(--space-1-5); }
-    .composer-task-trace-control { gap: var(--space-1); }
-    :is(.composer-scroll-to-bottom-control, .composer-task-trace-control)
+    .composer-stop-control { gap: var(--space-1); }
+    :is(.composer-scroll-to-bottom-control, .composer-stop-control)
     .composer-auxiliary-control {
       width: var(--control-sm);
       padding-inline: 0;
     }
-    :is(.composer-scroll-to-bottom-control, .composer-task-trace-control)
+    :is(.composer-scroll-to-bottom-control, .composer-stop-control)
     .composer-auxiliary-control > span { display: none; }
     .tool-detail-card { margin-left: 0; }
     .tool-detail-section { grid-template-columns: minmax(0, 1fr); }

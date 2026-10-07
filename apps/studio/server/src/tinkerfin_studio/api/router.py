@@ -13,6 +13,7 @@ from tinkerfin_studio.api.project_router import router as project_router
 from tinkerfin_studio.api.service_router import router as service_router
 from tinkerfin_studio.api.skill_router import router as skill_router
 from tinkerfin_studio.api.user_router import router as user_router
+from tinkerfin_studio.api.workspace_router import router as workspace_router
 
 
 def create_api_router() -> APIRouter:
@@ -20,6 +21,7 @@ def create_api_router() -> APIRouter:
 
     router = APIRouter(prefix="/api")
     router.include_router(project_router)
+    router.include_router(workspace_router)
     router.include_router(memory_router)
     router.include_router(automation_router)
     router.include_router(attachment_router)

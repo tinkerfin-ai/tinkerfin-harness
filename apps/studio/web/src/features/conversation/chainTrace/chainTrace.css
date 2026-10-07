@@ -854,7 +854,7 @@
     white-space: nowrap;
   }
 
-  .chain-trace-details-header > .ui-icon-button-wrap .ui-icon-button {
+  .chain-trace-details-header .ui-icon-button {
     width: var(--control-sm);
     min-width: var(--control-sm);
     height: var(--control-sm);
@@ -1067,7 +1067,7 @@
       min-height: var(--control-lg);
     }
     .chain-trace-search { grid-template-columns: var(--icon-sm) minmax(0, 1fr) var(--control-lg); }
-    .chain-trace-details-header > .ui-icon-button-wrap .ui-icon-button {
+    .chain-trace-details-header .ui-icon-button {
       width: var(--control-lg);
       min-width: var(--control-lg);
       height: var(--control-lg);

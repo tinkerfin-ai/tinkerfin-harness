@@ -95,6 +95,9 @@ Conversations default to Full access. Use the permission picker beside the model
 to require write approval. Open Memories in the sidebar to view and edit the current
 project's long-term memory. The agent reads and edits the same content; if a save
 reports a conflict, compare the latest content before saving again.
+The folder icon at the top right opens the current project's workspace, shared by
+its conversations. Preview the first 200 lines or 100 KiB of text and code as source;
+other formats show file information. Viewing files never creates or resumes a Sandbox.
 For scheduled work, see [Studio automation](automation.md).
 
 ## Troubleshooting

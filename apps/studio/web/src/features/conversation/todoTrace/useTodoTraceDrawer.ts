@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { WebTaskTraceViewState } from '../../../types'
+import { restoreFocus } from '../../../components/ui/focus'
 
 const PREFERENCE_PREFIX = 'tinkerfin:todo-trace-drawer:'
 const preferenceKey = (threadId: string) => `${PREFERENCE_PREFIX}${threadId}`
@@ -45,7 +46,7 @@ export function useTodoTraceDrawer({
 
   useLayoutEffect(() => {
     if (!open && drawerRef.current?.contains(document.activeElement)) {
-      launcherRef.current?.focus({ preventScroll: true })
+      restoreFocus(launcherRef.current, { preventScroll: true })
     }
   }, [open])
 
@@ -58,27 +59,13 @@ export function useTodoTraceDrawer({
     })
   }, [available, threadId])
 
-  const close = useCallback((restoreFocus = true) => {
+  const close = useCallback((shouldRestoreFocus = true) => {
     if (threadId) writePreference(threadId, false)
     setDesiredOpen(false)
-    if (restoreFocus) {
-      window.requestAnimationFrame(() => launcherRef.current?.focus({ preventScroll: true }))
+    if (shouldRestoreFocus) {
+      window.requestAnimationFrame(() => restoreFocus(launcherRef.current, { preventScroll: true }))
     }
   }, [threadId])
-
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        close(true)
-        return
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [close, open])
 
   return {
     open,

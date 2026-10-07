@@ -145,12 +145,19 @@ def test_business_json_openapi_responses_publish_the_envelope() -> None:
     schema = create_application(lifespan=None).openapi()
     native_paths = {
         "/api/notifications",
+        "/api/projects/{project_id}/workspace/events",
         "/api/conversation/chat",
         "/api/conversation/{thread_id}/compact",
         "/api/conversation/{thread_id}/trace",
         "/api/conversation/{thread_id}/runs/{run_id}/events",
         "/api/conversation/{thread_id}/trace/graph/follow",
     }
+    assert (
+        "text/event-stream"
+        in schema["paths"]["/api/projects/{project_id}/workspace/events"]["get"][
+            "responses"
+        ]["200"]["content"]
+    )
     null_results = {
         ("/api/auth/logout", "post"),
         ("/api/models/configurations/{model_id}", "put"),

@@ -1,6 +1,5 @@
 """当前登录用户的资源变化通知"""
 
-import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Request
@@ -13,10 +12,8 @@ from tinkerfin_studio.api.errors import (
     GlobalErrorCode,
     SystemException,
 )
-from tinkerfin_studio.auth.repository import RedisTokenRepository, UserRepository
-from tinkerfin_studio.auth.service import AuthService
+from tinkerfin_studio.api.session_access import session_has_access
 from tinkerfin_studio.automation.ownership import automation_owner
-from tinkerfin_studio.infrastructure.redis_keys import AUTH_TOKEN_KEY_PREFIX
 from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_studio.resources import get_resources
 
@@ -37,7 +34,7 @@ async def follow_notifications(
     权限复核各自借用短会话，连接空闲期间不占用数据库连接。
     """
     resources = get_resources(request.app)
-    user_id, token = auth.user.user_id, auth.token
+    user_id = auth.user.user_id
     scopes = [NotificationScope(f"ns_{user_id}")]
     if project_id is not None:
         async with resources.database.session() as session:
@@ -49,21 +46,7 @@ async def follow_notifications(
         )
 
     async def authorized() -> bool:
-        async with asyncio.timeout(5):
-            async with resources.database.session() as session:
-                service = AuthService(
-                    UserRepository(session),
-                    RedisTokenRepository(
-                        resources.redis_runtime, key_prefix=AUTH_TOKEN_KEY_PREFIX
-                    ),
-                    token_expire_seconds=resources.settings.auth_token_expire_seconds,
-                )
-                current = await service.resolve_token(token)
-        return (
-            current.is_authenticated
-            and current.user is not None
-            and current.user.user_id == user_id
-        )
+        return await session_has_access(resources, auth, project_id)
 
     try:
         return await sse_response(

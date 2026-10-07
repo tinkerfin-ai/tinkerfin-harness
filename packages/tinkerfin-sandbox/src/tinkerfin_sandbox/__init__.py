@@ -34,6 +34,7 @@ from .errors import OpenSandboxBusyError as OpenSandboxBusyError
 from .errors import OpenSandboxDestroyError as OpenSandboxDestroyError
 from .errors import OpenSandboxError as OpenSandboxError
 from .errors import OpenSandboxErrorCode as OpenSandboxErrorCode
+from .errors import OpenSandboxFileChangedError as OpenSandboxFileChangedError
 from .errors import OpenSandboxFileTooLargeError as OpenSandboxFileTooLargeError
 from .errors import OpenSandboxHandleClosedError as OpenSandboxHandleClosedError
 from .errors import (
@@ -44,6 +45,7 @@ from .errors import (
     OpenSandboxLifecycleUncertainError as OpenSandboxLifecycleUncertainError,
 )
 from .errors import OpenSandboxManagerClosedError as OpenSandboxManagerClosedError
+from .errors import OpenSandboxNotTextError as OpenSandboxNotTextError
 from .errors import OpenSandboxObserverReentryError as OpenSandboxObserverReentryError
 from .errors import OpenSandboxPausedError as OpenSandboxPausedError
 from .errors import OpenSandboxPurposeError as OpenSandboxPurposeError
@@ -70,6 +72,9 @@ from .errors import (
 )
 from .errors import (
     OpenSandboxWarmPoolUnavailableError as OpenSandboxWarmPoolUnavailableError,
+)
+from .errors import (
+    OpenSandboxWorkspaceNotInitializedError as OpenSandboxWorkspaceNotInitializedError,
 )
 from .errors import (
     UnexpectedOpenSandboxBackendError as UnexpectedOpenSandboxBackendError,
@@ -111,6 +116,9 @@ from .models import OpenSandboxStatusInfo as OpenSandboxStatusInfo
 from .models import (
     OpenSandboxUnavailableReason as OpenSandboxUnavailableReason,
 )
+from .workspace_files import WorkspaceDirectoryPage as WorkspaceDirectoryPage
+from .workspace_files import WorkspaceFileInfo as WorkspaceFileInfo
+from .workspace_files import WorkspaceText as WorkspaceText
 
 
 def __getattr__(name: str) -> object:

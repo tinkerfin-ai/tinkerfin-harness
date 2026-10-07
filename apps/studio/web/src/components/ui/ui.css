@@ -102,21 +102,40 @@
     color: var(--color-brand-text);
   }
 
+  .ui-drawer {
+    position: relative;
+    display: none;
+    flex: 0 0 var(--layout-drawer-width);
+    grid-template-rows: var(--layout-drawer-header-height) minmax(0, 1fr);
+    width: var(--layout-drawer-width);
+    min-width: 0;
+    height: 100dvh;
+    padding: 0 var(--layout-panel-inset) max(var(--layout-panel-inset), env(safe-area-inset-bottom));
+    border: 0;
+    border-left: 1px solid var(--color-border);
+    background: var(--color-canvas);
+  }
+  .ui-drawer.is-open { display: grid; }
+  .ui-drawer.is-full-page { grid-area: 1 / 1; width: 100%; border-left: 0; padding-top: env(safe-area-inset-top); }
+  .ui-drawer__body { display: grid; grid-template-rows: minmax(0, 1fr); min-width: 0; min-height: 0; }
+
   .ui-drawer-header {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: var(--type-title-line) var(--type-micro-line);
+    grid-template-rows: var(--control-xs) var(--type-micro-line);
     min-width: 0;
     height: var(--layout-drawer-header-height);
-    align-content: center;
+    align-content: start;
     align-items: center;
     column-gap: var(--space-3);
-    padding: calc(var(--space-2) + var(--space-4)) 0 var(--space-2);
-    row-gap: var(--space-0-5);
+    padding: calc((var(--layout-header-height) - var(--control-xs)) / 2) 0 0;
+    row-gap: 0;
   }
 
   .ui-drawer-header--compact {
     height: var(--space-16);
+    grid-template-rows: var(--control-md);
+    align-content: center;
     padding-top: var(--space-2);
     padding-bottom: var(--space-2);
   }
@@ -130,17 +149,22 @@
 
   .ui-drawer-header.has-description .ui-drawer-header__heading {
     grid-row: 1 / 3;
-    gap: var(--space-0-5);
+    grid-template-rows: var(--control-xs) var(--type-micro-line);
+    align-items: center;
   }
 
-  .ui-drawer-header > .ui-icon-button-wrap {
+  .ui-drawer-header > .ui-icon-button-wrap,
+  .ui-drawer-header__actions {
     grid-column: 2;
     grid-row: 1;
   }
 
-  .ui-drawer-header.has-back { grid-template-columns: auto minmax(0, 1fr); }
-  .ui-drawer-header.has-back > .ui-icon-button-wrap { grid-column: 1; grid-row: 1 / -1; }
+  .ui-drawer-header__actions { display: flex; align-items: center; gap: var(--space-0); }
+
+  .ui-drawer-header.has-back { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .ui-drawer-header.has-back > .ui-icon-button-wrap { grid-column: 1; grid-row: 1; }
   .ui-drawer-header.has-back .ui-drawer-header__heading { grid-column: 2; }
+  .ui-drawer-header.has-back .ui-drawer-header__actions { grid-column: 3; grid-row: 1; }
   .ui-drawer-header.has-back .ui-icon-button { width: var(--control-lg); height: var(--control-lg); }
 
   .ui-drawer-header h2 {
@@ -281,6 +305,23 @@
   .ui-button__spinner,
   .ui-text-field__spinner {
     animation: ui-spin var(--motion-slow) linear infinite;
+  }
+
+  .ui-button__icon > svg,
+  .ui-button__spinner,
+  .ui-compact-picker-trigger > svg:first-child:not(.ui-compact-picker-chevron),
+  .ui-compact-option > svg:first-child,
+  .ui-icon-button__icon > svg {
+    width: var(--icon-action);
+    height: var(--icon-action);
+  }
+
+  /* 关闭符号的图形留白较大，扩大绘制区域后仍与其他操作保持同一按钮中心 */
+  .ui-button__icon > .lucide-x > path,
+  .ui-icon-button__icon > .lucide-x > path {
+    transform-box: view-box;
+    transform-origin: center;
+    transform: scale(var(--icon-close-scale));
   }
 
   .ui-icon-button-wrap {

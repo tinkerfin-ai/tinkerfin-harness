@@ -122,6 +122,21 @@ await project.delete()
 网络活动，包括异常和取消退出，同时保留项目文件、HOME、缓存和依赖环境。backend 只能在上下文内使用。
 同一项目的并发运行共享文件，写入不具备事务保证。
 
+工作区声明也支持有界读取已存在的项目文件：
+
+| 方法 | 结果与限制 |
+| --- | --- |
+| `list_directory(path="/", *, limit=200, cursor=None)` | `WorkspaceDirectoryPage`；每页 1–200 项，目录优先，再按名称精确排序，可通过 `next_cursor` 继续读取 |
+| `get_file_info(path)` | `WorkspaceFileInfo`；虚拟路径、名称、类型、可选字节大小、UTC 修改时间及不透明的 `etag` |
+| `read_text(path, *, max_bytes, max_lines=200)` | `WorkspaceText`；UTF-8 文本前缀、文件信息和 `truncated`；允许 1–1,048,576 字节及 1–10,000 行 |
+
+这些方法不会创建 Sandbox、项目或执行会话，也不会恢复已暂停的 Sandbox。工作区尚不存在或已删除时
+抛出 `OpenSandboxWorkspaceNotInitializedError`，条目不存在时抛出 `FileNotFoundError`。
+符号链接只列出、不跟随；读取二进制或非普通文件的文本时抛出 `OpenSandboxNotTextError`。
+检测到读取期间文件变化或目录游标失效时抛出 `OpenSandboxFileChangedError`，目录分页应从第一页重新开始。
+元数据 `etag` 不是内容摘要，也不提供事务快照。查询只覆盖项目实际文件根，不包含其他路由 backend。
+Manager 负责查询连接的关闭，取消会等待所属资源清理后继续传播。
+
 `watch()` 返回异步上下文，为已存在且正在运行的项目提供
 `AsyncIterator[WorkspaceChange | ResyncRequired]`。
 `WorkspaceChange.FILES_CHANGED` 从 `tinkerfin_sandbox` 导出，`ResyncRequired` 复用

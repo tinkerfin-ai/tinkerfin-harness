@@ -1,7 +1,5 @@
-import { getAuthorizationHeader, subscribeAuthSession } from '../auth/session'
-import { getServerAddress, subscribeServerAddress } from './shared/config'
-import { requestEventStream } from './shared/http'
-import { parseJsonSseStream, SseError } from './shared/sse'
+import { startResourceFeed } from './shared/resourceFeed'
+import { SseError } from './shared/sse'
 
 export interface ResourceChange {
   scope: { namespace: string; owner_id: string | null }
@@ -49,69 +47,14 @@ export function startNotificationFeed(projectId?: string): () => void {
 }
 
 function connectFeed(projectId?: string): () => void {
-  let closed = false
-  let generation = 0
-  let controller: AbortController | undefined
-  let reconnect: ReturnType<typeof setTimeout> | undefined
-  let retryMs = 1000
-  let identity = ''
-  const currentIdentity = () => JSON.stringify([getServerAddress(), getAuthorizationHeader()])
-  const stop = () => {
-    generation += 1
-    clearTimeout(reconnect)
-    reconnect = undefined
-    controller?.abort()
-    controller = undefined
-  }
-  const connect = async () => {
-    if (closed || document.hidden || !getAuthorizationHeader()) return
-    const request = new AbortController()
-    const requestGeneration = generation
-    controller = request
-    const current = () => !closed && !request.signal.aborted && generation === requestGeneration
-      && identity === currentIdentity() && !document.hidden
-    try {
-      const response = await requestEventStream(`/api/notifications${projectId ? `?${new URLSearchParams({ projectId })}` : ''}`, {
-        signal: request.signal, suppressGlobalError: true,
-      })
-      if (!current()) { await response.body?.cancel(); return }
-      if (!response.body) throw new SseError('stream_data_invalid')
-      for await (const frame of parseJsonSseStream(response.body, request.signal)) {
-        if (!current()) break
-        if (frame.event === 'ready' || frame.event === 'resync') {
-          retryMs = 1000
-          notify({ kind: 'resync' })
-        } else if (frame.event === 'change') {
-          if (!isResourceChange(frame.data)) throw new SseError('stream_data_invalid')
-          notify({ kind: 'change', change: frame.data })
-        }
+  return startResourceFeed({
+    path: `/api/notifications${projectId ? `?${new URLSearchParams({ projectId })}` : ''}`,
+    onFrame(frame) {
+      if (frame.event === 'ready' || frame.event === 'resync') notify({ kind: 'resync' })
+      else if (frame.event === 'change') {
+        if (!isResourceChange(frame.data)) throw new SseError('stream_data_invalid')
+        notify({ kind: 'change', change: frame.data })
       }
-    } catch {
-      // 重连后的基线及可见资源校准负责补齐丢失提示，不让辅助通知打断操作
-    } finally {
-      if (controller === request) controller = undefined
-      if (current()) {
-        reconnect = setTimeout(() => { reconnect = undefined; void connect() }, retryMs)
-        retryMs = Math.min(retryMs * 2, 30_000)
-      }
-    }
-  }
-  const reset = () => {
-    stop()
-    identity = currentIdentity()
-    retryMs = 1000
-    void connect()
-  }
-  const authChanged = () => { if (identity !== currentIdentity()) reset() }
-  const releaseAuth = subscribeAuthSession(authChanged)
-  const releaseServer = subscribeServerAddress(reset)
-  document.addEventListener('visibilitychange', reset)
-  reset()
-  return () => {
-    closed = true
-    stop()
-    releaseAuth()
-    releaseServer()
-    document.removeEventListener('visibilitychange', reset)
-  }
+    },
+  })
 }

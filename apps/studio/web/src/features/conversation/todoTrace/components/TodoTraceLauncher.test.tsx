@@ -4,8 +4,6 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { WebTaskTraceViewState } from '../../../../types'
 import { TodoTraceLauncher } from './TodoTraceLauncher'
-import conversationStyles from '../../conversation.css?raw'
-import todoTraceStyles from '../todoTrace.css?raw'
 
 const ready = (count: number): WebTaskTraceViewState => ({
   phase: 'ready',
@@ -24,16 +22,6 @@ const ready = (count: number): WebTaskTraceViewState => ({
 })
 
 describe('TodoTraceLauncher', () => {
-  it('uses the shared borderless trace-launcher variant in every visual state', () => {
-    expect(conversationStyles).toMatch(
-      /\.composer-auxiliary-control\.composer-trace-launcher\s*{[^}]*border:\s*0;/s,
-    )
-    expect(todoTraceStyles).not.toMatch(/todo-trace-launcher\s*{[^}]*border:/s)
-    expect(todoTraceStyles).toMatch(
-      /\.composer-auxiliary-control\.todo-trace-launcher\.is-selected\s*{[^}]*box-shadow:\s*var\(--shadow-1\);/s,
-    )
-  })
-
   it('stays hidden before loading and when no group is confirmed', () => {
     const { rerender } = render(
       <TodoTraceLauncher
@@ -88,23 +76,24 @@ describe('TodoTraceLauncher', () => {
     expect(retry).toHaveBeenCalledOnce()
   })
 
-  it('counts groups and keeps the selected launcher available', () => {
+  it('显示任务组数量，抽屉打开时隐藏对应入口', () => {
     const toggle = vi.fn()
-    render(
+    const { rerender } = render(
       <TodoTraceLauncher
         ref={createRef()}
         taskTrace={ready(2)}
-        open
+        open={false}
         loadFailed={false}
         onToggle={toggle}
         onRetry={vi.fn()}
       />,
     )
     const launcher = screen.getByRole('button', { name: '任务轨迹 2' })
-    expect(launcher).toHaveClass('composer-trace-launcher')
-    expect(launcher).toHaveAttribute('aria-expanded', 'true')
-    expect(launcher).toHaveClass('is-selected')
+    expect(launcher).toHaveTextContent(/^2$/)
+    expect(launcher).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(launcher)
     expect(toggle).toHaveBeenCalledOnce()
+    rerender(<TodoTraceLauncher taskTrace={ready(2)} open loadFailed={false} onToggle={toggle} onRetry={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: '任务轨迹 2' })).not.toBeInTheDocument()
   })
 })

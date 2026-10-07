@@ -2,11 +2,11 @@ import {
   ArrowUpRight,
   ChevronDown,
 } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
 
 import type { TodoGroup } from '../../../../api/conversation/taskTrace'
-import { DrawerHeader, OverlayScrollbar } from '../../../../components/ui'
+import { Drawer, OverlayScrollbar } from '../../../../components/ui'
 import { useI18n } from '../../../../i18n'
 import { todoProgress } from '../domain'
 import { useTodoGroupWindow } from '../useTodoGroupWindow'
@@ -43,7 +43,6 @@ export function TodoTraceDrawer({
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
   const [now, setNow] = useState(Date.now())
   const viewportRef = useRef<HTMLDivElement>(null)
-  const closeRef = useRef<HTMLButtonElement>(null)
   const expandedEpoch = useRef(-1)
   const groupsRef = useRef(groups)
   const currentGroupId = groups[0]?.status === 'running' ? groups[0].id : undefined
@@ -52,10 +51,6 @@ export function TodoTraceDrawer({
   const buttonRefs = useRef(new Map<string, HTMLButtonElement>())
   groupsRef.current = groups
   const windowed = useTodoGroupWindow({ groups, expandedIds, viewportRef })
-
-  useLayoutEffect(() => {
-    if (open && fullPage) closeRef.current?.focus({ preventScroll: true })
-  }, [fullPage, open])
 
   useEffect(() => {
     if (!open || expandedEpoch.current === openEpoch) return
@@ -124,32 +119,21 @@ export function TodoTraceDrawer({
   const announcedProgress = announcedGroup ? todoProgress(announcedGroup) : undefined
 
   return (
-    <aside
-      ref={drawerRef}
+    <Drawer
+      drawerRef={drawerRef}
       data-workspace-layout-target="todo-trace-drawer"
       id="todo-trace-drawer"
-      className={`todo-trace-drawer${open ? ' is-open' : ''}${fullPage ? ' is-full-page' : ''}`}
-      aria-label={t('任务轨迹')}
-      aria-hidden={!open || undefined}
-      inert={!open || undefined}
-    >
-      {open && !fullPage && resizeHandle}
-      <p className="visually-hidden" aria-live="polite" aria-atomic="true">
+      className="todo-trace-drawer" open={open} fullPage={fullPage} resizeHandle={resizeHandle}
+      title={t('任务轨迹')} description={t('当前会话 · {count} 组', { count: groups.length })}
+      closeLabel={t('关闭任务轨迹')} backLabel={t('返回对话')} onClose={onClose}
+      announcement={<p className="visually-hidden" aria-live="polite" aria-atomic="true">
         {announcedGroup && announcedProgress
           ? t('任务组状态：{status}', {
               status: `${labels[announcedGroup.status]} ${announcedProgress.activeOrCompleted}/${announcedProgress.total}`,
             })
           : t('没有已确认的任务轨迹')}
-      </p>
-      <DrawerHeader
-        ref={closeRef}
-        title={t('任务轨迹')}
-        description={t('当前会话 · {count} 组', { count: groups.length })}
-        closeLabel={t('关闭任务轨迹')}
-        onClose={onClose}
-        backLabel={t('返回对话')}
-        onBack={fullPage ? onClose : undefined}
-      />
+      </p>}
+    >
       <div className="todo-trace-drawer-region">
         <div
           ref={viewportRef}
@@ -252,6 +236,6 @@ export function TodoTraceDrawer({
         </div>
         <OverlayScrollbar viewportRef={viewportRef} />
       </div>
-    </aside>
+    </Drawer>
   )
 }

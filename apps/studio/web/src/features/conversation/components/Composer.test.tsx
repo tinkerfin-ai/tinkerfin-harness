@@ -244,7 +244,7 @@ describe('Composer', () => {
     expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('保留正文')
   })
 
-  it('按传入控件显示返回底部和轨迹入口，移除后不再提供入口', () => {
+  it('按传入控件显示返回底部，移除后不再提供入口', () => {
     const props = {
       ...composerChromeProps(), text: '', isRunning: false,
       onDraftChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn(),
@@ -253,14 +253,11 @@ describe('Composer', () => {
       <DraftComposer
         {...props}
         scrollToBottomControl={<button type="button">回到底部</button>}
-        taskTraceControl={<button type="button">任务轨迹 2</button>}
       />,
     )
     expect(screen.getByRole('button', { name: '回到底部' })).toBeVisible()
-    expect(screen.getByRole('button', { name: '任务轨迹 2' })).toBeVisible()
     rerender(<DraftComposer {...props} />)
     expect(screen.queryByRole('button', { name: '回到底部' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '任务轨迹 2' })).not.toBeInTheDocument()
   })
 
   it('接管时隐藏输入控件，结束后恢复草稿和焦点', () => {

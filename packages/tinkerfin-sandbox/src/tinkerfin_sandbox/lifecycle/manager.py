@@ -220,6 +220,7 @@ class OpenSandboxManager(Generic[KeyT]):
         self._closed = False
         self._availability = _SandboxAvailability(self)
         self._workspace_watches = _WorkspaceWatches(self, notifications)
+        self._workspace_read_slots = asyncio.Semaphore(16)
 
     def _resolve_resource_key(self, key: KeyT, namespace: str | None) -> str:
         """Bind namespace before every cache, State, claim, or availability lookup."""

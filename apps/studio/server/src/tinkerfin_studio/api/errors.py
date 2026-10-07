@@ -129,6 +129,18 @@ class ProjectErrorCode(ErrorCode):
     )
 
 
+class WorkspaceErrorCode(ErrorCode):
+    """项目工作区只读查询和监听的可恢复错误"""
+
+    NOT_INITIALIZED = _ErrorCodeValue(1_001_011_000, 409, "工作区尚无文件")
+    NOT_FOUND = _ErrorCodeValue(1_001_011_001, 404, "文件或目录已不存在")
+    INVALID_PATH = _ErrorCodeValue(1_001_011_002, 422, "文件路径或目录游标不正确")
+    CHANGED = _ErrorCodeValue(1_001_011_003, 409, "文件或目录已变化，请刷新")
+    PAUSED = _ErrorCodeValue(1_001_011_004, 409, "工作区已暂停")
+    UNAVAILABLE = _ErrorCodeValue(1_001_011_005, 503, "工作区暂不可用，请稍后重试")
+    FORBIDDEN = _ErrorCodeValue(1_001_011_006, 403, "无法读取此文件或目录")
+
+
 class AuthErrorCode(ErrorCode):
     """认证模块错误"""
 
@@ -294,13 +306,18 @@ class SystemException(ApplicationException):
     """仅向调用方暴露安全消息的技术失败"""
 
 
-def _response(error_code: ErrorCode, *, message: str | None = None) -> JSONResponse:
+def _response(
+    request: Request, error_code: ErrorCode, *, message: str | None = None
+) -> JSONResponse:
     return JSONResponse(
         status_code=error_code.http_status,
         content=ApiResponse[None](
             code=int(error_code),
             message=message or error_code.message,
         ).model_dump(mode="json"),
+        headers={"Cache-Control": "private, no-store"}
+        if getattr(request.state, "private_no_store", False)
+        else None,
     )
 
 
@@ -318,7 +335,7 @@ async def application_exception_handler(
         int(error.error_code),
         exc_info=not isinstance(error, BusinessException),
     )
-    return _response(error.error_code, message=error.message)
+    return _response(request, error.error_code, message=error.message)
 
 
 async def request_validation_handler(
@@ -328,7 +345,7 @@ async def request_validation_handler(
     """把请求校验失败投影为统一错误"""
 
     logger.warning("请求校验失败: method=%s path=%s", request.method, request.url.path)
-    return _response(GlobalErrorCode.VALIDATION_FAILED)
+    return _response(request, GlobalErrorCode.VALIDATION_FAILED)
 
 
 async def http_exception_handler(
@@ -354,7 +371,7 @@ async def http_exception_handler(
         error.status_code,
     )
     return _response(
-        codes.get(error.status_code, GlobalErrorCode.INTERNAL_SERVER_ERROR)
+        request, codes.get(error.status_code, GlobalErrorCode.INTERNAL_SERVER_ERROR)
     )
 
 
@@ -370,4 +387,4 @@ async def unexpected_exception_handler(
         request.url.path,
         exc_info=error,
     )
-    return _response(GlobalErrorCode.INTERNAL_SERVER_ERROR)
+    return _response(request, GlobalErrorCode.INTERNAL_SERVER_ERROR)

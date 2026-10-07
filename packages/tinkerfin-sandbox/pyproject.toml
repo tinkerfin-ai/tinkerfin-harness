@@ -48,4 +48,4 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 tinkerfin_sandbox = ["py.typed"]
-"tinkerfin_sandbox.backends" = ["_rooted_helper.py.txt"]
+"tinkerfin_sandbox.backends" = ["_rooted_helper.py.txt", "_workspace_files_helper.py.txt"]
