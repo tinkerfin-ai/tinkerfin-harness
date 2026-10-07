@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 
@@ -40,6 +41,7 @@ async function openComposer(page: Page, locale = 'zh-CN', theme = 'light') {
     localStorage.setItem('tinkerfin:theme', theme)
   }, { locale, theme })
   await installNotificationStream(page)
+  await installProjectScope(page)
   await page.goto('/')
 }
 

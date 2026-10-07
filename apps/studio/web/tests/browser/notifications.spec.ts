@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { expect, test, type Page } from '@playwright/test'
 import type { ConversationHistoryDetail } from '../../src/api/conversation/history'
 
@@ -16,7 +17,7 @@ declare global {
 }
 
 function conversation(threadId: string, runId: string, title: string): ConversationHistoryDetail {
-  return {
+  return {projectId: 'project-1', archived: false,
     id: 1, threadId, title, titleSource: 'generated', titleGenerationStatus: 'succeeded', titleSeq: 1,
     accessMode: 'full', lastModel: 'main', pinned: false, createdAt: '2030-01-01T00:00:00Z', updatedAt: '2030-01-01T00:00:00Z',
     generation: 'test-generation', asOfSeq: 5, observedAt: '2030-01-01T00:00:00.000000Z', headRunId: runId, availableHeads: [runId], historyCursor: null,
@@ -53,7 +54,7 @@ async function prepare(page: Page) {
     window.fetch = async (input, init) => {
       const request = new Request(input, init)
       const path = new URL(request.url).pathname
-      if (!path.startsWith('/api/')) return original(input, init)
+      if (!path.startsWith('/api/') || path === '/api/projects') return original(input, init)
       if (path === '/api/notifications') {
         connections += 1
         let detach: () => void
@@ -96,6 +97,7 @@ test('两个独立窗口通过通知同步会话，断连和隐藏期间的变�
         if (request.path === '/api/models') return { data: { items: [{ modelId: 'main', displayName: 'Main', connectionId: 'provider', connectionDisplayName: '模型', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' } }
         if (request.path === '/api/conversation/config') return { data: { dayRanges: [7, 30] } }
         if (request.path === '/api/conversation/history') return { data: { items: [...threads.values()].map(item => ({
+          projectId: item.projectId, archived: item.archived,
           id: item.id, threadId: item.threadId, title: item.title, titleSource: item.titleSource, titleGenerationStatus: item.titleGenerationStatus, titleSeq: item.titleSeq,
           status: 'idle', lastRunId: item.headRunId, lastModel: item.lastModel, accessMode: item.accessMode, messageCount: item.messageCount, toolCallCount: 0,
           hasPendingInterrupt: false, pendingInteractionKind: null, pinned: false, createdAt: item.createdAt, updatedAt: item.updatedAt,
@@ -119,6 +121,7 @@ test('两个独立窗口通过通知同步会话，断连和隐藏期间的变�
         }
         throw new Error(`未预期的接口：${request.path}`)
       })
+      await installProjectScope(page)
       await page.goto(baseURL!)
       await expect(page.getByRole('textbox', { name: '消息输入' })).toBeEnabled()
       await expect.poll(() => page.evaluate(() => window.notificationTest.active())).toBe(1)
@@ -135,7 +138,7 @@ test('两个独立窗口通过通知同步会话，断连和隐藏期间的变�
     await expect(first).toHaveURL(/thread=shared-thread/)
     await second.getByRole('button', { name: '打开会话：跨窗口会话', exact: true }).click()
     await expect(second).toHaveURL(/thread=shared-thread/)
-    await second.getByRole('button', { name: '新会话', exact: true }).filter({ hasText: '新会话' }).click()
+    await second.locator('[aria-keyshortcuts~="Meta+K"]').click()
     await expect(second).not.toHaveURL(/thread=/)
     const item = threads.get('shared-thread')!
     item.title = '通知后的标题'
@@ -194,6 +197,7 @@ for (const titleState of ['succeeded', 'running'] as const) {
     })
     const titleReads = () => requests.filter(path => path.endsWith('/title'))
     const historyReads = () => requests.filter(path => path === '/api/conversation/history').length
+    await installProjectScope(page)
     await page.goto('/')
     await expect(page.getByRole('button', { name: /^打开会话：列表会话/ })).toHaveCount(40)
     await expect(page.getByRole('textbox', { name: '消息输入' })).toBeEnabled()

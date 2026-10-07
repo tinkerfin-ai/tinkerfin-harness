@@ -17,7 +17,7 @@ from tinkerfin_studio.attachments.service import AttachmentService
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.config.settings import S3StorageSettings
 
-pytestmark = pytest.mark.docker_integration
+pytestmark = [pytest.mark.docker_integration, pytest.mark.usefixtures("projects")]
 _IMAGE = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
 
 
@@ -78,7 +78,11 @@ async def test_real_direct_upload_download_and_reopening(
             async with httpx.AsyncClient(trust_env=False) as direct:
                 response = await api.post(
                     "/api/attachments/uploads",
-                    json={"name": "报告.md", "size_bytes": len(data)},
+                    json={
+                        "project_id": "project-1",
+                        "name": "报告.md",
+                        "size_bytes": len(data),
+                    },
                 )
                 assert response.status_code == 200
                 permit = response.json()["data"]

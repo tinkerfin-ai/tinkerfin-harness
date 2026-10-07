@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { expect, test, type Page } from '@playwright/test'
 
 type TitleHarness = {
@@ -55,7 +56,7 @@ async function setup(page: Page, theme: string, pauseClock = false) {
       const request = new Request(input, init)
       const url = new URL(request.url)
       requests.push(url.pathname)
-      if (!url.pathname.startsWith('/api/')) return original(input, init)
+      if (!url.pathname.startsWith('/api/') || url.pathname === '/api/projects') return original(input, init)
       const json = (data: unknown) => new Response(JSON.stringify({ code: 0, message: 'success', data }), { headers: { 'Content-Type': 'application/json' } })
       if (url.pathname === '/api/notifications') {
         let detach: () => void
@@ -75,6 +76,7 @@ async function setup(page: Page, theme: string, pauseClock = false) {
       if (url.pathname === '/api/models') return json({ items: [{ modelId: 'main', displayName: 'Main',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' })
       if (url.pathname === '/api/conversation/config') return json({ dayRanges: [7, 30] })
       if (url.pathname === '/api/conversation/history') return json({ items: [...new Map(streams.map(stream => [stream.threadId, stream])).values()].map((stream, index) => ({
+        projectId: 'project-1', archived: false,
         ...titles.get(stream.threadId), id: index + 1, status: stream.execution === 'running' ? 'running' : 'idle',
         lastRunId: stream.runId, lastModel: 'main', accessMode: 'full', messageCount: stream.messages.length, toolCallCount: 0,
         hasPendingInterrupt: false, pendingInteractionKind: null, pinned: false, createdAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-20T00:00:00Z',
@@ -114,11 +116,12 @@ async function setup(page: Page, theme: string, pauseClock = false) {
       }
       if (url.pathname.endsWith('/history')) {
         const stream = streams.filter(item => item.threadId === threadId).at(-1)!
-        return json({ accessMode: 'full', ...titles.get(threadId), id: 1, lastModel: 'main', pinned: false, asOfSeq: stream.seq, generation: 'test', observedAt: '2026-09-08T00:00:00.000000Z', headRunId: stream.runId, availableHeads: [stream.runId], historyCursor: null, messageCount: stream.messages.length, toolCallCount: 0, messages: stream.messages, reasoning: [], runFailures: [], state: { root: {}, subgraphs: {} }, interactions: [], status: { execution: stream.execution, headRunId: stream.runId }, completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false }, createdAt: '2026-09-08T00:00:00Z', updatedAt: '2026-09-08T00:00:00Z', graph: { asOfSeq: stream.seq, turns: [], nodes: [], orderedNodeIds: [], matchedNodeIds: [], completeness: { callTrackingMissing: false, relationshipEvidenceMissing: false, detailsOmitted: false } }, taskTrace: url.searchParams.get('includeTaskTrace') === 'true' ? { status: 'ready', todoGroups: [] } : null })
+        return json({ projectId: 'project-1', archived: false, accessMode: 'full', ...titles.get(threadId), id: 1, lastModel: 'main', pinned: false, asOfSeq: stream.seq, generation: 'test', observedAt: '2026-09-08T00:00:00.000000Z', headRunId: stream.runId, availableHeads: [stream.runId], historyCursor: null, messageCount: stream.messages.length, toolCallCount: 0, messages: stream.messages, reasoning: [], runFailures: [], state: { root: {}, subgraphs: {} }, interactions: [], status: { execution: stream.execution, headRunId: stream.runId }, completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false }, createdAt: '2026-09-08T00:00:00Z', updatedAt: '2026-09-08T00:00:00Z', graph: { asOfSeq: stream.seq, turns: [], nodes: [], orderedNodeIds: [], matchedNodeIds: [], completeness: { callTrackingMissing: false, relationshipEvidenceMissing: false, detailsOmitted: false } }, taskTrace: url.searchParams.get('includeTaskTrace') === 'true' ? { status: 'ready', todoGroups: [] } : null })
       }
       return json({})
     }
   }, { theme })
+  await installProjectScope(page)
   await page.goto('/')
   await expect(page.getByRole('textbox', { name: '消息输入' })).toBeEnabled()
   if (pauseClock) await page.clock.pauseAt(new Date('2026-09-20T01:00:00Z'))
@@ -236,7 +239,7 @@ test('A和B同时接收、往返切换后后台完成，停止B不影响A标题'
   await setup(page, 'light')
   await send(page, '会话A')
   await expect(page).toHaveTitle(/会话A/)
-  await page.locator('.new-chat').click()
+  await page.locator('[aria-keyshortcuts~="Meta+K"]').click()
   await send(page, '会话B')
   await expect(page).toHaveTitle(/会话B/)
   await expect(page.getByRole('button', { name: '打开会话：会话A，正在生成', exact: true })).toBeVisible()

@@ -52,7 +52,9 @@ async def test_skill_tool_schema_and_invalid_operation_fields(
 ):
     tools = {
         entry.name: entry
-        for entry in build_skill_tools(skill_library, user_id=1, thread_id="chat")
+        for entry in build_skill_tools(
+            skill_library, project_id="project-1", user_id=1, thread_id="chat"
+        )
     }
     assert set(tools) == {
         "list_skill_sources",
@@ -96,7 +98,9 @@ async def test_shared_skill_tools_manage_lifecycle_and_return_business_errors(
     await add_users(session)
     tools = {
         entry.name: entry
-        for entry in build_skill_tools(skill_library, user_id=1, thread_id="chat")
+        for entry in build_skill_tools(
+            skill_library, project_id="project-1", user_id=1, thread_id="chat"
+        )
     }
     assert (
         json.loads(await tools["list_skill_sources"].ainvoke({}))[0]["id"] == "catalog"
@@ -146,7 +150,9 @@ async def test_shared_skill_tools_manage_lifecycle_and_return_business_errors(
     assert conflict["code"] == int(SkillErrorCode.OPERATION_CONFLICT)
     foreign = {
         entry.name: entry
-        for entry in build_skill_tools(skill_library, user_id=2, thread_id="other")
+        for entry in build_skill_tools(
+            skill_library, project_id="project-2", user_id=2, thread_id="other"
+        )
     }
     message = await foreign["manage_skill"].ainvoke(
         {
@@ -171,7 +177,7 @@ async def test_shared_skill_tools_manage_lifecycle_and_return_business_errors(
     assert await tools["manage_skill"].ainvoke(remove) == await tools[
         "manage_skill"
     ].ainvoke(remove)
-    assert await skill_library.list(1) == []
+    assert await skill_library.list(1, project_id="project-1") == []
 
 
 async def test_skill_mutation_checkpoint_rebuild_reuses_committed_result(
@@ -207,7 +213,9 @@ async def test_skill_mutation_checkpoint_rebuild_reuses_committed_result(
     tinkerfin = TinkerFin(checkpointer=InMemorySaver()).with_namespace("ns_1")
     runtime = tinkerfin.build(
         model=model,
-        tools=build_skill_tools(skill_library, user_id=1, thread_id="chat"),
+        tools=build_skill_tools(
+            skill_library, project_id="project-1", user_id=1, thread_id="chat"
+        ),
         middleware=(InterruptAfterSave(),),
     )
     first = await runtime.ainvoke(
@@ -216,18 +224,20 @@ async def test_skill_mutation_checkpoint_rebuild_reuses_committed_result(
         input={"messages": [{"role": "user", "content": "安装报告技能"}]},
     )
     assert first["__interrupt__"]
-    installed = await skill_library.list(1)
+    installed = await skill_library.list(1, project_id="project-1")
     assert len(installed) == 1
     rebuilt = tinkerfin.build(
         model=model,
-        tools=build_skill_tools(skill_library, user_id=1, thread_id="chat"),
+        tools=build_skill_tools(
+            skill_library, project_id="project-1", user_id=1, thread_id="chat"
+        ),
         middleware=(InterruptAfterSave(),),
     )
     resumed = await rebuilt.ainvoke(
         thread_id="chat", run_id="resumed", input=Command(resume=True)
     )
     assert not resumed.get("__interrupt__")
-    assert (await skill_library.list(1)) == installed
+    assert (await skill_library.list(1, project_id="project-1")) == installed
     assert skill_catalog.downloads == 1
 
 
@@ -275,6 +285,7 @@ async def test_skill_management_roles_and_agui_history(
     )
     if role == "automation":
         runtime = build_automation_runtime(
+            project_id="project-1",
             resources=automation_resources,
             user_id=1,
             thread_id="skills-chat",
@@ -287,6 +298,7 @@ async def test_skill_management_roles_and_agui_history(
         )
     else:
         runtime = build_conversation_runtime(
+            project_id="project-1",
             resources=automation_resources,
             user_id=1,
             thread_id="skills-chat",
@@ -304,7 +316,7 @@ async def test_skill_management_roles_and_agui_history(
     )
     events = [event async for event in stream]
     assert stream.error is None, repr(stream.error)
-    items = await automation_resources.skills.list(1)
+    items = await automation_resources.skills.list(1, project_id="project-1")
     if role in {"chat", "plan"}:
         assert len(items) == 1
         assert all(
@@ -344,3 +356,6 @@ async def test_skill_management_roles_and_agui_history(
     else:
         assert items == []
         assert any("manage_skill" not in names for names in model.seen_tools)
+
+
+pytestmark = pytest.mark.usefixtures("projects")

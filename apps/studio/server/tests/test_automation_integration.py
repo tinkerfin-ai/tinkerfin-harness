@@ -7,7 +7,6 @@ from typing import cast
 import httpx
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.store.memory import InMemoryStore
 from pydantic import SecretStr
 from test_agent_runtime import _ToolModel, _Workspace
 from test_attachments import png
@@ -20,19 +19,23 @@ from tinkerfin_automation import (
 )
 from tinkerfin_studio.agent import runtime as runtime_module
 from tinkerfin_studio.api.dependencies import get_user_context
+from tinkerfin_studio.api.errors import AttachmentErrorCode, BusinessException
 from tinkerfin_studio.application import create_application
 from tinkerfin_studio.attachments.entity import AttachmentCollection
 from tinkerfin_studio.attachments.service import byte_chunks
 from tinkerfin_studio.auth.models import User
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.automation import target as target_module
+from tinkerfin_studio.automation.ownership import automation_execution_namespace
 from tinkerfin_studio.automation.schemas import SaveTask, TaskConfiguration
 from tinkerfin_studio.automation.service import NAMESPACE, StudioAutomationService
 from tinkerfin_studio.automation.target import (
     StudioAutomationTarget,
     fail_interactive_execution,
 )
+from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.models.entity import AgentModel, ModelConnection
+from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_studio.resources import ApplicationResources
 from tinkerfin_studio.services.repository import ServiceConfigRepository
 from tinkerfin_studio.services.schemas import SearchConfig, ServiceSave
@@ -42,7 +45,13 @@ from tinkerfin_tracing import Tracer
 
 @pytest.fixture
 async def automation_environment(
-    database, components_database, attachments, skill_library, monkeypatch
+    database,
+    components_database,
+    attachments,
+    skill_library,
+    monkeypatch,
+    projects,
+    persistent_store,
 ):
     async with database.session() as session:
         session.add(
@@ -88,7 +97,7 @@ async def automation_environment(
     class Sandboxes:
         def workspace(self, key, *, workspace_key, routes):
             assert key == "users/1"
-            assert workspace_key == "default"
+            assert workspace_key == "project-1"
             return workspace
 
     store = SqlAlchemyAutomationStore(components_database.engine)
@@ -108,7 +117,7 @@ async def automation_environment(
                     automation=automation,
                     tracer=tracer,
                     tinkerfin=TinkerFin(
-                        checkpointer=InMemorySaver(), store=InMemoryStore()
+                        checkpointer=InMemorySaver(), store=persistent_store
                     ).with_observer(tracer),
                     model_http_transport=None,
                     model_http_client=client,
@@ -120,7 +129,7 @@ async def automation_environment(
             automation.target(
                 "studio_agent",
                 StudioAutomationTarget(resources),
-                execution_namespace=lambda owner_id: f"ns_{int(owner_id)}",
+                execution_namespace=automation_execution_namespace,
             )
             async with automation.worker(
                 on_interrupt=fail_interactive_execution
@@ -142,6 +151,7 @@ async def automation_worker(automation_environment):
 
 def configuration():
     return {
+        "projectId": "project-1",
         "name": "日报",
         "prompt": "生成日报",
         "modelId": "main",
@@ -170,7 +180,7 @@ async def test_explicit_retry_preserves_service_binding_and_new_run_uses_current
                 configuration=SearchConfig(), api_key=SecretStr("original-key")
             ),
         )
-    service = StudioAutomationService(resources, user_id=1)
+    service = StudioAutomationService(resources, project_id="project-1", user_id=1)
     task = await service.save(
         SaveTask(
             request_id="bound-task",
@@ -183,7 +193,7 @@ async def test_explicit_retry_preserves_service_binding_and_new_run_uses_current
         raise ValueError("runtime setup failed")
 
     monkeypatch.setattr(target_module, "build_automation_runtime", fail_runtime)
-    handle = await resources.automation.for_owner("1").task(task.id)
+    handle = await resources.automation.for_owner("1:project-1").task(task.id)
     original = await handle.run()
     await automation_worker.wait_until_idle()
     snapshot = await resources.attachments.collection_configuration(
@@ -206,7 +216,7 @@ async def test_explicit_retry_preserves_service_binding_and_new_run_uses_current
             row.configuration = {**row.configuration, "services": None}
             await session.commit()
     monkeypatch.setattr(target_module, "build_automation_runtime", builder)
-    original = await resources.automation.for_owner("1").get_run(original.id)
+    original = await resources.automation.for_owner("1:project-1").get_run(original.id)
     retried = await original.retry()
     await automation_worker.wait_until_idle()
     retry_result = await service.result(retried.id)
@@ -258,7 +268,9 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
     )
     application.dependency_overrides[get_user_context] = lambda: user
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=application), base_url="http://test"
+        transport=httpx.ASGITransport(app=application),
+        base_url="http://test",
+        params={"projectId": "project-1"},
     ) as client:
         payload = {"requestId": "create", "configuration": configuration()}
         created = await client.post("/api/automation/tasks", json=payload)
@@ -294,7 +306,7 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
         assert result.status_code == 200, result.text
         detail = result.json()["data"]
         saved_run = (
-            await resources.automation.for_owner("1").get_run(execution_id)
+            await resources.automation.for_owner("1:project-1").get_run(execution_id)
         ).snapshot
         assert detail["status"] == "succeeded", (
             saved_run.failure_code,
@@ -329,15 +341,73 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
             roles=(),
             disabled=False,
         )
+        client.params = {"projectId": "project-2"}
         assert (
             await client.get(f"/api/automation/runs/{execution_id}")
         ).status_code == 404
         assert (await client.get("/api/automation/tasks")).json()["data"]["items"] == []
 
 
+async def test_task_input_survives_conversation_move_and_can_be_kept_when_editing(
+    automation_resources, automation_worker
+):
+    resources = automation_resources
+    async with resources.database.session() as session:
+        destination = await ProjectRepository(session, 1).create("目的项目")
+        repository = ConversationRepository(session)
+        thread = await repository.create_thread(
+            user_id=1,
+            project_id="project-1",
+            thread_id="reference-conversation",
+            title="参考文件",
+            model_id="main",
+        )
+        thread.last_run_id = "completed"
+        await session.commit()
+    file = await resources.attachments.upload(
+        user_id=1,
+        thread_id=thread.thread_id,
+        name="reference.md",
+        chunks=byte_chunks(b"# reference"),
+    )
+    service = StudioAutomationService(resources, project_id="project-1", user_id=1)
+    config = TaskConfiguration.model_validate(
+        {**configuration(), "attachments": [file.id]}
+    )
+    task = await service.save(SaveTask(request_id="retain", configuration=config))
+    async with resources.database.session() as session:
+        await ConversationRepository(session).organize_thread(
+            user_id=1,
+            thread_id=thread.thread_id,
+            project_id=destination.id,
+            archived=None,
+        )
+        await session.commit()
+
+    handle = await resources.automation.for_owner("1:project-1").task(task.id)
+    run = await handle.run()
+    await automation_worker.wait_until_idle()
+    assert (await service.result(run.id)).status == "succeeded"
+    assert (await resources.attachments.read(file.id, user_id=1, collection_id=run.id))[
+        1
+    ] == b"# reference"
+    changed = await service.save(
+        SaveTask(
+            request_id="edit-retained",
+            expected_revision=task.revision,
+            configuration=config.model_copy(update={"prompt": "核对参考文件"}),
+        ),
+        task_id=task.id,
+    )
+    assert [item.id for item in changed.input_files] == [file.id]
+    with pytest.raises(BusinessException) as denied:
+        await service.save(SaveTask(request_id="unrelated", configuration=config))
+    assert denied.value.error_code == AttachmentErrorCode.NOT_FOUND
+
+
 async def test_saved_schedule_survives_service_restart(automation_resources):
     resources = automation_resources
-    service = StudioAutomationService(resources, user_id=1)
+    service = StudioAutomationService(resources, project_id="project-1", user_id=1)
     task = await service.save(
         SaveTask(
             request_id="durable",
@@ -347,7 +417,7 @@ async def test_saved_schedule_survives_service_restart(automation_resources):
     second_store = SqlAlchemyAutomationStore(resources.components_database.engine)
     try:
         async with Automation(namespace=NAMESPACE, store=second_store) as second:
-            restored = (await second.for_owner("1").task(task.id)).snapshot
+            restored = (await second.for_owner("1:project-1").task(task.id)).snapshot
             assert restored.name == "日报"
             assert restored.next_run_at == task.next_run_at
     finally:
@@ -395,7 +465,7 @@ async def test_automation_requiring_write_approval_stops_for_human_review(
         ),
     )
     resources = automation_resources
-    service = StudioAutomationService(resources, user_id=1)
+    service = StudioAutomationService(resources, project_id="project-1", user_id=1)
     config = {**configuration(), "accessMode": "write_approval"}
     task = await service.save(
         SaveTask(
@@ -403,7 +473,7 @@ async def test_automation_requiring_write_approval_stops_for_human_review(
             configuration=TaskConfiguration.model_validate(config),
         )
     )
-    task_handle = await resources.automation.for_owner("1").task(task.id)
+    task_handle = await resources.automation.for_owner("1:project-1").task(task.id)
     run = await task_handle.run()
     await automation_worker.wait_until_idle()
     result = await service.result(run.id)
@@ -414,7 +484,9 @@ async def test_automation_requiring_write_approval_stops_for_human_review(
 async def test_batch_preserves_individual_conflicts(automation_resources):
     from tinkerfin_studio.automation.schemas import BatchCommand, BatchItem
 
-    service = StudioAutomationService(automation_resources, user_id=1)
+    service = StudioAutomationService(
+        automation_resources, project_id="project-1", user_id=1
+    )
     task = await service.save(
         SaveTask(
             request_id="batch",
@@ -458,9 +530,9 @@ async def test_automation_accepts_and_runs_authorized_image_inputs(
         model.image_support = image_support
         await session.commit()
     file = await resources.attachments.upload(
-        user_id=1, name="image.png", chunks=byte_chunks(png())
+        project_id="project-1", user_id=1, name="image.png", chunks=byte_chunks(png())
     )
-    service = StudioAutomationService(resources, user_id=1)
+    service = StudioAutomationService(resources, project_id="project-1", user_id=1)
     task = await service.save(
         SaveTask(
             request_id="image-input",
@@ -470,7 +542,7 @@ async def test_automation_accepts_and_runs_authorized_image_inputs(
         )
     )
     assert [item.id for item in task.input_files] == [file.id]
-    handle = await resources.automation.for_owner("1").task(task.id)
+    handle = await resources.automation.for_owner("1:project-1").task(task.id)
     run = await handle.run()
     await automation_worker.wait_until_idle()
     result = await service.result(run.id)
@@ -479,3 +551,6 @@ async def test_automation_accepts_and_runs_authorized_image_inputs(
         user_id=1, collection_id=run.id
     )
     assert [item.id for item in inputs] == [file.id]
+
+
+pytestmark = pytest.mark.usefixtures("projects")

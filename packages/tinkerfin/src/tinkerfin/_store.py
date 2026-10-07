@@ -23,6 +23,7 @@ from langgraph.store.base import (
 )
 
 from tinkerfin_contracts.identity import validate_namespace
+from tinkerfin_contracts.storage import ConditionalStore, DocumentSnapshot, JsonValue
 
 from .errors import TinkerFinLifecycleError
 
@@ -40,7 +41,7 @@ def validate_store_backend(backend: object) -> None:
             continue
         visited.add(id(current))
         if isinstance(current, StoreBackend) and current._store is not None:
-            # Deep Agents 0.7.5 StoreBackend._get_store gives this constructor
+            # Deep Agents 0.7.19 StoreBackend._get_store gives this constructor
             # value precedence over get_store(), bypassing Runtime isolation.
             raise ValueError(
                 "StoreBackend must use the Runtime store; pass store= to TinkerFin() "
@@ -62,6 +63,7 @@ class NamespaceStore(BaseStore):
         """Bind one namespace without starting I/O or acquiring Store ownership."""
 
         self._store = store
+        self.namespace = validate_namespace(namespace)
         self._root = (
             urlsafe_b64encode(validate_namespace(namespace).encode("utf-8"))
             .decode("ascii")
@@ -89,6 +91,70 @@ class NamespaceStore(BaseStore):
             self._relative_result(op, result)
             for op, result in zip(requests, results, strict=True)
         ]
+
+    async def acompare_and_set(
+        self,
+        namespace: tuple[str, ...],
+        key: str,
+        *,
+        expected: dict[str, JsonValue] | None,
+        value: dict[str, JsonValue] | None,
+    ) -> bool:
+        """Keep an atomic conditional write inside this bound namespace.
+
+        The provider must implement conditional writes; no read-then-write
+        fallback can preserve this guarantee across workers.
+
+        Args:
+            namespace: Relative collection labels within the bound owner.
+            key: Complete document key.
+            expected: Observed value, or None to require absence.
+            value: Replacement value, or None to delete.
+
+        Returns:
+            True after commit, or False for a stale condition.
+
+        Raises:
+            NotImplementedError: The provider lacks conditional document operations.
+        """
+        if not isinstance(self._store, ConditionalStore):
+            raise NotImplementedError(
+                "The configured Store does not support conditional writes"
+            )
+        return await self._store.acompare_and_set(
+            (self._root, *namespace), key, expected=expected, value=value
+        )
+
+    async def asearch_exact(
+        self,
+        namespace: tuple[str, ...],
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[DocumentSnapshot]:
+        """Page one relative collection without including descendant namespaces.
+
+        Ordering, validation, cancellation and resource ownership remain the
+        conditional provider's responsibility; no prefix-query fallback is used.
+
+        Args:
+            namespace: Relative collection labels within the bound owner.
+            limit: Nonnegative maximum result count.
+            offset: Nonnegative number of exact-collection documents to skip.
+
+        Returns:
+            Independent snapshots containing keys relative to this collection.
+
+        Raises:
+            NotImplementedError: The provider lacks exact collection queries.
+        """
+        if not isinstance(self._store, ConditionalStore):
+            raise NotImplementedError(
+                "The configured Store does not support exact collection queries"
+            )
+        return await self._store.asearch_exact(
+            (self._root, *namespace), limit=limit, offset=offset
+        )
 
     def _scoped(self, op: Op) -> Op:
         if isinstance(op, GetOp | PutOp):

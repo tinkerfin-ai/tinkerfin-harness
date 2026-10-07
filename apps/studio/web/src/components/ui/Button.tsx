@@ -1,12 +1,16 @@
 import { LoaderCircle } from 'lucide-react'
 import { forwardRef } from 'react'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import { Tooltip } from './Tooltip'
+import type { TooltipProps } from './Tooltip'
 
 export type ButtonVariant = 'primary' | 'solid' | 'secondary' | 'ghost' | 'danger' | 'text'
 export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
 export type ButtonShape = 'round' | 'capsule' | 'circle'
 
-export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'title'> {
+  tooltip?: string
+  tooltipPlacement?: TooltipProps['placement']
   variant?: ButtonVariant
   size?: ButtonSize
   shape?: ButtonShape
@@ -17,6 +21,8 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({
+  tooltip,
+  tooltipPlacement,
   variant = 'secondary',
   size = 'xs',
   shape = 'round',
@@ -39,7 +45,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     className,
   ].filter(Boolean).join(' ')
 
-  return (
+  const button = (
     <button
       {...buttonProps}
       ref={ref}
@@ -56,4 +62,5 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       {!loading && trailingIcon && <span className="ui-button__icon" aria-hidden="true">{trailingIcon}</span>}
     </button>
   )
+  return tooltip ? <Tooltip content={tooltip} placement={tooltipPlacement}>{button}</Tooltip> : button
 })

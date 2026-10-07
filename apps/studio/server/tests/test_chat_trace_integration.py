@@ -47,6 +47,7 @@ from tinkerfin_studio.conversation.models import (
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.request import ChatRequest
 from tinkerfin_studio.conversation.run_preparation import (
+    CompactIntent,
     ResumeChatIntent,
     StartChatIntent,
     classify_intent,
@@ -62,6 +63,7 @@ from tinkerfin_studio.models.schemas import (
     ModelConnectionSave,
 )
 from tinkerfin_studio.models.service import AgentModelService
+from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_studio.resources import ApplicationResources
 from tinkerfin_studio.services.repository import ServiceConfigRepository
 from tinkerfin_studio.services.schemas import SearchConfig, ServiceBindings, ServiceSave
@@ -138,13 +140,21 @@ def conversation_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
         resources: ApplicationResources,
         user_id: int,
         thread_id: str,
+        project_id: str,
         model_config: AgentModelConfig,
         search_service: ResolvedService | None,
         image_service: ResolvedService | None,
         access_mode: AccessMode,
         skill_snapshot: SkillSnapshotPayload,
     ) -> AgentRuntime[None]:
-        del thread_id, model_config, search_service, image_service, access_mode
+        del (
+            thread_id,
+            project_id,
+            model_config,
+            search_service,
+            image_service,
+            access_mode,
+        )
         return resources.tinkerfin.with_namespace(f"ns_{user_id}").build(
             model=ReplyModel(responses=["unused"])
         )
@@ -167,6 +177,7 @@ def _ordinary_request(
         "tools": [],
         "context": [],
         "forwardedProps": {
+            "projectId": "project-1",
             "model": model_id,
             "command": {"plan": "off"},
         },
@@ -191,6 +202,7 @@ def _resume_request(
             "tools": [],
             "context": [],
             "forwardedProps": {
+                "projectId": "project-1",
                 "model": model_id,
                 "command": {"plan": "off"},
             },
@@ -219,12 +231,18 @@ async def test_rejected_first_registration_rolls_back_its_new_conversation(
             )
             intent = classify_intent(request)
             resolved = await preparer.resolve_thread(
-                thread_id="", run_id=request.run_id, intent=intent
+                project_id="project-1",
+                thread_id="",
+                run_id=request.run_id,
+                intent=intent,
             )
             await preparer.register(
                 intent=intent,
                 prepared=prepare_run_request(
-                    request, user_id=1, thread_id=resolved.thread.thread_id
+                    request,
+                    project_id="project-1",
+                    user_id=1,
+                    thread_id=resolved.thread.thread_id,
                 ),
                 model=changed,
                 thread=resolved.thread,
@@ -284,10 +302,13 @@ async def test_conversation_is_announced_only_when_independent_history_can_read_
         )
         intent = classify_intent(request)
         resolved = await preparer.resolve_thread(
-            thread_id="", run_id=request.run_id, intent=intent
+            project_id="project-1", thread_id="", run_id=request.run_id, intent=intent
         )
         prepared = prepare_run_request(
-            request, user_id=1, thread_id=resolved.thread.thread_id
+            request,
+            project_id="project-1",
+            user_id=1,
+            thread_id=resolved.thread.thread_id,
         )
         execution = await preparer.register(
             intent=intent,
@@ -303,7 +324,11 @@ async def test_conversation_is_announced_only_when_independent_history_can_read_
                 tracer=reader,
                 history_queries=HistoryQueryAdmission(),
             )
-            assert (await history.list_history(page_size=10, cursor=None)).items == []
+            assert (
+                await history.list_history(
+                    project_id="project-1", page_size=10, cursor=None
+                )
+            ).items == []
         await notifications.publish(
             Notification(scope=scope, topic="test.boundary", key="prepared")
         )
@@ -337,7 +362,9 @@ async def test_conversation_is_announced_only_when_independent_history_can_read_
                         tracer=reader,
                         history_queries=HistoryQueryAdmission(),
                     )
-                    listed = await history.list_history(page_size=10, cursor=None)
+                    listed = await history.list_history(
+                        project_id="project-1", page_size=10, cursor=None
+                    )
                     assert [item.thread_id for item in listed.items] == [
                         prepared.identity.thread_id
                     ]
@@ -394,10 +421,14 @@ async def test_run_registration_persists_model_and_input(
         session, user_id=1, attachments=attachments, notifications=notifications
     )
     resolved = await preparer.resolve_thread(
-        thread_id=request.thread_id, run_id=request.run_id, intent=intent
+        project_id="project-1",
+        thread_id=request.thread_id,
+        run_id=request.run_id,
+        intent=intent,
     )
     prepared = prepare_run_request(
         request,
+        project_id="project-1",
         user_id=1,
         thread_id=resolved.thread.thread_id,
     )
@@ -448,7 +479,11 @@ async def test_resume_keeps_original_service_choice_and_rejects_changed_key(
         )
     repository = ConversationRepository(session)
     thread = await repository.create_thread(
-        user_id=1, thread_id="service-bindings", title="服务绑定", model_id="model-main"
+        project_id="project-1",
+        user_id=1,
+        thread_id="service-bindings",
+        title="服务绑定",
+        model_id="model-main",
     )
     request = _ordinary_request(thread_id=thread.thread_id, run_id="source")
     preparer = ConversationRunPreparer(
@@ -456,7 +491,9 @@ async def test_resume_keeps_original_service_choice_and_rejects_changed_key(
     )
     captured = await preparer.register(
         intent=classify_intent(request),
-        prepared=prepare_run_request(request, user_id=1, thread_id=thread.thread_id),
+        prepared=prepare_run_request(
+            request, project_id="project-1", user_id=1, thread_id=thread.thread_id
+        ),
         model=_model(),
         thread=thread,
     )
@@ -481,7 +518,9 @@ async def test_resume_keeps_original_service_choice_and_rejects_changed_key(
     async def register_resume():
         return await preparer.register(
             intent=classify_intent(resume),
-            prepared=prepare_run_request(resume, user_id=1, thread_id=thread.thread_id),
+            prepared=prepare_run_request(
+                resume, project_id="project-1", user_id=1, thread_id=thread.thread_id
+            ),
             model=_model(),
             thread=thread,
         )
@@ -501,6 +540,7 @@ async def test_resume_registration_stores_only_claim_identity(
 ) -> None:
     repository = ConversationRepository(session)
     thread = await repository.create_thread(
+        project_id="project-1",
         user_id=1,
         thread_id="thread-resume",
         title="恢复会话",
@@ -517,7 +557,8 @@ async def test_resume_registration_stores_only_claim_identity(
     await SkillRepository(session, 1).capture(
         RunIdentity(
             namespace="ns_1", thread_id=thread.thread_id, run_id="run-interrupted"
-        )
+        ),
+        project_id="project-1",
     )
     thread.status = "waiting_approval"
     thread.has_pending_interrupt = True
@@ -528,6 +569,7 @@ async def test_resume_registration_stores_only_claim_identity(
     assert isinstance(intent, ResumeChatIntent)
     prepared = prepare_run_request(
         request,
+        project_id="project-1",
         user_id=1,
         thread_id=thread.thread_id,
     )
@@ -565,6 +607,7 @@ async def test_continuation_preserves_source_model_and_file_access(
     selected_model = "model-other" if changed == "model" else "model-main"
     repository = ConversationRepository(session)
     thread = await repository.create_thread(
+        project_id="project-1",
         user_id=1,
         thread_id=f"thread-model-fence-{continuation}",
         title="模型继承",
@@ -601,6 +644,7 @@ async def test_continuation_preserves_source_model_and_file_access(
     intent = classify_intent(request)
     prepared = prepare_run_request(
         request,
+        project_id="project-1",
         user_id=1,
         thread_id=thread.thread_id,
     )
@@ -635,10 +679,14 @@ async def test_same_run_rejects_a_changed_registered_model(
         session, user_id=1, attachments=attachments, notifications=notifications
     )
     resolved = await preparer.resolve_thread(
-        thread_id=request.thread_id, run_id=request.run_id, intent=intent
+        project_id="project-1",
+        thread_id=request.thread_id,
+        run_id=request.run_id,
+        intent=intent,
     )
     prepared = prepare_run_request(
         request,
+        project_id="project-1",
         user_id=1,
         thread_id=resolved.thread.thread_id,
     )
@@ -799,7 +847,7 @@ async def test_chat_accepts_images_and_uses_messaging_only_for_delivery(
     )
 
     file = await attachments.upload(
-        user_id=1, name="image.png", chunks=byte_chunks(png())
+        project_id="project-1", user_id=1, name="image.png", chunks=byte_chunks(png())
     )
     request = _ordinary_request()
     request.forwarded_props.skill_ids = selected_ids
@@ -941,6 +989,7 @@ async def test_previous_head_reconcile_releases_the_request_transaction(
     )
     repository = ConversationRepository(session)
     thread = await repository.create_thread(
+        project_id="project-1",
         user_id=1,
         thread_id="thread-existing",
         title="已有会话",
@@ -1211,6 +1260,7 @@ async def test_pre_delivery_failure_keeps_only_preexisting_business_registration
     if existing:
         repository = ConversationRepository(session)
         thread = await repository.create_thread(
+            project_id="project-1",
             user_id=1,
             thread_id="existing-conversation",
             title="已有会话",
@@ -1220,7 +1270,9 @@ async def test_pre_delivery_failure_keeps_only_preexisting_business_registration
         request = _ordinary_request(thread_id=thread.thread_id, run_id="setup-failure")
         intent = classify_intent(request)
         assert isinstance(intent, StartChatIntent)
-        prepared = prepare_run_request(request, user_id=1, thread_id=thread.thread_id)
+        prepared = prepare_run_request(
+            request, project_id="project-1", user_id=1, thread_id=thread.thread_id
+        )
         await ConversationRunPreparer(
             session, user_id=1, attachments=attachments, notifications=notifications
         ).register(
@@ -1403,7 +1455,10 @@ async def test_business_registration_cleanup_settles_before_request_cancellation
         )
 
 
-pytestmark = pytest.mark.usefixtures("model_connections")
+pytestmark = [
+    pytest.mark.usefixtures("model_connections"),
+    pytest.mark.usefixtures("projects"),
+]
 
 
 async def test_initialization_error_is_logged_once_and_replay_does_not_log_again(
@@ -1424,7 +1479,11 @@ async def test_initialization_error_is_logged_once_and_replay_does_not_log_again
     monkeypatch.setattr("tinkerfin.deep_agent.create_agent_graph", failed_graph)
     repository = ConversationRepository(session)
     thread = await repository.create_thread(
-        user_id=1, thread_id="thread-log", title="日志验证", model_id="model-main"
+        project_id="project-1",
+        user_id=1,
+        thread_id="thread-log",
+        title="日志验证",
+        model_id="model-main",
     )
     thread.title_source = "user"
     await repository.commit()
@@ -1482,6 +1541,59 @@ async def test_initialization_error_is_logged_once_and_replay_does_not_log_again
         assert build_count == 1
 
 
+async def test_compaction_after_move_captures_destination_project_skills(
+    session, notifications, attachments
+):
+    """压缩属于当前项目的新运行，历史技能快照仅用于原运行的恢复"""
+    from tinkerfin_studio.conversation.request import CompactRequest
+
+    destination = await ProjectRepository(session, 1).create("目标项目")
+    source_skills = SkillRepository(session, 1, project_id="project-1")
+    source_skill = await source_skills.install(
+        parse_package(skill_files("source-only")), SkillOrigin(name="来源", kind="zip")
+    )
+    target_skill = await SkillRepository(session, 1, project_id=destination.id).install(
+        parse_package(skill_files("destination-only")),
+        SkillOrigin(name="目标", kind="zip"),
+    )
+    repository = ConversationRepository(session)
+    thread = await repository.create_thread(
+        user_id=1,
+        project_id="project-1",
+        thread_id="moved-compaction",
+        title="待压缩会话",
+        model_id="model-main",
+    )
+    source = RunIdentity(namespace="ns_1", thread_id=thread.thread_id, run_id="source")
+    original = await source_skills.capture(source, project_id="project-1")
+    thread.last_run_id = source.run_id
+    await session.commit()
+    await repository.organize_thread(
+        user_id=1, thread_id=thread.thread_id, project_id=destination.id, archived=None
+    )
+    await session.commit()
+    preparer = ConversationRunPreparer(
+        session, user_id=1, attachments=attachments, notifications=notifications
+    )
+    request = CompactRequest(runId="compact", model="model-main")
+    execution = await preparer.register(
+        intent=CompactIntent(thread_id=thread.thread_id),
+        prepared=prepare_run_request(
+            request,
+            user_id=1,
+            thread_id=thread.thread_id,
+            project_id=destination.id,
+        ),
+        model=_model(),
+        thread=thread,
+    )
+    assert [item.installation_id for item in execution.skills.skills] == [
+        target_skill.id
+    ]
+    assert await source_skills.snapshot(source) == original
+    assert [item.installation_id for item in original.skills] == [source_skill.id]
+
+
 async def test_manual_compaction_uses_registered_run_replay_without_chat_or_title(
     notifications,
     database,
@@ -1534,7 +1646,11 @@ async def test_manual_compaction_uses_registered_run_replay_without_chat_or_titl
     before = (await runtime.agui.history(tracer).get("compact-thread")).snapshot
     repository = ConversationRepository(session)
     thread = await repository.create_thread(
-        user_id=1, thread_id="compact-thread", title="项目", model_id="model-main"
+        project_id="project-1",
+        user_id=1,
+        thread_id="compact-thread",
+        title="项目",
+        model_id="model-main",
     )
     thread.last_access_mode = "write_approval"
     await repository.commit()
@@ -1606,6 +1722,7 @@ async def test_manual_compaction_uses_registered_run_replay_without_chat_or_titl
         )
         assert registration is not None
         assert registration.input_json == {
+            "projectId": "project-1",
             "operation": "compact",
             "threadId": "compact-thread",
             "runId": "compact-run",
@@ -1635,6 +1752,7 @@ async def test_compaction_respects_conversation_ownership_and_pending_work(
     repository = ConversationRepository(session)
     if condition != "missing":
         thread = await repository.create_thread(
+            project_id="project-" + str(2 if condition == "another-user" else 1),
             user_id=2 if condition == "another-user" else 1,
             thread_id="compact-thread",
             title="项目",
@@ -1690,10 +1808,10 @@ async def test_retried_registration_survives_first_submission_cleanup(
         session, user_id=1, attachments=attachments, notifications=notifications
     )
     resolved = await first.resolve_thread(
-        thread_id="", run_id=request.run_id, intent=intent
+        project_id="project-1", thread_id="", run_id=request.run_id, intent=intent
     )
     prepared = prepare_run_request(
-        request, user_id=1, thread_id=resolved.thread.thread_id
+        request, project_id="project-1", user_id=1, thread_id=resolved.thread.thread_id
     )
     execution = await first.register(
         intent=intent,
@@ -1715,7 +1833,10 @@ async def test_retried_registration_survives_first_submission_cleanup(
             notifications=notifications,
         )
         retry_thread = await retry.resolve_thread(
-            thread_id=prepared.identity.thread_id, run_id=request.run_id, intent=intent
+            project_id="project-1",
+            thread_id=prepared.identity.thread_id,
+            run_id=request.run_id,
+            intent=intent,
         )
         attached = await retry.register(
             intent=intent, prepared=prepared, model=_model(), thread=retry_thread.thread

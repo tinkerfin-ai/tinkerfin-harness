@@ -1,15 +1,19 @@
 import { ChevronDown } from 'lucide-react'
+import { useState } from 'react'
 import type { TraceGraphNode } from '../../../api/conversation/traceGraph'
 import { CodeText } from '../../../components/ui/CodeText'
+import { FeedbackState } from '../../../components/ui'
 import { useI18n } from '../../../i18n'
 import type { JsonValue } from '../../../types'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { traceContentText } from './tracePresentation'
+import { useTraceModelRequest } from './useTraceModelRequest'
 
 const record = (value: JsonValue | undefined | null) => value != null && typeof value === 'object' && !Array.isArray(value) ? value : undefined
 
 /** 压缩输入和摘要分别归入对应页签，模型用量在模型详情查看 */
-export function CompactionDetails({ operation, models, section }: {
+export function CompactionDetails({ threadId, operation, models, section }: {
+  threadId: string
   operation: TraceGraphNode
   models: TraceGraphNode[]
   section: 'request' | 'result'
@@ -19,6 +23,12 @@ export function CompactionDetails({ operation, models, section }: {
   const summary = result?.generated_summary ?? result?.summary
   const input = record(operation.request)
   const messages = Array.isArray(input?.messages) ? input.messages : []
+  const firstModel = models[0]
+  const [requestOpen, setRequestOpen] = useState(false)
+  const modelRequest = useTraceModelRequest({
+    threadId, nodeId: firstModel?.id ?? '', reference: firstModel?.requestReference,
+    enabled: section === 'request' && requestOpen,
+  })
   if (section === 'result') return (
     <section className="chain-trace-compaction-details">
       {typeof summary === 'string' && summary
@@ -30,7 +40,6 @@ export function CompactionDetails({ operation, models, section }: {
       {operation.failure && <pre><CodeText language="json">{JSON.stringify(operation.failure, null, 2)}</CodeText></pre>}
     </section>
   )
-  const firstModel = models[0]
   return (
     <div className="chain-trace-compaction-details">
       <section>
@@ -41,11 +50,16 @@ export function CompactionDetails({ operation, models, section }: {
           </section>
         })}
       </section>
-      {firstModel && (firstModel.request != null || firstModel.requestOmitted) && <details>
+      {firstModel && (firstModel.requestReference || firstModel.requestOmitted) && <details onToggle={event => setRequestOpen(event.currentTarget.open)}>
         <summary><ChevronDown size={14} aria-hidden="true" />{t('摘要模型输入')}</summary>
         {firstModel.requestOmitted
           ? <p className="chain-trace-compaction-note">{t('请求内容未保留')}</p>
-          : <pre><CodeText language="json">{JSON.stringify(firstModel.request ?? null, null, 2)}</CodeText></pre>}
+          : modelRequest.state.phase === 'ready'
+            ? <pre><CodeText language="json">{JSON.stringify(modelRequest.state.detail.request, null, 2)}</CodeText></pre>
+            : <FeedbackState kind={modelRequest.state.phase === 'error' ? 'error' : 'loading'}
+                appearance={modelRequest.state.phase === 'error' ? 'retry' : 'default'}
+                title={t(modelRequest.state.phase === 'error' ? '模型请求加载失败' : '正在加载模型请求')}
+                retryLabel={t('重新加载')} onRetry={modelRequest.state.phase === 'error' ? modelRequest.retry : undefined} />}
       </details>}
     </div>
   )

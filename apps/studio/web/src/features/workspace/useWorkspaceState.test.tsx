@@ -10,13 +10,13 @@ import { useWorkspaceState, type RetainConversationDetails } from './useWorkspac
 const NOW = '2026-09-20T00:00:00Z'
 
 const ended = (threadId: string, overrides: Partial<Conversation> = {}): Conversation => ({
-  ...buildEmptyConversation({ threadId, now: NOW, model: 'server-model' }),
+  ...buildEmptyConversation({projectId: 'project-1',  threadId, now: NOW, model: 'server-model' }),
   title: `会话 ${threadId}`,
   historySynchronized: true,
   messages: [{ id: `${threadId}:answer`, role: 'assistant', content: `答复 ${threadId}`, createdAt: NOW }],
   serverState: { files: { result: '内容' } },
   lastSeq: 2,
-  trace: {
+  trace: {projectId: 'project-1', archived: false,
     id: 1,
     threadId,
     title: `会话 ${threadId}`,

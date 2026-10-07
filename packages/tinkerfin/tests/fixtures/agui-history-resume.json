@@ -160,29 +160,7 @@
           "content": null,
           "contentOmitted": false,
           "toolCallOnly": false,
-          "request": {
-            "messages": [
-              {
-                "messageType": "human",
-                "id": "user",
-                "name": null,
-                "content": "Prepare report",
-                "toolCalls": [],
-                "toolCallChunks": [],
-                "toolCallId": null,
-                "toolStatus": null,
-                "responseMetadata": {},
-                "usageMetadata": null
-              }
-            ],
-            "invocation": {
-              "_type": "fake-messages-list-chat-model",
-              "stop": null
-            },
-            "options": {
-              "stop": null
-            }
-          },
+          "request": null,
           "requestOmitted": false,
           "result": null,
           "resultOmitted": false,
@@ -190,7 +168,8 @@
           "responseMetadata": null,
           "failure": null,
           "linkIssues": [],
-          "agui": null
+          "agui": null,
+          "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoiaGlzdG9yeSIsInRocmVhZF9pZCI6InJlcG9ydCIsImdlbmVyYXRpb24iOiJjMDBjYjYwNDE5ZWQ0ZWI0Yjk1Njc0ZDYwOTk4MzU0NCJ9LCJ0cmFjZV9zZXEiOjcsInJ1bl9pZCI6InJlcXVlc3QiLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtZmQ3Ny03NTcxLTk0NjctZjRhZjRiNmZlOWJhIn0"
         },
         {
           "id": "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
@@ -1243,29 +1222,7 @@
           "content": null,
           "contentOmitted": false,
           "toolCallOnly": false,
-          "request": {
-            "messages": [
-              {
-                "messageType": "human",
-                "id": "user",
-                "name": null,
-                "content": "Prepare report",
-                "toolCalls": [],
-                "toolCallChunks": [],
-                "toolCallId": null,
-                "toolStatus": null,
-                "responseMetadata": {},
-                "usageMetadata": null
-              }
-            ],
-            "invocation": {
-              "_type": "fake-messages-list-chat-model",
-              "stop": null
-            },
-            "options": {
-              "stop": null
-            }
-          },
+          "request": null,
           "requestOmitted": false,
           "result": null,
           "resultOmitted": false,
@@ -1273,7 +1230,8 @@
           "responseMetadata": null,
           "failure": null,
           "linkIssues": [],
-          "agui": null
+          "agui": null,
+          "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoiaGlzdG9yeSIsInRocmVhZF9pZCI6InJlcG9ydCIsImdlbmVyYXRpb24iOiJjMDBjYjYwNDE5ZWQ0ZWI0Yjk1Njc0ZDYwOTk4MzU0NCJ9LCJ0cmFjZV9zZXEiOjcsInJ1bl9pZCI6InJlcXVlc3QiLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtZmQ3Ny03NTcxLTk0NjctZjRhZjRiNmZlOWJhIn0"
         },
         {
           "id": "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
@@ -1430,59 +1388,7 @@
           "content": null,
           "contentOmitted": false,
           "toolCallOnly": false,
-          "request": {
-            "messages": [
-              {
-                "messageType": "human",
-                "id": "user",
-                "name": null,
-                "content": "Prepare report",
-                "toolCalls": [],
-                "toolCallChunks": [],
-                "toolCallId": null,
-                "toolStatus": null,
-                "responseMetadata": {},
-                "usageMetadata": null
-              },
-              {
-                "messageType": "assistant",
-                "id": "lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
-                "name": null,
-                "content": "",
-                "toolCalls": [
-                  {
-                    "id": "save-call",
-                    "name": "save_report",
-                    "arguments": {}
-                  }
-                ],
-                "toolCallChunks": [],
-                "toolCallId": null,
-                "toolStatus": null,
-                "responseMetadata": {},
-                "usageMetadata": null
-              },
-              {
-                "messageType": "tool",
-                "id": "5088ae83-68e9-4dab-ad48-57e96a433d56",
-                "name": "save_report",
-                "content": "Report saved",
-                "toolCalls": [],
-                "toolCallChunks": [],
-                "toolCallId": "save-call",
-                "toolStatus": "success",
-                "responseMetadata": {},
-                "usageMetadata": null
-              }
-            ],
-            "invocation": {
-              "_type": "fake-messages-list-chat-model",
-              "stop": null
-            },
-            "options": {
-              "stop": null
-            }
-          },
+          "request": null,
           "requestOmitted": false,
           "result": null,
           "resultOmitted": false,
@@ -1490,7 +1396,8 @@
           "responseMetadata": null,
           "failure": null,
           "linkIssues": [],
-          "agui": null
+          "agui": null,
+          "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoiaGlzdG9yeSIsInRocmVhZF9pZCI6InJlcG9ydCIsImdlbmVyYXRpb24iOiJjMDBjYjYwNDE5ZWQ0ZWI0Yjk1Njc0ZDYwOTk4MzU0NCJ9LCJ0cmFjZV9zZXEiOjI5LCJydW5faWQiOiJyZXN1bWUiLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtZmRiNC03MzQxLTgxZTctMGVkNzFhYjExODhkIn0"
         },
         {
           "id": "message:4f53cda18c2baa0c0354bb5f:lc_run--01a0981f-fdb4-7341-81e7-0ed71ab1188d-0",
@@ -1630,5 +1537,121 @@
       "pendingInteractions": [],
       "lastOccurredAt": "2026-09-13T00:17:08.551948Z"
     }
-  }
+  },
+  "modelRequests": [
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoiaGlzdG9yeSIsInRocmVhZF9pZCI6InJlcG9ydCIsImdlbmVyYXRpb24iOiJjMDBjYjYwNDE5ZWQ0ZWI0Yjk1Njc0ZDYwOTk4MzU0NCJ9LCJ0cmFjZV9zZXEiOjcsInJ1bl9pZCI6InJlcXVlc3QiLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtZmQ3Ny03NTcxLTk0NjctZjRhZjRiNmZlOWJhIn0",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user",
+            "name": null,
+            "content": "Prepare report",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoiaGlzdG9yeSIsInRocmVhZF9pZCI6InJlcG9ydCIsImdlbmVyYXRpb24iOiJjMDBjYjYwNDE5ZWQ0ZWI0Yjk1Njc0ZDYwOTk4MzU0NCJ9LCJ0cmFjZV9zZXEiOjcsInJ1bl9pZCI6InJlcXVlc3QiLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtZmQ3Ny03NTcxLTk0NjctZjRhZjRiNmZlOWJhIn0",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fd77-7571-9467-f4af4b6fe9ba",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user",
+            "name": null,
+            "content": "Prepare report",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoiaGlzdG9yeSIsInRocmVhZF9pZCI6InJlcG9ydCIsImdlbmVyYXRpb24iOiJjMDBjYjYwNDE5ZWQ0ZWI0Yjk1Njc0ZDYwOTk4MzU0NCJ9LCJ0cmFjZV9zZXEiOjI5LCJydW5faWQiOiJyZXN1bWUiLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtZmRiNC03MzQxLTgxZTctMGVkNzFhYjExODhkIn0",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-fdb4-7341-81e7-0ed71ab1188d",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user",
+            "name": null,
+            "content": "Prepare report",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "assistant",
+            "id": "lc_run--01a0981f-fd77-7571-9467-f4af4b6fe9ba-0",
+            "name": null,
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "save-call",
+                "name": "save_report",
+                "arguments": {}
+              }
+            ],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "tool",
+            "id": "5088ae83-68e9-4dab-ad48-57e96a433d56",
+            "name": "save_report",
+            "content": "Report saved",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": "save-call",
+            "toolStatus": "success",
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    }
+  ]
 }

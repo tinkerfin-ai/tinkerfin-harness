@@ -39,7 +39,7 @@ function envelope(data: unknown, code = 0, message = 'success', status = 200) {
   })
 }
 
-const detail = (): ConversationHistoryDetail => ({ accessMode: 'write_approval',
+const detail = (): ConversationHistoryDetail => ({projectId: 'project-1', archived: false,  accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',
   titleSeq: 0,
@@ -192,7 +192,7 @@ describe('conversation Trace client', () => {
   })
 
   it.each([
-    ['list', () => fetchConversationHistoryList()],
+    ['list', () => fetchConversationHistoryList({ projectId: 'project-1' })],
     ['config', () => fetchConversationHistoryGroupConfig()],
     ['detail', () => fetchConversationHistoryDetail('thread-auth', {
       includeTaskTrace: true,
@@ -230,7 +230,7 @@ describe('conversation Trace client', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    await fetchConversationHistoryList({
+    await fetchConversationHistoryList({projectId: 'project-1',
       pageSize: 5,
       cursor: 'opaque-list-cursor',
       query: '目标会话',

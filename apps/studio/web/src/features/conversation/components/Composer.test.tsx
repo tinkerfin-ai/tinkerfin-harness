@@ -149,9 +149,10 @@ describe('Composer', () => {
   })
 
   it('失败卡片显示明确状态，支持重试和移除，移除后可发送正文', () => {
+    const error = '网络请求失败，请稍后重试'
     const failed: DraftAttachment = {
       id: 'failed', name: '报告.pdf', kind: 'document', size: 3,
-      state: 'error', progress: 0, error: '网络请求失败，请稍后重试',
+      state: 'error', progress: 0, error,
     }
     const onRetryAttachment = vi.fn()
     const onRemoveAttachment = vi.fn()
@@ -163,7 +164,9 @@ describe('Composer', () => {
     const card = screen.getByRole('group', { name: '报告.pdf' })
     expect(within(card).getByText('PDF')).toBeInTheDocument()
     expect(within(card).getByRole('status')).toHaveTextContent('上传失败')
-    expect(within(card).getByRole('status')).toHaveAttribute('title', failed.error)
+    expect(within(card).getByRole('status')).toHaveAccessibleDescription(error)
+    fireEvent.pointerMove(within(card).getByRole('status'))
+    expect(screen.getByRole('tooltip')).toHaveTextContent(error)
     fireEvent.click(within(card).getByRole('button', { name: '重试附件：报告.pdf' }))
     expect(onRetryAttachment).toHaveBeenCalledWith('failed')
     rerender(<DraftComposer {...props} attachments={[{ ...failed, state: 'uploading', progress: 42 }]} />)

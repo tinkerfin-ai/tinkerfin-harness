@@ -22,7 +22,6 @@ export function useConversationManagement({
   workspace,
   conversation,
   setWorkspace,
-  setDraft,
   setDraftConversation,
   setDraftModel,
   setDraftAccessMode,
@@ -37,7 +36,6 @@ export function useConversationManagement({
   workspace: WorkspaceState
   conversation: Conversation
   setWorkspace: Dispatch<SetStateAction<WorkspaceState>>
-  setDraft: Dispatch<SetStateAction<string>>
   setDraftConversation: Dispatch<SetStateAction<Conversation | null>>
   setDraftModel: Dispatch<SetStateAction<string>>
   setDraftAccessMode: Dispatch<SetStateAction<Conversation['accessMode']>>
@@ -71,7 +69,6 @@ export function useConversationManagement({
 
   const performSelectConversation = (threadId: string) => {
     if (threadId !== latest.current.workspace.currentThreadId) onConversationBoundary()
-    setDraft('')
     setDraftConversation(null)
     setWorkspace((state) => selectCurrentConversation(state, threadId))
     if (findConversation(threadId)?.isHydrated) void followDetachedConversation(threadId)
@@ -79,7 +76,6 @@ export function useConversationManagement({
 
   const performNewConversation = () => {
     onConversationBoundary()
-    setDraft('')
     setDraftConversation(null)
     setDraftModel(defaultModelId)
     setDraftAccessMode('full')

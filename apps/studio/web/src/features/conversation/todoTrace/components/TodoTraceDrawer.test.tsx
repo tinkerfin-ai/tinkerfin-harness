@@ -50,6 +50,7 @@ describe('TodoTraceDrawer', () => {
 
     const latest = await screen.findByRole('button', { name: '收起任务组：最新任务' })
     expect(latest).toHaveAttribute('aria-expanded', 'true')
+    expect(within(latest).getByText('1/1', { exact: true })).toBeVisible()
     expect(screen.getByRole('heading', { name: '当前' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '历史' })).toBeInTheDocument()
     expect(screen.getByText('当前会话 · 2 组')).toBeInTheDocument()

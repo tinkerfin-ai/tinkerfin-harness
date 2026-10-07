@@ -6,10 +6,13 @@ import { formatAttachmentSize } from '../conversation/attachments/attachmentPres
 import { confirmSkillImport, previewGitHubSkills, previewZipSkills, updateSkill } from './api'
 import type { ImportPreview, InstalledSkill } from './model'
 import { skillError } from './useSkillData'
+import type { Project } from '../projects/api'
+import { SkillDestinationPicker } from './SkillDestinationPicker'
 
 /** 导入前预览真实内容，失败保留输入，确认只提交已预览的内容摘要 */
-export function SkillImportDialog({ trigger, target, onClose, onCompleted }: { trigger: HTMLElement; target?: InstalledSkill; onClose: () => void; onCompleted: (changed: boolean) => void }) {
+export function SkillImportDialog({ project, initialProjectId, trigger, target, onClose, onCompleted }: { project: Project; initialProjectId: string | null; trigger: HTMLElement; target?: InstalledSkill; onClose: () => void; onCompleted: (changed: boolean) => void }) {
   const { t } = useI18n()
+  const [projectId, setProjectId] = useState(target ? target.project_id : initialProjectId)
   const [tab, setTab] = useState<'github' | 'zip'>(target ? 'zip' : 'github')
   const [url, setUrl] = useState('')
   const [file, setFile] = useState<File | null>(null)
@@ -34,11 +37,11 @@ export function SkillImportDialog({ trigger, target, onClose, onCompleted }: { t
     setBusy(true); setError('')
     try {
       if (preview) {
-        const signature = JSON.stringify([preview.id, [...selected].sort(), target?.id])
+        const signature = JSON.stringify([projectId, preview.id, [...selected].sort(), target?.id])
         if (attempt.current?.signature !== signature) attempt.current = { signature, id: crypto.randomUUID() }
         const changed = target
-          ? (await updateSkill(target.id, attempt.current.id, { draft_id: preview.id, digest: selected[0] }, controller.signal)).changed
-          : Boolean(await confirmSkillImport(preview.id, selected, attempt.current.id, controller.signal))
+          ? (await updateSkill(projectId, target.id, attempt.current.id, { draft_id: preview.id, digest: selected[0] }, controller.signal)).changed
+          : Boolean(await confirmSkillImport(projectId, preview.id, selected, attempt.current.id, controller.signal))
         if (!controller.signal.aborted) { onCompleted(changed); onClose() }
       } else {
         const result = tab === 'github' ? await previewGitHubSkills(url.trim(), controller.signal)
@@ -58,6 +61,7 @@ export function SkillImportDialog({ trigger, target, onClose, onCompleted }: { t
   }
   return <Dialog open title={target ? t('更新「{name}」', { name: target.name }) : preview ? t('选择要安装的技能') : t('导入技能')} className="skills-import-dialog" restoreFocusTo={trigger} onClose={onClose} closeDisabled={busy}>
     <div className="skills-import-content">
+      {!target && <SkillDestinationPicker project={project} value={projectId} onChange={setProjectId} disabled={busy || preview !== null} />}
       {!preview ? <>
         {!target && <ViewTabs value={tab} label={t('导入方式')} options={[{ value: 'github', label: 'GitHub' }, { value: 'zip', label: t('ZIP 文件') }]} onChange={value => { if (!busy) { setTab(value); setError('') } }} />}
         {tab === 'github' ? <TextField label={t('GitHub 地址')} placeholder="https://github.com/owner/repository" value={url} disabled={busy} onChange={event => setUrl(event.target.value)}
@@ -68,7 +72,7 @@ export function SkillImportDialog({ trigger, target, onClose, onCompleted }: { t
             <input ref={input} type="file" aria-label={t('ZIP 文件')} accept=".zip,application/zip" hidden onChange={event => chooseFile(event.target.files?.[0])} />
             <Button type="button" size="sm" disabled={busy} onClick={() => input.current?.click()}>{file ? t('重新选择') : t('选择文件')}</Button>
           </div>}
-        <p className="skills-import-note">{target ? t('选择同名技能的 ZIP，保留启用状态并从下一轮生效') : t('导入到个人技能库，安装后默认启用')}</p>
+        <p className="skills-import-note">{target ? t('选择同名技能的 ZIP，保留启用状态并从下一轮生效') : t('安装后默认启用')}</p>
       </> : <div className="skills-import-candidates" role="group" aria-label={t('可安装技能')}>
         {preview.candidates.map(candidate => {
           const content = <span><strong>{candidate.name}</strong><p>{candidate.description}</p><small>{t('{count} 个文件', { count: candidate.file_count })} · {formatAttachmentSize(candidate.byte_size)}</small></span>

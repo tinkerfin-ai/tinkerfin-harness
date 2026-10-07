@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { mockDownloadPermits } from './support/attachment-storage'
 import { measureBounds } from './support/geometry'
@@ -113,6 +114,7 @@ test('生成文件使用紧凑类型卡片并沿用图片预览工具栏', async
 
   await mockDownloadPermits(page)
   await installNotificationStream(page)
+  await installProjectScope(page)
   await page.goto('/')
   await page.getByRole('button', { name: `打开会话：${documentHistory.title}`, exact: true }).click()
   const fileCards = page.locator('.attachment-card:not(.attachment-card--image)')

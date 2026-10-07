@@ -81,7 +81,11 @@ async def _register(database: Database, identity: RunIdentity) -> int:
     async with database.session() as session:
         repository = ConversationRepository(session)
         thread = await repository.create_thread(
-            user_id=7, thread_id=identity.thread_id, title="执行结算", model_id="main"
+            project_id="project-7",
+            user_id=7,
+            thread_id=identity.thread_id,
+            title="执行结算",
+            model_id="main",
         )
         run = await repository.create_run_registration(
             thread_id=thread.id,
@@ -373,6 +377,7 @@ async def _starting_registration(database, identity):
     async with database.session() as session:
         repository = ConversationRepository(session)
         thread = await repository.create_thread(
+            project_id="project-7",
             user_id=7,
             thread_id=identity.thread_id,
             title="关闭结算",
@@ -541,7 +546,11 @@ async def test_missing_trace_preparing_with_live_owner_is_preserved(
     async with database.session() as session:
         repository = ConversationRepository(session)
         thread = await repository.create_thread(
-            user_id=7, thread_id=identity.thread_id, title="尚在准备", model_id="main"
+            project_id="project-7",
+            user_id=7,
+            thread_id=identity.thread_id,
+            title="尚在准备",
+            model_id="main",
         )
         run = await repository.create_run_registration(
             thread_id=thread.id,
@@ -789,3 +798,6 @@ async def test_missing_running_trace_fails_startup_without_leaks(
         run = await repository.get_run(thread_pk=thread_pk, run_id=identity.run_id)
         assert thread is not None and run is not None
         assert (thread.status, run.status) == ("running", "running")
+
+
+pytestmark = pytest.mark.usefixtures("projects")

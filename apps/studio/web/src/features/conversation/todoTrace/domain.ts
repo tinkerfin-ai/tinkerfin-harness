@@ -93,8 +93,9 @@ export const projectTodoItems = (
   status: outputStatus(todo.status, groupStatus),
 }))
 
+/** 进度计入已完成和执行中的任务，未执行或未确认完成的任务不计入 */
 export const todoProgress = (group: TodoGroup) => ({
-  completed: group.todos.filter((todo) => todo.status === 'completed').length,
+  activeOrCompleted: group.todos.filter((todo) => todo.status === 'completed' || todo.status === 'running').length,
   total: group.todos.length,
 })
 

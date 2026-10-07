@@ -9,6 +9,7 @@ describe('文件审批选择', () => {
     render(<AccessModePicker value="write_approval" onChange={change} />)
     const trigger = screen.getByRole('button', { name: '选择访问权限' })
     expect(trigger).toHaveAccessibleDescription('写入需审批')
+    fireEvent.pointerMove(trigger)
     expect(screen.getByRole('tooltip')).toHaveTextContent('写入需审批')
     expect(trigger.querySelector('.ui-compact-picker-chevron')).not.toBeNull()
     fireEvent.click(trigger)

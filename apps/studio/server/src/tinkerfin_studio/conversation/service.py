@@ -58,6 +58,7 @@ from tinkerfin_studio.conversation.schemas import (
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import AgentModelConfig
 from tinkerfin_studio.models.service import AgentModelService
+from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_studio.resources import ApplicationResources
 from tinkerfin_studio.skills.execution import build_selected_skill_message
 from tinkerfin_tracing import TraceThreadNotFound, TracingError
@@ -214,6 +215,9 @@ class ConversationChatService:
             intent = CompactIntent(thread_id=thread_id)
         else:
             model = await models.resolve(request.forwarded_props.model)
+            await ProjectRepository(self._session, self._user.user_id).require(
+                request.forwarded_props.project_id
+            )
             request = await self._resolve_attachments(request)
             intent = classify_intent(request)
             thread_id = request.thread_id
@@ -250,6 +254,7 @@ class ConversationChatService:
                 resources=self._resources,
                 user_id=self._user.user_id,
                 thread_id=prepared.identity.thread_id,
+                project_id=execution.thread.project_id,
                 model_config=model,
                 search_service=search_service,
                 image_service=image_service,
@@ -348,6 +353,7 @@ class ConversationChatService:
             attachment = await self._resources.attachments.get(
                 attachment_id,
                 user_id=self._user.user_id,
+                project_id=request.forwarded_props.project_id,
                 thread_id=request.thread_id or None,
                 allow_unbound=True,
             )
@@ -371,6 +377,15 @@ class ConversationChatService:
     ) -> tuple[PreparedRunRequest, PreparedExecution]:
         """完成 thread 解析、权威快照和短事务 run 注册"""
 
+        if isinstance(request, CompactRequest):
+            existing = await self._repository.get_thread(
+                user_id=self._user.user_id, thread_id=thread_id
+            )
+            if existing is None:
+                raise BusinessException(ConversationErrorCode.NOT_FOUND)
+            project_id = existing.project_id
+        else:
+            project_id = request.forwarded_props.project_id
         run_preparer = ConversationRunPreparer(
             self._session,
             user_id=self._user.user_id,
@@ -380,6 +395,7 @@ class ConversationChatService:
         resolved_thread = await run_preparer.resolve_thread(
             thread_id=thread_id,
             run_id=request.run_id,
+            project_id=project_id,
             intent=intent,
         )
         thread = resolved_thread.thread
@@ -399,6 +415,7 @@ class ConversationChatService:
                 resolved_thread = await run_preparer.resolve_thread(
                     thread_id=thread_id,
                     run_id=request.run_id,
+                    project_id=project_id,
                     intent=intent,
                 )
                 thread = resolved_thread.thread
@@ -434,6 +451,7 @@ class ConversationChatService:
             request,
             user_id=self._user.user_id,
             thread_id=thread.thread_id,
+            project_id=project_id,
             access_mode=thread.last_access_mode,
         )
         try:

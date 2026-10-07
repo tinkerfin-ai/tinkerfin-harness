@@ -125,7 +125,7 @@ describe('实时正文逐字展示', () => {
         ? { type: 'RUN_FINISHED', threadId: 'thread', runId: 'run' }
         : { type: 'RUN_ERROR', code: 'model_error', message: '模型调用失败' },
     ]
-    const conversation = events.reduce(applyConversationEvent, buildEmptyConversation({ now: '' }))
+    const conversation = events.reduce(applyConversationEvent, buildEmptyConversation({projectId: 'project-1',  now: '' }))
     const message = conversation.messages.find(message => message.id === 'answer')!
     expect(message.content).toBe('你好吗')
     const { container, unmount } = render(<MessageBlock message={message} />, { wrapper: ProgressScope })
@@ -149,7 +149,7 @@ describe('实时正文逐字展示', () => {
       { type: 'TEXT_MESSAGE_START', messageId: 'answer', role: 'assistant' },
       { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: content },
     ]
-    let conversation = events.reduce(applyConversationEvent, buildEmptyConversation({ now: '' }))
+    let conversation = events.reduce(applyConversationEvent, buildEmptyConversation({projectId: 'project-1',  now: '' }))
     const { rerender, unmount } = render(<MessageBlock message={conversation.messages[0]} />, { wrapper: ProgressScope })
     frame()
     expect(screen.queryByText(content, { exact: true })).not.toBeInTheDocument()

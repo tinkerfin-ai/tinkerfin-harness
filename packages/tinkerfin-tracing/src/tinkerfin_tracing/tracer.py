@@ -17,6 +17,7 @@ from tinkerfin_contracts import (
 
 from ._follow_lineage import PendingTraceLineage, head_selection_pending
 from ._graph_projection import project_trace_graph_records
+from ._model_requests import read_model_request
 from ._projection_cache import ProjectionRegistry
 from ._tasks import capture, join_owned_task, select_failure
 from ._tracing_session import _TracingSession
@@ -35,6 +36,7 @@ from .graph import (
 )
 from .graph_query import TraceGraphQuery, decode_graph_cursor, encode_graph_cursor
 from .limits import TraceLimits
+from .model_requests import TraceModelRequest
 from .projection import (
     RegisteredTraceProjection,
     TraceProjection,
@@ -324,6 +326,31 @@ class Tracer:
             projection_names=projections,
             at_run_start=at_run_start,
         )
+
+    async def model_request(
+        self, identity: ThreadIdentity, *, reference: str
+    ) -> TraceModelRequest:
+        """Read one model input selected from a historical or queried graph node.
+
+        Args:
+            identity: Application-authorized conversation containing the model call.
+            reference: The node's opaque ``request_reference``.
+
+        Returns:
+            Complete retained input from the referenced immutable observation.
+
+        Raises:
+            TypeError: The conversation identity has the wrong type.
+            InvalidTraceReference: The reference is invalid or belongs to another scope.
+            TraceThreadNotFound: The referenced generation has been removed.
+            TraceStoreError: Reading the retained input fails.
+
+        The Store is borrowed. Cancellation propagates through its bounded read;
+        no subscription, agent execution, or resource ownership is created.
+        """
+        if not isinstance(identity, ThreadIdentity):
+            raise TypeError("identity must be a ThreadIdentity")
+        return await read_model_request(self._store, identity, reference)
 
     async def query(
         self,

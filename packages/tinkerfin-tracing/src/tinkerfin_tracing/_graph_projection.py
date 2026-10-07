@@ -15,6 +15,7 @@ from ._graph_reducer import (
     graph_node_mutations,
 )
 from ._ids import scope_id
+from ._model_requests import model_request_reference
 from .backend import TraceGraphNodeMutation
 from .capture import CapturedValue
 from .errors import TraceStoreProtocolError
@@ -635,12 +636,10 @@ def _validate_locator_ownership(
     _validate_locator_slots(record)
 
     expected_issue: TraceGraphLinkIssue | None = None
-    if (
-        record.kind is TraceGraphNodeKind.ASSISTANT_MESSAGE
-        and record.model_call_id is None
-    ):
-        expected_issue = TraceGraphLinkIssue.MISSING_MODEL_CALL
-    elif record.kind is TraceGraphNodeKind.TOOL:
+    # An assistant may be produced by middleware rather than a model. Absence of
+    # that optional relationship is not evidence of a missing required link.
+    # Claimed model ownership is still checked against its exact source fact above.
+    if record.kind is TraceGraphNodeKind.TOOL:
         if any(
             isinstance(event.fact, ToolExecutionFact)
             and event.fact.source_tool_call_id is None
@@ -680,7 +679,7 @@ def trace_graph_record_search_values(
     allowed_run_ids: frozenset[str],
     related_records: Mapping[str, TraceGraphNodeRecord],
 ) -> tuple[JsonValue, ...]:
-    """Return decoded detail values exposed by the corresponding public event."""
+    """Return retained public details independently of their display loading mode."""
 
     node = project_trace_graph_node(
         record,
@@ -690,10 +689,16 @@ def trace_graph_record_search_values(
         relationship_missing=False,
         allowed_run_ids=allowed_run_ids,
     )
+    request = node.request
+    if node.kind is TraceGraphNodeKind.MODEL:
+        # Search retained input even though display nodes expose a detail reference.
+        fact = None if record.request_event is None else record.request_event.fact
+        if isinstance(fact, ModelCallFact):
+            request, _omitted = _captured(fact.request)
     values: list[JsonValue] = []
     for value, omitted in (
         (node.content, node.content_omitted),
-        (node.request, node.request_omitted),
+        (request, node.request_omitted),
         (node.result, node.result_omitted),
     ):
         if value is not None and not omitted:
@@ -725,6 +730,7 @@ def project_trace_graph_node(
     content_omitted = False
     request: JsonValue | None = None
     request_omitted = False
+    request_reference: str | None = None
     result: JsonValue | None = None
     result_omitted = False
     usage: JsonValue | None = None
@@ -807,7 +813,13 @@ def project_trace_graph_node(
             or request_fact.phase != "started"
         ):
             raise TraceStoreProtocolError("Model Graph event is invalid")
-        request, request_omitted = _captured(request_fact.request)
+        request_omitted = (
+            request_fact.request is None
+            or request_fact.request.disposition == "omitted"
+        )
+        if not request_omitted:
+            assert record.request_event is not None
+            request_reference = model_request_reference(record.request_event)
         source_id = request_fact.call_id
         if isinstance(result_fact, ModelCallFact):
             usage, _usage_omitted = _captured(result_fact.usage)
@@ -925,6 +937,7 @@ def project_trace_graph_node(
         content_omitted=content_omitted,
         tool_call_only=tool_call_only,
         request=request,
+        request_reference=request_reference,
         request_omitted=request_omitted,
         result=result,
         result_omitted=result_omitted,

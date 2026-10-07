@@ -14,6 +14,7 @@ export type AutomationSchedule =
 
 /** 服务端保存的任务与日程，附件ID用于提交，inputFiles用于展示 */
 export interface AutomationTask {
+  projectId: string
   id: string
   name: string
   prompt: string

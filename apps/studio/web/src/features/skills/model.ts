@@ -5,6 +5,8 @@ export interface RemoteSkill {
 }
 export interface RemoteSkillPage { items: RemoteSkill[]; cursor: string | null }
 export interface InstalledSkill {
+  project_id: string | null
+  overridden: boolean
   source_kind: 'catalog' | 'github' | 'zip'
   id: string; name: string; description: string; source_id: string | null; source_name: string
   external_id: string | null; enabled: boolean; author: string | null; topics: string[]

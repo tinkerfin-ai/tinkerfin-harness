@@ -19,7 +19,7 @@ const isStringArray = (value: unknown): value is string[] => (
   Array.isArray(value) && value.every((item) => typeof item === 'string')
 )
 
-const isJsonValue = (value: unknown): value is JsonValue => {
+export const isJsonValue = (value: unknown): value is JsonValue => {
   const pending: Array<{ value: unknown; leaving: boolean; depth: number }> = [{
     value,
     leaving: false,

@@ -8,13 +8,13 @@ import { WorkspaceScreen } from './WorkspaceScreen'
 
 const user = { user_id: 7, username: 'requests', display_name: '请求验证', avatar_url: null, roles: [], disabled: false }
 const time = '2030-01-01T00:00:00Z'
-const historyItem = (overrides: Partial<ConversationHistoryListItem>): ConversationHistoryListItem => ({
+const historyItem = (overrides: Partial<ConversationHistoryListItem>): ConversationHistoryListItem => ({projectId: 'project-1', archived: false,
   id: 1, threadId: 'thread', title: '标题', titleSource: 'generated', titleGenerationStatus: 'succeeded', titleSeq: 1,
   accessMode: 'full', status: 'idle', lastRunId: 'run', lastModel: 'main', messageCount: 1, toolCallCount: 0,
   hasPendingInterrupt: false, pendingInteractionKind: null, pinned: false, createdAt: time, updatedAt: time,
   ...overrides,
 })
-const traceDetail = (overrides: Partial<ConversationHistoryDetail>): ConversationHistoryDetail => ({
+const traceDetail = (overrides: Partial<ConversationHistoryDetail>): ConversationHistoryDetail => ({projectId: 'project-1', archived: false,
   id: 1, threadId: 'thread', title: '标题', titleSource: 'generated', titleGenerationStatus: 'succeeded', titleSeq: 1,
   accessMode: 'full', lastModel: 'main', pinned: false, createdAt: time, updatedAt: time,
   asOfSeq: 3, generation: 'generation', observedAt: time, headRunId: 'run', availableHeads: ['run'], historyCursor: null,
@@ -33,6 +33,7 @@ function installFetch({ list, details }: { list: ConversationHistoryListItem[]; 
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
     const path = new URL(request.url).pathname
+    if (path === '/api/projects') return jsonResponse([{ id: 'project-1', name: '测试项目', createdAt: time, updatedAt: time }])
     if (path === '/api/models') return jsonResponse({ items: [{ modelId: 'main', displayName: 'Main', connectionId: 'provider', connectionDisplayName: '模型', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' })
     if (path === '/api/skills/installations') return jsonResponse([])
     if (path === '/api/conversation/config') return jsonResponse({ dayRanges: [7, 30] })

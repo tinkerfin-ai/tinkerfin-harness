@@ -71,6 +71,11 @@ class _ConversationNode(_ResponseModel):
     content_omitted: bool
     tool_call_only: bool
     request_omitted: bool = Field(description="采集或保留策略是否遗漏了请求正文")
+    request_reference: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="按需读取模型请求正文的会话内引用",
+    )
     result: JsonValue | None
     result_omitted: bool
     usage: JsonValue | None

@@ -28,7 +28,7 @@ const conversationWithApproval = (
   approval: ApprovalState,
   threadId = 'thread-approval',
 ): Conversation => ({
-  ...buildEmptyConversation({
+  ...buildEmptyConversation({projectId: 'project-1',
     threadId,
     now: '2026-08-25T00:00:00.000Z',
     model: 'GPT-5.5',

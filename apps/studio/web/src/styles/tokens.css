@@ -83,8 +83,8 @@
     --color-trace-tool: var(--primitive-green-800);
     --color-trace-subagent: var(--color-warning-text);
     --color-trace-assistant: var(--primitive-violet-700);
-    --color-focus: var(--primitive-blue-600);
-    --color-focus-soft: rgb(57 100 254 / 18%);
+    --color-focus: var(--color-text-secondary);
+    --color-focus-soft: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
     --color-code-surface: #f3f4f6;
     --color-code-comment: #61666b;
     --color-code-keyword: #7040b8;
@@ -164,6 +164,7 @@
     --layout-panel-inset: 20px;
     --layout-form-width: 712px;
     --layout-dialog-width: 440px;
+    --layout-conversation-search-width: 560px;
     --layout-action-width: 400px;
     --layout-document-width: 1040px;
     --layout-auth-width: 344px;
@@ -195,6 +196,7 @@
     --layer-drawer: 30;
     --layer-modal: 40;
     --layer-toast: 50;
+    --layer-tooltip: 60;
 
     --motion-instant: 0ms;
     --motion-fast: 100ms;
@@ -268,8 +270,8 @@
     --color-trace-context: var(--color-brand-text);
     --color-trace-tool: var(--color-success-text);
     --color-trace-assistant: var(--primitive-violet-300);
-    --color-focus: #8ab4ff;
-    --color-focus-soft: rgb(103 158 254 / 24%);
+    --color-focus: var(--color-text-secondary);
+    --color-focus-soft: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
     --color-code-surface: #23262b;
     --color-code-comment: #adb2b8;
     --color-code-keyword: #c2a2f2;

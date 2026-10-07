@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-from deepagents.backends.store import StoreBackend
 from langchain.agents.middleware import TodoListMiddleware
 
 from tinkerfin import AgentRuntime
@@ -61,6 +60,7 @@ def _build_runtime(
     resources: ApplicationResources,
     user_id: int,
     thread_id: str,
+    project_id: str,
     model_config: AgentModelConfig,
     search_service: ResolvedService | None,
     image_service: ResolvedService | None,
@@ -72,13 +72,14 @@ def _build_runtime(
 ) -> AgentRuntime[None]:
     """为已授权会话或后台任务绑定执行能力，实际运行时准备用户工作区
 
-    同一用户的会话与后台任务共用默认项目文件，每次执行结束时停止其进程
-    业务逻辑范围分别保存会话与记录，不改变所选项目
+    会话与后台任务使用已授权项目的文件与记忆，每次执行结束时停止其进程
+    项目归属由业务记录确定，界面切换不会改变正在执行的范围
 
     Args:
         resources: 请求期间借用的应用资源
-        user_id: 已认证用户的数据库 ID，决定会话与记忆隔离范围
+        user_id: 已认证用户的数据库 ID，决定用户隔离范围
         thread_id: 已校验归属的会话 ID
+        project_id: 已验证属于该用户的项目 UUID
         model_config: 已解密的聊天模型配置
         search_service: 本次运行可用的个人网页搜索服务
         image_service: 本次运行可用的个人图片生成服务
@@ -173,6 +174,7 @@ def _build_runtime(
         build_automation_tools(
             resources,
             user_id=user_id,
+            project_id=project_id,
             model_id=model_config.model_id,
             access_mode=access_mode,
         )
@@ -180,7 +182,12 @@ def _build_runtime(
         else ()
     )
     skill_tools = (
-        build_skill_tools(resources.skills, user_id=user_id, thread_id=thread_id)
+        build_skill_tools(
+            resources.skills,
+            user_id=user_id,
+            project_id=project_id,
+            thread_id=thread_id,
+        )
         if collection_id is None
         else ()
     )
@@ -230,8 +237,10 @@ def _build_runtime(
         configured = configured.with_plan(enabled=False)
     workspace = resources.sandbox_manager.workspace(
         f"users/{user_id}",
-        workspace_key="default",
-        routes={"/memories/": StoreBackend(namespace=lambda _runtime: ("memories",))},
+        workspace_key=project_id,
+        routes={
+            "/memories/": configured.files(("projects", project_id, "memories")).backend
+        },
     )
     return configured.build(
         model=model,
@@ -266,6 +275,7 @@ def build_conversation_runtime(
     resources: ApplicationResources,
     user_id: int,
     thread_id: str,
+    project_id: str,
     model_config: AgentModelConfig,
     search_service: ResolvedService | None,
     image_service: ResolvedService | None,
@@ -277,6 +287,7 @@ def build_conversation_runtime(
         resources=resources,
         user_id=user_id,
         thread_id=thread_id,
+        project_id=project_id,
         model_config=model_config,
         search_service=search_service,
         image_service=image_service,
@@ -293,6 +304,7 @@ def build_automation_runtime(
     resources: ApplicationResources,
     user_id: int,
     thread_id: str,
+    project_id: str,
     execution_id: str,
     model_config: AgentModelConfig,
     search_service: ResolvedService | None,
@@ -305,6 +317,7 @@ def build_automation_runtime(
         resources=resources,
         user_id=user_id,
         thread_id=thread_id,
+        project_id=project_id,
         model_config=model_config,
         search_service=search_service,
         image_service=image_service,

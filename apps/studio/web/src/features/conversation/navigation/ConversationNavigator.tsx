@@ -1,7 +1,8 @@
 import { List } from 'lucide-react'
-import { memo, useEffect, useId, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
-import { Button, Dialog, IconButton } from '../../../components/ui'
+import { Button, Dialog, IconButton, Tooltip } from '../../../components/ui'
+import { restoreFocus } from '../../../components/ui/focus'
 import { useI18n } from '../../../i18n'
 import type { ConversationTurn } from './turns'
 import './navigation.css'
@@ -19,7 +20,6 @@ export const ConversationNavigator = memo(function ConversationNavigator({
   turns, paneRef, open, onOpenChange, onNavigate,
 }: Props) {
   const { t } = useI18n()
-  const previewId = useId()
   const trigger = useRef<HTMLButtonElement>(null)
   const firstItem = useRef<HTMLButtonElement>(null)
   const rail = useRef<HTMLElement>(null)
@@ -27,8 +27,6 @@ export const ConversationNavigator = memo(function ConversationNavigator({
   const [previewMessageId, setPreviewMessageId] = useState<string | null>(null)
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
-  const [previewTop, setPreviewTop] = useState(0)
-  const previewRef = useRef<HTMLDivElement>(null)
   const bandRef = useRef<HTMLDivElement>(null)
   const request = useRef(0)
   const previouslyOpen = useRef(open)
@@ -36,24 +34,6 @@ export const ConversationNavigator = memo(function ConversationNavigator({
   navigateRef.current = onNavigate
   const previewIndex = turns.findIndex(turn => turn.messageId === previewMessageId)
   const setPreviewIndex = (index: number | null) => setPreviewMessageId(index == null ? null : turns[index]?.messageId ?? null)
-
-  useEffect(() => {
-    if (previewIndex < 0) return
-    const update = () => {
-      const band = bandRef.current?.getBoundingClientRect()
-      const railBounds = rail.current?.getBoundingClientRect()
-      const previewBounds = previewRef.current?.getBoundingClientRect()
-      if (!band || !railBounds || !previewBounds) return
-      const center = railBounds.top + 6 + previewIndex / Math.max(1, turns.length - 1) * (railBounds.height - 12)
-      const top = Math.max(band.top, Math.min(center - previewBounds.height / 2, band.bottom - previewBounds.height))
-      setPreviewTop(top - railBounds.top)
-    }
-    update()
-    const resize = new ResizeObserver(update)
-    if (bandRef.current) resize.observe(bandRef.current)
-    if (previewRef.current) resize.observe(previewRef.current)
-    return () => resize.disconnect()
-  }, [previewIndex, turns.length])
 
   useEffect(() => {
     const pane = paneRef.current
@@ -93,7 +73,7 @@ export const ConversationNavigator = memo(function ConversationNavigator({
 
   useEffect(() => {
     // 先解除工作区的模态隔离，再恢复取消操作的入口焦点
-    if (previouslyOpen.current && !open && !pendingId) trigger.current?.focus()
+    if (previouslyOpen.current && !open && !pendingId) restoreFocus(trigger.current)
     previouslyOpen.current = open
   }, [open, pendingId])
 
@@ -110,7 +90,6 @@ export const ConversationNavigator = memo(function ConversationNavigator({
   useEffect(() => () => { request.current += 1 }, [])
 
   if (turns.length < 2) return null
-  const preview = turns[previewIndex]
   const select = (messageId: string) => {
     setPreviewIndex(null)
     onOpenChange(false)
@@ -134,12 +113,13 @@ export const ConversationNavigator = memo(function ConversationNavigator({
           onPointerMove={event => setPreviewIndex(pointerIndex(event.clientY))}
           onPointerLeave={() => setPreviewIndex(null)}>
           {turns.map((turn, index) => (
-            <button key={turn.messageId} type="button"
+            <Tooltip key={turn.messageId} content={<><strong>{turn.prompt || t('未命名提问')}</strong>{turn.response && <p>{turn.response}</p>}</>} placement="left" className="ui-tooltip--prose"
+              open={index === previewIndex} onOpenChange={visible => { if (visible) setPreviewIndex(index); else setPreviewMessageId(current => current === turn.messageId ? null : current) }}>
+            <button type="button"
               className={`conversation-navigation-mark${turn.messageId === activeId ? ' is-current' : ''}${index === previewIndex ? ' is-preview' : ''}`}
               style={{ top: `calc(6px + (100% - 12px) * ${index / (turns.length - 1)})` }}
               aria-label={t('跳转到提问：{prompt}', { prompt: turn.prompt || t('未命名提问') })}
               aria-current={turn.messageId === activeId ? 'location' : undefined}
-              aria-describedby={index === previewIndex ? previewId : undefined}
               tabIndex={turn.messageId === (activeId ?? turns[0].messageId) ? 0 : -1}
               onKeyDown={event => {
                 if (event.key === 'Escape') { setPreviewIndex(null); return }
@@ -152,15 +132,9 @@ export const ConversationNavigator = memo(function ConversationNavigator({
                 rail.current?.querySelectorAll('button')[next]?.focus()
               }}
               onFocus={() => setPreviewIndex(index)} onBlur={() => setPreviewIndex(null)}
-              onClick={event => select(turns[event.detail ? pointerIndex(event.clientY) : index].messageId)} />
+              onClick={event => select(turns[event.detail ? pointerIndex(event.clientY) : index].messageId)} /></Tooltip>
           ))}
-          {preview && (
-            <div ref={previewRef} id={previewId} role="tooltip" className="conversation-navigation-preview"
-              style={{ top: previewTop }}>
-              <strong>{preview.prompt || t('未命名提问')}</strong>
-              {preview.response && <p>{preview.response}</p>}
-            </div>
-          )}
+
         </nav>
       </div>
       <Dialog open={open} title={t('对话目录')} description={t('仅显示已加载的对话')}

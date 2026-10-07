@@ -48,6 +48,8 @@ class SkillDetail(BaseModel):
 
 class InstalledSkill(BaseModel):
     id: str
+    project_id: str | None
+    overridden: bool = False
     name: str
     description: str
     source_kind: SkillSourceKind
@@ -75,6 +77,7 @@ class SkillCommandRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     request_id: str = Field(min_length=1, max_length=128)
+    project_id: str | None = Field(default=None, min_length=1, max_length=36)
 
 
 class InstallSkillRequest(SkillCommandRequest):

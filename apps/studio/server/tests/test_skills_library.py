@@ -31,6 +31,8 @@ from tinkerfin_studio.skills.schemas import (
     SkillCommandRequest,
 )
 
+pytestmark = pytest.mark.usefixtures("projects")
+
 _COMPRESSIONS = [ZIP_DEFLATED, ZIP_BZIP2, ZIP_LZMA]
 if sys.version_info >= (3, 14):
     from zipfile import ZIP_ZSTANDARD
@@ -274,18 +276,26 @@ async def test_install_idempotency_conflict_isolation_and_resume_snapshot(
     assert conflict.value.error_code == SkillErrorCode.NAME_CONFLICT
     repository = SkillRepository(session, 1)
     identity = RunIdentity(namespace="ns_1", thread_id="thread", run_id="first")
-    captured = await repository.capture(identity, selected_ids=(item.id,))
+    captured = await repository.capture(
+        identity, project_id="project-1", selected_ids=(item.id,)
+    )
     await session.commit()
     assert captured.skills[0].selected
     removal = SkillCommandRequest(request_id="remove")
     await skill_library.uninstall(1, item.id, removal)
     await skill_library.uninstall(1, item.id, removal)
-    assert await repository.capture(identity, selected_ids=(item.id,)) == captured
+    assert (
+        await repository.capture(
+            identity, project_id="project-1", selected_ids=(item.id,)
+        )
+        == captured
+    )
     with pytest.raises(BusinessException) as changed:
-        await repository.capture(identity, selected_ids=())
+        await repository.capture(identity, project_id="project-1", selected_ids=())
     assert changed.value.error_code == SkillErrorCode.SNAPSHOT_CONFLICT
     resumed = await repository.capture(
         RunIdentity(namespace="ns_1", thread_id="thread", run_id="resume"),
+        project_id="project-1",
         source=identity,
     )
     assert resumed == captured
@@ -295,6 +305,7 @@ async def test_install_idempotency_conflict_isolation_and_resume_snapshot(
     with pytest.raises(BusinessException) as unavailable:
         await repository.capture(
             RunIdentity(namespace="ns_1", thread_id="thread", run_id="new"),
+            project_id="project-1",
             selected_ids=(item.id,),
         )
     assert unavailable.value.error_code == SkillErrorCode.DISABLED

@@ -50,7 +50,7 @@ async def attachments(notifications, database, attachment_storage):
 async def test_upload_keeps_original_and_rejects_other_users(attachments):
     data = png()
     file = await attachments.upload(
-        user_id=1, name="截图.png", chunks=byte_chunks(data)
+        project_id="project-1", user_id=1, name="截图.png", chunks=byte_chunks(data)
     )
     _, original = await attachments.read(file.id, user_id=1)
     assert original == data
@@ -67,7 +67,9 @@ async def test_model_content_uses_image_variant_or_original_file(
 ):
     """授权原生输入使用图片模型变体，文档则保留原件格式和字节"""
     data = content()
-    file = await attachments.upload(user_id=1, name=name, chunks=byte_chunks(data))
+    file = await attachments.upload(
+        project_id="project-1", user_id=1, name=name, chunks=byte_chunks(data)
+    )
     resolved = await attachments.read_content(file, user_id=1)
     if file.mime_type.startswith("image/"):
         _, expected = await attachments.read(file.id, user_id=1, variant="model")
@@ -87,6 +89,7 @@ async def test_model_content_authorizes_before_reading_storage(
 ):
     """跨用户或集合读取在访问附件字节前被拒绝"""
     await attachments.create_collection(
+        project_id="project-1",
         user_id=1,
         collection_id="files",
         purpose="execution",
@@ -94,6 +97,7 @@ async def test_model_content_authorizes_before_reading_storage(
         configuration={},
     )
     file = await attachments.upload(
+        project_id="project-1",
         user_id=1,
         collection_id="files",
         name="note.md",
@@ -112,11 +116,13 @@ async def test_binding_prevents_cross_thread_reuse_and_draft_deletion(
     attachments, database
 ):
     file = await attachments.upload(
-        user_id=1, name="chart.png", chunks=byte_chunks(png())
+        project_id="project-1", user_id=1, name="chart.png", chunks=byte_chunks(png())
     )
     async with database.session() as session:
         session.add(
             ConversationThread(
+                archived=False,
+                project_id="project-1",
                 user_id=1,
                 thread_id="thread-a",
                 title="附件测试",
@@ -152,7 +158,7 @@ async def test_cleanup_removes_expired_drafts(attachments, database, monkeypatch
         attachment_service, "datetime", SimpleNamespace(now=lambda _tz: now)
     )
     file = await attachments.upload(
-        user_id=1, name="chart.png", chunks=byte_chunks(png())
+        project_id="project-1", user_id=1, name="chart.png", chunks=byte_chunks(png())
     )
     async with database.session() as session:
         row = await session.get(AttachmentFile, file.id)
@@ -172,14 +178,19 @@ async def test_invalid_type_and_path_do_not_publish_files(attachments):
         ("file.exe", b"binary"),
     ]:
         with pytest.raises(BusinessException):
-            await attachments.upload(user_id=1, name=name, chunks=byte_chunks(data))
+            await attachments.upload(
+                project_id="project-1", user_id=1, name=name, chunks=byte_chunks(data)
+            )
 
 
 async def test_pptx_upload_preserves_original_container_and_format(attachments):
     """PPTX 上传保留原件字节和 MIME 类型，可按附件身份取回"""
     data = pptx()
     file = await attachments.upload(
-        user_id=1, name="门店月报.pptx", chunks=byte_chunks(data)
+        project_id="project-1",
+        user_id=1,
+        name="门店月报.pptx",
+        chunks=byte_chunks(data),
     )
     assert file.mime_type == (
         "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -257,7 +268,12 @@ async def test_cancelled_storage_write_removes_staging_record_and_bytes(
     storage = InterruptedStorage()
     service = AttachmentService(database, storage, notifications=notifications)
     with pytest.raises(asyncio.CancelledError):
-        await service.upload(user_id=1, name="cancelled.png", chunks=byte_chunks(png()))
+        await service.upload(
+            project_id="project-1",
+            user_id=1,
+            name="cancelled.png",
+            chunks=byte_chunks(png()),
+        )
     async with database.session() as session:
         assert await session.scalar(select(AttachmentFile.id)) is None
     assert not storage.objects
@@ -297,7 +313,10 @@ async def test_same_name_attachments_remain_distinct_after_service_restart(
         originals.append(data)
         files.append(
             await attachments.upload(
-                user_id=1, name="report.docx", chunks=byte_chunks(data)
+                project_id="project-1",
+                user_id=1,
+                name="report.docx",
+                chunks=byte_chunks(data),
             )
         )
     assert files[0].id != files[1].id
@@ -305,6 +324,8 @@ async def test_same_name_attachments_remain_distinct_after_service_restart(
         now = datetime.now(UTC).replace(tzinfo=None)
         session.add(
             ConversationThread(
+                archived=False,
+                project_id="project-1",
                 user_id=1,
                 thread_id="reports",
                 title="比较报告",
@@ -367,6 +388,8 @@ async def test_generated_image_tool_preserves_actual_format_and_typed_result(
         now = datetime.now(UTC).replace(tzinfo=None)
         session.add(
             ConversationThread(
+                archived=False,
+                project_id="project-1",
                 user_id=1,
                 thread_id="generated",
                 title="生成图片",
@@ -549,7 +572,10 @@ async def test_markdown_upload_preserves_encoding_and_read_authorization(
     """Markdown 接受 BOM 并保留原件字节，下载仍要求附件所有权"""
     original = "\ufeff# 门店月报\r\n\r\n| 门店 | 营收 |\r\n| --- | --- |\r\n| 一店 | 128 |\r\n".encode()
     file = await attachments.upload(
-        user_id=1, name=f"月报.{extension}", chunks=byte_chunks(original)
+        project_id="project-1",
+        user_id=1,
+        name=f"月报.{extension}",
+        chunks=byte_chunks(original),
     )
     assert file.mime_type == "text/markdown"
     assert file.size_bytes == len(original)
@@ -565,7 +591,12 @@ async def test_markdown_upload_preserves_encoding_and_read_authorization(
 async def test_invalid_markdown_is_not_published(attachments, database, data):
     """空文件、非 UTF-8 和二进制内容不得留下可见附件"""
     with pytest.raises(BusinessException):
-        await attachments.upload(user_id=1, name="report.md", chunks=byte_chunks(data))
+        await attachments.upload(
+            project_id="project-1",
+            user_id=1,
+            name="report.md",
+            chunks=byte_chunks(data),
+        )
     async with database.session() as session:
         assert await session.scalar(select(AttachmentFile.id)) is None
 
@@ -596,6 +627,8 @@ async def test_markdown_tools_generate_deliver_import_and_reopen(
         now = datetime.now(UTC).replace(tzinfo=None)
         session.add(
             ConversationThread(
+                archived=False,
+                project_id="project-1",
                 user_id=1,
                 thread_id="markdown-report",
                 title="门店月报",
@@ -678,3 +711,6 @@ async def test_markdown_tools_generate_deliver_import_and_reopen(
         await restored.read(file.id, user_id=1, thread_id="another-thread")
     with pytest.raises(BusinessException):
         await restored.read(file.id, user_id=2, thread_id="markdown-report")
+
+
+pytestmark = pytest.mark.usefixtures("projects")

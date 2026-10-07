@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { expect, test, type Page } from '@playwright/test'
 import { installNotificationStream } from './fixtures/notifications'
 import { emptyServices, type SavedServices, type ServiceCapability, type ServiceConfiguration } from '../../src/features/settings/serviceSettings'
@@ -49,6 +50,7 @@ async function openServices(page: Page, theme = 'light', language = 'zh-CN') {
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
   await installNotificationStream(page)
+  await installProjectScope(page)
   await page.goto('/')
   if ((page.viewportSize()?.width ?? 1440) < 768) await page.getByRole('button', { name: language === 'en' ? 'Open navigation' : '打开导航', exact: true }).click()
   await page.getByRole('button', { name: language === 'en' ? 'Open user menu' : '打开用户菜单' }).click()

@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
@@ -11,7 +12,7 @@ const RUN = 'tool-scroll-run'
 const SUB_RUN = 'subagent-11111111-1111-5111-8111-111111111111'
 const time = '2026-09-20T00:00:00.000Z'
 const user = { user_id: 1, username: 'scroll-reader', display_name: '滚动验收', avatar_url: null, roles: [], disabled: false }
-const snapshot: ConversationHistoryDetail = {
+const snapshot: ConversationHistoryDetail = {projectId: 'project-1', archived: false,
   id: 1, threadId: THREAD, title: '工具流式阅读', accessMode: 'full', lastModel: 'test-model',
   titleSource: 'default', titleGenerationStatus: 'idle', titleSeq: 0, pinned: false,
   asOfSeq: 1, generation: 'scroll-generation', observedAt: time, headRunId: RUN,
@@ -85,7 +86,8 @@ async function openStudio(page: Page, theme = 'light', reducedMotion: 'reduce' |
   })
   const run = await installLiveRun(page, initial)
   await installNotificationStream(page)
-  await page.goto(`/?thread=${THREAD}`)
+  await installProjectScope(page)
+  await page.goto(`/?project=project-1&thread=${THREAD}`)
   await expect(page.getByText('检查工具输入与研究结果', { exact: true })).toBeVisible()
   return { ...run, setHistory: (value: ConversationHistoryDetail) => { history = value } }
 }

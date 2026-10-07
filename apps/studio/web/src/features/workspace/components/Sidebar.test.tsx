@@ -8,7 +8,7 @@ import { Sidebar } from './Sidebar'
 const workspace: WorkspaceState = {
   currentThreadId: 'recent',
   conversations: [
-    { accessMode: 'write_approval',
+    {projectId: 'project-1', archived: false,  accessMode: 'write_approval',
       threadId: 'pinned',
       historySynchronized: false,
       title: '置顶会话',
@@ -21,7 +21,7 @@ const workspace: WorkspaceState = {
       taskTrace: { phase: 'unloaded' },
       runStatus: 'idle',
     },
-    { accessMode: 'write_approval',
+    {projectId: 'project-1', archived: false,  accessMode: 'write_approval',
       threadId: 'recent',
       historySynchronized: false,
       title: '最近会话',
@@ -38,15 +38,15 @@ const workspace: WorkspaceState = {
 }
 
 const baseProps = {
+  projectSelector: null, onChooseProject: vi.fn(), onOpenConversation: vi.fn(),
+  onOpenMemories: vi.fn(), memoriesActive: false, archivedHistory: false, onArchivedHistoryChange: vi.fn(),
+  onArchive: vi.fn(), onMove: vi.fn(),
   workspace,
   historyConversations: workspace.conversations,
   historyDayRanges: [7, 30],
-  historyQuery: '',
-  onHistoryQueryChange: vi.fn(),
-  isHistorySearchActive: false,
-  isHistorySearching: false,
+  searchOpen: false,
+  onOpenSearch: vi.fn(),
   mode: 'expanded' as const,
-  settledMode: 'expanded' as const,
   overlayOpen: false,
   wideInteractive: true,
   railInteractive: false,
@@ -185,28 +185,16 @@ describe('Sidebar', () => {
     expect(screen.getByText('yunsan')).toBeInTheDocument()
   })
 
-  it('仅渲染当前可用的产品导航，并禁用尚不可用的入口', () => {
-    render(<Sidebar {...baseProps} />)
-
-    const historyScroll = screen.getByRole('region', { name: '最近对话' })
-    const productNavigation = screen.getByRole('navigation', { name: '工作区功能' })
-    expect(historyScroll).toContainElement(productNavigation)
-    expect(screen.getByRole('button', { name: '技能库' }).querySelector('.lucide-book-open-check')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '记忆管理' }).querySelector('.lucide-brain-circuit')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '自动化' }).querySelector('.lucide-alarm-clock')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '自动化' })).toBeEnabled()
-    const memoryButton = screen.getByRole('button', { name: '记忆管理' })
-    expect(memoryButton).not.toHaveAttribute('aria-current')
-    expect(memoryButton).not.toHaveAttribute('aria-pressed')
-    expect(memoryButton).not.toHaveClass('is-selected')
-    expect(memoryButton).toBeDisabled()
-    expect(screen.queryByRole('button', { name: '工作区' })).not.toBeInTheDocument()
-    for (const label of ['更多']) {
-      expect(screen.getByRole('button', { name: label })).toBeDisabled()
-    }
-
-    fireEvent.click(screen.getByRole('button', { name: '打开用户菜单' }))
-    expect(screen.getByRole('menuitem', { name: '设置' })).toBeEnabled()
+  it('项目功能独立于会话记录滚动，记忆入口可用', () => {
+    const onOpenMemories = vi.fn()
+    render(<Sidebar {...baseProps} onOpenMemories={onOpenMemories} />)
+    const history = screen.getByRole('region', { name: '最近对话' })
+    const navigation = screen.getByRole('navigation', { name: '工作区功能' })
+    expect(history).not.toContainElement(navigation)
+    expect(within(navigation).getAllByRole('button').map(button => button.textContent)).toEqual(['技能库', '记忆管理', '自动化', '更多'])
+    fireEvent.click(within(navigation).getByRole('button', { name: '记忆管理' }))
+    expect(onOpenMemories).toHaveBeenCalledOnce()
+    expect(within(navigation).getByRole('button', { name: '更多' })).toBeDisabled()
   })
 
   it('自动化入口可进入并体现当前页，其他入口保持原有状态', () => {
@@ -219,7 +207,7 @@ describe('Sidebar', () => {
     expect(screen.queryByRole('button', { name: 'MCP管理' })).not.toBeInTheDocument()
   })
 
-  it('在展开侧栏中点击 Logo 创建新会话，搜索位于收起控件左侧', () => {
+  it('品牌入口创建新会话，搜索在会话记录区提供', () => {
     const onNew = vi.fn()
     render(<Sidebar {...baseProps} onNew={onNew} />)
 
@@ -235,24 +223,26 @@ describe('Sidebar', () => {
     expect(onNew).toHaveBeenCalledOnce()
     expect(collapse.querySelector('.lucide-panel-right')).toBeInTheDocument()
     expect(within(actions as HTMLElement).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
-      .toEqual(['搜索会话', '收起侧边栏'])
+      .toEqual(['收起侧边栏'])
   })
 
-  it('只固定居中的新会话胶囊，并提供可用的 Command K 快捷键', () => {
+  it.each(['metaKey', 'ctrlKey'] as const)('会话工具栏与%s加K提供新会话动作', modifier => {
     const onNew = vi.fn()
     render(<Sidebar {...baseProps} onNew={onNew} />)
-
-    const newChat = document.querySelector('.new-chat') as HTMLButtonElement
-    const historyScroll = screen.getByRole('region', { name: '最近对话' })
-    expect(newChat.parentElement).toHaveClass('new-chat-wrap')
-    expect(historyScroll).not.toContainElement(newChat)
-    expect(newChat).toHaveAttribute('aria-keyshortcuts', 'Meta+K')
-    expect(newChat).not.toHaveAttribute('title')
-    expect(newChat.querySelector('.new-chat-shortcut')).toHaveTextContent('⌘ K')
-
-    fireEvent.keyDown(document, { key: 'k', metaKey: true })
-
+    const action = screen.getAllByRole('button', { name: '新会话' }).find(button => button.hasAttribute('aria-keyshortcuts'))!
+    expect(action).toBeEnabled()
+    expect(screen.getByRole('region', { name: '最近对话' })).not.toContainElement(action)
+    expect(action).toHaveAttribute('aria-keyshortcuts', 'Meta+K Control+K')
+    fireEvent.keyDown(document, { key: 'k', [modifier]: true })
     expect(onNew).toHaveBeenCalledOnce()
+  })
+
+  it('功能菜单保留更多入口，新会话在会话工具栏提供', () => {
+    render(<Sidebar {...baseProps} />)
+    const nav = screen.getByRole('navigation', { name: '工作区功能' })
+    expect(within(nav).queryByRole('button', { name: '新会话' })).not.toBeInTheDocument()
+    expect(within(nav).getByRole('button', { name: '更多' })).toBeDisabled()
+    expect(screen.getAllByRole('button', { name: '新会话' }).find(button => button.hasAttribute('aria-keyshortcuts'))).toBeEnabled()
   })
 
   it('modal 隔离期间不响应工作区全局快捷键', () => {
@@ -267,14 +257,15 @@ describe('Sidebar', () => {
   it('新会话入口始终保持动作按钮语义，不显示选中态', () => {
     const { rerender } = render(<Sidebar {...baseProps} />)
 
-    expect(document.querySelector('.new-chat')).not.toHaveClass('is-selected')
-    expect(document.querySelector('.new-chat')).not.toHaveAttribute('aria-pressed')
+    expect(screen.getAllByRole('button', { name: '新会话' }).find(button => button.hasAttribute('aria-keyshortcuts'))).not.toHaveClass('is-selected')
+    expect(screen.getAllByRole('button', { name: '新会话' }).find(button => button.hasAttribute('aria-keyshortcuts'))).not.toHaveAttribute('aria-pressed')
 
     rerender(<Sidebar {...baseProps} workspace={{ ...workspace, currentThreadId: '' }} />)
 
-    expect(document.querySelector('.new-chat')).not.toHaveClass('is-selected')
-    expect(document.querySelector('.new-chat')).not.toHaveAttribute('aria-pressed')
-    expect(screen.queryByRole('tooltip', { name: '新会话' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '新会话' }).find(button => button.hasAttribute('aria-keyshortcuts'))).not.toHaveClass('is-selected')
+    expect(screen.getAllByRole('button', { name: '新会话' }).find(button => button.hasAttribute('aria-keyshortcuts'))).not.toHaveAttribute('aria-pressed')
+    fireEvent.pointerMove(screen.getAllByRole('button', { name: '新会话' }).find(button => button.hasAttribute('aria-keyshortcuts'))!)
+    expect(screen.getByRole('tooltip', { name: '新会话' })).toBeInTheDocument()
   })
 
   it('按置顶和本地自然日渲染历史分组，不保留固定标题或行内置顶图标', () => {
@@ -638,13 +629,12 @@ describe('Sidebar', () => {
   })
 })
 
-describe('Sidebar rail and inline search', () => {
+describe('Sidebar rail and conversation search', () => {
   it('removes a closed mobile overlay from the accessibility tree and focus path', () => {
     render(
       <Sidebar
         {...baseProps}
         mode="overlay"
-        settledMode="overlay"
         overlayOpen={false}
         wideInteractive={false}
         railInteractive={false}
@@ -663,7 +653,6 @@ describe('Sidebar rail and inline search', () => {
       <Sidebar
         {...baseProps}
         mode="overlay"
-        settledMode="overlay"
         overlayOpen
         wideInteractive
         railInteractive={false}
@@ -676,117 +665,42 @@ describe('Sidebar rail and inline search', () => {
     expect(onCloseOverlay).toHaveBeenCalledOnce()
   })
 
-  it('keeps only rail controls accessible and expands search with one action', async () => {
+  it('Rail的搜索触发器打开弹框而不展开侧栏', async () => {
     const user = userEvent.setup()
-    const onRequestExpanded = vi.fn()
+    const onRequestExpanded = vi.fn(), onOpenSearch = vi.fn()
     render(
       <Sidebar
         {...baseProps}
         mode="rail"
-        settledMode="rail"
         wideInteractive={false}
         railInteractive
         onRequestExpanded={onRequestExpanded}
+        onOpenSearch={onOpenSearch}
       />,
     )
 
     expect(screen.getByRole('button', { name: '打开侧边栏' })).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.pointerMove(screen.getByRole('button', { name: '打开侧边栏' }))
     expect(screen.getByRole('tooltip', { name: '打开侧边栏' })).toBeInTheDocument()
+    fireEvent.pointerLeave(screen.getByRole('button', { name: '打开侧边栏' }))
+    fireEvent.pointerMove(screen.getByRole('button', { name: '展开侧边栏以查看账户' }))
     expect(screen.getByRole('tooltip', { name: '账户' })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'TinkerFin 首页' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '搜索会话' }))
-    expect(onRequestExpanded).toHaveBeenCalledOnce()
+    expect(onRequestExpanded).not.toHaveBeenCalled()
+    expect(onOpenSearch).toHaveBeenCalledWith(screen.getByRole('button', { name: '搜索会话' }))
   })
 
-  it('把查询交给后端状态并让 Escape 清空、收起和恢复焦点', async () => {
-    const user = userEvent.setup()
-    const onHistoryQueryChange = vi.fn()
-    const { rerender } = render(
-      <Sidebar {...baseProps} onHistoryQueryChange={onHistoryQueryChange} />,
-    )
-
+  it('展开侧栏的搜索入口交给宿主处理，并声明模态语义', () => {
+    const onOpenSearch = vi.fn()
+    const { rerender } = render(<Sidebar {...baseProps} onOpenSearch={onOpenSearch} />)
     const trigger = screen.getByRole('button', { name: '搜索会话' })
-    await user.click(trigger)
-    const input = screen.getByRole('textbox', { name: '搜索会话' })
+    fireEvent.click(trigger)
+    expect(onOpenSearch).toHaveBeenCalledWith(trigger)
+    expect(trigger).toHaveAttribute('aria-haspopup', 'dialog')
+    expect(screen.queryByRole('textbox', { name: '搜索会话' })).not.toBeInTheDocument()
+    rerender(<Sidebar {...baseProps} searchOpen onOpenSearch={onOpenSearch} />)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
-
-    fireEvent.pointerDown(document.body)
-    expect(trigger).toHaveAttribute('aria-expanded', 'false')
-    await user.click(trigger)
-    fireEvent.change(input, { target: { value: '置顶' } })
-    expect(onHistoryQueryChange).toHaveBeenLastCalledWith('置顶')
-    rerender(
-      <Sidebar
-        {...baseProps}
-        historyConversations={[workspace.conversations[0]!]}
-        historyQuery="置顶"
-        onHistoryQueryChange={onHistoryQueryChange}
-        isHistorySearchActive
-      />,
-    )
-    expect(screen.getByRole('button', { name: '打开会话：置顶会话' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '打开会话：最近会话' })).not.toBeInTheDocument()
-
-    fireEvent.pointerDown(document.body)
-    expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    expect(input).not.toHaveFocus()
-    await user.click(input)
-
-    await user.keyboard('{Escape}')
-    expect(trigger).toHaveAttribute('aria-expanded', 'false')
-    expect(onHistoryQueryChange).toHaveBeenLastCalledWith('')
-    await waitFor(() => expect(trigger).toHaveFocus())
-    rerender(<Sidebar {...baseProps} onHistoryQueryChange={onHistoryQueryChange} />)
-    expect(screen.getByRole('button', { name: '打开会话：最近会话' })).toBeInTheDocument()
-
-    await user.click(trigger)
-    rerender(
-      <Sidebar
-        {...baseProps}
-        historyQuery="置顶"
-        onHistoryQueryChange={onHistoryQueryChange}
-        isHistorySearchActive
-      />,
-    )
-    await user.click(screen.getByRole('button', { name: '清除搜索' }))
-    expect(trigger).toHaveAttribute('aria-expanded', 'false')
-    expect(onHistoryQueryChange).toHaveBeenLastCalledWith('')
-  })
-
-  it('preserves a non-empty query across rail and expanded presentation changes', async () => {
-    const user = userEvent.setup()
-    const onHistoryQueryChange = vi.fn()
-    const { rerender } = render(
-      <Sidebar {...baseProps} onHistoryQueryChange={onHistoryQueryChange} />,
-    )
-    await user.click(screen.getByRole('button', { name: '搜索会话' }))
-    fireEvent.change(screen.getByRole('textbox', { name: '搜索会话' }), { target: { value: '置顶' } })
-
-    rerender(
-      <Sidebar
-        {...baseProps}
-        historyQuery="置顶"
-        onHistoryQueryChange={onHistoryQueryChange}
-        isHistorySearchActive
-        mode="rail"
-        settledMode="rail"
-        wideInteractive={false}
-        railInteractive
-      />,
-    )
-    expect(screen.getByRole('button', { name: '搜索会话，当前查询：置顶' })).toBeInTheDocument()
-
-    rerender(
-      <Sidebar
-        {...baseProps}
-        historyConversations={[workspace.conversations[0]!]}
-        historyQuery="置顶"
-        onHistoryQueryChange={onHistoryQueryChange}
-        isHistorySearchActive
-      />,
-    )
-    expect(screen.getByRole('textbox', { name: '搜索会话' })).toHaveValue('置顶')
-    expect(screen.queryByRole('button', { name: '打开会话：最近会话' })).not.toBeInTheDocument()
   })
 
   it('Rail 按工作区顺序显示入口、提示和当前页状态', () => {
@@ -794,15 +708,20 @@ describe('Sidebar rail and inline search', () => {
     const onOpenSkills = vi.fn()
     const onOpenAutomation = vi.fn()
     render(
-      <Sidebar {...baseProps} mode="rail" settledMode="rail" wideInteractive={false} railInteractive
+      <Sidebar {...baseProps} mode="rail" wideInteractive={false} railInteractive
         skillsActive onNew={onNew} onOpenSkills={onOpenSkills} onOpenAutomation={onOpenAutomation} />,
     )
 
     const rail = document.querySelector('.sidebar-rail') as HTMLElement
-    const labels = ['打开侧边栏', '搜索会话', '记忆管理', '新会话', '技能库', '自动化']
+    const labels = ['打开侧边栏', '选择项目', '会话', '技能库', '记忆管理', '自动化', '已归档会话', '搜索会话', '新会话']
     expect(within(rail).getAllByRole('button').slice(0, labels.length).map(button => button.getAttribute('aria-label'))).toEqual(labels)
-    for (const label of labels) expect(within(rail).getByRole('tooltip', { name: label })).toBeInTheDocument()
-    expect(within(rail).getByRole('button', { name: '记忆管理' })).toBeDisabled()
+    for (const label of labels) {
+      const button = within(rail).getByRole('button', { name: label })
+      fireEvent.pointerMove(button)
+      expect(screen.getByRole('tooltip', { name: label })).toBeInTheDocument()
+      fireEvent.pointerLeave(button)
+    }
+    expect(within(rail).getByRole('button', { name: '记忆管理' })).toBeEnabled()
     expect(within(rail).getByRole('button', { name: '技能库' })).toHaveAttribute('aria-current', 'page')
 
     fireEvent.click(within(rail).getByRole('button', { name: '新会话' }))
@@ -819,7 +738,6 @@ describe('Sidebar rail and inline search', () => {
       <Sidebar
         {...baseProps}
         mode="rail"
-        settledMode="rail"
         wideInteractive={false}
         railInteractive
         user={{ ...baseProps.user, avatar_url: 'https://cdn.example.test/avatar.webp' }}
@@ -837,38 +755,22 @@ describe('Sidebar rail and inline search', () => {
     expect(screen.queryByRole('menuitem', { name: '退出登录' })).not.toBeInTheDocument()
   })
 
-  it('Rail 新会话入口也保持无选中态', () => {
+  it('Rail 在空白新会话页显示新会话选中态', () => {
     render(
       <Sidebar
         {...baseProps}
         workspace={{ ...workspace, currentThreadId: '' }}
         mode="rail"
-        settledMode="rail"
         wideInteractive={false}
         railInteractive
       />,
     )
 
-    expect(screen.getByRole('button', { name: '新会话' })).not.toHaveClass('is-selected')
-    expect(screen.getByRole('button', { name: '新会话' })).not.toHaveAttribute('aria-pressed')
+    expect(screen.getByRole('button', { name: '新会话' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: '新会话' })).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('focuses the input only after a rail expansion settles', async () => {
-    const user = userEvent.setup()
-    const { rerender } = render(
-      <Sidebar {...baseProps} mode="rail" settledMode="rail" wideInteractive={false} railInteractive />,
-    )
-    await user.click(screen.getByRole('button', { name: '搜索会话' }))
 
-    rerender(
-      <Sidebar {...baseProps} mode="expanded" settledMode="rail" wideInteractive railInteractive={false} />,
-    )
-    const input = screen.getByRole('textbox', { name: '搜索会话' })
-    expect(input).not.toHaveFocus()
-
-    rerender(<Sidebar {...baseProps} />)
-    await waitFor(() => expect(input).toHaveFocus())
-  })
 })
 
 it('每次新提交只定位一次今天，受理与标题变化不会抢走滚动位置', () => {

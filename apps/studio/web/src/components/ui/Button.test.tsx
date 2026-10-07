@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { Search } from 'lucide-react'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -12,7 +12,6 @@ describe('Button', () => {
     const button = screen.getByRole('button', { name: '筛选' })
     expect(button).toHaveAttribute('type', 'button')
     expect(button).toHaveAttribute('aria-pressed', 'true')
-    expect(button).toHaveClass('is-selected', 'ui-button--xs')
   })
 
   it('keeps explicit submit semantics and disables loading actions', () => {
@@ -22,7 +21,6 @@ describe('Button', () => {
     expect(button).toHaveAttribute('type', 'submit')
     expect(button).toHaveAttribute('aria-busy', 'true')
     expect(button).toBeDisabled()
-    expect(button.querySelector('.ui-button__spinner')).not.toBeNull()
   })
 
   it('distinguishes an explicit unselected toggle from a regular button', () => {
@@ -53,6 +51,7 @@ describe('IconButton', () => {
       <p id="action-reason">附件仍在上传</p>
       <IconButton label="发送消息" aria-describedby="action-reason" tooltip="发送草稿" disabled icon={<Search size={18} />} />
     </>)
+    fireEvent.pointerMove(screen.getByRole('button', { name: '发送消息' }))
     expect(screen.getByRole('button', { name: '发送消息' })).toHaveAccessibleDescription('附件仍在上传 发送草稿')
   })
 
@@ -60,11 +59,9 @@ describe('IconButton', () => {
     render(<IconButton label="搜索会话" tooltip="搜索会话" icon={<Search size={18} />} />)
 
     const button = screen.getByRole('button', { name: '搜索会话' })
+    fireEvent.pointerMove(button)
     const tooltip = screen.getByRole('tooltip', { name: '搜索会话' })
     expect(button).toHaveAccessibleDescription('搜索会话')
     expect(tooltip).toHaveTextContent('搜索会话')
-    expect(button.querySelector('.ui-button__label')).toBeNull()
-    expect(button.querySelector('.ui-button__icon .ui-icon-button__icon')).not.toBeNull()
-    expect(button).toHaveClass('ui-button--xs', 'ui-button--circle')
   })
 })

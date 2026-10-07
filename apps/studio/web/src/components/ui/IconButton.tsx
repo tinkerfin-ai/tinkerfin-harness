@@ -1,7 +1,8 @@
-import { forwardRef, useId } from 'react'
+import { forwardRef } from 'react'
 import type { ReactNode } from 'react'
 
 import { Button } from './Button'
+import { Tooltip } from './Tooltip'
 import type { ButtonProps } from './Button'
 
 export interface IconButtonProps extends Omit<
@@ -17,25 +18,23 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
   label,
   icon,
   tooltip,
+  tooltipPlacement,
   className,
   'aria-describedby': describedBy,
   ...buttonProps
 }, ref) {
-  const tooltipId = useId()
   const classes = ['ui-icon-button', className].filter(Boolean).join(' ')
 
-  return (
-    <span className="ui-icon-button-wrap">
+  const button = (
       <Button
         {...buttonProps}
         ref={ref}
         className={classes}
         shape="circle"
         aria-label={label}
-        aria-describedby={[describedBy, tooltip ? tooltipId : undefined].filter(Boolean).join(' ') || undefined}
+        aria-describedby={describedBy}
         leadingIcon={<span className="ui-icon-button__icon">{icon}</span>}
       />
-      {tooltip && <span id={tooltipId} className="ui-tooltip" role="tooltip">{tooltip}</span>}
-    </span>
   )
+  return <span className="ui-icon-button-wrap">{tooltip ? <Tooltip content={tooltip} placement={tooltipPlacement}>{button}</Tooltip> : button}</span>
 })

@@ -10,6 +10,7 @@ import type { JsonObject, JsonValue } from '../../../types'
 const ACTIVE_RUN_STORAGE_KEY = 'tinkerfin:active-conversation-run'
 
 export interface ActiveRunSession {
+  projectId: string
   threadId: string
   payload: ConversationRunPayload
   mode: ConversationRunMode
@@ -46,6 +47,7 @@ const isChatRequestPayload = (value: unknown): value is ChatRequestPayload => {
   if (!isRecord(value)) return false
   if (typeof value.threadId !== 'string' || typeof value.runId !== 'string') return false
   if (!isJsonObject(value.state) || !isJsonObject(value.forwardedProps)) return false
+  if (typeof value.forwardedProps.projectId !== 'string' || !value.forwardedProps.projectId) return false
   if (value.forwardedProps.accessMode !== "full" && value.forwardedProps.accessMode !== "write_approval") return false
   if (!Array.isArray(value.tools) || !value.tools.every(isJsonValue)) return false
   if (!Array.isArray(value.context) || !value.context.every(isJsonValue)) return false
@@ -65,7 +67,8 @@ const isChatRequestPayload = (value: unknown): value is ChatRequestPayload => {
 const parseActiveRunSession = (value: unknown): ActiveRunSession | null => {
   if (!isRecord(value)) return null
   const keys = Object.keys(value).sort()
-  if (keys.join('\0') !== ['lastSeq', 'mode', 'payload', 'threadId'].join('\0')) return null
+  if (keys.join('\0') !== ['lastSeq', 'mode', 'payload', 'projectId', 'threadId'].join('\0')) return null
+  if (typeof value.projectId !== 'string' || !value.projectId) return null
   if (typeof value.threadId !== 'string') return null
   if (value.mode !== 'start' && value.mode !== 'resume' && value.mode !== 'compact') return null
   if (!Number.isSafeInteger(value.lastSeq) || Number(value.lastSeq) < 0) return null
@@ -75,9 +78,11 @@ const parseActiveRunSession = (value: unknown): ActiveRunSession | null => {
     payload = value.payload
   } else {
     if (!isChatRequestPayload(value.payload) || !value.payload.runId.trim()) return null
+    if (value.payload.forwardedProps.projectId !== value.projectId) return null
     payload = value.payload
   }
   return {
+    projectId: value.projectId,
     threadId: value.threadId,
     payload,
     mode: value.mode,
@@ -106,8 +111,8 @@ export const readActiveRunSessions = (): ActiveRunSession[] => {
   return []
 }
 
-export const readActiveRunSession = (threadId: string): ActiveRunSession | null => (
-  readActiveRunSessions().find((session) => session.threadId === threadId) ?? null
+export const readActiveRunSession = (threadId: string, projectId: string): ActiveRunSession | null => (
+  readActiveRunSessions().find((session) => session.threadId === threadId && session.projectId === projectId) ?? null
 )
 
 const saveActiveRunSessions = (sessions: ActiveRunSession[]) => {

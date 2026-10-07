@@ -741,10 +741,12 @@ const isAgentMode = (value: unknown): value is AgentMode =>
   value === "default" || value === "plan"
 
 const forwardedPropsFor = (
+  projectId: string,
   model: string,
   mode: AgentMode,
   accessMode: Conversation["accessMode"],
 ): ChatRequestPayload["forwardedProps"] => ({
+  projectId,
   model,
   accessMode,
   command: { plan: mode === "plan" ? "on" : "off" },
@@ -781,7 +783,7 @@ export const buildInitialPayload = (
     ],
     tools: [],
     context: [],
-    forwardedProps: { ...forwardedPropsFor(conversation.model, conversation.mode, conversation.accessMode), skillIds: [...skillIds] },
+    forwardedProps: { ...forwardedPropsFor(conversation.projectId, conversation.model, conversation.mode, conversation.accessMode), skillIds: [...skillIds] },
   }
 }
 
@@ -854,7 +856,7 @@ export const buildResumePayload = (
     messages: [],
     tools: [],
     context: [],
-    forwardedProps: forwardedPropsFor(conversation.model, conversation.mode, conversation.accessMode),
+    forwardedProps: forwardedPropsFor(conversation.projectId, conversation.model, conversation.mode, conversation.accessMode),
     resume,
   }
 }
@@ -866,7 +868,7 @@ export const buildPlanDismissPayload = (conversation: Conversation): ChatRequest
   return {
     threadId: conversation.threadId, runId: createRunId(),
     state: {}, messages: [], tools: [], context: [],
-    forwardedProps: forwardedPropsFor(conversation.model, 'plan', conversation.accessMode),
+    forwardedProps: forwardedPropsFor(conversation.projectId, conversation.model, 'plan', conversation.accessMode),
     resume: [{ interruptId: interaction.interruptId, status: 'resolved',
       payload: interaction.kind === 'questions'
         ? { type: 'dismiss' }
@@ -1015,6 +1017,7 @@ export const buildPlanResumePayload = (
     tools: [],
     context: [],
     forwardedProps: forwardedPropsFor(
+      conversation.projectId,
       conversation.model,
       interaction.kind === 'review' && interaction.action === 'approve'
         ? 'default'
@@ -1041,7 +1044,7 @@ export const buildPlanAbandonPayload = (
     messages: [],
     tools: [],
     context: [],
-    forwardedProps: forwardedPropsFor(conversation.model, 'default', conversation.accessMode),
+    forwardedProps: forwardedPropsFor(conversation.projectId, conversation.model, 'default', conversation.accessMode),
     resume: [{
       interruptId: interaction.interruptId,
       status: 'cancelled',

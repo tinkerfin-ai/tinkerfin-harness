@@ -29,6 +29,7 @@ import { MarkdownContent } from '../components/MarkdownContent'
 import type { ConversationObservation, HistoryActivationRefresh, HistoryRefreshResult } from '../trace/historyRefresh'
 import { CodeText } from '../../../components/ui/CodeText'
 import { TraceLedger } from './TraceLedger'
+import { useTraceModelRequest } from './useTraceModelRequest'
 import { CompactionDetails } from './CompactionDetails'
 import { TraceNodeType } from './TraceNodeVisual'
 import { TraceTimeline } from './TraceTimeline'
@@ -125,6 +126,7 @@ const systemPrompt = (entry: TraceGraphNode) => {
 }
 
 function TraceDetails({
+  threadId,
   entry,
   responseEntries,
   relatedNodes,
@@ -137,6 +139,7 @@ function TraceDetails({
   onRetryResponse,
   onClose,
 }: {
+  threadId: string
   entry: TraceGraphNode
   relatedNodes: TraceGraphNode[]
   responseEntries: TraceGraphNode[]
@@ -159,7 +162,14 @@ function TraceDetails({
     : undefined
   const detailInput = compaction ?? entry
   const summaryModels = compaction ? relatedNodes.filter(node => node.kind === 'model' && node.parentNodeId === compaction.id) : []
-  const prompt = systemPrompt(entry)
+  const modelRequest = useTraceModelRequest({
+    threadId, nodeId: entry.id, reference: entry.requestReference,
+    enabled: visible && (tab === 'request' || tab === 'system'),
+  })
+  const request = entry.kind === 'model'
+    ? modelRequest.state.phase === 'ready' ? modelRequest.state.detail.request : null
+    : entry.request
+  const prompt = systemPrompt({ ...entry, request })
   const responseMessages = responseEntries
     .filter((item) => item.kind === 'assistant_message')
     .map((item) => ({
@@ -198,10 +208,10 @@ function TraceDetails({
   }
   const tabs: Array<{ id: DetailTab; label: string }> = [
     { id: 'overview', label: t('概述') },
-    ...(detailInput.request != null || detailInput.requestOmitted
+    ...(detailInput.request != null || detailInput.requestOmitted || detailInput.requestReference
       ? [{ id: 'request' as const, label: t(compaction ? '压缩内容' : '请求') }]
       : []),
-    ...(prompt ? [{ id: 'system' as const, label: t('系统提示词') }] : []),
+    ...(prompt || entry.requestReference ? [{ id: 'system' as const, label: t('系统提示词') }] : []),
     ...(entry.kind === 'model'
       ? [{ id: 'response' as const, label: t('响应') }]
       : []),
@@ -274,7 +284,7 @@ function TraceDetails({
                     <strong>{entry.failure.errorType}</strong>
                     {entry.failure.message && <p>{entry.failure.message}</p>}
                   </div>
-                  {(detailInput.request != null || detailInput.requestOmitted) && (
+                  {(detailInput.request != null || detailInput.requestOmitted || detailInput.requestReference) && (
                     <Button className="chain-trace-feedback-action" size="xs" variant="text" trailingIcon={<ChevronRight size={16} />} onClick={() => setTab('request')}>{t('查看请求')}</Button>
                   )}
                 </section>
@@ -306,10 +316,22 @@ function TraceDetails({
               </dl>
             </>
           )}
+          {(activeTab === 'request' || activeTab === 'system') && entry.requestReference && modelRequest.state.phase !== 'ready' ? (
+            <FeedbackState
+              kind={modelRequest.state.phase === 'error' ? 'error' : 'loading'}
+              appearance={modelRequest.state.phase === 'error' ? 'retry' : 'default'}
+              title={t(modelRequest.state.phase === 'error' ? '模型请求加载失败' : '正在加载模型请求')}
+              retryLabel={t('重新加载')}
+              onRetry={modelRequest.state.phase === 'error' ? modelRequest.retry : undefined}
+            />
+          ) : <>
           {activeTab === 'request' && (compaction
-            ? <CompactionDetails operation={compaction} models={summaryModels} section="request" />
-            : <pre><CodeText language="json">{entry.requestOmitted ? t('请求内容未保留') : json(entry.request)}</CodeText></pre>)}
-          {activeTab === 'system' && <MarkdownContent content={prompt} variant="compact" />}
+            ? <CompactionDetails threadId={threadId} operation={compaction} models={summaryModels} section="request" />
+            : <pre><CodeText language="json">{entry.requestOmitted ? t('请求内容未保留') : json(request)}</CodeText></pre>)}
+          {activeTab === 'system' && (prompt
+            ? <MarkdownContent content={prompt} variant="compact" />
+            : <p className="chain-trace-compaction-note">{t('本次模型请求没有最终系统提示词')}</p>)}
+          </>}
           {activeTab === 'response' && (
             <div className="chain-trace-response">
               {responseStatus === 'loading' ? (
@@ -355,7 +377,7 @@ function TraceDetails({
             </dl>
           )}
           {activeTab === 'result' && (compaction
-            ? <CompactionDetails operation={compaction} models={summaryModels} section="result" />
+            ? <CompactionDetails threadId={threadId} operation={compaction} models={summaryModels} section="result" />
             : <pre><CodeText language="json">{entry.failure
               ? json({
                   errorType: entry.failure.errorType,
@@ -798,6 +820,7 @@ export function ChainTraceView({
             {selected && (
               <TraceDetails
                 key={selected.id}
+                threadId={threadId}
                 entry={selected}
                 relatedNodes={graphNodes}
                 responseEntries={responseEntries}

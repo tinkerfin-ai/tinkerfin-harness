@@ -42,6 +42,8 @@ const canReloadEndedDetails = (conversation: Conversation) => (
 
 /** 只保留列表和再次打开会话所需的字段，避免新详情字段被顺带留在缓存中 */
 const unloadConversationDetails = (conversation: Conversation): Conversation => ({
+  projectId: conversation.projectId,
+  archived: conversation.archived,
   threadId: conversation.threadId,
   title: conversation.title,
   titleSource: conversation.titleSource,

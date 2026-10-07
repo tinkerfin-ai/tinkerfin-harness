@@ -104,6 +104,7 @@ def _run_input(*, mode: str = "default") -> RunAgentInput:
             "tools": [],
             "context": [],
             "forwardedProps": {
+                "projectId": "project-1",
                 "model": "main",
                 "command": {"plan": "on" if mode == "plan" else "off"},
             },
@@ -114,6 +115,7 @@ def _run_input(*, mode: str = "default") -> RunAgentInput:
 def _prepared(*, mode: str = "default"):
     return prepare_run_request(
         ChatRequest.from_agui(_run_input(mode=mode)),
+        project_id="project-7",
         user_id=7,
         thread_id="thread-1",
     )
@@ -218,6 +220,7 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
     monkeypatch: pytest.MonkeyPatch,
     attachments,
     model_http_client,
+    persistent_store,
     skill_library,
     workspace_failure: bool,
 ) -> None:
@@ -243,7 +246,7 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
             self, key: str, *, workspace_key: str, routes: dict[str, BackendProtocol]
         ) -> _Workspace:
             assert key == "users/7"
-            assert workspace_key == "default"
+            assert workspace_key == "project-7"
             assert set(routes) == {"/memories/"}
             return workspace
 
@@ -257,7 +260,7 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
         model_http_client=model_http_client,
         agent_persistence=SimpleNamespace(store=InMemoryStore()),
         agent_subagents=await load_subagents(),
-        tinkerfin=TinkerFin(checkpointer=InMemorySaver()),
+        tinkerfin=TinkerFin(checkpointer=InMemorySaver(), store=persistent_store),
         sandbox_manager=Sandboxes(),
         settings=SimpleNamespace(),
     )
@@ -269,6 +272,7 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
         }
     )
     runtime = build_conversation_runtime(
+        project_id="project-7",
         skill_snapshot=SkillSnapshotPayload(
             directory_id="00000000-0000-0000-0000-000000000000", skills=()
         ),
@@ -327,6 +331,7 @@ async def test_file_access_choice_controls_root_and_subagent_review(
     monkeypatch: pytest.MonkeyPatch,
     attachments,
     model_http_client,
+    persistent_store,
     skill_library,
     access_mode,
     delegated: bool,
@@ -396,11 +401,12 @@ async def test_file_access_choice_controls_root_and_subagent_review(
         model_http_transport=None,
         model_http_client=model_http_client,
         agent_subagents=await load_subagents(),
-        tinkerfin=TinkerFin(checkpointer=InMemorySaver()),
+        tinkerfin=TinkerFin(checkpointer=InMemorySaver(), store=persistent_store),
         sandbox_manager=Sandboxes(),
         settings=SimpleNamespace(),
     )
     runtime = build_conversation_runtime(
+        project_id="project-7",
         skill_snapshot=SkillSnapshotPayload(
             directory_id="00000000-0000-0000-0000-000000000000", skills=()
         ),
@@ -423,7 +429,12 @@ async def test_file_access_choice_controls_root_and_subagent_review(
 
 @pytest.mark.parametrize("delegated", [False, True])
 async def test_product_tool_failure_allows_root_and_researcher_to_reply(
-    monkeypatch, attachments, model_http_client, skill_library, delegated
+    monkeypatch,
+    attachments,
+    model_http_client,
+    persistent_store,
+    skill_library,
+    delegated,
 ):
     """文件工具校验失败返回对应角色，委派本身可以正常完成"""
     from langchain_core.language_models.fake_chat_models import (
@@ -486,11 +497,14 @@ async def test_product_tool_failure_allows_root_and_researcher_to_reply(
         model_http_transport=None,
         model_http_client=model_http_client,
         agent_subagents=await load_subagents(),
-        tinkerfin=TinkerFin(checkpointer=InMemorySaver()).with_observer(tracer),
+        tinkerfin=TinkerFin(
+            checkpointer=InMemorySaver(), store=persistent_store
+        ).with_observer(tracer),
         sandbox_manager=Sandboxes(),
         settings=SimpleNamespace(),
     )
     runtime = build_conversation_runtime(
+        project_id="project-7",
         skill_snapshot=SkillSnapshotPayload(
             directory_id="00000000-0000-0000-0000-000000000000", skills=()
         ),
@@ -525,6 +539,7 @@ async def test_product_tool_failure_allows_root_and_researcher_to_reply(
 async def test_analysis_commands_follow_permissions_in_chat_and_plan(
     attachments,
     model_http_client,
+    persistent_store,
     skill_library,
     monkeypatch: pytest.MonkeyPatch,
     mode,
@@ -564,11 +579,12 @@ async def test_analysis_commands_follow_permissions_in_chat_and_plan(
         model_http_transport=None,
         model_http_client=model_http_client,
         agent_subagents={},
-        tinkerfin=TinkerFin(checkpointer=InMemorySaver()),
+        tinkerfin=TinkerFin(checkpointer=InMemorySaver(), store=persistent_store),
         sandbox_manager=Sandboxes(),
         settings=SimpleNamespace(),
     )
     runtime = build_conversation_runtime(
+        project_id="project-7",
         skill_snapshot=SkillSnapshotPayload(
             directory_id="00000000-0000-0000-0000-000000000000", skills=()
         ),

@@ -2,7 +2,7 @@ import { ArrowRight, ChevronDown, Eye, EyeOff, SlidersHorizontal } from 'lucide-
 import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 
-import { BrandLogo, Button, IconButton, TextField } from '../../components/ui'
+import { BrandLogo, Button, IconButton, TextField, Tooltip } from '../../components/ui'
 import { ThemePicker } from '../../components/ui/ThemePicker'
 import { ValidatedForm } from '../../components/ui/ValidatedForm'
 import { DEFAULT_SERVER_ADDRESS } from '../../api/shared/config'
@@ -61,9 +61,9 @@ export function AuthScreen({ onLogin, onError, pending = false }: AuthScreenProp
         <div className="auth-brand" aria-label="TinkerFin"><BrandLogo size="md" /></div>
         <div className="auth-header-actions">
           <ThemePicker />
-          <a className="auth-github" href="https://github.com/tinkerfin-ai/tinkerfin-harness" target="_blank" rel="noopener noreferrer" aria-label={t('在 GitHub 查看 TinkerFin（新标签页）')} title="GitHub">
+          <Tooltip content="GitHub"><a className="auth-github" href="https://github.com/tinkerfin-ai/tinkerfin-harness" target="_blank" rel="noopener noreferrer" aria-label={t('在 GitHub 查看 TinkerFin（新标签页）')}>
             <img src="/auth/github-mark.svg" width="18" height="18" alt="" />
-          </a>
+          </a></Tooltip>
         </div>
       </header>
       <section className="auth-panel" aria-labelledby="login-heading">

@@ -1,9 +1,9 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { THEME_PREFERENCE_STORAGE_KEY } from '../../theme'
 import { ThemePicker } from './ThemePicker'
+import { MOTION_DURATION_MS } from './motion'
 
 type MediaQueryController = {
   mediaQuery: MediaQueryList
@@ -43,16 +43,18 @@ const installThemeColorMeta = () => {
 
 describe('ThemePicker', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     delete document.documentElement.dataset.theme
     delete document.documentElement.dataset.themePreference
     document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => meta.remove())
   })
 
-  it('renders a three-segment radio group, defaults to light, and persists dark', async () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('renders a three-segment radio group, defaults to light, and persists dark', () => {
     const media = createMediaQuery(true)
     vi.stubGlobal('matchMedia', vi.fn(() => media.mediaQuery))
     const themeColor = installThemeColorMeta()
-    const user = userEvent.setup()
 
     const firstRender = render(<ThemePicker />)
     const themeGroup = screen.getByRole('group', { name: '主题' })
@@ -67,9 +69,10 @@ describe('ThemePicker', () => {
     expect(lightOption).toBeChecked()
     expect(darkOption).not.toBeChecked()
     expect(document.documentElement).toHaveAttribute('data-theme', 'light')
-    await user.hover(themeGroup)
-    await waitFor(() => expect(themeGroup).toHaveAttribute('data-settled', 'true'))
-    await user.click(darkOption)
+    fireEvent.pointerEnter(themeGroup)
+    act(() => { vi.advanceTimersByTime(MOTION_DURATION_MS.slow) })
+    expect(themeGroup).toHaveAttribute('data-settled', 'true')
+    fireEvent.click(darkOption)
 
     expect(darkOption).toBeChecked()
     expect(document.documentElement).toHaveAttribute('data-theme-preference', 'dark')
@@ -82,28 +85,29 @@ describe('ThemePicker', () => {
     expect(screen.getByRole('radio', { name: '深色' })).toBeChecked()
   })
 
-  it('tracks operating-system changes only while following the system', async () => {
+  it('tracks operating-system changes only while following the system', () => {
     const media = createMediaQuery(false)
     vi.stubGlobal('matchMedia', vi.fn(() => media.mediaQuery))
     installThemeColorMeta()
-    const user = userEvent.setup()
 
     render(<ThemePicker />)
     const themeGroup = screen.getByRole('group', { name: '主题' })
     expect(document.documentElement).toHaveAttribute('data-theme', 'light')
 
-    await user.hover(themeGroup)
-    await waitFor(() => expect(themeGroup).toHaveAttribute('data-settled', 'true'))
+    fireEvent.pointerEnter(themeGroup)
+    act(() => { vi.advanceTimersByTime(MOTION_DURATION_MS.slow) })
+    expect(themeGroup).toHaveAttribute('data-settled', 'true')
     const systemOption = screen.getByRole('radio', { name: '跟随系统' })
-    await user.click(systemOption)
+    fireEvent.click(systemOption)
     expect(systemOption).toBeChecked()
     expect(document.documentElement).toHaveAttribute('data-theme-preference', 'system')
     act(() => media.setMatches(true))
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark')
 
-    await user.hover(themeGroup)
-    await waitFor(() => expect(themeGroup).toHaveAttribute('data-settled', 'true'))
-    await user.click(screen.getByRole('radio', { name: '浅色' }))
+    fireEvent.pointerEnter(themeGroup)
+    act(() => { vi.advanceTimersByTime(MOTION_DURATION_MS.slow) })
+    expect(themeGroup).toHaveAttribute('data-settled', 'true')
+    fireEvent.click(screen.getByRole('radio', { name: '浅色' }))
     expect(document.documentElement).toHaveAttribute('data-theme', 'light')
 
     act(() => media.setMatches(false))
@@ -111,11 +115,10 @@ describe('ThemePicker', () => {
     expect(document.documentElement).toHaveAttribute('data-theme', 'light')
   })
 
-  it('opens from hover or keyboard focus and closes on selection or a real outside action', async () => {
+  it('opens from hover or keyboard focus and closes on selection or a real outside action', () => {
     const media = createMediaQuery(false)
     vi.stubGlobal('matchMedia', vi.fn(() => media.mediaQuery))
     installThemeColorMeta()
-    const user = userEvent.setup()
 
     render(
       <>
@@ -128,27 +131,29 @@ describe('ThemePicker', () => {
     const lightOption = screen.getByRole('radio', { name: '浅色' })
 
     expect(themeGroup).toHaveAttribute('data-expanded', 'false')
-    await user.hover(themeGroup)
+    fireEvent.pointerEnter(themeGroup)
     expect(themeGroup).toHaveAttribute('data-expanded', 'true')
-    await user.unhover(themeGroup)
+    fireEvent.pointerLeave(themeGroup)
     expect(themeGroup).toHaveAttribute('data-expanded', 'false')
 
-    await user.hover(themeGroup)
+    fireEvent.pointerEnter(themeGroup)
     expect(themeGroup).toHaveAttribute('data-expanded', 'true')
-    await user.click(screen.getByRole('button', { name: '主题控件外' }))
+    fireEvent.pointerDown(screen.getByRole('button', { name: '主题控件外' }))
+    fireEvent.click(screen.getByRole('button', { name: '主题控件外' }))
     expect(themeGroup).toHaveAttribute('data-expanded', 'false')
 
     act(() => lightOption.focus())
     expect(themeGroup).toContainElement(document.activeElement as HTMLElement)
     expect(themeGroup).toHaveAttribute('data-expanded', 'true')
 
-    await waitFor(() => expect(themeGroup).toHaveAttribute('data-settled', 'true'))
-    await user.click(screen.getByRole('radio', { name: '深色' }))
+    act(() => { vi.advanceTimersByTime(MOTION_DURATION_MS.slow) })
+    expect(themeGroup).toHaveAttribute('data-settled', 'true')
+    fireEvent.click(screen.getByRole('radio', { name: '深色' }))
     expect(screen.getByRole('radio', { name: '深色' })).toBeChecked()
     expect(themeGroup).toHaveAttribute('data-expanded', 'false')
   })
 
-  it('opens on touch and collapses after a settled theme is selected', async () => {
+  it('opens on touch and collapses after a settled theme is selected', () => {
     const media = createMediaQuery(false)
     vi.stubGlobal('matchMedia', vi.fn(() => media.mediaQuery))
     installThemeColorMeta()
@@ -163,23 +168,26 @@ describe('ThemePicker', () => {
     fireEvent(lightOption, touchPointerDown)
     expect(themeGroup).toHaveAttribute('data-expanded', 'true')
 
-    await waitFor(() => expect(themeGroup).toHaveAttribute('data-settled', 'true'))
+    act(() => { vi.advanceTimersByTime(MOTION_DURATION_MS.slow) })
+    expect(themeGroup).toHaveAttribute('data-settled', 'true')
     fireEvent.click(darkOption)
     expect(darkOption).toBeChecked()
     expect(themeGroup).toHaveAttribute('data-expanded', 'false')
   })
 
-  it('selects the visible label only after the expansion has settled', async () => {
+  it('selects the visible label only after the expansion has settled', () => {
     const media = createMediaQuery(false)
     vi.stubGlobal('matchMedia', vi.fn(() => media.mediaQuery))
     installThemeColorMeta()
-    const user = userEvent.setup()
     render(<ThemePicker />)
 
     const themeGroup = screen.getByRole('group', { name: '主题' })
-    await user.hover(themeGroup)
-    await waitFor(() => expect(themeGroup).toHaveAttribute('data-settled', 'true'))
-    await user.click(screen.getByTitle('深色'))
+    fireEvent.pointerEnter(themeGroup)
+    act(() => { vi.advanceTimersByTime(MOTION_DURATION_MS.slow) })
+    expect(themeGroup).toHaveAttribute('data-settled', 'true')
+    fireEvent.pointerMove(screen.getByRole('radio', { name: '深色' }))
+    expect(screen.getByRole('tooltip', { name: '深色' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('radio', { name: '深色' }))
 
     expect(screen.getByRole('radio', { name: '深色' })).toBeChecked()
     expect(themeGroup).toHaveAttribute('data-expanded', 'false')

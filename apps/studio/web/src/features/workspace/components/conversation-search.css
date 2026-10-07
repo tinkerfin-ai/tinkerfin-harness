@@ -1,0 +1,17 @@
+@layer workspace {
+  .conversation-search-dialog { width: min(100%, var(--layout-conversation-search-width)); max-height: calc(100dvh - var(--space-8)); display: flex; flex-direction: column; }
+  .conversation-search-body { padding: var(--space-4) var(--dialog-content-padding) 0; }
+  .conversation-search-heading { margin: var(--space-4) 0 var(--space-2); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--color-text-secondary); }
+  .conversation-search-results-shell { position: relative; min-height: 0; }
+  .conversation-search-results { overflow-y: auto; max-height: min(40dvh, calc(var(--space-16) * 5)); min-height: var(--space-16); padding: 0 var(--space-3) var(--space-3); }
+  .conversation-search-list { display: flex; flex-direction: column; gap: var(--space-1); }
+  .conversation-search-result { width: 100%; min-height: var(--control-lg); justify-content: flex-start; gap: var(--space-3); padding: var(--space-2); text-align: start; }
+  .conversation-search-result[aria-selected='true'] { background: var(--color-active); }
+  .conversation-search-result .ui-button__label { min-width: 0; flex: 1; }
+  .conversation-search-result-copy { display: grid; min-width: 0; gap: var(--space-0-5); }
+  .conversation-search-result-copy > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .conversation-search-result-copy small { color: var(--color-text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
+  .conversation-search-empty { margin: 0; padding: var(--space-5) var(--space-2); color: var(--color-text-secondary); }
+  .conversation-search-more { width: 100%; margin-top: var(--space-2); }
+  .conversation-search-footer { padding: var(--space-2) var(--dialog-content-padding); border-top: 1px solid var(--color-border-subtle); color: var(--color-text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
+}

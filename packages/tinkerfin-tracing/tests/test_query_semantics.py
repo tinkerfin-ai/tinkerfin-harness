@@ -476,7 +476,7 @@ async def _record_subagent_scope(
     return tracer, ()
 
 
-async def test_graph_page_prefers_structure_and_marks_omitted_details() -> None:
+async def test_graph_page_keeps_model_input_available_outside_its_page_budget() -> None:
     limits = TraceGraphQueryLimits(max_page_bytes=2048)
     tracer = Tracer(graph_query_limits=limits)
     await _record_large_model_call(tracer, "bounded-page")
@@ -489,9 +489,16 @@ async def test_graph_page_prefers_structure_and_marks_omitted_details() -> None:
     )
 
     assert len(query.snapshot.model_dump_json(by_alias=True).encode()) <= 2048
-    assert query.completeness.details_omitted is True
+    assert query.completeness.details_omitted is False
     assert query.nodes[0].request is None
-    assert query.nodes[0].request_omitted is True
+    assert query.nodes[0].request_omitted is False
+    reference = query.nodes[0].request_reference
+    assert reference is not None
+    detail = await tracer.model_request(
+        ThreadIdentity(namespace="test", thread_id="thread-query"), reference=reference
+    )
+    assert detail.node_id == query.nodes[0].id
+    assert detail.request is not None and not detail.request_omitted
 
 
 async def test_graph_subagent_scope_expansion_obeys_the_total_limit() -> None:

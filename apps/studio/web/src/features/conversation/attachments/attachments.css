@@ -117,16 +117,6 @@
     background: var(--color-media-hover);
     outline: 0;
   }
-  .attachment-image-actions .ui-tooltip {
-    background: var(--color-media-shade);
-    color: var(--color-media-ink);
-    left: 0;
-    top: auto;
-    bottom: calc(100% + var(--space-2));
-    transform: none;
-    border: 0;
-    box-shadow: none;
-  }
   .attachment-media[data-state='error'] .attachment-loading {
     min-height: calc(var(--space-16) + var(--space-16));
     padding-bottom: calc(var(--control-composer) + var(--space-4));
@@ -156,6 +146,8 @@
     flex: 1;
     min-width: 0;
   }
+  .attachment-description-name { display: flex; width: 100%; min-width: 0; justify-content: flex-start; padding: 0; color: var(--color-text-primary); }
+  .attachment-description-name .ui-button__label { min-width: 0; width: 100%; text-align: start; }
   .attachment-description__title {
     display: block;
     overflow: hidden;
@@ -726,13 +718,6 @@
     font-size: var(--type-caption-size);
     font-variant-numeric: tabular-nums;
   }
-  .attachment-viewer .modal-dialog-head .ui-tooltip {
-    left: auto;
-    right: 0;
-    transform: none;
-    top: calc(100% + var(--space-2));
-    bottom: auto;
-  }
 
   .composer-attachments {
     display: flex;
@@ -820,18 +805,6 @@
   .composer-attachment-name .ui-button__label {
     min-width: 0;
   }
-  .ui-tooltip.attachment-name-tooltip,
-  .ui-tooltip.composer-attachment-name-tooltip {
-    display: block;
-    position: fixed;
-    max-width: min(var(--layout-image-multiple-width), calc(100vw - var(--space-6)));
-    overflow-wrap: anywhere;
-    transform: none;
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-    transition: none;
-  }
   .composer-attachment-state {
     display: flex;
     flex: 0 0 auto;
@@ -917,10 +890,6 @@
     }
     .composer-attachment[data-state='error'] .composer-attachment-state {
       padding-inline: var(--space-1);
-    }
-    .attachment-card .ui-tooltip,
-    .attachment-viewer .ui-tooltip {
-      display: none;
     }
   }
   @media (prefers-reduced-motion: reduce) {

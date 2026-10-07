@@ -32,15 +32,20 @@ async def test_zip_preview_requires_attachment_bound_by_message_submission(
 ):
     await add_users(session)
     await ConversationRepository(session).create_thread(
-        user_id=1, thread_id="chat", title="技能", model_id=None
+        project_id="project-1", user_id=1, thread_id="chat", title="技能", model_id=None
     )
     await session.commit()
     uploaded = await attachments.upload(
-        user_id=1, name="reports.zip", chunks=byte_chunks(archive_bytes(skill_files()))
+        project_id="project-1",
+        user_id=1,
+        name="reports.zip",
+        chunks=byte_chunks(archive_bytes(skill_files())),
     )
     preview_tool = next(
         entry
-        for entry in build_skill_tools(skill_library, user_id=1, thread_id="chat")
+        for entry in build_skill_tools(
+            skill_library, project_id="project-1", user_id=1, thread_id="chat"
+        )
         if entry.name == "preview_skills"
     )
     arguments = {"source": {"kind": "zip", "attachment_id": uploaded.id}}
@@ -68,18 +73,24 @@ async def test_chat_zip_preview_install_and_replace_share_the_skill_service(
 ):
     await add_users(session)
     await ConversationRepository(session).create_thread(
-        user_id=1, thread_id="chat", title="技能", model_id=None
+        project_id="project-1", user_id=1, thread_id="chat", title="技能", model_id=None
     )
     await session.commit()
     data = archive_bytes(skill_files())
     uploaded = await attachments.upload(
-        user_id=1, thread_id="chat", name="reports.zip", chunks=byte_chunks(data)
+        project_id="project-1",
+        user_id=1,
+        thread_id="chat",
+        name="reports.zip",
+        chunks=byte_chunks(data),
     )
     assert uploaded.mime_type == "application/zip"
     assert (await attachments.read(uploaded.id, user_id=1, thread_id="chat"))[1] == data
     tools = {
         entry.name: entry
-        for entry in build_skill_tools(skill_library, user_id=1, thread_id="chat")
+        for entry in build_skill_tools(
+            skill_library, project_id="project-1", user_id=1, thread_id="chat"
+        )
     }
     preview = json.loads(
         await tools["preview_skills"].ainvoke(
@@ -103,6 +114,7 @@ async def test_chat_zip_preview_install_and_replace_share_the_skill_service(
         )
     )["result"]["installation_ids"][0]
     replacement = await attachments.upload(
+        project_id="project-1",
         user_id=1,
         thread_id="chat",
         name="reports.zip",
@@ -143,7 +155,7 @@ async def test_zip_direct_upload_and_invalid_packages_use_the_same_validation(
 ):
     data = archive_bytes(skill_files())
     attachment_id, _ = await attachments.request_upload(
-        user_id=1, name="reports.zip", size_bytes=len(data)
+        project_id="project-1", user_id=1, name="reports.zip", size_bytes=len(data)
     )
     attachment_storage.objects[attachment_id + "-upload"] = data
     file = await attachments.complete_upload(attachment_id, user_id=1)
@@ -156,12 +168,18 @@ async def test_zip_direct_upload_and_invalid_packages_use_the_same_validation(
     ]:
         with pytest.raises(BusinessException) as failed:
             await attachments.upload(
-                user_id=1, name="invalid.zip", chunks=byte_chunks(malformed)
+                project_id="project-1",
+                user_id=1,
+                name="invalid.zip",
+                chunks=byte_chunks(malformed),
             )
         assert failed.value.error_code == SkillErrorCode.INVALID_PACKAGE
     with pytest.raises(BusinessException) as oversized:
         await attachments.request_upload(
-            user_id=1, name="large.zip", size_bytes=MAX_FILE_BYTES + 1
+            project_id="project-1",
+            user_id=1,
+            name="large.zip",
+            size_bytes=MAX_FILE_BYTES + 1,
         )
     assert oversized.value.error_code.http_status == 413
     assert set(attachment_storage.objects) == {file.id}
@@ -171,7 +189,10 @@ async def test_zip_is_a_model_reference_and_never_sent_as_binary(
     attachments: AttachmentService,
 ):
     uploaded = await attachments.upload(
-        user_id=1, name="reports.zip", chunks=byte_chunks(archive_bytes(skill_files()))
+        project_id="project-1",
+        user_id=1,
+        name="reports.zip",
+        chunks=byte_chunks(archive_bytes(skill_files())),
     )
 
     async def forbidden_read(attachment: Attachment) -> AttachmentContent:
@@ -195,3 +216,6 @@ async def test_zip_is_a_model_reference_and_never_sent_as_binary(
     assert uploaded.id in model.prompts[0]
     assert "application/zip" in model.prompts[0]
     assert "base64" not in model.prompts[0]
+
+
+pytestmark = pytest.mark.usefixtures("projects")

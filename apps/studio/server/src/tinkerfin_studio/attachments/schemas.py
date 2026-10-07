@@ -8,6 +8,7 @@ from tinkerfin_studio.attachments.processing import MAX_FILE_BYTES
 class UploadRequest(BaseModel):
     """申请上传所需的文件元信息，内容由完成接口核验"""
 
+    project_id: str = Field(min_length=1, max_length=36)
     name: str = Field(min_length=1, max_length=255)
     size_bytes: int = Field(gt=0, le=MAX_FILE_BYTES, strict=True)
 

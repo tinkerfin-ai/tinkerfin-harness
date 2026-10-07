@@ -18,7 +18,7 @@ classifiers = [
 dependencies = ["langgraph-checkpoint==4.2.0"]
 
 [project.optional-dependencies]
-sqlalchemy = ["sqlalchemy[asyncio]==2.0.52", "tinkerfin-sqlalchemy==0.1.0"]
+sqlalchemy = ["sqlalchemy[asyncio]==2.0.52", "tinkerfin-sqlalchemy==0.1.0", "tinkerfin-contracts==0.1.0"]
 
 [project.urls]
 Homepage = "https://github.com/tinkerfin-ai/tinkerfin-harness"

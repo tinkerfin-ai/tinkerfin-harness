@@ -3,6 +3,7 @@
 import io
 from types import SimpleNamespace
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 from PIL import Image
 from pydantic import SecretStr
@@ -20,6 +21,8 @@ from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import ModelConnectionSave
 from tinkerfin_studio.models.service import AgentModelService
+
+pytestmark = pytest.mark.usefixtures("projects")
 
 
 class ConversationCommands:
@@ -98,7 +101,11 @@ async def test_empty_json_results_and_file_content_keep_their_http_contract(
         conflict = await client.delete("/api/conversation/running")
         uploaded = await client.post(
             "/api/attachments/uploads",
-            json={"name": "chart.png", "size_bytes": len(content)},
+            json={
+                "project_id": "project-7",
+                "name": "chart.png",
+                "size_bytes": len(content),
+            },
         )
         assert uploaded.status_code == 200
         attachment_id = uploaded.json()["data"]["attachment_id"]
@@ -168,3 +175,6 @@ def test_business_json_openapi_responses_publish_the_envelope() -> None:
                 assert model["properties"]["data"]["type"] == "null"
                 seen_null_results.add((path, method))
     assert seen_null_results == null_results
+
+
+pytestmark = pytest.mark.usefixtures("projects")

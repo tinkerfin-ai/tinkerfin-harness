@@ -662,6 +662,8 @@ const projectTraceConversation = (
   })
 
   return {
+    projectId: trace.projectId,
+    archived: trace.archived,
     threadId: trace.threadId,
     ...mergeConversationTitle(options.previous, trace),
     pinned: trace.pinned,

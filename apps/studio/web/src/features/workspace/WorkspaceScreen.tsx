@@ -1,3 +1,8 @@
+import { MemoriesPage } from '../memories/MemoriesPage'
+import { MoveConversationDialog } from '../projects/MoveConversationDialog'
+import { useProjectConversationActions } from '../projects/useProjectConversationActions'
+import { ProjectsWorkspace, type ProjectWorkspaceScope } from '../projects/ProjectsWorkspace'
+import { ProjectSwitcher } from '../projects/ProjectSwitcher'
 import type { CSSProperties } from 'react'
 import { startNotificationFeed } from '../../api/notifications'
 import { useDrawerLayout } from '../../components/ui/useDrawerLayout'
@@ -19,6 +24,8 @@ import type { AuthUser } from '../../api/auth/types'
 import {
   Button,
   ErrorBoundary,
+  Dialog,
+  FeedbackState,
   useThemePreference,
   ViewTabs,
 } from '../../components/ui'
@@ -38,6 +45,7 @@ import { useAttachments } from '../conversation/useAttachments'
 import { useComposerSkills } from '../conversation/useComposerSkills'
 import { ComposerModelPicker } from './components/ComposerModelPicker'
 import { Sidebar } from './components/Sidebar'
+import { ConversationSearchDialog } from './components/ConversationSearchDialog'
 import {
   ConversationViewport,
 } from './components/ConversationViewport'
@@ -143,7 +151,14 @@ const withFinalApprovalDecision = (
   }
 }
 
-export function WorkspaceScreen({
+type WorkspaceScreenProps = { user: AuthUser; onLogout: () => void; onToast: ToastHandler }
+
+export function WorkspaceScreen(props: WorkspaceScreenProps) {
+  return <ProjectsWorkspace key={props.user.user_id} user={props.user} onLogout={props.onLogout}>{scope => <ProjectWorkspaceScreen key={scope.project.id} {...props} scope={scope} />}</ProjectsWorkspace>
+}
+
+function ProjectWorkspaceScreen({
+  scope,
   user,
   onLogout,
   onToast,
@@ -151,9 +166,15 @@ export function WorkspaceScreen({
   user: AuthUser
   onLogout: () => void
   onToast: ToastHandler
+  scope: ProjectWorkspaceScope
 }) {
   const { t } = useI18n()
-  useEffect(() => startNotificationFeed(), [])
+  const projectId = scope.project.id
+  useEffect(() => startNotificationFeed(projectId), [projectId])
+  const [archivedHistory, setArchivedHistory] = useState(false)
+  const [searchScope, setSearchScope] = useState<'project' | 'all'>('project')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchReturnTo, setSearchReturnTo] = useState<HTMLElement | null>(null)
   const {
     workspace,
     setWorkspace,
@@ -178,7 +199,8 @@ export function WorkspaceScreen({
   }, [workspace.conversations, draftConversation, textRevealProgress])
   const [draftModel, setDraftModel] = useState('')
   const [draftAccessMode, setDraftAccessMode] = useState<Conversation['accessMode']>('full')
-  const composerDraft = useComposerDraft()
+  const draftKey = workspace.currentThreadId ? `thread:${workspace.currentThreadId}` : `${projectId}:${pendingConversations.selectedRunId ? `pending:${pendingConversations.selectedRunId}` : ''}`
+  const composerDraft = useComposerDraft('', { key: draftKey, store: scope.drafts })
   const draft = composerDraft.text
   const setDraft = composerDraft.setText
   const draftRevision = composerDraft.revision
@@ -187,11 +209,12 @@ export function WorkspaceScreen({
   const [pendingResume, setPendingResume] = useState<PendingResume | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [activePage, setActivePage] = useState(readPageFromLocation)
-  const composerSkills = useComposerSkills(activePage === 'conversation', composerDraft.references)
+  const composerSkills = useComposerSkills(projectId, activePage === 'conversation', composerDraft.references)
   const retrySkillRequest = useRef<AbortController | null>(null)
   useEffect(() => () => retrySkillRequest.current?.abort(), [])
   const [automationModalOpen, setAutomationModalOpen] = useState(false)
   const [skillsModalOpen, setSkillsModalOpen] = useState(false)
+  const [memoriesModalOpen, setMemoriesModalOpen] = useState(false)
   const [workspaceView, setWorkspaceView] = useState<'conversation' | 'trace'>('conversation')
   const settingsRestoreFocus = useRef<HTMLElement | null>(null)
   const theme = useThemePreference()
@@ -203,14 +226,16 @@ export function WorkspaceScreen({
     models,
     retry: retryModelCatalog,
   } = useModelCatalog()
-  const localAttachments = useAttachments((message) => onToast(
+  const localAttachments = useAttachments(projectId, (message) => onToast(
     'error',
     isTranslationKey(message) ? t(message) : message,
-  ))
+  ), { key: draftKey, store: scope.attachments })
+  const projectActions = useProjectConversationActions(workspace, setWorkspace, onToast,
+    target => localAttachments.validateProjectMove(`thread:${target.threadId}`))
   const appShell = useRef<HTMLDivElement>(null)
   const latestWorkspace = useRef(workspace)
   const startedResumeRunIds = useRef(new Set<string>())
-  const [initialActiveSessions] = useState(readActiveRunSessions)
+  const [initialActiveSessions] = useState(() => readActiveRunSessions().filter(session => session.projectId === projectId))
   const autoRecoveredRunIds = useRef(new Set<string>())
   const notifiedConversationEvents = useRef(new Set<string>())
   const notifiedChainWarnings = useRef(new Set<string>())
@@ -243,6 +268,7 @@ export function WorkspaceScreen({
     streamRun,
     recoverConversation,
   } = useConversationStreamController({
+    projectId,
     workspace,
     setWorkspace,
     retainConversationDetails,
@@ -256,8 +282,8 @@ export function WorkspaceScreen({
     historyDayRanges,
     historyQuery,
     setHistoryQuery,
-    isHistorySearchActive,
     isHistorySearching,
+    searchConversations, searchCursor, searchLoadError, isSearchLoadingMore, loadMoreSearchHistory, retryHistorySearch,
     historyCursor,
     isHistoryLoadingMore,
     historyLoadError,
@@ -274,6 +300,8 @@ export function WorkspaceScreen({
     retryTaskTrace,
     loadOlderTrace,
   } = useWorkspaceHistory({
+    projectId, archived: archivedHistory, searchScope, searchOpen,
+    preferDraft: Boolean(scope.drafts.get(`${projectId}:`)?.doc.length || scope.attachments.get(`${projectId}:`)?.length),
     workspace,
     setWorkspace,
     retainConversationDetails,
@@ -292,14 +320,14 @@ export function WorkspaceScreen({
   const conversation = useMemo(() => {
     if (workspace.currentThreadId) {
       return selectedConversation
-        ?? buildEmptyConversation({
+        ?? buildEmptyConversation({ projectId,
           threadId: workspace.currentThreadId,
           now: new Date().toISOString(),
           model: draftModel,
         })
     }
-    return draftConversation ?? buildEmptyConversation({ now: new Date().toISOString(), model: draftModel, accessMode: draftAccessMode })
-  }, [draftConversation, draftModel, draftAccessMode, selectedConversation, workspace.currentThreadId])
+    return draftConversation ?? buildEmptyConversation({ projectId, now: new Date().toISOString(), model: draftModel, accessMode: draftAccessMode })
+  }, [projectId, draftConversation, draftModel, draftAccessMode, selectedConversation, workspace.currentThreadId])
 
   const notifyChainWarning = useCallback((message: string) => {
     const key = `${conversation.threadId}:${message}`
@@ -451,7 +479,7 @@ export function WorkspaceScreen({
 
   useEffect(() => {
     if (!workspace.currentThreadId || !selectedConversation?.isHydrated) return
-    const active = readActiveRunSession(selectedConversation.threadId)
+    const active = readActiveRunSession(selectedConversation.threadId, projectId)
     if (!active || (active.threadId && active.threadId !== selectedConversation.threadId)) return
     const runMatches = selectedConversation.activeRunId === active.payload.runId
     if (selectedConversation.runStatus !== 'detached' || !runMatches) {
@@ -470,6 +498,7 @@ export function WorkspaceScreen({
   }, [
     isActiveThread,
     initialActiveSessions,
+    projectId,
     selectedConversation?.activeRunId,
     selectedConversation?.isHydrated,
     selectedConversation?.lastSeq,
@@ -588,7 +617,7 @@ export function WorkspaceScreen({
 
     const now = new Date().toISOString()
     if (!workspace.currentThreadId) {
-      const nextConversation = buildEmptyConversation({
+      const nextConversation = buildEmptyConversation({ projectId,
         now,
         model: draftConversation?.model ?? draftModel,
         mode: effectiveMode,
@@ -619,6 +648,9 @@ export function WorkspaceScreen({
       }
 
       submissionLocks.current.set(submissionKey, payload.runId)
+      const pendingKey = `${projectId}:pending:${payload.runId}`
+      composerDraft.moveTo(pendingKey)
+      localAttachments.moveTo(pendingKey)
       scrollConversationToBottomImmediately()
       if (pendingConversations.selectedRunId) {
         discardDraft(pendingConversations.selectedRunId)
@@ -633,7 +665,19 @@ export function WorkspaceScreen({
         target: 'draft',
         initialConversation: seededConversation,
         onDraftChange: next => pendingConversations.update(payload.runId, next),
-        onRegistered: () => pendingConversations.remove(payload.runId),
+        onRegistered: (threadId, selected) => {
+          const key = `thread:${threadId}`
+          if (selected) { composerDraft.moveTo(key); localAttachments.moveTo(key) }
+          else {
+            const text = scope.drafts.get(pendingKey)
+            if (text) scope.drafts.set(key, text)
+            scope.drafts.delete(pendingKey)
+            const files = scope.attachments.get(pendingKey)
+            if (files) scope.attachments.set(key, files)
+            scope.attachments.delete(pendingKey)
+          }
+          pendingConversations.remove(payload.runId)
+        },
         onAccepted: () => {
           // 已受理的运行按正式会话隔离，空白入口可继续创建新会话
           releaseSubmission(payload.runId)
@@ -694,7 +738,7 @@ export function WorkspaceScreen({
     })
     if (!resubmission) setDraft('')
     void streamRun(currentConversation.threadId, payload, 'start', { target: 'workspace', onAccepted, onRequestRejected }).finally(() => releaseSubmission(payload.runId))
-  }, [isActiveThread, t, conversation, localAttachments, composerSkills, composerDraft, draftRevision, draftConversation?.model, draftModel, pendingConversations, discardDraft, setHistoryQuery, hydrateConversation, isRunning, messageWindow, scrollConversationToBottomImmediately, setDraft, setComposerPreference, setWorkspace, streamRun, workspace.conversations, workspace.currentThreadId])
+  }, [scope.attachments, scope.drafts, projectId, isActiveThread, t, conversation, localAttachments, composerSkills, composerDraft, draftRevision, draftConversation?.model, draftModel, pendingConversations, discardDraft, setHistoryQuery, hydrateConversation, isRunning, messageWindow, scrollConversationToBottomImmediately, setDraft, setComposerPreference, setWorkspace, streamRun, workspace.conversations, workspace.currentThreadId])
 
   const retryRun = useCallback(async (message: Message) => {
     const current = latestWorkspace.current.conversations.find(item => item.threadId === workspace.currentThreadId)
@@ -970,7 +1014,6 @@ export function WorkspaceScreen({
     workspace,
     conversation,
     setWorkspace,
-    setDraft,
     setDraftConversation,
     setDraftModel,
     setDraftAccessMode,
@@ -988,7 +1031,6 @@ export function WorkspaceScreen({
       submissionLocks.current.delete('')
       releaseDraft()
       draftRevision.current += 1
-      localAttachments.clearAttachments()
       setWorkspaceView('conversation')
     },
   })
@@ -1084,8 +1126,14 @@ export function WorkspaceScreen({
     void locate()
   }, [messageWindow, pushToast, t, taskDetailPageOpen, closeTaskDrawer])
 
+  const closeConversationSearch = () => {
+    setSearchOpen(false)
+    setHistoryQuery('')
+    setSearchScope('project')
+  }
+
   // Portal 对话框打开时整块工作区退出辅助技术与键盘路径，只保留最上层操作
-  const portalModalActive = settingsOpen || dialog != null || directoryOpen || automationModalOpen || skillsModalOpen
+  const portalModalActive = searchOpen || Boolean(projectActions.moving) || memoriesModalOpen || scope.modalOpen || settingsOpen || dialog != null || directoryOpen || automationModalOpen || skillsModalOpen
   const taskTraceLauncher = taskTraceBlocked ? undefined : (
     <TodoTraceLauncher
       ref={taskDrawer.launcherRef}
@@ -1120,6 +1168,13 @@ export function WorkspaceScreen({
       inert={portalModalActive || undefined}
     >
       <Sidebar
+        onOpenConversation={() => { setActivePage('conversation'); navigation.closeOverlay(false) }}
+        onOpenMemories={() => { messageWindow.captureReadingPosition(); taskDrawer.close(false); changeDirectoryOpen(false); navigation.closeOverlay(false); setActivePage('memories') }}
+        memoriesActive={activePage === 'memories'}
+        archivedHistory={archivedHistory} onArchivedHistoryChange={setArchivedHistory}
+        onArchive={projectActions.archive} onMove={projectActions.move}
+        projectSelector={<ProjectSwitcher scope={scope} />}
+        onChooseProject={() => { navigation.requestExpanded(); requestAnimationFrame(() => appShell.current?.querySelector<HTMLButtonElement>('.project-switcher-trigger')?.focus()) }}
         workspace={workspace}
         historyConversations={historyConversations}
         pendingConversations={pendingConversations.items}
@@ -1139,12 +1194,13 @@ export function WorkspaceScreen({
           if (pendingConversations.selectedRunId === runId) newConversation()
         }}
         historyDayRanges={historyDayRanges}
-        historyQuery={historyQuery}
-        onHistoryQueryChange={setHistoryQuery}
-        isHistorySearchActive={isHistorySearchActive}
-        isHistorySearching={isHistorySearching}
+        searchOpen={searchOpen}
+        searchTriggerRef={setSearchReturnTo}
+        onOpenSearch={() => {
+          navigation.closeOverlay(false)
+          setSearchOpen(true)
+        }}
         mode={navigation.mode}
-        settledMode={navigation.settledMode}
         overlayOpen={navigation.overlayOpen}
         wideInteractive={navigation.wideInteractive}
         railInteractive={navigation.railInteractive}
@@ -1173,6 +1229,8 @@ export function WorkspaceScreen({
           newConversation()
         }}
         onSelect={(threadId) => {
+          const target = workspace.conversations.find(item => item.threadId === threadId)
+          if (target && target.projectId !== projectId) { scope.select(target.projectId, threadId); return }
           setActivePage('conversation')
           selectConversation(threadId)
         }}
@@ -1203,15 +1261,19 @@ export function WorkspaceScreen({
         aria-hidden={taskDetailPageOpen || (navigation.mode === 'overlay' && navigation.overlayOpen) || undefined}
         inert={taskDetailPageOpen || (navigation.mode === 'overlay' && navigation.overlayOpen) || undefined}
       >
-        {activePage === 'skills' ? (
+        {activePage === 'memories' ? (
+          <ErrorBoundary fallback={({ reset }) => <div className="memories-page"><p>{t('记忆区域无法显示')}</p><Button type="button" onClick={reset}>{t('重新加载')}</Button></div>}>
+            <MemoriesPage project={scope.project} navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay} onModalChange={setMemoriesModalOpen} onToast={pushToast} />
+          </ErrorBoundary>
+        ) : activePage === 'skills' ? (
           <ErrorBoundary onError={() => pushToast('error', t('技能区域无法显示'))}
             fallback={({ reset }) => <div className="skills-empty"><p>{t('技能区域无法显示')}</p><Button type="button" onClick={reset}>{t('重新加载')}</Button></div>}>
-            <SkillsPage navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay} onModalChange={setSkillsModalOpen} onToast={pushToast} />
+            <SkillsPage project={scope.project} navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay} onModalChange={setSkillsModalOpen} onToast={pushToast} />
           </ErrorBoundary>
         ) : activePage === 'automation' ? (
           <ErrorBoundary onError={() => pushToast('error', t('自动化区域无法显示'))}
             fallback={({ reset }) => <div className="automation-empty"><p>{t('自动化区域无法显示')}</p><Button type="button" onClick={reset}>{t('重新加载')}</Button></div>}>
-            <AutomationPage navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay}
+            <AutomationPage projectId={projectId} navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay}
               onModalChange={setAutomationModalOpen} onToast={pushToast} defaultModelId={defaultModelId}
               renderModelChoice={(model, onSelect) => <ComposerModelPicker model={model} models={models} defaultModelId={defaultModelId}
                 status={modelCatalogStatus} open={isModelPickerOpen} onOpenChange={setModelPickerOpen}
@@ -1368,7 +1430,7 @@ export function WorkspaceScreen({
               attachments={localAttachments.attachments}
               onRetryAttachment={localAttachments.retryAttachment}
               onAttachmentError={() => onToast('error', t('无法打开文件选择器，请重试'))}
-              disabledReason={isConversationHydrationFailed
+              disabledReason={conversation.archived ? t('此会话已归档，恢复后可继续') : isConversationHydrationFailed
                 ? t('会话加载失败，请先重试')
                 : modelCatalogStatus === 'loading'
                   ? t('正在加载模型…')
@@ -1441,6 +1503,25 @@ export function WorkspaceScreen({
         />
       </ErrorBoundary>
       </div>
+      {searchOpen && <ErrorBoundary
+        fallback={({ reset }) => <Dialog open title={t('搜索会话')} className="modal-dialog--action conversation-search-dialog"
+          restoreFocusTo={navigation.mode === 'overlay' ? navigation.overlayTriggerRef.current : searchReturnTo} onClose={closeConversationSearch}>
+          <div className="conversation-search-body"><FeedbackState kind="error" appearance="retry" title={t('搜索会话失败')} onRetry={reset} /></div>
+        </Dialog>}>
+        <ConversationSearchDialog query={historyQuery} scope={searchScope} results={searchConversations}
+          projectNames={Object.fromEntries(scope.projects.map(project => [project.id, project.name]))}
+          loading={isHistorySearching} loadingMore={isSearchLoadingMore} error={searchLoadError}
+          hasMore={searchCursor != null} restoreFocusTo={navigation.mode === 'overlay' ? navigation.overlayTriggerRef.current : searchReturnTo}
+          onQueryChange={setHistoryQuery} onScopeChange={setSearchScope}
+          onLoadMore={() => loadMoreSearchHistory(true)} onRetry={retryHistorySearch} onClose={closeConversationSearch}
+          onSelect={target => {
+            closeConversationSearch()
+            if (target.projectId !== projectId) { scope.select(target.projectId, target.threadId); return }
+            setActivePage('conversation')
+            selectConversation(target.threadId)
+          }} />
+      </ErrorBoundary>}
+      {projectActions.moving && <MoveConversationDialog conversation={projectActions.moving.conversation} projects={scope.projects} trigger={projectActions.moving.trigger} pending={projectActions.pending} error={projectActions.error} onConfirm={projectActions.confirmMove} onClose={projectActions.close} />}
       <WorkspaceDialogs
         dialog={dialog}
         pending={dialogPending}

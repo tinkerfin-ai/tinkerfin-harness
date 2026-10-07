@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 
@@ -40,6 +41,7 @@ async function openSettings(page: Page, language: 'zh-CN'|'en', theme: 'light'|'
     localStorage.setItem('tinkerfin:theme',theme)
   }, {user,language,theme})
   await installNotificationStream(page)
+  await installProjectScope(page)
   await page.goto('/')
   if ((page.viewportSize()?.width ?? 1440) < 768) {
     await page.getByRole('button', {name: language === 'en' ? 'Open navigation' : '打开导航', exact: true}).click()

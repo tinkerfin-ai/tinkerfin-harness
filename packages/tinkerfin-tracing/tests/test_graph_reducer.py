@@ -23,6 +23,7 @@ from tinkerfin_tracing import (
     TraceGraph,
     TraceGraphCompleteness,
     TraceGraphFailure,
+    TraceGraphLinkIssue,
     TraceGraphNode,
     TraceGraphNodeKind,
     TraceGraphNodeStatus,
@@ -956,7 +957,7 @@ def test_interaction_locator_cannot_reuse_another_interaction() -> None:
         )
 
 
-def test_link_issue_cannot_be_removed_from_standalone_assistant() -> None:
+def test_standalone_assistant_does_not_imply_a_missing_model() -> None:
     event = _event(
         1,
         MessageFact(
@@ -972,11 +973,20 @@ def test_link_issue_cannot_be_removed_from_standalone_assistant() -> None:
         (event,),
         run_ids=frozenset({"run"}),
     )[0]
-    assert record.link_issue is not None
+    assert record.link_issue is None
+    node = project_trace_graph_node(
+        record,
+        turn_id="turn",
+        parent_subagent_id=None,
+        relationship_missing=False,
+        allowed_run_ids=frozenset({"run"}),
+    )
+    assert node.model_call_id is None
+    assert not node.link_issues
 
     with pytest.raises(TraceStoreProtocolError, match="link issue"):
         project_trace_graph_node(
-            replace(record, link_issue=None),
+            replace(record, link_issue=TraceGraphLinkIssue.MISSING_MODEL_CALL),
             turn_id="turn",
             parent_subagent_id=None,
             relationship_missing=False,

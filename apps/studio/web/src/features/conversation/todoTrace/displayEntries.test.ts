@@ -31,7 +31,7 @@ describe('buildConversationDisplayEntries', () => {
     })
     const ordinary = tool('tool-read', 'read_file', { batchId: 'batch-1' })
     const conversation = {
-      ...buildEmptyConversation({ now: '2026-08-30T12:00:00.000Z', model: 'main' }),
+      ...buildEmptyConversation({projectId: 'project-1',  now: '2026-08-30T12:00:00.000Z', model: 'main' }),
       messages: [ordinary, selected, failed],
       taskTrace: {
         phase: 'ready' as const,
@@ -61,7 +61,7 @@ describe('buildConversationDisplayEntries', () => {
 
   it('keeps one unconfirmed row and hides subagent or redundant successful calls', () => {
     const conversation = {
-      ...buildEmptyConversation({ now: '2026-08-30T12:00:00.000Z', model: 'main' }),
+      ...buildEmptyConversation({projectId: 'project-1',  now: '2026-08-30T12:00:00.000Z', model: 'main' }),
       messages: [
         tool('first-success', 'write_todos'),
         tool('second-success', 'write_todos'),
@@ -78,7 +78,7 @@ describe('buildConversationDisplayEntries', () => {
 })
 
 it('失败属于原提问轮次，部分回答保留且不影响后续成功轮次', () => {
-  const conversation = buildEmptyConversation({ now: '2026-09-08T00:00:00Z' })
+  const conversation = buildEmptyConversation({projectId: 'project-1',  now: '2026-09-08T00:00:00Z' })
   conversation.messages = [
     { id: 'q1', role: 'user', content: '问题1', createdAt: conversation.updatedAt, meta: { runId: 'r1' } },
     { id: 'a1', role: 'assistant', content: '部分回答', createdAt: conversation.updatedAt, meta: { runId: 'r1' } },
@@ -93,7 +93,7 @@ it('失败属于原提问轮次，部分回答保留且不影响后续成功轮�
 
 
 it('同一提问跨恢复运行只展示一张清单，保留失败工具并区分下一次提问', () => {
-  const conversation = buildEmptyConversation({ now: '2026-09-15T07:55:00Z' })
+  const conversation = buildEmptyConversation({projectId: 'project-1',  now: '2026-09-15T07:55:00Z' })
   conversation.messages = [
     { id: 'question', role: 'user', content: '生成报告', createdAt: conversation.updatedAt, meta: { runId: 'run-1' } },
     tool('selected', 'write_todos', { runId: 'resume-1' }),

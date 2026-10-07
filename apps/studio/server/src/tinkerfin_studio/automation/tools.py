@@ -25,6 +25,7 @@ def build_automation_tools(
     resources: ApplicationResources,
     *,
     user_id: int,
+    project_id: str,
     model_id: str,
     access_mode: AccessMode,
 ) -> tuple[BaseTool, ...]:
@@ -33,13 +34,14 @@ def build_automation_tools(
     Args:
         resources: 应用拥有的共享资源，工具只在当前运行中借用
         user_id: 已认证用户，不能由模型参数覆盖
+        project_id: 当前会话已授权的固定项目
         model_id: 创建任务时采用的当前会话模型
         access_mode: 创建任务时沿用的文件审批选择
 
     Returns:
         任务管理、执行查询及已有产物交付工具；写操作保留明确任务版本
     """
-    service = StudioAutomationService(resources, user_id=user_id)
+    service = StudioAutomationService(resources, user_id=user_id, project_id=project_id)
 
     async def result(operation: Awaitable[BaseModel | None]) -> str:
         try:
@@ -81,6 +83,7 @@ def build_automation_tools(
             ToolException: 缺少稳定工具调用标识
         """
         config = TaskConfiguration(
+            project_id=project_id,
             name=name,
             prompt=prompt,
             schedule=schedule,

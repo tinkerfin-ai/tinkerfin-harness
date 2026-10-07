@@ -51,6 +51,7 @@ async def test_summary_order_preserves_microseconds_rejects_conflicts_and_allows
     async with summary_database.session() as session:
         repository = ConversationRepository(session)
         thread = await repository.create_thread(
+            project_id="project-1",
             user_id=1,
             thread_id="ordered",
             title="摘要顺序",
@@ -139,3 +140,6 @@ async def test_summary_observation_schema_preserves_fractional_seconds(
         observation_type = actual["trace_observed_at"]["type"]
         assert isinstance(observation_type, DATETIME)
         assert observation_type.fsp == 6
+
+
+pytestmark = pytest.mark.usefixtures("projects")

@@ -15,6 +15,7 @@ class TracingErrorCode(StrEnum):
 
     ERROR = "tracing.error"
     INVALID_CURSOR = "tracing.invalid_cursor"
+    INVALID_REFERENCE = "tracing.invalid_reference"
     THREAD_NOT_FOUND = "tracing.thread_not_found"
     RUN_NOT_FOUND = "tracing.run_not_found"
     AMBIGUOUS_HEAD = "tracing.ambiguous_head"
@@ -69,6 +70,12 @@ class TraceThreadNotFound(TracingError, LookupError):
     """The selected Trace thread or generation does not exist."""
 
     code = TracingErrorCode.THREAD_NOT_FOUND
+
+
+class InvalidTraceReference(TracingError, ValueError):
+    """A retained-detail reference is malformed or belongs to another conversation."""
+
+    code = TracingErrorCode.INVALID_REFERENCE
 
 
 class TraceRunNotFound(TracingError, LookupError):

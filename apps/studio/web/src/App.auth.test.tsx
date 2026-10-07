@@ -120,6 +120,7 @@ describe('App authentication boundary', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(input instanceof Request ? input.url : String(input), 'http://localhost')
       if (url.pathname.endsWith('/api/auth/me')) return envelope(sessionPayload())
+      if (url.pathname === '/api/projects') return envelope([{ id: 'project-1', name: '测试项目', createdAt: '2030-01-01', updatedAt: '2030-01-01' }])
       if (url.pathname.endsWith('/api/conversation/config')) return envelope({ dayRanges: [7, 30] })
       if (url.pathname.endsWith('/api/conversation/history')) {
         return envelope({ items: [], nextCursor: null })
@@ -146,6 +147,7 @@ describe('App authentication boundary', () => {
           ? new Response(null, { status: 503 })
           : envelope(sessionPayload())
       }
+      if (url.pathname === '/api/projects') return envelope([{ id: 'project-1', name: '测试项目', createdAt: '2030-01-01', updatedAt: '2030-01-01' }])
       if (url.pathname.endsWith('/api/conversation/config')) return envelope({ dayRanges: [7, 30] })
       if (url.pathname.endsWith('/api/conversation/history')) {
         return envelope({ items: [], nextCursor: null })
@@ -176,6 +178,7 @@ describe('App authentication boundary', () => {
         if (sessionRequests === 1) throw new TypeError('Failed to fetch')
         return envelope(sessionPayload())
       }
+      if (url.pathname === '/api/projects') return envelope([{ id: 'project-1', name: '测试项目', createdAt: '2030-01-01', updatedAt: '2030-01-01' }])
       if (url.pathname.endsWith('/api/conversation/config')) return envelope({ dayRanges: [7, 30] })
       if (url.pathname.endsWith('/api/conversation/history')) {
         return envelope({ items: [], nextCursor: null })
@@ -198,6 +201,7 @@ describe('App authentication boundary', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(input instanceof Request ? input.url : String(input), 'http://localhost')
       if (url.pathname.endsWith('/api/auth/me')) return envelope(sessionPayload())
+      if (url.pathname === '/api/projects') return envelope([{ id: 'project-1', name: '测试项目', createdAt: '2030-01-01', updatedAt: '2030-01-01' }])
       if (url.pathname.endsWith('/api/conversation/config')) return envelope({ dayRanges: [7, 30] })
       if (url.pathname.endsWith('/api/conversation/history')) {
         return envelope(null, 401, 1_001_001_000, '登录已过期')
@@ -234,6 +238,7 @@ describe('App authentication boundary', () => {
       const url = new URL(request.url)
       if (url.pathname.endsWith('/api/auth/login')) return envelope(loginPayload())
       if (url.pathname.endsWith('/api/auth/me')) return envelope(sessionPayload())
+      if (url.pathname === '/api/projects') return envelope([{ id: 'project-1', name: '测试项目', createdAt: '2030-01-01', updatedAt: '2030-01-01' }])
       if (url.pathname.endsWith('/api/conversation/config')) return envelope({ dayRanges: [7, 30] })
       if (url.pathname.endsWith('/api/conversation/history')) return envelope({ items: [], nextCursor: null })
       throw new Error(`unexpected request: ${url.pathname}`)
@@ -398,6 +403,7 @@ describe('App authentication boundary', () => {
       const url = new URL(request.url)
       if (url.pathname.endsWith('/api/auth/login')) return envelope(loginPayload())
       if (url.pathname.endsWith('/api/auth/me')) return envelope(sessionPayload())
+      if (url.pathname === '/api/projects') return envelope([{ id: 'project-1', name: '测试项目', createdAt: '2030-01-01', updatedAt: '2030-01-01' }])
       if (url.pathname.endsWith('/api/conversation/config')) return envelope({ dayRanges: [7, 30] })
       if (url.pathname.endsWith('/api/conversation/history')) return envelope({ items: [], nextCursor: null })
       throw new Error(`unexpected request: ${url.pathname}`)
@@ -421,10 +427,11 @@ describe('App authentication boundary', () => {
       const url = new URL(request.url)
       if (url.pathname.endsWith('/api/auth/me')) return envelope(sessionPayload())
       if (url.pathname.endsWith('/api/auth/logout')) return envelope(null)
+      if (url.pathname === '/api/projects') return envelope([{ id: 'project-1', name: '测试项目', createdAt: '2030-01-01', updatedAt: '2030-01-01' }])
       if (url.pathname.endsWith('/api/conversation/config')) return envelope({ dayRanges: [7, 30] })
       if (url.pathname.endsWith('/api/conversation/history')) return envelope({ items: [], nextCursor: null })
       if (url.pathname.endsWith('/api/conversation/private-thread/history')) {
-        return envelope({
+        return envelope({projectId: 'project-1', archived: false,
           id: 1,
           threadId: 'private-thread',
           title: '私密会话',
@@ -458,7 +465,7 @@ describe('App authentication boundary', () => {
 
     render(<App />)
     await waitFor(() => expect(screen.getByLabelText('对话内容')).toBeInTheDocument())
-    writeActiveRunSession({
+    writeActiveRunSession({projectId: 'project-1',
       threadId: 'other-private-thread',
       payload: {
         threadId: 'other-private-thread',
@@ -467,7 +474,7 @@ describe('App authentication boundary', () => {
         messages: [{ id: 'request-private-run', role: 'user', content: 'private prompt' }],
         tools: [],
         context: [],
-        forwardedProps: { skillIds: [], accessMode: 'write_approval', model: 'main', command: { plan: 'off' } },
+        forwardedProps: {projectId: 'project-1',  skillIds: [], accessMode: 'write_approval', model: 'main', command: { plan: 'off' } },
       },
       mode: 'start',
       lastSeq: 7,
@@ -493,6 +500,7 @@ describe('App authentication boundary', () => {
       const request = input instanceof Request ? input : new Request(input)
       const url = new URL(request.url)
       if (url.pathname.endsWith('/api/auth/me')) return envelope(sessionPayload())
+      if (url.pathname === '/api/projects') return envelope([{ id: 'project-1', name: '测试项目', createdAt: '2030-01-01', updatedAt: '2030-01-01' }])
       if (url.pathname.endsWith('/api/conversation/config')) return envelope({ dayRanges: [7, 30] })
       if (url.pathname.endsWith('/api/conversation/history')) {
         return envelope({ items: [], nextCursor: null })

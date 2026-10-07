@@ -19,6 +19,7 @@ from .durable_store import DurableTraceStore as DurableTraceStore
 from .durable_store import InMemoryTraceStore as InMemoryTraceStore
 from .errors import AmbiguousTraceHead as AmbiguousTraceHead
 from .errors import InvalidTraceCursor as InvalidTraceCursor
+from .errors import InvalidTraceReference as InvalidTraceReference
 from .errors import TraceCaptureRejected as TraceCaptureRejected
 from .errors import TraceCorruption as TraceCorruption
 from .errors import TraceFollowLifecycleError as TraceFollowLifecycleError
@@ -67,6 +68,7 @@ from .graph import TraceGraphQueryLimits as TraceGraphQueryLimits
 from .graph import TraceGraphTurn as TraceGraphTurn
 from .graph_query import TraceGraphQuery as TraceGraphQuery
 from .limits import TraceLimits as TraceLimits
+from .model_requests import TraceModelRequest as TraceModelRequest
 from .projection import TraceProjection as TraceProjection
 from .query import TraceThread as TraceThread
 from .redaction import CompositeRedactor as CompositeRedactor
@@ -115,6 +117,7 @@ __all__ = [
     "InMemoryTraceStore",
     "InteractionFact",
     "InvalidTraceCursor",
+    "InvalidTraceReference",
     "MessageFact",
     "ModelCallFact",
     "NativeExtraFact",
@@ -162,6 +165,7 @@ __all__ = [
     "TraceLedgerBackend",
     "TraceLimits",
     "TraceMessage",
+    "TraceModelRequest",
     "TraceObserverFailed",
     "TraceProjection",
     "TraceProjectionCheckpoint",

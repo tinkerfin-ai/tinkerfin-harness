@@ -8,7 +8,7 @@ import { mockResourceNotices } from '../../test/resourceNotices'
 
 vi.mock('./api', () => ({ fetchCounts: vi.fn(), fetchRunPage: vi.fn(), fetchTaskPage: vi.fn() }))
 const dates = weekDates('2026-09-10')
-const base = { page: 'tasks' as const, query: '', status: 'all', dates, view: 'week' as const }
+const base = {projectId: 'project-1',  page: 'tasks' as const, query: '', status: 'all', dates, view: 'week' as const }
 let notices: ReturnType<typeof mockResourceNotices>
 beforeEach(() => {
   notices = mockResourceNotices()

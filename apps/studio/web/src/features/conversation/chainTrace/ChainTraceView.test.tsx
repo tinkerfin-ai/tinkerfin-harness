@@ -18,10 +18,12 @@ function ChainTraceView(props: Omit<ComponentProps<typeof TraceView>, 'drawerLay
 
 const useChainTrace = vi.hoisted(() => vi.fn())
 const queryTraceGraph = vi.hoisted(() => vi.fn())
+const fetchTraceModelRequest = vi.hoisted(() => vi.fn())
 vi.mock('./useChainTrace', () => ({ useChainTrace }))
 vi.mock('../../../api/conversation/traceGraph', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../../api/conversation/traceGraph')>(),
   queryTraceGraph,
+  fetchTraceModelRequest,
 }))
 
 const BASE_TIME = Date.parse('2026-09-04T00:00:00.000Z')
@@ -68,12 +70,7 @@ const nodes: TraceGraphNode[] = [
     provider: 'deepseek',
     model: 'deepseek-chat',
     firstOutputAt: new Date(BASE_TIME + 1220).toISOString(),
-    request: {
-      messages: [{
-        messageType: 'system',
-        content: [{ type: 'text', text: '# 最终系统提示词' }],
-      }],
-    },
+    requestReference: 'model-2-request',
     usage: {
       input_tokens: 4872,
       output_tokens: 185,
@@ -179,6 +176,10 @@ describe('ChainTraceView', () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
     useChainTrace.mockReset()
     queryTraceGraph.mockReset()
+    fetchTraceModelRequest.mockReset().mockResolvedValue({
+      nodeId: 'model-2', requestOmitted: false,
+      request: { messages: [{ messageType: 'system', content: [{ type: 'text', text: '# 最终系统提示词' }] }] },
+    })
     window.localStorage.clear()
     useChainTrace.mockImplementation(({ filter }: { filter: TraceGraphFilter }) => ({
       state: { phase: 'ready', page: filteredPage(filter) },
@@ -348,8 +349,7 @@ describe('ChainTraceView', () => {
     expect(queryTraceGraph).not.toHaveBeenCalled()
 
     fireEvent.click(within(modelDetails).getByRole('tab', { name: '系统提示词' }))
-    expect(within(modelDetails).getByRole('heading', { name: '最终系统提示词' }))
-      .toBeVisible()
+    expect(await within(modelDetails).findByRole('heading', { name: '最终系统提示词' })).toBeVisible()
     fireEvent.click(within(modelDetails).getByRole('tab', { name: '用量' }))
     expect(within(modelDetails).getByText('4,872')).toBeVisible()
   })

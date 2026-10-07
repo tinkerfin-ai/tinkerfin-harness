@@ -6,14 +6,16 @@ from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic import JsonValue
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tinkerfin_contracts import RunIdentity
 from tinkerfin_studio.api.errors import BusinessException, SkillErrorCode
 from tinkerfin_studio.auth.models import User
+from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_studio.skills.entity import (
+    ProjectSkillSetting,
     SkillImportDraft,
     SkillInstallation,
     SkillOperationReceipt,
@@ -62,11 +64,36 @@ def snapshot_key(user_id: int, identity: RunIdentity) -> str:
 class SkillRepository:
     """由调用方提交事务，用户行锁串行化安装变更与新运行捕获"""
 
-    def __init__(self, session: AsyncSession, user_id: int) -> None:
+    def __init__(
+        self, session: AsyncSession, user_id: int, *, project_id: str | None = None
+    ) -> None:
         self.session = session
         self.user_id = user_id
+        self.project_id = project_id
+
+    async def require_project(self) -> None:
+        if self.project_id is not None:
+            await ProjectRepository(self.session, self.user_id).require(self.project_id)
+
+    async def overrides(self, *, project_id: str | None = None) -> dict[str, bool]:
+        project_id = project_id if project_id is not None else self.project_id
+        if project_id is None:
+            return {}
+        return {
+            item.installation_id: item.enabled
+            for item in await self.session.scalars(
+                select(ProjectSkillSetting)
+                .where(
+                    ProjectSkillSetting.user_id == self.user_id,
+                    ProjectSkillSetting.project_id == project_id,
+                )
+                .with_for_update(read=True)
+                .execution_options(populate_existing=True)
+            )
+        }
 
     async def lock_owner(self) -> None:
+        await self.require_project()
         if (
             await self.session.scalar(
                 select(User.id).where(User.id == self.user_id).with_for_update()
@@ -76,20 +103,26 @@ class SkillRepository:
             raise BusinessException(SkillErrorCode.NOT_FOUND)
 
     async def list(self) -> list[SkillInstallation]:
+        await self.require_project()
         return list(
             await self.session.scalars(
                 select(SkillInstallation)
-                .where(SkillInstallation.user_id == self.user_id)
+                .where(
+                    SkillInstallation.user_id == self.user_id,
+                    SkillInstallation.project_id.in_(("", self.project_id or "")),
+                )
                 .order_by(SkillInstallation.updated_at.desc(), SkillInstallation.id)
             )
         )
 
     async def get(self, installation_id: str) -> SkillInstallation:
+        await self.require_project()
         item = await self.session.scalar(
             select(SkillInstallation)
             .where(
                 SkillInstallation.id == installation_id,
                 SkillInstallation.user_id == self.user_id,
+                SkillInstallation.project_id.in_(("", self.project_id or "")),
             )
             .execution_options(populate_existing=True)
         )
@@ -107,6 +140,7 @@ class SkillRepository:
             .where(
                 SkillInstallation.user_id == self.user_id,
                 SkillInstallation.name == package.name,
+                SkillInstallation.project_id == (self.project_id or ""),
             )
             .execution_options(populate_existing=True)
         )
@@ -118,6 +152,7 @@ class SkillRepository:
         item = SkillInstallation(
             id=str(uuid4()),
             user_id=self.user_id,
+            project_id=self.project_id or "",
             name=package.name,
             description=package.description,
             digest=package.digest,
@@ -145,6 +180,7 @@ class SkillRepository:
             .where(
                 SkillInstallation.user_id == self.user_id,
                 SkillInstallation.name == name,
+                SkillInstallation.project_id == (self.project_id or ""),
             )
             .execution_options(populate_existing=True)
         )
@@ -158,6 +194,8 @@ class SkillRepository:
     ) -> tuple[SkillInstallation, bool]:
         """调用方持有用户行锁；替换内容时保留最新启用状态和安装身份"""
         item = await self.get(installation_id)
+        if item.project_id != (self.project_id or ""):
+            raise BusinessException(SkillErrorCode.NOT_FOUND)
         if item.digest != expected_digest:
             raise BusinessException(SkillErrorCode.UPDATE_CONFLICT)
         collision = await self.find_name(package.name)
@@ -209,8 +247,24 @@ class SkillRepository:
     ) -> SkillInstallation:
         await self.lock_owner()
         item = await self.get(installation_id)
-        item.enabled = enabled
-        item.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        if self.project_id is not None and not item.project_id:
+            setting = await self.session.get(
+                ProjectSkillSetting, (self.project_id, item.id)
+            )
+            if setting is None:
+                self.session.add(
+                    ProjectSkillSetting(
+                        project_id=self.project_id,
+                        installation_id=item.id,
+                        user_id=self.user_id,
+                        enabled=enabled,
+                    )
+                )
+            else:
+                setting.enabled = enabled
+        else:
+            item.enabled = enabled
+            item.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self.session.flush()
         return item
 
@@ -218,6 +272,14 @@ class SkillRepository:
         """只移除安装关系，已被运行和导入引用的内容继续保留"""
         await self.lock_owner()
         item = await self.get(installation_id)
+        if item.project_id != (self.project_id or ""):
+            raise BusinessException(SkillErrorCode.NOT_FOUND)
+        await self.session.execute(
+            delete(ProjectSkillSetting).where(
+                ProjectSkillSetting.installation_id == item.id,
+                ProjectSkillSetting.user_id == self.user_id,
+            )
+        )
         await self.session.delete(item)
         await self.session.flush()
 
@@ -234,8 +296,21 @@ class SkillRepository:
             raise BusinessException(SkillErrorCode.NOT_FOUND)
         return item
 
-    async def snapshot(self, identity: RunIdentity) -> SkillSnapshotPayload:
-        """读取已提交快照，会话中早先的查询不能隐藏新登记的运行内容"""
+    async def snapshot(
+        self, identity: RunIdentity, *, project_id: str | None = None
+    ) -> SkillSnapshotPayload:
+        """读取运行固定内容，恢复执行时要求项目归属保持一致
+
+        Args:
+            identity: 已授权运行的身份
+            project_id: 继续执行时的项目；历史读取可不限定移动前的项目
+
+        Returns:
+            已提交的技能集合
+
+        Raises:
+            BusinessException: 快照不存在或不属于要继续执行的项目
+        """
         item = await self.session.scalar(
             select(SkillRunSnapshot)
             .where(
@@ -247,21 +322,25 @@ class SkillRepository:
         )
         if item is None:
             raise BusinessException(SkillErrorCode.CONTENT_UNAVAILABLE)
+        if project_id is not None and item.project_id != project_id:
+            raise BusinessException(SkillErrorCode.NOT_FOUND)
         return SkillSnapshotPayload.model_validate(item.payload)
 
     async def capture(
         self,
         identity: RunIdentity,
         *,
+        project_id: str,
         selected_ids: tuple[str, ...] = (),
         source: RunIdentity | None = None,
     ) -> SkillSnapshotPayload:
         """原子固定启用集合；幂等重试与恢复不读取最新安装状态"""
+        await ProjectRepository(self.session, self.user_id).require(project_id)
         await self.lock_owner()
         key = snapshot_key(self.user_id, identity)
         existing = await self.session.get(SkillRunSnapshot, key, populate_existing=True)
         if existing is not None:
-            if existing.user_id != self.user_id:
+            if existing.user_id != self.user_id or existing.project_id != project_id:
                 raise BusinessException(SkillErrorCode.NOT_FOUND)
             payload = SkillSnapshotPayload.model_validate(existing.payload)
             if source is None and set(selected_ids) != {
@@ -270,21 +349,31 @@ class SkillRepository:
                 raise BusinessException(SkillErrorCode.SNAPSHOT_CONFLICT)
             return payload
         if source is not None:
-            payload = await self.snapshot(source)
+            payload = await self.snapshot(source, project_id=project_id)
         else:
             # 用户锁确定捕获次序，当前读保证看到锁前已提交的更新和启停
-            enabled = list(
+            installations = list(
                 await self.session.scalars(
                     select(SkillInstallation)
                     .where(
                         SkillInstallation.user_id == self.user_id,
-                        SkillInstallation.enabled.is_(True),
+                        SkillInstallation.project_id.in_(("", project_id)),
                     )
                     .order_by(SkillInstallation.name)
                     .with_for_update(read=True)
                     .execution_options(populate_existing=True)
                 )
             )
+            overrides = await self.overrides(project_id=project_id)
+            preferred = {}
+            for item in installations:
+                if item.name not in preferred or item.project_id:
+                    preferred[item.name] = item
+            enabled = [
+                item
+                for item in preferred.values()
+                if overrides.get(item.id, item.enabled)
+            ]
             references = tuple(
                 SkillReference(
                     installation_id=item.id,
@@ -304,6 +393,7 @@ class SkillRepository:
                     SkillRunSnapshot(
                         id=key,
                         user_id=self.user_id,
+                        project_id=project_id,
                         payload=payload.model_dump(mode="json"),
                         created_at=datetime.now(UTC).replace(tzinfo=None),
                     )

@@ -145,6 +145,7 @@ async def test_programmatic_images_reach_downloadable_attachments(
         lambda *args, **kwargs: DrawingModel(responses=[], drawing=drawing),
     )
     await attachments.create_collection(
+        project_id="project-1",
         user_id=1,
         collection_id=drawing,
         purpose="execution",
@@ -165,6 +166,7 @@ async def test_programmatic_images_reach_downloadable_attachments(
             settings=SimpleNamespace(),
         )
         runtime = runtime_module.build_automation_runtime(
+            project_id="project-1",
             resources=resources,
             user_id=1,
             thread_id=drawing,

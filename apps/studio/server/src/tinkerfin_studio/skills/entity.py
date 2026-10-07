@@ -14,57 +14,66 @@ class SkillInstallation(Base):
 
     __tablename__ = "skill_installations"
     __table_args__ = (
-        UniqueConstraint("user_id", "name", name="uq_skill_installations_owner_name"),
+        UniqueConstraint(
+            "user_id", "project_id", "name", name="uq_skill_installations_owner_name"
+        ),
         Index("ix_skill_installations_owner_updated", "user_id", "updated_at"),
-        {**MYSQL_TABLE_OPTIONS, "comment": "用户技能安装关系与内容引用"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "用户技能安装记录"},
     )
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, comment="安装 UUID")
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, comment="技能安装 ID")
     user_id: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="安装所属用户 ID"
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36),
+        nullable=False,
+        default="",
+        server_default="",
+        comment="所属项目 ID，空字符串表示个人库",
     )
     name: Mapped[str] = mapped_column(
         String(64).with_variant(String(64, collation="utf8mb4_bin"), "mysql"),
         nullable=False,
-        comment="SKILL.md 声明的技能名，同一用户按原字符唯一",
+        comment="技能名称",
     )
     description: Mapped[str] = mapped_column(
-        String(1024), nullable=False, comment="技能声明的功能描述"
+        String(1024), nullable=False, comment="技能描述"
     )
     digest: Mapped[str] = mapped_column(
-        String(64), nullable=False, comment="技能完整目录的 SHA-256 内容摘要"
+        String(64), nullable=False, comment="技能目录 SHA-256 内容摘要"
     )
     source_kind: Mapped[str] = mapped_column(
-        String(16), nullable=False, comment="安装来源类别：catalog、github 或 zip"
+        String(16), nullable=False, comment="安装来源：catalog、github、zip"
     )
     source_id: Mapped[str | None] = mapped_column(
-        String(64), nullable=True, comment="服务端来源 ID，个人导入为空"
+        String(64), nullable=True, comment="技能来源 ID，个人导入为空"
     )
     source_name: Mapped[str] = mapped_column(
-        String(128), nullable=False, comment="安装时的来源展示名称"
+        String(128), nullable=False, comment="安装来源名称"
     )
     external_id: Mapped[str | None] = mapped_column(
         String(256), nullable=True, comment="来源中的发布者限定标识"
     )
     source_revision: Mapped[str | None] = mapped_column(
-        String(128), nullable=True, comment="第三方固定发行内容标识"
+        String(128), nullable=True, comment="来源发布内容标识"
     )
     source_url: Mapped[str | None] = mapped_column(
-        String(2048), nullable=True, comment="公开来源页面或 GitHub 地址"
+        String(2048), nullable=True, comment="来源页面地址"
     )
     author: Mapped[str | None] = mapped_column(
-        String(256), nullable=True, comment="来源实际提供的作者"
+        String(256), nullable=True, comment="技能作者"
     )
     topics: Mapped[list[str]] = mapped_column(
-        JSON, nullable=False, comment="来源提供的分类名称列表"
+        JSON, nullable=False, comment="技能分类列表"
     )
     enabled: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, comment="是否允许新运行使用"
+        Boolean, nullable=False, default=True, comment="是否启用技能"
     )
     file_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, comment="技能目录中文件数量"
+        Integer, nullable=False, comment="技能文件数"
     )
     byte_size: Mapped[int] = mapped_column(
-        Integer, nullable=False, comment="原始文件合计大小，单位字节"
+        Integer, nullable=False, comment="技能文件总大小（字节）"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, comment="UTC 安装时间"
@@ -74,34 +83,57 @@ class SkillInstallation(Base):
     )
 
 
+class ProjectSkillSetting(Base):
+    """项目对个人技能的启用选择"""
+
+    __tablename__ = "project_skill_settings"
+    __table_args__ = (
+        Index("ix_project_skill_settings_owner", "user_id", "project_id"),
+        {**MYSQL_TABLE_OPTIONS, "comment": "项目个人技能启用配置"},
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, comment="项目 ID"
+    )
+    installation_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, comment="技能安装 ID"
+    )
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="所属用户 ID")
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, comment="是否在项目中启用"
+    )
+
+
 class SkillImportDraft(Base):
     """确认时只使用预览固定的内容，不再次访问远程仓库"""
 
     __tablename__ = "skill_import_drafts"
     __table_args__ = (
         Index("ix_skill_import_drafts_owner", "user_id"),
-        {**MYSQL_TABLE_OPTIONS, "comment": "技能导入预览及幂等确认结果"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "技能导入预览与确认结果"},
     )
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, comment="导入预览 UUID"
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, comment="导入预览 ID")
     user_id: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="导入所属用户 ID"
     )
     source: Mapped[str] = mapped_column(
-        String(16), nullable=False, comment="github 或 zip"
+        String(16), nullable=False, comment="导入来源：github、zip"
     )
     source_url: Mapped[str | None] = mapped_column(
         String(2048), nullable=True, comment="GitHub 导入地址，ZIP 导入为空"
     )
     candidates: Mapped[list[dict[str, JsonValue]]] = mapped_column(
-        JSON, nullable=False, comment="已保存内容的预览条目及摘要"
+        JSON, nullable=False, comment="技能预览条目及内容摘要"
     )
     selected_digests: Mapped[list[str] | None] = mapped_column(
         JSON, nullable=True, comment="已确认的内容摘要列表，未确认为空"
     )
+    confirmed_project_id: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+        comment="确认安装的项目 ID，个人库为空字符串，未确认为空值",
+    )
     installation_ids: Mapped[list[str] | None] = mapped_column(
-        JSON, nullable=True, comment="确认生成的安装 UUID 列表"
+        JSON, nullable=True, comment="已确认的技能安装 ID 列表"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, comment="UTC 预览创建时间"
@@ -114,16 +146,17 @@ class SkillRunSnapshot(Base):
     __tablename__ = "skill_run_snapshots"
     __table_args__ = (
         Index("ix_skill_run_snapshots_owner", "user_id"),
-        {**MYSQL_TABLE_OPTIONS, "comment": "按运行身份固定的技能内容集合"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "运行技能快照"},
     )
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, comment="由用户和完整运行身份派生的 UUID"
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, comment="技能快照 ID")
     user_id: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="技能内容所属用户 ID"
     )
+    project_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, comment="所属项目 ID"
+    )
     payload: Mapped[dict[str, JsonValue]] = mapped_column(
-        JSON, nullable=False, comment="技能安装 ID、名称、内容摘要及本轮手选标记"
+        JSON, nullable=False, comment="技能安装 ID、名称、内容摘要及手动选择标记"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, comment="UTC 快照捕获时间"
@@ -136,7 +169,7 @@ class SkillOperationReceipt(Base):
     __tablename__ = "skill_operation_receipts"
     __table_args__ = (
         Index("ix_skill_operation_receipts_owner_created", "user_id", "created_at"),
-        {**MYSQL_TABLE_OPTIONS, "comment": "技能管理的幂等操作回执"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "技能操作回执"},
     )
     user_id: Mapped[int] = mapped_column(
         Integer, primary_key=True, comment="操作所属用户 ID"
@@ -144,13 +177,13 @@ class SkillOperationReceipt(Base):
     request_id: Mapped[str] = mapped_column(
         String(128),
         primary_key=True,
-        comment="同一用户下稳定的操作标识，重放时保持不变",
+        comment="技能操作请求 ID",
     )
     fingerprint: Mapped[str] = mapped_column(
         String(64), nullable=False, comment="规范化操作参数的 SHA-256 摘要"
     )
     result: Mapped[dict[str, JsonValue]] = mapped_column(
-        JSON, nullable=False, comment="已提交操作的公开结果，供相同请求重放"
+        JSON, nullable=False, comment="操作结果"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, comment="UTC 操作提交时间"

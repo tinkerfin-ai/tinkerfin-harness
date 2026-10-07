@@ -847,10 +847,6 @@
     font-weight: var(--weight-ui);
   }
 
-  .subagent-task-detail {
-    position: relative;
-    min-width: 0;
-  }
 
   .subagent-task-summary {
     display: block;
@@ -880,31 +876,7 @@
     outline-offset: 2px;
   }
 
-  .subagent-task-tooltip {
-    top: calc(100% + var(--space-1));
-    right: 0;
-    left: auto;
-    width: max-content;
-    max-width: min(560px, calc(100vw - var(--space-8)));
-    max-height: min(240px, 40vh);
-    padding: var(--space-3) var(--space-4);
-    overflow: auto;
-    transform: translateY(-2px);
-    color: var(--color-text-primary);
-    font-size: var(--type-ui-size);
-    line-height: var(--type-title-line);
-    overflow-wrap: anywhere;
-    pointer-events: auto;
-    text-align: left;
-    white-space: pre-wrap;
-  }
 
-  .subagent-task-detail.is-open .subagent-task-tooltip {
-    transform: translateY(0);
-    opacity: 1;
-    visibility: visible;
-    transition-delay: var(--motion-instant);
-  }
 
   .subagent-trace-list {
     position: relative;
@@ -1808,7 +1780,6 @@
   .composer-toolbar-button:hover:not(:disabled),
   .composer-toolbar-button:active:not(:disabled),
   .composer-toolbar-button:focus-visible { border: 0; background: var(--color-hover); box-shadow: none; }
-  .composer-toolbar .ui-tooltip { top: auto; bottom: calc(100% + var(--space-1)); }
   .composer-input-backdrop .composer-skill-reference { color: var(--color-brand-text); }
   .composer-input-backdrop .composer-skill-reference[data-unavailable] { color: var(--color-danger-text); text-decoration: line-through; }
   .composer-skill-error { margin: var(--space-2) var(--space-4); color: var(--color-danger-text); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }

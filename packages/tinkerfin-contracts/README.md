@@ -53,6 +53,22 @@ evidence as read-only; the Runtime supplies an independent copy to each observer
 `Command(resume=...)` remains invocation input and is represented only through the
 protocol-neutral Run source summary and checkpoint Observation.
 
+## Document collections
+
+`tinkerfin_contracts.storage.ConditionalStore` lets consumers share a collection
+without depending on a provider's query models. `asearch_exact(namespace,
+limit=100, offset=0)` returns independent `DocumentSnapshot` values containing
+the key, finite JSON value and UTC creation/update times. Descendant namespaces
+are excluded before pagination; pages sort by update time descending and then key.
+
+`acompare_and_set(namespace, key, expected=observed, value=replacement)` compares
+the complete JSON value and commits one document atomically across processes.
+Object member order does not affect the condition; array order and scalar types
+do. `expected=None` requires absence and `value=None` deletes. A conflict returns
+`False` without changing data. Consumers retain their draft and reread before
+retrying. Providers define validation and resource failures; these operations
+use borrowed resources and do not transfer ownership to consumers.
+
 ## License
 
 Apache License 2.0. See

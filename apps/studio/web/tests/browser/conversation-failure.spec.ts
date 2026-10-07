@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test } from '@playwright/test'
 import type { ConversationHistoryDetail, TraceMessage } from '../../src/api/conversation/history'
@@ -11,7 +12,7 @@ const messages: TraceMessage[] = [1, 2, 3].map(id => ({
   graphNamespace: [], role: 'user', content: `你好 ${id}`, contentOmitted: false,
   status: 'completed', createdAt: time, completedAt: time,
 }))
-const detail: ConversationHistoryDetail = { accessMode: 'write_approval',
+const detail: ConversationHistoryDetail = {projectId: 'project-1', archived: false,  accessMode: 'write_approval',
   id: 1, threadId, title: '连续失败验收', titleSource: 'user', titleGenerationStatus: 'idle', titleSeq: 1,
   lastModel: 'main', pinned: false, asOfSeq: 10, generation: 'failure-generation', observedAt: time,
   headRunId: 'run-3', availableHeads: ['run-3'], historyCursor: null, messageCount: 5, toolCallCount: 0,
@@ -47,7 +48,8 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
       await route.fulfill({ json: { code: 0, message: 'success', data } })
     })
     await installNotificationStream(page)
-    await page.goto('/?thread=' + threadId)
+    await installProjectScope(page)
+    await page.goto('/?project=project-1&thread=' + threadId)
     await expect(page.getByRole('region', { name: '会话异常' })).toHaveCount(3)
     await expect(page.getByRole('list', { name: '系统提示' })).toHaveCount(0)
     const geometry = await page.locator('.message-list').evaluate(list => {
@@ -104,12 +106,14 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
   })
 }
 
-test('首次历史与当前会话读取失败分别保留居中重试和全局 Toast', async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 320, height: 900 })
+for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440]) {
+test(`首次历史与当前会话读取失败分别保留居中重试和全局 Toast ${theme} ${width}`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 900 })
   await page.emulateMedia({ reducedMotion: 'reduce' })
-  await page.addInitScript((user) => {
+  await page.addInitScript(({ user, theme }) => {
+    localStorage.setItem('tinkerfin:theme', theme)
     localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'test-only', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
-  }, user)
+  }, { user, theme })
   let listFailed = false
   let detailFailed = false
   await page.route('**/api/**', async route => {
@@ -129,20 +133,36 @@ test('首次历史与当前会话读取失败分别保留居中重试和全局 T
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
   await installNotificationStream(page)
+  await installProjectScope(page)
   await page.goto('/')
   const conversation = page.getByRole('region', { name: '对话内容', exact: true })
   const historyAlert = conversation.getByRole('alert')
+  const expectCentered = async () => {
+    await expect(async () => {
+      const pane = await conversation.boundingBox()
+      const dock = await page.locator('.composer-dock').boundingBox()
+      const alert = await conversation.getByRole('alert').boundingBox()
+      expect(pane).not.toBeNull()
+      expect(dock).not.toBeNull()
+      expect(alert).not.toBeNull()
+      expect(alert!.y + alert!.height / 2).toBeCloseTo((pane!.y + dock!.y) / 2, 0)
+      expect(alert!.y + alert!.height).toBeLessThanOrEqual(dock!.y)
+    }).toPass()
+  }
   await expect(historyAlert).toContainText('历史会话加载失败')
+  await expectCentered()
   await expect(page.getByRole('list', { name: '系统提示' })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('history-bootstrap-failure-320.png') })
   await historyAlert.getByRole('button', { name: '重新加载' }).click()
   const detailAlert = conversation.getByRole('alert')
   await expect(detailAlert).toContainText('会话加载失败')
+  await expectCentered()
   await page.screenshot({ path: testInfo.outputPath('conversation-hydration-failure-320.png') })
   await detailAlert.getByRole('button', { name: '重新加载' }).click()
   await expect(conversation.getByRole('alert').filter({ hasText: '会话加载失败' })).toHaveCount(0)
   await expect(conversation.getByText('正常问题')).toBeVisible()
 })
+}
 
 test('侧栏更多历史读取失败保留原位重试和全局 Toast', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 320, height: 900 })
@@ -168,6 +188,7 @@ test('侧栏更多历史读取失败保留原位重试和全局 Toast', async ({
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
   await installNotificationStream(page)
+  await installProjectScope(page)
   await page.goto('/')
   await page.getByRole('button', { name: '打开导航' }).click()
   const sidebar = page.getByRole('region', { name: '最近对话' })

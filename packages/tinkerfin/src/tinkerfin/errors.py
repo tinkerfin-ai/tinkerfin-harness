@@ -14,6 +14,7 @@ class TinkerFinErrorCode(StrEnum):
     """Stable machine-readable categories for TinkerFin failures."""
 
     ERROR = "tinkerfin.error"
+    FILE_CONFLICT = "tinkerfin.file_conflict"
     LIFECYCLE_ERROR = "tinkerfin.lifecycle_error"
     STREAM_PROTOCOL_ERROR = "tinkerfin.stream_protocol_error"
     DELEGATION_REPLAY_INVALID = "tinkerfin.delegation_replay_invalid"

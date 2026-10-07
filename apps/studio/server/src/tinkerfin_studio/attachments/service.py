@@ -41,6 +41,7 @@ from tinkerfin_studio.attachments.storage import (
 from tinkerfin_studio.changes import notify_change
 from tinkerfin_studio.conversation.models import ConversationThread
 from tinkerfin_studio.infrastructure.database import Database
+from tinkerfin_studio.projects.repository import ProjectRepository
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ class AttachmentService:
         user_id: int,
         name: str,
         chunks: AsyncIterator[bytes],
+        project_id: str | None = None,
         thread_id: str | None = None,
         collection_id: str | None = None,
         source: Literal["user", "tool"] = "user",
@@ -122,11 +124,21 @@ class AttachmentService:
             )
             async with self._database.session() as session:
                 if thread_id is not None:
-                    await self._require_thread(session, user_id, thread_id)
-                if collection_id is not None:
-                    await self._require_collection(
-                        session, user_id, collection_id, writable=True
-                    )
+                    row.project_id = (
+                        await self._require_thread(session, user_id, thread_id)
+                    ).project_id
+                elif collection_id is not None:
+                    row.project_id = (
+                        await self._require_collection(
+                            session, user_id, collection_id, writable=True
+                        )
+                    ).project_id
+                elif project_id is not None:
+                    row.project_id = (
+                        await ProjectRepository(session, user_id).require(project_id)
+                    ).id
+                else:
+                    raise ValueError("草稿上传必须提供项目")
                 session.add(row)
                 await session.commit()
             try:
@@ -146,7 +158,7 @@ class AttachmentService:
             raise BusinessException(AttachmentErrorCode.INVALID_FILE)
 
     async def request_upload(
-        self, *, user_id: int, name: str, size_bytes: int
+        self, *, user_id: int, project_id: str, name: str, size_bytes: int
     ) -> tuple[str, UploadForm]:
         """登记用户待上传文件，只签发该附件的临时写入许可"""
         self._validate_name(name)
@@ -155,6 +167,7 @@ class AttachmentService:
         row = AttachmentFile(
             id=uuid4().hex,
             user_id=user_id,
+            project_id=project_id,
             name=name,
             size_bytes=size_bytes,
             mime_type="",
@@ -162,6 +175,7 @@ class AttachmentService:
             source="user",
         )
         async with self._database.session() as session:
+            await ProjectRepository(session, user_id).require(project_id)
             session.add(row)
             await session.commit()
         try:
@@ -306,8 +320,16 @@ class AttachmentService:
         collection_id: str,
         *,
         writable: bool = False,
+        lock: bool = False,
     ) -> AttachmentCollection:
-        collection = await session.get(AttachmentCollection, collection_id)
+        statement = select(AttachmentCollection).where(
+            AttachmentCollection.id == collection_id
+        )
+        if lock:
+            statement = statement.with_for_update().execution_options(
+                populate_existing=True
+            )
+        collection = await session.scalar(statement)
         if (
             collection is None
             or collection.user_id != user_id
@@ -320,29 +342,64 @@ class AttachmentService:
         self,
         *,
         user_id: int,
+        project_id: str,
         collection_id: str,
         purpose: Literal["input", "execution"],
         attachment_ids: tuple[str, ...],
         configuration: dict[str, JsonValue],
         task_id: str | None = None,
+        source_collection_id: str | None = None,
     ) -> None:
-        """在提交调度前保留不可变输入；重复请求只能复用完全相同的配置和文件"""
+        """固定任务和执行附件，会话移动不撤销已保存输入的使用权
+
+        Args:
+            user_id: 已认证的附件所属用户
+            project_id: 本次任务或执行固定的项目
+            collection_id: 新集合的幂等标识
+            purpose: 任务输入或执行附件
+            attachment_ids: 要保存引用的已发布文件
+            configuration: 不可变配置快照
+            task_id: 已知的所属任务
+            source_collection_id: 已有任务保存的输入集合；仅允许继承同项目的引用
+
+        Raises:
+            BusinessException: 文件或来源集合越权、容量超限、幂等请求内容冲突
+        """
         if len(attachment_ids) > 5 or len(set(attachment_ids)) != len(attachment_ids):
             raise BusinessException(AttachmentErrorCode.INVALID_FILE)
         try:
             async with self._database.session() as session:
+                await ProjectRepository(session, user_id).require(project_id)
                 existing = await session.get(AttachmentCollection, collection_id)
                 if existing is not None:
                     await self._verify_collection(
                         session,
                         existing,
                         user_id=user_id,
+                        project_id=project_id,
                         collection_id=collection_id,
                         purpose=purpose,
                         attachment_ids=attachment_ids,
                         configuration=configuration,
                     )
                     return
+                retained_ids: set[str] = set()
+                if source_collection_id is not None:
+                    source = await self._require_collection(
+                        session, user_id, source_collection_id, lock=True
+                    )
+                    if source.project_id != project_id or source.purpose != "input":
+                        raise BusinessException(AttachmentErrorCode.NOT_FOUND)
+                    retained_ids = set(
+                        await session.scalars(
+                            select(AttachmentReference.attachment_id)
+                            .where(
+                                AttachmentReference.collection_id
+                                == source_collection_id
+                            )
+                            .with_for_update(read=True)
+                        )
+                    )
                 files: list[AttachmentFile] = []
                 for identity in sorted(attachment_ids):
                     row = await session.scalar(
@@ -350,7 +407,12 @@ class AttachmentService:
                         .where(AttachmentFile.id == identity)
                         .with_for_update()
                     )
-                    if row is None or row.user_id != user_id or row.status != "ready":
+                    if (
+                        row is None
+                        or row.user_id != user_id
+                        or row.status != "ready"
+                        or (row.project_id != project_id and row.id not in retained_ids)
+                    ):
                         raise BusinessException(AttachmentErrorCode.NOT_FOUND)
                     files.append(row)
                 if sum(row.size_bytes for row in files) > MAX_TOTAL_BYTES:
@@ -359,6 +421,7 @@ class AttachmentService:
                     AttachmentCollection(
                         id=collection_id,
                         user_id=user_id,
+                        project_id=project_id,
                         purpose=purpose,
                         configuration=configuration,
                         task_id=task_id,
@@ -380,6 +443,7 @@ class AttachmentService:
                     session,
                     existing,
                     user_id=user_id,
+                    project_id=project_id,
                     collection_id=collection_id,
                     purpose=purpose,
                     attachment_ids=attachment_ids,
@@ -403,6 +467,7 @@ class AttachmentService:
         existing: AttachmentCollection,
         *,
         user_id: int,
+        project_id: str,
         collection_id: str,
         purpose: str,
         attachment_ids: tuple[str, ...],
@@ -410,6 +475,7 @@ class AttachmentService:
     ) -> None:
         if (
             existing.user_id != user_id
+            or existing.project_id != project_id
             or existing.purpose != purpose
             or existing.configuration != configuration
         ):
@@ -480,7 +546,9 @@ class AttachmentService:
     async def discard_collection(self, *, user_id: int, collection_id: str) -> None:
         """仅回收确认未提交任务的输入集合；不删除文件或运行历史"""
         async with self._database.session() as session:
-            collection = await self._require_collection(session, user_id, collection_id)
+            collection = await self._require_collection(
+                session, user_id, collection_id, lock=True
+            )
             if collection.task_id is not None or collection.purpose != "input":
                 raise BusinessException(AttachmentErrorCode.ALREADY_SENT)
             await session.execute(
@@ -494,7 +562,7 @@ class AttachmentService:
 
     async def _require_thread(
         self, session: AsyncSession, user_id: int, thread_id: str
-    ) -> None:
+    ) -> ConversationThread:
         thread = await session.scalar(
             select(ConversationThread).where(
                 ConversationThread.thread_id == thread_id,
@@ -503,12 +571,14 @@ class AttachmentService:
         )
         if thread is None or thread.status == "deleting":
             raise BusinessException(AttachmentErrorCode.THREAD_UNAVAILABLE)
+        return thread
 
     async def get(
         self,
         attachment_id: str,
         *,
         user_id: int,
+        project_id: str | None = None,
         thread_id: str | None = None,
         collection_id: str | None = None,
         allow_unbound: bool = False,
@@ -531,6 +601,8 @@ class AttachmentService:
         async with self._database.session() as session:
             row = await session.get(AttachmentFile, attachment_id)
             if row is None or row.user_id != user_id or row.status != "ready":
+                raise BusinessException(AttachmentErrorCode.NOT_FOUND)
+            if project_id is not None and row.project_id != project_id:
                 raise BusinessException(AttachmentErrorCode.NOT_FOUND)
             if (
                 thread_id is not None

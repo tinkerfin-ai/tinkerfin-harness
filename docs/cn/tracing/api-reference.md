@@ -76,6 +76,7 @@ Store 可被多个 namespace 共用：`open_writer(identity)` 使用完整运行
 `TraceGraphNode.parent_subagent_id` 表示最近的所属 Subagent，也是唯一的展示嵌套关系。非空
 `graph_namespace` 不能证明这一关系，必须有经过校验的 Subagent 来源。
 `TraceGraphNode.model_call_id` 只把 AssistantMessage、Tool 或 Subagent 与产生它的 Model 调用关联。
+中间件提示等未经模型生成的助手消息没有模型关联，这本身不表示关联证据缺失。
 只有已观测的 AssistantMessage 没有用户可见正文，且对应 Model 结果确实发出至少一个 Tool 调用时，
 `TraceGraphNode.tool_call_only` 才为 `true`；查询过滤掉 Tool 事件时，该值保持不变。
 
@@ -92,6 +93,12 @@ SystemMessage 内容投影；请求没有 SystemMessage
 
 `matched_node_ids` 只包含按事件顺序排列的直接匹配；`nodes` 还包含这些节点所属的 Subagent 容器，最多 64 层，
 总量受 `max_total_nodes` 约束。未筛选历史 Graph 的全部返回事件均为直接匹配。
+
+模型节点通过 `request_reference` 提供完整输入的读取引用，节点的 `request` 为 `None`。
+调用 `await tracer.model_request(thread, reference=node.request_reference)`，返回包含
+`node_id`、`request` 和 `request_omitted` 的 `TraceModelRequest`。无效或跨会话引用抛出
+`InvalidTraceReference`，已删除的历史抛出 `TraceThreadNotFound`。读取借用现有 Store，
+保留取消语义，不启动智能体或订阅。
 
 `TraceGraphDelta` 提供 Turn 和节点的 upsert/remove，以及当前 `next_cursor`、`as_of_seq`、完整
 `ordered_node_ids`、`matched_node_ids` 和 Completeness。带分页 cursor 的查询不能 follow；当前

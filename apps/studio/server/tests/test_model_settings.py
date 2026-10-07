@@ -178,7 +178,13 @@ async def test_active_run_protects_model_and_its_shared_connection(session, stat
     await owner.save_settings(model())
     now = datetime.now(UTC).replace(tzinfo=None)
     thread = ConversationThread(
-        user_id=1, thread_id="active", title="对话", created_at=now, updated_at=now
+        archived=False,
+        project_id="project-1",
+        user_id=1,
+        thread_id="active",
+        title="对话",
+        created_at=now,
+        updated_at=now,
     )
     session.add(thread)
     await session.flush()
@@ -260,3 +266,6 @@ def test_model_display_name_is_bounded_without_changing_supplier_id():
     assert model(display_name="名" * 40, model_name="x" * 128).model_name == "x" * 128
     with pytest.raises(ValidationError):
         model(display_name="名" * 41)
+
+
+pytestmark = pytest.mark.usefixtures("projects")

@@ -202,7 +202,7 @@ it.each(['succeeded', 'cancelled'] as const)('历史终态 %s 保留正文，取
   expect(restored.messages.find(message => message.id === 'prior-answer')?.liveText).toBe(source)
 })
 
-const detail = (): ConversationHistoryDetail => ({ accessMode: 'write_approval',
+const detail = (): ConversationHistoryDetail => ({projectId: 'project-1', archived: false,  accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',
   titleSeq: 0,

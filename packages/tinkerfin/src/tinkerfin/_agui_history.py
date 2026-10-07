@@ -12,6 +12,7 @@ from tinkerfin_tracing import (
     TraceFollow,
     TraceGraphFilter,
     TraceGraphQuery,
+    TraceModelRequest,
     Tracer,
     TraceThread,
     TraceThreadNotFound,
@@ -347,6 +348,31 @@ class AgUiHistory:
 
         await body.prepare(preflight=prepare_baseline)
         return AgUiLiveView(history=history, body=body)
+
+    async def model_request(
+        self, thread_id: str, *, reference: str
+    ) -> TraceModelRequest:
+        """Read a model node's complete retained request within this history scope.
+
+        Args:
+            thread_id: Application-authorized conversation containing the model call.
+            reference: Opaque ``request_reference`` returned on the model node.
+
+        Returns:
+            The retained input from the same immutable observation and generation.
+
+        Raises:
+            InvalidTraceReference: The reference is invalid or belongs to another scope.
+            TraceThreadNotFound: The referenced generation is unavailable.
+            TracingError: The retained input cannot be read.
+
+        The borrowed Tracer owns the read. No agent or subscription is started;
+        cancellation propagates and the borrowed Store remains open.
+        """
+        return await self._tracer.model_request(
+            ThreadIdentity(namespace=self._namespace, thread_id=thread_id),
+            reference=reference,
+        )
 
     async def query(
         self,

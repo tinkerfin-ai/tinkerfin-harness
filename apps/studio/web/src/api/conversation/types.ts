@@ -10,6 +10,7 @@ export interface ConversationCommandMap extends JsonObject {
 }
 
 export interface ConversationForwardedProps extends JsonObject {
+  projectId: string
   model: string
   accessMode: AccessMode
   command: ConversationCommandMap

@@ -24,6 +24,8 @@ from tinkerfin_studio.attachments.workspace_tools import (
 from tinkerfin_studio.services.schemas import ImageConfig
 from tinkerfin_studio.services.service import ResolvedService
 
+pytestmark = pytest.mark.usefixtures("projects")
+
 
 @pytest.mark.parametrize("source", ["generate", "capture", "import"])
 async def test_large_images_have_readable_previews_and_deliver_unchanged_original(
@@ -31,6 +33,7 @@ async def test_large_images_have_readable_previews_and_deliver_unchanged_origina
 ):
     runtime, workspace, files = work_file_runtime
     await attachments.create_collection(
+        project_id="project-1",
         user_id=1,
         collection_id="images",
         purpose="execution",
@@ -66,6 +69,7 @@ async def test_large_images_have_readable_previews_and_deliver_unchanged_origina
         )
     elif source == "import":
         original = await attachments.upload(
+            project_id="project-1",
             user_id=1,
             collection_id="images",
             name="original.png",
@@ -215,6 +219,7 @@ async def test_import_authorizes_before_copying_and_keeps_original(
 ):
     runtime, _, files = work_file_runtime
     await attachments.create_collection(
+        project_id="project-1",
         user_id=1,
         collection_id="run",
         purpose="execution",
@@ -222,6 +227,7 @@ async def test_import_authorizes_before_copying_and_keeps_original(
         configuration={},
     )
     original = await attachments.upload(
+        project_id="project-1",
         user_id=1,
         name="draft.md",
         chunks=byte_chunks(b"# original"),
@@ -285,6 +291,7 @@ async def test_one_image_generation_exports_and_delivers_every_selected_format(
 ):
     runtime, _, files = work_file_runtime
     await attachments.create_collection(
+        project_id="project-1",
         user_id=1,
         collection_id="formats",
         purpose="execution",

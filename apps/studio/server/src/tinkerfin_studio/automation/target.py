@@ -27,6 +27,7 @@ from tinkerfin_studio.api.errors import (
 from tinkerfin_studio.auth.models import User
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.service import AgentModelService
+from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_studio.services.repository import ServiceConfigRepository
 from tinkerfin_studio.services.schemas import ServiceBindings
 from tinkerfin_studio.services.service import (
@@ -36,6 +37,7 @@ from tinkerfin_studio.services.service import (
 )
 from tinkerfin_studio.skills.repository import SkillRepository
 
+from .ownership import automation_owner, parse_automation_owner
 from .schemas import TaskConfiguration
 from .service import NAMESPACE, collection_id, task_configuration
 
@@ -83,7 +85,7 @@ class StudioAutomationTarget:
                 if inherited is None:
                     original = (
                         await self._resources.automation.for_owner(
-                            str(user_id)
+                            automation_owner(user_id, config.project_id)
                         ).get_run(execution.retry_of)
                     ).snapshot
                     if original.execution_started_at is not None:
@@ -110,11 +112,13 @@ class StudioAutomationTarget:
             try:
                 await files.create_collection(
                     user_id=user_id,
+                    project_id=config.project_id,
                     collection_id=execution.execution_id,
                     purpose="execution",
                     attachment_ids=tuple(config.attachments),
                     configuration=candidate,
                     task_id=execution.task_id,
+                    source_collection_id=collection_id(execution),
                 )
                 stored = candidate
             except BusinessException as error:
@@ -160,8 +164,10 @@ class StudioAutomationTarget:
         execution = request.execution
         if execution.namespace != NAMESPACE:
             raise ValueError("自动化命名空间无效")
-        user_id = int(execution.owner_id)
+        user_id, project_id = parse_automation_owner(execution.owner_id)
         config = task_configuration(execution)
+        if config.project_id != project_id:
+            raise ValueError("任务配置与所属项目不一致")
         async with self._resources.database.session() as session:
             user = await session.get(User, user_id)
             if user is None or user.disabled:
@@ -170,11 +176,12 @@ class StudioAutomationTarget:
                         code="studio.user_unavailable", message="任务所属用户不可用"
                     )
                 )
+            await ProjectRepository(session, user_id).require(config.project_id)
             models = AgentModelService(AgentModelRepository(session, user_id=user_id))
             try:
                 model = await models.resolve(config.model_id)
                 skill_snapshot = await SkillRepository(session, user_id).capture(
-                    execution.identity
+                    execution.identity, project_id=config.project_id
                 )
                 await session.commit()
             except BusinessException:
@@ -201,6 +208,7 @@ class StudioAutomationTarget:
                 resources=self._resources,
                 user_id=user_id,
                 thread_id=execution.identity.thread_id,
+                project_id=config.project_id,
                 execution_id=execution.execution_id,
                 model_config=model,
                 search_service=search_service,

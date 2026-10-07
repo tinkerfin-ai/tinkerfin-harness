@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
@@ -9,6 +10,7 @@ const threadId = 'compact-browser'
 const time = '2026-09-21T00:00:00.000Z'
 const timestamp = (offset: number) => new Date(Date.parse(time) + offset).toISOString()
 const user = { user_id: 1, username: 'compact-test', display_name: '压缩验收', avatar_url: null, roles: [], disabled: false }
+const summaryModelRequest = { messages: [{ messageType: 'human', content: '请将早期对话整理为便于后续使用的摘要' }] }
 const summary = [
   '## 项目目标与约束',
   '用户希望为当前会话增加手动压缩，保留原聊天记录与报告附件，继续讨论实现细节。',
@@ -50,7 +52,7 @@ function history(runId?: string, phase: Phase = 'done', messageCount = 2): Conve
       completedAt: busy ? null : time }))
 
   }
-  return {
+  return {projectId: 'project-1', archived: false,
     accessMode: 'write_approval', id: 1, threadId, title: '项目讨论', titleSource: 'user', titleGenerationStatus: 'idle', titleSeq: 1,
     lastModel: 'main', pinned: false, asOfSeq, generation: 'compact-generation', observedAt: time,
     headRunId: runId ?? 'chat', availableHeads: [runId ?? 'chat'], historyCursor: null, messageCount, toolCallCount: 0,
@@ -105,14 +107,12 @@ async function openConversation(page: Page, options: { theme?: string; detail?: 
     else if (path === '/api/conversation/history') data = { items: [{ ...detail, status: detail.status.execution === 'running' ? 'running' : 'idle', lastRunId: detail.headRunId, hasPendingInterrupt: false, pendingInteractionKind: null }], nextCursor: null }
     else if (path.endsWith('/history')) {
       historyReads += 1
-      data = { ...detail, graph: { ...detail.graph, nodes: detail.graph.nodes.map(node => {
-        if (node.kind !== 'model') return node
-        const retained: Record<string, unknown> = { ...node }
-        delete retained.request
-        return retained
-      }) }, taskTrace: url.searchParams.get('includeTaskTrace') === 'false' ? null : detail.taskTrace }
+      data = { ...detail, taskTrace: url.searchParams.get('includeTaskTrace') === 'false' ? null : detail.taskTrace }
     } else if (path.endsWith('/trace/graph')) {
       data = { ...(url.searchParams.has('modelCallId') ? traceGraphWithNodes([], detail.asOfSeq) : detail.graph), nextCursor: null, generation: detail.generation, headRunId: detail.headRunId }
+    } else if (path.endsWith('/trace/model-request')) {
+      expect(url.searchParams.get('reference')).toBe('summary-model-request')
+      data = { nodeId: 'summary-model', request: summaryModelRequest, requestOmitted: false }
     } else if (path.endsWith('/follow')) {
       await finish
       await route.fulfill({ contentType: 'text/event-stream', body: '' })
@@ -123,7 +123,8 @@ async function openConversation(page: Page, options: { theme?: string; detail?: 
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
   await installNotificationStream(page)
-  await page.goto('/?thread=' + threadId)
+  await installProjectScope(page)
+  await page.goto('/?project=project-1&thread=' + threadId)
   await expect(page.getByText('项目目标和附件已确认，可以继续讨论实现细节', { exact: true })).toBeVisible()
   return { requests, release, setDetail: (value: ConversationHistoryDetail) => { detail = value }, historyReads: () => historyReads }
 }
@@ -355,7 +356,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
       ...detail.graph.nodes.filter(node => node.runId === 'compact').map(node => ({ ...node, startedAt: timestamp(1000), completedAt: timestamp(17200), ...(node.kind === 'custom' ? { request: { origin: 'manual', messages: [{ content: '项目目标与附件已确认，下一步实现压缩入口' }] }, result: { ...result('compact', 'not_reduced'), generated_summary: '## 项目目标与约束\n保留聊天历史及附件，使用当前模型生成摘要。手动压缩和工具共用保留规则。' } } : {}) })),
       traceGraphNode({ id: 'summary-model', kind: 'model', parentNodeId: 'compact-node', name: 'qwen3.8-max', runId: 'compact', turnId: 'compact-turn', startedSeq: 6,
         startedAt: timestamp(1216), completedAt: timestamp(17167),
-        request: { messages: [{ messageType: 'human', content: '请将早期对话整理为便于后续使用的摘要' }] } }),
+        requestReference: 'summary-model-request' }),
     ], detail.asOfSeq)
     const setup = await openConversation(page, { theme, detail })
     try {

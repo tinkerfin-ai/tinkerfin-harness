@@ -4,7 +4,7 @@ import { listInstalledSkills } from './api'
 import type { InstalledSkill } from './model'
 
 /** 页面和输入框共用安装列表订阅；主动刷新取消旧读取，通知仅触发权威查询 */
-export function useInstalledSkills(active = true) {
+export function useInstalledSkills(projectId: string | null, active = true) {
   const [items, setItems] = useState<InstalledSkill[]>([])
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState<unknown>(null)
@@ -12,12 +12,12 @@ export function useInstalledSkills(active = true) {
   useEffect(() => {
     if (!active) { setStatus('loading'); return }
     const watcher = watchResource({
-      read: listInstalledSkills,
+      read: signal => listInstalledSkills(projectId, signal),
       matches: change => change.topic === 'studio.skills.changed',
       update: value => { setItems(value); setStatus('ready'); setError(null) },
       onError: failure => { setError(failure); setStatus('error') },
     })
     return watcher.close
-  }, [active, generation])
+  }, [projectId, active, generation])
   return { items, status, error, refresh: useCallback(() => setGeneration(value => value + 1), []) }
 }

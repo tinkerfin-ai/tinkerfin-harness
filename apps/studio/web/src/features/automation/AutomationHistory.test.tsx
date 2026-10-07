@@ -52,8 +52,8 @@ describe('自动化运行历史', () => {
   it('结果对话框读取服务端事实且不提供审批或执行操作', async () => {
     const run = runFixture()
     vi.mocked(fetchRunDetail).mockResolvedValue({ ...run, threadId: 'automation-thread', runId: 'automation-run', resultAvailable: true, messages: [], outputFiles: [{ id: 'report', name: 'report.md', mime_type: 'text/markdown', size_bytes: 12 }] })
-    render(<AutomationRunDialog run={run} trigger={null} onToast={vi.fn()} onClose={vi.fn()} />)
-    await waitFor(() => expect(fetchRunDetail).toHaveBeenCalledWith(run.id, expect.any(AbortSignal)))
+    render(<AutomationRunDialog projectId="project-1" run={run} trigger={null} onToast={vi.fn()} onClose={vi.fn()} />)
+    await waitFor(() => expect(fetchRunDetail).toHaveBeenCalledWith('project-1', run.id, expect.any(AbortSignal)))
     expect(await screen.findByRole('button', { name: 'report.md' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /执行|审批/ })).not.toBeInTheDocument()
   })
@@ -61,7 +61,7 @@ describe('自动化运行历史', () => {
     const run = runFixture()
     const onToast = vi.fn()
     vi.mocked(fetchRunDetail).mockRejectedValueOnce(new Error('unavailable')).mockResolvedValueOnce({ ...run, threadId: 'automation-thread', runId: 'automation-run', resultAvailable: false, messages: [], outputFiles: [] })
-    render(<AutomationRunDialog run={run} trigger={null} onToast={onToast} onClose={vi.fn()} />)
+    render(<AutomationRunDialog projectId="project-1" run={run} trigger={null} onToast={onToast} onClose={vi.fn()} />)
     expect(await screen.findByRole('alert')).toHaveTextContent('运行结果加载失败')
     expect(onToast).toHaveBeenCalledExactlyOnceWith('error', '运行结果加载失败')
     fireEvent.click(screen.getByRole('button', { name: '重新加载' }))
@@ -73,7 +73,7 @@ describe('自动化运行历史', () => {
     const detail = { ...run, threadId: 'automation-thread', runId: 'automation-run', resultAvailable: true, messages: [], outputFiles: [{ id: 'report', name: 'report.md', mime_type: 'text/markdown', size_bytes: 12 }] }
     vi.mocked(fetchRunDetail).mockResolvedValueOnce(detail).mockRejectedValueOnce(new Error('unavailable')).mockResolvedValueOnce(detail)
     const onToast = vi.fn()
-    render(<AutomationRunDialog run={run} trigger={null} onToast={onToast} onClose={vi.fn()} />)
+    render(<AutomationRunDialog projectId="project-1" run={run} trigger={null} onToast={onToast} onClose={vi.fn()} />)
     expect(await screen.findByRole('button', { name: 'report.md' })).toBeInTheDocument()
     fireEvent(document, new Event('visibilitychange'))
     expect(await screen.findByRole('alert')).toHaveTextContent('运行结果加载失败')
@@ -95,7 +95,7 @@ it('运行状态不变时刷新正文，终态后的迟到附件仍能显示', a
     messages: [{ id: 'reply', role: 'assistant', content: '第一段', traceSeq: 1, graphNamespace: [], runId: 'result-run', contentOmitted: false, status: 'streaming', createdAt: AUTOMATION_TEST_NOW, agui: null }],
   }
   vi.mocked(fetchRunDetail).mockReset().mockResolvedValue(detail)
-  const { unmount } = render(<AutomationRunDialog run={run} trigger={null} onToast={vi.fn()} onClose={vi.fn()} />)
+  const { unmount } = render(<AutomationRunDialog projectId="project-1" run={run} trigger={null} onToast={vi.fn()} onClose={vi.fn()} />)
   await act(async () => vi.advanceTimersByTimeAsync(0))
   expect(screen.getByText('第一段')).toBeInTheDocument()
   vi.mocked(fetchRunDetail).mockResolvedValue({ ...detail, messages: [{ ...detail.messages[0], content: '完整正文' }] })

@@ -137,7 +137,7 @@ export function TodoTraceDrawer({
       <p className="visually-hidden" aria-live="polite" aria-atomic="true">
         {announcedGroup && announcedProgress
           ? t('任务组状态：{status}', {
-              status: `${labels[announcedGroup.status]} ${announcedProgress.completed}/${announcedProgress.total}`,
+              status: `${labels[announcedGroup.status]} ${announcedProgress.activeOrCompleted}/${announcedProgress.total}`,
             })
           : t('没有已确认的任务轨迹')}
       </p>
@@ -225,7 +225,7 @@ export function TodoTraceDrawer({
                             </span>
                           )}
                         </span>
-                        <span className="todo-trace-group-progress">{progress.completed}/{progress.total}</span>
+                        <span className="todo-trace-group-progress">{progress.activeOrCompleted}/{progress.total}</span>
                       </button>
                     </div>
                     {expanded && (

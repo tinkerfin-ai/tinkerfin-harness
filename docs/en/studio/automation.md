@@ -1,7 +1,9 @@
 # Studio automation
 
-Open Automation from the sidebar and create a task with a name, prompt, model, and
-schedule. Choose once, daily, weekdays, weekly, monthly, or a fixed interval. All
+Select a project, then open Automation from the sidebar and create a task with a
+name, prompt, model, and schedule. A task stays in the project where it was created;
+switching projects shows that project's tasks and history. Choose once, daily,
+weekdays, weekly, monthly, or a fixed interval. All
 times use Beijing time. Weekdays mean Monday through Friday without public-holiday
 adjustments; nonexistent monthly dates are skipped. Start and end dates include
 the whole day. The active period limits scheduled runs; manual runs remain available.
@@ -16,8 +18,8 @@ at 09:00 Beijing time.” A complete request creates and enables the task direct
 missing execution details are clarified first. The task saves independent instructions,
 the current conversation model and access mode, and only explicitly selected files.
 Later conversation changes do not alter it. Each execution has an independent
-conversation context and shares your workspace and long-term memory with ordinary
-conversations. The response reports its name, schedule,
+conversation context and shares the workspace and long-term memory with ordinary
+conversations in the same project. The response reports its name, schedule,
 and next run time.
 
 Conversations also support queries, edits, pause, enable, run-now, and deletion.

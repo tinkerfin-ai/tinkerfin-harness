@@ -149,7 +149,8 @@ describe('MessageBlock subagent card', () => {
     await user.unhover(summary!)
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
 
-    fireEvent.focus(summary!)
+    await user.tab()
+    expect(summary).toHaveFocus()
     const focused = screen.getByRole('tooltip')
     expect(focused).toHaveTextContent(fullInput)
     fireEvent.blur(summary!)

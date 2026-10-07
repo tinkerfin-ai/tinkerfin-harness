@@ -1,3 +1,4 @@
+import { Tooltip } from './Tooltip'
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
 import { Monitor, MoonStar, Sun } from 'lucide-react'
@@ -178,14 +179,12 @@ export function ThemePicker() {
           const optionId = `${optionName}-${option.value}`
           const isSelected = preference === option.value
           return (
-            <label
-              key={option.value}
+            <label key={option.value}
               className={`theme-switcher-option${isSelected ? ' is-selected' : ''}`}
               data-theme-option={option.value}
               htmlFor={optionId}
-              title={t(option.label)}
             >
-              <input
+              <Tooltip content={t(option.label)}><input
                 id={optionId}
                 className="theme-switcher-input"
                 type="radio"
@@ -202,7 +201,7 @@ export function ThemePicker() {
                     event.preventDefault()
                   }
                 }}
-              />
+              /></Tooltip>
               <span className="theme-switcher-visual" aria-hidden="true">
                 <OptionIcon size={16} />
               </span>

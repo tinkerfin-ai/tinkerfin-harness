@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test } from '@playwright/test'
 
@@ -24,6 +25,7 @@ test('预期 HTTP 异常只记录一次，同地址的未知失败和脚本异�
       else await route.fulfill({ status: 503, body: '{}' })
     })
     await installNotificationStream(page)
+    await installProjectScope(page)
     await page.goto('/diagnostics')
     await page.evaluate(async () => {
       await fetch('/diagnostic-api')

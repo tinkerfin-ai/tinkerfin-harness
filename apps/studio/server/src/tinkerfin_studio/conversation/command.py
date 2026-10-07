@@ -46,10 +46,17 @@ class ConversationCommandService:
         thread_id: str,
         title: str | None,
         pinned: bool | None,
+        project_id: str | None = None,
+        archived: bool | None = None,
     ) -> ConversationHistoryListItem:
         """更新明确提交的会话元信息"""
 
-        thread = await self._require_thread(thread_id)
+        thread = await self._repository.organize_thread(
+            user_id=self._user_id,
+            thread_id=thread_id,
+            project_id=project_id,
+            archived=archived,
+        )
         await self._repository.update_thread_meta(
             thread,
             title=title,

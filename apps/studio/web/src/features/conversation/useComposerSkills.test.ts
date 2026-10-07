@@ -8,14 +8,14 @@ import { composerSkillReferences, createComposerDraft, insertComposerSkill } fro
 
 vi.mock('../skills/api', () => ({ listInstalledSkills: vi.fn() }))
 vi.mock('../../api/notifications', () => ({ subscribeResourceChanges: vi.fn() }))
-const first: InstalledSkill = { id: 'one', name: 'reports', description: 'Prepare reports', enabled: true, source_id: null, source_kind: 'zip', source_name: 'ZIP', external_id: null, author: null, topics: [], file_count: 1, byte_size: 64, created_at: '2026-01-01', updated_at: '2026-01-01' }
+const first: InstalledSkill = {project_id: null, overridden: false,  id: 'one', name: 'reports', description: 'Prepare reports', enabled: true, source_id: null, source_kind: 'zip', source_name: 'ZIP', external_id: null, author: null, topics: [], file_count: 1, byte_size: 64, created_at: '2026-01-01', updated_at: '2026-01-01' }
 beforeEach(() => { vi.resetAllMocks(); vi.mocked(subscribeResourceChanges).mockReturnValue(() => {}); vi.mocked(listInstalledSkills).mockResolvedValue([first, { ...first, id: 'two', name: 'research' }, { ...first, id: 'disabled', enabled: false }]) })
 
 
 const references = insertComposerSkill(createComposerDraft(), first).state.field(composerSkillReferences)
 
 it('只提供启用的技能，已选身份来自草稿引用', async () => {
-  const { result, rerender } = renderHook(({ selected }) => useComposerSkills(true, selected), { initialProps: { selected: references } })
+  const { result, rerender } = renderHook(({ selected }) => useComposerSkills('project-1', true, selected), { initialProps: { selected: references } })
   await act(async () => {})
   expect(result.current.skills.map(item => item.id)).toEqual(['one', 'two'])
   expect(result.current.selected.map(item => item.id)).toEqual(['one'])
@@ -24,7 +24,7 @@ it('只提供启用的技能，已选身份来自草稿引用', async () => {
 })
 
 it('目录读取失败不删除草稿中的技能引用，重试后更新可用性', async () => {
-  const { result } = renderHook(() => useComposerSkills(true, references))
+  const { result } = renderHook(() => useComposerSkills('project-1', true, references))
   await act(async () => {})
   vi.mocked(listInstalledSkills).mockRejectedValueOnce(new Error('offline'))
   act(() => result.current.retry()); await act(async () => {})
@@ -37,8 +37,8 @@ it('目录读取失败不删除草稿中的技能引用，重试后更新可用�
 it('离开对话后取消目录请求，忽略迟到结果', async () => {
   let resolve!: (items: InstalledSkill[]) => void
   vi.mocked(listInstalledSkills).mockImplementationOnce(() => new Promise(done => { resolve = done }))
-  const { result, rerender } = renderHook(({ active }) => useComposerSkills(active, []), { initialProps: { active: true } })
-  const signal = vi.mocked(listInstalledSkills).mock.calls[0][0]
+  const { result, rerender } = renderHook(({ active }) => useComposerSkills('project-1', active, []), { initialProps: { active: true } })
+  const signal = vi.mocked(listInstalledSkills).mock.calls[0][1]
   rerender({ active: false })
   expect(signal?.aborted).toBe(true)
   await act(async () => resolve([first]))
@@ -46,7 +46,7 @@ it('离开对话后取消目录请求，忽略迟到结果', async () => {
 })
 
 it('返回对话后重新核验目录，停用或卸载的引用保留并标记不可用', async () => {
-  const { result, rerender } = renderHook(({ active }) => useComposerSkills(active, references), { initialProps: { active: true } })
+  const { result, rerender } = renderHook(({ active }) => useComposerSkills('project-1', active, references), { initialProps: { active: true } })
   await act(async () => {})
   rerender({ active: false })
   let reject: (reason: Error) => void = () => undefined
@@ -63,7 +63,7 @@ it('返回对话后重新核验目录，停用或卸载的引用保留并标记�
 })
 
 it('技能更新通知只影响可用性，不改写引用名称', async () => {
-  const { result } = renderHook(() => useComposerSkills(true, references))
+  const { result } = renderHook(() => useComposerSkills('project-1', true, references))
   await act(async () => {})
   vi.mocked(listInstalledSkills).mockResolvedValue([{ ...first, enabled: false }])
   const notice = vi.mocked(subscribeResourceChanges).mock.calls.at(-1)![0]

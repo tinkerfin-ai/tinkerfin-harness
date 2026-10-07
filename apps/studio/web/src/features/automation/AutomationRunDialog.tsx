@@ -18,7 +18,8 @@ function ResultFile({ file }: { file: Attachment }) {
 }
 
 /** 只读取已授权结果；关闭后取消请求，接收运行、轨迹和附件变化后刷新 */
-export function AutomationRunDialog({ run, trigger, onToast, onClose }: {
+export function AutomationRunDialog({ projectId, run, trigger, onToast, onClose }: {
+  projectId: string
   run: AutomationRun | null
   trigger: HTMLElement | null
   onToast: ToastHandler
@@ -47,7 +48,7 @@ export function AutomationRunDialog({ run, trigger, onToast, onClose }: {
         || (change.topic === 'studio.attachments.changed' && change.details.collection_id === id)
         || (change.topic === 'trace.changed' && (!observed || change.key === observed.threadId))
       ),
-      read: signal => fetchRunDetail(id, signal),
+      read: signal => fetchRunDetail(projectId, id, signal),
       update: result => { observed = result; setDetail(result); setFailure(false) },
       onError: () => {
         setFailure(true)
@@ -55,7 +56,7 @@ export function AutomationRunDialog({ run, trigger, onToast, onClose }: {
       },
     })
     return watch.close
-  }, [id, revision])
+  }, [projectId, id, revision])
   const current = detail ? presentRun(detail) : run
   return <Dialog open={run !== null} title={t('运行结果')} className="automation-result-dialog" restoreFocusTo={trigger} onClose={onClose}>
     {current && <div className="automation-result-content">

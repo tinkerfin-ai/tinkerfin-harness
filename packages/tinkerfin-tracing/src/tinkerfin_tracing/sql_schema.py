@@ -324,6 +324,9 @@ events = Table(
         comment="Database UTC commit time",
     ),
     comment="Authoritative semantic Trace Ledger events",
+    mysql_engine="InnoDB",
+    mysql_row_format="COMPRESSED",
+    mysql_key_block_size="8",
 )
 Index(
     "uq_tinkerfin_trace_events_id",
@@ -396,6 +399,9 @@ projection_checkpoints = Table(
         comment="Database UTC checkpoint commit time",
     ),
     comment="Disposable Projection checkpoint history",
+    mysql_engine="InnoDB",
+    mysql_row_format="COMPRESSED",
+    mysql_key_block_size="8",
 )
 graph_nodes = Table(
     TRACE_TABLE_NAMES[5],

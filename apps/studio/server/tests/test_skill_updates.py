@@ -31,6 +31,8 @@ from tinkerfin_studio.skills.schemas import (
 )
 from tinkerfin_studio.skills.sources import SkillSources
 
+pytestmark = pytest.mark.usefixtures("projects")
+
 
 def install_request(request_id: str = "install") -> InstallSkillRequest:
     return InstallSkillRequest(
@@ -48,7 +50,8 @@ async def test_catalog_update_retains_identity_state_and_both_run_contents(
     item = (await skill_library.install(1, install_request())).installation
     repository = SkillRepository(session, 1)
     original = await repository.capture(
-        RunIdentity(namespace="ns_1", thread_id="thread", run_id="old")
+        RunIdentity(namespace="ns_1", thread_id="thread", run_id="old"),
+        project_id="project-1",
     )
     await session.commit()
     await skill_library.set_enabled(
@@ -77,7 +80,8 @@ async def test_catalog_update_retains_identity_state_and_both_run_contents(
         1, item.id, SkillEnabledRequest(request_id="enable", enabled=True)
     )
     fresh = await repository.capture(
-        RunIdentity(namespace="ns_1", thread_id="thread", run_id="fresh")
+        RunIdentity(namespace="ns_1", thread_id="thread", run_id="fresh"),
+        project_id="project-1",
     )
     assert fresh.skills[0].digest == skill_catalog.packages["second"].digest
     assert fresh.skills[0].digest != original.skills[0].digest

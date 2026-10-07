@@ -57,7 +57,11 @@ def tools_for(resources):
     return {
         item.name: item
         for item in build_automation_tools(
-            resources, user_id=1, model_id="main", access_mode="full"
+            resources,
+            project_id="project-1",
+            user_id=1,
+            model_id="main",
+            access_mode="full",
         )
     }
 
@@ -115,9 +119,9 @@ async def test_conversation_schedule_objects_keep_saved_json(
             {**creation(), "schedule": schedule, "runtime": call_runtime()}
         )
     )
-    saved = await StudioAutomationService(automation_resources, user_id=1).get_task(
-        created["id"]
-    )
+    saved = await StudioAutomationService(
+        automation_resources, project_id="project-1", user_id=1
+    ).get_task(created["id"])
     serialized = saved.model_dump(mode="json", by_alias=True)
     assert created["schedule"] == serialized["schedule"] == schedule
     config = TaskConfiguration.model_validate({**configuration(), "schedule": schedule})
@@ -209,7 +213,9 @@ async def test_conversation_commands_preserve_saved_configuration_and_replay(
     )
     await automation_worker.wait_until_idle()
     assert (
-        await StudioAutomationService(automation_resources, user_id=1).result(run["id"])
+        await StudioAutomationService(
+            automation_resources, project_id="project-1", user_id=1
+        ).result(run["id"])
     ).status == "succeeded"
     deletion = {**command, "runtime": call_runtime("delete")}
     assert json.loads(await tools["delete_automation"].ainvoke(deletion)) == {
@@ -272,6 +278,7 @@ async def test_runtime_injects_command_identity_and_records_tool_result(
         runtime_module, "create_chat_model", lambda *args, **kwargs: model
     )
     runtime = build_conversation_runtime(
+        project_id="project-1",
         skill_snapshot=SkillSnapshotPayload(
             directory_id="00000000-0000-0000-0000-000000000000", skills=()
         ),
@@ -304,9 +311,9 @@ async def test_runtime_injects_command_identity_and_records_tool_result(
     result = next(event for event in events if isinstance(event, ToolCallResultEvent))
     task = json.loads(result.content)
     assert task["name"] == "对话日报"
-    saved = await StudioAutomationService(automation_resources, user_id=1).get_task(
-        task["id"]
-    )
+    saved = await StudioAutomationService(
+        automation_resources, project_id="project-1", user_id=1
+    ).get_task(task["id"])
     assert saved.prompt == "生成独立日报"
     history = await AgUiHistory(
         automation_resources.tracer, namespace=runtime.namespace
@@ -330,6 +337,7 @@ async def test_other_users_cannot_query_or_delete_conversation_tasks(
         entry.name: entry
         for entry in build_automation_tools(
             automation_resources,
+            project_id="project-2",
             user_id=2,
             model_id="main",
             access_mode="full",
@@ -393,6 +401,7 @@ async def test_automation_management_is_bound_to_main_roles(
         runtime_module, "create_chat_model", lambda *args, **kwargs: model
     )
     runtime = build_conversation_runtime(
+        project_id="project-1",
         skill_snapshot=SkillSnapshotPayload(
             directory_id="00000000-0000-0000-0000-000000000000", skills=()
         ),
@@ -411,7 +420,9 @@ async def test_automation_management_is_bound_to_main_roles(
     )
     _ = [event async for event in stream]
     assert stream.error is None, repr(stream.error)
-    tasks = await StudioAutomationService(automation_resources, user_id=1).list_tasks()
+    tasks = await StudioAutomationService(
+        automation_resources, project_id="project-1", user_id=1
+    ).list_tasks()
     if mode == "plan":
         assert len(tasks.items) == 1
         assert all("create_automation" in names for names in model.seen_tools)
@@ -459,7 +470,9 @@ async def test_checkpoint_resume_replays_a_committed_tool_without_another_task(
         input={"messages": [{"role": "user", "content": "创建日报"}]},
     )
     assert first["__interrupt__"]
-    service = StudioAutomationService(automation_resources, user_id=1)
+    service = StudioAutomationService(
+        automation_resources, project_id="project-1", user_id=1
+    )
     before = (await service.list_tasks()).items
     assert len(before) == 1
     resumed = await runtime.ainvoke(

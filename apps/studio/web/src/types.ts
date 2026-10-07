@@ -237,6 +237,8 @@ export type PlanInteraction = PlanQuestionState | PlanReviewState
 export type AccessMode = "full" | "write_approval"
 
 export interface Conversation extends Partial<Pick<ConversationTitleSnapshot, "titleSource" | "titleGenerationStatus" | "titleSeq">> {
+  projectId: string
+  archived: boolean
   threadId: string
   title: string
   pinned: boolean

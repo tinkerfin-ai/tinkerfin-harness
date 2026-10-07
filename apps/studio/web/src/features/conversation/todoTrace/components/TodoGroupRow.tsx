@@ -25,7 +25,7 @@ export function TodoGroupRow({
       onOpenChange={setOpen}
       presentationOverride={{
         title: 'Todos',
-        summary: `${progress.completed}/${progress.total}`,
+        summary: `${progress.activeOrCompleted}/${progress.total}`,
         icon: <ListChecks size={14} strokeWidth={2} />,
       }}
     >

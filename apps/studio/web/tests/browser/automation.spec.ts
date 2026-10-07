@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 import { createAutomationFixture, runFixture, taskFixture } from '../../src/test/automationFixtures'
@@ -73,6 +74,7 @@ async function prepare(page: Page, language = 'zh-CN') {
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
   await installNotificationStream(page)
+  await installProjectScope(page)
   await page.goto('/')
   await expect(page.getByRole('textbox', { name: language === 'en' ? 'Message input' : '消息输入', exact: true })).toBeVisible()
   if ((page.viewportSize()?.width ?? 1440) < 768) {
@@ -535,7 +537,7 @@ test('紧凑搜索和状态菜单按查询与当前周计数，关闭恢复搜�
 
 test('会话与自动化默认完全访问，权限选择沿用模型样式', async ({ page }, testInfo) => {
   await prepare(page)
-  await page.locator('.new-chat').click()
+  await page.locator('[aria-keyshortcuts~="Meta+K"]').click()
   const access = page.getByRole('button', { name: '选择访问权限' })
   await expect(access).toContainText('完全访问')
   await access.click()
@@ -563,7 +565,7 @@ test('触控环境的会话与自动化权限按钮及选项达到44像素', asy
     for (const location of ['conversation', 'automation']) {
       await page.getByRole('button', { name: '打开导航', exact: true }).click()
       if (location === 'conversation') {
-        await page.locator('.new-chat').click()
+        await page.locator('[aria-keyshortcuts~="Meta+K"]').click()
         await page.getByRole('button', { name: '关闭导航', exact: true }).click()
       } else {
         await page.getByRole('button', { name: '自动化', exact: true }).click()
@@ -585,11 +587,11 @@ test('触控环境的会话与自动化权限按钮及选项达到44像素', asy
 
 test('自动化刷新保留页面，新会话的标志、输入框和提示位于视觉中线上方', async ({ page }, testInfo) => {
   await prepare(page)
-  await expect(page).toHaveURL(/\/\?page=automation$/)
+  await expect(page).toHaveURL(url => url.searchParams.get('page') === 'automation' && url.searchParams.get('project') === 'project-1')
   await page.reload()
-  await expect(page).toHaveURL(/\/\?page=automation$/)
+  await expect(page).toHaveURL(url => url.searchParams.get('page') === 'automation' && url.searchParams.get('project') === 'project-1')
   await expect(page.getByRole('tab', { name: '历史', exact: true })).toBeVisible()
-  await page.locator('.new-chat').click()
+  await page.locator('[aria-keyshortcuts~="Meta+K"]').click()
   await expect(page.locator('.composer-dock.is-hero')).toBeVisible()
   await expect(page).not.toHaveURL(/page=automation/)
   for (const theme of ['light', 'dark']) {
@@ -627,7 +629,7 @@ test('功能菜单使用统一界面字重，日期范围两端完整显示且�
         await page.getByRole('button', { name: '打开侧边栏', exact: true }).click()
       }
       const menu = page.getByRole('navigation', { name: '工作区功能' })
-      for (const name of ['记忆管理', '技能库', '自动化', '更多']) {
+      for (const name of ['技能库', '记忆管理', '自动化']) {
         await expect(menu.getByRole('button', { name, exact: true })).toHaveCSS('font-weight', '400')
       }
       await expect(menu.getByRole('button', { name: '自动化', exact: true })).toHaveAttribute('aria-current', 'page')

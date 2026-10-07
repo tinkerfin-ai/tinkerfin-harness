@@ -29,7 +29,10 @@ async def request_upload(
     service = get_resources(request.app).attachments
     await service.cleanup()
     attachment_id, form = await service.request_upload(
-        user_id=user.user_id, name=body.name, size_bytes=body.size_bytes
+        user_id=user.user_id,
+        project_id=body.project_id,
+        name=body.name,
+        size_bytes=body.size_bytes,
     )
     return ApiResponse.success(
         UploadResponse(

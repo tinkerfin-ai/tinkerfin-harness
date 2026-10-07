@@ -42,6 +42,28 @@ function Example({
 }
 
 describe('Dialog组合契约', () => {
+  it('更新恢复入口不重置弹框内焦点，关闭使用最新入口', async () => {
+    const user = userEvent.setup()
+    const original = document.createElement('button')
+    const visible = document.createElement('button')
+    document.body.append(original, visible)
+    const { rerender } = render(<Dialog open title="示例" restoreFocusTo={original} onClose={vi.fn()}>
+      <input aria-label="内容" />
+    </Dialog>)
+    await user.tab()
+    const input = screen.getByRole('textbox', { name: '内容' })
+    expect(input).toHaveFocus()
+    rerender(<Dialog open title="示例" restoreFocusTo={visible} onClose={vi.fn()}>
+      <input aria-label="内容" />
+    </Dialog>)
+    expect(input).toHaveFocus()
+    rerender(<Dialog open={false} title="示例" restoreFocusTo={visible} onClose={vi.fn()}>内容</Dialog>)
+    await Promise.resolve()
+    expect(visible).toHaveFocus()
+    original.remove()
+    visible.remove()
+  })
+
   it('关闭流程已指定下一处焦点时，不抢回原入口', async () => {
     const user = userEvent.setup()
     function RedirectExample() {
@@ -99,4 +121,19 @@ describe('Dialog组合契约', () => {
     await user.keyboard('{Escape}')
     expect(close).not.toHaveBeenCalled()
   })
+  it('负tabIndex的结果按钮不占用对话框的Tab循环边界', async () => {
+    const user = userEvent.setup()
+    render(<Dialog open title="搜索" onClose={vi.fn()}>
+      <input aria-label="查询" />
+      <button type="button">范围</button>
+      <button type="button" tabIndex={-1}>结果</button>
+    </Dialog>)
+    await user.tab()
+    expect(screen.getByRole('textbox', { name: '查询' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: '范围' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: '关闭对话框' })).toHaveFocus()
+  })
+
 })

@@ -72,8 +72,10 @@ from tinkerfin_studio.conversation.trace_responses import (
 )
 from tinkerfin_tracing import (
     InvalidTraceCursor,
+    InvalidTraceReference,
     TraceGraphFilter,
     TraceMessage,
+    TraceModelRequest,
     Tracer,
     TraceThread,
     TraceThreadNotFound,
@@ -102,6 +104,8 @@ class _HistoryCursorPayload(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=True)
 
+    project_id: str | None = Field(alias="projectId")
+    archived: bool
     pinned: bool = Field(description="游标行是否置顶")
     updated_at: datetime = Field(
         alias="updatedAt", description="游标行的无时区最近 Trace 活动时间"
@@ -126,6 +130,8 @@ class _HistoryCursorPayload(BaseModel):
 def _history_item(thread: ConversationThread) -> ConversationHistoryListItem:
     return ConversationHistoryListItem(
         id=thread.id,
+        projectId=thread.project_id,
+        archived=thread.archived,
         threadId=thread.thread_id,
         title=thread.title,
         titleSource=thread.title_source,
@@ -169,6 +175,8 @@ class ConversationHistoryService:
     async def list_history(
         self,
         *,
+        project_id: str | None,
+        archived: bool = False,
         page_size: int,
         cursor: str | None,
         query: str | None = None,
@@ -176,18 +184,24 @@ class ConversationHistoryService:
         """按标题查询、置顶和最近 Trace 活动时间稳定分页"""
 
         resolved_query = (query.strip() or None) if query is not None else None
-        resolved = self._decode_cursor(cursor, query=resolved_query)
+        resolved = self._decode_cursor(
+            cursor, query=resolved_query, project_id=project_id, archived=archived
+        )
         resolved_page_size = min(max(page_size, 1), _HISTORY_PAGE_SIZE_MAX)
         threads = await self._repository.list_threads(
             user_id=self._user_id,
             page_size=resolved_page_size,
             cursor=resolved,
             query=resolved_query,
+            project_id=project_id,
+            archived=archived,
         )
         has_more = len(threads) > resolved_page_size
         page = threads[:resolved_page_size]
         next_cursor = (
-            self._encode_cursor(page[-1], query=resolved_query)
+            self._encode_cursor(
+                page[-1], query=resolved_query, project_id=project_id, archived=archived
+            )
             if has_more and page
             else None
         )
@@ -428,6 +442,21 @@ class ConversationHistoryService:
 
         return events()
 
+    async def get_model_request(
+        self, thread_id: str, *, reference: str
+    ) -> TraceModelRequest:
+        """校验会话归属后，按框架引用读取单次模型调用的完整输入"""
+        await self._require_thread(thread_id)
+        await self._repository.commit()
+        try:
+            return await self._history.model_request(thread_id, reference=reference)
+        except InvalidTraceReference as error:
+            raise BusinessException(
+                ConversationErrorCode.INVALID_TRACE_REFERENCE
+            ) from error
+        except (TraceThreadNotFound, TracingError) as error:
+            raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE) from error
+
     async def query_trace_graph(
         self,
         thread_id: str,
@@ -644,6 +673,8 @@ class ConversationHistoryService:
             )
         return ConversationHistoryDetail(
             id=thread.id,
+            projectId=thread.project_id,
+            archived=thread.archived,
             threadId=thread.thread_id,
             title=thread.title,
             titleSource=thread.title_source,
@@ -696,6 +727,8 @@ class ConversationHistoryService:
         thread: ConversationThread,
         *,
         query: str | None = None,
+        project_id: str | None = None,
+        archived: bool = False,
     ) -> str:
         payload = json.dumps(
             {
@@ -703,6 +736,8 @@ class ConversationHistoryService:
                 "updatedAt": thread.updated_at.isoformat(),
                 "id": thread.id,
                 "query": query,
+                "projectId": project_id,
+                "archived": archived,
             },
             separators=(",", ":"),
         )
@@ -713,6 +748,8 @@ class ConversationHistoryService:
         value: str | None,
         *,
         query: str | None = None,
+        project_id: str | None = None,
+        archived: bool = False,
     ) -> tuple[bool, datetime, int] | None:
         if value is None:
             return None
@@ -723,7 +760,11 @@ class ConversationHistoryService:
                 validate=True,
             )
             payload = _HistoryCursorPayload.model_validate_json(decoded, strict=True)
-            if payload.query != query:
+            if (
+                payload.query != query
+                or payload.project_id != project_id
+                or payload.archived != archived
+            ):
                 raise ValueError("游标查询词与当前请求不一致")
             return payload.pinned, payload.updated_at, payload.row_id
         except (ValueError, TypeError, ValidationError):

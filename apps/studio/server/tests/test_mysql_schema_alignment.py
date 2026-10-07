@@ -33,8 +33,10 @@ from tinkerfin_studio.conversation.models import (
 )
 from tinkerfin_studio.infrastructure.database import Base
 from tinkerfin_studio.models.entity import AgentModel, ModelConnection
+from tinkerfin_studio.projects.models import Project
 from tinkerfin_studio.services.entity import ServiceConfig
 from tinkerfin_studio.skills.entity import (
+    ProjectSkillSetting,
     SkillImportDraft,
     SkillInstallation,
     SkillOperationReceipt,
@@ -47,6 +49,8 @@ _DATABASE_NAME_PATTERN = re.compile(r"\Atinkerfin_schema_[a-f0-9]{16}_(sql|runti
 _EXPECTED_TABLES = frozenset(
     {
         "users",
+        "projects",
+        "project_skill_settings",
         "skill_installations",
         "skill_import_drafts",
         "skill_run_snapshots",
@@ -81,6 +85,7 @@ _EXPECTED_TABLES = frozenset(
 )
 _BUSINESS_MODELS = (
     User,
+    Project,
     AttachmentFile,
     AttachmentCollection,
     AttachmentReference,
@@ -90,6 +95,7 @@ _BUSINESS_MODELS = (
     ConversationThread,
     ConversationRunRegistration,
     ConversationInterruptClaim,
+    ProjectSkillSetting,
     SkillInstallation,
     SkillImportDraft,
     SkillOperationReceipt,
@@ -404,7 +410,8 @@ async def test_business_sql_and_framework_setups_compose_the_current_mysql_schem
                     assert column.character_set == "utf8mb4"
                     expected_collation = (
                         "utf8mb4_bin"
-                        if (table_name, column_name) == ("skill_installations", "name")
+                        if (table_name, column_name)
+                        in {("skill_installations", "name"), ("projects", "name")}
                         else "utf8mb4_0900_ai_ci"
                     )
                     assert column.collation == expected_collation

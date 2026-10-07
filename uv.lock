@@ -3611,6 +3611,7 @@ dependencies = [
 [package.optional-dependencies]
 sqlalchemy = [
     { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "tinkerfin-contracts" },
     { name = "tinkerfin-sqlalchemy" },
 ]
 
@@ -3618,6 +3619,7 @@ sqlalchemy = [
 requires-dist = [
     { name = "langgraph-checkpoint", specifier = "==4.2.0" },
     { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'sqlalchemy'", specifier = "==2.0.52" },
+    { name = "tinkerfin-contracts", marker = "extra == 'sqlalchemy'", editable = "packages/tinkerfin-contracts" },
     { name = "tinkerfin-sqlalchemy", marker = "extra == 'sqlalchemy'", editable = "packages/tinkerfin-sqlalchemy" },
 ]
 provides-extras = ["sqlalchemy"]

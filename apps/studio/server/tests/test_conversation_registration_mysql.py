@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from docker import DockerClient
 from sqlalchemy import event, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -28,18 +29,64 @@ from tinkerfin_gateway import Gateway
 from tinkerfin_gateway.starlette import sse_response
 from tinkerfin_messaging import Messaging
 from tinkerfin_notifications import NotificationScope
+from tinkerfin_studio.api.errors import BusinessException, ProjectErrorCode
+from tinkerfin_studio.attachments.entity import AttachmentFile
+from tinkerfin_studio.attachments.service import byte_chunks
 from tinkerfin_studio.conversation.models import (
     ConversationRunRegistration,
     ConversationThread,
 )
+from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.run_preparation import (
     classify_intent,
     prepare_run_request,
 )
 from tinkerfin_studio.conversation.run_registration import ConversationRunPreparer
 from tinkerfin_studio.infrastructure.database import Base, Database
+from tinkerfin_studio.projects.repository import ProjectRepository
 
-pytestmark = pytest.mark.studio_mysql_integration
+pytestmark = [pytest.mark.studio_mysql_integration, pytest.mark.usefixtures("projects")]
+
+
+@pytest.fixture(autouse=True)
+def record_owned_mysql_resources(
+    mysql_test_service,
+    docker_test_client: DockerClient,
+    docker_test_run_id: str,
+    record_property,
+) -> None:
+    """在同步准备阶段记录独占容器和匿名卷，供清理结果精确核对
+
+    Docker SDK 仅提供同步查询，此处在异步用例启动前串行调用，沿用客户端
+    配置的请求超时（默认 60 秒）。查询期间不响应异步取消，不占用数据库连接。
+    此处不创建资源或后台任务；容器和卷仍由测试客户端的最终清理负责。
+
+    Args:
+        mysql_test_service: 已启动的测试专用 MySQL
+        docker_test_client: 同步准备阶段借用的 Docker 客户端
+        docker_test_run_id: 当前测试进程独占的资源标签
+        record_property: 将资源身份写入测试结果的记录入口
+    """
+    del mysql_test_service
+    owned = docker_test_client.containers.list(
+        all=True, filters={"label": f"tinkerfin.test/run={docker_test_run_id}"}
+    )
+    record_property("docker_test_run_id", docker_test_run_id)
+    container_ids: list[str] = []
+    for item in owned:
+        identity = item.id
+        assert identity is not None
+        container_ids.append(identity)
+    record_property("docker_container_ids", ",".join(container_ids))
+    record_property(
+        "docker_volume_names",
+        ",".join(
+            mount["Name"]
+            for item in owned
+            for mount in item.attrs["Mounts"]
+            if mount["Type"] == "volume"
+        ),
+    )
 
 
 @pytest_asyncio.fixture
@@ -103,13 +150,20 @@ async def test_simultaneous_same_run_keeps_one_thread_and_registration(
             second, user_id=1, attachments=attachments, notifications=notifications
         )
         resolved = await owner.resolve_thread(
-            thread_id="", run_id=request.run_id, intent=intent
+            project_id="project-1", thread_id="", run_id=request.run_id, intent=intent
         )
         thread_id = resolved.thread.thread_id
-        prepared = prepare_run_request(request, user_id=1, thread_id=thread_id)
+        prepared = prepare_run_request(
+            request, project_id="project-1", user_id=1, thread_id=thread_id
+        )
         event.listen(database.engine.sync_engine, "before_cursor_execute", inserting)
         joining = asyncio.create_task(
-            contender.resolve_thread(thread_id="", run_id=request.run_id, intent=intent)
+            contender.resolve_thread(
+                project_id="project-1",
+                thread_id="",
+                run_id=request.run_id,
+                intent=intent,
+            )
         )
         try:
             await insert_entered.wait()
@@ -145,6 +199,178 @@ async def test_simultaneous_same_run_keeps_one_thread_and_registration(
     async with database.session() as check:
         assert len(list(await check.scalars(select(ConversationThread)))) == 1
         assert len(list(await check.scalars(select(ConversationRunRegistration)))) == 1
+
+
+@pytest.mark.parametrize("organize", ["move", "archive"])
+async def test_organizing_reads_preparing_registration_after_waiting_for_thread_lock(
+    database,
+    session,
+    notifications,
+    attachments,
+    organize,
+    docker_test_run_id,
+    record_property,
+):
+    """整理请求的旧快照不能隐藏在会话锁之前提交的运行登记"""
+    record_property("docker_test_run_id", docker_test_run_id)
+    record_property("database", database.engine.url.database)
+    repository = ConversationRepository(session)
+    destination = await ProjectRepository(session, 1).create("目标项目")
+    thread = await repository.create_thread(
+        user_id=1,
+        project_id="project-1",
+        thread_id="organizing",
+        title="会话",
+        model_id="model-main",
+    )
+    await session.commit()
+    waiting = asyncio.Event()
+
+    def locking(_connection, _cursor, statement, _parameters, _context, _executemany):
+        if (
+            statement.startswith("SELECT conversation_threads.")
+            and "FOR UPDATE" in statement
+        ):
+            waiting.set()
+
+    async with database.session() as writing, database.session() as organizing:
+        assert (
+            await organizing.scalar(text("SELECT @@transaction_isolation"))
+            == "REPEATABLE-READ"
+        )
+        writer = ConversationRepository(writing)
+        locked = await writer.lock_thread(thread.id)
+        assert locked is not None
+        organizer = ConversationRepository(organizing)
+        observed = await organizer.get_thread(user_id=1, thread_id=thread.thread_id)
+        assert observed is not None and observed.status == "idle"
+        event.listen(database.engine.sync_engine, "before_cursor_execute", locking)
+        pending = asyncio.create_task(
+            organizer.organize_thread(
+                user_id=1,
+                thread_id=thread.thread_id,
+                project_id=destination.id if organize == "move" else None,
+                archived=True if organize == "archive" else None,
+            )
+        )
+        try:
+            await waiting.wait()
+            request = _ordinary_request(thread_id=thread.thread_id, run_id="preparing")
+            await ConversationRunPreparer(
+                writing, user_id=1, attachments=attachments, notifications=notifications
+            ).register(
+                intent=classify_intent(request),
+                prepared=prepare_run_request(
+                    request,
+                    project_id="project-1",
+                    user_id=1,
+                    thread_id=thread.thread_id,
+                ),
+                model=_model(),
+                thread=locked,
+            )
+            with pytest.raises(BusinessException) as denied:
+                await pending
+            assert denied.value.error_code == ProjectErrorCode.ACTIVE_CONVERSATION
+        finally:
+            await writing.rollback()
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+            await organizing.rollback()
+            event.remove(database.engine.sync_engine, "before_cursor_execute", locking)
+    async with database.session() as check:
+        current = await ConversationRepository(check).get_thread(
+            user_id=1, thread_id=thread.thread_id
+        )
+        assert (
+            current is not None
+            and current.project_id == "project-1"
+            and not current.archived
+        )
+
+
+@pytest.mark.parametrize("retained", [False, True])
+async def test_collection_creation_checks_current_file_project_after_move(
+    database, session, attachments, retained
+):
+    """移动先取得附件锁时，只有已有输入引用可以继续在原项目使用文件"""
+    destination = await ProjectRepository(session, 1).create("目标项目")
+    repository = ConversationRepository(session)
+    thread = await repository.create_thread(
+        user_id=1,
+        project_id="project-1",
+        thread_id="moving-file",
+        title="会话",
+        model_id="model-main",
+    )
+    await session.commit()
+    file = await attachments.upload(
+        user_id=1,
+        thread_id=thread.thread_id,
+        name="reference.md",
+        chunks=byte_chunks(b"# fixed"),
+    )
+    if retained:
+        await attachments.create_collection(
+            user_id=1,
+            project_id="project-1",
+            collection_id="input",
+            purpose="input",
+            attachment_ids=(file.id,),
+            configuration={},
+        )
+    reached = asyncio.Event()
+
+    def locking(_connection, _cursor, statement, _parameters, _context, _executemany):
+        if (
+            statement.startswith("SELECT conversation_attachments.")
+            and "FOR UPDATE" in statement
+        ):
+            reached.set()
+
+    async with database.session() as moving:
+        await ConversationRepository(moving).organize_thread(
+            user_id=1,
+            thread_id=thread.thread_id,
+            project_id=destination.id,
+            archived=None,
+        )
+        event.listen(database.engine.sync_engine, "before_cursor_execute", locking)
+        pending = asyncio.create_task(
+            attachments.create_collection(
+                user_id=1,
+                project_id="project-1",
+                collection_id="execution",
+                purpose="execution",
+                attachment_ids=(file.id,),
+                configuration={},
+                source_collection_id="input" if retained else None,
+            )
+        )
+        try:
+            await reached.wait()
+            await moving.commit()
+            if retained:
+                await pending
+                assert [
+                    item.id
+                    for item in await attachments.list_collection(
+                        user_id=1, collection_id="execution"
+                    )
+                ] == [file.id]
+            else:
+                with pytest.raises(BusinessException):
+                    await pending
+        finally:
+            await moving.rollback()
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+            event.remove(database.engine.sync_engine, "before_cursor_execute", locking)
+    async with database.session() as check:
+        current = await check.get(AttachmentFile, file.id)
+        assert current is not None and current.project_id == destination.id
 
 
 async def test_notification_disconnect_returns_borrowed_mysql_connection(
