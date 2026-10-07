@@ -80,7 +80,7 @@ test('真实跨域表单直传保留文件与取消，业务凭据仅发送给�
           const { uploadAttachment } = await import('/src/features/conversation/attachments/client.ts')
           const progress = []
           const data = Uint8Array.from([37, 80, 68, 70, 0, 255])
-          const attachment = await uploadAttachment(new File([data], '中文 附件.pdf'), new AbortController().signal, p => progress.push(p))
+          const attachment = await uploadAttachment('upload-project', new File([data], '中文 附件.pdf'), new AbortController().signal, p => progress.push(p))
           return { attachment, progress }
         })
         assert.equal(result.attachment.name, '中文 附件.pdf')
@@ -92,10 +92,11 @@ test('真实跨域表单直传保留文件与取消，业务凭据仅发送给�
         assert.ok(apiRequests.every(r => r.authorization === 'Bearer isolated-upload-token'))
         assert.equal(apiRequests.length, 2)
         assert.equal(JSON.parse(apiRequests[0].bytes).size_bytes, 6)
+        assert.equal(JSON.parse(apiRequests[0].bytes).project_id, 'upload-project')
         await page.evaluate(async () => {
           const { uploadAttachment } = await import('/src/features/conversation/attachments/client.ts')
           const controller = new AbortController()
-          globalThis.uploadTest = { controller, completion: uploadAttachment(new File(['pdf'], 'cancel.pdf'), controller.signal, () => {}).then(() => 'success', e => e.code) }
+          globalThis.uploadTest = { controller, completion: uploadAttachment('upload-project', new File(['pdf'], 'cancel.pdf'), controller.signal, () => {}).then(() => 'success', e => e.code) }
         })
         await pendingUpload
         await page.evaluate(() => globalThis.uploadTest.controller.abort())

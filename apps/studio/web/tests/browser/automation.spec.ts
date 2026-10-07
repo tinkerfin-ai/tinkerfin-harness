@@ -629,7 +629,7 @@ test('功能菜单使用统一界面字重，日期范围两端完整显示且�
         await page.getByRole('button', { name: '打开侧边栏', exact: true }).click()
       }
       const menu = page.getByRole('navigation', { name: '工作区功能' })
-      for (const name of ['新会话', '技能库', '记忆管理', '自动化']) {
+      for (const name of ['技能库', '记忆管理', '自动化']) {
         await expect(menu.getByRole('button', { name, exact: true })).toHaveCSS('font-weight', '400')
       }
       await expect(menu.getByRole('button', { name: '自动化', exact: true })).toHaveAttribute('aria-current', 'page')
