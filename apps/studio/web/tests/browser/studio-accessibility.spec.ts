@@ -1042,6 +1042,7 @@ test('新会话工具栏保持动作样式，折叠菜单在空白页显示选�
 })
 
 test('折叠侧栏 tooltip 与 Rail 外边界保持稳定间距', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   await mockStudio(page)
   const shell = page.locator('.app-shell')
   const rail = page.locator('.sidebar-rail')
