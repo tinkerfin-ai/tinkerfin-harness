@@ -51,7 +51,6 @@ export function Composer({
   hero,
   takeover,
   scrollToBottomControl,
-  taskTraceControl,
   backgroundInert = false,
   modelControl,
   accessControl,
@@ -84,7 +83,6 @@ export function Composer({
   hero?: ReactNode
   takeover?: ReactNode
   scrollToBottomControl?: ReactNode
-  taskTraceControl?: ReactNode
   backgroundInert?: boolean
   modelControl: ReactNode
   accessControl?: ReactNode
@@ -320,15 +318,14 @@ export function Composer({
 
   return (
     <footer className={`composer-dock${hero ? ' is-hero' : ''}${takeover ? ' is-taken-over' : ''}`}>
-      {(!hero || scrollToBottomControl || taskTraceControl || (takeover && isRunning)) && (
+      {(!hero || scrollToBottomControl || (takeover && isRunning)) && (
         <div className="composer-auxiliary-controls">
           {scrollToBottomControl && (
             <div className="composer-scroll-to-bottom-control">{scrollToBottomControl}</div>
           )}
-          {(taskTraceControl || (takeover && isRunning)) && (
-            <div className="composer-task-trace-control" aria-hidden={backgroundInert || undefined} inert={backgroundInert || undefined}>
-              {taskTraceControl}
-              {takeover && isRunning && stopControl}
+          {takeover && isRunning && (
+            <div className="composer-stop-control" aria-hidden={backgroundInert || undefined} inert={backgroundInert || undefined}>
+              {stopControl}
             </div>
           )}
         </div>

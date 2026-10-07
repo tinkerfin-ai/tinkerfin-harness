@@ -10,7 +10,7 @@ gsap.registerPlugin(useGSAP, Flip)
 const LAYOUT_TARGET_SELECTOR = '[data-workspace-layout-target]'
 
 /**
- * 在侧栏或任务轨迹抽屉布局提交后恢复空间连续性
+ * 在侧栏或右侧抽屉布局提交后恢复空间连续性
  *
  * 业务状态仍由 React 和 CSS 决定；Flip 只读取提交前后的几何并通过 transform、
  * opacity 播放过渡，因此快速反向或卸载不会留下第二份布局状态

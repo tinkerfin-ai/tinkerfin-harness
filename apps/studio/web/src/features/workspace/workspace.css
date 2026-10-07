@@ -572,6 +572,7 @@
 
   .header-navigation { align-items: center; }
   .header-actions { justify-self: end; }
+  .workspace-header-tools { display: flex; align-items: center; gap: var(--space-0); margin-inline-end: calc(var(--layout-panel-inset) - var(--layout-page-gutter)); }
   .workspace-header-action,
   .workspace-header-action:hover,
   .workspace-header-action:active { flex-shrink: 0; transform: none; }

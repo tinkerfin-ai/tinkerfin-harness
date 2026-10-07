@@ -9,6 +9,7 @@ from typing import TypeAlias
 
 from ag_ui.core import BaseEvent
 from anyio import CancelScope
+from starlette.requests import Request
 from starlette.responses import StreamingResponse
 from starlette.types import Receive, Scope, Send
 
@@ -184,6 +185,7 @@ async def sse_response(
     stream: _Source | Awaitable[_Source],
     *,
     headers: Mapping[str, str] | None = None,
+    request: Request | None = None,
 ) -> SseResponse:
     """Preflight and transfer a Gateway stream into a closeable HTTP response.
 
@@ -193,17 +195,97 @@ async def sse_response(
     Admission, authorization, and cursor failures happen before sending headers.
     The response owns cleanup even if its body never starts. The host still owns
     routing, authentication, error responses, and authorization scope selection.
+    Pass ``request`` after reading its body to also cancel admission on client
+    disconnect. A response prepared concurrently with disconnect is closed here.
+
+    Args:
+        stream: Prepared stream or awaitable whose resulting stream is transferred
+            to this response. Admission failures remain observable by the host.
+        headers: Additional response headers, overriding the default SSE headers.
+        request: Borrowed HTTP request with its body already consumed. Its
+            disconnect monitor ends before the response starts sending. Omitting
+            it leaves admission cancellation to the host. Disconnect releases
+            readers without cancelling an accepted durable run.
+
+    Returns:
+        A single-use response owning the prepared stream and its renderer.
+
+    Raises:
+        asyncio.CancelledError: Admission is cancelled or the provided request
+            disconnects before handoff. Accepted readers are closed first.
     """
-    source = await stream if inspect.isawaitable(stream) else stream
-    try:
-        body = source.to_sse()
-        return SseResponse(source, body, headers)
-    except BaseException as error:
+    caller = asyncio.current_task()
+    stopping = False
+    watching = False
+
+    async def watch_disconnect() -> BaseException | None:
+        nonlocal watching
+        if stopping:
+            return None
+        watching = True
         try:
-            await _close_owned(source.aclose())
+            assert request is not None
+            while not await request.is_disconnected():
+                await asyncio.sleep(0.1)
+            failure: BaseException = asyncio.CancelledError("HTTP client disconnected")
+        except BaseException as error:  # noqa: BLE001 - return transport failures to the admitting caller
+            if stopping and _cancellation_only(error):
+                return None
+            failure = error
+        assert caller is not None
+        caller.cancel()
+        return failure
+
+    disconnect = (
+        asyncio.create_task(watch_disconnect(), name="tinkerfin-gateway-sse-preflight")
+        if request is not None
+        else None
+    )
+    source: _Source | None = None
+    response: SseResponse | None = None
+    failure: BaseException | None = None
+    try:
+        source = await stream if inspect.isawaitable(stream) else stream
+        body = source.to_sse()
+        response = SseResponse(source, body, headers)
+        if request is not None and await request.is_disconnected():
+            raise asyncio.CancelledError("HTTP client disconnected")
+    except BaseException as error:  # noqa: BLE001 - settle the monitor and any adopted source before delivery
+        failure = error
+    finally:
+        if disconnect is not None:
+            stopping = True
+            if watching and not disconnect.done():
+                disconnect.cancel()
+            try:
+                with CancelScope(shield=True):
+                    await _join_cleanup(disconnect)
+            except BaseException as error:  # noqa: BLE001 - cancellation during handoff must still close the response
+                failure = error if failure is None else _select_failure(failure, error)
+    # A completed Future can own a source before its awaiting task resumes. Task
+    # cancellation at that handoff must adopt and close the result as well.
+    if (
+        source is None
+        and isinstance(stream, asyncio.Future)
+        and stream.done()
+        and not stream.cancelled()
+    ):
+        try:
+            source = stream.result()
+        except BaseException as error:  # noqa: BLE001 - retrieve an accepted awaitable's original failure
+            failure = error if failure is None else _select_failure(failure, error)
+    if failure is not None:
+        try:
+            with CancelScope(shield=True):
+                if response is not None:
+                    await _close_owned(response.aclose())
+                elif source is not None:
+                    await _close_owned(source.aclose())
         except BaseException as cleanup_error:  # noqa: BLE001 - preserve control and independent cleanup failures
-            raise _select_failure(error, cleanup_error)
-        raise
+            failure = _select_failure(failure, cleanup_error)
+        raise failure
+    assert response is not None
+    return response
 
 
 __all__ = ["SseResponse", "sse_response"]

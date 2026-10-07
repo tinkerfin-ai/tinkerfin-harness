@@ -273,8 +273,8 @@ for (const locale of ['zh-CN', 'en']) {
         const iconGeometry = []
         for (const control of [commands, attachment, access]) {
           const icon = control.locator('svg').first()
-          await expect(icon).toHaveCSS('width', '16px')
-          await expect(icon).toHaveCSS('height', '16px')
+          await expect(icon).toHaveCSS('width', '17px')
+          await expect(icon).toHaveCSS('height', '17px')
           iconGeometry.push(await icon.evaluate(element => {
             const svg = element as SVGSVGElement
             const style = getComputedStyle(svg)

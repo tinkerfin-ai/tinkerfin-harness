@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { TodoGroup } from '../../../../api/conversation/taskTrace'
 import { TodoTraceDrawer } from './TodoTraceDrawer'
 import todoTraceStyles from '../todoTrace.css?raw'
+import drawerStyles from '../../../../components/ui/ui.css?raw'
 
 const group = (index: number): TodoGroup => ({
   id: `todo-group:run-${index}`,
@@ -122,7 +123,7 @@ describe('TodoTraceDrawer', () => {
   })
 
   it('uses borderless surfaces, icon-free roots, and aligned progress treatment', () => {
-    expect(todoTraceStyles).toMatch(/\.todo-trace-drawer\s*{[^}]*border:\s*0;[^}]*background:\s*var\(--color-canvas\);/s)
+    expect(drawerStyles).toMatch(/\.ui-drawer\s*{[^}]*border:\s*0;[^}]*background:\s*var\(--color-canvas\);/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-group-surface\s*{[^}]*border:\s*0;[^}]*background:\s*transparent;/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-group\.is-current \.todo-trace-group-surface\s*{[^}]*linear-gradient\(/s)
     expect(todoTraceStyles).not.toMatch(/\.todo-trace-group\.is-expanded\.is-history \.todo-trace-group-surface\s*{[^}]*linear-gradient\(/s)
@@ -130,7 +131,7 @@ describe('TodoTraceDrawer', () => {
     expect(todoTraceStyles).toMatch(/\.todo-trace-todo\.is-completed \.todo-trace-node-icon\s*{[^}]*color:\s*var\(--color-text-secondary\);/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-todo\.is-completed \.todo-trace-node-icon\s*{[^}]*background:\s*transparent;/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-completed-mark\s*{[^}]*box-shadow:\s*none;[^}]*filter:\s*none;/s)
-    expect(todoTraceStyles).toMatch(/\.todo-trace-drawer\s*{[^}]*grid-template-rows:\s*var\(--layout-drawer-header-height\) minmax\(0, 1fr\);/s)
+    expect(drawerStyles).toMatch(/\.ui-drawer\s*{[^}]*grid-template-rows:\s*var\(--layout-drawer-header-height\) minmax\(0, 1fr\);/s)
     expect(todoTraceStyles).not.toContain('.todo-trace-drawer-head')
     expect(todoTraceStyles).toMatch(/\.todo-trace-group-title\s*{[^}]*grid-row:\s*1;[^}]*align-self:\s*center;/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-group-progress\s*{[^}]*grid-row:\s*1;[^}]*align-self:\s*center;[^}]*padding:\s*0;/s)

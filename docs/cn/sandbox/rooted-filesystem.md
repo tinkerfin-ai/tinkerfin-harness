@@ -51,6 +51,29 @@ async with project.open() as backend:
 
 每个结果对象都可能包含正常数据和错误说明。批量或搜索场景不要只检查列表是否为空，也要检查结果中的 error。
 
+## 查看已有文件
+
+查看文件不应启动执行环境时，直接使用项目声明。Manager 必须在这些调用期间保持开启：
+
+```python
+project = manager.workspace("users/7", workspace_key="project-a")
+page = await project.list_directory("/", limit=100)
+while True:
+    for entry in page.entries:
+        print(entry.path, entry.kind, entry.size_bytes)
+    if page.next_cursor is None:
+        break
+    page = await project.list_directory("/", limit=100, cursor=page.next_cursor)
+
+info = await project.get_file_info("/notes.txt")
+preview = await project.read_text("/notes.txt", max_bytes=100 * 1024, max_lines=200)
+print(preview.text, preview.truncated)
+```
+
+这些读取不会创建、重建、初始化或恢复资源。宿主负责选择已授权的所有者与项目标识，框架负责限制
+路径范围、读取大小和关闭查询资源。工作区尚未初始化时可呈现无文件状态；暂停或连接不可用仍是
+明确错误。路径以虚拟 `/` 为根，不跟随符号链接。字段、限制与异常见 [API 参考](api-reference.md)。
+
 ## 订阅文件变化
 
 项目已存在且正在运行时，先建立订阅，再读取初始文件状态。订阅不会打开命令运行，也不会阻止
@@ -58,8 +81,9 @@ Sandbox 暂停：
 
 ```python
 async with project.watch() as changes:
+    print(await project.list_directory("/"))
     async for change in changes:
-        print(change)
+        print(await project.list_directory("/"))
 ```
 
 迭代结果为 `tinkerfin_sandbox.WorkspaceChange.FILES_CHANGED` 或

@@ -24,7 +24,11 @@ from .lifecycle import (
     RunPresentation,
     RunRegistration,
 )
-from .notifications import NotificationAuthorization, NotificationStream
+from .notifications import (
+    NotificationAuthorization,
+    NotificationStream,
+    ResourceChangeWatch,
+)
 from .run import GatewayRun
 
 
@@ -79,6 +83,39 @@ class Gateway:
             topics=topics,
             expires_at=expires_at,
             authorize=authorize,
+        )
+
+    async def resource_changes(
+        self,
+        *,
+        watch_changes: ResourceChangeWatch,
+        expires_at: datetime | None = None,
+        authorize: NotificationAuthorization | None = None,
+    ) -> NotificationStream:
+        """Observe an authorized resource through the managed notification feed.
+
+        Args:
+            watch_changes: Bound resource watch, such as ``workspace.watch``.
+                Entering it establishes observation; it yields bounded string
+                hints or ``ResyncRequired`` and owns its source-side cleanup.
+            expires_at: Fixed timezone-aware access expiry.
+            authorize: Short host-owned permission check, repeated while streaming.
+
+        Returns:
+            A prepared stream accepted by ``sse_response``. ``ready`` precedes
+            baseline reads, ``change`` carries ``{"kind": hint}``, and ``resync``
+            requires authoritative rereading. Closing releases only this watch.
+
+        Raises:
+            PermissionError: Access is expired or revoked during preparation.
+            ValueError: The expiry has no timezone.
+            GatewayError: Consumption or change-hint bounds are invalid.
+
+        Source-owned preparation and cleanup errors retain their original types.
+        No Sandbox, business identity, or resource content is inferred or cached.
+        """
+        return await NotificationStream._watch(
+            watch_changes, expires_at=expires_at, authorize=authorize
         )
 
     async def start(

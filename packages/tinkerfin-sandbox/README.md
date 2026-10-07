@@ -157,12 +157,21 @@ and command operations require asynchronous APIs.
 See [rooted files and commands](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/sandbox/rooted-filesystem.md)
 for permissions, transfer limits, and direct Deep Agents integration.
 
+Use `project.list_directory()` for paginated existing files,
+`project.get_file_info(path)` for metadata, or
+`project.read_text(path, max_bytes=100 * 1024, max_lines=200)` for a bounded UTF-8
+preview. These methods do not create, initialize, or resume resources. An absent or
+deleted workspace raises `OpenSandboxWorkspaceNotInitializedError`; binary files
+raise `OpenSandboxNotTextError` on text reads. A file-changed error invalidates the
+current read or directory cursor. Symbolic links are never followed.
+
 For an existing running project, subscribe before reading the initial file state:
 
 ```python
 async with project.watch() as changes:
+    print(await project.list_directory("/"))
     async for change in changes:
-        print(change)
+        print(await project.list_directory("/"))
 ```
 
 The iterator yields `WorkspaceChange.FILES_CHANGED` from `tinkerfin_sandbox` or

@@ -46,6 +46,7 @@ from ..errors import (
 )
 from ._purpose import require_binding_purpose
 from ._transport import _join_owned_task
+from ._workspace_files import QueryResult, query_files
 from ._workspace_watch import WorkspaceChange
 
 if TYPE_CHECKING:
@@ -248,6 +249,22 @@ class _ProjectCoordinator(Generic[_KeyT]):
             self._owner_key, self._project
         ) as changes:
             yield changes
+
+    async def query_files(
+        self,
+        operation: Literal["list", "stat", "text"],
+        path: str,
+        arguments: dict[str, JsonValue],
+    ) -> QueryResult:
+        """Query the bound project without entering its execution lifecycle."""
+        return await query_files(
+            self._manager,
+            self._owner_key,
+            self._project,
+            operation=operation,
+            path=path,
+            arguments=arguments,
+        )
 
     @asynccontextmanager
     async def _parent(

@@ -57,16 +57,26 @@ from tinkerfin_gateway import StartRun
 
 
 async def answer_with_context(gateway, runtime, user_text, instructions):
-    run = await gateway.start(runtime, StartRun(
-        thread_id="conversation",
-        run_id="request-with-context",
-        messages=(
-            {"id": "question", "role": "user", "content": user_text},
-            {"id": "reference", "role": "user", "content": instructions,
-             "source": {"kind": "context", "name": "retrieval",
-                        "metadata": {"document": "authorized-report"}}},
+    run = await gateway.start(
+        runtime,
+        StartRun(
+            thread_id="conversation",
+            run_id="request-with-context",
+            messages=(
+                {"id": "question", "role": "user", "content": user_text},
+                {
+                    "id": "reference",
+                    "role": "user",
+                    "content": instructions,
+                    "source": {
+                        "kind": "context",
+                        "name": "retrieval",
+                        "metadata": {"document": "authorized-report"},
+                    },
+                },
+            ),
         ),
-    ))
+    )
     async with run.subscribe() as replies:
         async for reply in replies:
             print(reply.data.type)
@@ -115,15 +125,19 @@ pip install "tinkerfin-gateway[starlette]"
 from tinkerfin_gateway.starlette import sse_response
 
 
-async def send_command(gateway, authorized_runtime, command):
-    return await sse_response(gateway.stream(authorized_runtime, command))
+async def send_command(gateway, authorized_runtime, command, request):
+    return await sse_response(
+        gateway.stream(authorized_runtime, command), request=request
+    )
 ```
 
 The host defines the route and authorizes its arguments. Admission and cursor
 checks finish before response headers are sent. The response closes its readers
 on completion, failed headers, cancellation, or disconnect. If it will not be sent,
 call `await response.aclose()`. Do not close the prepared stream before returning
-its response.
+its response. Pass `request` after consuming its body to cancel preparation on
+disconnect as well. Without it, the host must cancel abandoned preparation.
+The request is borrowed; closing a reader does not cancel an accepted durable run.
 
 ## Notify browsers about resource changes
 
@@ -160,6 +174,32 @@ headers. Keep one notification connection per visible tab, coalesce duplicate
 invalidations, and serialize reads of each resource. Reconnect and reload the
 baseline after interruption. Periodic repair reads remain necessary because
 notifications are advisory. Agent replies use the separate run output stream.
+
+For a resource with its own bound watch, use `resource_changes`:
+
+```python
+async def workspace_changes(
+    gateway, authorized_project, expires_at, check_access, request
+):
+    return await sse_response(
+        gateway.resource_changes(
+            watch_changes=authorized_project.watch,
+            expires_at=expires_at,
+            authorize=check_access,
+        ),
+        request=request,
+    )
+```
+
+The host selects the authorized resource and serves its authoritative queries.
+`watch_changes` follows the exported `ResourceChangeWatch` contract: entering its
+async context establishes a subscription, whose iterator yields string hints of at
+most 1,024 UTF-8 bytes or `ResyncRequired`. Gateway owns that context until its stream
+closes, with the same authorization, expiry, cancellation, and response cleanup as
+resource notifications. A string hint becomes `change` data such as
+`{"kind":"files_changed"}`. Wait for `ready` before the initial query. The resource's
+manager remains borrowed and must outlive the stream; the source determines whether
+it can observe absent or paused resources. Gateway has no Sandbox dependency.
 
 ## Add business registration and observations
 

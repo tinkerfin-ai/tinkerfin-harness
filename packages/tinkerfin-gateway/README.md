@@ -84,8 +84,10 @@ The host supplies its own routes and authentication:
 from tinkerfin_gateway.starlette import sse_response
 
 
-async def send_command(gateway, authorized_runtime, command):
-    return await sse_response(gateway.stream(authorized_runtime, command))
+async def send_command(gateway, authorized_runtime, command, request):
+    return await sse_response(
+        gateway.stream(authorized_runtime, command), request=request
+    )
 ```
 
 For changes to resource lists, use `await gateway.notifications(scopes=...)` and
@@ -103,6 +105,18 @@ message content; use run output subscriptions for replies.
 
 The response closes its readers on completion, send failure, cancellation, and
 disconnect. If a prepared response will not be sent, call `await response.aclose()`.
+Pass `request` after consuming its body to cancel preparation on disconnect too;
+otherwise the host owns that cancellation. Closing a reader does not cancel an
+accepted durable run.
+
+For a resource that provides its own scoped watch, pass the bound method as
+`gateway.resource_changes(watch_changes=project.watch, expires_at=..., authorize=...)`
+to `sse_response`. Gateway manages subscription closure and access checks; the host
+selects the authorized resource and provides its queries. String hints become
+`change` payloads such as `{"kind":"files_changed"}`. Wait for `ready` before reading
+the baseline and keep the resource's manager open until the stream ends. See the
+[resource delivery guide](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/gateway/index.md#notify-browsers-about-resource-changes)
+for a complete example and the `ResourceChangeWatch` contract.
 
 ## Documentation
 

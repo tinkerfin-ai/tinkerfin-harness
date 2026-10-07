@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useTodoTraceDrawer } from './useTodoTraceDrawer'
+import { Drawer } from '../../../components/ui/Drawer'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 const taskTrace = {
@@ -25,10 +26,11 @@ function Harness({ threadId = 'thread-1', blocked = false, available = true }) {
       <button ref={drawer.launcherRef} type="button" onClick={drawer.toggle}>
         launcher
       </button>
-      <aside ref={drawer.drawerRef}>
+      <Drawer id="test-task-drawer" drawerRef={drawer.drawerRef} title="任务轨迹" open={drawer.open}
+        closeLabel="关闭任务轨迹" backLabel="返回对话" onClose={drawer.close}>
         <button type="button">first</button>
         <button type="button">last</button>
-      </aside>
+      </Drawer>
       <output data-testid="drawer-state">
         {JSON.stringify({
           open: drawer.open,

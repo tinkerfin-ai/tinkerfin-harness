@@ -7,6 +7,7 @@ import { IconButton } from './IconButton'
 export interface DrawerHeaderProps {
   title: ReactNode
   description?: ReactNode
+  actions?: ReactNode
   closeLabel?: string
   onClose?: () => void
   backLabel?: string
@@ -18,6 +19,7 @@ export interface DrawerHeaderProps {
 export const DrawerHeader = forwardRef<HTMLButtonElement, DrawerHeaderProps>(function DrawerHeader({
   title,
   description,
+  actions,
   closeLabel,
   onClose,
   backLabel,
@@ -42,9 +44,10 @@ export const DrawerHeader = forwardRef<HTMLButtonElement, DrawerHeaderProps>(fun
         <h2>{title}</h2>
         {description && <span>{description}</span>}
       </span>
-      {!onBack && onClose && closeLabel && (
-        <IconButton ref={ref} label={closeLabel} icon={<X size={18} />} onClick={onClose} />
-      )}
+      {(actions || (!onBack && onClose && closeLabel)) && <div className="ui-drawer-header__actions">
+        {actions}
+        {!onBack && onClose && closeLabel && <IconButton ref={ref} label={closeLabel} icon={<X size={18} />} onClick={onClose} />}
+      </div>}
     </header>
   )
 })

@@ -16,6 +16,7 @@ from .lifecycle import RunPresentation as RunPresentation
 from .lifecycle import RunRegistration as RunRegistration
 from .notifications import NotificationAuthorization as NotificationAuthorization
 from .notifications import NotificationStream as NotificationStream
+from .notifications import ResourceChangeWatch as ResourceChangeWatch
 from .run import GatewayRun as GatewayRun
 
 __all__ = [
@@ -29,6 +30,7 @@ __all__ = [
     "GatewayRun",
     "NotificationAuthorization",
     "NotificationStream",
+    "ResourceChangeWatch",
     "ResumeRun",
     "ResumeSettlement",
     "RunAcceptance",

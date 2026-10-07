@@ -640,7 +640,7 @@ describe('MessageBlock assistant composition', () => {
     expect(screen.getByRole('group', { name: '回答操作' })).toBe(actionRow)
     expect(markdown!.compareDocumentPosition(actionRow!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(container.querySelector('.source-summary, .citation')).toBeNull()
-    expect(conversationStyles).toMatch(/\.message-action-row\s*\{[^}]*--message-action-control-size:\s*var\(--control-xs\);[^}]*--message-action-icon-size:\s*var\(--icon-lg\);[^}]*align-items:\s*flex-start;/s)
+    expect(conversationStyles).toMatch(/\.message-action-row\s*\{[^}]*--message-action-control-size:\s*var\(--control-xs\);[^}]*--message-action-icon-size:\s*var\(--icon-action\);[^}]*align-items:\s*flex-start;/s)
     expect(conversationStyles).toMatch(/\.message-action-row--assistant\s*\{[^}]*min-height:\s*46px;[^}]*margin-top:\s*0;[^}]*padding-top:\s*5px;/s)
     expect(conversationStyles).toMatch(/\.message-action-row--assistant \.ui-icon-button-wrap\s*\{[^}]*width:\s*var\(--message-action-icon-size\);/s)
     expect(conversationStyles).toMatch(/\.message-action-row--assistant \.ui-icon-button\s*\{[^}]*margin-inline:\s*calc\(\(var\(--message-action-control-size\) - var\(--message-action-icon-size\)\) \/ -2\);/s)

@@ -53,6 +53,33 @@ async with project.open() as backend:
 
 Results may contain both normal data and an error description. In search and batch operations, inspect the error field as well as the returned entries.
 
+## Inspect existing files
+
+Use the project declaration directly when viewing files must not start an execution
+environment. The manager must remain open throughout these calls:
+
+```python
+project = manager.workspace("users/7", workspace_key="project-a")
+page = await project.list_directory("/", limit=100)
+while True:
+    for entry in page.entries:
+        print(entry.path, entry.kind, entry.size_bytes)
+    if page.next_cursor is None:
+        break
+    page = await project.list_directory("/", limit=100, cursor=page.next_cursor)
+
+info = await project.get_file_info("/notes.txt")
+preview = await project.read_text("/notes.txt", max_bytes=100 * 1024, max_lines=200)
+print(preview.text, preview.truncated)
+```
+
+These reads do not create, recreate, initialize, or resume resources. The host chooses
+authorized owner and project identities; the framework confines traversal, enforces
+read limits, and closes query resources. Handle an uninitialized workspace as an
+absence of files. Paused or unavailable resources remain explicit errors. Paths are
+relative to virtual `/`; symbolic links are never followed. See the
+[API reference](api-reference.md) for result fields, limits, and errors.
+
 ## Watch file changes
 
 For an existing running project, enter the subscription before reading its initial
@@ -60,8 +87,9 @@ file state. Watching does not open a command run or keep the Sandbox from pausin
 
 ```python
 async with project.watch() as changes:
+    print(await project.list_directory("/"))
     async for change in changes:
-        print(change)
+        print(await project.list_directory("/"))
 ```
 
 The iterator yields `WorkspaceChange.FILES_CHANGED` from `tinkerfin_sandbox` or

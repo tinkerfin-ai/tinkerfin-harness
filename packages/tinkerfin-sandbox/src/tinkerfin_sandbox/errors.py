@@ -25,6 +25,9 @@ class OpenSandboxErrorCode(StrEnum):
     PURPOSE_MISMATCH = "sandbox.purpose_mismatch"
     BACKEND_ERROR = "sandbox.backend_error"
     FILE_TOO_LARGE = "sandbox.file_too_large"
+    FILE_CHANGED = "sandbox.file_changed"
+    NOT_TEXT = "sandbox.not_text"
+    WORKSPACE_NOT_INITIALIZED = "sandbox.workspace_not_initialized"
     BACKEND_UNAVAILABLE = "sandbox.backend_unavailable"
     BACKEND_TIMEOUT = "sandbox.backend_timeout"
     PAUSED = "sandbox.paused"
@@ -195,6 +198,24 @@ class OpenSandboxFileTooLargeError(OpenSandboxBackendError):
     code = OpenSandboxErrorCode.FILE_TOO_LARGE
 
 
+class OpenSandboxFileChangedError(OpenSandboxBackendError):
+    """A file, directory page, or project changed during a read; reread its state."""
+
+    code = OpenSandboxErrorCode.FILE_CHANGED
+
+
+class OpenSandboxNotTextError(OpenSandboxBackendError):
+    """The selected entry cannot be safely read as a regular UTF-8 text file."""
+
+    code = OpenSandboxErrorCode.NOT_TEXT
+
+
+class OpenSandboxWorkspaceNotInitializedError(OpenSandboxBackendError):
+    """No existing project file root is available; the read created no resources."""
+
+    code = OpenSandboxErrorCode.WORKSPACE_NOT_INITIALIZED
+
+
 class OpenSandboxBackendProtocolError(OpenSandboxBackendError):
     """A remote Sandbox response violates the supported protocol."""
 
@@ -278,10 +299,12 @@ __all__ = [
     "OpenSandboxDestroyError",
     "OpenSandboxError",
     "OpenSandboxErrorCode",
+    "OpenSandboxFileChangedError",
     "OpenSandboxHandleClosedError",
     "OpenSandboxHandleOwnershipError",
     "OpenSandboxInitializationError",
     "OpenSandboxManagerClosedError",
+    "OpenSandboxNotTextError",
     "OpenSandboxObserverReentryError",
     "OpenSandboxResetError",
     "OpenSandboxSettlementTimeoutError",
@@ -293,6 +316,7 @@ __all__ = [
     "OpenSandboxStateTimeoutError",
     "OpenSandboxStateUnavailableError",
     "OpenSandboxWarmPoolUnavailableError",
+    "OpenSandboxWorkspaceNotInitializedError",
     "UnexpectedOpenSandboxBackendError",
     "UnexpectedOpenSandboxStateError",
 ]

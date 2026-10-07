@@ -137,6 +137,24 @@ and cancellation, while retaining project files, HOME, caches, and dependencies.
 Use the backend only inside its context. Concurrent runs of one project share files
 without transactional write guarantees.
 
+The declaration also supports bounded reads of existing project files:
+
+| Method | Result and limits |
+| --- | --- |
+| `list_directory(path="/", *, limit=200, cursor=None)` | `WorkspaceDirectoryPage`; 1–200 entries, directories first then exact name, with an optional `next_cursor` |
+| `get_file_info(path)` | `WorkspaceFileInfo`; virtual path, name, kind, optional byte size, UTC modification time, and opaque `etag` |
+| `read_text(path, *, max_bytes, max_lines=200)` | `WorkspaceText`; UTF-8 prefix, file metadata, and `truncated`; 1–1,048,576 bytes and 1–10,000 lines |
+
+These methods create no Sandbox, project, or execution session and never resume a
+paused Sandbox. An absent or deleted workspace raises
+`OpenSandboxWorkspaceNotInitializedError`; a missing entry raises `FileNotFoundError`.
+Symbolic links are listed without being followed. Binary or non-regular entries raise
+`OpenSandboxNotTextError` on text reads. Detected read changes or an invalidated
+directory cursor raise `OpenSandboxFileChangedError`; restart directory pagination
+from its first page. The metadata `etag` is neither a content digest nor a transaction
+snapshot. Queries cover the physical project file root, excluding other routed backends.
+The manager owns query clients and settles them before propagating cancellation.
+
 `watch()` returns an asynchronous context yielding an
 `AsyncIterator[WorkspaceChange | ResyncRequired]` for an existing running project.
 `WorkspaceChange.FILES_CHANGED` is exported from `tinkerfin_sandbox`;
