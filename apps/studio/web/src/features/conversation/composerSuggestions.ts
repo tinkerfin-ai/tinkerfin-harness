@@ -64,23 +64,20 @@ const leadingSlashCommand = (value: string) => {
 export const hasLeadingSkillReference = (value: string, references: readonly ComposerSkillReference[]) =>
   references.some(reference => reference.from === value.search(/\S/) && value.slice(reference.from, reference.to) === `/${reference.skill.name}`)
 
-export const isAllowedComposerDraft = (value: string, skills: readonly ComposerSkill[] = [], references: readonly ComposerSkillReference[] = []) => {
-  if (hasLeadingSkillReference(value, references)) return true
-  const command = leadingSlashCommand(value)
-  if (!command || !command.query) return true
-  const matchingNames = [...ENABLED_SLASH_NAMES, ...skills.map(skill => skill.name)].filter((name) => name.startsWith(command.query))
-  if (matchingNames.length === 0) return false
-  return command.remainder === ''
-    || (/^\s/.test(command.remainder) && (command.query === 'plan' || command.query === 'compact'))
-}
-
-export const isSubmittableComposerDraft = (value: string, references: readonly ComposerSkillReference[] = []) => {
+/** 完整指令按发送语义判定，光标处待选择的前导指令交给候选菜单 */
+export const isSubmittableComposerDraft = (value: string, references: readonly ComposerSkillReference[] = [], caret = value.length) => {
   if (hasLeadingSkillReference(value, references)) return true
   const command = leadingSlashCommand(value)
   if (!command) return true
   if (command.query === 'compact') return true
-  return command.query === 'plan'
-    && Boolean(command.remainder.trim())
+  if (command.query === 'plan') return Boolean(command.remainder.trim())
+  // 已知指令前缀仍等待候选选择，其他斜杠文本按普通消息发送
+  const candidate = detectLeadingSlashToken(value, caret)
+  return command.query !== ''
+    && !ENABLED_SLASH_NAMES.some(name => (
+      name.startsWith(command.query.toLowerCase())
+      || (candidate && name.startsWith(candidate.query.toLowerCase()))
+    ))
 }
 
 export const cancelComposerSuggestion = (

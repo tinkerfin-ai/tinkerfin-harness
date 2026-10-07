@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { useEffect, useRef, useState } from 'react'
 import type { ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -34,6 +35,67 @@ function DraftComposer({ text, onDraftChange, ...props }: Omit<ComponentProps<ty
 }
 
 describe('Composer', () => {
+  it.each([
+    { label: '无技能', skills: [], skillsStatus: 'ready' as const },
+    { label: '技能描述匹配部分路径', skills: [{ id: 'find-skills', name: 'find-skills', description: 'Discover and install skills' }], skillsStatus: 'ready' as const },
+    { label: '技能目录读取中', skills: [], skillsStatus: 'loading' as const },
+    { label: '技能目录读取失败', skills: [], skillsStatus: 'error' as const },
+  ])('$label 时逐字符输入保留完整路径，不自动绑定技能', ({ skills, skillsStatus }) => {
+    render(<DraftComposer {...composerChromeProps()} text="" onDraftChange={vi.fn()} isRunning={false}
+      onSend={vi.fn()} onStop={vi.fn()} skills={skills} skillsStatus={skillsStatus} />)
+    const input = screen.getByRole('textbox', { name: '消息输入' }) as HTMLTextAreaElement
+    for (const character of '/scripts') {
+      const next = input.value + character
+      fireEvent.change(input, { target: { value: next, selectionStart: next.length } })
+    }
+    expect(input).toHaveValue('/scripts')
+    expect(input).not.toHaveAccessibleDescription()
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
+  })
+
+  it('路径粘贴、撤销与重做保留原文和发送能力', async () => {
+    const interaction = userEvent.setup()
+    render(<DraftComposer {...composerChromeProps()} text="" onDraftChange={vi.fn()} isRunning={false}
+      onSend={vi.fn()} onStop={vi.fn()} />)
+    const input = screen.getByRole('textbox', { name: '消息输入' })
+    await interaction.click(input)
+    await interaction.paste('/scripts/run.py')
+    expect(input).toHaveValue('/scripts/run.py')
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
+    await interaction.keyboard('{Control>}z{/Control}')
+    expect(input).toHaveValue('')
+    await interaction.keyboard('{Control>}{Shift>}z{/Shift}{/Control}')
+    expect(input).toHaveValue('/scripts/run.py')
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
+  })
+
+  it('已保存的路径草稿可通过发送按钮或Enter发送', () => {
+    const onSend = vi.fn()
+    render(<DraftComposer {...composerChromeProps()} text="/scripts" onDraftChange={vi.fn()} isRunning={false}
+      onSend={onSend} onStop={vi.fn()} />)
+    const send = screen.getByRole('button', { name: '发送消息' })
+    expect(send).toBeEnabled()
+    fireEvent.click(send)
+    fireEvent.keyDown(screen.getByRole('textbox', { name: '消息输入' }), { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledTimes(2)
+  })
+
+  it('路径中的中文组合输入保留后续编辑，确认候选时不发送', () => {
+    const onSend = vi.fn()
+    render(<DraftComposer {...composerChromeProps()} text="/scripts/" onDraftChange={vi.fn()} isRunning={false}
+      onSend={onSend} onStop={vi.fn()} />)
+    const input = screen.getByRole('textbox', { name: '消息输入' })
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: '/scripts/脚', selectionStart: 10 } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(onSend).not.toHaveBeenCalled()
+    fireEvent.compositionEnd(input)
+    fireEvent.change(input, { target: { value: '/scripts/脚本', selectionStart: 11 } })
+    expect(input).toHaveValue('/scripts/脚本')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledOnce()
+  })
+
   it('选择技能在光标处插入主题引用，删除和撤销同步所选身份', () => {
     const skills = [{ id: 'one', name: 'reports', description: 'Prepare reports' }, { id: 'two', name: 'research', description: 'Research sources' }]
     render(<DraftComposer {...composerChromeProps()} text="保留正文" onDraftChange={vi.fn()} isRunning={false} onSend={vi.fn()} onStop={vi.fn()} skills={skills} />)
@@ -398,7 +460,7 @@ describe('Composer', () => {
     }
   })
 
-  it('keeps a leading Slash insertion at the caret and cancels only that token', async () => {
+  it('普通斜杠文本不被Escape删除，候选取消只移除光标前的触发词', () => {
     function ComposerHarness() {
       const [value, setValue] = useState('已有内容')
       return (
@@ -424,9 +486,13 @@ describe('Composer', () => {
     expect(screen.getByRole('listbox', { name: '命令和技能建议' })).toBeVisible()
 
     fireEvent.change(input, { target: { value: '/x已有内容', selectionStart: 2 } })
-    expect(input).toHaveValue('/已有内容')
-    await waitFor(() => expect(input.selectionStart).toBe(1))
+    expect(input).toHaveValue('/x已有内容')
+    expect(input.selectionStart).toBe(2)
+    expect(screen.queryByRole('listbox', { name: '命令和技能建议' })).not.toBeInTheDocument()
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(input).toHaveValue('/x已有内容')
 
+    fireEvent.change(input, { target: { value: '/已有内容', selectionStart: 1 } })
     fireEvent.keyDown(input, { key: 'Escape' })
     expect(input).toHaveValue('已有内容')
     expect(input.selectionStart).toBe(0)
@@ -669,7 +735,7 @@ describe('Composer', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
-  it('rejects unavailable slash commands and keeps incomplete prefixes non-submittable', () => {
+  it('普通斜杠文本可编辑和发送，已知命令前缀仍等待完成', () => {
     function ComposerHarness() {
       const [value, setValue] = useState('')
       return (
@@ -692,9 +758,11 @@ describe('Composer', () => {
     expect(send).toBeDisabled()
 
     fireEvent.change(input, { target: { value: '/px', selectionStart: 3 } })
-    expect(input).toHaveValue('/p')
+    expect(input).toHaveValue('/px')
+    expect(send).toBeEnabled()
     fireEvent.change(input, { target: { value: '/export', selectionStart: 7 } })
-    expect(input).toHaveValue('/p')
+    expect(input).toHaveValue('/export')
+    expect(send).toBeEnabled()
 
     fireEvent.change(input, { target: { value: '/plan', selectionStart: 5 } })
     expect(input).toHaveValue('/plan')

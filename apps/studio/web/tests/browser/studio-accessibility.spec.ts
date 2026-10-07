@@ -3115,6 +3115,25 @@ test('运行中 SubAgent 与普通 Tool 共用扫光且标题保持稳定', asyn
   expect(sharedAlignment.every(delta => delta <= 1)).toBe(true)
 })
 
+test('搜索范围切换英文短选项后仍与展开选项对齐', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await mockStudio(page)
+  await page.evaluate(() => localStorage.setItem('tinkerfin:language', 'en'))
+  await page.reload()
+  await page.getByRole('button', { name: 'Search conversations', exact: true }).click()
+  const scope = page.getByRole('button', { name: 'Choose search scope', exact: true })
+  await scope.click()
+  const menu = page.getByRole('listbox', { name: 'Search scope', exact: true })
+  await menu.getByRole('option', { name: 'All projects', exact: true }).click()
+  await scope.click()
+  await expect(menu).toBeVisible()
+  const label = (await scope.getByText('All projects', { exact: true }).boundingBox())!
+  const optionLabel = (await menu.getByRole('option', { name: 'All projects', exact: true }).getByText('All projects', { exact: true }).boundingBox())!
+  expect(optionLabel.x).toBeCloseTo(label.x, 5)
+  expect((await menu.boundingBox())!.width).toBeCloseTo((await scope.boundingBox())!.width, 5)
+})
+
 for (const colorScheme of ['light', 'dark'] as const) {
   for (const width of [320, 768, 1024, 1440]) {
     test(`会话搜索居中布局与全局控件保持一致：${colorScheme} ${width}px`, async ({ page }) => {
@@ -3192,9 +3211,16 @@ for (const colorScheme of ['light', 'dark'] as const) {
           }
 
           const scope = dialog.getByRole('button', { name: '选择搜索范围' })
+          expect.soft(await scope.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
           if (!touch) {
             await scope.hover()
             expect.soft(await scope.evaluate(element => getComputedStyle(element).boxShadow)).toBe('none')
+            expect.soft(await scope.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+            await page.mouse.down()
+            expect.soft(await scope.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+            expect.soft(await scope.evaluate(element => getComputedStyle(element).boxShadow)).toBe('none')
+            await page.mouse.move(0, 0)
+            await page.mouse.up()
           }
           const scopeBounds = await measure(scope)
           await activate(scope)
@@ -3205,7 +3231,14 @@ for (const colorScheme of ['light', 'dark'] as const) {
           const allProjects = await measure(menu.getByRole('option', { name: '全部项目', exact: true }))
           const optionGap = allProjects.y - currentProject.y - currentProject.height
           console.info('会话搜索渲染', JSON.stringify({ suffix, fieldHeight: fieldBounds.height, scopeHeight: scopeBounds.height, optionHeight: currentProject.height, optionGap }))
-          expect.soft(menuBounds.y - scopeBounds.y - scopeBounds.height).toBe(4)
+          expect.soft(menuBounds.y - fieldBounds.y - fieldBounds.height).toBe(4)
+          expect.soft(await menu.evaluate(element => getComputedStyle(element).boxShadow)).toBe('none')
+          expect.soft(await scope.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+          expect.soft(menuBounds.x).toBeCloseTo(scopeBounds.x, 5)
+          expect.soft(menuBounds.width).toBeCloseTo(scopeBounds.width, 5)
+          const triggerText = await measure(scope.getByText('当前项目', { exact: true }))
+          const optionText = await measure(menu.getByRole('option', { name: '当前项目', exact: true }).getByText('当前项目', { exact: true }))
+          expect.soft(optionText.x).toBeCloseTo(triggerText.x, 5)
           expect.soft(currentProject.height).toBe(touch ? 44 : 32)
           expect.soft(allProjects.height).toBe(touch ? 44 : 32)
           expect.soft(optionGap).toBe(4)
@@ -3218,6 +3251,19 @@ for (const colorScheme of ['light', 'dark'] as const) {
           await expect(menu).toHaveCount(0)
           await expect(dialog).toBeVisible()
           await expect(scope).toBeFocused()
+          await expect(scope).toHaveCSS('outline-width', '2px')
+          await expect(scope).toHaveCSS('outline-style', 'solid')
+          if (width === 1440 && colorScheme === 'light' && !touch) {
+            await page.emulateMedia({ forcedColors: 'active' })
+            await scope.press('Enter')
+            await expect(menu).toBeVisible()
+            await expect(menu).toHaveCSS('box-shadow', 'none')
+            await expect(menu).toHaveCSS('border-top-width', '1px')
+            await menu.press('Escape')
+            await expect(scope).toBeFocused()
+            await expect(scope).toHaveCSS('outline-width', '2px')
+            await page.emulateMedia({ forcedColors: 'none' })
+          }
           if (touch) await activate(dialog.getByRole('button', { name: '关闭对话框' }))
           else await page.keyboard.press('Escape')
           await expect(dialog).toHaveCount(0)
