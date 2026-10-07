@@ -1,6 +1,7 @@
 import { Check, ChevronDown, FolderClosed, Pencil, Plus, X } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Button, IconButton, TextField, ValidatedForm } from '../../components/ui'
+import { restoreFocus } from '../../components/ui/focus'
 import { useI18n } from '../../i18n'
 import type { ProjectWorkspaceScope } from './ProjectsWorkspace'
 
@@ -47,7 +48,7 @@ export function ProjectSwitcher({ scope }: { scope: ProjectWorkspaceScope }) {
     if (renaming && open) input.current?.focus()
     if (renaming && !wasRenaming.current) input.current?.select()
     if (!renaming && wasRenaming.current) {
-      if (open) renameButton.current?.focus({ preventScroll: true })
+      if (open) restoreFocus(renameButton.current, { preventScroll: true })
     }
     wasRenaming.current = renaming
   }, [open, renaming])

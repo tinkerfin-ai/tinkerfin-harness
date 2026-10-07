@@ -329,6 +329,7 @@ export function useWorkspaceHistory({
   projectId,
   archived,
   searchScope,
+  searchOpen,
   preferDraft = false,
   workspace,
   setWorkspace,
@@ -343,6 +344,7 @@ export function useWorkspaceHistory({
   projectId: string
   archived: boolean
   searchScope: 'project' | 'all'
+  searchOpen: boolean
   preferDraft?: boolean
   workspace: WorkspaceState
   setWorkspace: Dispatch<SetStateAction<WorkspaceState>>
@@ -381,6 +383,8 @@ export function useWorkspaceHistory({
   const historyThreadIdsRef = useRef<string[]>([])
   const searchOnlyThreadIds = useRef(new Set<string>())
   const normalizedHistoryQuery = historyQuery.trim()
+  const searchCriteria = useMemo(() => ({ projectId, archived, scope: searchScope, query: normalizedHistoryQuery }), [projectId, archived, searchScope, normalizedHistoryQuery])
+  const [settledSearch, setSettledSearch] = useState<typeof searchCriteria | null>(null)
   const normalizedHistoryQueryRef = useRef(normalizedHistoryQuery)
   normalizedHistoryQueryRef.current = normalizedHistoryQuery
   const historyWatch = useRef<ReturnType<typeof watchResource> | null>(null)
@@ -389,8 +393,7 @@ export function useWorkspaceHistory({
   const historyExcludedIds = useRef(new Set<string>())
   const searchRefreshing = useRef<AbortSignal | null>(null)
   const searchPageRequest = useRef<Promise<void> | null>(null)
-  const latestSearchIds = useRef(searchThreadIds)
-  latestSearchIds.current = searchThreadIds
+  const searchThreadIdsRef = useRef<string[]>([])
   const historyLoadingRef = useRef(false)
   const historyLastLoadSettledAt = useRef<number | null>(null)
   const historyInFlightCursor = useRef<string | null>(null)
@@ -520,10 +523,10 @@ export function useWorkspaceHistory({
         ? [...response.items, historyItemFromDetail(preferredDetail)]
         : response.items
       const nextThreadIds = historyItems.map((item) => item.threadId)
+      const listedThreadIds = new Set(nextThreadIds)
       if (options.preserveWindow) {
-        const visible = new Set(nextThreadIds)
         for (const threadId of historyThreadIdsRef.current) {
-          if (!visible.has(threadId)) historyExcludedIds.current.add(threadId)
+          if (!listedThreadIds.has(threadId)) historyExcludedIds.current.add(threadId)
         }
       }
       historyThreadIdsRef.current = nextThreadIds
@@ -553,13 +556,18 @@ export function useWorkspaceHistory({
         const hasCurrent = state.currentThreadId
           ? conversations.some((item) => item.threadId === state.currentThreadId)
           : false
+        const firstHistoryConversation = conversations.find(item => (
+          listedThreadIds.has(item.threadId)
+          && item.projectId === projectId
+          && item.archived === archived
+        ))
         return selectCurrentConversation(
           { conversations, currentThreadId: state.currentThreadId },
           hasPreferred
             ? preferredThreadId
             : hasCurrent
               ? state.currentThreadId
-              : preferDraft ? '' : (conversations[0]?.threadId ?? ''),
+              : preferDraft ? '' : (firstHistoryConversation?.threadId ?? ''),
         )
       })
       return true
@@ -589,12 +597,12 @@ export function useWorkspaceHistory({
 
   useEffect(() => {
     const threadId = workspace.currentThreadId
-    if (normalizedHistoryQuery || !threadId || !searchOnlyThreadIds.current.has(threadId)) return
+    if (searchOpen || !threadId || !searchOnlyThreadIds.current.has(threadId)) return
     searchOnlyThreadIds.current.delete(threadId)
     const next = prependUniqueThreadIds(historyThreadIdsRef.current, [threadId])
     historyThreadIdsRef.current = next
     setHistoryThreadIds(next)
-  }, [normalizedHistoryQuery, workspace.currentThreadId])
+  }, [searchOpen, workspace.currentThreadId])
 
   useEffect(() => {
     historySearchGeneration.current += 1
@@ -624,12 +632,14 @@ export function useWorkspaceHistory({
         normal,
       ).state)
     }
+    setSettledSearch(null)
+    searchThreadIdsRef.current = []
     setSearchThreadIds([])
     setSearchCursor(null)
     setSearchLoadError(null)
     setSearchLoadingMore(false)
 
-    if (!normalizedHistoryQuery) {
+    if (!searchOpen) {
       setHistorySearching(false)
       return
     }
@@ -646,7 +656,7 @@ export function useWorkspaceHistory({
             await searchPageRequest.current
             if (signal.aborted) throw signal.reason
             const items: ConversationHistoryListItem[] = []
-            const count = Math.max(1, Math.ceil(latestSearchIds.current.length / HISTORY_PAGE_SIZE))
+            const count = Math.max(1, Math.ceil(searchThreadIdsRef.current.length / HISTORY_PAGE_SIZE))
             let cursor: string | undefined
             let nextCursor: string | null = null
             for (let index = 0; index < count; index += 1) {
@@ -664,11 +674,14 @@ export function useWorkspaceHistory({
           }
         },
         update: (response, signal) => {
+          setSettledSearch(searchCriteria)
           const normalIds = new Set(historyThreadIdsRef.current)
           for (const item of response.items) {
             if (!normalIds.has(item.threadId)) searchOnlyThreadIds.current.add(item.threadId)
           }
-          setSearchThreadIds(response.items.map(item => item.threadId))
+          const nextThreadIds = response.items.map(item => item.threadId)
+          searchThreadIdsRef.current = nextThreadIds
+          setSearchThreadIds(nextThreadIds)
           setSearchCursor(response.nextCursor)
           loadedSearchCursors.current.clear()
           setHistorySearching(false)
@@ -679,9 +692,9 @@ export function useWorkspaceHistory({
           }))
         },
         onError: () => {
+          setSettledSearch(searchCriteria)
           setHistorySearching(false)
           setSearchLoadError(t('搜索会话失败'))
-          latestToast.current('error', t('搜索会话失败'))
         },
       })
     }, HISTORY_SEARCH_DEBOUNCE_MS)
@@ -695,7 +708,7 @@ export function useWorkspaceHistory({
       historySearchAbortController.current?.abort()
       historySearchAbortController.current = null
     }
-  }, [projectId, archived, searchScope, defaultModelId, normalizedHistoryQuery, searchRetryVersion, setWorkspace, t])
+  }, [projectId, archived, searchScope, defaultModelId, normalizedHistoryQuery, searchCriteria, searchOpen, searchRetryVersion, setWorkspace, t])
 
   const retryHistoryBootstrap = useCallback(() => {
     setHistoryBootstrapStatus('loading')
@@ -777,7 +790,7 @@ export function useWorkspaceHistory({
     const cursor = searchCursor
     const query = normalizedHistoryQuery
     if (
-      !query
+      !searchOpen
       || !cursor
       || loadedSearchCursors.current.has(cursor)
       || (
@@ -810,10 +823,13 @@ export function useWorkspaceHistory({
       for (const item of response.items) {
         if (!normalIds.has(item.threadId)) searchOnlyThreadIds.current.add(item.threadId)
       }
-      setSearchThreadIds((current) => appendUniqueThreadIds(
-        current,
+      const nextThreadIds = appendUniqueThreadIds(
+        searchThreadIdsRef.current,
         response.items.map((item) => item.threadId),
-      ))
+      )
+      // 通知刷新等待分页后需要立即读到完整窗口
+      searchThreadIdsRef.current = nextThreadIds
+      setSearchThreadIds(nextThreadIds)
       setSearchCursor(response.nextCursor ?? null)
       setWorkspace((state) => ({
         ...state,
@@ -835,7 +851,6 @@ export function useWorkspaceHistory({
         historySearchLoadingRef.current = false
         setSearchLoadingMore(false)
         setSearchLoadError(t('搜索会话失败'))
-        latestToast.current('error', t('搜索会话失败'))
       }
     }).finally(() => {
       if (historySearchAbortController.current !== controller) return
@@ -844,24 +859,17 @@ export function useWorkspaceHistory({
       historySearchLoadingRef.current = false
       if (!controller.signal.aborted) setSearchLoadingMore(false)
     })
-  }, [projectId, archived, searchScope, defaultModelId, normalizedHistoryQuery, searchCursor, searchLoadError, setWorkspace, t])
+  }, [projectId, archived, searchScope, defaultModelId, normalizedHistoryQuery, searchOpen, searchCursor, searchLoadError, setWorkspace, t])
 
-  const loadMoreHistory = useCallback((isExplicitRetry = false) => {
-    if (normalizedHistoryQuery) loadMoreSearchHistory(isExplicitRetry)
-    else loadMoreNormalHistory(isExplicitRetry)
-  }, [loadMoreNormalHistory, loadMoreSearchHistory, normalizedHistoryQuery])
+  const retryHistoryLoad = useCallback(() => loadMoreNormalHistory(true), [loadMoreNormalHistory])
 
-  const retryHistoryLoad = useCallback(() => {
-    if (
-      normalizedHistoryQuery
-      && searchLoadError
-      && searchCursor == null
-    ) {
-      setSearchRetryVersion((value) => value + 1)
+  const retryHistorySearch = useCallback(() => {
+    if (searchLoadError && searchCursor == null) {
+      setSearchRetryVersion(value => value + 1)
       return
     }
-    loadMoreHistory(true)
-  }, [loadMoreHistory, normalizedHistoryQuery, searchCursor, searchLoadError])
+    loadMoreSearchHistory(true)
+  }, [loadMoreSearchHistory, searchCursor, searchLoadError])
 
   const hydrateTaskTrace = useCallback(async (threadId: string, isRetry = false) => {
     const target = latestWorkspace.current.conversations.find(
@@ -1214,23 +1222,18 @@ export function useWorkspaceHistory({
     }
   }, [onToast, retainConversationDetails, setWorkspace, t])
 
-  const activeHistoryThreadIds = normalizedHistoryQuery
-    ? searchThreadIds
-    : historyThreadIds
+  // 搜索结果共享会话元数据，但不替换侧栏的历史窗口
   const historyConversations = useMemo(() => {
-    const byId = new Map(workspace.conversations.map((item) => [item.threadId, item]))
-    return activeHistoryThreadIds
-      .map((threadId) => byId.get(threadId))
-      .filter((item): item is Conversation => item != null && item.archived === archived
-        && ((normalizedHistoryQuery && searchScope === 'all') || item.projectId === projectId))
-  }, [activeHistoryThreadIds, archived, normalizedHistoryQuery, projectId, searchScope, workspace.conversations])
-  const activeHistoryCursor = normalizedHistoryQuery ? searchCursor : historyCursor
-  const activeHistoryLoadingMore = normalizedHistoryQuery
-    ? isSearchLoadingMore
-    : isHistoryLoadingMore
-  const activeHistoryLoadError = normalizedHistoryQuery
-    ? searchLoadError
-    : historyLoadError
+    const byId = new Map(workspace.conversations.map(item => [item.threadId, item]))
+    return historyThreadIds.map(id => byId.get(id)).filter((item): item is Conversation =>
+      item != null && item.projectId === projectId && item.archived === archived)
+  }, [historyThreadIds, archived, projectId, workspace.conversations])
+  const searchConversations = useMemo(() => {
+    if (!searchOpen || settledSearch !== searchCriteria) return []
+    const byId = new Map(workspace.conversations.map(item => [item.threadId, item]))
+    return searchThreadIds.map(id => byId.get(id)).filter((item): item is Conversation =>
+      item != null && item.archived === archived && (searchScope === 'all' || item.projectId === projectId))
+  }, [searchThreadIds, archived, projectId, searchScope, workspace.conversations, searchOpen, settledSearch, searchCriteria])
 
   useEffect(() => {
     if (modelCatalogStatus === 'loading') return
@@ -1393,18 +1396,23 @@ export function useWorkspaceHistory({
     historyDayRanges,
     historyQuery,
     setHistoryQuery,
-    isHistorySearchActive: Boolean(normalizedHistoryQuery),
-    isHistorySearching,
-    historyCursor: activeHistoryCursor,
-    isHistoryLoadingMore: activeHistoryLoadingMore,
-    historyLoadError: activeHistoryLoadError,
+    isHistorySearching: searchOpen && (isHistorySearching || settledSearch !== searchCriteria),
+    searchConversations,
+    searchCursor,
+    isSearchLoadingMore,
+    searchLoadError: settledSearch === searchCriteria ? searchLoadError : null,
+    loadMoreSearchHistory,
+    retryHistorySearch,
+    historyCursor,
+    isHistoryLoadingMore,
+    historyLoadError,
     isHistoryBootstrapped,
     historyBootstrapStatus,
     hydrationState,
     historyRefresh,
     recheckConversationHistory,
     taskTraceLoadFailed: selectedTaskTraceLoadFailed,
-    loadMoreHistory,
+    loadMoreHistory: loadMoreNormalHistory,
     retryHistoryLoad,
     retryHistoryBootstrap,
     hydrateConversation,

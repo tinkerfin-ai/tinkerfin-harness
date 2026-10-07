@@ -9,15 +9,16 @@ import type { ChatRequestPayload } from '../../src/api/conversation/types'
 
 const user = { user_id: 1, username: 'skill-preview', display_name: '技能预览', avatar_url: null, roles: [], disabled: false }
 
-async function prepare(page: Page, installed: InstalledSkill[] = []) {
+async function prepare(page: Page, installed: InstalledSkill[] = [], language: 'zh-CN' | 'en' = 'zh-CN') {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.clock.setFixedTime(new Date('2026-09-28T09:00:00Z'))
-  await page.addInitScript(user => {
+  await page.addInitScript(({ user, language }) => {
     localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user }))
-    localStorage.setItem('tinkerfin:language', 'zh-CN')
-  }, user)
+    localStorage.setItem('tinkerfin:language', language)
+  }, { user, language })
   await page.route('**/api/**', async route => {
-    const path = new URL(route.request().url()).pathname
+    const url = new URL(route.request().url())
+    const path = url.pathname
     let data: unknown
     if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00.000Z', user }
     else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: '主模型', connectionId: 'provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true }], defaultModelId: 'main' }
@@ -25,7 +26,7 @@ async function prepare(page: Page, installed: InstalledSkill[] = []) {
     else if (path === '/api/conversation/history') data = { items: [], nextCursor: null }
     else if (path === '/api/conversation/skill-thread/title') data = { threadId: 'skill-thread', title: '整理本周资料', titleSource: 'user', titleGenerationStatus: 'skipped', titleSeq: 1 }
     else if (path === '/api/skills/sources') data = [{ id: 'clawhub', name: 'ClawHub', url: 'https://clawhub.ai' }]
-    else if (path === '/api/skills/installations') data = installed
+    else if (path === '/api/skills/installations') data = installed.filter(skill => skill.project_id === null || skill.project_id === url.searchParams.get('project_id'))
     else if (path === '/api/skills/catalog') data = { items: [{ id: 'author/reports', source_id: 'clawhub', name: 'Reports', description: '整理资料并生成报告', revision: 'fixed', author: 'Author', topics: [], updated_at: null }], cursor: null }
     else if (path.startsWith('/api/automation/') && path.endsWith('/counts')) data = {}
     else if (path.startsWith('/api/automation/')) data = { items: [], nextCursor: null }
@@ -171,6 +172,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1265
     await expect(page.getByRole('article')).toHaveCount(gallery.length)
     await page.evaluate(() => document.fonts.ready)
     await expect(page.getByRole('switch')).toHaveCount(0)
+    await expect(page.getByRole('tablist', { name: '技能范围' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '技能状态', exact: true })).toHaveCount(0)
     if (width > 1024) {
       const sources = page.getByRole('navigation', { name: '技能来源' })
@@ -203,7 +205,27 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1265
     expect((await firstCard.boundingBox())!.y - scrollBounds.y).toBeGreaterThanOrEqual(16)
     await page.screenshot({ path: testInfo.outputPath(`skills-hover-${theme}-${width}.png`), fullPage: true })
     await page.emulateMedia({ reducedMotion: 'reduce' })
+    const install = firstCard.getByRole('button', { name: '安装技能：market-research', exact: true })
+    await install.click()
+    const personal = firstCard.getByRole('radio', { name: /个人共用/ })
+    await expect(personal).toBeChecked()
+    await expect(personal).toBeFocused()
+    await expect(firstCard.getByRole('radio', { name: /当前项目/ })).toBeDisabled()
+    await expect(firstCard.getByRole('button', { name: '安装为个人共用', exact: true })).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath(`skills-install-destination-${theme}-${width}.png`), fullPage: true })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await personal.press('Escape')
+    await expect(install).toBeFocused()
+    await page.getByRole('button', { name: '导入技能', exact: true }).click()
+    const importDialog = page.getByRole('dialog', { name: '导入技能', exact: true })
+    await expect(importDialog.getByRole('radio', { name: /当前项目/ })).toBeChecked()
+    for (const option of await importDialog.getByRole('radio').all()) {
+      expect(await option.evaluate(element => element.closest('label')!.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44)
+    }
+    await page.screenshot({ path: testInfo.outputPath(`skills-import-destination-${theme}-${width}.png`), fullPage: true })
+    await importDialog.getByRole('button', { name: '取消', exact: true }).click()
     await page.getByRole('tab', { name: '我的', exact: true }).click()
+    await expect(page.getByRole('tablist', { name: '技能范围' })).toBeVisible()
     await expect(page.getByRole('switch')).toHaveCount(gallery.length)
     await expect(page.locator('select')).toHaveCount(0)
     const picker = page.getByRole('button', { name: '技能状态', exact: true })
@@ -312,8 +334,9 @@ test('滚动加载下一页，失败保留卡片并原位重试', async ({ page 
   await expect(retry).toHaveCount(0)
 })
 
-test('卡片空白处打开详情，安装按钮独立执行', async ({ page }) => {
+for (const target of [{ projectId: 'project-1', label: '当前项目', action: '安装到当前项目', status: '当前项目已安装' }, { projectId: null, label: '个人共用', action: '安装为个人共用', status: '个人共用已安装' }]) test(`卡片独立打开详情并明确安装到${target.label}`, async ({ page }) => {
   const installed: InstalledSkill[] = []
+  const requests: { project_id: string | null }[] = []
   await prepare(page, installed)
   await page.route('**/api/skills/catalog/detail?**', async route => {
     await route.fulfill({ json: { code: 0, message: 'success', data: {
@@ -323,8 +346,10 @@ test('卡片空白处打开详情，安装按钮独立执行', async ({ page }) 
   })
   await page.route('**/api/skills/installations', async route => {
     if (route.request().method() !== 'POST') { await route.fallback(); return }
-    installed.push(composerSkill)
-    await route.fulfill({ json: { code: 0, message: 'success', data: composerSkill } })
+    requests.push(route.request().postDataJSON())
+    const skill = { ...composerSkill, project_id: target.projectId }
+    installed.push(skill)
+    await route.fulfill({ json: { code: 0, message: 'success', data: skill } })
   })
   await installProjectScope(page)
   await page.goto('/?page=skills')
@@ -333,8 +358,56 @@ test('卡片空白处打开详情，安装按钮独立执行', async ({ page }) 
   await expect(page.getByRole('dialog', { name: 'Reports', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '关闭', exact: true }).click()
   await card.getByRole('button', { name: '安装技能：Reports', exact: true }).click()
-  await expect(card.getByText('已安装', { exact: true })).toBeVisible()
+  await expect(card.getByRole('radio', { name: /当前项目/ })).toBeFocused()
+  expect(requests).toHaveLength(0)
+  if (target.projectId === null) await page.keyboard.press('ArrowDown')
+  await expect(card.getByRole('radio', { name: new RegExp(target.label) })).toBeChecked()
+  await card.getByRole('button', { name: target.action, exact: true }).click()
+  await expect(card.getByText(target.status, { exact: true })).toBeVisible()
+  expect(requests).toEqual([expect.objectContaining({ project_id: target.projectId })])
   await expect(page.getByRole('dialog')).toHaveCount(0)
+})
+
+test('个人管理与发现之间可连续使用方向键导航', async ({ page }) => {
+  await prepare(page)
+  await installProjectScope(page)
+  await page.goto('/?page=skills&skillView=mine')
+  await page.getByRole('tab', { name: '当前项目', exact: true }).focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(page.getByRole('tab', { name: '个人共用', exact: true })).toBeFocused()
+  await page.getByRole('tab', { name: '我的', exact: true }).focus()
+  await page.keyboard.press('ArrowLeft')
+  await expect(page.getByRole('tab', { name: '发现', exact: true })).toBeFocused()
+  await expect(page.getByRole('tablist', { name: '技能范围' })).toHaveCount(0)
+  await page.keyboard.press('ArrowRight')
+  await expect(page.getByRole('tab', { name: '我的', exact: true })).toBeFocused()
+  await expect(page.getByRole('tab', { name: '个人共用', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await page.keyboard.press('ArrowLeft')
+  await page.getByRole('button', { name: '导入技能', exact: true }).click()
+  await page.getByRole('textbox', { name: 'GitHub 地址' }).fill('https://github.com/author/repository')
+  await expect(page.getByRole('radio', { name: /当前项目/ })).toBeChecked()
+  await page.goBack()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: '个人共用', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await page.goForward()
+  await expect(page.getByRole('tab', { name: '发现', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+})
+
+test('英文安装和导入位置在窄屏容纳长项目名', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 320, height: 960 })
+  await prepare(page, [], 'en')
+  await page.route('**/api/projects', route => route.fulfill({ json: { code: 0, message: 'success', data: [{ id: 'project-1', name: 'InvestmentResearchProjectWithAnUnbrokenLongName', createdAt: '2030-01-01', updatedAt: '2030-01-01' }] } }))
+  await page.goto('/?page=skills')
+  await page.getByRole('button', { name: 'Install skill: Reports', exact: true }).click()
+  await expect(page.getByRole('radio', { name: /Current project/ })).toBeChecked()
+  await expect(page.getByRole('button', { name: 'Install in current project', exact: true })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('skills-install-destination-en-320.png'), fullPage: true })
+  await page.getByRole('button', { name: 'Import skills', exact: true }).click()
+  await expect(page.getByRole('dialog').getByRole('group', { name: 'Install location' })).toBeVisible()
+  expect(await page.getByRole('dialog').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('skills-import-destination-en-320.png'), fullPage: true })
 })
 
 test('更新失败保留卡片，重试复用操作 ID 并区分最新内容', async ({ page }, testInfo) => {

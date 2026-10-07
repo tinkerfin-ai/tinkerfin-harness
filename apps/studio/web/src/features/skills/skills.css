@@ -65,6 +65,23 @@
 .skills-card-footer { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); margin-top: auto; padding-top: var(--space-5); min-height: var(--control-xs); }
 .skills-author { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); font-size: var(--type-caption-size); }
 .skills-install { flex-shrink: 0; min-height: var(--control-xs); padding-inline: var(--space-3); border: 0; border-radius: var(--radius-md); box-shadow: var(--shadow-1); }
+.skills-install-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--space-2); min-width: 0; }
+.skills-install-actions .skills-installed { white-space: normal; text-align: right; }
+.skills-install-form { position: relative; z-index: var(--layer-local); margin-top: var(--space-4); cursor: default; }
+.skills-install-form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-3); }
+.skills-destination { display: grid; gap: var(--space-1); min-width: 0; margin: 0; padding: 0; border: 0; }
+.skills-destination legend { margin-bottom: var(--space-2); padding: 0; font-size: var(--type-meta-size); font-weight: var(--weight-ui); }
+.skills-destination-option { display: flex; align-items: center; gap: var(--space-3); min-height: var(--control-lg); padding: var(--space-2); border-radius: var(--radius-md); cursor: pointer; }
+.skills-destination-option:hover:not(:has(input:disabled)) { background: var(--color-hover); }
+.skills-destination-option:active:not(:has(input:disabled)) { background: var(--color-active); }
+.skills-destination-option:has(input:checked) { background: var(--color-subtle); }
+.skills-destination-option:has(input:disabled) { cursor: default; color: var(--color-text-secondary); }
+.skills-destination-option input { flex-shrink: 0; width: var(--space-4); height: var(--space-4); margin: 0; accent-color: var(--color-brand); }
+.skills-destination-option input:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
+.skills-destination-option > span { min-width: 0; font-size: var(--type-meta-size); font-weight: var(--weight-ui); }
+.skills-destination-option small { display: block; margin-top: var(--space-1); color: var(--color-text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line); overflow-wrap: anywhere; }
+.skills-destination-installed { margin-inline-start: var(--space-2); color: var(--color-text-secondary); }
+.skills-import-content > .skills-destination { margin-bottom: var(--space-5); }
 .skills-installed { display: flex; align-items: center; gap: var(--space-1); min-height: var(--control-xs); color: var(--color-text-secondary); font-size: var(--type-caption-size); white-space: nowrap; }
 .skills-installed > svg { color: var(--color-success-text); }
 .skills-switch { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-xs); padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); font-size: var(--type-caption-size); white-space: nowrap; }

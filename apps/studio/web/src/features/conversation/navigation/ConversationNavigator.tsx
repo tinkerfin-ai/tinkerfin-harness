@@ -2,6 +2,7 @@ import { List } from 'lucide-react'
 import { memo, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { Button, Dialog, IconButton, Tooltip } from '../../../components/ui'
+import { restoreFocus } from '../../../components/ui/focus'
 import { useI18n } from '../../../i18n'
 import type { ConversationTurn } from './turns'
 import './navigation.css'
@@ -72,7 +73,7 @@ export const ConversationNavigator = memo(function ConversationNavigator({
 
   useEffect(() => {
     // 先解除工作区的模态隔离，再恢复取消操作的入口焦点
-    if (previouslyOpen.current && !open && !pendingId) trigger.current?.focus()
+    if (previouslyOpen.current && !open && !pendingId) restoreFocus(trigger.current)
     previouslyOpen.current = open
   }, [open, pendingId])
 

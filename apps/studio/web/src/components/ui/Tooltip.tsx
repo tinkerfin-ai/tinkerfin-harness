@@ -1,6 +1,7 @@
 import { cloneElement, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties, HTMLAttributes, ReactElement, ReactNode, Ref, RefObject } from 'react'
 import { createPortal } from 'react-dom'
+import { isRestoringFocus } from './focus'
 
 type TooltipPlacement = 'top' | 'bottom' | 'left' | 'right'
 interface TooltipTriggerProps extends HTMLAttributes<HTMLElement> { ref?: Ref<HTMLElement> }
@@ -116,7 +117,7 @@ export function Tooltip({ children, content, placement = 'bottom', enabled = tru
     onPointerEnter: event => { touch.current = event.pointerType === 'touch'; children.props.onPointerEnter?.(event) },
     onPointerMove: event => { children.props.onPointerMove?.(event); if (event.pointerType !== 'touch') reveal('pointer') },
     onPointerLeave: event => { children.props.onPointerLeave?.(event); if (event.pointerType !== 'touch') leave(event.relatedTarget) },
-    onFocus: event => { children.props.onFocus?.(event); if (event.currentTarget.matches(':focus-visible')) reveal('keyboard') },
+    onFocus: event => { children.props.onFocus?.(event); if (!isRestoringFocus(event.currentTarget) && event.currentTarget.matches(':focus-visible')) reveal('keyboard') },
     onBlur: event => { children.props.onBlur?.(event); keyboardFocus.current = false; sync() },
     onClick: event => { children.props.onClick?.(event); if (touchToggle && touch.current) { if (open) dismiss(); else reveal('pointer') } else dismiss() },
   })

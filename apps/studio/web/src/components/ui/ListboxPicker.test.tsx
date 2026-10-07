@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { ListboxPicker } from './ListboxPicker'
 
-function PortalPicker() {
+function PortalPicker({ tooltip }: { tooltip?: string }) {
   const [open, setOpen] = useState(false)
   const [value, setValue] = useState<'all' | 'model'>('all')
   return (
@@ -16,6 +16,7 @@ function PortalPicker() {
       onOpenChange={setOpen}
       onChange={setValue}
       triggerLabel="类型筛选"
+      triggerTooltip={tooltip}
       listboxLabel="类型"
       rootClassName="picker-root"
       triggerClassName="picker-trigger"
@@ -30,6 +31,19 @@ function PortalPicker() {
 }
 
 describe('ListboxPicker', () => {
+  it('带提示的范围选择器取消后恢复焦点，不重弹提示', async () => {
+    const user = userEvent.setup()
+    render(<PortalPicker tooltip="选择类型" />)
+    const trigger = screen.getByRole('button', { name: '类型筛选' })
+    await user.tab()
+    expect(screen.getByRole('tooltip')).toHaveTextContent('选择类型')
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('listbox', { name: '类型' })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(trigger).toHaveFocus()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
   it('keeps portal options inside the shared keyboard and focus contract', () => {
     render(<PortalPicker />)
 

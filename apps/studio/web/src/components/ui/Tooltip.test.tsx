@@ -1,9 +1,11 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createRef } from 'react'
+import { createRef, useRef, useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { Tooltip } from './Tooltip'
 import { IconButton } from './IconButton'
+import { Dialog } from './Dialog'
+import { restoreFocus } from './focus'
 
 describe('Tooltip', () => {
   it('鼠标显示统一提示，移入提示可继续阅读，移出后关闭', async () => {
@@ -30,6 +32,56 @@ describe('Tooltip', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent('设置说明')
     await interaction.keyboard('{Escape}')
     expect(ref.current).toHaveFocus()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
+  it('关闭弹框恢复入口焦点不显示提示，主动键盘进入仍可显示', async () => {
+    function SearchHarness() {
+      const [open, setOpen] = useState(false)
+      const trigger = useRef<HTMLButtonElement>(null)
+      const input = useRef<HTMLInputElement>(null)
+      return <>
+        <Tooltip content="搜索会话"><button ref={trigger} type="button" onClick={() => setOpen(true)}>搜索</button></Tooltip>
+        <button type="button">下一项</button>
+        <Dialog open={open} title="搜索会话" initialFocusRef={input} restoreFocusTo={trigger.current} onClose={() => setOpen(false)}>
+          <input ref={input} aria-label="搜索对话" />
+        </Dialog>
+      </>
+    }
+    const interaction = userEvent.setup()
+    render(<SearchHarness />)
+    const trigger = screen.getByRole('button', { name: '搜索' })
+    await interaction.click(trigger)
+    expect(screen.getByRole('textbox', { name: '搜索对话' })).toHaveFocus()
+    await interaction.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    await interaction.tab()
+    await interaction.tab({ shift: true })
+    expect(trigger).toHaveFocus()
+    expect(screen.getByRole('tooltip')).toHaveTextContent('搜索会话')
+  })
+
+  it('恢复入口不阻断后续悬停及主动键盘提示', async () => {
+    const interaction = userEvent.setup()
+    render(<>
+      <Tooltip content="搜索会话"><button type="button">搜索</button></Tooltip>
+      <button type="button">下一项</button>
+    </>)
+    const trigger = screen.getByRole('button', { name: '搜索' })
+    act(() => restoreFocus(trigger, { preventScroll: true }))
+    expect(trigger).toHaveFocus()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    await interaction.hover(trigger)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('搜索会话')
+    await interaction.unhover(trigger)
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    await interaction.tab()
+    await interaction.tab({ shift: true })
+    expect(screen.getByRole('tooltip')).toHaveTextContent('搜索会话')
+    await interaction.keyboard('{Escape}')
+    expect(trigger).toHaveFocus()
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
   })
 

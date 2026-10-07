@@ -24,6 +24,8 @@ import type { AuthUser } from '../../api/auth/types'
 import {
   Button,
   ErrorBoundary,
+  Dialog,
+  FeedbackState,
   useThemePreference,
   ViewTabs,
 } from '../../components/ui'
@@ -43,6 +45,7 @@ import { useAttachments } from '../conversation/useAttachments'
 import { useComposerSkills } from '../conversation/useComposerSkills'
 import { ComposerModelPicker } from './components/ComposerModelPicker'
 import { Sidebar } from './components/Sidebar'
+import { ConversationSearchDialog } from './components/ConversationSearchDialog'
 import {
   ConversationViewport,
 } from './components/ConversationViewport'
@@ -170,6 +173,8 @@ function ProjectWorkspaceScreen({
   useEffect(() => startNotificationFeed(projectId), [projectId])
   const [archivedHistory, setArchivedHistory] = useState(false)
   const [searchScope, setSearchScope] = useState<'project' | 'all'>('project')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchReturnTo, setSearchReturnTo] = useState<HTMLElement | null>(null)
   const {
     workspace,
     setWorkspace,
@@ -277,8 +282,8 @@ function ProjectWorkspaceScreen({
     historyDayRanges,
     historyQuery,
     setHistoryQuery,
-    isHistorySearchActive,
     isHistorySearching,
+    searchConversations, searchCursor, searchLoadError, isSearchLoadingMore, loadMoreSearchHistory, retryHistorySearch,
     historyCursor,
     isHistoryLoadingMore,
     historyLoadError,
@@ -295,7 +300,7 @@ function ProjectWorkspaceScreen({
     retryTaskTrace,
     loadOlderTrace,
   } = useWorkspaceHistory({
-    projectId, archived: archivedHistory, searchScope,
+    projectId, archived: archivedHistory, searchScope, searchOpen,
     preferDraft: Boolean(scope.drafts.get(`${projectId}:`)?.doc.length || scope.attachments.get(`${projectId}:`)?.length),
     workspace,
     setWorkspace,
@@ -1121,8 +1126,14 @@ function ProjectWorkspaceScreen({
     void locate()
   }, [messageWindow, pushToast, t, taskDetailPageOpen, closeTaskDrawer])
 
+  const closeConversationSearch = () => {
+    setSearchOpen(false)
+    setHistoryQuery('')
+    setSearchScope('project')
+  }
+
   // Portal 对话框打开时整块工作区退出辅助技术与键盘路径，只保留最上层操作
-  const portalModalActive = Boolean(projectActions.moving) || memoriesModalOpen || scope.modalOpen || settingsOpen || dialog != null || directoryOpen || automationModalOpen || skillsModalOpen
+  const portalModalActive = searchOpen || Boolean(projectActions.moving) || memoriesModalOpen || scope.modalOpen || settingsOpen || dialog != null || directoryOpen || automationModalOpen || skillsModalOpen
   const taskTraceLauncher = taskTraceBlocked ? undefined : (
     <TodoTraceLauncher
       ref={taskDrawer.launcherRef}
@@ -1157,12 +1168,10 @@ function ProjectWorkspaceScreen({
       inert={portalModalActive || undefined}
     >
       <Sidebar
-        projectNames={Object.fromEntries(scope.projects.map(project => [project.id, project.name]))}
         onOpenConversation={() => { setActivePage('conversation'); navigation.closeOverlay(false) }}
         onOpenMemories={() => { messageWindow.captureReadingPosition(); taskDrawer.close(false); changeDirectoryOpen(false); navigation.closeOverlay(false); setActivePage('memories') }}
         memoriesActive={activePage === 'memories'}
         archivedHistory={archivedHistory} onArchivedHistoryChange={setArchivedHistory}
-        searchScope={searchScope} onSearchScopeChange={setSearchScope}
         onArchive={projectActions.archive} onMove={projectActions.move}
         projectSelector={<ProjectSwitcher scope={scope} />}
         onChooseProject={() => { navigation.requestExpanded(); requestAnimationFrame(() => appShell.current?.querySelector<HTMLButtonElement>('.project-switcher-trigger')?.focus()) }}
@@ -1185,12 +1194,13 @@ function ProjectWorkspaceScreen({
           if (pendingConversations.selectedRunId === runId) newConversation()
         }}
         historyDayRanges={historyDayRanges}
-        historyQuery={historyQuery}
-        onHistoryQueryChange={setHistoryQuery}
-        isHistorySearchActive={isHistorySearchActive}
-        isHistorySearching={isHistorySearching}
+        searchOpen={searchOpen}
+        searchTriggerRef={setSearchReturnTo}
+        onOpenSearch={() => {
+          navigation.closeOverlay(false)
+          setSearchOpen(true)
+        }}
         mode={navigation.mode}
-        settledMode={navigation.settledMode}
         overlayOpen={navigation.overlayOpen}
         wideInteractive={navigation.wideInteractive}
         railInteractive={navigation.railInteractive}
@@ -1493,6 +1503,24 @@ function ProjectWorkspaceScreen({
         />
       </ErrorBoundary>
       </div>
+      {searchOpen && <ErrorBoundary
+        fallback={({ reset }) => <Dialog open title={t('搜索会话')} className="modal-dialog--action conversation-search-dialog"
+          restoreFocusTo={navigation.mode === 'overlay' ? navigation.overlayTriggerRef.current : searchReturnTo} onClose={closeConversationSearch}>
+          <div className="conversation-search-body"><FeedbackState kind="error" appearance="retry" title={t('搜索会话失败')} onRetry={reset} /></div>
+        </Dialog>}>
+        <ConversationSearchDialog query={historyQuery} scope={searchScope} results={searchConversations}
+          projectNames={Object.fromEntries(scope.projects.map(project => [project.id, project.name]))}
+          loading={isHistorySearching} loadingMore={isSearchLoadingMore} error={searchLoadError}
+          hasMore={searchCursor != null} restoreFocusTo={navigation.mode === 'overlay' ? navigation.overlayTriggerRef.current : searchReturnTo}
+          onQueryChange={setHistoryQuery} onScopeChange={setSearchScope}
+          onLoadMore={() => loadMoreSearchHistory(true)} onRetry={retryHistorySearch} onClose={closeConversationSearch}
+          onSelect={target => {
+            closeConversationSearch()
+            if (target.projectId !== projectId) { scope.select(target.projectId, target.threadId); return }
+            setActivePage('conversation')
+            selectConversation(target.threadId)
+          }} />
+      </ErrorBoundary>}
       {projectActions.moving && <MoveConversationDialog conversation={projectActions.moving.conversation} projects={scope.projects} trigger={projectActions.moving.trigger} pending={projectActions.pending} error={projectActions.error} onConfirm={projectActions.confirmMove} onClose={projectActions.close} />}
       <WorkspaceDialogs
         dialog={dialog}

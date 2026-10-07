@@ -2,6 +2,7 @@ import {
   BookOpenCheck,
   AlarmClock,
   BrainCircuit,
+  CircleEllipsis,
   Archive,
   ArchiveRestore,
   FolderClosed,
@@ -28,10 +29,11 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent, ReactNode } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent, ReactNode, Ref } from 'react'
 
 import type { AuthUser } from '../../../api/auth/types'
 import { BrandLogo, Button, FeedbackState, IconButton, OverlayScrollbar, UserAvatar } from '../../../components/ui'
+import { restoreFocus } from '../../../components/ui/focus'
 import { useI18n } from '../../../i18n'
 import { isConversationRunning } from '../../../lib/workspace'
 import type { Conversation, WorkspaceState } from '../../../types'
@@ -118,7 +120,6 @@ export function ConversationItem({
 const NO_PENDING_CONVERSATIONS: PendingConversation[] = []
 
 export interface SidebarProps {
-  projectNames: Record<string, string>
   projectSelector: ReactNode
   onChooseProject: () => void
   onOpenConversation: () => void
@@ -126,8 +127,6 @@ export interface SidebarProps {
   memoriesActive: boolean
   archivedHistory: boolean
   onArchivedHistoryChange: (value: boolean) => void
-  searchScope: 'project' | 'all'
-  onSearchScopeChange: (value: 'project' | 'all') => void
   onArchive: (threadId: string) => void
   onMove: (threadId: string, trigger: HTMLElement) => void
 
@@ -139,12 +138,10 @@ export interface SidebarProps {
   workspace: WorkspaceState
   historyConversations: Conversation[]
   historyDayRanges: number[]
-  historyQuery: string
-  onHistoryQueryChange: (query: string) => void
-  isHistorySearchActive: boolean
-  isHistorySearching: boolean
+  searchOpen: boolean
+  searchTriggerRef?: Ref<HTMLButtonElement>
+  onOpenSearch: (trigger: HTMLButtonElement) => void
   mode: SidebarMode
-  settledMode: SidebarMode
   overlayOpen: boolean
   wideInteractive: boolean
   railInteractive: boolean
@@ -173,8 +170,7 @@ export interface SidebarProps {
 }
 
 export function Sidebar({
-  projectNames,
-  projectSelector, onChooseProject, onOpenConversation, onOpenMemories, memoriesActive, archivedHistory, onArchivedHistoryChange, searchScope, onSearchScopeChange, onArchive, onMove,
+  projectSelector, onChooseProject, onOpenConversation, onOpenMemories, memoriesActive, archivedHistory, onArchivedHistoryChange, onArchive, onMove,
   pendingConversations = NO_PENDING_CONVERSATIONS,
   selectedPendingRunId,
   onSelectPending,
@@ -183,12 +179,10 @@ export function Sidebar({
   workspace,
   historyConversations,
   historyDayRanges,
-  historyQuery,
-  onHistoryQueryChange,
-  isHistorySearchActive,
-  isHistorySearching,
+  searchOpen,
+  searchTriggerRef,
+  onOpenSearch,
   mode,
-  settledMode,
   overlayOpen,
   wideInteractive,
   railInteractive,
@@ -219,7 +213,6 @@ export function Sidebar({
   const newConversationActive = !skillsActive && !memoriesActive && !automationActive && !workspace.currentThreadId && !selectedPendingRunId
   const locatedSubmission = useRef<string | null>(null)
   const programmaticScroll = useRef(false)
-  const [isSearchOpen, setSearchOpen] = useState(false)
   const [userMenu, setUserMenu] = useState(false)
   const [stickyHistoryTitle, setStickyHistoryTitle] = useState('')
   const [openMenu, setOpenMenu] = useState<{
@@ -234,10 +227,9 @@ export function Sidebar({
   const userMenuPopupRef = useRef<HTMLDivElement>(null)
   const userMenuButtonRef = useRef<HTMLButtonElement>(null)
   const historyScrollRef = useRef<HTMLDivElement>(null)
-  const searchInputRef = useRef<HTMLInputElement>(null)
-  const searchTriggerRef = useRef<HTMLButtonElement>(null)
   const overlayCloseButtonRef = useRef<HTMLButtonElement>(null)
-  const pendingSearchFocusRef = useRef(false)
+  const archiveButtonRef = useRef<HTMLButtonElement>(null)
+  const focusArchiveAfterExpand = useRef(false)
   const lockedHistoryScrollTop = useRef(0)
   const historyLoadSentinelRef = useRef<HTMLDivElement>(null)
   const paginationArmedRef = useRef(true)
@@ -263,13 +255,19 @@ export function Sidebar({
     onRetryLoadMore,
   }
   const groups = useMemo(
-    () => groupConversationHistory([...historyConversations, ...pendingConversations.filter(item => !isHistorySearchActive || item.conversation.title.toLocaleLowerCase().includes(historyQuery.toLocaleLowerCase())).map(item => item.conversation)], historyDayRanges, new Date(), locale),
-    [historyConversations, pendingConversations, historyDayRanges, locale, isHistorySearchActive, historyQuery],
+    () => groupConversationHistory([...historyConversations, ...pendingConversations.map(item => item.conversation)], historyDayRanges, new Date(), locale),
+    [historyConversations, pendingConversations, historyDayRanges, locale],
   )
   const menuConversation = openMenu
     ? workspace.conversations.find((item) => item.threadId === openMenu.threadId)
     : undefined
   const isOverlayHidden = mode === 'overlay' && !overlayOpen
+  useLayoutEffect(() => {
+    if (!wideInteractive || !focusArchiveAfterExpand.current) return
+    focusArchiveAfterExpand.current = false
+    restoreFocus(archiveButtonRef.current)
+  }, [wideInteractive])
+
   const capturePaginationAnchor = useCallback(() => {
     const root = historyScrollRef.current
     if (!root) return
@@ -361,53 +359,6 @@ export function Sidebar({
     })
   }
 
-  const focusSearch = () => {
-    window.requestAnimationFrame(() => searchInputRef.current?.focus())
-  }
-
-  const openSearch = (fromRail = false) => {
-    setSearchOpen(true)
-    if (fromRail) {
-      pendingSearchFocusRef.current = true
-      onRequestExpanded()
-    } else {
-      focusSearch()
-    }
-  }
-
-  const clearAndCloseSearch = (restoreFocus = true) => {
-    onHistoryQueryChange('')
-    setSearchOpen(false)
-    pendingSearchFocusRef.current = false
-    if (restoreFocus) window.requestAnimationFrame(() => searchTriggerRef.current?.focus())
-  }
-
-  useEffect(() => {
-    if (
-      pendingSearchFocusRef.current
-      && isSearchOpen
-      && settledMode === 'expanded'
-    ) {
-      pendingSearchFocusRef.current = false
-      focusSearch()
-    }
-  }, [isSearchOpen, settledMode])
-
-  useEffect(() => {
-    if (!isSearchOpen) return
-    const handleOutsidePointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Node && rootRef.current?.contains(target)) return
-      if (historyQuery.trim()) {
-        searchInputRef.current?.blur()
-      } else {
-        setSearchOpen(false)
-      }
-    }
-    document.addEventListener('pointerdown', handleOutsidePointerDown)
-    return () => document.removeEventListener('pointerdown', handleOutsidePointerDown)
-  }, [historyQuery, isSearchOpen])
-
   useEffect(() => {
     if (wideInteractive) return
     setOpenMenu(null)
@@ -476,7 +427,7 @@ export function Sidebar({
   }, [groups, updateStickyHistoryTitle])
 
   useLayoutEffect(() => {
-    if (!newSubmission || locatedSubmission.current === newSubmission || !wideInteractive || isHistorySearchActive) return
+    if (!newSubmission || locatedSubmission.current === newSubmission || !wideInteractive) return
     const root = historyScrollRef.current
     const heading = root?.querySelector<HTMLElement>('#conversation-group-today')
     if (!root || !heading) return
@@ -485,7 +436,7 @@ export function Sidebar({
     programmaticScroll.current = true
     root.scrollTop += heading.getBoundingClientRect().top - root.getBoundingClientRect().top
     updateStickyHistoryTitle(root)
-  }, [newSubmission, groups, wideInteractive, isHistorySearchActive, updateStickyHistoryTitle])
+  }, [newSubmission, groups, wideInteractive, updateStickyHistoryTitle])
 
   useEffect(() => {
     paginationArmedRef.current = true
@@ -509,7 +460,7 @@ export function Sidebar({
     })
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [historyQuery, requestHistoryPage])
+  }, [requestHistoryPage])
 
   useLayoutEffect(() => {
     const root = historyScrollRef.current
@@ -591,7 +542,7 @@ export function Sidebar({
       if (
         event.defaultPrevented
         || backgroundInert
-        || !event.metaKey
+        || (!event.metaKey && !event.ctrlKey)
         || event.key.toLocaleLowerCase('en-US') !== 'k'
       ) return
       event.preventDefault()
@@ -612,7 +563,6 @@ export function Sidebar({
     return <ConversationItem
       key={pending ? `pending:${pending.runId}` : conversation.threadId}
       conversation={conversation}
-      projectName={isHistorySearchActive && searchScope === 'all' ? projectNames[conversation.projectId] : undefined}
       pendingRunId={pending?.runId}
       isActive={!automationActive && !skillsActive && !memoriesActive && (pending
         ? selectedPendingRunId === pending.runId
@@ -679,48 +629,33 @@ export function Sidebar({
 
           {projectSelector}
           <nav className="sidebar-feature-nav ui-scrollbar" aria-label={t('工作区功能')}>
-            <Button type="button" variant="ghost" leadingIcon={<SquarePen size={18} />} selected={newConversationActive} aria-current={newConversationActive ? 'page' : undefined} onClick={onNew}>{t('新会话')}</Button>
             <Button type="button" variant="ghost" leadingIcon={<BookOpenCheck size={18} />} selected={skillsActive} aria-current={skillsActive ? 'page' : undefined} onClick={onOpenSkills}>{t('技能库')}</Button>
             <Button type="button" variant="ghost" leadingIcon={<BrainCircuit size={18} />} selected={memoriesActive} aria-current={memoriesActive ? 'page' : undefined} onClick={onOpenMemories}>{t('记忆管理')}</Button>
             <Button type="button" variant="ghost" leadingIcon={<AlarmClock size={18} />} selected={automationActive} aria-current={automationActive ? 'page' : undefined} onClick={onOpenAutomation}>{t('自动化')}</Button>
+            <Button type="button" variant="ghost" leadingIcon={<CircleEllipsis size={18} />} disabled>{t('更多')}</Button>
           </nav>
           <div className="sidebar-history-toolbar">
-              <IconButton
-                ref={searchTriggerRef}
-                size="sm"
-                label={t('搜索会话')}
-                tooltip={t('搜索会话')}
-                icon={<Search size={17} />}
-                selected={isSearchOpen || isHistorySearchActive}
-                aria-expanded={isSearchOpen}
-                aria-controls="sidebar-search"
-                onClick={() => openSearch(false)}
-              />
+            <IconButton
+              ref={archiveButtonRef}
+              label={t(archivedHistory ? '返回会话记录' : '已归档会话')}
+              tooltip={t(archivedHistory ? '返回会话记录' : '已归档会话')}
+              icon={archivedHistory ? <ArchiveRestore size={17} /> : <Archive size={17} />}
+              selected={archivedHistory}
+              onClick={() => onArchivedHistoryChange(!archivedHistory)}
+            />
+            <IconButton
+              ref={wideInteractive ? searchTriggerRef : undefined}
+              size="xs"
+              label={t('搜索会话')}
+              tooltip={t('搜索会话')}
+              icon={<Search size={17} />}
+              selected={searchOpen}
+              aria-expanded={searchOpen}
+              aria-haspopup="dialog"
+              onClick={event => onOpenSearch(event.currentTarget)}
+            />
             <IconButton label={t('新会话')} tooltip={t('新会话')} icon={<SquarePen size={17} />} aria-keyshortcuts="Meta+K Control+K" onClick={onNew} />
           </div>
-          <div className={`sidebar-history-search${isSearchOpen ? ' is-open' : ''}`} inert={!isSearchOpen || undefined} aria-hidden={!isSearchOpen || undefined}>
-            <label id="sidebar-search" className="sidebar-search">
-              <Search size={16} aria-hidden="true" />
-              <input
-                ref={searchInputRef}
-                aria-label={t('搜索会话')}
-                value={historyQuery}
-                onChange={(event) => onHistoryQueryChange(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Escape') return
-                  event.preventDefault()
-                  clearAndCloseSearch()
-                }}
-                placeholder={t('搜索对话')}
-              />
-              <IconButton label={t('清除搜索')} icon={<X size={16} />} onClick={() => clearAndCloseSearch()} />
-            </label>
-            <div className="sidebar-search-scope" role="group" aria-label={t('搜索范围')}>
-              <Button type="button" variant="text" selected={searchScope === 'project'} onClick={() => onSearchScopeChange('project')}>{t('当前项目')}</Button>
-              <Button type="button" variant="text" selected={searchScope === 'all'} onClick={() => onSearchScopeChange('all')}>{t('全部项目')}</Button>
-            </div>
-          </div>
-
           <div className="conversation-history">
             <div
               className={`conversation-sticky-title${stickyHistoryTitle ? ' is-visible' : ''}`}
@@ -772,16 +707,7 @@ export function Sidebar({
                     </section>
                   </Fragment>
                 ))}
-              {isHistorySearching && (
-                <div className="history-skeleton-list history-search-skeletons" aria-label={t('正在搜索会话')}>
-                  {Array.from({ length: 5 }, (_, index) => (
-                    <div key={index} className="history-skeleton" data-testid="history-search-skeleton" aria-hidden="true"><span /></div>
-                  ))}
-                </div>
-              )}
-              {!isHistorySearching && groups.length === 0 && !loadMoreError && (
-                <p className="no-search-result">{historyQuery.trim() ? t('没有匹配的对话') : t('暂无最近对话')}</p>
-              )}
+              {groups.length === 0 && !loadMoreError && <p className="no-search-result">{t('暂无最近对话')}</p>}
               {/* 尾部槽位在可分页期间保持固定高度，loading 切换不再改变原生滚动条几何 */}
               {(hasMore || isLoadingMore || loadMoreError) && (
                 <div className="history-pagination-slot">
@@ -796,7 +722,6 @@ export function Sidebar({
                   ) : null}
                 </div>
               )}
-              <Button type="button" variant="text" className="sidebar-archive-entry" leadingIcon={archivedHistory ? <ArchiveRestore size={16} /> : <Archive size={16} />} onClick={() => onArchivedHistoryChange(!archivedHistory)}>{t(archivedHistory ? '返回会话记录' : '已归档会话')}</Button>
               <div ref={historyLoadSentinelRef} className="history-load-sentinel" aria-hidden="true" />
               </div>
             </div>
@@ -875,14 +800,27 @@ export function Sidebar({
           <IconButton label={t('记忆管理')} tooltipPlacement="right" tooltip={t('记忆管理')} icon={<BrainCircuit size={18} />} tabIndex={railInteractive ? 0 : -1} selected={memoriesActive} aria-current={memoriesActive ? 'page' : undefined} onClick={onOpenMemories} />
           <IconButton label={t('自动化')} tooltipPlacement="right" tooltip={t('自动化')} icon={<AlarmClock size={18} />} selected={automationActive} aria-current={automationActive ? 'page' : undefined} tabIndex={railInteractive ? 0 : -1} onClick={onOpenAutomation} />
           <IconButton
-            label={historyQuery ? t('搜索会话，当前查询：{query}', { query: historyQuery }) : t('搜索会话')}
+            label={t(archivedHistory ? '返回会话记录' : '已归档会话')}
+            tooltipPlacement="right" tooltip={t(archivedHistory ? '返回会话记录' : '已归档会话')}
+            icon={archivedHistory ? <ArchiveRestore size={18} /> : <Archive size={18} />}
+            selected={archivedHistory}
+            tabIndex={railInteractive ? 0 : -1}
+            onClick={() => {
+              focusArchiveAfterExpand.current = true
+              onArchivedHistoryChange(!archivedHistory)
+              onRequestExpanded()
+            }}
+          />
+          <IconButton
+            ref={railInteractive ? searchTriggerRef : undefined}
+            label={t('搜索会话')}
             tooltipPlacement="right" tooltip={t('搜索会话')}
             icon={<Search size={18} />}
-            selected={isSearchOpen || isHistorySearchActive}
+            selected={searchOpen}
             tabIndex={railInteractive ? 0 : -1}
-            aria-expanded={isSearchOpen}
-            aria-controls="sidebar-search"
-            onClick={() => openSearch(true)}
+            aria-expanded={searchOpen}
+            aria-haspopup="dialog"
+            onClick={event => onOpenSearch(event.currentTarget)}
           />
           <IconButton label={t('新会话')} tooltipPlacement="right" tooltip={t('新会话')} icon={<SquarePen size={18} />} tabIndex={railInteractive ? 0 : -1} selected={newConversationActive} aria-current={newConversationActive ? 'page' : undefined} onClick={onNew} />
           <span className="rail-spacer" />

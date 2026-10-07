@@ -5,13 +5,7 @@
   .sidebar-feature-nav .ui-button { flex-shrink: 0; justify-content: flex-start; min-height: 44px; padding-inline: var(--space-3); }
   .sidebar-feature-nav .ui-button[aria-pressed="true"] { background: var(--color-active); color: var(--color-text-primary); border-color: transparent; }
   .sidebar-feature-nav .ui-button[aria-pressed="true"] svg { color: var(--color-brand-text); }
-  .sidebar-history-toolbar { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 auto; gap: var(--space-1); margin-top: var(--space-1); }
-  .sidebar-history-search { display: none; flex: 0 0 auto; }
-  .sidebar-history-search.is-open { display: block; }
-  .sidebar-history-search .sidebar-search { position: static; width: 100%; height: 44px; transform: none; opacity: 1; visibility: visible; pointer-events: auto; border: 1px solid var(--color-border); background: var(--color-layer-1); padding: 0 var(--space-2); }
-  .sidebar-search-scope { display: flex; gap: var(--space-1); padding: var(--space-1) 0 var(--space-2); }
-  .sidebar-search-scope .ui-button { flex: 1; }
-  .sidebar-archive-entry { margin: var(--space-2) 0; width: 100%; justify-content: flex-start; }
+  .sidebar-history-toolbar { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 auto; gap: var(--space-0); margin-top: var(--space-1); margin-right: var(--space-0); }
   .app-shell {
     display: grid;
     grid-template-columns: var(--layout-sidebar-expanded) minmax(0, 1fr);
@@ -117,7 +111,7 @@
     display: flex;
     margin-left: auto;
     /* 将操作图标的可见右边缘与新会话对齐，保留完整点击区域 */
-    margin-right: calc(-1 * var(--space-2));
+    margin-right: var(--space-0);
     flex: 0 0 auto;
     align-items: center;
     gap: var(--space-1);
@@ -240,67 +234,6 @@
     pointer-events: none;
   }
 
-  .sidebar-search {
-    position: absolute;
-    top: 50%;
-    right: 0;
-    left: 0;
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    height: var(--control-lg);
-    min-width: 0;
-    padding-left: var(--space-3);
-    /* 搜索态沿用标准输入高度，避免替换顶部品牌后产生视觉放大 */
-    transform: translateY(-50%) scaleX(.28);
-    transform-origin: right center;
-    border: 0;
-    border-radius: var(--radius-lg);
-    background: transparent;
-    color: var(--color-text-tertiary);
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    transition:
-      transform var(--motion-normal) var(--ease-in-out),
-      opacity var(--motion-fast) var(--ease-out),
-      visibility var(--motion-instant) linear var(--motion-normal);
-  }
-
-  .sidebar-search .ui-icon-button {
-    width: var(--control-xs);
-    min-width: var(--control-xs);
-    min-height: var(--control-xs);
-    height: var(--control-xs);
-  }
-
-  .sidebar-search:focus-within {
-    border: 0;
-    /* 输入焦点通过光标和前景色反馈，保持侧栏搜索无描边的产品契约 */
-    outline: 0;
-    box-shadow: none;
-    color: var(--color-text-primary);
-  }
-
-  .sidebar-search input {
-    width: 100%;
-    min-width: 0;
-    height: 100%;
-    padding: 0;
-    border: 0;
-    outline: 0;
-    background: transparent;
-    color: var(--color-text-primary);
-    font-size: var(--type-meta-size);
-    line-height: var(--type-meta-line);
-  }
-
-  .sidebar-search input::placeholder { color: var(--color-placeholder); opacity: 1; }
-
-  .sidebar-head.is-search-open .brand { transform: translateX(-24px); opacity: 0; pointer-events: none; }
-  .sidebar-head.is-search-open .sidebar-head-actions { transform: translateX(24px); opacity: 0; pointer-events: none; }
-  .sidebar-head.is-search-open .sidebar-search { transform: translateY(-50%) scaleX(1); opacity: 1; visibility: visible; pointer-events: auto; transition-delay: var(--motion-instant); }
-
   .conversation-scroll {
     flex: 1;
     min-height: 0;
@@ -312,7 +245,7 @@
 
   .conversation-scroll.is-scroll-locked { overflow-y: hidden; }
   .conversation-groups { position: relative; }
-  .conversation-group-items { padding: 0; margin-top: var(--space-2); }
+  .conversation-group-items { display: flex; flex-direction: column; gap: var(--space-1); padding: 0; margin-top: var(--space-2); }
   .conversation-group-items + .conversation-group-title { margin-top: var(--space-4); }
 
   .conversation-group-title,
@@ -914,7 +847,6 @@
     .sidebar-head-actions { gap: var(--space-0); }
 
     .sidebar-head-actions .ui-icon-button,
-    .sidebar-search .ui-icon-button,
     .new-chat.ui-button,
     .primary-nav .ui-button,
     .conversation-item,
@@ -931,12 +863,10 @@
 
     .conversation-more { width: var(--control-lg); min-width: var(--control-lg); min-height: var(--control-lg); height: var(--control-lg); opacity: 1; }
     .conversation-main { padding-right: calc(var(--control-lg) + var(--space-1)); }
-    .sidebar-search { min-height: var(--control-lg); }
   }
 
   @media (forced-colors: active) {
     .workspace-sidebar,
-    .sidebar-search,
     .conversation-group-title,
     .conversation-sticky-title,
     .conversation-item {
@@ -946,7 +876,6 @@
     }
 
     .scroll-to-bottom { color: CanvasText; }
-    .sidebar-search:focus-within { outline: 2px solid Highlight; outline-offset: -2px; }
     .conversation-title-marquee { -webkit-mask-image: none; mask-image: none; }
     .conversation-attention-dot { color: ButtonText; transform: none; opacity: 1; animation: none; }
     .sidebar-scrim { background: Canvas; opacity: .68; }
@@ -962,7 +891,6 @@
     .brand,
     .sidebar-head-actions,
     .new-chat-shortcut,
-    .sidebar-search,
     .conversation-scroll,
     .conversation-item,
     .conversation-more,

@@ -27,6 +27,7 @@ describe('对话快速导航交互', () => {
     expect(within(dialog).getByRole('button', { name: '第一个问题 第一段回答' })).toHaveFocus()
     fireEvent.keyDown(dialog, { key: 'Escape' })
     expect(trigger).toHaveFocus()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
     expect(navigate).not.toHaveBeenCalled()
     fireEvent.click(trigger)
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '第二个问题' }))

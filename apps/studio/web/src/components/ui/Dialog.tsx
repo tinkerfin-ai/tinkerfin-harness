@@ -7,6 +7,7 @@ import { useI18n } from '../../i18n'
 import { IconButton } from './IconButton'
 import { DialogContext, DialogDetailContext } from './DialogContext'
 import type { DialogDetailOptions } from './DialogContext'
+import { restoreFocus } from './focus'
 
 const FOCUSABLE_SELECTOR = [
   'button:not([disabled])',
@@ -53,7 +54,7 @@ export function Dialog({
   const descriptionId = useId()
   const dialogRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
-  const restoreFocusRef = useRef<HTMLElement | null>(null)
+  const restoreFocusRef = useRef(restoreFocusTo)
   const [detail, setDetail] = useState<DialogDetailOptions | null>(null)
   const [detailTarget, setDetailTarget] = useState<HTMLDivElement | null>(null)
   const showDetail = useCallback((next: DialogDetailOptions) => {
@@ -61,7 +62,7 @@ export function Dialog({
     setDetail(next)
     return () => {
       setDetail(current => current === next ? null : current)
-      queueMicrotask(() => { if (previous?.isConnected && !previous.closest('[inert], [hidden]')) previous.focus({ preventScroll: true }) })
+      queueMicrotask(() => { if (previous?.isConnected && !previous.closest('[inert], [hidden]')) restoreFocus(previous, { preventScroll: true }) })
     }
   }, [])
   const detailHost = useMemo(() => ({ target: detailTarget, show: showDetail }), [detailTarget, showDetail])
@@ -80,19 +81,20 @@ export function Dialog({
   }, [open, expanded])
 
 
+  useLayoutEffect(() => { restoreFocusRef.current = restoreFocusTo }, [restoreFocusTo])
+
   useLayoutEffect(() => {
     if (!open) return
-    restoreFocusRef.current = restoreFocusTo
-      ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
     ;(initialFocusRef?.current ?? closeRef.current ?? dialogRef.current)?.focus()
     return () => {
-      const target = restoreFocusRef.current
+      const target = restoreFocusRef.current ?? previousFocus
       // 等待宿主解除模态隔离；其他交互已设置新焦点时不再抢回入口
       queueMicrotask(() => {
-        if (document.activeElement === document.body) target?.focus()
+        if (document.activeElement === document.body && target?.isConnected && !target.closest('[inert], [hidden], [aria-hidden="true"]')) restoreFocus(target)
       })
     }
-  }, [initialFocusRef, open, restoreFocusTo])
+  }, [initialFocusRef, open])
 
   if (!open) return null
 
@@ -110,7 +112,7 @@ export function Dialog({
 
     const focusable = Array.from(
       dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? [],
-    ).filter(element => !element.closest('[hidden], [inert]'))
+    ).filter(element => element.tabIndex >= 0 && !element.closest('[hidden], [inert]'))
     if (focusable.length === 0) {
       event.preventDefault()
       dialogRef.current?.focus()

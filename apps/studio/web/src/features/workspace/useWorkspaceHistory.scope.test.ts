@@ -30,7 +30,7 @@ it('切换归档范围取消旧分页，晚到结果不能覆盖新范围或解�
   })
   const { result, rerender } = renderHook(({ archived }) => {
     const state = useWorkspaceState()
-    return useWorkspaceHistory({ ...state, projectId: 'project', archived, searchScope: 'project', preferDraft: true,
+    return useWorkspaceHistory({ ...state, projectId: 'project', archived, searchScope: 'project', searchOpen: false, preferDraft: true,
       defaultModelId: 'main', modelCatalogStatus: 'ready', followDetachedConversation: follow, prepareTaskTraceOwner: prepare, onToast: toast })
   }, { initialProps: { archived: false } })
   await act(async () => vi.advanceTimersByTimeAsync(0))
