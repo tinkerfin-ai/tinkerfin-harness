@@ -1282,7 +1282,7 @@ test('macOS Composer 支持 Control+U 且不接管 Command+U', async ({ page }) 
   await expect(input).toHaveValue('换行内容\n')
 })
 
-test('Composer 在已有文本前插入 Slash 时保持光标并安全取消建议', async ({ page }) => {
+test('Composer 在已有文本前输入斜杠文本并取消命令建议时保持光标', async ({ page }) => {
   await mockStudio(page, { emptyHistory: true })
   const input = page.getByRole('textbox', { name: '消息输入' })
   const expectCaret = async (position: number) => {
@@ -1302,22 +1302,29 @@ test('Composer 在已有文本前插入 Slash 时保持光标并安全取消建�
   await expect(page.getByRole('listbox', { name: '命令和技能建议' })).toBeVisible()
 
   await input.press('x')
-  await expect(input).toHaveValue('/已有内容')
-  await expectCaret(1)
+  await expect(input).toHaveValue('/x已有内容')
+  await expectCaret(2)
+  await expect(page.getByRole('listbox', { name: '命令和技能建议' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '发送消息', exact: true })).toBeEnabled()
 
   await input.press('Escape')
-  await expect(input).toHaveValue('已有内容')
-  await expectCaret(0)
+  await expect(input).toHaveValue('/x已有内容')
+  await expectCaret(2)
 
   await input.press('a')
-  await expect(input).toHaveValue('a已有内容')
-  await expectCaret(1)
+  await expect(input).toHaveValue('/xa已有内容')
+  await expectCaret(3)
 
   await input.fill('已有内容')
   await input.evaluate((element) => {
     const textarea = element as HTMLTextAreaElement
     textarea.setSelectionRange(0, 0)
   })
+  await input.press('/')
+  await expect(page.getByRole('listbox', { name: '命令和技能建议' })).toBeVisible()
+  await input.press('Escape')
+  await expect(input).toHaveValue('已有内容')
+  await expectCaret(0)
   await input.press('/')
   await expect(page.getByRole('listbox', { name: '命令和技能建议' })).toBeVisible()
   await page.locator('.empty-conversation').click({ position: { x: 20, y: 20 } })
