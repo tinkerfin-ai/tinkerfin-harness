@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
@@ -41,6 +42,7 @@ async function openConversation(page: Page, content: string, { theme = 'light', 
   })
   if (document) await mockDownloadPermits(page)
   await installNotificationStream(page)
+  await installProjectScope(page)
   await page.goto('/')
   const conversationName = locale === 'en' ? 'Open conversation: Markdown 图表' : `打开会话：Markdown 图表${running ? '，正在生成' : ''}`
   await page.getByRole('button', { name: conversationName, exact: true }).click()

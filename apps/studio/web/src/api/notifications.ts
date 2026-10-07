@@ -11,8 +11,7 @@ export interface ResourceChange {
 }
 export type ResourceNotice = { kind: 'resync' } | { kind: 'change'; change: ResourceChange }
 const listeners = new Set<(notice: ResourceNotice) => void>()
-let owners = 0
-let stopFeed: (() => void) | undefined
+const feeds = new Map<string, { owners: number; close: () => void }>()
 
 function isResourceChange(value: unknown): value is ResourceChange {
   if (!value || typeof value !== 'object') return false
@@ -35,19 +34,21 @@ function notify(notice: ResourceNotice) {
 }
 
 /** 已登录工作区拥有通知连接；同页共享一条连接，最后一个使用者退出时关闭 */
-export function startNotificationFeed(): () => void {
-  owners += 1
-  if (owners === 1) stopFeed = connectFeed()
+export function startNotificationFeed(projectId?: string): () => void {
+  const key = projectId ?? ''
+  const feed = feeds.get(key) ?? { owners: 0, close: connectFeed(projectId) }
+  feeds.set(key, feed)
+  feed.owners += 1
   let closed = false
   return () => {
     if (closed) return
     closed = true
-    owners -= 1
-    if (owners === 0) { stopFeed?.(); stopFeed = undefined }
+    feed.owners -= 1
+    if (feed.owners === 0) { feed.close(); feeds.delete(key) }
   }
 }
 
-function connectFeed(): () => void {
+function connectFeed(projectId?: string): () => void {
   let closed = false
   let generation = 0
   let controller: AbortController | undefined
@@ -70,7 +71,7 @@ function connectFeed(): () => void {
     const current = () => !closed && !request.signal.aborted && generation === requestGeneration
       && identity === currentIdentity() && !document.hidden
     try {
-      const response = await requestEventStream('/api/notifications', {
+      const response = await requestEventStream(`/api/notifications${projectId ? `?${new URLSearchParams({ projectId })}` : ''}`, {
         signal: request.signal, suppressGlobalError: true,
       })
       if (!current()) { await response.body?.cancel(); return }

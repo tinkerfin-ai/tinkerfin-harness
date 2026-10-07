@@ -17,7 +17,7 @@ function useHarness(active = true) {
   const [workspace, setWorkspace] = useState<WorkspaceState>({
     currentThreadId: 'a',
     conversations: ['a', 'b'].map(threadId => ({
-      ...buildEmptyConversation({ threadId, now: '2026-09-20T00:00:00Z' }), ...title(threadId),
+      ...buildEmptyConversation({projectId: 'project-1',  threadId, now: '2026-09-20T00:00:00Z' }), ...title(threadId),
     })),
   })
   const selected = workspace.conversations.find(item => item.threadId === workspace.currentThreadId)

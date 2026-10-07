@@ -12,9 +12,9 @@ export const skillError = (error: unknown, fallback: string) => error instanceof
   : fallback
 
 /** 安装与来源独立加载，命令只更新服务端确认后的状态 */
-export function useSkillLibrary() {
+export function useSkillLibrary(projectId: string | null) {
   const [sources, setSources] = useState<SkillSource[]>([])
-  const installedList = useInstalledSkills()
+  const installedList = useInstalledSkills(projectId)
   const installed = installedList.items
   const [sourceStatus, setSourceStatus] = useState<Status>('loading')
   const [sourceError, setSourceError] = useState<unknown>(null)
@@ -74,14 +74,14 @@ export function useSkillLibrary() {
       const fixed = previous?.signature === signature ? previous.skill : skill.revision ? skill : (await readRemoteSkill(skill.source_id, skill.id, null, signal)).skill
       if (!fixed.revision) throw new Error('Missing release')
       installTargets.current.set(key, { signature, skill: fixed })
-      return installSkill(fixed.source_id, fixed.id, fixed.revision, requestId, signal)
+      return installSkill(projectId, fixed.source_id, fixed.id, fixed.revision, requestId, signal)
     })
     if (result) installTargets.current.delete(key)
     return Boolean(result)
   }
-  const toggle = async (skill: InstalledSkill) => Boolean(await execute(skill.id, `enabled:${!skill.enabled}`, (requestId, signal) => setSkillEnabled(skill.id, !skill.enabled, requestId, signal)))
-  const uninstall = async (skill: InstalledSkill) => Boolean(await execute(skill.id, 'uninstall', (requestId, signal) => uninstallSkill(skill.id, requestId, signal)))
-  const update = async (skill: InstalledSkill) => (await execute(skill.id, 'update', (requestId, signal) => updateSkill(skill.id, requestId, undefined, signal)))?.value
+  const toggle = async (skill: InstalledSkill) => Boolean(await execute(skill.id, `enabled:${!skill.enabled}`, (requestId, signal) => setSkillEnabled(projectId, skill.id, !skill.enabled, requestId, signal)))
+  const uninstall = async (skill: InstalledSkill) => Boolean(await execute(skill.id, 'uninstall', (requestId, signal) => uninstallSkill(projectId,  skill.id, requestId, signal)))
+  const update = async (skill: InstalledSkill) => (await execute(skill.id, 'update', (requestId, signal) => updateSkill(projectId, skill.id, requestId, undefined, signal)))?.value
   return { sources, installed, sourceStatus, installedStatus: installedList.status, sourceError, installedError: installedList.error, refresh, busy, errors, install, toggle, uninstall, update }
 
 }

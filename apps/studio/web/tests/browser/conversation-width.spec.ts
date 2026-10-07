@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 import fixture from './fixtures/multimodal-history.json' with { type: 'json' }
@@ -39,7 +40,8 @@ async function openConversation(page: Page, theme: string) {
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
   await installNotificationStream(page)
-  await page.goto(`/?thread=${history.threadId}`)
+  await installProjectScope(page)
+  await page.goto(`/?project=project-1&thread=${history.threadId}`)
   await expect(page.getByRole('region', { name: '对话内容', exact: true })).toContainText('问题 0')
 }
 

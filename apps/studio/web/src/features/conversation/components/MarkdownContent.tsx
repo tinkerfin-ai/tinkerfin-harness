@@ -1,3 +1,4 @@
+import { Tooltip } from '../../../components/ui/Tooltip'
 import {
   Children,
   isValidElement,
@@ -87,7 +88,7 @@ function MarkdownContentView({
   const components = useMemo(() => ({
     img({ src, alt, title }: ComponentPropsWithoutRef<'img'>) {
       return allowRemoteImages || src?.startsWith('blob:')
-        ? <img src={src} alt={alt} title={title} />
+        ? <Tooltip content={title}><img src={src} alt={alt} /></Tooltip>
         : <span>{alt}</span>
     },
     a({ children, href }: { children?: ReactNode; href?: string }) {

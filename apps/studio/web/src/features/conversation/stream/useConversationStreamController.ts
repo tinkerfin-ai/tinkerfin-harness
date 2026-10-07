@@ -144,7 +144,7 @@ const waitForReconnect = (delay: number, signal: AbortSignal): Promise<void> => 
 export interface StreamRunOptions {
   /** 待受理提交即使不在当前页面，也保留正文与失败状态 */
   onDraftChange?: (conversation: Conversation) => void
-  onRegistered?: () => void
+  onRegistered?: (threadId: string, selected: boolean) => void
   onAccepted?: () => void
   /** 请求未被接受且服务端明确拒绝时，恢复仍属于该次提交的输入 */
   onRequestRejected?: () => void
@@ -156,6 +156,7 @@ export interface StreamRunOptions {
 }
 
 interface ConversationStreamControllerOptions {
+  projectId: string
   workspace: WorkspaceState
   setWorkspace: Dispatch<SetStateAction<WorkspaceState>>
   setDraftConversation: Dispatch<SetStateAction<Conversation | null>>
@@ -190,6 +191,7 @@ export interface ConversationStreamController {
  * 序号去重、缺口恢复、断连回放和动画帧合并
  */
 export function useConversationStreamController({
+  projectId,
   workspace,
   setWorkspace,
   setDraftConversation,
@@ -602,6 +604,7 @@ export function useConversationStreamController({
       // 持久化记录用 0 表示未知游标；线程投递的首条序号不一定从 1 开始
       if (lastAppliedSeq === 0) lastAppliedSeq = null
       const persistActiveRun = (immediate = false) => scheduleActiveRunPersistence({
+        projectId,
         threadId: targetThreadId,
         payload: requestPayload,
         mode,
@@ -682,7 +685,7 @@ export function useConversationStreamController({
                 candidateConversation,
               ))
               enqueueDraftUpdate(streamEpoch, null)
-              options.onRegistered?.()
+              options.onRegistered?.(reportedThreadId, draftStreamEpoch.current === streamEpoch)
               draftTarget = undefined
               validationTarget = candidateConversation
               target = 'workspace'
@@ -926,6 +929,7 @@ export function useConversationStreamController({
       retention.release()
     }
   }, [
+    projectId,
     retainConversationDetails,
     acknowledgeComposerPreferences,
     setWorkspace,
@@ -946,7 +950,7 @@ export function useConversationStreamController({
     const recoveryKey = threadId || pendingRunId || ''
     if ((threadId && isActiveThread(threadId)) || recoveryPending.current.has(recoveryKey) || !isMounted.current) return
     const pending = recoveryRequests.current.get(recoveryKey)
-    const session = readActiveRunSession(threadId)
+    const session = readActiveRunSession(threadId, projectId)
     const current = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
     const matchesPending = pending?.threadId === threadId && (
       current ? current.activeRunId === pending.payload.runId : pending.options.target === 'draft'
@@ -1018,7 +1022,7 @@ export function useConversationStreamController({
       recoveryPending.current.delete(recoveryKey)
       retention.release()
     }
-  }, [clearActiveRunPersistence, followDetachedConversation, isActiveThread, retainConversationDetails, setDraftConversation, setWorkspace, streamRun])
+  }, [projectId, clearActiveRunPersistence, followDetachedConversation, isActiveThread, retainConversationDetails, setDraftConversation, setWorkspace, streamRun])
 
   const hasActiveStream = useCallback(() => streams.current.size > 0, [])
   const cancelRun = useCallback((threadId: string) => {

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { ChevronRight, Cpu, KeyRound, Link2, MessageSquare, Monitor, Plus, RefreshCw, Search, Settings2, SlidersHorizontal, Star } from 'lucide-react'
-import { Button, OverlayScrollbar, TextField } from '../../components/ui'
+import { Button, IconButton, OverlayScrollbar, TextField, Tooltip } from '../../components/ui'
 import { useI18n } from '../../i18n'
 import { ImageInputStatus } from './ImageInputCapability'
 import { ModelConnectionForm } from './ModelConnectionForm'
@@ -41,11 +41,11 @@ export function ModelSettingsPanel({ onChanged }: { onChanged?: () => void }) {
           {view !== 'list' && <>
             <li aria-hidden="true"><ChevronRight size={12} /></li>
             {view === 'new' ? <li><span aria-current="page">{t('添加提供方')}</span></li>
-              : view === 'connection' ? <li><span aria-current="page" title={connection?.display_name}>{connection?.display_name}</span></li>
+              : view === 'connection' ? <li><Tooltip content={connection?.display_name}><span aria-current="page">{connection?.display_name}</span></Tooltip></li>
                 : <>
-                  <li><Button type="button" size="sm" variant="text" title={connection?.display_name} disabled={state.saving} onClick={close}>{connection?.display_name}</Button></li>
+                  <li><Button type="button" size="sm" variant="text" tooltip={connection?.display_name} disabled={state.saving} onClick={close}>{connection?.display_name}</Button></li>
                   <li aria-hidden="true"><ChevronRight size={12} /></li>
-                  <li><span aria-current="page" title={view === 'model' ? editing?.display_name : undefined}>{view === 'discovery' ? t('获取模型') : editing?.display_name || t('添加模型')}</span></li>
+                  <li><Tooltip content={view === 'model' ? editing?.display_name : undefined}><span aria-current="page">{view === 'discovery' ? t('获取模型') : editing?.display_name || t('添加模型')}</span></Tooltip></li>
                 </>}
           </>}
         </ol>
@@ -64,13 +64,13 @@ export function ModelSettingsPanel({ onChanged }: { onChanged?: () => void }) {
                   <nav className="settings-models__providers" aria-label={t('提供方')}>
                   {providers.map(({ connection: item, matches }) => {
                     const Icon = item.api_type === 'ollama' ? Monitor : Cpu
-                    return <button type="button" key={item.connection_id} title={item.display_name} className={`settings-models__provider${connection?.connection_id === item.connection_id ? ' is-selected' : ''}`} aria-current={connection?.connection_id === item.connection_id ? 'true' : undefined} onClick={() => setSelected(item.connection_id)}><Icon size={18} /><span><strong>{item.display_name}</strong><small>{t('{count} 个模型', { count: matches.length })}</small></span></button>
+                    return <Tooltip key={item.connection_id} content={item.display_name}><button type="button" className={`settings-models__provider${connection?.connection_id === item.connection_id ? ' is-selected' : ''}`} aria-current={connection?.connection_id === item.connection_id ? 'true' : undefined} onClick={() => setSelected(item.connection_id)}><Icon size={18} /><span><strong>{item.display_name}</strong><small>{t('{count} 个模型', { count: matches.length })}</small></span></button></Tooltip>
                   })}
                 </nav></>}>{connection ? <section className="settings-models__detail" aria-label={connection.display_name}>
                   <div className="settings-models__provider-heading"><h4>{connection.display_name}</h4><Button type="button" size="xs" variant="text" leadingIcon={<Settings2 size={14} />} onClick={() => setView('connection')}>{t('连接设置')}</Button></div>
                   <div className="settings-models__connection-meta"><span><Link2 size={13} />{connection.base_url}</span><span><KeyRound size={13} />{t(connection.auth_type === 'none' ? '无需认证' : '已配置密钥')}</span></div>
                   <div className="settings-models__list-heading"><div className="settings-models__row-actions"><Button type="button" size="xs" leadingIcon={<RefreshCw size={13} />} onClick={() => setView('discovery')}>{t('获取模型')}</Button><Button type="button" size="xs" leadingIcon={<Plus size={13} />} onClick={() => editModel(newModel(connection.connection_id))}>{t('手动添加')}</Button></div></div>
-                  <div className="settings-models__list-shell"><div className="settings-models__list-scroll ui-scrollbar" role="region" aria-label={t('模型列表')} tabIndex={0} ref={modelViewport}>
+                  <div className="settings-models__list-shell"><div className="settings-models__list-scroll ui-scrollbar" role="region" aria-label={t('模型列表')} ref={modelViewport}>
                   <section className="settings-models__group" aria-label={t('对话模型')}>
                       {matchingModels.map(model => {
                         const action = '设为默认对话'
@@ -81,8 +81,8 @@ export function ModelSettingsPanel({ onChanged }: { onChanged?: () => void }) {
                             <small>{model.image_input_capability && <ImageInputStatus capability={model.image_input_capability} />}{model.reasoning_enabled ? ` · ${t('推理')}` : ''}{!model.enabled ? ` · ${t('已停用')}` : ''}</small>
                           </div>
                           <div className="settings-models__row-actions">
-                            <Button type="button" variant="ghost" size="xs" aria-label={`${t(action)} ${model.display_name}`} title={t(action)} disabled={state.saving || model.is_default} onClick={() => { void state.makeDefault(model.model_id) }}><Star size={15} /></Button>
-                            <Button type="button" variant="ghost" size="xs" aria-label={t('配置模型 {name}', { name: model.display_name })} title={t('模型设置')} disabled={state.saving} onClick={() => editModel(model)}><SlidersHorizontal size={15} /></Button>
+                            <IconButton type="button" variant="ghost" size="xs" label={`${t(action)} ${model.display_name}`} tooltip={t(action)} disabled={state.saving || model.is_default} onClick={() => { void state.makeDefault(model.model_id) }} icon={<Star size={15} />} />
+                            <IconButton type="button" variant="ghost" size="xs" label={t('配置模型 {name}', { name: model.display_name })} tooltip={t('模型设置')} disabled={state.saving} onClick={() => editModel(model)} icon={<SlidersHorizontal size={15} />} />
                             <Button type="button" variant="ghost" size="xs" role="switch" aria-checked={model.enabled} aria-label={t('启用模型 {name}', { name: model.display_name })} disabled={state.saving || model.is_default} onClick={() => { void state.save({ ...model, enabled: !model.enabled }) }}><span className={`settings-models__switch${model.enabled ? ' is-enabled' : ''}`} /></Button>
                           </div>
                         </div>

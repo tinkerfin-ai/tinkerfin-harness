@@ -223,6 +223,7 @@ def test_builder_and_runtime_have_distinct_real_public_methods(
         "with_plan",
         "store",
         "build",
+        "files",
     }
     assert {name for name in dir(runtime) if not name.startswith("_")} == {
         "agui",

@@ -22,13 +22,13 @@ export const fetchRunPage = async (params: Record<string, string | undefined>, s
   return { ...result, items: result.items.map(presentRun) }
 }
 export const fetchCounts = (kind: 'tasks' | 'runs', params: Record<string, string | undefined>, signal: AbortSignal) => requestJson<Record<string, number>>(path(`${kind}/counts`, params), { signal, suppressGlobalError: true })
-export const saveTask = async (draft: AutomationDraft, requestId: string, task: AutomationTask | undefined, signal: AbortSignal) => {
+export const saveTask = async (projectId: string, draft: AutomationDraft, requestId: string, task: AutomationTask | undefined, signal: AbortSignal) => {
   const { name, prompt, schedule, modelId, accessMode, attachments, startsOn, endsOn } = draft
-  return taskView(await requestJson<TaskResponse>(path(task ? `tasks/${encodeURIComponent(task.id)}` : 'tasks'), {
+  return taskView(await requestJson<TaskResponse>(path(task ? `tasks/${encodeURIComponent(task.id)}` : 'tasks', { projectId }), {
     method: task ? 'PUT' : 'POST', signal, suppressGlobalError: true,
-    body: { requestId, expectedRevision: task?.revision ?? null, configuration: { name, prompt, schedule, modelId, accessMode, attachments, startsOn: startsOn || null, endsOn: endsOn || null } },
+    body: { requestId, expectedRevision: task?.revision ?? null, configuration: { projectId, name, prompt, schedule, modelId, accessMode, attachments, startsOn: startsOn || null, endsOn: endsOn || null } },
   }))
 }
-export const commandTask = (task: AutomationTask, operation: 'pause' | 'enable' | 'run', requestId: string, signal: AbortSignal) => requestJson<TaskResponse | AutomationRunRecord>(path(`tasks/${encodeURIComponent(task.id)}/${operation}`), { method: 'POST', signal, suppressGlobalError: true, body: { requestId, expectedRevision: task.revision } })
-export const batchTasks = (tasks: AutomationTask[], operation: 'pause' | 'delete', requestIds: Record<string, string>, signal: AbortSignal) => requestJson<BatchResult[]>(path('tasks/batch'), { method: 'POST', signal, suppressGlobalError: true, body: { operation, items: tasks.map(task => ({ taskId: task.id, expectedRevision: task.revision, requestId: requestIds[task.id] })) } })
-export const fetchRunDetail = (id: string, signal: AbortSignal) => requestJson<RunDetail>(path(`runs/${encodeURIComponent(id)}`), { signal, suppressGlobalError: true })
+export const commandTask = (task: AutomationTask, operation: 'pause' | 'enable' | 'run', requestId: string, signal: AbortSignal) => requestJson<TaskResponse | AutomationRunRecord>(path(`tasks/${encodeURIComponent(task.id)}/${operation}`, { projectId: task.projectId }), { method: 'POST', signal, suppressGlobalError: true, body: { requestId, expectedRevision: task.revision } })
+export const batchTasks = (projectId: string, tasks: AutomationTask[], operation: 'pause' | 'delete', requestIds: Record<string, string>, signal: AbortSignal) => requestJson<BatchResult[]>(path('tasks/batch', { projectId }), { method: 'POST', signal, suppressGlobalError: true, body: { operation, items: tasks.map(task => ({ taskId: task.id, expectedRevision: task.revision, requestId: requestIds[task.id] })) } })
+export const fetchRunDetail = (projectId: string, id: string, signal: AbortSignal) => requestJson<RunDetail>(path(`runs/${encodeURIComponent(id)}`, { projectId }), { signal, suppressGlobalError: true })

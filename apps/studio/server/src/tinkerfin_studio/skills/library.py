@@ -51,17 +51,21 @@ _SOURCE_KIND = TypeAdapter(SkillSourceKind)
 _Result = TypeVar("_Result", bound=BaseModel)
 
 
-def installed_skill(item: SkillInstallation) -> InstalledSkill:
+def installed_skill(
+    item: SkillInstallation, *, enabled: bool | None = None, overridden: bool = False
+) -> InstalledSkill:
     """投影安装信息，内容摘要和内部存储不发给页面"""
     return InstalledSkill(
         id=item.id,
+        project_id=item.project_id or None,
+        overridden=overridden,
         name=item.name,
         description=item.description,
         source_kind=_SOURCE_KIND.validate_python(item.source_kind),
         source_id=item.source_id,
         source_name=item.source_name,
         external_id=item.external_id,
-        enabled=item.enabled,
+        enabled=item.enabled if enabled is None else enabled,
         author=item.author,
         topics=item.topics,
         file_count=item.file_count,
@@ -143,11 +147,21 @@ class SkillLibrary:
             detail=await source.detail(card.id, resolved),
         )
 
-    async def list(self, user_id: int, *, query: str = "") -> list[InstalledSkill]:
+    async def list(
+        self, user_id: int, *, project_id: str | None = None, query: str = ""
+    ) -> list[InstalledSkill]:
         async with self._database.session() as session:
+            repository = SkillRepository(session, user_id, project_id=project_id)
+            installations = await repository.list()
+            overrides = await repository.overrides()
+            project_names = {item.name for item in installations if item.project_id}
             items = [
-                installed_skill(item)
-                for item in await SkillRepository(session, user_id).list()
+                installed_skill(
+                    item,
+                    enabled=overrides.get(item.id, item.enabled),
+                    overridden=not item.project_id and item.name in project_names,
+                )
+                for item in installations
             ]
         normalized = query.strip().casefold()
         return [
@@ -158,9 +172,13 @@ class SkillLibrary:
             in f"{item.name} {item.description} {item.author or ''}".casefold()
         ]
 
-    async def detail(self, user_id: int, installation_id: str) -> SkillDetail:
+    async def detail(
+        self, user_id: int, installation_id: str, *, project_id: str | None = None
+    ) -> SkillDetail:
         async with self._database.session() as session:
-            item = await SkillRepository(session, user_id).get(installation_id)
+            item = await SkillRepository(session, user_id, project_id=project_id).get(
+                installation_id
+            )
         package = await self.content.load(user_id, item.digest)
         return SkillDetail(
             name=item.name,
@@ -178,11 +196,13 @@ class SkillLibrary:
         request_id: str,
         fingerprint: str,
         result_type: type[_Result],
+        *,
+        project_id: str | None,
     ) -> _Result | None:
         async with self._database.session() as session:
-            value = await SkillRepository(session, user_id).receipt(
-                request_id, fingerprint
-            )
+            repository = SkillRepository(session, user_id, project_id=project_id)
+            await repository.require_project()
+            value = await repository.receipt(request_id, fingerprint)
         return None if value is None else result_type.model_validate(value)
 
     async def _commit(
@@ -192,9 +212,11 @@ class SkillLibrary:
         fingerprint: str,
         result_type: type[_Result],
         change: Callable[[SkillRepository], Awaitable[_Result]],
+        *,
+        project_id: str | None,
     ) -> _Result:
         async with self._database.session() as session, session.begin():
-            repository = SkillRepository(session, user_id)
+            repository = SkillRepository(session, user_id, project_id=project_id)
             await repository.lock_owner()
             previous = await repository.receipt(request_id, fingerprint)
             if previous is not None:
@@ -217,7 +239,11 @@ class SkillLibrary:
         """安装指定发行；重放已提交请求时不再次下载或重新安装"""
         fingerprint = _fingerprint("install", request)
         previous = await self._receipt(
-            user_id, request.request_id, fingerprint, SkillChangeResult
+            user_id,
+            request.request_id,
+            fingerprint,
+            SkillChangeResult,
+            project_id=request.project_id,
         )
         if previous is not None:
             return previous
@@ -244,7 +270,12 @@ class SkillLibrary:
             )
 
         return await self._commit(
-            user_id, request.request_id, fingerprint, SkillChangeResult, change
+            user_id,
+            request.request_id,
+            fingerprint,
+            SkillChangeResult,
+            change,
+            project_id=request.project_id,
         )
 
     async def set_enabled(
@@ -254,15 +285,22 @@ class SkillLibrary:
 
         async def change(repository: SkillRepository) -> SkillChangeResult:
             item = await repository.get(installation_id)
-            changed = item.enabled != request.enabled
+            overrides = await repository.overrides()
+            changed = overrides.get(item.id, item.enabled) != request.enabled
             if changed:
                 item = await repository.set_enabled(installation_id, request.enabled)
             return SkillChangeResult(
-                installation=installed_skill(item), changed=changed
+                installation=installed_skill(item, enabled=request.enabled),
+                changed=changed,
             )
 
         return await self._commit(
-            user_id, request.request_id, fingerprint, SkillChangeResult, change
+            user_id,
+            request.request_id,
+            fingerprint,
+            SkillChangeResult,
+            change,
+            project_id=request.project_id,
         )
 
     async def uninstall(
@@ -275,7 +313,12 @@ class SkillLibrary:
             return SkillRemovalResult(installation_id=installation_id)
 
         return await self._commit(
-            user_id, request.request_id, fingerprint, SkillRemovalResult, change
+            user_id,
+            request.request_id,
+            fingerprint,
+            SkillRemovalResult,
+            change,
+            project_id=request.project_id,
         )
 
     async def update(
@@ -284,12 +327,20 @@ class SkillLibrary:
         """策略准备内容后原子切换安装引用，旧快照仍指向原摘要"""
         fingerprint = _fingerprint("update", request, installation_id)
         previous = await self._receipt(
-            user_id, request.request_id, fingerprint, SkillChangeResult
+            user_id,
+            request.request_id,
+            fingerprint,
+            SkillChangeResult,
+            project_id=request.project_id,
         )
         if previous is not None:
             return previous
         async with self._database.session() as session:
-            item = await SkillRepository(session, user_id).get(installation_id)
+            item = await SkillRepository(
+                session, user_id, project_id=request.project_id
+            ).get(installation_id)
+            if item.project_id != (request.project_id or ""):
+                raise BusinessException(SkillErrorCode.NOT_FOUND)
             kind = _SOURCE_KIND.validate_python(item.source_kind)
             target = SkillUpdateTarget(
                 id=item.id,
@@ -325,7 +376,12 @@ class SkillLibrary:
             )
 
         return await self._commit(
-            user_id, request.request_id, fingerprint, SkillChangeResult, change
+            user_id,
+            request.request_id,
+            fingerprint,
+            SkillChangeResult,
+            change,
+            project_id=request.project_id,
         )
 
     async def _replacement(
@@ -407,7 +463,11 @@ class SkillLibrary:
         request = request.model_copy(update={"digests": sorted(request.digests)})
         fingerprint = _fingerprint("import", request, draft_id)
         previous = await self._receipt(
-            user_id, request.request_id, fingerprint, SkillImportResult
+            user_id,
+            request.request_id,
+            fingerprint,
+            SkillImportResult,
+            project_id=request.project_id,
         )
         if previous is not None:
             return previous
@@ -433,7 +493,10 @@ class SkillLibrary:
         async def change(repository: SkillRepository) -> SkillImportResult:
             draft = await repository.draft(draft_id)
             if draft.selected_digests is not None:
-                if draft.selected_digests != request.digests:
+                if (
+                    draft.selected_digests != request.digests
+                    or draft.confirmed_project_id != (request.project_id or "")
+                ):
                     raise BusinessException(SkillErrorCode.IMPORT_CONFLICT)
                 assert draft.installation_ids is not None
                 return SkillImportResult(installation_ids=draft.installation_ids)
@@ -441,9 +504,15 @@ class SkillLibrary:
                 (await repository.install(package, origin)).id for package in packages
             ]
             draft.selected_digests = request.digests
+            draft.confirmed_project_id = request.project_id or ""
             draft.installation_ids = ids
             return SkillImportResult(installation_ids=ids)
 
         return await self._commit(
-            user_id, request.request_id, fingerprint, SkillImportResult, change
+            user_id,
+            request.request_id,
+            fingerprint,
+            SkillImportResult,
+            change,
+            project_id=request.project_id,
         )

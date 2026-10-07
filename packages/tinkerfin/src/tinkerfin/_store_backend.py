@@ -27,7 +27,7 @@ from deepagents.backends.utils import (
 class _AsyncStoreBackend(StoreBackend):
     """Complete the built-in file adapter without enabling synchronous Store access.
 
-    Deep Agents 0.7.5 StoreBackend implements async read/write/edit/delete, but
+    Deep Agents 0.7.19 StoreBackend implements async read/write/edit/delete, but
     inherits thread-based wrappers for listing, search, and file transfer from
     BackendProtocol. Those wrappers call synchronous BaseStore operations. Here
     all I/O uses the borrowed Store's async methods; file encoding, namespace

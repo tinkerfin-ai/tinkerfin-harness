@@ -10,7 +10,7 @@ class User(Base):
     """可登录 Studio 的系统用户"""
 
     __tablename__ = "users"
-    __table_args__ = {**MYSQL_TABLE_OPTIONS, "comment": "TinkerFin Studio 登录用户"}
+    __table_args__ = {**MYSQL_TABLE_OPTIONS, "comment": "登录用户"}
 
     id: Mapped[int] = mapped_column(
         Integer, primary_key=True, autoincrement=True, comment="用户主键"
@@ -22,10 +22,10 @@ class User(Base):
         String(128), nullable=False, comment="展示名称"
     )
     avatar_url: Mapped[str | None] = mapped_column(
-        String(2048), nullable=True, comment="头像 HTTPS URL"
+        String(2048), nullable=True, comment="头像地址（HTTPS）"
     )
     password_hash: Mapped[str] = mapped_column(
-        String(512), nullable=False, comment="带算法、参数和独立盐值的密码哈希"
+        String(512), nullable=False, comment="密码哈希（含算法、参数和盐值）"
     )
     roles: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=list, comment="用户角色列表"

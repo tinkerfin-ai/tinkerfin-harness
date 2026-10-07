@@ -2978,29 +2978,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "human",
-                    "id": "user-one",
-                    "name": null,
-                    "content": "Deliver after approval",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -3008,7 +2986,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicGVuZGluZyIsInRocmVhZF9pZCI6InRocmVhZCIsImdlbmVyYXRpb24iOiI0YmM0NjBiZjRmNDA0NDdlOTUzOTQzMzE0YmZkMTk1NCJ9LCJ0cmFjZV9zZXEiOjcsInJ1bl9pZCI6InBlbmRpbmciLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYTY1Yy03NzMwLWEyYjQtMDBjYjBjYTUyYjNhIn0"
             },
             {
               "id": "message:4f53cda18c2baa0c0354bb5f:proposal-reviewed-call",
@@ -3195,71 +3174,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "human",
-                    "id": "user-one",
-                    "name": null,
-                    "content": "Deliver after approval",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "assistant",
-                    "id": "proposal-reviewed-call",
-                    "name": null,
-                    "content": "",
-                    "toolCalls": [
-                      {
-                        "id": "reviewed-call",
-                        "name": "deliver_report",
-                        "arguments": {}
-                      }
-                    ],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "tool",
-                    "id": "fbcc36c7-2e21-4612-9e43-abc0b314e9ba",
-                    "name": "deliver_report",
-                    "content": "Tool call deliver_report with id reviewed-call was cancelled - another message came in before it could be completed.",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": "reviewed-call",
-                    "toolStatus": "success",
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "human",
-                    "id": "user-two",
-                    "name": null,
-                    "content": "Use a different plan",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -3267,7 +3182,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicGVuZGluZyIsInRocmVhZF9pZCI6InRocmVhZCIsImdlbmVyYXRpb24iOiI0YmM0NjBiZjRmNDA0NDdlOTUzOTQzMzE0YmZkMTk1NCJ9LCJ0cmFjZV9zZXEiOjM3LCJydW5faWQiOiJuZXciLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYTcxYy03ZjUxLWFjNWItN2Q4MmZiMTJkNTNlIn0"
             },
             {
               "id": "message:4f53cda18c2baa0c0354bb5f:worker-final",
@@ -7800,29 +7716,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "human",
-                    "id": "user-one",
-                    "name": null,
-                    "content": "Deliver after approval",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -7830,7 +7724,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicGVuZGluZyIsInRocmVhZF9pZCI6InRocmVhZCIsImdlbmVyYXRpb24iOiJjYmYwYjFhZWNjNDY0OTNjODdmZjYxNzBmMjE3MDYyMCJ9LCJ0cmFjZV9zZXEiOjcsInJ1bl9pZCI6InBlbmRpbmciLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYTc4NS03NTEwLWE3NDEtNWYyYTE0YmUxYTA2In0"
             },
             {
               "id": "message:4f53cda18c2baa0c0354bb5f:proposal-delegate",
@@ -7997,41 +7892,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "system",
-                    "id": null,
-                    "name": null,
-                    "content": "Deliver only approved reports.",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "human",
-                    "id": "fe30957b-d53c-4e76-b073-e9269ecf5a0f",
-                    "name": null,
-                    "content": "Deliver after approval",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -8039,7 +7900,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicGVuZGluZyIsInRocmVhZF9pZCI6InRocmVhZCIsImdlbmVyYXRpb24iOiJjYmYwYjFhZWNjNDY0OTNjODdmZjYxNzBmMjE3MDYyMCJ9LCJ0cmFjZV9zZXEiOjE4LCJydW5faWQiOiJwZW5kaW5nIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6NjVhOTkxMGU0MTM5MzVmOWRlYmVmOGI1OjAxYTA5ODFmLWE3OWYtN2RhMC05N2M1LTliYWIzMDc0NzAxNyJ9"
             },
             {
               "id": "message:65a9910e413935f9debef8b5:proposal-reviewed-call",
@@ -8232,74 +8094,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "human",
-                    "id": "user-one",
-                    "name": null,
-                    "content": "Deliver after approval",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "assistant",
-                    "id": "proposal-delegate",
-                    "name": null,
-                    "content": "",
-                    "toolCalls": [
-                      {
-                        "id": "delegate",
-                        "name": "task",
-                        "arguments": {
-                          "subagent_type": "reporter",
-                          "description": "Deliver after approval"
-                        }
-                      }
-                    ],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "tool",
-                    "id": "87140e0f-f564-4e2b-aa1e-f49ccfb66cf0",
-                    "name": "task",
-                    "content": "Tool call task with id delegate was cancelled - another message came in before it could be completed.",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": "delegate",
-                    "toolStatus": "success",
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "human",
-                    "id": "user-two",
-                    "name": null,
-                    "content": "Use a different plan",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -8307,7 +8102,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicGVuZGluZyIsInRocmVhZF9pZCI6InRocmVhZCIsImdlbmVyYXRpb24iOiJjYmYwYjFhZWNjNDY0OTNjODdmZjYxNzBmMjE3MDYyMCJ9LCJ0cmFjZV9zZXEiOjU1LCJydW5faWQiOiJuZXciLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYTg3NS03MTEyLThmMmYtY2VmZjhiNGMyZGIxIn0"
             },
             {
               "id": "message:4f53cda18c2baa0c0354bb5f:root-final",
@@ -10569,29 +10365,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "human",
-                    "id": "user-one",
-                    "name": null,
-                    "content": "Deliver the report",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -10599,7 +10373,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiZTg3MmIzZGRiN2Y3NDQ0MzgxZWU0YmQzMTMyMmQ0NzAifSwidHJhY2Vfc2VxIjo3LCJydW5faWQiOiJmYWlsZWQiLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYThlYS03NDEwLWE3NDYtMjJiNzI4ZjBhZjI2In0"
             },
             {
               "id": "message:4f53cda18c2baa0c0354bb5f:proposal-delivery-call",
@@ -10754,71 +10529,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "human",
-                    "id": "user-one",
-                    "name": null,
-                    "content": "Deliver the report",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "assistant",
-                    "id": "proposal-delivery-call",
-                    "name": null,
-                    "content": "",
-                    "toolCalls": [
-                      {
-                        "id": "delivery-call",
-                        "name": "deliver_report",
-                        "arguments": {}
-                      }
-                    ],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "tool",
-                    "id": "1e1a2981-93b8-4648-8c12-7ac9921e4fb6",
-                    "name": "deliver_report",
-                    "content": "Tool call deliver_report with id delivery-call was cancelled - another message came in before it could be completed.",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": "delivery-call",
-                    "toolStatus": "success",
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "human",
-                    "id": "user-two",
-                    "name": null,
-                    "content": "Continue with another destination",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -10826,7 +10537,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiZTg3MmIzZGRiN2Y3NDQ0MzgxZWU0YmQzMTMyMmQ0NzAifSwidHJhY2Vfc2VxIjozMCwicnVuX2lkIjoiY29udGludWVkIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6NGY1M2NkYTE4YzJiYWEwYzAzNTRiYjVmOjAxYTA5ODFmLWE5NzUtNzc2MS1iYzhiLTMwZGEwN2YyMDBkNyJ9"
             },
             {
               "id": "message:4f53cda18c2baa0c0354bb5f:worker-final",
@@ -12688,29 +12400,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "human",
-                    "id": "user-one",
-                    "name": null,
-                    "content": "Deliver the report",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -12718,7 +12408,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiODE2MzkzNzZjM2U1NGNmNzllNWE5MzM3NGMxM2IzZTAifSwidHJhY2Vfc2VxIjo3LCJydW5faWQiOiJmYWlsZWQiLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYTliZC03YjEwLTg5NTUtYTgzNjE3MDg0Mzc5In0"
             },
             {
               "id": "message:4f53cda18c2baa0c0354bb5f:proposal-delivery-call",
@@ -12841,59 +12532,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "human",
-                    "id": "user-one",
-                    "name": null,
-                    "content": "Deliver the report",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "assistant",
-                    "id": "proposal-delivery-call",
-                    "name": null,
-                    "content": "",
-                    "toolCalls": [
-                      {
-                        "id": "delivery-call",
-                        "name": "deliver_report",
-                        "arguments": {}
-                      }
-                    ],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "tool",
-                    "id": "cd20cfab-2a31-42f7-8d8e-0cc35907d2a7",
-                    "name": "deliver_report",
-                    "content": "Report delivered",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": "delivery-call",
-                    "toolStatus": "success",
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -12901,7 +12540,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiODE2MzkzNzZjM2U1NGNmNzllNWE5MzM3NGMxM2IzZTAifSwidHJhY2Vfc2VxIjoyOCwicnVuX2lkIjoiY29udGludWVkIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6NGY1M2NkYTE4YzJiYWEwYzAzNTRiYjVmOjAxYTA5ODFmLWFhNDUtN2ZlMS04NmQ2LWI3YzI5M2YxMGNmNCJ9"
             },
             {
               "id": "message:4f53cda18c2baa0c0354bb5f:worker-final",
@@ -15960,29 +15600,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "human",
-                    "id": "user-one",
-                    "name": null,
-                    "content": "Deliver the report",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -15990,7 +15608,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiNTg3NzIzNjQwOTU4NDRkMGEyNTlhZTZjNDdjY2Q1MDQifSwidHJhY2Vfc2VxIjo3LCJydW5faWQiOiJmYWlsZWQiLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYWFhMy03MDcwLWFiMDUtNjljYjVjMTEzMWI4In0"
             },
             {
               "id": "message:4f53cda18c2baa0c0354bb5f:proposal-delegate",
@@ -16157,41 +15776,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "system",
-                    "id": null,
-                    "name": null,
-                    "content": "Deliver the requested report.",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "human",
-                    "id": "c76be31d-15a3-4f2f-b5de-4a975e91f0e8",
-                    "name": null,
-                    "content": "Deliver the report",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -16199,7 +15784,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiNTg3NzIzNjQwOTU4NDRkMGEyNTlhZTZjNDdjY2Q1MDQifSwidHJhY2Vfc2VxIjoxOCwicnVuX2lkIjoiZmFpbGVkIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6NTZiNDUwZTljNzJiMjM5NzVjNTFkMWEyOjAxYTA5ODFmLWFhYzQtN2Q3My04NGE1LTY1MzQ5YmEwZjNhYyJ9"
             },
             {
               "id": "message:56b450e9c72b23975c51d1a2:proposal-delivery-call",
@@ -16361,74 +15947,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "human",
-                    "id": "user-one",
-                    "name": null,
-                    "content": "Deliver the report",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "assistant",
-                    "id": "proposal-delegate",
-                    "name": null,
-                    "content": "",
-                    "toolCalls": [
-                      {
-                        "id": "delegate",
-                        "name": "task",
-                        "arguments": {
-                          "subagent_type": "reporter",
-                          "description": "Deliver the report"
-                        }
-                      }
-                    ],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "tool",
-                    "id": "5e459060-ae1c-457b-84d8-6ebdb99496d2",
-                    "name": "task",
-                    "content": "Tool call task with id delegate was cancelled - another message came in before it could be completed.",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": "delegate",
-                    "toolStatus": "success",
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "human",
-                    "id": "user-two",
-                    "name": null,
-                    "content": "Continue with another destination",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -16436,7 +15955,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiNTg3NzIzNjQwOTU4NDRkMGEyNTlhZTZjNDdjY2Q1MDQifSwidHJhY2Vfc2VxIjo0MywicnVuX2lkIjoiY29udGludWVkIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6NGY1M2NkYTE4YzJiYWEwYzAzNTRiYjVmOjAxYTA5ODFmLWFiNGQtNzQzMS05NWE2LTljYjYyOTNiMjdlZSJ9"
             },
             {
               "id": "message:4f53cda18c2baa0c0354bb5f:root-final",
@@ -20183,29 +19703,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "human",
-                    "id": "user-one",
-                    "name": null,
-                    "content": "Deliver the report",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -20213,7 +19711,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiZjU2MzEyMTM2MjdmNDg3MmIwYzJmOGQ0NmQ3ZGVmNWQifSwidHJhY2Vfc2VxIjo3LCJydW5faWQiOiJmYWlsZWQiLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYWI5ZS03OTIyLWFmYjAtMDJlZDdmNWM2MTE2In0"
             },
             {
               "id": "message:4f53cda18c2baa0c0354bb5f:proposal-delegate",
@@ -20380,41 +19879,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "system",
-                    "id": null,
-                    "name": null,
-                    "content": "Deliver the requested report.",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "human",
-                    "id": "90f07125-0985-4c99-ab12-7d3a1f3a7846",
-                    "name": null,
-                    "content": "Deliver the report",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -20422,7 +19887,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiZjU2MzEyMTM2MjdmNDg3MmIwYzJmOGQ0NmQ3ZGVmNWQifSwidHJhY2Vfc2VxIjoxOCwicnVuX2lkIjoiZmFpbGVkIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6YmVjMWRlNjFmZjVhZmJjNjQzYzU0NzA1OjAxYTA5ODFmLWFiYjMtNzA4My1iN2YyLTg5MGU4OWRiMDYyNSJ9"
             },
             {
               "id": "message:bec1de61ff5afbc643c54705:proposal-delivery-call",
@@ -20553,71 +20019,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "system",
-                    "id": null,
-                    "name": null,
-                    "content": "Deliver the requested report.",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "human",
-                    "id": "90f07125-0985-4c99-ab12-7d3a1f3a7846",
-                    "name": null,
-                    "content": "Deliver the report",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "assistant",
-                    "id": "proposal-delivery-call",
-                    "name": "reporter",
-                    "content": "",
-                    "toolCalls": [
-                      {
-                        "id": "delivery-call",
-                        "name": "deliver_report",
-                        "arguments": {}
-                      }
-                    ],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "tool",
-                    "id": "113cbeb1-238d-45ba-a957-1c67406be4e5",
-                    "name": "deliver_report",
-                    "content": "Report delivered",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": "delivery-call",
-                    "toolStatus": "success",
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -20625,7 +20027,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiZjU2MzEyMTM2MjdmNDg3MmIwYzJmOGQ0NmQ3ZGVmNWQifSwidHJhY2Vfc2VxIjo0MiwicnVuX2lkIjoiY29udGludWVkIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6YmVjMWRlNjFmZjVhZmJjNjQzYzU0NzA1OjAxYTA5ODFmLWFjMGEtNzg1MC04ODFkLTViOTBiZWM5ZTNjZSJ9"
             },
             {
               "id": "message:bec1de61ff5afbc643c54705:worker-final",
@@ -20715,62 +20118,7 @@
               "content": null,
               "contentOmitted": false,
               "toolCallOnly": false,
-              "request": {
-                "messages": [
-                  {
-                    "messageType": "human",
-                    "id": "user-one",
-                    "name": null,
-                    "content": "Deliver the report",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "assistant",
-                    "id": "proposal-delegate",
-                    "name": null,
-                    "content": "",
-                    "toolCalls": [
-                      {
-                        "id": "delegate",
-                        "name": "task",
-                        "arguments": {
-                          "subagent_type": "reporter",
-                          "description": "Deliver the report"
-                        }
-                      }
-                    ],
-                    "toolCallChunks": [],
-                    "toolCallId": null,
-                    "toolStatus": null,
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  },
-                  {
-                    "messageType": "tool",
-                    "id": "744b8d03-5c60-44da-aa28-98b7dad92d10",
-                    "name": "task",
-                    "content": "Worker complete",
-                    "toolCalls": [],
-                    "toolCallChunks": [],
-                    "toolCallId": "delegate",
-                    "toolStatus": "success",
-                    "responseMetadata": {},
-                    "usageMetadata": null
-                  }
-                ],
-                "invocation": {
-                  "_type": "fake-messages-list-chat-model",
-                  "stop": null
-                },
-                "options": {
-                  "stop": null
-                }
-              },
+              "request": null,
               "requestOmitted": false,
               "result": null,
               "resultOmitted": false,
@@ -20778,7 +20126,8 @@
               "responseMetadata": null,
               "failure": null,
               "linkIssues": [],
-              "agui": null
+              "agui": null,
+              "requestReference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiZjU2MzEyMTM2MjdmNDg3MmIwYzJmOGQ0NmQ3ZGVmNWQifSwidHJhY2Vfc2VxIjo1NCwicnVuX2lkIjoiY29udGludWVkIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6NGY1M2NkYTE4YzJiYWEwYzAzNTRiYjVmOjAxYTA5ODFmLWFjMjYtN2NhMC05NmM0LWExN2FiMTU5MjhiNiJ9"
             },
             {
               "id": "message:4f53cda18c2baa0c0354bb5f:root-final",
@@ -20873,6 +20222,771 @@
           "lastOccurredAt": "2026-09-13T00:16:47.671426Z"
         }
       }
+    }
+  ],
+  "modelRequests": [
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicGVuZGluZyIsInRocmVhZF9pZCI6InRocmVhZCIsImdlbmVyYXRpb24iOiI0YmM0NjBiZjRmNDA0NDdlOTUzOTQzMzE0YmZkMTk1NCJ9LCJ0cmFjZV9zZXEiOjcsInJ1bl9pZCI6InBlbmRpbmciLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYTY1Yy03NzMwLWEyYjQtMDBjYjBjYTUyYjNhIn0",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-a65c-7730-a2b4-00cb0ca52b3a",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user-one",
+            "name": null,
+            "content": "Deliver after approval",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicGVuZGluZyIsInRocmVhZF9pZCI6InRocmVhZCIsImdlbmVyYXRpb24iOiI0YmM0NjBiZjRmNDA0NDdlOTUzOTQzMzE0YmZkMTk1NCJ9LCJ0cmFjZV9zZXEiOjM3LCJydW5faWQiOiJuZXciLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYTcxYy03ZjUxLWFjNWItN2Q4MmZiMTJkNTNlIn0",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-a71c-7f51-ac5b-7d82fb12d53e",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user-one",
+            "name": null,
+            "content": "Deliver after approval",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "assistant",
+            "id": "proposal-reviewed-call",
+            "name": null,
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "reviewed-call",
+                "name": "deliver_report",
+                "arguments": {}
+              }
+            ],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "tool",
+            "id": "fbcc36c7-2e21-4612-9e43-abc0b314e9ba",
+            "name": "deliver_report",
+            "content": "Tool call deliver_report with id reviewed-call was cancelled - another message came in before it could be completed.",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": "reviewed-call",
+            "toolStatus": "success",
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "human",
+            "id": "user-two",
+            "name": null,
+            "content": "Use a different plan",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicGVuZGluZyIsInRocmVhZF9pZCI6InRocmVhZCIsImdlbmVyYXRpb24iOiJjYmYwYjFhZWNjNDY0OTNjODdmZjYxNzBmMjE3MDYyMCJ9LCJ0cmFjZV9zZXEiOjcsInJ1bl9pZCI6InBlbmRpbmciLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYTc4NS03NTEwLWE3NDEtNWYyYTE0YmUxYTA2In0",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-a785-7510-a741-5f2a14be1a06",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user-one",
+            "name": null,
+            "content": "Deliver after approval",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicGVuZGluZyIsInRocmVhZF9pZCI6InRocmVhZCIsImdlbmVyYXRpb24iOiJjYmYwYjFhZWNjNDY0OTNjODdmZjYxNzBmMjE3MDYyMCJ9LCJ0cmFjZV9zZXEiOjE4LCJydW5faWQiOiJwZW5kaW5nIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6NjVhOTkxMGU0MTM5MzVmOWRlYmVmOGI1OjAxYTA5ODFmLWE3OWYtN2RhMC05N2M1LTliYWIzMDc0NzAxNyJ9",
+      "nodeId": "model-call:65a9910e413935f9debef8b5:01a0981f-a79f-7da0-97c5-9bab30747017",
+      "request": {
+        "messages": [
+          {
+            "messageType": "system",
+            "id": null,
+            "name": null,
+            "content": "Deliver only approved reports.",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "human",
+            "id": "fe30957b-d53c-4e76-b073-e9269ecf5a0f",
+            "name": null,
+            "content": "Deliver after approval",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicGVuZGluZyIsInRocmVhZF9pZCI6InRocmVhZCIsImdlbmVyYXRpb24iOiJjYmYwYjFhZWNjNDY0OTNjODdmZjYxNzBmMjE3MDYyMCJ9LCJ0cmFjZV9zZXEiOjU1LCJydW5faWQiOiJuZXciLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYTg3NS03MTEyLThmMmYtY2VmZjhiNGMyZGIxIn0",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-a875-7112-8f2f-ceff8b4c2db1",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user-one",
+            "name": null,
+            "content": "Deliver after approval",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "assistant",
+            "id": "proposal-delegate",
+            "name": null,
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "delegate",
+                "name": "task",
+                "arguments": {
+                  "subagent_type": "reporter",
+                  "description": "Deliver after approval"
+                }
+              }
+            ],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "tool",
+            "id": "87140e0f-f564-4e2b-aa1e-f49ccfb66cf0",
+            "name": "task",
+            "content": "Tool call task with id delegate was cancelled - another message came in before it could be completed.",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": "delegate",
+            "toolStatus": "success",
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "human",
+            "id": "user-two",
+            "name": null,
+            "content": "Use a different plan",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiZTg3MmIzZGRiN2Y3NDQ0MzgxZWU0YmQzMTMyMmQ0NzAifSwidHJhY2Vfc2VxIjo3LCJydW5faWQiOiJmYWlsZWQiLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYThlYS03NDEwLWE3NDYtMjJiNzI4ZjBhZjI2In0",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-a8ea-7410-a746-22b728f0af26",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user-one",
+            "name": null,
+            "content": "Deliver the report",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiZTg3MmIzZGRiN2Y3NDQ0MzgxZWU0YmQzMTMyMmQ0NzAifSwidHJhY2Vfc2VxIjozMCwicnVuX2lkIjoiY29udGludWVkIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6NGY1M2NkYTE4YzJiYWEwYzAzNTRiYjVmOjAxYTA5ODFmLWE5NzUtNzc2MS1iYzhiLTMwZGEwN2YyMDBkNyJ9",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-a975-7761-bc8b-30da07f200d7",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user-one",
+            "name": null,
+            "content": "Deliver the report",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "assistant",
+            "id": "proposal-delivery-call",
+            "name": null,
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "delivery-call",
+                "name": "deliver_report",
+                "arguments": {}
+              }
+            ],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "tool",
+            "id": "1e1a2981-93b8-4648-8c12-7ac9921e4fb6",
+            "name": "deliver_report",
+            "content": "Tool call deliver_report with id delivery-call was cancelled - another message came in before it could be completed.",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": "delivery-call",
+            "toolStatus": "success",
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "human",
+            "id": "user-two",
+            "name": null,
+            "content": "Continue with another destination",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiODE2MzkzNzZjM2U1NGNmNzllNWE5MzM3NGMxM2IzZTAifSwidHJhY2Vfc2VxIjo3LCJydW5faWQiOiJmYWlsZWQiLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYTliZC03YjEwLTg5NTUtYTgzNjE3MDg0Mzc5In0",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-a9bd-7b10-8955-a83617084379",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user-one",
+            "name": null,
+            "content": "Deliver the report",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiODE2MzkzNzZjM2U1NGNmNzllNWE5MzM3NGMxM2IzZTAifSwidHJhY2Vfc2VxIjoyOCwicnVuX2lkIjoiY29udGludWVkIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6NGY1M2NkYTE4YzJiYWEwYzAzNTRiYjVmOjAxYTA5ODFmLWFhNDUtN2ZlMS04NmQ2LWI3YzI5M2YxMGNmNCJ9",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-aa45-7fe1-86d6-b7c293f10cf4",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user-one",
+            "name": null,
+            "content": "Deliver the report",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "assistant",
+            "id": "proposal-delivery-call",
+            "name": null,
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "delivery-call",
+                "name": "deliver_report",
+                "arguments": {}
+              }
+            ],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "tool",
+            "id": "cd20cfab-2a31-42f7-8d8e-0cc35907d2a7",
+            "name": "deliver_report",
+            "content": "Report delivered",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": "delivery-call",
+            "toolStatus": "success",
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiNTg3NzIzNjQwOTU4NDRkMGEyNTlhZTZjNDdjY2Q1MDQifSwidHJhY2Vfc2VxIjo3LCJydW5faWQiOiJmYWlsZWQiLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYWFhMy03MDcwLWFiMDUtNjljYjVjMTEzMWI4In0",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-aaa3-7070-ab05-69cb5c1131b8",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user-one",
+            "name": null,
+            "content": "Deliver the report",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiNTg3NzIzNjQwOTU4NDRkMGEyNTlhZTZjNDdjY2Q1MDQifSwidHJhY2Vfc2VxIjoxOCwicnVuX2lkIjoiZmFpbGVkIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6NTZiNDUwZTljNzJiMjM5NzVjNTFkMWEyOjAxYTA5ODFmLWFhYzQtN2Q3My04NGE1LTY1MzQ5YmEwZjNhYyJ9",
+      "nodeId": "model-call:56b450e9c72b23975c51d1a2:01a0981f-aac4-7d73-84a5-65349ba0f3ac",
+      "request": {
+        "messages": [
+          {
+            "messageType": "system",
+            "id": null,
+            "name": null,
+            "content": "Deliver the requested report.",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "human",
+            "id": "c76be31d-15a3-4f2f-b5de-4a975e91f0e8",
+            "name": null,
+            "content": "Deliver the report",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiNTg3NzIzNjQwOTU4NDRkMGEyNTlhZTZjNDdjY2Q1MDQifSwidHJhY2Vfc2VxIjo0MywicnVuX2lkIjoiY29udGludWVkIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6NGY1M2NkYTE4YzJiYWEwYzAzNTRiYjVmOjAxYTA5ODFmLWFiNGQtNzQzMS05NWE2LTljYjYyOTNiMjdlZSJ9",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-ab4d-7431-95a6-9cb6293b27ee",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user-one",
+            "name": null,
+            "content": "Deliver the report",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "assistant",
+            "id": "proposal-delegate",
+            "name": null,
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "delegate",
+                "name": "task",
+                "arguments": {
+                  "subagent_type": "reporter",
+                  "description": "Deliver the report"
+                }
+              }
+            ],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "tool",
+            "id": "5e459060-ae1c-457b-84d8-6ebdb99496d2",
+            "name": "task",
+            "content": "Tool call task with id delegate was cancelled - another message came in before it could be completed.",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": "delegate",
+            "toolStatus": "success",
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "human",
+            "id": "user-two",
+            "name": null,
+            "content": "Continue with another destination",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiZjU2MzEyMTM2MjdmNDg3MmIwYzJmOGQ0NmQ3ZGVmNWQifSwidHJhY2Vfc2VxIjo3LCJydW5faWQiOiJmYWlsZWQiLCJub2RlX2lkIjoibW9kZWwtY2FsbDo0ZjUzY2RhMThjMmJhYTBjMDM1NGJiNWY6MDFhMDk4MWYtYWI5ZS03OTIyLWFmYjAtMDJlZDdmNWM2MTE2In0",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-ab9e-7922-afb0-02ed7f5c6116",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user-one",
+            "name": null,
+            "content": "Deliver the report",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiZjU2MzEyMTM2MjdmNDg3MmIwYzJmOGQ0NmQ3ZGVmNWQifSwidHJhY2Vfc2VxIjoxOCwicnVuX2lkIjoiZmFpbGVkIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6YmVjMWRlNjFmZjVhZmJjNjQzYzU0NzA1OjAxYTA5ODFmLWFiYjMtNzA4My1iN2YyLTg5MGU4OWRiMDYyNSJ9",
+      "nodeId": "model-call:bec1de61ff5afbc643c54705:01a0981f-abb3-7083-b7f2-890e89db0625",
+      "request": {
+        "messages": [
+          {
+            "messageType": "system",
+            "id": null,
+            "name": null,
+            "content": "Deliver the requested report.",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "human",
+            "id": "90f07125-0985-4c99-ab12-7d3a1f3a7846",
+            "name": null,
+            "content": "Deliver the report",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiZjU2MzEyMTM2MjdmNDg3MmIwYzJmOGQ0NmQ3ZGVmNWQifSwidHJhY2Vfc2VxIjo0MiwicnVuX2lkIjoiY29udGludWVkIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6YmVjMWRlNjFmZjVhZmJjNjQzYzU0NzA1OjAxYTA5ODFmLWFjMGEtNzg1MC04ODFkLTViOTBiZWM5ZTNjZSJ9",
+      "nodeId": "model-call:bec1de61ff5afbc643c54705:01a0981f-ac0a-7850-881d-5b90bec9e3ce",
+      "request": {
+        "messages": [
+          {
+            "messageType": "system",
+            "id": null,
+            "name": null,
+            "content": "Deliver the requested report.",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "human",
+            "id": "90f07125-0985-4c99-ab12-7d3a1f3a7846",
+            "name": null,
+            "content": "Deliver the report",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "assistant",
+            "id": "proposal-delivery-call",
+            "name": "reporter",
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "delivery-call",
+                "name": "deliver_report",
+                "arguments": {}
+              }
+            ],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "tool",
+            "id": "113cbeb1-238d-45ba-a957-1c67406be4e5",
+            "name": "deliver_report",
+            "content": "Report delivered",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": "delivery-call",
+            "toolStatus": "success",
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
+    },
+    {
+      "reference": "eyJrZXkiOnsibmFtZXNwYWNlIjoicmVjb3ZlcnkiLCJ0aHJlYWRfaWQiOiJ0aHJlYWQiLCJnZW5lcmF0aW9uIjoiZjU2MzEyMTM2MjdmNDg3MmIwYzJmOGQ0NmQ3ZGVmNWQifSwidHJhY2Vfc2VxIjo1NCwicnVuX2lkIjoiY29udGludWVkIiwibm9kZV9pZCI6Im1vZGVsLWNhbGw6NGY1M2NkYTE4YzJiYWEwYzAzNTRiYjVmOjAxYTA5ODFmLWFjMjYtN2NhMC05NmM0LWExN2FiMTU5MjhiNiJ9",
+      "nodeId": "model-call:4f53cda18c2baa0c0354bb5f:01a0981f-ac26-7ca0-96c4-a17ab15928b6",
+      "request": {
+        "messages": [
+          {
+            "messageType": "human",
+            "id": "user-one",
+            "name": null,
+            "content": "Deliver the report",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "assistant",
+            "id": "proposal-delegate",
+            "name": null,
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "delegate",
+                "name": "task",
+                "arguments": {
+                  "subagent_type": "reporter",
+                  "description": "Deliver the report"
+                }
+              }
+            ],
+            "toolCallChunks": [],
+            "toolCallId": null,
+            "toolStatus": null,
+            "responseMetadata": {},
+            "usageMetadata": null
+          },
+          {
+            "messageType": "tool",
+            "id": "744b8d03-5c60-44da-aa28-98b7dad92d10",
+            "name": "task",
+            "content": "Worker complete",
+            "toolCalls": [],
+            "toolCallChunks": [],
+            "toolCallId": "delegate",
+            "toolStatus": "success",
+            "responseMetadata": {},
+            "usageMetadata": null
+          }
+        ],
+        "invocation": {
+          "_type": "fake-messages-list-chat-model",
+          "stop": null
+        },
+        "options": {
+          "stop": null
+        }
+      },
+      "requestOmitted": false
     }
   ]
 }

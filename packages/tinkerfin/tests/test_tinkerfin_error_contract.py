@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from tinkerfin import (
     AgUiResumeBindingError,
     AgUiSettlementTimeoutError,
@@ -12,6 +14,7 @@ from tinkerfin import (
     TinkerFinLifecycleError,
 )
 from tinkerfin.coordination import RunCoordinationError
+from tinkerfin.files import FileConflict
 from tinkerfin.redis import RedisLeaseError, RedisLeaseUnavailableError
 
 
@@ -22,11 +25,21 @@ def test_error_codes_are_unique_and_namespaced() -> None:
     assert all(value.startswith("tinkerfin.") for value in values)
 
 
-def test_error_contexts_are_separated_read_only_and_copied() -> None:
+@pytest.mark.parametrize(
+    ("error_type", "code"),
+    [
+        (RedisLeaseUnavailableError, TinkerFinErrorCode.REDIS_LEASE_UNAVAILABLE),
+        (FileConflict, TinkerFinErrorCode.FILE_CONFLICT),
+    ],
+)
+def test_error_contexts_are_separated_read_only_and_copied(
+    error_type: type[TinkerFinError],
+    code: TinkerFinErrorCode,
+) -> None:
     cause = ConnectionError("redis internals")
     context = {"retryable": True}
     diagnostic_context = {"implementation": "redis", "operation": "acquire"}
-    error = RedisLeaseUnavailableError(
+    error = error_type(
         "Run coordination is unavailable",
         context=context,
         diagnostic_context=diagnostic_context,
@@ -35,9 +48,8 @@ def test_error_contexts_are_separated_read_only_and_copied() -> None:
     context["retryable"] = False
     diagnostic_context["operation"] = "mutated"
 
-    assert isinstance(error, RedisLeaseError)
     assert isinstance(error, TinkerFinError)
-    assert error.code is TinkerFinErrorCode.REDIS_LEASE_UNAVAILABLE
+    assert error.code is code
     assert error.cause is cause
     assert error.__cause__ is cause
     assert str(error) == "Run coordination is unavailable"
@@ -54,6 +66,7 @@ def test_semantic_errors_keep_python_catch_contracts() -> None:
     assert isinstance(AgUiResumeBindingError("invalid resume"), ValueError)
     assert isinstance(AgUiSettlementTimeoutError(timeout=1), TimeoutError)
     assert isinstance(TinkerFinLifecycleError("closed"), RuntimeError)
+    assert issubclass(RedisLeaseUnavailableError, RedisLeaseError)
     assert issubclass(RunCoordinationError, TinkerFinError)
     assert issubclass(DelegationReplayError, TinkerFinLifecycleError)
     assert issubclass(DelegationFailedError, TinkerFinError)

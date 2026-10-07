@@ -24,7 +24,6 @@ export function ScrollToBottomButton({
       type="button"
       className={`composer-auxiliary-control scroll-to-bottom is-visible${fading ? ' is-fading' : ''}`}
       aria-label={t('回到底部')}
-      title={t('回到底部')}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       onFocus={onFocus}

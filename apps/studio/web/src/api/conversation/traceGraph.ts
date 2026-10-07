@@ -1,6 +1,7 @@
 import type { JsonValue } from '../../types'
 import { requestEventStream, requestJson } from '../shared/http'
 import { ConversationError } from './errors'
+import { isJsonValue } from './eventParser'
 import { parseJsonSseStream } from '../shared/sse'
 import {
   compareTraceGraphIds,
@@ -82,6 +83,7 @@ export interface TraceGraphNode {
   contentOmitted: boolean
   toolCallOnly: boolean
   request?: JsonValue | null
+  requestReference?: string | null
   requestOmitted: boolean
   result?: JsonValue | null
   resultOmitted: boolean
@@ -209,6 +211,7 @@ const NODE_KEYS = new Set([
   'contentOmitted',
   'toolCallOnly',
   'request',
+  'requestReference',
   'requestOmitted',
   'result',
   'resultOmitted',
@@ -351,6 +354,7 @@ export const parseTraceGraphNode = (value: unknown): TraceGraphNode => {
     || typeof value.contentOmitted !== 'boolean'
     || typeof value.toolCallOnly !== 'boolean'
     || typeof value.requestOmitted !== 'boolean'
+    || !isOptionalCanonicalString(value.requestReference, 16_384)
     || typeof value.resultOmitted !== 'boolean'
     || !Array.isArray(value.linkIssues)
     || value.linkIssues.some((item) => (
@@ -394,6 +398,11 @@ export const parseTraceGraphNode = (value: unknown): TraceGraphNode => {
     throw new ConversationError('stream_event_invalid')
   }
   if (value.toolCallOnly && value.contentOmitted) {
+    throw new ConversationError('stream_event_invalid')
+  }
+  if ((value.kind === 'model' && value.request != null)
+    || (value.requestReference != null && (value.kind !== 'model'
+      || value.request != null || value.requestOmitted))) {
     throw new ConversationError('stream_event_invalid')
   }
   parseFailure(value.failure)
@@ -681,4 +690,30 @@ export async function* followTraceGraph(
   for await (const frame of parseJsonSseStream(response.body, options.signal)) {
     yield parseTraceGraphEvent(frame.data)
   }
+}
+
+export interface TraceModelRequest {
+  nodeId: string
+  request: JsonValue | null
+  requestOmitted: boolean
+}
+
+/** 使用节点提供的引用读取单次模型请求，调用方负责取消已关闭的详情 */
+export const fetchTraceModelRequest = async (
+  threadId: string,
+  reference: string,
+  signal: AbortSignal,
+): Promise<TraceModelRequest> => {
+  const search = new URLSearchParams({ reference })
+  const value = await requestJson<unknown>(
+    `/api/conversation/${encodeURIComponent(threadId)}/trace/model-request?${search}`,
+    { signal, suppressGlobalError: true },
+  )
+  if (!isRecord(value) || !hasOnlyKeys(value, new Set(['nodeId', 'request', 'requestOmitted']))
+    || typeof value.nodeId !== 'string' || !isReferenceId(value.nodeId) || !isJsonValue(value.request)
+    || typeof value.requestOmitted !== 'boolean'
+    || (value.requestOmitted && value.request !== null)) {
+    throw new ConversationError('stream_event_invalid')
+  }
+  return { nodeId: value.nodeId, request: value.request, requestOmitted: value.requestOmitted }
 }

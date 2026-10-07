@@ -23,7 +23,7 @@ const THREAD_ID = 'thread-order-check'
 const RUN_ID = 'run-order-check'
 
 it.each([['questions', 'tool'], ['questions', 'questions'], ['questions', 'review'], ['review', 'questions']] as const)('Plan %s 的未确认输入不能被新 %s 交互覆盖', (previousKind, nextKind) => {
-  const current = buildEmptyConversation({ threadId: THREAD_ID, now: '2026-10-04T00:00:00Z' })
+  const current = buildEmptyConversation({projectId: 'project-1',  threadId: THREAD_ID, now: '2026-10-04T00:00:00Z' })
   current.activeRunId = 'resume-plan'
   current.planInteraction = previousKind === 'questions' ? {
     kind: 'questions', interruptId: 'old-plan', title: '范围', description: '范围确认', form: {},
@@ -55,7 +55,7 @@ it.each([['questions', 'tool'], ['questions', 'questions'], ['questions', 'revie
 
 it('准备失败后保留已提交审批和暂停工具，等待历史确认而非重复授权', () => {
   const waiting = applyConversationEvent(
-    applyConversationEvent(applyConversationEvent(buildEmptyConversation({ threadId: THREAD_ID, now: '2026-10-04T00:00:00Z' }),
+    applyConversationEvent(applyConversationEvent(buildEmptyConversation({projectId: 'project-1',  threadId: THREAD_ID, now: '2026-10-04T00:00:00Z' }),
       { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID }), {
       type: 'TOOL_CALL_START', toolCallId: 'pending-write', toolCallName: 'write_file',
     }),
@@ -77,7 +77,7 @@ it('准备失败后保留已提交审批和暂停工具，等待历史确认而�
 
 it('忽略的协议事件保留历史确认标记，正文或状态变更使其失效', () => {
   const current = {
-    ...buildEmptyConversation({ threadId: THREAD_ID, now: '2026-09-07T00:00:00Z' }),
+    ...buildEmptyConversation({projectId: 'project-1',  threadId: THREAD_ID, now: '2026-09-07T00:00:00Z' }),
     historySynchronized: true,
     activeRunId: RUN_ID,
   }
@@ -102,7 +102,7 @@ it('忽略的协议事件保留历史确认标记，正文或状态变更使其�
 })
 
 it('失败后新提问使用真实框架流，历史消息修复不重复追加旧正文', () => {
-  const initial = buildEmptyConversation({ threadId: 'thread', now: '2026-09-13T00:00:00Z' })
+  const initial = buildEmptyConversation({projectId: 'project-1',  threadId: 'thread', now: '2026-09-13T00:00:00Z' })
   const failed = checkpointReplay.before.map(parseConversationAgUiEvent).reduce(applyConversationEvent, initial)
   const finished = checkpointReplay.after.map(parseConversationAgUiEvent).reduce(applyConversationEvent, failed)
   expect(finished.messages.filter(message => message.role === 'assistant').map(message => message.content)).toEqual([
@@ -114,7 +114,7 @@ it('失败后新提问使用真实框架流，历史消息修复不重复追加�
 
 it('真实工具输出在流式文字之后仍保留图片，快照可以替换附件', () => {
   const events = mediaFixture.events.map(parseConversationAgUiEvent)
-  let conversation = events.reduce(applyConversationEvent, buildEmptyConversation({ now: "2026-09-07T00:00:00Z" }))
+  let conversation = events.reduce(applyConversationEvent, buildEmptyConversation({projectId: 'project-1',  now: "2026-09-07T00:00:00Z" }))
   const assistant = conversation.messages.find(message => message.role === 'assistant')
   expect(assistant?.content).toBe('Generated chart')
   expect(assistant?.attachments).toEqual([mediaFixture.attachment])
@@ -130,7 +130,7 @@ it('真实工具输出在流式文字之后仍保留图片，快照可以替换�
 })
 
 it('框架生成的历史快照保留工具和助手附件描述', () => {
-  const initial = buildEmptyConversation({ now: '2026-09-07T00:00:00Z' })
+  const initial = buildEmptyConversation({projectId: 'project-1',  now: '2026-09-07T00:00:00Z' })
   const live = mediaFixture.events.map(parseConversationAgUiEvent).reduce(applyConversationEvent, initial)
   const snapshots = mediaFixture.snapshots.map(parseConversationAgUiEvent)
   const replay = snapshots.reduce(applyConversationEvent, initial)
@@ -145,7 +145,7 @@ it('框架生成的历史快照保留工具和助手附件描述', () => {
 })
 
 it('工具快照按工具调用 ID 替换附件并保留已有卡片的状态和来源', () => {
-  const initial = buildEmptyConversation({ now: '2026-09-07T00:00:00Z' })
+  const initial = buildEmptyConversation({projectId: 'project-1',  now: '2026-09-07T00:00:00Z' })
   const live = mediaFixture.events.map(parseConversationAgUiEvent).reduce(applyConversationEvent, initial)
   const tool = live.messages.find(message => message.role === 'tool')!
   const snapshot = structuredClone(mediaFixture.snapshots[0])
@@ -172,7 +172,7 @@ it('工具快照必须提供稳定工具调用 ID 和合法附件', () => {
 
 it('子智能体图片留在对应卡片中，重复附件事件不会复制图片', () => {
   const events = nativeContractEvents()
-  let conversation = events.slice(0, 8).reduce(applyConversationEvent, buildEmptyConversation({ now: "2026-09-07T00:00:00Z" }))
+  let conversation = events.slice(0, 8).reduce(applyConversationEvent, buildEmptyConversation({projectId: 'project-1',  now: "2026-09-07T00:00:00Z" }))
   const subagent = conversation.messages.find(message => message.role === 'subagent')
   const sourceEvent = events.find(event => event.type === 'TOOL_CALL_START' && event.toolCallId === 'call-read')
   if (sourceEvent?.type !== 'TOOL_CALL_START' || !subagent) throw new Error('缺少子智能体场景')
@@ -344,7 +344,7 @@ it('parses bounded time clarification and submits an RFC time answer', () => {
       : question),
   }
   const payload = buildPlanResumePayload({
-    ...buildEmptyConversation({
+    ...buildEmptyConversation({projectId: 'project-1',
       threadId: THREAD_ID,
       now: '2026-08-30T00:00:00.000Z',
       model: 'main',
@@ -405,7 +405,7 @@ it('parses a zoned datetime clarification and submits one local minute', () => {
   }
 
   const payload = buildPlanResumePayload({
-    ...buildEmptyConversation({
+    ...buildEmptyConversation({projectId: 'project-1',
       threadId: THREAD_ID,
       now: '2026-08-30T00:00:00.000Z',
       model: 'main',
@@ -464,7 +464,7 @@ it('uses each Plan review interrupt response Schema as its action authority', ()
 })
 
 it('keeps reject and cancel in Plan mode while only approval exits', () => {
-  const conversation = buildEmptyConversation({
+  const conversation = buildEmptyConversation({projectId: 'project-1',
     threadId: THREAD_ID,
     now: '2026-08-30T00:00:00.000Z',
     model: 'main',
@@ -492,7 +492,7 @@ it('keeps reject and cancel in Plan mode while only approval exits', () => {
 
   const rejected = buildPlanResumePayload(conversation)
 
-  expect(rejected.forwardedProps).toEqual({ skillIds: [], accessMode: 'full', model: 'main', command: { plan: 'on' } })
+  expect(rejected.forwardedProps).toEqual({ projectId: 'project-1', skillIds: [], accessMode: 'full', model: 'main', command: { plan: 'on' } })
   expect(rejected.resume?.[0]).toEqual({
     interruptId: 'plan-review-decision',
     status: 'resolved',
@@ -514,7 +514,7 @@ it('keeps reject and cancel in Plan mode while only approval exits', () => {
       message: undefined,
     },
   })
-  expect(cancelled.forwardedProps).toEqual({ skillIds: [], accessMode: 'full', model: 'main', command: { plan: 'on' } })
+  expect(cancelled.forwardedProps).toEqual({ projectId: 'project-1', skillIds: [], accessMode: 'full', model: 'main', command: { plan: 'on' } })
   expect(cancelled.resume?.[0]).toEqual({
     interruptId: 'plan-review-decision',
     status: 'resolved',
@@ -524,7 +524,7 @@ it('keeps reject and cancel in Plan mode while only approval exits', () => {
     ...conversation,
     planInteraction: { ...review, action: 'approve', message: undefined },
   })
-  expect(approved.forwardedProps).toEqual({ skillIds: [], accessMode: 'full', model: 'main', command: { plan: 'off' } })
+  expect(approved.forwardedProps).toEqual({ projectId: 'project-1', skillIds: [], accessMode: 'full', model: 'main', command: { plan: 'off' } })
   expect(approved.resume?.[0]?.payload).toEqual({ type: 'approve', baseRevision: 2 })
 })
 
@@ -655,7 +655,7 @@ describe('AG-UI runtime reducer', () => {
         },
       },
     ]
-    const initial = buildEmptyConversation({
+    const initial = buildEmptyConversation({projectId: 'project-1',
       threadId: THREAD_ID,
       model: 'main',
       now: '2026-08-18T00:00:00.000Z',
@@ -719,7 +719,7 @@ describe('AG-UI runtime reducer', () => {
         },
       },
     })
-    let current = buildEmptyConversation({
+    let current = buildEmptyConversation({projectId: 'project-1',
       threadId: THREAD_ID,
       model: 'main',
       now: '2026-08-18T00:00:00.000Z',
@@ -809,7 +809,7 @@ describe('AG-UI runtime reducer', () => {
       rawStart,
     ].reduce(
       applyConversationEvent,
-      buildEmptyConversation({
+      buildEmptyConversation({projectId: 'project-1',
         threadId: THREAD_ID,
         model: 'main',
         now: '2026-08-18T00:00:00.000Z',
@@ -923,7 +923,7 @@ describe('AG-UI runtime reducer', () => {
     ]
     const current = events.reduce(
       applyConversationEvent,
-      buildEmptyConversation({
+      buildEmptyConversation({projectId: 'project-1',
         threadId: THREAD_ID,
         model: 'main',
         now: '2026-08-18T00:00:00.000Z',
@@ -944,7 +944,7 @@ describe('AG-UI runtime reducer', () => {
 
   it('treats a standard main RUN_ERROR rawEvent containing only runId as main scope', () => {
     const conversation = {
-      ...buildEmptyConversation({
+      ...buildEmptyConversation({projectId: 'project-1',
         threadId: THREAD_ID,
         now: '2026-08-18T10:00:00.000Z',
         model: 'main',
@@ -987,7 +987,7 @@ describe('AG-UI runtime reducer', () => {
 
   it('stores a detached connection notice outside protocol messages', () => {
     const conversation = {
-      ...buildEmptyConversation({
+      ...buildEmptyConversation({projectId: 'project-1',
         threadId: THREAD_ID,
         now: '2026-08-18T10:00:00.000Z',
         model: 'main',
@@ -1008,7 +1008,7 @@ describe('AG-UI runtime reducer', () => {
 
   it('keeps a submitted approval claimed while its resumed stream is detached', () => {
     const conversation: Conversation = {
-      ...buildEmptyConversation({
+      ...buildEmptyConversation({projectId: 'project-1',
         threadId: THREAD_ID,
         now: '2026-08-18T10:00:00.000Z',
         model: 'main',
@@ -1041,7 +1041,7 @@ describe('AG-UI runtime reducer', () => {
   })
 
   it('replaces draft identity and title without duplicating Graph input', () => {
-    const draft = buildEmptyConversation({
+    const draft = buildEmptyConversation({projectId: 'project-1',
       now: '2026-08-18T10:00:00.000Z',
       model: 'main',
     })
@@ -1062,7 +1062,7 @@ describe('AG-UI runtime reducer', () => {
 
   it('keeps the optimistic user message until an authoritative history snapshot arrives', () => {
     const draft = {
-      ...buildEmptyConversation({
+      ...buildEmptyConversation({projectId: 'project-1',
         now: '2026-08-18T10:00:00.000Z',
         model: 'main',
       }),
@@ -1092,7 +1092,7 @@ describe('AG-UI runtime reducer', () => {
   })
 
   it('uses values as Todo truth while the standard tool result completes the tool card', () => {
-    const initial = buildEmptyConversation({
+    const initial = buildEmptyConversation({projectId: 'project-1',
       threadId: 'thread-write-todos-end',
       now: '2026-08-05T00:00:00.000Z',
       model: 'GPT-5.5',
@@ -1177,7 +1177,7 @@ describe('AG-UI runtime reducer', () => {
 
   it('pauses every unresolved tool in the interrupted main run without inventing interrupt bindings', () => {
     let current = applyConversationEvent(
-      buildEmptyConversation({
+      buildEmptyConversation({projectId: 'project-1',
         threadId: THREAD_ID,
         now: '2026-08-05T00:00:00.000Z',
         model: 'GPT-5.5',
@@ -1232,7 +1232,7 @@ describe('AG-UI runtime reducer', () => {
   })
 
   it('marks ToolMessage status error as a failed tool card', () => {
-    const initial = buildEmptyConversation({
+    const initial = buildEmptyConversation({projectId: 'project-1',
       threadId: 'thread-tool-error',
       now: '2026-08-05T00:00:00.000Z',
       model: 'GPT-5.5',
@@ -1266,7 +1266,7 @@ describe('AG-UI runtime reducer', () => {
   })
 
   it('ignores the complete reasoning lifecycle for main and subagent runs', () => {
-    const initial = buildEmptyConversation({
+    const initial = buildEmptyConversation({projectId: 'project-1',
       threadId: 'thread-reasoning-hidden',
       now: '2026-08-05T00:00:00.000Z',
       model: 'GPT-5.5',
@@ -1332,7 +1332,7 @@ describe('AG-UI runtime reducer', () => {
   })
 
   it('replays the messages/tasks/values contract fixture without losing state or hierarchy', () => {
-    const initial = buildEmptyConversation({
+    const initial = buildEmptyConversation({projectId: 'project-1',
       threadId: 'thread-real-stream',
       now: '2026-08-05T00:00:00.000Z',
       model: 'GPT-5.5',
@@ -1386,7 +1386,7 @@ describe('AG-UI runtime reducer', () => {
   })
 
   it('keeps parallel same-type subagents isolated when task results finish in reverse order', () => {
-    let current = buildEmptyConversation({
+    let current = buildEmptyConversation({projectId: 'project-1',
       threadId: 'thread-parallel-subagents',
       now: '2026-08-05T00:00:00.000Z',
       model: 'GPT-5.5',
@@ -1516,7 +1516,7 @@ describe('AG-UI runtime reducer', () => {
 
   it('keeps interrupt order stable when preparing multi-item resume payloads', () => {
     const interrupted = applyConversationEvent(
-      buildEmptyConversation({
+      buildEmptyConversation({projectId: 'project-1',
         threadId: 'thread-multi-interrupt',
         accessMode: 'write_approval',
         now: '2026-08-05T00:00:00.000Z',
@@ -1563,7 +1563,7 @@ describe('AG-UI runtime reducer', () => {
       approval: approval ? { ...approval, items } : approval,
     })
 
-    expect(payload.forwardedProps).toEqual({ skillIds: [], accessMode: 'write_approval', model: 'GPT-5.5', command: { plan: 'off' } })
+    expect(payload.forwardedProps).toEqual({ projectId: 'project-1', skillIds: [], accessMode: 'write_approval', model: 'GPT-5.5', command: { plan: 'off' } })
     expect(payload.resume?.map((entry) => entry.interruptId)).toEqual([
       'interrupt-b',
       'interrupt-a#0',
@@ -1636,7 +1636,7 @@ describe('AG-UI runtime reducer', () => {
       submitted: false,
     }],
   ])('rejects a resume payload with %s', (_name, approval) => {
-    const current = buildEmptyConversation({
+    const current = buildEmptyConversation({projectId: 'project-1',
       threadId: 'thread-invalid-resume',
       now: '2026-08-05T00:00:00.000Z',
       model: 'GPT-5.5',
@@ -1646,7 +1646,7 @@ describe('AG-UI runtime reducer', () => {
   })
 
   it('rejects a resume payload when the authoritative interrupt group has changed', () => {
-    const current = buildEmptyConversation({
+    const current = buildEmptyConversation({projectId: 'project-1',
       threadId: 'thread-replaced-resume',
       now: '2026-08-05T00:00:00.000Z',
       model: 'GPT-5.5',
@@ -1674,7 +1674,7 @@ describe('AG-UI runtime reducer', () => {
   })
 
   it('does not claim a replacement approval group for an old resume submission', () => {
-    const current = buildEmptyConversation({
+    const current = buildEmptyConversation({projectId: 'project-1',
       threadId: 'thread-replaced-submission',
       now: '2026-08-05T00:00:00.000Z',
       model: 'GPT-5.5',
@@ -1709,7 +1709,7 @@ describe('AG-UI runtime reducer', () => {
   it('keeps interrupted tool cards paused while approval saving is unconfirmed', () => {
     const interrupted = applyConversationEvent(
       applyConversationEvent(
-        applyConversationEvent(buildEmptyConversation({
+        applyConversationEvent(buildEmptyConversation({projectId: 'project-1',
           threadId: 'thread-resume-running',
           now: '2026-08-05T00:00:00.000Z',
           model: 'GPT-5.5',
@@ -1770,7 +1770,7 @@ describe('AG-UI runtime reducer', () => {
 
   it('preserves pending approval when a resumed Runtime fails during initialization', () => {
     const started = applyConversationEvent(
-      buildEmptyConversation({
+      buildEmptyConversation({projectId: 'project-1',
         threadId: THREAD_ID,
         now: '2026-08-05T00:00:00.000Z',
         model: 'GPT-5.5',
@@ -1827,7 +1827,7 @@ describe('AG-UI runtime reducer', () => {
 
   it('marks only the related subagent when its parent task result fails', () => {
     const initial = applyConversationEvent(
-      buildEmptyConversation({
+      buildEmptyConversation({projectId: 'project-1',
         threadId: THREAD_ID,
         now: '2026-08-05T00:00:00.000Z',
         model: 'GPT-5.5',
@@ -1906,7 +1906,7 @@ it.each(['cancelled', 'resume_cancelled'])('取消 %s 只结束所属轮次的�
     { type: 'TEXT_MESSAGE_START', messageId: 'answer', role: 'assistant' },
     { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: '这一轮已经收到的正文' },
   ]
-  const running = events.reduce(applyConversationEvent, buildEmptyConversation({ threadId: THREAD_ID, now: '2026-09-20T00:00:00Z' }))
+  const running = events.reduce(applyConversationEvent, buildEmptyConversation({projectId: 'project-1',  threadId: THREAD_ID, now: '2026-09-20T00:00:00Z' }))
   const cancel: ConversationAgUiEvent = { type: 'RUN_ERROR', code, message: '已停止', rawEvent: { runId: RUN_ID } }
   const stopped = applyConversationEvent(running, cancel)
   expect(stopped.runStatus).toBe('idle')
@@ -1926,7 +1926,7 @@ it.each(['cancelled', 'resume_cancelled'])('取消 %s 只结束所属轮次的�
 })
 
 it('旧运行错误到达时只记录原运行失败，不停止当前新运行', () => {
-  const current = buildEmptyConversation({ now: '2026-09-08T00:00:00Z', threadId: THREAD_ID })
+  const current = buildEmptyConversation({projectId: 'project-1',  now: '2026-09-08T00:00:00Z', threadId: THREAD_ID })
   current.activeRunId = 'new-run'
   current.runStatus = 'streaming'
   current.messages = [{ id: 'old-question', role: 'user', content: '旧问题', createdAt: current.updatedAt, meta: { runId: 'old-run' } }]
@@ -1945,7 +1945,7 @@ it.each(['success', 'error'] as const)('历史子 Agent 卡接收 %s 结果，�
     meta: { status: 'running', subRunId: 'subagent-invocation', toolCallId: 'parent-task', input: '写入文件' },
   }
   const unrelated = { ...subagent, id: 'other-subagent', meta: { ...subagent.meta, subRunId: 'other-invocation', toolCallId: 'other-task' } }
-  const initial = { ...buildEmptyConversation({ now: subagent.createdAt }), messages: [subagent, unrelated] }
+  const initial = { ...buildEmptyConversation({projectId: 'project-1',  now: subagent.createdAt }), messages: [subagent, unrelated] }
   const event: ConversationAgUiEvent = {
     type: 'TOOL_CALL_RESULT', messageId: 'task-result', toolCallId: 'parent-task', role: 'tool', content: '工具结果',
     rawEvent: { streamMode: 'messages', runId: 'resume-run', toolResultStatus,
@@ -1961,7 +1961,7 @@ it.each(['success', 'error'] as const)('历史子 Agent 卡接收 %s 结果，�
 
 
 it.each(['questions', 'review'] as const)('关闭计划卡片不提交未完成答案：%s', (kind) => {
-  const conversation = buildEmptyConversation({ threadId: 'discussion', now: '2026-09-20T00:00:00Z' })
+  const conversation = buildEmptyConversation({projectId: 'project-1',  threadId: 'discussion', now: '2026-09-20T00:00:00Z' })
   conversation.mode = 'plan'
   conversation.planInteraction = kind === 'questions' ? {
     kind, interruptId: 'pending-question', title: '范围', description: '确认范围', form: {},
@@ -1988,7 +1988,7 @@ it.each(['questions', 'review'] as const)('关闭计划卡片不提交未完成�
 
 it('消息快照补齐可见提问的技能上下文，重放不重复且不会带入窗口外正文', () => {
   const source = { kind: 'context' as const, name: 'skill-invocation', metadata: { skills: [{ id: 'report', name: 'reports' }] } }
-  const initial = { ...buildEmptyConversation({ threadId: THREAD_ID, now: '2026-09-29T00:00:00Z' }), messages: [
+  const initial = { ...buildEmptyConversation({projectId: 'project-1',  threadId: THREAD_ID, now: '2026-09-29T00:00:00Z' }), messages: [
     { id: 'question', role: 'user' as const, content: '用 /reports 技能帮我', createdAt: '2026-09-29T00:00:00Z', meta: { runId: RUN_ID } },
     { id: 'answer', role: 'assistant' as const, content: '答复', createdAt: '2026-09-29T00:00:00Z' },
   ] }
@@ -2003,7 +2003,7 @@ it('消息快照补齐可见提问的技能上下文，重放不重复且不会�
   expect(current.messages.map(message => [message.id, message.role])).toEqual([['question', 'user'], ['context', 'context'], ['answer', 'assistant']])
   expect(current.messages[1].meta?.source).toEqual(source)
   expect(applyConversationEvent(current, event).messages).toEqual(current.messages)
-  const empty = buildEmptyConversation({ threadId: THREAD_ID, now: '2026-09-29T00:00:00Z' })
+  const empty = buildEmptyConversation({projectId: 'project-1',  threadId: THREAD_ID, now: '2026-09-29T00:00:00Z' })
   expect(applyConversationEvent(empty, event).messages.filter(message => message.role === 'context')).toHaveLength(2)
 })
 

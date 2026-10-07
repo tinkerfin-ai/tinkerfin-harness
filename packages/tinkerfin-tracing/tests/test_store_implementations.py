@@ -19,6 +19,7 @@ from tinkerfin_tracing import (
     InMemoryTraceStore,
     RunFact,
     SqlAlchemyTraceStore,
+    TraceLimits,
     TraceProjectionCheckpoint,
     TraceStore,
     TraceStoreOptions,
@@ -170,6 +171,71 @@ async def _exercise_store_contract(store: TraceStore) -> None:
 
 async def test_in_memory_store_satisfies_shared_contract() -> None:
     await _exercise_store_contract(InMemoryTraceStore())
+
+
+async def _exercise_checkpoint_retention(store: TraceStore) -> None:
+    writer = await store.open_writer(_identity())
+    try:
+        events = await writer.append((_fact("run-contract", "started"),))
+        events += await writer.append(
+            (
+                _fact("run-contract", "terminal"),
+                _fact("run-contract", "closed"),
+            ),
+            mandatory=True,
+        )
+        for scope in (None, "run-contract"):
+            for sequence in (1, 2, 3):
+                await store.save_projection_checkpoint(
+                    TraceProjectionCheckpoint(
+                        key=writer.key,
+                        projection_name="retained",
+                        run_id=scope,
+                        as_of_seq=sequence,
+                        state={"count": sequence},
+                    ),
+                    expected_as_of_seq=None if sequence == 1 else sequence - 1,
+                )
+            assert (
+                await store.load_projection_checkpoint(
+                    writer.key, projection_name="retained", run_id=scope, as_of_seq=1
+                )
+                is None
+            )
+            retained = await store.load_projection_checkpoint(
+                writer.key, projection_name="retained", run_id=scope, as_of_seq=2
+            )
+            assert retained is not None and retained.state == {"count": 2}
+            current = await store.load_projection_checkpoint(
+                writer.key, projection_name="retained", run_id=scope, as_of_seq=3
+            )
+            assert current is not None and current.state == {"count": 3}
+            assert (
+                await store.save_projection_checkpoint(current, expected_as_of_seq=2)
+                == current
+            )
+        assert (
+            await store.read_events(writer.key, after_seq=0, as_of_seq=3, limit=3)
+            == events
+        )
+    finally:
+        await writer.aclose()
+
+
+async def test_in_memory_retains_bounded_checkpoint_history_and_all_events() -> None:
+    await _exercise_checkpoint_retention(
+        InMemoryTraceStore(limits=TraceLimits(max_projection_checkpoints_per_scope=2))
+    )
+
+
+async def test_sql_retains_bounded_checkpoint_history_and_all_events(
+    trace_sql_engine: AsyncEngine,
+) -> None:
+    await _exercise_checkpoint_retention(
+        SqlAlchemyTraceStore(
+            trace_sql_engine, limits=TraceLimits(max_projection_checkpoints_per_scope=2)
+        )
+    )
 
 
 async def test_sql_store_satisfies_shared_contract(

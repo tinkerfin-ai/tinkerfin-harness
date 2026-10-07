@@ -1,4 +1,17 @@
 @layer workspace {
+  .conversation-label { flex: 1; min-width: 0; display: grid; text-align: start; }
+  .conversation-project-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-micro-size); color: var(--color-text-secondary); }
+  .sidebar-feature-nav { display: flex; flex-direction: column; flex: 0 1 auto; max-height: 40%; overflow-y: auto; gap: var(--space-1); padding-bottom: var(--space-3); border-bottom: 1px solid var(--color-border); }
+  .sidebar-feature-nav .ui-button { flex-shrink: 0; justify-content: flex-start; min-height: 44px; padding-inline: var(--space-3); }
+  .sidebar-feature-nav .ui-button[aria-pressed="true"] { background: var(--color-active); color: var(--color-text-primary); border-color: transparent; }
+  .sidebar-feature-nav .ui-button[aria-pressed="true"] svg { color: var(--color-brand-text); }
+  .sidebar-history-toolbar { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 auto; gap: var(--space-1); margin-top: var(--space-1); }
+  .sidebar-history-search { display: none; flex: 0 0 auto; }
+  .sidebar-history-search.is-open { display: block; }
+  .sidebar-history-search .sidebar-search { position: static; width: 100%; height: 44px; transform: none; opacity: 1; visibility: visible; pointer-events: auto; border: 1px solid var(--color-border); background: var(--color-layer-1); padding: 0 var(--space-2); }
+  .sidebar-search-scope { display: flex; gap: var(--space-1); padding: var(--space-1) 0 var(--space-2); }
+  .sidebar-search-scope .ui-button { flex: 1; }
+  .sidebar-archive-entry { margin: var(--space-2) 0; width: 100%; justify-content: flex-start; }
   .app-shell {
     display: grid;
     grid-template-columns: var(--layout-sidebar-expanded) minmax(0, 1fr);
@@ -31,9 +44,8 @@
     --sidebar-label-inset: calc(var(--space-3) + var(--sidebar-row-padding) + var(--icon-sm) + var(--space-1));
     position: absolute;
     inset: 0 auto 0 0;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    display: flex;
+    flex-direction: column;
     width: calc(var(--layout-sidebar-expanded) - 1px);
     min-width: calc(var(--layout-sidebar-expanded) - 1px);
     padding: 0 var(--space-3);
@@ -48,6 +60,7 @@
   }
 
   .sidebar-rail {
+    --tooltip-gap: var(--space-5);
     --sidebar-rail-control-size: var(--control-sm);
     position: absolute;
     inset: 0;
@@ -83,16 +96,7 @@
     height: var(--control-sm);
   }
 
-  .sidebar-rail .ui-tooltip {
-    top: 50%;
-    left: calc(100% + var(--space-5));
-    transform: translate(var(--space-0-5), -50%);
-  }
 
-  .sidebar-rail .ui-icon-button-wrap:hover .ui-tooltip,
-  .sidebar-rail .ui-icon-button:focus-visible + .ui-tooltip {
-    transform: translate(0, -50%);
-  }
 
   .rail-spacer { flex: 1; }
 
@@ -109,6 +113,7 @@
   }
 
   .sidebar-head-actions {
+    --tooltip-gap: var(--space-5);
     display: flex;
     margin-left: auto;
     /* 将操作图标的可见右边缘与新会话对齐，保留完整点击区域 */
@@ -132,28 +137,9 @@
     height: var(--control-xs);
   }
 
-  .sidebar-head-actions .ui-tooltip {
-    right: 0;
-    left: auto;
-    transform: translateY(-2px);
-  }
 
-  .sidebar-head-actions .sidebar-mode-toggle + .ui-tooltip {
-    top: 50%;
-    right: auto;
-    left: calc(100% + var(--space-3));
-    transform: translate(var(--space-0-5), -50%);
-  }
 
-  .sidebar-head-actions .ui-icon-button-wrap:hover .ui-tooltip,
-  .sidebar-head-actions .ui-icon-button:focus-visible + .ui-tooltip {
-    transform: translateY(0);
-  }
 
-  .sidebar-head-actions .ui-icon-button-wrap:hover .sidebar-mode-toggle + .ui-tooltip,
-  .sidebar-head-actions .sidebar-mode-toggle:focus-visible + .ui-tooltip {
-    transform: translate(0, -50%);
-  }
 
   .brand {
     display: inline-flex;
@@ -234,8 +220,10 @@
   .conversation-history {
     position: relative;
     display: flex;
+    flex: 1;
     flex-direction: column;
     min-height: 0;
+    margin-top: var(--space-1);
     margin-right: calc(var(--space-3) * -1);
     padding-top: 0;
   }
@@ -324,7 +312,7 @@
 
   .conversation-scroll.is-scroll-locked { overflow-y: hidden; }
   .conversation-groups { position: relative; }
-  .conversation-group-items { padding: 0; }
+  .conversation-group-items { padding: 0; margin-top: var(--space-2); }
   .conversation-group-items + .conversation-group-title { margin-top: var(--space-4); }
 
   .conversation-group-title,
@@ -502,6 +490,7 @@
   .history-skeleton:nth-child(3n) span { width: 81%; }
   .user-account {
     position: relative;
+    flex: 0 0 auto;
     min-height: var(--space-16);
     padding: 0;
     border: 0;
@@ -720,7 +709,18 @@
   }
 
   .conversation-pane.is-empty { overflow: hidden; }
-  .conversation-load-failure { display: grid; min-height: 100%; place-items: center; padding-block: var(--space-4); }
+  .conversation-pane:has(> .conversation-load-failure) { overflow-y: auto; }
+  .conversation-load-failure {
+    display: grid;
+    min-height: max(0px, calc(100% - var(--composer-height, 0px)));
+    margin-bottom: var(--composer-height, 0px);
+    place-items: center;
+    padding-block: var(--space-4);
+  }
+  .workspace-main:has(.composer-dock.is-taken-over) .conversation-load-failure {
+    min-height: 100%;
+    margin-bottom: 0;
+  }
   .message-list {
     --conversation-flow-gap: var(--space-4);
     width: min(100%, var(--layout-conversation-width));

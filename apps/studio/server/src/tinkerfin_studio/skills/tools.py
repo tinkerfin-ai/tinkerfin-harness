@@ -131,13 +131,14 @@ class _EnableArguments(_Arguments):
 
 
 def build_skill_tools(
-    library: SkillLibrary, *, user_id: int, thread_id: str
+    library: SkillLibrary, *, user_id: int, project_id: str, thread_id: str
 ) -> tuple[BaseTool, ...]:
     """为主会话绑定可信用户和会话，模型不能覆盖身份或业务操作标识
 
     Args:
         library: 页面共用的技能服务，只借用应用资源
         user_id: 已认证且已校验会话归属的用户 ID
+        project_id: 当前会话所属项目，管理操作只影响此项目
         thread_id: 当前会话，用于检查 ZIP 附件的引用范围
 
     Returns:
@@ -224,7 +225,7 @@ def build_skill_tools(
         Raises:
             ToolException: 技能查询不可用
         """
-        return await result(library.list(user_id, query=query))
+        return await result(library.list(user_id, project_id=project_id, query=query))
 
     @tool(
         args_schema=_DetailArguments,
@@ -244,7 +245,9 @@ def build_skill_tools(
             ToolException: 技能不存在、无权访问或内容不可用
         """
         if target.kind == "installed":
-            return await result(library.detail(user_id, target.installation_id))
+            return await result(
+                library.detail(user_id, target.installation_id, project_id=project_id)
+            )
         return await result(
             library.remote_detail(target.source_id, target.skill_id, target.revision)
         )
@@ -301,6 +304,7 @@ def build_skill_tools(
                     library.install(
                         user_id,
                         InstallSkillRequest(
+                            project_id=project_id,
                             request_id=request_id,
                             source_id=target.source_id,
                             skill_id=target.skill_id,
@@ -313,7 +317,11 @@ def build_skill_tools(
                 library.confirm(
                     user_id,
                     target.draft_id,
-                    ConfirmImportRequest(request_id=request_id, digests=target.digests),
+                    ConfirmImportRequest(
+                        request_id=request_id,
+                        project_id=project_id,
+                        digests=target.digests,
+                    ),
                 ),
                 mutation=True,
             )
@@ -323,7 +331,9 @@ def build_skill_tools(
                     user_id,
                     operation.installation_id,
                     UpdateSkillRequest(
-                        request_id=request_id, replacement=operation.replacement
+                        project_id=project_id,
+                        request_id=request_id,
+                        replacement=operation.replacement,
                     ),
                 ),
                 mutation=True,
@@ -332,7 +342,7 @@ def build_skill_tools(
             library.uninstall(
                 user_id,
                 operation.installation_id,
-                SkillCommandRequest(request_id=request_id),
+                SkillCommandRequest(request_id=request_id, project_id=project_id),
             ),
             mutation=True,
         )
@@ -364,7 +374,9 @@ def build_skill_tools(
             library.set_enabled(
                 user_id,
                 installation_id,
-                SkillEnabledRequest(request_id=request_id, enabled=enabled),
+                SkillEnabledRequest(
+                    request_id=request_id, project_id=project_id, enabled=enabled
+                ),
             ),
             mutation=True,
         )

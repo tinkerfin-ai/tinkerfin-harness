@@ -16,51 +16,52 @@ class AttachmentFile(Base):
     __table_args__ = (
         Index("ix_conversation_attachments_owner", "user_id", "thread_id"),
         Index("ix_conversation_attachments_cleanup", "thread_id", "created_at"),
-        {**MYSQL_TABLE_OPTIONS, "comment": "会话上传和生成附件的持久化引用"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "会话附件"},
     )
     id: Mapped[str] = mapped_column(
         String(32),
         primary_key=True,
-        comment="服务端随机附件 ID，同时作为不透明存储标识",
+        comment="附件 ID",
     )
     user_id: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="附件所属用户 ID"
     )
+    project_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, comment="附件所属项目 ID"
+    )
     thread_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True, comment="附件绑定的会话 ID；空值表示未发送草稿"
+        String(128), nullable=True, comment="所属会话 ID，草稿为空"
     )
     message_id: Mapped[str | None] = mapped_column(
-        String(128), nullable=True, comment="首次使用或生成附件的权威消息 ID"
+        String(128), nullable=True, comment="首次使用或生成附件的消息 ID"
     )
-    name: Mapped[str] = mapped_column(
-        String(255), nullable=False, comment="用户可见文件名，不用于存储路径"
-    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, comment="文件名")
     mime_type: Mapped[str] = mapped_column(
-        String(128), nullable=False, comment="服务端验证的文件媒体类型；待确认上传为空"
+        String(128), nullable=False, comment="文件媒体类型，待确认上传为空"
     )
     size_bytes: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, comment="原件大小，单位为字节；待确认上传为声明值"
+        BigInteger, nullable=False, comment="文件大小（字节），待确认上传为声明值"
     )
     sha256: Mapped[str] = mapped_column(
-        String(64), nullable=False, default="", comment="原件完整内容的 SHA-256 校验值"
+        String(64), nullable=False, default="", comment="文件内容 SHA-256 校验值"
     )
     status: Mapped[str] = mapped_column(
         String(16),
         nullable=False,
         default="uploading",
-        comment="uploading、processing、ready 或 deleting；仅 ready 可用",
+        comment="附件状态：uploading、processing、ready、deleting",
     )
     source: Mapped[str] = mapped_column(
         String(16),
         nullable=False,
         default="user",
-        comment="user 表示用户上传，tool 表示工具生成",
+        comment="附件来源：user 用户上传、tool 工具生成",
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(),
         nullable=False,
         default=lambda: datetime.now(UTC).replace(tzinfo=None),
-        comment="UTC 创建时间，用于未发送附件的清理",
+        comment="UTC 创建时间",
     )
 
 
@@ -70,28 +71,33 @@ class AttachmentCollection(Base):
     __tablename__ = "attachment_collections"
     __table_args__ = (
         Index("ix_attachment_collections_owner_task", "user_id", "task_id"),
-        {**MYSQL_TABLE_OPTIONS, "comment": "自动化任务配置和运行附件的持久归属"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "自动化任务附件集合"},
     )
     id: Mapped[str] = mapped_column(
         String(36),
         primary_key=True,
-        comment="集合稳定ID，任务配置由请求ID推导，运行使用执行ID",
+        comment="附件集合 ID",
     )
-    user_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="所属用户ID")
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="所属用户 ID")
+    project_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, comment="集合所属项目 ID"
+    )
     purpose: Mapped[str] = mapped_column(
-        String(16), nullable=False, comment="input为不可变任务配置，execution为运行附件"
+        String(16),
+        nullable=False,
+        comment="集合用途：input 任务输入、execution 运行附件",
     )
     task_id: Mapped[str | None] = mapped_column(
-        String(36), nullable=True, comment="关联自动化任务ID，删除任务后仍保留历史引用"
+        String(36), nullable=True, comment="关联自动化任务 ID"
     )
     configuration: Mapped[dict[str, JsonValue]] = mapped_column(
-        JSON, nullable=False, default=dict, comment="不含凭据的不可变任务或运行输入快照"
+        JSON, nullable=False, default=dict, comment="任务或运行输入快照"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(),
         nullable=False,
         default=lambda: datetime.now(UTC).replace(tzinfo=None),
-        comment="UTC创建时间",
+        comment="UTC 创建时间",
     )
 
 
@@ -101,11 +107,11 @@ class AttachmentReference(Base):
     __tablename__ = "attachment_references"
     __table_args__ = (
         Index("ix_attachment_references_file", "attachment_id"),
-        {**MYSQL_TABLE_OPTIONS, "comment": "自动化附件集合与文件引用，由服务校验归属"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "附件集合与文件关联"},
     )
     collection_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, comment="附件集合ID"
+        String(36), primary_key=True, comment="附件集合 ID"
     )
     attachment_id: Mapped[str] = mapped_column(
-        String(32), primary_key=True, comment="附件文件ID"
+        String(32), primary_key=True, comment="附件 ID"
     )

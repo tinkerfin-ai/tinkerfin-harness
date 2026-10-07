@@ -35,11 +35,13 @@ from tinkerfin_studio.conversation.schemas import (
 )
 from tinkerfin_studio.conversation.service import ConversationChatService
 from tinkerfin_studio.conversation.trace_responses import ConversationGraphQueryPage
+from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_studio.resources import get_resources
 from tinkerfin_tracing import (
     TraceGraphFilter,
     TraceGraphNodeKind,
     TraceGraphNodeStatus,
+    TraceModelRequest,
 )
 
 router = APIRouter(prefix="/conversation", tags=["会话"])
@@ -124,14 +126,26 @@ TraceGraphFilterDep: TypeAlias = Annotated[
 @router.get("/history", response_model=ApiResponse[ConversationHistoryListResponse])
 async def list_history(
     service: ConversationHistoryDep,
+    session: SessionDep,
+    user: UserContextDep,
+    project_id: Annotated[str, Query(alias="projectId", min_length=1, max_length=36)],
+    scope: Annotated[str, Query(pattern="^(project|all)$")] = "project",
+    archived: bool = False,
     page_size: Annotated[int, Query(alias="pageSize", ge=1, le=100)] = 20,
     cursor: Annotated[str | None, Query()] = None,
     query: Annotated[str | None, Query(max_length=255)] = None,
 ) -> ApiResponse[ConversationHistoryListResponse]:
     """分页返回当前用户历史会话"""
 
+    await ProjectRepository(session, user.user_id).require(project_id)
     return ApiResponse.success(
-        await service.list_history(page_size=page_size, cursor=cursor, query=query)
+        await service.list_history(
+            project_id=project_id if scope == "project" else None,
+            archived=archived,
+            page_size=page_size,
+            cursor=cursor,
+            query=query,
+        )
     )
 
 
@@ -242,6 +256,20 @@ async def query_trace_graph(
     )
 
 
+@router.get(
+    "/{thread_id}/trace/model-request", response_model=ApiResponse[TraceModelRequest]
+)
+async def get_model_request(
+    thread_id: ThreadIdPath,
+    service: ConversationHistoryDep,
+    reference: Annotated[str, Query(min_length=1, max_length=16_384)],
+) -> ApiResponse[TraceModelRequest]:
+    """读取所选链路模型节点的完整请求，避免会话加载时重复发送全部上下文"""
+    return ApiResponse[TraceModelRequest].success(
+        await service.get_model_request(thread_id, reference=reference)
+    )
+
+
 @router.get("/{thread_id}/trace/graph/follow", response_class=StreamingResponse)
 async def follow_trace_graph(
     thread_id: ThreadIdPath,
@@ -272,6 +300,8 @@ async def update_thread(
             thread_id=thread_id,
             title=payload.title,
             pinned=payload.pinned,
+            project_id=payload.project_id,
+            archived=payload.archived,
         )
     )
 

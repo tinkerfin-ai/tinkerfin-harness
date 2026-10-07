@@ -48,6 +48,14 @@ waits for accepted operations and does not close the Engine. Setup is automatic;
 - `aget`, `aput`, `adelete`, and `abatch` use complete namespace/key identities.
   A batch reads one snapshot before writing; the final write to each key wins.
   Updates preserve `created_at`.
+- `acompare_and_set(namespace, key, expected=observed, value=replacement)` commits
+  only when the complete JSON value still matches. `expected=None` requires
+  absence; `value=None` deletes. A conflict returns `False` without changing
+  data. Conditions are checked in the write transaction across Store instances.
+- `asearch_exact(namespace, limit=100, offset=0)` pages one collection and
+  excludes descendant namespaces before pagination. It returns independent
+  `DocumentSnapshot` values from `tinkerfin_contracts.storage`, ordered by update
+  time descending and then key ascending.
 - `asearch` matches a literal namespace prefix. Results sort by `updated_at`
   descending, then namespace and key ascending. `limit` and `offset` apply after
   filtering.

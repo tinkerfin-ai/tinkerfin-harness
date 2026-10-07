@@ -63,6 +63,13 @@ class ConversationForwardedProps(BaseModel):
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
+    project_id: str = Field(
+        alias="projectId",
+        min_length=1,
+        max_length=36,
+        description="本次会话所属项目，服务端核验归属",
+    )
+
     skill_ids: list[Annotated[str, Field(min_length=1, max_length=36)]] = Field(
         default_factory=list,
         alias="skillIds",

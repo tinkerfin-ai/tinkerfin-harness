@@ -101,10 +101,14 @@ async def remote_detail(
 
 @router.get("/installations")
 async def installations(
-    request: Request, user: UserContextDep
+    request: Request,
+    user: UserContextDep,
+    project_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
 ) -> ApiResponse[list[InstalledSkill]]:
     return ApiResponse.success(
-        await get_resources(request.app).skills.list(user.user_id)
+        await get_resources(request.app).skills.list(
+            user.user_id, project_id=project_id
+        )
     )
 
 
@@ -118,10 +122,15 @@ async def install(
 
 @router.get("/installations/{installation_id}")
 async def installed_detail(
-    installation_id: str, request: Request, user: UserContextDep
+    installation_id: str,
+    request: Request,
+    user: UserContextDep,
+    project_id: Annotated[str | None, Query(min_length=1, max_length=36)] = None,
 ) -> ApiResponse[SkillDetail]:
     return ApiResponse.success(
-        await get_resources(request.app).skills.detail(user.user_id, installation_id)
+        await get_resources(request.app).skills.detail(
+            user.user_id, installation_id, project_id=project_id
+        )
     )
 
 

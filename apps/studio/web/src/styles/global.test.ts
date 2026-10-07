@@ -211,14 +211,14 @@ describe('前端视觉契约', () => {
     expect(cssFiles['./global.css']).toMatch(/button,[\s\S]*select\s*{\s*font-size:\s*inherit;/)
   })
 
-  it('全部样式入口共用界面字体与 400 字重，内容排版使用独立语义', () => {
+  it('界面使用统一字体和默认字重，指定标识与当前位置允许加粗，内容使用独立语义', () => {
     expect(declarations(typographyStyles).get('--weight-ui')).toBe('400')
     const contentBoundary = /\.markdown-content|\.tool-(?:code|rich)-field|\.ui-code-text|\.attachment-sheet|\.mermaid-render-host|\bcode,\s*kbd,\s*pre,\s*samp/
     for (const [path, source] of Object.entries(cssFiles)) {
       if (path.endsWith('/fonts.css')) continue
       for (const [, selector, block] of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
         const weight = block.match(/font-weight:\s*([^;]+);/)?.[1].trim()
-        if (selector.trim() === '.skills-icon') {
+        if (selector.trim() === '.skills-icon' || (path.endsWith('/model-connections.css') && selector.trim() === '.settings-models__breadcrumbs span[aria-current]')) {
           expect(weight).toBe('var(--weight-semibold)')
         } else if (weight && weight !== 'var(--weight-ui)') {
           expect(selector, `${path}: 非界面字重只能用于语义内容`).toMatch(contentBoundary)
@@ -234,7 +234,8 @@ describe('前端视觉契约', () => {
     expect(tokensStyles).toContain('--motion-tooltip-hide-delay: 0ms;')
     expect(tokensStyles).toContain('--layout-toast-width: 380px;')
     expect(tokensStyles).toContain('--layout-toast-standard-width: 340px;')
-    expect(uiStyles).toMatch(/\.ui-tooltip\s*\{[^}]*opacity:\s*0;[^}]*opacity var\(--motion-instant\) linear var\(--motion-tooltip-hide-delay\)/s)
+    expect(uiStyles).toMatch(/\.ui-tooltip\s*\{[^}]*position:\s*fixed;[^}]*z-index:\s*var\(--layer-tooltip\)/s)
+    expect(uiStyles).toMatch(/\.ui-tooltip\[hidden\]\s*\{[^}]*display:\s*none;/s)
     expect(uiStyles).toMatch(/\.toast-card__title\s*\{[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s)
     expect(uiStyles).toMatch(/\.toast-card\s*>\s*button\s*\{[^}]*place-self:\s*center end;/s)
     expect(uiStyles).toMatch(/\.ui-button:focus-visible[\s\S]*outline:/)

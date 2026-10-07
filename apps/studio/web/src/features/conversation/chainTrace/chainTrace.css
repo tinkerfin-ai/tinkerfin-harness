@@ -150,11 +150,6 @@
     padding: 0;
   }
 
-  .chain-trace-search-control > .ui-icon-button-wrap .ui-tooltip {
-    right: 0;
-    left: auto;
-    transform: none;
-  }
 
   .chain-trace-search {
     --search-field-control-size: var(--chain-trace-action-height);

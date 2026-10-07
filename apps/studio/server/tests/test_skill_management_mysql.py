@@ -2,6 +2,7 @@
 
 import asyncio
 import secrets
+from datetime import datetime
 
 import httpx
 import pytest
@@ -19,6 +20,7 @@ from tinkerfin_contracts import RunIdentity
 from tinkerfin_studio.api.errors import BusinessException, SkillErrorCode
 from tinkerfin_studio.auth.models import User
 from tinkerfin_studio.infrastructure.database import Base, Database
+from tinkerfin_studio.projects.models import Project
 from tinkerfin_studio.skills.content import SkillContentStore
 from tinkerfin_studio.skills.downloads import GitHubSkillImporter
 from tinkerfin_studio.skills.entity import (
@@ -79,6 +81,19 @@ async def test_concurrent_skill_commands_and_snapshot_capture(
                 await connection.run_sync(Base.metadata.create_all)
             async with database.session() as session:
                 await add_users(session)
+                session.add_all(
+                    [
+                        Project(
+                            id=f"project-{user_id}",
+                            user_id=user_id,
+                            name="项目",
+                            created_at=datetime(2030, 1, 1),
+                            updated_at=datetime(2030, 1, 1),
+                        )
+                        for user_id in (1, 2)
+                    ]
+                )
+                await session.commit()
             async with httpx.AsyncClient(
                 transport=httpx.MockTransport(lambda _: httpx.Response(404))
             ) as client:
@@ -179,7 +194,8 @@ async def test_concurrent_skill_commands_and_snapshot_capture(
                                         namespace="ns_1",
                                         thread_id="thread",
                                         run_id="captured",
-                                    )
+                                    ),
+                                    project_id="project-1",
                                 )
 
                         snapshot_task = asyncio.create_task(capture())
@@ -206,7 +222,9 @@ async def test_concurrent_skill_commands_and_snapshot_capture(
                     await session.scalar(select(SkillRunSnapshot.id).limit(1))
                     async with database.session() as other, other.begin():
                         later = await SkillRepository(other, 1).capture(
-                            later_identity, selected_ids=(item.id,)
+                            later_identity,
+                            project_id="project-1",
+                            selected_ids=(item.id,),
                         )
                     repository = SkillRepository(session, 1)
                     assert await repository.snapshot(later_identity) == later
@@ -217,7 +235,9 @@ async def test_concurrent_skill_commands_and_snapshot_capture(
                     )
                     assert (
                         await repository.capture(
-                            later_identity, selected_ids=(item.id,)
+                            later_identity,
+                            project_id="project-1",
+                            selected_ids=(item.id,),
                         )
                         == later
                     )
@@ -225,6 +245,7 @@ async def test_concurrent_skill_commands_and_snapshot_capture(
                         RunIdentity(
                             namespace="ns_1", thread_id="thread", run_id="restored"
                         ),
+                        project_id="project-1",
                         source=later_identity,
                     )
                     assert restored == later
@@ -239,7 +260,9 @@ async def test_concurrent_skill_commands_and_snapshot_capture(
                 )
                 with pytest.raises(RuntimeError, match="abort registration"):
                     async with database.session() as session, session.begin():
-                        await SkillRepository(session, 1).capture(rollback_identity)
+                        await SkillRepository(session, 1).capture(
+                            rollback_identity, project_id="project-1"
+                        )
                         raise RuntimeError("abort registration")
                 async with database.session() as session:
                     with pytest.raises(BusinessException) as rolled_back:
@@ -255,7 +278,9 @@ async def test_concurrent_skill_commands_and_snapshot_capture(
                 async with database.session() as session:
                     await session.scalar(select(SkillRunSnapshot.id).limit(1))
                     async with database.session() as other, other.begin():
-                        await SkillRepository(other, 1).capture(pending_identity)
+                        await SkillRepository(other, 1).capture(
+                            pending_identity, project_id="project-1"
+                        )
                     session.add(
                         User(
                             id=3,
@@ -267,7 +292,9 @@ async def test_concurrent_skill_commands_and_snapshot_capture(
                         )
                     )
                     with pytest.raises(IntegrityError):
-                        await SkillRepository(session, 1).capture(pending_identity)
+                        await SkillRepository(session, 1).capture(
+                            pending_identity, project_id="project-1"
+                        )
                     await session.rollback()
 
                 async with database.session() as session, session.begin():
@@ -284,7 +311,8 @@ async def test_concurrent_skill_commands_and_snapshot_capture(
                     disabled = await SkillRepository(session, 1).capture(
                         RunIdentity(
                             namespace="ns_1", thread_id="thread", run_id="disabled"
-                        )
+                        ),
+                        project_id="project-1",
                     )
                     assert disabled.skills == ()
                     unavailable_identity = RunIdentity(
@@ -292,7 +320,9 @@ async def test_concurrent_skill_commands_and_snapshot_capture(
                     )
                     with pytest.raises(BusinessException) as unavailable:
                         await SkillRepository(session, 1).capture(
-                            unavailable_identity, selected_ids=(item.id,)
+                            unavailable_identity,
+                            project_id="project-1",
+                            selected_ids=(item.id,),
                         )
                     assert unavailable.value.error_code == SkillErrorCode.DISABLED
                     with pytest.raises(BusinessException) as unpublished:
@@ -329,12 +359,14 @@ async def test_concurrent_skill_commands_and_snapshot_capture(
                     resumed = await repository.capture(
                         RunIdentity(
                             namespace="ns_1", thread_id="thread", run_id="captured"
-                        )
+                        ),
+                        project_id="project-1",
                     )
                     fresh = await repository.capture(
                         RunIdentity(
                             namespace="ns_1", thread_id="thread", run_id="fresh"
-                        )
+                        ),
+                        project_id="project-1",
                     )
                 assert resumed == snapshot
                 assert fresh.skills == ()
@@ -365,8 +397,21 @@ async def test_two_users_capture_first_snapshot_without_gap_deadlock(
         ) as database:
             async with database.engine.begin() as connection:
                 await connection.run_sync(Base.metadata.create_all)
-            async with database.session() as session, session.begin():
+            async with database.session() as session:
                 await add_users(session)
+                session.add_all(
+                    [
+                        Project(
+                            id=f"project-{user_id}",
+                            user_id=user_id,
+                            name="项目",
+                            created_at=datetime(2030, 1, 1),
+                            updated_at=datetime(2030, 1, 1),
+                        )
+                        for user_id in (1, 2)
+                    ]
+                )
+                await session.commit()
 
             both = asyncio.Event()
             proceed = asyncio.Event()
@@ -400,7 +445,8 @@ async def test_two_users_capture_first_snapshot_without_gap_deadlock(
                             namespace=f"ns_{user_id}",
                             thread_id="thread",
                             run_id="first",
-                        )
+                        ),
+                        project_id=f"project-{user_id}",
                     )
 
             commands = [asyncio.create_task(capture(user_id)) for user_id in (1, 2)]

@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import type { ConversationHistoryDetail, TraceMessage } from '../../src/api/conversation/history'
 import { emptyTraceGraph } from '../../src/test/traceFixtures'
 import { expect, test, type Locator, type Page } from '@playwright/test'
@@ -22,6 +23,7 @@ async function prepare(page: Page, installed: InstalledSkill[] = []) {
     else if (path === '/api/models') data = { items: [{ modelId: 'main', displayName: '主模型', connectionId: 'provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true }], defaultModelId: 'main' }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history') data = { items: [], nextCursor: null }
+    else if (path === '/api/conversation/skill-thread/title') data = { threadId: 'skill-thread', title: '整理本周资料', titleSource: 'user', titleGenerationStatus: 'skipped', titleSeq: 1 }
     else if (path === '/api/skills/sources') data = [{ id: 'clawhub', name: 'ClawHub', url: 'https://clawhub.ai' }]
     else if (path === '/api/skills/installations') data = installed
     else if (path === '/api/skills/catalog') data = { items: [{ id: 'author/reports', source_id: 'clawhub', name: 'Reports', description: '整理资料并生成报告', revision: 'fixed', author: 'Author', topics: [], updated_at: null }], cursor: null }
@@ -33,7 +35,7 @@ async function prepare(page: Page, installed: InstalledSkill[] = []) {
   await installNotificationStream(page)
 }
 
-const composerSkill: InstalledSkill = {
+const composerSkill: InstalledSkill = {project_id: 'project-1', overridden: false,
   id: 'reports-id', name: 'reports', description: '整理报告', enabled: true,
   source_id: 'clawhub', source_kind: 'catalog', source_name: 'ClawHub', external_id: 'author/reports',
   author: 'Author', topics: [], file_count: 1, byte_size: 64,
@@ -63,6 +65,7 @@ for (const accepted of [false, true]) {
         }), { headers: { 'Content-Type': 'text/event-stream' } })
       }
     }, accepted)
+    await installProjectScope(page)
     await page.goto('/')
     const draft = page.getByRole('textbox', { name: '消息输入' })
     await draft.fill('整理本周资料')
@@ -103,6 +106,7 @@ for (const width of [320, 768, 1024, 1440]) {
   test(`技能页和自动化页的页签位置与下划线一致 ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
     await prepare(page)
+    await installProjectScope(page)
     await page.goto('/?page=skills')
     await expect(page.getByRole('article', { name: 'Reports', exact: true })).toBeVisible()
     await page.evaluate(() => document.fonts.ready)
@@ -110,6 +114,7 @@ for (const width of [320, 768, 1024, 1440]) {
     const importButton = await actionGeometry(page.getByRole('button', { name: '导入技能', exact: true }))
     const card = await page.getByRole('article', { name: 'Reports', exact: true }).boundingBox()
     expect(card?.height).toBeGreaterThanOrEqual(width < 768 ? 232 : 222)
+    await installProjectScope(page)
     await page.goto('/?page=automation')
     await expect(page.getByRole('tab', { name: '任务', exact: true })).toBeVisible()
     await page.getByRole('tab', { name: '任务', exact: true }).click()
@@ -161,6 +166,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1265
   test(`技能库的主题、固定布局与自定义选择器 ${theme} ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 960 })
     await prepareGallery(page, theme)
+    await installProjectScope(page)
     await page.goto('/?page=skills')
     await expect(page.getByRole('article')).toHaveCount(gallery.length)
     await page.evaluate(() => document.fonts.ready)
@@ -242,6 +248,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1265
 test('卡片悬浮有层次阴影并遵守减少动态设置', async ({ page }, testInfo) => {
   await prepareGallery(page, 'light')
   await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await installProjectScope(page)
   await page.goto('/?page=skills')
   const card = page.getByRole('article', { name: 'market-research', exact: true })
   await expect(card).toHaveCSS('cursor', 'pointer')
@@ -289,6 +296,7 @@ test('滚动加载下一页，失败保留卡片并原位重试', async ({ page 
       cursor: cursor ? null : 'next-page',
     } } })
   })
+  await installProjectScope(page)
   await page.goto('/?page=skills')
   await expect(page.getByRole('article')).toHaveCount(24)
   expect(nextRequests).toBe(0)
@@ -318,6 +326,7 @@ test('卡片空白处打开详情，安装按钮独立执行', async ({ page }) 
     installed.push(composerSkill)
     await route.fulfill({ json: { code: 0, message: 'success', data: composerSkill } })
   })
+  await installProjectScope(page)
   await page.goto('/?page=skills')
   const card = page.getByRole('article', { name: 'Reports', exact: true })
   await card.click({ position: { x: 10, y: 10 } })
@@ -342,6 +351,7 @@ test('更新失败保留卡片，重试复用操作 ID 并区分最新内容', a
     installed[0] = { ...installed[0], description: '更新后的报告技能' }
     await route.fulfill({ json: { code: 0, message: 'success', data: { installation: installed[0], changed } } })
   })
+  await installProjectScope(page)
   await page.goto('/?page=skills')
   await page.getByRole('tab', { name: '我的', exact: true }).click()
   const card = page.getByRole('article', { name: 'reports', exact: true })
@@ -390,6 +400,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 1440]) {
       installed[0] = { ...installed[0], description: '更新后的报告技能' }
       await route.fulfill({ json: { code: 0, message: 'success', data: { installation: installed[0], changed: true } } })
     })
+    await installProjectScope(page)
     await page.goto('/?page=skills')
     await page.getByRole('tab', { name: '我的', exact: true }).click()
     const trigger = page.getByRole('button', { name: '管理技能：reports', exact: true })
@@ -422,6 +433,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 1440]) {
 test('菜单不被卡片滚动区裁切，键盘关闭恢复焦点且不触发开关', async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 700 })
   await prepareGallery(page, 'light')
+  await installProjectScope(page)
   await page.goto('/?page=skills')
   await page.getByRole('tab', { name: '我的', exact: true }).click()
   const trigger = page.getByRole('button', { name: '管理技能：industry-outlook', exact: true })
@@ -458,9 +470,11 @@ test('通知同步技能页和对话选择，停用后的草稿保留并提示�
     await prepare(page, installed)
     await prepare(chat, installed)
     await chat.addInitScript(() => localStorage.setItem('tinkerfin:theme', 'system'))
+    await installProjectScope(page)
     await page.goto('/?page=skills')
     await page.getByRole('tab', { name: '我的', exact: true }).click()
     await expect(page.getByRole('switch')).toHaveAttribute('aria-checked', 'true')
+    await installProjectScope(chat)
     await chat.goto('/')
     const input = chat.getByRole('textbox', { name: '消息输入' })
     await input.fill('保留这段分析草稿')
@@ -505,6 +519,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
       submitted = route.request().postDataJSON() as ChatRequestPayload
       await route.fulfill({ status: 422, json: { code: 1_001_008_014, message: '诊断信息不进入界面', data: null } })
     })
+    await installProjectScope(page)
     await page.goto('/')
     const input = page.getByRole('textbox', { name: '消息输入' })
     await page.getByRole('button', { name: '打开命令和技能', exact: true }).click()
@@ -545,6 +560,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
 
 test('中文组合输入不会拆散技能引用或触发发送', async ({ page }) => {
   await prepare(page, [composerSkill])
+  await installProjectScope(page)
   await page.goto('/')
   const input = page.getByRole('textbox', { name: '消息输入' })
   await page.getByRole('button', { name: '打开命令和技能', exact: true }).click()
@@ -566,7 +582,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
     await page.addInitScript(theme => localStorage.setItem('tinkerfin:theme', theme), theme)
     const time = '2026-09-29T00:00:00Z'
     const request: TraceMessage = { id: 'question', agui: { kind: 'message', messageId: 'question' }, traceSeq: 1, graphNamespace: [], runId: 'run', role: 'user', content: '用 /ai-report-interpreter 技能帮我', contentOmitted: false, status: 'completed', createdAt: time }
-    const history: ConversationHistoryDetail = {
+    const history: ConversationHistoryDetail = {projectId: 'project-1', archived: false,
       id: 1, threadId: 'skill-history', title: '报告分析', accessMode: 'full', titleSource: 'user', titleGenerationStatus: 'idle', titleSeq: 1,
       lastModel: 'main', pinned: false, asOfSeq: 4, generation: 'skills', observedAt: time, headRunId: 'run', availableHeads: ['run'], historyCursor: null,
       messageCount: 3, toolCallCount: 0, messages: [request,
@@ -583,7 +599,8 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
       else { await route.fallback(); return }
       await route.fulfill({ json: { code: 0, message: 'success', data } })
     })
-    await page.goto('/?thread=skill-history')
+    await installProjectScope(page)
+    await page.goto('/?project=project-1&thread=skill-history')
     await expect(page.getByText('技能指令', { exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: '固定技能正文' })).toHaveCount(0)
     await expect(page.locator('.user-message')).toHaveCount(1)

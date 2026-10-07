@@ -5,7 +5,7 @@ import { applyConversationEvent } from '../agui/runtime'
 import { buildConversationDisplayEntries } from '../todoTrace/displayEntries'
 import { beginCompaction, compactionsFromTrace } from './state'
 
-const base = () => ({ ...buildEmptyConversation({ threadId: 't', now: '2026-09-21T00:00:00Z' }),
+const base = () => ({ ...buildEmptyConversation({projectId: 'project-1',  threadId: 't', now: '2026-09-21T00:00:00Z' }),
   messages: [{ id: 'answer', role: 'assistant' as const, content: '原回复', createdAt: '2026-09-21T00:00:00Z', meta: { runId: 'chat' } }],
   todos: [{ id: 'todo', content: '待办', status: 'running' as const }],
 })

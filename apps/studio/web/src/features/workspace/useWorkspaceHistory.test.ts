@@ -65,7 +65,7 @@ const readyTaskTrace = (suffix: string): ReadyTaskTrace => ({
 
 const detail = (
   overrides: Partial<ConversationHistoryDetail> = {},
-): ConversationHistoryDetail => ({ accessMode: 'write_approval',
+): ConversationHistoryDetail => ({projectId: 'project-1', archived: false,  accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',
   titleSeq: 0,
@@ -151,7 +151,7 @@ function useHarness(
     currentThreadId: initial.threadId,
   }).current
   useLayoutEffect(() => { setWorkspace(initialWorkspace) }, [initialWorkspace, setWorkspace])
-  const history = useWorkspaceHistory({
+  const history = useWorkspaceHistory({projectId: 'project-1', archived: false, searchScope: 'project',
     workspace,
     setWorkspace,
     retainConversationDetails,
@@ -1306,7 +1306,7 @@ function useBootstrapHarness(catalogReady = true) {
     prepareTaskTraceOwner: vi.fn(async () => undefined),
     onToast: vi.fn(),
   }).current
-  const history = useWorkspaceHistory({
+  const history = useWorkspaceHistory({projectId: 'project-1', archived: false, searchScope: 'project',
     workspace, setWorkspace, retainConversationDetails,
     defaultModelId: 'main',
     modelCatalogStatus: catalogReady ? 'ready' : 'loading',

@@ -1,4 +1,5 @@
 import { X } from 'lucide-react'
+import { Tooltip } from '../../../components/ui'
 import { useI18n } from '../../../i18n'
 
 export function ComposerPlanChip({
@@ -10,11 +11,10 @@ export function ComposerPlanChip({
 }) {
   const { t } = useI18n()
   return (
-    <button
+    <Tooltip content={t('Plan 已开启 — 点击关闭')} placement="top"><button
       type="button"
       className="composer-plan-chip"
       aria-label={t('Plan 已开启，点击关闭')}
-      title={t('Plan 已开启 — 点击关闭')}
       disabled={locked}
       onClick={onExitPlan}
     >
@@ -22,6 +22,6 @@ export function ComposerPlanChip({
       <span className="composer-plan-chip-close" aria-hidden="true">
         <X size={12} strokeWidth={2.4} />
       </span>
-    </button>
+    </button></Tooltip>
   )
 }

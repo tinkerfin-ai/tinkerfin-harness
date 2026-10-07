@@ -84,6 +84,7 @@ from .errors import (
     TinkerFinLifecycleError,
     TinkerFinStreamProtocolError,
 )
+from .files import PersistentFiles
 from .media import AttachmentSupport
 from .native import NativeStreamPart
 from .native_driver import (
@@ -1283,6 +1284,25 @@ class TinkerFin:
         if self._namespace is None:
             raise ValueError("set with_namespace(...) before build()")
         return self._namespace
+
+    def files(self, namespace: tuple[str, ...]) -> PersistentFiles:
+        """Bind persistent files for agents and application editors.
+
+        Use the returned object's backend as a filesystem route and its async
+        read/create/update/delete methods for external editors. The configured
+        Store must support conditional writes and exact queries; it remains borrowed.
+
+        Args:
+            namespace: Relative labels identifying one persistent file collection.
+
+        Returns:
+            A collection bound to this builder's ownership namespace.
+
+        Raises:
+            ValueError: The ownership namespace, Store or collection is missing.
+            NotImplementedError: The provider lacks the required document operations.
+        """
+        return PersistentFiles(self.store, namespace)
 
     @property
     def store(self) -> BaseStore:

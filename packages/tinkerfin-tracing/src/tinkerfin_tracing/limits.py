@@ -24,6 +24,14 @@ class TraceLimits(TraceModel, frozen=True):
     terminal_reserve_events_per_run: int = Field(default=4, ge=2)
     terminal_reserve_bytes_per_run: int = Field(default=4 * 1024 * 1024, ge=1024)
     follow_batch_size: int = Field(default=256, ge=1, le=10_000)
+    max_projection_checkpoints_per_scope: int = Field(
+        default=2,
+        ge=1,
+        description=(
+            "Latest rebuildable checkpoints retained per conversation, projection, "
+            "and optional run; older prefixes are reconstructed from retained events"
+        ),
+    )
 
     @model_validator(mode="after")
     def aggregate_limits_are_consistent(self) -> TraceLimits:

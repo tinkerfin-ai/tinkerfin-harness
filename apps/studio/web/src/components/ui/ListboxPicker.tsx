@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { Tooltip } from './Tooltip'
 
 function revealOption(listbox: HTMLElement, option: HTMLElement | null) {
   if (!option) return
@@ -251,7 +252,7 @@ export function ListboxPicker<T extends string>(props: ListboxPickerProps<T>) {
       {getOptionGroup
         ? Array.from(groups, ([id, group], index) => (
           <div key={id} role="group" className="ui-listbox-group" aria-labelledby={`${listboxId}-group-${index}`}>
-            <div id={`${listboxId}-group-${index}`} className="ui-listbox-group-label" title={group.label}>{group.label}</div>
+            <div id={`${listboxId}-group-${index}`} className="ui-listbox-group-label">{group.label}</div>
             {group.options.map(option => optionElement(option, optionIndex++))}
           </div>
         ))
@@ -261,12 +262,11 @@ export function ListboxPicker<T extends string>(props: ListboxPickerProps<T>) {
 
   return (
     <div ref={rootRef} className={rootClassName}>
-      <button
+      <Tooltip content={triggerTooltip} enabled={!open}><button
         ref={triggerRef}
         type="button"
         className={triggerClassName}
         aria-label={triggerLabel}
-        aria-describedby={triggerTooltip ? `${listboxId}-tooltip` : undefined}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
@@ -274,8 +274,7 @@ export function ListboxPicker<T extends string>(props: ListboxPickerProps<T>) {
         onClick={() => onOpenChange(!open)}
       >
         {props.multiple ? props.renderTrigger(props.value) : props.renderTrigger(props.value)}
-      </button>
-      {triggerTooltip && <span id={`${listboxId}-tooltip`} className="ui-tooltip" role="tooltip">{triggerTooltip}</span>}
+      </button></Tooltip>
       {listboxPortalTarget && listbox
         ? createPortal(listbox, listboxPortalTarget)
         : listbox}

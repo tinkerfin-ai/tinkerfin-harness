@@ -57,6 +57,70 @@ from tinkerfin_tracing.sql_store import (
 pytestmark = pytest.mark.docker_integration
 
 
+async def test_mysql_payload_tables_compress_without_changing_retained_content() -> (
+    None
+):
+    engine = create_async_engine(_url(), pool_size=1, max_overflow=0)
+    store = SqlAlchemyTraceStore(engine)
+    try:
+        await store.setup()
+        async with engine.connect() as connection:
+            options = (
+                await connection.execute(
+                    text(
+                        "SELECT TABLE_NAME, ROW_FORMAT FROM information_schema.tables "
+                        "WHERE table_schema=DATABASE() AND table_name IN "
+                        "('tinkerfin_trace_events','tinkerfin_trace_projection_checkpoints')"
+                    )
+                )
+            ).all()
+        assert len(options) == 2
+        assert all(row.ROW_FORMAT == "Compressed" for row in options)
+        writer = await store.open_writer(_identity("compressed-content"))
+        try:
+            values = await writer.append((_fact("compressed-content", "started"),))
+            values += await writer.append(
+                (
+                    _fact("compressed-content", "terminal"),
+                    _fact("compressed-content", "closed"),
+                ),
+                mandatory=True,
+            )
+            checkpoint = TraceProjectionCheckpoint(
+                key=writer.key,
+                projection_name="compressed",
+                run_id=None,
+                as_of_seq=3,
+                state={"text": "工具输入与结果" * 128},
+            )
+            await store.save_projection_checkpoint(checkpoint, expected_as_of_seq=None)
+            async with engine.connect() as connection:
+                for table_name in (
+                    "tinkerfin_trace_events",
+                    "tinkerfin_trace_projection_checkpoints",
+                ):
+                    await connection.exec_driver_sql(
+                        f"ALTER TABLE {table_name} ROW_FORMAT=DYNAMIC, KEY_BLOCK_SIZE=0, ALGORITHM=INPLACE, LOCK=NONE"
+                    )
+                    await connection.exec_driver_sql(
+                        f"ALTER TABLE {table_name} ROW_FORMAT=COMPRESSED, KEY_BLOCK_SIZE=8, ALGORITHM=INPLACE, LOCK=NONE"
+                    )
+            assert (
+                await store.read_events(writer.key, after_seq=0, as_of_seq=3, limit=3)
+                == values
+            )
+            assert (
+                await store.load_projection_checkpoint(
+                    writer.key, projection_name="compressed", run_id=None, as_of_seq=3
+                )
+                == checkpoint
+            )
+        finally:
+            await writer.aclose()
+    finally:
+        await engine.dispose()
+
+
 def _captured(value: JsonValue) -> CapturedValue:
     encoded = json.dumps(
         value,

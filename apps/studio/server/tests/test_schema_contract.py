@@ -11,8 +11,10 @@ from tinkerfin_studio.conversation.models import (
 )
 from tinkerfin_studio.infrastructure.database import Base
 from tinkerfin_studio.models.entity import AgentModel, ModelConnection
+from tinkerfin_studio.projects.models import Project
 from tinkerfin_studio.services.entity import ServiceConfig
 from tinkerfin_studio.skills.entity import (
+    ProjectSkillSetting,
     SkillImportDraft,
     SkillInstallation,
     SkillOperationReceipt,
@@ -25,6 +27,7 @@ def test_business_schema_contains_no_foreign_keys() -> None:
 
     registered = (
         User,
+        Project,
         AttachmentFile,
         AttachmentCollection,
         AttachmentReference,
@@ -34,6 +37,7 @@ def test_business_schema_contains_no_foreign_keys() -> None:
         ConversationThread,
         ConversationRunRegistration,
         ConversationInterruptClaim,
+        ProjectSkillSetting,
         SkillInstallation,
         SkillImportDraft,
         SkillOperationReceipt,

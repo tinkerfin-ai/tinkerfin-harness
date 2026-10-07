@@ -94,7 +94,11 @@ async def test_preparing_conversations_do_not_fill_history_pages(
     repository = ConversationRepository(session)
     for index in range(5):
         thread = await repository.create_thread(
-            user_id=1, thread_id=f"thread-{index}", title="Trace 会话", model_id="main"
+            project_id="project-1",
+            user_id=1,
+            thread_id=f"thread-{index}",
+            title="Trace 会话",
+            model_id="main",
         )
         thread.updated_at = datetime(2030, 1, 1)
         thread.pinned = pinned and index > 0
@@ -102,11 +106,13 @@ async def test_preparing_conversations_do_not_fill_history_pages(
             thread.last_run_id = f"run-{index}"
     await repository.commit()
     service = _service(repository, tracer=Tracer())
-    first = await service.list_history(page_size=2, cursor=None, query=query)
+    first = await service.list_history(
+        project_id="project-1", page_size=2, cursor=None, query=query
+    )
     assert [item.thread_id for item in first.items] == ["thread-2", "thread-1"]
     assert first.next_cursor is not None
     second = await service.list_history(
-        page_size=2, cursor=first.next_cursor, query=query
+        project_id="project-1", page_size=2, cursor=first.next_cursor, query=query
     )
     assert [item.thread_id for item in second.items] == ["thread-0"]
     assert second.next_cursor is None
@@ -193,6 +199,7 @@ async def _register(
     thread = await repository.get_thread(user_id=user_id, thread_id=thread_id)
     if thread is None:
         thread = await repository.create_thread(
+            project_id="project-" + str(user_id),
             user_id=user_id,
             thread_id=thread_id,
             title="Trace 会话",
@@ -404,7 +411,15 @@ async def test_trace_graph_query_returns_the_final_model_request(session) -> Non
     assert len(page.turns) == 1
     assert page.turns[0].ordinal == 1
     assert page.nodes[0].turn_id == page.turns[0].id
-    assert page.nodes[0].request == {
+    assert page.nodes[0].request is None
+    reference = page.nodes[0].request_reference
+    assert reference is not None
+    model_request = await service.get_model_request(
+        thread.thread_id, reference=reference
+    )
+    assert model_request.node_id == page.nodes[0].id
+    assert not model_request.request_omitted
+    assert model_request.request == {
         "messages": [
             {
                 "messageType": "system",
@@ -1526,6 +1541,8 @@ async def test_context_never_replaces_the_question_for_visible_failures(
     )
     repository = create_autospec(ConversationRepository, instance=True)
     repository.get_thread.return_value = ConversationThread(
+        archived=False,
+        project_id="project-1",
         id=1,
         user_id=1,
         thread_id="context-failure",
@@ -1607,3 +1624,6 @@ async def test_context_never_replaces_the_question_for_visible_failures(
     finally:
         await stream.aclose()
         await source.aclose()
+
+
+pytestmark = pytest.mark.usefixtures("projects")

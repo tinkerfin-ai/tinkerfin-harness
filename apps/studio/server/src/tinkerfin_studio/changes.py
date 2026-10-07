@@ -15,6 +15,8 @@ from tinkerfin_notifications import (
 logger = logging.getLogger(__name__)
 
 StudioChangeTopic = Literal[
+    "studio.projects.changed",
+    "studio.memories.changed",
     "studio.conversation.changed",
     "studio.conversation.title.changed",
     "studio.attachments.changed",

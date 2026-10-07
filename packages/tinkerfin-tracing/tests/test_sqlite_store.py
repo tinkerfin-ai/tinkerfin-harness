@@ -454,7 +454,11 @@ async def test_sqlite_graph_index_filters_without_repeating_fact_payloads(
             relationship_missing=False,
             allowed_run_ids=frozenset({_identity().run_id}),
         )
-        assert node.request == {"messages": [{"content": marker}]}
+        assert node.request_reference is not None
+        request = await Tracer(store=store).model_request(
+            _identity().thread, reference=node.request_reference
+        )
+        assert request.request == {"messages": [{"content": marker}]}
         rebuilt = await store.rebuild_trace_graph(snapshot.key)
         assert rebuilt == 2
         async with engine.connect() as connection:
@@ -1524,7 +1528,11 @@ async def test_sqlite_graph_query_reads_details_through_a_custom_encrypted_codec
                 .all()
             )
 
-        assert node.request == {
+        assert node.request_reference is not None
+        request = await Tracer(store=store).model_request(
+            _identity().thread, reference=node.request_reference
+        )
+        assert request.request == {
             "messages": [{"messageType": "system", "content": marker}]
         }
         assert context.content == marker
@@ -1945,13 +1953,18 @@ async def test_tracer_rebuilds_graph_without_rewriting_ledger(
 
         assert rebuilt == 2
         assert len(page.nodes) == 1
-        assert project_trace_graph_node(
+        node = project_trace_graph_node(
             page.nodes[0],
             turn_id="turn:test",
             parent_subagent_id=None,
             relationship_missing=False,
             allowed_run_ids=frozenset({_identity().run_id}),
-        ).request == {"messages": [{"content": "rebuild-marker"}]}
+        )
+        assert node.request_reference is not None
+        request = await Tracer(store=store).model_request(
+            _identity().thread, reference=node.request_reference
+        )
+        assert request.request == {"messages": [{"content": "rebuild-marker"}]}
     finally:
         await engine.dispose()
 

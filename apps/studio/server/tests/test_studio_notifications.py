@@ -92,7 +92,7 @@ async def test_notification_feed_uses_only_authenticated_scopes_without_holding_
     notification_route, notifications
 ):
     request, auth, _clock, _records, connections = notification_route
-    response = await follow_notifications(request, auth)
+    response = await follow_notifications(request, auth, "project-7")
     chunks = aiter(response.body_iterator)
     try:
         assert await anext(chunks) == b"event: ready\ndata: {}\n\n"
@@ -100,9 +100,13 @@ async def test_notification_feed_uses_only_authenticated_scopes_without_holding_
         for scope, key in (
             (NotificationScope("ns_99"), "foreign-user"),
             (NotificationScope("studio_automation", "99"), "foreign-owner"),
+            (
+                NotificationScope("studio_automation", "7:another-project"),
+                "other-project",
+            ),
             (NotificationScope("studio_automation"), "unowned"),
             (NotificationScope("ns_7"), "thread"),
-            (NotificationScope("studio_automation", "7"), "execution"),
+            (NotificationScope("studio_automation", "7:project-7"), "execution"),
         ):
             await notifications.publish(
                 Notification(scope=scope, topic="test.changed", key=key)
@@ -155,7 +159,11 @@ async def test_title_claim_and_saved_title_notify_only_committed_sequence(
     async with database.session() as session:
         repository = ConversationRepository(session)
         thread = await repository.create_thread(
-            user_id=1, thread_id="title", title="临时", model_id=None
+            project_id="project-1",
+            user_id=1,
+            thread_id="title",
+            title="临时",
+            model_id=None,
         )
         await repository.commit()
         thread_pk = thread.id
@@ -208,6 +216,7 @@ async def test_late_execution_attachment_notifies_its_collection(
         scope=NotificationScope("ns_1"), key="execution"
     ) as changes:
         await attachments.create_collection(
+            project_id="project-1",
             user_id=1,
             collection_id="execution",
             purpose="execution",
@@ -221,6 +230,7 @@ async def test_late_execution_attachment_notifies_its_collection(
             database, attachment_storage, notifications=notifications
         )
         file = await reopened.upload(
+            project_id="project-1",
             user_id=1,
             name="private.png",
             chunks=byte_chunks(png()),
@@ -241,3 +251,6 @@ async def test_late_execution_attachment_notifies_its_collection(
             )
         ] == [file.id]
         assert "private.png" not in change.model_dump_json()
+
+
+pytestmark = pytest.mark.usefixtures("projects")

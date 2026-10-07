@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { installLiveRun } from './fixtures/liveRun'
 import { fulfillExpectedHttpError, logBrowserDiagnostics } from './support/diagnostics'
@@ -763,7 +764,7 @@ async function mockStudio(page: Page, {
       : runningActivity
         ? 'running' as const
         : 'succeeded' as const
-    return { accessMode: 'write_approval',
+    return {projectId: 'project-1', archived: false,  accessMode: 'write_approval',
       id: 1,
       threadId: THREAD_ID,
       title: '浏览器会话',
@@ -871,6 +872,7 @@ async function mockStudio(page: Page, {
         items: emptyHistory ? [] : Array.from({ length: pageSize }, (_, offset) => {
           const index = pageStart + offset
           return { accessMode: 'full',
+            projectId: 'project-1', archived: false,
             id: index + 1,
             threadId: index === 0 ? THREAD_ID : `browser-history-${index}`,
             title: index === 0 ? '浏览器会话' : `分页验证会话 ${index}`,
@@ -932,6 +934,7 @@ async function mockStudio(page: Page, {
 
   if (runningActivity) await installLiveRun(page, buildTraceDetail())
   await installNotificationStream(page)
+  await installProjectScope(page)
   await page.goto('/')
   if (approval) await expect(page.getByRole('region', { name: '等待审批' })).toBeVisible()
   else if (planQuestion) await expect(page.getByRole('region', { name: 'Plan 澄清问题' })).toBeVisible()
@@ -993,8 +996,10 @@ test('四个目标视口保持正确导航形态且没有页面级横向溢出',
   }
 })
 
-test('新会话点击后在浅深主题和四个视口都不显示品牌蓝选中态', async ({ page }) => {
+test('新会话工具栏保持动作样式，折叠菜单在空白页显示选中态', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   await mockStudio(page)
+  await page.route('**/api/skills/sources', route => route.fulfill({ json: { code: 0, message: 'success', data: [] } }))
   for (const colorScheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme })
     for (const width of [320, 768, 1024, 1440]) {
@@ -1004,17 +1009,19 @@ test('新会话点击后在浅深主题和四个视口都不显示品牌蓝选�
       }
       const newChat = width === 768
         ? page.locator('.sidebar-rail').getByRole('button', { name: '新会话' })
-        : page.locator('.sidebar-wide .new-chat')
+        : page.locator('[aria-keyshortcuts~="Meta+K"]')
       await expect(newChat).toBeVisible()
       await expect(newChat).not.toHaveAttribute('title')
       await newChat.hover()
-      if (width === 768) await expect(page.getByRole('tooltip', { name: '新会话' })).toBeVisible()
-      else await expect(page.getByRole('tooltip', { name: '新会话' })).toHaveCount(0)
+      await expect(page.getByRole('tooltip', { name: '新会话' })).toBeVisible()
       const logo = page.locator('.sidebar-wide .brand')
       if (colorScheme === 'light' && width === 1024) await logo.click()
       else await newChat.click()
-      await expect(newChat).not.toHaveClass(/is-selected/)
-      await expect(newChat).not.toHaveAttribute('aria-pressed')
+      if (width === 768) await expect(newChat).toHaveAttribute('aria-current', 'page')
+      else {
+        await expect(newChat).not.toHaveClass(/is-selected/)
+        await expect(newChat).not.toHaveAttribute('aria-pressed')
+      }
       const colors = await newChat.evaluate((element) => {
         const probe = document.createElement('span')
         probe.style.color = 'var(--color-brand-text)'
@@ -1026,7 +1033,28 @@ test('新会话点击后在浅深主题和四个视口都不显示品牌蓝选�
           brandText,
         }
       })
-      expect(colors.color).not.toBe(colors.brandText)
+      if (width === 768) expect(colors.color).toBe(colors.brandText)
+      else expect(colors.color).not.toBe(colors.brandText)
+      if (width === 320 && await page.getByRole('button', { name: '打开导航' }).isVisible()) await page.getByRole('button', { name: '打开导航' }).click()
+      const menu = width === 768 ? page.locator('.sidebar-rail') : page.getByRole('navigation', { name: '工作区功能' })
+      const newConversation = menu.getByRole('button', { name: '新会话', exact: true })
+      const skills = menu.getByRole('button', { name: '技能库', exact: true })
+      await expect(newConversation).toHaveAttribute('aria-current', 'page')
+      await page.mouse.move(0, 0)
+      const selectedAppearance = await newConversation.evaluate(element => {
+        const css = getComputedStyle(element)
+        return { color: css.color, background: css.backgroundColor }
+      })
+      await skills.click()
+      if (width === 320 && await page.getByRole('button', { name: '打开导航' }).isVisible()) await page.getByRole('button', { name: '打开导航' }).click()
+      await expect(skills).toHaveAttribute('aria-current', 'page')
+      await expect(newConversation).not.toHaveAttribute('aria-current')
+      await page.mouse.move(0, 0)
+      expect(await skills.evaluate(element => {
+        const css = getComputedStyle(element)
+        return { color: css.color, background: css.backgroundColor }
+      })).toEqual(selectedAppearance)
+      if (width === 320) await page.getByRole('button', { name: '关闭导航', exact: true }).click()
     }
   }
 })
@@ -1036,7 +1064,7 @@ test('折叠侧栏 tooltip 与 Rail 外边界保持稳定间距', async ({ page 
   const shell = page.locator('.app-shell')
   const rail = page.locator('.sidebar-rail')
   const searchButton = rail.getByRole('button', { name: '搜索会话' })
-  const tooltip = rail.getByRole('tooltip').filter({ hasText: '搜索会话' })
+  const tooltip = page.getByRole('tooltip', { name: '搜索会话', exact: true })
 
   for (const colorScheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme })
@@ -1050,13 +1078,10 @@ test('折叠侧栏 tooltip 与 Rail 外边界保持稳定间距', async ({ page 
       await expect(tooltip).toBeVisible()
 
       if (width === 768) {
-        const labels = ['打开侧边栏', '搜索会话', '记忆管理', '新会话', '技能库', '自动化']
-        const controls = rail.locator(':scope > .ui-icon-button-wrap')
-        expect(await controls.locator('button').evaluateAll(buttons => buttons.slice(0, 6).map(button => button.getAttribute('aria-label')))).toEqual(labels)
+        const labels = ['打开侧边栏', '选择项目', '会话', '技能库', '记忆管理', '自动化', '搜索会话', '新会话']
         for (const label of labels) {
-          const button = rail.getByRole('button', { name: label, exact: true })
-          await button.locator('xpath=..').hover()
-          await expect(button.locator('xpath=..').getByRole('tooltip', { name: label })).toBeVisible()
+          await rail.getByRole('button', { name: label, exact: true }).hover()
+          await expect(page.getByRole('tooltip', { name: label, exact: true })).toBeVisible()
         }
         await searchButton.hover()
       }
@@ -1075,6 +1100,7 @@ test('折叠侧栏 tooltip 与 Rail 外边界保持稳定间距', async ({ page 
 })
 
 test('侧栏切换控件共享纵向锚点且 tooltip 避开相邻操作区', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.setViewportSize({ width: 1440, height: 900 })
   await mockStudio(page)
 
@@ -1083,9 +1109,9 @@ test('侧栏切换控件共享纵向锚点且 tooltip 避开相邻操作区', as
   const searchButton = sidebar.getByRole('button', { name: '搜索会话' }).first()
   const conversationTab = page.getByRole('tab', { name: '对话' })
   const traceTab = page.getByRole('tab', { name: '链路' })
-  const newChat = page.locator('.sidebar-wide .new-chat')
+  const newChat = page.locator('[aria-keyshortcuts~="Meta+K"]')
   const collapseButton = page.getByRole('button', { name: '收起侧边栏' })
-  const collapseTooltip = sidebar.getByRole('tooltip').filter({ hasText: '收起侧边栏' })
+  const collapseTooltip = page.getByRole('tooltip', { name: '收起侧边栏', exact: true })
 
   const [brandBounds, searchBounds, conversationTabBounds, traceTabBounds, collapseBounds] = await Promise.all([
     brand.boundingBox(),
@@ -1113,13 +1139,12 @@ test('侧栏切换控件共享纵向锚点且 tooltip 避开相邻操作区', as
   }
   const headerCenters = [
     brandBounds,
-    searchBounds,
     collapseBounds,
     conversationTabBounds,
     traceTabBounds,
   ].map((bounds) => bounds.y + (bounds.height / 2))
   headerCenters.forEach((center) => expect(center).toBeCloseTo(32, 5))
-  expect(newChatBounds.y).toBeCloseTo(68, 5)
+  expect(newChatBounds.y + newChatBounds.height / 2).toBeCloseTo(searchBounds.y + searchBounds.height / 2, 5)
   expect(collapseTooltipBounds.x).toBeGreaterThanOrEqual(sidebarBounds.x + sidebarBounds.width - 1)
   expect(
     collapseTooltipBounds.x < newChatBounds.x + newChatBounds.width
@@ -1132,9 +1157,8 @@ test('侧栏切换控件共享纵向锚点且 tooltip 避开相邻操作区', as
   await expect(page.locator('.app-shell')).toHaveAttribute('data-sidebar-mode', 'rail')
   const rail = page.locator('.sidebar-rail')
   const expandButton = rail.getByRole('button', { name: '打开侧边栏' })
-  const expandTooltip = rail.getByRole('tooltip').filter({ hasText: '打开侧边栏' })
-  const nextRailButton = rail.getByRole('button', { name: '搜索会话' })
-  await expect.poll(async () => (await rail.boundingBox())?.x).toBe(0)
+  const expandTooltip = page.getByRole('tooltip', { name: '打开侧边栏', exact: true })
+  const nextRailButton = rail.getByRole('button', { name: '选择项目' })
   const expandBounds = await expandButton.boundingBox()
   const railBounds = await rail.boundingBox()
   await expandButton.hover()
@@ -1149,7 +1173,6 @@ test('侧栏切换控件共享纵向锚点且 tooltip 避开相邻操作区', as
     - (collapseBounds.y + (collapseBounds.height / 2)),
   )).toBeLessThanOrEqual(1)
   expect(expandBounds.y + (expandBounds.height / 2)).toBeCloseTo(32, 5)
-  expect(nextRailButtonBounds.y).toBeCloseTo(newChatBounds.y, 5)
   expect(nextRailButtonBounds.y - (expandBounds.y + expandBounds.height)).toBeGreaterThanOrEqual(12)
   expect(expandTooltipBounds.y + expandTooltipBounds.height).toBeLessThanOrEqual(nextRailButtonBounds.y)
   expect(expandTooltipBounds.x).toBeGreaterThanOrEqual(railBounds.x + railBounds.width + 8)
@@ -2467,7 +2490,7 @@ test('界面统一字重且文章型 Markdown 保留语义排版与可滚动表�
       await page.screenshot({ path: testInfo.outputPath(`typography-${colorScheme}-${width}.png`), animations: 'disabled' })
     }
   }
-  await page.locator('.new-chat').click()
+  await page.locator('[aria-keyshortcuts~="Meta+K"]').click()
   await expect(historyTitle).toHaveCSS('font-weight', '400')
 })
 
@@ -3103,7 +3126,7 @@ test('运行中 SubAgent 与普通 Tool 共用扫光且标题保持稳定', asyn
   expect(sharedAlignment.every(delta => delta <= 1)).toBe(true)
 })
 
-test('搜索会话点击后保持标准输入高度且不显示容器描边', async ({ page }) => {
+test('搜索会话保持标准输入高度，范围选择位于输入下方', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await mockStudio(page)
 
@@ -3112,7 +3135,7 @@ test('搜索会话点击后保持标准输入高度且不显示容器描边', as
     for (const width of [320, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: 900 })
       await page.reload()
-      if (width === 320) await page.getByRole('button', { name: '打开导航' }).click()
+      if (width === 320 && await page.getByRole('button', { name: '打开导航' }).isVisible()) await page.getByRole('button', { name: '打开导航' }).click()
       await page.getByRole('button', { name: '搜索会话' }).click()
 
       const input = page.getByRole('textbox', { name: '搜索会话' })
@@ -3120,11 +3143,9 @@ test('搜索会话点击后保持标准输入高度且不显示容器描边', as
       await expect(input).toBeFocused()
       const metrics = await search.evaluate((element) => {
         const bounds = element.getBoundingClientRect()
-        const headerBounds = element.parentElement!.getBoundingClientRect()
         const styles = getComputedStyle(element)
         return {
           height: bounds.height,
-          centerOffset: ((bounds.top + bounds.bottom) - (headerBounds.top + headerBounds.bottom)) / 2,
           borderTopWidth: styles.borderTopWidth,
           outlineStyle: styles.outlineStyle,
           outlineWidth: styles.outlineWidth,
@@ -3133,11 +3154,14 @@ test('搜索会话点击后保持标准输入高度且不显示容器描边', as
 
       expect(metrics).toEqual({
         height: 44,
-        centerOffset: 0,
         borderTopWidth: '0px',
         outlineStyle: 'none',
         outlineWidth: '0px',
       })
+      const inputBounds = (await search.boundingBox())!
+      const scope = page.getByRole('button', { name: '当前项目', exact: true })
+      await expect(scope).toBeVisible()
+      expect((await scope.boundingBox())!.y).toBeGreaterThanOrEqual(inputBounds.y + inputBounds.height)
     }
   }
 })

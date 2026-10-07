@@ -1,6 +1,6 @@
 # TinkerFin Studio 后端
 
-提供用户认证、模型配置、Agent 会话、技能库、自动化任务、附件、运行历史和 Sandbox 工作区。
+提供用户认证、模型配置，以及按项目管理的 Agent 会话、技能库、记忆、自动化任务、附件、运行历史和 Sandbox 工作区。
 首次使用见 [Studio 上手指南](../../../docs/cn/studio/quick_start.md)；后端启动后可查看 [Swagger 接口文档](http://127.0.0.1:8090/docs)。
 
 ## 快速部署
@@ -212,7 +212,7 @@ docker compose --env-file ../../.env down
 自动化任务和运行记录保存在 MySQL，运行检查点保存在 Redis。备份恢复时须保持数据库、
 检查点和附件数据一致。任务参考文件及运行附件保留持久引用，删除任务仍保留历史文件。
 
-附件保存在所配置桶的 `attachments/` 下，内置 MinIO 使用 `minio-data` 卷。Sandbox 工作区跨会话
+附件保存在所配置桶的 `attachments/` 下，内置 MinIO 使用 `minio-data` 卷。Sandbox 工作区在同一项目内跨会话
 保留，不会因闲置自动删除；OpenSandbox 需要访问宿主机 Docker，请只在受信任的主机部署。
 
 ## 本地开发

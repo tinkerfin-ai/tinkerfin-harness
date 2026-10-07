@@ -31,48 +31,46 @@ class ServiceConfig(Base):
             "user_id", "capability", name="uq_service_configs_owner_capability"
         ),
         Index("ix_service_configs_owner_enabled", "user_id", "enabled"),
-        {**MYSQL_TABLE_OPTIONS, "comment": "用户搜索与图片生成服务配置"},
+        {**MYSQL_TABLE_OPTIONS, "comment": "搜索与图片生成服务配置"},
     )
 
-    id: Mapped[str] = mapped_column(
-        String(64), primary_key=True, comment="稳定服务配置 ID；清除后重建分配新值"
-    )
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, comment="服务配置 ID")
     user_id: Mapped[int] = mapped_column(
         Integer, primary_key=True, nullable=False, comment="配置所属用户 ID"
     )
     capability: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
-        comment="web_search 网页搜索或 image_generation 图片生成",
+        comment="服务类型：web_search 网页搜索、image_generation 图片生成",
     )
     provider_id: Mapped[str] = mapped_column(
-        String(32), nullable=False, comment="tavily、openai、fal 或 custom 接入方式"
+        String(32), nullable=False, comment="服务提供方：tavily、openai、fal、custom"
     )
     enabled: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, comment="是否允许新运行使用本服务"
+        Boolean, nullable=False, default=True, comment="是否启用服务"
     )
     config: Mapped[dict[str, JsonValue]] = mapped_column(
-        JSON, nullable=False, comment="经能力类型校验的请求及结果配置，不含凭证"
+        JSON, nullable=False, comment="服务请求与结果配置"
     )
     api_key: Mapped[str] = mapped_column(
         Text,
         nullable=False,
         default="",
-        comment="服务密钥原文，不进入响应、日志或运行绑定",
+        comment="服务密钥（明文）",
     )
     test_status: Mapped[str | None] = mapped_column(
         String(16),
         nullable=True,
-        comment="最近主动测试的 success 或 failed；配置改变时清空",
+        comment="最近测试状态：success 成功、failed 失败",
     )
     test_code: Mapped[str | None] = mapped_column(
-        String(32), nullable=True, comment="最近主动测试的安全结果码"
+        String(32), nullable=True, comment="最近测试结果码"
     )
     test_fingerprint: Mapped[str | None] = mapped_column(
-        String(64), nullable=True, comment="最近测试所针对的执行配置摘要"
+        String(64), nullable=True, comment="最近测试的配置摘要"
     )
     tested_at: Mapped[datetime | None] = mapped_column(
-        DateTime(), nullable=True, comment="最近主动测试时间，UTC"
+        DateTime(), nullable=True, comment="UTC 最近测试时间"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(), nullable=False, default=_utcnow, comment="UTC 创建时间"

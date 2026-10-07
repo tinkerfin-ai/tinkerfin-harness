@@ -61,6 +61,8 @@ Initializing a new database creates this account:
 
 Existing data volumes do not rerun the initialization SQL or overwrite accounts. There is no public registration endpoint.
 
+After signing in for the first time, choose Create project and enter a name. Conversations, memories, and automation tasks belong to the current project. Use the selector at the top of the sidebar to switch projects or create another.
+
 Open the user menu at the bottom left, select Models, and choose Add provider. Select a provider or custom service, enter its URL and authentication, and save the connection.
 
 Select that connection and use Fetch models, or enter the provider's Model ID manually. Enable a chat model, make it the default, and send “Hello” to check the connection.
@@ -90,7 +92,10 @@ UPDATE users SET password_hash = '<full generated hash>' WHERE username = 'tinke
 ```
 
 Conversations default to Full access. Use the permission picker beside the model
-to require write approval. For scheduled work, see [Studio automation](automation.md).
+to require write approval. Open Memories in the sidebar to view and edit the current
+project's long-term memory. The agent reads and edits the same content; if a save
+reports a conflict, compare the latest content before saving again.
+For scheduled work, see [Studio automation](automation.md).
 
 ## Troubleshooting
 

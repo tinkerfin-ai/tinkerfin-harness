@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page, type Route } from '@playwright/test'
 import { resolve } from 'node:path'
@@ -92,9 +93,7 @@ const nodes: TraceGraphNode[] = [
     provider: 'deepseek',
     model: 'deepseek-v4-pro',
     firstOutputAt: timestamp(SECOND_TURN_OFFSET + 1_260),
-    request: {
-      messages: [{ messageType: 'system', content: '# 浏览器系统提示词' }],
-    },
+    requestReference: 'model-current-request',
     usage: {
       input_token_details: { cache_read: 4736 },
       input_tokens: 4872,
@@ -138,7 +137,7 @@ const nodes: TraceGraphNode[] = [
     name: 'deepseek-v4-flash',
     provider: 'deepseek',
     model: 'deepseek-v4-flash',
-    request: { messages: [] },
+    requestReference: 'subagent-model-request',
   }),
   graphNode('subagent-tool', 'tool', 19, {
     parentSubagentId: 'subagent-outer',
@@ -181,7 +180,7 @@ const nodes: TraceGraphNode[] = [
     name: 'deepseek-v4-pro',
     provider: 'deepseek',
     model: 'deepseek-v4-pro',
-    request: { messages: [] },
+    requestReference: 'model-final-request',
   }),
   graphNode('assistant-current', 'assistant_message', 26, {
     modelCallId: 'model-final',
@@ -254,7 +253,7 @@ const emptyGraph = (asOfSeq: number): TraceGraph => ({
 const detail = (
   threadId = THREAD_ID,
   includeTaskTrace = true,
-): ConversationHistoryDetail => ({ accessMode: 'write_approval',
+): ConversationHistoryDetail => ({projectId: 'project-1', archived: false,  accessMode: 'write_approval',
   id: threadId === THREAD_ID ? 1 : 2,
   threadId,
   title: threadId === THREAD_ID ? '链路浏览器会话' : '另一个会话',
@@ -447,6 +446,7 @@ async function mockChainTraceStudio(
     if (url.pathname === '/api/conversation/history') {
       await fulfillJson(route, {
         items: [THREAD_ID, OTHER_THREAD_ID].map((threadId, index) => ({ accessMode: 'full',
+          projectId: 'project-1', archived: false,
           id: index + 1,
           threadId,
           title: threadId === THREAD_ID ? '链路浏览器会话' : '另一个会话',
@@ -497,11 +497,22 @@ async function mockChainTraceStudio(
       await fulfillJson(route, { ...directSnapshot, generation: `browser-generation:${THREAD_ID}`, headRunId: RUN_ID })
       return
     }
+    if (url.pathname === `/api/conversation/${THREAD_ID}/trace/model-request`) {
+      const reference = url.searchParams.get('reference')
+      const selected = nodes.find(node => node.requestReference === reference)
+      if (selected) {
+        await fulfillJson(route, { nodeId: selected.id, requestOmitted: false, request: {
+          messages: selected.id === 'model-current' ? [{ messageType: 'system', content: '# 浏览器系统提示词' }] : [],
+        } })
+        return
+      }
+    }
     await route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
   })
 
   await installNotificationStream(page)
-  await page.goto(`/?thread=${THREAD_ID}`)
+  await installProjectScope(page)
+  await page.goto(`/?project=project-1&thread=${THREAD_ID}`)
   const conversationLabel = language === 'en' ? 'Conversation' : '对话'
   const traceLabel = language === 'en' ? 'Trace' : '链路'
   await expect(page.getByRole('tab', { name: conversationLabel })).toHaveAttribute(

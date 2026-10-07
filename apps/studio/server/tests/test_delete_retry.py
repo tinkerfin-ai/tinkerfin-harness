@@ -77,6 +77,7 @@ async def test_delete_retries_each_destructive_stage_without_restoring_old_autho
 ) -> None:
     repository = ConversationRepository(session)
     thread = await repository.create_thread(
+        project_id="project-7",
         user_id=7,
         thread_id=f"thread-delete-{failure_stage}",
         title="删除重试",
@@ -175,6 +176,7 @@ async def test_delete_refuses_an_active_trace_and_restores_summary_status(
 ) -> None:
     repository = ConversationRepository(session)
     thread = await repository.create_thread(
+        project_id="project-7",
         user_id=7,
         thread_id="thread-delete-active",
         title="运行中",
@@ -248,3 +250,6 @@ async def test_delete_refuses_an_active_trace_and_restores_summary_status(
     assert stored is not None
     assert stored.status == "waiting_approval"
     await active_session.aclose()
+
+
+pytestmark = pytest.mark.usefixtures("projects")

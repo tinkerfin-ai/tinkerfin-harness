@@ -168,6 +168,11 @@ and pending interactions. A missing reference or omitted interaction content is
 represented by `agui=None`; it cannot be reconstructed into an approval request.
 `view.trace` exposes original facts and registered application projections.
 
+Model nodes provide a `request_reference` for their complete retained input. Read it
+on demand with `await history.model_request(thread_id, reference=node.request_reference)`.
+The reference stays bound to the original conversation and generation; the result
+contains `node_id`, `request`, and `request_omitted`.
+
 `await view.load_older(limit=100)` expands the loaded history at the same fixed
 prefix. For a filtered execution graph, use `await history.query(thread_id,
 where=filters)` and read its `snapshot` or `follow()` updates. Graph cursors apply

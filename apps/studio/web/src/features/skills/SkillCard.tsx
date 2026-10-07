@@ -1,7 +1,7 @@
 import { ArrowUpRight, Check, MoreHorizontal } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Button, IconButton, Surface } from '../../components/ui'
+import { Button, IconButton, Surface, Tooltip } from '../../components/ui'
 import { useI18n } from '../../i18n'
 import type { InstalledSkill, RemoteSkill, SkillSelection } from './model'
 
@@ -10,7 +10,8 @@ export function SkillIcon({ name }: { name: string }) {
   return <span className={`skills-icon skills-tone-${tone}`} aria-hidden="true">{Array.from(name)[0]?.toLocaleUpperCase()}</span>
 }
 
-export function SkillCard({ selection, sourceName, installed, busy, error, onOpen, onInstall, onToggle, onUpdate, onUninstall }: {
+export function SkillCard({ scopeId, selection, sourceName, installed, busy, error, onOpen, onInstall, onToggle, onUpdate, onUninstall }: {
+  scopeId: string | null
   selection: SkillSelection; sourceName: string; installed: boolean; busy: boolean; error?: string
   onOpen: (selection: SkillSelection, trigger: HTMLElement) => void
   onInstall: (skill: RemoteSkill) => void; onToggle: (skill: InstalledSkill) => void
@@ -69,8 +70,8 @@ export function SkillCard({ selection, sourceName, installed, busy, error, onOpe
           if (event.key === 'Tab') { setOpen(false); trigger.current?.focus({ preventScroll: true }) }
         }}>
           <button type="button" role="menuitem" onClick={() => { setOpen(false); onOpen(selection, trigger.current!) }}>{t('详情')}</button>
-          <button type="button" role="menuitem" disabled={busy} onClick={() => { setOpen(false); trigger.current?.focus({ preventScroll: true }); onUpdate(selection.skill, trigger.current!) }}>{t('更新')}</button>
-          <button type="button" role="menuitem" className="skills-menu-danger" disabled={busy} onClick={() => { setOpen(false); onUninstall(selection.skill, trigger.current!) }}>{t('卸载')}</button>
+          {selection.skill.project_id === scopeId && <button type="button" role="menuitem" disabled={busy} onClick={() => { setOpen(false); trigger.current?.focus({ preventScroll: true }); onUpdate(selection.skill, trigger.current!) }}>{t('更新')}</button>}
+          {selection.skill.project_id === scopeId && <button type="button" role="menuitem" className="skills-menu-danger" disabled={busy} onClick={() => { setOpen(false); onUninstall(selection.skill, trigger.current!) }}>{t('卸载')}</button>}
         </div>, document.body)}
       </div> : skill.topics[0] && <span className="skills-card-topic">{skill.topics[0]}</span>}
     </div>
@@ -78,9 +79,10 @@ export function SkillCard({ selection, sourceName, installed, busy, error, onOpe
       <h2><span>{skill.name}</span><ArrowUpRight size={16} aria-hidden="true" /></h2>
       <p>{skill.description || t('查看技能说明')}</p>
     </button>
-    <div className="skills-card-footer"><span className="skills-author" title={skill.author || sourceName}>{skill.author || sourceName}</span>
+    {selection.kind === 'installed' && <span className="skills-scope-label">{t(selection.skill.overridden ? '被项目同名技能覆盖' : selection.skill.project_id ? '项目专属' : '个人共用')}</span>}
+    <div className="skills-card-footer"><Tooltip content={skill.author || sourceName}><span className="skills-author">{skill.author || sourceName}</span></Tooltip>
       {selection.kind === 'installed' ? <button type="button" role="switch" className="skills-switch" aria-label={t('启用技能：{name}', { name: skill.name })}
-        aria-checked={selection.skill.enabled} aria-busy={busy || undefined} disabled={busy} onClick={() => onToggle(selection.skill)}>
+        aria-checked={selection.skill.enabled && !selection.skill.overridden} aria-busy={busy || undefined} disabled={busy || selection.skill.overridden} onClick={() => onToggle(selection.skill)}>
         <span>{selection.skill.enabled ? t('已启用') : t('已停用')}</span><i aria-hidden="true"><b /></i>
       </button> : installed ? <span className="skills-installed"><Check size={14} aria-hidden="true" />{t('已安装')}</span>
         : <Button type="button" size="xs" className="skills-install" loading={busy} onClick={() => onInstall(selection.skill)} aria-label={t('安装技能：{name}', { name: skill.name })}>{t('安装')}</Button>}

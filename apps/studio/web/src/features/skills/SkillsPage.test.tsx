@@ -13,7 +13,7 @@ vi.mock('./api', () => ({
 }))
 vi.mock('../../api/notifications', () => ({ subscribeResourceChanges: vi.fn() }))
 const remote: RemoteSkill = { id: 'author/reports', source_id: 'clawhub', name: 'Reports', description: 'Write verified reports', revision: 'fixed', author: 'Author', topics: ['Writing'], updated_at: null }
-const installed: InstalledSkill = { id: 'installed', name: 'reports', description: 'Write verified reports', source_id: 'clawhub', source_kind: 'catalog', source_name: 'ClawHub', external_id: remote.id, enabled: true, author: 'Author', topics: ['Writing'], file_count: 2, byte_size: 128, created_at: '2026-01-01', updated_at: '2026-01-01' }
+const installed: InstalledSkill = {project_id: 'project-1', overridden: false,  id: 'installed', name: 'reports', description: 'Write verified reports', source_id: 'clawhub', source_kind: 'catalog', source_name: 'ClawHub', external_id: remote.id, enabled: true, author: 'Author', topics: ['Writing'], file_count: 2, byte_size: 128, created_at: '2026-01-01', updated_at: '2026-01-01' }
 const detail = { name: 'reports', description: 'Write verified reports', markdown: '# Reports\nUse sources', files: ['SKILL.md', 'scripts/run.py'], author: 'Author', source_url: 'https://clawhub.ai/author/reports', topics: ['Writing'] }
 
 beforeEach(() => {
@@ -28,7 +28,7 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers() })
 const flush = async () => { await act(async () => {}); await act(async () => { await vi.runOnlyPendingTimersAsync() }) }
 function setup() {
-  render(<SkillsPage navigationTriggerRef={createRef()} onOpenNavigation={vi.fn()} onModalChange={vi.fn()} onToast={vi.fn()} />)
+  render(<SkillsPage project={{ id: 'project-1', name: '测试项目', createdAt: '2030-01-01', updatedAt: '2030-01-01' }} navigationTriggerRef={createRef()} onOpenNavigation={vi.fn()} onModalChange={vi.fn()} onToast={vi.fn()} />)
 }
 
 it('shows a permanent source choice and keeps state controls in Mine with a read-only detail', async () => {
@@ -120,7 +120,7 @@ it('submits only the selected previewed packages and retains the preview after f
   fireEvent.click(screen.getByRole('button', { name: '预览技能' })); await flush()
   fireEvent.click(screen.getByRole('checkbox', { name: /two/ }))
   fireEvent.click(screen.getByRole('button', { name: '安装 1 项技能' })); await flush()
-  expect(api.confirmSkillImport).toHaveBeenCalledWith('draft', ['one'], expect.any(String), expect.any(AbortSignal))
+  expect(api.confirmSkillImport).toHaveBeenCalledWith('project-1', 'draft', ['one'], expect.any(String), expect.any(AbortSignal))
   expect(screen.getByRole('checkbox', { name: /one/ })).toHaveAttribute('aria-checked', 'true')
   expect(screen.getByRole('alert')).toHaveTextContent('导入失败，请重试')
 })
@@ -145,7 +145,7 @@ it('updates a remote skill through its menu and reuses the operation ID after fa
     if (!attempt) expect(screen.getByRole('alert')).toHaveTextContent('操作失败，请重试')
   }
   const calls = vi.mocked(api.updateSkill).mock.calls
-  expect(calls[0][1]).toBe(calls[1][1])
+  expect(calls[0][2]).toBe(calls[1][2])
   expect(screen.getByText('Updated instructions')).toBeVisible()
   expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'false')
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -171,8 +171,8 @@ it('replaces a ZIP installation with its same-name preview and preserves failed 
   expect(within(dialog).getByText('New ZIP')).toBeVisible()
   fireEvent.click(within(dialog).getByRole('button', { name: '更新' })); await flush()
   const calls = vi.mocked(api.updateSkill).mock.calls
-  expect(calls[0][1]).toBe(calls[1][1])
-  expect(calls[0][2]).toEqual({ draft_id: 'zip-draft', digest: 'replacement' })
+  expect(calls[0][2]).toBe(calls[1][2])
+  expect(calls[0][3]).toEqual({ draft_id: 'zip-draft', digest: 'replacement' })
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
 
@@ -198,6 +198,6 @@ it('keeps the resolved release and operation ID when retrying an unconfirmed ins
   fireEvent.click(screen.getByRole('button', { name: '安装技能：Reports' })); await flush()
   expect(api.readRemoteSkill).toHaveBeenCalledTimes(1)
   const calls = vi.mocked(api.installSkill).mock.calls
-  expect(calls[0].slice(0, 4)).toEqual(calls[1].slice(0, 4))
-  expect(calls[1][2]).toBe('fixed')
+  expect(calls[0].slice(0, 5)).toEqual(calls[1].slice(0, 5))
+  expect(calls[1][3]).toBe('fixed')
 })

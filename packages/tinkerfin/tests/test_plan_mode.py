@@ -861,9 +861,9 @@ async def test_replanning_keeps_rejected_reply_as_model_input_not_child_output()
     assert replies[0].graph_namespace == ()
     assert replies[0].model_call_id is not None
     requests = [
-        node.request
+        (await tracer.model_request(identity, reference=node.request_reference)).request
         for node in graph.nodes
-        if node.run_id == "replan" and node.request is not None
+        if node.run_id == "replan" and node.request_reference is not None
     ]
     request_messages = [
         messages

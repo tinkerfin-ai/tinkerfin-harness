@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { installLiveRun } from './fixtures/liveRun'
 import { expect, test, type Page, type Route } from '@playwright/test'
@@ -129,7 +130,7 @@ const detail = ({
   const taskTrace: TaskTraceSnapshot | null = includeTaskTrace
     ? { status: 'ready', todoGroups: [...taskTraceGroups] }
     : null
-  return { accessMode: 'write_approval',
+  return {projectId: 'project-1', archived: false,  accessMode: 'write_approval',
     id: 1,
     threadId: THREAD_ID,
     title: '任务轨迹浏览器会话',
@@ -238,6 +239,7 @@ async function mockTodoTraceStudio(page: Page, {
     if (url.pathname === '/api/conversation/history') {
       await fulfillJson(route, {
         items: [{ accessMode: 'full',
+          projectId: 'project-1', archived: false,
           id: 1,
           threadId: THREAD_ID,
           title: '任务轨迹浏览器会话',
@@ -304,7 +306,8 @@ async function mockTodoTraceStudio(page: Page, {
   })
   const liveRun = await installLiveRun(page, detail({ groups, answer, taskTraceGroups, visibleGroups, includeTaskTrace: true, historyCursor }))
   await installNotificationStream(page)
-  await page.goto(`/?thread=${THREAD_ID}`)
+  await installProjectScope(page)
+  await page.goto(`/?project=project-1&thread=${THREAD_ID}`)
   if (taskTraceGroups.length > 0) {
     await expect(page.getByRole('button', { name: `${language === 'en' ? 'Task trace' : '任务轨迹'} ${taskTraceGroups.length}`, exact: true }))
       .toBeVisible()

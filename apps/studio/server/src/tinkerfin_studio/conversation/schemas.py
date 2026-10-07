@@ -57,6 +57,8 @@ class ConversationHistoryListItem(ConversationTitle):
     """历史列表中的会话摘要"""
 
     id: int = Field(ge=1)
+    project_id: str = Field(alias="projectId")
+    archived: bool
     status: str
     last_run_id: str | None = Field(default=None, alias="lastRunId")
     last_model: str | None = Field(default=None, alias="lastModel")
@@ -113,6 +115,8 @@ class ConversationHistoryDetail(ConversationTitle):
     """用户归属校验后的固定前缀 Trace 会话视图"""
 
     id: int = Field(ge=1)
+    project_id: str = Field(alias="projectId")
+    archived: bool
     last_model: str | None = Field(default=None, alias="lastModel")
     access_mode: AccessMode = Field(default="full", alias="accessMode")
     pinned: bool
@@ -198,7 +202,13 @@ class ConversationTraceGraphErrorEvent(BaseModel):
 
 
 class ConversationThreadUpdate(BaseModel):
-    """重命名或置顶请求"""
+    """会话命名、置顶、归档和项目移动请求"""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    project_id: str | None = Field(
+        default=None, alias="projectId", min_length=1, max_length=36
+    )
+    archived: bool | None = None
 
     title: str | None = Field(default=None, min_length=1, max_length=32)
     pinned: bool | None = None

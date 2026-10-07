@@ -53,11 +53,34 @@ export function readThreadFromLocation(): string {
   return new URLSearchParams(window.location.search).get(THREAD_PARAM) ?? ''
 }
 
-export type WorkspacePage = 'conversation' | 'automation' | 'skills'
+export type WorkspacePage = 'conversation' | 'automation' | 'skills' | 'memories'
 
 export function readPageFromLocation(): WorkspacePage {
   const page = new URLSearchParams(window.location.search).get('page')
-  return page === 'automation' || page === 'skills' ? page : 'conversation'
+  return page === 'automation' || page === 'skills' || page === 'memories' ? page : 'conversation'
+}
+
+export function readProjectFromLocation(): string {
+  return new URLSearchParams(window.location.search).get('project') ?? ''
+}
+
+/** 退出登录时清除项目与会话地址，历史记录不能保留另一个账号的当前范围 */
+export function clearWorkspaceLocation(): void {
+  window.history.replaceState(null, '', APP_PATHNAME)
+  rememberCurrentLocation()
+}
+
+export function writeProjectToLocation(projectId: string, threadId = '', options: { history?: 'push' | 'replace' } = {}): void {
+  const url = new URL(window.location.href)
+  url.searchParams.set('project', projectId)
+  url.searchParams.delete(THREAD_PARAM)
+  if (threadId) { url.searchParams.set(THREAD_PARAM, threadId); url.searchParams.delete('page') }
+  const desired = relativeLocation(url)
+  if (desired !== relativeLocation(new URL(window.location.href))) {
+    const write = options.history === 'replace' ? window.history.replaceState : window.history.pushState
+    write.call(window.history, null, '', desired)
+  }
+  rememberCurrentLocation()
 }
 
 /** 按当前页面一次性同步地址；自动化不携带后台会话身份，草稿不携带 thread */

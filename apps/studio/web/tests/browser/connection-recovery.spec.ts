@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test } from '@playwright/test'
 
@@ -33,6 +34,7 @@ for (const theme of ['light', 'dark']) {
         await route.fulfill({ json: { code: 0, message: 'success', data } })
       })
       await installNotificationStream(page)
+      await installProjectScope(page)
       await page.goto('/')
       const input = page.getByRole('textbox', { name: '消息输入' })
       await expect(input).toBeEnabled()

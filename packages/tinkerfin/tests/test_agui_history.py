@@ -32,7 +32,14 @@ from tinkerfin_agui_adapter import (
     AttachmentMessagesSnapshotEvent,
     parse_tool_review_interrupt,
 )
-from tinkerfin_tracing import TraceEntityDelta, TraceGraphDelta, Tracer, TraceUpdate
+from tinkerfin_tracing import (
+    InvalidTraceReference,
+    TraceEntityDelta,
+    TraceGraphDelta,
+    Tracer,
+    TraceThreadNotFound,
+    TraceUpdate,
+)
 
 
 class _ToolModel(FakeMessagesListChatModel):
@@ -49,6 +56,59 @@ class _ToolModel(FakeMessagesListChatModel):
 async def save_report() -> str:
     """Save the reviewed report."""
     return "Report saved"
+
+
+async def test_model_request_reference_reads_exact_input_and_rejects_foreign_scope() -> (
+    None
+):
+    tracer = Tracer()
+    runtime = (
+        TinkerFin()
+        .with_namespace("history")
+        .with_observer(tracer)
+        .build(model=_ToolModel(responses=[AIMessage(content="Complete")]), tools=[])
+    )
+    events = [
+        event
+        async for event in runtime.open_agui_run(
+            thread_id="request-details",
+            run_id="run",
+            messages=[{"id": "user", "role": "user", "content": "Inspect this input"}],
+        )
+    ]
+    assert isinstance(events[-1], RunFinishedEvent)
+    reader = runtime.agui.history(tracer)
+    view = await reader.get("request-details")
+    model = next(node for node in view.snapshot.graph.nodes if node.kind == "model")
+    assert model.request is None
+    assert not model.request_omitted
+    assert model.request_reference is not None
+    request = await reader.model_request(
+        "request-details", reference=model.request_reference
+    )
+    assert request.node_id == model.id
+    assert not request.request_omitted
+    assert isinstance(request.request, dict)
+    inputs = request.request["messages"]
+    assert isinstance(inputs, list)
+    assert any(
+        isinstance(item, dict) and item.get("content") == "Inspect this input"
+        for item in inputs
+    )
+    page = await reader.query("request-details")
+    queried_model = next(node for node in page.snapshot.nodes if node.kind == "model")
+    assert queried_model.request_reference == model.request_reference
+    with pytest.raises(InvalidTraceReference):
+        await reader.model_request("another-thread", reference=model.request_reference)
+    with pytest.raises(InvalidTraceReference):
+        await AgUiHistory(tracer, namespace="another-owner").model_request(
+            "request-details", reference=model.request_reference
+        )
+    with pytest.raises(InvalidTraceReference):
+        await reader.model_request("request-details", reference="invalid-reference")
+    await view.trace.delete()
+    with pytest.raises(TraceThreadNotFound):
+        await reader.model_request("request-details", reference=model.request_reference)
 
 
 @tool

@@ -14,8 +14,10 @@ const sortConversations = (conversations: Conversation[]) =>
   [...conversations].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
 
 export const buildEmptyConversation = (
-  options: { threadId?: string; now: string; model?: string; mode?: Conversation['mode']; accessMode?: Conversation['accessMode'] },
+  options: { projectId: string; threadId?: string; now: string; model?: string; mode?: Conversation['mode']; accessMode?: Conversation['accessMode'] },
 ): Conversation => ({
+  projectId: options.projectId,
+  archived: false,
   threadId: options.threadId ?? TRANSIENT_THREAD_ID,
   title: '新会话',
   pinned: false,

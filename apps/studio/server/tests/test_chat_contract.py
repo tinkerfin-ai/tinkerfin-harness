@@ -33,6 +33,7 @@ def test_chat_request_preserves_command_extensions_and_derives_plan_mode() -> No
                 "tools": [],
                 "context": [],
                 "forwardedProps": {
+                    "projectId": "project-1",
                     "model": "main",
                     "command": {"plan": "on", "compact": "保留这段命令输入"},
                     "trace": "x",
@@ -58,13 +59,16 @@ def test_chat_request_preserves_command_extensions_and_derives_plan_mode() -> No
         }
     ]
     assert payload["forwardedProps"] == {
+        "projectId": "project-1",
         "skillIds": [],
         "accessMode": "full",
         "model": "main",
         "command": {"plan": "on", "compact": "保留这段命令输入"},
         "trace": "x",
     }
-    prepared = prepare_run_request(request, user_id=7, thread_id="thread-1")
+    prepared = prepare_run_request(
+        request, project_id="project-7", user_id=7, thread_id="thread-1"
+    )
     assert prepared.mode == "plan"
 
 
@@ -81,6 +85,7 @@ def test_chat_request_accepts_a_multi_segment_colon_thread_id() -> None:
                 "tools": [],
                 "context": [],
                 "forwardedProps": {
+                    "projectId": "project-1",
                     "model": "main",
                     "command": {"plan": "off"},
                 },
@@ -131,7 +136,11 @@ async def test_chat_route_maps_studio_secondary_validation_to_safe_422() -> None
             ],
             "tools": [],
             "context": [],
-            "forwardedProps": {"model": "main", "command": {}},
+            "forwardedProps": {
+                "projectId": "project-1",
+                "model": "main",
+                "command": {},
+            },
         }
     )
 
@@ -162,7 +171,11 @@ def test_chat_request_drops_the_protocol_message_id() -> None:
                 ],
                 "tools": [],
                 "context": [],
-                "forwardedProps": {"model": "main", "command": {"plan": "off"}},
+                "forwardedProps": {
+                    "projectId": "project-1",
+                    "model": "main",
+                    "command": {"plan": "off"},
+                },
             }
         )
     )
@@ -192,7 +205,11 @@ def test_chat_request_enforces_the_utf8_user_message_capacity_before_side_effect
                 ],
                 "tools": [],
                 "context": [],
-                "forwardedProps": {"model": "main", "command": {"plan": "off"}},
+                "forwardedProps": {
+                    "projectId": "project-1",
+                    "model": "main",
+                    "command": {"plan": "off"},
+                },
             }
         )
 
@@ -224,7 +241,11 @@ async def test_chat_rejects_an_unpaired_unicode_surrogate_as_invalid_input(
             ],
             "tools": [],
             "context": [],
-            "forwardedProps": {"model": "main", "command": {"plan": "off"}},
+            "forwardedProps": {
+                "projectId": "project-1",
+                "model": "main",
+                "command": {"plan": "off"},
+            },
         }
     )
 
@@ -250,7 +271,11 @@ def test_resume_request_rejects_an_unexecuted_user_message() -> None:
                 "messages": [{"role": "user", "content": "不应执行"}],
                 "tools": [],
                 "context": [],
-                "forwardedProps": {"model": "main", "command": {"plan": "off"}},
+                "forwardedProps": {
+                    "projectId": "project-1",
+                    "model": "main",
+                    "command": {"plan": "off"},
+                },
                 "resume": [
                     {
                         "interruptId": "interrupt-1",
@@ -274,7 +299,11 @@ def test_chat_request_rejects_self_referential_parent_run() -> None:
                 "messages": [],
                 "tools": [],
                 "context": [],
-                "forwardedProps": {"model": "main", "command": {"plan": "off"}},
+                "forwardedProps": {
+                    "projectId": "project-1",
+                    "model": "main",
+                    "command": {"plan": "off"},
+                },
             }
         )
 
@@ -350,6 +379,7 @@ def test_from_agui_rejects_full_history_in_a_single_increment_request() -> None:
             ],
             "context": [{"description": "tenant", "value": "acme", "vendor": "kept"}],
             "forwardedProps": {
+                "projectId": "project-1",
                 "model": "main",
                 "command": {"plan": "off"},
                 "trace": {"sampled": True},
@@ -389,6 +419,7 @@ def test_image_input_rejects_external_urls_instead_of_stored_references() -> Non
                     "tools": [],
                     "context": [],
                     "forwardedProps": {
+                        "projectId": "project-1",
                         "model": "main",
                         "command": {"plan": "off"},
                     },
@@ -410,18 +441,24 @@ def test_client_message_id_does_not_change_the_canonical_business_snapshot() -> 
                     ],
                     "tools": [],
                     "context": [],
-                    "forwardedProps": {"model": "main", "command": {"plan": "off"}},
+                    "forwardedProps": {
+                        "projectId": "project-1",
+                        "model": "main",
+                        "command": {"plan": "off"},
+                    },
                 }
             )
         )
 
     first = prepare_run_request(
         request("client-a"),
+        project_id="project-7",
         user_id=7,
         thread_id="thread-1",
     )
     second = prepare_run_request(
         request("client-b"),
+        project_id="project-7",
         user_id=7,
         thread_id="thread-1",
     )
@@ -443,7 +480,11 @@ def test_chat_request_rejects_noncanonical_run_id(run_id: str) -> None:
                 "messages": [{"role": "user", "content": "执行任务"}],
                 "tools": [],
                 "context": [],
-                "forwardedProps": {"model": "main", "command": {"plan": "off"}},
+                "forwardedProps": {
+                    "projectId": "project-1",
+                    "model": "main",
+                    "command": {"plan": "off"},
+                },
             }
         )
 
@@ -478,6 +519,9 @@ def test_conversation_routes_are_registered_with_the_locked_paths() -> None:
         "pageSize",
         "cursor",
         "query",
+        "projectId",
+        "scope",
+        "archived",
     }
     detail_parameters = paths["/api/conversation/{thread_id}/history"]["get"][
         "parameters"
@@ -506,13 +550,16 @@ def test_chat_request_preserves_skill_text_and_rejects_client_context_source() -
             {"id": "client", "role": "user", "content": "  用/ai-report-interpreter\n"}
         ],
         "forwardedProps": {
+            "projectId": "project-1",
             "model": "main",
             "command": {"plan": "off"},
             "skillIds": ["report"],
         },
     }
     request = ChatRequest.from_agui(RunAgentInput.model_validate(payload))
-    prepared = prepare_run_request(request, user_id=1, thread_id="thread")
+    prepared = prepare_run_request(
+        request, project_id="project-1", user_id=1, thread_id="thread"
+    )
     assert prepared.messages[0]["content"] == "  用/ai-report-interpreter\n"
     assert len(prepared.messages) == 1
     payload["messages"] = [
@@ -525,3 +572,6 @@ def test_chat_request_preserves_skill_text_and_rejects_client_context_source() -
     ]
     with pytest.raises(ValidationError, match="来源由服务端确定"):
         ChatRequest.from_agui(RunAgentInput.model_validate(payload))
+
+
+pytestmark = pytest.mark.usefixtures("projects")

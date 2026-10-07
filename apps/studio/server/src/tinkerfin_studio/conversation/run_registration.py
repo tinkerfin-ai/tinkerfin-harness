@@ -37,6 +37,7 @@ from tinkerfin_studio.conversation.run_preparation import (
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import AgentModelConfig
 from tinkerfin_studio.models.service import model_settings, resolved_model
+from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_studio.services.repository import ServiceConfigRepository
 from tinkerfin_studio.services.schemas import ServiceBindings
 from tinkerfin_studio.services.service import (
@@ -91,16 +92,18 @@ class ConversationRunPreparer:
         *,
         thread_id: str,
         run_id: str,
+        project_id: str,
         intent: ChatIntent,
     ) -> ResolvedThread:
         """解析已有会话，或按 Run 幂等创建新会话"""
 
+        await ProjectRepository(self._session, self._user_id).require(project_id)
         if thread_id:
             thread = await self._repository.get_thread(
                 user_id=self._user_id,
                 thread_id=thread_id,
             )
-            if thread is None:
+            if thread is None or thread.project_id != project_id:
                 raise BusinessException(ConversationErrorCode.NOT_FOUND)
             return ResolvedThread(thread=thread, created=False)
         if not isinstance(intent, StartChatIntent):
@@ -116,12 +119,15 @@ class ConversationRunPreparer:
             thread_id=generated_thread_id,
         )
         if thread is not None:
+            if thread.project_id != project_id:
+                raise BusinessException(ConversationErrorCode.RUN_CONFLICT)
             return ResolvedThread(thread=thread, created=False)
         created = False
         try:
             # 新会话与首条运行登记一起提交，校验失败不能留下无法读取的空会话
             thread = await self._repository.create_thread(
                 user_id=self._user_id,
+                project_id=project_id,
                 thread_id=generated_thread_id,
                 title=intent.title,
                 model_id=None,
@@ -174,6 +180,10 @@ class ConversationRunPreparer:
             locked = await self._repository.lock_thread(thread.id)
             if locked is None or locked.status == "deleting":
                 raise BusinessException(ConversationErrorCode.NOT_FOUND)
+            if locked.project_id != prepared.project_id:
+                raise BusinessException(ConversationErrorCode.RUN_CONFLICT)
+            if locked.archived:
+                raise BusinessException(ConversationErrorCode.RUN_CONFLICT)
             thread = locked
             # 同一登记可能已被另一请求建立；锁内重新读取，避免使用锁前的快照
             existing = await self._repository.get_run_for_update(
@@ -276,17 +286,13 @@ class ConversationRunPreparer:
                 existing.updated_at = datetime.now(UTC).replace(tzinfo=None)
             skills = SkillRepository(self._session, self._user_id)
             if created:
+                # 审批恢复保留原内容；压缩属于当前项目的新运行
                 source_id = (
-                    source_run_id
-                    if isinstance(intent, ResumeChatIntent)
-                    else (
-                        thread.last_run_id
-                        if isinstance(intent, CompactIntent)
-                        else None
-                    )
+                    source_run_id if isinstance(intent, ResumeChatIntent) else None
                 )
                 skill_snapshot = await skills.capture(
                     prepared.identity,
+                    project_id=prepared.project_id,
                     selected_ids=intent.skill_ids
                     if isinstance(intent, StartChatIntent)
                     else (),

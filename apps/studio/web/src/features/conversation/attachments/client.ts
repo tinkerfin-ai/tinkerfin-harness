@@ -18,6 +18,7 @@ interface DownloadPermit {
 const storageClient = axios.create({ withCredentials: false })
 
 export async function uploadAttachment(
+  projectId: string,
   file: File,
   signal: AbortSignal,
   onProgress: (percent: number) => void,
@@ -25,7 +26,7 @@ export async function uploadAttachment(
   const request: ApiAxiosRequestConfig = {
     url: '/api/attachments/uploads',
     method: 'POST',
-    data: { name: file.name, size_bytes: file.size },
+    data: { project_id: projectId, name: file.name, size_bytes: file.size },
     signal,
     suppressGlobalError: true,
   }

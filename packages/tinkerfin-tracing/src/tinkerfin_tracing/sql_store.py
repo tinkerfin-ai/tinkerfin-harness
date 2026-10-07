@@ -1368,6 +1368,30 @@ class _SqlAlchemyTraceLedgerBackend:
                     created_at=now,
                 )
             )
+            # Checkpoints are disposable accelerators. Retain a bounded recent
+            # history under the same transaction; older views rebuild from events.
+            checkpoint_scope = (
+                projection_checkpoints.c.namespace_hash == _digest(change.namespace),
+                projection_checkpoints.c.thread_hash == _digest(key.thread_id),
+                projection_checkpoints.c.generation == key.generation,
+                projection_checkpoints.c.projection_hash
+                == _digest(effect.checkpoint.projection_name),
+                projection_checkpoints.c.run_scope_hash == _digest(scope),
+            )
+            oldest_retained = await connection.scalar(
+                select(projection_checkpoints.c.as_of_seq)
+                .where(*checkpoint_scope)
+                .order_by(projection_checkpoints.c.as_of_seq.desc())
+                .offset(change.limits.max_projection_checkpoints_per_scope - 1)
+                .limit(1)
+            )
+            if oldest_retained is not None:
+                await connection.execute(
+                    delete(projection_checkpoints).where(
+                        *checkpoint_scope,
+                        projection_checkpoints.c.as_of_seq < oldest_retained,
+                    )
+                )
 
     async def _insert_rebuilt_graph_nodes(
         self,

@@ -75,7 +75,16 @@ graph = await tracer.query(
     ),
 )
 print(graph.nodes, graph.matched_node_ids)
+
+model = next(node for node in graph.nodes if node.kind == TraceGraphNodeKind.MODEL)
+if model.request_reference is not None:
+    request = await tracer.model_request(thread, reference=model.request_reference)
+    print(request.request)
 ```
+
+Model nodes carry a `request_reference` for reading the retained input when inspecting
+that call. References remain bound to the original conversation and generation;
+deleted generations cannot be read through an old reference.
 
 Filters cover kind, status, model, provider, agent, graph namespace, time, and literal
 content search. Search uses retained, sanitized content. ASCII queries ignore ASCII
@@ -142,6 +151,7 @@ SQLite file databases work with the default pool. In-memory SQLite requires
 `AsyncAdaptedQueuePool` with `pool_size=1, max_overflow=0`; `StaticPool` does not isolate
 concurrent borrowers. The Store never disposes the Engine or changes its pool size.
 MySQL Graph queries require MySQL 8 or newer.
+MySQL payload tables use InnoDB compressed pages and require file-per-table tablespaces.
 
 `SqlAlchemyTraceStore(engine, notifications=notifications)` borrows a started
 [`tinkerfin-notifications`](https://github.com/tinkerfin-ai/tinkerfin-harness/tree/main/packages/tinkerfin-notifications)
@@ -152,6 +162,9 @@ resource identity, never captured content. `InMemoryTraceStore` and custom-backe
 `DurableTraceStore` accept the same argument.
 
 The `max_tracer_threads` and `max_tracer_bytes` limits apply separately to each namespace.
+`TraceLimits.max_projection_checkpoints_per_scope` retains the latest two rebuildable
+checkpoints by default for each conversation, projection, and optional run. Earlier
+historical prefixes are reconstructed from retained events when their cache is absent.
 Graph indexes can be rebuilt with `await tracer.rebuild_graph(thread)` without
 rewriting recorded events. A codec can encrypt stored event and checkpoint bytes.
 

@@ -27,7 +27,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-const summary = (pinned: boolean): ConversationHistoryListItem => ({ accessMode: 'write_approval',
+const summary = (pinned: boolean): ConversationHistoryListItem => ({projectId: 'project-1', archived: false,  accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',
   titleSeq: 0,
@@ -47,7 +47,7 @@ const summary = (pinned: boolean): ConversationHistoryListItem => ({ accessMode:
 })
 
 function useHarness() {
-  const conversation = buildEmptyConversation({
+  const conversation = buildEmptyConversation({projectId: 'project-1',
     threadId: 'thread-pin',
     now: '2026-08-25T00:00:00.000Z',
     model: 'GPT-5.5',
@@ -61,7 +61,6 @@ function useHarness() {
     workspace,
     conversation: workspace.conversations[0] ?? conversation,
     setWorkspace,
-    setDraft: vi.fn(),
     setDraftConversation: vi.fn(),
     setDraftModel: vi.fn(),
     setDraftAccessMode: vi.fn(),

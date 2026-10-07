@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from tinkerfin_automation import ExecutionStatus, TaskStatus
 from tinkerfin_automation.errors import AutomationError
-from tinkerfin_studio.api.dependencies import UserContextDep
+from tinkerfin_studio.api.dependencies import SessionDep, UserContextDep
 from tinkerfin_studio.api.responses import ApiResponse
 from tinkerfin_studio.automation.schemas import (
     BatchCommand,
@@ -25,22 +25,32 @@ from tinkerfin_studio.automation.service import (
     StudioAutomationService,
     automation_error,
 )
+from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_studio.resources import get_resources
 
 router = APIRouter(prefix="/automation", tags=["自动化"])
 
 
 async def automation_service(
-    request: Request, user: UserContextDep
+    request: Request,
+    user: UserContextDep,
+    session: SessionDep,
+    project_id: Annotated[str, Query(alias="projectId", min_length=1, max_length=36)],
 ) -> AsyncIterator[StudioAutomationService]:
     """将用户绑定到业务服务；框架错误统一转换为可恢复的 HTTP 错误"""
     try:
-        yield StudioAutomationService(get_resources(request.app), user_id=user.user_id)
+        await ProjectRepository(session, user.user_id).require(project_id)
+        await session.commit()
+        yield StudioAutomationService(
+            get_resources(request.app), user_id=user.user_id, project_id=project_id
+        )
     except (AutomationError, ValueError) as error:
         raise automation_error(error) from error
 
 
-Service = Annotated[StudioAutomationService, Depends(automation_service)]
+Service = Annotated[
+    StudioAutomationService, Depends(automation_service, scope="function")
+]
 Limit = Annotated[int, Query(ge=1, le=100)]
 Search = Annotated[str | None, Query(max_length=255)]
 Cursor = Annotated[str | None, Query(max_length=2048)]

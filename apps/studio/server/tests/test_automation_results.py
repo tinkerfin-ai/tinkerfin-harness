@@ -35,14 +35,16 @@ from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
 
 @pytest.fixture
 async def generated_runs(automation_resources, automation_worker):
-    service = StudioAutomationService(automation_resources, user_id=1)
+    service = StudioAutomationService(
+        automation_resources, project_id="project-1", user_id=1
+    )
     saved = await service.save(
         SaveTask(
             request_id="reports",
             configuration=TaskConfiguration.model_validate(configuration()),
         )
     )
-    task = await automation_resources.automation.for_owner("1").task(saved.id)
+    task = await automation_resources.automation.for_owner("1:project-1").task(saved.id)
     runs = []
     files = []
     for number in (1, 2):
@@ -53,6 +55,7 @@ async def generated_runs(automation_resources, automation_worker):
         runs.append(run)
         files.append(
             await automation_resources.attachments.upload(
+                project_id="project-1",
                 user_id=1,
                 name=f"report-{number}.md",
                 chunks=byte_chunks(f"# Report {number}\n".encode()),
@@ -115,9 +118,9 @@ async def test_delivered_files_preserve_ids_without_creating_artifacts_or_runs(
     async with automation_resources.database.session() as session:
         after = await session.scalar(select(func.count()).select_from(AttachmentFile))
     assert before == after
-    history = await StudioAutomationService(automation_resources, user_id=1).list_runs(
-        task_id=task.id
-    )
+    history = await StudioAutomationService(
+        automation_resources, project_id="project-1", user_id=1
+    ).list_runs(task_id=task.id)
     assert len(history.items) == 2
     with pytest.raises(BusinessException):
         await tools["deliver_automation_files"].ainvoke(
@@ -126,7 +129,11 @@ async def test_delivered_files_preserve_ids_without_creating_artifacts_or_runs(
     other = {
         tool.name: tool
         for tool in build_automation_tools(
-            automation_resources, user_id=2, model_id="main", access_mode="full"
+            automation_resources,
+            project_id="project-2",
+            user_id=2,
+            model_id="main",
+            access_mode="full",
         )
     }
     assert json.loads(await other["list_automation_runs"].ainvoke({}))["items"] == []
@@ -164,6 +171,7 @@ async def test_existing_output_is_a_downloadable_file_in_live_and_replayed_messa
         runtime_module, "create_chat_model", lambda *args, **kwargs: model
     )
     runtime = build_conversation_runtime(
+        project_id="project-1",
         skill_snapshot=SkillSnapshotPayload(
             directory_id="00000000-0000-0000-0000-000000000000", skills=()
         ),
@@ -196,3 +204,6 @@ async def test_existing_output_is_a_downloadable_file_in_live_and_replayed_messa
     )
     message = next(item for item in history.snapshot.messages if item.role == "tool")
     assert message.content == [files[0].content_block()]
+
+
+pytestmark = pytest.mark.usefixtures("projects")

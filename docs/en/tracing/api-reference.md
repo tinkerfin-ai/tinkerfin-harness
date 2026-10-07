@@ -81,7 +81,9 @@ owns a nested event scope. `TraceGraphNode.parent_subagent_id` identifies the ne
 owning Subagent and is the only display-nesting relationship. A non-empty `graph_namespace`
 does not prove that relationship; validated Subagent provenance must establish it.
 `TraceGraphNode.model_call_id` links only an AssistantMessage, Tool, or Subagent to the
-Model call that emitted it. `TraceGraphNode.tool_call_only` is true only when an observed
+Model call that emitted it. An AssistantMessage produced without a model, such as a
+middleware notice, has no model association; this alone is not missing relationship
+evidence. `TraceGraphNode.tool_call_only` is true only when an observed
 AssistantMessage has no user-visible content and its Model result emitted at least one
 Tool call; it remains stable when a query filters Tool events out of the page.
 
@@ -100,6 +102,13 @@ immediately follow its container.
 `matched_node_ids` contains only direct filter matches, in event order. `nodes` also includes their
 owning Subagent containers, up to 64 levels and within `max_total_nodes`.
 An unfiltered history Graph matches every returned event.
+
+Model nodes expose retained input through `request_reference`; their `request` is
+`None`. Use `await tracer.model_request(thread, reference=node.request_reference)`
+to read one complete `TraceModelRequest` with `node_id`, `request`, and
+`request_omitted`. Invalid or foreign references raise `InvalidTraceReference`;
+deleted generations raise `TraceThreadNotFound`. This read borrows the existing Store,
+propagates cancellation, and starts no agent or follower.
 
 `TraceGraphDelta` carries Turn and node upserts/removals plus the current `next_cursor`,
 `as_of_seq`, complete `ordered_node_ids`, `matched_node_ids`, and Completeness. Follow is

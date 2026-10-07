@@ -8,6 +8,7 @@ from sqlalchemy import update
 from tinkerfin_studio.api.errors import BusinessException
 from tinkerfin_studio.attachments.entity import AttachmentFile
 from tinkerfin_studio.attachments.service import byte_chunks
+from tinkerfin_studio.projects.repository import ProjectRepository
 
 
 async def test_task_and_run_keep_reference_through_cleanup_and_reconfiguration(
@@ -16,9 +17,13 @@ async def test_task_and_run_keep_reference_through_cleanup_and_reconfiguration(
     fixed_utc_time: datetime,
 ) -> None:
     file = await attachments.upload(
-        user_id=1, name="参考.md", chunks=byte_chunks(b"# reference")
+        project_id="project-1",
+        user_id=1,
+        name="参考.md",
+        chunks=byte_chunks(b"# reference"),
     )
     await attachments.create_collection(
+        project_id="project-1",
         user_id=1,
         collection_id="input",
         purpose="input",
@@ -29,6 +34,7 @@ async def test_task_and_run_keep_reference_through_cleanup_and_reconfiguration(
         user_id=1, collection_id="input", task_id="task"
     )
     await attachments.create_collection(
+        project_id="project-1",
         user_id=1,
         collection_id="run",
         purpose="execution",
@@ -51,6 +57,7 @@ async def test_task_and_run_keep_reference_through_cleanup_and_reconfiguration(
         await attachments.remove_draft(file.id, user_id=1)
     with pytest.raises(BusinessException):
         await attachments.create_collection(
+            project_id="project-1",
             user_id=1,
             collection_id="input",
             purpose="input",
@@ -66,6 +73,7 @@ async def test_outputs_are_bound_to_execution_and_input_collection_is_immutable(
     attachments,
 ) -> None:
     await attachments.create_collection(
+        project_id="project-1",
         user_id=1,
         collection_id="run",
         purpose="execution",
@@ -73,6 +81,7 @@ async def test_outputs_are_bound_to_execution_and_input_collection_is_immutable(
         configuration={},
     )
     file = await attachments.upload(
+        project_id="project-1",
         user_id=1,
         name="结果.md",
         chunks=byte_chunks(b"# result"),
@@ -84,6 +93,7 @@ async def test_outputs_are_bound_to_execution_and_input_collection_is_immutable(
         for item in await attachments.list_collection(user_id=1, collection_id="run")
     ] == [file.id]
     await attachments.create_collection(
+        project_id="project-1",
         user_id=1,
         collection_id="input",
         purpose="input",
@@ -92,6 +102,7 @@ async def test_outputs_are_bound_to_execution_and_input_collection_is_immutable(
     )
     with pytest.raises(BusinessException):
         await attachments.upload(
+            project_id="project-1",
             user_id=1,
             name="不可改写.md",
             chunks=byte_chunks(b"# no"),
@@ -105,9 +116,13 @@ async def test_failed_input_can_release_references_for_normal_draft_cleanup(
     attachments,
 ) -> None:
     file = await attachments.upload(
-        user_id=1, name="草稿.md", chunks=byte_chunks(b"# draft")
+        project_id="project-1",
+        user_id=1,
+        name="草稿.md",
+        chunks=byte_chunks(b"# draft"),
     )
     await attachments.create_collection(
+        project_id="project-1",
         user_id=1,
         collection_id="input",
         purpose="input",
@@ -128,6 +143,7 @@ async def test_duplicate_collection_creation_is_idempotent_under_concurrency(
     await asyncio.gather(
         *(
             attachments.create_collection(
+                project_id="project-1",
                 user_id=1,
                 collection_id="same",
                 purpose="input",
@@ -138,3 +154,43 @@ async def test_duplicate_collection_creation_is_idempotent_under_concurrency(
         )
     )
     assert await attachments.list_collection(user_id=1, collection_id="same") == []
+
+
+async def test_collection_inheritance_rejects_unrelated_project_user_and_files(
+    attachments, database
+) -> None:
+    async with database.session() as session:
+        other = await ProjectRepository(session, 1).create("另一项目")
+    file = await attachments.upload(
+        project_id=other.id,
+        user_id=1,
+        name="private.md",
+        chunks=byte_chunks(b"# private"),
+    )
+    for identity, user_id, project_id, purpose in (
+        ("project", 1, other.id, "input"),
+        ("user", 2, "project-2", "input"),
+        ("execution", 1, "project-1", "execution"),
+        ("unreferenced", 1, "project-1", "input"),
+    ):
+        await attachments.create_collection(
+            project_id=project_id,
+            user_id=user_id,
+            collection_id=identity,
+            purpose=purpose,
+            attachment_ids=(file.id,) if identity == "project" else (),
+            configuration={},
+        )
+        with pytest.raises(BusinessException):
+            await attachments.create_collection(
+                project_id="project-1",
+                user_id=1,
+                collection_id="rejected-" + identity,
+                purpose="execution",
+                attachment_ids=(file.id,),
+                source_collection_id=identity,
+                configuration={},
+            )
+
+
+pytestmark = pytest.mark.usefixtures("projects")

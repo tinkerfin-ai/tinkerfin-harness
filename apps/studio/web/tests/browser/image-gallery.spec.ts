@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { mockDownloadPermits } from './support/attachment-storage'
 import { measureBounds } from './support/geometry'
@@ -40,6 +41,7 @@ test('图片失败态、恢复与多图连续键盘浏览保持无边框布局',
   })
   await mockDownloadPermits(page)
   await installNotificationStream(page)
+  await installProjectScope(page)
   await page.goto('/')
   await page.getByRole('button', { name: '打开会话：多图预览回归', exact: true }).click()
   const preview = page.getByRole('button', { name: '放大图片：第一张.png', exact: true })

@@ -32,8 +32,10 @@ from tinkerfin_studio.api.errors import (
 )
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.service import AgentModelService
+from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_tracing import TraceThreadNotFound
 
+from .ownership import automation_owner
 from .schemas import (
     BatchCommand,
     BatchResult,
@@ -111,10 +113,15 @@ def run_view(run: AutomationExecution) -> RunView:
 class StudioAutomationService:
     """绑定当前用户后完成任务命令、查询和文件授权"""
 
-    def __init__(self, resources: ApplicationResources, *, user_id: int) -> None:
+    def __init__(
+        self, resources: ApplicationResources, *, user_id: int, project_id: str
+    ) -> None:
         self._resources = resources
         self._user_id = user_id
-        self._automation = resources.automation.for_owner(str(user_id))
+        self._project_id = project_id
+        self._automation = resources.automation.for_owner(
+            automation_owner(user_id, project_id)
+        )
 
     async def _task_view(self, task: AutomationTask) -> TaskView:
         config = task_configuration(task)
@@ -131,13 +138,14 @@ class StudioAutomationService:
         )
 
     async def _validate_configuration(self, config: TaskConfiguration) -> None:
+        if config.project_id != self._project_id:
+            raise BusinessException(AutomationErrorCode.INVALID_CONFIGURATION)
         async with self._resources.database.session() as session:
+            await ProjectRepository(session, self._user_id).require(config.project_id)
             models = AgentModelService(
                 AgentModelRepository(session, user_id=self._user_id)
             )
             await models.resolve(config.model_id)
-        for identity in config.attachments:
-            await self._resources.attachments.get(identity, user_id=self._user_id)
 
     async def save(self, command: SaveTask, *, task_id: str | None = None) -> TaskView:
         """先保留不可变输入，再提交可幂等重试的调度命令"""
@@ -148,16 +156,19 @@ class StudioAutomationService:
         await self._validate_configuration(config)
         identity = str(
             uuid5(
-                NAMESPACE_URL, f"studio-automation:{self._user_id}:{command.request_id}"
+                NAMESPACE_URL,
+                f"studio-automation:{self._user_id}:{self._project_id}:{command.request_id}",
             )
         )
         files = self._resources.attachments
         await files.create_collection(
             user_id=self._user_id,
+            project_id=config.project_id,
             collection_id=identity,
             purpose="input",
             attachment_ids=tuple(config.attachments),
             configuration=config.model_dump(mode="json", by_alias=True),
+            source_collection_id=None if task is None else collection_id(task.snapshot),
         )
         anchor = await files.collection_created_at(
             user_id=self._user_id, collection_id=identity

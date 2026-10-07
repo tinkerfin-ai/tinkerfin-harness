@@ -46,6 +46,7 @@ class ConversationRepository:
         self,
         *,
         user_id: int,
+        project_id: str,
         thread_id: str,
         title: str,
         model_id: str | None,
@@ -55,6 +56,8 @@ class ConversationRepository:
         now = datetime.now(UTC).replace(tzinfo=None)
         entity = ConversationThread(
             user_id=user_id,
+            project_id=project_id,
+            archived=False,
             thread_id=thread_id,
             title=title,
             status="idle",
@@ -351,14 +354,19 @@ class ConversationRepository:
         page_size: int,
         cursor: tuple[bool, datetime, int] | None,
         query: str | None = None,
+        project_id: str | None = None,
+        archived: bool = False,
     ) -> list[ConversationThread]:
         """按置顶与最近 Trace 活动分页，仅公开已有历史读取入口的会话"""
 
         statement = select(ConversationThread).where(
             ConversationThread.user_id == user_id,
             ConversationThread.deleted_at.is_(None),
+            ConversationThread.archived.is_(archived),
             ConversationThread.last_run_id.is_not(None),
         )
+        if project_id is not None:
+            statement = statement.where(ConversationThread.project_id == project_id)
         if query is not None:
             escaped = (
                 query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -391,6 +399,59 @@ class ConversationRepository:
         )
         return list(rows)
 
+    async def organize_thread(
+        self,
+        *,
+        user_id: int,
+        thread_id: str,
+        project_id: str | None,
+        archived: bool | None,
+    ) -> ConversationThread:
+        """在注册运行使用的会话锁内改变项目或归档状态"""
+        from tinkerfin_studio.api.errors import (
+            BusinessException,
+            ConversationErrorCode,
+            ProjectErrorCode,
+        )
+        from tinkerfin_studio.projects.repository import ProjectRepository
+
+        thread = await self.get_thread(user_id=user_id, thread_id=thread_id)
+        if thread is None:
+            raise BusinessException(ConversationErrorCode.NOT_FOUND)
+        thread = await self.lock_thread(thread.id)
+        if (
+            thread is None
+            or thread.deleted_at is not None
+            or thread.status == "deleting"
+        ):
+            raise BusinessException(ConversationErrorCode.NOT_FOUND)
+        changing = (project_id is not None and project_id != thread.project_id) or (
+            archived is not None and archived != thread.archived
+        )
+        if changing and (
+            thread.has_pending_interrupt
+            or thread.status in {"running", "waiting_approval"}
+            or await self.has_running_run(thread.id)
+        ):
+            raise BusinessException(ProjectErrorCode.ACTIVE_CONVERSATION)
+        if project_id is not None:
+            await ProjectRepository(self._session, user_id).require(project_id)
+            from tinkerfin_studio.attachments.entity import AttachmentFile
+
+            await self._session.execute(
+                update(AttachmentFile)
+                .where(
+                    AttachmentFile.user_id == user_id,
+                    AttachmentFile.thread_id == thread_id,
+                )
+                .values(project_id=project_id)
+            )
+            thread.project_id = project_id
+        if archived is not None:
+            thread.archived = archived
+        await self._session.flush()
+        return thread
+
     async def update_thread_meta(
         self,
         thread: ConversationThread,
@@ -408,6 +469,8 @@ class ConversationRepository:
             )
         if pinned is not None:
             values["pinned"] = pinned
+        if not values:
+            return
         statement = (
             update(ConversationThread)
             .where(ConversationThread.id == thread.id)
@@ -560,19 +623,20 @@ class ConversationRepository:
         )
 
     async def has_running_run(self, thread_pk: int) -> bool:
-        """返回是否仍有正在创建或执行的主 Run"""
+        """调用方持有会话锁，以当前读取确认是否仍有正在准备或执行的运行"""
 
-        count = await self._session.scalar(
-            select(func.count())
-            .select_from(ConversationRunRegistration)
+        run_id = await self._session.scalar(
+            select(ConversationRunRegistration.id)
             .where(
                 ConversationRunRegistration.conversation_thread_id == thread_pk,
                 ConversationRunRegistration.status.in_(
                     ("preparing", "starting", "running")
                 ),
             )
+            .limit(1)
+            .with_for_update()
         )
-        return bool(count)
+        return run_id is not None
 
     async def list_pending_runs(
         self, *, thread_pk: int | None = None

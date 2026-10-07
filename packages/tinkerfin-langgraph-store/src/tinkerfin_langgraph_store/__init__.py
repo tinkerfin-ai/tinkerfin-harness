@@ -28,7 +28,11 @@ def __getattr__(name: str) -> object:
         try:
             from .sqlalchemy import SqlAlchemyStore
         except ModuleNotFoundError as error:
-            if error.name not in {"sqlalchemy", "tinkerfin_sqlalchemy"}:
+            if error.name not in {
+                "sqlalchemy",
+                "tinkerfin_sqlalchemy",
+                "tinkerfin_contracts",
+            }:
                 raise
             raise ImportError(
                 'Install "tinkerfin-langgraph-store[sqlalchemy]" to use SqlAlchemyStore'

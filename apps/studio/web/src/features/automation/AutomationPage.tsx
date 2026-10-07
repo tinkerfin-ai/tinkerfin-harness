@@ -22,7 +22,8 @@ type ActiveDialog = { kind: 'editor'; task?: AutomationTask; trigger: HTMLElemen
 const filterLabels = { all: '全部状态', enabled: '已启用', paused: '已暂停', ...runStatusLabels } as const
 
 /** 使用服务端任务与执行事实，所有命令先确认结果再更新界面 */
-export function AutomationPage({ navigationTriggerRef, onOpenNavigation, onModalChange, onToast, defaultModelId, renderModelChoice }: {
+export function AutomationPage({ projectId, navigationTriggerRef, onOpenNavigation, onModalChange, onToast, defaultModelId, renderModelChoice }: {
+  projectId: string
   navigationTriggerRef: RefObject<HTMLButtonElement | null>
   onOpenNavigation: () => void
   onModalChange: (open: boolean) => void
@@ -50,7 +51,7 @@ export function AutomationPage({ navigationTriggerRef, onOpenNavigation, onModal
   const wasSearchOpenRef = useRef(false)
   const today = todayInBeijing()
   const dates = useMemo(() => weekDates(today, weekOffset), [today, weekOffset])
-  const data = useAutomation({ page, query, status: filter, dates, view,
+  const data = useAutomation({ projectId, page, query, status: filter, dates, view,
     onLoadError: () => onToast('error', t('自动化数据加载失败')),
   })
 
@@ -112,7 +113,7 @@ export function AutomationPage({ navigationTriggerRef, onOpenNavigation, onModal
     const controller = begin(ids); if (!controller) return new Set(ids)
     const keys = Object.fromEntries(tasks.map(task => [task.id, `${task.id}:${task.revision}:${operation}`]))
     try {
-      const result = await batchTasks(tasks, operation, Object.fromEntries(ids.map(id => [id, requestId(keys[id])])), controller.signal)
+      const result = await batchTasks(projectId, tasks, operation, Object.fromEntries(ids.map(id => [id, requestId(keys[id])])), controller.signal)
       if (controller.signal.aborted || !mounted.current) return new Set(ids)
       result.filter(item => item.succeeded).forEach(item => commandIds.current.delete(keys[item.taskId]))
       const failed = result.filter(item => !item.succeeded)
@@ -165,8 +166,8 @@ export function AutomationPage({ navigationTriggerRef, onOpenNavigation, onModal
         </div>
       </section>
     </div>
-    {dialog?.kind === 'editor' && <AutomationEditor task={dialog.task} trigger={dialog.trigger} defaultModelId={defaultModelId} renderModelChoice={renderModelChoice} onClose={() => setDialog(null)} onSave={() => { setDialog(null); data.reload(); onToast('info', t('任务已保存')) }} />}
-    {dialog?.kind === 'result' && <AutomationRunDialog run={dialog.run} trigger={dialog.trigger} onToast={onToast} onClose={() => setDialog(null)} />}
+    {dialog?.kind === 'editor' && <AutomationEditor projectId={projectId} task={dialog.task} trigger={dialog.trigger} defaultModelId={defaultModelId} renderModelChoice={renderModelChoice} onClose={() => setDialog(null)} onSave={() => { setDialog(null); data.reload(); onToast('info', t('任务已保存')) }} />}
+    {dialog?.kind === 'result' && <AutomationRunDialog projectId={projectId} run={dialog.run} trigger={dialog.trigger} onToast={onToast} onClose={() => setDialog(null)} />}
     {dialog?.kind === 'delete' && <Dialog open title={t('删除所选任务')} restoreFocusTo={dialog.trigger} closeDisabled={busy.size > 0} onClose={cancelDelete}>
       <p>{t('将删除 {count} 个任务并取消排队执行，运行历史会保留，此操作不可撤销', { count: dialog.tasks.length })}</p>
       <div className="automation-form-footer"><Button variant="ghost" disabled={busy.size > 0} onClick={cancelDelete}>{t('取消')}</Button>

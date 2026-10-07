@@ -1,3 +1,4 @@
+import type { Project } from '../projects/api'
 import { ChevronDown, FolderOpen, Layers2, Plus } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { Button, Dialog, FeedbackState, SearchField, ViewTabs } from '../../components/ui'
@@ -18,13 +19,27 @@ import './skills.css'
 type ActiveDialog = { kind: 'detail'; selection: SkillSelection; trigger: HTMLElement }
   | { kind: 'import'; trigger: HTMLElement } | { kind: 'update' | 'uninstall'; skill: InstalledSkill; trigger: HTMLElement } | null
 
-export function SkillsPage({ navigationTriggerRef, onOpenNavigation, onModalChange, onToast }: {
+interface SkillsPageProps {
+  project: Project
+  navigationTriggerRef: RefObject<HTMLButtonElement | null>; onOpenNavigation: () => void
+  onModalChange: (open: boolean) => void; onToast: (kind: ToastKind, message: string) => void
+}
+
+export function SkillsPage(props: SkillsPageProps) {
+  const [personal, setPersonal] = useState(false)
+  const { project, ...pageProps } = props
+  const projectId = personal ? null : project.id
+  return <ScopedSkillsPage key={projectId ?? 'personal'} {...pageProps} projectId={projectId} onScopeChange={setPersonal} />
+}
+
+function ScopedSkillsPage({ projectId, onScopeChange, navigationTriggerRef, onOpenNavigation, onModalChange, onToast }: {
+  projectId: string | null; onScopeChange: (personal: boolean) => void
   navigationTriggerRef: RefObject<HTMLButtonElement | null>; onOpenNavigation: () => void
   onModalChange: (open: boolean) => void; onToast: (kind: ToastKind, message: string) => void
 }) {
   const { t } = useI18n()
   const navigation = useSkillsNavigation()
-  const library = useSkillLibrary()
+  const library = useSkillLibrary(projectId)
   const catalog = useRemoteSkills(navigation.source, navigation.filters.query, navigation.view === 'discover')
   const [dialog, setDialog] = useState<ActiveDialog>(null)
   const [sourceDrawer, setSourceDrawer] = useState(false)
@@ -89,6 +104,7 @@ export function SkillsPage({ navigationTriggerRef, onOpenNavigation, onModalChan
         navigation={<ViewTabs value={navigation.view} label={t('技能库视图')} options={[{ value: 'discover', label: t('发现') }, { value: 'mine', label: t('我的') }]}
           className="workspace-view-tabs" onChange={value => { rememberScroll(); navigation.selectView(value) }} />}
         actions={<Button type="button" variant="primary" size="sm" className="workspace-header-action" leadingIcon={<Plus size={16} />} aria-label={t('导入技能')} onClick={event => setDialog({ kind: 'import', trigger: event.currentTarget })}><span className="workspace-header-action-label">{t('导入')}</span></Button>} />
+      <div className="skills-project-scope"><ViewTabs value={projectId ? 'project' : 'personal'} label={t('技能范围')} options={[{ value: 'project', label: t('当前项目') }, { value: 'personal', label: t('个人共用') }]} onChange={value => onScopeChange(value === 'personal')} /></div>
       <div className="skills-layout"><aside className="skills-sources">{sourceContent}</aside>
         <div className="skills-results">
           <div className="skills-filters">
@@ -114,8 +130,8 @@ export function SkillsPage({ navigationTriggerRef, onOpenNavigation, onModalChan
               </div> : <div className="skills-grid">{selections.map(selection => {
                 const skill = selection.skill
                 const key = selection.kind === 'installed' ? skill.id : `${selection.skill.source_id}/${skill.id}`
-                return <SkillCard key={key} selection={selection} sourceName={selection.kind === 'installed' ? selection.skill.source_name : sourceOptions.get(selection.skill.source_id) ?? ''}
-                  installed={selection.kind === 'installed' || library.installed.some(item => item.source_id === selection.skill.source_id && item.external_id === skill.id)} busy={library.busy.has(key)}
+                return <SkillCard scopeId={projectId} key={key} selection={selection} sourceName={selection.kind === 'installed' ? selection.skill.source_name : sourceOptions.get(selection.skill.source_id) ?? ''}
+                  installed={selection.kind === 'installed' || library.installed.filter(item => item.project_id === projectId).some(item => item.source_id === selection.skill.source_id && item.external_id === skill.id)} busy={library.busy.has(key)}
                   error={library.errors[key] ? skillError(library.errors[key], t('操作失败，请重试')) : undefined}
                   onOpen={(selection, trigger) => setDialog({ kind: 'detail', selection, trigger })} onInstall={skill => { void library.install(skill).then(done => { if (done) onToast('success', t('技能已安装')) }) }}
                   onToggle={skill => { void library.toggle(skill) }} onUpdate={update} onUninstall={(skill, trigger) => setDialog({ kind: 'uninstall', skill, trigger })} />
@@ -129,9 +145,9 @@ export function SkillsPage({ navigationTriggerRef, onOpenNavigation, onModalChan
       </div>
     </div>
     {sourceDrawer && <Dialog open title={t('技能来源')} className="skills-source-dialog" restoreFocusTo={sourceTrigger.current} onClose={() => setSourceDrawer(false)}>{sourceContent}</Dialog>}
-    {dialog?.kind === 'detail' && <SkillDetailDialog selection={dialog.selection} trigger={dialog.trigger} onClose={close} />}
-    {dialog?.kind === 'import' && <SkillImportDialog trigger={dialog.trigger} onClose={close} onCompleted={() => { library.refresh(); onToast('success', t('技能已安装')) }} />}
-    {dialog?.kind === 'update' && <SkillImportDialog target={dialog.skill} trigger={dialog.trigger} onClose={close} onCompleted={changed => { library.refresh(); onToast('success', changed ? t('技能已更新，下次新运行生效') : t('已是最新内容')) }} />}
+    {dialog?.kind === 'detail' && <SkillDetailDialog projectId={projectId} selection={dialog.selection} trigger={dialog.trigger} onClose={close} />}
+    {dialog?.kind === 'import' && <SkillImportDialog projectId={projectId} trigger={dialog.trigger} onClose={close} onCompleted={() => { library.refresh(); onToast('success', t('技能已安装')) }} />}
+    {dialog?.kind === 'update' && <SkillImportDialog projectId={projectId} target={dialog.skill} trigger={dialog.trigger} onClose={close} onCompleted={changed => { library.refresh(); onToast('success', changed ? t('技能已更新，下次新运行生效') : t('已是最新内容')) }} />}
     {dialog?.kind === 'uninstall' && <Dialog open title={t('卸载技能')} className="skills-delete-dialog" restoreFocusTo={dialog.trigger} onClose={close} closeDisabled={library.busy.has(dialog.skill.id)}>
       <div className="skills-delete-content"><p>{t('卸载「{name}」？', { name: dialog.skill.name })}</p><p>{t('已开始的运行继续使用原技能内容，你可以随时重新安装')}</p>{Boolean(library.errors[dialog.skill.id]) && <p className="skills-field-error" role="alert">{skillError(library.errors[dialog.skill.id], t('卸载失败，请重试'))}</p>}</div>
       <footer className="skills-dialog-footer"><Button type="button" size="sm" variant="ghost" disabled={library.busy.has(dialog.skill.id)} onClick={close}>{t('取消')}</Button><Button type="button" size="sm" variant="danger" loading={library.busy.has(dialog.skill.id)} onClick={() => { void library.uninstall(dialog.skill).then(done => { if (done) { close(); onToast('success', t('技能已卸载')) } }) }}>{t('卸载')}</Button></footer>

@@ -49,7 +49,7 @@ function DiagramCanvas({ diagram, source, onClose, backRef }: Omit<DiagramViewer
     </div>
     <footer className="diagram-viewer__tools" aria-label={t('图表缩放')}>
       <IconButton type="button" label={t('缩小')} tooltip={t('缩小')} icon={<Minus size={18} />} onClick={viewport.zoomOut} disabled={!viewport.canZoomOut} />
-      <Button type="button" variant="ghost" size="lg" aria-label={t('重置为 100%')} title={t('重置为 100%')} onClick={() => viewport.changeZoom(1)}>{Math.round(viewport.scale * 100)}%</Button>
+      <Button type="button" variant="ghost" size="lg" aria-label={t('重置为 100%')} tooltip={t('重置为 100%')} onClick={() => viewport.changeZoom(1)}>{Math.round(viewport.scale * 100)}%</Button>
       <IconButton type="button" label={t('放大')} tooltip={t('放大')} icon={<Plus size={18} />} onClick={viewport.zoomIn} disabled={!viewport.canZoomIn} />
       <Button type="button" variant="ghost" size="lg" onClick={() => viewport.changeZoom('fit')}>{t('适应画布')}</Button>
     </footer>

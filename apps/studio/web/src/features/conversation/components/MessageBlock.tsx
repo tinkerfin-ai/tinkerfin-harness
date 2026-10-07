@@ -11,7 +11,7 @@ import {
 } from 'lucide-react'
 import { memo, useEffect, useId, useMemo, useRef, useState, type Ref } from 'react'
 
-import { IconButton } from '../../../components/ui'
+import { IconButton, Tooltip } from '../../../components/ui'
 import type { Message } from '../../../types'
 import { MarkdownContent } from './MarkdownContent'
 import { CodeText } from '../../../components/ui/CodeText'
@@ -274,12 +274,8 @@ function SubagentCard({ message, childTools }: { message: Message; childTools: M
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [openToolIds, setOpenToolIds] = useState<Set<string>>(() => new Set())
-  const [inputHovered, setInputHovered] = useState(false)
-  const [inputFocused, setInputFocused] = useState(false)
-  const inputTooltipId = useId()
   const status = message.meta?.status ?? 'completed'
   const input = message.meta?.input
-  const inputDetailOpen = inputHovered || inputFocused
   const agentName = message.meta?.agentName ?? 'subagent'
   const statusLabel = status === 'running'
     ? t('正在运行')
@@ -326,30 +322,9 @@ function SubagentCard({ message, childTools }: { message: Message; childTools: M
         {input && (
           <div className="subagent-task-line">
             <span>{agentName}</span>
-            <div
-              className={`subagent-task-detail${inputDetailOpen ? ' is-open' : ''}`}
-              onMouseEnter={() => setInputHovered(true)}
-              onMouseLeave={() => setInputHovered(false)}
-            >
-              <button
-                type="button"
-                className="subagent-task-summary"
-                aria-describedby={inputDetailOpen ? inputTooltipId : undefined}
-                onFocus={() => setInputFocused(true)}
-                onBlur={() => setInputFocused(false)}
-              >
-                {input}
-              </button>
-              {inputDetailOpen && (
-                <span
-                  id={inputTooltipId}
-                  className="ui-tooltip subagent-task-tooltip"
-                  role="tooltip"
-                >
-                  {input}
-                </span>
-              )}
-            </div>
+            <Tooltip content={input} placement="bottom" className="ui-tooltip--prose">
+              <button type="button" className="subagent-task-summary">{input}</button>
+            </Tooltip>
           </div>
         )}
         <ol

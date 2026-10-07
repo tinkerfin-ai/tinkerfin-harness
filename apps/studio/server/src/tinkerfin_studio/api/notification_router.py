@@ -1,8 +1,9 @@
 """当前登录用户的资源变化通知"""
 
 import asyncio
+from typing import Annotated
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 
 from tinkerfin_gateway.starlette import SseResponse, sse_response
 from tinkerfin_notifications import NotificationError, NotificationScope
@@ -14,14 +15,22 @@ from tinkerfin_studio.api.errors import (
 )
 from tinkerfin_studio.auth.repository import RedisTokenRepository, UserRepository
 from tinkerfin_studio.auth.service import AuthService
+from tinkerfin_studio.automation.ownership import automation_owner
 from tinkerfin_studio.infrastructure.redis_keys import AUTH_TOKEN_KEY_PREFIX
+from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_studio.resources import get_resources
 
 router = APIRouter(tags=["通知"])
 
 
 @router.get("/notifications", response_class=SseResponse)
-async def follow_notifications(request: Request, auth: AuthSessionDep) -> SseResponse:
+async def follow_notifications(
+    request: Request,
+    auth: AuthSessionDep,
+    project_id: Annotated[
+        str | None, Query(alias="projectId", min_length=1, max_length=36)
+    ] = None,
+) -> SseResponse:
     """通知浏览器重新读取当前用户的会话、附件、轨迹和自动化资源
 
     作用域来自登录身份；固定到期或权限撤销后结束通知流。
@@ -29,6 +38,15 @@ async def follow_notifications(request: Request, auth: AuthSessionDep) -> SseRes
     """
     resources = get_resources(request.app)
     user_id, token = auth.user.user_id, auth.token
+    scopes = [NotificationScope(f"ns_{user_id}")]
+    if project_id is not None:
+        async with resources.database.session() as session:
+            await ProjectRepository(session, user_id).require(project_id)
+        scopes.append(
+            NotificationScope(
+                "studio_automation", automation_owner(user_id, project_id)
+            )
+        )
 
     async def authorized() -> bool:
         async with asyncio.timeout(5):
@@ -50,10 +68,7 @@ async def follow_notifications(request: Request, auth: AuthSessionDep) -> SseRes
     try:
         return await sse_response(
             resources.gateway.notifications(
-                scopes=(
-                    NotificationScope(f"ns_{user_id}"),
-                    NotificationScope("studio_automation", str(user_id)),
-                ),
+                scopes=tuple(scopes),
                 expires_at=auth.expires_at,
                 authorize=authorized,
             )

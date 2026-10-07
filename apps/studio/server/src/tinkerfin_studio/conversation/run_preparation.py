@@ -52,6 +52,7 @@ ChatIntent = StartChatIntent | ResumeChatIntent | CompactIntent
 class PreparedRunRequest:
     """数据库、Messaging、Agent 与主开始事件共用的权威请求事实"""
 
+    project_id: str
     input_json: dict[str, JsonValue]
     messages: tuple[dict[str, JsonValue], ...]
     identity: RunIdentity
@@ -95,14 +96,17 @@ def prepare_run_request(
     *,
     user_id: int,
     thread_id: str,
+    project_id: str,
     access_mode: AccessMode = "full",
 ) -> PreparedRunRequest:
     """分配服务端消息 ID 并构造一次权威标准请求快照"""
 
     if isinstance(request, CompactRequest):
         return PreparedRunRequest(
+            project_id=project_id,
             input_json={
                 "operation": "compact",
+                "projectId": project_id,
                 "threadId": thread_id,
                 **request.model_dump(mode="json", by_alias=True),
             },
@@ -137,6 +141,7 @@ def prepare_run_request(
         ),
     }
     return PreparedRunRequest(
+        project_id=project_id,
         input_json=input_json,
         messages=tuple(cast(list[dict[str, JsonValue]], input_json["messages"])),
         identity=identity,

@@ -54,7 +54,7 @@ function App() {
 }
 
 const newChatButton = () => screen.getAllByRole('button', { name: '新会话' })
-  .find(button => button.getAttribute('aria-keyshortcuts') === 'Meta+K')!
+  .find(button => button.getAttribute('aria-keyshortcuts')?.includes('Meta+K'))!
 
 const THREAD_ID = 'thread-app'
 const RUN_ID = 'run-app'
@@ -72,7 +72,7 @@ const MODEL_CATALOG: AgentModelCatalog = {
 
 const historyItem = (
   overrides: Partial<ConversationHistoryListItem> = {},
-): ConversationHistoryListItem => ({ accessMode: 'write_approval',
+): ConversationHistoryListItem => ({projectId: 'project-1', archived: false,  accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',
   titleSeq: 0,
@@ -94,7 +94,7 @@ const historyItem = (
 
 const traceDetail = (
   overrides: Partial<ConversationHistoryDetail> = {},
-): ConversationHistoryDetail => ({ accessMode: 'write_approval',
+): ConversationHistoryDetail => ({projectId: 'project-1', archived: false,  accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',
   titleSeq: 0,
@@ -181,6 +181,7 @@ function installFetch(options: {
       ? input
       : new Request(new URL(String(input), window.location.origin), init)
     const url = new URL(request.url)
+    if (url.pathname === '/api/projects') return jsonResponse([{ id: 'project-1', name: '测试项目', createdAt: BASE_TIME, updatedAt: BASE_TIME }])
     if (url.pathname.endsWith('/api/models')) return jsonResponse(MODEL_CATALOG)
     if (url.pathname.endsWith('/api/skills/installations') || url.pathname.endsWith('/api/skills/selection')) return jsonResponse([])
     if (url.pathname.endsWith('/api/conversation/config')) {
@@ -296,7 +297,7 @@ describe('Studio Trace history integration', () => {
   })
 
   it('停用已选技能后返回对话，权威列表核验期间不发包并保留草稿', async () => {
-    let installed: InstalledSkill = { id: 'reports', name: 'reports', description: '整理报告', source_kind: 'zip',
+    let installed: InstalledSkill = {project_id: null, overridden: false,  id: 'reports', name: 'reports', description: '整理报告', source_kind: 'zip',
       source_id: null, source_name: 'ZIP', external_id: null, enabled: true, author: null, topics: [],
       file_count: 1, byte_size: 3, created_at: BASE_TIME, updated_at: BASE_TIME }
     const onChat = vi.fn()
@@ -314,7 +315,7 @@ describe('Studio Trace history integration', () => {
       }
       return defaultFetch(input, init)
     })
-    window.history.replaceState({}, '', '/?thread=' + THREAD_ID)
+    window.history.replaceState({}, '', '/?project=project-1&thread=' + THREAD_ID)
     render(<App />)
     await screen.findByText('来自 Trace 的历史回复')
     fireEvent.change(screen.getByRole('textbox', { name: '消息输入' }), { target: { value: '保留正文' } })
@@ -328,7 +329,7 @@ describe('Studio Trace history integration', () => {
     let rejectRead: (reason: Error) => void = () => undefined
     heldRead = new Promise((_, reject) => { rejectRead = reject })
     act(() => {
-      window.history.replaceState({}, '', '/?thread=' + THREAD_ID)
+      window.history.replaceState({}, '', '/?project=project-1&thread=' + THREAD_ID)
       window.dispatchEvent(new PopStateEvent('popstate'))
     })
     const input = screen.getByRole('textbox', { name: '消息输入' })
@@ -492,7 +493,7 @@ describe('Studio Trace history integration', () => {
       await user.click(newChatButton())
       await user.type(screen.getByRole('textbox', { name: '消息输入' }), '后台会话{Enter}')
       await waitFor(() => expect(submitted).toBeDefined())
-      const running = traceDetail({
+      const running = traceDetail({projectId: 'project-1', archived: false,
         id: 2, threadId: 'thread-live', title: '后台会话', headRunId: submitted!.runId,
         availableHeads: [submitted!.runId],
         status: { execution: 'running', headRunId: submitted!.runId },
@@ -557,7 +558,7 @@ describe('Studio Trace history integration', () => {
       await user.type(input, '新草稿{Enter}')
       await waitFor(() => expect(submitted).toBeDefined())
       act(() => {
-        window.history.pushState({}, '', '/?thread=' + THREAD_ID)
+        window.history.pushState({}, '', '/?project=project-1&thread=' + THREAD_ID)
         window.dispatchEvent(new PopStateEvent('popstate'))
       })
       await screen.findByText('来自 Trace 的历史回复')
@@ -752,7 +753,7 @@ describe('Studio Trace history integration', () => {
       }
       return originalFetch(input, init)
     })
-    window.history.replaceState({}, '', '/?thread=' + THREAD_ID)
+    window.history.replaceState({}, '', '/?project=project-1&thread=' + THREAD_ID)
     const view = render(<App />)
     try {
       const retry = await screen.findByRole('button', { name: '重试' })
@@ -777,7 +778,7 @@ describe('Studio Trace history integration', () => {
   it('三个历史失败会话切换及重新打开时不弹错误提示', async () => {
     const user = userEvent.setup()
     const list = [1, 2, 3].map(id => historyItem({ id, threadId: `failed-${id}`, title: `失败会话${id}`, status: 'error' }))
-    const details = Object.fromEntries(list.map(item => [item.threadId, traceDetail({
+    const details = Object.fromEntries(list.map(item => [item.threadId, traceDetail({projectId: 'project-1', archived: false,
       threadId: item.threadId, title: item.title,
       messages: [{ ...traceDetail().messages[0]!, role: 'user', content: '你好', id: `question-${item.id}` }],
       status: { execution: 'failed', headRunId: RUN_ID },
@@ -811,7 +812,7 @@ describe('Studio Trace history integration', () => {
       ],
       details: {
         [THREAD_ID]: traceDetail(),
-        [secondThreadId]: traceDetail({
+        [secondThreadId]: traceDetail({projectId: 'project-1', archived: false,
           id: 2,
           threadId: secondThreadId,
           title: '第二个会话',

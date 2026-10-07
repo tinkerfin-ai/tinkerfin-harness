@@ -1915,10 +1915,12 @@ class _InMemoryTraceLedgerBackend:
             )
         apply_graph_events(thread.graph_nodes, effect.validated_events)
         if effect.checkpoint is not None:
-            thread.checkpoints.setdefault(
+            checkpoints = thread.checkpoints.setdefault(
                 (effect.checkpoint.projection_name, effect.checkpoint.run_id),
                 [],
-            ).append(effect.checkpoint)
+            )
+            checkpoints.append(effect.checkpoint)
+            del checkpoints[: -change.limits.max_projection_checkpoints_per_scope]
 
 
 class InMemoryTraceStore(DurableTraceStore):

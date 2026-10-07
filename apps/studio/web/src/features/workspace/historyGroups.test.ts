@@ -7,7 +7,7 @@ const conversation = (
   threadId: string,
   updatedAt: string,
   pinned = false,
-): Conversation => ({ accessMode: 'write_approval',
+): Conversation => ({projectId: 'project-1', archived: false,  accessMode: 'write_approval',
   historySynchronized: false,
   threadId,
   title: threadId,

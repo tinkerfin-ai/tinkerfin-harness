@@ -261,7 +261,17 @@ class TraceGraphNode(TraceModel, frozen=True):
             "Whether this Assistant emitted Tool calls without user-visible content"
         ),
     )
-    request: JsonValue | None = None
+    request: JsonValue | None = Field(
+        default=None,
+        description="Retained action input; model inputs are read using request_reference",
+    )
+    request_reference: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=16_384,
+        exclude_if=lambda value: value is None,
+        description="Reference for reading this model call's retained request separately",
+    )
     request_omitted: bool = False
     result: JsonValue | None = None
     result_omitted: bool = False
@@ -367,6 +377,18 @@ class TraceGraphNode(TraceModel, frozen=True):
         if self.tool_call_only and self.content_omitted:
             raise ValueError(
                 "tool_call_only requires observed AssistantMessage content"
+            )
+        if self.request_reference is not None and (
+            self.kind is not TraceGraphNodeKind.MODEL
+            or self.request is not None
+            or self.request_omitted
+        ):
+            raise ValueError(
+                "request_reference requires a retained separate model request"
+            )
+        if self.kind is TraceGraphNodeKind.MODEL and self.request is not None:
+            raise ValueError(
+                "Model requests must be read through their request_reference"
             )
         if len(set(self.link_issues)) != len(self.link_issues):
             raise ValueError("Trace Graph link issues must be unique")
@@ -625,10 +647,14 @@ class TraceGraphDelta(TraceModel, frozen=True):
 
 
 def _omit_graph_node_details(node: TraceGraphNode) -> TraceGraphNode:
+    # Observed empty Assistant content proves a Tool-only output. Keep that
+    # evidence when dropping other details so exported nodes remain valid.
+    keep_content = node.tool_call_only
     return node.model_copy(
         update={
-            "content": None,
-            "content_omitted": node.content_omitted or node.content is not None,
+            "content": node.content if keep_content else None,
+            "content_omitted": node.content_omitted
+            or (node.content is not None and not keep_content),
             "request": None,
             "request_omitted": node.request_omitted or node.request is not None,
             "result": None,

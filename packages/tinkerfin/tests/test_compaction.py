@@ -401,7 +401,12 @@ async def test_compaction_agui_has_one_terminal_and_no_assistant_messages() -> N
     assert actions[0].parent_node_id == contexts[0].id
     assert model_nodes[0].parent_node_id == actions[0].id
     assert "Earlier investigation results." in str(actions[0].request)
-    assert "Earlier investigation results." in str(model_nodes[0].request)
+    reference = model_nodes[0].request_reference
+    assert reference is not None
+    model_request = await runtime.agui.history(tracer).model_request(
+        "t", reference=reference
+    )
+    assert "Earlier investigation results." in str(model_request.request)
     operation = next(
         node for node in after.graph.nodes if node.name == "context_compaction"
     )

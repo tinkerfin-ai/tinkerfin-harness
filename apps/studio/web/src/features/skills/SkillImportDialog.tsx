@@ -8,7 +8,7 @@ import type { ImportPreview, InstalledSkill } from './model'
 import { skillError } from './useSkillData'
 
 /** 导入前预览真实内容，失败保留输入，确认只提交已预览的内容摘要 */
-export function SkillImportDialog({ trigger, target, onClose, onCompleted }: { trigger: HTMLElement; target?: InstalledSkill; onClose: () => void; onCompleted: (changed: boolean) => void }) {
+export function SkillImportDialog({ projectId, trigger, target, onClose, onCompleted }: { projectId: string | null; trigger: HTMLElement; target?: InstalledSkill; onClose: () => void; onCompleted: (changed: boolean) => void }) {
   const { t } = useI18n()
   const [tab, setTab] = useState<'github' | 'zip'>(target ? 'zip' : 'github')
   const [url, setUrl] = useState('')
@@ -37,8 +37,8 @@ export function SkillImportDialog({ trigger, target, onClose, onCompleted }: { t
         const signature = JSON.stringify([preview.id, [...selected].sort(), target?.id])
         if (attempt.current?.signature !== signature) attempt.current = { signature, id: crypto.randomUUID() }
         const changed = target
-          ? (await updateSkill(target.id, attempt.current.id, { draft_id: preview.id, digest: selected[0] }, controller.signal)).changed
-          : Boolean(await confirmSkillImport(preview.id, selected, attempt.current.id, controller.signal))
+          ? (await updateSkill(projectId, target.id, attempt.current.id, { draft_id: preview.id, digest: selected[0] }, controller.signal)).changed
+          : Boolean(await confirmSkillImport(projectId, preview.id, selected, attempt.current.id, controller.signal))
         if (!controller.signal.aborted) { onCompleted(changed); onClose() }
       } else {
         const result = tab === 'github' ? await previewGitHubSkills(url.trim(), controller.signal)

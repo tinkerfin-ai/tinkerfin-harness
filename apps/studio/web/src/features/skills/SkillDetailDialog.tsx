@@ -8,7 +8,7 @@ import { SkillIcon } from './SkillCard'
 import { skillError } from './useSkillData'
 import type { SkillDetail, SkillSelection } from './model'
 
-export function SkillDetailDialog({ selection, trigger, onClose }: { selection: SkillSelection; trigger: HTMLElement; onClose: () => void }) {
+export function SkillDetailDialog({ projectId, selection, trigger, onClose }: { projectId: string | null; selection: SkillSelection; trigger: HTMLElement; onClose: () => void }) {
   const { t } = useI18n()
   const [detail, setDetail] = useState<SkillDetail | null>(null)
   const [error, setError] = useState<unknown>(null)
@@ -17,11 +17,11 @@ export function SkillDetailDialog({ selection, trigger, onClose }: { selection: 
   useEffect(() => {
     const controller = new AbortController()
     setError(null); setDetail(null)
-    const request = selection.kind === 'installed' ? readInstalledSkill(selection.skill.id, controller.signal)
+    const request = selection.kind === 'installed' ? readInstalledSkill(projectId, selection.skill.id, controller.signal)
       : readRemoteSkill(selection.skill.source_id, selection.skill.id, selection.skill.revision, controller.signal).then(value => value.detail)
     void request.then(value => { if (!controller.signal.aborted) setDetail(value) }).catch(failure => { if (!controller.signal.aborted) setError(failure) })
     return () => controller.abort()
-  }, [selection, attempt])
+  }, [projectId, selection, attempt])
   return <Dialog open title={selection.skill.name} className="skills-detail-dialog" restoreFocusTo={trigger} initialFocusRef={closeRef} onClose={onClose}
     header={<header className="skills-detail-header"><SkillIcon name={selection.skill.name} /><div><h2>{selection.skill.name}</h2>
       <div className="skills-detail-byline">{selection.skill.author && <span>{selection.skill.author}</span>}{detail?.source_url && <a href={detail.source_url} target="_blank" rel="noopener noreferrer">{t('查看来源')}<ExternalLink size={12} aria-hidden="true" /></a>}</div>

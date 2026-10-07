@@ -17,6 +17,8 @@ import {
 } from './taskTrace'
 
 export interface ConversationHistoryListItem extends ConversationTitleSnapshot {
+  projectId: string
+  archived: boolean
   id: number
   threadId: string
   title: string
@@ -141,6 +143,8 @@ export interface InteractionAvailability {
 }
 
 export interface ConversationHistoryDetail extends ConversationTitleSnapshot {
+  projectId: string
+  archived: boolean
   id: number
   threadId: string
   title: string
@@ -227,14 +231,20 @@ const validateTraceObservation = (value: Record<string, unknown>) => {
 
 export const fetchConversationHistoryList = (
   params: {
+    projectId: string
+    archived?: boolean
+    scope?: 'project' | 'all'
     pageSize?: number
     cursor?: string | null
     query?: string | null
     signal?: AbortSignal
     suppressGlobalError?: boolean
-  } = {},
+  },
 ): Promise<ConversationHistoryListResponse> => {
   const search = new URLSearchParams()
+  search.set('projectId', params.projectId)
+  if (params.archived) search.set('archived', 'true')
+  if (params.scope) search.set('scope', params.scope)
   if (params.pageSize) search.set('pageSize', String(params.pageSize))
   if (params.cursor) search.set('cursor', params.cursor)
   if (params.query) search.set('query', params.query)
@@ -425,13 +435,15 @@ export async function* followConversationTrace(
 /** 重命名或置顶会话，仅传需要修改的字段并返回更新后的会话摘要 */
 export const patchConversation = (
   threadId: string,
-  body: { title?: string; pinned?: boolean },
+  body: { title?: string; pinned?: boolean; projectId?: string; archived?: boolean },
+  signal?: AbortSignal,
 ): Promise<ConversationHistoryListItem> =>
   requestJson<ConversationHistoryListItem>(
     CONVERSATION_API_PATH + '/' + encodeURIComponent(threadId),
     {
       method: 'PATCH',
       body,
+      signal,
       suppressGlobalError: true,
     },
   )

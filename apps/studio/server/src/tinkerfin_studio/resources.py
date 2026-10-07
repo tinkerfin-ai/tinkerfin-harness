@@ -35,6 +35,7 @@ from tinkerfin_studio.agent.persistence import AgentPersistence
 from tinkerfin_studio.agent.subagents import SubagentSettings, load_subagents
 from tinkerfin_studio.attachments.minio import MinioAttachmentStorage
 from tinkerfin_studio.attachments.service import AttachmentService
+from tinkerfin_studio.automation.ownership import automation_execution_namespace
 from tinkerfin_studio.automation.target import (
     StudioAutomationTarget,
     fail_interactive_execution,
@@ -524,7 +525,7 @@ def build_lifespan():
                 automation.target(
                     "studio_agent",
                     StudioAutomationTarget(resources),
-                    execution_namespace=lambda owner_id: f"ns_{int(owner_id)}",
+                    execution_namespace=automation_execution_namespace,
                 )
                 automation_worker = await _enter_lifespan_context(
                     stack,

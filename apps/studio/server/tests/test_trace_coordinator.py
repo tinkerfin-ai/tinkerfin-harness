@@ -92,6 +92,7 @@ async def _setup_run(database, *, thread_id: str, run_id: str):
     async with database.session() as session:
         repository = ConversationRepository(session)
         thread = await repository.create_thread(
+            project_id="project-1",
             user_id=1,
             thread_id=thread_id,
             title="协调器测试",
@@ -408,6 +409,7 @@ async def test_recover_preparing_deletes_empty_thread_without_trace(
     async with database.session() as session:
         repository = ConversationRepository(session)
         thread = await repository.create_thread(
+            project_id="project-1",
             user_id=1,
             thread_id="thread-stale",
             title="过期会话",
@@ -510,6 +512,7 @@ async def test_owner_preflight_cas_fences_a_stale_recovery_delete(
     async with database.session() as session:
         repository = ConversationRepository(session)
         thread = await repository.create_thread(
+            project_id="project-1",
             user_id=1,
             thread_id=identity.thread_id,
             title="激活竞态",
@@ -701,6 +704,7 @@ async def test_abandoned_trace_settles_the_complete_claim_batch_as_cancelled(
     async with database.session() as session:
         repository = ConversationRepository(session)
         thread = await repository.create_thread(
+            project_id="project-1",
             user_id=1,
             thread_id=identity.thread_id,
             title="放弃恢复",
@@ -831,3 +835,6 @@ async def test_initialization_error_code_is_persisted(notifications, database):
     finally:
         await coordinator.aclose()
         await messaging.__aexit__(None, None, None)
+
+
+pytestmark = pytest.mark.usefixtures("projects")

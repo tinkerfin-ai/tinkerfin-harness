@@ -6,16 +6,26 @@ import asyncio
 import json
 import math
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import TracebackType
 from typing import Self
 
-from langgraph.store.base import BaseStore, Item, Op, Result, SearchItem
+from langgraph.store.base import (
+    BaseStore,
+    Item,
+    Op,
+    PutOp,
+    Result,
+    SearchItem,
+    SearchOp,
+)
 from sqlalchemy import and_, case, delete, exists, or_, select, text
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.sql.elements import ColumnElement
 
+from tinkerfin_contracts.storage import DocumentSnapshot
 from tinkerfin_sqlalchemy import (
     SqlTransaction,
     engine_dialect,
@@ -50,6 +60,24 @@ from ._sql_schema import (
     prepare_schema,
 )
 from .errors import StoreCorruptionError, StoreDriverError
+
+
+@dataclass(frozen=True, slots=True)
+class _ExpectedDocument:
+    namespace: tuple[str, ...]
+    key: str
+    value: dict[str, JsonValue] | None
+
+
+class _WriteConflict(Exception):
+    """Roll back the complete transaction when a write condition is stale."""
+
+
+def _condition_value(value: dict[str, JsonValue]) -> str:
+    # Object order does not change JSON values; arrays and scalar types do.
+    return json.dumps(
+        value, sort_keys=True, ensure_ascii=True, allow_nan=False, separators=(",", ":")
+    )
 
 
 def _text(value: object) -> str:
@@ -362,6 +390,95 @@ class SqlAlchemyStore(BaseStore):
             StoreSchemaError: Existing tables differ from the required structure.
         """
 
+        return await self._execute(ops)
+
+    async def acompare_and_set(
+        self,
+        namespace: tuple[str, ...],
+        key: str,
+        *,
+        expected: dict[str, JsonValue] | None,
+        value: dict[str, JsonValue] | None,
+    ) -> bool:
+        """Commit a create, replacement or deletion only against the read value.
+
+        The comparison and write share the provider's transaction and namespace
+        lock. Independent workers cannot both replace one observed value. None
+        selects absence for the condition and deletion for the replacement.
+        JSON types are compared exactly, including bool versus integer.
+
+        Args:
+            namespace: Complete document namespace, with ordinary Store rules.
+            key: Document key within that namespace.
+            expected: Observed JSON document, or None for an absent document.
+            value: Replacement JSON document, or None to delete.
+
+        Returns:
+            True after commit; False if the condition no longer matches.
+
+        Raises:
+            TypeError: An identity or JSON value has the wrong type.
+            ValueError: An identity or JSON value is invalid.
+            LangGraphStoreError: The Store or database cannot complete the operation.
+        """
+        condition = _ExpectedDocument(
+            namespace, key, None if expected is None else json_object(expected)
+        )
+        try:
+            await self._execute((PutOp(namespace, key, value),), condition)
+        except _WriteConflict:
+            return False
+        return True
+
+    async def asearch_exact(
+        self,
+        namespace: tuple[str, ...],
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[DocumentSnapshot]:
+        """Read a page from one namespace, excluding descendants before paging.
+
+        Uses the same ordering, validation, cancellation and borrowed Engine
+        lifetime as asearch. The namespace must identify a document collection.
+
+        Args:
+            namespace: Complete collection namespace.
+            limit: Nonnegative maximum number of documents returned.
+            offset: Nonnegative number of documents skipped in this collection.
+
+        Returns:
+            Independent snapshots sorted by update time descending, then key.
+
+        Raises:
+            ValueError: The namespace or pagination is invalid.
+            TypeError: An input has the wrong type.
+            LangGraphStoreError: The Store or database cannot complete the query.
+        """
+        if not namespace:
+            raise ValueError("Document namespace cannot be empty")
+        results = await self._execute(
+            (SearchOp(namespace, limit=limit, offset=offset),), exact=True
+        )
+        items = results[0]
+        assert isinstance(items, list)
+        snapshots: list[DocumentSnapshot] = []
+        for item in items:
+            assert isinstance(item, SearchItem)
+            snapshots.append(
+                DocumentSnapshot(
+                    item.key, json_object(item.value), item.created_at, item.updated_at
+                )
+            )
+        return snapshots
+
+    async def _execute(
+        self,
+        ops: Iterable[Op],
+        condition: _ExpectedDocument | None = None,
+        *,
+        exact: bool = False,
+    ) -> list[Result]:
         with self._lifetime.operation():
             operations = prepare_operations(ops)
             if not operations:
@@ -379,7 +496,11 @@ class SqlAlchemyStore(BaseStore):
                 try:
                     async with transaction as connection:
                         return await self._batch(
-                            connection, operations, tuple(writes.values())
+                            connection,
+                            operations,
+                            tuple(writes.values()),
+                            condition,
+                            exact=exact,
                         )
                 except SQLAlchemyError as error:
                     # Only replay internal work when no COMMIT was acknowledged or
@@ -407,18 +528,35 @@ class SqlAlchemyStore(BaseStore):
         connection: AsyncConnection,
         operations: Sequence[Operation],
         writes: Sequence[Put],
+        condition: _ExpectedDocument | None = None,
+        *,
+        exact: bool = False,
     ) -> list[Result]:
         changed_namespaces = sorted({op.namespace for op in writes})
         # One lock per affected namespace also protects removal of its final
         # document. Stable ordering bounds cross-namespace lock conflicts.
         for namespace in changed_namespaces:
             await self._lock_namespace(connection, namespace)
+        if condition is not None:
+            current = await self._get(
+                connection, Get(condition.namespace, condition.key)
+            )
+            actual = (
+                None
+                if current is None
+                else _condition_value(json_object(current.value))
+            )
+            expected = (
+                None if condition.value is None else _condition_value(condition.value)
+            )
+            if actual != expected:
+                raise _WriteConflict
         result: list[Result] = []
         for op in operations:
             if isinstance(op, Get):
                 result.append(await self._get(connection, op))
             elif isinstance(op, Search):
-                result.append(await self._search(connection, op))
+                result.append(await self._search(connection, op, exact=exact))
             elif isinstance(op, ListNamespaces):
                 result.append(await self._list(connection, op))
             else:
@@ -509,12 +647,14 @@ class SqlAlchemyStore(BaseStore):
         return result
 
     async def _search(
-        self, connection: AsyncConnection, op: Search
+        self, connection: AsyncConnection, op: Search, *, exact: bool = False
     ) -> list[SearchItem]:
         query = select(documents, namespaces.c.namespace).join(
             namespaces, namespaces.c.namespace_id == documents.c.namespace_id
         )
-        if op.prefix:
+        if exact:
+            query = query.where(documents.c.namespace_id == _namespace_id(op.prefix))
+        elif op.prefix:
             query = query.where(_prefix_expression(op.prefix))
         for condition in op.filters:
             query = query.where(_filter_expression(condition))
@@ -529,6 +669,8 @@ class SqlAlchemyStore(BaseStore):
         for row in (await connection.execute(query)).mappings():
             item = _item(dict(row), search=True)
             assert isinstance(item, SearchItem)
+            if exact and item.namespace != op.prefix:
+                raise StoreCorruptionError("Namespace digest collision")
             result.append(item)
         return result
 

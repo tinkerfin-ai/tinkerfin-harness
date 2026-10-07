@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ApprovalState, Conversation } from '../../types'
 import { useConversationScroll } from './useConversationScroll'
 
-const conversation: Conversation = { accessMode: 'write_approval',
+const conversation: Conversation = {projectId: 'project-1', archived: false,  accessMode: 'write_approval',
   historySynchronized: false,
   threadId: 'thread-scroll',
   title: '滚动测试',

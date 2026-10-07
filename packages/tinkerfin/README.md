@@ -54,6 +54,78 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Persistent files shared with an editor
+
+Bind a collection once to use the same persistent files from an application and
+agent file tools. The Store must implement atomic conditional writes and exact
+collection queries, such as
+`tinkerfin-langgraph-store`'s `SqlAlchemyStore`. The application owns and closes
+its Store and Engine; the file collection and Runtime borrow them.
+
+```python
+import asyncio
+
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from tinkerfin import TinkerFin
+from tinkerfin.files import FileConflict
+from tinkerfin_langgraph_store import SqlAlchemyStore
+
+
+async def main() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///files.db")
+    try:
+        async with SqlAlchemyStore(engine) as store:
+            configured = TinkerFin(store=store).with_namespace("account-a")
+            files = configured.files(("project-a", "memories"))
+            runtime = configured.build(model="openai:gpt-5.4", backend=files.backend)
+            try:
+                snapshot = await files.read("/preferences.md")
+            except FileNotFoundError:
+                snapshot = await files.create("/preferences.md", b"Initial preferences")
+
+            draft = b"Prefer concise explanations"
+            try:
+                saved = await files.update(
+                    snapshot.path, draft, expected_etag=snapshot.etag
+                )
+                print(saved.content)
+            except FileConflict:
+                # Retain draft and reread before asking its author to resolve the conflict.
+                print("The file changed; the draft has not been saved")
+
+            await runtime.ainvoke(
+                thread_id="conversation-1",
+                run_id="request-1",
+                input={
+                    "messages": [{"role": "user", "content": "Read /preferences.md"}]
+                },
+            )
+    finally:
+        await engine.dispose()
+
+
+asyncio.run(main())
+```
+
+This SQLite example additionally needs
+`pip install "tinkerfin-langgraph-store[sqlalchemy]" aiosqlite` and the model
+provider configured in Quick Start.
+
+`create(path, bytes)` refuses existing files. `delete(path, expected_etag=...)`
+refuses changed or recreated files. `list(limit=100, offset=0)` and `read(path)`
+return file snapshots with content, etag and update time. Collection pages exclude
+descendant namespaces before pagination. Paths are canonical absolute virtual
+file paths. Agent tools can create, replace, edit and delete through the same
+conditional-write path; a conflict requires rereading, rather than silently
+replaying an old change. A collection's backend must run under the namespace
+that created it.
+
+Agent directory deletion is recursive and conditions each file on its observed
+snapshot. A conflict or cancellation can leave earlier files deleted; new or
+changed files are retained. A reported incomplete deletion requires reading the
+remaining files before retrying. Directory deletion is not one transaction.
+
 ## Core concepts
 
 ### Configure, then run

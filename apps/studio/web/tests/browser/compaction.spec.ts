@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
@@ -50,7 +51,7 @@ function history(runId?: string, phase: Phase = 'done', messageCount = 2): Conve
       completedAt: busy ? null : time }))
 
   }
-  return {
+  return {projectId: 'project-1', archived: false,
     accessMode: 'write_approval', id: 1, threadId, title: '项目讨论', titleSource: 'user', titleGenerationStatus: 'idle', titleSeq: 1,
     lastModel: 'main', pinned: false, asOfSeq, generation: 'compact-generation', observedAt: time,
     headRunId: runId ?? 'chat', availableHeads: [runId ?? 'chat'], historyCursor: null, messageCount, toolCallCount: 0,
@@ -123,7 +124,8 @@ async function openConversation(page: Page, options: { theme?: string; detail?: 
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
   await installNotificationStream(page)
-  await page.goto('/?thread=' + threadId)
+  await installProjectScope(page)
+  await page.goto('/?project=project-1&thread=' + threadId)
   await expect(page.getByText('项目目标和附件已确认，可以继续讨论实现细节', { exact: true })).toBeVisible()
   return { requests, release, setDetail: (value: ConversationHistoryDetail) => { detail = value }, historyReads: () => historyReads }
 }

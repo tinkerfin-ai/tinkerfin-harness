@@ -27,7 +27,7 @@ function conversation(
     updatedAt = BASE_TIME,
   } = overrides
 
-  return {
+  return {projectId: 'project-1', archived: false,
     threadId,
     title,
     pinned,
@@ -69,7 +69,7 @@ describe('workspace conversation behavior', () => {
   })
 
   it('uses the fixed draft title until the backend returns the authoritative title', () => {
-    const draft = buildEmptyConversation({
+    const draft = buildEmptyConversation({projectId: 'project-1',
       now: '2026-08-03T11:00:00.000Z',
       model: 'GPT-5.5',
     })

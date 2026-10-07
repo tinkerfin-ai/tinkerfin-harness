@@ -16,7 +16,11 @@ async def create_thread(database: Database):
     async with database.session() as session:
         repository = ConversationRepository(session)
         thread = await repository.create_thread(
-            user_id=1, thread_id="title-thread", title="临时标题", model_id=None
+            project_id="project-1",
+            user_id=1,
+            thread_id="title-thread",
+            title="临时标题",
+            model_id=None,
         )
         await repository.commit()
         return thread.id
@@ -195,7 +199,11 @@ def test_default_title_uses_first_16_characters(character):
             "tools": [],
             "context": [],
             "messages": [{"role": "user", "content": character * 40}],
-            "forwardedProps": {"model": "model", "command": {"plan": "off"}},
+            "forwardedProps": {
+                "projectId": "project-1",
+                "model": "model",
+                "command": {"plan": "off"},
+            },
         }
     )
     intent = classify_intent(request)
@@ -595,3 +603,6 @@ async def test_title_query_checks_owner_and_returns_current_snapshot(
     else:
         assert response.json()["code"] != 0
         assert response.json()["data"] is None
+
+
+pytestmark = pytest.mark.usefixtures("projects")

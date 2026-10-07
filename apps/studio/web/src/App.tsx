@@ -20,7 +20,7 @@ import {
   subscribeAuthSession,
   AuthSessionStorageError,
 } from './auth/session'
-import { writeWorkspaceToLocation } from './lib/threadRoute'
+import { clearWorkspaceLocation } from './lib/threadRoute'
 import { clearActiveRunSession } from './features/conversation/stream/activeRunSession'
 import { useI18n } from './i18n'
 
@@ -92,7 +92,7 @@ export default function App() {
     authEntry.current = 'restore'
     clearActiveRunSession()
     setToasts([])
-    writeWorkspaceToLocation('conversation', '', { history: 'replace' })
+    clearWorkspaceLocation()
     setPhase('signedOut')
   }), [])
 
@@ -105,7 +105,7 @@ export default function App() {
   }), [])
 
   useEffect(() => {
-    if (phase === 'signedOut') writeWorkspaceToLocation('conversation', '', { history: 'replace' })
+    if (phase === 'signedOut') clearWorkspaceLocation()
   }, [phase])
 
   let content: ReactNode

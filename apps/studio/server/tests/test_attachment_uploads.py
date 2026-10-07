@@ -15,7 +15,7 @@ async def test_upload_confirmation_publishes_validated_bytes_once(
 ):
     data = b"# report\n"
     attachment_id, form = await attachments.request_upload(
-        user_id=1, name="report.md", size_bytes=len(data)
+        project_id="project-1", user_id=1, name="report.md", size_bytes=len(data)
     )
     assert form.expires_in == 600
     with pytest.raises(BusinessException):
@@ -45,7 +45,7 @@ async def test_incomplete_or_invalid_upload_is_not_published(
     attachments, attachment_storage, database, data
 ):
     attachment_id, _ = await attachments.request_upload(
-        user_id=1, name="report.md", size_bytes=11
+        project_id="project-1", user_id=1, name="report.md", size_bytes=11
     )
     if data is not None:
         attachment_storage.objects[attachment_id + "-upload"] = data
@@ -70,7 +70,7 @@ async def test_concurrent_confirmation_and_removal_cannot_interleave_publication
         return await read(key)
 
     attachment_id, _ = await attachments.request_upload(
-        user_id=1, name="report.md", size_bytes=4
+        project_id="project-1", user_id=1, name="report.md", size_bytes=4
     )
     attachment_storage.objects[attachment_id + "-upload"] = b"text"
     monkeypatch.setattr(attachment_storage, "read", blocked_read)
@@ -104,7 +104,7 @@ async def test_cancellation_preserves_primary_error_when_cleanup_is_unavailable(
         raise OSError("unavailable")
 
     attachment_id, _ = await attachments.request_upload(
-        user_id=1, name="report.md", size_bytes=4
+        project_id="project-1", user_id=1, name="report.md", size_bytes=4
     )
     monkeypatch.setattr(attachment_storage, "read", blocked_read)
     monkeypatch.setattr(attachment_storage, "delete", unavailable)
@@ -118,3 +118,6 @@ async def test_cancellation_preserves_primary_error_when_cleanup_is_unavailable(
     async with database.session() as session:
         row = await session.get(AttachmentFile, attachment_id)
         assert row.status == "deleting"
+
+
+pytestmark = pytest.mark.usefixtures("projects")

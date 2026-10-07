@@ -147,6 +147,10 @@ async with view.follow() as updates:
 引用缺失或交互内容未完整留存时，`agui=None`，不能据此构造审批请求。
 通过 `view.trace` 可读取原始事实和已注册的业务投影。
 
+模型节点通过 `request_reference` 提供完整输入的读取引用。查看某次调用时，使用
+`await history.model_request(thread_id, reference=node.request_reference)` 按需读取。
+引用始终绑定原会话和历史归属，结果包含 `node_id`、`request` 与 `request_omitted`。
+
 `await view.load_older(limit=100)` 在同一历史范围内加载更早内容。筛选执行图时，
 使用 `await history.query(thread_id, where=filters)`，读取其 `snapshot` 或
 `follow()` 更新。图分页游标要求筛选条件和图末尾不变；图变化后需重新查询。

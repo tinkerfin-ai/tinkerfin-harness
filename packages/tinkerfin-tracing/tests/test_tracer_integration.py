@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 
 import pytest
 from ag_ui.core import RunFinishedEvent
+from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain.agents.middleware.types import InputAgentState
 from langchain.tools import tool
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -127,6 +128,105 @@ class _SubagentToolBindingModel(FakeMessagesListChatModel):
     ) -> _SubagentToolBindingModel:
         del tools, kwargs
         return self
+
+
+@pytest.mark.parametrize("child", (False, True))
+async def test_middleware_assistant_messages_do_not_require_model_relationships(
+    child: bool,
+) -> None:
+    @tool
+    async def lookup() -> str:
+        """Return one observed research result."""
+        return "retained result"
+
+    limited_model = _SubagentToolBindingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[{"id": f"lookup-{i}", "name": "lookup", "args": {}}],
+            )
+            for i in range(2)
+        ]
+    )
+    limiter = ToolCallLimitMiddleware(run_limit=1, exit_behavior="end")
+    tracer = Tracer()
+    runtime = (
+        TinkerFin()
+        .with_namespace("middleware-messages")
+        .with_observer(tracer)
+        .build(
+            model=(
+                _SubagentToolBindingModel(
+                    responses=[
+                        AIMessage(
+                            content="",
+                            tool_calls=[
+                                {
+                                    "id": "delegate",
+                                    "name": "task",
+                                    "args": {
+                                        "subagent_type": "worker",
+                                        "description": "Research and report findings",
+                                    },
+                                }
+                            ],
+                        ),
+                        AIMessage(content="The research stopped at its budget"),
+                    ]
+                )
+                if child
+                else limited_model
+            ),
+            tools=[lookup],
+            middleware=[] if child else [limiter],
+            subagents=(
+                [
+                    {
+                        "name": "worker",
+                        "description": "Research one topic",
+                        "system_prompt": "Return your findings",
+                        "model": limited_model,
+                        "tools": [lookup],
+                        "middleware": [limiter],
+                    }
+                ]
+                if child
+                else []
+            ),
+        )
+    )
+    events = [
+        event
+        async for event in runtime.open_agui_run(
+            thread_id="thread",
+            run_id="run",
+            messages=[{"id": "request", "role": "user", "content": "Research"}],
+            include_subagent_events=False,
+        )
+    ]
+    assert isinstance(events[-1], RunFinishedEvent)
+    view = await tracer.get(runtime.thread_identity("thread"))
+    notices = [
+        node
+        for node in view.graph.nodes
+        if node.kind is TraceGraphNodeKind.ASSISTANT_MESSAGE
+        and isinstance(node.content, str)
+        and node.content.startswith("Tool call limit reached:")
+    ]
+    assert len(notices) == 1
+    assert notices[0].model_call_id is None
+    assert not notices[0].link_issues
+    assert bool(notices[0].parent_subagent_id) is child
+    assert not view.graph.completeness.relationship_evidence_missing
+    model = next(
+        node for node in view.graph.nodes if node.kind is TraceGraphNodeKind.MODEL
+    )
+    response = await tracer.query(
+        runtime.thread_identity("thread"),
+        where=TraceGraphFilter(model_call_id=model.id),
+    )
+    assert response.nodes
+    assert not response.snapshot.completeness.relationship_evidence_missing
 
 
 @tool

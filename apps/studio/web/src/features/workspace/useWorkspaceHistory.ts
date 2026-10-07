@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -222,6 +223,8 @@ export const historyItemFromDetail = (
         : 'idle'
   return {
     id: detail.id,
+    projectId: detail.projectId,
+    archived: detail.archived,
     threadId: detail.threadId,
     title: detail.title,
     titleSource: detail.titleSource,
@@ -245,6 +248,8 @@ const conversationFromHistoryItem = (
   item: ConversationHistoryListItem,
   fallbackModel: string,
 ): Conversation => ({
+  projectId: item.projectId,
+  archived: item.archived,
   threadId: item.threadId,
   ...mergeConversationTitle(undefined, item),
   pinned: item.pinned,
@@ -302,6 +307,8 @@ export const mergeHistoryConversations = (
     byId.set(item.threadId, {
       ...existing,
       ...mergeConversationTitle(existing, item),
+      projectId: item.projectId,
+      archived: item.archived,
       pinned: item.pinned,
       updatedAt: summaryIsNotOlder ? item.updatedAt : existing.updatedAt,
       model: preserveRuntime ? existing.model : summary.model,
@@ -319,6 +326,10 @@ export const mergeHistoryConversations = (
 }
 
 export function useWorkspaceHistory({
+  projectId,
+  archived,
+  searchScope,
+  preferDraft = false,
   workspace,
   setWorkspace,
   retainConversationDetails,
@@ -329,6 +340,10 @@ export function useWorkspaceHistory({
   prepareTaskTraceOwner,
   onToast,
 }: {
+  projectId: string
+  archived: boolean
+  searchScope: 'project' | 'all'
+  preferDraft?: boolean
   workspace: WorkspaceState
   setWorkspace: Dispatch<SetStateAction<WorkspaceState>>
   retainConversationDetails: RetainConversationDetails
@@ -369,10 +384,10 @@ export function useWorkspaceHistory({
   const normalizedHistoryQueryRef = useRef(normalizedHistoryQuery)
   normalizedHistoryQueryRef.current = normalizedHistoryQuery
   const historyWatch = useRef<ReturnType<typeof watchResource> | null>(null)
-  const historyRefreshing = useRef(false)
+  const historyRefreshing = useRef<AbortSignal | null>(null)
   const historyPageRequest = useRef<Promise<void> | null>(null)
   const historyExcludedIds = useRef(new Set<string>())
-  const searchRefreshing = useRef(false)
+  const searchRefreshing = useRef<AbortSignal | null>(null)
   const searchPageRequest = useRef<Promise<void> | null>(null)
   const latestSearchIds = useRef(searchThreadIds)
   latestSearchIds.current = searchThreadIds
@@ -412,6 +427,30 @@ export function useWorkspaceHistory({
   const notifiedTaskTraceRequest = useRef<number | null>(null)
   latestWorkspace.current = workspace
 
+  const listScope = useRef({ projectId, archived })
+  useLayoutEffect(() => {
+    if (listScope.current.projectId === projectId && listScope.current.archived === archived) return
+    listScope.current = { projectId, archived }
+    historyWatch.current?.close()
+    historyWatch.current = null
+    historyAbortController.current?.abort()
+    historyAbortController.current = null
+    historyPageRequest.current = null
+    historyInFlightCursor.current = null
+    historyLoadingRef.current = false
+    historyRefreshing.current = null
+    historyLastLoadSettledAt.current = null
+    loadedHistoryCursors.current.clear()
+    historyExcludedIds.current.clear()
+    historyThreadIdsRef.current = []
+    historyInitialized.current = false
+    setHistoryThreadIds([])
+    setHistoryCursor(null)
+    setHistoryLoadingMore(false)
+    setHistoryLoadError(null)
+    setHistoryBootstrapStatus('loading')
+  }, [projectId, archived])
+
   // 明确导航立即取消首屏恢复权，包括空白页再次点击新会话
   const cancelInitialSelection = useCallback(() => {
     initialSelection.current.status = 'cancelled'
@@ -442,7 +481,7 @@ export function useWorkspaceHistory({
           let cursor: string | undefined
           let nextCursor: string | null = null
           for (let index = 0; index < pageCount; index += 1) {
-            const page = await fetchConversationHistoryList({ pageSize: HISTORY_PAGE_SIZE, cursor, signal: options.signal, suppressGlobalError: options.preserveWindow })
+            const page = await fetchConversationHistoryList({ projectId, archived, pageSize: HISTORY_PAGE_SIZE, cursor, signal: options.signal, suppressGlobalError: options.preserveWindow })
             items.push(...page.items)
             nextCursor = page.nextCursor ?? null
             if (!nextCursor || options.signal?.aborted) break
@@ -461,20 +500,21 @@ export function useWorkspaceHistory({
         fetchConversationHistoryGroupConfig({ signal: options.signal }),
       ])
       if (options.signal?.aborted) return false
+      if (preferredDetail && preferredDetail.projectId !== projectId) throw new Error('会话不属于当前项目')
       const applyInitialSelection = initialize && selection.status === 'pending'
         && latestWorkspace.current.currentThreadId === selectedAtStart
       // 首次失败保留恢复机会；成功后通知和目录刷新只能更新列表
       if (initialize && selection.status === 'pending') selection.status = 'applied'
-      const activeSession = readActiveRunSession(preferredThreadId)
+      const activeSession = readActiveRunSession(preferredThreadId, projectId)
       const preferredExists = preferredThreadId
         ? Boolean(preferredDetail || response.items.some((item) => item.threadId === preferredThreadId))
         : true
       if (
-        applyInitialSelection && (
+        activeSession && applyInitialSelection && (
           (response.items.length === 0 && !preferredDetail)
           || (!preferredExists && activeSession?.threadId === preferredThreadId)
         )
-      ) clearActiveRunSession(activeSession?.payload.runId)
+      ) clearActiveRunSession(activeSession.payload.runId)
       if (preferredDetail && applyInitialSelection) prefetchedHistoryDetails.current.set(preferredThreadId, preferredDetail)
       const historyItems = preferredDetail && !response.items.some((item) => item.threadId === preferredThreadId)
         ? [...response.items, historyItemFromDetail(preferredDetail)]
@@ -519,7 +559,7 @@ export function useWorkspaceHistory({
             ? preferredThreadId
             : hasCurrent
               ? state.currentThreadId
-              : (conversations[0]?.threadId ?? ''),
+              : preferDraft ? '' : (conversations[0]?.threadId ?? ''),
         )
       })
       return true
@@ -528,11 +568,12 @@ export function useWorkspaceHistory({
     } finally {
       retention?.release()
     }
-  }, [defaultModelId, prepareTaskTraceOwner, retainConversationDetails, setWorkspace])
+  }, [projectId, archived, preferDraft, defaultModelId, prepareTaskTraceOwner, retainConversationDetails, setWorkspace])
 
   useEffect(() => {
     const known = new Set(historyThreadIdsRef.current)
     const additions = sortConversations(workspace.conversations)
+      .filter(conversation => conversation.projectId === projectId && conversation.archived === archived)
       .map((conversation) => conversation.threadId)
       .filter((threadId) => (
         threadId
@@ -544,7 +585,7 @@ export function useWorkspaceHistory({
     const next = prependUniqueThreadIds(historyThreadIdsRef.current, additions)
     historyThreadIdsRef.current = next
     setHistoryThreadIds(next)
-  }, [workspace.conversations])
+  }, [projectId, archived, workspace.conversations])
 
   useEffect(() => {
     const threadId = workspace.currentThreadId
@@ -564,6 +605,7 @@ export function useWorkspaceHistory({
     historySearchLastLoadSettledAt.current = null
     historySearchAbortController.current?.abort()
     historySearchAbortController.current = null
+    searchPageRequest.current = null
     historySearchLoadingRef.current = false
     historySearchInFlightCursor.current = null
     loadedSearchCursors.current.clear()
@@ -599,7 +641,7 @@ export function useWorkspaceHistory({
       watch = watchResource({
         matches: change => change.topic === 'studio.conversation.changed' || change.topic === 'studio.conversation.title.changed',
         read: async signal => {
-          searchRefreshing.current = true
+          searchRefreshing.current = signal
           try {
             await searchPageRequest.current
             if (signal.aborted) throw signal.reason
@@ -608,8 +650,8 @@ export function useWorkspaceHistory({
             let cursor: string | undefined
             let nextCursor: string | null = null
             for (let index = 0; index < count; index += 1) {
-              const response = await fetchConversationHistoryList({
-                pageSize: HISTORY_PAGE_SIZE, query: normalizedHistoryQuery, cursor, signal, suppressGlobalError: true,
+              const response = await fetchConversationHistoryList({ projectId, archived,
+                pageSize: HISTORY_PAGE_SIZE, query: normalizedHistoryQuery, scope: searchScope, cursor, signal, suppressGlobalError: true,
               })
               items.push(...response.items)
               nextCursor = response.nextCursor ?? null
@@ -618,7 +660,7 @@ export function useWorkspaceHistory({
             }
             return { items, nextCursor }
           } finally {
-            searchRefreshing.current = false
+            if (searchRefreshing.current === signal) searchRefreshing.current = null
           }
         },
         update: (response, signal) => {
@@ -653,7 +695,7 @@ export function useWorkspaceHistory({
       historySearchAbortController.current?.abort()
       historySearchAbortController.current = null
     }
-  }, [defaultModelId, normalizedHistoryQuery, searchRetryVersion, setWorkspace, t])
+  }, [projectId, archived, searchScope, defaultModelId, normalizedHistoryQuery, searchRetryVersion, setWorkspace, t])
 
   const retryHistoryBootstrap = useCallback(() => {
     setHistoryBootstrapStatus('loading')
@@ -678,13 +720,13 @@ export function useWorkspaceHistory({
     setHistoryLoadError(null)
     const controller = new AbortController()
     historyAbortController.current = controller
-    historyPageRequest.current = fetchConversationHistoryList({
+    historyPageRequest.current = fetchConversationHistoryList({ projectId, archived,
       pageSize: HISTORY_PAGE_SIZE,
       cursor,
       signal: controller.signal,
       suppressGlobalError: true,
     }).then((response) => {
-      if (controller.signal.aborted || historyInFlightCursor.current !== cursor) return
+      if (controller.signal.aborted || historyAbortController.current !== controller) return
       historyLastLoadSettledAt.current = Date.now()
       loadedHistoryCursors.current.add(cursor)
       const incomingIds = response.items.map((item) => item.threadId)
@@ -708,7 +750,7 @@ export function useWorkspaceHistory({
         ),
       }))
     }).catch(() => {
-      if (!controller.signal.aborted && historyInFlightCursor.current === cursor) {
+      if (!controller.signal.aborted && historyAbortController.current === controller) {
         // 错误一旦对用户可见，重试所有权必须同时释放，不能留下不可观察的忙碌窗口
         historyLastLoadSettledAt.current = Date.now()
         historyAbortController.current = null
@@ -719,13 +761,13 @@ export function useWorkspaceHistory({
         latestToast.current('error', t('历史记录加载失败'))
       }
     }).finally(() => {
-      if (historyInFlightCursor.current !== cursor) return
+      if (historyAbortController.current !== controller) return
       historyAbortController.current = null
       historyInFlightCursor.current = null
       historyLoadingRef.current = false
       if (!controller.signal.aborted) setHistoryLoadingMore(false)
     })
-  }, [defaultModelId, historyCursor, historyLoadError, setWorkspace, t])
+  }, [projectId, archived, defaultModelId, historyCursor, historyLoadError, setWorkspace, t])
 
   const loadMoreSearchHistory = useCallback((isExplicitRetry = false) => {
     if (
@@ -749,10 +791,11 @@ export function useWorkspaceHistory({
     setSearchLoadError(null)
     const controller = new AbortController()
     historySearchAbortController.current = controller
-    searchPageRequest.current = fetchConversationHistoryList({
+    searchPageRequest.current = fetchConversationHistoryList({ projectId, archived,
       pageSize: HISTORY_PAGE_SIZE,
       cursor,
       query,
+      scope: searchScope,
       signal: controller.signal,
       suppressGlobalError: true,
     }).then((response) => {
@@ -795,13 +838,13 @@ export function useWorkspaceHistory({
         latestToast.current('error', t('搜索会话失败'))
       }
     }).finally(() => {
-      if (historySearchInFlightCursor.current !== cursor) return
+      if (historySearchAbortController.current !== controller) return
       historySearchAbortController.current = null
       historySearchInFlightCursor.current = null
       historySearchLoadingRef.current = false
       if (!controller.signal.aborted) setSearchLoadingMore(false)
     })
-  }, [defaultModelId, normalizedHistoryQuery, searchCursor, searchLoadError, setWorkspace, t])
+  }, [projectId, archived, searchScope, defaultModelId, normalizedHistoryQuery, searchCursor, searchLoadError, setWorkspace, t])
 
   const loadMoreHistory = useCallback((isExplicitRetry = false) => {
     if (normalizedHistoryQuery) loadMoreSearchHistory(isExplicitRetry)
@@ -1178,8 +1221,9 @@ export function useWorkspaceHistory({
     const byId = new Map(workspace.conversations.map((item) => [item.threadId, item]))
     return activeHistoryThreadIds
       .map((threadId) => byId.get(threadId))
-      .filter((item): item is Conversation => item != null)
-  }, [activeHistoryThreadIds, workspace.conversations])
+      .filter((item): item is Conversation => item != null && item.archived === archived
+        && ((normalizedHistoryQuery && searchScope === 'all') || item.projectId === projectId))
+  }, [activeHistoryThreadIds, archived, normalizedHistoryQuery, projectId, searchScope, workspace.conversations])
   const activeHistoryCursor = normalizedHistoryQuery ? searchCursor : historyCursor
   const activeHistoryLoadingMore = normalizedHistoryQuery
     ? isSearchLoadingMore
@@ -1193,7 +1237,7 @@ export function useWorkspaceHistory({
     const watch = watchResource({
       matches: change => change.topic === 'studio.conversation.changed' || change.topic === 'studio.conversation.title.changed',
       read: async signal => {
-        historyRefreshing.current = true
+        historyRefreshing.current = signal
         try {
           await historyPageRequest.current
           if (signal.aborted) return false
@@ -1203,7 +1247,7 @@ export function useWorkspaceHistory({
             preserveWindow: historyInitialized.current,
           })
         } finally {
-          historyRefreshing.current = false
+          if (historyRefreshing.current === signal) historyRefreshing.current = null
         }
       },
       update: succeeded => {

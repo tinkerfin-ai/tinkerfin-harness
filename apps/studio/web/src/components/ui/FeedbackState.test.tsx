@@ -20,9 +20,8 @@ describe('FeedbackState', () => {
 
     const alert = screen.getByRole('alert')
     const retry = screen.getByRole('button', { name: '重试' })
-    expect(alert).toHaveTextContent(/^!会话加载失败重试$/)
-    expect(alert.querySelector('.ui-feedback-icon__mark')).toHaveTextContent('!')
-    expect(retry.querySelector('.ui-button__label')).toBeNull()
+    expect(alert).toHaveTextContent('会话加载失败')
+    expect(retry).toHaveAccessibleName('重试')
     fireEvent.click(retry)
     expect(onRetry).toHaveBeenCalledOnce()
 

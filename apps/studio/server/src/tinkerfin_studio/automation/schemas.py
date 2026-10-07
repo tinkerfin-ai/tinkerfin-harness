@@ -111,6 +111,9 @@ class ScheduleInput(
 class TaskConfiguration(Boundary):
     """用户保存的任务配置，运行按该快照执行而不包含模型凭据"""
 
+    project_id: str = Field(
+        min_length=1, max_length=36, description="创建时固定的项目 UUID"
+    )
     name: str = Field(min_length=1, max_length=255)
     prompt: str = Field(min_length=1, max_length=50000)
     schedule: ScheduleInput

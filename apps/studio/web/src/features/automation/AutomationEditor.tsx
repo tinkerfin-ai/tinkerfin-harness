@@ -17,7 +17,8 @@ const units = ['minutes', 'hours', 'days'] as const
 const unitLabels = { minutes: '分钟', hours: '小时', days: '天' } as const
 
 /** 保留编辑内容直到后端确认保存；失败重试使用同一请求标识 */
-export function AutomationEditor({ task, trigger, onSave, onClose, defaultModelId, renderModelChoice }: {
+export function AutomationEditor({ projectId, task, trigger, onSave, onClose, defaultModelId, renderModelChoice }: {
+  projectId: string
   task?: AutomationTask
   trigger: HTMLElement | null
   onSave: () => void
@@ -54,7 +55,7 @@ export function AutomationEditor({ task, trigger, onSave, onClose, defaultModelI
     owned.current.add(controller)
     setSaving(true); setFailure('')
     try {
-      await saveTask(draft, saveIdentity.current.id, task, controller.signal)
+      await saveTask(projectId, draft, saveIdentity.current.id, task, controller.signal)
       if (!controller.signal.aborted && mounted.current) onSave()
     } catch (error) {
       if (controller.signal.aborted || !mounted.current) return
@@ -74,7 +75,7 @@ export function AutomationEditor({ task, trigger, onSave, onClose, defaultModelI
     setUploading(true); setFailure('')
     try {
       for (const file of files) {
-        const attachment = await uploadAttachment(file, controller.signal, () => {})
+        const attachment = await uploadAttachment(projectId, file, controller.signal, () => {})
         if (controller.signal.aborted || !mounted.current) return
         setDraft(current => ({ ...current, attachments: [...current.attachments, attachment.id], inputFiles: [...current.inputFiles, attachment] }))
       }

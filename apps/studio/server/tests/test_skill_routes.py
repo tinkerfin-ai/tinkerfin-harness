@@ -79,17 +79,27 @@ async def test_zip_preview_confirm_details_toggle_uninstall_and_owner_scope(
         installation_id = confirmed.json()["data"][0]
         conversations = ConversationRepository(session)
         thread = await conversations.create_thread(
-            user_id=1, thread_id="thread", title="技能", model_id=None
+            project_id="project-1",
+            user_id=1,
+            thread_id="thread",
+            title="技能",
+            model_id=None,
         )
         await conversations.create_run_registration(
             thread_id=thread.id,
             run_id="run",
             parent_run_id=None,
             model_id="main",
-            input_json={"forwardedProps": {"skillIds": [installation_id]}},
+            input_json={
+                "forwardedProps": {
+                    "projectId": "project-1",
+                    "skillIds": [installation_id],
+                }
+            },
         )
         await SkillRepository(session, 1).capture(
             RunIdentity(namespace="ns_1", thread_id="thread", run_id="run"),
+            project_id="project-1",
             selected_ids=(installation_id,),
         )
         await session.commit()
@@ -203,3 +213,6 @@ async def test_catalog_update_http_replays_committed_result_and_validates_comman
                 "/api/skills/installations", json={**payload, "user_id": 2}
             )
         ).status_code == 422
+
+
+pytestmark = pytest.mark.usefixtures("projects")

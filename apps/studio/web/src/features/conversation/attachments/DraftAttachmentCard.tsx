@@ -1,5 +1,5 @@
 import { FileImage, RotateCcw, X } from 'lucide-react'
-import { IconButton } from '../../../components/ui'
+import { IconButton, Tooltip } from '../../../components/ui'
 import { FeedbackIcon } from '../../../components/ui/FeedbackState'
 import { isTranslationKey, useI18n } from '../../../i18n'
 import type { DraftAttachment } from '../useAttachments'
@@ -69,13 +69,12 @@ export function DraftAttachmentCard({
           </span>
         )}
         {failed && (
-          <span
+          <Tooltip content={isTranslationKey(error) ? t(error) : error}><span
             className="composer-attachment-state"
             role="status"
-            title={isTranslationKey(error) ? t(error) : error}
           >
             {t('上传失败')}
-          </span>
+          </span></Tooltip>
         )}
       </div>
       <div className="composer-attachment-actions">

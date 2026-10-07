@@ -30,7 +30,7 @@ describe('附件直传与下载', () => {
       return { status: 204 }
     })
     const progress = vi.fn()
-    expect(await uploadAttachment(file, signal, progress)).toEqual(attachment)
+    expect(await uploadAttachment('project-1', file, signal, progress)).toEqual(attachment)
     expect(apiClient.request).toHaveBeenLastCalledWith(expect.objectContaining({ url: '/api/attachments/stored/complete', signal }))
     expect(progress.mock.calls).toEqual([[99], [100]])
     expect(axios.create).toHaveBeenCalledWith({ withCredentials: false })
@@ -39,7 +39,7 @@ describe('附件直传与下载', () => {
   it('直传失败不确认附件', async () => {
     vi.mocked(apiClient.request).mockResolvedValueOnce({ data: { attachment_id: 'a', url: 'https://files.example', fields: {} } })
     storageRequest.mockRejectedValueOnce(new Error('upload failed'))
-    await expect(uploadAttachment(new DomFile(['a'], 'a.md'), new AbortController().signal, vi.fn())).rejects.toThrow('upload failed')
+    await expect(uploadAttachment('project-1', new DomFile(['a'], 'a.md'), new AbortController().signal, vi.fn())).rejects.toThrow('upload failed')
     expect(apiClient.request).toHaveBeenCalledTimes(1)
   })
 

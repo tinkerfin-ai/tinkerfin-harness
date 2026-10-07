@@ -57,12 +57,12 @@ const payload: ChatRequestPayload = {
   messages: [],
   tools: [],
   context: [],
-  forwardedProps: { skillIds: [], accessMode: 'write_approval', model: 'main', command: { plan: 'off' } },
+  forwardedProps: {projectId: 'project-1',  skillIds: [], accessMode: 'write_approval', model: 'main', command: { plan: 'off' } },
 }
 
 const traceDetail = (
   overrides: Partial<ConversationHistoryDetail> = {},
-): ConversationHistoryDetail => ({ accessMode: 'write_approval',
+): ConversationHistoryDetail => ({projectId: 'project-1', archived: false,  accessMode: 'write_approval',
   titleSource: 'default',
   titleGenerationStatus: 'idle',
   titleSeq: 0,
@@ -106,7 +106,7 @@ const traceDetail = (
   taskTrace: overrides.taskTrace ?? { status: 'ready', todoGroups: [] },
 })
 
-const conversation = (overrides: Partial<Conversation> = {}): Conversation => ({ accessMode: 'write_approval',
+const conversation = (overrides: Partial<Conversation> = {}): Conversation => ({projectId: 'project-1', archived: false,  accessMode: 'write_approval',
   threadId: THREAD_ID,
   title: 'Controller test',
   pinned: false,
@@ -147,7 +147,7 @@ function useControllerHarness(initialConversation: Conversation, onNotice?: (not
     setWorkspace({ conversations: [initial], currentThreadId: initial.threadId })
   }, [initial, setWorkspace])
   const [draftConversation, setDraftConversation] = useState<Conversation | null>(null)
-  const controller = useConversationStreamController({
+  const controller = useConversationStreamController({projectId: 'project-1',
     workspace,
     setWorkspace,
     setDraftConversation,
@@ -186,7 +186,7 @@ describe('useConversationStreamController', () => {
       notice: { kind: 'warning', content: '连接已中断，尚无法确认任务状态，请恢复连接' },
     })
     expect(result.current.controller.hasActiveStream()).toBe(false)
-    expect(readActiveRunSession(THREAD_ID)?.payload).toEqual(payload)
+    expect(readActiveRunSession(THREAD_ID, 'project-1')?.payload).toEqual(payload)
     await act(async () => { await result.current.controller.followDetachedConversation(THREAD_ID) })
     await act(async () => { await vi.runOnlyPendingTimersAsync() })
     expect(traceMocks.follow).not.toHaveBeenCalled()
@@ -198,7 +198,7 @@ describe('useConversationStreamController', () => {
     ]))
     await act(async () => { await result.current.controller.recoverConversation(THREAD_ID) })
     expect(clientMocks.start).toHaveBeenLastCalledWith(payload, expect.any(AbortSignal), 0)
-    expect(readActiveRunSession(THREAD_ID)).toBeNull()
+    expect(readActiveRunSession(THREAD_ID, 'project-1')).toBeNull()
     expect(clientMocks.cancel).not.toHaveBeenCalled()
   })
 
@@ -222,7 +222,7 @@ describe('useConversationStreamController', () => {
     })
     expect(attempts).toBe(4)
     expect(result.current.workspace.conversations[0]).toMatchObject({ runStatus: 'detached', activeRunId: RUN_ID, lastSeq: 1 })
-    expect(readActiveRunSession(THREAD_ID)?.lastSeq).toBe(1)
+    expect(readActiveRunSession(THREAD_ID, 'project-1')?.lastSeq).toBe(1)
     expect(clientMocks.cancel).not.toHaveBeenCalled()
     expect(result.current.controller.hasActiveStream()).toBe(false)
   })
@@ -261,7 +261,7 @@ describe('useConversationStreamController', () => {
       runStatus: outcome === 'success' ? 'idle' : 'error', activeRunId: undefined,
       notice: { recovery: 'history' },
     })
-    expect(readActiveRunSession(THREAD_ID)).toBeNull()
+    expect(readActiveRunSession(THREAD_ID, 'project-1')).toBeNull()
     traceMocks.detail.mockResolvedValue(traceDetail({
       status: { execution: outcome === 'success' ? 'succeeded' : 'failed', headRunId: RUN_ID },
     }))
@@ -270,7 +270,7 @@ describe('useConversationStreamController', () => {
     expect(clientMocks.cancel).not.toHaveBeenCalled()
     expect(result.current.workspace.conversations[0]?.notice).toBeUndefined()
     expect(result.current.workspace.conversations[0]?.runStatus).toBe(outcome === 'success' ? 'idle' : 'error')
-    expect(readActiveRunSession(THREAD_ID)).toBeNull()
+    expect(readActiveRunSession(THREAD_ID, 'project-1')).toBeNull()
   })
 
   it('replaces the temporary AG-UI view with the terminal Trace snapshot', async () => {
@@ -523,7 +523,7 @@ describe('useConversationStreamController', () => {
   })
 
   it('刷新恢复的终止失败只恢复会话事实，不重复通知全局 Toast', async () => {
-    writeActiveRunSession({ threadId: THREAD_ID, payload, mode: 'start', lastSeq: 1 })
+    writeActiveRunSession({projectId: 'project-1',  threadId: THREAD_ID, payload, mode: 'start', lastSeq: 1 })
     clientMocks.start.mockImplementation(() => streamItems([
       { seq: 2, event: { type: 'RUN_ERROR', rawEvent: { runId: RUN_ID }, code: 'failed', message: 'temporary failure' } },
     ]))
@@ -906,7 +906,7 @@ const restored = (snapshot: ConversationHistoryDetail) => restoreConversationFro
   model: 'main', includeTaskTrace: true,
 })
 
-const cacheRun = (request = payload, lastSeq = 4) => writeActiveRunSession({
+const cacheRun = (request = payload, lastSeq = 4) => writeActiveRunSession({projectId: 'project-1',
   threadId: request.threadId, payload: request, mode: 'start', lastSeq,
 })
 
@@ -950,7 +950,7 @@ describe('已受理运行的历史恢复', () => {
       await act(async () => { await result.current.controller.recoverConversation(THREAD_ID) })
       expect(clientMocks.start).toHaveBeenCalledExactlyOnceWith(nextPayload, expect.any(AbortSignal), 73)
       expect(traceMocks.follow).not.toHaveBeenCalled()
-      expect(readActiveRunSession(THREAD_ID)).toBeNull()
+      expect(readActiveRunSession(THREAD_ID, 'project-1')).toBeNull()
     } finally { unmount() }
   })
 
@@ -989,7 +989,7 @@ describe('已受理运行的历史恢复', () => {
       expect(result.current.workspace.conversations[0]?.messages.find(item => item.id === 'answer')?.content).toBe('第一段第二段')
       await act(async () => { await feed.push({ type: 'event', replayed: false, seq: 283, event: { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID, outcome: { type: 'success' } } }); await recovering })
       expect(result.current.workspace.conversations[0]?.runStatus).toBe('idle')
-      expect(readActiveRunSession(THREAD_ID)).toBeNull()
+      expect(readActiveRunSession(THREAD_ID, 'project-1')).toBeNull()
     } finally { unmount(); await recovering }
   })
 
@@ -1312,5 +1312,5 @@ it('压缩沿用流控制器和权威历史，不提交聊天消息或改变权�
   expect(clientMocks.start).not.toHaveBeenCalled()
   expect(result.current.workspace.conversations[0]?.compactions?.[0]).toMatchObject({ status: 'compacted', summary: '压缩摘要' })
   expect(result.current.workspace.conversations[0]?.messages.every(message => message.content !== '压缩摘要')).toBe(true)
-  expect(readActiveRunSession(THREAD_ID)).toBeNull()
+  expect(readActiveRunSession(THREAD_ID, 'project-1')).toBeNull()
 })

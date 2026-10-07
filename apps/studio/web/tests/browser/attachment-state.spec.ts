@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
@@ -65,6 +66,7 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
     try {
       if (source === 'picker') await page.setViewportSize({ width: 320, height: 960 })
       await installNotificationStream(page)
+      await installProjectScope(page)
       await page.goto('/')
       const input = page.getByRole('textbox', { name: '消息输入' })
       const send = page.getByRole('button', { name: '发送消息', exact: true })
@@ -194,7 +196,10 @@ for (const source of ['picker', 'paste', 'drop'] as const) {
           }
         }
         await page.setViewportSize({ width: 320, height: 960 })
-        await card.getByRole('button', { name: imageName, exact: true }).click()
+        const filenameTouchBox = await card.getByRole('button', { name: imageName, exact: true }).boundingBox()
+        if (!filenameTouchBox) throw new Error('附件名称触控目标不可用')
+        await device.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: filenameTouchBox.x + filenameTouchBox.width / 2, y: filenameTouchBox.y + filenameTouchBox.height / 2 }] })
+        await device.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
         await expect(page.getByRole('tooltip', { name: imageName, exact: true })).toBeVisible()
         await input.click()
         await expect(page.getByRole('tooltip', { name: imageName, exact: true })).toHaveCount(0)
@@ -270,6 +275,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
     })
     await mockDownloadPermits(page)
     await installNotificationStream(page)
+    await installProjectScope(page)
     await page.goto('/')
     await expect(page.locator('html')).toHaveAttribute('lang', locale)
     const input = page.getByRole('textbox', { name: english ? 'Message input' : '消息输入' })

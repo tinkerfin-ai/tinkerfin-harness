@@ -231,7 +231,9 @@ def graph_node_mutations(
                     completed_at=_terminal_time(status, fact.occurred_at),
                     started_seq=event.trace_seq,
                     result_seq=(event.trace_seq if fact.content is not None else None),
-                    link_issue=TraceGraphLinkIssue.MISSING_MODEL_CALL,
+                    # Middleware may emit an AssistantMessage without invoking a
+                    # model. Only ModelCallFact can establish model ownership.
+                    link_issue=None,
                 )
             )
             continue

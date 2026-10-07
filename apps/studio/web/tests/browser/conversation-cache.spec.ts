@@ -1,3 +1,4 @@
+import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 import fixture from './fixtures/multimodal-history.json' with { type: 'json' }
@@ -73,7 +74,8 @@ async function openFixture(page: Page, theme = 'light') {
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
   await installNotificationStream(page)
-  await page.goto('/?thread=cache-1')
+  await installProjectScope(page)
+  await page.goto('/?project=project-1&thread=cache-1')
   await expect(page.getByText('cache-1 问题 238', { exact: true })).toBeAttached()
   return {
     olderRequests,

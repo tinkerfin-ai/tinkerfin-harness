@@ -59,6 +59,15 @@ async def components_database(tmp_path) -> AsyncIterator[Database]:
 
 
 @pytest_asyncio.fixture
+async def persistent_store(components_database: Database):
+    """持久文件测试使用支持条件写入的独立存储"""
+    from tinkerfin_langgraph_store import SqlAlchemyStore
+
+    async with SqlAlchemyStore(components_database.engine) as store:
+        yield store
+
+
+@pytest_asyncio.fixture
 async def session(database: Database) -> AsyncIterator[AsyncSession]:
     """提供测试独占的异步 Session"""
 
@@ -234,3 +243,22 @@ def large_image():
     data = output.getvalue()
     assert MAX_BINARY_BYTES < len(data) <= MAX_FILE_BYTES
     return data
+
+
+@pytest_asyncio.fixture
+async def projects(database: Database) -> None:
+    """为项目归属测试提供独立的稳定项目"""
+    from tinkerfin_studio.projects.models import Project
+
+    async with database.session() as session:
+        for user_id in (1, 2, 7):
+            session.add(
+                Project(
+                    id=f"project-{user_id}",
+                    user_id=user_id,
+                    name="默认测试项目",
+                    created_at=datetime(2030, 1, 1),
+                    updated_at=datetime(2030, 1, 1),
+                )
+            )
+        await session.commit()

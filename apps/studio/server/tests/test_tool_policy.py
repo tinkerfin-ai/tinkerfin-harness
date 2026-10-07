@@ -6,9 +6,10 @@ import pytest
 from ag_ui.core import RunFinishedInterruptOutcome
 from httpx import ConnectError
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.tools import ToolException, tool
 from langgraph.checkpoint.memory import InMemorySaver
+from pydantic import Field
 
 from tinkerfin import AgUiResumeRequest, TinkerFin
 from tinkerfin_sandbox import OpenSandboxStateOwnershipError
@@ -17,8 +18,14 @@ from tinkerfin_tracing import Tracer
 
 
 class Model(FakeMessagesListChatModel):
+    requests: list[list[BaseMessage]] = Field(default_factory=list)
+
     def bind_tools(self, tools, **kwargs):
         return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.requests.append(list(messages))
+        return super()._generate(messages, stop, run_manager, **kwargs)
 
 
 def proposal(index: int, *, name: str = "operation", args=None) -> AIMessage:
@@ -134,7 +141,7 @@ async def test_unknown_or_integrity_failure_terminates_run(failure):
 
 
 @pytest.mark.parametrize("failed", [False, True])
-async def test_repeated_tools_end_at_budget_with_paired_results(failed):
+async def test_exhausted_budget_keeps_results_for_one_final_summary(failed):
     calls = []
 
     @tool
@@ -146,12 +153,18 @@ async def test_repeated_tools_end_at_budget_with_paired_results(failed):
         return "ok"
 
     tracer = Tracer()
+    model = Model(
+        responses=[
+            *(proposal(i) for i in range(TOOL_CALL_LIMIT)),
+            AIMessage(content="已整理现有结果；剩余任务需要继续处理"),
+        ]
+    )
     runtime = (
         TinkerFin()
         .with_namespace("bounded")
         .with_observer(tracer)
         .build(
-            model=Model(responses=[proposal(i) for i in range(TOOL_CALL_LIMIT + 1)]),
+            model=model,
             tools=[operation],
             middleware=tool_execution_policy(),
         )
@@ -166,10 +179,17 @@ async def test_repeated_tools_end_at_budget_with_paired_results(failed):
     assert {result["toolCallId"] for result in results} == {
         event.tool_call_id for event in events if event.type == "TOOL_CALL_START"
     }
-    assert len(results) == TOOL_CALL_LIMIT + 1
+    assert len(results) == TOOL_CALL_LIMIT
     assert sum(event.type == "RUN_FINISHED" for event in events) == 1
     history = await tracer.get(runtime.thread_identity("thread"))
-    assert "limit" in str(history.messages).lower()
+    assert "已整理现有结果" in str(history.messages)
+    assert len(model.requests) == TOOL_CALL_LIMIT + 1
+    assert "工具额度已用尽" in model.requests[-1][0].text
+    assert "预留" in model.requests[-2][0].text
+    assert (
+        sum(isinstance(item, ToolMessage) for item in model.requests[-1])
+        == TOOL_CALL_LIMIT
+    )
 
 
 async def test_parallel_batch_over_budget_executes_no_partial_batch():
@@ -192,7 +212,9 @@ async def test_parallel_batch_over_budget_executes_no_partial_batch():
         TinkerFin()
         .with_namespace("policy")
         .build(
-            model=Model(responses=[batch]),
+            model=Model(
+                responses=[batch, AIMessage(content="本批工具未执行，已保留已有结果")]
+            ),
             tools=[operation],
             middleware=tool_execution_policy(),
         )
@@ -203,6 +225,93 @@ async def test_parallel_batch_over_budget_executes_no_partial_batch():
         sum(event.type == "TOOL_CALL_RESULT" for event in events) == TOOL_CALL_LIMIT + 1
     )
     assert sum(event.type == "RUN_FINISHED" for event in events) == 1
+    assert any(
+        event.type == "TEXT_MESSAGE_CONTENT" and "本批工具未执行" in event.delta
+        for event in events
+    )
+
+
+async def test_child_budget_returns_findings_to_parent():
+    calls = []
+
+    @tool
+    async def operation() -> str:
+        """返回可供子任务总结的证据"""
+        calls.append("child-result")
+        return "来源甲：已核实的数据"
+
+    child = Model(
+        responses=[
+            *(proposal(i) for i in range(TOOL_CALL_LIMIT)),
+            AIMessage(content="研究结论：来源甲的数据已核实；第二部分尚未完成"),
+        ]
+    )
+    parent = Model(
+        responses=[
+            proposal(
+                1,
+                name="task",
+                args={
+                    "subagent_type": "researcher",
+                    "description": "核实两部分数据并总结",
+                },
+            ),
+            AIMessage(content="已收到研究结果和未完成事项"),
+        ]
+    )
+    runtime = (
+        TinkerFin()
+        .with_namespace("child-budget")
+        .build(
+            model=parent,
+            middleware=tool_execution_policy(),
+            subagents=[
+                {
+                    "name": "researcher",
+                    "description": "核实数据",
+                    "system_prompt": "返回有来源的结论和未完成事项",
+                    "model": child,
+                    "tools": [operation],
+                    "middleware": tool_execution_policy(),
+                }
+            ],
+        )
+    )
+    events, error = await collect(runtime)
+    assert error is None and len(calls) == TOOL_CALL_LIMIT
+    returned = [
+        item
+        for item in parent.requests[-1]
+        if isinstance(item, ToolMessage) and item.name == "task"
+    ]
+    assert len(returned) == 1
+    assert "研究结论：来源甲的数据已核实" in returned[0].text
+    assert "第二部分尚未完成" in returned[0].text
+    assert "工具额度已用尽" in child.requests[-1][0].text
+    assert sum(event.type == "RUN_FINISHED" for event in events) == 1
+
+
+async def test_model_cannot_repeat_tools_in_final_summary():
+    calls = []
+
+    @tool
+    async def operation() -> str:
+        """只执行额度允许的操作"""
+        calls.append("executed")
+        return "observed"
+
+    model = Model(responses=[proposal(i) for i in range(TOOL_CALL_LIMIT + 1)])
+    runtime = (
+        TinkerFin()
+        .with_namespace("invalid-summary")
+        .build(model=model, tools=[operation], middleware=tool_execution_policy())
+    )
+    events, error = await collect(runtime)
+    assert error is not None
+    assert len(calls) == TOOL_CALL_LIMIT
+    assert len(model.requests) == TOOL_CALL_LIMIT + 1
+    assert sum(event.type == "RUN_ERROR" for event in events) == 1
+    assert not any(event.type == "RUN_FINISHED" for event in events)
 
 
 async def test_new_user_turn_resets_exhausted_budget():
@@ -216,7 +325,8 @@ async def test_new_user_turn_resets_exhausted_budget():
 
     model = Model(
         responses=[
-            *(proposal(i) for i in range(TOOL_CALL_LIMIT + 1)),
+            *(proposal(i) for i in range(TOOL_CALL_LIMIT)),
+            AIMessage(content="本轮达到额度，已总结"),
             proposal(TOOL_CALL_LIMIT + 1),
             AIMessage(content="新任务完成"),
         ]

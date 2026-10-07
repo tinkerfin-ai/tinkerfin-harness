@@ -62,7 +62,7 @@ const page = (): TraceGraphPage => ({
       updatedSeq: 6,
       contentOmitted: false,
       toolCallOnly: false,
-      request: { messages: [] },
+      requestReference: 'model-request-reference',
       requestOmitted: false,
       resultOmitted: false,
       usage: { input_tokens: 2, output_tokens: 1 },
@@ -145,7 +145,7 @@ describe('Trace Graph client', () => {
     expect(events[0]).toHaveProperty('snapshot.nodes.0.name', 'HumanMessage')
   })
 
-  it('查询页要求固定身份且保留完整模型请求，基础图不接受查询身份', () => {
+  it('查询页要求固定身份和独立模型请求引用，基础图不接受查询身份', () => {
     const source = { ...page(), generation: 'generation-test', headRunId: 'run-fixture' }
     expect(parseTraceGraphQueryPage(source)).toEqual(source)
     expect(() => parseTraceGraphQueryPage(page())).toThrow('stream_event_invalid')
@@ -153,7 +153,7 @@ describe('Trace Graph client', () => {
     expect(() => parseTraceGraphQueryPage({ ...source, headRunId: '' })).toThrow('stream_event_invalid')
     const model = source.nodes.find(node => node.kind === 'model')!
     model.request = { messages: [{ content: '独立链路中的模型原始输入' }] }
-    expect(parseTraceGraphQueryPage(source).nodes.find(node => node.kind === 'model')?.request).toEqual(model.request)
+    expect(() => parseTraceGraphQueryPage(source)).toThrow('stream_event_invalid')
   })
 
   it('queries one model response from the direct Graph route', async () => {

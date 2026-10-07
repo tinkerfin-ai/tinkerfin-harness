@@ -120,7 +120,13 @@ async def test_default_can_change_during_run_without_changing_run_or_connection(
     connection = await service.resolve("target")
     now = datetime.now(UTC).replace(tzinfo=None)
     thread = ConversationThread(
-        user_id=1, thread_id="active", title="运行", created_at=now, updated_at=now
+        archived=False,
+        project_id="project-1",
+        user_id=1,
+        thread_id="active",
+        title="运行",
+        created_at=now,
+        updated_at=now,
     )
     session.add(thread)
     await session.flush()
@@ -261,4 +267,7 @@ async def test_default_http_action_has_no_body_and_returns_null_envelope(
     assert len(list(await session.scalars(select(AgentModel)))) == 1
 
 
-pytestmark = pytest.mark.usefixtures("model_connections")
+pytestmark = [
+    pytest.mark.usefixtures("model_connections"),
+    pytest.mark.usefixtures("projects"),
+]

@@ -2,7 +2,11 @@ import {
   BookOpenCheck,
   AlarmClock,
   BrainCircuit,
-  CircleEllipsis,
+  Archive,
+  ArchiveRestore,
+  FolderClosed,
+  FolderInput,
+  MessageSquare,
   Ellipsis,
   LogOut,
   PanelRight,
@@ -24,7 +28,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent, ReactNode } from 'react'
 
 import type { AuthUser } from '../../../api/auth/types'
 import { BrandLogo, Button, FeedbackState, IconButton, OverlayScrollbar, UserAvatar } from '../../../components/ui'
@@ -49,12 +53,14 @@ export function ConversationItem({
   onToggleMenu,
   onRemove,
   pendingRunId,
+  projectName,
 }: {
   conversation: Conversation
   isActive: boolean
   isMenuOpen: boolean
   onSelect: () => void
   pendingRunId?: string
+  projectName?: string
   onRemove?: () => void
   onToggleMenu?: (event: MouseEvent<HTMLButtonElement>) => void
 }) {
@@ -89,7 +95,7 @@ export function ConversationItem({
           {generating && <span className="conversation-loading"><i /><i /><i /><i /></span>}
           {requiresAttention && <span className={`conversation-attention-dot is-${attentionTone}`} />}
         </span>
-        <OverflowMarquee className="conversation-title-marquee" endRevealInset={12}>{`${conversation.title}\u200b`}</OverflowMarquee>
+        <span className="conversation-label"><OverflowMarquee className="conversation-title-marquee" endRevealInset={12}>{`${conversation.title}\u200b`}</OverflowMarquee>{projectName && <small className="conversation-project-label">{projectName}</small>}</span>
       </button>
       {onRemove && <IconButton className="conversation-more" size="sm"
         label={t('移除未发送会话：{title}', { title: conversation.title })}
@@ -112,6 +118,19 @@ export function ConversationItem({
 const NO_PENDING_CONVERSATIONS: PendingConversation[] = []
 
 export interface SidebarProps {
+  projectNames: Record<string, string>
+  projectSelector: ReactNode
+  onChooseProject: () => void
+  onOpenConversation: () => void
+  onOpenMemories: () => void
+  memoriesActive: boolean
+  archivedHistory: boolean
+  onArchivedHistoryChange: (value: boolean) => void
+  searchScope: 'project' | 'all'
+  onSearchScopeChange: (value: 'project' | 'all') => void
+  onArchive: (threadId: string) => void
+  onMove: (threadId: string, trigger: HTMLElement) => void
+
   pendingConversations?: PendingConversation[]
   selectedPendingRunId?: string | null
   onSelectPending?: (runId: string) => void
@@ -154,6 +173,8 @@ export interface SidebarProps {
 }
 
 export function Sidebar({
+  projectNames,
+  projectSelector, onChooseProject, onOpenConversation, onOpenMemories, memoriesActive, archivedHistory, onArchivedHistoryChange, searchScope, onSearchScopeChange, onArchive, onMove,
   pendingConversations = NO_PENDING_CONVERSATIONS,
   selectedPendingRunId,
   onSelectPending,
@@ -195,6 +216,7 @@ export function Sidebar({
   backgroundInert = false,
 }: SidebarProps) {
   const { locale, t } = useI18n()
+  const newConversationActive = !skillsActive && !memoriesActive && !automationActive && !workspace.currentThreadId && !selectedPendingRunId
   const locatedSubmission = useRef<string | null>(null)
   const programmaticScroll = useRef(false)
   const [isSearchOpen, setSearchOpen] = useState(false)
@@ -590,8 +612,9 @@ export function Sidebar({
     return <ConversationItem
       key={pending ? `pending:${pending.runId}` : conversation.threadId}
       conversation={conversation}
+      projectName={isHistorySearchActive && searchScope === 'all' ? projectNames[conversation.projectId] : undefined}
       pendingRunId={pending?.runId}
-      isActive={!automationActive && !skillsActive && (pending
+      isActive={!automationActive && !skillsActive && !memoriesActive && (pending
         ? selectedPendingRunId === pending.runId
         : conversation.threadId === workspace.currentThreadId)}
       isMenuOpen={!pending && openMenu?.threadId === conversation.threadId}
@@ -630,11 +653,38 @@ export function Sidebar({
           aria-hidden={!wideInteractive || undefined}
           inert={!wideInteractive || undefined}
         >
-          <div className={`sidebar-head${isSearchOpen ? ' is-search-open' : ''}`}>
+          <div className="sidebar-head">
             <button type="button" className="brand" aria-label={t('新会话')} onClick={onNew}>
               <BrandLogo size="md" />
             </button>
             <div className="sidebar-head-actions">
+              {mode === 'overlay' ? (
+                <IconButton ref={overlayCloseButtonRef} label={t('关闭导航')} icon={<X size={18} />} onClick={() => onCloseOverlay()} />
+              ) : (
+                <IconButton
+                  className="sidebar-mode-toggle"
+                  size="sm"
+                  label={t('收起侧边栏')}
+                  tooltipPlacement="right"
+                  tooltip={t('收起侧边栏')}
+                  icon={<PanelRight size={17} />}
+                  aria-controls="workspace-sidebar"
+                  aria-expanded="true"
+                  onClick={onToggleMode}
+                />
+              )}
+            </div>
+
+          </div>
+
+          {projectSelector}
+          <nav className="sidebar-feature-nav ui-scrollbar" aria-label={t('工作区功能')}>
+            <Button type="button" variant="ghost" leadingIcon={<SquarePen size={18} />} selected={newConversationActive} aria-current={newConversationActive ? 'page' : undefined} onClick={onNew}>{t('新会话')}</Button>
+            <Button type="button" variant="ghost" leadingIcon={<BookOpenCheck size={18} />} selected={skillsActive} aria-current={skillsActive ? 'page' : undefined} onClick={onOpenSkills}>{t('技能库')}</Button>
+            <Button type="button" variant="ghost" leadingIcon={<BrainCircuit size={18} />} selected={memoriesActive} aria-current={memoriesActive ? 'page' : undefined} onClick={onOpenMemories}>{t('记忆管理')}</Button>
+            <Button type="button" variant="ghost" leadingIcon={<AlarmClock size={18} />} selected={automationActive} aria-current={automationActive ? 'page' : undefined} onClick={onOpenAutomation}>{t('自动化')}</Button>
+          </nav>
+          <div className="sidebar-history-toolbar">
               <IconButton
                 ref={searchTriggerRef}
                 size="sm"
@@ -646,21 +696,9 @@ export function Sidebar({
                 aria-controls="sidebar-search"
                 onClick={() => openSearch(false)}
               />
-              {mode === 'overlay' ? (
-                <IconButton ref={overlayCloseButtonRef} label={t('关闭导航')} icon={<X size={18} />} onClick={() => onCloseOverlay()} />
-              ) : (
-                <IconButton
-                  className="sidebar-mode-toggle"
-                  size="sm"
-                  label={t('收起侧边栏')}
-                  tooltip={t('收起侧边栏')}
-                  icon={<PanelRight size={17} />}
-                  aria-controls="workspace-sidebar"
-                  aria-expanded="true"
-                  onClick={onToggleMode}
-                />
-              )}
-            </div>
+            <IconButton label={t('新会话')} tooltip={t('新会话')} icon={<SquarePen size={17} />} aria-keyshortcuts="Meta+K Control+K" onClick={onNew} />
+          </div>
+          <div className={`sidebar-history-search${isSearchOpen ? ' is-open' : ''}`} inert={!isSearchOpen || undefined} aria-hidden={!isSearchOpen || undefined}>
             <label id="sidebar-search" className="sidebar-search">
               <Search size={16} aria-hidden="true" />
               <input
@@ -677,20 +715,10 @@ export function Sidebar({
               />
               <IconButton label={t('清除搜索')} icon={<X size={16} />} onClick={() => clearAndCloseSearch()} />
             </label>
-          </div>
-
-          <div className="new-chat-wrap">
-            <Button
-              className="new-chat"
-              size="lg"
-              variant="ghost"
-              leadingIcon={<SquarePen size={18} />}
-              trailingIcon={<kbd className="new-chat-shortcut">⌘ K</kbd>}
-              aria-keyshortcuts="Meta+K"
-              onClick={onNew}
-            >
-              {t('新会话')}
-            </Button>
+            <div className="sidebar-search-scope" role="group" aria-label={t('搜索范围')}>
+              <Button type="button" variant="text" selected={searchScope === 'project'} onClick={() => onSearchScopeChange('project')}>{t('当前项目')}</Button>
+              <Button type="button" variant="text" selected={searchScope === 'all'} onClick={() => onSearchScopeChange('all')}>{t('全部项目')}</Button>
+            </div>
           </div>
 
           <div className="conversation-history">
@@ -728,14 +756,7 @@ export function Sidebar({
                 requestHistoryPageFromViewport(event.currentTarget)
               }}
             >
-              <nav className="primary-nav" aria-label={t('工作区功能')}>
-                <Button size="sm" variant="ghost" leadingIcon={<BrainCircuit size={18} />} disabled>{t('记忆管理')}</Button>
-                <Button type="button" size="sm" variant="ghost" leadingIcon={<BookOpenCheck size={18} />} selected={skillsActive}
-                  aria-current={skillsActive ? 'page' : undefined} onClick={onOpenSkills}>{t('技能库')}</Button>
-                <Button type="button" size="sm" variant="ghost" leadingIcon={<AlarmClock size={18} />} selected={automationActive}
-                  aria-current={automationActive ? 'page' : undefined} onClick={onOpenAutomation}>{t('自动化')}</Button>
-                <Button size="sm" variant="ghost" leadingIcon={<CircleEllipsis size={18} />} disabled>{t('更多')}</Button>
-              </nav>
+
               <div className="conversation-groups">
                 {groups.map((group) => (
                   <Fragment key={group.key}>
@@ -775,6 +796,7 @@ export function Sidebar({
                   ) : null}
                 </div>
               )}
+              <Button type="button" variant="text" className="sidebar-archive-entry" leadingIcon={archivedHistory ? <ArchiveRestore size={16} /> : <Archive size={16} />} onClick={() => onArchivedHistoryChange(!archivedHistory)}>{t(archivedHistory ? '返回会话记录' : '已归档会话')}</Button>
               <div ref={historyLoadSentinelRef} className="history-load-sentinel" aria-hidden="true" />
               </div>
             </div>
@@ -840,16 +862,21 @@ export function Sidebar({
           <IconButton
             className="rail-brand-toggle"
             label={t('打开侧边栏')}
-            tooltip={t('打开侧边栏')}
+            tooltipPlacement="right" tooltip={t('打开侧边栏')}
             icon={<PanelRight size={17} />}
             tabIndex={railInteractive ? 0 : -1}
             aria-controls="workspace-sidebar"
             aria-expanded="false"
             onClick={onToggleMode}
           />
+          <IconButton label={t('选择项目')} tooltipPlacement="right" tooltip={t('选择项目')} icon={<FolderClosed size={18} />} tabIndex={railInteractive ? 0 : -1} onClick={onChooseProject} />
+          <IconButton label={t('会话')} tooltipPlacement="right" tooltip={t('会话')} icon={<MessageSquare size={18} />} tabIndex={railInteractive ? 0 : -1} selected={!skillsActive && !memoriesActive && !automationActive && !newConversationActive} onClick={onOpenConversation} />
+          <IconButton label={t('技能库')} tooltipPlacement="right" tooltip={t('技能库')} icon={<BookOpenCheck size={18} />} selected={skillsActive} aria-current={skillsActive ? 'page' : undefined} tabIndex={railInteractive ? 0 : -1} onClick={onOpenSkills} />
+          <IconButton label={t('记忆管理')} tooltipPlacement="right" tooltip={t('记忆管理')} icon={<BrainCircuit size={18} />} tabIndex={railInteractive ? 0 : -1} selected={memoriesActive} aria-current={memoriesActive ? 'page' : undefined} onClick={onOpenMemories} />
+          <IconButton label={t('自动化')} tooltipPlacement="right" tooltip={t('自动化')} icon={<AlarmClock size={18} />} selected={automationActive} aria-current={automationActive ? 'page' : undefined} tabIndex={railInteractive ? 0 : -1} onClick={onOpenAutomation} />
           <IconButton
             label={historyQuery ? t('搜索会话，当前查询：{query}', { query: historyQuery }) : t('搜索会话')}
-            tooltip={t('搜索会话')}
+            tooltipPlacement="right" tooltip={t('搜索会话')}
             icon={<Search size={18} />}
             selected={isSearchOpen || isHistorySearchActive}
             tabIndex={railInteractive ? 0 : -1}
@@ -857,18 +884,11 @@ export function Sidebar({
             aria-controls="sidebar-search"
             onClick={() => openSearch(true)}
           />
-          <IconButton label={t('记忆管理')} tooltip={t('记忆管理')} icon={<BrainCircuit size={18} />} tabIndex={railInteractive ? 0 : -1} disabled />
-          <IconButton label={t('新会话')} tooltip={t('新会话')} icon={<SquarePen size={18} />} tabIndex={railInteractive ? 0 : -1} onClick={onNew} />
-          <IconButton label={t('技能库')} tooltip={t('技能库')} icon={<BookOpenCheck size={18} />}
-            selected={skillsActive} aria-current={skillsActive ? 'page' : undefined}
-            tabIndex={railInteractive ? 0 : -1} onClick={onOpenSkills} />
-          <IconButton label={t('自动化')} tooltip={t('自动化')} icon={<AlarmClock size={18} />}
-            selected={automationActive} aria-current={automationActive ? 'page' : undefined}
-            tabIndex={railInteractive ? 0 : -1} onClick={onOpenAutomation} />
+          <IconButton label={t('新会话')} tooltipPlacement="right" tooltip={t('新会话')} icon={<SquarePen size={18} />} tabIndex={railInteractive ? 0 : -1} selected={newConversationActive} aria-current={newConversationActive ? 'page' : undefined} onClick={onNew} />
           <span className="rail-spacer" />
           <IconButton
             label={t('展开侧边栏以查看账户')}
-            tooltip={t('账户')}
+            tooltipPlacement="right" tooltip={t('账户')}
             icon={(
               <UserAvatar
                 avatarUrl={user.avatar_url}
@@ -887,6 +907,8 @@ export function Sidebar({
               {menuConversation.pinned ? t('取消置顶') : t('置顶')}
             </Button>
             <Button variant="ghost" leadingIcon={<Pencil size={15} />} onClick={() => { onRename(menuConversation.threadId, openMenu.trigger); closeMenu() }}>{t('重命名')}</Button>
+            <Button type="button" variant="ghost" leadingIcon={<FolderInput size={15} />} disabled={isConversationRunning(menuConversation) || Boolean(menuConversation.pendingInteractionKind)} onClick={() => { onMove(menuConversation.threadId, openMenu.trigger); closeMenu() }}>{t('移动到项目')}</Button>
+            <Button type="button" variant="ghost" leadingIcon={menuConversation.archived ? <ArchiveRestore size={15} /> : <Archive size={15} />} disabled={isConversationRunning(menuConversation) || Boolean(menuConversation.pendingInteractionKind)} onClick={() => { onArchive(menuConversation.threadId); closeMenu(true) }}>{t(menuConversation.archived ? '恢复会话' : '归档会话')}</Button>
             <Button variant="ghost" className="conversation-menu-danger" leadingIcon={<Trash2 size={15} />} onClick={() => { onDelete(menuConversation.threadId, openMenu.trigger); closeMenu() }}>{t('删除')}</Button>
           </div>
         )}

@@ -45,3 +45,6 @@ export { ValidatedForm } from './ValidatedForm'
 
 export { SearchField } from './SearchField'
 export type { SearchFieldProps } from './SearchField'
+
+export { Tooltip } from './Tooltip'
+export type { TooltipProps } from './Tooltip'

@@ -114,6 +114,21 @@ class SkillErrorCode(ErrorCode):
     )
 
 
+class ProjectErrorCode(ErrorCode):
+    """项目归属、重名与记忆编辑失败"""
+
+    NOT_FOUND = _ErrorCodeValue(1_001_010_000, 404, "项目不存在或不可访问")
+    NAME_CONFLICT = _ErrorCodeValue(1_001_010_001, 409, "已有同名项目，请换一个名称")
+    MEMORY_NOT_FOUND = _ErrorCodeValue(1_001_010_002, 404, "记忆不存在")
+    MEMORY_CONFLICT = _ErrorCodeValue(
+        1_001_010_003, 409, "记忆已被修改，请重新读取后对照保存"
+    )
+    MEMORY_INVALID = _ErrorCodeValue(1_001_010_004, 422, "记忆路径或内容不正确")
+    ACTIVE_CONVERSATION = _ErrorCodeValue(
+        1_001_010_005, 409, "会话仍在执行或等待处理，暂不能移动或归档"
+    )
+
+
 class AuthErrorCode(ErrorCode):
     """认证模块错误"""
 
@@ -189,6 +204,7 @@ class ConversationErrorCode(ErrorCode):
 
     NOT_FOUND = _ErrorCodeValue(1_001_004_000, 404, "会话不存在")
     INVALID_CURSOR = _ErrorCodeValue(1_001_004_001, 422, "无效的分页游标")
+    INVALID_TRACE_REFERENCE = _ErrorCodeValue(1_001_004_033, 422, "无效的链路详情引用")
     RUN_CONFLICT = _ErrorCodeValue(
         1_001_004_002,
         409,
