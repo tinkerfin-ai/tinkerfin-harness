@@ -4,7 +4,7 @@ import { installNotificationStream } from './fixtures/notifications'
 import { installLiveRun } from './fixtures/liveRun'
 import { fulfillExpectedHttpError, logBrowserDiagnostics } from './support/diagnostics'
 import { toolReviewInterrupts, planInterrupt } from '../../src/test/aguiFixtures'
-import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
+import { expect, test, type Locator, type Page, type Route, type TestInfo } from '@playwright/test'
 import { resolve } from 'node:path'
 import type { ConversationHistoryDetail, TraceMessage } from '../../src/api/conversation/history'
 import type { TaskTraceSnapshot } from '../../src/api/conversation/taskTrace'
@@ -1504,6 +1504,42 @@ test('澄清工具显示表单标题，原始 JSON 只在展开详情中显示',
   await expect(row.locator('.tool-code-field')).toContainText('"title": "确认执行方式"')
 })
 
+async function checkTimeZoneLayout(page: Page, testInfo: TestInfo, kind: 'time' | 'datetime', region: Locator, controls: [Locator, ...Locator[]], hasTouch = false) {
+  expect(await page.evaluate(() => matchMedia('(any-pointer: coarse)').matches)).toBe(hasTouch)
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme }, theme)
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      const zone = region.getByText('时区：Asia/Shanghai')
+      await expect(zone).toBeVisible()
+      for (const control of controls) {
+        await expect(control).toHaveAccessibleDescription('时区：Asia/Shanghai')
+        const display = control.getByText(await control.innerText(), { exact: true })
+        const textWidth = await display.evaluate(element => ({ scroll: element.scrollWidth, available: element.clientWidth }))
+        expect(textWidth.scroll).toBeLessThanOrEqual(textWidth.available)
+        if (hasTouch) {
+          const bounds = await control.boundingBox()
+          expect(bounds!.width).toBeGreaterThanOrEqual(44)
+          expect(bounds!.height).toBeGreaterThanOrEqual(44)
+        }
+      }
+      const [regionBounds, rowBounds, ...contentBounds] = await measureBounds(region, region.locator('.plan-question-time'), zone, ...controls)
+      for (const bounds of contentBounds) {
+        expect(bounds.x).toBeGreaterThanOrEqual(regionBounds.x)
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(regionBounds.x + regionBounds.width)
+        expect(bounds.y).toBeGreaterThanOrEqual(rowBounds.y)
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(rowBounds.y + rowBounds.height)
+      }
+      expect(await region.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+      await controls[controls.length - 1].scrollIntoViewIfNeeded()
+      await expect(controls[controls.length - 1]).toBeInViewport()
+      await page.screenshot({ path: testInfo.outputPath(`plan-${kind}-${hasTouch ? 'touch' : 'mouse'}-${theme}-${width}.png`), animations: 'disabled' })
+    }
+  }
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'light' })
+  await page.setViewportSize({ width: 1024, height: 900 })
+}
+
 test('Plan 澄清按后端题型渲染单选、多选、文本与日期控件', async ({ page }, testInfo) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.setViewportSize({ width: 1024, height: 900 })
@@ -1666,49 +1702,7 @@ test('Plan 澄清按后端题型渲染单选、多选、文本与日期控件', 
   const timeRegion = page.getByRole('region', { name: '期望几点上线？' })
   await expect(timeRegion.getByText('时区：Asia/Shanghai')).toBeVisible()
   await expect(time).toHaveAccessibleDescription('时区：Asia/Shanghai')
-  const checkTimeZoneLayout = async (kind: 'time' | 'datetime', region: Locator, controls: [Locator, ...Locator[]]) => {
-    const touchSession = await page.context().newCDPSession(page)
-    try {
-      for (const hasTouch of [false, true]) {
-        await touchSession.send('Emulation.setTouchEmulationEnabled', { enabled: hasTouch })
-        expect(await page.evaluate(() => matchMedia('(any-pointer: coarse)').matches)).toBe(hasTouch)
-        for (const theme of ['light', 'dark']) {
-          await page.evaluate(theme => { document.documentElement.dataset.theme = theme }, theme)
-          for (const width of [320, 768, 1024, 1440]) {
-            await page.setViewportSize({ width, height: 900 })
-            const zone = region.getByText('时区：Asia/Shanghai')
-            await expect(zone).toBeVisible()
-            for (const control of controls) {
-              await expect(control).toHaveAccessibleDescription('时区：Asia/Shanghai')
-              const display = control.getByText(await control.innerText(), { exact: true })
-              const textWidth = await display.evaluate(element => ({ scroll: element.scrollWidth, available: element.clientWidth }))
-              expect(textWidth.scroll).toBeLessThanOrEqual(textWidth.available)
-              if (hasTouch) {
-                const bounds = await control.boundingBox()
-                expect(bounds!.width).toBeGreaterThanOrEqual(44)
-                expect(bounds!.height).toBeGreaterThanOrEqual(44)
-              }
-            }
-            const [regionBounds, rowBounds, ...contentBounds] = await measureBounds(region, region.locator('.plan-question-time'), zone, ...controls)
-            for (const bounds of contentBounds) {
-              expect(bounds.x).toBeGreaterThanOrEqual(regionBounds.x)
-              expect(bounds.x + bounds.width).toBeLessThanOrEqual(regionBounds.x + regionBounds.width)
-              expect(bounds.y).toBeGreaterThanOrEqual(rowBounds.y)
-              expect(bounds.y + bounds.height).toBeLessThanOrEqual(rowBounds.y + rowBounds.height)
-            }
-            expect(await region.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
-            await page.screenshot({ path: testInfo.outputPath(`plan-${kind}-${hasTouch ? 'touch' : 'mouse'}-${theme}-${width}.png`), animations: 'disabled' })
-          }
-        }
-      }
-    } finally {
-      await touchSession.send('Emulation.setTouchEmulationEnabled', { enabled: false })
-      await touchSession.detach()
-      await page.evaluate(() => { document.documentElement.dataset.theme = 'light' })
-      await page.setViewportSize({ width: 1024, height: 900 })
-    }
-  }
-  await checkTimeZoneLayout('time', timeRegion, [time])
+  await checkTimeZoneLayout(page, testInfo, 'time', timeRegion, [time])
   const timeBounds = await time.boundingBox()
   if (!timeBounds) throw new Error('时间选择器几何不可用')
   expect(timeBounds.height).toBeCloseTo(dateInputBounds.height, 5)
@@ -1786,7 +1780,7 @@ test('Plan 澄清按后端题型渲染单选、多选、文本与日期控件', 
   await page.getByRole('listbox', { name: '小时' }).getByRole('option', { name: '09' }).click()
   await page.getByRole('listbox', { name: '分钟' }).getByRole('option', { name: '30' }).click()
   await expect(dateTimeTime).toContainText('09:30')
-  await checkTimeZoneLayout('datetime', dateTimeRegion, [dateTimeDate, dateTimeTime])
+  await checkTimeZoneLayout(page, testInfo, 'datetime', dateTimeRegion, [dateTimeDate, dateTimeTime])
 })
 
 test('Plan 澄清切换到长多选题后 Tab 从首项按视觉顺序移动', async ({ page }) => {
@@ -3159,37 +3153,75 @@ test('运行中 SubAgent 与普通 Tool 共用扫光且标题保持稳定', asyn
   expect(sharedAlignment.every(delta => delta <= 1)).toBe(true)
 })
 
-for (const locale of ['zh-CN', 'en'] as const) for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1024, 1440]) {
-  test(`搜索范围文本列在选项切换后保持对齐 ${locale} ${theme} ${width}`, async ({ page }) => {
-    await page.emulateMedia({ reducedMotion: 'reduce' })
-    await page.setViewportSize({ width, height: 900 })
-    await page.addInitScript(theme => localStorage.setItem('tinkerfin:theme', theme), theme)
-    await mockStudio(page)
-    if (locale === 'en') {
-      await page.evaluate(() => localStorage.setItem('tinkerfin:language', 'en'))
-      await page.reload()
+for (const hasTouch of [false, true]) {
+  test.describe(`搜索范围 ${hasTouch ? '触控' : '鼠标'}`, () => {
+    test.use({ hasTouch })
+    for (const locale of ['zh-CN', 'en'] as const) for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1024, 1440]) {
+      test(`搜索范围文本列在选项切换后保持对齐 ${locale} ${theme} ${width}`, async ({ page }, testInfo) => {
+        await page.emulateMedia({ reducedMotion: 'reduce' })
+        await page.setViewportSize({ width, height: 900 })
+        await page.addInitScript(theme => localStorage.setItem('tinkerfin:theme', theme), theme)
+        await mockStudio(page)
+        if (locale === 'en') {
+          await page.evaluate(() => localStorage.setItem('tinkerfin:language', 'en'))
+          await page.reload()
+        }
+        await page.evaluate(() => document.fonts.ready)
+        const english = locale === 'en'
+        if (width < 768) await page.getByRole('button', { name: english ? 'Open navigation' : '打开导航', exact: true }).click()
+        await page.getByRole('button', { name: english ? 'Search conversations' : '搜索会话', exact: true }).click()
+        const dialog = page.getByRole('dialog', { name: english ? 'Search conversations' : '搜索会话', exact: true })
+        const close = dialog.getByRole('button', { name: english ? 'Close dialog' : '关闭对话框', exact: true })
+        const scope = page.getByRole('button', { name: english ? 'Choose search scope' : '选择搜索范围', exact: true })
+        const menu = page.getByRole('listbox', { name: english ? 'Search scope' : '搜索范围', exact: true })
+        const openScope = async () => {
+          const [trigger, closeButton, panel] = await measureBounds(scope, close, dialog)
+          expect(panel.x).toBeGreaterThanOrEqual(0)
+          expect(panel.x + panel.width).toBeLessThanOrEqual(width)
+          expect(closeButton.x + closeButton.width).toBeLessThanOrEqual(width)
+          expect(trigger.x + trigger.width).toBeLessThanOrEqual(closeButton.x)
+          if (hasTouch) {
+            expect(trigger.height).toBeGreaterThanOrEqual(44)
+            expect(closeButton.width).toBeGreaterThanOrEqual(44)
+            expect(closeButton.height).toBeGreaterThanOrEqual(44)
+          }
+          const ownsEdges = await scope.evaluate(element => {
+            const bounds = element.getBoundingClientRect()
+            return [bounds.left + 2, bounds.left + bounds.width / 2, bounds.right - 2]
+              .every(x => element.contains(document.elementFromPoint(x, bounds.top + bounds.height / 2)))
+          })
+          expect(ownsEdges).toBe(true)
+          const position = { x: trigger.width - 2, y: trigger.height / 2 }
+          if (hasTouch) await scope.tap({ position })
+          else await scope.click({ position })
+          await expect(menu).toBeVisible()
+        }
+        for (const name of english ? ['All projects', 'Current project'] : ['全部项目', '当前项目']) {
+          await openScope()
+          await menu.getByRole('option', { name, exact: true }).click()
+          await openScope()
+          const option = menu.getByRole('option', { name, exact: true })
+          await expect(option).toBeVisible()
+          const [label, optionLabel, triggerBounds, menuBounds] = await measureBounds(
+            scope.getByText(name, { exact: true }), option.getByText(name, { exact: true }), scope, menu,
+          )
+          expect(optionLabel.x).toBeCloseTo(label.x, 5)
+          expect(menuBounds.width).toBeCloseTo(triggerBounds.width, 5)
+          expect(menuBounds.x).toBeGreaterThanOrEqual(0)
+          expect(menuBounds.x + menuBounds.width).toBeLessThanOrEqual(width)
+          await page.screenshot({ path: testInfo.outputPath(`scope-${name}.png`) })
+          await menu.press('Escape')
+        }
+        if (hasTouch) await close.tap()
+        else await close.click()
+        await expect(dialog).toBeHidden()
+        const returnLabel = width < 768
+          ? english ? 'Open navigation' : '打开导航'
+          : english ? 'Search conversations' : '搜索会话'
+        await expect(page.getByRole('button', { name: returnLabel, exact: true })).toBeFocused()
+      })
     }
-    await page.evaluate(() => document.fonts.ready)
-    const english = locale === 'en'
-    if (width < 768) await page.getByRole('button', { name: english ? 'Open navigation' : '打开导航', exact: true }).click()
-    await page.getByRole('button', { name: english ? 'Search conversations' : '搜索会话', exact: true }).click()
-    const scope = page.getByRole('button', { name: english ? 'Choose search scope' : '选择搜索范围', exact: true })
-    const menu = page.getByRole('listbox', { name: english ? 'Search scope' : '搜索范围', exact: true })
-    for (const name of english ? ['All projects', 'Current project'] : ['全部项目', '当前项目']) {
-      await scope.click()
-      await menu.getByRole('option', { name, exact: true }).click()
-      await scope.click()
-      const option = menu.getByRole('option', { name, exact: true })
-      await expect(option).toBeVisible()
-      const [label, optionLabel, triggerBounds, menuBounds] = await measureBounds(
-        scope.getByText(name, { exact: true }), option.getByText(name, { exact: true }), scope, menu,
-      )
-      expect(optionLabel.x).toBeCloseTo(label.x, 5)
-      expect(menuBounds.width).toBeCloseTo(triggerBounds.width, 5)
-      expect(menuBounds.x).toBeGreaterThanOrEqual(0)
-      expect(menuBounds.x + menuBounds.width).toBeLessThanOrEqual(width)
-      await menu.press('Escape')
-    }
+
   })
 }
 
@@ -3615,6 +3647,32 @@ test.describe('touch/coarse pointer', () => {
       await page.keyboard.press('Escape')
       await expect(trigger).toBeFocused()
     }
+  })
+
+  test('Plan 时间与日期时间在触控上下文完整显示并保持可达', async ({ page }, testInfo) => {
+    await mockStudio(page, { planQuestion: true, planQuestionForm: {
+      ...planQuestionForm, questions: planQuestionForm.questions.slice(-2),
+    } })
+    const closeNavigation = page.getByRole('button', { name: '关闭导航' })
+    if (await closeNavigation.isVisible()) await closeNavigation.click()
+    const timeRegion = page.getByRole('region', { name: '期望几点上线？' })
+    const time = timeRegion.getByRole('button', { name: '时间回答：期望几点上线？' })
+    await time.tap()
+    await page.getByRole('listbox', { name: '小时' }).getByRole('option', { name: '09' }).tap()
+    await page.getByRole('listbox', { name: '分钟' }).getByRole('option', { name: '30' }).tap()
+    await expect(time).toContainText('09:30')
+    await checkTimeZoneLayout(page, testInfo, 'time', timeRegion, [time], true)
+    await page.getByRole('button', { name: '下一题', exact: true }).tap()
+    const region = page.getByRole('region', { name: '回滚截止点是什么时候？' })
+    const date = region.getByRole('button', { name: '日期回答：回滚截止点是什么时候？' })
+    const dateTime = region.getByRole('button', { name: '时间回答：回滚截止点是什么时候？' })
+    await date.tap()
+    await page.locator('[data-date-value="2026-09-01"]').tap()
+    await dateTime.tap()
+    await page.getByRole('listbox', { name: '小时' }).getByRole('option', { name: '09' }).tap()
+    await page.getByRole('listbox', { name: '分钟' }).getByRole('option', { name: '30' }).tap()
+    await expect(dateTime).toContainText('09:30')
+    await checkTimeZoneLayout(page, testInfo, 'datetime', region, [date, dateTime], true)
   })
 
   test('Plan、模型、命令和 Rail 控件满足触控目标尺寸', async ({ page }) => {

@@ -1,6 +1,7 @@
 @layer workspace {
   .conversation-search-dialog {
     width: min(100%, var(--layout-conversation-search-width));
+    min-width: 0;
     max-height: calc(100dvh - var(--layout-page-gutter) * 2);
     align-self: start;
     margin-block-start: max(0px, calc((100dvh - var(--layout-conversation-search-height)) / 2 - var(--layout-page-gutter)));
@@ -12,9 +13,10 @@
   }
   .conversation-search-dialog.has-query { height: min(var(--layout-conversation-search-height), calc(100dvh - var(--layout-page-gutter) * 2)); }
   .conversation-search-dialog .modal-dialog-head { align-items: center; gap: var(--space-1); padding: var(--space-3) var(--dialog-content-padding) 0; flex-shrink: 0; }
-  .conversation-search-dialog .modal-dialog-head h2 { font-size: var(--type-ui-size); line-height: var(--type-ui-line); font-weight: var(--weight-ui); }
-  .conversation-search-dialog .modal-dialog-head > .ui-icon-button-wrap { margin: 0; }
-  .conversation-search-scope { margin-left: auto; }
+  .conversation-search-dialog .modal-dialog-head h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-ui-size); line-height: var(--type-ui-line); font-weight: var(--weight-ui); }
+  .conversation-search-dialog .modal-dialog-head > .ui-icon-button-wrap { flex-shrink: 0; margin: 0; }
+  .conversation-search-scope { flex: 0 0 auto; margin-left: auto; }
+  .conversation-search-scope .ui-compact-picker { max-width: none; }
   .conversation-search-scope .ui-compact-picker-trigger > svg { flex: 0 0 var(--icon-sm); }
   .conversation-search-body { padding: var(--space-2) var(--dialog-content-padding) var(--space-3); flex-shrink: 0; }
   .conversation-search-field { position: relative; }
