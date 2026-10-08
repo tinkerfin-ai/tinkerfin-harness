@@ -146,8 +146,6 @@
     flex: 1;
     min-width: 0;
   }
-  .attachment-description-name { display: flex; width: 100%; min-width: 0; justify-content: flex-start; padding: 0; color: var(--color-text-primary); }
-  .attachment-description-name .ui-button__label { min-width: 0; width: 100%; text-align: start; }
   .attachment-description__title {
     display: block;
     overflow: hidden;
@@ -351,6 +349,7 @@
     white-space: nowrap;
   }
   .attachment-document-layout {
+    position: relative;
     display: grid;
     grid-template-columns: 184px minmax(0, 1fr);
     flex: 1;
@@ -860,6 +859,10 @@
     }
   }
   @media (any-hover: none), (any-pointer: coarse) {
+    .composer-attachments {
+      height: var(--control-lg);
+    }
+
     .attachment-image-actions,
     .attachment-file-actions,
     .attachment-media::after {

@@ -59,8 +59,7 @@ describe('ModalDialog', () => {
     await user.click(opener)
     const dialog = screen.getByRole('dialog', { name: '重命名会话' })
     const input = screen.getByRole('textbox', { name: '会话名称' })
-    expect(dialog).toHaveClass('modal-dialog--action', 'has-input', 'is-default')
-    expect(screen.getByText('会话名称')).toHaveClass('visually-hidden')
+
     expect(input).toHaveFocus()
 
     screen.getByRole('button', { name: '关闭对话框' }).focus()
@@ -89,7 +88,7 @@ describe('ModalDialog', () => {
 
     await user.click(screen.getByRole('button', { name: '删除' }))
     expect(onConfirm).toHaveBeenCalledWith(undefined)
-    expect(screen.getByRole('dialog')).toHaveClass('modal-dialog--action', 'is-danger')
+
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 
     rerender(

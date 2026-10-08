@@ -6,8 +6,39 @@ import type {
   ChatResumeEntry,
 } from '../../../api/conversation/types'
 import type { JsonObject, JsonValue } from '../../../types'
+import { getAuthSession } from '../../../auth/session'
 
 const ACTIVE_RUN_STORAGE_KEY = 'tinkerfin:active-conversation-run'
+let ownerRevision = 0
+
+/** 登录凭证只用于内存中的所有权核验，不写入运行恢复缓存 */
+export interface ActiveRunOwner {
+  serverAddress: string
+  userId: number
+  token: string
+  revision: number
+}
+
+/** 捕获当前登录归属，全局清空后先前捕获的归属同样失效 */
+export const captureActiveRunOwner = (): ActiveRunOwner | null => {
+  const auth = getAuthSession()
+  return auth ? {
+    serverAddress: auth.serverAddress,
+    userId: auth.user.user_id,
+    token: auth.token,
+    revision: ownerRevision,
+  } : null
+}
+
+const sameOwner = (first: ActiveRunOwner | null, second: ActiveRunOwner | null) => (
+  first === null || second === null ? first === second
+    : first.serverAddress === second.serverAddress && first.userId === second.userId
+      && first.token === second.token && first.revision === second.revision
+)
+
+export const isActiveRunOwnerCurrent = (owner: ActiveRunOwner | null): boolean => (
+  owner !== null && sameOwner(owner, captureActiveRunOwner())
+)
 
 export interface ActiveRunSession {
   projectId: string
@@ -95,13 +126,22 @@ const isCompactRequestPayload = (value: unknown): value is CompactRequestPayload
   && typeof value.runId === 'string' && Boolean(value.runId.trim())
   && typeof value.model === 'string' && Boolean(value.model.trim())
 
-export const readActiveRunSessions = (): ActiveRunSession[] => {
+export const readActiveRunSessions = (owner = captureActiveRunOwner()): ActiveRunSession[] => {
+  const current = captureActiveRunOwner()
+  if (!sameOwner(owner, current)) return []
   try {
+    if (!owner) {
+      window.sessionStorage.removeItem(ACTIVE_RUN_STORAGE_KEY)
+      return []
+    }
     const raw = window.sessionStorage.getItem(ACTIVE_RUN_STORAGE_KEY)
     if (!raw) return []
     const value: unknown = JSON.parse(raw)
-    if (Array.isArray(value)) {
-      const sessions = value.map(parseActiveRunSession)
+    if (isRecord(value)
+      && Object.keys(value).sort().join('\0') === ['runs', 'serverAddress', 'userId'].join('\0')
+      && value.serverAddress === owner.serverAddress && value.userId === owner.userId
+      && Array.isArray(value.runs)) {
+      const sessions = value.runs.map(parseActiveRunSession)
       if (sessions.every((item): item is ActiveRunSession => item !== null)) return sessions
     }
     window.sessionStorage.removeItem(ACTIVE_RUN_STORAGE_KEY)
@@ -111,26 +151,31 @@ export const readActiveRunSessions = (): ActiveRunSession[] => {
   return []
 }
 
-export const readActiveRunSession = (threadId: string, projectId: string): ActiveRunSession | null => (
-  readActiveRunSessions().find((session) => session.threadId === threadId && session.projectId === projectId) ?? null
+export const readActiveRunSession = (threadId: string, projectId: string, owner = captureActiveRunOwner()): ActiveRunSession | null => (
+  readActiveRunSessions(owner).find((session) => session.threadId === threadId && session.projectId === projectId) ?? null
 )
 
-const saveActiveRunSessions = (sessions: ActiveRunSession[]) => {
+const saveActiveRunSessions = (sessions: ActiveRunSession[], owner: ActiveRunOwner | null) => {
   try {
-    if (sessions.length) window.sessionStorage.setItem(ACTIVE_RUN_STORAGE_KEY, JSON.stringify(sessions))
+    if (sessions.length && owner) window.sessionStorage.setItem(ACTIVE_RUN_STORAGE_KEY, JSON.stringify({
+      serverAddress: owner.serverAddress, userId: owner.userId, runs: sessions,
+    }))
     else window.sessionStorage.removeItem(ACTIVE_RUN_STORAGE_KEY)
   } catch {
     // 浏览器禁用存储时，当前连接仍继续接收
   }
 }
 
-export const writeActiveRunSession = (session: ActiveRunSession): void => {
+export const writeActiveRunSession = (session: ActiveRunSession, owner = captureActiveRunOwner()): void => {
+  if (!isActiveRunOwnerCurrent(owner)) return
   saveActiveRunSessions([
-    ...readActiveRunSessions().filter((item) => item.payload.runId !== session.payload.runId),
+    ...readActiveRunSessions(owner).filter((item) => item.payload.runId !== session.payload.runId),
     session,
-  ])
+  ], owner)
 }
 
-export const clearActiveRunSession = (runId?: string): void => {
-  saveActiveRunSessions(runId ? readActiveRunSessions().filter((item) => item.payload.runId !== runId) : [])
+export const clearActiveRunSession = (runId?: string, owner = captureActiveRunOwner()): void => {
+  if (!sameOwner(owner, captureActiveRunOwner())) return
+  if (!runId) ownerRevision += 1
+  saveActiveRunSessions(runId ? readActiveRunSessions(owner).filter((item) => item.payload.runId !== runId) : [], owner)
 }

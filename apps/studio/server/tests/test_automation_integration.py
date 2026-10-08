@@ -279,10 +279,6 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
         repeat = await client.post("/api/automation/tasks", json=payload)
         assert repeat.status_code == 200, repeat.text
         assert repeat.json()["data"]["id"] == task["id"]
-        assert (await client.get("/api/automation/tasks/counts")).json()["data"] == {
-            "enabled": 1,
-            "paused": 0,
-        }
         assert (
             len(
                 (

@@ -1549,7 +1549,8 @@
   .plan-question-date .ui-temporal-picker__trigger { min-width: 150px; }
   .plan-question-time-copy { display: grid; min-width: 0; gap: 1px; }
   .plan-question-time-copy small { color: var(--color-text-tertiary); font-size: var(--type-micro-size); line-height: var(--type-caption-line); }
-  .plan-question-datetime { height: auto; min-height: var(--control-md); }
+  .plan-question-time-copy .plan-question-time-zone { color: var(--color-text-caption-on-layer); overflow-wrap: anywhere; }
+  .plan-question-time { height: auto; min-height: var(--control-md); padding-block: var(--space-2); }
   .plan-question-datetime-controls { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: var(--space-2); }
   .plan-question-datetime-controls > .ui-temporal-picker { flex: 1 1 150px; }
 
@@ -1867,15 +1868,15 @@
     .plan-review-rejection-form { margin-right: var(--space-4); margin-left: var(--space-4); }
     .plan-question-progress { margin-right: var(--space-3); margin-left: var(--space-3); }
     .approval-composer-actions { grid-column: 2; }
-    .plan-question-datetime { padding-top: var(--space-2); padding-bottom: var(--space-2); }
-    .plan-question-datetime .plan-question-date-copy { display: grid; width: 100%; align-items: stretch; }
+    .plan-question-time .plan-question-date-copy { display: grid; width: 100%; align-items: stretch; }
     .plan-question-datetime-controls { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-    .plan-question-datetime-controls .ui-temporal-picker,
-    .plan-question-datetime-controls .ui-temporal-picker__control,
-    .plan-question-datetime-controls .ui-temporal-picker__trigger { width: 100%; min-width: 0; }
+    .plan-question-time .ui-temporal-picker,
+    .plan-question-time .ui-temporal-picker__control,
+    .plan-question-time .ui-temporal-picker__trigger { width: 100%; min-width: 0; }
   }
 
   @container conversation (max-width: 440px) {
+    .plan-question-datetime-controls { grid-template-columns: minmax(0, 1fr); }
     .composer-dock { --composer-inline-inset: var(--layout-page-gutter); }
     .composer-auxiliary-controls { gap: var(--space-4); }
     .composer-auxiliary-control { padding-inline: var(--space-1-5); }
@@ -1923,7 +1924,7 @@
     .plan-question-date,
     .composer-suggestion-item { min-height: var(--control-lg); }
     .plan-question-date { height: var(--control-lg); }
-    .plan-question-datetime { height: auto; }
+    .plan-question-time { height: auto; }
     .plan-question-composer.is-minimized .plan-question-progress,
     .plan-question-composer.is-minimized .plan-question-progress-step { height: var(--control-lg); }
     .plan-interaction-card-head-button { width: var(--control-lg); min-width: var(--control-lg); height: var(--control-lg); min-height: var(--control-lg); }

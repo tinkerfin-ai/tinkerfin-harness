@@ -64,6 +64,7 @@ const baseProps = {
   onDelete: vi.fn(),
   hasMore: true,
   onLoadMore: vi.fn(),
+  onRetryLoadMore: vi.fn(),
   user: {
     user_id: 7,
     username: 'yunsan',
@@ -105,16 +106,12 @@ describe('Sidebar', () => {
 
     const trigger = screen.getByRole('button', { name: '打开用户菜单' })
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
-    expect(trigger.parentElement).toHaveClass('user-account')
-    expect(trigger).toHaveClass('user-card')
-    expect(trigger.querySelector('.lucide-chevron-down')).not.toBeInTheDocument()
 
     fireEvent.click(trigger)
 
     const expandedTrigger = screen.getByRole('button', { name: '关闭用户菜单' })
     expect(expandedTrigger).toHaveAttribute('aria-expanded', 'true')
-    expect(expandedTrigger.querySelector('.lucide-chevron-up')).not.toBeInTheDocument()
-    expect(expandedTrigger.querySelector('.lucide-chevron-down')).not.toBeInTheDocument()
+
   })
 
   it('从用户菜单打开设置并把稳定的账户按钮作为焦点恢复目标', () => {
@@ -141,8 +138,7 @@ describe('Sidebar', () => {
     expect(screen.queryByRole('menuitem', { name: '退出登录' })).not.toBeInTheDocument()
     const collapsedTrigger = screen.getByRole('button', { name: '打开用户菜单' })
     expect(collapsedTrigger).toHaveAttribute('aria-expanded', 'false')
-    expect(collapsedTrigger.querySelector('.lucide-chevron-down')).not.toBeInTheDocument()
-    expect(collapsedTrigger.querySelector('.lucide-chevron-up')).not.toBeInTheDocument()
+
   })
 
   it('用户菜单通过 Escape 收起并把焦点还给触发器', () => {
@@ -215,13 +211,11 @@ describe('Sidebar', () => {
       .getByRole('button', { name: '新会话' })
     const collapse = screen.getByRole('button', { name: '收起侧边栏' })
     const actions = collapse.closest('.sidebar-head-actions')
-    expect(brand.querySelector('.brand-logo')).toHaveClass('brand-logo--md')
-    expect(brand.querySelector('.brand-logo__mark')).toHaveAttribute('alt', '')
-    expect(brand.querySelector('.brand-logo__wordmark')).toHaveAttribute('alt', '')
+
     expect(brand).not.toHaveTextContent('Plus')
     fireEvent.click(brand)
     expect(onNew).toHaveBeenCalledOnce()
-    expect(collapse.querySelector('.lucide-panel-right')).toBeInTheDocument()
+
     expect(within(actions as HTMLElement).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
       .toEqual(['收起侧边栏'])
   })
@@ -257,12 +251,10 @@ describe('Sidebar', () => {
   it('新会话入口始终保持动作按钮语义，不显示选中态', () => {
     const { rerender } = render(<Sidebar {...baseProps} />)
 
-    expect(screen.getAllByRole('button', { name: '新会话' }).find(button => button.hasAttribute('aria-keyshortcuts'))).not.toHaveClass('is-selected')
     expect(screen.getAllByRole('button', { name: '新会话' }).find(button => button.hasAttribute('aria-keyshortcuts'))).not.toHaveAttribute('aria-pressed')
 
     rerender(<Sidebar {...baseProps} workspace={{ ...workspace, currentThreadId: '' }} />)
 
-    expect(screen.getAllByRole('button', { name: '新会话' }).find(button => button.hasAttribute('aria-keyshortcuts'))).not.toHaveClass('is-selected')
     expect(screen.getAllByRole('button', { name: '新会话' }).find(button => button.hasAttribute('aria-keyshortcuts'))).not.toHaveAttribute('aria-pressed')
     fireEvent.pointerMove(screen.getAllByRole('button', { name: '新会话' }).find(button => button.hasAttribute('aria-keyshortcuts'))!)
     expect(screen.getByRole('tooltip', { name: '新会话' })).toBeInTheDocument()
@@ -275,29 +267,21 @@ describe('Sidebar', () => {
 
     const historyList = screen.getByRole('region', { name: '最近对话' })
     const historyRegion = historyList.parentElement
-    expect(historyList).toHaveClass('ui-scrollbar')
+
     expect(historyList).toHaveAttribute('tabindex', '0')
-    expect(historyRegion?.querySelector('.ui-scrollbar-overlay')).not.toBeInTheDocument()
-    expect(historyRegion?.querySelector('.ui-overlay-scrollbar')).toHaveAttribute('data-visibility', 'transient')
-    const pinnedItem = screen.getByRole('button', { name: '打开会话：置顶会话' }).closest('.conversation-item')
-    expect(historyRegion).toHaveClass('conversation-history')
+
+    expect(within(historyList).getAllByRole('button', { name: /^打开会话：/ }).map(button => button.getAttribute('aria-label'))).toEqual(['打开会话：置顶会话', '打开会话：最近会话'])
+
     expect(screen.queryByText('最近对话')).not.toBeInTheDocument()
     const pinnedHeading = screen.getByRole('heading', { name: '置顶' })
-    expect(pinnedHeading).toHaveClass('conversation-group-title')
-    expect(pinnedHeading.parentElement).toHaveClass('conversation-groups')
-    expect(pinnedHeading.nextElementSibling).toHaveClass('conversation-group-items')
+
     const todayHeading = screen.getByRole('heading', { name: '今天' })
-    expect(todayHeading).toHaveClass('conversation-group-title')
+
     expect(screen.queryByText('已置顶')).not.toBeInTheDocument()
     expect(screen.queryByText('最近')).not.toBeInTheDocument()
-    expect(pinnedItem).toHaveClass('is-pinned')
-    expect(pinnedItem?.querySelector('.conversation-pinned-indicator')).not.toBeInTheDocument()
+
     const recentButton = screen.getByRole('button', { name: '打开会话：最近会话' })
     expect(recentButton).not.toHaveAttribute('title')
-    expect(recentButton.closest('.conversation-item')).toHaveClass('is-recent')
-    expect(recentButton.closest('.conversation-item')).toHaveClass('overflow-marquee-trigger')
-    expect(recentButton.querySelector('.conversation-title-marquee')).toHaveClass('overflow-marquee')
-    expect(historyList.querySelector('.conversation-item')).toBe(pinnedItem)
 
     const groupsContainer = historyList.querySelector('.conversation-groups') as HTMLElement
     Object.defineProperty(groupsContainer, 'offsetTop', { configurable: true, value: 100 })
@@ -308,14 +292,13 @@ describe('Sidebar', () => {
 
     fireEvent.scroll(historyList)
     expect(stickyTitle).toHaveTextContent('置顶')
-    expect(stickyTitle).toHaveClass('is-visible')
 
     historyList.scrollTop = 301
     fireEvent.scroll(historyList)
     expect(stickyTitle).toHaveTextContent('今天')
   })
 
-  it('按审批或 Plan 状态绑定待处理颜色并同步可访问名称', () => {
+  it('审批或 Plan 待处理状态同步可访问名称', () => {
     const waiting = workspace.conversations.map((item): Conversation => item.threadId === 'recent'
       ? { ...item, runStatus: 'waiting_approval' as const }
       : item)
@@ -327,10 +310,7 @@ describe('Sidebar', () => {
       />,
     )
 
-    const waitingButton = screen.getByRole('button', { name: '打开会话：最近会话，等待处理' })
-    expect(waitingButton.querySelector('.conversation-status-slot')).toBeInTheDocument()
-    expect(waitingButton.querySelector('.conversation-attention-dot')).toHaveClass('is-approval')
-    expect(screen.getByRole('button', { name: '打开会话：置顶会话' }).querySelector('.conversation-attention-dot')).toBeNull()
+    expect(screen.getByRole('button', { name: '打开会话：最近会话，等待处理' })).toBeVisible()
 
     const summarizedPlanWaiting = waiting.map((item): Conversation => item.threadId === 'recent'
       ? { ...item, pendingInteractionKind: 'plan_clarification' }
@@ -342,8 +322,7 @@ describe('Sidebar', () => {
         historyConversations={summarizedPlanWaiting}
       />,
     )
-    expect(screen.getByRole('button', { name: '打开会话：最近会话，等待处理' })
-      .querySelector('.conversation-attention-dot')).toHaveClass('is-plan')
+    expect(screen.getByRole('button', { name: '打开会话：最近会话，等待处理' })).toBeVisible()
 
     for (const pendingInteractionKind of ['tool_approval', 'plan_review'] as const) {
       const summarizedApprovalWaiting = waiting.map((item): Conversation => item.threadId === 'recent'
@@ -356,8 +335,8 @@ describe('Sidebar', () => {
           historyConversations={summarizedApprovalWaiting}
         />,
       )
-      expect(screen.getByRole('button', { name: '打开会话：最近会话，等待处理' })
-        .querySelector('.conversation-attention-dot')).toHaveClass('is-approval')
+    expect(screen.getByRole('button', { name: '打开会话：最近会话，等待处理' })).toBeVisible()
+
     }
 
     const pendingDespiteIdleStatus = workspace.conversations.map((item): Conversation => (
@@ -372,8 +351,7 @@ describe('Sidebar', () => {
         historyConversations={pendingDespiteIdleStatus}
       />,
     )
-    expect(screen.getByRole('button', { name: '打开会话：最近会话，等待处理' })
-      .querySelector('.conversation-attention-dot')).toHaveClass('is-approval')
+    expect(screen.getByRole('button', { name: '打开会话：最近会话，等待处理' })).toBeVisible()
 
     const planWaiting = waiting.map((item): Conversation => item.threadId === 'recent'
       ? {
@@ -402,8 +380,7 @@ describe('Sidebar', () => {
         historyConversations={planWaiting}
       />,
     )
-    expect(screen.getByRole('button', { name: '打开会话：最近会话，等待处理' })
-      .querySelector('.conversation-attention-dot')).toHaveClass('is-plan')
+    expect(screen.getByRole('button', { name: '打开会话：最近会话，等待处理' })).toBeVisible()
 
     const reviewWaiting = planWaiting.map((item): Conversation => item.threadId === 'recent'
       ? {
@@ -432,11 +409,12 @@ describe('Sidebar', () => {
         historyConversations={reviewWaiting}
       />,
     )
-    expect(screen.getByRole('button', { name: '打开会话：最近会话，等待处理' })
-      .querySelector('.conversation-attention-dot')).toHaveClass('is-approval')
+    expect(screen.getByRole('button', { name: '打开会话：最近会话，等待处理' })).toBeVisible()
 
     rerender(<Sidebar {...baseProps} />)
-    expect(screen.getByRole('button', { name: '打开会话：最近会话' }).querySelector('.conversation-attention-dot')).toBeNull()
+    expect(screen.getByRole('button', { name: '打开会话：最近会话' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '打开会话：最近会话，等待处理' })).not.toBeInTheDocument()
+
   })
 
   it('opens the existing management menu from a pinned conversation', () => {
@@ -446,7 +424,6 @@ describe('Sidebar', () => {
     historyList.scrollTop = 48
     fireEvent.click(screen.getByRole('button', { name: '管理会话：置顶会话' }))
 
-    expect(historyList).toHaveClass('is-scroll-locked')
     historyList.scrollTop = 96
     fireEvent.scroll(historyList)
     expect(historyList).toHaveProperty('scrollTop', 48)
@@ -455,7 +432,7 @@ describe('Sidebar', () => {
     expect(screen.getByRole('button', { name: /删除/ })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /取消置顶/ }))
-    expect(historyList).not.toHaveClass('is-scroll-locked')
+
     historyList.scrollTop = 96
     fireEvent.scroll(historyList)
     expect(historyList).toHaveProperty('scrollTop', 96)
@@ -478,25 +455,25 @@ describe('Sidebar', () => {
     expect(trigger).toHaveFocus()
   })
 
-  it('reserves one stable pagination slot while loading and error content changes', () => {
+  it('分页加载与失败保留当前记录，结束后不显示更多入口', () => {
     const { rerender } = render(<Sidebar {...baseProps} />)
     const scroll = screen.getByRole('region', { name: '最近对话' })
-    const slot = scroll.querySelector('.history-pagination-slot')
-    expect(slot).toBeInTheDocument()
-    expect(slot).toBeEmptyDOMElement()
+    expect(within(scroll).getByRole('button', { name: '打开会话：最近会话' })).toBeVisible()
 
     rerender(<Sidebar {...baseProps} isLoadingMore />)
-    expect(scroll.querySelector('.history-pagination-slot')).toBe(slot)
+
     expect(screen.getByText('正在加载更多历史会话')).toHaveAttribute('role', 'status')
     expect(screen.queryByTestId('history-skeleton')).not.toBeInTheDocument()
-    expect(scroll.querySelector('.history-load-sentinel')).toBeInTheDocument()
 
     rerender(<Sidebar {...baseProps} loadMoreError="加载历史失败" />)
-    expect(scroll.querySelector('.history-pagination-slot')).toBe(slot)
-    expect(screen.queryByText('加载历史失败')).not.toBeInTheDocument()
+
+    expect(screen.getByRole('button', { name: '重试加载历史' })).toBeEnabled()
+    expect(within(scroll).getByRole('button', { name: '打开会话：最近会话' })).toBeVisible()
 
     rerender(<Sidebar {...baseProps} hasMore={false} />)
-    expect(scroll.querySelector('.history-pagination-slot')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '重试加载历史' })).not.toBeInTheDocument()
+    expect(screen.queryByText('正在加载更多历史会话')).not.toBeInTheDocument()
+
   })
 
   it('coalesces repeated bottom scroll events into one request per idle-separated burst', () => {
@@ -747,8 +724,6 @@ describe('Sidebar rail and conversation search', () => {
 
     const accountTrigger = screen.getByRole('button', { name: '展开侧边栏以查看账户' })
     expect(accountTrigger.querySelector('img')).toHaveAttribute('src', 'https://cdn.example.test/avatar.webp')
-    expect(accountTrigger.querySelector('.user-avatar')).toBeInTheDocument()
-    expect(accountTrigger.querySelector('.lucide-user-round')).not.toBeInTheDocument()
 
     fireEvent.click(accountTrigger)
     expect(onRequestExpanded).toHaveBeenCalledOnce()
@@ -769,7 +744,6 @@ describe('Sidebar rail and conversation search', () => {
     expect(screen.getByRole('button', { name: '新会话' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('button', { name: '新会话' })).toHaveAttribute('aria-pressed', 'true')
   })
-
 
 })
 

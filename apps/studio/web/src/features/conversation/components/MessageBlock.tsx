@@ -9,7 +9,7 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react'
-import { memo, useEffect, useId, useMemo, useRef, useState, type Ref } from 'react'
+import { memo, useId, useMemo, useState, type Ref } from 'react'
 
 import { IconButton, Tooltip } from '../../../components/ui'
 import type { Message } from '../../../types'
@@ -18,7 +18,7 @@ import { CodeText } from '../../../components/ui/CodeText'
 import { useTypewriterText } from './useTypewriterText'
 import { ToolCallRow } from './ToolCallRow'
 import { ContextMessage } from './ContextMessage'
-import { COPY_FEEDBACK_DURATION_MS } from './copyFeedback'
+import { useCopyFeedback } from './copyFeedback'
 import { useI18n } from '../../../i18n'
 import { useStreamingContentScroll } from './useStreamingContentScroll'
 
@@ -140,24 +140,8 @@ function formatMessageTime(createdAt: string): string | null {
 
 function MessageActionRow({ content, kind, createdAt }: { content: string; kind: MessageActionKind; createdAt?: string }) {
   const { t } = useI18n()
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const resetTimer = useRef<number | null>(null)
+  const { state: copyState, copy } = useCopyFeedback()
   const messageTime = kind === 'user' && createdAt ? formatMessageTime(createdAt) : null
-
-  useEffect(() => () => {
-    if (resetTimer.current != null) window.clearTimeout(resetTimer.current)
-  }, [])
-
-  const copyMessage = async () => {
-    if (resetTimer.current != null) window.clearTimeout(resetTimer.current)
-    try {
-      await navigator.clipboard.writeText(content)
-      setCopyState('copied')
-    } catch {
-      setCopyState('failed')
-    }
-    resetTimer.current = window.setTimeout(() => setCopyState('idle'), COPY_FEEDBACK_DURATION_MS)
-  }
 
   const labels = kind === 'user'
     ? {
@@ -190,7 +174,7 @@ function MessageActionRow({ content, kind, createdAt }: { content: string; kind:
           : copyState === 'failed'
             ? <TriangleAlert size={20} />
             : <Copy size={20} />}
-        onClick={() => void copyMessage()}
+        onClick={() => void copy(content)}
       />
       <span className="message-action-status" aria-live="polite">
         {copyState === 'copied' ? t('已复制') : copyState === 'failed' ? t('复制失败，请重试') : ''}

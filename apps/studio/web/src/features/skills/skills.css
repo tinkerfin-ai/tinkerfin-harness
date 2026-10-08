@@ -22,6 +22,9 @@
 .skills-search, .skills-search:hover, .skills-search:focus-within, .skills-search input, .skills-search input:focus { border: 0; outline: 0; box-shadow: none; }
 .skills-search input { font-size: var(--type-meta-size); padding-left: var(--space-1); }
 .skills-search:focus-within { background: var(--color-active); }
+@media (any-hover: none), (any-pointer: coarse) {
+  .skills-search { --search-field-control-size: var(--control-lg); }
+}
 .skills-search:not(.is-filled) .ui-icon-button-wrap { visibility: hidden; }
 .skills-picker { flex-shrink: 0; }
 .skills-picker .ui-compact-picker-trigger:focus-visible { outline: 0; box-shadow: var(--shadow-2); }

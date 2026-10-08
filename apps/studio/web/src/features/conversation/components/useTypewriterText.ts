@@ -7,9 +7,17 @@ type LiveText = NonNullable<Message['liveText']>
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
-/** 每帧只显示一个完整字素，正常结束后继续显示已收到的正文 */
+/** 默认逐帧显示完整字素；减少动效时立即显示已收到的正文并保留进度 */
 export function useTypewriterText(content: string, source: LiveText | undefined, complete: boolean) {
   const progress = useContext(TextRevealProgressContext)
+  const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+  useLayoutEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const update = () => setReducedMotion(media.matches)
+    update()
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
   const key = source?.key
   const initialContent = source?.initialContent ?? content
   const [display, setDisplay] = useState(() => ({
@@ -21,11 +29,16 @@ export function useTypewriterText(content: string, source: LiveText | undefined,
     ? display.text
     : key ? progress?.get(key) ?? initialContent : content
   const restoredPrefix = content.startsWith(initialContent) ? initialContent : ''
-  const text = !key ? content : content.startsWith(previous) && previous.length >= restoredPrefix.length
+  const text = !key || reducedMotion ? content : content.startsWith(previous) && previous.length >= restoredPrefix.length
     ? previous : restoredPrefix
 
   useLayoutEffect(() => {
     if (!key || !progress) return
+    if (reducedMotion) {
+      progress.set(key, content)
+      setDisplay({ key, text: content })
+      return
+    }
     const saved = progress.get(key) ?? initialContent
     // 服务端恢复的已显示前缀优先于同页尚未播完的旧动画进度
     let offset = content.startsWith(saved) ? Math.max(saved.length, restoredPrefix.length) : restoredPrefix.length
@@ -50,7 +63,7 @@ export function useTypewriterText(content: string, source: LiveText | undefined,
     return () => {
       if (frame !== undefined) window.cancelAnimationFrame(frame)
     }
-  }, [content, key, initialContent, restoredPrefix, progress, complete])
+  }, [content, key, initialContent, restoredPrefix, progress, complete, reducedMotion])
 
   return text
 }

@@ -79,6 +79,7 @@ export const DatePicker = forwardRef<HTMLButtonElement, DatePickerProps>(functio
     },
     translations: {
       content: t('选择日期'),
+      dayCell: (state) => t(!state.selectable ? '不可选日期：{date}' : state.selected ? '已选日期：{date}' : '选择日期：{date}', { date: state.valueText }),
       trigger: () => label,
       nextTrigger: (view) => view === 'day' ? t('下个月') : view === 'month' ? t('下一年') : t('下一组年份'),
       prevTrigger: (view) => view === 'day' ? t('上个月') : view === 'month' ? t('上一年') : t('上一组年份'),
@@ -145,7 +146,7 @@ export const DatePicker = forwardRef<HTMLButtonElement, DatePickerProps>(functio
       </span>
       <Portal>
         <div {...api.getPositionerProps()}>
-          <div {...api.getContentProps()} className={`ui-temporal-picker__popover ui-date-picker__popover${inDialog ? ' is-in-dialog' : ''}`}>
+          <div {...api.getContentProps()} aria-roledescription={t('日期选择器')} className={`ui-temporal-picker__popover ui-date-picker__popover${inDialog ? ' is-in-dialog' : ''}`}>
               <header {...api.getViewControlProps({ view: api.view })} className="ui-date-picker__head">
                 <button type="button" {...api.getPrevTriggerProps({ view: api.view })} className="ui-date-picker__nav">
                   <ChevronLeft size={17} aria-hidden="true" />
@@ -163,8 +164,9 @@ export const DatePicker = forwardRef<HTMLButtonElement, DatePickerProps>(functio
                   <div className="ui-date-picker__weekdays" aria-hidden="true">
                     {api.weekDays.map((weekday) => <span key={weekday.short}>{weekday.short}</span>)}
                   </div>
-                  <div {...api.getTableProps({ view: 'day', columns: 7 })} className="ui-date-picker__grid">
-                    {api.weeks.flat().map((date) => {
+                  <div {...api.getTableProps({ view: 'day', columns: 7 })} aria-label={caption} aria-roledescription={t('月历')} className="ui-date-picker__grid">
+                    {api.weeks.map(week => <div {...api.getTableRowProps({ view: 'day' })} role="row" className="ui-date-picker__row" key={week[0].toString()}>
+                    {week.map((date) => {
                       const cellProps = { value: date, visibleRange: api.visibleRange }
                       const state = api.getDayTableCellState(cellProps)
                       return (
@@ -179,14 +181,16 @@ export const DatePicker = forwardRef<HTMLButtonElement, DatePickerProps>(functio
                         </span>
                       )
                     })}
+                    </div>)}
                   </div>
                 </div>
               )}
 
               {api.view === 'month' && (
                 <div {...api.getViewProps({ view: 'month' })}>
-                  <div {...api.getTableProps({ view: 'month', columns: 3 })} className="ui-date-picker__period-grid">
-                    {api.getMonthsGrid({ columns: 3, format: 'short' }).flat().map((month) => {
+                  <div {...api.getTableProps({ view: 'month', columns: 3 })} aria-label={caption} aria-roledescription={t('月份网格')} className="ui-date-picker__period-grid">
+                    {api.getMonthsGrid({ columns: 3, format: 'short' }).map(months => <div {...api.getTableRowProps({ view: 'month' })} role="row" className="ui-date-picker__row" key={months[0].value}>
+                    {months.map((month) => {
                       const cellProps = { value: month.value, columns: 3 }
                       const state = api.getMonthTableCellState(cellProps)
                       return (
@@ -201,14 +205,16 @@ export const DatePicker = forwardRef<HTMLButtonElement, DatePickerProps>(functio
                         </span>
                       )
                     })}
+                    </div>)}
                   </div>
                 </div>
               )}
 
               {api.view === 'year' && (
                 <div {...api.getViewProps({ view: 'year' })}>
-                  <div {...api.getTableProps({ view: 'year', columns: 3 })} className="ui-date-picker__period-grid">
-                    {api.getYearsGrid({ columns: 3 }).flat().map((year) => {
+                  <div {...api.getTableProps({ view: 'year', columns: 3 })} aria-label={caption} aria-roledescription={t('年份网格')} className="ui-date-picker__period-grid">
+                    {api.getYearsGrid({ columns: 3 }).map(years => <div {...api.getTableRowProps({ view: 'year' })} role="row" className="ui-date-picker__row" key={years[0].value}>
+                    {years.map((year) => {
                       const cellProps = { value: year.value, columns: 3 }
                       const state = api.getYearTableCellState(cellProps)
                       return (
@@ -223,6 +229,7 @@ export const DatePicker = forwardRef<HTMLButtonElement, DatePickerProps>(functio
                         </span>
                       )
                     })}
+                    </div>)}
                   </div>
                 </div>
               )}

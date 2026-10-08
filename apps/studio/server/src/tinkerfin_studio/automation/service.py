@@ -231,12 +231,6 @@ class StudioAutomationService:
             next_cursor=page.next_cursor,
         )
 
-    async def task_counts(self, *, query: str | None = None) -> dict[TaskStatus, int]:
-        """统计全部匹配任务，不受当前分页和状态选择影响"""
-        return await self._automation.summarize_tasks(
-            filters=TaskFilter(name_contains=query)
-        )
-
     async def task_command(
         self, task_id: str, operation: str, command: TaskCommand
     ) -> TaskView | RunView | None:
@@ -319,16 +313,6 @@ class StudioAutomationService:
         return RunList(
             items=[run_view(run.snapshot) for run in page.items],
             next_cursor=page.next_cursor,
-        )
-
-    async def run_counts(
-        self, *, queued_from: datetime, queued_until: datetime, query: str | None = None
-    ) -> dict[ExecutionStatus, int]:
-        """按名称及日期范围汇总历史的完整状态分布"""
-        return await self._automation.summarize_runs(
-            filters=ExecutionFilter(
-                name_contains=query, queued_from=queued_from, queued_until=queued_until
-            ),
         )
 
     async def result(self, execution_id: str) -> RunDetail:

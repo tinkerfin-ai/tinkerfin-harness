@@ -15,8 +15,7 @@ describe('WorkspaceHeader', () => {
       />,
     )
 
-    expect(screen.getByRole('heading', { level: 1, name: '研究下一季度产品路线' }))
-      .toHaveClass('workspace-title')
+    expect(screen.getByRole('heading', { level: 1, name: '研究下一季度产品路线' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '额外操作' })).toBeInTheDocument()
   })
 

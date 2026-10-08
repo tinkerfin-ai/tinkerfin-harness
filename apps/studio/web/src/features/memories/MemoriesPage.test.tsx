@@ -63,6 +63,8 @@ it('英文界面显示记忆冲突的英文说明并保留输入', async () => {
   localStorage.setItem(LANGUAGE_STORAGE_KEY, 'en')
   vi.mocked(api.saveMemory).mockRejectedValueOnce(new Error('记忆已被修改，请重新读取后对照保存'))
   render(<LocaleProvider><MemoriesPage project={project} navigationTriggerRef={createRef()} onOpenNavigation={vi.fn()} onModalChange={vi.fn()} onToast={vi.fn()} /></LocaleProvider>)
+  expect(screen.getByRole('button', { name: 'Add memory' })).toHaveTextContent('Add')
+  expect(screen.getByRole('button', { name: 'Search memories' })).toBeVisible()
   fireEvent.click(await screen.findByRole('button', { name: 'Edit memory: research.md' }))
   const dialog = await screen.findByRole('dialog', { name: 'Edit memory' })
   fireEvent.change(within(dialog).getByLabelText('Content'), { target: { value: 'Local input' } })

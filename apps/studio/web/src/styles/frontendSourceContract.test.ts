@@ -44,7 +44,7 @@ describe('前端源码契约', () => {
     expect(missing).toEqual([])
   })
 
-  it('不再使用无所有者 primary、secondary、danger 类名', () => {
+  it('不使用无所有者 primary、secondary、danger 类名', () => {
     const forbidden: string[] = []
     for (const [path, source] of productionSources) {
       for (const match of source.matchAll(/className="([^"]+)"/g)) {

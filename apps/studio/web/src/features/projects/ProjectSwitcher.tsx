@@ -1,5 +1,5 @@
 import { Check, ChevronDown, FolderClosed, Pencil, Plus, X } from 'lucide-react'
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Button, IconButton, TextField, ValidatedForm } from '../../components/ui'
 import { restoreFocus } from '../../components/ui/focus'
 import { useI18n } from '../../i18n'
@@ -19,21 +19,22 @@ export function ProjectSwitcher({ scope }: { scope: ProjectWorkspaceScope }) {
   const wasRenaming = useRef(false)
   const saving = scope.renameForm?.saving ?? false
 
+  const fit = useCallback(() => {
+    const anchor = trigger.current?.getBoundingClientRect()
+    const menu = panel.current
+    if (!anchor || !menu) return
+    const tokens = getComputedStyle(document.documentElement)
+    const gap = parseFloat(tokens.getPropertyValue('--space-1')) || 0
+    const inset = parseFloat(tokens.getPropertyValue('--space-3')) || 0
+    const width = Math.min(anchor.width, window.innerWidth - inset * 2)
+    menu.style.width = `${width}px`
+    menu.style.left = `${Math.max(inset, Math.min(anchor.left, window.innerWidth - width - inset))}px`
+    menu.style.top = `${anchor.bottom + gap}px`
+    menu.style.maxHeight = `${Math.max(0, window.innerHeight - anchor.bottom - gap - inset)}px`
+  }, [])
+
   useLayoutEffect(() => {
     if (!open) return
-    const fit = () => {
-      const anchor = trigger.current?.getBoundingClientRect()
-      const menu = panel.current
-      if (!anchor || !menu) return
-      const tokens = getComputedStyle(document.documentElement)
-      const gap = parseFloat(tokens.getPropertyValue('--space-1')) || 0
-      const inset = parseFloat(tokens.getPropertyValue('--space-3')) || 0
-      const width = Math.min(anchor.width, window.innerWidth - inset * 2)
-      menu.style.width = `${width}px`
-      menu.style.left = `${Math.max(inset, Math.min(anchor.left, window.innerWidth - width - inset))}px`
-      menu.style.top = `${anchor.bottom + gap}px`
-      menu.style.maxHeight = `${Math.max(0, window.innerHeight - anchor.bottom - gap - inset)}px`
-    }
     fit()
     if (!renaming) {
       selected.current?.focus({ preventScroll: true })
@@ -42,7 +43,7 @@ export function ProjectSwitcher({ scope }: { scope: ProjectWorkspaceScope }) {
     window.addEventListener('resize', fit)
     window.addEventListener('scroll', fit, true)
     return () => { window.removeEventListener('resize', fit); window.removeEventListener('scroll', fit, true) }
-  }, [open, renaming])
+  }, [open, renaming, fit])
 
   useLayoutEffect(() => {
     if (renaming && open) input.current?.focus()
@@ -75,17 +76,21 @@ export function ProjectSwitcher({ scope }: { scope: ProjectWorkspaceScope }) {
   return <div className="project-switcher">
     <button ref={trigger} type="button" className="project-switcher-trigger" aria-label={t('切换项目：{name}', { name: scope.project.name })}
       aria-haspopup="dialog" aria-expanded={open} aria-controls={id} disabled={saving}
-      onClick={() => { if (open) close(); else panel.current?.showPopover() }}
+      popoverTarget={id}
       onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); panel.current?.showPopover() } }}>
       <FolderClosed size={18} aria-hidden="true" /><span>{scope.project.name}</span><ChevronDown size={15} aria-hidden="true" />
     </button>
     <div ref={panel} id={id} popover="auto" role="dialog" aria-label={t('项目')} aria-hidden={!open} className="project-switcher-popover ui-scrollbar"
+      onBeforeToggle={event => { if (event.newState === 'open') fit() }}
       onToggle={event => {
         const visible = event.currentTarget.matches(':popover-open')
         setOpen(visible)
         if (!visible && scope.renameForm && !saving) scope.renameForm.cancel()
       }}
-      onBlur={event => { if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) close() }}
+      onBlur={event => {
+        // 点击入口由浏览器切换浮层，提前关闭会让同一次点击再次打开
+        if (event.relatedTarget instanceof Node && event.relatedTarget !== trigger.current && !event.currentTarget.contains(event.relatedTarget)) close()
+      }}
       >
       {scope.projects.map(project => {
         const active = project.id === scope.project.id
@@ -93,14 +98,14 @@ export function ProjectSwitcher({ scope }: { scope: ProjectWorkspaceScope }) {
           {active && scope.renameForm ? <ValidatedForm className="project-rename-form" aria-label={t('重命名项目')} errors={{ projectName: scope.renameForm.error }} validationAttempt={scope.renameForm.validationAttempt}
             onSubmit={event => { event.preventDefault(); void scope.renameForm?.submit() }}>
             <TextField ref={input} name="projectName" label={t('项目名称')} fieldSize="md" shape="standard" value={scope.renameForm.name} error={scope.renameForm.error} maxLength={64} autoComplete="off" onKeyDown={handleKeys} required disabled={saving} onChange={event => scope.renameForm?.change(event.target.value)} />
-            <div className="project-rename-actions">
-              <IconButton type="submit" size="md" variant="ghost" label={t('保存')} tooltip={t('保存')} icon={<Check size={16} />} loading={saving} onKeyDown={handleKeys} />
-              <IconButton type="button" size="md" variant="ghost" label={t('取消')} tooltip={t('取消')} icon={<X size={16} />} disabled={saving} onKeyDown={handleKeys} onClick={() => scope.renameForm?.cancel()} />
+            <div className="project-switcher-actions">
+              <IconButton type="submit" variant="ghost" label={t('保存')} tooltip={t('保存')} icon={<Check size={17} />} loading={saving} onKeyDown={handleKeys} />
+              <IconButton type="button" variant="ghost" label={t('取消')} tooltip={t('取消')} icon={<X size={17} />} disabled={saving} onKeyDown={handleKeys} onClick={() => scope.renameForm?.cancel()} />
             </div>
           </ValidatedForm> : <>
             <Button ref={active ? selected : undefined} type="button" variant="ghost" className="project-switcher-choice" aria-current={active ? 'true' : undefined} disabled={saving || renaming}
               leadingIcon={<FolderClosed size={16} />} onKeyDown={handleKeys} onClick={() => { close(); if (!active) scope.select(project.id) }}><span>{project.name}</span></Button>
-            {active && <><Check className="project-selected-check" size={14} aria-hidden="true" /><IconButton ref={renameButton} type="button" variant="ghost" label={t('重命名项目')} tooltip={t('重命名项目')} icon={<Pencil size={16} />} disabled={saving} onKeyDown={handleKeys} onClick={scope.rename} /></>}
+            {active && <div className="project-switcher-actions"><span className="project-selected-check" aria-hidden="true"><Check size={17} /></span><IconButton ref={renameButton} type="button" variant="ghost" label={t('重命名项目')} tooltip={t('重命名项目')} icon={<Pencil size={17} />} disabled={saving} onKeyDown={handleKeys} onClick={scope.rename} /></div>}
           </>}
         </div>
       })}

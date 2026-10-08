@@ -1,8 +1,6 @@
 import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
-import { mkdir } from 'node:fs/promises'
-import { resolve } from 'node:path'
 import type { ConversationHistoryDetail } from '../../src/api/conversation/history'
 import { traceGraphNode, traceGraphWithNodes } from '../../src/test/traceFixtures'
 
@@ -300,7 +298,7 @@ test('刷新后保存阶段禁用停止，未确认的结果可重新加载', as
 })
 
 for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440]) {
-  test(`压缩操作各状态视觉 ${theme} ${width}`, async ({ page }) => {
+  test(`压缩操作各状态视觉 ${theme} ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 960 })
     await page.emulateMedia({ reducedMotion: 'reduce' })
     const setup = await openConversation(page, { theme, detail: history('compact') })
@@ -316,13 +314,12 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
       expect(bounds.x).toBeGreaterThanOrEqual(0)
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-      const directory = resolve(process.cwd(), '../../../.impeccable/review/context-details')
-      await mkdir(directory, { recursive: true })
+
       const operation = page.locator('[id="compaction:compact"]')
-      if (width === 320) await operation.screenshot({ path: resolve(directory, `focus-${theme}-${width}.png`) })
+      if (width === 320) await operation.screenshot({ path: testInfo.outputPath(`focus-${theme}-${width}.png`) })
       await disclosure.evaluate(element => element.blur())
-      await operation.screenshot({ path: resolve(directory, `summary-${theme}-${width}.png`) })
-      if (width === 320 || width === 1440) await page.screenshot({ path: resolve(directory, `page-${theme}-${width}.png`) })
+      await operation.screenshot({ path: testInfo.outputPath(`summary-${theme}-${width}.png`) })
+      if (width === 320 || width === 1440) await page.screenshot({ path: testInfo.outputPath(`page-${theme}-${width}.png`) })
       const phases: [Phase, string][] = [
         ['generating', '正在整理上下文'],
         ['saving', '正在保存压缩结果'],
@@ -340,12 +337,12 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
         await expect(region.getByText('compact_conversation', { exact: true })).toBeVisible()
         await expect(region.getByText(label, { exact: true })).toBeVisible()
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-        await region.screenshot({ path: resolve(directory, `${phase}-${theme}-${width}.png`) })
+        await region.screenshot({ path: testInfo.outputPath(`${phase}-${theme}-${width}.png`) })
       }
     } finally { setup.release() }
   })
 
-  test(`压缩链路说明 ${theme} ${width}`, async ({ page }) => {
+  test(`压缩链路说明 ${theme} ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 960 })
     await page.emulateMedia({ reducedMotion: 'reduce' })
     const detail = history('compact', 'not_reduced')
@@ -391,9 +388,8 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
         await expect(page.getByRole('heading', { name: '项目目标与约束', exact: true })).toBeVisible()
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-      const directory = resolve(process.cwd(), '../../../.impeccable/review/context-details')
-      await mkdir(directory, { recursive: true })
-      await page.screenshot({ path: resolve(directory, `trace-${theme}-${width}.png`) })
+
+      await page.screenshot({ path: testInfo.outputPath(`trace-${theme}-${width}.png`) })
     } finally { setup.release() }
   })
 }

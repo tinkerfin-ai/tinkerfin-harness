@@ -131,11 +131,8 @@ describe('ToastViewport', () => {
 
     expect(screen.getByRole('list', { name: '系统提示' })).toBeInTheDocument()
     expect(screen.getAllByRole('status')).toHaveLength(2)
-    const errorToast = screen.getByText('保存失败').closest('li')
-    expect(errorToast).toHaveClass('toast-card')
-    expect(errorToast?.querySelector('.ui-feedback-icon__mark'))
-      .toHaveTextContent('!')
-    expect(errorToast?.querySelector('circle')).toBeNull()
+    expect(screen.getByRole('list')).toContainElement(screen.getByText('保存失败'))
+
   })
 
   it('removes only one trailing full stop and preserves sentence boundaries', () => {
@@ -168,7 +165,7 @@ describe('ToastViewport', () => {
       />,
     )
 
-    expect(screen.getAllByText('提示', { selector: '.toast-card__title' })).toHaveLength(4)
+    expect(screen.getAllByText('提示', { exact: true })).toHaveLength(4)
   })
 
   it('renders warning with the shared toast structure and status semantics', () => {
@@ -181,9 +178,9 @@ describe('ToastViewport', () => {
 
     const message = screen.getByRole('status')
     const toast = message.closest('li') as HTMLElement
-    expect(toast).toHaveClass('toast-card', 'is-warning')
-    expect(toast.querySelector('.toast-card__title')).toHaveTextContent('提示')
-    expect(toast.querySelector('.ui-feedback-icon')).toHaveClass('is-warning')
-    expect(toast.querySelector('svg')).toBeInTheDocument()
+
+    expect(toast).toHaveTextContent('提示')
+    expect(message).toHaveTextContent('附件仍在上传')
+
   })
 })

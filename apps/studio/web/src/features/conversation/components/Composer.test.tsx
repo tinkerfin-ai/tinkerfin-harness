@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect, useRef, useState } from 'react'
 import type { ComponentProps } from 'react'
@@ -35,6 +35,56 @@ function DraftComposer({ text, onDraftChange, ...props }: Omit<ComponentProps<ty
 }
 
 describe('Composer', () => {
+  it('新增附件定位使用当前动效偏好，卸载取消尚未执行的定位', () => {
+    const frames = new Map<number, FrameRequestCallback>()
+    let frameId = 0
+    let reduced = false
+    const matchMedia = window.matchMedia
+    const scrollDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView')
+    const scroll = vi.fn()
+    vi.stubGlobal('matchMedia', (query: string) => query === '(prefers-reduced-motion: reduce)'
+      ? { ...matchMedia(query), matches: reduced } : matchMedia(query))
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.set(++frameId, callback)
+      return frameId
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scroll })
+    const frame = () => act(() => {
+      const callbacks = [...frames.values()]
+      frames.clear()
+      callbacks.forEach(callback => callback(0))
+    })
+    const props = {
+      ...composerChromeProps(), text: '', isRunning: false,
+      onDraftChange: vi.fn(), onSend: vi.fn(), onStop: vi.fn(),
+    }
+    const attachment: DraftAttachment = { id: 'first', name: '报告.pdf', kind: 'document', size: 3, state: 'queued', progress: 0 }
+    const view = render(<DraftComposer {...props} />)
+    try {
+      view.rerender(<DraftComposer {...props} attachments={[attachment]} />)
+      frame()
+      expect(scroll).toHaveBeenLastCalledWith({ behavior: 'smooth', block: 'nearest', inline: 'end' })
+      view.rerender(<DraftComposer {...props} attachments={[attachment, { ...attachment, id: 'second' }]} />)
+      reduced = true
+      frame()
+      expect(scroll).toHaveBeenLastCalledWith({ behavior: 'instant', block: 'nearest', inline: 'end' })
+      view.rerender(<DraftComposer {...props} attachments={[attachment, { ...attachment, id: 'third' }]} />)
+      reduced = false
+      frame()
+      expect(scroll).toHaveBeenLastCalledWith({ behavior: 'smooth', block: 'nearest', inline: 'end' })
+      view.rerender(<DraftComposer {...props} attachments={[attachment, { ...attachment, id: 'fourth' }]} />)
+      view.unmount()
+      frame()
+      expect(scroll).toHaveBeenCalledTimes(3)
+    } finally {
+      view.unmount()
+      vi.unstubAllGlobals()
+      if (scrollDescriptor) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', scrollDescriptor)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+    }
+  })
+
   it.each([
     { label: '无技能', skills: [], skillsStatus: 'ready' as const },
     { label: '技能描述匹配部分路径', skills: [{ id: 'find-skills', name: 'find-skills', description: 'Discover and install skills' }], skillsStatus: 'ready' as const },

@@ -18,7 +18,7 @@
   [data-theme='dark'] .auth-ambient { background: radial-gradient(ellipse at 48% 46%, var(--color-canvas) 0 24%, transparent 68%), linear-gradient(155deg, var(--color-auth-blue) 0%, var(--color-canvas) 48%, var(--color-auth-violet) 100%); }
   .auth-ambient-art { position: absolute; z-index: var(--layer-local); inset: -6% -9%; width: 118%; height: 112%; }
   /* 图像与viewBox同步外扩，旋转时图层裁切边缘仍留在视口之外 */
-  .auth-ribbon { position: absolute; inset: -30%; width: 160%; height: 160%; transform-origin: center; will-change: transform; }
+  .auth-ribbon { position: absolute; inset: -30%; width: 160%; height: 160%; transform-origin: center; }
   .auth-ambient-mist { position: absolute; z-index: var(--layer-local); inset: 8% 4% 6% 6%; border-radius: var(--radius-pill); background: radial-gradient(ellipse at 8% 12%, rgb(105 177 255 / 15%), transparent 42%), radial-gradient(ellipse at 92% 90%, rgb(155 119 255 / 16%), transparent 44%); filter: blur(56px); }
 
   .auth-header { position: absolute; z-index: var(--layer-sticky); top: 0; right: var(--layout-page-gutter); left: var(--layout-page-gutter); height: var(--layout-header-height); display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
@@ -48,13 +48,9 @@
   .auth-password-toggle:focus-visible .ui-icon-button__icon { transform: scale(1.15); }
   .auth-password-toggle { border-radius: var(--radius-sm); }
   .auth-page ~ .toast-viewport { --radius-button: var(--radius-md); }
-  /* 错误仍供读屏读取，视觉反馈统一使用字段红框和ValidatedForm震动 */
-  .auth-field .ui-text-field__error, .auth-server-field .ui-text-field__label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .auth-server-field .ui-text-field__label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
   .auth-primary { position: relative; isolation: isolate; overflow: hidden; width: 100%; min-height: var(--control-xl); margin-top: var(--space-1); border: 0; border-radius: var(--radius-lg); box-shadow: none; }
-  .auth-primary::before { position: absolute; z-index: var(--layer-behind); inset: 0; width: 200%; content: ''; pointer-events: none; background: linear-gradient(110deg, transparent 20%, rgb(255 255 255 / 6%) 38%, rgb(255 255 255 / 18%) 50%, rgb(255 255 255 / 6%) 62%, transparent 80%); background-size: 50% 100%; transform: translateX(-50%); animation: auth-sheen var(--motion-auth-sheen) linear infinite; }
-  .auth-primary:disabled::before { animation-play-state: paused; opacity: 0; }
-  @keyframes auth-sheen { from { transform: translateX(-50%); } to { transform: translateX(0); } }
 
   .auth-server { margin-top: var(--space-1); }
   .auth-server summary { display: flex; align-items: center; gap: var(--space-2); min-height: 60px; padding: var(--space-1) 0; list-style: none; color: var(--color-text-secondary); cursor: pointer; font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
@@ -75,8 +71,6 @@
     .auth-header:has(.theme-switcher.is-expanded) .brand-logo__wordmark { visibility: hidden; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .auth-ribbon, .auth-ambient-mist { will-change: auto; }
-    .auth-primary::before { display: none; animation: none; }
     .auth-server summary > svg:last-child, .auth-field .ui-text-field__control { transition: none; }
   }
   @media (prefers-reduced-transparency: reduce) {

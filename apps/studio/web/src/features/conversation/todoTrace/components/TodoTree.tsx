@@ -45,9 +45,7 @@ export function TodoTree({ group }: { group: TodoGroup }) {
             {statusIcon(todo.status)}
           </span>
           <span className="todo-trace-todo-content">{todo.content}</span>
-          {todo.status !== 'completed' && todo.status !== 'pending' && (
-            <span className="todo-trace-status-label">{labels[todo.status]}</span>
-          )}
+          <span className={todo.status === 'completed' || todo.status === 'pending' ? 'visually-hidden' : 'todo-trace-status-label'}>{labels[todo.status]}</span>
         </li>
       ))}
     </ul>

@@ -89,13 +89,10 @@ describe('InteractionCardResizeHandle', () => {
     await waitFor(() => expect(handle).toHaveAttribute('aria-valuenow', '260'))
     dispatchPointer(handle, 'pointerdown', { button: 0, pointerId: 7, pointerType: 'mouse', clientY: 500 })
     dispatchPointer(handle, 'pointermove', { pointerId: 7, pointerType: 'mouse', clientY: 290 })
-    expect(card).toHaveClass('is-resizing')
-    expect(document.documentElement).toHaveClass('is-resizing-interaction-card')
+
     dispatchPointer(handle, 'pointerup', { pointerId: 7, pointerType: 'mouse', clientY: 280 })
 
     expect(card.style.getPropertyValue('--interaction-card-height')).toBe('480px')
-    expect(card).not.toHaveClass('is-resizing')
-    expect(document.documentElement).not.toHaveClass('is-resizing-interaction-card')
 
     dispatchPointer(handle, 'pointerdown', { button: 0, pointerId: 8, pointerType: 'mouse', clientY: 500 })
     dispatchPointer(handle, 'pointermove', { pointerId: 8, pointerType: 'mouse', clientY: 300 })

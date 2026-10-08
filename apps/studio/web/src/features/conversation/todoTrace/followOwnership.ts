@@ -14,11 +14,14 @@ export interface FollowHandoffResult {
 export class TaskTraceFollowOwnership {
   private currentThreadId = ''
   private epoch = 0
+  private generation = 0
   private records = new Map<string, FollowRecord>()
   private transition: Promise<void> = Promise.resolve()
 
   async handoff(nextThreadId: string): Promise<FollowHandoffResult> {
+    const generation = this.generation
     return this.enqueue(async () => {
+      if (generation !== this.generation) return { epoch: this.epoch, demotedThreadIds: [] }
       this.epoch += 1
       const demotedThreadIds: string[] = []
       const stopping = [...this.records.values()].filter((record) => {
@@ -29,6 +32,7 @@ export class TaskTraceFollowOwnership {
       })
       for (const record of stopping) record.controller.abort()
       await Promise.allSettled(stopping.map((record) => record.settled))
+      if (generation !== this.generation) return { epoch: this.epoch, demotedThreadIds: [] }
       this.currentThreadId = nextThreadId
       return { epoch: this.epoch, demotedThreadIds }
     })
@@ -41,14 +45,17 @@ export class TaskTraceFollowOwnership {
       signal: AbortSignal
     }) => Promise<void>,
   ): Promise<void> {
+    const generation = this.generation
     const record = await this.enqueue(async () => {
+      if (generation !== this.generation) return null
       const includeTaskTrace = threadId === this.currentThreadId
       const existing = this.records.get(threadId)
-      if (existing?.includeTaskTrace === includeTaskTrace) return existing
+      if (existing?.includeTaskTrace === includeTaskTrace && !existing.controller.signal.aborted) return existing
       if (existing) {
         existing.controller.abort()
         await Promise.allSettled([existing.settled])
       }
+      if (generation !== this.generation) return null
       const controller = new AbortController()
       const owner: FollowRecord = {
         threadId,
@@ -65,11 +72,13 @@ export class TaskTraceFollowOwnership {
       this.records.set(threadId, owner)
       return owner
     })
-    await record.settled
+    await record?.settled
   }
 
   async stop(threadId: string): Promise<void> {
+    const generation = this.generation
     await this.enqueue(async () => {
+      if (generation !== this.generation) return
       const record = this.records.get(threadId)
       if (!record) return
       record.controller.abort()
@@ -79,6 +88,8 @@ export class TaskTraceFollowOwnership {
 
   abortAll() {
     this.epoch += 1
+    this.generation += 1
+    this.currentThreadId = ''
     for (const record of this.records.values()) record.controller.abort()
   }
 

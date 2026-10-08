@@ -47,8 +47,6 @@ async function openFixture(page: Page, theme = 'light') {
     else if (path === '/api/skills/installations') data = []
     else if (path === '/api/models') data = { defaultModelId: 'model-0', items: [{ modelId: 'model-0', displayName: 'Model',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: false, isDefault: true }] }
     else if (path === '/api/automation/runs' || path === '/api/automation/tasks') data = { items: [], nextCursor: null }
-    else if (path === '/api/automation/runs/counts') data = {}
-    else if (path === '/api/automation/tasks/counts') data = { enabled: 0, paused: 0 }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history') data = {
       items: threadIds.map(threadId => ({ ...detail(threadId, null), status: 'idle', hasPendingInterrupt: false, pendingInteractionKind: null, updatedAt: '2026-09-21T00:00:00Z' })), nextCursor: null,
@@ -121,7 +119,6 @@ for (const theme of ['light', 'dark']) {
     await expect.poll(() => offset(page)).toBeCloseTo(-25, 0)
     expect(fixture.olderRequests).toEqual(['80', '0', '80', '0'])
     await expect(anchor(page)).not.toBeFocused()
-    await expect(anchor(page)).not.toHaveClass(/todo-trace-locate-target/)
   })
 }
 

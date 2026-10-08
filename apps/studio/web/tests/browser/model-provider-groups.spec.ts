@@ -27,7 +27,6 @@ async function prepare(page: Page, theme: string) {
     else if (path === '/api/models') data = { items: models, defaultModelId: 'model-0' }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/conversation/history' || path === '/api/automation/tasks' || path === '/api/automation/runs') data = { items: [], nextCursor: null }
-    else if (path === '/api/automation/tasks/counts') data = { enabled: 0, paused: 0 }
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
   await installNotificationStream(page)

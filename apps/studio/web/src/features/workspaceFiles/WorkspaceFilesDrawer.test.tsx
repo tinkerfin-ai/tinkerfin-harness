@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { WorkspaceFilesDrawer } from './WorkspaceFilesDrawer'
 import type { WorkspaceFilesState } from './useWorkspaceFiles'
@@ -12,6 +12,26 @@ const state = (): WorkspaceFilesState => ({
   toggleDirectory: vi.fn(), selectFile: vi.fn(), retryDirectory: vi.fn(), loadMore: vi.fn(), refreshPreview: vi.fn(), refresh: vi.fn(),
 })
 const props = { projectName: '项目 A', open: true, fullPage: false, onClose: vi.fn(), onToast: vi.fn() }
+
+it.each(['unmount', 'close', 'select'] as const)('复制在 %s 后完成时不再发送旧文件的提示', async action => {
+  const descriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+  let complete!: () => void
+  const written = new Promise<void>(resolve => { complete = resolve })
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn(() => written) } })
+  try {
+    const onToast = vi.fn()
+    const files = { ...state(), selected: file('/page.html') }
+    const view = render(<WorkspaceFilesDrawer {...props} state={files} onToast={onToast} />)
+    fireEvent.click(screen.getByRole('button', { name: '复制路径' }))
+    if (action === 'unmount') view.unmount()
+    else view.rerender(<WorkspaceFilesDrawer {...props} state={action === 'select' ? { ...files, selected: file('/other.py') } : files} open={action !== 'close'} onToast={onToast} />)
+    await act(async () => { complete(); await written })
+    expect(onToast).not.toHaveBeenCalled()
+  } finally {
+    if (descriptor) Object.defineProperty(navigator, 'clipboard', descriptor)
+    else Reflect.deleteProperty(navigator, 'clipboard')
+  }
+})
 
 it('已有目录刷新期间分页显示忙碌且禁用，刷新完成后可加载下一页', () => {
   const files = state()

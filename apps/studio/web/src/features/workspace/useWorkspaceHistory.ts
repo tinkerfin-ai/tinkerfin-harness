@@ -383,6 +383,7 @@ export function useWorkspaceHistory({
   const historyThreadIdsRef = useRef<string[]>([])
   const searchOnlyThreadIds = useRef(new Set<string>())
   const normalizedHistoryQuery = historyQuery.trim()
+  const searchEnabled = searchOpen && normalizedHistoryQuery.length > 0
   const searchCriteria = useMemo(() => ({ projectId, archived, scope: searchScope, query: normalizedHistoryQuery }), [projectId, archived, searchScope, normalizedHistoryQuery])
   const [settledSearch, setSettledSearch] = useState<typeof searchCriteria | null>(null)
   const normalizedHistoryQueryRef = useRef(normalizedHistoryQuery)
@@ -639,7 +640,7 @@ export function useWorkspaceHistory({
     setSearchLoadError(null)
     setSearchLoadingMore(false)
 
-    if (!searchOpen) {
+    if (!searchEnabled) {
       setHistorySearching(false)
       return
     }
@@ -708,7 +709,7 @@ export function useWorkspaceHistory({
       historySearchAbortController.current?.abort()
       historySearchAbortController.current = null
     }
-  }, [projectId, archived, searchScope, defaultModelId, normalizedHistoryQuery, searchCriteria, searchOpen, searchRetryVersion, setWorkspace, t])
+  }, [projectId, archived, searchScope, defaultModelId, normalizedHistoryQuery, searchCriteria, searchEnabled, searchRetryVersion, setWorkspace, t])
 
   const retryHistoryBootstrap = useCallback(() => {
     setHistoryBootstrapStatus('loading')
@@ -790,7 +791,7 @@ export function useWorkspaceHistory({
     const cursor = searchCursor
     const query = normalizedHistoryQuery
     if (
-      !searchOpen
+      !searchEnabled
       || !cursor
       || loadedSearchCursors.current.has(cursor)
       || (
@@ -859,17 +860,18 @@ export function useWorkspaceHistory({
       historySearchLoadingRef.current = false
       if (!controller.signal.aborted) setSearchLoadingMore(false)
     })
-  }, [projectId, archived, searchScope, defaultModelId, normalizedHistoryQuery, searchOpen, searchCursor, searchLoadError, setWorkspace, t])
+  }, [projectId, archived, searchScope, defaultModelId, normalizedHistoryQuery, searchEnabled, searchCursor, searchLoadError, setWorkspace, t])
 
   const retryHistoryLoad = useCallback(() => loadMoreNormalHistory(true), [loadMoreNormalHistory])
 
   const retryHistorySearch = useCallback(() => {
+    if (!searchEnabled) return
     if (searchLoadError && searchCursor == null) {
       setSearchRetryVersion(value => value + 1)
       return
     }
     loadMoreSearchHistory(true)
-  }, [loadMoreSearchHistory, searchCursor, searchLoadError])
+  }, [loadMoreSearchHistory, searchEnabled, searchCursor, searchLoadError])
 
   const hydrateTaskTrace = useCallback(async (threadId: string, isRetry = false) => {
     const target = latestWorkspace.current.conversations.find(
@@ -1229,11 +1231,11 @@ export function useWorkspaceHistory({
       item != null && item.projectId === projectId && item.archived === archived)
   }, [historyThreadIds, archived, projectId, workspace.conversations])
   const searchConversations = useMemo(() => {
-    if (!searchOpen || settledSearch !== searchCriteria) return []
+    if (!searchEnabled || settledSearch !== searchCriteria) return []
     const byId = new Map(workspace.conversations.map(item => [item.threadId, item]))
     return searchThreadIds.map(id => byId.get(id)).filter((item): item is Conversation =>
       item != null && item.archived === archived && (searchScope === 'all' || item.projectId === projectId))
-  }, [searchThreadIds, archived, projectId, searchScope, workspace.conversations, searchOpen, settledSearch, searchCriteria])
+  }, [searchThreadIds, archived, projectId, searchScope, workspace.conversations, searchEnabled, settledSearch, searchCriteria])
 
   useEffect(() => {
     if (modelCatalogStatus === 'loading') return
@@ -1396,7 +1398,7 @@ export function useWorkspaceHistory({
     historyDayRanges,
     historyQuery,
     setHistoryQuery,
-    isHistorySearching: searchOpen && (isHistorySearching || settledSearch !== searchCriteria),
+    isHistorySearching: searchEnabled && (isHistorySearching || settledSearch !== searchCriteria),
     searchConversations,
     searchCursor,
     isSearchLoadingMore,

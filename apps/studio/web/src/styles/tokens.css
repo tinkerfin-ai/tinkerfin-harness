@@ -166,7 +166,9 @@
     --layout-panel-inset: 20px;
     --layout-form-width: 712px;
     --layout-dialog-width: 440px;
-    --layout-conversation-search-width: 560px;
+    --layout-conversation-search-width: 580px;
+    --layout-conversation-search-height: 480px;
+    --layout-toolbar-search-width: calc(var(--space-16) * 2 + var(--space-12));
     --layout-action-width: 400px;
     --layout-document-width: 1040px;
     --layout-auth-width: 344px;

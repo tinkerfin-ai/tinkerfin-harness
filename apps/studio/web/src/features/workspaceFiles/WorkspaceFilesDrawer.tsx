@@ -24,6 +24,11 @@ export function WorkspaceFilesDrawer({ projectName, state, open, fullPage, resiz
   const [detailVisible, setDetailVisible] = useState(false)
   const returnToTree = useRef(false)
   const selectedPath = state.selected?.path
+  const copyAttempt = useRef(0)
+  useLayoutEffect(() => {
+    copyAttempt.current += 1
+    return () => { copyAttempt.current += 1 }
+  }, [open, selectedPath])
   const previousPath = useRef(selectedPath)
   const readerPosition = useRef({ top: 0, left: 0 })
   useLayoutEffect(() => {
@@ -41,9 +46,14 @@ export function WorkspaceFilesDrawer({ projectName, state, open, fullPage, resiz
     if (viewport) { viewport.scrollTop = readerPosition.current.top; viewport.scrollLeft = readerPosition.current.left }
   }, [selectedPath, state.preview])
   const copyPath = async () => {
-    if (!selectedPath) return
-    try { await navigator.clipboard.writeText(selectedPath); onToast('success', t('已复制路径')) }
-    catch { onToast('error', t('复制失败')) }
+    if (!open || !selectedPath) return
+    const attempt = ++copyAttempt.current
+    try {
+      await navigator.clipboard.writeText(selectedPath)
+      if (attempt === copyAttempt.current) onToast('success', t('已复制路径'))
+    } catch {
+      if (attempt === copyAttempt.current) onToast('error', t('复制失败'))
+    }
   }
   const backToTree = () => {
     returnToTree.current = true
@@ -60,8 +70,8 @@ export function WorkspaceFilesDrawer({ projectName, state, open, fullPage, resiz
     backLabel={t('返回对话')} onClose={onClose} resizeHandle={resizeHandle} data-workspace-layout-target="workspace-files-drawer"
     actions={<IconButton size="xs" label={t('刷新文件')} tooltip={t('刷新文件')} icon={<RefreshCw size={18} />} onClick={state.refresh} />}>
     <div className="workspace-files-content">
-      {state.availability === 'loading' ? <FeedbackState kind="loading" title={t('正在加载工作区')} compact />
-        : state.availability === 'paused' || state.availability === 'unavailable' ? <FeedbackState kind="error" title={unavailable} appearance="retry" onRetry={state.refresh} compact />
+      {state.availability === 'loading' ? <div className="workspace-files-feedback"><FeedbackState kind="loading" title={t('正在加载工作区')} compact /></div>
+        : state.availability === 'paused' || state.availability === 'unavailable' ? <div className="workspace-files-feedback"><FeedbackState kind="error" title={unavailable} appearance="retry" onRetry={state.refresh} compact /></div>
           : empty ? <div className="workspace-files-empty"><FolderOpen size={28} aria-hidden="true" /><h3>{t('工作区尚无文件')}</h3><p>{t('会话中创建的文件会显示在这里')}</p></div>
             : <div className="workspace-files-layout" data-detail-visible={Boolean(detailVisible && selected)}>
               <div className="workspace-files-tree-region">

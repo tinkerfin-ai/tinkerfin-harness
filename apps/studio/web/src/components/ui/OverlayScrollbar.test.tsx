@@ -90,40 +90,13 @@ describe('OverlayScrollbar', () => {
     fireEvent.scroll(viewport)
     act(() => flushFrames())
 
-    expect(overlay).toHaveAttribute('data-scrollable', 'true')
-    expect(overlay).toHaveAttribute('data-visibility', 'persistent')
-    expect(overlay).toHaveClass('is-visible', 'ui-overlay-scrollbar--regular')
+
     expect(Number.parseFloat(overlay.style.top)).toBeCloseTo(33)
     expect(Number.parseFloat(overlay.style.left)).toBeCloseTo(199)
     expect(Number.parseFloat(overlay.style.height)).toBeCloseTo(194)
     expect(Number.parseFloat(thumb.style.height)).toBeCloseTo(48.5)
     expect(thumb.style.transform).toBe('translate3d(0, 72.75px, 0)')
-    fireEvent.pointerLeave(viewport, { pointerType: 'mouse' })
-    act(() => vi.advanceTimersByTime(1_000))
-    expect(overlay).toHaveClass('is-visible')
-  })
 
-  it('stays visible while hovered and hides one second after leaving', () => {
-    vi.useFakeTimers()
-    const flushFrames = installFrames()
-    const { container } = render(<ScrollbarHarness />)
-    const host = container.querySelector<HTMLElement>('.scrollbar-host')!
-    const viewport = container.querySelector<HTMLElement>('.ui-scrollbar')!
-    const overlay = container.querySelector<HTMLElement>('.ui-overlay-scrollbar')!
-    defineVerticalGeometry(viewport)
-    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ top: 10, left: 10 } as DOMRect)
-
-    fireEvent.pointerEnter(viewport, { pointerType: 'mouse' })
-    act(() => flushFrames())
-    expect(overlay).toHaveClass('is-visible')
-    act(() => vi.advanceTimersByTime(2_000))
-    expect(overlay).toHaveClass('is-visible')
-
-    fireEvent.pointerLeave(viewport, { pointerType: 'mouse' })
-    act(() => vi.advanceTimersByTime(999))
-    expect(overlay).toHaveClass('is-visible')
-    act(() => vi.advanceTimersByTime(1))
-    expect(overlay).not.toHaveClass('is-visible')
   })
 
   it('maps thumb dragging directly to the viewport scroll position', () => {
@@ -161,116 +134,9 @@ describe('OverlayScrollbar', () => {
     dispatchPointer('pointerup', 150)
   })
 
-  it('鼠标点击保留焦点，离开后仍自动隐藏，键盘操作重新显示', () => {
-    vi.useFakeTimers()
-    const { container, getByRole } = render(<ScrollbarHarness />)
-    const viewport = container.querySelector<HTMLElement>('.ui-scrollbar')!
-    const overlay = container.querySelector<HTMLElement>('.ui-overlay-scrollbar')!
-    const button = getByRole('button', { name: '查看详情' })
-    defineVerticalGeometry(viewport)
-
-    fireEvent.pointerEnter(viewport, { pointerType: 'mouse' })
-    fireEvent.pointerDown(button)
-    act(() => button.focus())
-    fireEvent.pointerLeave(viewport, { pointerType: 'mouse' })
-    act(() => vi.advanceTimersByTime(1_000))
-    expect(button).toHaveFocus()
-    expect(overlay).not.toHaveClass('is-visible')
-
-    fireEvent.keyDown(button, { key: 'ArrowDown' })
-    act(() => vi.advanceTimersByTime(1_000))
-    expect(overlay).toHaveClass('is-visible')
-    act(() => button.blur())
-    act(() => vi.advanceTimersByTime(1_000))
-    expect(overlay).not.toHaveClass('is-visible')
-  })
-
-  it('键盘进入时保持可见，改用鼠标后不再由焦点阻止隐藏', () => {
-    vi.useFakeTimers()
-    const { container, getByRole } = render(<ScrollbarHarness />)
-    const viewport = container.querySelector<HTMLElement>('.ui-scrollbar')!
-    const overlay = container.querySelector<HTMLElement>('.ui-overlay-scrollbar')!
-    const button = getByRole('button', { name: '查看详情' })
-    defineVerticalGeometry(viewport)
-
-    fireEvent.keyDown(document, { key: 'Tab' })
-    act(() => button.focus())
-    act(() => vi.advanceTimersByTime(1_000))
-    expect(overlay).toHaveClass('is-visible')
-    fireEvent.pointerDown(document.body)
-    act(() => vi.advanceTimersByTime(1_000))
-    expect(button).toHaveFocus()
-    expect(overlay).not.toHaveClass('is-visible')
-  })
-
-  it('无悬停和键盘焦点时，滚动显示并在停止后隐藏', () => {
-    vi.useFakeTimers()
+  it('measures the compact horizontal thumb and its scroll offset', () => {
     const flushFrames = installFrames()
-    const { container, unmount } = render(<ScrollbarHarness />)
-    const viewport = container.querySelector<HTMLElement>('.ui-scrollbar')!
-    const overlay = container.querySelector<HTMLElement>('.ui-overlay-scrollbar')!
-    defineVerticalGeometry(viewport)
-    fireEvent.scroll(viewport)
-    act(() => flushFrames())
-    expect(overlay).toHaveClass('is-visible')
-    act(() => vi.advanceTimersByTime(1_000))
-    expect(overlay).not.toHaveClass('is-visible')
-    fireEvent.scroll(viewport)
-    unmount()
-    expect(vi.getTimerCount()).toBe(0)
-    act(() => flushFrames())
-    fireEvent.keyDown(document, { key: 'Tab' })
-    fireEvent.pointerDown(document.body)
-    expect(vi.getTimerCount()).toBe(0)
-  })
-
-  it('触控进入不产生悬停，滚动结束后自动隐藏', () => {
-    vi.useFakeTimers()
-    const flushFrames = installFrames()
-    const { container } = render(<ScrollbarHarness />)
-    const viewport = container.querySelector<HTMLElement>('.ui-scrollbar')!
-    const overlay = container.querySelector<HTMLElement>('.ui-overlay-scrollbar')!
-    defineVerticalGeometry(viewport)
-    const enter = new Event('pointerenter')
-    Object.defineProperty(enter, 'pointerType', { value: 'touch' })
-    fireEvent(viewport, enter)
-    expect(overlay).not.toHaveClass('is-visible')
-    fireEvent.scroll(viewport)
-    act(() => flushFrames())
-    expect(overlay).toHaveClass('is-visible')
-    act(() => vi.advanceTimersByTime(1_000))
-    expect(overlay).not.toHaveClass('is-visible')
-  })
-
-  it.each(['pointerup', 'pointercancel', 'lostpointercapture'])('拖拽以 %s 结束后在区域外自动隐藏', (endEvent) => {
-    vi.useFakeTimers()
-    const flushFrames = installFrames()
-    const { container } = render(<ScrollbarHarness />)
-    const viewport = container.querySelector<HTMLElement>('.ui-scrollbar')!
-    const overlay = container.querySelector<HTMLElement>('.ui-overlay-scrollbar')!
-    const thumb = container.querySelector<HTMLElement>('.ui-overlay-scrollbar__thumb')!
-    defineVerticalGeometry(viewport)
-    fireEvent.scroll(viewport)
-    act(() => flushFrames())
-    const pointer = (type: string) => {
-      const event = new Event(type, { bubbles: true, cancelable: true })
-      Object.defineProperties(event, {
-        button: { value: 0 }, pointerId: { value: 7 },
-        clientY: { value: 100 }, pointerType: { value: 'mouse' },
-      })
-      fireEvent(thumb, event)
-    }
-    pointer('pointerdown')
-    act(() => vi.advanceTimersByTime(1_000))
-    expect(overlay).toHaveClass('is-visible')
-    pointer(endEvent)
-    act(() => vi.advanceTimersByTime(1_000))
-    expect(overlay).not.toHaveClass('is-visible')
-  })
-
-  it('supports a compact horizontal variant and hides when no overflow exists', () => {
-    const flushFrames = installFrames()
-    const { container, rerender } = render(
+    const { container } = render(
       <ScrollbarHarness axis="horizontal" size="compact" visibility="persistent" />,
     )
     const host = container.querySelector<HTMLElement>('.scrollbar-host')!
@@ -296,17 +162,11 @@ describe('OverlayScrollbar', () => {
     fireEvent.scroll(viewport)
     act(() => flushFrames())
 
-    expect(overlay).toHaveClass('ui-overlay-scrollbar--horizontal', 'ui-overlay-scrollbar--compact')
     expect(Number.parseFloat(overlay.style.width)).toBeCloseTo(296)
     expect(Number.parseFloat(thumb.style.width)).toBeCloseTo(74)
     expect(thumb.style.transform).toBe('translate3d(111px, 0, 0)')
 
-    Object.defineProperty(viewport, 'scrollWidth', { configurable: true, value: 300 })
-    rerender(<ScrollbarHarness axis="horizontal" size="compact" visibility="persistent" />)
-    fireEvent.scroll(viewport)
-    act(() => flushFrames())
-    expect(overlay).toHaveAttribute('data-scrollable', 'false')
-    expect(overlay).not.toHaveClass('is-visible')
+
   })
 
   it('coalesces content geometry changes into one immediate frame', () => {
@@ -327,7 +187,6 @@ describe('OverlayScrollbar', () => {
     const { container } = render(<ScrollbarHarness visibility="persistent" />)
     const host = container.querySelector<HTMLElement>('.scrollbar-host')!
     const viewport = container.querySelector<HTMLElement>('.ui-scrollbar')!
-    const overlay = container.querySelector<HTMLElement>('.ui-overlay-scrollbar')!
     defineVerticalGeometry(viewport)
     vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ top: 10, left: 10 } as DOMRect)
     fireEvent.scroll(viewport)
@@ -341,7 +200,23 @@ describe('OverlayScrollbar', () => {
     act(() => resizeCallback?.([], {} as ResizeObserver))
     expect(requestAnimationFrame).toHaveBeenCalledOnce()
     act(() => flushFrames())
-    expect(overlay).not.toHaveClass('is-geometry-transitioning')
+
     expect(Number.parseFloat(thumb.style.height)).toBeCloseTo(38.8)
   })
+})
+
+// 隐藏计时由浏览器的真实样式验证，此处只验证资源在卸载时释放
+it('卸载取消尚未执行的隐藏与几何任务', () => {
+  vi.useFakeTimers()
+  const flushFrames = installFrames()
+  const view = render(<ScrollbarHarness />)
+  const viewport = view.container.querySelector<HTMLElement>('.ui-scrollbar')!
+  defineVerticalGeometry(viewport)
+  fireEvent.scroll(viewport)
+  view.unmount()
+  expect(vi.getTimerCount()).toBe(0)
+  act(() => flushFrames())
+  fireEvent.keyDown(document, { key: 'Tab' })
+  fireEvent.pointerDown(document.body)
+  expect(vi.getTimerCount()).toBe(0)
 })

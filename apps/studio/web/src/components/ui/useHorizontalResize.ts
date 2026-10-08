@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState, type PointerEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
 
-/** 指针捕获期间合并调宽预览；取消手势或卸载时交还原有宽度 */
-export function useHorizontalResize({ width, multiplier, previewWidth, commit, cancel }: {
+/** 指针捕获合并调宽预览，键盘按同一方向调整；取消手势或卸载时交还原有宽度 */
+export function useHorizontalResize({ width, min, max, multiplier, previewWidth, commit, cancel }: {
   width: number
+  min: number
+  max: number
   multiplier: number
   previewWidth: (width: number) => void
   commit: (width: number) => void
   cancel: () => void
 }) {
-  const current = useRef({ width, multiplier, previewWidth, commit, cancel })
-  current.current = { width, multiplier, previewWidth, commit, cancel }
+  const current = useRef({ width, min, max, multiplier, previewWidth, commit, cancel })
+  current.current = { width, min, max, multiplier, previewWidth, commit, cancel }
   const drag = useRef<{ id: number; origin: number; base: number; latest: number } | null>(null)
   const frame = useRef<number | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -35,6 +37,18 @@ export function useHorizontalResize({ width, multiplier, previewWidth, commit, c
 
   return {
     dragging,
+    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+      if (drag.current) return
+      const options = current.current
+      const width = event.key === 'Home' ? options.min
+        : event.key === 'End' ? options.max
+          : event.key === 'ArrowLeft' ? options.width - 16 * options.multiplier
+            : event.key === 'ArrowRight' ? options.width + 16 * options.multiplier
+              : undefined
+      if (width === undefined) return
+      event.preventDefault()
+      options.commit(Math.max(options.min, Math.min(options.max, width)))
+    },
     onPointerDown: (event: PointerEvent<HTMLElement>) => {
       if (event.button !== 0 || drag.current) return
       event.preventDefault()

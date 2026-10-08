@@ -1,25 +1,46 @@
 @layer workspace {
-  .conversation-search-dialog { width: min(100%, var(--layout-conversation-search-width)); max-height: calc(100dvh - var(--space-8)); display: flex; flex-direction: column; }
-  .conversation-search-body { padding: var(--space-4) var(--dialog-content-padding) 0; }
+  .conversation-search-dialog {
+    width: min(100%, var(--layout-conversation-search-width));
+    max-height: calc(100dvh - var(--layout-page-gutter) * 2);
+    align-self: start;
+    margin-block-start: max(0px, calc((100dvh - var(--layout-conversation-search-height)) / 2 - var(--layout-page-gutter)));
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+    border: 0;
+    border-radius: var(--radius-xl);
+  }
+  .conversation-search-dialog.has-query { height: min(var(--layout-conversation-search-height), calc(100dvh - var(--layout-page-gutter) * 2)); }
+  .conversation-search-dialog .modal-dialog-head { align-items: center; gap: var(--space-1); padding: var(--space-3) var(--dialog-content-padding) 0; flex-shrink: 0; }
+  .conversation-search-dialog .modal-dialog-head h2 { font-size: var(--type-ui-size); line-height: var(--type-ui-line); font-weight: var(--weight-ui); }
+  .conversation-search-dialog .modal-dialog-head > .ui-icon-button-wrap { margin: 0; }
+  .conversation-search-scope { margin-left: auto; }
+  .conversation-search-scope .ui-compact-picker-trigger > svg { flex: 0 0 var(--icon-sm); }
+  .conversation-search-body { padding: var(--space-2) var(--dialog-content-padding) var(--space-3); flex-shrink: 0; }
   .conversation-search-field { position: relative; }
-  .conversation-search-field .ui-compact-picker { position: static; }
-  /* 菜单跟随完整输入框，右侧内缩包含输入框边线和内边距 */
-  .conversation-search-field .ui-compact-picker-options { right: calc(var(--space-3) + 1px); }
+  .conversation-search-field .ui-text-field__control { padding-inline: 0; border: 0; border-bottom: 2px solid var(--color-border); border-radius: 0; background: transparent; box-shadow: none; }
+  .conversation-search-field .ui-text-field__control:focus-within { border-color: var(--color-border); }
+  .conversation-search-field input { font-size: var(--type-body-size); }
+  .conversation-search-field input::-webkit-search-cancel-button { display: none; }
   /* 两个范围共用文本列，切换到较短译文时保持按钮和菜单对齐 */
   .conversation-search-scope-label { display: grid; text-align: start; }
   .conversation-search-scope-label > span { grid-area: 1 / 1; }
   .conversation-search-scope-label > span[aria-hidden='true'] { visibility: hidden; }
-  .conversation-search-heading { margin: var(--space-4) 0 var(--space-2); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--color-text-secondary); }
-  .conversation-search-results-shell { position: relative; min-height: 0; }
-  .conversation-search-results { overflow-y: auto; max-height: min(40dvh, calc(var(--space-16) * 5)); min-height: var(--space-16); padding: 0 var(--space-3) var(--space-3); }
+  .conversation-search-heading { margin: 0; padding: var(--space-3) var(--dialog-content-padding) var(--space-2); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--color-text-secondary); flex-shrink: 0; }
+  .conversation-search-results-shell { display: flex; flex-direction: column; position: relative; min-height: 0; flex: 1; border-top: 1px solid var(--color-border-subtle); }
+  .conversation-search-results { display: flex; flex-direction: column; overflow-y: auto; min-height: 0; flex: 1; padding: 0 var(--space-3) var(--space-3); }
   .conversation-search-list { display: flex; flex-direction: column; gap: var(--space-1); }
-  .conversation-search-result { width: 100%; min-height: var(--control-lg); justify-content: flex-start; gap: var(--space-3); padding: var(--space-2); text-align: start; }
+  .conversation-search-result { width: 100%; min-height: var(--space-16); justify-content: flex-start; padding: var(--space-2) var(--space-3); text-align: start; border-radius: var(--radius-sm); }
   .conversation-search-result[aria-selected='true'] { background: var(--color-active); }
-  .conversation-search-result .ui-button__label { min-width: 0; flex: 1; }
-  .conversation-search-result-copy { display: grid; min-width: 0; gap: var(--space-0-5); }
+  .conversation-search-result .ui-button__label { display: flex; align-items: center; justify-content: space-between; min-width: 0; flex: 1; gap: var(--space-4); }
+  .conversation-search-result-copy { display: grid; min-width: 0; gap: var(--space-0-5); flex: 1; }
   .conversation-search-result-copy > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .conversation-search-result-copy small { color: var(--color-text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
-  .conversation-search-empty { margin: 0; padding: var(--space-5) var(--space-2); color: var(--color-text-secondary); }
+  .conversation-search-result-date { color: var(--color-text-secondary); font-size: var(--type-caption-size); flex-shrink: 0; }
+  .conversation-search-results > .ui-feedback-state { max-width: 100%; margin: auto; flex-shrink: 0; }
+  .conversation-search-results > .ui-feedback-state.is-loading { width: max-content; grid-template-columns: auto minmax(0, 1fr); border: 0; background: transparent; }
+  .conversation-search-empty { margin: auto; padding: var(--space-5) var(--space-2); text-align: center; color: var(--color-text-secondary); }
   .conversation-search-more { width: 100%; margin-top: var(--space-2); }
-  .conversation-search-footer { padding: var(--space-2) var(--dialog-content-padding); border-top: 1px solid var(--color-border-subtle); color: var(--color-text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
+  .conversation-search-footer { padding: var(--space-2) var(--dialog-content-padding); border-top: 1px solid var(--color-border-subtle); color: var(--color-text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line); flex-shrink: 0; }
+  @media (max-width: 440px) { .conversation-search-result-date { display: none; } }
 }

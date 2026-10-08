@@ -1556,7 +1556,7 @@ describe('弹框搜索的独立窗口', () => {
       : normalResponse.promise)
     const { result } = renderHook(() => useBootstrapHarness())
     await act(async () => vi.advanceTimersByTimeAsync(0))
-    act(() => { result.current.setSearchScope('all'); result.current.setSearchOpen(true) })
+    act(() => { result.current.setSearchScope('all'); result.current.setSearchOpen(true); result.current.history.setHistoryQuery('跨项目') })
     await act(async () => vi.advanceTimersByTimeAsync(300))
     expect(result.current.history.searchConversations.map(item => item.threadId)).toEqual([remote.threadId])
     expect(result.current.workspace.currentThreadId).toBe('')
@@ -1582,7 +1582,7 @@ describe('弹框搜索的独立窗口', () => {
     })
     const { result } = renderHook(() => useHarness(detail(), { catalogReady: true }))
     await act(async () => vi.advanceTimersByTimeAsync(0))
-    act(() => { result.current.setSearchScope('all'); result.current.setSearchOpen(true) })
+    act(() => { result.current.setSearchScope('all'); result.current.setSearchOpen(true); result.current.history.setHistoryQuery('跨项目') })
     await act(async () => vi.advanceTimersByTimeAsync(300))
     expect(result.current.history.searchConversations.map(item => item.threadId)).toEqual(firstPage.map(item => item.threadId))
     act(() => result.current.history.loadMoreSearchHistory(true))
@@ -1596,24 +1596,52 @@ describe('弹框搜索的独立窗口', () => {
     expect(result.current.history.historyConversations.map(item => item.threadId)).toEqual([initial.threadId])
   })
 
-  it('空查询可读取全部项目近期会话并分页，侧栏窗口保持当前项目', async () => {
+  it('空白查询不读取或订阅搜索结果，切换范围、分页与重试保持空闲', async () => {
     const initial = historyItemFromDetail(detail())
-    const remote = { ...initial, projectId: 'other-project', threadId: 'remote', title: '跨项目会话' }
-    const next = { ...remote, threadId: 'remote-next', title: '更多跨项目会话' }
-    historyMocks.list.mockImplementation(params => Promise.resolve(params.scope === 'all'
-      ? { items: params.cursor ? [remote, next] : [remote], nextCursor: params.cursor ? null : 'next' }
-      : { items: [initial], nextCursor: null }))
+    historyMocks.list.mockResolvedValue({ items: [initial], nextCursor: null })
     const { result, unmount } = renderHook(() => useHarness(detail(), { catalogReady: true }))
     await act(async () => vi.advanceTimersByTimeAsync(0))
-    act(() => { result.current.setSearchScope('all'); result.current.setSearchOpen(true) })
+    act(() => result.current.setSearchOpen(true))
     await act(async () => vi.advanceTimersByTimeAsync(300))
-    expect(result.current.history.searchConversations.map(item => item.threadId)).toEqual(['remote'])
-    expect(result.current.history.historyConversations.map(item => item.threadId)).toEqual([initial.threadId])
-    act(() => result.current.history.loadMoreSearchHistory(true))
-    await act(async () => vi.advanceTimersByTimeAsync(0))
-    expect(result.current.history.searchConversations.map(item => item.threadId)).toEqual(['remote', 'remote-next'])
+    act(() => { result.current.setSearchScope('all'); result.current.history.setHistoryQuery('   ') })
+    await act(async () => vi.advanceTimersByTimeAsync(300))
+    act(() => { result.current.history.loadMoreSearchHistory(true); result.current.history.retryHistorySearch() })
+    await act(async () => { notices.changed('studio.conversation.title.changed', initial.threadId); await vi.advanceTimersByTimeAsync(0) })
+    expect(historyMocks.list.mock.calls.filter(([params]) => params.scope)).toEqual([])
+    expect(result.current.history.searchConversations).toEqual([])
+    expect(result.current.history.isHistorySearching).toBe(false)
     expect(result.current.history.searchCursor).toBeNull()
+    expect(result.current.history.historyConversations.map(item => item.threadId)).toEqual([initial.threadId])
     unmount()
+  })
+
+  it.each(['baseline', 'page'] as const)('清空查询取消在途%s读取，迟到响应不能填回结果', async phase => {
+    const initial = historyItemFromDetail(detail({ status: { execution: 'succeeded', headRunId: RUN_ID } }))
+    const remote = { ...initial, projectId: 'other-project', threadId: 'remote', title: '跨项目会话' }
+    const pending = deferred<{ items: typeof initial[]; nextCursor: null }>()
+    let signal: AbortSignal | undefined
+    historyMocks.list.mockImplementation(params => {
+      if (!params.scope) return Promise.resolve({ items: [initial], nextCursor: null })
+      if (phase === 'baseline' || params.cursor) { signal = params.signal; return pending.promise }
+      return Promise.resolve({ items: [remote], nextCursor: 'next' })
+    })
+    const { result } = renderHook(() => useHarness(detail(), { catalogReady: true }))
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => { result.current.setSearchScope('all'); result.current.setSearchOpen(true); result.current.history.setHistoryQuery('跨项目') })
+    await act(async () => vi.advanceTimersByTimeAsync(300))
+    if (phase === 'page') act(() => result.current.history.loadMoreSearchHistory(true))
+    expect(signal?.aborted).toBe(false)
+    act(() => result.current.history.setHistoryQuery('   '))
+    expect(signal?.aborted).toBe(true)
+    expect(result.current.history.searchConversations).toEqual([])
+    expect(result.current.history.isHistorySearching).toBe(false)
+    expect(result.current.history.isSearchLoadingMore).toBe(false)
+    expect(result.current.history.searchCursor).toBeNull()
+    await act(async () => pending.resolve({ items: [remote], nextCursor: null }))
+    await act(async () => vi.advanceTimersByTimeAsync(300))
+    expect(result.current.history.searchConversations).toEqual([])
+    expect(result.current.workspace.conversations.some(item => item.threadId === remote.threadId)).toBe(false)
+    expect(result.current.history.historyConversations.map(item => item.threadId)).toEqual([initial.threadId])
   })
 
   it('改查询和关闭撤销请求，迟到搜索不能替换结果或侧栏', async () => {

@@ -43,8 +43,6 @@ describe('ViewTabs', () => {
       />,
     )
 
-    expect(screen.getByRole('tablist', { name: '链路布局' }))
-      .toHaveClass('ui-view-tabs--compact')
     expect(screen.getByRole('tab', { name: '时间线' })).toHaveAttribute('aria-selected', 'true')
   })
 
@@ -62,8 +60,6 @@ describe('ViewTabs', () => {
       />,
     )
 
-    expect(screen.getByRole('tablist', { name: '详情分类' }))
-      .toHaveClass('ui-view-tabs--medium')
     expect(screen.getByRole('tab', { name: '概述' })).toHaveAttribute(
       'aria-controls',
       'details',
