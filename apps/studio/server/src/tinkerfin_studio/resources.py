@@ -403,6 +403,7 @@ def build_lifespan():
                                 ),
                             ),
                             config=OpenSandboxConfig(
+                                image=sandbox_settings.image,
                                 # 用户工作区跨会话保留，由明确的清理操作结束生命周期
                                 ttl=None,
                                 resource={

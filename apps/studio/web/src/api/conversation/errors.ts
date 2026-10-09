@@ -1,5 +1,4 @@
 import { SseError } from '../shared/sse'
-import { ApiError } from '../shared/http'
 import { translateCurrent, type TranslationKey } from '../../i18n'
 
 const conversationErrorMessageKeys = {
@@ -14,6 +13,8 @@ const conversationErrorMessageKeys = {
   run_request_failed: '对话请求失败，请重试',
   run_failed: '对话运行失败',
   run_initialization_failed: '任务初始化失败，请重试',
+  workspace_busy: '项目中还有任务在执行，请等待结束后再试',
+  workspace_file_conflict: '技能文件有本地修改，请先处理文件冲突后再试',
   resume_failed: '继续任务失败，请重新提交',
   approval_stale: '当前审批已更新，请重新检查',
   approval_incomplete: '请先处理所有待审批项',
@@ -51,9 +52,7 @@ export const conversationErrorMessage = (
   error: unknown,
   fallback: ConversationErrorCode,
 ) => translateCurrent(
-  error instanceof ApiError && error.code === 1_001_008_014
-    ? '所选技能正文合计超过 512 KiB，请减少所选技能后重试'
-    : conversationErrorMessageKeys[
+  conversationErrorMessageKeys[
     error instanceof ConversationError || error instanceof SseError ? error.code : fallback
   ],
 )
@@ -62,3 +61,16 @@ export const hasConversationErrorCode = (
   error: unknown,
   code: ConversationErrorCode,
 ) => (error instanceof ConversationError || error instanceof SseError) && error.code === code
+
+/** 将运行失败类别映射为可处理的提示，诊断正文不进入界面 */
+export const conversationRunError = (code: string | null | undefined, diagnostic?: unknown) => new ConversationError(
+  code === 'workspace_busy' ? 'workspace_busy'
+    : code === 'workspace_file_conflict' ? 'workspace_file_conflict'
+      : code === 'runtime_initialization_error' ? 'run_initialization_failed' : 'run_failed',
+  diagnostic,
+)
+
+
+export const isConversationPreparationFailure = (code: string | null | undefined) => (
+  code === 'runtime_initialization_error' || code === 'workspace_busy' || code === 'workspace_file_conflict'
+)

@@ -66,6 +66,7 @@ from ._failure_evidence import select_failure
 from ._lazy_run import AgUiRunStream, NativeRunStream
 from ._observation import (
     RuntimeObservationHub,
+    initialization_error_code,
     native_input_kind,
     observer_tuple,
     source_context,
@@ -105,6 +106,7 @@ from .plan.clarification import ClarificationFormBase, DefaultClarificationForm
 from .plan.clarification_types import ClarificationType
 from .plan.models import PlanContentModel, PlanReviewAction, StructuredPlanContent
 from .runtime_profile import DeepAgentsRuntimeProfile, DeepAgentsV2RuntimeProfile
+from .skills import SkillSource
 from .sse import (
     SseBody,
     SseEventIdResolver,
@@ -795,6 +797,8 @@ class AgUiEventStream:
                 if isinstance(error, _runtime_streams._StreamDeadlineExceeded)
                 else self._runtime_error_code
             )
+            if error_code == "runtime_initialization_error":
+                error_code = initialization_error_code(error)
             if not self._main_started:
                 self._main_started = True
                 yield initial_event
@@ -923,7 +927,7 @@ class TinkerFin:
         system_prompt: str | SystemMessage | None = None,
         middleware: Sequence[AgentMiddlewareType] = (),
         subagents: Sequence[SubagentDefinition] | None = None,
-        skills: Sequence[str] | None = None,
+        skills: Sequence[SkillSource] | None = None,
         memory: Sequence[str] | None = None,
         permissions: Sequence[FilesystemPermission] | None = None,
         backend: AgentBackend = None,
@@ -943,7 +947,7 @@ class TinkerFin:
         system_prompt: str | SystemMessage | None = None,
         middleware: Sequence[AgentMiddlewareType] = (),
         subagents: Sequence[SubagentDefinition] | None = None,
-        skills: Sequence[str] | None = None,
+        skills: Sequence[SkillSource] | None = None,
         memory: Sequence[str] | None = None,
         permissions: Sequence[FilesystemPermission] | None = None,
         backend: AgentBackend = None,
@@ -962,7 +966,7 @@ class TinkerFin:
         system_prompt: str | SystemMessage | None = None,
         middleware: Sequence[AgentMiddlewareType] = (),
         subagents: Sequence[SubagentDefinition] | None = None,
-        skills: Sequence[str] | None = None,
+        skills: Sequence[SkillSource] | None = None,
         memory: Sequence[str] | None = None,
         permissions: Sequence[FilesystemPermission] | None = None,
         backend: AgentBackend = None,
@@ -1004,7 +1008,7 @@ class TinkerFin:
                 effective file permissions.
             subagents: Declared, compiled, or remote agents available for delegation.
                 A general-purpose agent is added unless explicitly declared.
-            skills: Backend directories containing this agent's skills.
+            skills: Current backend skill sources and optional name selections.
             memory: Backend files loaded as persistent instructions.
             permissions: File-tool rules. These do not restrict arbitrary shell
                 commands; executable backends only support protected non-shell routes.

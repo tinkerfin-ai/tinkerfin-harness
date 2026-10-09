@@ -57,6 +57,7 @@ Docker 项目为 `tinkerfin`，依赖容器为 `mysql8`、`redis-runtime`、`min
 | `MYSQL_PUBLISHED_PORT` | `13306` | 从本机连接内置 MySQL 的端口 |
 | `REDIS_RUNTIME_PUBLISHED_PORT` | `6379` | 本机访问 Redis 的端口 |
 | `OPEN_SANDBOX_PUBLISHED_PORT` | `8091` | 本机访问 OpenSandbox 的端口 |
+| `OPEN_SANDBOX_IMAGE` | 框架默认镜像 | 新建执行沙箱使用的镜像；技能目录同步需要包含当前工作区能力的 Sandbox Runtime，已有沙箱需单独更新 |
 | `OPEN_SANDBOX_CPU` | `1` | 每个新建执行沙箱的 CPU 核数上限，可填 `0.5` 等正数 |
 | `OPEN_SANDBOX_MEMORY_MIB` | `1024` | 每个新建执行沙箱的内存上限，单位为 MiB，必须为正整数 |
 | `OPEN_SANDBOX_WARM_POOL_SIZE` | `0` | 全局预热沙箱数量；Studio 项目工作区不使用此池，保持为 `0` |

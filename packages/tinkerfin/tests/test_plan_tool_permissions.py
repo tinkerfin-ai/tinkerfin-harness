@@ -27,7 +27,7 @@ from test_plan_mode import (
 )
 from test_runtime_workspace import _Workspace
 
-from tinkerfin import AgUiResumeRequest, TinkerFin
+from tinkerfin import AgUiResumeRequest, SkillSource, TinkerFin
 
 
 class _AnalysisSandbox(StateBackend, SandboxBackendProtocol):
@@ -89,7 +89,7 @@ async def test_planner_analysis_preserves_workspace_skills_memory_and_host_promp
             model=model,
             backend=workspace,
             system_prompt="Cite observed evidence in the customer's language.",
-            skills=["/skills/"],
+            skills=[SkillSource("/skills/")],
             memory=["/skills/context.md"],
         )
     )
@@ -467,7 +467,7 @@ async def test_planner_preserves_system_file_format_before_the_routed_model_gate
             model=initial,
             system_prompt=system,
             backend=_Workspace(backend) if workspace_context else backend,
-            skills=["/skills/"] if workspace_context else None,
+            skills=[SkillSource("/skills/")] if workspace_context else None,
             memory=["/context.md"] if workspace_context else None,
             middleware=[RouteModel()],
         )

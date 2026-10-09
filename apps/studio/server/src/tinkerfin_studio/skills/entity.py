@@ -141,7 +141,7 @@ class SkillImportDraft(Base):
 
 
 class SkillRunSnapshot(Base):
-    """新运行捕获的技能集合，恢复时复用原执行内容"""
+    """新运行捕获的技能集合，供历史展示和恢复关联保留当时选择"""
 
     __tablename__ = "skill_run_snapshots"
     __table_args__ = (

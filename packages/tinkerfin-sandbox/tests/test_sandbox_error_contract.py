@@ -119,3 +119,15 @@ def test_initialization_error_is_distinct_and_preserves_its_cause() -> None:
     assert dict(error.context) == {}
     assert not hasattr(error.context, "__setitem__")
     assert "private" not in str(error)
+
+
+def test_actionable_workspace_failures_expose_only_their_safe_category() -> None:
+    from tinkerfin_contracts import WorkspacePreparationFailure
+    from tinkerfin_sandbox import OpenSandboxBusyError, OpenSandboxFileChangedError
+
+    for failure, reason in [
+        (OpenSandboxBusyError("busy"), "busy"),
+        (OpenSandboxFileChangedError("changed"), "file_conflict"),
+    ]:
+        assert isinstance(failure, WorkspacePreparationFailure)
+        assert failure.workspace_failure == reason

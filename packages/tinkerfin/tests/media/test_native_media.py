@@ -33,7 +33,7 @@ from openai import BadRequestError
 from pydantic import Field, SecretStr
 from test_runtime_workspace import _Workspace
 
-from tinkerfin import TinkerFin
+from tinkerfin import SkillSource, TinkerFin
 from tinkerfin.deep_agent import create_graph
 from tinkerfin.media import Attachment, AttachmentContent, AttachmentSupport
 from tinkerfin_tracing import Tracer
@@ -620,7 +620,7 @@ async def test_system_file_format_survives_framework_instruction_preparation(
             initial,
             system_prompt=system,
             backend=_Workspace(backend) if configuration == "workspace" else backend,
-            skills=["/skills/"] if configuration == "skills" else None,
+            skills=[SkillSource("/skills/")] if configuration == "skills" else None,
             memory=["/context.md"] if configuration == "memory" else None,
             middleware=middleware,
         )

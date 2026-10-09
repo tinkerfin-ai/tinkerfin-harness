@@ -49,7 +49,7 @@ async def test_project_override_does_not_change_personal_or_other_project(
     assert not snapshot.skills
 
 
-async def test_project_name_precedence_and_resume_keep_exact_skill_content(
+async def test_project_precedence_and_resume_preserve_historical_selection(
     session: AsyncSession,
     skill_library: SkillLibrary,
 ) -> None:
@@ -104,6 +104,7 @@ async def test_project_name_precedence_and_resume_keep_exact_skill_content(
         source=source,
     )
     assert resumed == snapshot
+    assert await skill_library.workspace_files(1, project_id="project-1") == ()
     with pytest.raises(BusinessException) as caught:
         await repository.capture(
             RunIdentity(namespace="ns_1", thread_id="one", run_id="invalid"),

@@ -1,3 +1,4 @@
+import { parseRunFailures } from './history'
 import frameworkResume from '../../../../../../packages/tinkerfin/tests/fixtures/agui-history-resume.json'
 import { restoreConversationFromTrace } from '../../features/conversation/trace/runtime'
 import { applyConversationEvent, prepareResumeSubmission } from '../../features/conversation/agui'
@@ -425,4 +426,10 @@ describe('conversation Trace client', () => {
     }).rejects.toThrow('stream_event_invalid')
   })
 
+})
+
+
+it.each(['workspace_busy', 'workspace_file_conflict'])('接受 %s 的历史失败记录并保留可重试状态', (errorCode) => {
+  const failure = { runId: 'run-workspace', errorCode, failedAt: '2026-10-09T00:00:00Z', retryable: true }
+  expect(parseRunFailures([failure])).toEqual([failure])
 })

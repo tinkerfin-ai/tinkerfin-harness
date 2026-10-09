@@ -355,7 +355,7 @@ def build_skill_tools(
     async def set_skill_enabled(
         installation_id: str, enabled: bool, runtime: ToolRuntime
     ) -> str:
-        """启用或停用本人已安装的技能，不改变当前运行快照
+        """启用或停用本人已安装的技能，在后续执行前同步项目目录
 
         Args:
             installation_id: list_skills 返回的明确安装 ID

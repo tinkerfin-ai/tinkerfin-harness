@@ -4,6 +4,7 @@ import asyncio
 import shlex
 from datetime import timedelta
 from functools import partial
+from unittest.mock import create_autospec
 
 import anyio
 import pytest
@@ -19,9 +20,9 @@ from tinkerfin import TinkerFin
 from tinkerfin_contracts import RunIdentity
 from tinkerfin_sandbox import OpenSandboxClient, OpenSandboxConfig, OpenSandboxManager
 from tinkerfin_studio.skills.content import SkillContentStore
-from tinkerfin_studio.skills.execution import SkillsWorkspace, skill_source_path
+from tinkerfin_studio.skills.execution import SkillsWorkspace
+from tinkerfin_studio.skills.library import SkillLibrary
 from tinkerfin_studio.skills.packages import SkillFile, parse_package
-from tinkerfin_studio.skills.schemas import SkillReference, SkillSnapshotPayload
 
 pytestmark = [pytest.mark.docker_integration, pytest.mark.opensandbox_e2e]
 
@@ -49,17 +50,6 @@ async def test_skill_scripts_resources_rebuild_and_cancel_in_owned_sandbox(
     )
     content = SkillContentStore(TinkerFin(store=InMemoryStore()))
     await content.save(1, package)
-    snapshot = SkillSnapshotPayload(
-        directory_id="12345678-0000-0000-0000-000000000000",
-        skills=(
-            SkillReference(
-                installation_id="reports",
-                name=package.name,
-                digest=package.digest,
-                selected=True,
-            ),
-        ),
-    )
     identity = RunIdentity(
         namespace="skills-integration", thread_id="thread", run_id="run"
     )
@@ -78,22 +68,24 @@ async def test_skill_scripts_resources_rebuild_and_cancel_in_owned_sandbox(
             enable_capture_offload=True,
         ),
     )
+    library = create_autospec(SkillLibrary, instance=True)
+    library.workspace_files.return_value = tuple(
+        (f"{package.name}/{file.path}", file.content) for file in package.files
+    )
     sandbox_ids: list[str] = []
     async with OpenSandboxManager[str](client=client) as manager:
         workspace = SkillsWorkspace(
             manager.workspace("user", workspace_key="default"),
-            content=content,
+            library=library,
             user_id=1,
-            snapshot=snapshot,
+            project_id="default",
         )
         try:
             for _ in range(2):
                 async with workspace.prepare(identity) as prepared:
                     backend = prepared.workspace
                     sandbox_ids.append(backend.id)
-                    root = (
-                        skill_source_path(snapshot, snapshot.skills[0]) + package.name
-                    )
+                    root = f"/skills/{package.name}"
                     result = await backend.aexecute(
                         f"cd {shlex.quote(backend.to_shell_path(root))} && python3 scripts/run.py"
                     )

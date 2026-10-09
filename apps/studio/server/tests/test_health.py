@@ -56,6 +56,7 @@ async def test_readiness_reports_all_available_dependencies() -> None:
             components_database=cast(Database, _Database()),
             redis=cast(Redis, _Redis()),
             sandbox=SandboxSettings(
+                image="runtime-image",
                 cpu=1,
                 memory_mib=1024,
                 domain="opensandbox:8090",
@@ -99,6 +100,7 @@ async def test_readiness_hides_redis_and_sandbox_failures() -> None:
             components_database=cast(Database, _Database()),
             redis=cast(Redis, BrokenRedis()),
             sandbox=SandboxSettings(
+                image="runtime-image",
                 cpu=1,
                 memory_mib=1024,
                 domain="opensandbox:8090",
@@ -138,6 +140,7 @@ async def test_readiness_rejects_control_plane_health_without_warm_capacity() ->
             components_database=cast(Database, _Database()),
             redis=cast(Redis, _Redis()),
             sandbox=SandboxSettings(
+                image="runtime-image",
                 cpu=1,
                 memory_mib=1024,
                 domain="opensandbox:8090",
@@ -178,6 +181,7 @@ async def test_readiness_reports_each_database_independently(tmp_path, unavailab
             components_database=databases["components_database"],
             redis=cast(Redis, _Redis()),
             sandbox=SandboxSettings(
+                image="runtime-image",
                 cpu=1,
                 memory_mib=1024,
                 domain="sandbox:8090",

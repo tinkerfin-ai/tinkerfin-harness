@@ -1,5 +1,7 @@
 """页面与对话共用的技能查询、内容准备及幂等管理事务"""
 
+from __future__ import annotations
+
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
@@ -171,6 +173,25 @@ class SkillLibrary:
             or normalized
             in f"{item.name} {item.description} {item.author or ''}".casefold()
         ]
+
+    async def workspace_files(
+        self, user_id: int, *, project_id: str
+    ) -> tuple[tuple[str, bytes], ...]:
+        """准备当前启用技能的名称目录，供工作区在下次执行前同步"""
+        async with self._database.session() as session:
+            installations = await SkillRepository(session, user_id).effective(
+                project_id=project_id
+            )
+            selected = tuple((item.name, item.digest) for item in installations)
+        files: list[tuple[str, bytes]] = []
+        for name, digest in selected:
+            package = await self.content.load(user_id, digest)
+            if package.name != name:
+                raise BusinessException(SkillErrorCode.CONTENT_UNAVAILABLE)
+            files.extend(
+                (f"{name}/{file.path}", file.content) for file in package.files
+            )
+        return tuple(files)
 
     async def detail(
         self, user_id: int, installation_id: str, *, project_id: str | None = None

@@ -617,7 +617,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
     let submitted: ChatRequestPayload | undefined
     await page.route('**/api/conversation/chat', async route => {
       submitted = route.request().postDataJSON() as ChatRequestPayload
-      await route.fulfill({ status: 422, json: { code: 1_001_008_014, message: '诊断信息不进入界面', data: null } })
+      await route.fulfill({ status: 409, json: { code: 1_001_008_006, message: '诊断信息不进入界面', data: null } })
     })
     await installProjectScope(page)
     await page.goto('/')
@@ -651,7 +651,8 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
     await input.press('ControlOrMeta+z')
     await expect(input).toHaveValue('/ai-report-interpreter')
     await page.getByRole('button', { name: '发送消息', exact: true }).click()
-    await expect(page.getByRole('status')).toHaveText('所选技能正文合计超过 512 KiB，请减少所选技能后重试')
+    await expect(page.getByRole('status')).toHaveText('对话请求失败，请重试')
+    await expect(page.getByText('诊断信息不进入界面', { exact: true })).toHaveCount(0)
     expect(submitted?.messages).toMatchObject([{ content: '/ai-report-interpreter' }])
     expect(submitted?.forwardedProps.skillIds).toEqual(['reports-id'])
     await expect(input).toHaveValue('/ai-report-interpreter')

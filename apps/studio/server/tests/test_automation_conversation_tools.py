@@ -31,7 +31,6 @@ from tinkerfin_studio.api.errors import BusinessException
 from tinkerfin_studio.automation.schemas import TaskConfiguration
 from tinkerfin_studio.automation.service import StudioAutomationService
 from tinkerfin_studio.automation.tools import build_automation_tools
-from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
 
 
 def call_runtime(task_id: str = "node", call_id: str = "call") -> ToolRuntime:
@@ -279,9 +278,6 @@ async def test_runtime_injects_command_identity_and_records_tool_result(
     )
     runtime = build_conversation_runtime(
         project_id="project-1",
-        skill_snapshot=SkillSnapshotPayload(
-            directory_id="00000000-0000-0000-0000-000000000000", skills=()
-        ),
         resources=automation_resources,
         user_id=1,
         thread_id="chat",
@@ -402,9 +398,6 @@ async def test_automation_management_is_bound_to_main_roles(
     )
     runtime = build_conversation_runtime(
         project_id="project-1",
-        skill_snapshot=SkillSnapshotPayload(
-            directory_id="00000000-0000-0000-0000-000000000000", skills=()
-        ),
         resources=automation_resources,
         user_id=1,
         thread_id="limited",

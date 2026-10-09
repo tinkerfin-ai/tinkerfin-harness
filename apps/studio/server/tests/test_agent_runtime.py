@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import create_autospec
+from unittest.mock import AsyncMock, create_autospec
 
 import httpx
 import pytest
@@ -43,7 +43,6 @@ from tinkerfin_studio.models import providers as providers_module
 from tinkerfin_studio.models.chat import create_chat_model
 from tinkerfin_studio.models.schemas import AgentModelConfig
 from tinkerfin_studio.resources import ApplicationResources
-from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
 
 
 class _CommandBackend(StateBackend, SandboxBackendProtocol):
@@ -185,6 +184,13 @@ class _ToolModel(FakeListChatModel):
         return self
 
 
+@pytest.fixture(autouse=True)
+def empty_current_skills(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tinkerfin_studio.skills.library import SkillLibrary
+
+    monkeypatch.setattr(SkillLibrary, "workspace_files", AsyncMock(return_value=()))
+
+
 class _Workspace:
     """通过同步信号记录执行期间的用户工作区借用"""
 
@@ -198,6 +204,9 @@ class _Workspace:
         self.closed: list[RunIdentity] = []
         self.failure = failure
         self.backend = backend if backend is not None else StateBackend()
+
+    def with_directories(self, directories):
+        return self
 
     @asynccontextmanager
     async def prepare(
@@ -273,9 +282,6 @@ async def test_runtime_build_is_separate_from_user_workspace_execution(
     )
     runtime = build_conversation_runtime(
         project_id="project-7",
-        skill_snapshot=SkillSnapshotPayload(
-            directory_id="00000000-0000-0000-0000-000000000000", skills=()
-        ),
         resources=resources,
         user_id=7,
         thread_id="thread-1",
@@ -407,9 +413,6 @@ async def test_file_access_choice_controls_root_and_subagent_review(
     )
     runtime = build_conversation_runtime(
         project_id="project-7",
-        skill_snapshot=SkillSnapshotPayload(
-            directory_id="00000000-0000-0000-0000-000000000000", skills=()
-        ),
         resources=resources,
         user_id=7,
         thread_id="thread-1",
@@ -505,9 +508,6 @@ async def test_product_tool_failure_allows_root_and_researcher_to_reply(
     )
     runtime = build_conversation_runtime(
         project_id="project-7",
-        skill_snapshot=SkillSnapshotPayload(
-            directory_id="00000000-0000-0000-0000-000000000000", skills=()
-        ),
         resources=resources,
         user_id=7,
         thread_id="tool-error",
@@ -585,9 +585,6 @@ async def test_analysis_commands_follow_permissions_in_chat_and_plan(
     )
     runtime = build_conversation_runtime(
         project_id="project-7",
-        skill_snapshot=SkillSnapshotPayload(
-            directory_id="00000000-0000-0000-0000-000000000000", skills=()
-        ),
         resources=resources,
         user_id=7,
         thread_id="analysis",

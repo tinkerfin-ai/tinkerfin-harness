@@ -108,6 +108,8 @@ def test_load_settings_groups_external_resource_configuration(
     assert settings.redis_runtime.database == 3
     assert settings.redis_runtime.checkpoint_database == 0
     assert settings.sandbox.domain == "127.0.0.1:8091"
+    monkeypatch.setenv("OPEN_SANDBOX_IMAGE", "custom-runtime:testing")
+    assert load_settings(env_file=env_file).sandbox.image == "custom-runtime:testing"
     assert settings.sandbox.cpu == 2
     assert settings.sandbox.memory_mib == 2048
     assert settings.sandbox.warm_pool_size == 3

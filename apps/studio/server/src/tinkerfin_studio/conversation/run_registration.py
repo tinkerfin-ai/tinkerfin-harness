@@ -286,7 +286,7 @@ class ConversationRunPreparer:
                 existing.updated_at = datetime.now(UTC).replace(tzinfo=None)
             skills = SkillRepository(self._session, self._user_id)
             if created:
-                # 审批恢复保留原内容；压缩属于当前项目的新运行
+                # 审批恢复保留原选择记录；执行文件由工作区读取当前内容
                 source_id = (
                     source_run_id if isinstance(intent, ResumeChatIntent) else None
                 )

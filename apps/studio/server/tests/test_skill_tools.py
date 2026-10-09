@@ -31,7 +31,6 @@ from tinkerfin_studio.agent.runtime import (
 from tinkerfin_studio.api.errors import SkillErrorCode
 from tinkerfin_studio.skills.library import SkillLibrary
 from tinkerfin_studio.skills.packages import parse_package
-from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
 from tinkerfin_studio.skills.tools import build_skill_tools
 
 
@@ -280,9 +279,6 @@ async def test_skill_management_roles_and_agui_history(
     monkeypatch.setattr(
         runtime_module, "create_chat_model", lambda *args, **kwargs: model
     )
-    snapshot = SkillSnapshotPayload(
-        directory_id="00000000-0000-0000-0000-000000000000", skills=()
-    )
     if role == "automation":
         runtime = build_automation_runtime(
             project_id="project-1",
@@ -293,7 +289,6 @@ async def test_skill_management_roles_and_agui_history(
             search_service=None,
             image_service=None,
             access_mode="full",
-            skill_snapshot=snapshot,
             execution_id="execution",
         )
     else:
@@ -306,7 +301,6 @@ async def test_skill_management_roles_and_agui_history(
             search_service=None,
             image_service=None,
             access_mode="full",
-            skill_snapshot=snapshot,
         )
     stream = runtime.open_agui_run(
         thread_id="skills-chat",

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from copy import copy
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 from deepagents.backends.composite import CompositeBackend
@@ -13,12 +14,14 @@ from tinkerfin_contracts import PreparedWorkspace, RunIdentity
 from tinkerfin_notifications import ResyncRequired
 
 from ..backends.rooted import RootedOpenSandboxBackend
+from ..directory_contents import WorkspaceDirectoryContents
 from ..middleware.filesystem import (
     ROOTED_EXECUTE_TOOL_DESCRIPTION,
     ROOTED_FILESYSTEM_SYSTEM_PROMPT,
 )
 from ..workspace_files import WorkspaceDirectoryPage, WorkspaceFileInfo, WorkspaceText
 from ._workspace_access import _ProjectCoordinator
+from ._workspace_directories import synchronize
 from ._workspace_watch import WorkspaceChange
 
 if TYPE_CHECKING:
@@ -60,6 +63,70 @@ class SandboxWorkspace(Generic[KeyT]):
         """
         self._project = _ProjectCoordinator(manager, key, workspace_key)
         self._routes = dict(routes or {})
+        self._directories: tuple[WorkspaceDirectoryContents, ...] = ()
+
+    def with_directories(
+        self, directories: Sequence[WorkspaceDirectoryContents]
+    ) -> SandboxWorkspace[KeyT]:
+        """Prepare managed inputs before admitting each Run.
+
+        Files remain project-local and writable. Unchanged declarations preserve
+        local edits. A changed declaration raises Busy while another Run uses
+        the project, and raises FileChanged instead of overwriting local edits.
+        The framework owns publication, admission and failed-preparation cleanup.
+
+        Args:
+            directories: Complete managed inputs at nonoverlapping virtual paths.
+
+        Returns:
+            A lazy copy of this project declaration, borrowing the same manager.
+
+        Raises:
+            TypeError: An entry is not a WorkspaceDirectoryContents declaration.
+            ValueError: Directory paths overlap.
+        """
+        values = tuple(directories)
+        if any(not isinstance(item, WorkspaceDirectoryContents) for item in values):
+            raise TypeError("directories must contain WorkspaceDirectoryContents")
+        paths = [item.path.rstrip("/") for item in values]
+        if any(
+            a == b or a.startswith(b + "/") or b.startswith(a + "/")
+            for i, a in enumerate(paths)
+            for b in paths[i + 1 :]
+        ):
+            raise ValueError("managed directory declarations must not overlap")
+        result = copy(self)
+        result._directories = values
+        return result
+
+    async def synchronize_directories(
+        self, directories: Sequence[WorkspaceDirectoryContents]
+    ) -> bool:
+        """Publish explicit declarations in an existing project without a Run.
+
+        Returns whether any directory changed. No sandbox is created. Busy and
+        local-change conflicts are observable; this method never waits or retries
+        on behalf of the host and does not publish partly uploaded directories.
+        Each directory is published independently; an error in a later declaration
+        does not undo earlier publications.
+
+        Args:
+            directories: Complete managed inputs at nonoverlapping virtual paths.
+
+        Returns:
+            Whether at least one directory declaration changed.
+
+        Raises:
+            TypeError: A declaration has an unsupported type.
+            ValueError: Directory paths overlap.
+            OpenSandboxError: The existing workspace is unavailable, busy, has
+                conflicting local edits, or publication or cleanup fails.
+        """
+        prepared = self.with_directories(directories)
+        changed = False
+        for item in prepared._directories:
+            changed = await synchronize(self._project, item, create=False) or changed
+        return changed
 
     @asynccontextmanager
     async def open(self) -> AsyncGenerator[RootedOpenSandboxBackend, None]:
@@ -225,6 +292,8 @@ class SandboxWorkspace(Generic[KeyT]):
 
         if not isinstance(identity, RunIdentity):
             raise TypeError("workspace preparation requires a RunIdentity")
+        for item in self._directories:
+            await synchronize(self._project, item, create=True)
         async with self.open() as workspace:
             backend = (
                 CompositeBackend(default=workspace, routes=dict(self._routes))

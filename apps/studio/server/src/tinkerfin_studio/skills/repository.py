@@ -1,6 +1,7 @@
 """技能安装和运行快照的事务操作"""
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -296,10 +297,35 @@ class SkillRepository:
             raise BusinessException(SkillErrorCode.NOT_FOUND)
         return item
 
+    async def effective(self, *, project_id: str) -> Sequence[SkillInstallation]:
+        """读取项目当前启用项，同名项目安装优先于个人安装"""
+        await ProjectRepository(self.session, self.user_id).require(project_id)
+        await self.lock_owner()
+        installations = list(
+            await self.session.scalars(
+                select(SkillInstallation)
+                .where(
+                    SkillInstallation.user_id == self.user_id,
+                    SkillInstallation.project_id.in_(("", project_id)),
+                )
+                .order_by(SkillInstallation.name)
+                .with_for_update(read=True)
+                .execution_options(populate_existing=True)
+            )
+        )
+        overrides = await self.overrides(project_id=project_id)
+        preferred = {}
+        for item in installations:
+            if item.name not in preferred or item.project_id:
+                preferred[item.name] = item
+        return [
+            item for item in preferred.values() if overrides.get(item.id, item.enabled)
+        ]
+
     async def snapshot(
         self, identity: RunIdentity, *, project_id: str | None = None
     ) -> SkillSnapshotPayload:
-        """读取运行固定内容，恢复执行时要求项目归属保持一致
+        """读取历史技能选择，关联恢复记录时要求项目归属保持一致
 
         Args:
             identity: 已授权运行的身份
@@ -334,7 +360,7 @@ class SkillRepository:
         selected_ids: tuple[str, ...] = (),
         source: RunIdentity | None = None,
     ) -> SkillSnapshotPayload:
-        """原子固定启用集合；幂等重试与恢复不读取最新安装状态"""
+        """保存运行开始时的技能选择；重复请求和恢复沿用原选择记录"""
         await ProjectRepository(self.session, self.user_id).require(project_id)
         await self.lock_owner()
         key = snapshot_key(self.user_id, identity)
@@ -351,29 +377,7 @@ class SkillRepository:
         if source is not None:
             payload = await self.snapshot(source, project_id=project_id)
         else:
-            # 用户锁确定捕获次序，当前读保证看到锁前已提交的更新和启停
-            installations = list(
-                await self.session.scalars(
-                    select(SkillInstallation)
-                    .where(
-                        SkillInstallation.user_id == self.user_id,
-                        SkillInstallation.project_id.in_(("", project_id)),
-                    )
-                    .order_by(SkillInstallation.name)
-                    .with_for_update(read=True)
-                    .execution_options(populate_existing=True)
-                )
-            )
-            overrides = await self.overrides(project_id=project_id)
-            preferred = {}
-            for item in installations:
-                if item.name not in preferred or item.project_id:
-                    preferred[item.name] = item
-            enabled = [
-                item
-                for item in preferred.values()
-                if overrides.get(item.id, item.enabled)
-            ]
+            enabled = await self.effective(project_id=project_id)
             references = tuple(
                 SkillReference(
                     installation_id=item.id,
@@ -383,7 +387,7 @@ class SkillRepository:
                 )
                 for item in enabled
             )
-            payload = SkillSnapshotPayload(directory_id=key, skills=references)
+            payload = SkillSnapshotPayload(skills=references)
         # 先检查本事务已有的待写项，使后面的完整性错误只属于本次快照插入
         await self.session.flush()
         try:

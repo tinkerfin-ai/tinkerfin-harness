@@ -27,6 +27,7 @@ from pydantic_settings import (
 from pydantic_settings.sources.utils import parse_env_vars
 from sqlalchemy.engine import URL, make_url
 
+from tinkerfin_sandbox import OpenSandboxConfig
 from tinkerfin_studio.skills.sources import SkillSourceSettings
 
 _DEFAULT_ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
@@ -81,6 +82,7 @@ class RedisRuntimeSettings(RedisConnectionSettings):
 class SandboxSettings:
     """已校验的沙箱配置，CPU 为核数上限，内存单位为 MiB"""
 
+    image: str
     domain: str
     protocol: Literal["http", "https"]
     api_key: SecretStr | None = field(repr=False)
@@ -283,6 +285,11 @@ class Settings(BaseSettings):
     redis_runtime_socket_timeout_seconds: float = Field(
         default=10.0, gt=0, description="Redis Runtime 命令超时秒数"
     )
+    open_sandbox_image: str = Field(
+        default_factory=lambda: OpenSandboxConfig().image,
+        min_length=1,
+        description="新建执行沙箱使用的镜像，不改变已存在的沙箱",
+    )
     open_sandbox_domain: str = Field(
         default="127.0.0.1:8091", min_length=1, description="OpenSandbox 域名与端口"
     )
@@ -452,6 +459,7 @@ class Settings(BaseSettings):
         """返回 OpenSandbox 资源使用的分组配置"""
 
         return SandboxSettings(
+            image=self.open_sandbox_image,
             domain=self.open_sandbox_domain,
             protocol=self.open_sandbox_protocol,
             api_key=self.open_sandbox_api_key,

@@ -71,7 +71,6 @@ from tinkerfin_studio.services.service import ResolvedService, ServiceConfigServ
 from tinkerfin_studio.skills.content import SkillContentStore
 from tinkerfin_studio.skills.packages import parse_package
 from tinkerfin_studio.skills.repository import SkillOrigin, SkillRepository
-from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
 from tinkerfin_tracing import Tracer
 
 
@@ -144,7 +143,6 @@ def conversation_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
         search_service: ResolvedService | None,
         image_service: ResolvedService | None,
         access_mode: AccessMode,
-        skill_snapshot: SkillSnapshotPayload,
     ) -> AgentRuntime[None]:
         del (
             thread_id,
@@ -881,7 +879,8 @@ async def test_chat_accepts_images_and_uses_messaging_only_for_delivery(
         assert command.messages[1]["role"] == "user"
         source = command.messages[1]["source"]
         assert isinstance(source, dict) and source["kind"] == "context"
-        assert "读取 references/data.bin" in str(command.messages[1]["content"])
+        assert "/skills/reports/SKILL.md" in str(command.messages[1]["content"])
+        assert "读取 references/data.bin" not in str(command.messages[1]["content"])
     assert len(trace.ensured) == 1
     assert trace.ensured[0].run_id == "run-1"
     repository = ConversationRepository(session)

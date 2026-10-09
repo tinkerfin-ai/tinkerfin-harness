@@ -28,7 +28,11 @@ from test_runtime_store import _Model
 
 from tinkerfin import AgUiResumeRequest, TinkerFin
 from tinkerfin.deep_agent import create_graph
-from tinkerfin_contracts import PreparedWorkspace, RunIdentity, RunTerminalObservation
+from tinkerfin_contracts import (
+    PreparedWorkspace,
+    RunIdentity,
+    RunTerminalObservation,
+)
 from tinkerfin_messaging import MemoryBackend, Messaging
 
 
@@ -388,3 +392,63 @@ async def test_prepared_composite_backend_cannot_bypass_runtime_store_isolation(
     with pytest.raises(ValueError, match="StoreBackend must use the Runtime store"):
         await runtime.ainvoke(thread_id="thread", run_id="run", input={"messages": []})
     assert len(workspace.opened) == 1 and workspace.closed == workspace.opened
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected_code"),
+    [
+        ("busy", "workspace_busy"),
+        ("file_conflict", "workspace_file_conflict"),
+        (None, "runtime_initialization_error"),
+        (["busy"], "runtime_initialization_error"),
+        ("unknown", "runtime_initialization_error"),
+    ],
+)
+async def test_workspace_preparation_reason_is_safe_and_has_one_terminal(
+    reason: str | list[str] | None,
+    expected_code: str,
+) -> None:
+    class ProviderFailure(Exception):
+        workspace_failure: str | list[str] | None
+
+    failure = ProviderFailure("private provider diagnostics")
+    failure.workspace_failure = reason
+
+    class UnavailableWorkspace(_Workspace):
+        @asynccontextmanager
+        async def prepare(
+            self, identity: RunIdentity
+        ) -> AsyncGenerator[PreparedWorkspace[Path, BackendProtocol]]:
+            async with super().prepare(identity) as prepared:
+                if failure is not None:
+                    raise failure
+                yield prepared
+
+    workspace = UnavailableWorkspace()
+    observed: list[RunTerminalObservation] = []
+
+    async def on_terminal(event: RunTerminalObservation) -> None:
+        observed.append(event)
+
+    runtime = (
+        TinkerFin()
+        .with_namespace("workspace-failure")
+        .with_observer(on_terminal=on_terminal)
+        .build(model=_Model(responses=[AIMessage(content="unused")]), backend=workspace)
+    )
+    stream = runtime.open_agui_run(
+        thread_id="thread",
+        run_id="run",
+        messages=[{"id": "question", "role": "user", "content": "hello"}],
+    )
+    events = [event async for event in stream]
+    assert [event.type for event in events] == ["RUN_STARTED", "RUN_ERROR"]
+    terminal = events[-1]
+    assert isinstance(terminal, RunErrorEvent)
+    assert terminal.code == expected_code
+    recorded = [item for item in observed if isinstance(item, RunTerminalObservation)]
+    assert len(recorded) == 1 and recorded[0].code == terminal.code
+    assert terminal.message == "Agent run failed"
+    assert "private" not in terminal.model_dump_json()
+    assert stream.error is failure
+    assert workspace.opened == workspace.closed

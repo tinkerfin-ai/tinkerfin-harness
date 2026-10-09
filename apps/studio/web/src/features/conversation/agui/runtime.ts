@@ -14,6 +14,8 @@ import type {
 import {
   ConversationError,
   conversationErrorMessage,
+  conversationRunError,
+  isConversationPreparationFailure,
 } from "../../../api/conversation/errors"
 import type {
   ApprovalAllowedDecision,
@@ -1476,7 +1478,7 @@ const reduceConversationEvent = (
         const rawEvent = rawEventOrMain(conversation, event.rawEvent)
         const completedAt = nowIso()
         const errorMessage = conversationErrorMessage(
-          new ConversationError(event.code === 'runtime_initialization_error' ? 'run_initialization_failed' : 'run_failed', event.message),
+          conversationRunError(event.code, event.message),
           'run_failed',
         )
         const isCancelled = event.code === "cancelled" || event.code === "resume_cancelled"
@@ -1490,7 +1492,7 @@ const reduceConversationEvent = (
                   runId: errorRunId,
                   errorCode: event.code ?? null,
                   failedAt: completedAt,
-                  retryable: event.code === 'runtime_initialization_error',
+                  retryable: isConversationPreparationFailure(event.code),
                 }]
               : conversation.runFailures
         if (conversation.activeRunId && errorRunId && conversation.activeRunId !== errorRunId) {
