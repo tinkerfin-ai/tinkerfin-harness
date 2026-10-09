@@ -20,7 +20,7 @@ interface FilesState {
   availability: 'loading' | 'ready' | 'uninitialized' | 'paused' | 'unavailable'
   connection: ResourceFeedState
   directories: Record<string, DirectoryState>
-  expanded: ReadonlySet<string>
+  directoryPath: string
   selected: WorkspaceFile | null
   preview: WorkspacePreview | null
   previewPhase: 'idle' | 'loading' | 'ready' | 'error' | 'missing'
@@ -29,7 +29,7 @@ interface FilesState {
 const emptyDirectory = (): DirectoryState => ({ entries: [], phase: 'loading', nextCursor: null, pages: 1 })
 const initialState = (projectId: string): FilesState => ({
   projectId, availability: 'loading', connection: 'connecting', directories: {},
-  expanded: new Set(['/']), selected: null, preview: null, previewPhase: 'idle', updated: false,
+  directoryPath: '/', selected: null, preview: null, previewPhase: 'idle', updated: false,
 })
 const identity = () => JSON.stringify([getServerAddress(), getAuthorizationHeader()])
 const subscribeIdentity = (notify: () => void) => {
@@ -41,7 +41,8 @@ const subscribeIdentity = (notify: () => void) => {
 interface FileActions {
   directory: (path: string, cursor?: string | null) => void
   preview: (file: WorkspaceFile) => void
-  collapse: (path: string) => void
+  navigate: (path: string) => void
+  closeFile: () => void
 }
 
 /** 当前项目拥有查询与通知；关闭后保留阅读状态，项目或身份变化拒绝旧响应 */
@@ -167,7 +168,7 @@ export function useWorkspaceFiles(projectId: string, enabled: boolean) {
     }
     const reconcile = () => {
       if (!current() || document.hidden) return
-      for (const path of stateRef.current.expanded) directory(path)
+      directory(stateRef.current.directoryPath)
       checkSelected()
     }
     const preview = (file: WorkspaceFile) => {
@@ -206,13 +207,16 @@ export function useWorkspaceFiles(projectId: string, enabled: boolean) {
       clearTimeout(changeTimer)
       changeTimer = undefined
     }
-    actions.current = { directory, preview, collapse(path) {
-      for (const [key, request] of activeDirectories) {
-        if (key === path || key.startsWith(`${path}/`)) { request.abort(); activeDirectories.delete(key) }
-      }
-      for (const key of queuedDirectories.keys()) if (key === path || key.startsWith(`${path}/`)) queuedDirectories.delete(key)
-      for (const key of refreshAgain) if (key === path || key.startsWith(`${path}/`)) refreshAgain.delete(key)
-      pump()
+    const closeFile = () => {
+      previewRequest?.abort()
+      infoRequest?.abort()
+      publish(previous => ({ ...previous, selected: null, preview: null, previewPhase: 'idle', updated: false }))
+    }
+    actions.current = { directory, preview, closeFile, navigate(path) {
+      if (!current()) return
+      abortReads()
+      publish(previous => ({ ...previous, directoryPath: path, selected: null, preview: null, previewPhase: 'idle', updated: false }))
+      directory(path)
     } }
     const closeFeed = startResourceFeed({
       path: `${workspaceEndpoint(projectId)}/events`,
@@ -247,16 +251,8 @@ export function useWorkspaceFiles(projectId: string, enabled: boolean) {
     }
   }, [projectId, enabled, attempt, ownerIdentity, publish])
 
-  const toggleDirectory = useCallback((path: string) => {
-    const expanded = new Set(stateRef.current.expanded)
-    const closing = expanded.has(path)
-    if (closing) {
-      for (const key of expanded) if (key === path || key.startsWith(`${path}/`)) expanded.delete(key)
-      actions.current?.collapse(path)
-    } else expanded.add(path)
-    publish(previous => ({ ...previous, expanded }))
-    if (!closing) actions.current?.directory(path)
-  }, [publish])
+  const openDirectory = useCallback((path: string) => actions.current?.navigate(path), [])
+  const closeFile = useCallback(() => actions.current?.closeFile(), [])
   const selectFile = useCallback((file: WorkspaceFile) => actions.current?.preview(file), [])
   const retryDirectory = useCallback((path: string) => actions.current?.directory(path), [])
   const loadMore = useCallback((path: string) => {
@@ -265,7 +261,7 @@ export function useWorkspaceFiles(projectId: string, enabled: boolean) {
   }, [])
   const refreshPreview = useCallback(() => { if (stateRef.current.selected) actions.current?.preview(stateRef.current.selected) }, [])
   const refresh = useCallback(() => setAttempt(value => value + 1), [])
-  return { ...(state.projectId === projectId && stateIdentity.current === ownerIdentity ? state : initialState(projectId)), toggleDirectory, selectFile, retryDirectory, loadMore, refreshPreview, refresh }
+  return { ...(state.projectId === projectId && stateIdentity.current === ownerIdentity ? state : initialState(projectId)), openDirectory, closeFile, selectFile, retryDirectory, loadMore, refreshPreview, refresh }
 }
 
 export type WorkspaceFilesState = ReturnType<typeof useWorkspaceFiles>

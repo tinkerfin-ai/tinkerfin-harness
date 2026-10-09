@@ -2,7 +2,7 @@ import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 
-const user = { user_id: 1, username: 'composer-test', display_name: '输入区验收', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'composer-test', avatar_url: null, roles: [], disabled: false }
 const names = ['deepseek-v4-pro', 'DeepSeek-V4-Flash', 'DeepSeek-V4-Flash-Vision']
 
 function textStyle(element: Element) {

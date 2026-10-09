@@ -1303,22 +1303,22 @@ describe('所选会话与链路共享激活刷新', () => {
 })
 
 
-function useBootstrapHarness(catalogReady = true) {
+function useBootstrapHarness(catalogReady = true, archived = false, preferDraft = false, projectId = 'project-1') {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchScope, setSearchScope] = useState<'project' | 'all'>('project')
   const { workspace, setWorkspace, retainConversationDetails } = useWorkspaceState()
   const callbacks = useRef({
     followDetachedConversation: vi.fn(),
-    prepareTaskTraceOwner: vi.fn(async () => undefined),
+    prepareTaskTraceOwner: vi.fn<(threadId: string) => Promise<void>>(async () => undefined),
     onToast: vi.fn(),
   }).current
-  const history = useWorkspaceHistory({projectId: 'project-1', archived: false, searchScope, searchOpen,
+  const history = useWorkspaceHistory({projectId, archived, preferDraft, searchScope, searchOpen,
     workspace, setWorkspace, retainConversationDetails,
     defaultModelId: 'main',
     modelCatalogStatus: catalogReady ? 'ready' : 'loading',
     ...callbacks,
   })
-  return { workspace, setWorkspace, history, setSearchOpen, setSearchScope }
+  return { workspace, setWorkspace, history, setSearchOpen, setSearchScope, prepareTaskTraceOwner: callbacks.prepareTaskTraceOwner }
 }
 
 describe('会话列表变化通知', () => {
@@ -1336,6 +1336,285 @@ describe('会话列表变化通知', () => {
     window.history.replaceState(null, '', '/')
     vi.restoreAllMocks()
     vi.useRealTimers()
+  })
+
+  it('普通与归档列表各自恢复非首条选择，快速往返不串记另一列表', async () => {
+    const records = [
+      detail({ threadId: 'normal-first' }), detail({ threadId: 'normal-selected' }),
+      detail({ threadId: 'archive-first', archived: true }), detail({ threadId: 'archive-selected', archived: true }),
+    ]
+    historyMocks.detail.mockImplementation(async id => records.find(item => item.threadId === id))
+    historyMocks.list.mockImplementation(async options => ({ items: records.filter(item => item.archived === options.archived).map(historyItemFromDetail), nextCursor: null }))
+    const { result, rerender } = renderHook(({ archived }) => useBootstrapHarness(true, archived), { initialProps: { archived: false } })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => { result.current.history.cancelInitialSelection(); result.current.setWorkspace(state => ({ ...state, currentThreadId: 'normal-selected' })) })
+    rerender({ archived: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => { result.current.history.cancelInitialSelection(); result.current.setWorkspace(state => ({ ...state, currentThreadId: 'archive-selected' })) })
+    rerender({ archived: false })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.workspace.currentThreadId).toBe('normal-selected')
+    rerender({ archived: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.workspace.currentThreadId).toBe('archive-selected')
+    const response = deferred<{ items: ReturnType<typeof historyItemFromDetail>[]; nextCursor: null }>()
+    let normalSignal: AbortSignal | undefined
+    historyMocks.list.mockImplementation(options => {
+      if (options.archived) return Promise.resolve({ items: records.filter(item => item.archived).map(historyItemFromDetail), nextCursor: null })
+      normalSignal = options.signal
+      return response.promise
+    })
+    rerender({ archived: false })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    rerender({ archived: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(normalSignal?.aborted).toBe(true)
+    await act(async () => { response.resolve({ items: records.filter(item => !item.archived).map(historyItemFromDetail), nextCursor: null }); await vi.advanceTimersByTimeAsync(0) })
+    expect(result.current.workspace.currentThreadId).toBe('archive-selected')
+  })
+
+  it('两侧已加载列表和正文立即复用，后台校准不遮挡内容且只读取缺失的任务轨迹', async () => {
+    const records = [
+      detail({ threadId: 'normal-first', status: { execution: 'succeeded', headRunId: RUN_ID } }),
+      detail({ threadId: 'normal-selected', status: { execution: 'succeeded', headRunId: RUN_ID } }),
+      detail({ threadId: 'archive-first', archived: true, status: { execution: 'succeeded', headRunId: RUN_ID } }),
+      detail({ threadId: 'archive-selected', archived: true, status: { execution: 'succeeded', headRunId: RUN_ID } }),
+    ]
+    historyMocks.detail.mockImplementation(async id => records.find(item => item.threadId === id))
+    const page = (archived: boolean) => ({ items: records.filter(item => item.archived === archived).map(historyItemFromDetail), nextCursor: null })
+    historyMocks.list.mockImplementation(async options => page(options.archived))
+    const { result, rerender } = renderHook(({ archived }) => useBootstrapHarness(true, archived), { initialProps: { archived: false } })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => { result.current.history.cancelInitialSelection(); result.current.setWorkspace(state => ({ ...state, currentThreadId: 'normal-selected' })) })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    rerender({ archived: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => { result.current.history.cancelInitialSelection(); result.current.setWorkspace(state => ({ ...state, currentThreadId: 'archive-selected' })) })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    for (const archived of [false, true]) {
+      const response = deferred<ReturnType<typeof page>>()
+      historyMocks.list.mockImplementationOnce(() => response.promise)
+      const calls = historyMocks.detail.mock.calls.length
+      rerender({ archived })
+      const expected = archived ? 'archive-selected' : 'normal-selected'
+      expect(result.current.workspace.currentThreadId).toBe(expected)
+      expect(result.current.history.historyConversations.map(item => item.threadId)).toEqual(page(archived).items.map(item => item.threadId))
+      expect(result.current.history.historyBootstrapStatus).toBe('ready')
+      expect(result.current.workspace.conversations.find(item => item.threadId === expected)?.messages[0]?.content).toBe('初始内容')
+      await act(async () => { response.resolve(page(archived)); await vi.advanceTimersByTimeAsync(0) })
+      expect(historyMocks.detail.mock.calls.slice(calls).map(([id]) => id)).toEqual([expected])
+      expect(result.current.workspace.currentThreadId).toBe(expected)
+    }
+  })
+
+  it.each([false, true])('明确导航到归档=%s的窗口外会话时，缓存列表不能覆盖目标', async archived => {
+    const source = detail({ threadId: 'source', archived: !archived })
+    const first = detail({ threadId: 'target-first', archived })
+    const target = detail({ threadId: 'target-route', archived, title: '明确打开的会话' })
+    const records = [source, first, target]
+    const held = deferred<{ items: ReturnType<typeof historyItemFromDetail>[]; nextCursor: null }>()
+    let hold = false
+    historyMocks.detail.mockImplementation(async id => records.find(item => item.threadId === id))
+    historyMocks.list.mockImplementation(options => options.archived === archived && hold ? held.promise
+      : Promise.resolve({ items: [historyItemFromDetail(options.archived === archived ? first : source)], nextCursor: null }))
+    const { result, rerender } = renderHook(({ scope }) => useBootstrapHarness(true, scope), { initialProps: { scope: !archived } })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    rerender({ scope: archived })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    rerender({ scope: !archived })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => {
+      result.current.history.cancelInitialSelection()
+      result.current.setWorkspace(state => ({ conversations: [...state.conversations, restoreConversationFromTrace(target, { model: 'main', includeTaskTrace: true })], currentThreadId: target.threadId }))
+    })
+    hold = true
+    rerender({ scope: archived })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.workspace.currentThreadId).toBe(target.threadId)
+    expect(result.current.history.historyConversations.map(item => item.threadId)).toContain(target.threadId)
+    expect(result.current.workspace.conversations.find(item => item.threadId === target.threadId)?.messages[0]?.content).toBe('初始内容')
+    await act(async () => { held.resolve({ items: [historyItemFromDetail(first)], nextCursor: null }); await vi.advanceTimersByTimeAsync(0) })
+    expect(result.current.workspace.currentThreadId).toBe(target.threadId)
+    expect(result.current.history.historyConversations.find(item => item.threadId === target.threadId)?.title).toBe('明确打开的会话')
+  })
+
+  it.each(['removed', 'restored', 'moved'] as const)('记忆的归档会话%s后只选择仍属于目标范围的会话', async change => {
+    const normal = detail({ threadId: 'normal' })
+    const first = detail({ threadId: 'archive-first', archived: true })
+    let remembered = detail({ threadId: 'archive-selected', archived: true })
+    let valid = true
+    historyMocks.detail.mockImplementation(async id => {
+      if (id === remembered.threadId) {
+        if (change === 'removed' && !valid) throw new ApiError('请求未找到', { status: 404 })
+        return remembered
+      }
+      return id === first.threadId ? first : normal
+    })
+    historyMocks.list.mockImplementation(async options => ({ items: (options.archived ? valid ? [first, remembered] : [first] : [normal]).map(historyItemFromDetail), nextCursor: null }))
+    const { result, rerender } = renderHook(({ archived }) => useBootstrapHarness(true, archived), { initialProps: { archived: false } })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    rerender({ archived: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => { result.current.history.cancelInitialSelection(); result.current.setWorkspace(state => ({ ...state, currentThreadId: remembered.threadId })) })
+    rerender({ archived: false })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    valid = false
+    if (change === 'restored') remembered = { ...remembered, archived: false }
+    if (change === 'moved') remembered = { ...remembered, projectId: 'another-project' }
+    rerender({ archived: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.workspace.currentThreadId).toBe(first.threadId)
+    expect(result.current.history.historyConversations.map(item => item.threadId)).toEqual([first.threadId])
+  })
+
+  it('恢复的会话不在首屏分页中时仍显示并选中，项目切换不串用选择', async () => {
+    const records = [
+      detail({ threadId: 'normal-first' }), detail({ threadId: 'normal-selected' }),
+      detail({ threadId: 'archive', archived: true }), detail({ threadId: 'other-project-thread', projectId: 'other-project' }),
+    ]
+    let paged = false
+    historyMocks.detail.mockImplementation(async id => records.find(item => item.threadId === id))
+    historyMocks.list.mockImplementation(async options => ({
+      items: records.filter(item => item.projectId === options.projectId && item.archived === options.archived
+        && !(paged && item.threadId === 'normal-selected')).map(historyItemFromDetail),
+      nextCursor: paged && options.projectId === 'project-1' && !options.archived ? 'next-page' : null,
+    }))
+    const { result, rerender } = renderHook(({ archived, projectId }) => useBootstrapHarness(true, archived, false, projectId), { initialProps: { archived: false, projectId: 'project-1' } })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => { result.current.history.cancelInitialSelection(); result.current.setWorkspace(state => ({ ...state, currentThreadId: 'normal-selected' })) })
+    rerender({ archived: true, projectId: 'project-1' })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    paged = true
+    rerender({ archived: false, projectId: 'project-1' })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.workspace.currentThreadId).toBe('normal-selected')
+    expect(result.current.history.historyConversations.map(item => item.threadId)).toContain('normal-selected')
+    rerender({ archived: false, projectId: 'other-project' })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.workspace.currentThreadId).toBe('other-project-thread')
+    expect(result.current.history.historyConversations.map(item => item.threadId)).toEqual(['other-project-thread'])
+    rerender({ archived: false, projectId: 'project-1' })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.workspace.currentThreadId).toBe('normal-first')
+  })
+
+  it.each(['detail', 'prepare'] as const)('记忆会话%s临时失败可重试恢复，手动导航后重试不夺回选择', async failure => {
+    const records = [detail({ threadId: 'normal-first' }), detail({ threadId: 'normal-selected' }), detail({ threadId: 'archive', archived: true })]
+    let fail = false
+    let paged = false
+    historyMocks.detail.mockImplementation(async id => {
+      if (fail && failure === 'detail' && id === 'normal-selected') throw new ApiError('暂不可用', { status: 503 })
+      return records.find(item => item.threadId === id)
+    })
+    historyMocks.list.mockImplementation(async options => ({
+      items: records.filter(item => item.archived === options.archived && !(paged && item.threadId === 'normal-selected')).map(historyItemFromDetail),
+      nextCursor: paged && !options.archived ? 'next-page' : null,
+    }))
+    const { result, rerender } = renderHook(({ archived }) => useBootstrapHarness(true, archived), { initialProps: { archived: false } })
+    result.current.prepareTaskTraceOwner.mockImplementation(async id => {
+      if (fail && failure === 'prepare' && id === 'normal-selected') throw new Error('准备暂不可用')
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => { result.current.history.cancelInitialSelection(); result.current.setWorkspace(state => ({ ...state, currentThreadId: 'normal-selected' })) })
+    rerender({ archived: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    fail = true; paged = true
+    rerender({ archived: false })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.history.historyBootstrapStatus).toBe('error')
+    expect(result.current.workspace.currentThreadId).toBe('normal-selected')
+    expect(result.current.history.historyConversations.map(item => item.threadId)).toContain('normal-selected')
+    fail = false
+    await act(async () => { result.current.history.retryHistoryBootstrap(); await vi.advanceTimersByTimeAsync(0) })
+    expect(result.current.history.historyBootstrapStatus).toBe('ready')
+    expect(result.current.workspace.currentThreadId).toBe('normal-selected')
+    rerender({ archived: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    fail = true
+    rerender({ archived: false })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.history.historyBootstrapStatus).toBe('error')
+    act(() => { result.current.history.cancelInitialSelection(); result.current.setWorkspace(createNewConversation) })
+    fail = false
+    await act(async () => { result.current.history.retryHistoryBootstrap(); await vi.advanceTimersByTimeAsync(0) })
+    expect(result.current.history.historyBootstrapStatus).toBe('ready')
+    expect(result.current.workspace.currentThreadId).toBe('')
+  })
+
+  it('明确切换普通与归档列表时选择目标范围会话，空列表保留其他会话资料', async () => {
+    const normal = detail({ threadId: 'normal-thread', archived: false, status: { execution: 'succeeded', headRunId: RUN_ID } })
+    const archived = detail({ threadId: 'archived-thread', archived: true, status: { execution: 'succeeded', headRunId: RUN_ID } })
+    let archiveEmpty = false
+    historyMocks.detail.mockImplementation(async id => {
+      if (id !== archived.threadId) return normal
+      if (archiveEmpty) throw new ApiError('请求未找到', { status: 404 })
+      return archived
+    })
+    historyMocks.list.mockImplementation(async options => ({ items: options.archived ? archiveEmpty ? [] : [historyItemFromDetail(archived)] : [historyItemFromDetail(normal)], nextCursor: null }))
+    const { result, rerender } = renderHook(({ archived }) => useBootstrapHarness(true, archived), { initialProps: { archived: false } })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.workspace.currentThreadId).toBe(normal.threadId)
+    rerender({ archived: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.workspace.currentThreadId).toBe(archived.threadId)
+    expect(result.current.history.historyConversations.map(item => item.threadId)).toEqual([archived.threadId])
+    rerender({ archived: false })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.workspace.currentThreadId).toBe(normal.threadId)
+    archiveEmpty = true
+    rerender({ archived: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.workspace.currentThreadId).toBe('')
+    expect(result.current.history.historyConversations).toEqual([])
+    expect(result.current.workspace.conversations.map(item => item.threadId)).toContain(normal.threadId)
+  })
+
+  it('列表切换不因已有新会话草稿跳过目标会话，手动导航后迟到列表不改变选择', async () => {
+    const normal = historyItemFromDetail(detail())
+    const archived = historyItemFromDetail(detail({ threadId: 'archived-thread', archived: true }))
+    const response = deferred<{ items: typeof archived[]; nextCursor: null }>()
+    historyMocks.list.mockImplementation(options => options.archived ? response.promise : Promise.resolve({ items: [normal], nextCursor: null }))
+    const { result, rerender } = renderHook(({ archived }) => useBootstrapHarness(true, archived, true), { initialProps: { archived: false } })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.workspace.currentThreadId).toBe('')
+    rerender({ archived: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    await act(async () => { response.resolve({ items: [archived], nextCursor: null }); await vi.advanceTimersByTimeAsync(0) })
+    expect(result.current.workspace.currentThreadId).toBe(archived.threadId)
+    rerender({ archived: false })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(result.current.workspace.currentThreadId).toBe(normal.threadId)
+    const delayed = deferred<{ items: typeof archived[]; nextCursor: null }>()
+    historyMocks.list.mockImplementation(options => options.archived ? delayed.promise : Promise.resolve({ items: [normal], nextCursor: null }))
+    rerender({ archived: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    act(() => { result.current.history.cancelInitialSelection(); result.current.setWorkspace(createNewConversation) })
+    await act(async () => { delayed.resolve({ items: [archived], nextCursor: null }); await vi.advanceTimersByTimeAsync(0) })
+    expect(result.current.workspace.currentThreadId).toBe('')
+    expect(result.current.history.historyConversations.map(item => item.threadId)).toEqual([archived.threadId])
+  })
+
+  it('快速返回普通列表取消归档读取，迟到归档结果不能改变列表或当前会话', async () => {
+    const normal = historyItemFromDetail(detail())
+    const archived = historyItemFromDetail(detail({ threadId: 'archived-thread', archived: true }))
+    const response = deferred<{ items: typeof archived[]; nextCursor: null }>()
+    let archiveSignal: AbortSignal | undefined
+    historyMocks.list.mockImplementation(options => {
+      if (!options.archived) return Promise.resolve({ items: [normal], nextCursor: null })
+      archiveSignal = options.signal
+      return response.promise
+    })
+    const { result, rerender } = renderHook(({ archived }) => useBootstrapHarness(true, archived), { initialProps: { archived: false } })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    rerender({ archived: true })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(archiveSignal?.aborted).toBe(false)
+    rerender({ archived: false })
+    await act(async () => vi.advanceTimersByTimeAsync(0))
+    expect(archiveSignal?.aborted).toBe(true)
+    await act(async () => { response.resolve({ items: [archived], nextCursor: null }); await vi.advanceTimersByTimeAsync(0) })
+    expect(result.current.workspace.currentThreadId).toBe(normal.threadId)
+    expect(result.current.history.historyConversations.map(item => item.threadId)).toEqual([normal.threadId])
   })
 
   it.each(['normal', 'search'] as const)('列表外当前会话单独读取标题，进入%s列表后取消读取并拒绝迟到结果', async coverage => {

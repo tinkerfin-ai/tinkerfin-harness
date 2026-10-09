@@ -6,7 +6,7 @@ import { emptyTraceGraph } from '../../test/traceFixtures'
 import { mockResourceNotices } from '../../test/resourceNotices'
 import { WorkspaceScreen } from './WorkspaceScreen'
 
-const user = { user_id: 7, username: 'requests', display_name: '请求验证', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 7, username: 'requests', avatar_url: null, roles: [], disabled: false }
 const time = '2030-01-01T00:00:00Z'
 const historyItem = (overrides: Partial<ConversationHistoryListItem>): ConversationHistoryListItem => ({projectId: 'project-1', archived: false,
   id: 1, threadId: 'thread', title: '标题', titleSource: 'generated', titleGenerationStatus: 'succeeded', titleSeq: 1,

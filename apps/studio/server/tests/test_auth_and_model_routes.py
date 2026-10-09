@@ -1,4 +1,3 @@
-from dataclasses import replace
 from datetime import UTC, datetime
 
 from httpx import ASGITransport, AsyncClient
@@ -24,7 +23,6 @@ class RouteAuthService:
     def __init__(self, user: UserContext) -> None:
         self.user = user
         self.logged_out: list[str] = []
-        self.updated_fields: list[frozenset[str]] = []
 
     async def login(self, username: str, password: str) -> LoginResult:
         assert (username, password) == ("alice", "secret")
@@ -39,28 +37,6 @@ class RouteAuthService:
 
     async def get_user(self, user_id: int) -> UserContext | None:
         return self.user if user_id == self.user.user_id else None
-
-    async def update_user(
-        self,
-        user_id: int,
-        *,
-        display_name: str | None,
-        avatar_url: str | None,
-        fields: frozenset[str],
-    ) -> UserContext | None:
-        if user_id != self.user.user_id:
-            return None
-        self.updated_fields.append(fields)
-        self.user = replace(
-            self.user,
-            display_name=(
-                display_name
-                if "display_name" in fields and display_name is not None
-                else self.user.display_name
-            ),
-            avatar_url=(avatar_url if "avatar_url" in fields else self.user.avatar_url),
-        )
-        return self.user
 
 
 class RouteModelService:
@@ -88,7 +64,6 @@ async def test_auth_user_and_model_routes_keep_the_public_contract() -> None:
     user = UserContext(
         user_id=7,
         username="alice",
-        display_name="Alice",
         avatar_url="https://cdn.example.test/avatars/alice.webp",
         roles=("admin",),
         disabled=False,
@@ -115,17 +90,9 @@ async def test_auth_user_and_model_routes_keep_the_public_contract() -> None:
         )
         me = await client.get("/api/auth/me")
         lookup = await client.get("/api/user/7")
-        updated_user = await client.patch(
-            "/api/user/me",
-            json={
-                "display_name": "Alice Chen",
-                "avatar_url": "https://cdn.example.test/avatars/alice-new.webp",
-            },
-        )
-        rejected_avatar = await client.patch(
-            "/api/user/me",
-            json={"avatar_url": "http://cdn.example.test/avatar.webp"},
-        )
+        for field in ("username", "display_name"):
+            rejected = await client.patch("/api/user/me", json={field: "changed"})
+            assert rejected.status_code == 405
         models = await client.get("/api/models")
         logout = await client.post(
             "/api/auth/logout",
@@ -139,7 +106,6 @@ async def test_auth_user_and_model_routes_keep_the_public_contract() -> None:
         "user": {
             "user_id": 7,
             "username": "alice",
-            "display_name": "Alice",
             "avatar_url": "https://cdn.example.test/avatars/alice.webp",
             "roles": ["admin"],
             "disabled": False,
@@ -150,13 +116,6 @@ async def test_auth_user_and_model_routes_keep_the_public_contract() -> None:
         "user": login.json()["data"]["user"],
     }
     assert lookup.json()["data"] == login.json()["data"]["user"]
-    assert updated_user.json()["data"] == {
-        **login.json()["data"]["user"],
-        "display_name": "Alice Chen",
-        "avatar_url": "https://cdn.example.test/avatars/alice-new.webp",
-    }
-    assert auth.updated_fields == [frozenset({"display_name", "avatar_url"})]
-    assert rejected_avatar.status_code == 422
     assert models.json()["data"] == {
         "items": [
             {

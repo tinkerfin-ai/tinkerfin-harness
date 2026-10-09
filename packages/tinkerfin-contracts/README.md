@@ -69,6 +69,10 @@ do. `expected=None` requires absence and `value=None` deletes. A conflict return
 retrying. Providers define validation and resource failures; these operations
 use borrowed resources and do not transfer ownership to consumers.
 
+## Documentation
+
+[Complete documentation](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/index.md).
+
 ## License
 
 Apache License 2.0. See

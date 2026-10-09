@@ -92,7 +92,6 @@ async def add_users(session: AsyncSession) -> None:
             User(
                 id=index,
                 username=f"user{index}",
-                display_name="用户",
                 password_hash="unused",
                 roles=[],
                 disabled=False,

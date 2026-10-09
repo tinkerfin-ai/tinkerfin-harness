@@ -285,7 +285,6 @@ async def test_concurrent_skill_commands_and_snapshot_capture(
                         User(
                             id=3,
                             username="invalid",
-                            display_name="待写用户",
                             password_hash=None,
                             roles=[],
                             disabled=False,

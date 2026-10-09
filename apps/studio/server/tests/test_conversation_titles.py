@@ -584,7 +584,7 @@ async def test_title_query_checks_owner_and_returns_current_snapshot(
     await create_thread(database)
     app = create_application(lifespan=None)
     app.dependency_overrides[get_user_context] = lambda: UserContext(
-        user_id=user_id, username="user", display_name="用户", roles=(), disabled=False
+        user_id=user_id, username="user", roles=(), disabled=False
     )
     app.dependency_overrides[get_session] = lambda: session
     async with AsyncClient(

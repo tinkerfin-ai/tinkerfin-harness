@@ -123,7 +123,7 @@ async def file_client(session):
     app.state.resources = SimpleNamespace(sandbox_manager=manager)
     app.dependency_overrides[get_session] = lambda: session
     app.dependency_overrides[get_user_context] = lambda: UserContext(
-        1, "one", "用户", (), False
+        1, "one", (), False
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

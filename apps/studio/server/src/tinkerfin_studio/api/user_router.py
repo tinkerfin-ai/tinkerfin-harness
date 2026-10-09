@@ -1,34 +1,58 @@
 """用户查询路由"""
 
 from typing import Annotated
+from uuid import uuid4
 
-from fastapi import APIRouter, Path
+import anyio
+from anyio.lowlevel import checkpoint
+from fastapi import APIRouter, Path, Request
 
 from tinkerfin_studio.api.dependencies import AuthServiceDep, UserContextDep
 from tinkerfin_studio.api.errors import BusinessException, GlobalErrorCode
 from tinkerfin_studio.api.responses import ApiResponse
-from tinkerfin_studio.auth.schemas import UserRead, UserUpdate
+from tinkerfin_studio.auth.avatars import MAX_AVATAR_BYTES, prepare_avatar
+from tinkerfin_studio.auth.schemas import UserRead
+from tinkerfin_studio.resources import get_resources
 
 router = APIRouter(prefix="/user", tags=["用户"])
 
 
-@router.patch("/me", response_model=ApiResponse[UserRead], summary="修改当前用户信息")
-async def update_current_user(
-    payload: UserUpdate,
+@router.put(
+    "/me/avatar", response_model=ApiResponse[UserRead], summary="上传当前用户头像"
+)
+async def upload_avatar(
+    request: Request,
     current_user: UserContextDep,
     auth_service: AuthServiceDep,
 ) -> ApiResponse[UserRead]:
-    """修改当前登录用户明确提交的资料字段"""
+    """接收图片原始字节，完成校验后才替换当前用户头像"""
 
-    fields = frozenset(payload.model_fields_set)
-    if not fields:
-        return ApiResponse.success(UserRead.from_context(current_user))
-    user = await auth_service.update_user(
-        current_user.user_id,
-        display_name=payload.display_name,
-        avatar_url=payload.avatar_url,
-        fields=fields,
-    )
+    content = bytearray()
+    try:
+        with anyio.fail_after(30):
+            async for chunk in request.stream():
+                if len(content) + len(chunk) > MAX_AVATAR_BYTES:
+                    raise BusinessException(
+                        GlobalErrorCode.VALIDATION_FAILED,
+                        message="请选择不超过 5 MiB 的头像图片",
+                    )
+                content.extend(chunk)
+    except TimeoutError as error:
+        raise BusinessException(
+            GlobalErrorCode.BAD_REQUEST, message="头像上传超时，请重试"
+        ) from error
+    image = await prepare_avatar(bytes(content))
+    await checkpoint()
+    try:
+        avatar_url = await get_resources(request.app).object_storage.upload_avatar(
+            uuid4().hex, image
+        )
+    except (OSError, TimeoutError) as error:
+        raise BusinessException(
+            GlobalErrorCode.SERVICE_UNAVAILABLE, message="头像上传失败，请重试"
+        ) from error
+    await checkpoint()
+    user = await auth_service.save_avatar(current_user.user_id, avatar_url)
     if user is None:
         raise BusinessException(GlobalErrorCode.UNAUTHORIZED)
     return ApiResponse.success(UserRead.from_context(user))

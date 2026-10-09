@@ -19,7 +19,7 @@ async def test_create_rename_and_cross_user_access(
     app.state.resources = SimpleNamespace(notifications=notifications)
     app.dependency_overrides[get_session] = lambda: session
     app.dependency_overrides[get_user_context] = lambda: UserContext(
-        user_id=1, username="one", display_name="用户", roles=(), disabled=False
+        user_id=1, username="one", roles=(), disabled=False
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

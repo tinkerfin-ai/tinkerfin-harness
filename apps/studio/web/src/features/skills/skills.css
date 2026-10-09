@@ -106,11 +106,6 @@
 .skills-empty p { margin: 0; color: var(--color-text-secondary); font-size: var(--type-meta-size); line-height: var(--type-ui-line); }
 .skills-pagination { display: grid; place-items: center; min-height: var(--space-8); padding-top: var(--space-6); }
 .skills-pagination > p { margin: 0; color: var(--color-text-secondary); font-size: var(--type-caption-size); }
-.skills-skeleton { display: flex; flex-direction: column; gap: var(--space-3); min-height: 222px; padding: var(--space-5); border: 1px solid var(--skills-card-border); border-radius: var(--radius-2xl); }
-.skills-skeleton > * { height: var(--space-3); background: var(--color-subtle); border-radius: var(--radius-sm); }
-.skills-skeleton > span { width: var(--control-lg); height: var(--control-lg); margin-bottom: var(--space-2); border-radius: var(--radius-xl); }
-.skills-skeleton > b { width: 60%; height: var(--space-4); }
-.skills-skeleton > i:last-child { width: 80%; }
 .skills-mobile-source { display: none; }
 .skills-page :is(button, a, summary):focus-visible, :is(.skills-detail-dialog, .skills-import-dialog, .skills-delete-dialog, .skills-source-dialog) :is(button, a, summary):focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
 .skills-page .skills-picker button:focus-visible, .skills-page .skills-search button:focus-visible { outline: 0; }

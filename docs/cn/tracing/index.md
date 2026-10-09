@@ -75,8 +75,7 @@ async with history.follow() as updates:
 可在提交后通知其他实例；跨进程使用其 Redis 后端。应在所有 Writer 和跟随订阅关闭后再关闭通知服务。
 遗漏的通知每 30 秒或在最近的 Writer 租约到期时通过权威读取修正。未配置通知时默认每 0.5 秒
 检查一次，可通过 `TraceStoreOptions.follow_poll_seconds` 调整。Writer 关闭或租约到期，但缺少已记录终态时，
-运行显示 `unknown` 与 `missing_tail=True`，不能据此判断 Agent 成功。有效接管可以在相同
-事件序号恢复为 `running`。
+运行显示 `unknown` 与 `missing_tail=True`，不能据此判断 Agent 成功。
 
 同一存储代内按 `(as_of_seq, observed_at)` 比较更新，并保留 UTC 时间精度；相同观测内容
 冲突时需重新读取。拉取期间取消、拉取异常或退出异步上下文时，会关闭上游订阅。

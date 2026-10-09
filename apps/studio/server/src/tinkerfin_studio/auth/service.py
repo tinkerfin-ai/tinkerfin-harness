@@ -132,33 +132,13 @@ class AuthService:
         await self._users.commit()
         return user_context
 
-    async def update_user(
-        self,
-        user_id: int,
-        *,
-        display_name: str | None,
-        avatar_url: str | None,
-        fields: frozenset[str],
-    ) -> UserContext | None:
-        """按已校验的字段集合更新当前用户资料
-
-        Args:
-            user_id: 当前已登录用户 ID
-            display_name: 新展示名称，未更新时可为空
-            avatar_url: 新头像 URL；字段存在且值为空时表示清空
-            fields: HTTP 边界确认由请求显式提供的字段名
-
-        Returns:
-            更新后的用户上下文；用户不存在时返回空
-        """
+    async def save_avatar(self, user_id: int, avatar_url: str) -> UserContext | None:
+        """保存已成功上传到对象存储的头像地址"""
 
         user = await self._users.get_by_id(user_id)
         if user is None:
             return None
-        if "display_name" in fields and display_name is not None:
-            user.display_name = display_name
-        if "avatar_url" in fields:
-            user.avatar_url = avatar_url
+        user.avatar_url = avatar_url
         await self._users.commit()
         return self._context(user)
 
@@ -167,7 +147,6 @@ class AuthService:
         return UserContext(
             user_id=user.id,
             username=user.username,
-            display_name=user.display_name,
             roles=tuple(user.roles),
             disabled=user.disabled,
             avatar_url=user.avatar_url,

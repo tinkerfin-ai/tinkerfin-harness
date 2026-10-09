@@ -42,7 +42,7 @@ export function Tooltip({ children, content, placement = 'bottom', enabled = tru
   const dismiss = () => { hovering.current = false; keyboardFocus.current = false; sync() }
   const reveal = (source: 'pointer' | 'keyboard') => {
     const measured = overflowRef?.current ?? anchor.current
-    if (!available || (overflowOnly && (!measured || measured.scrollWidth <= measured.clientWidth))) return
+    if (!available || (overflowOnly && (!measured || (measured.scrollWidth <= measured.clientWidth && measured.scrollHeight <= measured.clientHeight)))) return
     if (source === 'pointer') hovering.current = true
     else keyboardFocus.current = true
     sync()

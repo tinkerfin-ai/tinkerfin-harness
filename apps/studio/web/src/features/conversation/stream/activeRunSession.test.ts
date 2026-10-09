@@ -158,7 +158,7 @@ const active = { projectId: 'project-1', threadId: payload.threadId, payload, mo
 it('同一登录刷新用户资料后仍能保存恢复记录，持久内容不包含凭证', () => {
   const owner = captureActiveRunOwner()
   writeActiveRunSession(active, owner)
-  updateAuthSession({ expires_at: testAuthSession.expiresAt, user: { ...testAuthSession.user, display_name: '新显示名' } })
+  updateAuthSession({ expires_at: testAuthSession.expiresAt, user: { ...testAuthSession.user, avatar_url: 'https://example.test/avatar.jpg' } })
   writeActiveRunSession({ ...active, lastSeq: 4 }, owner)
   expect(readActiveRunSession(payload.threadId, 'project-1')?.lastSeq).toBe(4)
   const raw = window.sessionStorage.getItem('tinkerfin:active-conversation-run')!

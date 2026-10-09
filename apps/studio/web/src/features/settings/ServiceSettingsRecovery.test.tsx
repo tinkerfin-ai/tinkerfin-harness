@@ -19,7 +19,7 @@ it('高级编辑器资源不可用时保留参数，并使用文本输入修正�
   const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   try {
     const user = userEvent.setup()
-    render(<SettingsDialog open user={{ user_id: 1, username: 'user', display_name: 'User', avatar_url: null, roles: [], disabled: false }} themePreference="light" onThemePreferenceChange={vi.fn()} onToast={vi.fn()} onClose={vi.fn()} />)
+    render(<SettingsDialog open user={{ user_id: 1, username: 'user', avatar_url: null, roles: [], disabled: false }} themePreference="light" onThemePreferenceChange={vi.fn()} onToast={vi.fn()} onClose={vi.fn()} />)
     await user.click(screen.getByRole('button', { name: '服务连接' }))
     await screen.findByLabelText('API Key')
     await user.click(screen.getByText('搜索参数', { exact: true }))

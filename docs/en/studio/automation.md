@@ -26,11 +26,11 @@ Conversations also support queries, edits, pause, enable, run-now, and deletion.
 Explicit requests act directly, including deletion; ambiguous references are clarified.
 You can also ask whether a task ran, read its results, or request files it already
 produced. Retrieving existing files does not rerun the task. Reference files and
-execution outputs are shown separately. Plan mode also has these task-management
-tools. Background tasks and subagents receive no task-management tools.
+execution outputs are shown separately. Tasks can also be managed in Plan mode.
+Automation tasks and subagents cannot manage other tasks.
 
-Conversations and tasks default to Full access (`full`). Require write approval
-(`write_approval`) requires approval for command execution and for importing, generating,
+Conversations and tasks default to Full access. Require write approval
+requires approval for command execution and for importing, generating,
 editing, deleting, or delivering files, including image generation and browser screenshots.
 The same policy applies in Plan mode and to subagents; approving a tool does not approve
 a Plan draft. This is not a read-only sandbox policy. Permissions cannot change during

@@ -85,7 +85,7 @@ every 30 seconds or at the next writer lease deadline. Without Notifications,
 `TraceStoreOptions.follow_poll_seconds` controls the read interval, defaulting to
 0.5 seconds. Writer closure or lease expiry without a
 recorded terminal reports `unknown` with `missing_tail=True`; it does not claim that
-the Agent succeeded. A valid takeover can restore `running` at the same event sequence.
+the Agent succeeded.
 
 Within one generation, compare updates by `(as_of_seq, observed_at)` and preserve the
 UTC timestamp's precision. Equal observations with conflicting contents require a

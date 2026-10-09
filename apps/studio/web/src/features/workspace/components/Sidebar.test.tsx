@@ -68,7 +68,6 @@ const baseProps = {
   user: {
     user_id: 7,
     username: 'yunsan',
-    display_name: '云杉',
     avatar_url: null,
     roles: [],
     disabled: false,
@@ -88,11 +87,33 @@ afterEach(() => {
 })
 
 describe('Sidebar', () => {
+  it.each([false, true])('会话行明确标识当前会话且其他页面不保留选中，归档=%s', archived => {
+    const conversations = workspace.conversations.map(item => ({ ...item, archived }))
+    const props = { ...baseProps, archivedHistory: archived, workspace: { ...workspace, conversations }, historyConversations: conversations }
+    const view = render(<Sidebar {...props} />)
+    expect(screen.getByRole('button', { name: '打开会话：最近会话' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: '打开会话：置顶会话' })).not.toHaveAttribute('aria-current')
+    view.rerender(<Sidebar {...props} skillsActive />)
+    expect(screen.getByRole('button', { name: '打开会话：最近会话' })).not.toHaveAttribute('aria-current')
+  })
+
+  it('未发送的普通会话仅在普通列表展示，切换归档不删除草稿', () => {
+    const pending = { runId: 'pending-run', conversation: { ...workspace.conversations[0], threadId: '', title: '未发送草稿', pinned: false } }
+    const props = { ...baseProps, pendingConversations: [pending], selectedPendingRunId: pending.runId, workspace: { ...workspace, currentThreadId: '' } }
+    const view = render(<Sidebar {...props} />)
+    expect(screen.getByRole('button', { name: '打开会话：未发送草稿' })).toHaveAttribute('aria-current', 'page')
+    view.rerender(<Sidebar {...props} archivedHistory historyConversations={[]} />)
+    expect(screen.queryByRole('button', { name: '打开会话：未发送草稿' })).not.toBeInTheDocument()
+    expect(screen.getByText('暂无最近对话')).toBeInTheDocument()
+    view.rerender(<Sidebar {...props} />)
+    expect(screen.getByRole('button', { name: '打开会话：未发送草稿' })).toHaveAttribute('aria-current', 'page')
+  })
+
   it('renders the authenticated display name and performs real logout', () => {
     const onLogout = vi.fn()
     render(<Sidebar {...baseProps} onLogout={onLogout} />)
 
-    expect(screen.getByText('云杉')).toBeInTheDocument()
+    expect(screen.getByText('yunsan')).toBeInTheDocument()
     expect(screen.queryByText('Yunsan')).not.toBeInTheDocument()
     expect(screen.queryByText('Pro 工作区')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '打开用户菜单' }))
@@ -175,8 +196,8 @@ describe('Sidebar', () => {
     expect(screen.getByRole('button', { name: '打开任务抽屉' })).toHaveFocus()
   })
 
-  it('falls back to the username when the display name is empty', () => {
-    render(<Sidebar {...baseProps} user={{ ...baseProps.user, display_name: '' }} />)
+  it('shows the immutable username', () => {
+    render(<Sidebar {...baseProps} />)
 
     expect(screen.getByText('yunsan')).toBeInTheDocument()
   })
@@ -462,7 +483,7 @@ describe('Sidebar', () => {
 
     rerender(<Sidebar {...baseProps} isLoadingMore />)
 
-    expect(screen.getByText('正在加载更多历史会话')).toHaveAttribute('role', 'status')
+    expect(within(scroll).getByRole('status')).toHaveTextContent('正在加载更多历史会话')
     expect(screen.queryByTestId('history-skeleton')).not.toBeInTheDocument()
 
     rerender(<Sidebar {...baseProps} loadMoreError="加载历史失败" />)

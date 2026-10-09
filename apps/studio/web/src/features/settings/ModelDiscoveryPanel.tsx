@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { RefreshCw, Search } from 'lucide-react'
-import { Button, TextField } from '../../components/ui'
+import { Button, FeedbackState, TextField } from '../../components/ui'
 import { requestJson } from '../../api/shared/http'
 import { useI18n } from '../../i18n'
 import { ImageInputStatus } from './ImageInputCapability'
@@ -39,7 +39,7 @@ export function ModelDiscoveryPanel({ connection, models, saving, onAdd, onManua
     <Button size="sm" type="button" disabled={saving} onClick={onCancel}>{t('取消')}</Button><Button size="sm" type="button" variant="primary" loading={saving} disabled={candidates.length === 0 || candidates.length > 200} onClick={() => {
       void onAdd(candidates.map(item => ({ ...newModel(connection.connection_id), model_name: item.model_name, display_name: [...item.display_name].slice(0, 40).join('') }))).then(saved => { if (saved) onCancel() })
     }}>{t('添加所选模型')}</Button></div>}>
-    {loading ? <p role="status">{t('正在获取模型')}</p> : result?.outcome === 'success' ? <>
+    {loading ? <FeedbackState kind="loading" title={t('正在获取模型')} /> : result?.outcome === 'success' ? <>
       {result.items.length > 0 && <TextField shape="standard" fieldSize="md" label={t('搜索模型名称或 Model ID')} value={search} disabled={saving} leadingContent={<Search size={14} />} onChange={event => setSearch(event.target.value)} />}
       <div className="settings-models__discovered">
       {result.items.length === 0 && <p>{t('服务没有返回模型，可手动添加')}</p>}

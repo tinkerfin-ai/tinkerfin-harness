@@ -90,9 +90,6 @@ runtime = (
 )
 ```
 
-Checkpointed approval uses `durability="sync"`. This waits for asynchronous checkpoint
-writes; it does not select a synchronous database driver.
-
 ## Plan before execution
 
 Enable Plan on the builder, then select `mode="plan"` for a request:

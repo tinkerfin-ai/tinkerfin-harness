@@ -79,16 +79,6 @@ Supported providers may produce `REASONING_START`, `REASONING_MESSAGE_*`, and `R
 
 Provider-private reasoning metadata is removed from normal messages, state, and raw payloads regardless of this setting.
 
-## What `messages`, `tasks`, and `values` contribute
-
-| Native mode | Information used during conversion |
-| --- | --- |
-| `messages` | Text chunks, tool argument chunks, tool results, and message metadata |
-| `tasks` | Graph node and task starts, results, errors, and graph namespace relationships |
-| `values` | State snapshots and top-level `interrupts` |
-
-The mode is plural: `tasks`. It is not the Deep Agents delegation tool named `task`. Root and subgraph `values` are separate state scopes; a later subgraph snapshot must not replace root state.
-
 ## Terminal events
 
 Each main run has one terminal:

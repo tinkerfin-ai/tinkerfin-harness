@@ -46,6 +46,13 @@ const HISTORY_PAGE_SIZE = 100
 const HISTORY_LOAD_COOLDOWN_MS = 300
 const HISTORY_SEARCH_DEBOUNCE_MS = 300
 
+interface HistoryWindow {
+  threadIds: string[]
+  cursor: string | null
+  loadedCursors: Set<string>
+  excludedIds: Set<string>
+}
+
 interface TracePageRequestIdentity {
   asOfSeq: number
   generation: string
@@ -423,7 +430,8 @@ export function useWorkspaceHistory({
   const initialSelection = useRef<{
     threadId: string
     status: 'pending' | 'applied' | 'cancelled'
-  }>({ threadId: readThreadFromLocation(), status: 'pending' })
+    kind: 'route' | 'list'
+  }>({ threadId: readThreadFromLocation(), status: 'pending', kind: 'route' })
   const historyInitialized = useRef(false)
   const latestWorkspace = useRef(workspace)
   const latestToast = useRef(onToast)
@@ -431,10 +439,39 @@ export function useWorkspaceHistory({
   const notifiedTaskTraceRequest = useRef<number | null>(null)
   latestWorkspace.current = workspace
 
+  const cachedWindows = useRef<{ normal?: HistoryWindow; archived?: HistoryWindow }>({})
+  const hasHistoryWindow = useRef(false)
+  const latestHistoryCursor = useRef(historyCursor)
+  latestHistoryCursor.current = historyCursor
   const listScope = useRef({ projectId, archived })
+  const rememberedThreadIds = useRef({ normal: '', archived: '' })
   useLayoutEffect(() => {
     if (listScope.current.projectId === projectId && listScope.current.archived === archived) return
+    const previousScope = listScope.current
+    const current = latestWorkspace.current.conversations.find(item => item.threadId === latestWorkspace.current.currentThreadId)
+    // 快速切换时右侧可能仍显示另一列表，不能将它记入正在离开的列表
+    if (previousScope.projectId !== projectId) {
+      rememberedThreadIds.current = { normal: '', archived: '' }
+      cachedWindows.current = {}
+    } else if (hasHistoryWindow.current) {
+      cachedWindows.current[previousScope.archived ? 'archived' : 'normal'] = {
+        threadIds: historyThreadIdsRef.current,
+        cursor: latestHistoryCursor.current,
+        loadedCursors: new Set(loadedHistoryCursors.current),
+        excludedIds: new Set(historyExcludedIds.current),
+      }
+    }
+    if (previousScope.projectId === projectId && current?.projectId === projectId && current.archived === previousScope.archived) {
+      rememberedThreadIds.current[previousScope.archived ? 'archived' : 'normal'] = current.threadId
+    }
     listScope.current = { projectId, archived }
+    // 两种列表恢复各自上次打开的会话；后续通知刷新仍只更新目录
+    initialSelection.current = {
+      threadId: current?.projectId === projectId && current.archived === archived
+        ? current.threadId : rememberedThreadIds.current[archived ? 'archived' : 'normal'],
+      status: 'pending',
+      kind: 'list',
+    }
     historyWatch.current?.close()
     historyWatch.current = null
     historyAbortController.current?.abort()
@@ -444,18 +481,38 @@ export function useWorkspaceHistory({
     historyLoadingRef.current = false
     historyRefreshing.current = null
     historyLastLoadSettledAt.current = null
-    loadedHistoryCursors.current.clear()
-    historyExcludedIds.current.clear()
-    historyThreadIdsRef.current = []
-    historyInitialized.current = false
-    setHistoryThreadIds([])
-    setHistoryCursor(null)
+    const cached = cachedWindows.current[archived ? 'archived' : 'normal']
+    loadedHistoryCursors.current = new Set(cached?.loadedCursors)
+    historyExcludedIds.current = new Set(cached?.excludedIds)
+    // 已明确打开的目标会话优先于列表记忆，即使它不在缓存分页中
+    const currentInScope = current?.projectId === projectId && current.archived === archived
+    historyThreadIdsRef.current = cached && currentInScope
+      ? prependUniqueThreadIds(cached.threadIds, [current.threadId])
+      : cached?.threadIds ?? []
+    if (currentInScope) historyExcludedIds.current.delete(current.threadId)
+    hasHistoryWindow.current = Boolean(cached)
+    historyInitialized.current = Boolean(cached)
+    setHistoryThreadIds(historyThreadIdsRef.current)
+    setHistoryCursor(cached?.cursor ?? null)
+    // 已打开的两侧列表立即显示缓存，后台校准不能遮住已有正文
+    if (cached) {
+      const selection = initialSelection.current
+      const preferredId = selection.threadId
+      const cachedThreadIds = new Set(historyThreadIdsRef.current)
+      setWorkspace(state => {
+        if (initialSelection.current !== selection || selection.status === 'cancelled') return state
+        const available = state.conversations.filter(item => cachedThreadIds.has(item.threadId)
+          && item.projectId === projectId && item.archived === archived)
+        const selected = available.find(item => item.threadId === preferredId) ?? available[0]
+        return selectCurrentConversation(state, selected?.threadId ?? '')
+      })
+    }
     setHistoryLoadingMore(false)
     setHistoryLoadError(null)
-    setHistoryBootstrapStatus('loading')
-  }, [projectId, archived])
+    setHistoryBootstrapStatus(cached ? 'ready' : 'loading')
+  }, [projectId, archived, setWorkspace])
 
-  // 明确导航立即取消首屏恢复权，包括空白页再次点击新会话
+  // 明确导航取消正在恢复的会话选择，包括空白页再次点击新会话
   const cancelInitialSelection = useCallback(() => {
     initialSelection.current.status = 'cancelled'
   }, [])
@@ -475,10 +532,13 @@ export function useWorkspaceHistory({
     const selection = initialSelection.current
     const initialize = selection.status === 'pending'
     const selectedAtStart = latestWorkspace.current.currentThreadId
+    const knownThreadIds = latestWorkspace.current.conversations
+      .filter(item => item.projectId === projectId && item.archived === archived)
+      .map(item => item.threadId)
     const preferredThreadId = initialize ? selection.threadId : ''
     const retention = preferredThreadId ? retainConversationDetails(preferredThreadId) : undefined
     try {
-      const [response, preferredDetail, groupConfig] = await Promise.all([
+      const [response, groupConfig] = await Promise.all([
         (async () => {
           const pageCount = options.preserveWindow ? Math.max(1, Math.ceil(historyThreadIdsRef.current.length / HISTORY_PAGE_SIZE)) : 1
           const items: ConversationHistoryListItem[] = []
@@ -493,18 +553,33 @@ export function useWorkspaceHistory({
           }
           return { items, nextCursor }
         })(),
-        preferredThreadId
-          ? prepareTaskTraceOwner(preferredThreadId)
-            .then(() => fetchConversationHistoryDetail(preferredThreadId, {
-              includeTaskTrace: true,
-              signal: options.signal,
-            }))
-            .catch(() => undefined)
-          : Promise.resolve(undefined),
         fetchConversationHistoryGroupConfig({ signal: options.signal }),
       ])
       if (options.signal?.aborted) return false
-      if (preferredDetail && preferredDetail.projectId !== projectId) throw new Error('会话不属于当前项目')
+      const preferredItem = response.items.find(item => item.threadId === preferredThreadId)
+      const previous = latestWorkspace.current.conversations.find(item => item.threadId === preferredThreadId)
+      const reusable = selection.kind === 'list' && previous && preferredItem
+        && previous.projectId === projectId && previous.archived === archived
+        && mergeHistoryConversations([previous], [preferredItem], defaultModelId)[0]?.isHydrated
+      // 列表确认详情未变时复用正文；缺失或变化的会话才读取详情
+      const loadedPreferredDetail = preferredThreadId && !reusable
+        ? await prepareTaskTraceOwner(preferredThreadId)
+          .then(() => fetchConversationHistoryDetail(preferredThreadId, {
+            includeTaskTrace: true,
+            signal: options.signal,
+            suppressGlobalError: true,
+          }))
+          .catch(error => {
+            // 临时读取失败保留上次选择，等待用户重试
+            if (selection.kind === 'list' && !isConversationUnavailable(error)) throw error
+            return undefined
+          })
+        : undefined
+      if (options.signal?.aborted) return false
+      if (selection.kind === 'route' && loadedPreferredDetail && loadedPreferredDetail.projectId !== projectId) throw new Error('会话不属于当前项目')
+      const preferredDetail = loadedPreferredDetail?.projectId === projectId
+        && (selection.kind === 'route' || loadedPreferredDetail.archived === archived)
+        ? loadedPreferredDetail : undefined
       const applyInitialSelection = initialize && selection.status === 'pending'
         && latestWorkspace.current.currentThreadId === selectedAtStart
       // 首次失败保留恢复机会；成功后通知和目录刷新只能更新列表
@@ -525,11 +600,11 @@ export function useWorkspaceHistory({
         : response.items
       const nextThreadIds = historyItems.map((item) => item.threadId)
       const listedThreadIds = new Set(nextThreadIds)
-      if (options.preserveWindow) {
-        for (const threadId of historyThreadIdsRef.current) {
-          if (!listedThreadIds.has(threadId)) historyExcludedIds.current.add(threadId)
-        }
+      // 当前窗口以列表结果为准，旧缓存不能把空列表重新填回
+      for (const threadId of knownThreadIds) {
+        if (!listedThreadIds.has(threadId)) historyExcludedIds.current.add(threadId)
       }
+      hasHistoryWindow.current = true
       historyThreadIdsRef.current = nextThreadIds
       setHistoryThreadIds(nextThreadIds)
       for (const threadId of nextThreadIds) {
@@ -552,10 +627,12 @@ export function useWorkspaceHistory({
           return { ...state, conversations }
         }
         const hasPreferred = preferredThreadId
-          ? conversations.some((item) => item.threadId === preferredThreadId)
+          ? conversations.some((item) => item.threadId === preferredThreadId && (selection.kind === 'route'
+            || listedThreadIds.has(item.threadId) && item.projectId === projectId && item.archived === archived))
           : false
         const hasCurrent = state.currentThreadId
-          ? conversations.some((item) => item.threadId === state.currentThreadId)
+          ? conversations.some((item) => item.threadId === state.currentThreadId
+            && listedThreadIds.has(item.threadId) && item.projectId === projectId && item.archived === archived)
           : false
         const firstHistoryConversation = conversations.find(item => (
           listedThreadIds.has(item.threadId)
@@ -568,7 +645,7 @@ export function useWorkspaceHistory({
             ? preferredThreadId
             : hasCurrent
               ? state.currentThreadId
-              : preferDraft ? '' : (firstHistoryConversation?.threadId ?? ''),
+              : preferDraft && selection.kind === 'route' ? '' : (firstHistoryConversation?.threadId ?? ''),
         )
       })
       return true
@@ -712,7 +789,7 @@ export function useWorkspaceHistory({
   }, [projectId, archived, searchScope, defaultModelId, normalizedHistoryQuery, searchCriteria, searchEnabled, searchRetryVersion, setWorkspace, t])
 
   const retryHistoryBootstrap = useCallback(() => {
-    setHistoryBootstrapStatus('loading')
+    setHistoryBootstrapStatus(hasHistoryWindow.current ? 'ready' : 'loading')
     historyWatch.current?.refresh()
   }, [])
 

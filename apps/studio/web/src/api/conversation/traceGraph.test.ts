@@ -101,7 +101,6 @@ describe('Trace Graph client', () => {
       user: {
         user_id: 7,
         username: 'trace-user',
-        display_name: 'Trace User',
         avatar_url: null,
         roles: [],
         disabled: false,

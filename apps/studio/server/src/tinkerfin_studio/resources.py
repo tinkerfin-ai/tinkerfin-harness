@@ -33,7 +33,6 @@ from tinkerfin_sandbox.lifecycle.sqlalchemy import SQLAlchemyOpenSandboxState
 from tinkerfin_sandbox.models import OpenSandboxConfig
 from tinkerfin_studio.agent.persistence import AgentPersistence
 from tinkerfin_studio.agent.subagents import SubagentSettings, load_subagents
-from tinkerfin_studio.attachments.minio import MinioAttachmentStorage
 from tinkerfin_studio.attachments.service import AttachmentService
 from tinkerfin_studio.automation.ownership import automation_execution_namespace
 from tinkerfin_studio.automation.target import (
@@ -52,6 +51,7 @@ from tinkerfin_studio.conversation.todo_groups import TodoGroupProjection
 from tinkerfin_studio.health import ReadinessService
 from tinkerfin_studio.infrastructure._failures import _cleanup_failure_priority
 from tinkerfin_studio.infrastructure.database import Database
+from tinkerfin_studio.infrastructure.object_storage import MinioStorage
 from tinkerfin_studio.infrastructure.redis_client import create_redis_client
 from tinkerfin_studio.infrastructure.redis_keys import (
     MESSAGING_KEY_PREFIX,
@@ -258,6 +258,7 @@ class ApplicationResources:
     model_http_client: httpx.AsyncClient
     model_http_transport: ModelTransport
     attachments: AttachmentService
+    object_storage: MinioStorage
     database: Database  # 业务仓储使用的连接池
     components_database: Database
     redis_runtime: Redis
@@ -324,7 +325,7 @@ def build_lifespan():
                     settings.database_management_connection_reserve,
                 )
                 attachment_storage = await _enter_lifespan_context(
-                    stack, outcome, MinioAttachmentStorage.open(settings.s3_storage)
+                    stack, outcome, MinioStorage.open(settings.s3_storage)
                 )
                 await attachment_storage.initialize()
                 redis_runtime_settings = settings.redis_runtime
@@ -496,6 +497,7 @@ def build_lifespan():
                     model_http_transport=model_http_transport,
                     attachments=attachments,
                     database=database,
+                    object_storage=attachment_storage,
                     components_database=components_database,
                     redis_runtime=redis_runtime,
                     agent_persistence=persistence,

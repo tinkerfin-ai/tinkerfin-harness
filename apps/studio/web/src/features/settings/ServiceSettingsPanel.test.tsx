@@ -1,7 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useLayoutEffect } from 'react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { requestJson } from '../../api/shared/http'
 import { SettingsDialog } from './SettingsDialog'
+import { ServiceSettingsPanel } from './ServiceSettingsPanel'
+import { useServiceSettings } from './useServiceSettings'
 import { emptyServices, type SavedServices, type ServiceCapability, type ServiceConfiguration } from './serviceSettings'
 
 vi.mock('../../api/shared/http', async importOriginal => ({ ...await importOriginal<typeof import('../../api/shared/http')>(), requestJson: vi.fn() }))
@@ -30,11 +33,43 @@ beforeEach(() => {
 })
 
 async function openServices(onClose = vi.fn()) {
-  render(<SettingsDialog open user={{ user_id: 1, username: 'user', display_name: 'User', avatar_url: null, roles: [], disabled: false }} themePreference="light" onThemePreferenceChange={vi.fn()} onToast={vi.fn()} onClose={onClose} />)
+  render(<SettingsDialog open user={{ user_id: 1, username: 'user', avatar_url: null, roles: [], disabled: false }} themePreference="light" onThemePreferenceChange={vi.fn()} onToast={vi.fn()} onClose={onClose} />)
   fireEvent.click(screen.getByRole('button', { name: '服务连接' }))
   await screen.findByLabelText('API Key')
   return onClose
 }
+
+it('每次打开服务页均在配置加载完成后提供编辑区，并保留独立草稿', async () => {
+  const editableCommits: boolean[] = []
+  const loads: Array<(value: SavedServices) => void> = []
+  vi.mocked(requestJson).mockImplementation(() => new Promise<SavedServices>(resolve => loads.push(resolve)))
+  function ServicePage({ active }: { active: boolean }) {
+    const state = useServiceSettings(active)
+    useLayoutEffect(() => {
+      if (active) editableCommits.push(screen.queryByLabelText('API Key') !== null)
+    })
+    return active ? <ServiceSettingsPanel state={state} confirmClose={false} onCloseDecision={vi.fn()} /> : null
+  }
+  const view = render(<ServicePage active={false} />)
+  view.rerender(<ServicePage active />)
+  expect(editableCommits).not.toContain(true)
+  expect(screen.queryByLabelText('API Key')).not.toBeInTheDocument()
+  await act(async () => loads[0](emptyServices()))
+  fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'search-key' } })
+  fireEvent.click(screen.getByRole('tab', { name: '图片生成' }))
+  fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'image-model' } })
+  fireEvent.click(screen.getByRole('tab', { name: '网页搜索' }))
+  expect(screen.getByLabelText('API Key')).toHaveValue('search-key')
+  fireEvent.click(screen.getByRole('tab', { name: '图片生成' }))
+  expect(screen.getByLabelText('模型 ID')).toHaveValue('image-model')
+  view.rerender(<ServicePage active={false} />)
+  editableCommits.length = 0
+  view.rerender(<ServicePage active />)
+  expect(editableCommits).not.toContain(true)
+  expect(screen.queryByLabelText('API Key')).not.toBeInTheDocument()
+  await act(async () => loads[1](emptyServices()))
+  expect(screen.getByLabelText('模型 ID')).toHaveValue('')
+})
 
 it('两个能力直接编辑，独立保存且保存不调用测试', async () => {
   await openServices()

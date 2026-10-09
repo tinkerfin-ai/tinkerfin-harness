@@ -53,7 +53,7 @@ async def capability_client(database):
     app.add_exception_handler(BusinessException, business_error)
     app.dependency_overrides[get_session] = session_dependency
     app.dependency_overrides[get_user_context] = lambda: UserContext(
-        user_id=1, username="test", display_name="Test", roles=(), disabled=False
+        user_id=1, username="test", roles=(), disabled=False
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -97,7 +97,7 @@ async def test_preview_and_settings_share_resolution_without_saving(capability_c
 async def test_capability_is_owned_and_authenticated(capability_client):
     client, app = capability_client
     app.dependency_overrides[get_user_context] = lambda: UserContext(
-        user_id=2, username="other", display_name="Other", roles=(), disabled=False
+        user_id=2, username="other", roles=(), disabled=False
     )
     missing = await client.post(
         "/api/models/input-capabilities",

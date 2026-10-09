@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { buildApiUrl, DEFAULT_SERVER_ADDRESS, getServerAddress, normalizeServerAddress, SERVER_ADDRESS_STORAGE_KEY, setServerAddress, subscribeServerAddress } from './config'
 import { getAuthSession, clearAuthSession, createAuthSession, getAuthorizationHeader, saveAuthSession } from '../../auth/session'
 
-const session = () => createAuthSession({ access_token: 'secret', token_type: 'Bearer', expires_at: '2099-01-01T00:00:00Z', user: { user_id: 1, username: 'test', display_name: 'Test', avatar_url: null, roles: [], disabled: false } })
+const session = () => createAuthSession({ access_token: 'secret', token_type: 'Bearer', expires_at: '2099-01-01T00:00:00Z', user: { user_id: 1, username: 'test', avatar_url: null, roles: [], disabled: false } })
 
 describe('服务器地址', () => {
   it('uses the default when blank and persists a normalized custom address', () => {

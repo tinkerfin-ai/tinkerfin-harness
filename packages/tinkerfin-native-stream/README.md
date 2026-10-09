@@ -11,12 +11,23 @@ application resources.
 pip install tinkerfin-native-stream
 ```
 
-## Current stream contract
+## Decode recorded output
 
-The package exposes the one current `NativeStreamFrame` contract shared by every
-downstream consumer. A concrete Runtime Profile owns third-party graph invocation and
-maps its live objects into that frame; downstream consumers do not detect or negotiate
-an upstream version.
+Use `NativeStreamPart` to validate a stored JSON record and obtain the frame consumed
+by Native protocol integrations:
+
+```python
+from tinkerfin_native_stream import NativeStreamPart
+
+record = '{"type":"custom","ns":[],"data":{"progress":0.5}}'
+part = NativeStreamPart.model_validate_json(record)
+frame = part.to_frame()
+print(frame.replay.data)
+```
+
+## Live and recorded values
+
+A Runtime Profile maps live graph output into `NativeStreamFrame`.
 
 `NativeStreamFrame.canonical` retains the validated live object for protocol conversion,
 `observations` contains ordered protocol-neutral Runtime facts, and `replay` is the
@@ -40,6 +51,10 @@ those changes.
 workflows that request human input. Producers validate their response Schema before
 emission; protocol adapters apply their own publication and resume validation. The
 package does not contain AG-UI event models or conversion lifecycle code.
+
+## Documentation
+
+[Complete documentation](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/index.md).
 
 ## License
 

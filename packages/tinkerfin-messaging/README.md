@@ -109,9 +109,8 @@ Pass an existing Engine when your application already has one. SQL tables are pr
 automatically. The application owns the Engine or Redis client and closes it after
 Messaging. SQL polling holds no connection between queries. Connection and statement
 timeouts belong to the Engine; table setup has a 30-second lock wait. SQL writes share
-one database-wide capacity budget and are serialized for admission. Workers sharing
-that database must use equal backend settings. Unknown commit outcomes are reported
-without automatically replaying the operation.
+one database-wide capacity budget. Workers sharing that database must use equal backend
+settings. Unknown commit outcomes are reported without automatically replaying the operation.
 
 SQLite in-memory Engines need exclusive checkouts: use `AsyncAdaptedQueuePool` with
 `pool_size=1, max_overflow=0`. Redis clients must return bytes (`decode_responses=False`).

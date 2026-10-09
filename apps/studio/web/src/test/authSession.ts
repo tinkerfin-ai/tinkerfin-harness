@@ -8,7 +8,6 @@ export const testAuthSession: AuthSession = {
   user: {
     user_id: 7,
     username: 'tester',
-    display_name: '测试用户',
     avatar_url: null,
     roles: [],
     disabled: false,

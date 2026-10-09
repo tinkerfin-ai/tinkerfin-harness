@@ -10,7 +10,6 @@ class UserContext:
 
     user_id: int
     username: str
-    display_name: str
     roles: tuple[str, ...]
     disabled: bool
     avatar_url: str | None = None

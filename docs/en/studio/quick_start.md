@@ -23,10 +23,9 @@ uv sync --package tinkerfin-studio --locked
 uv run --package tinkerfin-studio python -m tinkerfin_studio
 ```
 
-`--local` waits for the four services, creates `apps/studio/.env` with random passwords from the single `apps/studio/.env.example` template, and selects the `tinkerfin` bucket on first setup. Repeated runs reuse configuration and data. Adjust `apps/studio/.env` first if a port is occupied.
+The first start creates `apps/studio/.env`. Repeated runs reuse configuration and data. Adjust this file first if a port is occupied.
 
-In PyCharm, select the repository's `.venv`, set the working directory to the repository root, and run the `tinkerfin_studio` module.
-After startup: [readiness](http://127.0.0.1:8090/health/ready) · [API docs (Swagger)](http://127.0.0.1:8090/docs). Workspaces are created on demand without a warm pool; each new sandbox is limited to 1 CPU and 1 GiB of memory. The runtime image is downloaded on first use if needed.
+After startup: [readiness](http://127.0.0.1:8090/health/ready) · [API docs (Swagger)](http://127.0.0.1:8090/docs). First use may require downloading the runtime image.
 
 To run the backend and its dependencies in containers, use the following command with the same `.env`. Python and uv are not required on the host:
 
@@ -34,7 +33,7 @@ To run the backend and its dependencies in containers, use the following command
 ./apps/studio/server/deploy/start.sh --container
 ```
 
-To choose your own passwords, change deployment addresses, or connect to existing services, first run `./apps/studio/server/deploy/init-env.sh`, then edit `.env` before starting. `COMPOSE_PROFILES` selects the bundled services. Run `start.sh` without a mode flag to use an available published image. See [server deployment](../../../apps/studio/server/README.md) for remote access and file log mount requirements.
+To choose your own passwords, change deployment addresses, or connect to existing services, see [server deployment](../../../apps/studio/server/README.md).
 
 ## Start the Web client
 
@@ -59,7 +58,7 @@ Initializing a new database creates this account:
 | Username | `tinkerfin` |
 | Password | `123456` |
 
-Existing data volumes do not rerun the initialization SQL or overwrite accounts. There is no public registration endpoint.
+Existing deployments use their existing account and password. There is no public registration endpoint.
 
 After signing in for the first time, choose Create project and enter a name. Conversations, memories, and automation tasks belong to the current project. Use the selector at the top of the sidebar to switch projects or create another.
 
@@ -92,12 +91,7 @@ UPDATE users SET password_hash = '<full generated hash>' WHERE username = 'tinke
 ```
 
 Conversations default to Full access. Use the permission picker beside the model
-to require write approval. Open Memories in the sidebar to view and edit the current
-project's long-term memory. The agent reads and edits the same content; if a save
-reports a conflict, compare the latest content before saving again.
-The folder icon at the top right opens the current project's workspace, shared by
-its conversations. Preview the first 200 lines or 100 KiB of text and code as source;
-other formats show file information. Viewing files never creates or resumes a Sandbox.
+to require write approval. Conversations in the same project share a workspace and long-term memory.
 For scheduled work, see [Studio automation](automation.md).
 
 ## Troubleshooting

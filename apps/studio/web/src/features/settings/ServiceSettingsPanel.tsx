@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react'
 import { CheckCircle2, ChevronDown, CircleAlert, Eye, EyeOff, Image, LoaderCircle, Search, Square, Trash2 } from 'lucide-react'
-import { Button, ErrorBoundary, IconButton, TextField, ValidatedForm, ViewTabs } from '../../components/ui'
+import { Button, FeedbackState, ErrorBoundary, IconButton, TextField, ValidatedForm, ViewTabs } from '../../components/ui'
 import { isTranslationKey, useI18n } from '../../i18n'
 import { ImageOutputFormats } from './ImageOutputFormats'
 import { ModelChoice } from './ModelChoice'
@@ -26,7 +26,7 @@ function ServiceJsonField({ label, value, onChange, hint, error, reserved, disab
         aria-invalid={parsed.issues.length > 0} value={value} disabled={disabled} spellCheck={false}
         onChange={event => onChange(event.target.value)} />
     </>}>
-      <Suspense fallback={<p role="status">{t('加载中')}</p>}>
+      <Suspense fallback={<FeedbackState kind="loading" title={t('加载中')} />}>
         <ModelOptionsEditor disabled={disabled} value={value} onChange={onChange} issues={parsed.issues} issueMessage={() => t('请检查 JSON 格式和受控字段')} descriptionId={id} />
       </Suspense>
     </ErrorBoundary>
@@ -40,8 +40,8 @@ const testFailureMessages: Record<string, string> = {
   response_too_large: '服务响应超过大小限制', invalid_response: '服务响应格式不正确', network_error: '连接失败，请检查地址和网络', service_error: '服务返回错误，请稍后重试',
 }
 
-function ServiceEditor({ state, confirmClose, onCloseDecision }: {
-  state: ServiceSettingsState; confirmClose: boolean; onCloseDecision: (discard: boolean) => void
+function ServiceEditor({ state, confirmClose, closeDisabled, onCloseDecision }: {
+  state: ServiceSettingsState; confirmClose: boolean; closeDisabled?: boolean; onCloseDecision: (discard: boolean) => void
 }) {
   const { t } = useI18n()
   const text = (value: string) => isTranslationKey(value) ? t(value) : value
@@ -132,8 +132,8 @@ function ServiceEditor({ state, confirmClose, onCloseDecision }: {
         <div className="settings-services__confirm">
           <p>{t('有尚未保存的修改，关闭后将丢失')}</p>
           <div className="settings-services__actions">
-            <Button ref={continueRef} type="button" onClick={() => onCloseDecision(false)}>{t('继续编辑')}</Button>
-            <Button type="button" onClick={() => onCloseDecision(true)}>{t('放弃修改并关闭')}</Button>
+            <Button ref={continueRef} type="button" disabled={closeDisabled || state.saving !== null} onClick={() => onCloseDecision(false)}>{t('继续编辑')}</Button>
+            <Button type="button" disabled={closeDisabled || state.saving !== null} onClick={() => onCloseDecision(true)}>{t('放弃修改并关闭')}</Button>
           </div>
         </div>
       ) : confirmClear ? (
@@ -162,13 +162,13 @@ function ServiceEditor({ state, confirmClose, onCloseDecision }: {
   </section>
 }
 
-export function ServiceSettingsPanel({ state, confirmClose, onCloseDecision }: {
-  state: ServiceSettingsState; confirmClose: boolean; onCloseDecision: (discard: boolean) => void
+export function ServiceSettingsPanel({ state, confirmClose, closeDisabled = false, onCloseDecision }: {
+  state: ServiceSettingsState; confirmClose: boolean; closeDisabled?: boolean; onCloseDecision: (discard: boolean) => void
 }) {
   const { t } = useI18n()
   const text = (value: string) => isTranslationKey(value) ? t(value) : value
   return <section className="settings-models settings-services">
     <div className="settings-services__tabs"><ViewTabs value={state.capability} label={t('服务能力')} options={(['web_search', 'image_generation'] as const).map(value => ({ value, label: text(serviceLabels[value]) }))} onChange={state.setCapability} /></div>
-    {state.loading ? <div className="settings-services__loading" role="status">{t('正在加载服务配置')}</div> : state.loadFailed ? <div className="settings-services__loading" role="alert"><p>{t('服务配置加载失败')}</p><Button type="button" onClick={state.reload}>{t('重新加载')}</Button></div> : <ServiceEditor key={state.capability} state={state} confirmClose={confirmClose} onCloseDecision={onCloseDecision} />}
+    {state.loading ? <div className="settings-services__loading"><FeedbackState kind="loading" title={t('正在加载服务配置')} /></div> : state.loadFailed ? <div className="settings-services__loading" role="alert"><p>{t('服务配置加载失败')}</p><Button type="button" onClick={state.reload}>{t('重新加载')}</Button></div> : <ServiceEditor key={state.capability} state={state} confirmClose={confirmClose} closeDisabled={closeDisabled} onCloseDecision={onCloseDecision} />}
   </section>
 }

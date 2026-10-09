@@ -985,7 +985,7 @@
   }
   .chain-trace-feedback-action.ui-button:hover:not(:disabled) { background: transparent; color: var(--color-brand-text); }
   .chain-trace-feedback-action.ui-button:active:not(:disabled) { background: transparent; color: var(--color-text-primary); }
-  :is(.chain-trace, .chain-trace-details) .ui-feedback-state:not(.is-retry) {
+  :is(.chain-trace, .chain-trace-details) .ui-feedback-state.is-error:not(.is-retry) {
     width: fit-content;
     max-width: 100%;
     min-height: var(--control-lg);
@@ -995,10 +995,10 @@
     box-shadow: none;
     background: transparent;
   }
-  :is(.chain-trace, .chain-trace-details) .ui-feedback-state.has-action:not(.is-retry) { grid-template-columns: auto minmax(0, 1fr) auto; }
-  :is(.chain-trace, .chain-trace-details) .ui-feedback-state__title { text-align: left; font-size: var(--type-meta-size); font-weight: var(--weight-ui); }
-  :is(.chain-trace, .chain-trace-details) .ui-feedback-icon { width: var(--icon-lg); height: var(--icon-lg); background: transparent; }
-  :is(.chain-trace, .chain-trace-details) .ui-feedback-state > .ui-icon-button-wrap { translate: none; }
+  :is(.chain-trace, .chain-trace-details) .ui-feedback-state.is-error.has-action:not(.is-retry) { grid-template-columns: auto minmax(0, 1fr) auto; }
+  :is(.chain-trace, .chain-trace-details) .ui-feedback-state.is-error .ui-feedback-state__title { text-align: left; font-size: var(--type-meta-size); font-weight: var(--weight-ui); }
+  :is(.chain-trace, .chain-trace-details) .ui-feedback-state.is-error .ui-feedback-icon { width: var(--icon-lg); height: var(--icon-lg); background: transparent; }
+  :is(.chain-trace, .chain-trace-details) .ui-feedback-state.is-error > .ui-icon-button-wrap { translate: none; }
 
   .chain-trace-state,
   .chain-trace-empty {

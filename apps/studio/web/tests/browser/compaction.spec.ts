@@ -7,7 +7,7 @@ import { traceGraphNode, traceGraphWithNodes } from '../../src/test/traceFixture
 const threadId = 'compact-browser'
 const time = '2026-09-21T00:00:00.000Z'
 const timestamp = (offset: number) => new Date(Date.parse(time) + offset).toISOString()
-const user = { user_id: 1, username: 'compact-test', display_name: '压缩验收', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'compact-test', avatar_url: null, roles: [], disabled: false }
 const summaryModelRequest = { messages: [{ messageType: 'human', content: '请将早期对话整理为便于后续使用的摘要' }] }
 const summary = [
   '## 项目目标与约束',

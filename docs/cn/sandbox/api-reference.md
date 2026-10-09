@@ -9,7 +9,7 @@
 | 字段 | 默认值 | 作用 |
 | --- | --- | --- |
 | `image` | TinkerFin 固定版本镜像 | 新 Sandbox 使用的镜像 |
-| `entrypoint` | `/opt/sandbox-runtime/bin/entrypoint.sh` | 容器入口命令 |
+| `entrypoint` | `["/opt/sandbox-runtime/bin/entrypoint.sh"]` | 容器入口命令 |
 | `env` | `{}` | Sandbox 环境变量 |
 | `metadata` | `{}` | 创建时附加的业务 metadata；保留字段不能覆盖 |
 | `resource` | `cpu=1, memory=2Gi` | 资源规格 |

@@ -42,7 +42,7 @@ function normalizeExpiresAt(value: string): string {
   return new Date(timestamp).toISOString()
 }
 
-function sessionsEqual(first: AuthSession | null | undefined, second: AuthSession | null) {
+function sameAuthorization(first: AuthSession | null | undefined, second: AuthSession | null) {
   if (first == null || second == null) return first == null && second == null
   return first.serverAddress === second.serverAddress
     && first.token === second.token
@@ -50,11 +50,13 @@ function sessionsEqual(first: AuthSession | null | undefined, second: AuthSessio
     && first.expiresAt === second.expiresAt
     && first.user.user_id === second.user.user_id
     && first.user.username === second.user.username
-    && first.user.display_name === second.user.display_name
-    && first.user.avatar_url === second.user.avatar_url
     && first.user.disabled === second.user.disabled
     && first.user.roles.length === second.user.roles.length
     && first.user.roles.every((role, index) => role === second.user.roles[index])
+}
+
+function sessionsEqual(first: AuthSession | null | undefined, second: AuthSession | null) {
+  return sameAuthorization(first, second) && first?.user.avatar_url === second?.user.avatar_url
 }
 
 function getLocalStorage(): Storage | null {
@@ -71,7 +73,6 @@ function normalizeAuthUser(value: unknown): AuthUser | null {
   if (Object.keys(value).sort().join('\0') !== [
     'avatar_url',
     'disabled',
-    'display_name',
     'roles',
     'user_id',
     'username',
@@ -79,7 +80,6 @@ function normalizeAuthUser(value: unknown): AuthUser | null {
   const candidate = value as Partial<AuthUser>
   if (!(typeof candidate.user_id === 'number'
     && typeof candidate.username === 'string'
-    && typeof candidate.display_name === 'string'
     && (candidate.avatar_url === null || typeof candidate.avatar_url === 'string')
     && Array.isArray(candidate.roles)
     && candidate.roles.every((role) => typeof role === 'string')
@@ -87,7 +87,6 @@ function normalizeAuthUser(value: unknown): AuthUser | null {
   return {
     user_id: candidate.user_id,
     username: candidate.username,
-    display_name: candidate.display_name,
     avatar_url: candidate.avatar_url,
     roles: candidate.roles,
     disabled: candidate.disabled,
@@ -295,7 +294,7 @@ export function startAuthSessionLifecycle(
     if (sessionsEqual(previous, next)) return
     currentSession = next
     notifySessionListeners(next)
-    if (next) options.onExternalSession?.(next)
+    if (next && !sameAuthorization(previous, next)) options.onExternalSession?.(next)
   }
 
   const unsubscribe = subscribeAuthSession(scheduleExpiry)

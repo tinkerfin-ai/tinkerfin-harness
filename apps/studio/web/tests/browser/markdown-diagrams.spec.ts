@@ -8,7 +8,7 @@ import type { ConversationHistoryDetail } from '../../src/api/conversation/histo
 import { installLiveRun } from './fixtures/liveRun'
 import { mockDownloadPermits } from './support/attachment-storage'
 
-const user = { user_id: 1, username: 'diagram-test', display_name: '图表验收', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'diagram-test', avatar_url: null, roles: [], disabled: false }
 const assistantId = original.messages.at(-1)!.id
 const jsonSource = '{\n  "name": "中文示例",\n  "count": 42,\n  "enabled": true\n}'
 

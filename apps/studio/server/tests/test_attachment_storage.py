@@ -8,8 +8,8 @@ import pytest
 from aiobotocore.stub import AioStubber
 from pydantic import SecretStr
 
-from tinkerfin_studio.attachments.minio import MinioAttachmentStorage
 from tinkerfin_studio.config.settings import S3StorageSettings
+from tinkerfin_studio.infrastructure.object_storage import MinioStorage
 
 
 def storage_settings() -> S3StorageSettings:
@@ -23,7 +23,7 @@ def storage_settings() -> S3StorageSettings:
 
 
 async def test_signatures_target_public_host_and_exact_temporary_object():
-    async with MinioAttachmentStorage.open(storage_settings()) as storage:
+    async with MinioStorage.open(storage_settings()) as storage:
         form = await storage.upload_form("a" * 32, 42)
         assert form.url == "https://files.example.com/chosen-bucket"
         assert form.expires_in == 600
@@ -44,7 +44,7 @@ async def test_signatures_target_public_host_and_exact_temporary_object():
 
 
 async def test_storage_errors_distinguish_missing_content_and_unavailable_storage():
-    async with MinioAttachmentStorage.open(storage_settings()) as storage:
+    async with MinioStorage.open(storage_settings()) as storage:
         with AioStubber(storage._client) as stub:
             stub.add_client_error(
                 "get_object", service_error_code="NoSuchKey", http_status_code=404
@@ -54,7 +54,7 @@ async def test_storage_errors_distinguish_missing_content_and_unavailable_storag
             stub.add_client_error(
                 "head_bucket", service_error_code="AccessDenied", http_status_code=403
             )
-            with pytest.raises(OSError, match="附件存储请求失败"):
+            with pytest.raises(OSError, match="对象存储请求失败"):
                 await storage.check_ready()
             stub.add_response(
                 "delete_object",
@@ -62,4 +62,30 @@ async def test_storage_errors_distinguish_missing_content_and_unavailable_storag
                 {"Bucket": "chosen-bucket", "Key": "attachments/" + "a" * 32},
             )
             await storage.delete("a" * 32)
+            stub.assert_no_pending_responses()
+
+
+async def test_avatar_uses_existing_storage_client_and_permanent_url():
+    async with MinioStorage.open(storage_settings()) as storage:
+        with AioStubber(storage._client) as stub:
+            stub.add_response(
+                "put_object",
+                {},
+                {
+                    "Bucket": "chosen-bucket",
+                    "Key": "avatars/" + "b" * 32 + ".jpg",
+                    "Body": b"image",
+                    "ContentType": "image/jpeg",
+                    "CacheControl": "public, max-age=31536000, immutable",
+                    "IfNoneMatch": "*",
+                },
+            )
+            url = await storage.upload_avatar("b" * 32, b"image")
+            assert (
+                url
+                == "https://files.example.com/chosen-bucket/avatars/"
+                + "b" * 32
+                + ".jpg"
+            )
+            assert not urlsplit(url).query
             stub.assert_no_pending_responses()

@@ -1,6 +1,6 @@
 # 安装与可选组件
 
-[Documentation](index.md) · [English](../en/installation.md)
+[文档首页](index.md) · [English](../en/installation.md)
 
 
 要求 Python 3.11 或更高版本。

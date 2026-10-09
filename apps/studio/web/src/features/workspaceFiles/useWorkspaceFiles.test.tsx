@@ -23,7 +23,7 @@ const settle = () => act(() => vi.advanceTimersByTimeAsync(0))
 const closeFeed = vi.fn()
 function signIn(token = 'one') {
   saveAuthSession({ serverAddress: getServerAddress(), token, tokenType: 'Bearer', expiresAt: '2100-01-01T00:00:00Z',
-    user: { user_id: token === 'one' ? 1 : 2, username: token, display_name: token, roles: [], disabled: false, avatar_url: null } })
+    user: { user_id: token === 'one' ? 1 : 2, username: token, roles: [], disabled: false, avatar_url: null } })
 }
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -119,18 +119,45 @@ it('隐藏页面与关闭抽屉会取消查询，恢复可见后重新校准，�
   expect(readWorkspaceDirectory).toHaveBeenCalledTimes(queries)
 })
 
-it('目录查询最多四个并发，收起目录取消后代查询并释放名额', async () => {
+it('进入新目录取消旧查询，迟到目录与预览不能覆盖当前目录', async () => {
   const pending = deferred<WorkspaceDirectory>()
-  vi.mocked(readWorkspaceDirectory).mockImplementation(async (_project, path) => path === '/' ? page('/', Array.from({ length: 5 }, (_, i) => file(`/d${i}`, 'directory'))) : pending.promise)
+  const pendingPreview = deferred<Awaited<ReturnType<typeof readWorkspacePreview>>>()
+  vi.mocked(readWorkspaceDirectory).mockImplementation(async (_project, path) => path === '/scripts' ? pending.promise : page(path, [file(`${path === '/' ? '' : path}/a.py`)]))
+  vi.mocked(readWorkspacePreview).mockReturnValueOnce(pendingPreview.promise)
   const { result } = renderHook(() => useWorkspaceFiles('project', true))
   ready(); await settle()
-  act(() => { for (let i = 0; i < 5; i++) result.current.toggleDirectory(`/d${i}`) })
-  expect(readWorkspaceDirectory).toHaveBeenCalledTimes(5)
-  const first = vi.mocked(readWorkspaceDirectory).mock.calls[1][3]
-  act(() => result.current.toggleDirectory('/d0'))
-  expect(first.aborted).toBe(true)
-  expect(readWorkspaceDirectory).toHaveBeenCalledTimes(6)
-  expect(result.current.expanded.has('/d0')).toBe(false)
+  act(() => result.current.selectFile(file('/a.py')))
+  const previewSignal = vi.mocked(readWorkspacePreview).mock.calls[0][2]
+  act(() => result.current.openDirectory('/scripts'))
+  const directorySignal = vi.mocked(readWorkspaceDirectory).mock.calls.at(-1)![3]
+  expect(previewSignal.aborted).toBe(true)
+  act(() => result.current.openDirectory('/skills')); await settle()
+  expect(directorySignal.aborted).toBe(true)
+  pending.resolve(page('/scripts', [file('/scripts/old.py')]))
+  pendingPreview.resolve({ kind: 'text', file: file('/a.py'), text: 'late', truncated: false })
+  await settle()
+  expect(result.current.directoryPath).toBe('/skills')
+  expect(result.current.directories['/skills'].entries).toEqual([file('/skills/a.py')])
+  expect(result.current.selected).toBeNull()
+  expect(result.current.preview).toBeNull()
+  change(); await act(() => vi.advanceTimersByTimeAsync(150))
+  expect(readWorkspaceDirectory).toHaveBeenLastCalledWith('project', '/skills', null, expect.any(AbortSignal))
+})
+
+it('返回目录取消正在读取的文件，不交付迟到正文', async () => {
+  const pending = deferred<Awaited<ReturnType<typeof readWorkspacePreview>>>()
+  vi.mocked(readWorkspacePreview).mockReturnValueOnce(pending.promise)
+  const { result } = renderHook(() => useWorkspaceFiles('project', true))
+  ready(); await settle()
+  act(() => result.current.selectFile(file('/a.py')))
+  const signal = vi.mocked(readWorkspacePreview).mock.calls[0][2]
+  act(() => result.current.closeFile())
+  expect(signal.aborted).toBe(true)
+  pending.resolve({ kind: 'text', file: file('/a.py'), text: 'late', truncated: false }); await settle()
+  expect(result.current.directoryPath).toBe('/')
+  expect(result.current.selected).toBeNull()
+  expect(result.current.previewPhase).toBe('idle')
+  expect(result.current.preview).toBeNull()
 })
 
 it('分页游标失效重新读取目录，未初始化与暂停均不提供旧文件', async () => {

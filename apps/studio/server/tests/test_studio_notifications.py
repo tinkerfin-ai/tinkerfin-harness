@@ -40,7 +40,7 @@ async def notification_route(database, notifications, monkeypatch):
     auth = AuthenticatedSession(
         token="login-token",
         expires_at=clock.now + timedelta(hours=1),
-        user=UserContext(7, "alice", "Alice", (), False),
+        user=UserContext(7, "alice", (), False),
     )
     records = {auth.token: TokenRecord(auth.token, 7, auth.expires_at)}
 
@@ -49,9 +49,7 @@ async def notification_route(database, notifications, monkeypatch):
 
     monkeypatch.setattr(RedisTokenRepository, "get", get_record)
     async with database.session() as session:
-        session.add(
-            User(id=7, username="alice", display_name="Alice", password_hash="unused")
-        )
+        session.add(User(id=7, username="alice", password_hash="unused"))
         await session.commit()
     connections = [0]
 

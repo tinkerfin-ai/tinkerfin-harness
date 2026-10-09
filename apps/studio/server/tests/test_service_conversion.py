@@ -69,7 +69,8 @@ async def source_data(engine: AsyncEngine) -> None:
             "ALTER TABLE agent_models ADD COLUMN purpose VARCHAR(16) NOT NULL DEFAULT 'chat', ADD COLUMN generation_options JSON",
             "ALTER TABLE conversation_run_registrations DROP COLUMN service_bindings",
             "ALTER TABLE agent_models DROP INDEX ix_agent_models_default, ADD INDEX ix_agent_models_default (user_id,purpose,is_default,enabled)",
-            "INSERT INTO users (id,username,display_name,password_hash,roles,disabled) VALUES (2,'second','Second','unused','[]',0)",
+            "INSERT INTO users (id,username,password_hash,roles,disabled) VALUES (2,'second','unused','[]',0)",
+            "INSERT INTO projects (id,user_id,name,created_at,updated_at) VALUES ('project-1',1,'测试项目','2026-09-01','2026-09-01')",
         ):
             await connection.execute(text(statement))
         for owner, connection_id in (
@@ -117,8 +118,8 @@ async def source_data(engine: AsyncEngine) -> None:
             )
         await connection.execute(
             text(
-                "INSERT INTO attachment_collections (id,user_id,purpose,configuration,task_id,created_at) "
-                "VALUES ('past-run',1,'execution',:configuration,'task-1','2026-09-01')"
+                "INSERT INTO attachment_collections (id,user_id,project_id,purpose,configuration,task_id,created_at) "
+                "VALUES ('past-run',1,'project-1','execution',:configuration,'task-1','2026-09-01')"
             ),
             {"configuration": json.dumps({"prompt": "绘图", "model": "chat"})},
         )
@@ -199,8 +200,8 @@ async def test_preflight_blocks_unfinished_conversations_and_unknown_authenticat
         )
         await connection.execute(
             text(
-                "INSERT INTO conversation_threads (user_id,thread_id,title,status,message_count,tool_call_count,has_pending_interrupt,pinned,created_at,updated_at) "
-                "VALUES (1,'pending','Pending','waiting_approval',0,0,1,0,'2026-09-01','2026-09-01')"
+                "INSERT INTO conversation_threads (user_id,project_id,thread_id,title,status,message_count,tool_call_count,has_pending_interrupt,pinned,created_at,updated_at) "
+                "VALUES (1,'project-1','pending','Pending','waiting_approval',0,0,1,0,'2026-09-01','2026-09-01')"
             )
         )
     _, blockers = await preflight(engine, engine, choices={1: "image"})

@@ -101,9 +101,9 @@ finally:
         await database.dispose()
 ```
 
-Entry prepares storage. Worker exit closes Engine then Service; the explicitly supplied
-Store and database remain host-owned. Automation owns its default Store and assumes
-a supplied Scheduler's lifecycle. Shutdown stops admission, waits for accepted
+Entry prepares storage. The explicitly supplied Store and database remain host-owned.
+Automation owns its default Store and assumes a supplied Scheduler's lifecycle.
+Shutdown stops admission, waits for accepted
 operations, and joins cleanup even on cancellation. Do not close Automation from
 one of its running targets or resource callbacks.
 
@@ -146,8 +146,8 @@ can call `await store.setup()`. Database pool checkouts must be exclusive.
 `SqlAlchemyAutomationStore(database, notifications=notifications)` borrow an open
 `tinkerfin_notifications.Notifications` service. Close it after workers and observers.
 Committed task and execution hints wake workers, including remote schedule deletions
-and cancellation requests. Workers repair lost hints every 30 seconds and still
-check due work and claim leases. Notifications carry resource identity, not input or
+and cancellation requests. Workers repair lost hints every 30 seconds.
+Notifications carry resource identity, not input or
 result content.
 
 ## Task commands and execution results

@@ -130,7 +130,6 @@ async def test_business_sql_initializes_the_documented_login(
     await session.execute(text(seeds[0]))
     user = (await session.scalars(select(User))).one()
     assert user.username == "tinkerfin"
-    assert user.display_name == "TinkerFin"
     assert user.roles == []
     assert user.disabled is False
     assert user.password_hash != "123456"
@@ -395,7 +394,6 @@ async def test_business_sql_and_framework_setups_compose_the_current_mysql_schem
         async with AsyncSession(sql_engine) as session:
             initial_user = (await session.scalars(select(User))).one()
             assert initial_user.username == "tinkerfin"
-            assert initial_user.display_name == "TinkerFin"
             assert initial_user.roles == []
             assert initial_user.disabled is False
             assert await verify_password("123456", initial_user.password_hash)

@@ -10,7 +10,7 @@ export function useServiceSettings(active: boolean) {
   const [capability, setCapability] = useState<ServiceCapability>('web_search')
   const [saved, setSaved] = useState<SavedServices>(emptyServices)
   const [drafts, setDrafts] = useState(draftDefaults)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [loadFailed, setLoadFailed] = useState(false)
   const [reload, setReload] = useState(0)
   const [saving, setSaving] = useState<ServiceCapability | null>(null)
@@ -32,7 +32,7 @@ export function useServiceSettings(active: boolean) {
       })
       .catch(() => { if (!controller.signal.aborted) setLoadFailed(true) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
-    return () => { controller.abort(); for (const request of owned.values()) request.abort(); owned.clear(); setSaving(null) }
+    return () => { controller.abort(); for (const request of owned.values()) request.abort(); owned.clear(); setSaving(null); setLoading(true) }
   }, [active, reload])
 
   const change = (draft: ServiceDraft) => {

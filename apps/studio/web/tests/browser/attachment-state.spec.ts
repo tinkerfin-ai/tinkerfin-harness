@@ -6,7 +6,7 @@ import { resolve } from 'node:path'
 import { mockDownloadPermits } from './support/attachment-storage'
 import { measureBounds } from './support/geometry'
 
-const user = { user_id: 1, username: 'attachment-test', display_name: '附件验收', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'attachment-test', avatar_url: null, roles: [], disabled: false }
 const imageName = 'AI架构应用开发工程师-附件截图.png'
 const sample = resolve(process.cwd(), 'tests/browser/fixtures/chart.png')
 const modelCatalog = {

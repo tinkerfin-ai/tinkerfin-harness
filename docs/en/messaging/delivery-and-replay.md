@@ -14,7 +14,7 @@ subscription = await channel.wrap(
 
 Before returning, `wrap()` atomically decides whether this caller owns a new producer or attaches an existing run. A different active run in the same thread raises `RunAlreadyActive`; a different persisted format raises `CodecMismatch`.
 
-`run_id` identifies an idempotent run within its namespace and thread. Messaging neither reads nor stores a business request digest.
+`run_id` identifies an idempotent run within its namespace and thread. Messaging does not read or compare request bodies. The application can bind a complete request digest through `request_digest` and owns digest calculation and input authorization.
 
 ## Return SSE directly
 

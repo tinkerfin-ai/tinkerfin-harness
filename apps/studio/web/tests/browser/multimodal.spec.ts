@@ -11,7 +11,6 @@ const sample = resolve(process.cwd(), 'tests/browser/fixtures/multimodal.png')
 const user = {
   user_id: 1,
   username: 'multimodal-test',
-  display_name: '多模态验收',
   avatar_url: null,
   roles: [],
   disabled: false,

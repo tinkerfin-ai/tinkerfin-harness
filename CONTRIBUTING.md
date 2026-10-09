@@ -7,7 +7,7 @@ Use [Issues](https://github.com/tinkerfin-ai/tinkerfin-harness/issues) for repro
 ## Submit a change
 
 1. Fork the repository and create a branch from `main`.
-2. Keep the change focused. Add regression coverage for bugs and update affected documentation.
+2. Keep the change focused. Add regression coverage for bugs and check affected documentation for accuracy.
 3. Open a pull request against `tinkerfin-ai/tinkerfin-harness:main`, describing the behavior and the checks you ran.
 4. Resolve review discussions and wait for the required checks. A maintainer reviews and merges the pull request.
 
@@ -37,8 +37,6 @@ pnpm test:browser
 ```
 
 Browser tests build the application and start their own preview server. Keep port `4173` available. Docker integration and isolated wheel checks are described in [repository development](docs/en/development.md). Report any checks you could not run and why.
-
-When running selected tests with `pnpm exec playwright test` directly, run `pnpm build` first.
 
 ## Local Git checks
 

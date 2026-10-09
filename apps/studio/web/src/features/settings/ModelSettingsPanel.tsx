@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
-import { ChevronRight, Cpu, KeyRound, Link2, MessageSquare, Monitor, Plus, RefreshCw, Search, Settings2, SlidersHorizontal, Star } from 'lucide-react'
-import { Button, IconButton, OverlayScrollbar, TextField, Tooltip } from '../../components/ui'
+import { Cpu, KeyRound, Link2, MessageSquare, Monitor, Plus, RefreshCw, Search, Settings2, SlidersHorizontal, Star } from 'lucide-react'
+import { Breadcrumbs, Button, FeedbackState, IconButton, OverlayScrollbar, TextField, Tooltip } from '../../components/ui'
 import { useI18n } from '../../i18n'
 import { ImageInputStatus } from './ImageInputCapability'
 import { ModelConnectionForm } from './ModelConnectionForm'
@@ -35,21 +35,12 @@ export function ModelSettingsPanel({ onChanged }: { onChanged?: () => void }) {
   const defaultModel = state.models.find(model => model.is_default)
   return <section className="settings-section settings-models settings-model-connections">
     <div className="settings-models__toolbar">
-      <nav className="settings-models__breadcrumbs" aria-label={t('模型配置导航')}>
-        <ol>
-          <li>{view === 'list' ? <span aria-current="page">{t('模型配置')}</span> : <Button type="button" size="sm" variant="text" disabled={state.saving} onClick={close}>{t('模型配置')}</Button>}</li>
-          {view !== 'list' && <>
-            <li aria-hidden="true"><ChevronRight size={12} /></li>
-            {view === 'new' ? <li><span aria-current="page">{t('添加提供方')}</span></li>
-              : view === 'connection' ? <li><Tooltip content={connection?.display_name}><span aria-current="page">{connection?.display_name}</span></Tooltip></li>
-                : <>
-                  <li><Button type="button" size="sm" variant="text" tooltip={connection?.display_name} disabled={state.saving} onClick={close}>{connection?.display_name}</Button></li>
-                  <li aria-hidden="true"><ChevronRight size={12} /></li>
-                  <li><Tooltip content={view === 'model' ? editing?.display_name : undefined}><span aria-current="page">{view === 'discovery' ? t('获取模型') : editing?.display_name || t('添加模型')}</span></Tooltip></li>
-                </>}
-          </>}
-        </ol>
-      </nav>
+      <Breadcrumbs label={t('模型配置导航')} size="md" disabled={state.saving} items={[
+        { label: t('模型配置'), onNavigate: close },
+        ...(view === 'list' ? [] : view === 'new' ? [{ label: t('添加提供方') }]
+          : view === 'connection' ? [{ label: connection?.display_name ?? '' }]
+            : [{ label: connection?.display_name ?? '', onNavigate: close }, { label: view === 'discovery' ? t('获取模型') : editing?.display_name || t('添加模型') }]),
+      ]} />
       {view === 'list' && <Button type="button" size="xs" variant="primary" leadingIcon={<Plus size={14} />} disabled={state.loading || state.saving || state.loadFailed} onClick={() => setView('new')}>{t('添加提供方')}</Button>}
     </div>
     <div key={view} className={view === 'list' ? 'settings-models__overview' : 'settings-models__page'}>
@@ -57,7 +48,7 @@ export function ModelSettingsPanel({ onChanged }: { onChanged?: () => void }) {
         : view === 'model' && editing && connection ? <ModelConfigurationForm key={editing.model_id} model={editing} connection={connection} existing={state.models.some(model => model.model_id === editing.model_id)} saving={state.saving} onSave={state.save} onRemove={state.remove} onCancel={close} />
           : view === 'discovery' && connection ? <ModelDiscoveryPanel connection={connection} models={models} saving={state.saving} onAdd={state.addModels} onManual={() => editModel(newModel(connection.connection_id))} onCancel={close} />
             : <>
-              {state.loadFailed ? <div role="status"><p>{t('模型加载失败，请先重试')}</p><Button type="button" onClick={state.reload}>{t('重新加载模型')}</Button></div> : state.loading ? <p role="status">{t('正在加载模型配置')}</p> : state.connections.length === 0 ? <div className="settings-models__empty"><Cpu size={28} /><h4>{t('连接你的第一个模型服务')}</h4><p>{t('添加云端提供方，或连接本地 Ollama')}</p><Button type="button" onClick={() => setView('new')}>{t('添加提供方')}</Button></div> : <>
+              {state.loadFailed ? <div role="status"><p>{t('模型加载失败，请先重试')}</p><Button type="button" onClick={state.reload}>{t('重新加载模型')}</Button></div> : state.loading ? <FeedbackState kind="loading" title={t('正在加载模型配置')} /> : state.connections.length === 0 ? <div className="settings-models__empty"><Cpu size={28} /><h4>{t('连接你的第一个模型服务')}</h4><p>{t('添加云端提供方，或连接本地 Ollama')}</p><Button type="button" onClick={() => setView('new')}>{t('添加提供方')}</Button></div> : <>
                 <div className="settings-models__default"><MessageSquare size={14} /><span>{t('默认对话模型')}</span><strong>{defaultModel?.display_name ?? t('未设置')}</strong></div>
                 <ModelProviderSplit sidebar={<>
                   <TextField shape="standard" fieldSize="md" rootClassName="settings-models__search" label={<span className="visually-hidden">{t('搜索提供方或模型')}</span>} placeholder={t('搜索提供方或模型')} value={search} leadingContent={<Search size={14} />} onChange={event => setSearch(event.target.value)} />

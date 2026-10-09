@@ -92,7 +92,7 @@ finally:
         await database.dispose()
 ```
 
-进入上下文时准备 Store。worker 退出依次关闭 Engine、Service；显式 Store 和数据库仍由宿主关闭。
+进入上下文时准备 Store；显式 Store 和数据库仍由宿主关闭。
 默认 Store 由框架拥有；传入 Scheduler 即将其生命周期交给 Automation。关闭先停止新操作，
 等待已接受的操作并收齐清理，取消不会遗留任务。运行中的目标或资源回调不能关闭其所属 Automation。
 
@@ -126,7 +126,7 @@ Store setup 创建空库或校验完整当前结构，不自动修补部分表�
 `SqlAlchemyAutomationStore(database, notifications=notifications)` 借用已启动的
 `tinkerfin_notifications.Notifications`，应在 Worker 和观察者结束后再关闭通知服务。
 提交后的任务与执行通知会唤醒 Worker，包括远端删除日程和取消执行。遗漏的提示每 30 秒通过
-权威读取修正，到期事项与 claim 租约仍按原有规则处理。通知只携带资源身份，不包含任务输入或结果正文。
+重新读取修正。通知只携带资源身份，不包含任务输入或结果正文。
 
 ## 任务命令与执行结果
 

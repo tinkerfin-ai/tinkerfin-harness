@@ -151,6 +151,9 @@ export function ConversationViewport({
             }
           }}
         >
+        {historyStatus === 'error' && !isInitialHistoryUnavailable && (
+          <div className="conversation-load-failure"><FeedbackState kind="error" appearance="retry" title={t('历史会话加载失败')} retryLabel={t('重新加载')} onRetry={onRetryHistory} /></div>
+        )}
         {!isHistoryBootstrapped || historyStatus === 'loading' ? (
           <FeedbackState kind="loading" title={t('正在加载历史会话')} />
         ) : isInitialHistoryUnavailable ? (

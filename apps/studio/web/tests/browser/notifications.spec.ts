@@ -32,7 +32,7 @@ async function prepare(page: Page) {
   await page.clock.install({ time: new Date('2030-01-01T00:00:00Z') })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.addInitScript(() => {
-    const user = { user_id: 1, username: 'notifications', display_name: '通知验收', avatar_url: null, roles: [], disabled: false }
+    const user = { user_id: 1, username: 'notifications', avatar_url: null, roles: [], disabled: false }
     localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
     const original = window.fetch
     const readers = new Set<ReadableStreamDefaultController<Uint8Array>>()
@@ -92,7 +92,7 @@ test('两个独立窗口通过通知同步会话，断连和隐藏期间的变�
       await prepare(page)
       await page.exposeFunction('readNotificationApi', async (request: { path: string; method: string; body: string; authorization: string | null }) => {
         expect(request.authorization).toBe('Bearer browser-token')
-        if (request.path === '/api/auth/me') return { data: { expires_at: '2099-01-01T00:00:00Z', user: { user_id: 1, username: 'notifications', display_name: '通知验收', avatar_url: null, roles: [], disabled: false } } }
+        if (request.path === '/api/auth/me') return { data: { expires_at: '2099-01-01T00:00:00Z', user: { user_id: 1, username: 'notifications', avatar_url: null, roles: [], disabled: false } } }
         if (request.path === '/api/skills/installations') return { data: [] }
         if (request.path === '/api/models') return { data: { items: [{ modelId: 'main', displayName: 'Main', connectionId: 'provider', connectionDisplayName: '模型', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' } }
         if (request.path === '/api/conversation/config') return { data: { dayRanges: [7, 30] } }
@@ -184,7 +184,7 @@ for (const titleState of ['succeeded', 'running'] as const) {
     await prepare(page)
     await page.exposeFunction('readNotificationApi', async ({ path }: { path: string }) => {
       requests.push(path)
-      if (path === '/api/auth/me') return { data: { expires_at: '2099-01-01T00:00:00Z', user: { user_id: 1, username: 'notifications', display_name: '通知验收', avatar_url: null, roles: [], disabled: false } } }
+      if (path === '/api/auth/me') return { data: { expires_at: '2099-01-01T00:00:00Z', user: { user_id: 1, username: 'notifications', avatar_url: null, roles: [], disabled: false } } }
       if (path === '/api/models') return { data: { items: [{ modelId: 'main', displayName: 'Main', connectionId: 'provider', connectionDisplayName: '模型', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' } }
       if (path === '/api/skills/installations') return { data: [] }
       if (path === '/api/conversation/config') return { data: { dayRanges: [7, 30] } }

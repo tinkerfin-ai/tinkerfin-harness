@@ -211,15 +211,26 @@ describe('前端视觉契约', () => {
     expect(cssFiles['./global.css']).toMatch(/button,[\s\S]*select\s*{\s*font-size:\s*inherit;/)
   })
 
-  it('界面使用统一字体和默认字重，指定标识与当前位置允许加粗，内容使用独立语义', () => {
+  it('界面使用统一字体和语义字重，内容使用独立语义', () => {
     expect(declarations(typographyStyles).get('--weight-ui')).toBe('400')
-    const contentBoundary = /\.markdown-content|\.tool-(?:code|rich)-field|\.ui-code-text|\.attachment-sheet|\.mermaid-render-host|\bcode,\s*kbd,\s*pre,\s*samp/
+    const contentBoundary = /\.workspace-file-source|\.markdown-content|\.tool-(?:code|rich)-field|\.ui-code-text|\.attachment-sheet|\.mermaid-render-host|\bcode,\s*kbd,\s*pre,\s*samp/
     for (const [path, source] of Object.entries(cssFiles)) {
       if (path.endsWith('/fonts.css')) continue
       for (const [, selector, block] of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
         const weight = block.match(/font-weight:\s*([^;]+);/)?.[1].trim()
-        if (selector.trim() === '.skills-icon' || (path.endsWith('/model-connections.css') && selector.trim() === '.settings-models__breadcrumbs span[aria-current]')) {
-          expect(weight).toBe('var(--weight-semibold)')
+        const interfaceWeights = new Map([
+          ['.skills-icon', 'var(--weight-semibold)'],
+          ['.ui-breadcrumbs span[aria-current]', 'var(--weight-semibold)'],
+          ['.workspace-files-drawer .ui-drawer-header h2', 'var(--weight-semibold)'],
+          ['.workspace-file-name', 'var(--weight-workspace-file)'],
+          ['.workspace-file-entry[data-kind="directory"] .workspace-file-name', 'var(--weight-workspace-folder)'],
+          ['.workspace-file-icon > span', 'var(--weight-bold)'],
+          ['.workspace-file-information strong', 'var(--weight-semibold)'],
+          ['.workspace-files-empty h3', 'var(--weight-medium)'],
+        ])
+        const expectedWeight = interfaceWeights.get(selector.trim())
+        if (expectedWeight) {
+          expect(weight, `${path}: 界面角色使用声明的字重`).toBe(expectedWeight)
         } else if (weight && weight !== 'var(--weight-ui)') {
           expect(selector, `${path}: 非界面字重只能用于语义内容`).toMatch(contentBoundary)
         }

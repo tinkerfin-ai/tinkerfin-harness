@@ -18,11 +18,10 @@ class User(Base):
     username: Mapped[str] = mapped_column(
         String(64), unique=True, index=True, nullable=False, comment="登录用户名"
     )
-    display_name: Mapped[str] = mapped_column(
-        String(128), nullable=False, comment="展示名称"
-    )
     avatar_url: Mapped[str | None] = mapped_column(
-        String(2048), nullable=True, comment="头像地址（HTTPS）"
+        String(2048),
+        nullable=True,
+        comment="头像的长期对象存储地址，空值由前端显示默认头像",
     )
     password_hash: Mapped[str] = mapped_column(
         String(512), nullable=False, comment="密码哈希（含算法、参数和盐值）"

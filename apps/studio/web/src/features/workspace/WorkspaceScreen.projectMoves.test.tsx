@@ -5,7 +5,7 @@ import { mockNativePopover } from '../../test/nativePopover'
 import { emptyTraceGraph } from '../../test/traceFixtures'
 import { WorkspaceScreen } from './WorkspaceScreen'
 
-const user = { user_id: 7, username: 'review', display_name: '审查', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 7, username: 'review', avatar_url: null, roles: [], disabled: false }
 const time = '2030-01-01T00:00:00Z'
 const projects = [{ id: 'first', name: '研究', createdAt: time, updatedAt: time }, { id: 'second', name: '开发', createdAt: time, updatedAt: time }]
 const jsonResponse = (data: unknown) => new Response(JSON.stringify({ code: 0, message: 'success', data }), { headers: { 'Content-Type': 'application/json' } })

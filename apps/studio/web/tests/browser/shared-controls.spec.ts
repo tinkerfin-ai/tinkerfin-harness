@@ -181,3 +181,47 @@ for (const axis of ['vertical', 'horizontal']) test(`常驻 ${axis} 滚动条保
   await page.clock.runFor(32)
   await expect(overlay).toHaveCSS('opacity', '0')
 })
+
+for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440]) {
+  test(`加载反馈在页面和功能样式中保持一致 ${theme} ${width}`, async ({ page, controlsOrigin }, info) => {
+    await page.setViewportSize({ width, height: 900 })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto(`${controlsOrigin}${fixture}?example=loading&theme=${theme}`)
+    await page.evaluate(() => document.fonts.ready)
+    let reference: unknown
+    for (const name of ['页面', '紧凑区域', '链路', '链路详情', '搜索', '工作区']) {
+      const region = page.getByRole('region', { name, exact: true })
+      const status = region.getByRole('status')
+      await expect(status).toHaveAttribute('aria-busy', 'true')
+      const visual = await status.evaluate(element => {
+        const style = getComputedStyle(element)
+        const icon = element.querySelector('svg')!
+        const text = [...element.children].find(child => child.textContent === '正在加载历史会话')!
+        const titleStyle = getComputedStyle(text)
+        return { border: style.borderTopWidth, background: style.backgroundColor, shadow: style.boxShadow,
+          gap: style.columnGap, fontSize: titleStyle.fontSize, weight: titleStyle.fontWeight,
+          iconWidth: icon.getBoundingClientRect().width, iconColor: getComputedStyle(icon).color,
+          animation: getComputedStyle(icon).animationName,
+          withinViewport: element.getBoundingClientRect().right <= innerWidth,
+          centered: Math.abs(element.getBoundingClientRect().left + element.getBoundingClientRect().width / 2
+            - (element.parentElement!.getBoundingClientRect().left + element.parentElement!.getBoundingClientRect().width / 2)) < 1 }
+      })
+      expect(visual).toMatchObject({ border: '0px', background: 'rgba(0, 0, 0, 0)', shadow: 'none', gap: '8px', fontSize: '13px', iconWidth: 18, animation: 'none', withinViewport: true, centered: true })
+      if (reference) expect(visual).toEqual(reference)
+      else reference = visual
+    }
+    const long = page.getByRole('region', { name: '长加载文案' }).getByRole('status')
+    expect(await long.evaluate(element => element.scrollWidth <= element.clientWidth && element.getBoundingClientRect().right <= innerWidth)).toBe(true)
+    await expect(page.getByRole('region', { name: '错误恢复' }).getByRole('button', { name: '重新加载' })).toBeVisible()
+    await page.screenshot({ path: info.outputPath(`loading-${theme}-${width}.png`), fullPage: true, animations: 'disabled' })
+  })
+}
+
+test('加载反馈的转圈遵守减少动态效果偏好', async ({ page, controlsOrigin }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto(`${controlsOrigin}${fixture}?example=loading`)
+  const icon = page.getByRole('region', { name: '页面', exact: true }).getByRole('status').locator('svg')
+  await expect(icon).toHaveCSS('animation-name', 'ui-spin')
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(icon).toHaveCSS('animation-name', 'none')
+})

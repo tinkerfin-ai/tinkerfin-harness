@@ -35,7 +35,7 @@ describe('conversation stream client', () => {
       token: 'conversation-token',
       serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer',
       expiresAt: '2099-01-01T00:00:00.000Z',
-      user: { user_id: 7, username: 'yunsan', display_name: '云杉', avatar_url: null, roles: [], disabled: false },
+      user: { user_id: 7, username: 'yunsan', avatar_url: null, roles: [], disabled: false },
     })
   })
 

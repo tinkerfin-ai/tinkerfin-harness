@@ -373,7 +373,6 @@ async def test_cancel_after_producer_failure_reconciles_missing_trace_tail(
                 user=UserContext(
                     user_id=1,
                     username="user",
-                    display_name="用户",
                     roles=(),
                     disabled=False,
                 ),

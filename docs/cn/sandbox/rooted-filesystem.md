@@ -155,9 +155,15 @@ Linux procfs，并允许命令服务与文件服务共享进程视图。
 
 ```python
 from deepagents import FilesystemPermission
+from deepagents.backends import StoreBackend
 
 from tinkerfin import TinkerFin
 
+project = manager.workspace(
+    "users/7",
+    workspace_key="project-a",
+    routes={"/policies/": StoreBackend(namespace=lambda _: ("policies",))},
+)
 permissions = [
     FilesystemPermission(
         operations=["write"],
@@ -167,7 +173,7 @@ permissions = [
 ]
 
 runtime = (
-    TinkerFin(checkpointer=checkpointer)
+    TinkerFin(store=store, checkpointer=checkpointer)
     .with_namespace("projects/project-a")
     .build(
         model=model,
@@ -177,8 +183,9 @@ runtime = (
 )
 ```
 
-Runtime 在运行开始时一起准备项目隔离访问和文件 middleware。权限规则需要 interrupt 而非 deny 时，
-必须配置 checkpointer。只有由调用方自行管理的 Deep Agents Graph 才需要直接使用
+Runtime 在运行开始时一起准备项目隔离访问和文件 middleware。示例借用宿主的 Store，将 `/policies/`
+交给不提供 Shell 的存储后端；权限规则只限制该路由的文件工具写入，不能限制项目 Shell。需要 interrupt
+而非 deny 时，必须配置 checkpointer。只有自行管理 Deep Agents Graph 的调用方才需要直接使用
 `build_rooted_filesystem_middleware()`。
 
 下一篇：[多进程持久化与自定义扩展](persistence-and-extensions.md)。

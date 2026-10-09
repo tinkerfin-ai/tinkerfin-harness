@@ -3,7 +3,7 @@ import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 import fixture from './fixtures/multimodal-history.json' with { type: 'json' }
 
-const user = { user_id: 1, username: 'cache-test', display_name: '阅读恢复', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'cache-test', avatar_url: null, roles: [], disabled: false }
 const threadIds = ['cache-1', 'cache-2', 'cache-3', 'cache-4']
 const title = (threadId: string) => `阅读恢复 ${threadId}`
 const detail = (threadId: string, cursor: string | null) => {

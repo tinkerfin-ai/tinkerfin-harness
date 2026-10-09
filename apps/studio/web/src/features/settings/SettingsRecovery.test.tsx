@@ -13,7 +13,7 @@ describe('模型设置区域恢复', () => {
   it('渲染故障通知一次，重试按钮恢复区域且不重复错误正文', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const onToast = vi.fn()
-    render(<SettingsDialog open user={{user_id: 1, username: 'test', display_name: 'Test', avatar_url: null, roles: [], disabled: false}} themePreference="light" onThemePreferenceChange={vi.fn()} onClose={vi.fn()} onToast={onToast} />)
+    render(<SettingsDialog open user={{user_id: 1, username: 'test', avatar_url: null, roles: [], disabled: false}} themePreference="light" onThemePreferenceChange={vi.fn()} onClose={vi.fn()} onToast={onToast} />)
     fireEvent.click(screen.getByRole('button', {name: '模型配置'}))
     expect(onToast).toHaveBeenCalledExactlyOnceWith('error', '模型加载失败，请先重试')
     expect(screen.queryByText('模型加载失败，请先重试')).not.toBeInTheDocument()

@@ -628,6 +628,11 @@
     font-size: var(--type-caption-size);
     box-shadow: var(--shadow-2);
   }
+  .attachment-viewer-status.is-loading {
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+  }
   .attachment-viewer-info {
     width: var(--layout-image-multiple-width);
     flex: 0 0 auto;

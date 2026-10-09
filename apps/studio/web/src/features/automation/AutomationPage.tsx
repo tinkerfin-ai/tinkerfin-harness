@@ -72,7 +72,7 @@ export function AutomationPage({ projectId, navigationTriggerRef, onOpenNavigati
       <section className="automation-content">
         <div id="automation-panel" role="tabpanel" aria-label={t(page === 'history' ? '历史' : '任务')} aria-busy={data.loading}>
           {data.error && <div className={`automation-load-failure is-${page}`}><FeedbackState kind="error" appearance="retry" title={t('自动化数据加载失败')} retryLabel={t('重新加载')} onRetry={data.reload} /></div>}
-          {data.loading && !data.tasks.length && !data.runs.length ? <p role="status">{t('正在加载自动化')}</p> : page === 'history'
+          {data.loading && !data.tasks.length && !data.runs.length ? <FeedbackState kind="loading" title={t('正在加载自动化')} /> : page === 'history'
             ? <AutomationHistory offset={weekOffset} onOffsetChange={setWeekOffset} runs={data.runs} query={query} status={filter === 'enabled' || filter === 'paused' ? 'all' : filter} onOpenRun={(run, trigger) => setDialog({ kind: 'result', run, trigger })} view={view} onViewChange={setView} cursors={data.cursors} onLoadMore={data.loadMore} loading={data.loading} loadFailed={data.error && !data.runs.length} />
             : data.error && !data.tasks.length ? null : <><AutomationTaskList tasks={data.tasks} query={query} status={filter === 'enabled' || filter === 'paused' ? filter : 'all'} busy={busy}
               onEdit={(task, trigger) => setDialog({ kind: 'editor', task, trigger })} onExecute={id => void actions.execute(id, 'run')}

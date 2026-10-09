@@ -1,20 +1,95 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsDialog } from './SettingsDialog'
 import { LocaleProvider } from '../../i18n'
+import { saveAvatar } from '../../api/auth/client'
+import { requestJson } from '../../api/shared/http'
+import { emptyServices } from './serviceSettings'
+
+vi.mock('../../api/auth/client', () => ({ saveAvatar: vi.fn() }))
+vi.mock('../../api/shared/http', async importOriginal => ({ ...await importOriginal<typeof import('../../api/shared/http')>(), requestJson: vi.fn() }))
+afterEach(() => { vi.unstubAllGlobals(); vi.mocked(saveAvatar).mockReset(); vi.mocked(requestJson).mockReset() })
 
 const user = {
   user_id: 7,
   username: 'yunsan',
-  display_name: '云杉',
   avatar_url: 'https://cdn.example.test/avatar.webp',
   roles: [],
   disabled: false,
 }
 
 describe('SettingsDialog', () => {
+  it.each([true, false])('服务放弃确认保留另一区的头像草稿或保存：saving=%s', async saving => {
+    vi.mocked(requestJson).mockResolvedValue(emptyServices())
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = () => 'blob:profile'
+      static revokeObjectURL = vi.fn()
+    })
+    vi.stubGlobal('Image', class { src = ''; decode = () => Promise.resolve() })
+    let finish: (value: null) => void = () => undefined
+    vi.mocked(saveAvatar).mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const onClose = vi.fn()
+    const view = render(<LocaleProvider><SettingsDialog open user={user} themePreference="light"
+      onThemePreferenceChange={vi.fn()} onToast={vi.fn()} onClose={onClose} /></LocaleProvider>)
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '服务连接' }))
+      fireEvent.change(await screen.findByLabelText('API Key'), { target: { value: 'draft-key' } })
+      fireEvent.click(screen.getByRole('button', { name: '关闭对话框' }))
+      expect(screen.getByRole('button', { name: '放弃修改并关闭' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: '账号管理' }))
+      fireEvent.change(screen.getByLabelText('选择头像图片'), { target: { files: [new File(['photo'], 'avatar.png', { type: 'image/png' })] } })
+      const save = await screen.findByRole('button', { name: '保存' })
+      if (saving) fireEvent.click(save)
+      fireEvent.click(screen.getByRole('button', { name: '服务连接' }))
+      const discard = screen.getByRole('button', { name: '放弃修改并关闭' })
+      if (saving) expect(discard).toBeDisabled()
+      fireEvent.click(discard)
+      expect(onClose).not.toHaveBeenCalled()
+      if (saving) expect(vi.mocked(saveAvatar).mock.calls[0][1].aborted).toBe(false)
+      else {
+        expect(screen.getByRole('group', { name: '头像尚未保存' })).toBeVisible()
+        expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+        fireEvent.click(screen.getByRole('button', { name: '放弃更改' }))
+        expect(onClose).toHaveBeenCalledOnce()
+      }
+    } finally {
+      view.unmount()
+      finish(null)
+    }
+  })
+
+  it('未保存确认遵守保存保护，并随保存或取消结束', async () => {
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = () => 'blob:profile'
+      static revokeObjectURL = vi.fn()
+    })
+    vi.stubGlobal('Image', class { src = ''; decode = () => Promise.resolve() })
+    let complete: (value: typeof user) => void = () => undefined
+    vi.mocked(saveAvatar).mockImplementation(() => new Promise(resolve => { complete = resolve }))
+    const onClose = vi.fn()
+    render(<LocaleProvider><SettingsDialog open user={user} themePreference="light"
+      onThemePreferenceChange={vi.fn()} onToast={vi.fn()} onClose={onClose} /></LocaleProvider>)
+    const choose = async () => {
+      fireEvent.change(screen.getByLabelText('选择头像图片'), { target: { files: [new File(['photo'], 'avatar.png', { type: 'image/png' })] } })
+      await screen.findByRole('button', { name: '保存' })
+      fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+      expect(screen.getByRole('group', { name: '头像尚未保存' })).toBeInTheDocument()
+    }
+    await choose()
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    expect(screen.getByRole('button', { name: '放弃更改' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '放弃更改' }))
+    expect(onClose).not.toHaveBeenCalled()
+    complete(user)
+    await screen.findByRole('status')
+    expect(screen.queryByRole('group', { name: '头像尚未保存' })).not.toBeInTheDocument()
+    await choose()
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('group', { name: '头像尚未保存' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument()
+  })
   it('shows the supported user fields and changes the controlled appearance preference', async () => {
     const onThemePreferenceChange = vi.fn()
     render(<LocaleProvider>
@@ -33,8 +108,8 @@ describe('SettingsDialog', () => {
 
     expect(settingsContent).toHaveAttribute('role', 'region')
     expect(settingsContent).toHaveAttribute('tabindex', '0')
-    expect(screen.getByText('云杉')).toBeInTheDocument()
-    expect(screen.getByText('@yunsan')).toBeInTheDocument()
+    expect(screen.getByText('yunsan')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: '用户名' })).not.toBeInTheDocument()
     expect(screen.queryByText(/用户 ID|角色|禁用/)).not.toBeInTheDocument()
     expect(screen.queryByText(/后续|暂不|修改功能/)).not.toBeInTheDocument()
     const accountSection = screen.getByRole('button', { name: '账号管理' })
@@ -53,7 +128,7 @@ describe('SettingsDialog', () => {
     expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Account' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Account' }))
-    expect(screen.getByText('云杉')).toBeInTheDocument()
+    expect(screen.getByText('yunsan')).toBeInTheDocument()
   })
 
   it('closes on Escape and restores focus to the account trigger', async () => {

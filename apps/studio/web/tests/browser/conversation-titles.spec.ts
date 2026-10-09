@@ -14,7 +14,7 @@ type TitleHarness = {
 async function setup(page: Page, theme: string, pauseClock = false) {
   await page.clock.install({ time: new Date('2026-09-20T00:00:00Z') })
   await page.addInitScript(({ theme }) => {
-    const user = { user_id: 1, username: 'titles', display_name: '标题验收', avatar_url: null, roles: [], disabled: false }
+    const user = { user_id: 1, username: 'titles', avatar_url: null, roles: [], disabled: false }
     localStorage.setItem('tinkerfin:theme', theme)
     localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'test-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00Z', user }))
     const original = window.fetch

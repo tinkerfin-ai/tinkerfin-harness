@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { installNotificationStream } from './fixtures/notifications'
 import { emptyServices, type SavedServices, type ServiceCapability, type ServiceConfiguration } from '../../src/features/settings/serviceSettings'
 
-const user = { user_id: 17, username: 'services-test', display_name: '服务验收', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 17, username: 'services-test', avatar_url: null, roles: [], disabled: false }
 
 async function openServices(page: Page, theme = 'light', language = 'zh-CN') {
   const saved: SavedServices = emptyServices()
@@ -74,7 +74,11 @@ for (const theme of ['light', 'dark']) {
       await page.screenshot({ path: info.outputPath(`search-${width}.png`), animations: 'disabled' })
       const preset = dialog.getByRole('button', { name: '接入方式', exact: true })
       const addressHeight = await dialog.getByLabel('服务地址', { exact: true }).evaluate(element => element.closest('.ui-text-field__control')!.getBoundingClientRect().height)
-      expect(addressHeight).toBe(40)
+      expect(addressHeight).toBe(36)
+      for (const name of ['测试搜索', '取消修改', '保存']) {
+        expect((await dialog.getByRole('button', { name, exact: true }).boundingBox())!.height).toBe(addressHeight)
+      }
+
       expect((await preset.boundingBox())!.height).toBe(addressHeight)
       await preset.click()
       const presets = dialog.getByRole('listbox', { name: '接入方式', exact: true })
@@ -85,6 +89,12 @@ for (const theme of ['light', 'dark']) {
       await dialog.getByLabel('模型 ID', { exact: true }).fill('image-model')
       const formats = dialog.getByRole('button', { name: '输出格式', exact: true })
       expect((await formats.boundingBox())!.height).toBe(addressHeight)
+      for (const name of ['试生成', '取消修改', '保存']) {
+        expect((await dialog.getByRole('button', { name, exact: true }).boundingBox())!.height).toBe(addressHeight)
+      }
+      const keyHeight = await dialog.getByLabel('API Key', { exact: true }).evaluate(element => element.closest('.ui-text-field__control')!.getBoundingClientRect().height)
+      expect(keyHeight).toBe(addressHeight)
+
       await formats.click()
       const list = dialog.getByRole('listbox', { name: '输出格式', exact: true })
       await expect(list).toHaveAttribute('aria-multiselectable', 'true')
@@ -183,6 +193,10 @@ test.describe('触控与放大重排', () => {
     const dialog = page.getByRole('dialog')
     const preset = dialog.getByRole('button', { name: 'Connection type', exact: true })
     expect((await preset.boundingBox())!.height).toBe(48)
+    for (const name of ['Test search', 'Reset', 'Save']) {
+      expect((await dialog.getByRole('button', { name, exact: true }).boundingBox())!.height).toBe(48)
+    }
+
     await dialog.getByLabel('API Key', { exact: true }).fill('isolated-key')
     await dialog.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(dialog.getByText('Saved', { exact: true })).toBeVisible()

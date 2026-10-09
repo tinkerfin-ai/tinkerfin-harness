@@ -90,9 +90,8 @@ service errors; they do not switch delivery to process-local memory.
 ## Use framework publishers
 
 Pass the same started `notifications` object to `InMemoryTraceStore`,
-`SqlAlchemyTraceStore`, `MemoryAutomationStore`, or `SqlAlchemyAutomationStore`.
-The stores publish after committing and releasing their mutation locks. Their
-followers and workers use hints together with lease deadlines and repair reads.
+`SqlAlchemyTraceStore`, `MemoryAutomationStore`, or `SqlAlchemyAutomationStore`
+to notify subscribers when records change.
 
 | Topic | Scope | Resource key |
 | --- | --- | --- |

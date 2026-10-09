@@ -19,7 +19,6 @@ const SECOND_TURN_OFFSET = 60 * 60 * 1_000
 const user = {
   user_id: 27,
   username: 'chain-browser-user',
-  display_name: '链路用户',
   avatar_url: null,
   roles: [],
   disabled: false,

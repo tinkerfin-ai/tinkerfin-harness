@@ -16,7 +16,6 @@ import {
 const user = {
   user_id: 7,
   username: 'yunsan',
-  display_name: '云杉',
   avatar_url: null,
   roles: [],
   disabled: false,
@@ -154,6 +153,26 @@ describe('auth session lifecycle', () => {
 
     expect(getAuthSession()).toBeNull()
     stop()
+  })
+
+  it('keeps a profile-only external update in the same authenticated workspace', () => {
+    const initial = createAuthSession(loginPayload('2099-01-01T00:00:00Z'))
+    saveAuthSession(initial)
+    const onExternalSession = vi.fn()
+    const onSession = vi.fn()
+    const unsubscribe = subscribeAuthSession(onSession)
+    const stop = startAuthSessionLifecycle({ onExternalSession })
+    const changed = { ...initial, user: { ...initial.user, avatar_url: 'https://files.example.test/avatars/image.jpg' } }
+    window.localStorage.setItem(AUTH_SESSION_STORAGE_KEY, JSON.stringify(changed))
+    window.dispatchEvent(new StorageEvent('storage', { key: AUTH_SESSION_STORAGE_KEY }))
+    expect(getAuthSession()?.user.avatar_url).toBe(changed.user.avatar_url)
+    expect(onSession).toHaveBeenCalledWith(changed)
+    expect(onExternalSession).not.toHaveBeenCalled()
+    const authorizationChanged = { ...changed, user: { ...changed.user, roles: ['admin'] } }
+    window.localStorage.setItem(AUTH_SESSION_STORAGE_KEY, JSON.stringify(authorizationChanged))
+    window.dispatchEvent(new StorageEvent('storage', { key: AUTH_SESSION_STORAGE_KEY }))
+    expect(onExternalSession).toHaveBeenCalledWith(authorizationChanged)
+    unsubscribe(); stop()
   })
 
   it('does not commit memory state or notify listeners when persistence fails', () => {
