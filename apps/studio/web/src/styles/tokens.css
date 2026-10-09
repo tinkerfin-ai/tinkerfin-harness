@@ -58,6 +58,7 @@
     --color-brand-hover: var(--primitive-blue-700);
     --color-brand-soft: var(--primitive-blue-50);
     --color-brand-text: var(--primitive-blue-700);
+    --color-conversation-status: var(--color-brand-text);
     --color-on-brand: var(--primitive-white);
     --color-plan-panel-accent: var(--color-brand);
     --color-plan-panel-background: var(--primitive-blue-50);
@@ -248,10 +249,9 @@
     --motion-normal: 200ms;
     --motion-slow: 300ms;
     --motion-loading-cycle: 1000ms;
-    --motion-conversation-loading-cycle: 1200ms;
+    --motion-conversation-loading-cycle: 1600ms;
     --motion-tool-result-cycle: 1450ms;
     --motion-tool-sweep-cycle: 2600ms;
-    --motion-attention-cycle: 1800ms;
     --motion-tooltip-delay: 500ms;
     --motion-tooltip-hide-delay: 0ms;
     --ease-in: cubic-bezier(.4, 0, 1, 1);
@@ -293,6 +293,7 @@
     --color-brand-hover: #7aabff;
     --color-brand-soft: #283142;
     --color-brand-text: #8ab4ff;
+    --color-conversation-status: var(--primitive-blue-300);
     --color-on-brand: #151517;
     --color-plan-panel-background: var(--color-brand-soft);
     --color-selection: var(--color-brand);

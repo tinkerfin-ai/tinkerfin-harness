@@ -10,12 +10,15 @@ import {
   MessageSquare,
   Ellipsis,
   LogOut,
+  LoaderCircle,
+  MessageCircleQuestion,
   PanelRight,
   Pencil,
   Pin,
   PinOff,
   Search,
   Settings2,
+  ShieldQuestion,
   SquarePen,
   Trash2,
   X,
@@ -96,8 +99,10 @@ export function ConversationItem({
         onClick={onSelect}
       >
         <span className="conversation-status-slot" aria-hidden="true">
-          {generating && <span className="conversation-loading"><i /><i /><i /><i /></span>}
-          {requiresAttention && <span className={`conversation-attention-dot is-${attentionTone}`} />}
+          {generating && <LoaderCircle className="conversation-loading" />}
+          {requiresAttention && (attentionTone === 'approval'
+            ? <ShieldQuestion className="conversation-attention-icon is-approval" />
+            : <MessageCircleQuestion className="conversation-attention-icon is-plan" />)}
         </span>
         <span className="conversation-label"><OverflowMarquee className="conversation-title-marquee" endRevealInset={12}>{`${conversation.title}\u200b`}</OverflowMarquee>{projectName && <small className="conversation-project-label">{projectName}</small>}</span>
       </button>

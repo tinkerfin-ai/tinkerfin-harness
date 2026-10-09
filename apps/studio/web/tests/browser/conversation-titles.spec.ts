@@ -203,7 +203,7 @@ for (const theme of ['light', 'dark']) {
       expect(await page.evaluate(() => (window as typeof window & { titleHarness: TitleHarness }).titleHarness.cancelled)).toEqual(['title-thread-0', 'title-thread-0'])
     })
 
-    test(`标题更新与四点加载 ${theme} ${width}`, async ({ page }, testInfo) => {
+    test(`标题更新与行内加载图标 ${theme} ${width}`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 1000 })
       await page.emulateMedia({ reducedMotion: 'reduce' })
       await setup(page, theme)
@@ -223,13 +223,27 @@ for (const theme of ['light', 'dark']) {
       const runningConversation = page.getByRole('button', { name: '打开会话：用户固定标题，正在生成', exact: true })
       await expect(runningConversation).toBeVisible()
       const alignment = await runningConversation.evaluate(element => {
+        const row = element.getBoundingClientRect()
         const indicator = element.querySelector('.conversation-loading')!.getBoundingClientRect()
         const title = element.querySelector('.conversation-title-marquee')!.getBoundingClientRect()
-        return { center: indicator.x + indicator.width / 2, titleStart: title.x }
+        return { center: indicator.x + indicator.width / 2 - row.x, titleStart: title.x - row.x, iconWidth: indicator.width, iconHeight: indicator.height }
       })
-      expect(alignment.center).toBeCloseTo(alignment.titleStart / 2, 1)
+      expect(alignment).toEqual({ center: 16, titleStart: 30, iconWidth: 16, iconHeight: 16 })
+      const loadingIcon = runningConversation.locator('svg')
+      await expect(loadingIcon).toHaveCSS('animation-name', 'none')
+      await expect(loadingIcon).toHaveCSS('stroke-width', '1.7px')
+      await expect(loadingIcon).toHaveCSS('color', theme === 'light' ? 'rgb(49, 88, 230)' : 'rgb(140, 163, 254)')
+      await expect(runningConversation).toHaveCSS('box-shadow', 'none')
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
       await page.screenshot({ path: testInfo.outputPath(`title-${theme}-${width}.png`) })
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+      await expect(loadingIcon).toHaveCSS('animation-duration', '1.6s')
+      await expect(loadingIcon).toHaveCSS('animation-timing-function', 'linear')
+      await page.evaluate(() => (window as typeof window & { titleHarness: TitleHarness }).titleHarness.finish(0))
+      const idleConversation = page.getByRole('button', { name: '打开会话：用户固定标题', exact: true })
+      await expect(idleConversation).toBeVisible()
+      await expect(idleConversation.locator('svg')).toHaveCount(0)
+      expect(await idleConversation.evaluate(element => element.querySelector('.conversation-title-marquee')!.getBoundingClientRect().x - element.getBoundingClientRect().x)).toBe(30)
     })
   }
 }
@@ -253,8 +267,6 @@ test('A和B同时接收、往返切换后后台完成，停止B不影响A标题'
   const loading = page.getByRole('status', { name: '任务仍在继续' })
   await expect(loading).toBeVisible()
   await expect(page.getByRole('button', { name: '恢复连接', exact: true })).toHaveCount(0)
-  const runningConversation = page.getByRole('button', { name: '打开会话：会话A，正在生成', exact: true })
-  expect(await runningConversation.evaluate(element => element.getAnimations({ subtree: true }).map(animation => animation.effect?.getTiming().duration))).toEqual([1200, 1200, 1200, 1200])
   await page.getByRole('button', { name: '打开会话：会话B，正在生成', exact: true }).click()
   await page.getByRole('button', { name: '停止任务', exact: true }).click()
   await expect.poll(() => page.evaluate(() => (window as typeof window & { titleHarness: TitleHarness }).titleHarness.cancelled)).toEqual(['title-thread-1'])
