@@ -1,6 +1,7 @@
 """第三方技能来源的游标、固定下载和失败边界"""
 
 import asyncio
+import codecs
 from collections.abc import AsyncIterator
 
 import httpx
@@ -68,6 +69,11 @@ async def test_catalog_preserves_empty_page_cursor_and_source_identity() -> None
 
 async def test_search_has_no_cursor_and_download_pins_owner_and_release() -> None:
     requests: list[httpx.Request] = []
+    files = (
+        SkillFile("SKILL.md", codecs.BOM_UTF8 + skill_files()[0].content),
+        *skill_files()[1:],
+        SkillFile("references/slides/SKILL.md", b"Nested reference"),
+    )
 
     def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
@@ -89,7 +95,7 @@ async def test_search_has_no_cursor_and_download_pins_owner_and_release() -> Non
         assert request.url.params["version"] == "fixed"
         return httpx.Response(
             200,
-            content=archive_bytes(skill_files()),
+            content=archive_bytes(files),
             headers={"content-type": "application/zip"},
         )
 
@@ -97,10 +103,30 @@ async def test_search_has_no_cursor_and_download_pins_owner_and_release() -> Non
         remote = source(client)
         page = await remote.browse(query="reports", cursor=None)
         assert page.cursor is None
-        assert (await remote.package(page.items[0].id, "fixed")).name == "reports"
+        package = await remote.package(page.items[0].id, "fixed")
+        assert package.name == "reports"
+        assert package.files == tuple(sorted(files, key=lambda file: file.path))
         with pytest.raises(BusinessException):
             await remote.browse(query="reports", cursor="invalid")
     assert len(requests) == 2
+
+
+async def test_catalog_download_rejects_multiple_independent_skill_roots() -> None:
+    content = archive_bytes(
+        tuple(SkillFile("reports/" + f.path, f.content) for f in skill_files())
+        + tuple(SkillFile("slides/" + f.path, f.content) for f in skill_files("slides"))
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200, content=content, headers={"content-type": "application/zip"}
+            )
+        )
+    ) as client:
+        with pytest.raises(BusinessException) as failure:
+            await source(client).package("author/reports", "fixed")
+    assert failure.value.error_code == SkillErrorCode.INVALID_PACKAGE
+    assert failure.value.message == "来源下载必须对应单个技能"
 
 
 @pytest.mark.parametrize(
@@ -128,6 +154,11 @@ async def test_github_handoff_uses_fixed_commit_and_never_forwards_source_secret
 ):
     commit = "a" * 40
     urls: list[str] = []
+    files = (
+        SkillFile("SKILL.md", codecs.BOM_UTF8 + skill_files()[0].content),
+        *skill_files()[1:],
+        SkillFile("references/slides/SKILL.md", b"Nested reference"),
+    )
 
     def respond(request: httpx.Request) -> httpx.Response:
         urls.append(str(request.url))
@@ -149,15 +180,15 @@ async def test_github_handoff_uses_fixed_commit_and_never_forwards_source_secret
             content=archive_bytes(
                 tuple(
                     SkillFile("repository/skills/reports/" + file.path, file.content)
-                    for file in skill_files()
+                    for file in files
                 )
             ),
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
-        assert (
-            await source(client).package("author/reports", "fixed")
-        ).name == "reports"
+        package = await source(client).package("author/reports", "fixed")
+        assert package.name == "reports"
+        assert package.files == tuple(sorted(files, key=lambda file: file.path))
     assert len(urls) == 2 and all("127.0.0.1" not in url for url in urls)
 
 

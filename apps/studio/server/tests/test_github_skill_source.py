@@ -10,8 +10,9 @@ from tinkerfin_studio.skills.sources import SkillSourceSettings
 
 REVISION = "a" * 40
 FILES = {
-    "skills/reports/SKILL.md": b"---\nname: reports\ndescription: Verified reports\n---\nRead data.bin",
+    "skills/reports/SKILL.md": b"\xef\xbb\xbf---\nname: reports\ndescription: Verified reports\n---\nRead data.bin",
     "skills/reports/data.bin": b"\x00\xff\x80",
+    "skills/reports/references/slides/SKILL.md": b"Nested reference",
     "template/SKILL.md": b"excluded",
 }
 
@@ -81,8 +82,13 @@ async def test_github_catalog_search_details_and_install_keep_fixed_content() ->
             detail.source_url
             == f"https://github.com/anthropics/skills/tree/{REVISION}/skills/reports"
         )
-        assert detail.files == ["SKILL.md", "data.bin"]
+        assert detail.files == ["SKILL.md", "data.bin", "references/slides/SKILL.md"]
         package = await source.package("skills/reports", REVISION)
+        assert {file.path: file.content for file in package.files} == {
+            path.removeprefix("skills/reports/"): content
+            for path, content in FILES.items()
+            if path.startswith("skills/reports/")
+        }
         assert (
             next(file.content for file in package.files if file.path == "data.bin")
             == FILES["skills/reports/data.bin"]

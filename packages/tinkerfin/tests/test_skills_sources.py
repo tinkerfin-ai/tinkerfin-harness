@@ -1,9 +1,11 @@
 """Configured skill paths refresh within a persisted conversation."""
 
+import asyncio
 from typing import Any
 
 import pytest
 from deepagents.backends import StoreBackend
+from deepagents.backends.protocol import BackendProtocol, FileDownloadResponse, LsResult
 from deepagents.backends.utils import create_file_data
 from langchain.tools import tool
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
@@ -181,3 +183,115 @@ async def test_source_name_selection_precedes_same_name_override() -> None:
         SkillSource("/first/", names=("reporting",)),
         SkillSource("/second/", names=("another",)),
     ]
+
+
+async def test_bom_skill_is_discovered_without_changing_stored_or_tool_content() -> (
+    None
+):
+    configured = TinkerFin(store=InMemoryStore()).with_namespace("owner")
+    path = "/skills/reporting/SKILL.md"
+    text = "\ufeff---\nname: reporting\ndescription: BOM-DISCOVERY-MARKER\n---\nInstructions"
+    original = dict(create_file_data(text))
+    await configured.store.aput(("files",), path, original)
+    model = _SkillModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "read_file", "args": {"file_path": path}, "id": "read"}
+                ],
+            ),
+            AIMessage(content="done"),
+        ]
+    )
+    runtime = configured.build(
+        model=model,
+        backend=StoreBackend(namespace=lambda _: ("files",)),
+        skills=[SkillSource("/skills/", names=("reporting",))],
+    )
+    await runtime.ainvoke(
+        thread_id="thread",
+        run_id="run",
+        input={"messages": [HumanMessage(content="Read the reporting skill")]},
+    )
+    assert "BOM-DISCOVERY-MARKER" in model.observations[0]
+    assert "\ufeff---" in model.observations[1]
+    stored = await configured.store.aget(("files",), path)
+    assert stored is not None and stored.value == original
+
+
+@pytest.mark.parametrize(
+    "content,error",
+    [(None, "permission_denied"), (b"\xef\xbb\xbf\xff", None)],
+)
+async def test_skill_discovery_preserves_failed_and_invalid_file_reads(
+    content: bytes | None, error: str | None
+) -> None:
+    response = FileDownloadResponse(
+        path="/skills/reporting/SKILL.md", content=content, error=error
+    )
+
+    class MetadataBackend(BackendProtocol):
+        async def als(self, path: str) -> LsResult:
+            return LsResult(entries=[{"path": "/skills/reporting/", "is_dir": True}])
+
+        async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+            return [response]
+
+    model = _SkillModel(responses=[AIMessage(content="done")])
+    runtime = (
+        TinkerFin()
+        .with_namespace("owner")
+        .build(model=model, backend=MetadataBackend(), skills=[SkillSource("/skills/")])
+    )
+    await runtime.ainvoke(
+        thread_id="thread",
+        run_id="run",
+        input={"messages": [HumanMessage(content="Work")]},
+    )
+    assert "/skills/reporting/SKILL.md" not in model.observations[0]
+    assert response.content == content and response.error == error
+
+
+async def test_cancelling_skill_discovery_releases_the_borrowed_read() -> None:
+    entered = asyncio.Event()
+    released = asyncio.Event()
+
+    class PendingBackend(BackendProtocol):
+        async def als(self, path: str) -> LsResult:
+            return LsResult(entries=[{"path": "/skills/reporting/", "is_dir": True}])
+
+        async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+                return []
+            finally:
+                released.set()
+
+    model = _SkillModel(responses=[AIMessage(content="unused")])
+    runtime = (
+        TinkerFin()
+        .with_namespace("owner")
+        .build(model=model, backend=PendingBackend(), skills=[SkillSource("/skills/")])
+    )
+    run = asyncio.create_task(
+        runtime.ainvoke(
+            thread_id="thread",
+            run_id="run",
+            input={"messages": [HumanMessage(content="Work")]},
+        )
+    )
+    reading = asyncio.create_task(entered.wait())
+    try:
+        await asyncio.wait((run, reading), return_when=asyncio.FIRST_COMPLETED)
+        if not reading.done():
+            pytest.fail(f"discovery did not start: {await run}")
+        run.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await run
+        assert released.is_set() and model.observations == []
+    finally:
+        reading.cancel()
+        run.cancel()
+        await asyncio.gather(reading, run, return_exceptions=True)

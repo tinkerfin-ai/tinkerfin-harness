@@ -1,5 +1,6 @@
 """聊天 ZIP 的完整原件、技能校验、附件归属和模型引用"""
 
+import codecs
 import json
 
 import pytest
@@ -76,7 +77,13 @@ async def test_chat_zip_preview_install_and_replace_share_the_skill_service(
         project_id="project-1", user_id=1, thread_id="chat", title="技能", model_id=None
     )
     await session.commit()
-    data = archive_bytes(skill_files())
+    data = archive_bytes(
+        (
+            SkillFile("SKILL.md", codecs.BOM_UTF8 + skill_files()[0].content),
+            *skill_files()[1:],
+            SkillFile("references/slides/SKILL.md", b"Nested reference"),
+        )
+    )
     uploaded = await attachments.upload(
         project_id="project-1",
         user_id=1,

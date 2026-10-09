@@ -1,5 +1,6 @@
-"""技能包校验、安装发布和运行固定内容的可观察契约"""
+"""技能包校验、安装发布和完整内容保存的可观察契约"""
 
+import codecs
 import io
 import stat
 import struct
@@ -16,6 +17,7 @@ from tinkerfin import TinkerFin
 from tinkerfin_contracts import RunIdentity
 from tinkerfin_studio.api.errors import BusinessException, SkillErrorCode
 from tinkerfin_studio.auth.models import User
+from tinkerfin_studio.skills import packages as skill_packages
 from tinkerfin_studio.skills.content import SkillContentStore
 from tinkerfin_studio.skills.library import SkillLibrary
 from tinkerfin_studio.skills.packages import (
@@ -84,6 +86,69 @@ def test_frontmatter_handles_crlf_multiline_and_literal_delimiters_without_rewri
     assert package.name == "café-reports"
     assert "--- separators" in package.description
     assert package.files[0].content == markdown
+
+
+async def test_bom_metadata_preserves_original_files_and_stored_digest() -> None:
+    original = skill_files()
+    files = (
+        SkillFile("SKILL.md", codecs.BOM_UTF8 + original[0].content),
+        *original[1:],
+    )
+    package = parse_package(files)
+    assert package.name == "reports"
+    assert package.files == tuple(sorted(files, key=lambda file: file.path))
+    assert package.digest != parse_package(original).digest
+    content = SkillContentStore(TinkerFin(store=InMemoryStore()))
+    await content.save(1, package)
+    assert await content.load(1, package.digest) == package
+
+
+@pytest.mark.parametrize("prefix", ["", "repository/"])
+async def test_archive_keeps_nested_skill_documents_in_the_parent_package(
+    prefix: str,
+) -> None:
+    files = (
+        *skill_files(),
+        SkillFile("references/slides/SKILL.md", b"A reference document"),
+        SkillFile("references/slides/assets/example.bin", b"\x00\xff"),
+    )
+    packages = await SkillArchiveReader().read(
+        archive_bytes(tuple(SkillFile(prefix + f.path, f.content) for f in files))
+    )
+    assert packages == (parse_package(files),)
+
+
+async def test_archive_discovers_sibling_packages_without_promoting_nested_documents() -> (
+    None
+):
+    first = (*skill_files("reports"), SkillFile("nested/SKILL.md", b"reference"))
+    second = skill_files("slides")
+    packages = await SkillArchiveReader().read(
+        archive_bytes(
+            tuple(SkillFile("repo/a/" + f.path, f.content) for f in first)
+            + tuple(SkillFile("repo/ab/" + f.path, f.content) for f in second)
+        )
+    )
+    assert packages == (parse_package(first), parse_package(second))
+
+
+async def test_archive_skill_capacity_counts_only_independent_roots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(skill_packages, "MAX_SKILLS", 1)
+    files = (*skill_files(), SkillFile("nested/SKILL.md", b"reference"))
+    assert len(await SkillArchiveReader().read(archive_bytes(files))) == 1
+    with pytest.raises(BusinessException) as failure:
+        await SkillArchiveReader().read(
+            archive_bytes(
+                tuple(SkillFile("first/" + f.path, f.content) for f in files)
+                + tuple(
+                    SkillFile("second/" + f.path, f.content)
+                    for f in skill_files("slides")
+                )
+            )
+        )
+    assert failure.value.error_code == SkillErrorCode.INVALID_PACKAGE
 
 
 async def add_users(session: AsyncSession) -> None:
