@@ -17,7 +17,7 @@ from tinkerfin_contracts.identity import validate_namespace
 
 DEFAULT_SANDBOX_IMAGE = (
     "ghcr.io/tinkerfin-ai/sandbox-runtime@"
-    "sha256:c633c3bf0cf8a4bfde2372bb81cfb9e567ccc90f472e0f2772949123cc4c930d"
+    "sha256:155b3847039b52b61e016b9fde6d8616a9c988f187a480dd2bb49dacfde33cbc"
 )
 _RESERVED_METADATA_PREFIX = "tinkerfin.ai/"
 
