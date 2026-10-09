@@ -4,7 +4,7 @@ import type { InterruptEvent, ConversationAgUiEvent, MessageSource } from './typ
 import type { ConversationTitleSnapshot } from "./titles"
 import type { PendingInteractionKind, JsonObject, JsonValue } from '../../types'
 import { requestEventStream, requestJson } from '../shared/http'
-import { ConversationError } from './errors'
+import { ConversationError, isConversationPreparationFailure } from './errors'
 import { parseJsonSseStream } from '../shared/sse'
 import type {
   ConversationGraph,
@@ -127,7 +127,7 @@ export const parseRunFailures = (value: unknown): ConversationRunFailure[] => {
       || item.runId !== item.runId.trim() || ids.has(item.runId)
       || !(item.errorCode === null || typeof item.errorCode === 'string')
       || typeof item.failedAt !== 'string' || typeof item.retryable !== 'boolean'
-      || (item.retryable && item.errorCode !== 'runtime_initialization_error')) {
+      || (item.retryable && !isConversationPreparationFailure(item.errorCode))) {
       throw new ConversationError('stream_event_invalid')
     }
     traceObservationTime(item.failedAt)

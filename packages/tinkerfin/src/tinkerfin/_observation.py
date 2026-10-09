@@ -55,6 +55,7 @@ from tinkerfin_contracts import (
     RuntimeObservation,
     RuntimeObserver,
     ToolExecutionObservation,
+    WorkspacePreparationFailure,
 )
 from tinkerfin_native_stream import (
     NativeExtraStreamPart,
@@ -82,6 +83,15 @@ if TYPE_CHECKING:
 _CALLBACK_TIMESTAMP: ContextVar[tuple[datetime, int] | None] = ContextVar(
     "tinkerfin_callback_timestamp", default=None
 )
+
+
+def initialization_error_code(error: BaseException) -> str:
+    """Keep public preparation reasons identical in live and recorded terminals."""
+    if isinstance(error, WorkspacePreparationFailure):
+        reason = error.workspace_failure
+        if isinstance(reason, str) and reason in {"busy", "file_conflict"}:
+            return f"workspace_{reason}"
+    return "runtime_initialization_error"
 
 
 def _stamp() -> tuple[datetime, int]:
@@ -986,7 +996,7 @@ class RuntimeObservationHub:
         ):
             # Preserve a proven pre-Graph failure without relabeling later observer
             # or cleanup failures, or changing cancellation into initialization failure.
-            code = "runtime_initialization_error"
+            code = initialization_error_code(error)
         self._terminal = outcome
         await self._settle_thread_callbacks()
         await self._call_handler.settle(outcome, error=error)

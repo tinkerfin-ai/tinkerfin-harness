@@ -180,7 +180,7 @@ class StudioAutomationTarget:
             models = AgentModelService(AgentModelRepository(session, user_id=user_id))
             try:
                 model = await models.resolve(config.model_id)
-                skill_snapshot = await SkillRepository(session, user_id).capture(
+                await SkillRepository(session, user_id).capture(
                     execution.identity, project_id=config.project_id
                 )
                 await session.commit()
@@ -214,7 +214,6 @@ class StudioAutomationTarget:
                 search_service=search_service,
                 image_service=image_service,
                 access_mode=config.access_mode,
-                skill_snapshot=skill_snapshot,
             )
             prepared = replace(
                 execution, input={"messages": [{"role": "user", "content": content}]}

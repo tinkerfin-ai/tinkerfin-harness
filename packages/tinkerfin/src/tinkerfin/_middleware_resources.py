@@ -25,6 +25,7 @@ from ._store import validate_store_backend
 from ._store_backend import async_store_backend
 from ._subagents import validate_subagent_resources
 from ._summarization import ObservedCompactionTool, observe_summarization
+from .skills import SkillSource
 
 _Middleware = AgentMiddleware[Any, Any, Any]
 
@@ -107,7 +108,8 @@ def prepare_middleware_resources(
         elif type(item) is SkillsMiddleware:
             result = SourceSkillsMiddleware(
                 backend=async_store_backend(item._backend),
-                sources=list(zip(item.sources, item.source_labels, strict=True)),
+                sources=[SkillSource(path) for path in item.sources],
+                labels=list(item.source_labels),
                 system_prompt=item.system_prompt_template,
             )
         elif type(item) is SummarizationMiddleware:

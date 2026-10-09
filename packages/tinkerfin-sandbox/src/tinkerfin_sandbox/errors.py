@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from enum import StrEnum
 from types import MappingProxyType
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 _ContextValue: TypeAlias = str | int | float | bool | None
 
@@ -181,6 +181,11 @@ class OpenSandboxBusyError(OpenSandboxBackendError):
 
     code = OpenSandboxErrorCode.BUSY
 
+    @property
+    def workspace_failure(self) -> Literal["busy"]:
+        """Let a Runtime report that the workspace must become idle first."""
+        return "busy"
+
 
 class OpenSandboxLifecycleUncertainError(OpenSandboxBackendError):
     """A dispatched lifecycle request has no confirmed remote outcome.
@@ -202,6 +207,11 @@ class OpenSandboxFileChangedError(OpenSandboxBackendError):
     """A file, directory page, or project changed during a read; reread its state."""
 
     code = OpenSandboxErrorCode.FILE_CHANGED
+
+    @property
+    def workspace_failure(self) -> Literal["file_conflict"]:
+        """Let a Runtime report that local file changes need resolution."""
+        return "file_conflict"
 
 
 class OpenSandboxNotTextError(OpenSandboxBackendError):

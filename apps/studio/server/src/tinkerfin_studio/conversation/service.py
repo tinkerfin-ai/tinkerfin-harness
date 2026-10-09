@@ -242,9 +242,7 @@ class ConversationChatService:
             if isinstance(intent, StartChatIntent) and any(
                 skill.selected for skill in execution.skills.skills
             ):
-                skill_message = await build_selected_skill_message(
-                    self._resources.skills.content,
-                    user_id=self._user.user_id,
+                skill_message = build_selected_skill_message(
                     identity=prepared.identity,
                     snapshot=execution.skills,
                 )
@@ -259,7 +257,6 @@ class ConversationChatService:
                 search_service=search_service,
                 image_service=image_service,
                 access_mode=prepared.access_mode,
-                skill_snapshot=execution.skills,
             )
             command: RunCommand
             if isinstance(intent, CompactIntent):

@@ -237,8 +237,8 @@ class RunTerminalObservation(ObservationModel):
         min_length=1,
         max_length=1024,
         description=(
-            "Client-safe terminal code; runtime_initialization_error identifies "
-            "a failure before Agent execution"
+            "Client-safe terminal code. runtime_initialization_error, workspace_busy "
+            "and workspace_file_conflict identify failures before Agent execution"
         ),
     )
     error_type: str | None = Field(default=None, min_length=1, max_length=1024)

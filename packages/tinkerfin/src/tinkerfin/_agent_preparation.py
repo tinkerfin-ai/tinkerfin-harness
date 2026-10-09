@@ -26,6 +26,7 @@ from ._state_schema import validate_state_schema
 from ._store import validate_store_backend
 from ._store_backend import async_store_backend
 from ._subagents import validate_subagent_resources
+from .skills import SkillSource
 
 _DECLARED_AGENT_FIELDS = frozenset(
     {
@@ -162,6 +163,10 @@ def validate_agent_spec(spec: AgentSpec[ContextT]) -> None:
         raise TypeError("backend must be a BackendProtocol or Workspace")
     if any(not isinstance(item, AgentMiddleware) for item in spec.middleware):
         raise TypeError("middleware must contain AgentMiddleware instances")
+    if spec.skills is not None and any(
+        not isinstance(source, SkillSource) for source in spec.skills
+    ):
+        raise TypeError("skills must contain SkillSource declarations")
     _validate_middleware(spec.middleware)
     validate_delegation_retry(spec.middleware, persistent=spec.checkpointer is not None)
     has_remote_agents = any(
@@ -202,6 +207,11 @@ def validate_agent_spec(spec: AgentSpec[ContextT]) -> None:
         if "runnable" not in declaration and "graph_id" not in declaration:
             if not isinstance(values.get("system_prompt"), str):
                 raise TypeError("declarative subagents require system_prompt")
+            skills = declaration.get("skills")
+            if skills is not None and any(
+                not isinstance(source, SkillSource) for source in skills
+            ):
+                raise TypeError("subagent skills must contain SkillSource declarations")
             middleware = declaration.get("middleware", ())
             _validate_middleware(middleware)
             validate_delegation_retry(

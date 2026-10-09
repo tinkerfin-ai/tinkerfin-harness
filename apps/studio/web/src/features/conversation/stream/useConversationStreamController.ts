@@ -17,6 +17,7 @@ import { ApiError } from '../../../api/shared/http'
 import {
   ConversationError,
   conversationErrorMessage,
+  conversationRunError,
   hasConversationErrorCode,
 } from '../../../api/conversation/errors'
 import {
@@ -530,7 +531,7 @@ export function useConversationStreamController({
         latestNoticeHandler.current?.(current.notice?.id?.endsWith(':terminal') ? current.notice : {
           kind: 'error',
           content: conversationErrorMessage(
-            new ConversationError(event.code === 'runtime_initialization_error' ? 'run_initialization_failed' : 'run_failed', event.message),
+            conversationRunError(event.code, event.message),
             'run_failed',
           ),
           id: `${payload.runId}:terminal`,

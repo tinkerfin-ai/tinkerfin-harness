@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { LANGUAGE_STORAGE_KEY } from '../../i18n'
-import { ConversationError, conversationErrorMessage } from './errors'
-import { ApiError } from '../shared/http'
+import { ConversationError, conversationErrorMessage, conversationRunError } from './errors'
 
 describe('conversation error boundary', () => {
   beforeEach(() => {
@@ -33,10 +32,9 @@ describe('conversation error boundary', () => {
 
 
 it.each([
-  ['zh-CN', '所选技能正文合计超过 512 KiB，请减少所选技能后重试'],
-  ['en', 'Selected skill instructions exceed 512 KiB. Select fewer skills and try again'],
-])('技能正文超限在 %s 下给出操作提示，不展示服务端诊断', (locale, expected) => {
-  window.localStorage.setItem(LANGUAGE_STORAGE_KEY, locale)
-  const error = new ApiError('private diagnostics', { code: 1_001_008_014, status: 422 })
-  expect(conversationErrorMessage(error, 'run_request_failed')).toBe(expected)
+  ['workspace_busy', '项目中还有任务在执行，请等待结束后再试'],
+  ['workspace_file_conflict', '技能文件有本地修改，请先处理文件冲突后再试'],
+])('运行错误 %s 保留可处理原因并隐藏诊断', (code, expected) => {
+  window.localStorage.setItem(LANGUAGE_STORAGE_KEY, 'zh-CN')
+  expect(conversationErrorMessage(conversationRunError(code, 'private diagnostics'), 'run_failed')).toBe(expected)
 })

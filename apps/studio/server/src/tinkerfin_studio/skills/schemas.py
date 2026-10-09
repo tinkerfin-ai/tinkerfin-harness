@@ -201,7 +201,7 @@ class UpdateSkillOperation(BaseModel):
 class UninstallSkillOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["uninstall"] = Field(
-        description="移除个人安装，已开始运行仍使用原快照"
+        description="移除个人安装，后续执行前同步工作区"
     )
     installation_id: str = Field(
         min_length=1, max_length=36, description="list_skills 返回的个人安装 ID"
@@ -215,7 +215,7 @@ SkillOperation = Annotated[
 
 
 class SkillReference(BaseModel):
-    """运行固定的安装内容；卸载不使已捕获引用失效"""
+    """运行开始时的技能选择记录，不决定执行目录内容"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     installation_id: str
@@ -233,8 +233,4 @@ class SelectedSkill(BaseModel):
 
 class SkillSnapshotPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    directory_id: str = Field(
-        pattern=r"^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$",
-        description="初次捕获时分配的执行目录标识，恢复时保持不变",
-    )
     skills: tuple[SkillReference, ...]

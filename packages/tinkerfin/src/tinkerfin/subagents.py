@@ -11,6 +11,8 @@ from langchain.agents.structured_output import ResponseFormat
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
+from .skills import SkillSource
+
 
 class SubAgent(TypedDict):
     """Describe a delegated agent that receives an isolated task description.
@@ -29,7 +31,7 @@ class SubAgent(TypedDict):
     tools: NotRequired[Sequence[BaseTool | Callable[..., Any] | dict[str, Any]]]
     middleware: NotRequired[Sequence[AgentMiddleware[Any, Any, Any]]]
     interrupt_on: NotRequired[dict[str, bool | InterruptOnConfig]]
-    skills: NotRequired[Sequence[str]]
+    skills: NotRequired[Sequence[SkillSource]]
     permissions: NotRequired[Sequence[FilesystemPermission]]
     response_format: NotRequired[ResponseFormat[Any] | type | dict[str, Any]]
 

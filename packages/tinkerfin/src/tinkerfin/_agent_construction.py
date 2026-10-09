@@ -53,6 +53,7 @@ from ._state_schema import private_state_fields
 from ._summarization import ObservedCompactionTool, observe_summarization
 from ._tool_runtime import _ToolRuntimeMiddleware
 from .media import AttachmentSupport
+from .skills import SkillSource
 from .tools import _ToolRunScope
 
 AgentGraph: TypeAlias = CompiledStateGraph[
@@ -136,7 +137,7 @@ def _role_defaults(
     *,
     model: BaseChatModel,
     backend: BackendProtocol,
-    skills: Sequence[str] | None,
+    skills: Sequence[SkillSource] | None,
     permissions: Sequence[FilesystemPermission],
     interrupt_on: dict[str, bool | InterruptOnConfig] | None,
     workspace: PreparedWorkspace[object, BackendProtocol] | None,
@@ -159,7 +160,7 @@ def _child_stack(
     *,
     model: BaseChatModel,
     backend: BackendProtocol,
-    skills: Sequence[str] | None,
+    skills: Sequence[SkillSource] | None,
     permissions: Sequence[FilesystemPermission],
     custom: Sequence[AgentMiddlewareType],
     interrupt_on: dict[str, bool | InterruptOnConfig] | None,

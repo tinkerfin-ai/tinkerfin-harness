@@ -41,6 +41,7 @@ from ..errors import (
     OpenSandboxBackendUnavailableError,
     OpenSandboxBusyError,
     OpenSandboxError,
+    OpenSandboxFileChangedError,
     OpenSandboxInitializationError,
     OpenSandboxLifecycleUncertainError,
 )
@@ -128,7 +129,7 @@ class _RecordPayload(BaseModel):
 class _RegistryFailure(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    reason: Literal["busy", "stale", "unavailable"]
+    reason: Literal["busy", "stale", "unavailable", "changed"]
     message: str
 
 
@@ -302,14 +303,42 @@ class _ProjectCoordinator(Generic[_KeyT]):
             raise OpenSandboxBackendProtocolError(
                 "Workspace registry request exceeds its byte limit"
             )
+
         command = f"printf %s {shlex.quote(request)} | {_REGISTRY_COMMAND}"
 
         async def execute() -> ExecuteResponse:
             async with asyncio.timeout(self._control_timeout):
                 with parent._rooted_file_operation():
-                    return await parent.aexecute(
-                        command, timeout=max(1, math.ceil(self._control_timeout))
-                    )
+                    if len(command.encode("utf-8")) <= 48 * 1024:
+                        return await parent.aexecute(
+                            command,
+                            timeout=max(1, math.ceil(self._control_timeout)),
+                        )
+                    # Execd invokes the shell with one -c argument. Large JSON
+                    # requests must travel as files to avoid Linux MAX_ARG_STRLEN.
+                    path = f"/tmp/.tinkerfin-registry-{uuid4()}.json"
+                    primary: BaseException | None = None
+                    try:
+                        await parent._file_request(
+                            parent._sandbox.files.write_file(
+                                path, request.encode("utf-8"), mode=600
+                            )
+                        )
+                        return await parent.aexecute(
+                            f"{_REGISTRY_COMMAND} < {shlex.quote(path)}",
+                            timeout=max(1, math.ceil(self._control_timeout)),
+                        )
+                    except BaseException as error:
+                        primary = error
+                        raise
+                    finally:
+
+                        async def remove_request() -> None:
+                            await parent._file_request(
+                                parent._sandbox.files.delete_files([path])
+                            )
+
+                        await _finish_cleanup(remove_request(), primary=primary)
 
         response = await _workspace_call(execute())
         content = _response_content(response, limit=_REGISTRY_LIMIT)
@@ -337,7 +366,9 @@ class _ProjectCoordinator(Generic[_KeyT]):
             ) from error
         reason = rejection.error.reason
         if reason == "busy":
-            raise OpenSandboxBusyError("Workspace deletion is in progress")
+            raise OpenSandboxBusyError("Workspace is in use or under maintenance")
+        if reason == "changed":
+            raise OpenSandboxFileChangedError("Managed files have local modifications")
         if reason == "stale":
             raise OpenSandboxLifecycleUncertainError(
                 "Workspace admission is no longer current", context={"reason": reason}

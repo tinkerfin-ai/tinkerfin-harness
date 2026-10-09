@@ -26,6 +26,45 @@ maps file-tool `/` to that directory, and `reset()` clears its children. This op
 only limits file tools; raw Shell commands can access other Sandbox paths. It does
 not configure isolated workspaces, whose virtual file root is always `/`.
 
+## Prepare shared input files
+
+Use a Sandbox Runtime image with directory publication support and configure it
+with `OpenSandboxConfig(image=...)`. Existing Sandboxes require a separate update.
+
+Declare input files when building a Runtime that needs project-local resources:
+
+```python
+from tinkerfin import SkillSource, TinkerFin
+from tinkerfin_sandbox import WorkspaceDirectoryContents
+
+project = manager.workspace("users/7", workspace_key="project-a").with_directories([
+    WorkspaceDirectoryContents(
+        "/skills",
+        (("reports/SKILL.md", b"---\nname: reports\ndescription: Prepare reports\n---\nRead the project data."),),
+    ),
+])
+runtime = TinkerFin().build(
+    model=model, backend=project, skills=[SkillSource("/skills/")],
+)
+await runtime.ainvoke(thread_id="report", input={"messages": [{"role": "user", "content": "Prepare a report"}]})
+```
+
+The Runtime publishes the declaration before starting execution. Files remain
+writable and shared by the project's runs. Reusing the same declaration preserves
+local edits. Changed declarations remove obsolete managed files and preserve
+unrelated files; modifying a locally edited managed file raises
+`OpenSandboxFileChangedError`. Publication raises `OpenSandboxBusyError` while
+another execution uses the project. Resolve the conflict or wait for that execution
+to finish before explicitly trying again. Publication rejects symbolic links.
+
+To update an existing project without executing an agent, call
+`await project.synchronize_directories(declarations)`. It returns whether anything
+changed and never creates a sandbox. Declarations must use distinct, nonoverlapping
+absolute subdirectories, with at most 8,192 files, 16,384 total file and directory entries, and 512 MiB per directory.
+Cancellation waits for accepted publication and cleanup before propagating. Runtime streams report these preparation failures as `workspace_busy` or
+`workspace_file_conflict` in both live and recorded terminals, without exposing provider diagnostics.
+
+
 ## Common asynchronous file operations
 
 ```python

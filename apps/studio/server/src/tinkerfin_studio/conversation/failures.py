@@ -61,7 +61,12 @@ class ConversationFailureProjection:
                 runId=run_id,
                 errorCode=fact.code,
                 failedAt=fact.occurred_at,
-                retryable=fact.code == "runtime_initialization_error",
+                retryable=fact.code
+                in {
+                    "runtime_initialization_error",
+                    "workspace_busy",
+                    "workspace_file_conflict",
+                },
             )
         return state.model_copy(
             update={

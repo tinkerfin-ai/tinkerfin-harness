@@ -184,7 +184,7 @@ export function ConversationViewport({
             {entries.map((entry) => entry.type === 'compaction'
               ? <CompactionCard key={`compaction:${entry.operation.runId}`} operation={entry.operation} onReload={isRunning ? undefined : onRetryHydration} />
               : entry.type === 'run-failure'
-              ? <ConversationRunFailure id={`failure:${entry.failure.runId}`} key={`failure:${entry.failure.runId}`} retryable={entry.failure.retryable && !entry.message.meta?.contentOmitted && Boolean(entry.message.content || entry.message.attachments?.length)} disabled={retryDisabled} onRetry={onRetryRun ? () => onRetryRun(entry.message) : undefined} />
+              ? <ConversationRunFailure errorCode={entry.failure.errorCode} id={`failure:${entry.failure.runId}`} key={`failure:${entry.failure.runId}`} retryable={entry.failure.retryable && !entry.message.meta?.contentOmitted && Boolean(entry.message.content || entry.message.attachments?.length)} disabled={retryDisabled} onRetry={onRetryRun ? () => onRetryRun(entry.message) : undefined} />
               : entry.type === 'tools'
               ? <ToolCallBatch key={`batch-${entry.messages[0].id}`} messages={entry.messages} />
               : entry.type === 'todo-group'

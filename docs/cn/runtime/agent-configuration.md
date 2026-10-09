@@ -54,6 +54,7 @@ middleware；`task` 和已配置远程智能体使用的委派工具名称也不
 ```python
 from deepagents.backends import StoreBackend
 from deepagents.backends.utils import create_file_data
+from tinkerfin import SkillSource
 
 scoped = TinkerFin(store=store, checkpointer=checkpointer).with_namespace("support")
 await scoped.store.aput(
@@ -61,13 +62,15 @@ await scoped.store.aput(
     dict(create_file_data("---\nname: reporting\ndescription: Prepare reports\n---\nVerify sources.")),
 )
 runtime = scoped.build(
-    model=model, skills=["/skills/"],
+    model=model, skills=[SkillSource("/skills/")],
     backend=StoreBackend(namespace=lambda _: ("files",)),
 )
 ```
 
-技能来源路径指向包含技能子目录的父目录。已有会话在来源路径改变后重新发现技能，
-路径不变时保留元数据缓存。需要在审批和恢复期间固定技能时，使用内容不可变的目录。
+技能来源指向包含技能子目录的父目录，每次模型调用前重新读取当前目录。
+使用 `SkillSource("/skills/", names=("reporting",))` 限定提供的技能名称；
+省略 `names` 加载全部，空元组不提供技能。目录内容更新会影响后续读取，包括恢复执行。
+名称筛选只控制技能说明，不代替文件或执行权限。
 
 可恢复的工具审批和 Plan 必须使用具体 checkpointer。checkpointer 已保存 thread 历史时，只提交新的用户消息。
 

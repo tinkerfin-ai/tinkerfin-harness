@@ -6,12 +6,26 @@ from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Generic, Protocol, TypeVar, runtime_checkable
+from typing import Generic, Literal, Protocol, TypeVar, runtime_checkable
 
 from .identity import RunIdentity
 
 WorkspaceT_co = TypeVar("WorkspaceT_co", covariant=True)
 BackendT_co = TypeVar("BackendT_co", covariant=True)
+
+
+@runtime_checkable
+class WorkspacePreparationFailure(Protocol):
+    """Expose a safe preparation category across workspace provider exceptions.
+
+    Providers retain their own exception family and diagnostic details. Runtime
+    reports only this category when preparation fails; exception text stays private.
+    """
+
+    @property
+    def workspace_failure(self) -> Literal["busy", "file_conflict"] | None:
+        """Identify an actionable condition, or leave it unclassified."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,4 +76,4 @@ class Workspace(Protocol[WorkspaceT_co, BackendT_co]):
         ...
 
 
-__all__ = ["PreparedWorkspace", "Workspace"]
+__all__ = ["PreparedWorkspace", "Workspace", "WorkspacePreparationFailure"]

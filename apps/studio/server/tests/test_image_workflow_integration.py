@@ -25,7 +25,6 @@ from tinkerfin_sandbox import OpenSandboxClient, OpenSandboxConfig, OpenSandboxM
 from tinkerfin_studio.agent import runtime as runtime_module
 from tinkerfin_studio.models.schemas import AgentModelConfig
 from tinkerfin_studio.resources import ApplicationResources
-from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
 
 pytestmark = [pytest.mark.docker_integration, pytest.mark.opensandbox_e2e]
 
@@ -184,9 +183,6 @@ async def test_programmatic_images_reach_downloadable_attachments(
             search_service=None,
             image_service=None,
             access_mode="full",
-            skill_snapshot=SkillSnapshotPayload(
-                directory_id="00000000-0000-0000-0000-000000000000", skills=()
-            ),
         )
         try:
             result = await runtime.ainvoke(

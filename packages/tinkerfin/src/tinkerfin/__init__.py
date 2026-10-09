@@ -33,6 +33,7 @@ from .runtime import SseMapper as SseMapper
 from .runtime import SsePayload as SsePayload
 from .runtime import SsePreflight as SsePreflight
 from .runtime import TinkerFin as TinkerFin
+from .skills import SkillSource as SkillSource
 
 if TYPE_CHECKING:
     from .agui_input import AgUiUserInput as AgUiUserInput
@@ -107,6 +108,7 @@ __all__ = [
     "PartObserver",
     "RunIdentity",
     "RunObservationError",
+    "SkillSource",
     "SseBody",
     "SseEventIdResolver",
     "SseMapper",

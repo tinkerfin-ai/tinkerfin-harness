@@ -45,6 +45,7 @@ from .protocols import RunObservationSession as RunObservationSession
 from .protocols import RuntimeObserver as RuntimeObserver
 from .workspace import PreparedWorkspace as PreparedWorkspace
 from .workspace import Workspace as Workspace
+from .workspace import WorkspacePreparationFailure as WorkspacePreparationFailure
 
 __all__ = [
     "RUNTIME_OBSERVATION_ADAPTER",
@@ -87,5 +88,6 @@ __all__ = [
     "ThreadIdentity",
     "ToolExecutionObservation",
     "Workspace",
+    "WorkspacePreparationFailure",
     "subagent_request_id",
 ]

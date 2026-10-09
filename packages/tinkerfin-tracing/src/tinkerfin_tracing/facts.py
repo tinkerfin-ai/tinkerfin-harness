@@ -70,8 +70,8 @@ class RunFact(TraceFactBase, frozen=True):
         min_length=1,
         max_length=1024,
         description=(
-            "Client-safe terminal code; runtime_initialization_error proves "
-            "that Agent execution did not start"
+            "Client-safe terminal code. runtime_initialization_error, workspace_busy "
+            "and workspace_file_conflict prove that Agent execution did not start"
         ),
     )
     error_type: str | None = Field(default=None, min_length=1, max_length=1024)

@@ -24,6 +24,39 @@ project = manager.workspace("users/7", workspace_key="project-a")
 `/` 映射到该目录，`reset()` 则清空其子项。这个配置只限制文件工具，原始 Shell 仍能访问 Sandbox 内
 其他路径；它不配置隔离工作区，隔离工作区的虚拟文件根始终为 `/`。
 
+## 准备共享输入文件
+
+使用包含目录发布能力的 Sandbox Runtime 镜像，并通过 `OpenSandboxConfig(image=...)` 配置。已有沙箱需单独更新。
+
+Runtime 需要项目内资源时，可以声明待准备的文件：
+
+```python
+from tinkerfin import SkillSource, TinkerFin
+from tinkerfin_sandbox import WorkspaceDirectoryContents
+
+project = manager.workspace("users/7", workspace_key="project-a").with_directories([
+    WorkspaceDirectoryContents(
+        "/skills",
+        (("reports/SKILL.md", b"---\nname: reports\ndescription: Prepare reports\n---\nRead the project data."),),
+    ),
+])
+runtime = TinkerFin().build(
+    model=model, backend=project, skills=[SkillSource("/skills/")],
+)
+await runtime.ainvoke(thread_id="report", input={"messages": [{"role": "user", "content": "生成报告"}]})
+```
+
+Runtime 在开始执行前发布声明的文件。文件保持可写，同项目的运行共享这些文件。
+重复使用相同声明会保留本地修改。声明变化时会移除不再需要的受管理文件，并保留其他文件；
+若需要替换或移除的文件已有本地修改，会抛出 `OpenSandboxFileChangedError`。
+项目仍有执行任务时，发布变更会抛出 `OpenSandboxBusyError`。
+处理文件冲突或等待该执行结束后，可再次主动发起操作。发布不允许经过符号链接。
+
+不执行 Agent、只更新已有项目时，调用 `await project.synchronize_directories(declarations)`。
+返回值表示是否发生变化，该方法不会创建沙箱。声明必须使用互不重叠的绝对子目录路径，
+每个目录最多 8,192 个文件、16,384 个文件和子目录条目，内容合计 512 MiB。取消会等待已接受的发布和清理结束后继续传播。Runtime 的实时事件和历史终态分别使用 `workspace_busy` 或 `workspace_file_conflict` 标识这两类准备失败，不公开底层诊断正文。
+
+
 ## 常用异步文件操作
 
 ```python

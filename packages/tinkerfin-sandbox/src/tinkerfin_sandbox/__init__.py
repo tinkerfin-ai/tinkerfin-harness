@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 from .backends import OpenSandboxBackend as OpenSandboxBackend
 from .backends import OpenSandboxHandle as OpenSandboxHandle
 from .backends import RootedOpenSandboxBackend as RootedOpenSandboxBackend
+from .directory_contents import WorkspaceDirectoryContents as WorkspaceDirectoryContents
 from .errors import OpenSandboxBackendError as OpenSandboxBackendError
 from .errors import (
     OpenSandboxBackendProtocolError as OpenSandboxBackendProtocolError,

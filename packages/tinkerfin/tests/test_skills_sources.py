@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from deepagents.backends import StoreBackend
 from deepagents.backends.utils import create_file_data
+from langchain.tools import tool
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -13,7 +14,7 @@ from langgraph.store.memory import InMemoryStore
 from pydantic import Field
 from test_runtime_store import _Model, _runtime_store
 
-from tinkerfin import TinkerFin
+from tinkerfin import SkillSource, TinkerFin
 
 
 class _SkillModel(_Model):
@@ -29,9 +30,10 @@ class _SkillModel(_Model):
         self.observations.append(
             "\n".join(str(message.content) for message in messages)
         )
-        return ChatResult(
-            generations=[ChatGeneration(message=AIMessage(content="done"))]
-        )
+        response = self.responses[
+            min(len(self.observations) - 1, len(self.responses) - 1)
+        ]
+        return ChatResult(generations=[ChatGeneration(message=response)])
 
 
 async def test_public_store_seeds_the_same_namespace_used_by_agent_tools() -> None:
@@ -54,7 +56,7 @@ def test_public_store_requires_persistence_and_namespace() -> None:
         _ = TinkerFin().with_namespace("owner").store
 
 
-async def test_skill_discovery_refreshes_changed_paths_and_preserves_unchanged_cache() -> (
+async def test_skill_discovery_refreshes_current_files_in_persisted_conversation() -> (
     None
 ):
     model = _SkillModel(responses=[AIMessage(content="done")])
@@ -77,7 +79,7 @@ async def test_skill_discovery_refreshes_changed_paths_and_preserves_unchanged_c
         runtime = configured.build(
             model=model,
             backend=StoreBackend(namespace=lambda _: ("files",)),
-            skills=paths,
+            skills=[SkillSource(path) for path in paths],
         )
         await runtime.ainvoke(
             thread_id="same",
@@ -90,8 +92,92 @@ async def test_skill_discovery_refreshes_changed_paths_and_preserves_unchanged_c
     await seed("/second/reporting/SKILL.md", "second-description")
     assert "first-description" in await run(["/first/"], "first")
     await seed("/first/reporting/SKILL.md", "changed-description")
-    assert "first-description" in await run(["/first/"], "cached")
+    assert "changed-description" in await run(["/first/"], "changed")
     changed = await run(["/second/"], "second")
     assert "second-description" in changed and "first-description" not in changed
     empty = await run([], "empty")
     assert "second-description" not in empty
+
+
+async def test_skill_changes_are_visible_after_a_tool_in_the_same_run() -> None:
+    configured = TinkerFin(store=InMemoryStore()).with_namespace("owner")
+
+    async def publish(description: str) -> None:
+        await configured.store.aput(
+            ("files",),
+            "/skills/reporting/SKILL.md",
+            dict(
+                create_file_data(
+                    f"---\nname: reporting\ndescription: {description}\n---\nInstructions"
+                )
+            ),
+        )
+
+    @tool
+    async def revise_skill() -> str:
+        """Update the project skill's current instructions."""
+        await publish("UPDATED-INSTRUCTIONS")
+        return "updated"
+
+    await publish("INITIAL-INSTRUCTIONS")
+    model = _SkillModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "revise_skill", "args": {}, "id": "revise"}],
+            ),
+            AIMessage(content="done"),
+        ]
+    )
+    runtime = configured.build(
+        model=model,
+        tools=[revise_skill],
+        backend=StoreBackend(namespace=lambda _: ("files",)),
+        skills=[SkillSource("/skills/")],
+    )
+    await runtime.ainvoke(
+        thread_id="thread",
+        run_id="run",
+        input={"messages": [HumanMessage(content="Revise")]},
+    )
+    assert "INITIAL-INSTRUCTIONS" in model.observations[0]
+    assert "UPDATED-INSTRUCTIONS" in model.observations[1]
+    assert "INITIAL-INSTRUCTIONS" not in model.observations[1]
+
+
+async def test_source_name_selection_precedes_same_name_override() -> None:
+    configured = TinkerFin(store=InMemoryStore()).with_namespace("owner")
+    for directory, description in [
+        ("first", "ALLOWED-DESCRIPTION"),
+        ("second", "EXCLUDED-DESCRIPTION"),
+    ]:
+        await configured.store.aput(
+            ("files",),
+            f"/{directory}/reporting/SKILL.md",
+            dict(
+                create_file_data(
+                    f"---\nname: reporting\ndescription: {description}\n---\nInstructions"
+                )
+            ),
+        )
+    model = _SkillModel(responses=[AIMessage(content="done")])
+    sources = [
+        SkillSource("/first/", names=("reporting",)),
+        SkillSource("/second/", names=("another",)),
+    ]
+    runtime = configured.build(
+        model=model,
+        backend=StoreBackend(namespace=lambda _: ("files",)),
+        skills=sources,
+    )
+    await runtime.ainvoke(
+        thread_id="thread",
+        run_id="run",
+        input={"messages": [HumanMessage(content="Work")]},
+    )
+    assert "ALLOWED-DESCRIPTION" in model.observations[-1]
+    assert "EXCLUDED-DESCRIPTION" not in model.observations[-1]
+    assert sources == [
+        SkillSource("/first/", names=("reporting",)),
+        SkillSource("/second/", names=("another",)),
+    ]

@@ -109,10 +109,6 @@ class SkillErrorCode(ErrorCode):
         1_001_008_013, 422, "更新来源中没有唯一匹配的同名技能，原技能已保留"
     )
 
-    INSTRUCTIONS_TOO_LARGE = _ErrorCodeValue(
-        1_001_008_014, 422, "所选技能正文合计超过 512 KiB，请减少所选技能后重试"
-    )
-
 
 class ProjectErrorCode(ErrorCode):
     """项目归属、重名与记忆编辑失败"""

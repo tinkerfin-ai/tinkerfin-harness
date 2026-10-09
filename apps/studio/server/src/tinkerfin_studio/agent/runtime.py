@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from langchain.agents.middleware import TodoListMiddleware
 
-from tinkerfin import AgentRuntime
+from tinkerfin import AgentRuntime, SkillSource
 from tinkerfin.media import AttachmentSupport
 from tinkerfin.plan import PlanReviewAction
 from tinkerfin.subagents import SubAgent
@@ -23,11 +23,7 @@ from tinkerfin_studio.automation.tools import build_automation_tools
 from tinkerfin_studio.models.chat import create_chat_model
 from tinkerfin_studio.models.schemas import AgentModelConfig
 from tinkerfin_studio.services.service import ResolvedService
-from tinkerfin_studio.skills.execution import (
-    SkillsWorkspace,
-    skill_source_path,
-)
-from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
+from tinkerfin_studio.skills.execution import SkillsWorkspace
 from tinkerfin_studio.skills.tools import build_skill_tools
 
 if TYPE_CHECKING:
@@ -68,7 +64,6 @@ def _build_runtime(
     namespace: str,
     collection_id: str | None,
     plan_enabled: bool,
-    skill_snapshot: SkillSnapshotPayload,
 ) -> AgentRuntime[None]:
     """为已授权会话或后台任务绑定执行能力，实际运行时准备用户工作区
 
@@ -87,7 +82,6 @@ def _build_runtime(
         namespace: 已授权业务运行的会话与记录范围
         collection_id: 后台执行的附件集合，普通会话不设置
         plan_enabled: 是否允许会话计划与人工交互
-        skill_snapshot: 本次运行已固定的技能内容，恢复沿用原快照
 
     Returns:
         绑定用户 namespace、模型、Plan 和附件能力的 Runtime
@@ -129,9 +123,7 @@ def _build_runtime(
             collection_id=collection_id,
         ),
     )
-    skill_paths = [
-        skill_source_path(skill_snapshot, skill) for skill in skill_snapshot.skills
-    ]
+    skill_sources = [SkillSource("/skills/")]
     tool_registry = {web_search.name: web_search}
     subagents: list[SubAgent] = [
         {
@@ -145,7 +137,7 @@ def _build_runtime(
                 image_generation_available=image_service is not None,
             ),
             "tools": [web_search, *attachment_tools],
-            "skills": skill_paths,
+            "skills": skill_sources,
         },
     ]
     subagents.extend(
@@ -158,11 +150,7 @@ def _build_runtime(
                 web_search_available=search_service is not None,
                 image_generation_available=image_service is not None,
             ),
-            "skills": [
-                skill_source_path(skill_snapshot, skill)
-                for skill in skill_snapshot.skills
-                if skill.name in definition.skills
-            ],
+            "skills": [SkillSource("/skills/", names=tuple(definition.skills))],
             "tools": [
                 *(tool_registry[tool] for tool in definition.tools),
                 *attachment_tools,
@@ -196,7 +184,7 @@ def _build_runtime(
         "管理前通过 list_skills 或 search_skills 确定真实身份；来源不明确先 list_skill_sources。"
         "GitHub 或 ZIP 先用 preview_skills，多个候选只选择用户要求的项目。ZIP 附件只交给技能预览，不运行包内代码。"
         "目标明确时无需再次确认，指代不清先询问，不自动改用其他来源。"
-        "仅按工具成功结果报告完成；安装、更新和状态变化只对下一次新运行生效，本轮及恢复继续使用原快照。\n"
+        "仅按工具成功结果报告完成；安装、更新和状态变化在后续执行前同步；使用技能前读取项目当前文件。\n"
         if skill_tools
         else ""
     )
@@ -257,15 +245,13 @@ def _build_runtime(
             ),
         ),
         subagents=subagents,
-        skills=skill_paths,
+        skills=skill_sources,
         backend=SkillsWorkspace(
             workspace,
-            content=resources.skills.content,
+            library=resources.skills,
             user_id=user_id,
-            snapshot=skill_snapshot,
-        )
-        if skill_snapshot.skills
-        else workspace,
+            project_id=project_id,
+        ),
         interrupt_on=file_review_policy(access_mode),
     )
 
@@ -279,7 +265,6 @@ def build_conversation_runtime(
     model_config: AgentModelConfig,
     search_service: ResolvedService | None,
     image_service: ResolvedService | None,
-    skill_snapshot: SkillSnapshotPayload,
     access_mode: AccessMode = "full",
 ) -> AgentRuntime[None]:
     """绑定会话模型、用户工作区与文件审批选择，资源由运行时按需准备"""
@@ -295,7 +280,6 @@ def build_conversation_runtime(
         namespace=f"ns_{user_id}",
         collection_id=None,
         plan_enabled=True,
-        skill_snapshot=skill_snapshot,
     )
 
 
@@ -310,7 +294,6 @@ def build_automation_runtime(
     search_service: ResolvedService | None,
     image_service: ResolvedService | None,
     access_mode: AccessMode,
-    skill_snapshot: SkillSnapshotPayload,
 ) -> AgentRuntime[None]:
     """为独立后台执行绑定产物集合，沿用该用户的沙箱与长期记忆"""
     return _build_runtime(
@@ -325,7 +308,6 @@ def build_automation_runtime(
         namespace=f"ns_{user_id}",
         collection_id=execution_id,
         plan_enabled=False,
-        skill_snapshot=skill_snapshot,
     )
 
 

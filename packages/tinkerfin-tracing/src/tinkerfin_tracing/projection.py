@@ -664,7 +664,12 @@ def advance_core_projection_state(
                     "call_history_known": info.call_history_known
                     or (
                         fact.outcome == "failed"
-                        and fact.code == "runtime_initialization_error"
+                        and fact.code
+                        in {
+                            "runtime_initialization_error",
+                            "workspace_busy",
+                            "workspace_file_conflict",
+                        }
                     ),
                 }
             )

@@ -59,6 +59,7 @@ relative namespaces within this isolation boundary.
 ```python
 from deepagents.backends import StoreBackend
 from deepagents.backends.utils import create_file_data
+from tinkerfin import SkillSource
 
 scoped = TinkerFin(store=store, checkpointer=checkpointer).with_namespace("support")
 await scoped.store.aput(
@@ -66,14 +67,16 @@ await scoped.store.aput(
     dict(create_file_data("---\nname: reporting\ndescription: Prepare reports\n---\nVerify sources.")),
 )
 runtime = scoped.build(
-    model=model, skills=["/skills/"],
+    model=model, skills=[SkillSource("/skills/")],
     backend=StoreBackend(namespace=lambda _: ("files",)),
 )
 ```
 
-Skill source paths are parent directories containing skill subdirectories. Changed
-paths refresh discovery in an existing thread; unchanged paths retain cached metadata.
-Use immutable content directories to keep skills fixed during approval and resume.
+Skill sources are parent directories containing skill subdirectories. Discovery reads
+current files before each model call, including resumed execution. Use
+`SkillSource("/skills/", names=("reporting",))` to select names; omit `names` to
+load all skills, or pass an empty tuple to expose none. Name selection controls
+instructions, not filesystem or execution permissions.
 
 A concrete checkpointer is required for resumable tool approval and Plan. Submit only
 new user messages when the checkpointer already contains the thread history.
