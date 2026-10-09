@@ -71,7 +71,7 @@ PowerShell 对应命令：
 和本地配置仍可使用。钩子不会自动暂存、隐藏或重写文件；手动验证脚本可检查尚未提交的工作。
 
 CI 的 `web` 通过共用 Python 检查器执行单元测试、Lint、构建和打包检查。
-`web-browser` 安装 Chromium 并将界面测试分为两个任务；第一分片还执行包含真实浏览器
+`web-browser` 安装 Chromium 并将界面测试分为三个任务；第一分片还执行包含真实浏览器
 上传测试的 `test:http`。`verify-studio-web.sh --skip-browser`（PowerShell：
 `verify-studio-web.ps1 -SkipBrowser`）跳过 HTTP 测试和界面浏览器测试。
 

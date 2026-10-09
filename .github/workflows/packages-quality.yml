@@ -81,7 +81,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     defaults:
       run:
         working-directory: apps/studio/web
@@ -113,7 +113,7 @@ jobs:
       - name: Check web and browser test types
         run: pnpm exec tsc -b
       - name: Test browser behavior and accessibility
-        run: pnpm exec playwright test --shard=${{ matrix.shard }}/2
+        run: pnpm exec playwright test --shard=${{ matrix.shard }}/3
       - name: Upload browser failure evidence
         if: failure()
         uses: actions/upload-artifact@v4

@@ -75,7 +75,7 @@ Ignored dependencies and local configuration remain available. The hooks do not 
 or rewrite files; manual verification scripts can check work in progress.
 
 CI's `web` job runs unit tests, lint, build and packaging checks through the shared
-Python checker. `web-browser` installs Chromium and splits UI tests across two jobs;
+Python checker. `web-browser` installs Chromium and splits UI tests across three jobs;
 the first also runs `test:http`, which includes a real browser upload test.
 `verify-studio-web.sh --skip-browser` (PowerShell: `verify-studio-web.ps1 -SkipBrowser`)
 omits both HTTP and UI browser tests.
