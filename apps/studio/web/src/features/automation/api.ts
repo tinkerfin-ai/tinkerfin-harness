@@ -21,7 +21,6 @@ export const fetchRunPage = async (params: Record<string, string | undefined>, s
   const result = await requestJson<Page<AutomationRunRecord>>(path('runs', params), { signal, suppressGlobalError: true })
   return { ...result, items: result.items.map(presentRun) }
 }
-export const fetchCounts = (kind: 'tasks' | 'runs', params: Record<string, string | undefined>, signal: AbortSignal) => requestJson<Record<string, number>>(path(`${kind}/counts`, params), { signal, suppressGlobalError: true })
 export const saveTask = async (projectId: string, draft: AutomationDraft, requestId: string, task: AutomationTask | undefined, signal: AbortSignal) => {
   const { name, prompt, schedule, modelId, accessMode, attachments, startsOn, endsOn } = draft
   return taskView(await requestJson<TaskResponse>(path(task ? `tasks/${encodeURIComponent(task.id)}` : 'tasks', { projectId }), {

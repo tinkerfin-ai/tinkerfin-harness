@@ -234,7 +234,7 @@ describe('文件附件类型', () => {
     expect(opener).toHaveFocus()
   })
 
-  it('仅在文件标题区域提供完整名称提示', async () => {
+  it('文件名被截断时，预览入口通过悬浮与焦点提供完整名称', async () => {
     const name = '这是一个很长的文件标题.pdf'
     const user = userEvent.setup()
     render(
@@ -244,6 +244,7 @@ describe('文件附件类型', () => {
     )
 
     const opener = screen.getByRole('button', { name: `预览文档：${name}` })
+    expect(opener.querySelector('button')).toBeNull()
     const title = screen.getByText(name, { selector: 'strong' })
     Object.defineProperties(title, {
       clientWidth: { configurable: true, value: 100 },
@@ -256,8 +257,23 @@ describe('文件附件类型', () => {
     document.documentElement.style.setProperty('--space-1', '4px')
     await user.hover(title)
     expect(screen.getByRole('tooltip', { name })).toHaveTextContent(name)
+    await user.unhover(title)
+    await user.tab()
+    expect(opener).toHaveFocus()
+    expect(screen.getByRole('tooltip', { name })).toHaveTextContent(name)
     document.documentElement.style.removeProperty('--space-3')
     document.documentElement.style.removeProperty('--space-1')
+  })
+
+  it('点击文件名只打开一次预览，文件信息保留完整名称', async () => {
+    const name = '这是一个很长的文件标题.bin'
+    const user = userEvent.setup()
+    render(<AttachmentList attachments={[{ ...cat, id: 'file', name, mime_type: 'application/octet-stream' }]} />)
+    await user.click(screen.getByText(name, { selector: 'strong' }))
+    const dialog = screen.getByRole('dialog', { name })
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    await user.click(within(dialog).getByRole('button', { name: '文件信息' }))
+    expect(within(dialog).getByRole('complementary', { name: '文件信息' })).toHaveTextContent(name)
   })
 })
 

@@ -1,10 +1,12 @@
 import { act, renderHook } from '@testing-library/react'
-import { useLayoutEffect, useRef, useState } from 'react'
+import { StrictMode, useLayoutEffect, useRef, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { StreamedAgUiEvent } from '../../../api/conversation/client'
 import { ApiError } from '../../../api/shared/http'
-import { readActiveRunSession, writeActiveRunSession } from './activeRunSession'
+import { readActiveRunSession, writeActiveRunSession, clearActiveRunSession, readActiveRunSessions } from './activeRunSession'
+import { clearAuthSession, saveAuthSession } from '../../../auth/session'
+import { testAuthSession } from '../../../test/authSession'
 import type {
   ConversationHistoryDetail,
   ConversationTraceEvent,
@@ -49,6 +51,9 @@ vi.mock(import('../../../api/conversation/history'), async (importOriginal) => (
 const THREAD_ID = 'thread-controller'
 const RUN_ID = 'run-controller'
 const BASE_TIME = '2026-08-09T00:00:00.000Z'
+
+beforeEach(() => saveAuthSession(testAuthSession))
+afterEach(() => clearAuthSession())
 
 const payload: ChatRequestPayload = {
   threadId: THREAD_ID,
@@ -171,6 +176,68 @@ describe('useConversationStreamController', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  it.each(['离开工作区', '退出登录', '切换账号'] as const)('%s后只允许有效登录归属保存运行恢复记录', async reason => {
+    let entered!: () => void
+    const active = new Promise<void>(resolve => { entered = resolve })
+    clientMocks.start.mockImplementation(async function* (_payload: ChatRequestPayload, signal: AbortSignal) {
+      entered()
+      await new Promise<void>(resolve => {
+        if (signal.aborted) resolve()
+        else signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+      yield* streamItems([])
+    })
+    const hook = renderHook(() => useControllerHarness(conversation()))
+    let running!: Promise<void>
+    await act(async () => {
+      running = hook.result.current.controller.streamRun(THREAD_ID, payload, 'start')
+      await active
+    })
+    expect(readActiveRunSessions()).toHaveLength(1)
+    if (reason === '退出登录') {
+      clearAuthSession()
+      clearActiveRunSession()
+    } else if (reason === '切换账号') {
+      saveAuthSession({ ...testAuthSession, token: 'another-login', user: { ...testAuthSession.user, user_id: 8 } })
+      writeActiveRunSession({ projectId: 'project-2', threadId: 'another-thread', payload: {
+        ...payload, threadId: 'another-thread', runId: 'another-run', forwardedProps: { ...payload.forwardedProps, projectId: 'project-2' },
+      }, mode: 'start', lastSeq: 7 })
+    }
+    hook.unmount()
+    await act(async () => { await running })
+    expect(readActiveRunSessions().map(session => session.payload.runId))
+      .toEqual(reason === '离开工作区' ? [RUN_ID] : reason === '切换账号' ? ['another-run'] : [])
+    if (reason === '退出登录') expect(window.sessionStorage.getItem('tinkerfin:active-conversation-run')).toBeNull()
+  })
+
+  it('等待旧订阅停止期间卸载，排队提交完成但不发出请求', async () => {
+    const hook = renderHook(() => useControllerHarness(conversation()))
+    let running!: Promise<void>
+    act(() => { running = hook.result.current.controller.streamRun(THREAD_ID, payload, 'start') })
+    hook.unmount()
+    await act(async () => { await running })
+    expect(clientMocks.start).not.toHaveBeenCalled()
+    expect(readActiveRunSessions()).toEqual([])
+  })
+
+  it('StrictMode重新建立副作用时不会复活上一轮排队提交', async () => {
+    let running!: Promise<void>
+    const hook = renderHook(() => {
+      const value = useControllerHarness(conversation())
+      const started = useRef(false)
+      useLayoutEffect(() => {
+        if (started.current) return
+        started.current = true
+        running = value.controller.streamRun(THREAD_ID, payload, 'start')
+      }, [value.controller])
+      return value
+    }, { wrapper: StrictMode })
+    await act(async () => { await running })
+    expect(clientMocks.start).not.toHaveBeenCalled()
+    expect(readActiveRunSessions()).toEqual([])
+    hook.unmount()
   })
 
   it('preserves an unconfirmed submission and retries the same run only on explicit recovery', async () => {

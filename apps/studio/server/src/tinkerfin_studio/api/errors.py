@@ -118,7 +118,7 @@ class ProjectErrorCode(ErrorCode):
     """项目归属、重名与记忆编辑失败"""
 
     NOT_FOUND = _ErrorCodeValue(1_001_010_000, 404, "项目不存在或不可访问")
-    NAME_CONFLICT = _ErrorCodeValue(1_001_010_001, 409, "已有同名项目，请换一个名称")
+    NAME_CONFLICT = _ErrorCodeValue(1_001_010_001, 409, "项目名称已存在")
     MEMORY_NOT_FOUND = _ErrorCodeValue(1_001_010_002, 404, "记忆不存在")
     MEMORY_CONFLICT = _ErrorCodeValue(
         1_001_010_003, 409, "记忆已被修改，请重新读取后对照保存"

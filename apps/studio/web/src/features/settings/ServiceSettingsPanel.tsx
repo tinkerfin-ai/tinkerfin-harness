@@ -20,7 +20,12 @@ function ServiceJsonField({ label, value, onChange, hint, error, reserved, disab
   const parsed = parseServiceOptions(value, reserved)
   return <div className="settings-services__json">
     <span className="settings-services__label">{label}</span>
-    <ErrorBoundary fallback={({ reset }) => <Button type="button" onClick={reset}>{t('重试')}</Button>}>
+    <ErrorBoundary fallback={() => <>
+      <p className="settings-services__hint" role="status">{t('高级编辑器不可用，可继续使用纯文本编辑')}</p>
+      <textarea className="settings-services__json-input" aria-label={t('高级参数 JSON')} aria-describedby={id}
+        aria-invalid={parsed.issues.length > 0} value={value} disabled={disabled} spellCheck={false}
+        onChange={event => onChange(event.target.value)} />
+    </>}>
       <Suspense fallback={<p role="status">{t('加载中')}</p>}>
         <ModelOptionsEditor disabled={disabled} value={value} onChange={onChange} issues={parsed.issues} issueMessage={() => t('请检查 JSON 格式和受控字段')} descriptionId={id} />
       </Suspense>

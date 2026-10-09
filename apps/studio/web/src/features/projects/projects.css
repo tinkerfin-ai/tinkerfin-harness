@@ -17,21 +17,24 @@
   .project-switcher-list .ui-listbox-group-label { padding: var(--space-2) var(--space-3); color: var(--color-text-secondary); font-size: var(--type-caption-size); }
   .project-switcher-option[data-active="true"] { background: var(--color-hover); }
   .projects-form { display: grid; gap: var(--space-6); }
-  .project-switcher-popover { position: fixed; inset: auto; margin: 0; padding: var(--space-1); border: 0; border-radius: var(--radius-button); background: var(--color-layer-1); color: var(--color-text-primary); box-shadow: var(--shadow-2); overflow-y: auto; }
-  .project-switcher-row { display: flex; align-items: center; gap: var(--space-1); padding-inline-end: var(--space-1); min-height: var(--control-lg); border-radius: var(--radius-button); }
-  .project-switcher-row.is-renaming { padding-inline-end: 0; }
-  .project-switcher-row.is-selected { background: var(--color-hover); }
-  .project-switcher-choice { min-width: 0; flex: 1; min-height: var(--control-lg); justify-content: flex-start; padding-inline: var(--space-2); }
+  .project-switcher-popover { --project-action-size: var(--control-xs); --project-row-height: var(--control-lg); position: fixed; inset: auto; margin: 0; padding: var(--space-1); border: 0; border-radius: var(--radius-button); background: var(--color-layer-1); color: var(--color-text-primary); box-shadow: var(--shadow-2); overflow-y: auto; }
+  .project-switcher-row { display: flex; align-items: center; gap: var(--space-1); min-height: var(--project-row-height); border-radius: var(--radius-button); }
+  .project-switcher-row:has(.project-switcher-choice:not(:disabled)):hover { background: var(--color-hover); }
+  .project-switcher-row:has(.project-switcher-choice:active:not(:disabled)) { background: var(--color-active); }
+  .project-switcher-row:has(.project-switcher-choice:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+  .project-switcher-choice { min-width: 0; flex: 1; min-height: var(--project-row-height); justify-content: flex-start; padding-inline: var(--space-2); }
+  .project-switcher-choice:is(:hover, :active, :focus-visible) { background: transparent; box-shadow: none; outline: 0; }
   .project-switcher-choice .ui-button__label, .project-switcher-choice .ui-button__label > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .project-selected-check { flex-shrink: 0; color: var(--color-text-secondary); }
+  .project-selected-check { display: grid; place-items: center; width: var(--project-action-size); height: var(--project-action-size); flex-shrink: 0; color: var(--color-text-secondary); }
+  .project-selected-check > svg { width: var(--icon-action); height: var(--icon-action); }
   .project-switcher-footer { border-top: 1px solid var(--color-border-subtle); margin-top: var(--space-1); padding-top: var(--space-1); }
   .project-switcher-footer > .ui-button { width: 100%; min-height: var(--control-lg); justify-content: flex-start; padding-inline: var(--space-2); }
-  .project-rename-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; width: 100%; gap: var(--space-1); padding: var(--space-0-5) var(--space-1); }
+  .project-rename-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; width: 100%; gap: var(--space-1); padding-block: var(--space-0-5); padding-inline: var(--space-1) 0; }
   .project-rename-form .ui-text-field__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .project-rename-form .ui-text-field { min-width: 0; }
   .project-rename-form .ui-text-field__control { padding-inline: var(--space-2); }
-  .project-rename-actions { display: flex; align-items: center; min-height: var(--control-md); }
-  @media (any-hover: none), (any-pointer: coarse) { .project-rename-actions { min-height: calc(var(--control-lg) + var(--space-0-5)); } }
+  .project-switcher-actions { display: flex; align-items: center; flex-shrink: 0; height: calc(var(--project-row-height) - var(--space-1)); }
+  @media (any-hover: none), (any-pointer: coarse) { .project-switcher-popover { --project-action-size: var(--control-lg); --project-row-height: calc(var(--control-lg) + var(--space-1) + var(--space-0-5)); } }
   .projects-form-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
   .projects-onboarding { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; padding: var(--space-6); gap: var(--space-6); background: var(--color-canvas); }
   .projects-onboarding-brand { align-self: flex-start; }

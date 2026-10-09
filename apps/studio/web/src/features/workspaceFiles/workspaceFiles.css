@@ -1,7 +1,9 @@
 @layer workspace {
   .workspace-files-drawer { container: workspace-files / inline-size; }
   .workspace-files-content { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  .workspace-files-content > .ui-feedback-state { flex: 1; }
+  .workspace-files-feedback { display: grid; flex: 1; min-width: 0; min-height: 0; place-items: center; }
+  .workspace-files-feedback > .ui-feedback-state { max-width: 100%; margin: 0; }
+  .workspace-files-feedback > .ui-feedback-state.is-loading { width: auto; grid-template-columns: auto minmax(0, 1fr); border: 0; background: transparent; }
   .workspace-files-layout { display: grid; grid-template-columns: 144px minmax(0, 1fr); gap: var(--space-4); flex: 1; min-height: 0; min-width: 0; }
   .workspace-files-tree-region { position: relative; min-height: 0; min-width: 0; border-right: 1px solid var(--color-border); padding-right: var(--space-2); }
   .workspace-files-tree-scroll, .workspace-file-preview-scroll { height: 100%; overflow: auto; overscroll-behavior: contain; }

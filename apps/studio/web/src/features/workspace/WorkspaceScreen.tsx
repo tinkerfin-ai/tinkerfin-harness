@@ -368,7 +368,8 @@ function ProjectWorkspaceScreen({
 
   useEffect(() => {
     if (activePage !== 'conversation') {
-      document.title = `TinkerFin - ${activePage === 'skills' ? t('技能库') : t('自动化')}`
+      const pageTitles = { skills: t('技能库'), automation: t('自动化'), memories: t('记忆管理') }
+      document.title = `TinkerFin - ${pageTitles[activePage]}`
       return
     }
     document.title = conversation.threadId && conversation.title.trim()

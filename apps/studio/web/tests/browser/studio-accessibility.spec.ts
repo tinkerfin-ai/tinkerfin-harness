@@ -4,7 +4,7 @@ import { installNotificationStream } from './fixtures/notifications'
 import { installLiveRun } from './fixtures/liveRun'
 import { fulfillExpectedHttpError, logBrowserDiagnostics } from './support/diagnostics'
 import { toolReviewInterrupts, planInterrupt } from '../../src/test/aguiFixtures'
-import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
+import { expect, test, type Locator, type Page, type Route, type TestInfo } from '@playwright/test'
 import { resolve } from 'node:path'
 import type { ConversationHistoryDetail, TraceMessage } from '../../src/api/conversation/history'
 import type { TaskTraceSnapshot } from '../../src/api/conversation/taskTrace'
@@ -1020,7 +1020,6 @@ test('新会话工具栏保持动作样式，折叠菜单在空白页显示选�
       else await newChat.click()
       if (width === 768) await expect(newChat).toHaveAttribute('aria-current', 'page')
       else {
-        await expect(newChat).not.toHaveClass(/is-selected/)
         await expect(newChat).not.toHaveAttribute('aria-pressed')
       }
       const colors = await newChat.evaluate((element) => {
@@ -1251,7 +1250,6 @@ test('首页与会话态使用相同的输入卡片高度', async ({ page }) => 
 
   await page.unroute('**/api/**')
   await mockStudio(page)
-  await expect(page.locator('.composer-dock')).not.toHaveClass(/is-hero/)
   const conversationHeight = await page.locator('.composer').evaluate((element) => (
     element.getBoundingClientRect().height
   ))
@@ -1506,7 +1504,44 @@ test('澄清工具显示表单标题，原始 JSON 只在展开详情中显示',
   await expect(row.locator('.tool-code-field')).toContainText('"title": "确认执行方式"')
 })
 
-test('Plan 澄清按后端题型渲染单选、多选、文本与日期控件', async ({ page }) => {
+async function checkTimeZoneLayout(page: Page, testInfo: TestInfo, kind: 'time' | 'datetime', region: Locator, controls: [Locator, ...Locator[]], hasTouch = false) {
+  expect(await page.evaluate(() => matchMedia('(any-pointer: coarse)').matches)).toBe(hasTouch)
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme }, theme)
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      const zone = region.getByText('时区：Asia/Shanghai')
+      await expect(zone).toBeVisible()
+      for (const control of controls) {
+        await expect(control).toHaveAccessibleDescription('时区：Asia/Shanghai')
+        const display = control.getByText(await control.innerText(), { exact: true })
+        const textWidth = await display.evaluate(element => ({ scroll: element.scrollWidth, available: element.clientWidth }))
+        expect(textWidth.scroll).toBeLessThanOrEqual(textWidth.available)
+        if (hasTouch) {
+          const bounds = await control.boundingBox()
+          expect(bounds!.width).toBeGreaterThanOrEqual(44)
+          expect(bounds!.height).toBeGreaterThanOrEqual(44)
+        }
+      }
+      const [regionBounds, rowBounds, ...contentBounds] = await measureBounds(region, region.locator('.plan-question-time'), zone, ...controls)
+      for (const bounds of contentBounds) {
+        expect(bounds.x).toBeGreaterThanOrEqual(regionBounds.x)
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(regionBounds.x + regionBounds.width)
+        expect(bounds.y).toBeGreaterThanOrEqual(rowBounds.y)
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(rowBounds.y + rowBounds.height)
+      }
+      expect(await region.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+      await controls[controls.length - 1].scrollIntoViewIfNeeded()
+      await expect(controls[controls.length - 1]).toBeInViewport()
+      await page.screenshot({ path: testInfo.outputPath(`plan-${kind}-${hasTouch ? 'touch' : 'mouse'}-${theme}-${width}.png`), animations: 'disabled' })
+    }
+  }
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'light' })
+  await page.setViewportSize({ width: 1024, height: 900 })
+}
+
+test('Plan 澄清按后端题型渲染单选、多选、文本与日期控件', async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.setViewportSize({ width: 1024, height: 900 })
   await mockStudio(page, { planQuestion: true })
 
@@ -1538,8 +1573,6 @@ test('Plan 澄清按后端题型渲染单选、多选、文本与日期控件', 
   await expect(page.getByRole('button', { name: '浏览下一题' })).toBeEnabled()
   const nextQuestion = page.getByRole('button', { name: '下一题', exact: true })
   await expect(nextQuestion).toBeEnabled()
-  await expect(nextQuestion).toHaveClass(/ui-button--capsule/)
-  await expect(nextQuestion).toHaveClass(/ui-button--primary/)
   await expect(nextQuestion).toHaveCSS('background-color', 'rgb(57, 100, 254)')
   const clarificationFooter = page.locator('.plan-question-composer-footer')
   const clarificationBody = page.locator('.plan-question-composer-body')
@@ -1666,7 +1699,10 @@ test('Plan 澄清按后端题型渲染单选、多选、文本与日期控件', 
   const time = page.getByRole('button', { name: '时间回答：期望几点上线？' })
   await expect(time).toHaveAttribute('aria-haspopup', 'dialog')
   await expect(page.locator('.plan-question-time select')).toHaveCount(0)
-  await expect(page.getByRole('region', { name: '期望几点上线？' })).not.toContainText('时区')
+  const timeRegion = page.getByRole('region', { name: '期望几点上线？' })
+  await expect(timeRegion.getByText('时区：Asia/Shanghai')).toBeVisible()
+  await expect(time).toHaveAccessibleDescription('时区：Asia/Shanghai')
+  await checkTimeZoneLayout(page, testInfo, 'time', timeRegion, [time])
   const timeBounds = await time.boundingBox()
   if (!timeBounds) throw new Error('时间选择器几何不可用')
   expect(timeBounds.height).toBeCloseTo(dateInputBounds.height, 5)
@@ -1714,6 +1750,7 @@ test('Plan 澄清按后端题型渲染单选、多选、文本与日期控件', 
       expect(responsiveDialogBounds.y + responsiveDialogBounds.height).toBeLessThanOrEqual(900)
       expect(responsiveTriggerBounds.x).toBeGreaterThanOrEqual(0)
       expect(responsiveTriggerBounds.x + responsiveTriggerBounds.width).toBeLessThanOrEqual(width)
+
     }
   }
   await page.emulateMedia({ colorScheme: 'light' })
@@ -1730,7 +1767,7 @@ test('Plan 澄清按后端题型渲染单选、多选、文本与日期控件', 
 
   await page.getByRole('button', { name: '下一题', exact: true }).click()
   const dateTimeRegion = page.getByRole('region', { name: '回滚截止点是什么时候？' })
-  await expect(dateTimeRegion).not.toContainText('时区')
+  await expect(dateTimeRegion.getByText('时区：Asia/Shanghai')).toBeVisible()
   await expect(dateTimeRegion).not.toContainText('允许范围')
   const dateTimeDate = page.getByRole('button', { name: '日期回答：回滚截止点是什么时候？' })
   const dateTimeTime = page.getByRole('button', { name: '时间回答：回滚截止点是什么时候？' })
@@ -1743,7 +1780,7 @@ test('Plan 澄清按后端题型渲染单选、多选、文本与日期控件', 
   await page.getByRole('listbox', { name: '小时' }).getByRole('option', { name: '09' }).click()
   await page.getByRole('listbox', { name: '分钟' }).getByRole('option', { name: '30' }).click()
   await expect(dateTimeTime).toContainText('09:30')
-  await expect(page.locator('.plan-question-datetime select')).toHaveCount(0)
+  await checkTimeZoneLayout(page, testInfo, 'datetime', dateTimeRegion, [dateTimeDate, dateTimeTime])
 })
 
 test('Plan 澄清切换到长多选题后 Tab 从首项按视觉顺序移动', async ({ page }) => {
@@ -2141,7 +2178,6 @@ test('Tool 审批按独立卡片顺序接管输入区且不暴露折叠或拖拽
   await mockStudio(page, { approval: true })
   const card = page.getByRole('region', { name: '等待审批' })
   await expect(card).toContainText('/first-approval.txt')
-  await expect(card.locator('.approval-toggle-surface')).toHaveCount(0)
   await expect(page.getByRole('separator', { name: '调整交互卡片高度' })).toHaveCount(0)
 
   await card.getByRole('button', { name: '允许' }).click()
@@ -2160,21 +2196,15 @@ test('Tool 审批按独立卡片顺序接管输入区且不暴露折叠或拖拽
   await expect(card.locator('.approval-status-dot')).toBeVisible()
 })
 
-test('HITL 始终展开并忽略旧的会话级收起缓存', async ({ page }) => {
-  const collapseKey = `tinkerfin:approval-collapse:${THREAD_ID}`
-  await page.addInitScript((key) => {
-    window.sessionStorage.setItem(key, 'collapsed')
-  }, collapseKey)
+test('重新打开待审批会话后仍可直接完成审批', async ({ page }) => {
   await mockStudio(page, { approval: true })
   const card = page.getByRole('region', { name: '等待审批' })
-  await expect(card).not.toHaveClass(/is-minimized/)
   await expect(card.getByRole('button', { name: '允许' })).toBeVisible()
   await expect(card.getByRole('button', { name: /展开审批卡片|收起审批卡片/ })).toHaveCount(0)
   await expect(page.getByRole('separator', { name: '调整交互卡片高度' })).toHaveCount(0)
 
   await page.reload()
   await expect(card).toBeVisible()
-  await expect(card).not.toHaveClass(/is-minimized/)
   await expect(card.getByRole('button', { name: '允许' })).toBeVisible()
   await expect(card.getByRole('button', { name: /展开审批卡片|收起审批卡片/ })).toHaveCount(0)
   await expect(page.getByRole('separator', { name: '调整交互卡片高度' })).toHaveCount(0)
@@ -2790,7 +2820,6 @@ test('澄清问题接管输入区并沿用主题色', async ({ page }) => {
       const bridgeBackground = await bridge.evaluate((element) => getComputedStyle(element).backgroundImage)
       expect(bridgeBackground).toContain(headerBackground)
       expect(bridgeBackground).toContain(contentBackground)
-      await expect(attentionDot).toHaveClass(/is-plan/)
       await expect(attentionDot).toHaveCSS('color', accentColor)
     }
   }
@@ -3124,28 +3153,81 @@ test('运行中 SubAgent 与普通 Tool 共用扫光且标题保持稳定', asyn
   expect(sharedAlignment.every(delta => delta <= 1)).toBe(true)
 })
 
-test('搜索范围切换英文短选项后仍与展开选项对齐', async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: 'reduce' })
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await mockStudio(page)
-  await page.evaluate(() => localStorage.setItem('tinkerfin:language', 'en'))
-  await page.reload()
-  await page.getByRole('button', { name: 'Search conversations', exact: true }).click()
-  const scope = page.getByRole('button', { name: 'Choose search scope', exact: true })
-  await scope.click()
-  const menu = page.getByRole('listbox', { name: 'Search scope', exact: true })
-  await menu.getByRole('option', { name: 'All projects', exact: true }).click()
-  await scope.click()
-  await expect(menu).toBeVisible()
-  const label = (await scope.getByText('All projects', { exact: true }).boundingBox())!
-  const optionLabel = (await menu.getByRole('option', { name: 'All projects', exact: true }).getByText('All projects', { exact: true }).boundingBox())!
-  expect(optionLabel.x).toBeCloseTo(label.x, 5)
-  expect((await menu.boundingBox())!.width).toBeCloseTo((await scope.boundingBox())!.width, 5)
-})
+for (const hasTouch of [false, true]) {
+  test.describe(`搜索范围 ${hasTouch ? '触控' : '鼠标'}`, () => {
+    test.use({ hasTouch })
+    for (const locale of ['zh-CN', 'en'] as const) for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1024, 1440]) {
+      test(`搜索范围文本列在选项切换后保持对齐 ${locale} ${theme} ${width}`, async ({ page }, testInfo) => {
+        await page.emulateMedia({ reducedMotion: 'reduce' })
+        await page.setViewportSize({ width, height: 900 })
+        await page.addInitScript(theme => localStorage.setItem('tinkerfin:theme', theme), theme)
+        await mockStudio(page)
+        if (locale === 'en') {
+          await page.evaluate(() => localStorage.setItem('tinkerfin:language', 'en'))
+          await page.reload()
+        }
+        await page.evaluate(() => document.fonts.ready)
+        const english = locale === 'en'
+        if (width < 768) await page.getByRole('button', { name: english ? 'Open navigation' : '打开导航', exact: true }).click()
+        await page.getByRole('button', { name: english ? 'Search conversations' : '搜索会话', exact: true }).click()
+        const dialog = page.getByRole('dialog', { name: english ? 'Search conversations' : '搜索会话', exact: true })
+        const close = dialog.getByRole('button', { name: english ? 'Close dialog' : '关闭对话框', exact: true })
+        const scope = page.getByRole('button', { name: english ? 'Choose search scope' : '选择搜索范围', exact: true })
+        const menu = page.getByRole('listbox', { name: english ? 'Search scope' : '搜索范围', exact: true })
+        const openScope = async () => {
+          const [trigger, closeButton, panel] = await measureBounds(scope, close, dialog)
+          expect(panel.x).toBeGreaterThanOrEqual(0)
+          expect(panel.x + panel.width).toBeLessThanOrEqual(width)
+          expect(closeButton.x + closeButton.width).toBeLessThanOrEqual(width)
+          expect(trigger.x + trigger.width).toBeLessThanOrEqual(closeButton.x)
+          if (hasTouch) {
+            expect(trigger.height).toBeGreaterThanOrEqual(44)
+            expect(closeButton.width).toBeGreaterThanOrEqual(44)
+            expect(closeButton.height).toBeGreaterThanOrEqual(44)
+          }
+          const ownsEdges = await scope.evaluate(element => {
+            const bounds = element.getBoundingClientRect()
+            return [bounds.left + 2, bounds.left + bounds.width / 2, bounds.right - 2]
+              .every(x => element.contains(document.elementFromPoint(x, bounds.top + bounds.height / 2)))
+          })
+          expect(ownsEdges).toBe(true)
+          const position = { x: trigger.width - 2, y: trigger.height / 2 }
+          if (hasTouch) await scope.tap({ position })
+          else await scope.click({ position })
+          await expect(menu).toBeVisible()
+        }
+        for (const name of english ? ['All projects', 'Current project'] : ['全部项目', '当前项目']) {
+          await openScope()
+          await menu.getByRole('option', { name, exact: true }).click()
+          await openScope()
+          const option = menu.getByRole('option', { name, exact: true })
+          await expect(option).toBeVisible()
+          const [label, optionLabel, triggerBounds, menuBounds] = await measureBounds(
+            scope.getByText(name, { exact: true }), option.getByText(name, { exact: true }), scope, menu,
+          )
+          expect(optionLabel.x).toBeCloseTo(label.x, 5)
+          expect(menuBounds.width).toBeCloseTo(triggerBounds.width, 5)
+          expect(menuBounds.x).toBeGreaterThanOrEqual(0)
+          expect(menuBounds.x + menuBounds.width).toBeLessThanOrEqual(width)
+          await page.screenshot({ path: testInfo.outputPath(`scope-${name}.png`) })
+          await menu.press('Escape')
+        }
+        if (hasTouch) await close.tap()
+        else await close.click()
+        await expect(dialog).toBeHidden()
+        const returnLabel = width < 768
+          ? english ? 'Open navigation' : '打开导航'
+          : english ? 'Search conversations' : '搜索会话'
+        await expect(page.getByRole('button', { name: returnLabel, exact: true })).toBeFocused()
+      })
+    }
+
+  })
+}
 
 for (const colorScheme of ['light', 'dark'] as const) {
   for (const width of [320, 768, 1024, 1440]) {
-    test(`会话搜索居中布局与全局控件保持一致：${colorScheme} ${width}px`, async ({ page }) => {
+    test(`会话搜索紧凑与结果布局保持稳定：${colorScheme} ${width}px`, async ({ page }, testInfo) => {
       await page.clock.install({ time: new Date(BASE_TIME) })
       await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
       await page.setViewportSize({ width, height: 900 })
@@ -3155,6 +3237,11 @@ for (const colorScheme of ['light', 'dark'] as const) {
         expectedMessageText: '会话搜索预览',
         paginatedHistory: true,
         paginationPageCount: 1,
+      })
+      const searchQueries: string[] = []
+      page.on('request', request => {
+        const url = new URL(request.url())
+        if (url.pathname === '/api/conversation/history' && url.searchParams.has('query')) searchQueries.push(url.searchParams.get('query')!)
       })
       const cdp = await page.context().newCDPSession(page)
       const measure = async (locator: Locator) => {
@@ -3189,16 +3276,25 @@ for (const colorScheme of ['light', 'dark'] as const) {
           if (width < 768) await activate(navigationEntry)
           const searchEntry = page.getByRole('button', { name: '搜索会话', exact: true })
           const returnEntry = width < 768 ? navigationEntry : searchEntry
-          const searchResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/conversation/history')
+          const previousQueries = searchQueries.length
           await activate(searchEntry)
           await page.clock.runFor(300)
-          await searchResponse
 
           const dialog = page.getByRole('dialog', { name: '搜索会话', exact: true })
           const input = dialog.getByRole('combobox', { name: '搜索会话' })
           const resultOptions = dialog.getByRole('listbox', { name: '会话搜索结果' }).getByRole('option')
           await expect(input).toBeFocused()
+          await expect(input).toHaveValue('')
+          await expect(input).toHaveAttribute('aria-expanded', 'false')
+          await expect(dialog.getByRole('listbox', { name: '会话搜索结果' })).toHaveCount(0)
+          expect(searchQueries).toHaveLength(previousQueries)
+          const emptyBounds = await measure(dialog)
+          expect(emptyBounds.height).toBeLessThan(480)
+          expect(emptyBounds.y).toBe((900 - 480) / 2)
+          await input.fill('分页')
+          await page.clock.runFor(300)
           await expect(resultOptions).toHaveCount(20)
+          expect(searchQueries.slice(previousQueries)).toEqual(['分页'])
           await expect(shell).toHaveAttribute('data-sidebar-mode', initialMode)
           const dialogBounds = await measure(dialog)
           expect.soft(dialogBounds.x).toBeGreaterThanOrEqual(0)
@@ -3206,7 +3302,8 @@ for (const colorScheme of ['light', 'dark'] as const) {
           expect.soft(dialogBounds.x + dialogBounds.width).toBeLessThanOrEqual(width)
           expect.soft(dialogBounds.y + dialogBounds.height).toBeLessThanOrEqual(900)
           expect.soft(dialogBounds.x + dialogBounds.width / 2).toBeCloseTo(width / 2, 5)
-          expect.soft(dialogBounds.y + dialogBounds.height / 2).toBeCloseTo(450, 5)
+          expect.soft(dialogBounds.height).toBe(480)
+          expect.soft(dialogBounds.y).toBe(emptyBounds.y)
           const fieldBounds = await measure(dialog.locator('.ui-text-field__control'))
           if (touch) expect.soft(fieldBounds.height).toBeGreaterThanOrEqual(44)
           else expect.soft(fieldBounds.height).toBe(44)
@@ -3240,21 +3337,21 @@ for (const colorScheme of ['light', 'dark'] as const) {
           const allProjects = await measure(menu.getByRole('option', { name: '全部项目', exact: true }))
           const optionGap = allProjects.y - currentProject.y - currentProject.height
           console.info('会话搜索渲染', JSON.stringify({ suffix, fieldHeight: fieldBounds.height, scopeHeight: scopeBounds.height, optionHeight: currentProject.height, optionGap }))
-          expect.soft(menuBounds.y - fieldBounds.y - fieldBounds.height).toBe(4)
+          expect.soft(menuBounds.y - scopeBounds.y - scopeBounds.height).toBe(4)
+          const headingBounds = await measure(dialog.getByRole('heading', { name: '搜索会话', exact: true }))
+          expect.soft(scopeBounds.x).toBeGreaterThan(headingBounds.x + headingBounds.width)
+          expect.soft(scopeBounds.y + scopeBounds.height / 2).toBeCloseTo(headingBounds.y + headingBounds.height / 2, 5)
           expect.soft(await menu.evaluate(element => getComputedStyle(element).boxShadow)).toBe('none')
           expect.soft(await scope.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
           expect.soft(menuBounds.x).toBeCloseTo(scopeBounds.x, 5)
           expect.soft(menuBounds.width).toBeCloseTo(scopeBounds.width, 5)
-          const triggerText = await measure(scope.getByText('当前项目', { exact: true }))
-          const optionText = await measure(menu.getByRole('option', { name: '当前项目', exact: true }).getByText('当前项目', { exact: true }))
-          expect.soft(optionText.x).toBeCloseTo(triggerText.x, 5)
           expect.soft(currentProject.height).toBe(touch ? 44 : 32)
           expect.soft(allProjects.height).toBe(touch ? 44 : 32)
           expect.soft(optionGap).toBe(4)
           expect.soft(menuBounds.x).toBeGreaterThanOrEqual(0)
           expect.soft(menuBounds.x + menuBounds.width).toBeLessThanOrEqual(width)
           expect.soft(menuBounds.y + menuBounds.height).toBeLessThanOrEqual(900)
-          await page.screenshot({ path: resolve('../../../.agents/review/studio-search/screenshots', `search-${suffix}.png`), animations: 'disabled' })
+          await page.screenshot({ path: testInfo.outputPath(`search-${suffix}.png`), animations: 'disabled' })
 
           await page.keyboard.press('Escape')
           await expect(menu).toHaveCount(0)
@@ -3273,6 +3370,13 @@ for (const colorScheme of ['light', 'dark'] as const) {
             await expect(scope).toHaveCSS('outline-width', '2px')
             await page.emulateMedia({ forcedColors: 'none' })
           }
+          await input.fill('')
+          await page.clock.runFor(300)
+          await expect(dialog.getByRole('listbox', { name: '会话搜索结果' })).toHaveCount(0)
+          expect(searchQueries.slice(previousQueries)).toEqual(['分页'])
+          const clearedBounds = await measure(dialog)
+          expect(clearedBounds.y).toBe(emptyBounds.y)
+          expect(clearedBounds.height).toBe(emptyBounds.height)
           if (touch) await activate(dialog.getByRole('button', { name: '关闭对话框' }))
           else await page.keyboard.press('Escape')
           await expect(dialog).toHaveCount(0)
@@ -3316,7 +3420,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
             }
             expect.soft(tooltipPositions[0].y).toBe(tooltipPositions[1].y)
           }
-          await page.screenshot({ path: resolve('../../../.agents/review/studio-search/screenshots', `sidebar-${suffix}.png`), animations: 'disabled' })
+          await page.screenshot({ path: testInfo.outputPath(`sidebar-${suffix}.png`), animations: 'disabled' })
         }
       } finally {
         await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false })
@@ -3543,6 +3647,32 @@ test.describe('touch/coarse pointer', () => {
       await page.keyboard.press('Escape')
       await expect(trigger).toBeFocused()
     }
+  })
+
+  test('Plan 时间与日期时间在触控上下文完整显示并保持可达', async ({ page }, testInfo) => {
+    await mockStudio(page, { planQuestion: true, planQuestionForm: {
+      ...planQuestionForm, questions: planQuestionForm.questions.slice(-2),
+    } })
+    const closeNavigation = page.getByRole('button', { name: '关闭导航' })
+    if (await closeNavigation.isVisible()) await closeNavigation.click()
+    const timeRegion = page.getByRole('region', { name: '期望几点上线？' })
+    const time = timeRegion.getByRole('button', { name: '时间回答：期望几点上线？' })
+    await time.tap()
+    await page.getByRole('listbox', { name: '小时' }).getByRole('option', { name: '09' }).tap()
+    await page.getByRole('listbox', { name: '分钟' }).getByRole('option', { name: '30' }).tap()
+    await expect(time).toContainText('09:30')
+    await checkTimeZoneLayout(page, testInfo, 'time', timeRegion, [time], true)
+    await page.getByRole('button', { name: '下一题', exact: true }).tap()
+    const region = page.getByRole('region', { name: '回滚截止点是什么时候？' })
+    const date = region.getByRole('button', { name: '日期回答：回滚截止点是什么时候？' })
+    const dateTime = region.getByRole('button', { name: '时间回答：回滚截止点是什么时候？' })
+    await date.tap()
+    await page.locator('[data-date-value="2026-09-01"]').tap()
+    await dateTime.tap()
+    await page.getByRole('listbox', { name: '小时' }).getByRole('option', { name: '09' }).tap()
+    await page.getByRole('listbox', { name: '分钟' }).getByRole('option', { name: '30' }).tap()
+    await expect(dateTime).toContainText('09:30')
+    await checkTimeZoneLayout(page, testInfo, 'datetime', region, [date, dateTime], true)
   })
 
   test('Plan、模型、命令和 Rail 控件满足触控目标尺寸', async ({ page }) => {

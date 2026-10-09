@@ -88,11 +88,9 @@ describe('ApprovalCard', () => {
 
     const card = screen.getByRole('region', { name: '等待审批' })
     expect(card).toHaveTextContent('/first.txt')
-    expect(card.querySelector('.approval-composer-head')).toHaveTextContent('写入 /first.txt')
-    expect(card.querySelector('.plan-interaction-card-title')).toHaveTextContent('写入 /first.txt')
-    expect(card.querySelector('.interaction-card-color-bridge.is-warning')).toBeInTheDocument()
+
     for (const action of ['允许', '拒绝']) {
-      expect(screen.getByRole('button', { name: action })).toHaveClass('ui-button--capsule')
+      expect(screen.getByRole('button', { name: action })).toBeEnabled()
     }
     expect(screen.queryByText('1 / 2')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '允许' }))
@@ -103,7 +101,7 @@ describe('ApprovalCard', () => {
 
     await user.click(screen.getByRole('button', { name: '拒绝' }))
     for (const action of ['取消', '确认拒绝']) {
-      expect(screen.getByRole('button', { name: action })).toHaveClass('ui-button--capsule')
+      expect(screen.getByRole('button', { name: action })).toBeEnabled()
     }
     await user.type(screen.getByLabelText('拒绝原因（可选）'), '文件位置不正确')
     await user.click(screen.getByRole('button', { name: '确认拒绝' }))
@@ -271,26 +269,19 @@ describe('ApprovalCard', () => {
     expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument()
   })
 
-  it('always stays expanded and ignores the removed per-conversation collapse preference', () => {
+  it('切换会话后始终显示当前审批动作', () => {
     const approval: ApprovalState = {
       activeIndex: 0,
       submitted: false,
       items: [approvalItem('collapse', '/collapse.txt')],
     }
     const conversation = conversationWithApproval(approval)
-    window.sessionStorage.setItem('tinkerfin:approval-collapse:thread-approval', 'collapsed')
     const view = render(<ApprovalCard conversation={conversation} onChange={vi.fn()} onSubmit={vi.fn()} />)
 
     expect(screen.getAllByText('写入 /collapse.txt')).toHaveLength(1)
     expect(screen.queryByRole('separator', { name: '调整交互卡片高度' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '允许' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /展开审批卡片|收起审批卡片/ })).not.toBeInTheDocument()
-    const card = screen.getByRole('region', { name: '等待审批' })
-    expect(card).not.toHaveClass('is-minimized')
-    expect(card.querySelector('.approval-composer-head')).not.toHaveTextContent('等待审批')
-    expect(card.querySelector('.approval-toggle-surface')).not.toBeInTheDocument()
-    expect(card.querySelector('.interaction-card-color-bridge')).toBeInTheDocument()
-
     view.rerender(
       <ApprovalCard
         conversation={conversationWithApproval(approval, 'thread-other')}

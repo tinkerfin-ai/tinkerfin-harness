@@ -1,13 +1,10 @@
 import { emptyTraceGraph } from '../../src/test/traceFixtures'
 import { expect, test, type Page } from '@playwright/test'
-import { mkdir } from 'node:fs/promises'
-import { resolve } from 'node:path'
 import fixture from './fixtures/multimodal-history.json' with { type: 'json' }
 import { installNotificationStream } from './fixtures/notifications'
 import { fulfillExpectedHttpError } from './support/diagnostics'
+import { measureBounds } from './support/geometry'
 
-const captured = resolve(process.cwd(), '../../../.agents/design/production-project-isolation/review')
-const reviewCaptured = resolve(process.cwd(), '../../../.agents/review/project-isolation/frontend/screenshots')
 const date = '2030-01-01T00:00:00Z'
 const user = { user_id: 1, username: 'project-review', display_name: '个人账号', avatar_url: null, roles: [], disabled: false }
 const record = { id: 1, projectId: 'research', archived: false, threadId: 'research-thread', title: '本周市场观察', titleSource: 'user', titleGenerationStatus: 'skipped', titleSeq: 1, status: 'idle', lastRunId: 'run', lastModel: 'main', accessMode: 'full', messageCount: 2, toolCallCount: 0, hasPendingInterrupt: false, pendingInteractionKind: null, pinned: false, createdAt: date, updatedAt: date }
@@ -72,6 +69,111 @@ async function prepare(page: Page, theme: 'light' | 'dark' = 'light') {
   await expect(page.getByRole('textbox', { name: '消息输入' })).toBeEnabled()
   return { projects, threads, memories }
 }
+
+for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1024, 1440]) {
+  test(`项目浮层在打开前完成定位 ${theme} ${width}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await prepare(page, theme)
+    await page.setViewportSize({ width, height: 900 })
+    if (width < 768) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+    else if (width < 1024) await page.getByRole('button', { name: '打开侧边栏', exact: true }).click()
+    if (theme === 'light') await page.emulateMedia({ reducedMotion: 'no-preference' })
+    const trigger = page.getByRole('button', { name: '切换项目：市场研究' })
+    const menu = page.getByRole('dialog', { name: '项目', exact: true, includeHidden: true })
+    const anchor = (await trigger.boundingBox())!
+    await menu.evaluate(element => {
+      element.addEventListener('beforetoggle', event => {
+        if ((event as ToggleEvent).newState === 'open') {
+          const menu = element as HTMLElement
+          element.setAttribute('data-opening-position', JSON.stringify({ top: menu.style.top, width: menu.style.width }))
+        }
+      })
+    })
+    await trigger.click()
+    await expect(menu).toBeVisible()
+    const position = JSON.parse((await menu.getAttribute('data-opening-position'))!)
+    expect(parseFloat(position.top)).toBeGreaterThanOrEqual(anchor.y + anchor.height)
+    expect(parseFloat(position.width)).toBe(anchor.width)
+    const bounds = (await menu.boundingBox())!
+    expect(bounds.x).toBeGreaterThanOrEqual(0)
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+    await page.evaluate(() => document.fonts.ready)
+
+    await page.screenshot({ path: testInfo.outputPath(`menu-${theme}-${width}.png`) })
+    const selected = menu.getByRole('button', { name: '市场研究', exact: true })
+    const rename = menu.getByRole('button', { name: '重命名项目', exact: true })
+    const [checkIcon, renameIcon] = await measureBounds(menu.locator('svg.lucide-check'), rename.locator('svg'))
+    expect({ width: checkIcon.width, height: checkIcon.height }).toEqual({ width: renameIcon.width, height: renameIcon.height })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const paintedSurface = () => selected.evaluate(element => {
+      let surface: Element = element
+      while (getComputedStyle(surface).backgroundColor === 'rgba(0, 0, 0, 0)' && surface.parentElement) surface = surface.parentElement
+      const bounds = surface.getBoundingClientRect()
+      return { role: surface.getAttribute('role'), x: bounds.x, right: bounds.right }
+    })
+    await page.mouse.move(0, 0)
+    expect((await paintedSurface()).role).toBe('dialog')
+
+    await page.screenshot({ path: testInfo.outputPath(`project-normal-${theme}-${width}.png`) })
+    for (const [state, row] of [['current', selected], ['other', menu.getByRole('button', { name: '产品开发', exact: true })]] as const) {
+      await row.hover()
+      const surface = await row.evaluate(element => {
+        let surface: Element = element
+        while (getComputedStyle(surface).backgroundColor === 'rgba(0, 0, 0, 0)' && surface.parentElement) surface = surface.parentElement
+        const bounds = surface.getBoundingClientRect()
+        return { role: surface.getAttribute('role'), x: bounds.x, right: bounds.right }
+      })
+      expect(surface.role).not.toBe('dialog')
+      expect(surface.x - bounds.x).toBeCloseTo(bounds.x + bounds.width - surface.right, 4)
+      await page.screenshot({ path: testInfo.outputPath(`project-hover-${state}-${theme}-${width}.png`) })
+    }
+    await rename.hover()
+    expect((await paintedSurface()).role).not.toBe('dialog')
+    await rename.click()
+    await expect(menu.getByRole('textbox', { name: '项目名称' })).toBeFocused()
+    const [saveIcon, cancelIcon] = await measureBounds(menu.getByRole('button', { name: '保存', exact: true }).locator('svg'), menu.getByRole('button', { name: '取消', exact: true }).locator('svg'))
+    expect(saveIcon).toEqual(checkIcon)
+    expect(cancelIcon).toEqual(renameIcon)
+    await page.screenshot({ path: testInfo.outputPath(`project-rename-${theme}-${width}.png`) })
+  })
+}
+
+test('再次点击项目入口只关闭浮层，键盘与外部点击仍可正常操作', async ({ page }) => {
+  await prepare(page)
+  const trigger = page.getByRole('button', { name: '切换项目：市场研究' })
+  const menu = page.getByRole('dialog', { name: '项目', exact: true, includeHidden: true })
+  await trigger.click()
+  await expect(menu).toBeVisible()
+  await expect(menu.getByRole('button', { name: '市场研究', exact: true })).toBeFocused()
+  await menu.evaluate(element => {
+    const states: string[] = []
+    element.addEventListener('beforetoggle', event => {
+      states.push((event as ToggleEvent).newState)
+      element.setAttribute('data-toggle-states', JSON.stringify(states))
+    })
+  })
+  const bounds = (await trigger.boundingBox())!
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+  await page.mouse.down()
+  try {
+    await expect(menu).toBeVisible()
+  } finally {
+    await page.mouse.up()
+  }
+  await expect(menu).toHaveAttribute('data-toggle-states', '["closed"]')
+  await expect(menu).toBeHidden()
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  await expect(trigger).toBeFocused()
+  await trigger.press('ArrowDown')
+  await expect(menu.getByRole('button', { name: '市场研究', exact: true })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(menu).toBeHidden()
+  await expect(trigger).toBeFocused()
+  await trigger.press('Enter')
+  await expect(menu).toBeVisible()
+  await page.getByRole('textbox', { name: '消息输入' }).click()
+  await expect(menu).toBeHidden()
+})
 
 test('创建、重命名与切换项目保留独立草稿，长名称不撑开侧栏', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -197,16 +299,120 @@ test('搜索弹框跨响应式断点关闭后恢复可见入口', async ({ page 
   await expect(page.getByRole('tooltip')).toHaveCount(0)
 })
 
+for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1024, 1440]) {
+  test(`会话搜索仅在输入关键词后显示模糊匹配 ${theme} ${width}`, async ({ page }, testInfo) => {
+    await page.clock.install({ time: new Date(date) })
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await prepare(page, theme)
+    await page.locator('[aria-keyshortcuts~="Meta+K"]').click()
+    await page.setViewportSize({ width, height: 900 })
+    if (width < 768) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+    else if (width < 1024) await page.getByRole('button', { name: '打开侧边栏', exact: true }).click()
+    await page.clock.pauseAt(new Date('2030-01-01T00:01:00Z'))
+    const queries: string[] = []
+    await page.route('**/api/conversation/history?**', route => {
+      const params = new URL(route.request().url()).searchParams
+      if (params.has('scope')) queries.push(params.get('query') ?? '')
+      return route.fallback()
+    })
+    await page.getByRole('button', { name: '搜索会话', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '搜索会话', exact: true })
+    const input = dialog.getByRole('combobox', { name: '搜索会话' })
+    await expect(input).toBeFocused()
+    await page.clock.runFor(300)
+    await expect(input).toHaveAttribute('placeholder', '输入关键词')
+    await expect(dialog.getByRole('status')).toHaveCount(0)
+    await expect(input).toHaveAttribute('aria-expanded', 'false')
+    await expect(dialog.getByText('方向键选择，Enter 打开，Esc 关闭')).toHaveCount(0)
+    const [emptyPanel] = await measureBounds(dialog)
+    const [emptyInput] = await measureBounds(input)
+    expect(emptyPanel.height).toBeLessThan(480)
+    expect(emptyPanel.y).toBe((900 - 480) / 2)
+    expect(queries).toEqual([])
+
+    await page.screenshot({ path: testInfo.outputPath(`empty-${theme}-${width}.png`) })
+    await dialog.getByRole('button', { name: '选择搜索范围' }).click()
+    const scope = dialog.getByRole('listbox', { name: '搜索范围', exact: true })
+    const all = scope.getByRole('option', { name: '全部项目', exact: true })
+    await expect(all).toBeInViewport()
+    await all.click()
+    await expect(scope).toHaveCount(0)
+    expect(queries).toEqual([])
+    await input.fill('周')
+    await page.clock.runFor(300)
+    await expect(dialog.getByRole('option')).toHaveCount(1)
+    await expect(dialog.getByRole('option')).toContainText('本周市场观察')
+    await expect(dialog.getByRole('option', { selected: true })).toHaveCount(0)
+    await expect(input).not.toHaveAttribute('aria-activedescendant')
+    expect(queries).toEqual(['周'])
+    const bounds = (await dialog.boundingBox())!
+    expect(bounds.height).toBe(480)
+    expect(bounds.y).toBe(emptyPanel.y)
+    expect((await measureBounds(input))[0]).toEqual(emptyInput)
+    expect(bounds.y + bounds.height / 2).toBeCloseTo(450, 4)
+    expect(bounds.x).toBeGreaterThanOrEqual(0)
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+    await page.screenshot({ path: testInfo.outputPath(`results-${theme}-${width}.png`) })
+    await input.press('ArrowDown')
+    await expect(dialog.getByRole('option', { selected: true })).toContainText('本周市场观察')
+    await page.screenshot({ path: testInfo.outputPath(`selected-${theme}-${width}.png`) })
+    await input.fill('不存在的标题')
+    await page.clock.runFor(300)
+    const noResults = dialog.getByText('没有匹配的对话', { exact: true })
+    await expect(noResults).toBeVisible()
+    const [noMatchPanel] = await measureBounds(dialog)
+    expect(noMatchPanel).toEqual(bounds)
+    await page.screenshot({ path: testInfo.outputPath(`no-match-${theme}-${width}.png`) })
+    await input.clear()
+    await page.clock.runFor(300)
+    await expect(input).toHaveAttribute('placeholder', '输入关键词')
+    await expect(dialog.getByRole('status')).toHaveCount(0)
+    await expect(dialog.getByRole('option')).toHaveCount(0)
+    const [clearedPanel] = await measureBounds(dialog)
+    expect(clearedPanel).toEqual(emptyPanel)
+    expect(queries).toEqual(['周', '不存在的标题'])
+  })
+}
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`搜索结果在短视口内滚动且输入和底栏保持可见 ${theme}`, async ({ page }) => {
+    await page.clock.install({ time: new Date(date) })
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const state = await prepare(page, theme)
+    state.threads.push(...Array.from({ length: 9 }, (_, index) => ({ ...record, id: index + 2, threadId: `search-${index}`, title: `市场观察 ${index + 1}` })))
+    await page.setViewportSize({ width: 768, height: 420 })
+    await page.clock.pauseAt(new Date('2030-01-01T00:01:00Z'))
+    await page.getByRole('button', { name: '搜索会话', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '搜索会话', exact: true })
+    const input = dialog.getByRole('combobox', { name: '搜索会话' })
+    await input.fill('观察')
+    await page.clock.runFor(300)
+    const options = dialog.getByRole('option')
+    await expect(options).toHaveCount(10)
+    const last = options.last()
+    await last.scrollIntoViewIfNeeded()
+    await expect(last).toBeInViewport()
+    await expect(input).toBeInViewport()
+    const footer = dialog.getByText('方向键选择，Enter 打开，Esc 关闭')
+    await expect(footer).toBeInViewport()
+    const [rowBox, footerBox] = await measureBounds(last, footer)
+    expect(rowBox.y + rowBox.height).toBeLessThanOrEqual(footerBox.y)
+    const [panel] = await measureBounds(dialog)
+    expect(panel.y + panel.height / 2).toBeCloseTo(210, 4)
+    expect(panel.y + panel.height).toBeLessThanOrEqual(420)
+  })
+}
+
 test('会话搜索独立保留侧栏，支持范围、分页、重试、输入法和跨项目打开', async ({ page }) => {
   await page.clock.install({ time: new Date(date) })
   await page.setViewportSize({ width: 1440, height: 900 })
   const state = await prepare(page)
-  const remote = { ...record, id: 50, projectId: 'product', threadId: 'product-search', title: '产品交互方案' }
-  const next = { ...remote, id: 51, threadId: 'product-next', title: '接口交互记录' }
-  state.threads.push(...Array.from({ length: 24 }, (_, index) => ({ ...record, id: index + 2, threadId: `research-${index}`, title: `研究记录 ${index + 1}` })), remote, next)
+  const remote = { ...record, id: 50, projectId: 'product', threadId: 'product-search', title: '产品市场交互方案' }
+  const next = { ...remote, id: 51, threadId: 'product-next', title: '接口市场交互记录' }
+  state.threads.push(...Array.from({ length: 24 }, (_, index) => ({ ...record, id: index + 2, threadId: `research-${index}`, title: `市场研究记录 ${index + 1}` })), remote, next)
   await page.reload()
   const history = page.getByRole('region', { name: '最近对话', includeHidden: true })
-  await expect(history.getByRole('button', { name: '打开会话：研究记录 24', exact: true })).toHaveCount(1)
+  await expect(history.getByRole('button', { name: '打开会话：市场研究记录 24', exact: true })).toHaveCount(1)
   await page.clock.pauseAt(new Date('2030-01-01T00:01:00Z'))
   await history.evaluate(element => { element.scrollTop = 160 })
   const sidebarState = () => history.evaluate(element => ({ scroll: element.scrollTop, text: element.textContent }))
@@ -222,7 +428,7 @@ test('会话搜索独立保留侧栏，支持范围、分页、重试、输入�
     const items = scope === 'all' ? (params.has('cursor') ? [remote, next] : [record, remote]) : state.threads.slice(0, 2)
     const query = params.get('query') ?? ''
     await route.fulfill({ json: { code: 0, message: 'success', data: {
-      items: items.filter(item => item.title.includes(query)), nextCursor: scope === 'all' && !params.has('cursor') && !query ? 'search-next' : null,
+      items: items.filter(item => item.title.includes(query)), nextCursor: scope === 'all' && !params.has('cursor') && query ? 'search-next' : null,
     } } })
   })
   await page.getByRole('button', { name: '搜索会话', exact: true }).click()
@@ -230,6 +436,12 @@ test('会话搜索独立保留侧栏，支持范围、分页、重试、输入�
   const input = dialog.getByRole('combobox', { name: '搜索会话' })
   const results = dialog.getByRole('listbox', { name: '会话搜索结果' })
   await expect(input).toBeFocused()
+  await expect(input).toHaveAttribute('placeholder', '输入关键词')
+  await expect(dialog.getByRole('status')).toHaveCount(0)
+  await page.clock.runFor(300)
+  expect(requests).toEqual([])
+  await expect(results.getByRole('option')).toHaveCount(0)
+  await input.fill('市场')
   await expect(dialog.getByText('正在搜索会话', { exact: true })).toBeVisible()
   await page.clock.runFor(300)
   await expect(dialog.getByText('搜索会话失败', { exact: true })).toBeVisible()
@@ -241,15 +453,22 @@ test('会话搜索独立保留侧栏，支持范围、分页、重试、输入�
   await input.fill('不存在')
   await page.clock.runFor(300)
   await expect(dialog.getByText('没有匹配的对话', { exact: true })).toBeVisible()
-  await input.fill('')
+  const requestsBeforeClear = requests.length
+  await input.fill('   ')
+  await expect(input).toHaveAttribute('placeholder', '输入关键词')
+  await expect(dialog.getByRole('status')).toHaveCount(0)
+  await expect(results.getByRole('option')).toHaveCount(0)
   await page.clock.runFor(300)
   await dialog.getByRole('button', { name: '选择搜索范围' }).click()
   const scope = dialog.getByRole('listbox', { name: '搜索范围', exact: true })
   await scope.press('ArrowDown')
   await scope.press('Enter')
   await page.clock.runFor(300)
+  expect(requests).toHaveLength(requestsBeforeClear)
+  await input.fill('市场')
+  await page.clock.runFor(300)
   await expect(results.getByRole('option')).toHaveCount(2)
-  await expect(results.getByRole('option', { name: /产品交互方案/ })).toContainText('产品开发')
+  await expect(results.getByRole('option', { name: /产品市场交互方案/ })).toContainText('产品开发')
   await dialog.getByRole('button', { name: '加载更多' }).click()
   await expect(results.getByRole('option')).toHaveCount(3)
   expect(requests.some(request => new URLSearchParams(request).get('cursor') === 'search-next')).toBe(true)
@@ -259,16 +478,19 @@ test('会话搜索独立保留侧栏，支持范围、分页、重试、输入�
   for (const key of ['ArrowDown', 'Enter']) await input.dispatchEvent('keydown', { key, isComposing: true, bubbles: true })
   await input.dispatchEvent('compositionend')
   await expect(dialog).toBeVisible()
-  await expect(results.getByRole('option', { selected: true })).toContainText('本周市场观察')
+  await expect(results.getByRole('option', { selected: true })).toHaveCount(0)
   await input.press('Control+k')
   await expect(dialog).toBeVisible()
   await input.press('ArrowDown')
+  await expect(results.getByRole('option', { selected: true })).toContainText('本周市场观察')
+  await input.press('ArrowDown')
+  await expect(results.getByRole('option', { selected: true })).toContainText('产品市场交互方案')
   await input.press('Enter')
   await expect(dialog).toHaveCount(0)
   await expect(page.getByRole('button', { name: '切换项目：产品开发' })).toBeVisible()
   expect(new URL(page.url()).searchParams.get('project')).toBe('product')
   expect(new URL(page.url()).searchParams.get('thread')).toBe('product-search')
-  await expect(page.getByRole('button', { name: '打开会话：产品交互方案', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '打开会话：产品市场交互方案', exact: true })).toBeVisible()
   await expect(page.getByRole('textbox', { name: '消息输入' })).toBeEnabled()
 })
 
@@ -336,7 +558,7 @@ test('项目长列表打开后选中行可见，返回另一项目撤销原行�
 test.describe('行内项目操作与中性聚焦', () => {
   test.use({ hasTouch: true })
   for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1024, 1440]) {
-    test(`${theme} ${width}`, async ({ page }) => {
+    test(`${theme} ${width}`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width: 1440, height: 900 })
       await prepare(page, theme)
       await page.setViewportSize({ width, height: 900 })
@@ -347,6 +569,7 @@ test.describe('行内项目操作与中性聚焦', () => {
       const menu = page.getByRole('dialog', { name: '项目', exact: true })
       const rename = menu.getByRole('button', { name: '重命名项目', exact: true })
       const renameBounds = (await rename.boundingBox())!
+      const [checkIcon, renameIcon] = await measureBounds(menu.locator('svg.lucide-check'), rename.locator('svg'))
       await rename.click()
       const input = menu.getByRole('textbox', { name: '项目名称' })
       const save = menu.getByRole('button', { name: '保存', exact: true })
@@ -361,12 +584,14 @@ test.describe('行内项目操作与中性聚焦', () => {
       }
       const cancelBounds = (await cancel.boundingBox())!
       expect(Math.abs(cancelBounds.x + cancelBounds.width - renameBounds.x - renameBounds.width)).toBeLessThanOrEqual(0.5)
+      const [saveIcon, cancelIcon] = await measureBounds(save.locator('svg'), cancel.locator('svg'))
+      expect(saveIcon).toEqual(checkIcon)
+      expect(cancelIcon).toEqual(renameIcon)
       const bounds = (await menu.boundingBox())!
       expect(bounds.x).toBeGreaterThanOrEqual(0)
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
-      const captured = resolve(process.cwd(), '../../../.agents/review/studio-tooltip/screenshots')
-      await mkdir(captured, { recursive: true })
-      await page.screenshot({ path: resolve(captured, `inline-${theme}-${width}.png`), fullPage: true })
+
+      await page.screenshot({ path: testInfo.outputPath(`inline-${theme}-${width}.png`), fullPage: true })
       await cancel.click()
       await page.keyboard.press('Escape')
       await page.getByRole('button', { name: '记忆管理', exact: true }).click()
@@ -383,7 +608,7 @@ test.describe('行内项目操作与中性聚焦', () => {
       })
       expect(focused.border).toBe(focused.expected)
       expect(focused.outline).toBe('0px')
-      await page.screenshot({ path: resolve(captured, `memory-focus-${theme}-${width}.png`), fullPage: true })
+      await page.screenshot({ path: testInfo.outputPath(`memory-focus-${theme}-${width}.png`), fullPage: true })
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
     })
   }
@@ -404,7 +629,7 @@ test('记忆冲突显示最新内容并保留本地输入', async ({ page }) => 
 })
 
 for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1024, 1440]) {
-  test(`项目表单校验与确认按钮 ${theme} ${width}`, async ({ page }) => {
+  test(`项目表单校验与确认按钮 ${theme} ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await prepare(page, theme)
     if (theme === 'light' && width === 1440) await page.emulateMedia({ reducedMotion: 'no-preference' })
@@ -436,11 +661,11 @@ for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1
       probe.remove()
       return actual === expected
     })).toBe(true)
-    await mkdir(reviewCaptured, { recursive: true })
-    await page.screenshot({ path: resolve(reviewCaptured, `project-form-${theme}-${width}.png`), fullPage: true })
+
+    await page.screenshot({ path: testInfo.outputPath(`project-form-${theme}-${width}.png`), fullPage: true })
   })
 
-  test(`项目导航与记忆页面 ${theme} ${width}`, async ({ page }) => {
+  test(`项目导航与记忆页面 ${theme} ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
     if (width < 768) {
       await page.setViewportSize({ width: 1440, height: 900 })
@@ -452,20 +677,52 @@ for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1
       await page.getByRole('button', { name: '记忆管理', exact: true }).click()
     }
     await expect(page.getByRole('button', { name: '编辑记忆：preferences.md' })).toBeVisible()
+    const add = page.getByRole('button', { name: '新增记忆', exact: true })
+    await expect(add).toBeVisible()
+    await expect(add).toHaveText('新增')
+    await expect(page.getByText('这里的记忆会用于此项目的后续会话')).toHaveCount(0)
+    const [addBox] = await measureBounds(add)
+    expect(addBox.y + addBox.height / 2).toBe(32)
+    const search = page.getByRole('button', { name: '搜索记忆', exact: true })
+    await expect(page.getByRole('searchbox', { name: '搜索记忆', exact: true })).toHaveCount(0)
+    const [searchIcon] = await measureBounds(search.locator('svg'))
+    expect(addBox.x - searchIcon.x - searchIcon.width).toBe(15)
+    await search.click()
+    const searchInput = page.getByRole('searchbox', { name: '搜索记忆', exact: true })
+    await expect(searchInput).toBeFocused()
+    await expect(searchInput).toHaveCSS('font-size', '13px')
+    await searchInput.fill('没有这条记忆')
+    await expect(page.getByRole('status')).toHaveText('没有匹配的记忆')
+    await page.getByRole('button', { name: '关闭搜索', exact: true }).click()
+    await expect(search).toBeFocused()
+    await expect(page.getByRole('button', { name: '编辑记忆：preferences.md' })).toBeVisible()
+    await add.click()
+    const createMemory = page.getByRole('dialog', { name: '新增记忆', exact: true })
+    await expect(createMemory.getByRole('textbox', { name: '记忆名称' })).toBeFocused()
+    await createMemory.getByRole('button', { name: '取消', exact: true }).click()
+    await expect(add).toBeFocused()
     await page.evaluate(() => document.fonts.ready)
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
-    await mkdir(captured, { recursive: true })
-    await page.screenshot({ path: resolve(captured, `memories-${theme}-${width}.png`), fullPage: true })
+
+    await page.screenshot({ path: testInfo.outputPath(`memories-${theme}-${width}.png`), fullPage: true })
+
+    await page.screenshot({ path: testInfo.outputPath(`header-memories-${theme}-${width}.png`) })
+    await search.click()
+    await expect(searchInput).toHaveValue('')
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+    await page.screenshot({ path: testInfo.outputPath(`header-search-${theme}-${width}.png`) })
+    await searchInput.press('Escape')
+    await expect(search).toBeFocused()
     if (width === 320) {
       await page.getByRole('button', { name: '打开导航' }).click()
       await expect(page.getByRole('button', { name: '关闭导航', exact: true })).toBeFocused()
-      await page.screenshot({ path: resolve(captured, `navigation-${theme}-${width}.png`), fullPage: true })
+      await page.screenshot({ path: testInfo.outputPath(`navigation-${theme}-${width}.png`), fullPage: true })
     }
   })
 }
 
 for (const theme of ['light', 'dark'] as const) for (const width of [320, 1440]) {
-  test(`长会话列表独立滚动且账号保持在底部 ${theme} ${width}`, async ({ page }) => {
+  test(`长会话列表独立滚动且账号保持在底部 ${theme} ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     const state = await prepare(page, theme)
     state.threads.push(...Array.from({ length: 25 }, (_, index) => ({ ...record, id: index + 2, threadId: `history-${index}`, title: `市场研究记录 ${index + 1}` })))
@@ -483,15 +740,15 @@ for (const theme of ['light', 'dark'] as const) for (const width of [320, 1440])
     await expect(page.getByRole('button', { name: '已归档会话', exact: true })).toBeInViewport()
     expect(await account.boundingBox()).toEqual(before)
     await page.evaluate(() => document.fonts.ready)
-    await mkdir(captured, { recursive: true })
-    await page.screenshot({ path: resolve(captured, `navigation-long-${theme}-${width}.png`), fullPage: true })
+
+    await page.screenshot({ path: testInfo.outputPath(`navigation-long-${theme}-${width}.png`), fullPage: true })
   })
 }
 
 test.describe('移动目标选择的触控与键盘操作', () => {
   test.use({ hasTouch: true })
   for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1024, 1440]) {
-    test(`${theme} ${width}`, async ({ page }) => {
+    test(`${theme} ${width}`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width: 1440, height: 900 })
       await prepare(page, theme)
       await page.getByRole('button', { name: '管理会话：本周市场观察' }).click()
@@ -513,8 +770,8 @@ test.describe('移动目标选择的触控与键盘操作', () => {
       expect(bounds.x).toBeGreaterThanOrEqual(0)
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
-      await mkdir(reviewCaptured, { recursive: true })
-      await page.screenshot({ path: resolve(reviewCaptured, `move-${theme}-${width}.png`), fullPage: true })
+
+      await page.screenshot({ path: testInfo.outputPath(`move-${theme}-${width}.png`), fullPage: true })
       await page.keyboard.press('Escape')
       await expect(list).toHaveCount(0)
       await expect(trigger).toBeFocused()

@@ -7,6 +7,7 @@ export interface SearchFieldProps {
   id?: string
   className?: string
   appearance?: 'plain' | 'soft'
+  showIcon?: boolean
   label: string
   closeLabel: string
   placeholder: string
@@ -17,16 +18,18 @@ export interface SearchFieldProps {
 
 /** 紧凑搜索输入框，清除按钮与 Escape 统一交给调用方关闭并恢复焦点 */
 export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(function SearchField({
-  id, className, appearance = 'plain', label, closeLabel, placeholder, value, onChange, onClose,
+  id, className, appearance = 'plain', showIcon = true, label, closeLabel, placeholder, value, onChange, onClose,
 }, ref) {
-  return <label id={id} className={`ui-search-field ui-search-field--${appearance}${className ? ` ${className}` : ''}`}>
-    <Search size={14} aria-hidden="true" />
+  return <div id={id} className={`ui-search-field ui-search-field--${appearance}${showIcon ? '' : ' ui-search-field--no-icon'}${className ? ` ${className}` : ''}`}>
+    <label className="ui-search-field__input">
+    {showIcon && <Search size={14} aria-hidden="true" />}
     <input ref={ref} type="text" role="searchbox" aria-label={label} value={value} placeholder={placeholder}
       onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => {
         if (event.key !== 'Escape') return
         event.preventDefault()
         onClose()
       }} />
+    </label>
     <IconButton type="button" size="xs" label={closeLabel} icon={<X size={13} />} onClick={onClose} />
-  </label>
+  </div>
 })

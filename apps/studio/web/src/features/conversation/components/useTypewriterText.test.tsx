@@ -12,6 +12,16 @@ import { TextRevealProgressContext } from './textRevealProgress'
 const frames = new Map<number, FrameRequestCallback>()
 let frameId = 0
 let progress: Map<string, string>
+let reducedMotion = false
+const motionListeners = new Set<() => void>()
+const originalMatchMedia = window.matchMedia
+
+function setReducedMotion(value: boolean) {
+  act(() => {
+    reducedMotion = value
+    motionListeners.forEach(listener => listener())
+  })
+}
 
 function ProgressScope({ children }: PropsWithChildren) {
   return <TextRevealProgressContext.Provider value={progress}>{children}</TextRevealProgressContext.Provider>
@@ -29,6 +39,13 @@ describe('实时正文逐字展示', () => {
   beforeEach(() => {
     frames.clear()
     progress = new Map()
+    reducedMotion = false
+    motionListeners.clear()
+    vi.stubGlobal('matchMedia', (query: string) => query === '(prefers-reduced-motion: reduce)' ? {
+      get matches() { return reducedMotion },
+      addEventListener: (_type: string, listener: () => void) => motionListeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => motionListeners.delete(listener),
+    } : originalMatchMedia(query))
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       frames.set(++frameId, callback)
       return frameId
@@ -36,6 +53,47 @@ describe('实时正文逐字展示', () => {
     vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
   })
   afterEach(() => vi.unstubAllGlobals())
+
+  it('减少动效时立即显示当前正文，后续增量和重新挂载保留已显示进度', () => {
+    setReducedMotion(true)
+    const source = { key: 'thread/run/answer', initialContent: '' }
+    const first = renderHook(({ content }) => useTypewriterText(content, source, false), {
+      initialProps: { content: '已收到的正文' }, wrapper: ProgressScope,
+    })
+    expect(first.result.current).toBe('已收到的正文')
+    expect(frames.size).toBe(0)
+    first.rerender({ content: '已收到的正文与新内容' })
+    expect(first.result.current).toBe('已收到的正文与新内容')
+    first.unmount()
+    expect(motionListeners.size).toBe(0)
+    setReducedMotion(false)
+    const resumed = renderHook(() => useTypewriterText('已收到的正文与新内容追加', source, true), { wrapper: ProgressScope })
+    expect(resumed.result.current).toBe('已收到的正文与新内容')
+    frame()
+    expect(resumed.result.current).toBe('已收到的正文与新内容追')
+    resumed.unmount()
+  })
+
+  it('动态启用减少动效取消未播帧，关闭后只逐字显示后续新增正文', () => {
+    const source = { key: 'thread/run/answer', initialContent: '' }
+    const { result, rerender, unmount } = renderHook(({ content }) => useTypewriterText(content, source, true), {
+      initialProps: { content: '甲乙丙' }, wrapper: ProgressScope,
+    })
+    frame()
+    expect(result.current).toBe('甲')
+    setReducedMotion(true)
+    expect(result.current).toBe('甲乙丙')
+    expect(frames.size).toBe(0)
+    setReducedMotion(false)
+    expect(result.current).toBe('甲乙丙')
+    expect(frames.size).toBe(0)
+    rerender({ content: '甲乙丙丁戊' })
+    frame()
+    expect(result.current).toBe('甲乙丙丁')
+    unmount()
+    expect(frames.size).toBe(0)
+    expect(motionListeners.size).toBe(0)
+  })
 
   it('整段及结束一起到达时仍每帧一个字，完整内容不被改写', () => {
     const source = { key: 'thread/run/answer', initialContent: '' }

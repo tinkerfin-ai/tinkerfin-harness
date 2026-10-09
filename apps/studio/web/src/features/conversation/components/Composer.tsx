@@ -197,7 +197,11 @@ export function Composer({
       const element = attachmentScroll.current
       const lastAttachment = element?.lastElementChild
       if (lastAttachment instanceof HTMLElement && typeof lastAttachment.scrollIntoView === 'function')
-        lastAttachment.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'end' })
+        lastAttachment.scrollIntoView({
+          behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+          block: 'nearest',
+          inline: 'end',
+        })
     })
     return () => window.cancelAnimationFrame(frame)
   }, [attachments])

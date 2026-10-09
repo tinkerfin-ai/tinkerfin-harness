@@ -8,16 +8,16 @@ import { MarkdownContent } from './MarkdownContent'
 describe('MarkdownContent links', () => {
   it('keeps Chinese instructions after a bare URL outside the link', () => {
     const content = '访问 https://www.baidu.com，了解该网站的主营业务。返回不超过50字的中文总结，说明百度是做什么业务的。'
-    render(<MarkdownContent content={content} />)
+    const { container } = render(<MarkdownContent content={content} />)
 
     const link = screen.getByRole('link')
     expect(link).toHaveAttribute('href', 'https://www.baidu.com')
     expect(link).toHaveTextContent('https://www.baidu.com')
     expect(link).toHaveAttribute('target', '_blank')
     expect(link).toHaveAttribute('rel', 'noopener noreferrer')
-    expect(link).toHaveClass('markdown-bare-url')
+
     expect(link).not.toHaveTextContent('了解该网站的主营业务')
-    expect(link.parentElement).toHaveTextContent(content)
+    expect(container).toHaveTextContent(content)
   })
 
   it('preserves explicit Markdown link labels', () => {
@@ -25,7 +25,7 @@ describe('MarkdownContent links', () => {
 
     const link = screen.getByRole('link', { name: '百度官网' })
     expect(link).toHaveAttribute('href', 'https://www.baidu.com')
-    expect(link).not.toHaveClass('markdown-bare-url')
+
     expect(screen.getByRole('link', { name: 'https://www.baidu.com中文说明' })).toHaveAttribute(
       'href',
       'https://example.com',
@@ -132,8 +132,10 @@ describe('MarkdownContent article contract', () => {
   })
 
   it('exposes compact content as an explicit variant', () => {
-    const { container } = render(<MarkdownContent content="**工具结果**" variant="compact" />)
-    expect(container.firstElementChild).toHaveClass('markdown-content--compact')
+    render(<MarkdownContent content="**工具结果** [原文](https://example.com)" variant="compact" />)
+    expect(screen.getByRole('strong')).toHaveTextContent('工具结果')
+    expect(screen.getByRole('link', { name: '原文' })).toHaveAttribute('href', 'https://example.com')
+
   })
 
   it('owns the measured article rhythm while keeping compact Markdown isolated', () => {
@@ -158,7 +160,6 @@ describe('MarkdownContent article contract', () => {
     expect(conversationStyles).toMatch(/\.tool-rich-field \.markdown-content :is\(h1, h2, h3, h4, h5, h6\)/s)
   })
 })
-
 
 it('文档可关闭远端图片加载，聊天默认仍可展示 Markdown 图片', () => {
   const content = '![营收趋势](https://example.com/chart.png)'

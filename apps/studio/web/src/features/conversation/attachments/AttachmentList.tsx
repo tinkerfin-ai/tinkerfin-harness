@@ -1,7 +1,7 @@
 import { CornerDownLeft, Download, RotateCcw } from 'lucide-react'
-import { useContext, useState } from 'react'
+import { useContext, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
-import { Button, ErrorBoundary, IconButton } from '../../../components/ui'
+import { Button, ErrorBoundary, IconButton, Tooltip } from '../../../components/ui'
 import { useI18n } from '../../../i18n'
 import type { Attachment } from './content'
 import { AttachmentReferenceContext } from './context'
@@ -10,7 +10,6 @@ import { useAttachmentImage } from './useAttachmentImage'
 import { useAttachmentDownload } from './useAttachmentDownload'
 import { documentFormat } from './documentPreview'
 import { AttachmentFileIcon } from './AttachmentFileIcon'
-import { AttachmentFilename } from './AttachmentFilename'
 import { formatAttachmentSize } from './attachmentPresentation'
 import './attachments.css'
 
@@ -27,6 +26,7 @@ function AttachmentCard({
   const image = useAttachmentImage(isImage ? attachment.id : undefined)
   const download = useAttachmentDownload(attachment)
   const [ratio, setRatio] = useState(1)
+  const filenameRef = useRef<HTMLElement | null>(null)
   const documentPreview = documentFormat(attachment.mime_type)
   const actions = (
     <>
@@ -115,6 +115,7 @@ function AttachmentCard({
         </div>
       ) : (
         <div className="attachment-description">
+          <Tooltip content={attachment.name} placement="top" overflowOnly overflowRef={filenameRef}>
           <button
             type="button"
             className="attachment-document-preview"
@@ -123,10 +124,11 @@ function AttachmentCard({
           >
             <AttachmentFileIcon attachment={attachment} />
             <span className="attachment-description__text">
-              <AttachmentFilename name={attachment.name} variant="card" />
+              <strong ref={filenameRef} className="attachment-description__title">{attachment.name}</strong>
               <small>{formatAttachmentSize(attachment.size_bytes)}</small>
             </span>
           </button>
+          </Tooltip>
           <div
             className="attachment-file-actions"
             role="group"

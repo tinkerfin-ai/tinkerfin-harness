@@ -49,7 +49,9 @@ import {
   upsertConversation,
 } from '../../../lib/workspace'
 import {
+  captureActiveRunOwner,
   clearActiveRunSession,
+  isActiveRunOwnerCurrent,
   readActiveRunSession,
   writeActiveRunSession,
   type ActiveRunSession,
@@ -185,10 +187,10 @@ export interface ConversationStreamController {
 }
 
 /**
- * 管理会话实时连接和持久化事件序号状态
+ * 管理已登录工作区的实时会话与刷新恢复
  *
- * 页面提供 React 状态边界；控制器负责流取消、epoch、权威线程切换、
- * 序号去重、缺口恢复、断连回放和动画帧合并
+ * 卸载关闭连接而不取消服务端任务，同一登录刷新仍可恢复
+ * 退出或切换登录后，旧请求不能重新建立连接或写回运行恢复记录
  */
 export function useConversationStreamController({
   projectId,
@@ -240,6 +242,8 @@ export function useConversationStreamController({
   const taskTraceFollowOwnership = useRef(new TaskTraceFollowOwnership())
   const delayedTraceFollowTimers = useRef(new Set<number>())
   const activeRunPersistence = useRef(new Map<string, { session: ActiveRunSession; timer: number | null }>())
+  const [runSessionOwner] = useState(captureActiveRunOwner)
+  const lifetime = useRef(0)
   const isMounted = useRef(true)
   latestWorkspace.current = workspace
 
@@ -253,9 +257,9 @@ export function useConversationStreamController({
       if (runId && key !== runId) continue
       if (owner.timer != null) window.clearTimeout(owner.timer)
       owner.timer = null
-      writeActiveRunSession(owner.session)
+      writeActiveRunSession(owner.session, runSessionOwner)
     }
-  }, [])
+  }, [runSessionOwner])
 
   const scheduleActiveRunPersistence = useCallback((session: ActiveRunSession, immediate = false) => {
     const runId = session.payload.runId
@@ -274,8 +278,8 @@ export function useConversationStreamController({
     const owner = activeRunPersistence.current.get(runId)
     if (owner?.timer != null) window.clearTimeout(owner.timer)
     activeRunPersistence.current.delete(runId)
-    clearActiveRunSession(runId)
-  }, [])
+    clearActiveRunSession(runId, runSessionOwner)
+  }, [runSessionOwner])
 
   const flushWorkspaceUpdates = useCallback(() => {
     if (workspaceUpdateTimer.current != null) {
@@ -351,7 +355,7 @@ export function useConversationStreamController({
   }, [clearActiveRunPersistence])
 
   const followDetachedConversation = useCallback(async (threadId: string) => {
-    if (!isMounted.current || isActiveThread(threadId)) return
+    if (!isMounted.current || !isActiveRunOwnerCurrent(runSessionOwner) || isActiveThread(threadId)) return
     // 首响应丢失时，旧 head 的 Trace 不能证明这次提交是否被受理
     if (recoveryRequests.current.get(threadId)?.receivedEvent === false) return
     const target = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
@@ -361,6 +365,7 @@ export function useConversationStreamController({
     const retention = retainConversationDetails(threadId)
     try {
       await taskTraceFollowOwnership.current.follow(threadId, async ({ includeTaskTrace, signal }) => {
+      if (!isActiveRunOwnerCurrent(runSessionOwner)) return
       let projected = target
       let lastSeq: number | undefined
       let completed = false
@@ -472,14 +477,15 @@ export function useConversationStreamController({
     } finally {
       retention.release()
     }
-  }, [clearActiveRunPersistence, clearCancelPending, isActiveThread, retainConversationDetails, setWorkspace])
+  }, [clearActiveRunPersistence, clearCancelPending, isActiveThread, retainConversationDetails, runSessionOwner, setWorkspace])
 
   const handoffTaskTraceFollow = useCallback(async (threadId: string) => {
+    if (!isMounted.current || !isActiveRunOwnerCurrent(runSessionOwner)) return
     const handoff = await taskTraceFollowOwnership.current.handoff(threadId)
     for (const demotedThreadId of handoff.demotedThreadIds) {
       void followDetachedConversation(demotedThreadId)
     }
-  }, [followDetachedConversation])
+  }, [followDetachedConversation, runSessionOwner])
 
   const streamRun = useCallback(async (
     threadIdToStream: string,
@@ -487,13 +493,16 @@ export function useConversationStreamController({
     mode: ConversationRunMode,
     options: StreamRunOptions = { target: 'workspace' },
   ) => {
-    if (threadIdToStream && isActiveThread(threadIdToStream)) return
+    if (!isMounted.current || !isActiveRunOwnerCurrent(runSessionOwner)
+      || (threadIdToStream && isActiveThread(threadIdToStream))) return
+    const requestLifetime = lifetime.current
     const retention = retainConversationDetails(threadIdToStream)
     try {
       if (threadIdToStream) setWorkspace(state => updateConversation(state, threadIdToStream, item => ({
         ...item, historySynchronized: false,
       })))
       if (threadIdToStream) await taskTraceFollowOwnership.current.stop(threadIdToStream)
+      if (!isMounted.current || requestLifetime !== lifetime.current || !isActiveRunOwnerCurrent(runSessionOwner)) return
       if (threadIdToStream && isActiveThread(threadIdToStream)) return
       const streamEpoch = ++activeStreamEpoch.current
       const controller = new AbortController()
@@ -930,6 +939,7 @@ export function useConversationStreamController({
     }
   }, [
     projectId,
+    runSessionOwner,
     retainConversationDetails,
     acknowledgeComposerPreferences,
     setWorkspace,
@@ -948,9 +958,9 @@ export function useConversationStreamController({
 
   const recoverConversation = useCallback(async (threadId: string, pendingRunId?: string) => {
     const recoveryKey = threadId || pendingRunId || ''
-    if ((threadId && isActiveThread(threadId)) || recoveryPending.current.has(recoveryKey) || !isMounted.current) return
+    if ((threadId && isActiveThread(threadId)) || recoveryPending.current.has(recoveryKey) || !isMounted.current || !isActiveRunOwnerCurrent(runSessionOwner)) return
     const pending = recoveryRequests.current.get(recoveryKey)
-    const session = readActiveRunSession(threadId, projectId)
+    const session = readActiveRunSession(threadId, projectId, runSessionOwner)
     const current = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
     const matchesPending = pending?.threadId === threadId && (
       current ? current.activeRunId === pending.payload.runId : pending.options.target === 'draft'
@@ -965,6 +975,7 @@ export function useConversationStreamController({
     try {
       if (current?.notice?.recovery === 'history') {
         await taskTraceFollowOwnership.current.follow(threadId, async ({ includeTaskTrace, signal }) => {
+          if (!isActiveRunOwnerCurrent(runSessionOwner)) return
           try {
             const detail = await fetchConversationHistoryDetail(threadId, { includeTaskTrace, signal, suppressGlobalError: true })
             if (signal.aborted || !isMounted.current || isActiveThread(threadId)) return
@@ -1022,7 +1033,7 @@ export function useConversationStreamController({
       recoveryPending.current.delete(recoveryKey)
       retention.release()
     }
-  }, [projectId, clearActiveRunPersistence, followDetachedConversation, isActiveThread, retainConversationDetails, setDraftConversation, setWorkspace, streamRun])
+  }, [projectId, clearActiveRunPersistence, followDetachedConversation, isActiveThread, retainConversationDetails, runSessionOwner, setDraftConversation, setWorkspace, streamRun])
 
   const hasActiveStream = useCallback(() => streams.current.size > 0, [])
   const cancelRun = useCallback((threadId: string) => {
@@ -1071,6 +1082,7 @@ export function useConversationStreamController({
     isMounted.current = true
     return () => {
       isMounted.current = false
+      lifetime.current += 1
       flushActiveRunPersistence()
       for (const owner of connections.values()) {
         owner.controller.abort()

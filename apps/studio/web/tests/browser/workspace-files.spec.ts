@@ -98,6 +98,38 @@ async function selectScript(page: Page) {
   await expect(page.getByRole('region', { name: '文件内容' })).toContainText('def summarize(values)')
 }
 
+for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440]) {
+  test(`工作区加载提示居中且没有卡片边框 ${theme} ${width}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 })
+    await prepare(page, theme)
+    let release!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    await page.route('**/workspace/entries?**', async route => {
+      await pending
+      await route.fulfill({ json: { code: 0, message: 'success', data: { state: 'ready', path: '/', entries: [], nextCursor: null } } })
+    })
+    try {
+      await page.getByRole('button', { name: '工作区', exact: true }).click()
+      const drawer = page.getByRole('complementary', { name: '工作区', exact: true })
+      const loading = drawer.getByRole('status').filter({ hasText: /^正在加载工作区$/ })
+      await expect(loading).toBeVisible()
+      await expect(loading).toHaveAttribute('aria-busy', 'true')
+      await expect(loading).toHaveCSS('border-top-width', '0px')
+      const [status, title, footer] = await measureBounds(loading, drawer.getByRole('heading', { name: '工作区', exact: true }), drawer.getByText('只读', { exact: true }))
+      expect(status.y).toBeGreaterThan(title.y + title.height)
+      expect(status.y + status.height).toBeLessThan(footer.y)
+      expect(status.height).toBeLessThan(footer.y - title.y - title.height - status.height)
+      expect(status.x).toBeGreaterThanOrEqual(0)
+      expect(status.x + status.width).toBeLessThanOrEqual(width)
+
+      await page.screenshot({ path: testInfo.outputPath(`loading-${theme}-${width}.png`) })
+    } finally {
+      release()
+    }
+    await expect(page.getByText('工作区尚无文件', { exact: true })).toBeVisible()
+  })
+}
+
 for (const [name, title] of [['工作区', '工作区'], ['任务轨迹 1', '任务轨迹']]) {
   test(`键盘打开${title}后进入抽屉，Tab 可继续操作，Escape 返回入口`, async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })

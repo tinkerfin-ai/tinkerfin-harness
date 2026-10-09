@@ -1,19 +1,18 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchCounts, fetchRunPage, fetchTaskPage } from './api'
+import { fetchRunPage, fetchTaskPage } from './api'
 import { useAutomation } from './useAutomation'
 import { taskFixture, runFixture } from '../../test/automationFixtures'
 import { weekDates } from './model'
 import { mockResourceNotices } from '../../test/resourceNotices'
 
-vi.mock('./api', () => ({ fetchCounts: vi.fn(), fetchRunPage: vi.fn(), fetchTaskPage: vi.fn() }))
+vi.mock('./api', () => ({ fetchRunPage: vi.fn(), fetchTaskPage: vi.fn() }))
 const dates = weekDates('2026-09-10')
 const base = {projectId: 'project-1',  page: 'tasks' as const, query: '', status: 'all', dates, view: 'week' as const }
 let notices: ReturnType<typeof mockResourceNotices>
 beforeEach(() => {
   notices = mockResourceNotices()
   vi.useFakeTimers()
-  vi.mocked(fetchCounts).mockResolvedValue({ enabled: 1, paused: 0 })
   vi.mocked(fetchTaskPage).mockReset().mockResolvedValue({ items: [taskFixture()], nextCursor: null })
   vi.mocked(fetchRunPage).mockReset().mockResolvedValue({ items: [], nextCursor: null })
 })

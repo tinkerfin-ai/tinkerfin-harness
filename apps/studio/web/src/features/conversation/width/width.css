@@ -30,7 +30,8 @@
     pointer-events: none;
     transition: opacity var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
   }
-  .conversation-width-handles:has(.conversation-width-handle:is(:hover, [data-dragging])) .conversation-width-indicator { opacity: 1; }
+  .conversation-width-handles:has(.conversation-width-handle:is(:hover, :focus-visible, [data-dragging])) .conversation-width-indicator { opacity: 1; }
+  .conversation-width-handle:focus-visible .conversation-width-indicator { outline: 2px solid var(--color-focus); outline-offset: var(--space-1); }
   .conversation-width-handles:has(.conversation-width-handle[data-dragging]) .conversation-width-indicator { color: var(--color-text-tertiary); }
   @media (any-pointer: coarse) {
     .conversation-width-handle { display: none; }

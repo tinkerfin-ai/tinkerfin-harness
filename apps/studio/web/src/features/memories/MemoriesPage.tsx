@@ -1,6 +1,6 @@
 import { FileText, Plus, Trash2 } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
-import { Button, Dialog, FeedbackState, IconButton, SearchField, TextField } from '../../components/ui'
+import { Button, Dialog, ExpandableSearch, FeedbackState, IconButton, TextField } from '../../components/ui'
 import type { ToastHandler } from '../../components/ui/ToastViewport'
 import { useI18n } from '../../i18n'
 import type { Project } from '../projects/api'
@@ -15,6 +15,7 @@ export function MemoriesPage({ project, navigationTriggerRef, onOpenNavigation, 
 }) {
   const { t, locale } = useI18n()
   const [query, setQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const library = useMemories(project.id, query)
   const { editor, removal, loading, saving, error, conflict, discarding, open, closeEditor, save, remove,
     setEditor, setRemoval, setDiscarding, create, requestRemoval, loadConflict } = useMemoryEditor(project.id, library.refresh, onToast)
@@ -23,11 +24,14 @@ export function MemoriesPage({ project, navigationTriggerRef, onOpenNavigation, 
   const modal = editor !== null || removal !== null
   useLayoutEffect(() => { onModalChange(modal); return () => onModalChange(false) }, [modal, onModalChange])
   return <>
-    <WorkspaceHeader conversationTitle={t('记忆管理')} overlayTriggerRef={navigationTriggerRef} onOpenOverlay={onOpenNavigation} />
+    <WorkspaceHeader conversationTitle={t('记忆管理')} overlayTriggerRef={navigationTriggerRef} onOpenOverlay={onOpenNavigation}
+      actions={<div className="workspace-search-actions">
+        <ExpandableSearch open={searchOpen} onOpenChange={setSearchOpen} label={t('搜索记忆')}
+          placeholder={t('搜索名称或内容')} closeLabel={t('关闭搜索')} value={query} onChange={setQuery} />
+        <Button type="button" size="sm" variant="primary" className="workspace-header-action" leadingIcon={<Plus size={17} />} aria-label={t('新增记忆')}
+          onClick={event => create(event.currentTarget)}><span className="workspace-header-action-label">{t('新增')}</span></Button>
+      </div>} />
     <section className="memories-page ui-scrollbar">
-      <div className="memories-heading"><div><h1>{t('记忆管理')}</h1><p>{project.name}</p></div><Button type="button" leadingIcon={<Plus size={17} />} onClick={event => create(event.currentTarget)}>{t('新增记忆')}</Button></div>
-      <p className="memories-intro">{t('这里的记忆会用于此项目的后续会话')}</p>
-      <SearchField label={t('搜索记忆')} placeholder={t('搜索名称或内容')} value={query} onChange={setQuery} closeLabel={t('清除搜索')} onClose={() => setQuery('')} />
       {library.status === 'loading' ? <FeedbackState kind="loading" title={t('正在加载记忆')} /> : library.status === 'error' ? <FeedbackState kind="error" title={t('记忆加载失败')} onRetry={library.refresh} /> : <>
         {library.items.length === 0 && <p className="memories-empty" role="status">{query ? t('没有匹配的记忆') : t('还没有记忆')}</p>}
         <ul className="memories-list">{library.items.map(item => <li key={item.path}>

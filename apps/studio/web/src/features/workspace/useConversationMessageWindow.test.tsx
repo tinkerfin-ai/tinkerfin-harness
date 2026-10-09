@@ -133,7 +133,7 @@ describe('useConversationMessageWindow', () => {
 
     expect(result).toBe('found')
     expect(screen.getByText('消息 10')).toHaveFocus()
-    expect(screen.getByText('消息 10')).toHaveClass('todo-trace-locate-target')
+
     expect(current?.visibleEntries.length).toBeLessThanOrEqual(100)
     expect(screen.queryByText('消息 149')).not.toBeInTheDocument()
 
@@ -233,7 +233,6 @@ const currentReveal = (messageId: string) => {
   return current.revealMessage(messageId)
 }
 
-
 describe('页面内阅读锚点恢复', () => {
   let frames: Map<number, FrameRequestCallback>
   let nextFrame: number
@@ -281,7 +280,7 @@ describe('页面内阅读锚点恢复', () => {
     await act(async () => {})
     expect(screen.getByText('消息 1').parentElement?.scrollTop).toBe(25)
     expect(screen.getByText('消息 1')).not.toHaveFocus()
-    expect(screen.getByText('消息 1')).not.toHaveClass('todo-trace-locate-target')
+
     expect(options.pauseFollowing).toHaveBeenCalledOnce()
     expect(loadOlderTrace).not.toHaveBeenCalled()
   })

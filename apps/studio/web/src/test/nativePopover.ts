@@ -7,6 +7,7 @@ export function mockNativePopover() {
   const toggle = (element: HTMLElement, visible: boolean) => {
     const wasOpen = open.has(element)
     if (visible === wasOpen) return
+    element.dispatchEvent(Object.assign(new Event('beforetoggle'), { oldState: wasOpen ? 'open' : 'closed', newState: visible ? 'open' : 'closed' }))
     if (visible) open.add(element)
     else open.delete(element)
     element.dispatchEvent(Object.assign(new Event('toggle'), { oldState: wasOpen ? 'open' : 'closed', newState: visible ? 'open' : 'closed' }))
@@ -17,7 +18,16 @@ export function mockNativePopover() {
     hidePopover: { configurable: true, value: function (this: HTMLElement) { toggle(this, false) } },
     scrollIntoView: { configurable: true, value: () => {} },
   })
+  const invoke = (event: MouseEvent) => {
+    if (event.defaultPrevented || !(event.target instanceof Element)) return
+    const trigger = event.target.closest<HTMLButtonElement>('button[popovertarget]')
+    if (!trigger || trigger.disabled) return
+    const target = document.getElementById(trigger.getAttribute('popovertarget') ?? '')
+    if (target) toggle(target, !open.has(target))
+  }
+  document.addEventListener('click', invoke)
   return () => {
+    document.removeEventListener('click', invoke)
     for (const [name, descriptor] of originals) {
       if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
       else Reflect.deleteProperty(HTMLElement.prototype, name)

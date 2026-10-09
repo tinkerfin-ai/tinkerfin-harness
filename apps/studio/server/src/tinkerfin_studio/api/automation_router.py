@@ -70,14 +70,6 @@ async def list_tasks(
     )
 
 
-@router.get("/tasks/counts", response_model=ApiResponse[dict[TaskStatus, int]])
-async def task_counts(
-    service: Service, query: Search = None
-) -> ApiResponse[dict[TaskStatus, int]]:
-    """返回名称筛选下的启用和暂停任务数量"""
-    return ApiResponse.success(await service.task_counts(query=query))
-
-
 @router.post("/tasks", response_model=ApiResponse[TaskView])
 async def create_task(command: SaveTask, service: Service) -> ApiResponse[TaskView]:
     """保存任务并提交未来调度，重复请求不会创建第二个任务"""
@@ -147,21 +139,6 @@ async def list_runs(
             status=status,
             cursor=cursor,
             limit=limit,
-        )
-    )
-
-
-@router.get("/runs/counts", response_model=ApiResponse[dict[ExecutionStatus, int]])
-async def run_counts(
-    service: Service,
-    queued_from: Annotated[datetime, Query(alias="from")],
-    queued_until: Annotated[datetime, Query(alias="until")],
-    query: Search = None,
-) -> ApiResponse[dict[ExecutionStatus, int]]:
-    """汇总当前日期范围和名称下全部执行状态"""
-    return ApiResponse.success(
-        await service.run_counts(
-            queued_from=queued_from, queued_until=queued_until, query=query
         )
     )
 

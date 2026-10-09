@@ -1,18 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { fetchCounts, fetchRunPage, fetchTaskPage, type Page } from './api'
+import { fetchRunPage, fetchTaskPage, type Page } from './api'
 import { watchResource } from '../../api/shared/watchResource'
 import { dateBoundary, shiftDate, type AutomationRun, type AutomationTask } from './model'
 
 interface Snapshot {
   tasks: AutomationTask[]
   runs: AutomationRun[]
-  counts: Record<string, number>
   cursors: Record<string, string | null>
   loading: boolean
   error: boolean
 }
-const initial: Snapshot = { tasks: [], runs: [], counts: {}, cursors: {}, loading: true, error: false }
+const initial: Snapshot = { tasks: [], runs: [], cursors: {}, loading: true, error: false }
 
 /** 按当前视图读取服务端分页；刷新已加载页，隐藏或离开页面时取消请求 */
 export function useAutomation({ projectId, page, query, status, dates, view, onLoadError }: {
@@ -62,12 +61,11 @@ export function useAutomation({ projectId, page, query, status, dates, view, onL
         const base = { projectId, query: query.trim() || undefined, from: dateBoundary(days[0]), until: dateBoundary(shiftDate(days[6], 1)) }
         const taskRead = page === 'tasks' ? readPages(cursor => fetchTaskPage({ projectId, query: base.query, status: selectedStatus, cursor }, signal), counts.tasks ?? 1) : Promise.resolve({ items: [], nextCursor: null })
         const runKeys = page === 'history' ? view === 'week' ? days : [days[0]] : []
-        const [tasks, runs, totals] = await Promise.all([
+        const [tasks, runs] = await Promise.all([
           taskRead,
           Promise.all(runKeys.map(async day => ({ day, ...await readPages(cursor => fetchRunPage({ ...base, from: dateBoundary(day), until: view === 'week' ? dateBoundary(shiftDate(day, 1)) : base.until, status: selectedStatus, cursor }, signal), counts[day] ?? 1) }))),
-          fetchCounts(page === 'tasks' ? 'tasks' : 'runs', page === 'tasks' ? { projectId, query: base.query } : base, signal),
         ])
-        return { tasks: tasks.items, runs: runs.flatMap(group => group.items), counts: totals,
+        return { tasks: tasks.items, runs: runs.flatMap(group => group.items),
           cursors: Object.fromEntries([['tasks', tasks.nextCursor], ...runs.map(group => [group.day, group.nextCursor])]), loading: false, error: false }
       },
       update: value => { setSnapshot(value); first = false },

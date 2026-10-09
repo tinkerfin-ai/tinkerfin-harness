@@ -1,10 +1,21 @@
 import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { createAutomationFixture, runFixture, taskFixture } from '../../src/test/automationFixtures'
 import type { AutomationDraft } from '../../src/features/automation/model'
 
 const user = { user_id: 1, username: 'automation-preview', display_name: '自动化预览', avatar_url: null, roles: [], disabled: false }
+
+const menuAppearance = (menu: Locator) => Promise.all([
+  menu.evaluate(element => {
+    const style = getComputedStyle(element)
+    return [style.backgroundColor, style.borderRadius, style.boxShadow, style.padding]
+  }),
+  menu.getByRole('option').first().evaluate(element => {
+    const style = getComputedStyle(element)
+    return [style.fontSize, style.lineHeight, style.minHeight, style.padding, style.borderRadius, style.backgroundColor, style.color]
+  }),
+])
 
 async function prepare(page: Page, language = 'zh-CN') {
   const requests: string[] = []
@@ -31,7 +42,6 @@ async function prepare(page: Page, language = 'zh-CN') {
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
     else if (path === '/api/skills/installations') data = []
     else if (path === '/api/conversation/history') data = { items: [], nextCursor: null }
-    else if (path === '/api/automation/tasks/counts') data = { enabled: matchingTasks.filter(task => task.enabled).length, paused: matchingTasks.filter(task => !task.enabled).length }
     else if (path === '/api/automation/tasks' && method === 'GET') data = { items: matchingTasks.filter(task => !status || task.enabled === (status === 'enabled')), nextCursor: null }
     else if (path === '/api/automation/tasks' && method === 'POST') {
       const command: { requestId: string; configuration: AutomationDraft } = route.request().postDataJSON()
@@ -63,9 +73,6 @@ async function prepare(page: Page, language = 'zh-CN') {
       const command: { configuration: AutomationDraft } = route.request().postDataJSON()
       const task = state.tasks.find(task => task.id === path.split('/').at(-1))!
       Object.assign(task, command.configuration, { revision: task.revision + 1 }); data = task
-    } else if (path === '/api/automation/runs/counts') {
-      const counts: Record<string, number> = {}
-      matchingRuns.forEach(run => { counts[run.status] = (counts[run.status] ?? 0) + 1 }); data = counts
     } else if (path === '/api/automation/runs') data = { items: matchingRuns.filter(run => !status || run.status === status), nextCursor: null }
     else if (path.startsWith('/api/automation/runs/')) {
       const run = state.runs.find(run => run.id === path.split('/').at(-1))!
@@ -492,47 +499,118 @@ test('任务行图标、说明和留白均可编辑，执行与开关不触发�
   await expect(dialog).toHaveCount(0)
 })
 
-test('紧凑搜索和状态菜单按查询与当前周计数，关闭恢复搜索入口', async ({ page }) => {
+for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440]) {
+  test(`展开搜索保持适中字号和紧凑间距，关闭后恢复入口 ${theme} ${width}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await prepare(page)
+    const archiveIcon = (await page.getByRole('button', { name: '已归档会话', exact: true }).locator('svg').boundingBox())!
+    const sidebarSearchIcon = (await page.getByRole('button', { name: '搜索会话', exact: true }).locator('svg').boundingBox())!
+    const referenceGap = sidebarSearchIcon.x - archiveIcon.x - archiveIcon.width
+    await page.setViewportSize({ width, height: 900 })
+    await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
+    const trigger = page.getByRole('button', { name: '搜索任务或运行历史', exact: true })
+    const before = (await trigger.locator('svg').boundingBox())!
+    const filterIcon = page.getByRole('button', { name: '筛选状态', exact: true }).locator('svg')
+    const closedFilter = (await filterIcon.boundingBox())!
+    expect(closedFilter.x - before.x - before.width).toBeCloseTo(referenceGap, 4)
+    expect(closedFilter.width).toBe(sidebarSearchIcon.width)
+    const create = page.getByRole('button', { name: '新建自动化', exact: true })
+    const createBox = (await create.boundingBox())!
+    expect(createBox.x - closedFilter.x - closedFilter.width).toBeCloseTo(referenceGap, 4)
+    await trigger.click()
+    const input = page.getByRole('searchbox', { name: '搜索任务或运行历史', exact: true })
+    await expect(input).toBeFocused()
+    const icon = page.locator('label').filter({ has: input }).locator(':scope > svg')
+    await expect(icon).toHaveCount(0)
+    const inputBox = (await input.boundingBox())!
+    const closeBox = (await page.getByRole('button', { name: '关闭搜索', exact: true }).boundingBox())!
+    const closeIcon = (await page.getByRole('button', { name: '关闭搜索', exact: true }).locator('svg').boundingBox())!
+    const openFilter = (await filterIcon.boundingBox())!
+    await expect(input).toHaveCSS('font-size', '13px')
+    expect(inputBox.width).toBeGreaterThan(0)
+    expect(inputBox.x + inputBox.width).toBeLessThanOrEqual(closeBox.x)
+    expect(closeBox.x - inputBox.x - inputBox.width).toBeLessThanOrEqual(4)
+    expect(openFilter.x - closeIcon.x - closeIcon.width).toBeCloseTo(referenceGap, 4)
+    expect(createBox.x - openFilter.x - openFilter.width).toBeCloseTo(referenceGap, 4)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0)
+
+    await page.screenshot({ path: testInfo.outputPath(`automation-search-${theme}-${width}.png`) })
+    await input.press('Escape')
+    await expect(trigger).toBeFocused()
+    const collapsed = (await trigger.locator('svg').boundingBox())!
+    expect({ width: collapsed.width, height: collapsed.height }).toEqual({ width: before.width, height: before.height })
+    const filter = page.getByRole('button', { name: '筛选状态', exact: true })
+    await expect(filter).toBeVisible()
+    await filter.click()
+    const menu = page.getByRole('listbox', { name: '筛选状态', exact: true })
+    await page.mouse.move(0, 0)
+    const filterAppearance = await menuAppearance(menu)
+    const menuBox = (await menu.boundingBox())!
+    expect(menuBox.x).toBeGreaterThanOrEqual(0)
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(width)
+    await menu.press('End')
+    const last = menu.getByRole('option', { name: '结果待确认', exact: true })
+    await expect(menu).toHaveAttribute('aria-activedescendant', (await last.getAttribute('id'))!)
+    await expect(last).toBeInViewport()
+    await menu.press('Home')
+    await page.screenshot({ path: testInfo.outputPath(`filter-${theme}-${width}.png`) })
+    await menu.press('Escape')
+    await expect(filter).toBeFocused()
+    await create.click()
+    await page.getByRole('dialog', { name: '新建自动化', exact: true }).getByRole('button', { name: '选择模型', exact: true }).click()
+    await page.mouse.move(0, 0)
+    expect(filterAppearance).toEqual(await menuAppearance(page.getByRole('listbox', { name: '模型选项', exact: true })))
+  })
+}
+
+test('状态筛选独立于搜索，关闭搜索保留筛选且切换视图重置状态', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
-  await prepare(page)
+  const requests = await prepare(page)
   await page.getByRole('tab', { name: '任务', exact: true }).click()
   const searchTrigger = page.getByRole('button', { name: '搜索任务或运行历史', exact: true })
-  await searchTrigger.click()
   const search = page.getByRole('searchbox', { name: '搜索任务或运行历史', exact: true })
-  await expect(search).toBeFocused()
   const filter = page.getByRole('button', { name: '筛选状态', exact: true })
+  await expect(search).toHaveCount(0)
+  const searchBox = (await searchTrigger.boundingBox())!
+  const filterBox = (await filter.boundingBox())!
+  expect(filterBox.x).toBeGreaterThanOrEqual(searchBox.x + searchBox.width)
   await filter.click()
-  await expect(page.getByRole('option', { name: /全部状态/ })).toContainText('5')
-  await expect(page.getByRole('option', { name: /已暂停/ })).toContainText('1')
-  await page.getByRole('option', { name: /已暂停/ }).click()
+  const menu = page.getByRole('listbox', { name: '筛选状态', exact: true })
+  await expect(menu.getByRole('option')).toHaveText(['全部状态', '已启用', '已暂停'])
+  await menu.getByRole('option', { name: '已暂停', exact: true }).click()
+  await expect(filter).toBeFocused()
   await expect(page.getByRole('button', { name: '每日 AI 新闻简报', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '竞品产品动态追踪', exact: true })).toBeVisible()
-  await search.fill('竞品')
-  await filter.click()
-  await expect(page.getByRole('option', { name: /全部状态/ })).toContainText('1')
-  await page.keyboard.press('Home')
-  await page.keyboard.press('Enter')
-  await expect(filter).toBeFocused()
-  await search.focus()
-  await page.keyboard.press('Escape')
+  await searchTrigger.click()
+  await expect(search).toBeFocused()
+  await search.fill('不存在')
+  await expect(page.getByRole('button', { name: '竞品产品动态追踪', exact: true })).toHaveCount(0)
+  await search.press('Escape')
   await expect(searchTrigger).toBeFocused()
   await expect(search).toHaveCount(0)
+  await expect(filter).toBeVisible()
+  await expect(page.getByRole('button', { name: '竞品产品动态追踪', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '每日 AI 新闻简报', exact: true })).toHaveCount(0)
+  await filter.click()
+  await expect(menu.getByRole('option', { selected: true })).toHaveText('已暂停')
+  await menu.press('Home')
+  await menu.press('Enter')
+  await expect(filter).toBeFocused()
   await expect(page.getByRole('button', { name: '每日 AI 新闻简报', exact: true })).toBeVisible()
   await page.getByRole('tab', { name: '历史', exact: true }).click()
-  await page.getByRole('button', { name: '上一周', exact: true }).click()
-  await searchTrigger.click()
   await filter.click()
-  await expect(page.getByRole('option', { name: /全部状态/ })).toContainText('1')
-  await expect(page.getByRole('option', { name: /运行失败/ })).toContainText('0')
-  await page.keyboard.press('Escape')
-  for (const width of [320, 768, 1024, 1440]) {
-    await page.setViewportSize({ width, height: 900 })
-    await expect(search).toBeVisible()
-    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0)
-    await expect(page.locator('.automation-search-field')).toHaveCSS('border-top-width', '0px')
-    const box = await search.boundingBox()
-    expect(box!.width).toBeGreaterThan(0)
-  }
+  await expect(menu.getByRole('option', { selected: true })).toHaveText('全部状态')
+  await expect(menu.getByRole('option')).toHaveText(['全部状态', '排队中', '运行中', '等待人工处理', '正在取消', '运行完成', '运行失败', '运行超时', '已取消', '结果待确认'])
+  await menu.getByRole('option', { name: '运行失败', exact: true }).click()
+  await searchTrigger.click()
+  await page.getByRole('button', { name: '关闭搜索', exact: true }).click()
+  await filter.click()
+  await expect(menu.getByRole('option', { selected: true })).toHaveText('运行失败')
+  await menu.press('Escape')
+  await page.getByRole('tab', { name: '任务', exact: true }).click()
+  await filter.click()
+  await expect(menu.getByRole('option', { selected: true })).toHaveText('全部状态')
+  expect(requests.filter(request => /\/automation\/(tasks|runs)\/counts/.test(request))).toEqual([])
 })
 
 test('会话与自动化默认完全访问，权限选择沿用模型样式', async ({ page }, testInfo) => {

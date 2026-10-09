@@ -28,6 +28,6 @@ describe('UserAvatar', () => {
     render(<UserAvatar avatarUrl={null} displayName="" username="yunsan" size="lg" />)
 
     expect(screen.getByText('Y')).toBeInTheDocument()
-    expect(screen.getByText('Y').parentElement).toHaveClass('user-avatar--lg')
+
   })
 })

@@ -5,18 +5,23 @@ import { expect, it, vi } from 'vitest'
 
 import { SearchField } from './SearchField'
 
-it('保留输入、外部焦点与 Escape 关闭语义', async () => {
+it.each([true, false])('图标展示状态 %s 保留输入、外部焦点与 Escape 关闭语义', async showIcon => {
   const close = vi.fn()
   const ref = createRef<HTMLInputElement>()
   function Example() {
     const [value, setValue] = useState('')
-    return <SearchField ref={ref} value={value} onChange={setValue} onClose={close}
+    return <SearchField ref={ref} showIcon={showIcon} value={value} onChange={setValue} onClose={close}
       label="搜索记录" closeLabel="关闭搜索" placeholder="输入关键词" />
   }
   render(<Example />)
   const user = userEvent.setup()
   const input = screen.getByRole('searchbox', { name: '搜索记录' })
   expect(ref.current).toBe(input)
+  const fieldLabel = ref.current!.labels![0]
+  expect(fieldLabel.control).toBe(input)
+  expect(fieldLabel.contains(screen.getByRole('button', { name: '关闭搜索' }))).toBe(false)
+  await user.click(fieldLabel)
+  expect(input).toHaveFocus()
   await user.type(input, '新闻')
   expect(input).toHaveValue('新闻')
   await user.keyboard('{Escape}')

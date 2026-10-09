@@ -12,6 +12,7 @@ import {
 import {
   forwardRef,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -69,6 +70,7 @@ const clampTime = (
 const PlanDateTimeControl = forwardRef<HTMLButtonElement, {
   value: string | undefined
   prompt: string
+  descriptionId: string
   minimum?: string
   maximum?: string
   disabled: boolean
@@ -76,6 +78,7 @@ const PlanDateTimeControl = forwardRef<HTMLButtonElement, {
 }>(function PlanDateTimeControl({
   value,
   prompt,
+  descriptionId,
   minimum,
   maximum,
   disabled,
@@ -99,6 +102,7 @@ const PlanDateTimeControl = forwardRef<HTMLButtonElement, {
         max={maximumParts?.date}
         disabled={disabled}
         label={t('日期回答：{question}', { question: prompt })}
+        aria-describedby={descriptionId}
         onChange={(date) => {
           const nextBounds = timeBoundsForDate(date, minimum, maximum)
           const nextTime = clampTime(
@@ -113,6 +117,7 @@ const PlanDateTimeControl = forwardRef<HTMLButtonElement, {
         controlSize="xs"
         value={parts?.time ?? ''}
         label={t('时间回答：{question}', { question: prompt })}
+        aria-describedby={descriptionId}
         min={bounds.minimum}
         max={bounds.maximum}
         disabled={disabled || !parts}
@@ -245,6 +250,7 @@ export function PlanQuestionComposer({
   onClose: () => void
 }) {
   const { t } = useI18n()
+  const timeZoneId = useId()
   const [minimized, setMinimized] = useState(() => readPlanQuestionCollapsed(threadId))
   const [focusedAnswerIndex, setFocusedAnswerIndex] = useState(0)
   const [readOnlyQuestionIndex, setReadOnlyQuestionIndex] = useState(interaction.activeQuestionIndex)
@@ -731,6 +737,7 @@ export function PlanQuestionComposer({
                 <span className="plan-question-date-copy">
                   <span className="plan-question-time-copy">
                     <span className="plan-question-date-label">{t('选择时间')}</span>
+                    <small id={timeZoneId} className="plan-question-time-zone">{t('时区：{timeZone}', { timeZone: question.timeZone })}</small>
                     {(question.minimum || question.maximum) && (
                       <small>{t('允许范围：{minimum}–{maximum}', {
                         minimum: question.minimum ?? '00:00',
@@ -744,6 +751,7 @@ export function PlanQuestionComposer({
                     value={question.time ?? ''}
                     disabled={interaction.submitted}
                     label={t('时间回答：{question}', { question: question.prompt })}
+                    aria-describedby={timeZoneId}
                     min={question.minimum ?? undefined}
                     max={question.maximum ?? undefined}
                     onChange={(value) => {
@@ -763,12 +771,14 @@ export function PlanQuestionComposer({
                 <span className="plan-question-date-copy">
                   <span className="plan-question-time-copy">
                     <span className="plan-question-date-label">{t('选择日期和时间')}</span>
+                    <small id={timeZoneId} className="plan-question-time-zone">{t('时区：{timeZone}', { timeZone: question.timeZone })}</small>
                   </span>
                   <PlanDateTimeControl
                     ref={dateTimeAnswerRef}
                     value={question.dateTime}
                     disabled={interaction.submitted}
                     prompt={question.prompt}
+                    descriptionId={timeZoneId}
                     minimum={question.minimum ?? undefined}
                     maximum={question.maximum ?? undefined}
                     onChange={(value) => {

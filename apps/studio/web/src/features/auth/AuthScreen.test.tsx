@@ -30,6 +30,8 @@ describe('登录页', () => {
     expect(screen.getByLabelText('用户名')).toHaveAttribute('aria-invalid', 'true')
     expect(screen.getByLabelText('密码')).toHaveAttribute('aria-invalid', 'true')
     expect(screen.getByLabelText('用户名')).toHaveAccessibleDescription('请输入用户名')
+    expect(screen.getByText('请输入用户名')).toHaveAttribute('role', 'alert')
+    expect(screen.getByText('请输入密码')).toHaveAttribute('role', 'alert')
     expect(screen.getByLabelText('用户名')).toHaveFocus()
     await user.type(screen.getByLabelText('用户名'), 'tinkerfin')
     expect(screen.getByLabelText('用户名')).toHaveAttribute('aria-invalid', 'false')

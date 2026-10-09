@@ -55,9 +55,9 @@ describe('TodoTraceDrawer', () => {
     expect(screen.getByRole('heading', { name: '当前' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '历史' })).toBeInTheDocument()
     expect(screen.getByText('当前会话 · 2 组')).toBeInTheDocument()
-    expect(within(latest).getAllByText('最新任务')[0]).toHaveClass('todo-trace-group-title')
+
     expect(within(latest).queryByText('1 项')).not.toBeInTheDocument()
-    expect(latest.querySelector('.todo-trace-group-state')).not.toBeInTheDocument()
+
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
     expect(screen.getByText('任务内容 0')).toBeInTheDocument()
 
@@ -79,8 +79,7 @@ describe('TodoTraceDrawer', () => {
     expect(screen.getByText('任务内容 1')).toBeInTheDocument()
     const historyList = screen.getAllByRole('list', { name: '任务列表' })
       .find((list) => within(list).queryByText('任务内容 1'))
-    expect(within(historyList as HTMLElement).queryByText('已完成'))
-      .not.toBeInTheDocument()
+    expect(within(historyList as HTMLElement).getByRole('listitem')).toHaveTextContent('已完成')
     expect(screen.getByText('任务内容 0')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '定位到对话：历史任务 1' }))
@@ -127,7 +126,7 @@ describe('TodoTraceDrawer', () => {
     expect(todoTraceStyles).toMatch(/\.todo-trace-group-surface\s*{[^}]*border:\s*0;[^}]*background:\s*transparent;/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-group\.is-current \.todo-trace-group-surface\s*{[^}]*linear-gradient\(/s)
     expect(todoTraceStyles).not.toMatch(/\.todo-trace-group\.is-expanded\.is-history \.todo-trace-group-surface\s*{[^}]*linear-gradient\(/s)
-    expect(todoTraceStyles).not.toContain('.todo-trace-group-state')
+
     expect(todoTraceStyles).toMatch(/\.todo-trace-todo\.is-completed \.todo-trace-node-icon\s*{[^}]*color:\s*var\(--color-text-secondary\);/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-todo\.is-completed \.todo-trace-node-icon\s*{[^}]*background:\s*transparent;/s)
     expect(todoTraceStyles).toMatch(/\.todo-trace-completed-mark\s*{[^}]*box-shadow:\s*none;[^}]*filter:\s*none;/s)

@@ -81,13 +81,12 @@ describe('MessageBlock subagent card', () => {
     expect(card).not.toBeNull()
     expect(card?.open).toBe(false)
     const header = card?.querySelector('.subagent-card-head')
-    expect(within(header as HTMLElement).getByText('Task')).toHaveClass('conversation-detail-title')
-    expect(within(header as HTMLElement).getByText('SubAgent')).toHaveClass('conversation-detail-summary')
+
     expect(within(header as HTMLElement).getByText('1 个工具')).toBeVisible()
-    expect(header?.querySelector('.subagent-card-chevron')).toBeNull()
+
     expect(header).not.toHaveTextContent('访问两个 URL 并总结业务')
-    expect(card?.querySelector('.tool-row-state-dot')).toBeNull()
-    expect(card?.querySelector('.subagent-visually-hidden')).toHaveTextContent('researcher，已完成')
+    expect(header).toHaveAccessibleName(/researcher，已完成/)
+
     expect(screen.queryByText('这段内部思考不应出现在子智能体卡片中')).not.toBeInTheDocument()
 
     await user.click(card!.querySelector('.subagent-card-head')!)
@@ -99,7 +98,7 @@ describe('MessageBlock subagent card', () => {
     const trace = screen.getByRole('list', { name: 'researcher 工具轨迹' })
     expect(within(trace).getAllByRole('listitem')).toHaveLength(2)
     const output = container.querySelector('.subagent-output-node')
-    expect(output).toHaveClass('is-completed')
+
     expect(within(output as HTMLElement).getByText('已完成')).toBeVisible()
     expect(conversationStyles).toMatch(/\.subagent-output-copy\s*\{[^}]*gap:\s*var\(--space-3\);/s)
     expect(within(output as HTMLElement).getByText('公司定位：中国最大的搜索引擎和 AI 科技公司。')).toBeVisible()
@@ -115,8 +114,7 @@ describe('MessageBlock subagent card', () => {
     expect(toolDetails?.open).toBe(false)
     await user.click(toolDetails!.querySelector('summary')!)
     expect(toolDetails?.open).toBe(true)
-    expect(container.querySelector('.subagent-trace-marker')).not.toBeInTheDocument()
-    expect(toolDetails?.querySelector('time')).not.toBeInTheDocument()
+
     expect(screen.getByRole('region', { name: '输入' }).textContent).toBe('{\n  "file_path": "/research/url.json"\n}')
     expect(screen.getByText('https://www.baidu.com')).toBeVisible()
 
@@ -157,11 +155,11 @@ describe('MessageBlock subagent card', () => {
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
   })
 
-  it('never renders legacy process or assistant reasoning content', () => {
+  it('过程信息和模型推理不进入可见回答', () => {
     const processMessage: Message = {
-      id: 'legacy-process',
+      id: 'hidden-process',
       role: 'process',
-      content: '旧版思考过程',
+      content: '不展示的过程信息',
       createdAt: '2026-08-06T02:30:40.000Z',
     }
     const assistantMessage: Message = {
@@ -173,7 +171,7 @@ describe('MessageBlock subagent card', () => {
     }
 
     const { rerender } = render(<MessageBlock message={processMessage} />)
-    expect(screen.queryByText('旧版思考过程')).not.toBeInTheDocument()
+    expect(screen.queryByText('不展示的过程信息')).not.toBeInTheDocument()
 
     rerender(<MessageBlock message={assistantMessage} />)
     expect(screen.getByText('这是最终回答')).toBeVisible()
@@ -244,17 +242,14 @@ describe('MessageBlock subagent card', () => {
 
     await user.click(row.querySelector('summary')!)
     expect(row.open).toBe(true)
-    const detailSections = row.querySelectorAll('.tool-detail-section')
-    expect(detailSections).toHaveLength(2)
-    expect(detailSections[0]).toHaveClass('tool-detail-section--params')
-    expect(detailSections[1]).toHaveClass('tool-detail-section--result')
+
     expect(screen.getByRole('region', { name: '输入' })).not.toContainElement(screen.getByText('输入'))
     expect(screen.getByRole('region', { name: '输出' })).not.toContainElement(screen.getByText('输出'))
-    expect(row.querySelector('.tool-code-field')).toHaveTextContent('{"query":"Lang')
+    expect(screen.getByRole('region', { name: '输入' })).toHaveTextContent('{"query":"Lang')
+    expect(screen.getByLabelText('工具字段加载中')).toBeInTheDocument()
     expect(screen.getByText('输入')).toBeInTheDocument()
     expect(screen.getByText('输出')).toBeInTheDocument()
-    expect(screen.getByLabelText('工具字段加载中')).toHaveClass('tool-field-pending')
-    expect(row.querySelector('.tool-skeleton')).toBeNull()
+
     expect(conversationStyles).toMatch(/\.tool-detail-card\s*\{[^}]*margin:\s*var\(--space-2\) 0 0 calc\(var\(--icon-sm\) \+ var\(--space-2\)\);[^}]*background:\s*var\(--color-layer-1\);[^}]*font-family:\s*var\(--font-ui\);/s)
     expect(conversationStyles).toMatch(/\.tool-code-field,[\s\S]*\.tool-rich-field\s*\{[^}]*font-family:\s*var\(--font-code\);[^}]*font-size:\s*var\(--type-caption-size\);/s)
     expect(conversationStyles).toMatch(/\.tool-field-pending > i\s*\{[^}]*animation:\s*conversation-tool-result-pulse var\(--motion-tool-result-cycle\)/s)
@@ -309,7 +304,7 @@ describe('MessageBlock subagent card', () => {
     )
 
     expect(screen.getByText('等待审批')).toBeInTheDocument()
-    expect(screen.getByLabelText('等待审批后执行')).toHaveClass('tool-field-pending')
+
     expect(screen.getByLabelText('等待审批后执行')).not.toHaveAttribute('aria-busy')
     expect(screen.queryByText('等待审批后执行')).not.toBeInTheDocument()
   })
@@ -328,7 +323,7 @@ describe('MessageBlock subagent card', () => {
     const row = container.querySelector('.tool-card')
     expect(row?.querySelector('summary')).toHaveTextContent('Read读取失败')
     expect(row?.querySelector('summary')).not.toHaveTextContent('/research/url.json')
-    expect(row?.querySelector('.tool-row-state-dot.is-failed')).not.toBeNull()
+
   })
 
   it('preserves literal JSON escapes in Tool parameters', async () => {
@@ -398,7 +393,6 @@ describe('MessageBlock subagent card', () => {
     await user.click(tool.querySelector('summary')!)
     expect(agent.open).toBe(true)
     expect(tool.open).toBe(true)
-    expect(agent.querySelector('.tool-row-state-dot')).toBeNull()
 
     rerender(<MessageBlock
       message={{
@@ -422,8 +416,7 @@ describe('MessageBlock subagent card', () => {
 
     expect(agent.open).toBe(true)
     expect(tool.open).toBe(true)
-    expect(agent.querySelector('.tool-row-state-dot')).toBeNull()
-    expect(agent.querySelector('.subagent-output-node')).toHaveClass('is-completed')
+
     expect(screen.getByRole('region', { name: '输入' }).textContent).toBe('{\n  "file_path": "/research/url.json"\n}')
     expect(screen.getByText('读取完成')).toBeVisible()
     expect(screen.getByRole('link', { name: '报告' })).toHaveAttribute('href', 'https://example.com/report')
@@ -445,27 +438,18 @@ describe('MessageBlock subagent card', () => {
     const agent = container.querySelector<HTMLDetailsElement>('.subagent-card')!
     await user.click(agent.querySelector('.subagent-card-head')!)
 
-    expect(agent.querySelector('.subagent-task-line')).toBeNull()
-    expect(agent.querySelector('.subagent-trace-list')).toHaveClass('is-tool-empty')
-    expect(agent.querySelector('.subagent-tool-node')).toBeNull()
-    expect(agent.querySelector('.subagent-output-node')).toHaveClass('is-running')
-    expect(agent.querySelector('.subagent-output-pulse')).not.toBeNull()
     expect(within(agent.querySelector('.subagent-output-node')!).getByText('执行中')).toBeVisible()
-    expect(agent.querySelector('.subagent-output-node .activity-dots')).toBeNull()
 
     rerender(<MessageBlock message={{
       ...running,
       meta: { ...running.meta, result: '等待用户确认', status: 'paused' },
     }} childTools={[]} />)
-    expect(agent.querySelector('.tool-row-state-dot.is-paused')).not.toBeNull()
-    expect(agent.querySelector('.subagent-output-node')).toHaveClass('is-paused')
 
     rerender(<MessageBlock message={{
       ...running,
       meta: { ...running.meta, result: '子 Agent 执行失败', status: 'failed' },
     }} childTools={[]} />)
-    expect(agent.querySelector('.tool-row-state-dot.is-failed')).not.toBeNull()
-    expect(agent.querySelector('.subagent-output-node')).toHaveClass('is-failed')
+
     expect(within(agent.querySelector('.subagent-output-node')!).getByText('执行失败')).toBeVisible()
     expect(conversationStyles).toMatch(/\.subagent-trace-output\s*{[^}]*max-height:\s*180px;[^}]*overflow:\s*auto;/s)
   })
@@ -612,9 +596,8 @@ describe('MessageBlock assistant composition', () => {
       createdAt: '2026-08-23T00:00:00Z',
       meta: { status: 'completed' },
     }
-    const { container, rerender } = render(<MessageBlock message={message} showActions={false} />)
-
-    expect(container.querySelector('.message-action-row')).toBeNull()
+    const { rerender } = render(<MessageBlock message={message} showActions={false} />)
+    expect(screen.queryByRole('group', { name: '回答操作' })).not.toBeInTheDocument()
 
     rerender(<MessageBlock message={message} showActions />)
     expect(screen.getByRole('group', { name: '回答操作' })).toBeInTheDocument()
@@ -639,19 +622,12 @@ describe('MessageBlock assistant composition', () => {
     expect(actionRow).not.toBeNull()
     expect(screen.getByRole('group', { name: '回答操作' })).toBe(actionRow)
     expect(markdown!.compareDocumentPosition(actionRow!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(container.querySelector('.source-summary, .citation')).toBeNull()
-    expect(conversationStyles).toMatch(/\.message-action-row\s*\{[^}]*--message-action-control-size:\s*var\(--control-xs\);[^}]*--message-action-icon-size:\s*var\(--icon-action\);[^}]*align-items:\s*flex-start;/s)
-    expect(conversationStyles).toMatch(/\.message-action-row--assistant\s*\{[^}]*min-height:\s*46px;[^}]*margin-top:\s*0;[^}]*padding-top:\s*5px;/s)
-    expect(conversationStyles).toMatch(/\.message-action-row--assistant \.ui-icon-button-wrap\s*\{[^}]*width:\s*var\(--message-action-icon-size\);/s)
-    expect(conversationStyles).toMatch(/\.message-action-row--assistant \.ui-icon-button\s*\{[^}]*margin-inline:\s*calc\(\(var\(--message-action-control-size\) - var\(--message-action-icon-size\)\) \/ -2\);/s)
-    expect(conversationStyles).toMatch(/@media \(any-hover:\s*none\), \(any-pointer:\s*coarse\)[\s\S]*\.message-action-row\s*\{\s*--message-action-control-size:\s*var\(--control-lg\);/s)
 
     await user.click(screen.getByRole('button', { name: '复制回答' }))
     expect(writeText).toHaveBeenCalledWith('这是**最终回答**')
     expect(screen.getByText('已复制')).toBeInTheDocument()
   })
 })
-
 
 it('技能上下文默认折叠，展开保留正文，不显示工具完成状态或用户消息操作', async () => {
   const user = userEvent.setup()

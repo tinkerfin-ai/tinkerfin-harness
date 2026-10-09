@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { LocaleProvider } from '../../../i18n'
 import { ConversationWidthHandles } from './ConversationWidthHandles'
@@ -49,14 +50,38 @@ it('两侧鼠标对称调宽，取消或无移动不覆盖保存值', () => {
   pointer(right, 'pointerdown', 100)
   pointer(right, 'pointerup', 100)
   expect(localStorage.getItem(CONVERSATION_WIDTH_KEY)).toBe('970')
-  expect(left.tabIndex).toBe(-1)
-  expect(right.tabIndex).toBe(-1)
-  fireEvent.keyDown(left, { key: 'ArrowLeft' })
-  expect(localStorage.getItem(CONVERSATION_WIDTH_KEY)).toBe('970')
   pointer(right, 'pointerdown', 100)
   pointer(right, 'pointerup', -900)
   expect(localStorage.getItem(CONVERSATION_WIDTH_KEY)).toBe('640')
   pointer(right, 'pointerdown', 100)
   pointer(right, 'pointerup', 1100)
   expect(localStorage.getItem(CONVERSATION_WIDTH_KEY)).toBe('1440')
+})
+
+it('键盘两侧方向与指针一致，范围、即时显示及保存值同步', async () => {
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1600)
+  render(<LocaleProvider><Consumer /></LocaleProvider>)
+  const right = screen.getByRole('separator', { name: '调整会话右侧宽度' })
+  const left = screen.getByRole('separator', { name: '调整会话左侧宽度' })
+  expect(left.tabIndex).toBe(0)
+  expect(right.tabIndex).toBe(0)
+  expect(left).toHaveAttribute('aria-valuemin', '640')
+  expect(left).toHaveAttribute('aria-valuemax', '1440')
+  const user = userEvent.setup()
+  await user.tab()
+  expect(left).toHaveFocus()
+  await user.keyboard('{ArrowLeft}')
+  expect(left).toHaveAttribute('aria-valuenow', '952')
+  expect(localStorage.getItem(CONVERSATION_WIDTH_KEY)).toBe('952')
+  await user.tab()
+  expect(right).toHaveFocus()
+  await user.keyboard('{ArrowLeft}')
+  expect(right).toHaveAttribute('aria-valuenow', '920')
+  fireEvent.keyDown(left, { key: 'Home' })
+  fireEvent.keyDown(left, { key: 'ArrowRight' })
+  expect(left).toHaveAttribute('aria-valuenow', '640')
+  fireEvent.keyDown(right, { key: 'End' })
+  fireEvent.keyDown(right, { key: 'ArrowRight' })
+  expect(right).toHaveAttribute('aria-valuenow', '1440')
+  expect(screen.getByRole('status', { name: '会话宽度' })).toHaveTextContent('1440')
 })

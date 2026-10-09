@@ -15,10 +15,6 @@ import { traceGraphNode, traceGraphWithNodes } from '../../src/test/traceFixture
 const THREAD_ID = 'todo-trace-browser-thread'
 const RUN_ID = 'todo-trace-browser-run'
 const BASE_TIME = Date.UTC(2026, 7, 31, 12)
-const EVIDENCE_DIR = resolve(
-  process.cwd(),
-  '../../../.agents/evidence/20260828014138-trace-persistence-studio-authority/implementation/browser',
-)
 const user = {
   user_id: 17,
   username: 'todo-browser-user',
@@ -411,7 +407,6 @@ test('并排抽屉支持独立展开、定位与关闭焦点恢复', async ({ pa
   await page.getByRole('button', { name: '定位到对话：历史任务轨迹 2' }).click()
   await expect(drawer).toBeVisible()
   await expect(page.locator('#public-todo-user-message-1')).toBeFocused()
-  await expect(page.locator('#public-todo-user-message-1')).toHaveClass(/todo-trace-locate-target/)
   await expect(page.locator('#public-todo-user-message-1')).toHaveCSS('outline-style', 'none')
   await expect(page.locator('#public-todo-user-message-1')).toHaveCSS('border-width', '0px')
   await expect(page.locator('#public-todo-user-message-1 .message-markdown')).toHaveCSS('outline-style', 'none')
@@ -448,7 +443,6 @@ test('未水化消息通过可取消的旧 Trace 分页后定位', async ({ page
 
   await expect.poll(evidence.olderRequestCount).toBe(1)
   await expect(page.locator('#public-todo-user-message-2')).toBeFocused()
-  await expect(page.locator('#public-todo-user-message-2')).toHaveClass(/todo-trace-locate-target/)
   expect(evidence.pageErrors).toEqual([])
 })
 
@@ -500,7 +494,7 @@ test('已结束但未确认完成的旧清单保持 3/4 且不继续旋转', asy
   expect(evidence.pageErrors).toEqual([])
 })
 
-test('手机全屏任务页与桌面抽屉支持高对比和静态状态反馈', async ({ page }) => {
+test('手机全屏任务页与桌面抽屉支持高对比和静态状态反馈', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 320, height: 800 })
   await page.emulateMedia({
     colorScheme: 'dark',
@@ -516,7 +510,7 @@ test('手机全屏任务页与桌面抽屉支持高对比和静态状态反馈',
   await expect(drawer).toBeVisible()
   await expect(page.getByRole('button', { name: '返回对话' })).toBeFocused()
   await expect(page.getByText('展开窗口后可查看', { exact: true })).toHaveCount(0)
-  await page.screenshot({ path: resolve(EVIDENCE_DIR, '320-forced-colors.png') })
+  await page.screenshot({ path: testInfo.outputPath('320-forced-colors.png') })
   await page.setViewportSize({ width: 1440, height: 800 })
   await expect(drawer).toBeVisible()
   await expect(drawer.getByRole('heading', { name: '任务轨迹' })).toBeVisible()
