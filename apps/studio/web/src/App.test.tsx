@@ -26,7 +26,6 @@ import {
 const TEST_USER = {
   user_id: 7,
   username: 'yunsan',
-  display_name: '云杉',
   avatar_url: null,
   roles: [],
   disabled: false,

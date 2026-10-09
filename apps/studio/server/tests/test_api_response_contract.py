@@ -46,7 +46,6 @@ async def test_empty_json_results_and_file_content_keep_their_http_contract(
     user = UserContext(
         user_id=7,
         username="alice",
-        display_name="Alice",
         avatar_url=None,
         roles=(),
         disabled=False,

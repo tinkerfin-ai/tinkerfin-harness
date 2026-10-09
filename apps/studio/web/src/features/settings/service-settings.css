@@ -7,10 +7,9 @@
   .settings-services .settings-services__form { padding: 0; }
   .settings-services__form .ui-text-field, .settings-services__form .settings-models__choice { gap: var(--space-2); }
   .settings-services__form .settings-models__check { justify-content: flex-start; gap: var(--space-2); }
-  .settings-services__form .ui-text-field__trailing .ui-button { min-height: var(--control-xs); height: var(--control-xs); }
   .settings-services__hint { margin: 0 0 var(--space-4); color: var(--color-text-secondary); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
   .settings-services__parameters { min-width: 0; margin-top: var(--space-2); }
-  .settings-services__parameters > summary { display: flex; align-items: center; min-height: var(--settings-model-control-height); gap: var(--space-2); list-style: none; cursor: pointer; font-size: var(--type-meta-size); }
+  .settings-services__parameters > summary { display: flex; align-items: center; min-height: var(--settings-control-height); gap: var(--space-2); list-style: none; cursor: pointer; font-size: var(--type-meta-size); }
   .settings-services__parameters > summary::-webkit-details-marker { display: none; }
   .settings-services__parameters > summary > svg { margin-left: auto; flex-shrink: 0; }
   .settings-services__parameters[open] > summary > svg { transform: rotate(180deg); }
@@ -53,7 +52,6 @@
   }
   @media (pointer: coarse) {
     .settings-services .settings-choice-option { min-height: var(--control-xl); }
-    .settings-services__form .ui-text-field__trailing .ui-button { min-height: var(--control-lg); height: var(--control-lg); min-width: var(--control-lg); }
   }
   @media (prefers-reduced-motion: reduce) {
     .settings-services__test-spinner { animation: none; }

@@ -9,7 +9,7 @@ export interface DrawerProps extends Omit<HTMLAttributes<HTMLElement>, 'title' |
   description?: ReactNode
   actions?: ReactNode
   closeLabel: string
-  backLabel: string
+  backLabel?: string
   fullPage?: boolean
   resizeHandle?: ReactNode
   drawerRef?: Ref<HTMLElement>
@@ -43,7 +43,7 @@ export function Drawer({ id, open, title, description, actions, closeLabel, back
     {open && !fullPage && resizeHandle}
     {announcement}
     <DrawerHeader ref={closeRef} title={title} description={description} actions={actions} closeLabel={closeLabel}
-      onClose={onClose} backLabel={backLabel} onBack={fullPage ? onClose : undefined} />
+      onClose={onClose} backLabel={backLabel} onBack={fullPage && backLabel ? onClose : undefined} />
     <div className="ui-drawer__body">{children}</div>
   </aside>
 }

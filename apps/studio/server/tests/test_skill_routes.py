@@ -26,7 +26,7 @@ async def test_invalid_skill_import_returns_a_package_error(
     app = create_application(lifespan=None)
     app.state.resources = SimpleNamespace(skills=skill_library)
     app.dependency_overrides[get_user_context] = lambda: UserContext(
-        user_id=1, username="one", display_name="用户", roles=(), disabled=False
+        user_id=1, username="one", roles=(), disabled=False
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
@@ -53,9 +53,7 @@ async def test_zip_preview_confirm_details_toggle_uninstall_and_owner_scope(
     await add_users(session)
     app = create_application(lifespan=None)
     app.state.resources = SimpleNamespace(skills=skill_library)
-    user = UserContext(
-        user_id=1, username="one", display_name="用户", roles=(), disabled=False
-    )
+    user = UserContext(user_id=1, username="one", roles=(), disabled=False)
     app.dependency_overrides[get_user_context] = lambda: user
     app.dependency_overrides[get_session] = lambda: session
     async with httpx.AsyncClient(
@@ -114,9 +112,7 @@ async def test_zip_preview_confirm_details_toggle_uninstall_and_owner_scope(
             json={"request_id": "disable", "enabled": False},
         )
         assert toggle.status_code == 200 and not toggle.json()["data"]["enabled"]
-        user = UserContext(
-            user_id=2, username="two", display_name="用户", roles=(), disabled=False
-        )
+        user = UserContext(user_id=2, username="two", roles=(), disabled=False)
         assert (
             await client.get("/api/skills/selection?thread_id=thread&run_id=run")
         ).status_code == 404
@@ -127,9 +123,7 @@ async def test_zip_preview_confirm_details_toggle_uninstall_and_owner_scope(
                 json={"request_id": "uninstall"},
             )
         ).status_code == 404
-        user = UserContext(
-            user_id=1, username="one", display_name="用户", roles=(), disabled=False
-        )
+        user = UserContext(user_id=1, username="one", roles=(), disabled=False)
         assert (
             await client.request(
                 "DELETE",
@@ -154,7 +148,7 @@ async def test_catalog_update_http_replays_committed_result_and_validates_comman
     app = create_application(lifespan=None)
     app.state.resources = SimpleNamespace(skills=skill_library)
     app.dependency_overrides[get_user_context] = lambda: UserContext(
-        user_id=1, username="one", display_name="用户", roles=(), disabled=False
+        user_id=1, username="one", roles=(), disabled=False
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

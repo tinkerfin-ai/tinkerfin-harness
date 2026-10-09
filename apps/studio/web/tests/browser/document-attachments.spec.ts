@@ -10,7 +10,6 @@ import source from './fixtures/multimodal-history.json' with { type: 'json' }
 const user = {
   user_id: 1,
   username: 'document-attachment-test',
-  display_name: '文件附件验收',
   avatar_url: null,
   roles: [],
   disabled: false,

@@ -10,7 +10,7 @@ const settle = () => vi.advanceTimersByTimeAsync(0)
 const matches = (change: { key: string }) => change.key === 'resource'
 function signIn(token: string) {
   saveAuthSession({ serverAddress: getServerAddress(), token, tokenType: 'Bearer', expiresAt: '2100-01-01T00:00:00Z', user: {
-    user_id: token === 'one' ? 1 : 2, username: token, display_name: token, avatar_url: null, disabled: false, roles: [],
+    user_id: token === 'one' ? 1 : 2, username: token, avatar_url: null, disabled: false, roles: [],
   } })
 }
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2030-01-01T00:00:00Z')); clearAuthSession(); notices = mockResourceNotices() })

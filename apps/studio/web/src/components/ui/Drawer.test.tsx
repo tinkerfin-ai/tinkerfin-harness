@@ -4,6 +4,14 @@ import { Drawer } from './Drawer'
 
 const props = { id: 'files', title: '工作区', closeLabel: '关闭工作区', backLabel: '返回对话' }
 describe('Drawer', () => {
+  it('全宽视图未指定返回标签时使用关闭入口并恢复关闭焦点', () => {
+    const close = vi.fn()
+    render(<Drawer id="full-width" title="工作区" closeLabel="关闭工作区" open fullPage onClose={close}>文件</Drawer>)
+    expect(screen.getByRole('button', { name: '关闭工作区' })).toHaveFocus()
+    expect(screen.queryByRole('button', { name: '返回对话' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '关闭工作区' }))
+    expect(close).toHaveBeenCalledOnce()
+  })
   it('关闭后退出辅助技术，打开显示标题、描述、业务内容和调宽操作', () => {
     const close = vi.fn()
     const { rerender } = render(<Drawer {...props} open={false} onClose={close}>内容</Drawer>)

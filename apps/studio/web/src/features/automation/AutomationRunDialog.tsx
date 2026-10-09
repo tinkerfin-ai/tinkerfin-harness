@@ -68,7 +68,7 @@ export function AutomationRunDialog({ projectId, run, trigger, onToast, onClose 
       <div className="automation-result-meta"><RunStatus run={current} /><time>{current.date} {current.time}</time>
         <span>{t(current.trigger === 'manual' ? '手动运行' : '定时运行')}</span></div>
       {failure && <div className="automation-result-failure"><FeedbackState kind="error" appearance="retry" title={t('运行结果加载失败')} retryLabel={t('重新加载')} onRetry={() => setRevision(value => value + 1)} /></div>}
-      {!detail ? !failure && <p role="status">{t('正在加载运行结果')}</p> : <>
+      {!detail ? !failure && <FeedbackState kind="loading" title={t('正在加载运行结果')} /> : <>
           {detail.error && <p role="status">{isTranslationKey(detail.error) ? t(detail.error) : detail.error}</p>}
           {!detail.resultAvailable && <p>{t('暂时没有可显示的结果')}</p>}
           <div className="automation-result-output">{detail.messages.filter(message => message.role === 'assistant').map(message => <MarkdownContent key={message.id} content={messageText(message.content)} />)}</div>

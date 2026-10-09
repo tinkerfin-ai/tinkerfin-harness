@@ -9,7 +9,7 @@
 | Field | Default | Purpose |
 | --- | --- | --- |
 | `image` | Version-pinned TinkerFin image | Image for new Sandboxes |
-| `entrypoint` | `/opt/sandbox-runtime/bin/entrypoint.sh` | Container entry command |
+| `entrypoint` | `["/opt/sandbox-runtime/bin/entrypoint.sh"]` | Container entry command |
 | `env` | `{}` | Sandbox environment variables |
 | `metadata` | `{}` | Application metadata; reserved ownership fields are rejected |
 | `resource` | `cpu=1, memory=2Gi` | Resource request |

@@ -42,7 +42,6 @@ function seedAuthSession(token = 'token-123') {
     user: {
       user_id: 7,
       username: 'yunsan',
-      display_name: 'Yunsan',
       avatar_url: null,
       roles: [],
       disabled: false,

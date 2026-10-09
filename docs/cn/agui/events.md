@@ -79,16 +79,6 @@ async with aclosing(
 
 无论开关是否启用，provider 私有推理元数据都不会作为普通状态、消息或 raw payload 直接公开。
 
-## `messages`、`tasks`、`values` 分别做什么
-
-| 原生模式 | 转换时提供的信息 |
-| --- | --- |
-| `messages` | 文本 chunk、工具参数 chunk、工具结果及消息 metadata |
-| `tasks` | Graph 节点和任务的开始、结果、错误及 graph_namespace 关系 |
-| `values` | 每一步之后的状态快照，以及顶层 `interrupts` |
-
-`tasks` 是复数；它不等于 Deep Agents 中名为 `task` 的子 Agent 工具。根 Graph 与子图的 `values` 也是不同状态范围，前端或服务端不能用后到的子图状态覆盖根状态。
-
 ## 终止事件
 
 每次主运行只应有一个终止事件：

@@ -39,11 +39,19 @@ export function FeedbackState({
   const { t } = useI18n()
   const actionLabel = retryLabel ?? t('重试')
 
+  if (kind === 'loading') {
+    return (
+      <div className={`ui-feedback-state is-loading${compact ? ' is-compact' : ''}`} role="status" aria-busy="true">
+        <LoaderCircle className="ui-feedback-state__spinner" size={18} aria-hidden="true" />
+        <span className="ui-feedback-state__title">{title}</span>
+      </div>
+    )
+  }
+
   return (
     <Surface
       className={`ui-feedback-state is-${kind}${onRetry ? ' has-action' : ' is-title-only'}${appearance === 'retry' ? ' is-retry' : ''}${compact ? ' is-compact' : ''}`}
-      role={kind === 'error' ? 'alert' : 'status'}
-      aria-busy={kind === 'loading' || undefined}
+      role="alert"
     >
       {appearance === 'retry' && kind === 'error'
         ? <span className="ui-feedback-state__error-icon" aria-hidden="true"><CircleAlert size={17} /></span>

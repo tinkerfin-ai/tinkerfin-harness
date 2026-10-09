@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 
 import {
@@ -9,6 +9,7 @@ import { getServerAddress, subscribeServerAddress } from './api/shared/config'
 import { LoginTransition } from './features/auth/LoginTransition'
 import { useAuthVerification } from './features/auth/useAuthVerification'
 import { ApiError, AuthError, subscribeApiErrors } from './api/shared/http'
+import { FeedbackState } from './components/ui/FeedbackState'
 import { ToastViewport } from './components/ui/ToastViewport'
 import type { ToastItem, ToastKind } from './components/ui/ToastViewport'
 import {
@@ -37,6 +38,7 @@ const WorkspaceScreen = lazy(async () => ({
 
 export default function App() {
   const { t } = useI18n()
+  const session = useSyncExternalStore(subscribeAuthSession, getAuthSession, () => null)
   const [phase, setPhase] = useState<AuthPhase>(() => (
     getAuthSession() ? 'checking' : 'signedOut'
   ))
@@ -116,7 +118,7 @@ export default function App() {
         className="auth-checking"
         aria-label={isAuthRetrying ? t('正在重新验证登录状态') : t('正在检查登录状态')}
       >
-        <span className="auth-checking__mark" aria-hidden="true" />
+        <FeedbackState kind="loading" title={isAuthRetrying ? t('正在重新验证登录状态') : t('正在检查登录状态')} />
       </main>
     )
   } else if (phase === 'signedOut') {
@@ -156,7 +158,6 @@ export default function App() {
   } else if (phase === 'transitioning') {
     content = <LoginTransition onComplete={() => setPhase('signedIn')} />
   } else {
-    const session = getAuthSession()
     content = session ? (
       <WorkspaceScreen
         user={session.user}
@@ -175,7 +176,7 @@ export default function App() {
       <a className="skip-link" href="#main-content">{t('跳到主要内容')}</a>
       <Suspense fallback={(
         <main id="main-content" className="auth-checking" aria-label={t('正在加载界面')}>
-          <span className="auth-checking__mark" aria-hidden="true" />
+          <FeedbackState kind="loading" title={t('正在加载界面')} />
         </main>
       )}>
         {content}

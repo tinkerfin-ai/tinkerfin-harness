@@ -3,7 +3,7 @@ import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 import type { AgentModelCatalogItem } from '../../src/api/models/types'
 
-const user = { user_id: 1, username: 'provider-test', display_name: '提供方分组验收', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'provider-test', avatar_url: null, roles: [], disabled: false }
 const models: AgentModelCatalogItem[] = Array.from({ length: 15 }, (_, index) => ({
   modelId: `model-${index}`,
   displayName: index < 3 ? ['DeepSeek-V4-Pro', 'DeepSeek-V4-Flash', 'DeepSeek-V4-Flash-Vision'][index] : `Qwen ${index} 长名称模型用于验证菜单中的完整名称`,

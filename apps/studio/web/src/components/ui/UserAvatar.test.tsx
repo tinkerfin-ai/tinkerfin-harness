@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import { UserAvatar } from './UserAvatar'
@@ -8,8 +8,6 @@ describe('UserAvatar', () => {
     const { container } = render(
       <UserAvatar
         avatarUrl="https://cdn.example.test/avatar.webp"
-        displayName="云杉"
-        username="yunsan"
       />,
     )
     const image = container.querySelector('img')
@@ -21,13 +19,13 @@ describe('UserAvatar', () => {
     fireEvent.error(image as HTMLImageElement)
 
     expect(container.querySelector('img')).not.toBeInTheDocument()
-    expect(screen.getByText('云')).toBeInTheDocument()
+    expect(container.textContent).toBe('')
   })
 
-  it('uses the username initial when display name is empty', () => {
-    render(<UserAvatar avatarUrl={null} displayName="" username="yunsan" size="lg" />)
+  it('uses the frontend default icon without a saved avatar', () => {
+    const { container } = render(<UserAvatar avatarUrl={null} size="lg" />)
 
-    expect(screen.getByText('Y')).toBeInTheDocument()
+    expect(container.textContent).toBe('')
 
   })
 })

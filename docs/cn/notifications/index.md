@@ -70,7 +70,7 @@ async def serve(redis_url, serve_application):
 
 ## 使用框架发布者
 
-把同一个已启动的 `notifications` 传给 `InMemoryTraceStore`、`SqlAlchemyTraceStore`、`MemoryAutomationStore` 或 `SqlAlchemyAutomationStore`。这些存储在提交并释放修改锁后发布提示；跟随读取和工作进程结合通知、租约期限与校准读取等待变化。
+把同一个已启动的 `notifications` 传给 `InMemoryTraceStore`、`SqlAlchemyTraceStore`、`MemoryAutomationStore` 或 `SqlAlchemyAutomationStore`，即可在记录变化后通知订阅者。
 
 | 主题 | 作用域 | 资源键 |
 | --- | --- | --- |

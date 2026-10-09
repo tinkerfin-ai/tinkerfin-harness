@@ -1,5 +1,7 @@
 @layer settings {
   .settings-dialog {
+    --settings-control-height: var(--control-sm);
+    --settings-inline-action-height: var(--control-xs);
     --layout-settings-height: calc(var(--space-16) * 9.5);
     --settings-content-inset: var(--layout-panel-inset);
     display: grid;
@@ -9,6 +11,34 @@
   }
 
   .settings-dialog .modal-dialog-head { padding-inline: var(--settings-content-inset); }
+
+  .settings-dialog .ui-button {
+    --button-control-size: var(--settings-control-height);
+    height: var(--settings-control-height);
+    min-height: var(--settings-control-height);
+    padding-block: 0;
+  }
+  .settings-dialog .ui-text-field__control,
+  .settings-dialog .settings-choice-trigger,
+  .settings-dialog .settings-theme-option,
+  .settings-dialog .settings-nav__item,
+  .settings-dialog .ui-view-tabs {
+    height: var(--settings-control-height);
+    min-height: var(--settings-control-height);
+  }
+  .settings-dialog .ui-text-field__trailing .ui-button {
+    --button-control-size: var(--settings-inline-action-height);
+    height: var(--settings-inline-action-height);
+    min-height: var(--settings-inline-action-height);
+  }
+  .settings-dialog .settings-choice-option { min-height: var(--settings-control-height); }
+  @media (any-pointer: coarse) {
+    .settings-dialog {
+      --settings-control-height: var(--control-xl);
+      --settings-inline-action-height: var(--control-lg);
+    }
+  }
+
 
   .settings-layout {
     position: relative;
@@ -32,7 +62,7 @@
     align-items: center;
     gap: var(--space-2);
     width: 100%;
-    min-height: var(--control-lg);
+    min-height: var(--settings-control-height);
     padding: 0 var(--space-3);
     border: 0;
     border-radius: var(--radius-button);
@@ -68,11 +98,16 @@
     background: var(--color-layer-2);
   }
 
-  .settings-profile__identity { display: grid; min-width: 0; }
+  .settings-profile__identity { display: grid; flex: 1; min-width: 0; }
   .settings-profile__identity strong { overflow: hidden; font-size: var(--type-body-size); line-height: var(--type-body-line); text-overflow: ellipsis; white-space: nowrap; }
   .settings-profile__identity span { overflow: hidden; color: var(--color-text-secondary); font-size: var(--type-meta-size); line-height: var(--type-meta-line); text-overflow: ellipsis; white-space: nowrap; }
+  .settings-profile-editor__actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
+  .settings-profile-editor__error { margin: var(--space-3) 0 0; color: var(--color-danger); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+  .settings-profile-editor__notice { margin: var(--space-3) 0 0; color: var(--color-text-secondary); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+  .settings-profile-editor__confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--color-border-subtle); }
+  .settings-profile-editor__confirm > span { flex: 1 1 100%; font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .settings-theme-options { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--space-2); margin:var(--space-4) 0 0; padding:0; border:0; }
-  .settings-theme-option { display:flex; align-items:center; justify-content:center; gap:var(--space-2); min-height:var(--control-lg); padding:0 var(--space-3); border:1px solid var(--color-border); border-radius: var(--radius-button); background:var(--color-layer-1); color:var(--color-text-secondary); cursor:pointer; transition:border-color var(--motion-fast) var(--ease-out),background-color var(--motion-fast) var(--ease-out),color var(--motion-fast) var(--ease-out); }
+  .settings-theme-option { display:flex; align-items:center; justify-content:center; gap:var(--space-2); min-height:var(--settings-control-height); padding:0 var(--space-3); border:1px solid var(--color-border); border-radius: var(--radius-button); background:var(--color-layer-1); color:var(--color-text-secondary); cursor:pointer; transition:border-color var(--motion-fast) var(--ease-out),background-color var(--motion-fast) var(--ease-out),color var(--motion-fast) var(--ease-out); }
   .settings-theme-option:hover { background:var(--color-hover); color:var(--color-text-primary); }
   .settings-theme-option:active { background:var(--color-active); }
   .settings-theme-option:has(input:focus-visible) { outline:2px solid var(--color-focus); outline-offset:0; }
@@ -86,7 +121,7 @@
     justify-content: space-between;
     gap: var(--space-3);
     width: 100%;
-    min-height: var(--control-lg);
+    min-height: var(--settings-control-height);
     padding: 0 var(--space-3);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-button);
@@ -125,7 +160,9 @@
   @media (max-width: 440px) {
     .settings-nav__item svg { display: none; }
     .settings-dialog { width: 100%; border-radius: var(--radius-3xl); }
-    .settings-profile { align-items: flex-start; padding: var(--space-3); }
+    .settings-profile { flex-wrap: wrap; align-items: center; padding: var(--space-3); }
+    .settings-profile__identity { flex-basis: calc(100% - var(--space-16) - var(--space-4)); }
+    .settings-profile__choose { margin-left: calc(var(--space-16) + var(--space-4)); }
   }
 
   @media (forced-colors: active) {

@@ -11,7 +11,7 @@ const frame = (index: number, event: string, data: unknown = {}) => streams[inde
 const settle = () => vi.advanceTimersByTimeAsync(0)
 function signIn(token = 'one') {
   saveAuthSession({ serverAddress: getServerAddress(), token, tokenType: 'Bearer', expiresAt: '2100-01-01T00:00:00Z', user: {
-    user_id: token === 'one' ? 1 : 2, username: token, display_name: token, roles: [], disabled: false, avatar_url: null,
+    user_id: token === 'one' ? 1 : 2, username: token, roles: [], disabled: false, avatar_url: null,
   } })
 }
 

@@ -58,7 +58,6 @@ async def automation_environment(
             User(
                 id=1,
                 username="owner",
-                display_name="Owner",
                 password_hash="not-used",
                 disabled=False,
             )
@@ -263,9 +262,7 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
     resources = automation_resources
     application = create_application(lifespan=None)
     application.state.resources = resources
-    user = UserContext(
-        user_id=1, username="owner", display_name="Owner", roles=(), disabled=False
-    )
+    user = UserContext(user_id=1, username="owner", roles=(), disabled=False)
     application.dependency_overrides[get_user_context] = lambda: user
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=application),
@@ -333,7 +330,6 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
         user = UserContext(
             user_id=2,
             username="other",
-            display_name="Other",
             roles=(),
             disabled=False,
         )

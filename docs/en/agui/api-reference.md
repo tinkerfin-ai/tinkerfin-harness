@@ -57,8 +57,8 @@ pass `AgUiResumeRequest` to the Runtime and do not construct bindings.
 | `ScopedIdCodec` | Encode and decode IDs with full Graph position |
 | `ResumeMapper` | Translate trusted native or persisted AG-UI interrupt evidence |
 
-The adapter's `RunIdentity` contains AG-UI thread and run IDs. Business namespace
-selection belongs to the higher-level Runtime or host.
+The adapter uses `RunIdentity` with required `namespace`, `thread_id`, and `run_id`
+fields. The host chooses the namespace and enforces authorization.
 
 ## Interrupt contracts
 

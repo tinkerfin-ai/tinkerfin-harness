@@ -20,7 +20,6 @@ import { emptyTraceGraph } from './test/traceFixtures'
 const user = {
   user_id: 7,
   username: 'yunsan',
-  display_name: '云杉',
   avatar_url: null,
   roles: [],
   disabled: false,

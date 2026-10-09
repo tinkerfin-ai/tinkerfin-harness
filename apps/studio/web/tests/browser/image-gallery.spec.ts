@@ -15,7 +15,7 @@ const history = {
   messages: source.messages.map(message => message.role === 'tool' ? { ...message, content: images } : message),
   graph: { ...source.graph, nodes: source.graph.nodes.map(node => node.kind === 'tool' ? { ...node, result: images } : node) },
 }
-const user = { user_id: 1, username: 'gallery-test', display_name: '图片验收', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'gallery-test', avatar_url: null, roles: [], disabled: false }
 
 test('图片失败态、恢复与多图连续键盘浏览保持无边框布局', async ({ page }, testInfo) => {
   let previewAvailable = false

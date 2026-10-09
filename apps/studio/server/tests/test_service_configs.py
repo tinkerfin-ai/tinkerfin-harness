@@ -34,7 +34,6 @@ async def owners(session: AsyncSession) -> None:
             User(
                 id=user_id,
                 username=f"owner-{user_id}",
-                display_name=f"Owner {user_id}",
                 password_hash="unused",
                 roles=[],
                 disabled=False,
@@ -161,7 +160,6 @@ async def test_service_settings_route_saves_without_supplier_request_and_masks_k
     user = UserContext(
         user_id=1,
         username="owner-1",
-        display_name="Owner 1",
         avatar_url=None,
         roles=(),
         disabled=False,
@@ -208,7 +206,6 @@ async def test_active_service_test_calls_supplier_once_and_records_safe_result(
     app.dependency_overrides[get_network_user_context] = lambda: UserContext(
         user_id=1,
         username="owner-1",
-        display_name="Owner 1",
         avatar_url=None,
         roles=(),
         disabled=False,

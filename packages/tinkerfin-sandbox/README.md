@@ -178,15 +178,13 @@ The iterator yields `WorkspaceChange.FILES_CHANGED` from `tinkerfin_sandbox` or
 `ResyncRequired` from `tinkerfin_notifications`. These are root-wide hints: read the
 current directory or file state after a change, and reread it whenever resynchronization
 is required. Hints can be combined and do not contain file contents or operation history.
-Ordinary writes, truncations, renames, deletions, and directory changes are observed;
-memory-mapped writes are outside this coverage.
 
 Watching creates no Sandbox, resumes none, and runs no initialization. Pausing, deleting,
 or losing the selected instance yields a disconnected resync and ends that watch; enter
 a new context after the project is available. A compatible runtime collector is required.
-The manager owns its default in-process notification service. To share hints among workers,
-pass an already started `Notifications` service as `OpenSandboxManager(..., notifications=...)`
-and close that service after its managers.
+See [Watch file changes](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/sandbox/rooted-filesystem.md#watch-file-changes)
+for change coverage and [Manager configuration](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/sandbox/lifecycle.md#manager-configuration)
+for cross-worker notifications.
 
 ## Persistent state
 
@@ -210,21 +208,15 @@ finally:
     await engine.dispose()
 ```
 
-State stores physical Sandbox bindings and their purpose, leases, warm slots,
-availability, and pending cleanup. It does not store project files. Its `namespace`
-separates deployments sharing a database; all workers in that deployment must agree on
+State persists Sandbox bindings and lifecycle coordination, not project files.
+Its `namespace` separates deployments sharing a database; all workers in that deployment must agree on
 warm capacity. Warm instances serve raw command Sandboxes; isolated workspaces create
 their own instances.
 
-Startup creates an empty schema or validates the existing tables, indexes, and database
-comments. The first startup needs DDL permissions. Generate the complete schema with
-`get_sqlalchemy_opensandbox_state_schema(dialect="postgresql")`; the descriptor exposes
-`ddl` and `table_names`. `mysql` and `sqlite` are also accepted.
-
-SQLite requires exclusive connection checkouts. For an in-memory database, use
-`AsyncAdaptedQueuePool(pool_size=1, max_overflow=0)` instead of `StaticPool`.
-Configure database connection and statement timeouts on the Engine. State options are
-described in the [persistence guide](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/sandbox/persistence-and-extensions.md).
+Startup creates or validates the database structure. The first startup needs DDL
+permissions. Configure connection and statement timeouts on the Engine. Schema
+generation, SQLite connection requirements, and State options are described in the
+[persistence guide](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/sandbox/persistence-and-extensions.md).
 
 ## Documentation
 

@@ -23,10 +23,9 @@ uv sync --package tinkerfin-studio --locked
 uv run --package tinkerfin-studio python -m tinkerfin_studio
 ```
 
-`--local` 等待四个依赖就绪，从唯一模板 `apps/studio/.env.example` 生成含随机密码的 `apps/studio/.env`，首次使用桶 `tinkerfin`。重复执行会复用配置和数据；端口被占用时需先调整 `apps/studio/.env`。
+首次启动会生成 `apps/studio/.env`。重复执行会复用配置和数据；端口被占用时需先调整该文件。
 
-也可在 PyCharm 中选择仓库的 `.venv`，以仓库根目录为工作目录运行模块 `tinkerfin_studio`。
-后端就绪后可查看[健康状态](http://127.0.0.1:8090/health/ready)和 [Swagger 接口文档](http://127.0.0.1:8090/docs)。默认按需创建工作区，不预热沙箱；每个新沙箱上限为 1 CPU、1 GiB 内存。首次使用时，缺少运行镜像还需下载。
+后端就绪后可查看[健康状态](http://127.0.0.1:8090/health/ready)和 [Swagger 接口文档](http://127.0.0.1:8090/docs)。首次使用时可能需要下载运行镜像。
 
 后端和依赖全部容器化时，执行以下命令，共用同一份 `.env`，不需要宿主机安装 Python 或 uv：
 
@@ -34,7 +33,7 @@ uv run --package tinkerfin-studio python -m tinkerfin_studio
 ./apps/studio/server/deploy/start.sh --container
 ```
 
-需要自定义密码、部署地址或复用已有组件时，先执行 `./apps/studio/server/deploy/init-env.sh`，编辑 `.env` 后再启动。依赖由 `COMPOSE_PROFILES` 选择。已有发布镜像时执行不带模式参数的 `start.sh`。远程访问和文件日志挂载要求见[服务端部署说明](../../../apps/studio/server/README.md)。
+需要自定义密码、部署地址或复用已有服务时，见[服务端部署说明](../../../apps/studio/server/README.md)。
 
 ## 启动 Web
 
@@ -59,7 +58,7 @@ pnpm dev
 | 用户名 | `tinkerfin` |
 | 密码 | `123456` |
 
-已有数据卷不会重新执行初始化 SQL，也不会覆盖已有账号。当前没有公开注册入口。
+已有部署使用原有账号和密码。当前没有公开注册入口。
 
 首次登录后，点击“创建项目”并填写名称。会话、记忆和自动化任务归属当前项目；之后可从侧栏顶部切换项目或创建其他项目。
 
@@ -92,8 +91,7 @@ UPDATE users SET password_hash = '<生成的完整哈希>' WHERE username = 'tin
 ```
 
 对话默认使用完全访问，可通过模型旁的权限选择器改为写入需审批。
-在侧栏“记忆管理”中可查看和编辑当前项目的长期记忆，Agent 也会读取和修改这些内容；保存时若提示内容已更新，先对照最新内容再保存。
-会话右上角的文件夹图标打开当前项目的工作区，项目内的会话共享其中的文件。文本和代码可查看前 200 行或 100 KiB 源码，其他格式仅显示文件信息；查看不会创建或恢复沙箱。
+同一项目的会话共享工作区和长期记忆。
 定时任务的设置和结果查看见 [Studio 自动化](automation.md)。
 
 ## 遇到问题

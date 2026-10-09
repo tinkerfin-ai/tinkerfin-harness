@@ -53,7 +53,7 @@
 | `ScopedIdCodec` | 使用完整 Graph 位置编码和解码 ID |
 | `ResumeMapper` | 转换可信原生或已保存 AG-UI interrupt 证据 |
 
-Adapter 的 `RunIdentity` 只包含 AG-UI thread 和 run ID。业务 namespace 由上层 Runtime 或宿主选择。
+Adapter 的 `RunIdentity` 包含必填的 `namespace`、`thread_id` 和 `run_id`；namespace 由宿主选择并负责授权。
 
 ## Interrupt 契约
 

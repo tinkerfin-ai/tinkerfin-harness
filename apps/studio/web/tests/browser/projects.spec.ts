@@ -6,7 +6,7 @@ import { fulfillExpectedHttpError } from './support/diagnostics'
 import { measureBounds } from './support/geometry'
 
 const date = '2030-01-01T00:00:00Z'
-const user = { user_id: 1, username: 'project-review', display_name: '个人账号', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'project-review', avatar_url: null, roles: [], disabled: false }
 const record = { id: 1, projectId: 'research', archived: false, threadId: 'research-thread', title: '本周市场观察', titleSource: 'user', titleGenerationStatus: 'skipped', titleSeq: 1, status: 'idle', lastRunId: 'run', lastModel: 'main', accessMode: 'full', messageCount: 2, toolCallCount: 0, hasPendingInterrupt: false, pendingInteractionKind: null, pinned: false, createdAt: date, updatedAt: date }
 
 async function prepare(page: Page, theme: 'light' | 'dark' = 'light') {
@@ -200,6 +200,157 @@ test('创建、重命名与切换项目保留独立草稿，长名称不撑开�
   await page.getByRole('dialog', { name: '项目', exact: true }).getByRole('button', { name, exact: true }).click()
   await expect(page.getByRole('textbox', { name: '消息输入' })).toHaveValue('待研究的问题')
 })
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`普通与归档列表同步当前会话、空列表和深链接 ${theme}`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const api = await prepare(page, theme)
+    api.threads.push(
+      { ...record, id: 2, threadId: 'archived-thread', title: '归档会话选择', archived: true },
+      { ...record, id: 3, threadId: 'other-archived-thread', title: '另一条归档会话', archived: true },
+      { ...record, id: 4, threadId: 'other-normal-thread', title: '另一条普通会话' },
+    )
+    const history = page.getByRole('region', { name: '最近对话', exact: true })
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      if (width < 768) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+      else if (width < 1024) await page.getByRole('button', { name: '打开侧边栏', exact: true }).click()
+      const normal = history.getByRole('button', { name: '打开会话：本周市场观察', exact: true })
+      await expect(normal).toHaveAttribute('aria-current', 'page')
+      await page.getByRole('button', { name: '已归档会话', exact: true }).click()
+      const current = history.getByRole('button', { name: '打开会话：归档会话选择', exact: true })
+      const other = history.getByRole('button', { name: '打开会话：另一条归档会话', exact: true })
+      await expect(current).toHaveAttribute('aria-current', 'page')
+      await expect(other).not.toHaveAttribute('aria-current')
+      await expect(page).toHaveTitle('归档会话选择')
+      await expect(page).toHaveURL(/thread=archived-thread/)
+      await page.mouse.move(width - 1, 899)
+      const surface = (button: typeof current) => button.evaluate(element => {
+        let layer: Element = element
+        while (getComputedStyle(layer).backgroundColor === 'rgba(0, 0, 0, 0)' && layer.parentElement) layer = layer.parentElement
+        return getComputedStyle(layer).backgroundColor
+      })
+      expect(await surface(current)).not.toBe(await surface(other))
+      await page.screenshot({ path: info.outputPath(`archived-selected-${theme}-${width}.png`), animations: 'disabled' })
+      await other.click()
+      if (width < 768) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+      await expect(other).toHaveAttribute('aria-current', 'page')
+      await expect(current).not.toHaveAttribute('aria-current')
+      await expect(page).toHaveTitle('另一条归档会话')
+      await current.click()
+      if (width < 768) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+      await expect(current).toHaveAttribute('aria-current', 'page')
+      await page.getByRole('button', { name: '返回会话记录', exact: true }).click()
+      await expect(normal).toHaveAttribute('aria-current', 'page')
+      await expect(page).toHaveTitle('本周市场观察')
+      await page.screenshot({ path: info.outputPath(`normal-selected-${theme}-${width}.png`), animations: 'disabled' })
+      const otherNormal = history.getByRole('button', { name: '打开会话：另一条普通会话', exact: true })
+      await otherNormal.click()
+      if (width < 768) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+      await expect(otherNormal).toHaveAttribute('aria-current', 'page')
+      await expect(normal).not.toHaveAttribute('aria-current')
+      await expect(page).toHaveTitle('另一条普通会话')
+      await normal.click()
+      if (width < 768) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+      await expect(normal).toHaveAttribute('aria-current', 'page')
+    }
+    await page.goto('/?project=research&thread=archived-thread')
+    await expect(page.getByRole('button', { name: '返回会话记录', exact: true })).toBeVisible()
+    await expect(history.getByRole('button', { name: '打开会话：归档会话选择', exact: true })).toHaveAttribute('aria-current', 'page')
+    await expect(page).toHaveTitle('归档会话选择')
+    await page.goBack()
+    await expect(history.getByRole('button', { name: '打开会话：本周市场观察', exact: true })).toHaveAttribute('aria-current', 'page')
+    api.threads.splice(1)
+    await page.getByRole('button', { name: '已归档会话', exact: true }).click()
+    await expect(history.getByText('暂无最近对话', { exact: true })).toBeVisible()
+    await expect(history.locator('[aria-current="page"]')).toHaveCount(0)
+    await expect(page).not.toHaveURL(/thread=/)
+  })
+}
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`普通与归档列表分别记住非首条会话 ${theme}`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const api = await prepare(page, theme)
+    api.threads.push(
+      { ...record, id: 2, threadId: 'archive-first', title: '首条归档会话', archived: true },
+      { ...record, id: 3, threadId: 'archive-selected', title: '上次归档会话', archived: true, updatedAt: '2029-12-26T00:00:00Z' },
+      { ...record, id: 4, threadId: 'normal-selected', title: '上次普通会话', updatedAt: '2029-12-26T00:00:00Z' },
+    )
+    const history = page.getByRole('region', { name: '最近对话', exact: true })
+    await page.getByRole('button', { name: '已归档会话', exact: true }).click()
+    await page.getByRole('button', { name: '返回会话记录', exact: true }).click()
+    const normal = history.getByRole('button', { name: '打开会话：上次普通会话', exact: true })
+    const archived = history.getByRole('button', { name: '打开会话：上次归档会话', exact: true })
+    await normal.click()
+    await page.getByRole('button', { name: '已归档会话', exact: true }).click()
+    await archived.click()
+    await page.getByRole('button', { name: '返回会话记录', exact: true }).click()
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      if (width < 768) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+      else if (width < 1024) await page.getByRole('button', { name: '打开侧边栏', exact: true }).click()
+      await expect(normal).toHaveAttribute('aria-current', 'page')
+      await expect(history.getByRole('button', { name: '打开会话：本周市场观察', exact: true })).not.toHaveAttribute('aria-current')
+      await expect(page).toHaveTitle('上次普通会话')
+      await expect(page).toHaveURL(/thread=normal-selected/)
+      await page.screenshot({ path: info.outputPath(`remembered-normal-${theme}-${width}.png`), animations: 'disabled' })
+      await page.getByRole('button', { name: '已归档会话', exact: true }).click()
+      await expect(archived).toHaveAttribute('aria-current', 'page')
+      await expect(history.getByRole('button', { name: '打开会话：首条归档会话', exact: true })).not.toHaveAttribute('aria-current')
+      await expect(page).toHaveTitle('上次归档会话')
+      await expect(page).toHaveURL(/thread=archive-selected/)
+      await page.screenshot({ path: info.outputPath(`remembered-archived-${theme}-${width}.png`), animations: 'disabled' })
+      await page.getByRole('button', { name: '返回会话记录', exact: true }).click()
+      await expect(normal).toHaveAttribute('aria-current', 'page')
+      await expect(page).toHaveTitle('上次普通会话')
+    }
+    for (const targetArchived of [true, false]) {
+      let release: () => void = () => undefined
+      const held = new Promise<void>(resolve => { release = resolve })
+      const listPattern = '**/api/conversation/history*'
+      await page.route(listPattern, async route => {
+        await held
+        await route.fallback()
+      })
+      const response = page.waitForResponse(url => new URL(url.url()).pathname === '/api/conversation/history')
+      await page.getByRole('button', { name: targetArchived ? '已归档会话' : '返回会话记录', exact: true }).click()
+      await expect(targetArchived ? archived : normal).toHaveAttribute('aria-current', 'page')
+      await expect(page).toHaveTitle(targetArchived ? '上次归档会话' : '上次普通会话')
+      await expect(page.getByRole('region', { name: '对话内容', exact: true }).getByText('整理本周需要关注的市场变化', { exact: true })).toBeVisible()
+      await expect(page.getByText('正在加载历史会话', { exact: true })).toHaveCount(0)
+      release()
+      await response
+      await page.unroute(listPattern)
+    }
+    await page.getByRole('button', { name: '已归档会话', exact: true }).click()
+    let detailUnavailable = true
+    await page.route('**/api/conversation/normal-selected/history*', async route => {
+      if (detailUnavailable) return fulfillExpectedHttpError(route, 503, '记忆会话详情临时不可用')
+      await route.fallback()
+    })
+    await page.route('**/api/conversation/history*', async route => {
+      const url = new URL(route.request().url())
+      if (url.searchParams.get('archived') === 'true') return route.fallback()
+      const older = url.searchParams.has('cursor')
+      await route.fulfill({ json: { code: 0, message: 'success', data: {
+        items: older ? api.threads.filter(item => item.threadId === 'normal-selected') : [record],
+        nextCursor: older ? null : 'next-page',
+      } } })
+    })
+    await page.getByRole('button', { name: '返回会话记录', exact: true }).click()
+    await expect(page.getByText('历史会话加载失败', { exact: true })).toBeVisible()
+    await expect(page).toHaveTitle('上次普通会话')
+    await expect(normal).toHaveAttribute('aria-current', 'page')
+    await expect(page.getByRole('region', { name: '对话内容', exact: true }).getByText('整理本周需要关注的市场变化', { exact: true })).toBeVisible()
+    await expect(history.getByRole('button', { name: '打开会话：本周市场观察', exact: true })).not.toHaveAttribute('aria-current')
+    detailUnavailable = false
+    await page.getByRole('button', { name: '重新加载', exact: true }).click()
+    await expect(normal).toHaveAttribute('aria-current', 'page')
+    await expect(page).toHaveTitle('上次普通会话')
+    await expect(page).toHaveURL(/thread=normal-selected/)
+  })
+}
 
 test('会话移动、归档与恢复使用目标项目', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -779,3 +930,53 @@ test.describe('移动目标选择的触控与键盘操作', () => {
     })
   }
 })
+
+for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1024, 1440]) {
+  test(`历史会话与链路的加载反馈采用同一外观 ${theme} ${width}`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await prepare(page, theme)
+    await page.setViewportSize({ width, height: 900 })
+    if (width < 768) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+    else if (width < 1024) await page.getByRole('button', { name: '打开侧边栏', exact: true }).click()
+    let releaseList: () => void = () => undefined
+    const heldList = new Promise<void>(resolve => { releaseList = resolve })
+    const listPattern = '**/api/conversation/history*'
+    await page.route(listPattern, async route => { await heldList; await route.fallback() })
+    await page.getByRole('button', { name: '已归档会话', exact: true }).click()
+    if (width < 768) await page.getByRole('button', { name: '关闭导航', exact: true }).click()
+    const history = page.getByRole('status').filter({ hasText: '正在加载历史会话' })
+    await expect(history).toBeVisible()
+    const appearance = (status: typeof history) => status.evaluate(element => {
+      const style = getComputedStyle(element)
+      const icon = element.querySelector('svg')!
+      const title = [...element.children].find(child => child.textContent)!
+      return { border: style.borderTopWidth, background: style.backgroundColor, shadow: style.boxShadow,
+        gap: style.columnGap, fontSize: getComputedStyle(title).fontSize, weight: getComputedStyle(title).fontWeight,
+        iconWidth: icon.getBoundingClientRect().width, color: getComputedStyle(icon).color,
+        animation: getComputedStyle(icon).animationName }
+    })
+    const historyAppearance = await appearance(history)
+    expect(historyAppearance).toMatchObject({ border: '0px', background: 'rgba(0, 0, 0, 0)', shadow: 'none', gap: '8px', fontSize: '13px', iconWidth: 18, animation: 'none' })
+    await page.screenshot({ path: info.outputPath(`history-loading-${theme}-${width}.png`), animations: 'disabled' })
+    releaseList()
+    await expect(history).toHaveCount(0)
+    await page.unroute(listPattern)
+    if (width < 768) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+    await page.getByRole('button', { name: '返回会话记录', exact: true }).click()
+    if (width < 768) await page.getByRole('button', { name: '关闭导航', exact: true }).click()
+    await expect(page).toHaveTitle('本周市场观察')
+    let releaseGraph: () => void = () => undefined
+    const heldGraph = new Promise<void>(resolve => { releaseGraph = resolve })
+    await page.route('**/api/conversation/research-thread/trace/graph?*', async route => {
+      await heldGraph
+      await route.fulfill({ json: { code: 0, message: 'success', data: { ...emptyTraceGraph(3), nextCursor: null, generation: 'project-preview', headRunId: 'run' } } })
+    })
+    await page.getByRole('tab', { name: '链路', exact: true }).click()
+    const chain = page.getByRole('status').filter({ hasText: '正在加载链路…' })
+    await expect(chain).toBeVisible()
+    expect(await appearance(chain)).toEqual(historyAppearance)
+    await page.screenshot({ path: info.outputPath(`chain-loading-${theme}-${width}.png`), animations: 'disabled' })
+    releaseGraph()
+    await expect(chain).toHaveCount(0)
+  })
+}

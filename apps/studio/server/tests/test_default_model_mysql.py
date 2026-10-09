@@ -41,7 +41,6 @@ async def default_database(mysql_admin_url: str) -> AsyncIterator[Database]:
                     User(
                         id=1,
                         username="default-test",
-                        display_name="默认测试",
                         password_hash="unused",
                         roles=[],
                     )

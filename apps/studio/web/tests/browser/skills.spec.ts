@@ -8,7 +8,7 @@ import type { InstalledSkill } from '../../src/features/skills/model'
 import type { ChatRequestPayload } from '../../src/api/conversation/types'
 import { fulfillExpectedHttpError } from './support/diagnostics'
 
-const user = { user_id: 1, username: 'skill-preview', display_name: '技能预览', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'skill-preview', avatar_url: null, roles: [], disabled: false }
 
 async function prepare(page: Page, installed: InstalledSkill[] = [], language: 'zh-CN' | 'en' = 'zh-CN') {
   await page.emulateMedia({ reducedMotion: 'reduce' })

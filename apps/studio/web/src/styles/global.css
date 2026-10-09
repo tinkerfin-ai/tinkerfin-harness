@@ -159,15 +159,6 @@
     background: var(--color-canvas);
   }
 
-  .auth-checking__mark {
-    width: var(--icon-xl);
-    height: var(--icon-xl);
-    border: 2px solid var(--color-border-strong);
-    border-top-color: var(--color-brand);
-    border-radius: var(--radius-md);
-    animation: global-state-spin var(--motion-loading-cycle) linear infinite;
-  }
-
   .login-transition {
     background: radial-gradient(circle at 50% 45%, var(--color-brand-soft), var(--color-canvas) 46%);
   }
@@ -182,10 +173,6 @@
     background: var(--color-layer-1);
     box-shadow: var(--shadow-2);
     color: var(--color-brand);
-  }
-
-  @keyframes global-state-spin {
-    to { transform: rotate(360deg); }
   }
 
   @media (forced-colors: active) {
@@ -208,9 +195,5 @@
       transition: none;
     }
 
-    .auth-checking__mark {
-      animation: none;
-      border-radius: var(--radius-pill);
-    }
   }
 }

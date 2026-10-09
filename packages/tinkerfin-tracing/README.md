@@ -162,9 +162,6 @@ resource identity, never captured content. `InMemoryTraceStore` and custom-backe
 `DurableTraceStore` accept the same argument.
 
 The `max_tracer_threads` and `max_tracer_bytes` limits apply separately to each namespace.
-`TraceLimits.max_projection_checkpoints_per_scope` retains the latest two rebuildable
-checkpoints by default for each conversation, projection, and optional run. Earlier
-historical prefixes are reconstructed from retained events when their cache is absent.
 Graph indexes can be rebuilt with `await tracer.rebuild_graph(thread)` without
 rewriting recorded events. A codec can encrypt stored event and checkpoint bytes.
 

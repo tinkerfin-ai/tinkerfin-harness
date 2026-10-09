@@ -47,7 +47,7 @@ async def parts():
 
 
 async def main():
-    identity = RunIdentity(threadId="thread-1", runId="run-1")
+    identity = RunIdentity(namespace="company-a", threadId="thread-1", runId="run-1")
     async for event in astream_events(
         parts(),
         identity=identity,
@@ -79,17 +79,14 @@ ownership.
   completion boundaries.
 - Full graph namespaces and IDs correlate concurrent messages, tool calls, results, and
   subagents; arrival order is not identity.
-- Every `tasks/start` establishes a possible compiled-graph scope. Only a scope also
-  correlated with a Deep Agents `task` Tool call receives `deep_agent_subagent`
-  identity; ordinary graphs use `compiled_subgraph` provenance.
+- Verified Deep Agents delegates use `deep_agent_subagent` provenance; ordinary
+  graphs use `compiled_subgraph` provenance.
 - Task and non-root values diagnostics use `source="langgraph.tasks"` and
   `source="langgraph.values"`. A LangGraph task is not automatically a subagent, and
   subgraph provenance never uses AG-UI `parentRunId`.
 - Verified Deep Agents delegates publish `SubagentProvenance` with schema
-  `tinkerfin.subagent-provenance`. `subagentInvocationId` is derived from the
-  thread, original delegation task identity, and complete scoped parent `task` Tool
-  ID, so it remains stable when a new
-  request run resumes the same checkpointed invocation.
+  `tinkerfin.subagent-provenance`. Preserve its complete `subagentInvocationId`,
+  which remains stable when a new request resumes the same checkpointed invocation.
 - Delegate provenance uses the effective Deep Agents `task` fields `description` and
   `subagent_type`. The sanitized task RAW event retains the complete native
   pre-validation input, but additional model-produced arguments do not change the
@@ -99,10 +96,8 @@ ownership.
   Task errors in RAW events use `type="TaskError"` without exception details.
 - `expose_subagent_events=False` suppresses public subgraph events while preserving
   validation.
-- Child interrupts remain buffered until root `values` propagates an identical full ID
-  and value. The terminal boundary publishes root state, then a root-first
-  graph-scoped message snapshot, then one interrupt outcome. A replay of the same
-  child interrupt set must carry the identical message snapshot for that graph namespace.
+- Before an interrupt terminal, conversion publishes root state and a root-first
+  graph-scoped message snapshot. Preserve their order when storing or replaying events.
 - Declared `RuntimeInterruptEnvelope` values map to AG-UI interrupts without a Tool
   ID. Their trusted envelope, response schema, and native ID are persisted for generic
   resume translation; one batch cannot mix runtime and Tool interrupts.

@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { FeedbackState } from '../../../src/components/ui/FeedbackState'
 import { BrandLogo } from '../../../src/components/ui/BrandLogo'
 import { BrandMark } from '../../../src/components/ui/BrandMark'
 import { Button } from '../../../src/components/ui/Button'
@@ -12,6 +13,9 @@ import '../../../src/styles/typography.css'
 import '../../../src/styles/fonts.css'
 import '../../../src/styles/global.css'
 import '../../../src/components/ui/ui.css'
+import '../../../src/features/conversation/chainTrace/chainTrace.css'
+import '../../../src/features/workspaceFiles/workspaceFiles.css'
+import '../../../src/features/workspace/components/conversation-search.css'
 
 const parameters = new URLSearchParams(location.search)
 document.documentElement.dataset.theme = parameters.get('theme') ?? 'light'
@@ -40,6 +44,25 @@ function ScrollbarExample() {
   </>
 }
 
+
+function LoadingExamples() {
+  const contexts = [
+    ['页面', ''], ['紧凑区域', ''], ['链路', 'chain-trace'], ['链路详情', 'chain-trace-details'],
+    ['搜索', 'conversation-search-results'], ['工作区', 'workspace-files-feedback'],
+  ]
+  return <main style={{ padding: 16, display: 'grid', gap: 16 }}>
+    <h1>加载反馈验证</h1>
+    {contexts.map(([name, className]) => <section key={name} aria-label={name} style={{ minWidth: 0 }}>
+      <h2>{name}</h2>
+      <div className={className}><FeedbackState kind="loading" compact={name === '紧凑区域'} title="正在加载历史会话" /></div>
+    </section>)}
+    <section aria-label="长加载文案" style={{ minWidth: 0 }}>
+      <FeedbackState kind="loading" title="正在读取这份包含较长名称的工作区文件，请稍候 Loading conversation history and workspace details" />
+    </section>
+    <section aria-label="错误恢复"><FeedbackState kind="error" appearance="retry" title="历史会话加载失败" retryLabel="重新加载" onRetry={() => {}} /></section>
+  </main>
+}
+
 export function Controls() {
   return <main style={{ padding: 16, display: 'grid', gap: 24 }}>
     <h1>共享控件验证</h1>
@@ -49,9 +72,9 @@ export function Controls() {
       density={density} value="first" onChange={() => {}} options={[{ value: 'first', label: '首项' }, { value: 'second', label: '次项' }]} />)}
     {(['sm', 'md', 'lg'] as const).map(size => <BrandLogo key={size} size={size} className={`fixture-brand-${size}`} />)}
     <BrandMark size={28} className="fixture-mark" />
-    {(['sm', 'lg'] as const).map(size => <UserAvatar key={size} size={size} avatarUrl={null} username="fixture" displayName="验证" className={`fixture-avatar-${size}`} />)}
+    {(['sm', 'lg'] as const).map(size => <UserAvatar key={size} size={size} avatarUrl={null} className={`fixture-avatar-${size}`} />)}
     {(['primary', 'secondary', 'solid'] as const).map(variant => <Button key={variant} variant={variant} size="sm" shape="capsule">操作 {variant}</Button>)}
   </main>
 }
 
-createRoot(document.getElementById('root')!).render(parameters.get('example') === 'scrollbar' ? <ScrollbarExample /> : <Controls />)
+createRoot(document.getElementById('root')!).render(parameters.get('example') === 'scrollbar' ? <ScrollbarExample /> : parameters.get('example') === 'loading' ? <LoadingExamples /> : <Controls />)

@@ -1,6 +1,6 @@
 import type { ApiError } from '../shared/http'
 import { AuthError, requestJson } from '../shared/http'
-import type { AuthSessionResponse, LoginRequest, LoginResponse } from './types'
+import type { AuthSessionResponse, AuthUser, LoginRequest, LoginResponse } from './types'
 import type { AuthSession } from '../../auth/session'
 import { getAuthorizationHeader, getAuthSession, updateAuthSession } from '../../auth/session'
 
@@ -11,6 +11,23 @@ export interface BootstrapAuthResult {
 }
 
 const bootstrapRequests = new Map<string, Promise<BootstrapAuthResult>>()
+
+/** 保存头像后同步当前会话，服务器或登录身份切换后丢弃原响应 */
+export async function saveAvatar(file: File, signal: AbortSignal): Promise<AuthUser | null> {
+  const session = getAuthSession()
+  if (!session) return null
+  const user = await requestJson<AuthUser>('/api/user/me/avatar', {
+    method: 'PUT',
+    body: file,
+    headers: { Authorization: `${session.tokenType} ${session.token}`, 'Content-Type': file.type },
+    signal,
+    suppressGlobalError: true,
+  })
+  const current = getAuthSession()
+  if (signal.aborted || !current || current.token !== session.token
+    || current.serverAddress !== session.serverAddress || current.user.user_id !== session.user.user_id) return null
+  return updateAuthSession({ user, expires_at: current.expiresAt }, session.token)?.user ?? null
+}
 
 export function login(input: LoginRequest, signal?: AbortSignal) {
   return requestJson<LoginResponse>('/api/auth/login', {

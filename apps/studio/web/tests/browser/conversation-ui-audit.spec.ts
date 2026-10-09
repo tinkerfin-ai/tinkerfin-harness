@@ -6,7 +6,7 @@ import { installLiveRun } from './fixtures/liveRun'
 import { installNotificationStream } from './fixtures/notifications'
 import { installProjectScope } from './fixtures/projects'
 
-const user = { user_id: 1, username: 'conversation-ui', display_name: '附件交互验收', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'conversation-ui', avatar_url: null, roles: [], disabled: false }
 const documentName = '项目交付附件完整文件名-需要在键盘与触控设备上完整阅读-原始资料归档.bin'
 const draftNames = Array.from({ length: 5 }, (_, index) => `项目交付材料-${index + 1}-包含完整说明与验证记录的附件.pdf`)
 const widths = [320, 768, 1024, 1440]

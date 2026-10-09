@@ -73,7 +73,7 @@ test('真实跨域表单直传保留文件与取消，业务凭据仅发送给�
           localStorage.setItem('tinkerfin.auth.session', JSON.stringify({
           serverAddress: target,
           token: 'isolated-upload-token', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z',
-          user: { user_id: 1, username: 'test', display_name: '附件测试', avatar_url: null, roles: [], disabled: false },
+          user: { user_id: 1, username: 'test', avatar_url: null, roles: [], disabled: false },
           }))
         }, target)
         const result = await page.evaluate(async () => {

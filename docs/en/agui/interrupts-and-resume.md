@@ -142,7 +142,7 @@ Plan interrupts have no `toolCallId`. Clients must not return Forms, labels, or 
 
 A discussion request ends the pending card. That card can no longer be submitted or approved. The framework preserves its trusted form or draft as conversation context without treating unsubmitted form content as answers. The model may then reply, ask new questions, or produce a new draft; a new draft still requires approval.
 
-The planning model generates ordinary replies directly through the normal message stream, with no separate action-selection call. Replies persist in history; completion waits for a new user message rather than automatically starting another planning turn.
+Ordinary replies stream as messages and persist in history. Completion waits for a new user message rather than automatically starting another planning turn.
 
 To close a card without sending a discussion message, use `type="dismiss"` for clarification, or `type="dismiss"` with the current `baseRevision` for draft review. Dismissal does not submit unfinished answers, invoke the model, or authorize execution. Planning mode remains active and waits for a new message; the trusted form or draft remains available as context.
 

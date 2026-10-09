@@ -6,7 +6,7 @@ import { emptyTraceGraph } from '../../src/test/traceFixtures'
 
 const threadId = 'failure-browser'
 const time = '2026-09-08T00:00:00.000Z'
-const user = { user_id: 1, username: 'failure-test', display_name: '会话验收', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'failure-test', avatar_url: null, roles: [], disabled: false }
 const messages: TraceMessage[] = [1, 2, 3].map(id => ({
   id: `question-${id}`, agui: null, traceSeq: id, runId: `run-${id}`,
   graphNamespace: [], role: 'user', content: `你好 ${id}`, contentOmitted: false,

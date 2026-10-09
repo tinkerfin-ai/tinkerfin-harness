@@ -83,8 +83,6 @@ runtime = (
 )
 ```
 
-审批流程使用 `durability="sync"`，表示等待异步 checkpoint 写入完成，不表示使用同步数据库驱动。
-
 ## 执行前审阅 Plan
 
 在 builder 上启用 Plan，并在请求中选择 `mode="plan"`：

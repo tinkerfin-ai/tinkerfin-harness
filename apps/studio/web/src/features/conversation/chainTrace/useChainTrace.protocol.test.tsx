@@ -73,7 +73,6 @@ describe('链路读取协议生命周期', () => {
       user: {
         user_id: 7,
         username: 'chain-contract',
-        display_name: '链路契约',
         avatar_url: null,
         roles: [],
         disabled: false,

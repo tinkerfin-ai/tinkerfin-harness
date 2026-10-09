@@ -3,8 +3,7 @@ SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 CREATE TABLE users (
   id INTEGER NOT NULL AUTO_INCREMENT COMMENT '用户主键',
   username VARCHAR(64) NOT NULL COMMENT '登录用户名',
-  display_name VARCHAR(128) NOT NULL COMMENT '展示名称',
-  avatar_url VARCHAR(2048) COMMENT '头像地址（HTTPS）',
+  avatar_url VARCHAR(2048) COMMENT '头像的长期对象存储地址，空值由前端显示默认头像',
   password_hash VARCHAR(512) NOT NULL COMMENT '密码哈希（含算法、参数和盐值）',
   roles JSON NOT NULL COMMENT '用户角色列表',
   disabled BOOL NOT NULL COMMENT '是否禁止登录',
@@ -195,8 +194,8 @@ CREATE TABLE attachment_references (
 
 CREATE INDEX ix_attachment_references_file ON attachment_references (attachment_id);
 
-INSERT INTO users (username, display_name, avatar_url, password_hash, roles, disabled)
-VALUES ('tinkerfin', 'TinkerFin', NULL, '$pbkdf2-sha256$600000$1ZFendL8broCk5OyW_zBQA$FHwGHqHzxz2n3-ksjSWYySw1tq6sE3X83sIsAGB1REI', '[]', FALSE);
+INSERT INTO users (username, avatar_url, password_hash, roles, disabled)
+VALUES ('tinkerfin', NULL, '$pbkdf2-sha256$600000$1ZFendL8broCk5OyW_zBQA$FHwGHqHzxz2n3-ksjSWYySw1tq6sE3X83sIsAGB1REI', '[]', FALSE);
 
 CREATE TABLE skill_installations (
 	project_id VARCHAR(36) NOT NULL DEFAULT '' COMMENT '所属项目 ID，空字符串表示个人库',

@@ -29,7 +29,7 @@ parts = graph.astream(
 
 events = astream_events(
     parts,
-    identity=RunIdentity(threadId="thread-1", runId="run-1"),
+    identity=RunIdentity(namespace="company-a", threadId="thread-1", runId="run-1"),
 )
 
 async with aclosing(events):
@@ -44,7 +44,7 @@ Fully consuming `astream_events()` delivers one `RUN_STARTED` and one main termi
 | Parameter | Default | Purpose |
 | --- | --- | --- |
 | `parts` | required | Async LangGraph v2 stream or decoded `NativeStreamPart` records |
-| `identity` | required | Main thread and run identity emitted by this conversion |
+| `identity` | required | Namespace, thread, and run identity for this conversion |
 | `expose_reasoning_events` | `False` | Emits supported reasoning events |
 | `expose_subagent_events` | `True` | Delivers subagent events |
 | `prior_tool_call_ids` | `frozenset()` | Complete scoped tool IDs emitted before resume |
@@ -65,28 +65,9 @@ its Native records or converts it directly through `runtime.open_agui_run()`.
 ## Durable attachments
 
 `Attachment` from `tinkerfin_contracts.media` contains `id`, `name`, `mime_type`,
-and `size_bytes`. Its `content_block()` produces a LangChain `image` or `file`
-block with `file_id`, `mime_type`, and `extras.attachment`. Store the reference in
-messages. To resolve it, the host authorizes access and supplies bounded file bytes through
-`TinkerFin().with_attachments(AttachmentSupport(read_content=...))` when making model
-requests. The optional asynchronous reader returns
-`AttachmentContent(data=..., mime_type=...)`; without it, stored attachments remain
-references for file-reading tools. Native media needs no reader: framework-created
-graphs check it against the destination model's declared image, audio, video, and PDF
-capabilities by default. `supports_content(model, mime_type)` can customize this check
-without a reader. Unsupported content or unknown support produces descriptive text
-for the model; original messages and stored references remain unchanged.
-This does not parse files or convert video into frames.
-
-With a reader, `max_attachments` defaults to 5 recent supported files per request.
-`max_bytes` defaults to 20 MiB of total resolved content before base64 encoding; exceeding it
-raises `ValueError` before provider invocation. The host must also bound storage
-reads before returning bytes. This policy applies to framework-created graphs;
-externally compiled and remote agents choose their own file-input mechanism.
-
-Ordinary callers pass standard user messages to `runtime.open_agui_run(messages=...)`;
-the Runtime owns validation and conversion. `AgUiUserInput` provides ID-free text and
-attachment inspection plus authorized descriptor replacement for hosts assigning IDs.
+and `size_bytes`. Messages retain attachment references, and the host authorizes access;
+the converter does not read file bytes. For Runtime model-request resolution, see
+[attachment configuration](../../../packages/tinkerfin/README.md#observations-and-attachments).
 
 For custom adapter integrations, `user_message_to_langchain()` from
 `tinkerfin_agui_adapter.media` converts AG-UI user messages to LangChain;
@@ -139,7 +120,7 @@ from tinkerfin_agui_adapter import (
 
 
 lifecycle = AgUiLifecycleEventFactory()
-identity = RunIdentity(threadId="thread-1", runId="run-1")
+identity = RunIdentity(namespace="company-a", threadId="thread-1", runId="run-1")
 adapter = DeepAgentAgUiAdapter(identity=identity)
 
 try:
@@ -172,7 +153,10 @@ finally:
 `abort()` closes only child text, reasoning, and Tool lifecycles. The custom
 orchestrator emits the one main `RUN_ERROR`, as shown above.
 
-Your orchestrator owns one start and one terminal. Prefer `astream_events()` unless you truly need that ownership.
+The example sends a main terminal on normal completion or an ordinary conversion error.
+Cancellation propagates and closes the source; abandoned consumption does not guarantee
+delivery of child endings or a main terminal. Prefer `astream_events()` for ordinary
+integrations.
 
 ## Reduce very small deltas
 

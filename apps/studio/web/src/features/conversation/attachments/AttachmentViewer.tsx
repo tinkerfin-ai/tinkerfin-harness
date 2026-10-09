@@ -9,7 +9,7 @@ import {
   Plus,
 } from 'lucide-react'
 import { useContext, useEffect, useRef, useState } from 'react'
-import { Button, Dialog, IconButton } from '../../../components/ui'
+import { Button, Dialog, FeedbackState, IconButton } from '../../../components/ui'
 import { useI18n } from '../../../i18n'
 import type { Attachment } from './content'
 import { AttachmentReferenceContext } from './context'
@@ -234,16 +234,14 @@ function ViewerImage({
               }}
             />
           ) : (
-            <p className="attachment-viewer-empty" role="status">
-              {preview.failed
-                ? t('图片暂时无法打开，请重试')
-                : t('正在加载图片…')}
-            </p>
+            preview.failed
+              ? <p className="attachment-viewer-empty" role="status">{t('图片暂时无法打开，请重试')}</p>
+              : <FeedbackState kind="loading" title={t('正在加载图片…')} />
           )}
           </div>
         </div>
         {(!original.url || download.failed) && (
-          <div className="attachment-viewer-status" role="status">
+          <div className={`attachment-viewer-status${!download.failed && !original.failed ? ' is-loading' : ''}`} role={download.failed || original.failed ? 'status' : undefined}>
             {download.failed ? (
               <>
                 {t('下载失败，请重试')}
@@ -271,7 +269,7 @@ function ViewerImage({
                 </Button>
               </>
             ) : (
-              t('正在加载原图…')
+              <FeedbackState kind="loading" title={t('正在加载原图…')} />
             )}
           </div>
         )}

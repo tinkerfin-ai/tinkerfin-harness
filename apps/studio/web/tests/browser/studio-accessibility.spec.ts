@@ -29,7 +29,6 @@ const toolResultContent = (message: Message): JsonValue | undefined => message.a
 const user = {
   user_id: 7,
   username: 'browser-user',
-  display_name: '浏览器用户',
   avatar_url: null,
   roles: [],
   disabled: false,

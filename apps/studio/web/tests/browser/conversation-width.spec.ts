@@ -3,7 +3,7 @@ import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
 import fixture from './fixtures/multimodal-history.json' with { type: 'json' }
 
-const user = { user_id: 1, username: 'width-test', display_name: '布局验收', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'width-test', avatar_url: null, roles: [], disabled: false }
 const history = {
   ...fixture, title: '布局验收', lastModel: 'model-0', messageCount: 16, toolCallCount: 0,
   messages: Array.from({ length: 16 }, (_, i) => ({

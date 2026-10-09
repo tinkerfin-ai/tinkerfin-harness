@@ -68,13 +68,12 @@ Path("opensandbox-schema.sql").write_text(schema.ddl, encoding="utf-8")
 
 `dialect` accepts `postgresql`, `mysql`, or `sqlite`. The descriptor also exposes
 `table_names`. Startup creates an empty schema or validates its tables, columns, keys,
-indexes, and database comments. Creating the schema requires DDL permissions; a
-precreated complete schema can use a DML account.
+and indexes. MySQL and PostgreSQL also validate database comments. Creating the schema
+requires DDL permissions; a precreated complete schema can use a DML account.
 
 ## Warm capacity
 
 ```python
-config = OpenSandboxConfig(warm_pool_size=2)
 manager = OpenSandboxManager(
     client=client,
     key_resolver=key_resolver,

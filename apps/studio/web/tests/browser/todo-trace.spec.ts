@@ -18,7 +18,6 @@ const BASE_TIME = Date.UTC(2026, 7, 31, 12)
 const user = {
   user_id: 17,
   username: 'todo-browser-user',
-  display_name: '任务轨迹用户',
   avatar_url: null,
   roles: [],
   disabled: false,

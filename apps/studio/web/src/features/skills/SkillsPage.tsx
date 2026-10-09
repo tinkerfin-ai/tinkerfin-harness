@@ -131,7 +131,7 @@ function ScopedSkillsPage({ project, navigation, catalog, projectId, dialog, set
             </div>}
           </div>
           <div ref={scroll} className="skills-scroll ui-scrollbar" onScroll={rememberScroll}>
-            {status === 'loading' ? <div className="skills-grid" role="status" aria-label={t('正在加载技能')}>{Array.from({ length: 6 }, (_, index) => <div className="skills-skeleton" key={index} aria-hidden="true"><span /><b /><i /><i /></div>)}</div>
+            {status === 'loading' ? <FeedbackState kind="loading" title={t('正在加载技能')} />
               : status === 'error' && !(navigation.view === 'mine' && library.installed.length) ? <div className="skills-empty"><FeedbackState kind="error" title={skillError(failure, t('技能加载失败'))} onRetry={retry} /></div>
               : selections.length === 0 ? <div className="skills-empty"><h2>{navigation.view === 'mine' && library.installed.length === 0 ? t('把常用技能放在这里') : t('没有找到技能')}</h2><p>{navigation.view === 'mine' && library.installed.length === 0 ? t('从发现中安装，或导入自己的技能') : t('尝试其他关键词或来源')}</p>
                 {hasFilters ? <Button type="button" size="sm" onClick={() => navigation.changeFilters({ query: '', category: '', status: 'all' })}>{t('清除筛选')}</Button>
@@ -147,7 +147,7 @@ function ScopedSkillsPage({ project, navigation, catalog, projectId, dialog, set
               })}</div>}
             {status === 'error' && navigation.view === 'mine' && library.installed.length > 0 && <FeedbackState compact kind="error" title={skillError(failure, t('技能加载失败'))} onRetry={retry} />}
             {navigation.view === 'discover' && catalog.cursor && status === 'ready' && <div ref={pagination} className="skills-pagination">
-              {catalog.loadingMore ? <p role="status">{t('正在加载技能')}</p> : Boolean(catalog.error) && <FeedbackState compact kind="error" title={skillError(catalog.error, t('加载更多失败'))} onRetry={() => void catalog.more()} />}
+              {catalog.loadingMore ? <FeedbackState kind="loading" title={t('正在加载技能')} /> : Boolean(catalog.error) && <FeedbackState compact kind="error" title={skillError(catalog.error, t('加载更多失败'))} onRetry={() => void catalog.more()} />}
             </div>}
           </div>
         </div>

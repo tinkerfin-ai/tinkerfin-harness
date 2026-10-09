@@ -1,8 +1,8 @@
 import { Check, ChevronDown, Cpu, Link2, Monitor, MoonStar, Settings2, Sun, UserRound } from 'lucide-react'
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 import type { AuthUser } from '../../api/auth/types'
-import { Button, Dialog, ErrorBoundary, ListboxPicker, OverlayScrollbar, UserAvatar } from '../../components/ui'
+import { Button, Dialog, ErrorBoundary, ListboxPicker, OverlayScrollbar } from '../../components/ui'
 import { useI18n, type LanguagePreference } from '../../i18n'
 import type { ThemePreference } from '../../theme'
 import './settings.css'
@@ -10,6 +10,8 @@ import type { ToastKind } from '../../components/ui/ToastViewport'
 import { ModelSettingsPanel } from './ModelSettingsPanel'
 import { ServiceSettingsPanel } from './ServiceSettingsPanel'
 import { useServiceSettings } from './useServiceSettings'
+import { useUserProfile } from './useUserProfile'
+import { UserProfileEditor } from './UserProfileEditor'
 
 const APPEARANCE_OPTIONS = [
   { value: 'system', label: '跟随系统', icon: Monitor },
@@ -49,21 +51,25 @@ export function SettingsDialog({
   const [activeSection, setActiveSection] = useState<'user' | 'general' | 'models' | 'services'>('user')
   const [servicesVisited, setServicesVisited] = useState(false)
   const [confirmClose, setConfirmClose] = useState(false)
+  const [confirmProfileClose, setConfirmProfileClose] = useState(false)
+  const profile = useUserProfile(user, open)
+  useEffect(() => { if (!open || !profile.dirty) setConfirmProfileClose(false) }, [open, profile.dirty])
   const services = useServiceSettings(open && servicesVisited)
   const [languageOpen, setLanguageOpen] = useState(false)
   const { preference: languagePreference, setPreference: setLanguagePreference, t } = useI18n()
-  const displayName = user.display_name.trim() || user.username
   const languageLabel = (value: LanguagePreference) => {
     if (value === 'system') return t('跟随系统')
     return value === 'zh-CN' ? t('简体中文') : 'English'
   }
-  const close = () => {
-    if (servicesVisited && services.dirty) { setActiveSection('services'); setConfirmClose(true); return }
+  const closeDisabled = profile.saving || services.saving !== null
+  const requestClose = (discard?: 'profile' | 'services') => {
+    if (closeDisabled) return
+    setConfirmProfileClose(false); setConfirmClose(false)
+    if (discard === 'profile') profile.reset()
+    if (discard === 'services') { services.reset('web_search'); services.reset('image_generation') }
+    if (discard !== 'profile' && profile.dirty) { setActiveSection('user'); setConfirmProfileClose(true); return }
+    if (discard !== 'services' && servicesVisited && services.dirty) { setActiveSection('services'); setConfirmClose(true); return }
     onClose()
-  }
-  const decideClose = (discard: boolean) => {
-    setConfirmClose(false)
-    if (discard) { services.reset('web_search'); services.reset('image_generation'); onClose() }
   }
 
   return (
@@ -71,9 +77,9 @@ export function SettingsDialog({
       open={open}
       title={t('设置')}
       className="settings-dialog"
-      closeDisabled={services.saving !== null}
+      closeDisabled={closeDisabled}
       restoreFocusTo={restoreFocusTo}
-      onClose={close}
+      onClose={() => requestClose()}
     >
       <div className="settings-layout">
         <nav className="settings-nav" aria-label={t('设置分类')}>
@@ -99,7 +105,7 @@ export function SettingsDialog({
           <button type="button" className={`settings-nav__item${activeSection === 'services' ? ' is-selected' : ''}`} aria-current={activeSection === 'services' ? 'page' : undefined} onClick={() => { setServicesVisited(true); setActiveSection('services') }}><Link2 size={18} aria-hidden="true" />{t('服务连接')}</button>
         </nav>
         {activeSection === 'services' ? <div className="settings-models-host">
-          <ErrorBoundary fallback={({ reset }) => <Button type="button" onClick={reset}>{t('重新加载服务配置')}</Button>}><ServiceSettingsPanel state={services} confirmClose={confirmClose} onCloseDecision={decideClose} /></ErrorBoundary>
+          <ErrorBoundary fallback={({ reset }) => <Button type="button" onClick={reset}>{t('重新加载服务配置')}</Button>}><ServiceSettingsPanel state={services} confirmClose={confirmClose} closeDisabled={closeDisabled} onCloseDecision={discard => { if (discard) requestClose('services'); else setConfirmClose(false) }} /></ErrorBoundary>
         </div> : activeSection === 'models' ? <div className="settings-models-host">
           <ErrorBoundary onError={() => onToast('error', t('模型加载失败，请先重试'))} fallback={({ reset }) => <Button type="button" onClick={reset}>{t('重新加载模型')}</Button>}><ModelSettingsPanel onChanged={onModelsChanged} /></ErrorBoundary>
         </div> : <div
@@ -111,18 +117,12 @@ export function SettingsDialog({
         >
           {activeSection === 'user' && <section className="settings-section" aria-labelledby="settings-account-title">
             <h3 id="settings-account-title">{t('用户信息')}</h3>
-            <div className="settings-profile">
-              <UserAvatar
-                avatarUrl={user.avatar_url}
-                displayName={displayName}
-                username={user.username}
-                size="lg"
-              />
-              <div className="settings-profile__identity">
-                <strong>{displayName}</strong>
-                <span>@{user.username}</span>
-              </div>
-            </div>
+            <UserProfileEditor username={user.username} profile={profile} confirmClose={confirmProfileClose && profile.dirty}
+              closeDisabled={closeDisabled}
+              onCloseDecision={discard => {
+                if (discard) requestClose('profile')
+                else setConfirmProfileClose(false)
+              }} />
           </section>}
           {activeSection === 'general' && <>
           <section className="settings-section" aria-labelledby="settings-appearance-title">

@@ -190,9 +190,9 @@ finally:
         await database.dispose()
 ```
 
-Entering the context prepares storage. Worker exit closes Engine then Service;
-explicit Stores and database engines remain host-owned. A supplied Scheduler
-transfers its lifecycle to Automation. An instance can be entered once; do not
+Entering the context prepares storage. Explicit Stores and database engines remain
+host-owned. A supplied Scheduler transfers its lifecycle to Automation. An instance
+can be entered once; do not
 nest client and worker contexts. Close outside running targets and resource callbacks.
 Shutdown joins accepted operations and owned cleanup, including on cancellation.
 

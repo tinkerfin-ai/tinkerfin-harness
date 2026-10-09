@@ -63,12 +63,11 @@ Path("opensandbox-schema.sql").write_text(schema.ddl, encoding="utf-8")
 ```
 
 `dialect` 接受 `postgresql`、`mysql` 或 `sqlite`，返回值同时提供 `table_names`。
-启动会创建空数据库中的表，或检查已有表、列、主键、索引和数据库注释。建表需要 DDL 权限；提前建立完整结构后，可使用 DML 账号。
+启动会创建空数据库中的表，或检查已有表、列、主键和索引；MySQL 和 PostgreSQL 还检查数据库注释。建表需要 DDL 权限；提前建立完整结构后，可使用 DML 账号。
 
 ## 预热 Sandbox
 
 ```python
-config = OpenSandboxConfig(warm_pool_size=2)
 manager = OpenSandboxManager(
     client=client,
     key_resolver=key_resolver,

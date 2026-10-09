@@ -6,13 +6,12 @@ import {
   saveAuthSession,
 } from '../../auth/session'
 import type { AuthUser } from './types'
-import { bootstrapAuthSession } from './client'
+import { bootstrapAuthSession, saveAvatar } from './client'
 import { getServerAddress, setServerAddress } from '../shared/config'
 
 const user = (id: number, name: string): AuthUser => ({
   user_id: id,
   username: name,
-  display_name: name,
   avatar_url: null,
   roles: [],
   disabled: false,
@@ -54,6 +53,34 @@ describe('bootstrapAuthSession', () => {
     clearAuthSession()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  it('saves raw image bytes and refreshes the current user without changing the expiry', async () => {
+    const updated = { ...user(1, 'user-a'), avatar_url: 'https://files.example.test/avatars/image.jpg' }
+    let uploaded = ''
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const request = input instanceof Request ? input : new Request(input)
+      expect(request.method).toBe('PUT')
+      expect(request.headers.get('Authorization')).toBe('Bearer token-a')
+      uploaded = await request.text()
+      return new Response(JSON.stringify({ code: 0, message: 'success', data: updated }), { headers: { 'Content-Type': 'application/json' } })
+    }))
+    save('token-a', user(1, 'user-a'))
+    const image = new File(['picture'], 'avatar.png', { type: 'image/png' })
+    await expect(saveAvatar(image, new AbortController().signal)).resolves.toEqual(updated)
+    expect(uploaded).toBe('picture')
+    expect(getAuthSession()).toMatchObject({ expiresAt: '2099-01-01T00:00:00.000Z', user: updated })
+  })
+
+  it('does not apply a saved avatar to a different login', async () => {
+    const pending = deferred<Response>()
+    vi.stubGlobal('fetch', vi.fn(() => pending.promise))
+    save('token-a', user(1, 'user-a'))
+    const request = saveAvatar(new File(['photo'], 'avatar.png', { type: 'image/png' }), new AbortController().signal)
+    save('token-b', user(2, 'user-b'))
+    pending.resolve(new Response(JSON.stringify({ code: 0, message: 'success', data: user(1, 'user-a') }), { headers: { 'Content-Type': 'application/json' } }))
+    await expect(request).resolves.toBeNull()
+    expect(getAuthSession()?.user).toEqual(user(2, 'user-b'))
   })
 
   it('keeps old token responses from replacing a newer session', async () => {

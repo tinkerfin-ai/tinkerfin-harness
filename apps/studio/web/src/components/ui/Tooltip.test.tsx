@@ -114,4 +114,13 @@ describe('Tooltip', () => {
     fireEvent.pointerMove(ref.current!)
     expect(screen.getByRole('tooltip')).toHaveTextContent('完整文件名')
   })
+
+  it('多行截断保持宽度时仍能提供完整内容', () => {
+    const ref = createRef<HTMLSpanElement>()
+    render(<Tooltip content="完整多行文件名" overflowOnly overflowRef={ref}><span ref={ref}>文件名</span></Tooltip>)
+    Object.defineProperties(ref.current!, { scrollWidth: { configurable: true, value: 100 }, clientWidth: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 40 }, clientHeight: { configurable: true, value: 20 } })
+    fireEvent.pointerMove(ref.current!)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('完整多行文件名')
+  })
 })

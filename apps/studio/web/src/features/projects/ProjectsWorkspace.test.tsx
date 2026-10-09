@@ -10,7 +10,7 @@ import * as api from './api'
 vi.mock('./api', () => ({ listProjects: vi.fn(), saveProject: vi.fn() }))
 const first = { id: 'first', name: '研究', createdAt: '2030-01-01', updatedAt: '2030-01-01' }
 const second = { ...first, id: 'second', name: '开发' }
-const user = { user_id: 1, username: 'one', display_name: '用户', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'one', avatar_url: null, roles: [], disabled: false }
 function Editor({ scope }: { scope: ProjectWorkspaceScope }) {
   const draft = useComposerDraft('', { key: scope.project.id, store: scope.drafts })
   return <><ProjectSwitcher scope={scope} /><input aria-label="草稿" value={draft.text} onChange={event => draft.setText(event.target.value)} /></>

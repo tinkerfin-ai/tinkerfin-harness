@@ -171,9 +171,15 @@ between command and filesystem services.
 
 ```python
 from deepagents import FilesystemPermission
+from deepagents.backends import StoreBackend
 
 from tinkerfin import TinkerFin
 
+project = manager.workspace(
+    "users/7",
+    workspace_key="project-a",
+    routes={"/policies/": StoreBackend(namespace=lambda _: ("policies",))},
+)
 permissions = [
     FilesystemPermission(
         operations=["write"],
@@ -183,7 +189,7 @@ permissions = [
 ]
 
 runtime = (
-    TinkerFin(checkpointer=checkpointer)
+    TinkerFin(store=store, checkpointer=checkpointer)
     .with_namespace("projects/project-a")
     .build(
         model=model,
@@ -194,7 +200,9 @@ runtime = (
 ```
 
 The Runtime prepares isolated project access and its filesystem middleware together
-when the run starts. Permission rules that interrupt instead of deny require a checkpointer.
+when the run starts. This example borrows the host Store and routes `/policies/` to a
+backend without Shell access. The permission limits file-tool writes on that route;
+it cannot restrict the project Shell. Interrupt rules require a checkpointer.
 Use `build_rooted_filesystem_middleware()` only in a caller-managed Deep Agents Graph.
 
 Next: [Persistent state and extensions](persistence-and-extensions.md).

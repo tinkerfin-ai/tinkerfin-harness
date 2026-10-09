@@ -27,7 +27,6 @@ def discovery_app(database, monkeypatch, model_connections):
         UserContext(
             user_id=1,
             username="tester",
-            display_name="Tester",
             roles=(),
             disabled=False,
         )
@@ -116,7 +115,6 @@ async def test_discovery_does_not_borrow_another_users_connection(
         UserContext(
             user_id=3,
             username="missing",
-            display_name="Missing",
             roles=(),
             disabled=False,
         )
@@ -233,7 +231,6 @@ async def test_discovery_authenticates_before_network_without_holding_database_s
             user = UserContext(
                 user_id=1,
                 username="tester",
-                display_name="Tester",
                 roles=(),
                 disabled=False,
             )
@@ -302,7 +299,6 @@ async def test_http_cancellation_waits_for_client_close_after_repeated_cancel(
         UserContext(
             user_id=1,
             username="tester",
-            display_name="Tester",
             roles=(),
             disabled=False,
         )

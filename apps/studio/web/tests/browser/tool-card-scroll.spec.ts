@@ -11,7 +11,7 @@ const THREAD = 'tool-scroll-thread'
 const RUN = 'tool-scroll-run'
 const SUB_RUN = 'subagent-11111111-1111-5111-8111-111111111111'
 const time = '2026-09-20T00:00:00.000Z'
-const user = { user_id: 1, username: 'scroll-reader', display_name: '滚动验收', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'scroll-reader', avatar_url: null, roles: [], disabled: false }
 const snapshot: ConversationHistoryDetail = {projectId: 'project-1', archived: false,
   id: 1, threadId: THREAD, title: '工具流式阅读', accessMode: 'full', lastModel: 'test-model',
   titleSource: 'default', titleGenerationStatus: 'idle', titleSeq: 0, pinned: false,

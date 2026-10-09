@@ -31,6 +31,7 @@ import {
 } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent, ReactNode, Ref } from 'react'
 
+import { buildApiUrl } from '../../../api/shared/config'
 import type { AuthUser } from '../../../api/auth/types'
 import { BrandLogo, Button, FeedbackState, IconButton, OverlayScrollbar, UserAvatar } from '../../../components/ui'
 import { restoreFocus } from '../../../components/ui/focus'
@@ -91,6 +92,7 @@ export function ConversationItem({
         className="conversation-main"
         aria-label={requiresAttention ? `${openLabel}，${t('等待处理')}` : generating ? `${openLabel}，${t('正在生成')}` : openLabel}
         aria-busy={generating || undefined}
+        aria-current={isActive ? 'page' : undefined}
         onClick={onSelect}
       >
         <span className="conversation-status-slot" aria-hidden="true">
@@ -255,8 +257,8 @@ export function Sidebar({
     onRetryLoadMore,
   }
   const groups = useMemo(
-    () => groupConversationHistory([...historyConversations, ...pendingConversations.map(item => item.conversation)], historyDayRanges, new Date(), locale),
-    [historyConversations, pendingConversations, historyDayRanges, locale],
+    () => groupConversationHistory([...historyConversations, ...(!archivedHistory ? pendingConversations.map(item => item.conversation) : [])], historyDayRanges, new Date(), locale),
+    [historyConversations, pendingConversations, archivedHistory, historyDayRanges, locale],
   )
   const menuConversation = openMenu
     ? workspace.conversations.find((item) => item.threadId === openMenu.threadId)
@@ -712,8 +714,8 @@ export function Sidebar({
               {(hasMore || isLoadingMore || loadMoreError) && (
                 <div className="history-pagination-slot">
                   {isLoadingMore ? (
-                    <div className="history-pagination-status" role="status">
-                      {t('正在加载更多历史会话')}
+                    <div className="history-pagination-status">
+                      <FeedbackState kind="loading" title={t('正在加载更多历史会话')} />
                     </div>
                   ) : loadMoreError ? (
                     <div className="history-pagination-status">
@@ -740,11 +742,9 @@ export function Sidebar({
               onClick={() => setUserMenu((value) => !value)}
             >
               <UserAvatar
-                avatarUrl={user.avatar_url}
-                displayName={user.display_name}
-                username={user.username}
+                avatarUrl={user.avatar_url ? buildApiUrl(user.avatar_url) : null}
               />
-              <strong className="user-name">{user.display_name.trim() || user.username}</strong>
+              <strong className="user-name">{user.username}</strong>
             </button>
             {userMenu && (
               <div
@@ -829,9 +829,7 @@ export function Sidebar({
             tooltipPlacement="right" tooltip={t('账户')}
             icon={(
               <UserAvatar
-                avatarUrl={user.avatar_url}
-                displayName={user.display_name}
-                username={user.username}
+                avatarUrl={user.avatar_url ? buildApiUrl(user.avatar_url) : null}
               />
             )}
             tabIndex={railInteractive ? 0 : -1}

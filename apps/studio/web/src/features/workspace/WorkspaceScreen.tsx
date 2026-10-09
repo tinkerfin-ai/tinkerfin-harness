@@ -338,6 +338,11 @@ function ProjectWorkspaceScreen({
     () => workspace.conversations.find((item) => item.threadId === workspace.currentThreadId),
     [workspace],
   )
+  const selectedThreadId = selectedConversation?.threadId
+  const selectedArchived = selectedConversation?.archived
+  useEffect(() => {
+    if (selectedThreadId && selectedArchived !== undefined) setArchivedHistory(selectedArchived)
+  }, [selectedThreadId, selectedArchived])
   const conversation = useMemo(() => {
     if (workspace.currentThreadId) {
       return selectedConversation
@@ -410,7 +415,7 @@ function ProjectWorkspaceScreen({
     active: activePage === 'conversation' && workspaceView === 'conversation',
   })
   const taskDrawerLayout = useDrawerLayout(640, resizeConversationContent)
-  const filesDrawerLayout = useDrawerLayout(640, resizeConversationContent, 520)
+  const filesDrawerLayout = useDrawerLayout(640, resizeConversationContent, 560)
   const { hostRef: taskHostRef } = taskDrawerLayout
   const { hostRef: filesHostRef } = filesDrawerLayout
   const drawerHostRef = useCallback((node: HTMLDivElement | null) => {
@@ -1029,6 +1034,17 @@ function ProjectWorkspaceScreen({
     )))
   }, [setWorkspace])
 
+  const onConversationBoundary = () => {
+    cancelInitialSelection()
+    messageWindow.captureReadingPosition()
+    setActivePage('conversation')
+    pendingConversations.select(null)
+    submissionLocks.current.delete('')
+    releaseDraft()
+    draftRevision.current += 1
+    setWorkspaceView('conversation')
+  }
+
   const {
     dialog,
     dialogPending,
@@ -1054,16 +1070,7 @@ function ProjectWorkspaceScreen({
     cancelRun,
     isActiveThread,
     onToast: pushToast,
-    onConversationBoundary: () => {
-      cancelInitialSelection()
-      messageWindow.captureReadingPosition()
-      setActivePage('conversation')
-      pendingConversations.select(null)
-      submissionLocks.current.delete('')
-      releaseDraft()
-      draftRevision.current += 1
-      setWorkspaceView('conversation')
-    },
+    onConversationBoundary,
   })
 
   const setAgentMode = useCallback((mode: AgentMode) => {
@@ -1203,7 +1210,11 @@ function ProjectWorkspaceScreen({
         onOpenConversation={() => { setActivePage('conversation'); navigation.closeOverlay(false) }}
         onOpenMemories={() => { messageWindow.captureReadingPosition(); taskDrawer.close(false); changeDirectoryOpen(false); navigation.closeOverlay(false); setActivePage('memories') }}
         memoriesActive={activePage === 'memories'}
-        archivedHistory={archivedHistory} onArchivedHistoryChange={setArchivedHistory}
+        archivedHistory={archivedHistory} onArchivedHistoryChange={value => {
+          onConversationBoundary()
+          setDraftConversation(null)
+          setArchivedHistory(value)
+        }}
         onArchive={projectActions.archive} onMove={projectActions.move}
         projectSelector={<ProjectSwitcher scope={scope} />}
         onChooseProject={() => { navigation.requestExpanded(); requestAnimationFrame(() => appShell.current?.querySelector<HTMLButtonElement>('.project-switcher-trigger')?.focus()) }}
@@ -1550,7 +1561,7 @@ function ProjectWorkspaceScreen({
           <FeedbackState kind="error" title={t('工作区无法显示')} onRetry={reset} />
         </Drawer>
       ) : null}>
-        <WorkspaceFilesDrawer projectName={scope.project.name} state={workspaceFiles} open={filesDrawerOpen}
+        <WorkspaceFilesDrawer state={workspaceFiles} open={filesDrawerOpen}
           fullPage={filesDetailPageOpen} onClose={closeWorkspaceFiles} onToast={pushToast}
           resizeHandle={<DrawerResizeHandle control={filesDrawerLayout} label={t('调整工作区宽度')} controls="workspace-files-drawer" />} />
       </ErrorBoundary>

@@ -6,7 +6,7 @@ import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 
 const widths = [320, 768, 1024, 1440]
-const user = { user_id: 1, username: 'feature-check', display_name: '功能验收', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'feature-check', avatar_url: null, roles: [], disabled: false }
 const reportText = Array.from({ length: 35 }, (_, index) => `第${index + 1}段结果：自动化报告中的完整正文可以逐段阅读`).join('\n\n')
 
 async function prepare(page: Page, theme: 'light' | 'dark', { locale = 'zh-CN', task = taskFixture() }: { locale?: 'zh-CN' | 'en'; task?: AutomationTask } = {}) {

@@ -1,4 +1,6 @@
 export { Button } from './Button'
+export { Breadcrumbs } from './Breadcrumbs'
+export type { BreadcrumbItem, BreadcrumbsProps } from './Breadcrumbs'
 export type { ButtonProps, ButtonShape, ButtonSize, ButtonVariant } from './Button'
 export { BrandLogo } from './BrandLogo'
 export type { BrandLogoProps, BrandLogoSize } from './BrandLogo'

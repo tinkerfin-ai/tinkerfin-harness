@@ -1,6 +1,6 @@
 import { CornerDownLeft, Download, Info } from 'lucide-react'
 import { useContext, useEffect, useId, useRef, useState } from 'react'
-import { Button, Dialog, IconButton } from '../../../components/ui'
+import { Button, Dialog, FeedbackState, IconButton } from '../../../components/ui'
 import { useI18n } from '../../../i18n'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { attachmentBlob } from './client'
@@ -164,7 +164,7 @@ export function DocumentAttachmentPreview({
           ))}
         </aside>
         <div className="attachment-document-body" role="region" aria-label={t('文档预览')} tabIndex={0}>
-          {preview.phase === 'loading' && <p role="status">{t('正在加载文档…')}</p>}
+          {preview.phase === 'loading' && <FeedbackState kind="loading" title={t('正在加载文档…')} />}
           {preview.phase === 'unsupported' && <div className="attachment-document-unavailable">
             <AttachmentFileIcon attachment={attachment} />
             <h3>{isPptx ? t('PPTX 暂不支持在线预览') : t('此格式无法在线预览')}</h3>

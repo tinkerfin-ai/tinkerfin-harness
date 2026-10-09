@@ -4,7 +4,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import { createAutomationFixture, runFixture, taskFixture } from '../../src/test/automationFixtures'
 import type { AutomationDraft } from '../../src/features/automation/model'
 
-const user = { user_id: 1, username: 'automation-preview', display_name: '自动化预览', avatar_url: null, roles: [], disabled: false }
+const user = { user_id: 1, username: 'automation-preview', avatar_url: null, roles: [], disabled: false }
 
 const menuAppearance = (menu: Locator) => Promise.all([
   menu.evaluate(element => {

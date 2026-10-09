@@ -95,7 +95,6 @@ async def stored_model_configs(session):
         User(
             id=1,
             username="test",
-            display_name="测试用户",
             password_hash="unused",
             roles=[],
             disabled=False,
@@ -254,7 +253,7 @@ async def test_rejected_first_registration_rolls_back_its_new_conversation(
             )
             service = ConversationChatService(
                 session,
-                user=UserContext(1, "user", "用户", (), False),
+                user=UserContext(1, "user", (), False),
                 resources=cast(
                     ApplicationResources,
                     SimpleNamespace(
@@ -839,7 +838,6 @@ async def test_chat_accepts_images_and_uses_messaging_only_for_delivery(
         user=UserContext(
             user_id=1,
             username="user",
-            display_name="用户",
             roles=(),
             disabled=False,
         ),
@@ -945,7 +943,6 @@ async def test_trace_notification_failure_retains_the_running_conversation(
             user=UserContext(
                 user_id=1,
                 username="user",
-                display_name="用户",
                 roles=(),
                 disabled=False,
             ),
@@ -1031,7 +1028,6 @@ async def test_previous_head_reconcile_releases_the_request_transaction(
         user=UserContext(
             user_id=1,
             username="user",
-            display_name="用户",
             roles=(),
             disabled=False,
         ),
@@ -1178,7 +1174,6 @@ async def test_title_survives_main_finish_and_response_disconnect(
             user=UserContext(
                 user_id=1,
                 username="user",
-                display_name="用户",
                 roles=(),
                 disabled=False,
             ),
@@ -1310,9 +1305,7 @@ async def test_pre_delivery_failure_keeps_only_preexisting_business_registration
     )
     service = ConversationChatService(
         session,
-        user=UserContext(
-            user_id=1, username="user", display_name="用户", roles=(), disabled=False
-        ),
+        user=UserContext(user_id=1, username="user", roles=(), disabled=False),
         resources=resources,
     )
     with pytest.raises(failure_type) as caught:
@@ -1377,9 +1370,7 @@ async def test_business_registration_cleanup_settles_before_request_cancellation
     monkeypatch.setattr(service_module, "build_conversation_runtime", reject_runtime)
     service = ConversationChatService(
         session,
-        user=UserContext(
-            user_id=1, username="user", display_name="用户", roles=(), disabled=False
-        ),
+        user=UserContext(user_id=1, username="user", roles=(), disabled=False),
         resources=cast(
             ApplicationResources,
             SimpleNamespace(
@@ -1513,7 +1504,6 @@ async def test_initialization_error_is_logged_once_and_replay_does_not_log_again
             user=UserContext(
                 user_id=1,
                 username="user",
-                display_name="用户",
                 roles=(),
                 disabled=False,
             ),
@@ -1680,7 +1670,6 @@ async def test_manual_compaction_uses_registered_run_replay_without_chat_or_titl
             user=UserContext(
                 user_id=1,
                 username="user",
-                display_name="用户",
                 roles=(),
                 disabled=False,
             ),
@@ -1776,9 +1765,7 @@ async def test_compaction_respects_conversation_ownership_and_pending_work(
     )
     service = ConversationChatService(
         session,
-        user=UserContext(
-            user_id=1, username="user", display_name="用户", roles=(), disabled=False
-        ),
+        user=UserContext(user_id=1, username="user", roles=(), disabled=False),
         resources=resources,
     )
     with pytest.raises(BusinessException) as caught:

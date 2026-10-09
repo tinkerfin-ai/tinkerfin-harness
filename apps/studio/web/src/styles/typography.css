@@ -58,6 +58,13 @@
     --type-inline-code-line: 22px;
     --type-code-block-size: 13px;
     --type-code-block-line: 22px;
+    --type-workspace-title-size: 17px;
+    --weight-workspace-file: 450;
+    --weight-workspace-folder: 550;
+    --type-workspace-code-line: 22.8px;
+    --type-workspace-line-number-size: 10px;
+    --type-workspace-icon-label-size: 6px;
+    --type-workspace-icon-grid-label-size: 10px;
     --type-file-icon-size: 8px;
     --type-file-icon-compact-size: 7px;
   }

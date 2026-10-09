@@ -19,7 +19,7 @@ subscription = await channel.wrap(
 - 同一 thread 有另一个活跃 run：抛出 `RunAlreadyActive`；
 - codec 与 channel 已绑定格式不同：抛出 `CodecMismatch`。
 
-`run_id` 是同一 namespace 与线程内的运行幂等标识。Messaging 不读取或保存业务请求摘要；同一个 `RunIdentity` 的正文是否一致由应用校验。
+`run_id` 是同一 namespace 与线程内的运行幂等标识。Messaging 不读取或比较请求正文；应用可通过 `request_digest` 绑定完整请求的摘要，并负责摘要计算与输入授权。
 
 ## 直接获得 SSE
 

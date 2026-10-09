@@ -47,7 +47,6 @@ async def test_login_resolve_and_logout_use_one_token_record(
 
     user = User(
         username="alice",
-        display_name="Alice",
         password_hash=await hash_password("secret-pass"),
         roles=["admin"],
         disabled=False,
@@ -86,7 +85,6 @@ async def test_login_releases_the_user_transaction_before_password_and_redis(
 
     user = User(
         username="transaction-user",
-        display_name="Transaction User",
         password_hash="stored-hash",
         roles=[],
         disabled=False,
@@ -156,7 +154,6 @@ async def test_login_hides_bad_username_and_bad_password_difference(
 
     user = User(
         username="alice",
-        display_name="Alice",
         password_hash=await hash_password("secret-pass"),
         roles=[],
         disabled=False,
@@ -179,45 +176,3 @@ async def test_login_hides_bad_username_and_bad_password_difference(
         (1_001_001_000, "用户名或密码错误"),
         (1_001_001_000, "用户名或密码错误"),
     ]
-
-
-async def test_update_user_changes_only_explicit_profile_fields(
-    session: AsyncSession,
-) -> None:
-    """用户资料更新应支持设置、保留和清空头像"""
-
-    user = User(
-        username="alice",
-        display_name="Alice",
-        avatar_url="https://cdn.example.test/alice.webp",
-        password_hash=await hash_password("secret-pass"),
-        roles=[],
-        disabled=False,
-    )
-    session.add(user)
-    await session.commit()
-    service = AuthService(
-        UserRepository(session),
-        TokenMemoryStore(),
-        token_expire_seconds=1800,
-    )
-
-    renamed = await service.update_user(
-        user.id,
-        display_name="Alice Chen",
-        avatar_url=None,
-        fields=frozenset({"display_name"}),
-    )
-    cleared = await service.update_user(
-        user.id,
-        display_name=None,
-        avatar_url=None,
-        fields=frozenset({"avatar_url"}),
-    )
-
-    assert renamed is not None
-    assert renamed.display_name == "Alice Chen"
-    assert renamed.avatar_url == "https://cdn.example.test/alice.webp"
-    assert cleared is not None
-    assert cleared.display_name == "Alice Chen"
-    assert cleared.avatar_url is None
