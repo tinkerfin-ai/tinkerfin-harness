@@ -2782,6 +2782,42 @@ test('加载更早消息后从按钮热区底边继续公共消息间距', async
   }
 })
 
+for (const state of ['approval', 'planReview', 'planQuestion'] as const) {
+  test(`会话行内待处理图标 ${state}`, async ({ page }, testInfo) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await mockStudio(page, { [state]: true })
+    const conversation = page.getByRole('button', { name: '打开会话：浏览器会话，等待处理', exact: true })
+    const icon = conversation.locator('svg')
+    await expect(icon).toHaveClass(new RegExp(state === 'planQuestion' ? 'lucide-message-circle-question' : 'lucide-shield-question'))
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate(theme => { document.documentElement.dataset.theme = theme }, theme)
+      for (const width of [320, 768, 1024, 1440]) {
+        await page.setViewportSize({ width, height: 900 })
+        for (const name of ['打开导航', '打开侧边栏']) {
+          const control = page.getByRole('button', { name, exact: true })
+          if (await control.isVisible()) await control.click()
+        }
+        await expect(conversation).toBeVisible()
+        await expect(icon).toHaveCSS('animation-name', 'none')
+        await expect(icon).toHaveCSS('stroke-width', '1.7px')
+        await expect(icon).toHaveCSS('color', state === 'planQuestion'
+          ? theme === 'light' ? 'rgb(49, 88, 230)' : 'rgb(140, 163, 254)'
+          : theme === 'light' ? 'rgb(138, 75, 0)' : 'rgb(255, 200, 105)')
+        expect(await conversation.evaluate(element => {
+          const row = element.getBoundingClientRect()
+          const icon = element.querySelector('svg')!.getBoundingClientRect()
+          const title = element.querySelector('.conversation-title-marquee')!.getBoundingClientRect()
+          return { center: icon.x + icon.width / 2 - row.x, titleStart: title.x - row.x, iconWidth: icon.width, iconHeight: icon.height }
+        })).toEqual({ center: 16, titleStart: 30, iconWidth: 16, iconHeight: 16 })
+        await expect(conversation).toHaveCSS('box-shadow', 'none')
+        await page.screenshot({ path: testInfo.outputPath(`status-${state}-${theme}-${width}.png`) })
+      }
+    }
+    await page.emulateMedia({ forcedColors: 'active' })
+    await expect(icon).toHaveCSS('color', 'rgb(0, 0, 0)')
+  })
+}
+
 test('澄清问题接管输入区并沿用主题色', async ({ page }) => {
   await mockStudio(page, {
     planQuestion: true,
@@ -2798,7 +2834,7 @@ test('澄清问题接管输入区并沿用主题色', async ({ page }) => {
   const title = card.locator('.plan-question-composer-heading h2 > span')
   const icon = card.locator('.plan-question-composer-heading h2 > svg')
   const bridge = card.locator('.interaction-card-color-bridge.is-plan')
-  const attentionDot = page.locator(`[data-history-thread-id="${THREAD_ID}"] .conversation-attention-dot`)
+  const attentionIcon = page.getByRole('button', { name: '打开会话：浏览器会话，等待处理', exact: true, includeHidden: true }).locator('svg')
 
   await expect(header.locator('.plan-interaction-card-description'))
     .toHaveText('这些答案会影响后续规划')
@@ -2819,7 +2855,8 @@ test('澄清问题接管输入区并沿用主题色', async ({ page }) => {
       const bridgeBackground = await bridge.evaluate((element) => getComputedStyle(element).backgroundImage)
       expect(bridgeBackground).toContain(headerBackground)
       expect(bridgeBackground).toContain(contentBackground)
-      await expect(attentionDot).toHaveCSS('color', accentColor)
+      await expect(attentionIcon).toHaveCSS('color', colorScheme === 'light' ? 'rgb(49, 88, 230)' : 'rgb(140, 163, 254)')
+      await expect(attentionIcon).toHaveCSS('animation-name', 'none')
     }
   }
 })
