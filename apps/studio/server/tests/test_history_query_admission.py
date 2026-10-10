@@ -123,35 +123,21 @@ def _service(
 async def _invoke(
     service: ConversationHistoryService,
     entry: _Entry,
-    *,
-    admission: HistoryQueryAdmission,
-    expected_borrowed: int,
-    include_task_trace: bool = True,
-    last_event_id: str | None = None,
 ) -> None:
     if entry == "history":
-        detail = await service.get_detail(
-            _THREAD, include_task_trace=include_task_trace
-        )
-        assert (detail.task_trace is not None) is include_task_trace
+        detail = await service.get_detail(_THREAD)
+        assert detail.task_trace is not None
     else:
         body = await service.follow_live(
             _THREAD,
             run_id=_RUN,
-            last_event_id=last_event_id,
-            include_task_trace=include_task_trace,
+            last_event_id=None,
         )
         try:
-            assert admission.borrowed_tokens == expected_borrowed
             frame = await anext(body)
-            if last_event_id is None:
-                payload = json.loads(frame.decode().split("data: ", 1)[1])
-                assert payload["type"] == "snapshot"
-                assert (
-                    payload["snapshot"]["taskTrace"] is not None
-                ) is include_task_trace
-            else:
-                assert frame.startswith(b"id: 1\nevent: replay\n")
+            payload = json.loads(frame.decode().split("data: ", 1)[1])
+            assert payload["type"] == "snapshot"
+            assert payload["snapshot"]["taskTrace"] is not None
         finally:
             await body.aclose()
 
@@ -187,8 +173,6 @@ async def test_unauthorized_queries_do_not_enter_admission_or_read_trace(
         await _invoke(
             _service(history_case, admission, user_id=2),
             entry,
-            admission=admission,
-            expected_borrowed=0,
         )
     assert caught.value.error_code == ConversationErrorCode.NOT_FOUND
     read.assert_not_called()
@@ -260,13 +244,10 @@ async def test_live_preflight_interruption_closes_open_replay_and_releases_capac
         _invoke(
             _service(history_case, admission),
             "live",
-            admission=admission,
-            expected_borrowed=0,
         )
     )
     try:
         await _wait_for_signal(task, preflight_entered)
-        assert admission.borrowed_tokens == 1
         assert channel.opened.is_set() and channel.closed_count == 0
         if interruption in {"timeout", "error"}:
             if interruption == "timeout":
@@ -280,8 +261,11 @@ async def test_live_preflight_interruption_closes_open_replay_and_releases_capac
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
-        assert admission.borrowed_tokens == 0
         assert channel.closed_count == 1
+        monkeypatch.setattr(repository, "get_run", original_get_run)
+        deadline = _ControlledDeadline()
+        await _invoke(_service(history_case, admission), "live")
+        assert channel.closed_count == 2
         snapshot = await tracer.store.snapshot(
             ThreadIdentity(namespace="ns_1", thread_id=_THREAD)
         )

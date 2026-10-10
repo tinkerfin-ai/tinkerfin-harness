@@ -20,11 +20,6 @@ class HistoryQueryAdmission:
         self._limiter = CapacityLimiter(capacity)
         self._timeout_seconds = timeout_seconds
 
-    @property
-    def borrowed_tokens(self) -> int:
-        """返回当前占用初始查询容量的请求数"""
-        return self._limiter.borrowed_tokens
-
     @asynccontextmanager
     async def admit(self) -> AsyncIterator[None]:
         """在含排队的时限内占用容量，退出或取消时立即归还"""

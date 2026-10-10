@@ -1,4 +1,4 @@
-"""附件业务测试使用的内存对象存储，真实签名另由集成测试验证"""
+"""附件业务测试使用的内存对象存储"""
 
 from collections.abc import AsyncIterator
 
@@ -31,6 +31,3 @@ class MemoryAttachmentStorage:
         self, key: str, *, name: str, mime_type: str, inline: bool
     ) -> DownloadLink:
         return DownloadLink("https://storage.example/" + key, 300)
-
-    async def check_ready(self) -> None:
-        pass
