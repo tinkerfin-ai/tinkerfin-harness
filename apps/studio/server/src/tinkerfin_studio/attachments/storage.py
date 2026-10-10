@@ -51,7 +51,3 @@ class AttachmentStorage(Protocol):
     ) -> DownloadLink:
         """签发已获业务授权的对象读取链接"""
         ...
-
-    async def check_ready(self) -> None:
-        """确认存储可访问，失败抛出 OSError"""
-        ...

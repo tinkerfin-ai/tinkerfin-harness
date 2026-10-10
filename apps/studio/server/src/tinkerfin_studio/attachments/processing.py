@@ -12,7 +12,6 @@ from tinkerfin_studio.skills.packages import parse_archive
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_TOTAL_BYTES = 25 * 1024 * 1024
-MAX_ATTACHMENT_COUNT = 5
 MAX_PIXELS = 40_000_000
 MIME_TYPES = {
     "png": "image/png",
