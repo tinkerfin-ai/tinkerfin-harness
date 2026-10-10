@@ -83,7 +83,7 @@ async function prepare(page: Page, language = 'zh-CN') {
     } else throw new Error(`Unexpected request: ${method} ${path}`)
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
-  await installNotificationStream(page)
+  await installNotificationStream(page, false)
   await installProjectScope(page)
   await page.goto('/')
   await expect(page.getByRole('textbox', { name: language === 'en' ? 'Message input' : '消息输入', exact: true })).toBeVisible()

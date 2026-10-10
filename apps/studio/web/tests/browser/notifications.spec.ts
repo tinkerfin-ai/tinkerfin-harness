@@ -55,6 +55,9 @@ async function prepare(page: Page) {
       const request = new Request(input, init)
       const path = new URL(request.url).pathname
       if (!path.startsWith('/api/') || path === '/api/projects') return original(input, init)
+      if (path === '/api/automation/runs/active') {
+        return new Response(JSON.stringify({ code: 0, message: 'success', data: { items: [], nextCursor: null } }), { headers: { 'Content-Type': 'application/json' } })
+      }
       if (path === '/api/notifications') {
         connections += 1
         let detach: () => void

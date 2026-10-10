@@ -58,6 +58,7 @@ async function setup(page: Page, theme: string, pauseClock = false) {
       requests.push(url.pathname)
       if (!url.pathname.startsWith('/api/') || url.pathname === '/api/projects') return original(input, init)
       const json = (data: unknown) => new Response(JSON.stringify({ code: 0, message: 'success', data }), { headers: { 'Content-Type': 'application/json' } })
+      if (url.pathname === '/api/automation/runs/active') return json({ items: [], nextCursor: null })
       if (url.pathname === '/api/notifications') {
         let detach: () => void
         return new Response(new ReadableStream<Uint8Array>({
