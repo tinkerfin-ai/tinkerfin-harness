@@ -1,5 +1,6 @@
 """贡献者可在隔离 SQLite 和本地模型上运行的自动化接口闭环"""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import cast
@@ -17,6 +18,7 @@ from tinkerfin_automation import (
     SqlAlchemyAutomationStore,
     next_run_after,
 )
+from tinkerfin_notifications import Notification, NotificationScope
 from tinkerfin_studio.agent import runtime as runtime_module
 from tinkerfin_studio.api.dependencies import get_user_context
 from tinkerfin_studio.api.errors import AttachmentErrorCode, BusinessException
@@ -52,6 +54,7 @@ async def automation_environment(
     monkeypatch,
     projects,
     persistent_store,
+    notifications,
 ):
     async with database.session() as session:
         session.add(
@@ -115,6 +118,7 @@ async def automation_environment(
                     skills=skill_library,
                     automation=automation,
                     tracer=tracer,
+                    notifications=notifications,
                     tinkerfin=TinkerFin(
                         checkpointer=InMemorySaver(), store=persistent_store
                     ).with_observer(tracer),
@@ -264,11 +268,16 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
     application.state.resources = resources
     user = UserContext(user_id=1, username="owner", roles=(), disabled=False)
     application.dependency_overrides[get_user_context] = lambda: user
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=application),
-        base_url="http://test",
-        params={"projectId": "project-1"},
-    ) as client:
+    async with (
+        resources.notifications.subscribe(
+            scope=NotificationScope("ns_1"), topics=("studio.memories.changed",)
+        ) as memory_changes,
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application),
+            base_url="http://test",
+            params={"projectId": "project-1"},
+        ) as client,
+    ):
         payload = {"requestId": "create", "configuration": configuration()}
         created = await client.post("/api/automation/tasks", json=payload)
         assert created.status_code == 200, created.text
@@ -295,6 +304,9 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
         ).json()["data"]["id"] == execution_id
         await automation_worker.wait_until_idle()
         await automation_worker.check_ready()
+        memory_notice = await anext(memory_changes)
+        assert isinstance(memory_notice, Notification)
+        assert memory_notice.key == "project-1"
         result = await client.get(f"/api/automation/runs/{execution_id}")
         assert result.status_code == 200, result.text
         detail = result.json()["data"]
@@ -318,12 +330,21 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
             json={**changed, "requestId": "conflict"},
         )
         assert conflict.status_code == 409
-        deleted = await client.request(
-            "DELETE",
-            f"/api/automation/tasks/{task['id']}",
-            json={"requestId": "delete", "expectedRevision": 2},
+        deleted = await client.post(
+            "/api/automation/tasks/batch",
+            json={
+                "operation": "delete",
+                "items": [
+                    {
+                        "taskId": task["id"],
+                        "requestId": "delete",
+                        "expectedRevision": 2,
+                    }
+                ],
+            },
         )
         assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["data"][0]["succeeded"] is True
         assert (await client.get(f"/api/automation/runs/{execution_id}")).json()[
             "data"
         ]["name"] == "日报"
@@ -546,3 +567,35 @@ async def test_automation_accepts_and_runs_authorized_image_inputs(
 
 
 pytestmark = pytest.mark.usefixtures("projects")
+
+
+async def test_cancelled_automation_announces_project_memories(
+    automation_resources, automation_worker, monkeypatch
+):
+    entered = asyncio.Event()
+
+    async def run_until_cancelled(self, request):
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(target_module.TinkerFinTarget, "run", run_until_cancelled)
+    resources = automation_resources
+    service = StudioAutomationService(resources, user_id=1, project_id="project-1")
+    task = await service.save(
+        SaveTask(
+            request_id="cancel-memory-run",
+            configuration=TaskConfiguration.model_validate(configuration()),
+        )
+    )
+    async with resources.notifications.subscribe(
+        scope=NotificationScope("ns_1"), topics=("studio.memories.changed",)
+    ) as changes:
+        handle = await resources.automation.for_owner("1:project-1").task(task.id)
+        execution = await handle.run()
+        await entered.wait()
+        await execution.cancel()
+        await automation_worker.wait_until_idle()
+        notice = await anext(changes)
+        assert isinstance(notice, Notification)
+        assert notice.key == "project-1"
+        assert (await execution.refresh()).status == "needs_attention"

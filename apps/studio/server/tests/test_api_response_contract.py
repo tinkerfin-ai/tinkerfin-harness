@@ -147,7 +147,6 @@ def test_business_json_openapi_responses_publish_the_envelope() -> None:
         "/api/projects/{project_id}/workspace/events",
         "/api/conversation/chat",
         "/api/conversation/{thread_id}/compact",
-        "/api/conversation/{thread_id}/trace",
         "/api/conversation/{thread_id}/runs/{run_id}/events",
         "/api/conversation/{thread_id}/trace/graph/follow",
     }

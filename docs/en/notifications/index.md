@@ -38,9 +38,11 @@ key can be combined. A new key beyond queue capacity raises
 `NotificationCapacityExceeded`; this must not undo an already committed resource.
 
 Subscriptions are independent and bounded. Overflow or a connection interruption
-produces `ResyncRequired`, which requires a new authoritative snapshot. Keep a
-periodic repair read because commits and notifications are separate operations,
-and Redis Pub/Sub cannot replay hints missed during disconnection.
+produces `ResyncRequired`, which requires a new authoritative snapshot. Commits and
+notifications are separate operations, and Redis Pub/Sub cannot replay hints missed
+during disconnection. Keep periodic authoritative reads for states that require
+ongoing confirmation; other resources can refresh on visibility or user request,
+according to their freshness requirements.
 
 ## Choose a scope and payload
 

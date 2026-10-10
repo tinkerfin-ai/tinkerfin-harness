@@ -5,6 +5,8 @@ import { clearAuthSession, saveAuthSession } from '../../auth/session'
 import { emptyTraceGraph } from '../../test/traceFixtures'
 import { mockResourceNotices } from '../../test/resourceNotices'
 import { WorkspaceScreen } from './WorkspaceScreen'
+import { ProjectsWorkspace } from '../projects/ProjectsWorkspace'
+import type { Project } from '../projects/api'
 
 const user = { user_id: 7, username: 'requests', avatar_url: null, roles: [], disabled: false }
 const time = '2030-01-01T00:00:00Z'
@@ -60,7 +62,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-it.each(['succeeded', 'running'] as const)('四十个列表会话在重同步、校准和恢复前台时共享标题读取：%s', async titleGenerationStatus => {
+it.each(['succeeded', 'running'] as const)('四十个列表会话空闲不查询，重同步和恢复前台共享标题读取：%s', async titleGenerationStatus => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date('2030-01-01T00:00:00Z'))
   const notices = mockResourceNotices()
@@ -78,7 +80,7 @@ it.each(['succeeded', 'running'] as const)('四十个列表会话在重同步、
   const original = fetch.getMockImplementation()!
   fetch.mockImplementation(async (input, init) => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname
-    if (path === '/api/notifications') return new Response(new ReadableStream(), { headers: { 'Content-Type': 'text/event-stream' } })
+    if (path === '/api/notifications') return new Response(new ReadableStream({ start(reader) { reader.enqueue(new TextEncoder().encode('event: ready\ndata: {}\n\n')) } }), { headers: { 'Content-Type': 'text/event-stream' } })
     if (path.endsWith('/title')) return jsonResponse(list.find(item => path.includes(`/${item.threadId}/`)))
     return original(input, init)
   })
@@ -94,8 +96,8 @@ it.each(['succeeded', 'running'] as const)('四十个列表会话在重同步、
     await act(async () => { notices.resync(); await vi.advanceTimersByTimeAsync(0) })
     expect(listReads()).toBe(++reads)
     expect(titleReads()).toEqual([])
-    await act(async () => vi.advanceTimersByTimeAsync(30_000))
-    expect(listReads()).toBe(++reads)
+    await act(async () => vi.advanceTimersByTimeAsync(90_000))
+    expect(listReads()).toBe(reads)
     expect(titleReads()).toEqual([])
     act(() => { visibility.mockReturnValue(true); document.dispatchEvent(new Event('visibilitychange')) })
     await act(async () => vi.advanceTimersByTimeAsync(60_000))
@@ -113,4 +115,44 @@ it.each(['succeeded', 'running'] as const)('四十个列表会话在重同步、
     await act(async () => vi.advanceTimersByTimeAsync(0))
     vi.restoreAllMocks()
   }
+})
+
+
+it('空项目工作区也接收其他窗口创建项目的通知，始终只保留一个订阅', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date(time))
+  let projects: Project[] = []
+  const readers = new Set<ReadableStreamDefaultController<Uint8Array>>()
+  let projectReads = 0
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    const path = new URL(request.url).pathname
+    if (path === '/api/projects') { projectReads += 1; return jsonResponse(projects) }
+    if (path === '/api/notifications') {
+      let reader: ReadableStreamDefaultController<Uint8Array>
+      return new Response(new ReadableStream({
+        start(value) { reader = value; readers.add(value); value.enqueue(new TextEncoder().encode('event: ready\ndata: {}\n\n')) },
+        cancel() { readers.delete(reader) },
+      }), { headers: { 'Content-Type': 'text/event-stream' } })
+    }
+    throw new Error(`未预期的接口：${path}`)
+  }))
+  const view = render(<ProjectsWorkspace user={user} onLogout={vi.fn()}>{scope => <p role="status">{scope.project.name}</p>}</ProjectsWorkspace>)
+  await act(async () => vi.advanceTimersByTimeAsync(0))
+  expect(screen.getByRole('heading', { name: '从一个项目开始' })).toBeVisible()
+  expect(readers.size).toBe(1)
+  expect(projectReads).toBe(1)
+  projects = [{ id: 'remote', name: '另一个窗口创建的项目', createdAt: time, updatedAt: time }]
+  await act(async () => {
+    const data = { scope: { namespace: 'ns_7', owner_id: null }, topic: 'studio.projects.changed', key: 'remote', details: {} }
+    for (const reader of readers) reader.enqueue(new TextEncoder().encode(`event: change\ndata: ${JSON.stringify(data)}\n\n`))
+    await vi.advanceTimersByTimeAsync(0)
+  })
+  expect(screen.getByRole('status')).toHaveTextContent('另一个窗口创建的项目')
+  expect(readers.size).toBe(1)
+  const afterChange = projectReads
+  await act(async () => vi.advanceTimersByTimeAsync(90_000))
+  expect(projectReads).toBe(afterChange)
+  view.unmount()
+  await act(async () => vi.advanceTimersByTimeAsync(0))
+  expect(readers.size).toBe(0)
 })

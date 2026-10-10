@@ -1,11 +1,10 @@
-"""用户查询路由"""
+"""当前用户头像上传接口"""
 
-from typing import Annotated
 from uuid import uuid4
 
 import anyio
 from anyio.lowlevel import checkpoint
-from fastapi import APIRouter, Path, Request
+from fastapi import APIRouter, Request
 
 from tinkerfin_studio.api.dependencies import AuthServiceDep, UserContextDep
 from tinkerfin_studio.api.errors import BusinessException, GlobalErrorCode
@@ -56,18 +55,3 @@ async def upload_avatar(
     if user is None:
         raise BusinessException(GlobalErrorCode.UNAUTHORIZED)
     return ApiResponse.success(UserRead.from_context(user))
-
-
-@router.get(
-    "/{user_id}", response_model=ApiResponse[UserRead | None], summary="查询用户"
-)
-async def get_user(
-    user_id: Annotated[int, Path(ge=1, description="用户 ID")],
-    current_user: UserContextDep,
-    auth_service: AuthServiceDep,
-) -> ApiResponse[UserRead | None]:
-    """按用户 ID 查询安全用户信息"""
-
-    del current_user
-    user = await auth_service.get_user(user_id)
-    return ApiResponse.success(None if user is None else UserRead.from_context(user))

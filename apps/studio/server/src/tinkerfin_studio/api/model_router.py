@@ -22,15 +22,12 @@ from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import (
     AgentModelCatalog,
     AgentModelSave,
-    AgentModelSettings,
     InputCapabilityRequest,
     InputCapabilityResult,
     ModelAPI,
     ModelConnectionSave,
-    ModelConnectionSettings,
     ModelDiscoveryResult,
     ModelSettingsOverview,
-    ProviderPreset,
 )
 from tinkerfin_studio.models.service import AgentModelService, connection_provider
 from tinkerfin_studio.models.transport import ModelTransport
@@ -76,14 +73,6 @@ async def model_settings_overview(
     )
 
 
-@router.get("/configurations", response_model=ApiResponse[list[AgentModelSettings]])
-async def model_settings(
-    service: ModelServiceDep,
-) -> ApiResponse[list[AgentModelSettings]]:
-    """返回当前用户的可编辑模型配置，密钥不回显"""
-    return ApiResponse.success(await service.settings())
-
-
 @router.post("/configurations", response_model=ApiResponse[None])
 async def add_models(
     payload: Annotated[list[AgentModelSave], Field(min_length=1, max_length=200)],
@@ -123,20 +112,6 @@ async def delete_model_settings(
     """删除本人模型配置，保留会话历史"""
     await service.delete_settings(model_id)
     return ApiResponse.success()
-
-
-@router.get("/providers", response_model=ApiResponse[list[ProviderPreset]])
-async def provider_presets(user: UserContextDep) -> ApiResponse[list[ProviderPreset]]:
-    """返回连接默认值，不请求供应商或读取密钥"""
-    del user
-    return ApiResponse.success(list(PROVIDER_PRESETS))
-
-
-@router.get("/connections", response_model=ApiResponse[list[ModelConnectionSettings]])
-async def connections(
-    service: ModelServiceDep,
-) -> ApiResponse[list[ModelConnectionSettings]]:
-    return ApiResponse.success(await service.connections())
 
 
 @router.put("/connections/{connection_id}", response_model=ApiResponse[None])

@@ -172,7 +172,7 @@ test('两个独立窗口通过通知同步会话，断连和隐藏期间的变�
 })
 
 for (const titleState of ['succeeded', 'running'] as const) {
-  test(`四十个会话刷新、校准和通知重连不逐项查询标题：${titleState}`, async ({ page }) => {
+  test(`四十个会话空闲不查询，变化和重连共享标题读取：${titleState}`, async ({ page }) => {
     const threads = Array.from({ length: 40 }, (_, index) => ({
       ...conversation(`listed-${index}`, `run-${index}`, `列表会话${index}`), id: index + 1,
       titleSource: titleState === 'succeeded' ? 'generated' as const : 'default' as const,
@@ -214,10 +214,12 @@ for (const titleState of ['succeeded', 'running'] as const) {
     await expect(page.getByRole('button', { name: '打开会话：重同步后的标题', exact: true })).toBeVisible()
     expect(titleReads()).toEqual([])
     const beforeRepair = historyReads()
-    threads[1]!.title = '校准后的标题'
+    threads[1]!.title = '通知后的标题'
     threads[1]!.titleSeq += 1
-    await page.clock.runFor(30_000)
-    await expect(page.getByRole('button', { name: '打开会话：校准后的标题', exact: true })).toBeVisible()
+    await page.clock.runFor(90_000)
+    expect(historyReads()).toBe(beforeRepair)
+    await page.evaluate(() => window.notificationTest.emit('studio.conversation.title.changed', 'listed-1'))
+    await expect(page.getByRole('button', { name: '打开会话：通知后的标题', exact: true })).toBeVisible()
     expect(historyReads() - beforeRepair).toBe(1)
     expect(titleReads()).toEqual([])
 

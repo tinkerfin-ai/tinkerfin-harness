@@ -4,6 +4,7 @@ import type { Attachment } from '../conversation/attachments/content'
 import { presentRun, type AutomationDraft, type AutomationRun, type AutomationRunRecord, type AutomationTask } from './model'
 
 export interface Page<T> { items: T[]; nextCursor: string | null }
+export interface RunCalendarDay extends Page<AutomationRun> { date: string }
 interface TaskResponse extends Omit<AutomationTask, 'startsOn' | 'endsOn'> { startsOn: string | null; endsOn: string | null }
 export interface RunDetail extends AutomationRunRecord { threadId: string; runId: string; messages: TraceMessage[]; outputFiles: Attachment[]; resultAvailable: boolean }
 export interface BatchResult { taskId: string; succeeded: boolean; error: string | null }
@@ -20,6 +21,10 @@ export const fetchTaskPage = async (params: Record<string, string | undefined>, 
 export const fetchRunPage = async (params: Record<string, string | undefined>, signal: AbortSignal): Promise<Page<AutomationRun>> => {
   const result = await requestJson<Page<AutomationRunRecord>>(path('runs', params), { signal, suppressGlobalError: true })
   return { ...result, items: result.items.map(presentRun) }
+}
+export const fetchRunCalendar = async (params: Record<string, string | undefined>, signal: AbortSignal): Promise<RunCalendarDay[]> => {
+  const result = await requestJson<{ days: Array<Page<AutomationRunRecord> & { date: string }> }>(path('runs/calendar', params), { signal, suppressGlobalError: true })
+  return result.days.map(day => ({ ...day, items: day.items.map(presentRun) }))
 }
 export const saveTask = async (projectId: string, draft: AutomationDraft, requestId: string, task: AutomationTask | undefined, signal: AbortSignal) => {
   const { name, prompt, schedule, modelId, accessMode, attachments, startsOn, endsOn } = draft

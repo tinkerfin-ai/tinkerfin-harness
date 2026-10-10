@@ -1,4 +1,4 @@
-"""历史、Trace 与运行续播的共享准入及首快照资源契约"""
+"""历史与运行续播的共享准入及首快照资源契约"""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from tinkerfin_studio.conversation.todo_groups import (
 )
 from tinkerfin_tracing import Tracer
 
-_Entry = Literal["history", "trace", "live"]
+_Entry = Literal["history", "live"]
 _THREAD = "admission-thread"
 _RUN = "admission-run"
 
@@ -134,17 +134,6 @@ async def _invoke(
             _THREAD, include_task_trace=include_task_trace
         )
         assert (detail.task_trace is not None) is include_task_trace
-    elif entry == "trace":
-        events = await service.follow_trace(
-            _THREAD, include_task_trace=include_task_trace
-        )
-        try:
-            assert admission.borrowed_tokens == expected_borrowed
-            initial = await anext(events)
-            assert initial.type == "snapshot"
-            assert (initial.snapshot.task_trace is not None) is include_task_trace
-        finally:
-            await events.aclose()
     else:
         body = await service.follow_live(
             _THREAD,
@@ -182,7 +171,7 @@ async def _wait_for_signal(task: asyncio.Task[None], signal: asyncio.Event) -> N
         await asyncio.gather(waiter, return_exceptions=True)
 
 
-@pytest.mark.parametrize("entry", ["history", "trace", "live"])
+@pytest.mark.parametrize("entry", ["history", "live"])
 async def test_unauthorized_queries_do_not_enter_admission_or_read_trace(
     history_case: _HistoryCase,
     monkeypatch: pytest.MonkeyPatch,

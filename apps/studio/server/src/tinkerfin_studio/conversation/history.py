@@ -53,12 +53,9 @@ from tinkerfin_studio.conversation.schemas import (
     ConversationInteractionAvailability,
     ConversationRunSnapshotEvent,
     ConversationSubmissionResult,
-    ConversationTraceErrorEvent,
     ConversationTraceGraphErrorEvent,
     ConversationTraceGraphSnapshotEvent,
     ConversationTraceGraphUpdateEvent,
-    ConversationTraceSnapshotEvent,
-    ConversationTraceUpdateEvent,
     PendingInteractionKind,
 )
 from tinkerfin_studio.conversation.todo_groups import (
@@ -70,7 +67,6 @@ from tinkerfin_studio.conversation.todo_groups import (
 from tinkerfin_studio.conversation.trace_responses import (
     ConversationGraph,
     ConversationGraphQueryPage,
-    ConversationTraceUpdate,
 )
 from tinkerfin_tracing import (
     InvalidTraceCursor,
@@ -352,99 +348,6 @@ class ConversationHistoryService:
         body = SseBody(source_factory=iterate, close=live.aclose)
         await body.prepare(preflight=prepare_snapshot)
         return body
-
-    async def follow_trace(
-        self,
-        thread_id: str,
-        *,
-        include_task_trace: bool = True,
-    ) -> AsyncGenerator[
-        ConversationTraceSnapshotEvent
-        | ConversationTraceUpdateEvent
-        | ConversationTraceErrorEvent,
-        None,
-    ]:
-        """先返回权威快照，再按框架顺序跟随同一 generation 的语义增量"""
-
-        thread, history = await self._load_trace(
-            thread_id,
-            history_cursor=None,
-            limit=100,
-            include_task_trace=include_task_trace,
-        )
-        trace = history.trace
-        task_trace = self._task_trace(trace) if include_task_trace else None
-        detail = await self._detail(
-            thread=thread, history=history, task_trace=task_trace
-        )
-        # 归属和运行配置已固定到快照；长流开始前归还业务连接
-        await self._repository.commit()
-
-        async def events() -> AsyncGenerator[
-            ConversationTraceSnapshotEvent
-            | ConversationTraceUpdateEvent
-            | ConversationTraceErrorEvent,
-            None,
-        ]:
-            updates = history.follow()
-            last_projection = trace.projections.get(TODO_PROJECTION)
-            last_task_trace = task_trace
-            user_runs = {
-                item.id: item.run_id
-                for item in trace.messages
-                if _is_user_question(item)
-            }
-            last_status = trace.status
-            last_completeness = trace.completeness
-            try:
-                async with updates:
-                    yield ConversationTraceSnapshotEvent(snapshot=detail)
-                    async for update in updates:
-                        for message_id in update.messages.removes:
-                            user_runs.pop(message_id, None)
-                        for item in update.messages.upserts:
-                            if _is_user_question(item):
-                                user_runs[item.id] = item.run_id
-                        task_trace_update = None
-                        if include_task_trace:
-                            projection = update.projections[TODO_PROJECTION]
-                            if (
-                                projection != last_projection
-                                or update.status != last_status
-                                or update.completeness != last_completeness
-                            ):
-                                candidate = render_task_trace(
-                                    TodoGroupProjectionResult.model_validate(
-                                        projection
-                                    ),
-                                    status=update.status,
-                                    completeness=update.completeness,
-                                )
-                                last_projection = projection
-                                last_status = update.status
-                                last_completeness = update.completeness
-                                if candidate != last_task_trace:
-                                    task_trace_update = candidate
-                                    last_task_trace = candidate
-                        yield ConversationTraceUpdateEvent(
-                            update=ConversationTraceUpdate.from_update(update),
-                            runFailures=visible_run_failures(
-                                update.projections[FAILURE_PROJECTION],
-                                set(user_runs.values()),
-                            ),
-                            taskTrace=task_trace_update,
-                        )
-            except asyncio.CancelledError:
-                raise
-            except TracingError as error:
-                logger.error(
-                    "Trace follow 异常结束: thread_id=%s",
-                    thread.thread_id,
-                    exc_info=(type(error), error, error.__traceback__),
-                )
-                yield ConversationTraceErrorEvent()
-
-        return events()
 
     async def get_model_request(
         self, thread_id: str, *, reference: str

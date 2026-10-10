@@ -36,7 +36,10 @@ from tinkerfin_studio.attachments.service import byte_chunks
 from tinkerfin_studio.auth.models import User
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.conversation import service as service_module
-from tinkerfin_studio.conversation.delivery import ConversationAdmission
+from tinkerfin_studio.conversation.delivery import (
+    ConversationAdmission,
+    ConversationRunObserver,
+)
 from tinkerfin_studio.conversation.failures import ConversationFailureProjection
 from tinkerfin_studio.conversation.history import ConversationHistoryService
 from tinkerfin_studio.conversation.history_queries import HistoryQueryAdmission
@@ -1964,3 +1967,45 @@ async def test_not_saved_resume_requires_a_new_run_id(
         thread_pk=thread_pk, interrupt_ids=frozenset({"interrupt-root#0"})
     )
     assert [claim.claimed_run_id for claim in claims] == ["second"]
+
+
+@pytest.mark.parametrize("outcome", ["finished", "failed", "cancelled"])
+async def test_run_terminal_announces_persisted_project_memories(
+    notifications, persistent_store, outcome
+):
+    from ag_ui.core import RunErrorEvent, RunFinishedEvent
+
+    files = (
+        TinkerFin(store=persistent_store)
+        .with_namespace("ns_1")
+        .files(("projects", "project-1", "memories"))
+    )
+    resources = cast(ApplicationResources, SimpleNamespace(notifications=notifications))
+    observer = ConversationRunObserver(
+        resources,
+        thread_pk=1,
+        user_id=1,
+        project_id="project-1",
+        title_text="",
+        model=_model(),
+        search_service=None,
+        image_service=None,
+    )
+    async with notifications.subscribe(
+        scope=NotificationScope("ns_1"), topics=("studio.memories.changed",)
+    ) as changes:
+        await files.create("/agent.md", "运行保存的记忆".encode())
+        event = (
+            RunFinishedEvent(thread_id="thread", run_id="run")
+            if outcome == "finished"
+            else RunErrorEvent(message="运行结束", code=outcome)
+        )
+        await observer(
+            CommittedRunEvent(
+                RunIdentity(namespace="ns_1", thread_id="thread", run_id="run"), event
+            )
+        )
+        notice = await anext(changes)
+        assert isinstance(notice, Notification)
+        assert notice.key == "project-1"
+        assert (await files.read("/agent.md")).content.decode() == "运行保存的记忆"

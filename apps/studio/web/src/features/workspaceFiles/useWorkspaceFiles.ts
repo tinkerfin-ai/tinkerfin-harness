@@ -241,12 +241,10 @@ export function useWorkspaceFiles(projectId: string, enabled: boolean) {
         if (connection === 'disconnected') { baselineReady = false; abortReads(); unavailable(error) }
       },
     })
-    const calibration = setInterval(() => { if (baselineReady) reconcile() }, 30_000)
     return () => {
       closed = true
       closeFeed()
       abortReads()
-      clearInterval(calibration)
       actions.current = null
     }
   }, [projectId, enabled, attempt, ownerIdentity, publish])

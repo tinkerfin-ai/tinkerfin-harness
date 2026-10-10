@@ -222,21 +222,6 @@ async def follow_run_events(
     return sse_response(body)
 
 
-@router.get("/{thread_id}/trace", response_class=StreamingResponse)
-async def follow_trace(
-    thread_id: ThreadIdPath,
-    service: ConversationHistoryDep,
-    include_task_trace: Annotated[bool, Query(alias="includeTaskTrace")] = True,
-) -> StreamingResponse:
-    """鉴权后先发送 Trace snapshot，再持续发送语义增量"""
-
-    events = await service.follow_trace(
-        thread_id,
-        include_task_trace=include_task_trace,
-    )
-    return trace_sse_response(events)
-
-
 @router.get(
     "/{thread_id}/trace/graph",
     response_model=ApiResponse[ConversationGraphQueryPage],

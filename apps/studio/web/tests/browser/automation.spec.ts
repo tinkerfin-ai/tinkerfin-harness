@@ -1,7 +1,7 @@
 import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { createAutomationFixture, runFixture, taskFixture } from '../../src/test/automationFixtures'
+import { createAutomationFixture, runCalendarFixture, runFixture, taskFixture } from '../../src/test/automationFixtures'
 import type { AutomationDraft } from '../../src/features/automation/model'
 
 const user = { user_id: 1, username: 'automation-preview', avatar_url: null, roles: [], disabled: false }
@@ -74,6 +74,7 @@ async function prepare(page: Page, language = 'zh-CN') {
       const task = state.tasks.find(task => task.id === path.split('/').at(-1))!
       Object.assign(task, command.configuration, { revision: task.revision + 1 }); data = task
     } else if (path === '/api/automation/runs') data = { items: matchingRuns.filter(run => !status || run.status === status), nextCursor: null }
+    else if (path === '/api/automation/runs/calendar') data = runCalendarFixture(matchingRuns.filter(run => !status || run.status === status), url.searchParams.get('weekStart')!)
     else if (path.startsWith('/api/automation/runs/')) {
       const run = state.runs.find(run => run.id === path.split('/').at(-1))!
       data = { ...run, threadId: `thread-${run.id}`, runId: `run-${run.id}`, messages: [], outputFiles: [], resultAvailable: true }
@@ -159,7 +160,7 @@ test('自动化读取失败在内容区展示统一重试并通知全局 Toast',
   await taskAlert.getByRole('button', { name: '重新加载' }).click()
   await expect(taskAlert).toHaveCount(0)
 
-  const historyFailure = '**/api/automation/runs?**'
+  const historyFailure = '**/api/automation/runs/calendar?**'
   await page.route(historyFailure, route => route.fulfill({ status: 503, json: { code: 1001007004, message: 'unavailable', data: null } }))
   await page.getByRole('tab', { name: '历史', exact: true }).click()
   const historyAlert = page.getByRole('tabpanel', { name: '历史' }).getByRole('alert')
@@ -173,7 +174,7 @@ test('自动化读取失败在内容区展示统一重试并通知全局 Toast',
   await historyAlert.getByRole('button', { name: '重新加载' }).click()
   await expect(historyAlert).toHaveCount(0)
 
-  const runFailure = '**/api/automation/runs/*'
+  const runFailure = '**/api/automation/runs/run-*'
   await page.route(runFailure, route => route.fulfill({ status: 503, json: { code: 1001007004, message: 'unavailable', data: null } }))
   await page.getByRole('button', { name: /查看运行：每日 AI 新闻简报/ }).first().click()
   const dialog = page.getByRole('dialog', { name: '运行结果' })
@@ -724,4 +725,39 @@ test('功能菜单使用统一界面字重，日期范围两端完整显示且�
       await page.getByRole('button', { name: '回到本周', exact: true }).click()
     }
   }
+})
+
+
+test('历史周历只查询一次，空闲无请求，任务变化不刷新历史，搜索合并输入', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-09-10T07:00:00Z') })
+  const requests = await prepare(page)
+  const history = page.getByRole('tabpanel', { name: '历史', exact: true })
+  await expect(history).toHaveAttribute('aria-busy', 'false')
+  const calendars = () => requests.filter(path => path === 'GET /api/automation/runs/calendar').length
+  expect(calendars()).toBe(1)
+  expect(requests.filter(path => path === 'GET /api/automation/runs')).toEqual([])
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000))
+  const idle = requests.length
+  await page.clock.fastForward(90_000)
+  expect(requests).toHaveLength(idle)
+  await page.evaluate(() => window.emitResourceChange('automation.task.changed', 'task'))
+  await page.clock.runFor(1000)
+  expect(calendars()).toBe(1)
+  await page.evaluate(() => window.emitResourceChange('automation.execution.changed', 'run'))
+  await expect.poll(calendars).toBe(2)
+  await expect(history).toHaveAttribute('aria-busy', 'false')
+  await page.getByRole('button', { name: '搜索任务或运行历史', exact: true }).click()
+  const input = page.getByRole('searchbox', { name: '搜索任务或运行历史', exact: true })
+  await input.fill('每'); await input.fill('每日'); await input.fill('每日 AI')
+  expect(calendars()).toBe(2)
+  await page.clock.runFor(250)
+  await expect(history).toHaveAttribute('aria-busy', 'false')
+  expect(calendars()).toBe(3)
+  await expect(page.getByRole('button', { name: /查看运行：每日 AI/ }).first()).toBeVisible()
+  await page.getByRole('tab', { name: '任务', exact: true }).click()
+  await expect(page.getByRole('tabpanel', { name: '任务', exact: true })).toHaveAttribute('aria-busy', 'false')
+  await page.evaluate(() => window.emitResourceChange('automation.execution.changed', 'run'))
+  await page.clock.fastForward(90_000)
+  expect(calendars()).toBe(3)
+  expect(requests.filter(path => path === 'GET /api/automation/tasks')).toHaveLength(1)
 })

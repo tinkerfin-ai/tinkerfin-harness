@@ -1,7 +1,7 @@
 """认证用户的任务管理和只读执行历史接口"""
 
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -13,6 +13,7 @@ from tinkerfin_studio.api.responses import ApiResponse
 from tinkerfin_studio.automation.schemas import (
     BatchCommand,
     BatchResult,
+    RunCalendar,
     RunDetail,
     RunList,
     RunView,
@@ -84,27 +85,12 @@ async def batch_tasks(
     return ApiResponse.success(await service.batch(command))
 
 
-@router.get("/tasks/{task_id}", response_model=ApiResponse[TaskView])
-async def get_task(task_id: str, service: Service) -> ApiResponse[TaskView]:
-    """读取本人任务配置"""
-    return ApiResponse.success(await service.get_task(task_id))
-
-
 @router.put("/tasks/{task_id}", response_model=ApiResponse[TaskView])
 async def update_task(
     task_id: str, command: SaveTask, service: Service
 ) -> ApiResponse[TaskView]:
     """按预期修订保存配置，不改写已经入队的执行"""
     return ApiResponse.success(await service.save(command, task_id=task_id))
-
-
-@router.delete("/tasks/{task_id}", response_model=ApiResponse[None])
-async def delete_task(
-    task_id: str, command: TaskCommand, service: Service
-) -> ApiResponse[None]:
-    """删除任务、取消排队执行，保留运行历史及其附件"""
-    await service.task_command(task_id, "delete", command)
-    return ApiResponse.success()
 
 
 @router.post(
@@ -139,6 +125,24 @@ async def list_runs(
             status=status,
             cursor=cursor,
             limit=limit,
+        )
+    )
+
+
+@router.get("/runs/calendar", response_model=ApiResponse[RunCalendar])
+async def run_calendar(
+    service: Service,
+    week_start: Annotated[
+        date, Query(alias="weekStart", description="北京时间周历起始日期，连续七天")
+    ],
+    query: Search = None,
+    status: ExecutionStatus | None = None,
+    limit: Limit = 50,
+) -> ApiResponse[RunCalendar]:
+    """一次返回七天的执行页与独立游标"""
+    return ApiResponse.success(
+        await service.run_calendar(
+            week_start=week_start, query=query, status=status, limit=limit
         )
     )
 

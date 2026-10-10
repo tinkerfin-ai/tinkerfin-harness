@@ -388,62 +388,7 @@ async def test_history_rejects_another_users_thread_before_trace_lookup(
     assert graph_error.value.error_code is ConversationErrorCode.NOT_FOUND
 
 
-async def test_trace_follow_sends_snapshot_then_semantic_update_and_closes(
-    session,
-) -> None:
-    tracer = Tracer(
-        projections=(ConversationFailureProjection(), TodoGroupProjection()),
-    )
-    repository = ConversationRepository(session)
-    thread = await _register(
-        repository,
-        user_id=1,
-        thread_id="thread-follow",
-        run_id="run-follow",
-    )
-    context, trace_session = await _open_trace(
-        tracer,
-        thread_id=thread.thread_id,
-        run_id="run-follow",
-    )
-    events = await _service(repository, tracer=tracer).follow_trace(thread.thread_id)
-    assert session.in_transaction() is False
-
-    snapshot = await anext(events)
-    assert snapshot.type == "snapshot"
-    assert snapshot.snapshot.status.execution == "running"
-    assert snapshot.snapshot.task_trace is not None
-    pending = asyncio.create_task(anext(events))
-    await trace_session.observe(
-        NativeMessageObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            message=NativeMessageRecord(
-                message_type="assistant",
-                id="assistant-follow",
-                content="delta",
-            ),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=3,
-        )
-    )
-
-    update = await pending
-    assert update.type == "update"
-    assert update.update.messages.upserts[0].content == "delta"
-    retained = update.update.messages.upserts[0]
-    assert retained.agui is not None
-    wire = update.model_dump(mode="json", by_alias=True)
-    assert (
-        wire["update"]["messages"]["upserts"][0]["agui"]["messageId"]
-        == retained.agui.message_id
-    )
-    assert update.task_trace is None
-    await events.aclose()
-    await _finish_trace(context, trace_session)
-
-
-async def test_live_failure_and_snapshot_have_identical_results(session):
+async def test_history_projects_completed_run_failures(session):
     tracer = Tracer(
         projections=(ConversationFailureProjection(), TodoGroupProjection())
     )
@@ -453,9 +398,8 @@ async def test_live_failure_and_snapshot_have_identical_results(session):
         tracer, thread_id="failure-live", run_id="run-live"
     )
     service = _service(repository, tracer=tracer)
-    stream = await service.follow_trace("failure-live", include_task_trace=False)
-    first = await anext(stream)
-    assert first.type == "snapshot" and first.snapshot.run_failures == ()
+    first = await service.get_detail("failure-live", include_task_trace=False)
+    assert first.run_failures == ()
     await source.observe(
         RunTerminalObservation(
             identity=context.identity,
@@ -467,13 +411,10 @@ async def test_live_failure_and_snapshot_have_identical_results(session):
     )
     await source.force(ObservationBoundary.TERMINAL)
     try:
-        update = await anext(stream)
-        assert update.type == "update"
-        assert len(update.run_failures) == 1
         detail = await service.get_detail("failure-live", include_task_trace=False)
-        assert update.run_failures == detail.run_failures
+        assert len(detail.run_failures) == 1
+        assert detail.run_failures[0].run_id == "run-live"
     finally:
-        await stream.aclose()
         await source.aclose()
 
 
@@ -600,27 +541,21 @@ async def test_tool_review_uses_same_reference_in_history_graph_and_follow(
         limit=1,
     )
     assert next(node for node in page.nodes if node.id == tool.id).agui == tool.agui
-    for events in (
-        await service.follow_trace(thread.thread_id, include_task_trace=False),
-        await service.follow_trace_graph(
-            thread.thread_id,
-            where=TraceGraphFilter(kinds={TraceGraphNodeKind.TOOL}),
-            limit=1,
-        ),
-    ):
-        try:
-            event = await anext(events)
-            assert event.type == "snapshot"
-            wire = event.model_dump(mode="json", by_alias=True)["snapshot"]
-            nodes = wire["graph"]["nodes"] if "graph" in wire else wire["nodes"]
-            assert (
-                next(node for node in nodes if node["id"] == tool.id)["agui"][
-                    "toolCallId"
-                ]
-                == tool.agui.tool_call_id
-            )
-        finally:
-            await events.aclose()
+    events = await service.follow_trace_graph(
+        thread.thread_id,
+        where=TraceGraphFilter(kinds={TraceGraphNodeKind.TOOL}),
+        limit=1,
+    )
+    try:
+        event = await anext(events)
+        assert event.type == "snapshot"
+        nodes = event.model_dump(mode="json", by_alias=True)["snapshot"]["nodes"]
+        assert (
+            next(node for node in nodes if node["id"] == tool.id)["agui"]["toolCallId"]
+            == tool.agui.tool_call_id
+        )
+    finally:
+        await events.aclose()
 
 
 async def test_live_replay_authorizes_run_and_keeps_sse_cursor_separate(

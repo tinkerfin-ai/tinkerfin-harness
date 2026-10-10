@@ -8,7 +8,6 @@ import { FolderClosed } from 'lucide-react'
 import { WorkspaceFilesDrawer } from '../workspaceFiles/WorkspaceFilesDrawer'
 import { useWorkspaceFiles } from '../workspaceFiles/useWorkspaceFiles'
 import { restoreFocus } from '../../components/ui/focus'
-import { startNotificationFeed } from '../../api/notifications'
 import { useDrawerLayout } from '../../components/ui/useDrawerLayout'
 import { DrawerResizeHandle } from '../../components/ui/DrawerResizeHandle'
 import { isConversationRunning } from '../../lib/workspace'
@@ -183,7 +182,6 @@ function ProjectWorkspaceScreen({
 }) {
   const { t } = useI18n()
   const projectId = scope.project.id
-  useEffect(() => startNotificationFeed(projectId), [projectId])
   const [archivedHistory, setArchivedHistory] = useState(false)
   const [searchScope, setSearchScope] = useState<'project' | 'all'>('project')
   const [searchOpen, setSearchOpen] = useState(false)

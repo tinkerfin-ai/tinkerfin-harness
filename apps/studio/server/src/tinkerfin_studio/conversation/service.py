@@ -328,6 +328,8 @@ class ConversationChatService:
                 on_committed=ConversationRunObserver(
                     self._resources,
                     thread_pk=execution.thread.id,
+                    user_id=self._user.user_id,
+                    project_id=execution.thread.project_id,
                     title_text=title_text,
                     model=model,
                     search_service=search_service,

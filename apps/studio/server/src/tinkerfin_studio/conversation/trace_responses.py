@@ -10,25 +10,16 @@ from tinkerfin.agui import (
     AgUiSubagentReference,
     AgUiToolReference,
     AgUiTraceGraph,
-    AgUiTraceGraphDelta,
     AgUiTraceGraphNode,
     AgUiTraceGraphPage,
-    AgUiTraceInteraction,
-    AgUiTraceMessage,
-    AgUiTraceUpdate,
 )
 from tinkerfin_tracing import (
-    TraceCompleteness,
-    TraceEntityDelta,
     TraceGraphCompleteness,
     TraceGraphFailure,
     TraceGraphLinkIssue,
     TraceGraphNodeKind,
     TraceGraphNodeStatus,
     TraceGraphTurn,
-    TraceReasoning,
-    TraceState,
-    TraceStatus,
 )
 
 
@@ -147,72 +138,6 @@ class ConversationGraph(_ResponseModel):
             matched_node_ids=graph.matched_node_ids,
             as_of_seq=graph.as_of_seq,
             completeness=graph.completeness,
-        )
-
-
-class ConversationGraphDelta(_ResponseModel):
-    """对话图增量，节点使用与历史快照相同的展示契约"""
-
-    as_of_seq: int
-    next_cursor: str | None
-    turn_upserts: tuple[TraceGraphTurn, ...]
-    turn_removes: tuple[str, ...]
-    node_upserts: tuple[ConversationGraphNode, ...]
-    node_removes: tuple[str, ...]
-    ordered_node_ids: tuple[str, ...]
-    matched_node_ids: tuple[str, ...]
-    completeness: TraceGraphCompleteness
-
-    @classmethod
-    def from_graph(cls, graph: AgUiTraceGraphDelta) -> "ConversationGraphDelta":
-        """转换已校验的框架图增量"""
-        return cls(
-            as_of_seq=graph.as_of_seq,
-            next_cursor=graph.next_cursor,
-            turn_upserts=graph.turn_upserts,
-            turn_removes=graph.turn_removes,
-            node_upserts=tuple(_conversation_node(node) for node in graph.node_upserts),
-            node_removes=graph.node_removes,
-            ordered_node_ids=graph.ordered_node_ids,
-            matched_node_ids=graph.matched_node_ids,
-            completeness=graph.completeness,
-        )
-
-
-class ConversationTraceUpdate(_ResponseModel):
-    """只发送界面消费的增量与状态，同序号状态变化仍需应用"""
-
-    generation: str
-    observed_at: datetime
-    as_of_seq: int
-    has_events: bool = Field(description="本批是否包含已提交的事件或语义事实")
-    messages: TraceEntityDelta[AgUiTraceMessage]
-    reasoning: TraceEntityDelta[TraceReasoning]
-    graph: ConversationGraphDelta
-    interactions: TraceEntityDelta[AgUiTraceInteraction]
-    state: TraceState
-    status: TraceStatus
-    completeness: TraceCompleteness
-    message_count: int
-    tool_call_count: int
-
-    @classmethod
-    def from_update(cls, update: AgUiTraceUpdate) -> "ConversationTraceUpdate":
-        """业务投影消费完毕后生成对话流响应"""
-        return cls(
-            generation=update.generation,
-            observed_at=update.observed_at,
-            as_of_seq=update.as_of_seq,
-            has_events=bool(update.events or update.facts),
-            messages=update.messages,
-            reasoning=update.reasoning,
-            graph=ConversationGraphDelta.from_graph(update.graph),
-            interactions=update.interactions,
-            state=update.state,
-            status=update.status,
-            completeness=update.completeness,
-            message_count=update.message_count,
-            tool_call_count=update.tool_call_count,
         )
 
 

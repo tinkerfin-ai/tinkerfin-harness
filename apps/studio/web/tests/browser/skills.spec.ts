@@ -1,3 +1,4 @@
+import { runCalendarFixture } from '../../src/test/automationFixtures'
 import { installProjectScope } from './fixtures/projects'
 import type { ConversationHistoryDetail, TraceMessage } from '../../src/api/conversation/history'
 import { emptyTraceGraph } from '../../src/test/traceFixtures'
@@ -29,6 +30,7 @@ async function prepare(page: Page, installed: InstalledSkill[] = [], language: '
     else if (path === '/api/skills/sources') data = [{ id: 'clawhub', name: 'ClawHub', url: 'https://clawhub.ai' }]
     else if (path === '/api/skills/installations') data = installed.filter(skill => skill.project_id === null || skill.project_id === url.searchParams.get('project_id'))
     else if (path === '/api/skills/catalog') data = { items: [{ id: 'author/reports', source_id: 'clawhub', name: 'Reports', description: '整理资料并生成报告', revision: 'fixed', author: 'Author', topics: [], updated_at: null }], cursor: null }
+    else if (path === '/api/automation/runs/calendar') data = runCalendarFixture([], url.searchParams.get('weekStart')!)
     else if (path === '/api/automation/tasks' || path === '/api/automation/runs') data = { items: [], nextCursor: null }
     else throw new Error(`Unexpected request: ${path}`)
     await route.fulfill({ json: { code: 0, message: 'success', data } })
