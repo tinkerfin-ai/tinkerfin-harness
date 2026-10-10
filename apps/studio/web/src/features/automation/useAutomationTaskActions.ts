@@ -49,7 +49,7 @@ export function useAutomationTaskActions(projectId: string, tasks: AutomationTas
     ids.forEach(id => busyRef.current.delete(id))
     if (mounted.current) setBusy(new Set(busyRef.current))
   }
-  const execute = async (id: string, operation: 'pause' | 'enable' | 'run') => {
+  const execute = async (id: string, operation: 'pause' | 'enable') => {
     const task = tasks.find(item => item.id === id)
     if (!task) return
     const controller = begin([id])
@@ -59,7 +59,7 @@ export function useAutomationTaskActions(projectId: string, tasks: AutomationTas
       await commandTask(task, operation, requestId(key), controller.signal)
       if (controller.signal.aborted || !mounted.current) return
       commandIds.current.delete(key)
-      onToast('info', t(operation === 'run' ? '已加入运行队列' : operation === 'pause' ? '任务已暂停' : '任务已启用'))
+      onToast('info', t(operation === 'pause' ? '任务已暂停' : '任务已启用'))
       reload()
     } catch (error) {
       if (!controller.signal.aborted && mounted.current) onToast('error', error instanceof Error ? error.message : t('操作失败，请重试'))

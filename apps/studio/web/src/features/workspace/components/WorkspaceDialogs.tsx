@@ -42,8 +42,8 @@ export function WorkspaceDialogs({
         open
         title={t('删除会话')}
         description={dialog.isRunning
-          ? t('“{title}”仍在接收实时输出。继续会先停止该会话任务，并永久删除全部历史记录', { title: dialog.title })
-          : t('将永久删除“{title}”及其全部历史记录，此操作不可撤销', { title: dialog.title })}
+          ? t('将先停止“{title}”的当前运行，再删除会话。自动化执行历史和结果会保留', { title: dialog.title })
+          : t('将删除“{title}”。普通会话的历史会永久删除；自动化执行历史和结果会保留', { title: dialog.title })}
         confirmLabel={t('删除')}
         tone="danger"
         isPending={pending}

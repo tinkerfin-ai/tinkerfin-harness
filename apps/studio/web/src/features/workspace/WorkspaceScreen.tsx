@@ -99,10 +99,11 @@ import {
 } from '../conversation/stream/activeRunSession'
 import {
   buildEmptyConversation,
+  upsertConversation,
   selectCurrentConversation,
   updateConversation,
 } from '../../lib/workspace'
-import { readPageFromLocation, readThreadFromLocation, writeWorkspaceToLocation } from '../../lib/threadRoute'
+import { readPageFromLocation, readProjectFromLocation, readThreadFromLocation, writeWorkspaceToLocation } from '../../lib/threadRoute'
 import type {
   ApprovalState,
   Conversation,
@@ -162,7 +163,7 @@ type WorkspaceScreenProps = { user: AuthUser; onLogout: () => void; onToast: Toa
 
 export function WorkspaceScreen(props: WorkspaceScreenProps) {
   const [workspaceFilesOpen, setWorkspaceFilesOpen] = useState(false)
-  return <ProjectsWorkspace key={props.user.user_id} user={props.user} onLogout={props.onLogout}>{scope => <ProjectWorkspaceScreen key={scope.project.id} {...props} scope={scope} workspaceFilesOpen={workspaceFilesOpen} onWorkspaceFilesOpenChange={setWorkspaceFilesOpen} />}</ProjectsWorkspace>
+  return <ProjectsWorkspace key={props.user.user_id} user={props.user} onLogout={props.onLogout} onToast={props.onToast}>{scope => <ProjectWorkspaceScreen key={scope.project.id} {...props} scope={scope} workspaceFilesOpen={workspaceFilesOpen} onWorkspaceFilesOpenChange={setWorkspaceFilesOpen} />}</ProjectsWorkspace>
 }
 
 function ProjectWorkspaceScreen({
@@ -497,6 +498,7 @@ function ProjectWorkspaceScreen({
   // 历史导航释放草稿的页面选择权，迟到的首帧只能更新原会话
   useEffect(() => {
     const onPopState = () => {
+      if (readProjectFromLocation() && readProjectFromLocation() !== projectId) return
       cancelInitialSelection()
       selectPendingConversation(null)
       submissionLocks.current.delete('')
@@ -504,17 +506,19 @@ function ProjectWorkspaceScreen({
       const threadId = readThreadFromLocation()
       setActivePage(readPageFromLocation())
       setWorkspaceView('conversation')
-      setWorkspace((state) =>
-        state.currentThreadId === threadId
-          ? state
-          : !threadId || state.conversations.some((item) => item.threadId === threadId)
-            ? selectCurrentConversation(state, threadId)
-            : state,
-      )
+      setWorkspace(state => {
+        if (state.currentThreadId === threadId) return state
+        // 路由可以指向尚未分页加载的会话，正文仍由现有历史加载流程授权读取
+        const target = !threadId || state.conversations.some(item => item.threadId === threadId)
+          ? state : upsertConversation(state, { ...buildEmptyConversation({
+            projectId, threadId, model: defaultModelId, now: new Date().toISOString(),
+          }), isHydrated: false })
+        return selectCurrentConversation(target, threadId)
+      })
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
-  }, [cancelInitialSelection, releaseDraft, selectPendingConversation, setWorkspace])
+  }, [projectId, defaultModelId, cancelInitialSelection, releaseDraft, selectPendingConversation, setWorkspace])
 
   useEffect(() => {
     if (!workspace.currentThreadId || !selectedConversation?.isHydrated) return
@@ -1324,7 +1328,10 @@ function ProjectWorkspaceScreen({
         ) : activePage === 'automation' ? (
           <ErrorBoundary onError={() => pushToast('error', t('自动化区域无法显示'))}
             fallback={({ reset }) => <div className="automation-empty"><p>{t('自动化区域无法显示')}</p><Button type="button" onClick={reset}>{t('重新加载')}</Button></div>}>
-            <AutomationPage projectId={projectId} navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay}
+            <AutomationPage projectId={projectId} executions={scope.automation} onOpenConversation={target => {
+              scope.select(target.projectId, target.threadId)
+              window.dispatchEvent(new PopStateEvent('popstate'))
+            }} navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay}
               onModalChange={setAutomationModalOpen} onToast={pushToast} defaultModelId={defaultModelId}
               renderModelChoice={(model, onSelect) => <ComposerModelPicker model={model} models={models} defaultModelId={defaultModelId}
                 status={modelCatalogStatus} open={isModelPickerOpen} onOpenChange={setModelPickerOpen}

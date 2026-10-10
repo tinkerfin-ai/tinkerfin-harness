@@ -28,6 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gateway = ["tinkerfin-gateway==0.1.0"]
 sqlalchemy = [
     "sqlalchemy[asyncio]==2.0.52",
     "tinkerfin-sqlalchemy==0.1.0",
@@ -54,3 +55,4 @@ tinkerfin-contracts = { workspace = true }
 tinkerfin-native-stream = { workspace = true }
 tinkerfin = { workspace = true }
 tinkerfin-sqlalchemy = { workspace = true }
+tinkerfin-gateway = { workspace = true }

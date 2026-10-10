@@ -1369,6 +1369,13 @@ class AgentRuntime(Generic[ContextT]):
         return runtime
 
     @property
+    def default_mode(self) -> AgentMode:
+        """Return the execution mode used when a request does not select one."""
+        return (
+            "default" if self._plan_options is None else self._plan_options.default_mode
+        )
+
+    @property
     def agui(self) -> RuntimeAgUi:
         """Access AG-UI operations and history in this Runtime's namespace."""
         require_agui()

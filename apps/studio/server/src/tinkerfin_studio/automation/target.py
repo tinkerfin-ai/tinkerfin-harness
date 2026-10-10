@@ -18,6 +18,7 @@ from tinkerfin_automation.targets import (
     ExecutionOutcome,
     ExecutionRequest,
 )
+from tinkerfin_gateway import RunPresentation
 from tinkerfin_studio.agent.runtime import build_automation_runtime
 from tinkerfin_studio.api.errors import (
     AttachmentErrorCode,
@@ -25,7 +26,10 @@ from tinkerfin_studio.api.errors import (
     ServiceErrorCode,
 )
 from tinkerfin_studio.auth.models import User
-from tinkerfin_studio.changes import notify_change
+from tinkerfin_studio.conversation.delivery import (
+    ConversationAdmission,
+    ConversationRunObserver,
+)
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.service import AgentModelService
 from tinkerfin_studio.projects.repository import ProjectRepository
@@ -36,8 +40,8 @@ from tinkerfin_studio.services.service import (
     ServiceConfigService,
     bindings_for,
 )
-from tinkerfin_studio.skills.repository import SkillRepository
 
+from .conversations import register_conversation
 from .ownership import automation_owner, parse_automation_owner
 from .schemas import TaskConfiguration
 from .service import NAMESPACE, collection_id, task_configuration
@@ -181,9 +185,6 @@ class StudioAutomationTarget:
             models = AgentModelService(AgentModelRepository(session, user_id=user_id))
             try:
                 model = await models.resolve(config.model_id)
-                await SkillRepository(session, user_id).capture(
-                    execution.identity, project_id=config.project_id
-                )
                 await session.commit()
             except BusinessException:
                 return ExecutionFailed(
@@ -216,21 +217,58 @@ class StudioAutomationTarget:
                 image_service=image_service,
                 access_mode=config.access_mode,
             )
-            prepared = replace(
-                execution, input={"messages": [{"role": "user", "content": content}]}
+            prepared, conversation = await register_conversation(
+                self._resources,
+                execution=execution,
+                configuration=config,
+                user_id=user_id,
+                model=model,
+                services=bindings_for(search_service, image_service),
+                content=content,
             )
-            try:
-                return await TinkerFinTarget(runtime).run(
-                    ExecutionRequest(execution=prepared, deadline=request.deadline)
-                )
-            finally:
-                # 任务也能写入项目记忆，正常、失败或取消后都重新读取已保存内容
-                await notify_change(
-                    self._resources.notifications,
+            admission = ConversationAdmission(
+                self._resources,
+                user_id=user_id,
+                thread_pk=conversation.thread.id,
+                identity=execution.identity,
+                registered=conversation.registered,
+                thread_created=conversation.thread_created,
+            )
+            outcome = await TinkerFinTarget(
+                runtime,
+                gateway=self._resources.gateway,
+                registration=admission,
+                on_committed=ConversationRunObserver(
+                    self._resources,
+                    thread_pk=conversation.thread.id,
                     user_id=user_id,
-                    topic="studio.memories.changed",
-                    key=config.project_id,
+                    project_id=config.project_id,
+                    title_text="",
+                    model=model,
+                    search_service=search_service,
+                    image_service=image_service,
+                ),
+                presentation=RunPresentation(
+                    start_attributes={
+                        "title": conversation.thread.title,
+                        "titleSource": conversation.thread.title_source,
+                        "titleSeq": conversation.thread.title_seq,
+                        "titleGenerationStatus": conversation.thread.title_generation_status,
+                    }
+                ),
+            ).run(
+                ExecutionRequest(
+                    execution=replace(
+                        execution, input={"messages": list(prepared.messages)}
+                    ),
+                    deadline=request.deadline,
                 )
+            )
+            await self._resources.conversation_trace.reconcile(
+                thread_pk=conversation.thread.id,
+                identity=execution.identity,
+            )
+            return outcome
         except BusinessException as error:
             if error.error_code == ServiceErrorCode.CONFIGURATION_CHANGED:
                 return ExecutionFailed(

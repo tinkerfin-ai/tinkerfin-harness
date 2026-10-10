@@ -1,8 +1,6 @@
 """当前登录用户的资源变化通知"""
 
-from typing import Annotated
-
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Request
 
 from tinkerfin_gateway.starlette import SseResponse, sse_response
 from tinkerfin_notifications import NotificationError, NotificationScope
@@ -24,9 +22,6 @@ router = APIRouter(tags=["通知"])
 async def follow_notifications(
     request: Request,
     auth: AuthSessionDep,
-    project_id: Annotated[
-        str | None, Query(alias="projectId", min_length=1, max_length=36)
-    ] = None,
 ) -> SseResponse:
     """通知浏览器重新读取当前用户的会话、附件、轨迹和自动化资源
 
@@ -36,17 +31,23 @@ async def follow_notifications(
     resources = get_resources(request.app)
     user_id = auth.user.user_id
     scopes = [NotificationScope(f"ns_{user_id}")]
-    if project_id is not None:
-        async with resources.database.session() as session:
-            await ProjectRepository(session, user_id).require(project_id)
-        scopes.append(
-            NotificationScope(
-                "studio_automation", automation_owner(user_id, project_id)
-            )
-        )
+    async with resources.database.session() as session:
+        project_ids = {
+            item.id for item in await ProjectRepository(session, user_id).list()
+        }
+    scopes.extend(
+        NotificationScope("studio_automation", automation_owner(user_id, project_id))
+        for project_id in sorted(project_ids)
+    )
 
     async def authorized() -> bool:
-        return await session_has_access(resources, auth, project_id)
+        if not await session_has_access(resources, auth):
+            return False
+        async with resources.database.session() as session:
+            current_ids = {
+                item.id for item in await ProjectRepository(session, user_id).list()
+            }
+        return current_ids == project_ids
 
     try:
         return await sse_response(

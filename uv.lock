@@ -3183,6 +3183,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+gateway = [
+    { name = "tinkerfin-gateway" },
+]
 sqlalchemy = [
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "tinkerfin-sqlalchemy" },
@@ -3196,12 +3199,13 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'sqlalchemy'", specifier = "==2.0.52" },
     { name = "tinkerfin", editable = "packages/tinkerfin" },
     { name = "tinkerfin-contracts", editable = "packages/tinkerfin-contracts" },
+    { name = "tinkerfin-gateway", marker = "extra == 'gateway'", editable = "packages/tinkerfin-gateway" },
     { name = "tinkerfin-native-stream", editable = "packages/tinkerfin-native-stream" },
     { name = "tinkerfin-notifications", editable = "packages/tinkerfin-notifications" },
     { name = "tinkerfin-sqlalchemy", marker = "extra == 'sqlalchemy'", editable = "packages/tinkerfin-sqlalchemy" },
     { name = "tzdata", specifier = ">=2025.2" },
 ]
-provides-extras = ["sqlalchemy"]
+provides-extras = ["gateway", "sqlalchemy"]
 
 [[package]]
 name = "tinkerfin-contracts"
@@ -3527,7 +3531,7 @@ dependencies = [
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "starlette" },
     { name = "tinkerfin", extra = ["agui", "redis", "tracing"] },
-    { name = "tinkerfin-automation", extra = ["sqlalchemy"] },
+    { name = "tinkerfin-automation", extra = ["gateway", "sqlalchemy"] },
     { name = "tinkerfin-contracts" },
     { name = "tinkerfin-gateway", extra = ["starlette"] },
     { name = "tinkerfin-langgraph-store", extra = ["sqlalchemy"] },
@@ -3572,7 +3576,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = "==2.0.52" },
     { name = "starlette", specifier = ">=1.3.1,<2" },
     { name = "tinkerfin", extras = ["agui", "redis", "tracing"], editable = "packages/tinkerfin" },
-    { name = "tinkerfin-automation", extras = ["sqlalchemy"], editable = "packages/tinkerfin-automation" },
+    { name = "tinkerfin-automation", extras = ["gateway", "sqlalchemy"], editable = "packages/tinkerfin-automation" },
     { name = "tinkerfin-contracts", editable = "packages/tinkerfin-contracts" },
     { name = "tinkerfin-gateway", extras = ["starlette"], editable = "packages/tinkerfin-gateway" },
     { name = "tinkerfin-langgraph-store", extras = ["sqlalchemy"], editable = "packages/tinkerfin-langgraph-store" },

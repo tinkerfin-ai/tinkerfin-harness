@@ -1133,6 +1133,7 @@ export function useWorkspaceHistory({
               || !ownsHydrationRequest(current, requestIdentity)) return
             // 恢复焦点后要求的新观测不能由失焦前已发出的读取替代
             if (request.foreground > requestedForeground) continue
+            if (detail.projectId !== projectId) throw new Error('会话已移出当前项目')
             const restored = restoreConversationFromTrace(detail, {
               previous: current,
               preserveHistory: options.refresh,
@@ -1178,6 +1179,7 @@ export function useWorkspaceHistory({
     hydrationRequests.current.set(threadId, request)
     return request.completion
   }, [
+    projectId,
     followDetachedConversation,
     hydrateTaskTrace,
     onToast,

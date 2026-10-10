@@ -75,3 +75,62 @@ async def notification_route(database, notifications, monkeypatch):
 
 
 pytestmark = pytest.mark.usefixtures("projects")
+
+
+async def test_notifications_cover_owned_projects_without_replaying_history(
+    notification_route, notifications, database
+):
+    from tinkerfin_notifications import Notification, NotificationScope
+    from tinkerfin_studio.api.notification_router import follow_notifications
+    from tinkerfin_studio.projects.repository import ProjectRepository
+
+    request, auth, clock, _records, connections = notification_route
+    async with database.session() as session:
+        first = await ProjectRepository(session, 7).create("第一项目")
+        second = await ProjectRepository(session, 7).create("第二项目")
+    await notifications.publish(
+        Notification(
+            scope=NotificationScope("studio_automation", f"7:{first.id}"),
+            topic="automation.execution.changed",
+            key="offline",
+        )
+    )
+    response = await follow_notifications(request, auth)
+    body = aiter(response.body_iterator)
+    try:
+        assert await anext(body) == b"event: ready\ndata: {}\n\n"
+        await notifications.publish(
+            Notification(
+                scope=NotificationScope("studio_automation", "8:foreign"),
+                topic="automation.execution.changed",
+                key="foreign",
+            )
+        )
+        for project in (first, second):
+            await notifications.publish(
+                Notification(
+                    scope=NotificationScope("studio_automation", f"7:{project.id}"),
+                    topic="automation.execution.changed",
+                    key=project.id,
+                )
+            )
+            frame = await anext(body)
+            assert isinstance(frame, bytes)
+            assert project.id.encode() in frame
+            assert b"offline" not in frame and b"foreign" not in frame
+            assert connections == [0]
+        async with database.session() as session:
+            await ProjectRepository(session, 7).create("新增项目")
+        clock.monotonic = 15.0
+        await notifications.publish(
+            Notification(
+                scope=NotificationScope("ns_7"),
+                topic="studio.projects.changed",
+                key="new",
+            )
+        )
+        with pytest.raises(StopAsyncIteration):
+            await anext(body)
+    finally:
+        await response.aclose()
+    assert connections == [0]

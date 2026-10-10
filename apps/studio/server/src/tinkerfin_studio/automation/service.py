@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import base64
 from asyncio import TaskGroup
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING
 from uuid import NAMESPACE_URL, uuid5
+
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select
 
 from tinkerfin.agui import AgUiHistory
 from tinkerfin_automation import (
@@ -31,18 +35,23 @@ from tinkerfin_studio.api.errors import (
     AutomationErrorCode,
     BusinessException,
 )
+from tinkerfin_studio.conversation.models import (
+    ConversationRunRegistration,
+    ConversationThread,
+)
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.service import AgentModelService
 from tinkerfin_studio.projects.repository import ProjectRepository
-from tinkerfin_tracing import TraceThreadNotFound
+from tinkerfin_tracing import TraceRunNotFound, TraceThreadNotFound
 
-from .ownership import automation_owner
+from .ownership import automation_owner, parse_automation_owner
 from .schemas import (
     ZONE,
     BatchCommand,
     BatchResult,
     RunCalendar,
     RunCalendarDay,
+    RunConversation,
     RunDetail,
     RunList,
     RunView,
@@ -103,6 +112,8 @@ def run_view(run: AutomationExecution) -> RunView:
         failure = "执行结果尚未确认，请检查运行记录"
     return RunView(
         id=run.execution_id,
+        project_id=parse_automation_owner(run.owner_id)[1],
+        updated_at=run.updated_at,
         task_id=run.task_id,
         name=run.task_name,
         status=run.status,
@@ -111,6 +122,67 @@ def run_view(run: AutomationExecution) -> RunView:
         started_at=run.execution_started_at,
         finished_at=run.finished_at,
         error=failure,
+    )
+
+
+class _ActiveCursor(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    user_id: int
+    project_id: str
+    after: str | None
+
+
+async def list_active_runs(
+    resources: ApplicationResources, *, user_id: int, cursor: str | None, limit: int
+) -> RunList:
+    """每页读取一个授权项目的活跃执行，游标不允许改变用户或调度作用域"""
+    async with resources.database.session() as session:
+        projects = sorted(
+            item.id for item in await ProjectRepository(session, user_id).list()
+        )
+    after = None
+    selected = projects[0] if projects else None
+    if cursor is not None:
+        value = _ActiveCursor.model_validate_json(
+            base64.b64decode(cursor, altchars=b"-_", validate=True)
+        )
+        if value.user_id != user_id or value.project_id not in projects:
+            raise ValueError("活跃执行游标与当前用户不匹配")
+        selected, after = value.project_id, value.after
+    if selected is None:
+        return RunList(items=[], next_cursor=None)
+    page = await resources.automation.for_owner(
+        automation_owner(user_id, selected)
+    ).list_runs(
+        filters=ExecutionFilter(
+            statuses=(
+                ExecutionStatus.QUEUED,
+                ExecutionStatus.RUNNING,
+                ExecutionStatus.CANCEL_REQUESTED,
+            )
+        ),
+        cursor=after,
+        limit=limit,
+    )
+    next_project = selected
+    if page.next_cursor is None:
+        index = projects.index(selected) + 1
+        next_project = projects[index] if index < len(projects) else None
+    next_cursor = (
+        None
+        if next_project is None
+        else base64.urlsafe_b64encode(
+            _ActiveCursor(
+                user_id=user_id, project_id=next_project, after=page.next_cursor
+            )
+            .model_dump_json()
+            .encode()
+        ).decode()
+    )
+    service = StudioAutomationService(resources, user_id=user_id, project_id=selected)
+    return RunList(
+        items=await service._run_views([run.snapshot for run in page.items]),
+        next_cursor=next_cursor,
     )
 
 
@@ -126,6 +198,48 @@ class StudioAutomationService:
         self._automation = resources.automation.for_owner(
             automation_owner(user_id, project_id)
         )
+
+    async def _run_views(self, runs: list[AutomationExecution]) -> list[RunView]:
+        """批量关联会话入口，原执行项目与移动后的会话位置分别保留"""
+        if not runs:
+            return []
+        async with self._resources.database.session() as session:
+            rows = await session.execute(
+                select(
+                    ConversationRunRegistration.automation_execution_id,
+                    ConversationThread.thread_id,
+                    ConversationThread.project_id,
+                )
+                .join(
+                    ConversationThread,
+                    ConversationThread.id
+                    == ConversationRunRegistration.conversation_thread_id,
+                )
+                .where(
+                    ConversationRunRegistration.automation_execution_id.in_(
+                        [run.execution_id for run in runs]
+                    ),
+                    ConversationThread.user_id == self._user_id,
+                    ConversationThread.deleted_at.is_(None),
+                )
+            )
+            links = {
+                execution_id: RunConversation(
+                    thread_id=thread_id, project_id=project_id
+                )
+                for execution_id, thread_id, project_id in rows
+            }
+        return [
+            run_view(run).model_copy(
+                update={"conversation": links.get(run.execution_id)}
+            )
+            for run in runs
+        ]
+
+    async def status(self, execution_id: str) -> RunView:
+        """读取本人执行状态和会话位置，不加载消息或文件"""
+        run = (await self._automation.get_run(execution_id)).snapshot
+        return (await self._run_views([run]))[0]
 
     async def _task_view(self, task: AutomationTask) -> TaskView:
         config = task_configuration(task)
@@ -252,7 +366,7 @@ class StudioAutomationService:
                 expected_revision=command.expected_revision,
                 request_id=command.request_id,
             )
-            return run_view(run.snapshot)
+            return (await self._run_views([run.snapshot]))[0]
         change = {"pause": task.pause, "enable": task.enable}.get(operation)
         if change is None:
             raise BusinessException(AutomationErrorCode.INVALID_CONFIGURATION)
@@ -315,7 +429,7 @@ class StudioAutomationService:
             limit=limit,
         )
         return RunList(
-            items=[run_view(run.snapshot) for run in page.items],
+            items=await self._run_views([run.snapshot for run in page.items]),
             next_cursor=page.next_cursor,
         )
 
@@ -376,7 +490,7 @@ class StudioAutomationService:
     async def result(self, execution_id: str) -> RunDetail:
         """先核验执行归属，再读取框架的只读消息与当前执行附件"""
         run = (await self._automation.get_run(execution_id)).snapshot
-        view = run_view(run)
+        view = (await self._run_views([run]))[0]
         details = {
             **view.model_dump(),
             "thread_id": run.identity.thread_id,
@@ -387,8 +501,8 @@ class StudioAutomationService:
         try:
             history = await AgUiHistory(
                 self._resources.tracer, namespace=run.identity.namespace
-            ).get(run.identity.thread_id, head_run_id=run.identity.run_id, limit=100)
-        except TraceThreadNotFound:
+            ).get_run(run.identity.thread_id, run_id=run.identity.run_id)
+        except (TraceThreadNotFound, TraceRunNotFound):
             return RunDetail(**details, result_available=False)
         files = await self._resources.attachments.list_collection(
             user_id=self._user_id, collection_id=execution_id
@@ -398,9 +512,7 @@ class StudioAutomationService:
             **details,
             result_available=True,
             messages=[
-                message
-                for message in history.snapshot.messages
-                if message.role == "assistant"
+                message for message in history.messages if message.role == "assistant"
             ],
             output_files=[file for file in files if file.id not in original_ids],
         )

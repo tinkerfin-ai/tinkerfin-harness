@@ -14,6 +14,7 @@ from tinkerfin_contracts.media import Attachment
 from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
 from tinkerfin_studio.conversation.request import ChatRequest, CompactRequest
+from tinkerfin_studio.services.schemas import ServiceBindings
 
 
 def conversation_identity(thread_id: str, run_id: str, *, user_id: int) -> RunIdentity:
@@ -71,6 +72,14 @@ class RegisteredRun:
     run_id: int
     created: bool
     preparation_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class AutomationRunContext:
+    """自动化会话的执行归属及已固定的外部服务"""
+
+    execution_id: str
+    services: ServiceBindings
 
 
 def classify_intent(request: ChatRequest) -> ChatIntent:

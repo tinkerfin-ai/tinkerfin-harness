@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal
 
@@ -18,6 +19,7 @@ from tinkerfin_tracing import (
     TraceInteraction,
     TraceMessage,
     TraceReasoning,
+    TraceRun,
     TraceState,
     TraceSummary,
     TraceUpdate,
@@ -154,3 +156,10 @@ class AgUiTraceHistory(_HistoryModel, frozen=True):
     graph: AgUiTraceGraph
     interactions: tuple[AgUiTraceInteraction, ...]
     summary: AgUiTraceSummary
+
+
+@dataclass(frozen=True, slots=True)
+class AgUiTraceRun(TraceRun):
+    """One exact Run's retained output with references matching live AG-UI delivery."""
+
+    messages: tuple[AgUiTraceMessage, ...]

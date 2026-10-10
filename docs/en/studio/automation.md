@@ -45,4 +45,14 @@ Pausing affects future scheduled triggers.
 Filter execution history by date, name, and status, then open a result to read messages
 or download files. The calendar groups runs by queue time. Deleting a task retains historical files.
 
+Each started execution appears as a separate conversation in its project. Run-now
+stays on the current page and shows submission, queue, and execution progress.
+While Studio is connected, completions and failures from all your projects produce
+a notification with **Open conversation** when an entry is available. Initial load
+and reconnection refresh status without replaying offline completion notifications.
+The result panel also opens the conversation for follow-up questions; its task result
+continues to show only the original execution. Moving a conversation changes where
+it opens, while task history remains in the task's project. Deleting an automation
+conversation removes its entry and retains the execution history, messages, and files.
+
 [Studio quick start](quick_start.md) · [Documentation](../index.md)

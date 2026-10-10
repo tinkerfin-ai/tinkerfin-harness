@@ -163,6 +163,10 @@ class ConversationRunRegistration(Base):
             "run_id",
             name="uq_conversation_run_registrations_thread_run",
         ),
+        UniqueConstraint(
+            "automation_execution_id",
+            name="uq_conversation_run_registrations_automation",
+        ),
         Index(
             "ix_conversation_run_registrations_thread_started",
             "conversation_thread_id",
@@ -189,6 +193,9 @@ class ConversationRunRegistration(Base):
     )
     parent_run_id: Mapped[str | None] = mapped_column(
         String(128), nullable=True, comment="分支或恢复的来源运行 ID"
+    )
+    automation_execution_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, comment="自动化执行 ID；普通会话运行为 NULL"
     )
     access_mode: Mapped[AccessMode] = mapped_column(
         String(32),

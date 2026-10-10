@@ -42,9 +42,9 @@ function notify(notice: ResourceNotice) {
 }
 
 /** 已登录工作区拥有通知连接；同页共享一条连接，最后一个使用者退出时关闭 */
-export function startNotificationFeed(projectId?: string): () => void {
-  const key = projectId ?? ''
-  const feed = feeds.get(key) ?? connectFeed(projectId)
+export function startNotificationFeed(): () => void {
+  const key = 'workspace'
+  const feed = feeds.get(key) ?? connectFeed()
   feeds.set(key, feed)
   feed.owners += 1
   let closed = false
@@ -59,10 +59,10 @@ export function startNotificationFeed(projectId?: string): () => void {
   }
 }
 
-function connectFeed(projectId?: string) {
+function connectFeed() {
   let state: ResourceFeedState = 'connecting'
   const close = startResourceFeed({
-    path: `/api/notifications${projectId ? `?${new URLSearchParams({ projectId })}` : ''}`,
+    path: '/api/notifications',
     onState(value) {
       state = value
       // ready 与随后同一帧的 resync 合并通知，避免一帧触发两次基线

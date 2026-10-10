@@ -15,6 +15,7 @@ from pydantic import JsonValue
 from sqlalchemy import delete, exists, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.selectable import Exists
 
 from tinkerfin.media import AttachmentContent
 from tinkerfin_contracts.media import Attachment
@@ -39,7 +40,10 @@ from tinkerfin_studio.attachments.storage import (
     UploadForm,
 )
 from tinkerfin_studio.changes import notify_change
-from tinkerfin_studio.conversation.models import ConversationThread
+from tinkerfin_studio.conversation.models import (
+    ConversationRunRegistration,
+    ConversationThread,
+)
 from tinkerfin_studio.infrastructure.database import Database
 from tinkerfin_studio.projects.repository import ProjectRepository
 
@@ -55,6 +59,30 @@ def descriptor(row: AttachmentFile) -> Attachment:
     """返回可以公开的附件描述，不暴露存储细节"""
     return Attachment(
         id=row.id, name=row.name, mime_type=row.mime_type, size_bytes=row.size_bytes
+    )
+
+
+def _execution_reference(*, user_id: int, thread_id: str) -> Exists:
+    """只向本次执行关联的未删除会话开放集合引用，不改变原文件归属"""
+    return (
+        select(AttachmentReference.attachment_id)
+        .join(
+            ConversationRunRegistration,
+            ConversationRunRegistration.automation_execution_id
+            == AttachmentReference.collection_id,
+        )
+        .join(
+            ConversationThread,
+            ConversationThread.id == ConversationRunRegistration.conversation_thread_id,
+        )
+        .where(
+            AttachmentReference.attachment_id == AttachmentFile.id,
+            ConversationThread.user_id == user_id,
+            ConversationThread.thread_id == thread_id,
+            ConversationThread.deleted_at.is_(None),
+        )
+        .correlate(AttachmentFile)
+        .exists()
     )
 
 
@@ -270,7 +298,7 @@ class AttachmentService:
         if row.thread_id is not None:
             details["thread_id"] = row.thread_id
         if collection_id is not None:
-            details["collection_id"] = collection_id
+            details.update(await self._collection_details(row.user_id, collection_id))
         await notify_change(
             self._notifications,
             user_id=row.user_id,
@@ -458,8 +486,31 @@ class AttachmentService:
             user_id=user_id,
             topic="studio.attachments.changed",
             key=collection_id,
-            details={"collection_id": collection_id},
+            details=await self._collection_details(user_id, collection_id),
         )
+
+    async def _collection_details(
+        self, user_id: int, collection_id: str
+    ) -> dict[str, JsonValue]:
+        details: dict[str, JsonValue] = {"collection_id": collection_id}
+        async with self._database.session() as session:
+            thread_id = await session.scalar(
+                select(ConversationThread.thread_id)
+                .join(
+                    ConversationRunRegistration,
+                    ConversationRunRegistration.conversation_thread_id
+                    == ConversationThread.id,
+                )
+                .where(
+                    ConversationRunRegistration.automation_execution_id
+                    == collection_id,
+                    ConversationThread.user_id == user_id,
+                    ConversationThread.deleted_at.is_(None),
+                )
+            )
+        if thread_id is not None:
+            details["thread_id"] = thread_id
+        return details
 
     async def _verify_collection(
         self,
@@ -569,7 +620,11 @@ class AttachmentService:
                 ConversationThread.user_id == user_id,
             )
         )
-        if thread is None or thread.status == "deleting":
+        if (
+            thread is None
+            or thread.deleted_at is not None
+            or thread.status == "deleting"
+        ):
             raise BusinessException(AttachmentErrorCode.THREAD_UNAVAILABLE)
         return thread
 
@@ -602,13 +657,26 @@ class AttachmentService:
             row = await session.get(AttachmentFile, attachment_id)
             if row is None or row.user_id != user_id or row.status != "ready":
                 raise BusinessException(AttachmentErrorCode.NOT_FOUND)
-            if project_id is not None and row.project_id != project_id:
-                raise BusinessException(AttachmentErrorCode.NOT_FOUND)
-            if (
-                thread_id is not None
-                and row.thread_id != thread_id
-                and not (allow_unbound and row.thread_id is None)
-            ):
+            linked = False
+            if thread_id is not None:
+                linked = bool(
+                    await session.scalar(
+                        select(
+                            _execution_reference(user_id=user_id, thread_id=thread_id)
+                        ).where(AttachmentFile.id == attachment_id)
+                    )
+                )
+                if linked or not (allow_unbound and row.thread_id is None):
+                    thread = await self._require_thread(session, user_id, thread_id)
+                    if project_id is not None and thread.project_id != project_id:
+                        raise BusinessException(AttachmentErrorCode.NOT_FOUND)
+                if (
+                    not linked
+                    and row.thread_id != thread_id
+                    and not (allow_unbound and row.thread_id is None)
+                ):
+                    raise BusinessException(AttachmentErrorCode.NOT_FOUND)
+            if project_id is not None and row.project_id != project_id and not linked:
                 raise BusinessException(AttachmentErrorCode.NOT_FOUND)
             if collection_id is not None:
                 await self._require_collection(session, user_id, collection_id)
@@ -617,7 +685,7 @@ class AttachmentService:
                 )
                 if reference is None:
                     raise BusinessException(AttachmentErrorCode.NOT_FOUND)
-            elif row.thread_id is not None:
+            elif row.thread_id is not None and not linked:
                 retained = await session.scalar(
                     select(
                         exists().where(
@@ -692,7 +760,10 @@ class AttachmentService:
                 select(AttachmentFile)
                 .where(
                     AttachmentFile.user_id == user_id,
-                    AttachmentFile.thread_id == thread_id,
+                    or_(
+                        AttachmentFile.thread_id == thread_id,
+                        _execution_reference(user_id=user_id, thread_id=thread_id),
+                    ),
                     AttachmentFile.status == "ready",
                 )
                 .order_by(AttachmentFile.created_at)
@@ -709,7 +780,7 @@ class AttachmentService:
         thread_id: str,
         message_id: str,
     ) -> None:
-        """在调用方的运行登记事务内绑定附件，禁止跨会话认领"""
+        """绑定当前草稿；本执行的集合文件只授权引用，不转移原始归属"""
         total = 0
         for attachment_id in sorted(set(ids)):
             row = await session.scalar(
@@ -717,17 +788,22 @@ class AttachmentService:
                 .where(AttachmentFile.id == attachment_id)
                 .with_for_update()
             )
-            if (
-                row is None
-                or row.user_id != user_id
-                or row.status != "ready"
-                or row.thread_id not in (None, thread_id)
-            ):
+            if row is None or row.user_id != user_id or row.status != "ready":
+                raise BusinessException(AttachmentErrorCode.NOT_FOUND)
+            linked = bool(
+                await session.scalar(
+                    select(
+                        _execution_reference(user_id=user_id, thread_id=thread_id)
+                    ).where(AttachmentFile.id == attachment_id)
+                )
+            )
+            if row.thread_id not in (None, thread_id) and not linked:
                 raise BusinessException(AttachmentErrorCode.NOT_FOUND)
             total += row.size_bytes
-            row.thread_id = thread_id
-            if row.message_id is None:
-                row.message_id = message_id
+            if not linked:
+                row.thread_id = thread_id
+                if row.message_id is None:
+                    row.message_id = message_id
         if total > MAX_TOTAL_BYTES:
             raise BusinessException(AttachmentErrorCode.TOO_LARGE)
         await session.flush()

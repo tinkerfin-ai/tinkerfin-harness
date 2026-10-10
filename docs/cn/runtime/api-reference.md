@@ -46,6 +46,7 @@ AG-UI 入口需要安装 `tinkerfin[agui]`。
 | API | 结果 |
 | --- | --- |
 | `runtime.namespace` | 构建 Runtime 时固定的 namespace |
+| `runtime.default_mode` | 请求未指定模式时使用的执行模式 |
 | `runtime.thread_identity(thread_id)` | 完整 namespaced thread 身份 |
 | `runtime.run_identity(thread_id, run_id)` | 完整 namespaced run 身份 |
 | `await runtime.ainvoke(...)` | 最终状态的防御性副本 |

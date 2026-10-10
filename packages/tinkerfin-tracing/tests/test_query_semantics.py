@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
+
 from tinkerfin_contracts import (
     RunClosedObservation,
     RunIdentity,
@@ -17,7 +20,12 @@ from tinkerfin_contracts import (
     RunTerminalOutcome,
 )
 from tinkerfin_tracing import (
+    AmbiguousTraceHead,
+    InMemoryTraceStore,
+    SqlAlchemyTraceStore,
     Tracer,
+    TraceRunNotFound,
+    TraceThreadNotFound,
 )
 
 
@@ -95,3 +103,46 @@ async def _finish(
         )
     )
     await session.aclose()
+
+
+@pytest.mark.parametrize("storage", ["memory", "sqlite"])
+async def test_exact_run_survives_followup_forks_and_store_reopen(
+    storage: str, trace_sql_engine: AsyncEngine
+) -> None:
+    store = (
+        InMemoryTraceStore()
+        if storage == "memory"
+        else SqlAlchemyTraceStore(trace_sql_engine)
+    )
+    tracer = Tracer(store=store)
+    first = _context("first")
+    session = await _start(tracer, first)
+    active = await tracer.get_run(first.identity)
+    assert active.summary.status.execution == "running"
+    await _finish(session, first)
+    saved = await tracer.get_run(first.identity)
+    for run_id in ("second", "fork"):
+        context = _context(run_id, parent_run_id="first")
+        session = await _start(tracer, context)
+        await _finish(session, context, outcome="failed")
+        result = await tracer.get_run(context.identity)
+        assert [item.content for item in result.messages] == [f"request {run_id}"]
+        assert result.summary.status.execution == "failed"
+    reopened = Tracer(
+        store=(store if storage == "memory" else SqlAlchemyTraceStore(trace_sql_engine))
+    )
+    result = await reopened.get_run(first.identity)
+    assert result.identity == first.identity
+    assert result.messages == saved.messages == active.messages
+    assert result.generation == saved.generation
+    assert result.as_of_seq > saved.as_of_seq
+    assert result.summary.status.execution == "succeeded"
+    assert result.summary.completeness == saved.summary.completeness
+    with pytest.raises(AmbiguousTraceHead):
+        await reopened.get(first.identity.thread, head_run_id="first")
+    with pytest.raises(TraceRunNotFound):
+        await reopened.get_run(_context("missing").identity)
+    with pytest.raises(TraceThreadNotFound):
+        await reopened.get_run(
+            RunIdentity(namespace="other", thread_id="thread-query", run_id="first")
+        )

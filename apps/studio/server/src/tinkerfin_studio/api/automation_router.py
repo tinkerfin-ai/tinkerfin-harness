@@ -25,6 +25,7 @@ from tinkerfin_studio.automation.schemas import (
 from tinkerfin_studio.automation.service import (
     StudioAutomationService,
     automation_error,
+    list_active_runs,
 )
 from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_studio.resources import get_resources
@@ -145,6 +146,30 @@ async def run_calendar(
             week_start=week_start, query=query, status=status, limit=limit
         )
     )
+
+
+@router.get("/runs/active", response_model=ApiResponse[RunList])
+async def active_runs(
+    request: Request, user: UserContextDep, cursor: Cursor = None, limit: Limit = 100
+) -> ApiResponse[RunList]:
+    """分页恢复当前用户全部项目的执行状态，不提供离线完成通知"""
+    try:
+        return ApiResponse.success(
+            await list_active_runs(
+                get_resources(request.app),
+                user_id=user.user_id,
+                cursor=cursor,
+                limit=limit,
+            )
+        )
+    except (AutomationError, ValueError) as error:
+        raise automation_error(error) from error
+
+
+@router.get("/runs/{execution_id}/status", response_model=ApiResponse[RunView])
+async def run_status(execution_id: str, service: Service) -> ApiResponse[RunView]:
+    """按执行原所属项目校验权限，只读取轻量状态与结果导航"""
+    return ApiResponse.success(await service.status(execution_id))
 
 
 @router.get("/runs/{execution_id}", response_model=ApiResponse[RunDetail])

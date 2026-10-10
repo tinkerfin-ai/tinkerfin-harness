@@ -18,6 +18,8 @@ from tinkerfin_automation import (
     SqlAlchemyAutomationStore,
     next_run_after,
 )
+from tinkerfin_gateway import Gateway
+from tinkerfin_messaging import Messaging
 from tinkerfin_notifications import Notification, NotificationScope
 from tinkerfin_studio.agent import runtime as runtime_module
 from tinkerfin_studio.api.dependencies import get_user_context
@@ -35,7 +37,13 @@ from tinkerfin_studio.automation.target import (
     StudioAutomationTarget,
     fail_interactive_execution,
 )
+from tinkerfin_studio.conversation.command import ConversationCommandService
+from tinkerfin_studio.conversation.coordinator import ConversationTraceCoordinator
+from tinkerfin_studio.conversation.failures import ConversationFailureProjection
+from tinkerfin_studio.conversation.history_queries import HistoryQueryAdmission
 from tinkerfin_studio.conversation.repository import ConversationRepository
+from tinkerfin_studio.conversation.service import ConversationChatService
+from tinkerfin_studio.conversation.todo_groups import TodoGroupProjection
 from tinkerfin_studio.models.entity import AgentModel, ModelConnection
 from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_studio.resources import ApplicationResources
@@ -102,13 +110,30 @@ async def automation_environment(
             assert workspace_key == "project-1"
             return workspace
 
-    store = SqlAlchemyAutomationStore(components_database.engine)
+    store = SqlAlchemyAutomationStore(
+        components_database.engine, notifications=notifications
+    )
     automation = Automation(namespace=NAMESPACE, store=store)
     try:
-        tracer = Tracer()
-        async with httpx.AsyncClient(
-            transport=httpx.MockTransport(lambda _: httpx.Response(500))
-        ) as client:
+        tracer = Tracer(
+            projections=(ConversationFailureProjection(), TodoGroupProjection())
+        )
+        async with (
+            httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda _: httpx.Response(500))
+            ) as client,
+            Messaging() as messaging,
+        ):
+            channel = messaging.agui_channel(name="automation-test")
+            gateway = Gateway(
+                messaging=messaging, notifications=notifications, name=channel.name
+            )
+            coordinator = ConversationTraceCoordinator(
+                database=database,
+                notifications=notifications,
+                tracer=tracer,
+                conversation_channel=channel,
+            )
             resources = cast(
                 ApplicationResources,
                 SimpleNamespace(
@@ -119,6 +144,11 @@ async def automation_environment(
                     automation=automation,
                     tracer=tracer,
                     notifications=notifications,
+                    gateway=gateway,
+                    messaging=messaging,
+                    conversation_channel=channel,
+                    conversation_trace=coordinator,
+                    history_queries=HistoryQueryAdmission(),
                     tinkerfin=TinkerFin(
                         checkpointer=InMemorySaver(), store=persistent_store
                     ).with_observer(tracer),
@@ -134,10 +164,13 @@ async def automation_environment(
                 StudioAutomationTarget(resources),
                 execution_namespace=automation_execution_namespace,
             )
-            async with automation.worker(
-                on_interrupt=fail_interactive_execution
-            ) as worker:
-                yield resources, worker
+            try:
+                async with automation.worker(
+                    on_interrupt=fail_interactive_execution
+                ) as worker:
+                    yield resources, worker
+            finally:
+                await coordinator.aclose()
     finally:
         await store.close()
 
@@ -318,6 +351,47 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
             saved_run.failure_message,
         )
         assert any(message["content"] == "任务完成" for message in detail["messages"])
+        history = (await client.get("/api/conversation/history")).json()["data"]
+        assert len(history["items"]) == 1
+        conversation = history["items"][0]
+        assert conversation["threadId"] == saved_run.identity.thread_id
+        assert conversation["lastRunId"] == saved_run.identity.run_id
+        assert conversation["status"] == "idle"
+        full = await client.get(
+            f"/api/conversation/{saved_run.identity.thread_id}/history"
+        )
+        assert full.status_code == 200, full.text
+        assert any(
+            message["role"] == "user" for message in full.json()["data"]["messages"]
+        )
+        continued = await client.post(
+            "/api/conversation/chat",
+            json={
+                "threadId": saved_run.identity.thread_id,
+                "runId": "continue-automation",
+                "parentRunId": saved_run.identity.run_id,
+                "state": {},
+                "tools": [],
+                "context": [],
+                "messages": [{"id": "followup", "role": "user", "content": "继续追问"}],
+                "forwardedProps": {
+                    "projectId": "project-1",
+                    "model": "main",
+                    "command": {"plan": "off"},
+                },
+            },
+        )
+        assert continued.status_code == 200, continued.text
+        assert '"type":"RUN_FINISHED"' in continued.text
+        full = await client.get(
+            f"/api/conversation/{saved_run.identity.thread_id}/history"
+        )
+        assert full.status_code == 200, full.text
+        assert len(full.json()["data"]["messages"]) == 4
+        original = (await client.get(f"/api/automation/runs/{execution_id}")).json()[
+            "data"
+        ]
+        assert len(original["messages"]) == 1
         changed = {
             "requestId": "edit",
             "expectedRevision": 1,
@@ -416,6 +490,99 @@ async def test_task_input_survives_conversation_move_and_can_be_kept_when_editin
     with pytest.raises(BusinessException) as denied:
         await service.save(SaveTask(request_id="unrelated", configuration=config))
     assert denied.value.error_code == AttachmentErrorCode.NOT_FOUND
+
+    assert (
+        await resources.attachments.read(
+            file.id, user_id=1, thread_id=run.identity.thread_id
+        )
+    )[1] == b"# reference"
+    async with resources.notifications.subscribe(
+        scope=NotificationScope("ns_1"), topics=("studio.attachments.changed",)
+    ) as notices:
+        output = await resources.attachments.upload(
+            user_id=1,
+            collection_id=run.id,
+            name="result.md",
+            chunks=byte_chunks(b"# result"),
+            source="tool",
+        )
+        notice = await anext(notices)
+        assert isinstance(notice, Notification)
+        assert notice.details["thread_id"] == run.identity.thread_id
+    async with resources.database.session() as session:
+        repository = ConversationRepository(session)
+        await repository.organize_thread(
+            user_id=1,
+            thread_id=run.identity.thread_id,
+            project_id=destination.id,
+            archived=None,
+        )
+        await resources.attachments.bind(
+            session,
+            [file.id, output.id],
+            user_id=1,
+            thread_id=run.identity.thread_id,
+            message_id="followup-with-files",
+        )
+        await session.commit()
+    assert {
+        item.id
+        for item in await resources.attachments.list_thread(
+            user_id=1, thread_id=run.identity.thread_id
+        )
+    } == {file.id, output.id}
+    assert (
+        await resources.attachments.get(
+            output.id,
+            user_id=1,
+            project_id=destination.id,
+            thread_id=run.identity.thread_id,
+        )
+    ).id == output.id
+    with pytest.raises(BusinessException):
+        await resources.attachments.get(
+            output.id, user_id=2, thread_id=run.identity.thread_id
+        )
+    with pytest.raises(BusinessException):
+        await resources.attachments.get(
+            output.id, user_id=1, thread_id=thread.thread_id
+        )
+    followup_file = await resources.attachments.upload(
+        user_id=1,
+        thread_id=run.identity.thread_id,
+        name="followup.md",
+        chunks=byte_chunks(b"followup"),
+    )
+    async with resources.database.session() as session:
+        await ConversationCommandService(
+            ConversationRepository(session), user_id=1, resources=resources
+        ).delete(thread_id=run.identity.thread_id)
+    with pytest.raises(BusinessException):
+        await resources.attachments.get(
+            followup_file.id, user_id=1, thread_id=run.identity.thread_id
+        )
+    with pytest.raises(BusinessException):
+        await resources.attachments.list_thread(
+            user_id=1, thread_id=run.identity.thread_id
+        )
+    async with resources.database.session() as session:
+        assert (
+            await ConversationRepository(session).get_thread(
+                user_id=1, thread_id=run.identity.thread_id
+            )
+            is None
+        )
+    await resources.attachments.cleanup()
+    retained = await service.result(run.id)
+    assert retained.messages
+    assert [item.id for item in retained.output_files] == [output.id]
+    assert (
+        await resources.attachments.read(output.id, user_id=1, collection_id=run.id)
+    )[1] == b"# result"
+    with pytest.raises(BusinessException):
+        await resources.attachments.get(
+            output.id, user_id=1, thread_id=run.identity.thread_id
+        )
 
 
 async def test_saved_schedule_survives_service_restart(automation_resources):
@@ -574,11 +741,18 @@ async def test_cancelled_automation_announces_project_memories(
 ):
     entered = asyncio.Event()
 
-    async def run_until_cancelled(self, request):
-        entered.set()
-        await asyncio.Event().wait()
+    class WaitingModel(_ToolModel):
+        async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
+            entered.set()
+            await asyncio.Event().wait()
+            async for chunk in super()._astream(messages, stop, run_manager, **kwargs):
+                yield chunk
 
-    monkeypatch.setattr(target_module.TinkerFinTarget, "run", run_until_cancelled)
+    monkeypatch.setattr(
+        runtime_module,
+        "create_chat_model",
+        lambda *args, **kwargs: WaitingModel(responses=["完成"]),
+    )
     resources = automation_resources
     service = StudioAutomationService(resources, user_id=1, project_id="project-1")
     task = await service.save(
@@ -593,9 +767,102 @@ async def test_cancelled_automation_announces_project_memories(
         handle = await resources.automation.for_owner("1:project-1").task(task.id)
         execution = await handle.run()
         await entered.wait()
-        await execution.cancel()
+        async with resources.database.session() as session:
+            response = await ConversationChatService(
+                session,
+                user=UserContext(user_id=1, username="owner", roles=(), disabled=False),
+                resources=resources,
+            ).cancel(
+                thread_id=execution.identity.thread_id, run_id=execution.identity.run_id
+            )
+        assert response.cancelled is False
         await automation_worker.wait_until_idle()
         notice = await anext(changes)
         assert isinstance(notice, Notification)
         assert notice.key == "project-1"
         assert (await execution.refresh()).status == "needs_attention"
+
+
+async def test_removed_automation_rejects_followup_waiting_for_registration(
+    automation_resources, automation_worker, monkeypatch
+):
+    from tinkerfin_studio.conversation.run_registration import ConversationRunPreparer
+
+    resources = automation_resources
+    service = StudioAutomationService(resources, user_id=1, project_id="project-1")
+    task = await service.save(
+        SaveTask(
+            request_id="delete-race",
+            configuration=TaskConfiguration.model_validate(configuration()),
+        )
+    )
+    execution = await (
+        await resources.automation.for_owner("1:project-1").task(task.id)
+    ).run()
+    await automation_worker.wait_until_idle()
+    async with resources.database.session() as session:
+        thread = await ConversationRepository(session).get_thread(
+            user_id=1, thread_id=execution.identity.thread_id
+        )
+        assert thread is not None
+        assert (
+            thread.title_source,
+            thread.title_generation_status,
+            thread.title_seq,
+        ) == ("generated", "succeeded", 1)
+    entered, release = asyncio.Event(), asyncio.Event()
+    register = ConversationRunPreparer.register
+
+    async def wait_for_registration(self, **kwargs):
+        if kwargs["prepared"].identity.run_id == "late-followup":
+            entered.set()
+            await release.wait()
+        return await register(self, **kwargs)
+
+    monkeypatch.setattr(ConversationRunPreparer, "register", wait_for_registration)
+    application = create_application(lifespan=None)
+    application.state.resources = resources
+    application.dependency_overrides[get_user_context] = lambda: UserContext(
+        user_id=1, username="owner", roles=(), disabled=False
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application), base_url="http://test"
+    ) as client:
+        request = asyncio.create_task(
+            client.post(
+                "/api/conversation/chat",
+                json={
+                    "threadId": execution.identity.thread_id,
+                    "runId": "late-followup",
+                    "parentRunId": execution.identity.run_id,
+                    "state": {},
+                    "tools": [],
+                    "context": [],
+                    "messages": [{"id": "followup", "role": "user", "content": "继续"}],
+                    "forwardedProps": {
+                        "projectId": "project-1",
+                        "model": "main",
+                        "command": {"plan": "off"},
+                    },
+                },
+            )
+        )
+        try:
+            await entered.wait()
+            async with resources.database.session() as session:
+                await ConversationCommandService(
+                    ConversationRepository(session), user_id=1, resources=resources
+                ).delete(thread_id=execution.identity.thread_id)
+        finally:
+            release.set()
+            response = await request
+        assert response.status_code in (404, 409)
+        assert "RUN_STARTED" not in response.text
+    async with resources.database.session() as session:
+        assert (
+            await ConversationRepository(session).get_run(
+                thread_pk=thread.id, run_id="late-followup"
+            )
+            is None
+        )
+    assert (await service.result(execution.id)).messages

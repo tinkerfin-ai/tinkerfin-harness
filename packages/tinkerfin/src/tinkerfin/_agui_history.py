@@ -22,12 +22,14 @@ from ._agui_history_models import (
     AgUiTraceGraphDelta,
     AgUiTraceGraphPage,
     AgUiTraceHistory,
+    AgUiTraceRun,
     AgUiTraceUpdate,
 )
 from ._agui_history_projection import (
     _project_graph_delta,
     _project_graph_page,
     _project_history,
+    _project_run,
     _project_update,
 )
 from .sse import SseBody
@@ -287,6 +289,29 @@ class AgUiHistory:
             projections=projections,
         )
         return AgUiHistoryView(trace)
+
+    async def get_run(self, thread_id: str, *, run_id: str) -> AgUiTraceRun:
+        """Read one exact Run's output with live message references.
+
+        Args:
+            thread_id: Application-authorized conversation in this reader's namespace.
+            run_id: Exact Run to inspect, even after follow-up or branched executions.
+
+        Returns:
+            A fixed-prefix result excluding ancestor and descendant messages. State
+            retains context inherited by this Run. No stream or resource is opened.
+
+        Raises:
+            ValueError: An identifier is invalid.
+            TracingError: The thread, Run or retained evidence is unavailable.
+        """
+        return _project_run(
+            await self._tracer.get_run(
+                RunIdentity(
+                    namespace=self._namespace, thread_id=thread_id, run_id=run_id
+                )
+            )
+        )
 
     async def open_live(
         self,

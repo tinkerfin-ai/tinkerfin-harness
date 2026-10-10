@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from tinkerfin import RunIdentity
 from tinkerfin.checkpoints import delete_thread
 from tinkerfin_messaging.errors import (
@@ -83,7 +85,7 @@ class ConversationCommandService:
         return _history_item(updated)
 
     async def delete(self, *, thread_id: str) -> None:
-        """先删权威 Trace，再删恢复、传输与 Studio 业务记录"""
+        """自动化会话只移除入口并保留结果；普通会话删除全部关联记录"""
 
         thread = await self._require_thread(thread_id)
         if thread.status != "deleting":
@@ -117,6 +119,22 @@ class ConversationCommandService:
         destruction_started = retrying
         try:
             await self._require_inactive_transport(identity)
+            if await self._repository.has_automation_execution(thread_pk):
+                locked = await self._repository.lock_thread(thread_pk)
+                if locked is None:
+                    raise BusinessException(ConversationErrorCode.NOT_FOUND)
+                # 删除标记阻止新提问，执行来源登记与文件引用继续保留结果依据
+                locked.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+                locked.status = previous_status
+                await self._repository.commit()
+                destruction_started = True
+                await notify_change(
+                    self._resources.notifications,
+                    user_id=self._user_id,
+                    topic="studio.conversation.changed",
+                    key=thread_id,
+                )
+                return
             trace = None
             try:
                 trace = await self._resources.tracer.get(

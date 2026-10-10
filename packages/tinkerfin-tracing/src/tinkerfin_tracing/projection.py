@@ -1161,6 +1161,52 @@ def _selected_interactions(
     return _interactions(facts, fact_sequences=fact_sequences)
 
 
+def project_run_checkpoint(
+    state: CoreProjectionState,
+    *,
+    run_id: str,
+    active_run_ids: tuple[str, ...],
+) -> CoreProjection:
+    """Select only one Run's output, retaining its independently captured context.
+
+    Unlike branch selection, this never resolves an ancestor to a descendant head.
+    Checkpoint message buckets inherit ancestors, so message ownership must still
+    be selected explicitly. See exact-run query contract tests.
+    """
+    run = state.runs.get(run_id)
+    if run is None:
+        raise TraceRunNotFound(
+            "Selected Run does not exist in this Trace generation",
+            context={"run_id": run_id},
+        )
+    messages = tuple(item for item in run.messages if item.run_id == run_id)
+    reasoning = tuple(item for item in run.reasoning if item.run_id == run_id)
+    interactions = _selected_interactions(state, frozenset({run_id}))
+    pending = tuple(item for item in interactions if item.status == "pending")
+    return CoreProjection(
+        selected_run_ids=frozenset({run_id}),
+        selected_head=run_id,
+        available_heads=state.heads,
+        messages=messages,
+        reasoning=reasoning,
+        state=run.state.model_copy(deep=True),
+        interactions=interactions,
+        summary=TraceSummary(
+            status=_status_with_pending(_status(run, active_run_ids), pending),
+            completeness=TraceCompleteness(
+                missing_prefix=run.missing_prefix,
+                missing_tail=run.terminal is None and run_id not in active_run_ids,
+                payload_omitted=run.payload_omitted,
+            ),
+            message_count=sum(item.role in {"user", "assistant"} for item in messages),
+            tool_call_count=run.own_tool_call_count,
+            pending_interactions=pending,
+            last_occurred_at=run.last_occurred_at,
+        ),
+        has_older=False,
+    )
+
+
 def project_core_checkpoint(
     state: CoreProjectionState,
     *,
@@ -1896,7 +1942,9 @@ def _namespace_key(graph_namespace: tuple[str, ...]) -> str:
     )
 
 
-def _status(info: _RunInfo, active_run_ids: tuple[str, ...]) -> TraceStatus:
+def _status(
+    info: _RunInfo | CoreRunCheckpoint, active_run_ids: tuple[str, ...]
+) -> TraceStatus:
     # Runtime terminal facts are authoritative before the Store writer finishes its
     # final cleanup. A short-lived active fence must not hide an already committed
     # Agent outcome or leave followers waiting for a non-existent status-only event.

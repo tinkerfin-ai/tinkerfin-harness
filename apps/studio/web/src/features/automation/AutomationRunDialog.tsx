@@ -9,7 +9,7 @@ import { messageText, type Attachment } from '../conversation/attachments/conten
 import { useAttachmentDownload } from '../conversation/attachments/useAttachmentDownload'
 import { fetchRunDetail, type RunDetail } from './api'
 import { watchResource } from '../../api/shared/watchResource'
-import { isRunInProgress, presentRun, type AutomationRun } from './model'
+import { isRunInProgress, presentRun, type AutomationRun, type RunConversation } from './model'
 import { RunStatus } from './AutomationHistory'
 
 function ResultFile({ file }: { file: Attachment }) {
@@ -22,12 +22,13 @@ function ResultFile({ file }: { file: Attachment }) {
 }
 
 /** 只读取已授权结果；关闭后取消请求，接收运行、轨迹和附件变化后刷新 */
-export function AutomationRunDialog({ projectId, run, trigger, onToast, onClose }: {
+export function AutomationRunDialog({ projectId, run, trigger, onToast, onClose, onOpenConversation }: {
   projectId: string
   run: AutomationRun | null
   trigger: HTMLElement | null
   onToast: ToastHandler
   onClose: () => void
+  onOpenConversation: (target: RunConversation) => void
 }) {
   const { t } = useI18n()
   const [detail, setDetail] = useState<RunDetail | null>(null)
@@ -70,6 +71,7 @@ export function AutomationRunDialog({ projectId, run, trigger, onToast, onClose 
         <span>{t(current.trigger === 'manual' ? '手动运行' : '定时运行')}</span></div>
       {failure && <div className="automation-result-failure"><FeedbackState kind="error" appearance="retry" title={t('运行结果加载失败')} retryLabel={t('重新加载')} onRetry={() => setRevision(value => value + 1)} /></div>}
       {!detail ? !failure && <FeedbackState kind="loading" title={t('正在加载运行结果')} /> : <>
+          {detail.conversation && <Button type="button" variant="secondary" onClick={() => { onClose(); onOpenConversation(detail.conversation!) }}>{t('打开会话')}</Button>}
           {detail.error && <p role="status">{isTranslationKey(detail.error) ? t(detail.error) : detail.error}</p>}
           {!detail.resultAvailable && <p>{t('暂时没有可显示的结果')}</p>}
           <div className="automation-result-output">{detail.messages.filter(message => message.role === 'assistant').map(message => <MarkdownContent key={message.id} content={messageText(message.content)} />)}</div>

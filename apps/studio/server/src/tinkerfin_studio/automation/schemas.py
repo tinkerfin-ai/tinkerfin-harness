@@ -253,15 +253,25 @@ class TaskList(Boundary):
     next_cursor: str | None
 
 
+class RunConversation(Boundary):
+    """执行关联会话的当前位置，已移除的入口不返回链接"""
+
+    thread_id: str
+    project_id: str
+
+
 class RunView(Boundary):
     """一次执行的真实时间和状态，任务改名不会改变当次名称"""
 
     id: str
+    project_id: str
+    conversation: RunConversation | None = None
     task_id: str | None
     name: str | None
     status: ExecutionStatus
     trigger: str
     queued_at: datetime
+    updated_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
     error: str | None = None

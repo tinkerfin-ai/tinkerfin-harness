@@ -73,7 +73,9 @@ async function prepare(page: Page, language = 'zh-CN') {
       const command: { configuration: AutomationDraft } = route.request().postDataJSON()
       const task = state.tasks.find(task => task.id === path.split('/').at(-1))!
       Object.assign(task, command.configuration, { revision: task.revision + 1 }); data = task
-    } else if (path === '/api/automation/runs') data = { items: matchingRuns.filter(run => !status || run.status === status), nextCursor: null }
+    } else if (path === '/api/automation/runs/active') data = { items: state.runs.filter(run => ['queued', 'running', 'cancel_requested'].includes(run.status)), nextCursor: null }
+    else if (/^\/api\/automation\/runs\/[^/]+\/status$/.test(path)) data = state.runs.find(run => run.id === path.split('/').at(-2))
+    else if (path === '/api/automation/runs') data = { items: matchingRuns.filter(run => !status || run.status === status), nextCursor: null }
     else if (path === '/api/automation/runs/calendar') data = runCalendarFixture(matchingRuns.filter(run => !status || run.status === status), url.searchParams.get('weekStart')!)
     else if (path.startsWith('/api/automation/runs/')) {
       const run = state.runs.find(run => run.id === path.split('/').at(-1))!
