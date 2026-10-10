@@ -689,7 +689,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
       messageCount: 3, toolCallCount: 0, messages: [request,
         { ...request, id: 'skill-context', agui: { kind: 'message', messageId: 'skill-context' }, traceSeq: 2, content: '## 固定技能正文\n\n先阅读报告，核对资料来源，保留可追溯的计算依据。\n\n- 区分已确认的信息和推断\n- 使用用户提供的数据\n- 明确列出需要核验的内容', source: { kind: 'context', name: 'skill-invocation', metadata: { skills: [{ id: 'removed-skill', name: 'ai-report-interpreter', digest: 'fixed' }] } } },
         { ...request, id: 'answer', agui: { kind: 'message', messageId: 'answer' }, traceSeq: 3, role: 'assistant', content: '请提供需要解读的报告' },
-      ], reasoning: [], interactionAvailability: [], interactions: [], graph: emptyTraceGraph(4), state: { root: {}, subgraphs: {} }, status: { execution: 'succeeded', headRunId: 'run' },
+      ], reasoning: [], submissionResult: null, planResults: [], interactionAvailability: [], interactions: [], graph: emptyTraceGraph(4), state: { root: {}, subgraphs: {} }, status: { execution: 'succeeded', headRunId: 'run' },
       completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false }, taskTrace: null, runFailures: [], createdAt: time, updatedAt: time,
     }
     await page.route('**/api/conversation/**', async route => {

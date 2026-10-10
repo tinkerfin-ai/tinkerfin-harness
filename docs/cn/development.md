@@ -81,21 +81,10 @@ uv run --locked --no-sync python -m pytest --noconftest tests/packaging -m packa
 ```
 
 测试覆盖构建残留、当前源码内容、wheel 元数据、许可证、依赖声明和隔离环境安装。
-CI 在 Python 3.11–3.14 上运行核心安装场景，另在 Python 3.11 上运行全部可选依赖组合和
-Studio 部署所需的完整 wheel 集合。
+CI 统一在 Python 3.14 上验证核心安装场景、全部可选依赖组合和 Studio 部署所需的
+完整 wheel 集合。
 
 
 准备命令下载适合当前 Python 与平台的 wheel，并校验锁文件中的哈希。隔离安装测试
 随后只使用 `.cache/test-wheels`，不访问包索引。锁文件、Python 版本或平台变化后需
 重新执行准备命令；隔离构建所需的工具也包含在本地 wheel 仓库中。
-
-## 验证 Docker 集成
-
-启动 Docker 后执行以下测试；测试会创建并清理专用的临时服务：
-
-```bash
-uv run pytest -m docker_integration
-```
-
-主质量工作流在 push 和 PR 时执行，默认排除 Docker 集成测试。
-需要验证真实服务时，通过上面的命令在本地按需运行。

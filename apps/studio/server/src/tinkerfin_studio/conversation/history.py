@@ -43,6 +43,7 @@ from tinkerfin_studio.conversation.history_queries import (
     HistoryQueryTimeout,
 )
 from tinkerfin_studio.conversation.models import ConversationThread
+from tinkerfin_studio.conversation.plan_results import saved_plan_results
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.schemas import (
     ConversationHistoryDetail,
@@ -51,6 +52,7 @@ from tinkerfin_studio.conversation.schemas import (
     ConversationHistoryListResponse,
     ConversationInteractionAvailability,
     ConversationRunSnapshotEvent,
+    ConversationSubmissionResult,
     ConversationTraceErrorEvent,
     ConversationTraceGraphErrorEvent,
     ConversationTraceGraphSnapshotEvent,
@@ -223,6 +225,7 @@ class ConversationHistoryService:
         history_cursor: str | None = None,
         limit: int = 100,
         include_task_trace: bool = True,
+        submission_run_id: str | None = None,
     ) -> ConversationHistoryDetail:
         """返回一个固定 as-of、可继续向前扩展的 Trace 视图"""
 
@@ -236,6 +239,7 @@ class ConversationHistoryService:
             thread=thread,
             history=history,
             task_trace=self._task_trace(history.trace) if include_task_trace else None,
+            submission_run_id=submission_run_id,
         )
         await self._repository.commit()
         return detail
@@ -253,7 +257,7 @@ class ConversationHistoryService:
         registration = await self._repository.get_run(
             thread_pk=thread.id, run_id=run_id
         )
-        if registration is None:
+        if registration is None or registration.status == "rejected":
             raise BusinessException(ConversationErrorCode.RUN_NOT_FOUND)
         await self._repository.commit()
         if self._conversation_channel is None:
@@ -611,6 +615,7 @@ class ConversationHistoryService:
         thread: ConversationThread,
         history: AgUiHistoryView,
         task_trace: TaskTraceSnapshot | None,
+        submission_run_id: str | None = None,
     ) -> ConversationHistoryDetail:
         snapshot = history.snapshot
         trace = history.trace
@@ -620,6 +625,29 @@ class ConversationHistoryService:
         )
         if registration is None:
             raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
+        # 确认结果属于指定提交；当前可用性可能已由另一提交持有
+        requested_submission = submission_run_id or snapshot.head_run_id
+        submission = await self._repository.get_run(
+            thread_pk=thread.id, run_id=requested_submission
+        )
+        submission_result = None
+        if submission is not None and submission.resume_not_saved:
+            resume = submission.input_json.get("resume")
+            if not isinstance(resume, list):
+                raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
+            submitted_ids = tuple(
+                identifier
+                for entry in resume
+                if isinstance(entry, dict)
+                and isinstance(identifier := entry.get("interruptId"), str)
+                and identifier
+            )
+            if not submitted_ids or len(set(submitted_ids)) != len(resume):
+                raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
+            submission_result = ConversationSubmissionResult(
+                submissionRunId=submission.run_id,
+                interruptIds=tuple(sorted(submitted_ids)),
+            )
         summary = snapshot.summary
         interactions = {item.id: item for item in snapshot.interactions}
         # Pending 项必须跨越可见 Turn 窗口保留，避免历史分页隐藏仍需用户处理的交互
@@ -630,30 +658,32 @@ class ConversationHistoryService:
             if item.status == "pending"
             for action in item.agui or ()
         )
+        plan_ids = frozenset(
+            action.id
+            for item in interactions.values()
+            for action in item.agui or ()
+            if action.reason
+            in {"tinkerfin:plan_clarification", "tinkerfin:plan_review"}
+        )
         claims = await self._repository.list_interaction_claims(
             thread_pk=thread.id,
-            interrupt_ids=interrupt_ids,
-            submission_run_id=snapshot.head_run_id,
+            interrupt_ids=interrupt_ids | plan_ids,
+            submission_run_id=requested_submission,
+        )
+        submitted_runs = await self._repository.get_runs(
+            thread_pk=thread.id,
+            run_ids=frozenset(
+                claim.claimed_run_id
+                for claim in claims
+                if claim.interrupt_id in plan_ids and claim.resolution_id
+            ),
         )
         claimed_ids = {claim.interrupt_id for claim in claims}
-        resume = registration.input_json.get("resume")
-        submitted_ids = (
-            {
-                interrupt_id
-                for entry in resume
-                if isinstance(entry, dict)
-                and isinstance(interrupt_id := entry.get("interruptId"), str)
-            }
-            if isinstance(resume, list)
-            else set()
-        )
         availability = [
             ConversationInteractionAvailability(
                 interruptId=interrupt_id,
                 state="available",
-                submissionRunId=snapshot.head_run_id
-                if interrupt_id in submitted_ids
-                else None,
+                submissionRunId=None,
             )
             for interrupt_id in sorted(interrupt_ids - claimed_ids)
         ]
@@ -706,6 +736,10 @@ class ConversationHistoryService:
                 )
             ),
             interactionAvailability=tuple(availability),
+            submissionResult=submission_result,
+            planResults=saved_plan_results(
+                claims, {run.run_id: run for run in submitted_runs}, plan_ids
+            ),
             status=summary.status,
             completeness=summary.completeness,
             taskTrace=task_trace,

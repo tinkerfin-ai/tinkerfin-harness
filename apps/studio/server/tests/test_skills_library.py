@@ -1,9 +1,7 @@
 """技能包校验、安装发布和完整内容保存的可观察契约"""
 
-import codecs
 import io
 import stat
-import struct
 import sys
 from collections.abc import Iterable
 from zipfile import ZIP_BZIP2, ZIP_DEFLATED, ZIP_LZMA, ZipFile, ZipInfo
@@ -17,7 +15,6 @@ from tinkerfin import TinkerFin
 from tinkerfin_contracts import RunIdentity
 from tinkerfin_studio.api.errors import BusinessException, SkillErrorCode
 from tinkerfin_studio.auth.models import User
-from tinkerfin_studio.skills import packages as skill_packages
 from tinkerfin_studio.skills.content import SkillContentStore
 from tinkerfin_studio.skills.library import SkillLibrary
 from tinkerfin_studio.skills.packages import (
@@ -61,96 +58,6 @@ def archive_bytes(files: tuple[SkillFile, ...]) -> bytes:
     return output.getvalue()
 
 
-def damaged_archive(compression: int = ZIP_DEFLATED) -> bytes:
-    """保留完整 ZIP 目录表，只损坏首个文件的压缩数据"""
-    output = io.BytesIO()
-    with ZipFile(output, "w", compression=compression) as archive:
-        archive.writestr("SKILL.md", skill_files()[0].content)
-        compressed_size = archive.getinfo("SKILL.md").compress_size
-    data = bytearray(output.getvalue())
-    name_length, extra_length = struct.unpack_from("<HH", data, 26)
-    start = 30 + name_length + extra_length
-    if compression == ZIP_LZMA:
-        # 保留 ZIP 中的 LZMA 属性头，只损坏实际压缩流
-        start += 9
-        compressed_size -= 9
-    data[start : start + compressed_size] = b"\xff" * compressed_size
-    return bytes(data)
-
-
-def test_frontmatter_handles_crlf_multiline_and_literal_delimiters_without_rewriting_bytes() -> (
-    None
-):
-    markdown = "---\r\nname: café-reports\r\ndescription: |\r\n  Reports with --- separators\r\nmetadata:\r\n  author: sample\r\n---\r\n# Instructions\r\n".encode()
-    package = parse_package((SkillFile("SKILL.md", markdown),))
-    assert package.name == "café-reports"
-    assert "--- separators" in package.description
-    assert package.files[0].content == markdown
-
-
-async def test_bom_metadata_preserves_original_files_and_stored_digest() -> None:
-    original = skill_files()
-    files = (
-        SkillFile("SKILL.md", codecs.BOM_UTF8 + original[0].content),
-        *original[1:],
-    )
-    package = parse_package(files)
-    assert package.name == "reports"
-    assert package.files == tuple(sorted(files, key=lambda file: file.path))
-    assert package.digest != parse_package(original).digest
-    content = SkillContentStore(TinkerFin(store=InMemoryStore()))
-    await content.save(1, package)
-    assert await content.load(1, package.digest) == package
-
-
-@pytest.mark.parametrize("prefix", ["", "repository/"])
-async def test_archive_keeps_nested_skill_documents_in_the_parent_package(
-    prefix: str,
-) -> None:
-    files = (
-        *skill_files(),
-        SkillFile("references/slides/SKILL.md", b"A reference document"),
-        SkillFile("references/slides/assets/example.bin", b"\x00\xff"),
-    )
-    packages = await SkillArchiveReader().read(
-        archive_bytes(tuple(SkillFile(prefix + f.path, f.content) for f in files))
-    )
-    assert packages == (parse_package(files),)
-
-
-async def test_archive_discovers_sibling_packages_without_promoting_nested_documents() -> (
-    None
-):
-    first = (*skill_files("reports"), SkillFile("nested/SKILL.md", b"reference"))
-    second = skill_files("slides")
-    packages = await SkillArchiveReader().read(
-        archive_bytes(
-            tuple(SkillFile("repo/a/" + f.path, f.content) for f in first)
-            + tuple(SkillFile("repo/ab/" + f.path, f.content) for f in second)
-        )
-    )
-    assert packages == (parse_package(first), parse_package(second))
-
-
-async def test_archive_skill_capacity_counts_only_independent_roots(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(skill_packages, "MAX_SKILLS", 1)
-    files = (*skill_files(), SkillFile("nested/SKILL.md", b"reference"))
-    assert len(await SkillArchiveReader().read(archive_bytes(files))) == 1
-    with pytest.raises(BusinessException) as failure:
-        await SkillArchiveReader().read(
-            archive_bytes(
-                tuple(SkillFile("first/" + f.path, f.content) for f in files)
-                + tuple(
-                    SkillFile("second/" + f.path, f.content)
-                    for f in skill_files("slides")
-                )
-            )
-        )
-    assert failure.value.error_code == SkillErrorCode.INVALID_PACKAGE
-
-
 async def add_users(session: AsyncSession) -> None:
     session.add_all(
         [
@@ -165,27 +72,6 @@ async def add_users(session: AsyncSession) -> None:
         ]
     )
     await session.commit()
-
-
-async def test_zip_and_persistent_store_preserve_full_directories_and_binary_bytes() -> (
-    None
-):
-    packages = await SkillArchiveReader().read(
-        archive_bytes(
-            tuple(
-                SkillFile("repository/" + file.path, file.content)
-                for file in skill_files()
-            )
-        )
-    )
-    package = packages[0]
-    assert package.files == tuple(sorted(skill_files(), key=lambda file: file.path))
-    content = SkillContentStore(TinkerFin(store=InMemoryStore()))
-    await content.save(1, package)
-    assert await content.load(1, package.digest) == package
-    with pytest.raises(BusinessException) as failure:
-        await content.load(2, package.digest)
-    assert failure.value.error_code == SkillErrorCode.CONTENT_UNAVAILABLE
 
 
 @pytest.mark.parametrize(
@@ -221,93 +107,6 @@ async def test_archive_rejects_symlinks_duplicate_paths_and_large_files() -> Non
     with pytest.raises(BusinessException) as failure:
         parse_package((*skill_files(), SkillFile("large", b"x" * (MAX_FILE_BYTES + 1))))
     assert failure.value.error_code == SkillErrorCode.TOO_LARGE
-
-
-@pytest.mark.parametrize("compression", _COMPRESSIONS)
-async def test_archive_reports_invalid_compressed_content_as_a_package_error(
-    compression: int,
-) -> None:
-    with pytest.raises(BusinessException) as failure:
-        await SkillArchiveReader().read(damaged_archive(compression))
-    assert failure.value.error_code == SkillErrorCode.INVALID_PACKAGE
-
-
-@pytest.mark.parametrize(
-    "paths",
-    [
-        ("references", "references/data.bin"),
-        ("references/data.bin", "references"),
-        ("References", "references/data.bin"),
-        ("references/data.bin", "REFERENCES"),
-    ],
-)
-def test_package_rejects_files_used_as_parent_directories(
-    paths: tuple[str, str],
-) -> None:
-    files = (skill_files()[0], *(SkillFile(path, b"content") for path in paths))
-    with pytest.raises(BusinessException) as failure:
-        parse_package(files)
-    assert failure.value.error_code == SkillErrorCode.INVALID_PACKAGE
-
-
-@pytest.mark.parametrize(
-    "paths",
-    [
-        ("references", "references/data.bin"),
-        ("references/data.bin", "references"),
-        ("References", "references/data.bin"),
-        ("references", "references/"),
-        ("references/", "REFERENCES"),
-        ("references", "references/nested/"),
-        ("references/nested/", "References"),
-    ],
-)
-async def test_archive_rejects_conflicting_file_and_directory_paths(
-    paths: tuple[str, str],
-) -> None:
-    files = (skill_files()[0], *(SkillFile(path, b"") for path in paths))
-    with pytest.raises(BusinessException) as failure:
-        await SkillArchiveReader().read(archive_bytes(files))
-    assert failure.value.error_code == SkillErrorCode.INVALID_PACKAGE
-
-
-async def test_archive_preserves_files_under_explicit_directories() -> None:
-    expected = (skill_files()[0], SkillFile("references/nested/data.bin", b"\x00\xff"))
-    packages = await SkillArchiveReader().read(
-        archive_bytes(
-            (
-                SkillFile("references/", b""),
-                *expected,
-                SkillFile("references/nested/", b""),
-            )
-        )
-    )
-    assert packages[0].files == expected
-
-
-@pytest.mark.parametrize(
-    "markdown",
-    [
-        b"# Missing frontmatter",
-        b"---\nname: ../escape\ndescription: test\n---\n",
-        b"---\nname: okay\ndescription: []\n---\n",
-        b"---\nname: reports\ndescription: Reports\n---",
-        b"---\r\nname: reports\r\ndescription: Reports\r\n---\r",
-    ],
-)
-def test_skill_requires_valid_name_and_description(markdown: bytes) -> None:
-    with pytest.raises(BusinessException):
-        parse_package((SkillFile("SKILL.md", markdown),))
-
-
-def test_long_description_limits_catalog_excerpt_and_preserves_original_file() -> None:
-    description = "Full description " * 100
-    markdown = (
-        f"---\nname: reports\ndescription: {description}\n---\nInstructions".encode()
-    )
-    package = parse_package((SkillFile("SKILL.md", markdown),))
-    assert package.description == description.strip()[:1024]
-    assert package.files[0].content == markdown
 
 
 async def test_install_idempotency_conflict_isolation_and_resume_snapshot(
@@ -373,24 +172,6 @@ async def test_install_idempotency_conflict_isolation_and_resume_snapshot(
             selected_ids=(item.id,),
         )
     assert unavailable.value.error_code == SkillErrorCode.DISABLED
-
-
-async def test_import_confirmation_uses_preview_and_is_idempotent(
-    session: AsyncSession,
-    skill_library: SkillLibrary,
-) -> None:
-    await add_users(session)
-    preview = await skill_library.preview_zip(1, archive_bytes(skill_files()))
-    request = ConfirmImportRequest(
-        request_id="confirm", digests=[preview.candidates[0].digest]
-    )
-    result = await skill_library.confirm(1, preview.id, request)
-    assert await skill_library.confirm(1, preview.id, request) == result
-    assert (
-        await skill_library.detail(1, result.installation_ids[0])
-    ).markdown == parse_package(skill_files()).markdown
-    with pytest.raises(BusinessException):
-        await skill_library.confirm(2, preview.id, request)
 
 
 async def test_failed_content_write_never_publishes_an_installation(

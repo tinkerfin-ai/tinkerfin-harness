@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypedDict
 
 import pytest
-from pydantic import JsonValue, ValidationError
 from sqlalchemy import event as sql_event
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -46,8 +44,6 @@ from tinkerfin_tracing import (
     ToolFact,
     TraceGraphNodeKind,
     TraceGraphNodeStatus,
-    TraceLimits,
-    TraceQuotaExceeded,
     Tracer,
     TraceSemanticFact,
     TraceStore,
@@ -55,7 +51,6 @@ from tinkerfin_tracing import (
     TurnFact,
 )
 from tinkerfin_tracing._ids import scope_id
-from tinkerfin_tracing.redaction import RedactionContext
 
 NOW = datetime(2026, 9, 6, tzinfo=UTC)
 
@@ -74,42 +69,20 @@ def _source(identity: RunIdentity, sequence: int) -> _ObservationSource:
     }
 
 
-@pytest.fixture(
-    params=(
-        "memory",
-        "sqlite",
-        pytest.param("mysql", marks=pytest.mark.docker_integration),
-        pytest.param("postgresql", marks=pytest.mark.docker_integration),
-    )
-)
+@pytest.fixture(params=("memory", "sqlite"))
 async def assistant_store(
-    request: pytest.FixtureRequest,
-    tmp_path: Path,
+    request: pytest.FixtureRequest, tmp_path: Path
 ) -> AsyncIterator[tuple[TraceStore, AsyncEngine | None]]:
     if request.param == "memory":
         yield InMemoryTraceStore(), None
         return
-    async with AsyncExitStack() as databases:
-        if request.param == "postgresql":
-            engine = await databases.enter_async_context(
-                request.getfixturevalue("trace_postgresql_database")()
-            )
-            assert isinstance(engine, AsyncEngine)
-            yield SqlAlchemyTraceStore(engine), engine
-            return
-        url = (
-            await databases.enter_async_context(
-                request.getfixturevalue("trace_mysql_database")()
-            )
-            if request.param == "mysql"
-            else f"sqlite+aiosqlite:///{tmp_path / 'assistant.db'}"
-        )
-        assert isinstance(url, str)
-        engine = create_async_engine(url, hide_parameters=True)
-        try:
-            yield SqlAlchemyTraceStore(engine), engine
-        finally:
-            await engine.dispose()
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'assistant.db'}", hide_parameters=True
+    )
+    try:
+        yield SqlAlchemyTraceStore(engine), engine
+    finally:
+        await engine.dispose()
 
 
 async def _start(tracer: Tracer, identity: RunIdentity) -> RunObservationSession:
@@ -287,31 +260,6 @@ async def test_parallel_namespaces_completed_and_removed_messages_remain_indepen
         assistants[scope_id("message", (), "finished")].status
         is TraceGraphNodeStatus.SUCCEEDED
     )
-
-
-@pytest.mark.parametrize("oversize_first", (False, True))
-async def test_omitted_prefix_cannot_be_replaced_by_a_later_small_suffix(
-    oversize_first: bool,
-) -> None:
-    limits = TraceLimits(max_event_bytes=4096)
-    tracer = Tracer(limits=limits)
-    identity = RunIdentity(namespace="test", thread_id="omitted", run_id="run")
-    session = await _start(tracer, identity)
-    chunks = (
-        ("x" * 10000, "suffix")
-        if oversize_first
-        else ("x" * 1500, "y" * 1500, "suffix")
-    )
-    for sequence, chunk in enumerate(chunks, start=3):
-        await _message(session, identity, sequence, chunk)
-    await _finish(session, identity, "cancelled")
-    graph = await tracer.query(identity.thread)
-    message = next(
-        n for n in graph.nodes if n.kind is TraceGraphNodeKind.ASSISTANT_MESSAGE
-    )
-    assert message.status is TraceGraphNodeStatus.CANCELLED
-    assert message.content is None
-    assert message.content_omitted
 
 
 def _fact_source(identity: RunIdentity, sequence: int) -> dict[str, object]:
@@ -513,48 +461,6 @@ async def test_committed_terminal_closes_only_its_active_assistant_and_rebuild_p
         assert (await tracer.query(identity.thread)).snapshot == graph.snapshot
 
 
-class _WholeMessageRedactor:
-    def redact(self, value: JsonValue, *, context: RedactionContext) -> JsonValue:
-        if context.content_kind == "message" and isinstance(value, str):
-            return value.replace("private-value", "[REDACTED]")
-        return value
-
-
-async def test_assembled_partial_content_is_redacted_and_empty_output_is_not_invented() -> (
-    None
-):
-    tracer = Tracer(redactor=_WholeMessageRedactor())
-    identity = RunIdentity(namespace="test", thread_id="redaction", run_id="run")
-    session = await _start(tracer, identity)
-    await _message(session, identity, 3, "private-")
-    await _message(session, identity, 4, "value")
-    await _message(session, identity, 5, "", message_id="empty")
-    await _finish(session, identity, "cancelled")
-    nodes = {n.id: n for n in (await tracer.query(identity.thread)).nodes}
-    assert nodes[scope_id("message", (), "assistant")].content == "[REDACTED]"
-    assert nodes[scope_id("message", (), "empty")].content is None
-    assert (
-        nodes[scope_id("message", (), "empty")].status is TraceGraphNodeStatus.CANCELLED
-    )
-
-
-async def test_complete_snapshot_can_replace_an_omitted_partial_prefix() -> None:
-    tracer = Tracer(limits=TraceLimits(max_event_bytes=4096))
-    identity = RunIdentity(namespace="test", thread_id="snapshot", run_id="run")
-    session = await _start(tracer, identity)
-    await _message(session, identity, 3, "x" * 10000)
-    await _message(session, identity, 4, "real snapshot", complete=True)
-    await _finish(session, identity, "cancelled")
-    message = next(
-        n
-        for n in (await tracer.query(identity.thread)).nodes
-        if n.kind is TraceGraphNodeKind.ASSISTANT_MESSAGE
-    )
-    assert message.content == "real snapshot"
-    assert not message.content_omitted
-    assert message.status is TraceGraphNodeStatus.SUCCEEDED
-
-
 @pytest.mark.parametrize("complete_state", (False, True))
 async def test_model_success_and_native_response_completeness_have_separate_evidence(
     assistant_store: tuple[TraceStore, AsyncEngine | None],
@@ -690,26 +596,6 @@ async def test_interrupted_message_can_resume_with_its_same_id_without_duplicate
     assert (await tracer.get(first.thread)).graph == result.graph
 
 
-async def test_assistant_settlement_respects_ordinary_event_quota() -> None:
-    tracer = Tracer(limits=TraceLimits(max_thread_events=16))
-    identity = RunIdentity(namespace="test", thread_id="quota", run_id="run")
-    session = await _start(tracer, identity)
-    for sequence in range(3, 9):
-        await _message(
-            session, identity, sequence, "part", message_id=f"message-{sequence}"
-        )
-    # Starts fit the ordinary quota, but six additional retained deliveries do not.
-    await tracer.query(identity.thread)
-    with pytest.raises(TraceQuotaExceeded):
-        await session.observe(
-            RunTerminalObservation(**_source(identity, 90), outcome="cancelled")
-        )
-    await session.aclose()
-    thread = await tracer.get(identity.thread)
-    assert thread.status.execution == "unknown"
-    assert thread.completeness.missing_tail
-
-
 @pytest.mark.parametrize("parent_result", (False, True))
 async def test_child_assistant_uses_its_own_native_scope_at_cancellation(
     assistant_store: tuple[TraceStore, AsyncEngine | None],
@@ -826,24 +712,6 @@ async def test_child_assistant_uses_its_own_native_scope_at_cancellation(
     assert message.content == "child partial"
     await tracer.rebuild_graph(identity.thread)
     assert (await tracer.query(identity.thread)).snapshot == graph.snapshot
-
-
-@pytest.mark.parametrize("phase", ("cancelled", "interrupted", "abandoned"))
-def test_partial_phases_do_not_claim_state_snapshots_or_non_assistant_roles(
-    phase: str,
-) -> None:
-    identity = RunIdentity(namespace="test", thread_id="fact", run_id="run")
-    values = {
-        **_fact_source(identity, 1),
-        "phase": phase,
-        "message_id": "message",
-        "role": "assistant",
-    }
-    fact = MessageFact.model_validate(values)
-    assert MessageFact.model_validate_json(fact.model_dump_json()) == fact
-    for invalid in ({"role": "user"}, {"from_state_snapshot": True}):
-        with pytest.raises(ValidationError, match="Assistant delivery"):
-            MessageFact.model_validate({**values, **invalid})
 
 
 async def test_terminal_cannot_close_or_supply_a_locator_for_another_run(

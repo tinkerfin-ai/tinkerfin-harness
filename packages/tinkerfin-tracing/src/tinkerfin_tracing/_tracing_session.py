@@ -35,6 +35,7 @@ from tinkerfin_contracts import (
     ToolExecutionObservation,
 )
 
+from ._abandonment import nonexecuting_settlements
 from ._ids import scope_id as _scope_id
 from ._observation_values import (
     append_json_content,
@@ -228,6 +229,9 @@ class _TracingSession:
         self._pending_interactions: dict[
             tuple[tuple[str, ...], str], _PendingInteraction
         ] = {}
+        self._known_interactions: dict[
+            tuple[tuple[str, ...], str], _PendingInteraction
+        ] = {}
         self._subagent_descriptors: dict[tuple[str, ...], SubagentRequestReference] = {}
         self._subagent_requests: dict[str, SubagentRequestReference] = {}
         self._logical_openings: dict[str, SubagentFact] = {}
@@ -249,7 +253,7 @@ class _TracingSession:
     async def _hydrate_context(self, context: RunSourceContext) -> None:
         """Select the verified parent before processing input or Native evidence."""
 
-        from .projection import select_prior_run_ids
+        from .projection import select_prior_run_ids, select_resume_parent
 
         if self._lineage_hydrated:
             if context.parent_run_id != self._context.parent_run_id:
@@ -259,12 +263,18 @@ class _TracingSession:
         core_state = await load_core_projection_state(
             self._store, self._writer.key, as_of_seq=self._lineage_through_seq
         )
+        parent_run_id = context.parent_run_id
+        if context.input_kind in {"resume", "abandon"}:
+            parent_run_id = select_resume_parent(
+                core_state.runs,
+                parent_run_id=parent_run_id,
+                interrupt_ids=tuple(item.interrupt_id for item in context.resume),
+                before_seq=self._lineage_through_seq + 1,
+            )
         prior_events = await read_lineage_events(
             self._store,
             self._writer.key,
-            run_ids=select_prior_run_ids(
-                core_state, parent_run_id=context.parent_run_id
-            ),
+            run_ids=select_prior_run_ids(core_state, parent_run_id=parent_run_id),
             as_of_seq=self._lineage_through_seq,
         )
         self._hydrate(prior_events)
@@ -274,8 +284,15 @@ class _TracingSession:
     def _hydrate(self, events: tuple[TraceEvent, ...]) -> None:
         """Restore dedupe and state baselines from the current semantic Ledger."""
 
+        control_settlements = nonexecuting_settlements(events)
         for event in events:
             fact = event.fact
+            if (
+                isinstance(fact, ToolFact | SubagentFact)
+                and (fact.identity.run_id, fact.source_observation_id)
+                in control_settlements
+            ):
+                continue
             if fact.parent_subagent_id is not None and not isinstance(
                 fact, SubagentFact
             ):
@@ -385,6 +402,7 @@ class _TracingSession:
                         kind=fact.interaction_kind,
                         tool_call_ids=fact.tool_call_ids,
                     )
+                    self._known_interactions[key] = self._pending_interactions[key]
                 else:
                     self._pending_interactions.pop(key, None)
             elif isinstance(fact, SubagentFact):
@@ -598,6 +616,14 @@ class _TracingSession:
     ) -> None:
         """Advance framework-owned core cache after one Store transaction commits."""
 
+        for event in events:
+            if (
+                isinstance(event.fact, RunFact)
+                and event.fact.phase == "started"
+                and event.fact.input_kind in {"resume", "abandon"}
+            ):
+                # Hydration and projection share the exact committed start fence.
+                self._lineage_through_seq = event.trace_seq - 1
         await load_core_projection_state(
             self._store,
             self._writer.key,
@@ -2138,6 +2164,7 @@ class _TracingSession:
                 kind=interaction_kind,
                 tool_call_ids=tool_call_ids,
             )
+            self._known_interactions[key] = self._pending_interactions[key]
             facts.append(
                 make_fact(
                     InteractionFact,
@@ -2474,7 +2501,7 @@ class _TracingSession:
         self,
         interrupt_id: str,
     ) -> tuple[tuple[str, ...], _PendingInteraction]:
-        matches = [key for key in self._pending_interactions if key[1] == interrupt_id]
+        matches = [key for key in self._known_interactions if key[1] == interrupt_id]
         if len(matches) > 1:
             raise TraceCorruption(
                 "Native interrupt ID is ambiguous across graph scopes",
@@ -2483,7 +2510,8 @@ class _TracingSession:
         if not matches:
             return (), _PendingInteraction(kind="resume", tool_call_ids=())
         key = matches[0]
-        pending = self._pending_interactions.pop(key)
+        pending = self._known_interactions[key]
+        self._pending_interactions.pop(key, None)
         return key[0], pending
 
     @property

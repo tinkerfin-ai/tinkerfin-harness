@@ -89,9 +89,9 @@ uv run --locked --no-sync python -m pytest --noconftest tests/packaging -m packa
 ```
 
 The suite checks contaminated build directories, current source contents, wheel metadata,
-licenses, declared dependencies, and installation into isolated environments. CI runs the
-core installation cases on Python 3.11–3.14. Python 3.11 also runs every optional dependency
-combination and the complete Studio deployment wheel set.
+licenses, declared dependencies, and installation into isolated environments. CI uses
+Python 3.14 for the core installation cases, every optional dependency combination,
+and the complete Studio deployment wheel set.
 
 
 The preparation commands download wheels for the current Python and platform and
@@ -99,15 +99,3 @@ verify their lockfile hashes. Isolated installations then run offline against
 `.cache/test-wheels`, with no package index access. Run preparation again when the
 lockfile, Python version, or platform changes. The local wheelhouse also contains
 the tools required by isolated builds.
-
-## Validate Docker integrations
-
-Start Docker, then run tests that create and clean up their own disposable services:
-
-```bash
-uv run pytest -m docker_integration
-```
-
-The main quality workflow runs on pushes and pull requests and excludes Docker
-integration tests by default. Run them locally with the command above when you need
-to validate against real services.

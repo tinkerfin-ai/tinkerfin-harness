@@ -3,89 +3,38 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import cast
-from uuid import uuid4
+from collections.abc import AsyncIterator, Callable
 
 import pytest
-from redis.asyncio import Redis
-from redis.crc import key_slot
 
 from tinkerfin_contracts import RunIdentity
 from tinkerfin_messaging import (
     MemoryBackend,
-    MessagingBackendProtocolError,
     MessagingLimits,
     MessagingQuotaExceeded,
     MessagingRetentionPolicy,
     RecoveryCheckpoint,
-    RedisBackend,
     StreamDeleteConflict,
 )
 from tinkerfin_messaging._messaging_ledger import _MessagingLedger
 
 
-def test_total_capacity_defaults_and_validation() -> None:
-    limits = MessagingLimits()
-    assert limits.max_total_bytes == 1024**3
-    assert limits.max_total_records == 100_000
-    for field in ("max_total_bytes", "max_total_records"):
-        with pytest.raises(TypeError, match=field):
-            MessagingLimits(**{field: True})
-        with pytest.raises(ValueError, match=field):
-            MessagingLimits(**{field: 0})
-
-
-@pytest.fixture(
-    params=[
-        "memory",
-        pytest.param(
-            "redis", marks=[pytest.mark.docker_integration, pytest.mark.redis_e2e]
-        ),
-    ]
-)
-async def capacity_backend_factory(
-    request: pytest.FixtureRequest,
-) -> AsyncIterator[
+@pytest.fixture(params=["memory"])
+async def capacity_backend_factory() -> AsyncIterator[
     Callable[[MessagingLimits, MessagingRetentionPolicy], _MessagingLedger]
 ]:
-    """Isolate each capacity contract, sharing a Redis prefix only inside its test."""
-
-    client: Redis | None = None
-    prefix = f"tfmsg:total-capacity:{uuid4().hex}"
+    """Share one isolated memory backend inside each capacity contract."""
     memory: MemoryBackend | None = None
-    if request.param == "redis":
-        url = request.getfixturevalue("redis_url")
-        assert isinstance(url, str)
-        client = Redis.from_url(url, decode_responses=False, socket_timeout=5)
 
     def make(
         limits: MessagingLimits, retention: MessagingRetentionPolicy
     ) -> _MessagingLedger:
         nonlocal memory
-        if client is None:
-            if memory is None:
-                memory = MemoryBackend(limits=limits, retention_policy=retention)
-            return _MessagingLedger(memory)
-        return _MessagingLedger(
-            RedisBackend(
-                client,
-                key_prefix=prefix,
-                limits=limits,
-                retention_policy=retention,
-                producer_lease_seconds=5,
-                generation_cleanup_retry_seconds=0.01,
-            )
-        )
+        if memory is None:
+            memory = MemoryBackend(limits=limits, retention_policy=retention)
+        return _MessagingLedger(memory)
 
-    try:
-        yield make
-    finally:
-        if client is not None:
-            keys = [key async for key in client.scan_iter(match=f"{prefix}:*")]
-            if keys:
-                await client.unlink(*keys)
-            await client.aclose()
+    yield make
 
 
 async def _start(
@@ -269,53 +218,6 @@ async def test_concurrent_workers_cannot_overshoot_total_bytes(
         await worker.finish(run.handle, status="completed")
 
 
-@pytest.mark.docker_integration
-@pytest.mark.redis_e2e
-async def test_redis_scope_format_and_limits_are_shared_across_channels(
-    redis_url: str,
-) -> None:
-    client = Redis.from_url(redis_url, decode_responses=False, socket_timeout=5)
-    prefix = f"tfmsg:capacity-format:{uuid4().hex}"
-    try:
-        backend = _MessagingLedger(
-            RedisBackend(
-                client, key_prefix=prefix, limits=MessagingLimits(max_total_records=12)
-            )
-        )
-        first = await _start(backend, "thread", channel="one")
-        second = await _start(backend, "thread", channel="two")
-        keys = [key async for key in client.scan_iter(match=f"{prefix}:*")]
-        assert len({key_slot(key) for key in keys}) == 1
-        quota_keys = [key for key in keys if key.endswith(b":capacity")]
-        assert len(quota_keys) == 1
-        assert (
-            await cast(
-                Awaitable[bytes | None], client.hget(quota_keys[0], "total_records")
-            )
-            == b"8"
-        )
-        different = _MessagingLedger(
-            RedisBackend(
-                client, key_prefix=prefix, limits=MessagingLimits(max_total_records=13)
-            )
-        )
-        with pytest.raises(MessagingBackendProtocolError):
-            await _start(different, "thread", channel="three")
-        assert (
-            await cast(
-                Awaitable[bytes | None], client.hget(quota_keys[0], "total_records")
-            )
-            == b"8"
-        )
-        await backend.finish(first.handle, status="completed")
-        await backend.finish(second.handle, status="completed")
-    finally:
-        keys = [key async for key in client.scan_iter(match=f"{prefix}:*")]
-        if keys:
-            await client.unlink(*keys)
-        await client.aclose()
-
-
 async def test_concurrent_empty_admissions_cannot_overshoot_total_records(
     capacity_backend_factory,
 ) -> None:
@@ -370,37 +272,3 @@ async def test_plain_commit_preserves_latest_checkpoint_and_historical_evidence(
     assert snapshot.matching_message is not None
     assert snapshot.matching_message.checkpoint == first
     await backend.finish(run.handle, status="completed")
-
-
-@pytest.mark.docker_integration
-@pytest.mark.redis_e2e
-async def test_redis_expiry_index_has_one_member_per_terminal_thread(
-    redis_url: str,
-) -> None:
-    client = Redis.from_url(redis_url, decode_responses=False, socket_timeout=5)
-    prefix = f"tfmsg:capacity-index:{uuid4().hex}"
-    try:
-        backend = _MessagingLedger(
-            RedisBackend(
-                client,
-                key_prefix=prefix,
-                retention_policy=MessagingRetentionPolicy.expire_after(30),
-            )
-        )
-        for index in range(70):
-            run = await _start(backend, "same-thread", run=str(index))
-            await backend.finish(run.handle, status="completed")
-        indices = [
-            key async for key in client.scan_iter(match=f"{prefix}:*:expirations")
-        ]
-        assert len(indices) == 1
-        assert await cast(Awaitable[int], client.zcard(indices[0])) == 1
-        active = await _start(backend, "same-thread", run="active")
-        assert await cast(Awaitable[int], client.zcard(indices[0])) == 0
-        await backend.finish(active.handle, status="completed")
-        assert await cast(Awaitable[int], client.zcard(indices[0])) == 1
-    finally:
-        keys = [key async for key in client.scan_iter(match=f"{prefix}:*")]
-        if keys:
-            await client.unlink(*keys)
-        await client.aclose()

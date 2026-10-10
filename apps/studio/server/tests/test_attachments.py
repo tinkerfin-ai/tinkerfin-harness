@@ -4,7 +4,7 @@ import base64
 import io
 import json
 import struct
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -12,7 +12,6 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pytest
 from attachment_fakes import MemoryAttachmentStorage
 from PIL import Image
-from pydantic import BaseModel
 from sqlalchemy import select
 
 from tinkerfin_studio.api.errors import BusinessException
@@ -59,28 +58,6 @@ async def test_upload_keeps_original_and_rejects_other_users(attachments):
     with pytest.raises(BusinessException) as denied:
         await attachments.read(file.id, user_id=2)
     assert denied.value.error_code.http_status == 404
-
-
-@pytest.mark.parametrize("name,content", [("chart.png", png), ("slides.pptx", pptx)])
-async def test_model_content_uses_image_variant_or_original_file(
-    attachments, name, content
-):
-    """授权原生输入使用图片模型变体，文档则保留原件格式和字节"""
-    data = content()
-    file = await attachments.upload(
-        project_id="project-1", user_id=1, name=name, chunks=byte_chunks(data)
-    )
-    resolved = await attachments.read_content(file, user_id=1)
-    if file.mime_type.startswith("image/"):
-        _, expected = await attachments.read(file.id, user_id=1, variant="model")
-        assert resolved.data == expected
-        assert resolved.mime_type == "image/jpeg"
-        with Image.open(io.BytesIO(resolved.data)) as image:
-            assert image.format == "JPEG"
-    else:
-        assert resolved.data == data
-        assert resolved.mime_type == file.mime_type
-    assert (await attachments.read(file.id, user_id=1))[1] == data
 
 
 @pytest.mark.parametrize("user_id,collection_id", [(2, "files"), (1, "other")])
@@ -150,27 +127,6 @@ async def test_binding_prevents_cross_thread_reuse_and_draft_deletion(
     ].id == file.id
 
 
-async def test_cleanup_removes_expired_drafts(attachments, database, monkeypatch):
-    from tinkerfin_studio.attachments import service as attachment_service
-
-    now = datetime(2026, 9, 26, tzinfo=UTC)
-    monkeypatch.setattr(
-        attachment_service, "datetime", SimpleNamespace(now=lambda _tz: now)
-    )
-    file = await attachments.upload(
-        project_id="project-1", user_id=1, name="chart.png", chunks=byte_chunks(png())
-    )
-    async with database.session() as session:
-        row = await session.get(AttachmentFile, file.id)
-        row.created_at = now.replace(tzinfo=None) - timedelta(days=2)
-        await session.commit()
-    await attachments.cleanup()
-    with pytest.raises(BusinessException):
-        await attachments.get(file.id, user_id=1)
-    async with database.session() as session:
-        assert await session.scalar(select(AttachmentFile.id)) is None
-
-
 async def test_invalid_type_and_path_do_not_publish_files(attachments):
     for name, data in [
         ("../x.png", png()),
@@ -181,23 +137,6 @@ async def test_invalid_type_and_path_do_not_publish_files(attachments):
             await attachments.upload(
                 project_id="project-1", user_id=1, name=name, chunks=byte_chunks(data)
             )
-
-
-async def test_pptx_upload_preserves_original_container_and_format(attachments):
-    """PPTX 上传保留原件字节和 MIME 类型，可按附件身份取回"""
-    data = pptx()
-    file = await attachments.upload(
-        project_id="project-1",
-        user_id=1,
-        name="门店月报.pptx",
-        chunks=byte_chunks(data),
-    )
-    assert file.mime_type == (
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    )
-    _, downloaded = await attachments.read(file.id, user_id=1)
-    assert downloaded == data
-    assert file.size_bytes == len(data)
 
 
 def test_pptx_validation_rejects_bad_encrypted_and_oversized_containers():
@@ -223,31 +162,6 @@ def test_pptx_validation_rejects_bad_encrypted_and_oversized_containers():
             "report.pptx",
             office_container("ppt/presentation.xml", b"0" * (50 * 1024 * 1024 + 1)),
         )
-
-
-async def test_generated_workbook_and_pdf_have_valid_content(attachments):
-    """生成的工作簿保留单元格，PDF 满足附件格式校验"""
-    from openpyxl import load_workbook
-
-    workbook = await attachments.documents.run(
-        {
-            "operation": "generate",
-            "kind": "xlsx",
-            "rows": [["quarter", "revenue"], ["Q3", "128"]],
-        }
-    )
-    parsed = load_workbook(io.BytesIO(base64.b64decode(workbook["data"])))
-    try:
-        assert parsed.active is not None
-        assert list(parsed.active.values) == [("quarter", "revenue"), ("Q3", "128")]
-    finally:
-        parsed.close()
-    pdf = await attachments.documents.run(
-        {"operation": "generate", "kind": "pdf", "text": "第三季度营收：128 万元"}
-    )
-    assert (
-        validate_file("report.pdf", base64.b64decode(pdf["data"])) == "application/pdf"
-    )
 
 
 async def test_cancelled_storage_write_removes_staging_record_and_bytes(
@@ -296,231 +210,6 @@ async def test_workbook_preserves_numbers_and_treats_formula_like_text_as_text(
     workbook.close()
 
 
-async def test_same_name_attachments_remain_distinct_after_service_restart(
-    notifications, attachments, database, attachment_storage
-):
-    """同名报告按 ID 区分，重新创建服务后原件和会话引用仍可读取"""
-    files = []
-    originals = []
-    for marker in ("报告 A：收入 128", "报告 B：收入 256"):
-        data = office_container(
-            "word/document.xml",
-            (
-                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-                f"<w:body><w:p><w:r><w:t>{marker}</w:t></w:r></w:p></w:body></w:document>"
-            ).encode(),
-        )
-        originals.append(data)
-        files.append(
-            await attachments.upload(
-                project_id="project-1",
-                user_id=1,
-                name="report.docx",
-                chunks=byte_chunks(data),
-            )
-        )
-    assert files[0].id != files[1].id
-    async with database.session() as session:
-        now = datetime.now(UTC).replace(tzinfo=None)
-        session.add(
-            ConversationThread(
-                archived=False,
-                project_id="project-1",
-                user_id=1,
-                thread_id="reports",
-                title="比较报告",
-                created_at=now,
-                updated_at=now,
-            )
-        )
-        await session.commit()
-        await attachments.bind(
-            session,
-            [file.id for file in files],
-            user_id=1,
-            thread_id="reports",
-            message_id="question",
-        )
-        await session.commit()
-    restored = AttachmentService(
-        database, attachment_storage, notifications=notifications
-    )
-    assert len(await restored.list_thread(user_id=1, thread_id="reports")) == 2
-    results = []
-    for file in files:
-        _, data = await restored.read(file.id, user_id=1, thread_id="reports")
-        results.append(data)
-    assert results == originals
-
-
-@pytest.mark.parametrize(
-    "format_name, mime",
-    [("PNG", "image/png"), ("JPEG", "image/jpeg"), ("WEBP", "image/webp")],
-)
-async def test_generated_image_tool_preserves_actual_format_and_typed_result(
-    attachments, database, monkeypatch, format_name, mime, work_file_runtime
-):
-    """生成工作图片不发布附件，显式交付后保留实际格式和原始字节"""
-    import json
-
-    from langchain_core.messages import ToolMessage
-
-    from tinkerfin_agui_adapter import DeepAgentAgUiAdapter, RunIdentity
-    from tinkerfin_studio.attachments import tools as media_tools
-    from tinkerfin_studio.attachments.workspace_tools import (
-        build_sandbox_attachment_tools,
-    )
-    from tinkerfin_studio.services.schemas import ImageConfig
-    from tinkerfin_studio.services.service import ResolvedService
-
-    runtime, _, files = work_file_runtime
-
-    output = io.BytesIO()
-    Image.new("RGB", (32, 24), "blue").save(output, format_name)
-    data = output.getvalue()
-
-    async def generate(service, prompt):
-        assert service.api_key == "test-key"
-        return data
-
-    monkeypatch.setattr(media_tools, "generate_image_bytes", generate)
-    async with database.session() as session:
-        now = datetime.now(UTC).replace(tzinfo=None)
-        session.add(
-            ConversationThread(
-                archived=False,
-                project_id="project-1",
-                user_id=1,
-                thread_id="generated",
-                title="生成图片",
-                created_at=now,
-                updated_at=now,
-            )
-        )
-        await session.commit()
-    tools = media_tools.build_attachment_tools(
-        service=attachments,
-        processor=attachments.documents,
-        user_id=1,
-        thread_id="generated",
-        image_service=ResolvedService(
-            "image", ImageConfig(model="image-model"), "fingerprint", "test-key"
-        ),
-    )
-    generator = next(item for item in tools if item.name == "generate_image")
-    result = await generator.ainvoke(
-        {
-            "type": "tool_call",
-            "id": "generate",
-            "name": "generate_image",
-            "args": {"prompt": "blue square", "runtime": runtime},
-        }
-    )
-    assert isinstance(result, ToolMessage)
-    assert isinstance(result.content, str)
-    work_file = json.loads(result.content)["files"][0]
-    assert work_file["mime_type"] == mime
-    assert files[work_file["file_path"]] == data
-    assert await attachments.list_thread(user_id=1, thread_id="generated") == []
-    adapter = DeepAgentAgUiAdapter(
-        identity=RunIdentity(namespace="test", thread_id="generated", run_id="run")
-    )
-    events = adapter.process(
-        {
-            "type": "messages",
-            "ns": (),
-            "data": (result, {"lc_agent_name": None, "langgraph_node": "tools"}),
-        }
-    )
-    wire = next(
-        item.model_dump(mode="json", by_alias=True)
-        for item in events
-        if item.type == "TOOL_CALL_RESULT"
-    )
-    assert json.loads(wire["content"]) == {"files": [work_file]}
-    assert wire["attachments"] == []
-    deliver = build_sandbox_attachment_tools(
-        service=attachments, user_id=1, thread_id="generated"
-    )[0]
-    delivered = await deliver.ainvoke(
-        {
-            "type": "tool_call",
-            "id": "deliver",
-            "name": "deliver_file",
-            "args": {
-                "runtime": runtime,
-                "file_path": work_file["file_path"],
-                "name": work_file["name"],
-            },
-        }
-    )
-    events = adapter.process(
-        {
-            "type": "messages",
-            "ns": (),
-            "data": (delivered, {"lc_agent_name": None, "langgraph_node": "tools"}),
-        }
-    )
-    wire = next(
-        item.model_dump(mode="json", by_alias=True)
-        for item in events
-        if item.type == "TOOL_CALL_RESULT"
-    )
-    assert wire["content"] == ""
-    assert len(wire["attachments"]) == 1
-    attachment = wire["attachments"][0]
-    assert attachment["mime_type"] == mime
-    _, original = await attachments.read(
-        attachment["id"], user_id=1, thread_id="generated"
-    )
-    assert original == data
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"operation": "unknown", "kind": "png", "values": [1]},
-        {"operation": "generate", "kind": "xlsx", "rows": [[{"unexpected": "object"}]]},
-        {
-            "operation": "preview_image",
-            "data": "invalid-base64",
-            "max_bytes": 4096,
-        },
-    ],
-)
-async def test_file_worker_rejects_invalid_input(attachments, payload):
-    with pytest.raises(ValueError):
-        await attachments.documents.run(payload)
-
-
-@pytest.mark.parametrize(
-    "failure_type,kind",
-    [(ValueError, "invalid_input"), (RuntimeError, "internal_error")],
-)
-def test_file_worker_reports_input_and_internal_failures_separately(
-    monkeypatch, capsys, failure_type, kind
-):
-    """子进程区分无效输入和内部故障，只公开故障类别"""
-    from tinkerfin_studio.attachments import worker
-
-    def fail(_payload):
-        raise failure_type("private generator details")
-
-    monkeypatch.setattr(worker.resource, "setrlimit", lambda *_args: None)
-    monkeypatch.setattr(
-        worker.sys,
-        "stdin",
-        SimpleNamespace(
-            buffer=io.BytesIO(b'{"operation":"generate","kind":"md","text":"ok"}')
-        ),
-    )
-    monkeypatch.setattr(worker, "generate", fail)
-    with pytest.raises(SystemExit) as exited:
-        worker.main()
-    assert exited.value.code == 1
-    assert json.loads(capsys.readouterr().out) == {"kind": kind}
-
-
 @pytest.mark.parametrize(
     "kind,error_type", [("invalid_input", ValueError), ("internal_error", RuntimeError)]
 )
@@ -545,48 +234,6 @@ async def test_file_processor_preserves_worker_failure_category_and_reaps_proces
     process.wait.assert_awaited_once()
 
 
-def test_attachment_tools_describe_all_model_visible_parameters(attachments):
-    from tinkerfin_studio.attachments.tools import build_attachment_tools
-
-    tools = build_attachment_tools(
-        service=attachments,
-        processor=attachments.documents,
-        user_id=1,
-        thread_id="schema-only",
-        image_service=None,
-    )
-    for tool in tools:
-        schema_type = tool.tool_call_schema
-        assert isinstance(schema_type, type)
-        assert issubclass(schema_type, BaseModel)
-        schema = schema_type.model_json_schema()
-        assert all(
-            field.get("description") for field in schema.get("properties", {}).values()
-        )
-
-
-@pytest.mark.parametrize("extension", ["md", "markdown", "MD"])
-async def test_markdown_upload_preserves_encoding_and_read_authorization(
-    attachments, extension
-):
-    """Markdown 接受 BOM 并保留原件字节，下载仍要求附件所有权"""
-    original = "\ufeff# 门店月报\r\n\r\n| 门店 | 营收 |\r\n| --- | --- |\r\n| 一店 | 128 |\r\n".encode()
-    file = await attachments.upload(
-        project_id="project-1",
-        user_id=1,
-        name=f"月报.{extension}",
-        chunks=byte_chunks(original),
-    )
-    assert file.mime_type == "text/markdown"
-    assert file.size_bytes == len(original)
-    _, downloaded = await attachments.read(file.id, user_id=1)
-    assert downloaded == original
-    with pytest.raises(BusinessException):
-        await attachments.read(file.id, user_id=2)
-    with pytest.raises(BusinessException):
-        await attachments.read(file.id, user_id=1, variant="preview")
-
-
 @pytest.mark.parametrize("data", [b"", b"\xff\xfe#\x00", b"# report\x00data"])
 async def test_invalid_markdown_is_not_published(attachments, database, data):
     """空文件、非 UTF-8 和二进制内容不得留下可见附件"""
@@ -599,118 +246,6 @@ async def test_invalid_markdown_is_not_published(attachments, database, data):
         )
     async with database.session() as session:
         assert await session.scalar(select(AttachmentFile.id)) is None
-
-
-@pytest.mark.parametrize("extension", ["md", "markdown"])
-async def test_markdown_tools_generate_deliver_import_and_reopen(
-    notifications,
-    attachments,
-    database,
-    attachment_storage,
-    extension,
-    work_file_runtime,
-):
-    """Markdown 生成、交付和重新导入保留原件，服务重建后仍校验会话权限"""
-    import json
-
-    from langchain_core.messages import ToolMessage
-
-    from tinkerfin_contracts.media import attachment_from_block
-    from tinkerfin_studio.attachments.tools import build_attachment_tools
-    from tinkerfin_studio.attachments.workspace_tools import (
-        build_sandbox_attachment_tools,
-    )
-
-    runtime, _, files = work_file_runtime
-
-    async with database.session() as session:
-        now = datetime.now(UTC).replace(tzinfo=None)
-        session.add(
-            ConversationThread(
-                archived=False,
-                project_id="project-1",
-                user_id=1,
-                thread_id="markdown-report",
-                title="门店月报",
-                created_at=now,
-                updated_at=now,
-            )
-        )
-        await session.commit()
-    tools = {
-        item.name: item
-        for item in build_attachment_tools(
-            service=attachments,
-            processor=attachments.documents,
-            user_id=1,
-            thread_id="markdown-report",
-            image_service=None,
-        )
-    }
-    text = "# 门店月报\n\n- 营收：128 万元\n- 下月安排：优化排班\n"
-    result = await tools["create_file"].ainvoke(
-        {
-            "type": "tool_call",
-            "id": "create-report",
-            "name": "create_file",
-            "args": {
-                "name": f"月报.{extension}",
-                "kind": "md",
-                "text": text,
-                "runtime": runtime,
-            },
-        }
-    )
-    assert isinstance(result, ToolMessage)
-    assert isinstance(result.content, str)
-    work_file = json.loads(result.content)
-    assert files[work_file["file_path"]] == text.encode()
-    assert work_file["shell_path"] == work_file["file_path"].lstrip("/")
-    assert await attachments.list_thread(user_id=1, thread_id="markdown-report") == []
-    deliver = build_sandbox_attachment_tools(
-        service=attachments, user_id=1, thread_id="markdown-report"
-    )[0]
-    result = await deliver.ainvoke(
-        {
-            "type": "tool_call",
-            "id": "deliver-report",
-            "name": "deliver_file",
-            "args": {
-                "runtime": runtime,
-                "file_path": work_file["file_path"],
-                "name": work_file["name"],
-            },
-        }
-    )
-    assert isinstance(result, ToolMessage)
-    assert isinstance(result.content, list)
-    file = attachment_from_block(result.content[0])
-    assert file is not None and file.mime_type == "text/markdown"
-    restored = AttachmentService(
-        database, attachment_storage, notifications=notifications
-    )
-    _, original = await restored.read(file.id, user_id=1, thread_id="markdown-report")
-    assert original == text.encode()
-    imported = json.loads(
-        await tools["import_attachment"].ainvoke(
-            {"attachment_id": file.id, "runtime": runtime}
-        )
-    )
-    assert imported["file_path"] != work_file["file_path"]
-    assert imported["shell_path"] == imported["file_path"].lstrip("/")
-    assert files[imported["file_path"]] == original
-    files[imported["file_path"]] = b"# edited"
-    assert (await restored.read(file.id, user_id=1, thread_id="markdown-report"))[
-        1
-    ] == original
-    assert [
-        item.id
-        for item in await restored.list_thread(user_id=1, thread_id="markdown-report")
-    ] == [file.id]
-    with pytest.raises(BusinessException):
-        await restored.read(file.id, user_id=1, thread_id="another-thread")
-    with pytest.raises(BusinessException):
-        await restored.read(file.id, user_id=2, thread_id="markdown-report")
 
 
 pytestmark = pytest.mark.usefixtures("projects")

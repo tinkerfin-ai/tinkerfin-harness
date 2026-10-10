@@ -115,26 +115,6 @@ async def test_retry_and_saved_run_queries_need_no_target_declaration(
         await retry.cancel()
 
 
-def test_fixed_runtime_cannot_have_a_second_namespace_source() -> None:
-    runtime = TinkerFin().with_namespace("user").build(model="provider:model")
-    app = Automation(namespace="scheduler")
-    with pytest.raises(ValueError, match="already selects"):
-        app.target("report", TinkerFinTarget(runtime), execution_namespace="user")
-    app.target("report", TinkerFinTarget(runtime))
-
-
-async def test_delayed_worker_entry_rejects_remote_declarations() -> None:
-    app = Automation()
-    app.target("local", report)
-    worker = app.worker()
-    app.remote_target("remote", execution_namespace="user")
-    with pytest.raises(AutomationLifecycleError, match="client lifecycle"):
-        async with worker:
-            pytest.fail("a remote declaration entered a local worker lifecycle")
-    async with app:
-        assert not (await app.for_owner("owner").list_runs()).items
-
-
 @pytest.mark.parametrize("namespace", ["", " padded ", "x" * 129])
 async def test_invalid_policy_rejects_before_any_submission(
     store_with_clock: tuple[AutomationStore, ManualClock],

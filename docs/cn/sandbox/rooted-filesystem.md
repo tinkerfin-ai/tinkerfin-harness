@@ -34,16 +34,27 @@ Runtime 需要项目内资源时，可以声明待准备的文件：
 from tinkerfin import SkillSource, TinkerFin
 from tinkerfin_sandbox import WorkspaceDirectoryContents
 
-project = manager.workspace("users/7", workspace_key="project-a").with_directories([
-    WorkspaceDirectoryContents(
-        "/skills",
-        (("reports/SKILL.md", b"---\nname: reports\ndescription: Prepare reports\n---\nRead the project data."),),
-    ),
-])
-runtime = TinkerFin().build(
-    model=model, backend=project, skills=[SkillSource("/skills/")],
+project = manager.workspace("users/7", workspace_key="project-a").with_directories(
+    [
+        WorkspaceDirectoryContents(
+            "/skills",
+            (
+                (
+                    "reports/SKILL.md",
+                    b"---\nname: reports\ndescription: Prepare reports\n---\nRead the project data.",
+                ),
+            ),
+        ),
+    ]
 )
-await runtime.ainvoke(thread_id="report", input={"messages": [{"role": "user", "content": "生成报告"}]})
+runtime = TinkerFin().build(
+    model=model,
+    backend=project,
+    skills=[SkillSource("/skills/")],
+)
+await runtime.ainvoke(
+    thread_id="report", input={"messages": [{"role": "user", "content": "生成报告"}]}
+)
 ```
 
 Runtime 在开始执行前发布声明的文件。文件保持可写，同项目的运行共享这些文件。

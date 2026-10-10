@@ -41,7 +41,7 @@ it.each([false, true])('会话移动在导航前后提交都保留未发送文�
     if (path === '/api/conversation/thread/history') return jsonResponse({
       ...record, asOfSeq: 3, generation: 'generation', observedAt: time, headRunId: 'run', availableHeads: ['run'], historyCursor: null,
       messages: [{ agui: null, id: 'answer', sourceId: 'answer', traceSeq: 2, graphNamespace: [], runId: 'run', role: 'assistant', content: '对话正文', contentOmitted: false, status: 'completed', createdAt: time, completedAt: time }],
-      reasoning: [], runFailures: [], state: { root: {}, subgraphs: {} }, interactionAvailability: [], interactions: [], status: { execution: 'succeeded', headRunId: 'run' },
+      reasoning: [], runFailures: [], state: { root: {}, subgraphs: {} }, submissionResult: null, planResults: [], interactionAvailability: [], interactions: [], status: { execution: 'succeeded', headRunId: 'run' },
       completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false }, graph: emptyTraceGraph(3), taskTrace: { status: 'ready', todoGroups: [] },
     })
     throw new Error(`未预期的接口：${path}`)

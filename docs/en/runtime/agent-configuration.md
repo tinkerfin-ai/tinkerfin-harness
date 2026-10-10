@@ -63,11 +63,17 @@ from tinkerfin import SkillSource
 
 scoped = TinkerFin(store=store, checkpointer=checkpointer).with_namespace("support")
 await scoped.store.aput(
-    ("files",), "/skills/reporting/SKILL.md",
-    dict(create_file_data("---\nname: reporting\ndescription: Prepare reports\n---\nVerify sources.")),
+    ("files",),
+    "/skills/reporting/SKILL.md",
+    dict(
+        create_file_data(
+            "---\nname: reporting\ndescription: Prepare reports\n---\nVerify sources."
+        )
+    ),
 )
 runtime = scoped.build(
-    model=model, skills=[SkillSource("/skills/")],
+    model=model,
+    skills=[SkillSource("/skills/")],
     backend=StoreBackend(namespace=lambda _: ("files",)),
 )
 ```
@@ -80,6 +86,9 @@ instructions, not filesystem or execution permissions.
 
 A concrete checkpointer is required for resumable tool approval and Plan. Submit only
 new user messages when the checkpointer already contains the thread history.
+For managed AG-UI runs, a custom saver must implement asynchronous `aget_tuple`,
+`alist`, `aput`, and `aput_writes`. Admission reads checkpoint history to prevent
+reuse of a completed cancellation's Run identity with different input.
 
 ```python
 runtime = (

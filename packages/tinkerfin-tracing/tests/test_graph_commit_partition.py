@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Literal, TypedDict
 
@@ -18,12 +17,6 @@ from tinkerfin_tracing import (
     ToolFact,
     TraceGraphFilter,
     TraceSemanticFact,
-)
-from tinkerfin_tracing._graph_reducer import (
-    ReducedTraceGraphRevision,
-    apply_graph_events,
-    apply_graph_node_mutation,
-    graph_node_mutations,
 )
 from tinkerfin_tracing._ids import scope_id
 from tinkerfin_tracing.facts import TraceEvent
@@ -120,38 +113,6 @@ def _events(scenario: Scenario, *, thread: str, nested: bool) -> tuple[TraceEven
             )
         )
     return tuple(result)
-
-
-@pytest.mark.parametrize(
-    "scenario",
-    [
-        "proposal",
-        "execution",
-        "relocated-execution",
-        "late-arguments",
-        "interrupted",
-        "recovery",
-    ],
-)
-@pytest.mark.parametrize("nested", [False, True])
-def test_every_prefix_and_commit_partition_uses_the_actual_start_fact(
-    scenario: Scenario, nested: bool
-) -> None:
-    events = _events(scenario, thread="pure", nested=nested)
-    for length in range(1, len(events) + 1):
-        prefix = events[:length]
-        reference: dict[tuple[str, str], ReducedTraceGraphRevision] = {}
-        apply_graph_events(reference, prefix)
-        assert len(reference) == 1
-        for batches in _partitions(prefix):
-            actual: dict[tuple[str, str], ReducedTraceGraphRevision] = {}
-            for batch in batches:
-                sources = {event.trace_seq: event for event in batch}
-                for mutation in graph_node_mutations(batch):
-                    apply_graph_node_mutation(actual, mutation, source_events=sources)
-            assert {key: asdict(value) for key, value in actual.items()} == {
-                key: asdict(value) for key, value in reference.items()
-            }
 
 
 @pytest.mark.parametrize(

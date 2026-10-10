@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tinkerfin_notifications import Notifications
 from tinkerfin_studio.infrastructure.database import Base, Database
+from tinkerfin_studio.projects.models import Project
 
 
 @pytest.fixture
@@ -248,8 +249,6 @@ def large_image():
 @pytest_asyncio.fixture
 async def projects(database: Database) -> None:
     """为项目归属测试提供独立的稳定项目"""
-    from tinkerfin_studio.projects.models import Project
-
     async with database.session() as session:
         for user_id in (1, 2, 7):
             session.add(

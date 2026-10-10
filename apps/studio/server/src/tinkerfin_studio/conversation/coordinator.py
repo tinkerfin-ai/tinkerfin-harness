@@ -130,7 +130,16 @@ class ConversationTraceCoordinator:
                 thread_pk=thread_pk,
                 receipt=receipt,
             )
+            thread = await repository.get_thread_by_pk(thread_pk)
             await repository.commit()
+        if thread is not None:
+            await notify_change(
+                self._notifications,
+                user_id=thread.user_id,
+                topic="studio.conversation.interactions.changed",
+                key=thread.thread_id,
+                details={"submissionRunId": receipt.identity.run_id},
+            )
         await self.reconcile(thread_pk=thread_pk, identity=receipt.identity)
 
     async def recover(
@@ -170,7 +179,15 @@ class ConversationTraceCoordinator:
                     ),
                 )
                 await repository.commit()
-            if result.run_deleted:
+            if result.resume_released:
+                await notify_change(
+                    self._notifications,
+                    user_id=candidate.user_id,
+                    topic="studio.conversation.interactions.changed",
+                    key=candidate.identity.thread_id,
+                    details={"submissionRunId": candidate.identity.run_id},
+                )
+            if result.run_deleted or result.resume_released:
                 await notify_change(
                     self._notifications,
                     user_id=candidate.user_id,
@@ -230,6 +247,9 @@ class ConversationTraceCoordinator:
                 unstarted.append(candidate)
             else:
                 recovered.add(candidate.thread_pk)
+                # 准备阶段可已有 Trace；仍由失活检查、证明和原 CAS 决定能否清理
+                if candidate.status == "preparing":
+                    unstarted.append(candidate)
                 if trace.summary.status.execution == "running":
                     self.ensure(
                         thread_pk=candidate.thread_pk, identity=candidate.identity
@@ -414,13 +434,23 @@ class ConversationTraceCoordinator:
                 trace_as_of_seq=view.as_of_seq,
                 trace_observed_at=_database_time(view.observed_at),
             )
+            cancelled_thread = None
             if result.status == "applied" and outcome == "abandoned":
                 await repository.cancel_claims(
                     thread_pk=thread_pk,
                     run_id=run_id,
                     resolution_id=f"trace:{generation}:{view.as_of_seq}",
                 )
+                cancelled_thread = await repository.get_thread_by_pk(thread_pk)
             await repository.commit()
+        if cancelled_thread is not None:
+            await notify_change(
+                self._notifications,
+                user_id=cancelled_thread.user_id,
+                topic="studio.conversation.interactions.changed",
+                key=cancelled_thread.thread_id,
+                details={"submissionRunId": run_id},
+            )
         if result.changed_thread is not None:
             await notify_change(
                 self._notifications,

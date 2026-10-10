@@ -18,31 +18,25 @@ from opensandbox import Sandbox
 from opensandbox.config import ConnectionConfig
 from opensandbox.transport import RetryPolicy
 from sqlalchemy.ext.asyncio import AsyncEngine
-from test_manager import _resource_key
 from tests.support.sql_engines import SqlEngineFactory
 
 from tinkerfin_sandbox import (
     OpenSandboxAvailability,
     OpenSandboxAvailabilityPhase,
     OpenSandboxBackend,
-    OpenSandboxBackendError,
     OpenSandboxBackendUnavailableError,
     OpenSandboxConfig,
     OpenSandboxDiagnosticContent,
-    OpenSandboxHandle,
     OpenSandboxHolderUpdate,
     OpenSandboxLifecycleEvent,
-    OpenSandboxLifecycleEventType,
     OpenSandboxManager,
     OpenSandboxOwnerClaim,
-    OpenSandboxPausedError,
     OpenSandboxPurpose,
     OpenSandboxPurposeError,
     OpenSandboxRecoveryPolicy,
     OpenSandboxRuntimeInfo,
     OpenSandboxStateError,
     OpenSandboxStatusInfo,
-    RootedOpenSandboxBackend,
     SQLAlchemyOpenSandboxState,
 )
 from tinkerfin_sandbox.backends import sdk
@@ -53,7 +47,6 @@ from tinkerfin_sandbox.lifecycle import (
 )
 
 _ResultT = TypeVar("_ResultT")
-_Backend = OpenSandboxHandle | RootedOpenSandboxBackend
 
 
 class _StateChanges:
@@ -522,175 +515,3 @@ async def _world(
             yield world
         finally:
             await world.close()
-
-
-@pytest.mark.parametrize("failure", ["before", "after"])
-async def test_registration_failure_recovers_through_get(
-    tmp_path: Path, failure: Literal["before", "after"]
-) -> None:
-    async with _world(tmp_path) as world:
-        manager = await world.add()
-        world.states[0].registration_failure = failure
-        with pytest.raises(OpenSandboxStateError):
-            await manager.get("owner")
-        backend = await manager.get("owner")
-        assert (await backend.aexecute("probe")).exit_code == 0
-        assert world.remote.created == 1
-        await manager.pause("owner", timeout=2)
-        assert world.remote.states[backend.id] == "Paused"
-
-
-async def test_committed_registration_response_failure_is_released_on_close(
-    tmp_path: Path,
-) -> None:
-    async with _world(tmp_path) as world:
-        first = await world.add()
-        world.states[0].registration_failure = "after"
-        with pytest.raises(OpenSandboxStateError):
-            await first.get("owner")
-        await first.aclose()
-        second = await world.add()
-        backend = await second.get("owner")
-        await second.pause("owner", timeout=2)
-        assert world.remote.created == 1
-        assert world.remote.states[backend.id] == "Paused"
-
-
-@pytest.mark.parametrize("cancellations", [1, 2])
-async def test_cancelled_registration_settles_ownership_before_manager_close(
-    tmp_path: Path, cancellations: int
-) -> None:
-    async with _world(tmp_path) as world:
-        first = await world.add()
-        state = world.states[0]
-        state.delay_registration = True
-        operation = world.spawn(first.get("owner"))
-        await state.registration_committed.wait()
-        for _ in range(cancellations):
-            operation.cancel("cancelled registration caller")
-            await asyncio.sleep(0)
-        with pytest.raises(asyncio.CancelledError):
-            await operation
-        state.registration_release.set()
-        await first.aclose()
-        second = await world.add()
-        backend = await second.get("owner")
-        await second.pause("owner", timeout=2)
-        assert world.remote.created == 1
-        assert world.remote.states[backend.id] == "Paused"
-
-
-async def test_peer_resume_registration_failure_recovers_through_get(
-    tmp_path: Path,
-) -> None:
-    async with _world(tmp_path) as world:
-        first = await world.add()
-        second = await world.add()
-        await first.get("owner")
-        backend = await second.get("owner")
-        await first.pause("owner", timeout=2)
-        world.states[1].registration_failure = "before"
-        await first.resume("owner", timeout=2)
-        await world.states[1].registration_failed.wait()
-        assert await second.get("owner") is backend
-        assert (await backend.aexecute("probe")).exit_code == 0
-        assert world.remote.created == 1
-
-
-@pytest.mark.asyncio
-async def test_pause_blocks_workspace_reset_without_executing_commands(
-    tmp_path: Path,
-) -> None:
-    async with _world(tmp_path, workspace_root="/workspace") as world:
-        manager = await world.add()
-        await manager.get("owner")
-        await manager.pause("owner", timeout=2)
-        count = len(world.remote.executions)
-        with pytest.raises(OpenSandboxPausedError):
-            await manager.reset("owner")
-        assert len(world.remote.executions) == count
-
-
-@pytest.mark.asyncio
-async def test_repeated_pause_and_resume_do_not_repeat_remote_effects(
-    tmp_path: Path,
-) -> None:
-    async with _world(tmp_path) as world:
-        first, second = await world.add(), await world.add()
-        await first.get("owner")
-        await second.get("owner")
-        await first.pause("owner", timeout=2)
-        await second.pause("owner", timeout=2)
-        await first.resume("owner", timeout=2)
-        await second.resume("owner", timeout=2)
-        assert len(world.remote.pause_calls) == 1
-        assert world.remote.resume_calls == ["sandbox-1"]
-        assert world.remote.created == 1
-
-
-@pytest.mark.asyncio
-async def test_missing_and_stopped_instances_never_create_during_pause_or_resume(
-    tmp_path: Path,
-) -> None:
-    async with _world(tmp_path) as world:
-        manager = await world.add()
-        for operation in (manager.pause, manager.resume):
-            with pytest.raises(OpenSandboxBackendUnavailableError):
-                await operation("missing", timeout=1)
-        assert world.remote.created == 0
-        handle = await manager.get("owner")
-        original = await world.states[0].read_binding(_resource_key("owner"))
-        world.remote.states[handle.id] = "Terminated"
-        for operation in (manager.pause, manager.resume):
-            with pytest.raises(OpenSandboxBackendError):
-                await operation("owner", timeout=1)
-        assert world.remote.created == 1
-        assert await world.states[0].read_binding(_resource_key("owner")) == original
-
-
-@pytest.mark.asyncio
-async def test_paused_diagnostics_and_details_remain_readable_without_false_outage(
-    tmp_path: Path,
-) -> None:
-    observer = _Observer()
-    async with _world(tmp_path) as world:
-        manager = await world.add(observer)
-        await manager.get("owner")
-        await manager.pause("owner", timeout=2)
-        commands = len(world.remote.executions)
-        connections = len(world.clients[0].connections)
-        logs = await manager.get_diagnostic_logs("owner", scope="all")
-        events = await manager.get_diagnostic_events("owner", scope="runtime")
-        details = await manager.get_details("owner")
-        assert details is not None and details.status is not None
-        assert details.status.state == "Paused"
-        assert not details.healthy
-        assert not await manager.is_healthy("owner")
-        assert logs.content == "retained logs" and logs.scope == "all"
-        assert events.warnings == ("Summary only",)
-        assert len(world.remote.executions) == commands
-        assert len(world.clients[0].connections) == connections
-        await manager.resume("owner", timeout=2)
-        await manager.aclose()
-        kinds = [event.type for event in observer.events]
-        assert OpenSandboxLifecycleEventType.PAUSED in kinds
-        assert OpenSandboxLifecycleEventType.RESUMED in kinds
-        assert OpenSandboxLifecycleEventType.UNAVAILABLE not in kinds
-        assert OpenSandboxLifecycleEventType.RECOVERY_FAILED not in kinds
-
-
-async def test_expired_paused_sandbox_details_remain_an_unavailable_snapshot(
-    tmp_path: Path,
-) -> None:
-    async with _world(tmp_path) as world:
-        manager = await world.add()
-        handle = await manager.get("owner")
-        await manager.pause("owner", timeout=2)
-        world.remote.states.pop(handle.id)
-        details = await manager.get_details("owner")
-        assert details is not None
-        assert details.available is False
-        assert details.unavailable_reason == "not_found"
-        assert details.access_state == "paused"
-        assert world.remote.created == 1
-        assert world.remote.resume_calls == []

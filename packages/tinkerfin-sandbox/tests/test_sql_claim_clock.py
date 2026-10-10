@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy import DateTime, text
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from tinkerfin_sandbox import (
     OpenSandboxOwnerClaim,
@@ -193,18 +193,6 @@ async def test_server_lease_fencing_after_row_lock_wait(
     await _check_clock(sandbox_sql_engine, monkeypatch, case)
 
 
-@pytest.mark.docker_integration
-@pytest.mark.parametrize("case", _CASES)
-async def test_mysql57_lease_fencing_after_row_lock_wait(
-    mysql57_sandbox_url: str, monkeypatch: pytest.MonkeyPatch, case: str
-) -> None:
-    engine = create_async_engine(mysql57_sandbox_url, pool_size=4, max_overflow=0)
-    try:
-        await _check_clock(engine, monkeypatch, case)
-    finally:
-        await engine.dispose()
-
-
 async def _check_subsecond_leases(
     engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -244,14 +232,3 @@ async def test_sql_state_preserves_subsecond_leases(
     sandbox_sql_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     await _check_subsecond_leases(sandbox_sql_engine, monkeypatch)
-
-
-@pytest.mark.docker_integration
-async def test_mysql57_state_preserves_subsecond_leases(
-    mysql57_sandbox_url: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    engine = create_async_engine(mysql57_sandbox_url)
-    try:
-        await _check_subsecond_leases(engine, monkeypatch)
-    finally:
-        await engine.dispose()

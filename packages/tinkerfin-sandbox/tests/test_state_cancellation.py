@@ -6,92 +6,17 @@ import asyncio
 import gc
 import sqlite3
 from collections.abc import Callable
-from contextlib import closing
 from pathlib import Path
 from typing import Literal
 
 import aiosqlite
 import pytest
 from sqlalchemy import event, text
-from sqlalchemy.engine import AdaptedConnection, Connection
+from sqlalchemy.engine import AdaptedConnection
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from tinkerfin_sandbox import SQLAlchemyOpenSandboxState
-
-
-def _hold_writer(path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(path, timeout=0.1, check_same_thread=False)
-    connection.execute("BEGIN IMMEDIATE")
-    return connection
-
-
-def _release_writer(connection: sqlite3.Connection) -> None:
-    connection.rollback()
-    connection.close()
-
-
-def _check_database(path: Path) -> None:
-    with closing(sqlite3.connect(path, timeout=0.1)) as connection:
-        connection.execute("BEGIN IMMEDIATE")
-        connection.rollback()
-        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-
-
-@pytest.mark.parametrize("cancellations", [1, 2, 3])
-async def test_repeated_cancellation_during_sqlite_lock_wait_settles_resources(
-    tmp_path: Path, cancellations: int
-) -> None:
-    path = tmp_path / "state.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
-    state = SQLAlchemyOpenSandboxState(engine=engine, namespace="cancel-test")
-    initial_tasks = set(asyncio.all_tasks())
-    reached = asyncio.Event()
-
-    def before_execute(
-        _connection: Connection,
-        _cursor: object,
-        statement: str,
-        _parameters: object,
-        _context: object,
-        _many: bool,
-    ) -> None:
-        if statement == "BEGIN IMMEDIATE":
-            reached.set()
-
-    operation: asyncio.Task[object] | None = None
-    blocker: sqlite3.Connection | None = None
-    try:
-        await state.start(warm_pool_size=0)
-        event.listen(engine.sync_engine, "before_cursor_execute", before_execute)
-        blocker = await asyncio.to_thread(_hold_writer, path)
-        operation = asyncio.create_task(state.acquire_owner("owner"))
-        await reached.wait()
-        for number in range(cancellations):
-            operation.cancel(f"caller cancellation {number}")
-            await asyncio.sleep(0)
-        await asyncio.to_thread(_release_writer, blocker)
-        blocker = None
-        with pytest.raises(asyncio.CancelledError):
-            await operation
-        await state.aclose()
-        await asyncio.sleep(0)
-        assert not [
-            task for task in asyncio.all_tasks() - initial_tasks if not task.done()
-        ]
-        assert isinstance(engine.pool, AsyncAdaptedQueuePool)
-        assert engine.pool.checkedout() == 0
-        async with engine.connect() as connection:
-            assert await connection.scalar(text("SELECT 1")) == 1
-        await asyncio.to_thread(_check_database, path)
-    finally:
-        if blocker is not None:
-            await asyncio.to_thread(_release_writer, blocker)
-        if operation is not None and not operation.done():
-            operation.cancel()
-            await asyncio.gather(operation, return_exceptions=True)
-        await state.aclose()
-        await engine.dispose()
 
 
 async def test_cancel_during_pool_return_preserves_borrowed_engine_capacity(

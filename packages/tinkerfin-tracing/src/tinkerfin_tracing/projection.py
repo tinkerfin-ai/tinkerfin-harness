@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, JsonValue
 
 from tinkerfin_contracts import MessageSource, RunTerminalOutcome
 
+from ._abandonment import cancelled_batch
 from ._models import TraceModel
 from .capture import CapturedValue
 from .errors import (
@@ -187,6 +188,8 @@ class CoreRunCheckpoint(TraceModel, frozen=True):
     terminal: RunTerminalOutcome | None = None
     completed_at: datetime | None = None
     state: TraceState = Field(default_factory=TraceState)
+    abandonment_ids: tuple[str, ...] = ()
+    closed: bool = False
     call_history_known: bool = Field(
         default=False,
         description=(
@@ -441,6 +444,7 @@ def advance_core_projection_state(
             parent_run_id is not None
             and info.parent_run_id is not None
             and parent_run_id != info.parent_run_id
+            and info.lineage_bound
         ):
             raise TraceCorruption("Run lineage parent changed after start")
         if parent_run_id is None or info.parent_run_id == parent_run_id:
@@ -523,6 +527,13 @@ def advance_core_projection_state(
         if isinstance(fact, RunFact) and fact.phase in {"started", "input", "resumed"}:
             input_bound = fact.phase in {"input", "resumed"}
             parent_run_id = fact.parent_run_id
+            if input_bound and fact.input_kind in {"resume", "abandon"}:
+                parent_run_id = select_resume_parent(
+                    runs,
+                    parent_run_id=parent_run_id,
+                    interrupt_ids=fact.interrupt_ids,
+                    before_seq=event.trace_seq if info is None else info.first_seq,
+                )
             candidates = heads - {run_id}
             lineage_already_bound = info is not None and info.lineage_bound
             if (
@@ -580,6 +591,9 @@ def advance_core_projection_state(
                     "input_kind": fact.input_kind or info.input_kind,
                     "lineage_bound": info.lineage_bound or input_bound,
                     "last_seq": event.trace_seq,
+                    "abandonment_ids": cancelled_batch(fact)
+                    if input_bound
+                    else info.abandonment_ids,
                 }
             )
             parent = (
@@ -660,6 +674,9 @@ def advance_core_projection_state(
             info = info.model_copy(
                 update={
                     "terminal": fact.outcome,
+                    "abandonment_ids": info.abandonment_ids
+                    if fact.error_type is None
+                    else (),
                     "completed_at": fact.occurred_at,
                     "call_history_known": info.call_history_known
                     or (
@@ -675,6 +692,11 @@ def advance_core_projection_state(
             )
         elif isinstance(fact, CallTrackingFact):
             info = info.model_copy(update={"call_history_known": True})
+
+        if isinstance(fact, RunFact) and fact.phase == "closed":
+            info = info.model_copy(update={"closed": fact.outcome == info.terminal})
+        if isinstance(fact, RunFact) and fact.phase == "observer_failed":
+            info = info.model_copy(update={"abandonment_ids": ()})
 
         messages = _advance_messages(
             info.messages,
@@ -931,6 +953,48 @@ def select_prior_head_run_id(
         return None
     candidate = state.heads[0]
     return candidate if state.runs[candidate].terminal is not None else None
+
+
+def select_resume_parent(
+    runs: Mapping[str, CoreRunCheckpoint],
+    *,
+    parent_run_id: str | None,
+    interrupt_ids: tuple[str, ...],
+    before_seq: int,
+) -> str | None:
+    """Extend only a proven, closed abandonment chain preceding this Run's start.
+
+    Runtime's parent still identifies the native checkpoint. A cancellation does
+    not create another checkpoint, but its history belongs before the next response
+    to the same batch. Store sequence fences exclude concurrent operations; ordinary
+    branches and unrelated batches never become inferred predecessors.
+    """
+
+    ids = tuple(sorted(interrupt_ids))
+    if parent_run_id is None or not ids:
+        return parent_run_id
+    eligible = {
+        key: run
+        for key, run in runs.items()
+        if run.input_kind == "abandon"
+        and run.terminal == "abandoned"
+        and run.closed
+        and run.abandonment_ids == ids
+        and run.last_seq < before_seq
+    }
+    descendants: set[str] = set()
+    for key in eligible:
+        visited: set[str] = set()
+        cursor: str | None = key
+        while cursor in eligible and cursor not in visited:
+            visited.add(cursor)
+            cursor = eligible[cursor].parent_run_id
+        if cursor == parent_run_id:
+            descendants.add(key)
+    leaves = descendants - {eligible[key].parent_run_id for key in descendants}
+    if len(leaves) > 1:
+        raise TraceCorruption("Resume source has concurrent abandonment branches")
+    return next(iter(leaves)) if leaves else parent_run_id
 
 
 def _advance_messages(
@@ -1776,7 +1840,7 @@ def _interactions(
             source_id=fact.source_interaction_id,
             graph_namespace=fact.graph_namespace,
             run_id=fact.identity.run_id,
-            kind=fact.interaction_kind,
+            kind=fact.interaction_kind if previous is None else previous.kind,
             tool_call_ids=(
                 fact.tool_call_ids
                 if fact.tool_call_ids

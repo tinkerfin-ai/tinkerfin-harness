@@ -1,4 +1,5 @@
 import { SseError } from '../shared/sse'
+import { ApiError } from '../shared/http'
 import { translateCurrent, type TranslationKey } from '../../i18n'
 
 const conversationErrorMessageKeys = {
@@ -16,6 +17,7 @@ const conversationErrorMessageKeys = {
   workspace_busy: '项目中还有任务在执行，请等待结束后再试',
   workspace_file_conflict: '技能文件有本地修改，请先处理文件冲突后再试',
   resume_failed: '继续任务失败，请重新提交',
+  resume_not_saved: '提交未保存，请重试',
   approval_stale: '当前审批已更新，请重新检查',
   approval_incomplete: '请先处理所有待审批项',
   plan_stale: '当前 Plan 请求已更新，请重新检查',
@@ -53,7 +55,8 @@ export const conversationErrorMessage = (
   fallback: ConversationErrorCode,
 ) => translateCurrent(
   conversationErrorMessageKeys[
-    error instanceof ConversationError || error instanceof SseError ? error.code : fallback
+    error instanceof ApiError && error.code === 1_001_004_034 ? 'resume_not_saved'
+      : error instanceof ConversationError || error instanceof SseError ? error.code : fallback
   ],
 )
 

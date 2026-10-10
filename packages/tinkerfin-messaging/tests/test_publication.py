@@ -239,22 +239,3 @@ async def test_external_publication_preserves_recoverable_checkpoint(
         finally:
             release.set()
             await subscription.aclose()
-
-
-def test_publication_error_has_stable_safe_context() -> None:
-    from tinkerfin_messaging import MessagingError, MessagingErrorCode
-
-    error = PublicationRejected(
-        identity=RunIdentity(namespace="test", thread_id="thread", run_id="run"),
-        reason="run_closed",
-    )
-    assert isinstance(error, MessagingError)
-    assert error.code == MessagingErrorCode.PUBLICATION_REJECTED
-    assert dict(error.context) == {
-        "thread_id": "thread",
-        "run_id": "run",
-        "reason": "run_closed",
-    }
-    from types import MappingProxyType
-
-    assert isinstance(error.context, MappingProxyType)

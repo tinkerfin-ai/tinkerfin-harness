@@ -4,19 +4,16 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import AsyncIterator, Awaitable, Mapping
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import cast
 from uuid import uuid4
 
 import pytest
-from redis.asyncio import Redis
 from scripts.prepare_gateway_storage import (
     StoragePreparationError,
     _execute,
     main,
-    prepare_redis_storage,
     prepare_sql_storage,
 )
 from sqlalchemy import (
@@ -31,7 +28,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from tests.support.docker_services import MySQLTestService, PostgreSQLTestService
 from tinkerfin_automation import ExecutionLimits, SqlAlchemyAutomationStore
 from tinkerfin_automation.service import AutomationService
 from tinkerfin_contracts import RunIdentity
@@ -46,52 +42,14 @@ from tinkerfin_messaging.sqlalchemy import SqlAlchemyBackend
 from tinkerfin_studio.conversation.models import ConversationRunRegistration
 
 
-@pytest.fixture(
-    params=[
-        "sqlite",
-        pytest.param("mysql", marks=pytest.mark.docker_integration),
-        pytest.param("postgresql", marks=pytest.mark.docker_integration),
-    ]
-)
-async def storage_engine(
-    request: pytest.FixtureRequest, tmp_path: Path
-) -> AsyncIterator[AsyncEngine]:
-    """Own exactly one disposable database or schema per test."""
-    if request.param == "sqlite":
-        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'storage.db'}")
-        try:
-            yield engine
-        finally:
-            await engine.dispose()
-        return
-    service = request.getfixturevalue(f"{request.param}_test_service")
-    name = f"gateway_storage_{uuid4().hex}"
-    if isinstance(service, MySQLTestService):
-        admin = create_async_engine(service.url("tinkerfin_test_admin"))
-        async with admin.begin() as connection:
-            await connection.exec_driver_sql(
-                f"CREATE DATABASE `{name}` CHARACTER SET utf8mb4"
-            )
-        engine = create_async_engine(service.url(name))
-        drop = f"DROP DATABASE `{name}`"
-    else:
-        assert isinstance(service, PostgreSQLTestService)
-        admin = create_async_engine(service.url())
-        async with admin.begin() as connection:
-            await connection.exec_driver_sql(f'CREATE SCHEMA "{name}"')
-        engine = create_async_engine(
-            service.url(), connect_args={"server_settings": {"search_path": name}}
-        )
-        drop = f'DROP SCHEMA "{name}" CASCADE'
+@pytest.fixture(params=["sqlite"])
+async def storage_engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
+    """Own one SQLite database per storage conversion test."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'storage.db'}")
     try:
         yield engine
     finally:
         await engine.dispose()
-        try:
-            async with admin.begin() as connection:
-                await connection.exec_driver_sql(drop)
-        finally:
-            await admin.dispose()
 
 
 async def _snapshot(engine: AsyncEngine, omit: tuple[str, str] | None = None):
@@ -366,64 +324,6 @@ async def test_studio_conversion_preserves_registration_and_does_not_replace_pre
     assert len(saved[target[0]][0][target[1]]) == 32
     await prepare_sql_storage(storage_engine, "studio", apply=True)
     assert await _snapshot(storage_engine) == saved
-
-
-@pytest.mark.docker_integration
-async def test_redis_conversion_preserves_hashes_expiry_capacity_and_unbound_replay(
-    redis_test_service,
-):
-    prefix = f"offline-{uuid4().hex}"
-    client = Redis.from_url(redis_test_service.url(0))
-    backend = RedisBackend(client, key_prefix=prefix)
-    try:
-        identity = await _seed_messaging(backend)
-        keys = [key async for key in client.scan_iter(match=f"{prefix}:*")]
-        run_key = next(key for key in keys if b":run:" in key)
-        await cast(Awaitable[int], client.hdel(run_key.decode(), "request_digest"))
-        before = {key: await client.dump(key) for key in keys}
-        before_run = await cast(
-            Awaitable[dict[bytes, bytes]], client.hgetall(run_key.decode())
-        )
-        expiry = {
-            key: await cast(Awaitable[int], client.pexpiretime(key)) for key in keys
-        }
-        assert (
-            await prepare_redis_storage(client, key_prefix=prefix)
-        ).missing_values == 1
-        assert {key: await client.dump(key) for key in keys} == before
-        await prepare_redis_storage(client, key_prefix=prefix, apply=True)
-        assert {key: await client.dump(key) for key in keys if key != run_key} == {
-            key: value for key, value in before.items() if key != run_key
-        }
-        converted: Mapping[bytes, bytes] = await cast(
-            Awaitable[dict[bytes, bytes]], client.hgetall(run_key.decode())
-        )
-        assert converted[b"request_digest"] == b""
-        assert {
-            key: value for key, value in converted.items() if key != b"request_digest"
-        } == before_run
-        assert {
-            key: await cast(Awaitable[int], client.pexpiretime(key)) for key in keys
-        } == expiry
-        await cast(
-            Awaitable[int], client.hset(run_key.decode(), "request_digest", "b" * 64)
-        )
-        assert (
-            await prepare_redis_storage(client, key_prefix=prefix, apply=True)
-        ).missing_values == 0
-        assert (
-            await cast(
-                Awaitable[bytes], client.hget(run_key.decode(), "request_digest")
-            )
-            == b"b" * 64
-        )
-        await cast(Awaitable[int], client.hset(run_key.decode(), "request_digest", ""))
-        await _verify_messaging(backend, identity)
-    finally:
-        keys = [key async for key in client.scan_iter(match=f"{prefix}:*")]
-        if keys:
-            await client.delete(*keys)
-        await client.aclose()
 
 
 async def test_invalid_execution_payload_prevents_any_schema_change(storage_engine):

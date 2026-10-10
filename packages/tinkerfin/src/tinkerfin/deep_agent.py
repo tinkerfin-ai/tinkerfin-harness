@@ -13,7 +13,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from functools import partial, wraps
 from typing import (
     TYPE_CHECKING,
@@ -272,14 +272,6 @@ class _AsyncAstreamResolver:
             self._owner = None
 
 
-@dataclass(frozen=True, slots=True)
-class _ResolvedResume:
-    """Retain a validated decision batch and its checkpoint-proven parent."""
-
-    binding: AgUiResumeBinding
-    parent_run_id: str | None
-
-
 class _ResumeInitializationGuard:
     """Settle one host claim only while the resume marker is not durable.
 
@@ -433,7 +425,7 @@ def _create_graph_agui_stream(
     private_state_keys: frozenset[str],
     checkpointer: object | None,
     resume_request: AgUiResumeRequest | None,
-    resolve_resume: Callable[[_NativeAstream], Awaitable[_ResolvedResume]] | None,
+    resolve_resume: Callable[[_NativeAstream], Awaitable[AgUiResumeBinding]] | None,
     resume_responses: tuple[AgUiResumeResponse, ...],
     on_resume_saved: AgUiResumeReceiptObserver | None,
     on_resume_not_saved: (AgUiResumeNotSavedObserver | None),
@@ -490,7 +482,6 @@ def _create_graph_agui_stream(
     resolver = _AsyncAstreamResolver(native_astream_factory)
     resolve_native_astream = resolver.resolve
     resume: AgUiResumeBinding | None = None
-    effective_parent_run_id = parent_run_id
     effective_checkpointer = checkpointer
 
     async def resume_marker_is_readable() -> bool:
@@ -541,12 +532,32 @@ def _create_graph_agui_stream(
             raise TypeError("bound Graph config must be a mapping")
         effective_config = cast(RunnableConfig, raw_config)
         if resume is not None and resume.mode == "abandon":
+            from ._agui_cancellation import save_cancellation
+            from ._agui_lineage import _require_checkpointer
+
+            resolution = await bind_agui_lineage(
+                native_astream,
+                effective_config,
+                identity=identity,
+                parent_run_id=parent_run_id,
+                runtime_profile=tinkerfin._runtime_profile,
+                resume=resume,
+            )
+            assert resume_request is not None
+            await save_cancellation(
+                _require_checkpointer(native_astream),
+                resolution,
+                identity=identity,
+                request=resume_request,
+                binding=resume,
+                runtime_profile=tinkerfin._runtime_profile.profile_id,
+            )
             await observation.record_input(
                 source_context(
                     identity=identity,
                     runtime_profile=tinkerfin._runtime_profile.profile_id,
                     input_kind="abandon",
-                    parent_run_id=effective_parent_run_id,
+                    parent_run_id=resolution.parent_run_id,
                     mode=mode,
                     graph_input=resume.model_dump(mode="json", by_alias=True),
                     config=effective_config,
@@ -632,7 +643,7 @@ def _create_graph_agui_stream(
     source_created = False
 
     async def deferred_source() -> AsyncIterator[Mapping[str, object]]:
-        nonlocal resume, effective_parent_run_id, effective_checkpointer
+        nonlocal resume, effective_checkpointer
         try:
             native_astream = await resolve_native_astream()
             if resolve_resume is not None:
@@ -640,9 +651,7 @@ def _create_graph_agui_stream(
                     from ._agui_lineage import _require_checkpointer
 
                     effective_checkpointer = _require_checkpointer(native_astream)
-                resolved = await resolve_resume(native_astream)
-                resume = resolved.binding
-                effective_parent_run_id = resolved.parent_run_id
+                resume = await resolve_resume(native_astream)
                 stream._bind_prior_tools(frozenset(resume.prior_tool_call_ids))
         except Exception as error:
             await stream._fail_initialization(error)
@@ -814,7 +823,7 @@ def _wrap_agui_resume_astream(
     private_state_keys: frozenset[str],
     checkpointer: object | None,
     resume_request: AgUiResumeRequest,
-    resolve_resume: Callable[[_NativeAstream], Awaitable[_ResolvedResume]],
+    resolve_resume: Callable[[_NativeAstream], Awaitable[AgUiResumeBinding]],
     resume_responses: tuple[AgUiResumeResponse, ...],
     on_resume_saved: AgUiResumeReceiptObserver | None,
     on_resume_not_saved: (AgUiResumeNotSavedObserver | None),
@@ -1415,7 +1424,7 @@ class _AgentDefinition:
             )
             return graph._astream
 
-        async def resolve_resume(astream: _NativeAstream) -> _ResolvedResume:
+        async def resolve_resume(astream: _NativeAstream) -> AgUiResumeBinding:
             return await self._prepare_agui_resume_from_astream(
                 astream,
                 identity=identity,
@@ -1464,7 +1473,7 @@ class _AgentDefinition:
         identity: RunIdentity,
         request: AgUiResumeRequest,
         parent_run_id: str | None,
-    ) -> _ResolvedResume:
+    ) -> AgUiResumeBinding:
         """Resolve one public resume request against an already built Graph."""
 
         require_agui()
@@ -1525,7 +1534,7 @@ class _AgentDefinition:
                     self._plan_options,
                     responses[pending.id],
                 )
-        return _ResolvedResume(binding, parent_run_id or context.parent_run_id)
+        return binding
 
 
 def bind_agent(builder: TinkerFin, spec: AgentSpec[ContextT]) -> AgentRuntime[ContextT]:

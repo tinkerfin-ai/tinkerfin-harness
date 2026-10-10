@@ -8,6 +8,7 @@ from ag_ui.core import RunErrorEvent, RunStartedEvent
 
 from tinkerfin import AgUiResumeReceipt, RunIdentity
 from tinkerfin_gateway import CommittedRunEvent, RunAcceptance
+from tinkerfin_studio.changes import notify_change
 from tinkerfin_studio.conversation.error_logging import log_conversation_error
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.run_preparation import RegisteredRun
@@ -102,10 +103,19 @@ class ConversationResumeSettlement:
         """仅在明确未保存审批时释放本运行的认领"""
         async with self._resources.database.session() as session:
             repository = ConversationRepository(session)
-            await repository.release_claims(
+            released = await repository.release_claims(
                 thread_pk=self._thread_pk, run_id=self._run_id
             )
+            thread = await repository.get_thread_by_pk(self._thread_pk)
             await repository.commit()
+        if released is not None and thread is not None:
+            await notify_change(
+                self._resources.notifications,
+                user_id=thread.user_id,
+                topic="studio.conversation.interactions.changed",
+                key=thread.thread_id,
+                details={"submissionRunId": self._run_id},
+            )
 
 
 class ConversationRunObserver:

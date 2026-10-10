@@ -39,6 +39,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.7"
       - name: Read application version
         id: version
         env:
@@ -108,6 +111,9 @@ jobs:
       packages: write
     timeout-minutes: 20
     steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.7"
       - name: Require successful quality checks for this commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -183,6 +189,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.7"
       - name: Verify anonymous pull and supported platforms
         env:
           RELEASE_TAG: ${{ github.ref_name }}

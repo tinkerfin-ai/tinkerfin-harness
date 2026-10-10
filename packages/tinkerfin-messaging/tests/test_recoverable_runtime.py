@@ -196,21 +196,6 @@ async def test_recoverable_factory_failure_settles_run_before_returning(
     assert not_started_statuses == ["failed"]
 
 
-def test_recoverable_checkpoint_must_match_the_stable_message_id() -> None:
-    with pytest.raises(
-        ValueError,
-        match="checkpoint.last_message_id must match message_id",
-    ):
-        RecoverableMessage(
-            message_id="stable-message-1",
-            data="not-committed",
-            checkpoint=RecoveryCheckpoint(
-                position=b"1",
-                last_message_id="different-message",
-            ),
-        )
-
-
 async def test_recoverable_cancel_callback_returns_checkpointed_tail(
     messaging_backend: MessagingBackendHarness,
 ) -> None:

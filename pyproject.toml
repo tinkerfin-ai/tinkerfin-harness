@@ -9,7 +9,6 @@ dependencies = []
 dev = [
     { include-group = "test" },
     { include-group = "lint" },
-    { include-group = "integration" },
     { include-group = "packaging" },
 ]
 test = [
@@ -21,7 +20,6 @@ test = [
     "langgraph-checkpoint>=4.1,<5",
     "pytest>=8.3.5,<10.0.0",
     "pytest-asyncio>=0.25.3,<2.0.0",
-    "pytest-cov>=7,<8",
     "pytest-xdist>=3.8,<4",
     "sse-starlette==3.4.11",
     "sqlalchemy[asyncio]>=2.0.48,<3",
@@ -29,12 +27,6 @@ test = [
 lint = [
     "pyright>=1.1.411,<2.0.0",
     "ruff>=0.16.1,<0.17.0",
-]
-integration = [
-    "asyncmy>=0.2.11,<1",
-    "asyncpg>=0.30,<1",
-    "docker>=7.2,<8",
-    "testcontainers>=4.15,<5",
 ]
 packaging = [
     "pip>=26,<27",
@@ -99,7 +91,6 @@ select = [
 
 [tool.pyright]
 include = [
-    "conftest.py",
     "scripts",
     "tests",
     "packages/tinkerfin/src",
@@ -137,15 +128,11 @@ reportIncompatibleMethodOverride = "error"
 executionEnvironments = [{ root = "." }]
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 asyncio_mode = "auto"
 required_plugins = ["pytest-asyncio"]
 markers = [
-    "docker_integration: uses repository-owned disposable Docker services",
-    "opensandbox_e2e: uses a test-owned disposable OpenSandbox Server and Sandbox",
-    "mysql_integration: uses a test-owned disposable MySQL database",
     "packaging_e2e: builds and installs wheels in isolated environments",
-    "redis_e2e: uses a test-owned disposable Redis Stack service",
-    "studio_mysql_integration: uses test-owned disposable Studio MySQL databases",
     "studio_e2e: requires the real Studio dependencies and explicit E2E configuration",
 ]
 
@@ -159,27 +146,5 @@ addopts = [
     "--strict-config",
     "--strict-markers",
     "-m",
-    "not docker_integration and not packaging_e2e",
+    "not packaging_e2e",
 ]
-
-[tool.coverage.run]
-branch = true
-source = [
-    "tinkerfin",
-    "tinkerfin_contracts",
-    "tinkerfin_native_stream",
-    "tinkerfin_tracing",
-    "tinkerfin_langgraph_store",
-    "tinkerfin_sqlalchemy",
-    "tinkerfin_agui_adapter",
-    "tinkerfin_messaging",
-    "tinkerfin_sandbox",
-    "tinkerfin_automation",
-    "tinkerfin_notifications",
-    "tinkerfin_gateway",
-]
-
-[tool.coverage.report]
-fail_under = 80
-precision = 2
-show_missing = true

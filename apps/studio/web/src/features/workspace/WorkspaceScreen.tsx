@@ -49,6 +49,8 @@ import { useComposerDraft } from '../conversation/useComposerDraft'
 import { useContextCompaction } from '../conversation/compaction/useContextCompaction'
 import { useAttachments } from '../conversation/useAttachments'
 import { useComposerSkills } from '../conversation/useComposerSkills'
+import { useInteractionConfirmation } from '../conversation/useInteractionConfirmation'
+import { markInteractionRequestRejected } from '../conversation/interactionConfirmation'
 import { ComposerModelPicker } from './components/ComposerModelPicker'
 import { Sidebar } from './components/Sidebar'
 import { ConversationSearchDialog } from './components/ConversationSearchDialog'
@@ -465,6 +467,9 @@ function ProjectWorkspaceScreen({
   const updateCurrent = useCallback((updater: (item: Conversation) => Conversation) => {
     setWorkspace((state) => updateConversation(state, state.currentThreadId, updater))
   }, [setWorkspace])
+  const interactionConfirmation = useInteractionConfirmation(conversation, (threadId, updater) => {
+    setWorkspace(state => updateConversation(state, threadId, updater))
+  })
 
   useLayoutEffect(() => {
     const shell = appShell.current
@@ -829,8 +834,13 @@ function ProjectWorkspaceScreen({
       pendingResume.threadId,
       pendingResume.payload,
       'resume',
+      { target: 'workspace', onRequestRejected: () => {
+        setWorkspace(state => updateConversation(state, pendingResume.threadId, current => markInteractionRequestRejected(
+          current, pendingResume.threadId, pendingResume.payload.runId, pendingResume.expectedInterruptIds,
+        )))
+      } },
     )
-  }, [pendingResume, streamRun, workspace.conversations])
+  }, [pendingResume, setWorkspace, streamRun, workspace.conversations])
 
   const submitApproval = useCallback((
     expectedInterruptIds: readonly string[],
@@ -1407,6 +1417,7 @@ function ProjectWorkspaceScreen({
               stopDisabledReason={compaction.saving ? t('正在保存压缩结果') : undefined}
               stopPending={cancelPendingRunId === conversation.activeRunId}
               isHydrating={isConversationHydrating}
+              submission={conversation.approval?.submitted || conversation.planInteraction?.submitted ? interactionConfirmation : undefined}
               hero={showConversationHero ? <EmptyConversationBrand /> : undefined}
               takeover={conversation.approval
                 ? (

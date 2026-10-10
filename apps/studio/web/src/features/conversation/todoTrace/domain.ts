@@ -1,5 +1,4 @@
 import type {
-  TaskTraceSnapshot,
   TodoGroup,
   TodoTraceItem,
   TodoTraceItemStatus,
@@ -97,15 +96,4 @@ export const projectTodoItems = (
 export const todoProgress = (group: TodoGroup) => ({
   activeOrCompleted: group.todos.filter((todo) => todo.status === 'completed' || todo.status === 'running').length,
   total: group.todos.length,
-})
-
-export const semanticTaskTrace = (snapshot: TaskTraceSnapshot) => ({
-  status: snapshot.status,
-  ...(snapshot.status === 'unavailable' ? { errorCode: snapshot.errorCode } : {}),
-  todoGroups: snapshot.todoGroups.map((group) => ({
-    id: group.id,
-    userMessagePreview: group.userMessagePreview,
-    status: group.status,
-    todos: group.todos,
-  })),
 })

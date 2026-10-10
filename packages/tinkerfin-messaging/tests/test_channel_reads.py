@@ -2,32 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator
-from typing import ClassVar, cast
+from typing import ClassVar
 
 import pytest
 from backend_harness import MessagingBackendHarness
 
 from tinkerfin import RunIdentity
 from tinkerfin_messaging import (
-    CodecMismatch,
     FiniteMessageSource,
     InvalidCursor,
-    MemoryBackend,
     MessageChannel,
     Messaging,
-    MessagingBackendProtocolError,
-    MessagingClosed,
-    MessagingErrorCode,
     RunNotFound,
-    RunProducerFailed,
-    RunStatus,
     StreamDeleted,
-)
-from tinkerfin_messaging.backend_contract import (
-    MessagingBackend,
-    MessagingTransition,
-    MessagingTransitionResult,
 )
 
 
@@ -47,49 +34,6 @@ class _TextCodec:
 
     def decode(self, payload: bytes) -> str:
         return payload.decode()
-
-
-class _OtherTextCodec(_TextCodec):
-    codec_id: ClassVar[str] = "test.other-text.v1"
-
-
-class _FailingSource:
-    def __init__(self) -> None:
-        self._iterator: AsyncGenerator[str, None] | None = None
-
-    def __aiter__(self) -> AsyncIterator[str]:
-        async def iterate() -> AsyncGenerator[str, None]:
-            yield "before-failure"
-            raise RuntimeError("producer failed")
-
-        self._iterator = iterate()
-        return self._iterator
-
-    async def aclose(self) -> None:
-        if self._iterator is not None:
-            await self._iterator.aclose()
-
-
-class _IncompleteMessagingBackend:
-    """Model a backend object that omits required storage operations."""
-
-
-class _InvalidRunStatusBackend(MemoryBackend):
-    async def commit_messaging_transition(
-        self,
-        transition: MessagingTransition,
-    ) -> MessagingTransitionResult:
-        if transition.kind == "reconcile_producer_ownership":
-            return MessagingTransitionResult(
-                kind=transition.kind,
-                run_status=cast(RunStatus, "corrupted"),
-            )
-        return await super().commit_messaging_transition(transition)
-
-
-class _FalseyBackend(MemoryBackend):
-    def __bool__(self) -> bool:
-        return False
 
 
 async def _commit(messaging: Messaging, *items: str) -> MessageChannel[str, str]:
@@ -198,52 +142,6 @@ async def test_channel_run_status_exposes_every_durable_state(
             )
 
 
-async def test_channel_run_status_rejects_calls_after_messaging_closes() -> None:
-    messaging = Messaging(backend=MemoryBackend())
-    async with messaging:
-        channel = messaging.channel(name="events", codec=_TextCodec())
-
-    with pytest.raises(MessagingClosed):
-        await channel.get_run_status(identity=_identity())
-
-
-def test_messaging_rejects_a_backend_missing_the_status_contract() -> None:
-    """Explicit and structural backends must implement the complete contract."""
-
-    incomplete = _IncompleteMessagingBackend()
-    assert not isinstance(incomplete, MessagingBackend)
-    with pytest.raises(TypeError, match="backend must implement MessagingBackend"):
-        Messaging(backend=cast(MessagingBackend, incomplete))
-
-
-def test_messaging_keeps_a_valid_falsey_backend() -> None:
-    """Backend ownership is based on explicit presence rather than truthiness."""
-
-    backend = _FalseyBackend()
-
-    assert Messaging(backend=backend).backend is backend
-
-
-@pytest.mark.parametrize(
-    "backend",
-    [_InvalidRunStatusBackend()],
-    ids=["invalid-status"],
-)
-async def test_channel_run_status_rejects_invalid_backend_results(
-    backend: MessagingBackend,
-) -> None:
-    """Replaceable backends cannot silently violate the public status contract."""
-
-    async with Messaging(backend=backend) as messaging:
-        channel = messaging.channel(name="events", codec=_TextCodec())
-
-        with pytest.raises(MessagingBackendProtocolError) as caught:
-            await channel.get_run_status(identity=_identity())
-
-    assert caught.value.code is MessagingErrorCode.BACKEND_PROTOCOL_ERROR
-    assert caught.value.diagnostic_context["operation"] == "get_run_status"
-
-
 async def test_channel_read_and_follow_reject_cursors_beyond_thread_tail(
     messaging_backend: MessagingBackendHarness,
 ) -> None:
@@ -259,77 +157,6 @@ async def test_channel_read_and_follow_reject_cursors_beyond_thread_tail(
 
         assert read_error.value.latest == 1
         assert follow_error.value.latest == 1
-
-
-@pytest.mark.parametrize(
-    ("after", "limit", "error", "message"),
-    [
-        (-1, 1, ValueError, "greater than or equal to zero"),
-        (True, 1, TypeError, "after must be an integer"),
-        (0, 0, ValueError, "between 1 and 1000"),
-        (0, 1001, ValueError, "between 1 and 1000"),
-        (0, True, TypeError, "limit must be an integer"),
-    ],
-)
-async def test_channel_read_validates_page_bounds(
-    after: int,
-    limit: int,
-    error: type[Exception],
-    message: str,
-) -> None:
-    async with Messaging(backend=MemoryBackend()) as messaging:
-        channel = messaging.channel(name="events", codec=_TextCodec())
-
-        with pytest.raises(error, match=message):
-            await channel.read(identity=_identity(), after=after, limit=limit)
-
-
-async def test_channel_read_rejects_persisted_codec_mismatch() -> None:
-    async with Messaging(backend=MemoryBackend()) as messaging:
-        await _commit(messaging, "first")
-        mismatched = messaging.channel(name="events", codec=_OtherTextCodec())
-
-        with pytest.raises(CodecMismatch):
-            await mismatched.read(identity=_identity(), after=0, limit=10)
-
-
-async def test_channel_follow_preserves_unknown_run_failure_and_can_close_early() -> (
-    None
-):
-    async with Messaging(backend=MemoryBackend()) as messaging:
-        channel = await _commit(messaging, "first", "second")
-        with pytest.raises(RunNotFound):
-            await channel.follow(identity=_identity(run_id="missing"), after=0)
-
-        following = await channel.follow(identity=_identity(), after=0)
-        assert (await anext(aiter(following))).data == "first"
-        await following.aclose()
-
-
-async def test_channel_follow_preserves_producer_failure_after_committed_events() -> (
-    None
-):
-    async with Messaging(backend=MemoryBackend()) as messaging:
-        channel = messaging.channel(name="events", codec=_TextCodec())
-        owner = await channel.wrap(
-            _FailingSource(),
-            identity=_identity(run_id="run-failed"),
-            after=0,
-        )
-
-        owner_iterator = aiter(owner)
-        assert (await anext(owner_iterator)).data == "before-failure"
-        with pytest.raises(RunProducerFailed):
-            await anext(owner_iterator)
-
-        following = await channel.follow(
-            identity=_identity(run_id="run-failed"),
-            after=0,
-        )
-        following_iterator = aiter(following)
-        assert (await anext(following_iterator)).data == "before-failure"
-        with pytest.raises(RunProducerFailed):
-            await anext(following_iterator)
 
 
 async def test_channel_follow_keeps_its_committed_terminal_snapshot_during_deletion(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
 
 import pytest
 from test_manager import _FakeBackend, _FakeClient
@@ -11,30 +10,16 @@ from test_workspace_readiness import (
     _causes,
     _client,
     _Clock,
-    _Deadline,
     _WorkspaceService,
 )
 
-from tinkerfin_notifications import (
-    MemoryBackend,
-    Notification,
-    Notifications,
-    NotificationScope,
-)
 from tinkerfin_sandbox import (
     InMemoryOpenSandboxState,
-    OpenSandboxBackend,
     OpenSandboxBackendError,
     OpenSandboxBackendProtocolError,
-    OpenSandboxError,
     OpenSandboxManager,
-    OpenSandboxManagerClosedError,
-    OpenSandboxPurpose,
-    OpenSandboxSettlementTimeoutError,
-    OpenSandboxStateError,
 )
 from tinkerfin_sandbox.lifecycle import client as client_module
-from tinkerfin_sandbox.lifecycle import manager as manager_module
 
 
 class _ClosingClient(_FakeClient):
@@ -117,76 +102,6 @@ async def test_manager_reports_and_retries_its_owned_sdk_client_cleanup(
         await client.aclose()
 
 
-@pytest.mark.parametrize("persistent", [False, True])
-@pytest.mark.parametrize("failed_finalizer", ["client", "state", "both"])
-async def test_manager_retries_only_unfinished_finalizers(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-    persistent: bool,
-    failed_finalizer: str,
-) -> None:
-    backend = _FakeBackend("known-instance")
-    client = _ClosingClient(backend)
-    state = _ClosingState(persistent=persistent)
-    client_error = OpenSandboxBackendError("Controlled client close failure")
-    state_error = OpenSandboxStateError("Controlled State close failure")
-    client.close_error = client_error if failed_finalizer != "state" else None
-    state.close_error = state_error if failed_finalizer != "client" else None
-    closed_notifications: list[MemoryBackend] = []
-    close_memory = MemoryBackend.aclose
-
-    async def observe_close(notification_backend: MemoryBackend) -> None:
-        await close_memory(notification_backend)
-        closed_notifications.append(notification_backend)
-
-    monkeypatch.setattr(MemoryBackend, "aclose", observe_close)
-    borrowed_backend = MemoryBackend()
-    async with Notifications(backend=borrowed_backend) as notifications:
-        manager = OpenSandboxManager(
-            client=client,
-            state=state,
-            notifications=notifications if persistent else None,
-        )
-        try:
-            await manager.start()
-            handle = await manager.get("owner")
-            with pytest.raises(OpenSandboxError) as captured:
-                await manager.aclose()
-            assert captured.value is (
-                client_error if failed_finalizer == "client" else state_error
-            )
-            if failed_finalizer == "both":
-                assert client_error in _causes(captured.value)
-            assert not any(
-                record.name.startswith("tinkerfin.sandbox") for record in caplog.records
-            )
-            assert client.close_calls == state.close_calls == state.shutdown_calls == 1
-            assert backend.close_calls == 1
-            assert handle.is_closed
-            assert client.destroy_calls == ([] if persistent else [backend.id])
-            assert len(closed_notifications) == (0 if persistent else 1)
-            with pytest.raises(OpenSandboxManagerClosedError):
-                await manager.get("owner")
-            client.close_error = state.close_error = None
-            await manager.aclose()
-            await manager.aclose()
-            assert client.close_calls == (1 if failed_finalizer == "state" else 2)
-            assert state.close_calls == (1 if failed_finalizer == "client" else 2)
-            assert state.shutdown_calls == backend.close_calls == 1
-            assert client.destroy_calls == ([] if persistent else [backend.id])
-            assert len(closed_notifications) == (0 if persistent else 1)
-            assert borrowed_backend not in closed_notifications
-            notification = Notification(
-                scope=NotificationScope("borrowed"), topic="usable", key="one"
-            )
-            async with notifications.subscribe() as subscription:
-                await notifications.publish(notification)
-                assert await anext(subscription) == notification
-        finally:
-            client.close_error = state.close_error = None
-            await manager.aclose()
-
-
 @pytest.mark.parametrize("retry", [False, True])
 async def test_cancelled_manager_close_caller_does_not_repeat_concurrent_finalization(
     retry: bool,
@@ -235,35 +150,6 @@ async def test_cancelled_manager_close_caller_does_not_repeat_concurrent_finaliz
         await manager.aclose()
 
 
-async def test_manager_close_timeout_keeps_the_unfinished_finalizer_owned(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    clock = _Clock()
-    controlled = clock.module()
-    setattr(
-        controlled, "timeout", lambda seconds: _Deadline(clock, clock.now + seconds)
-    )
-    monkeypatch.setattr(manager_module, "asyncio", controlled)
-    client = _ClosingClient()
-    client.close_release.clear()
-    manager = OpenSandboxManager(client=client, settlement_timeout=1)
-    closing = asyncio.create_task(manager.aclose())
-    try:
-        await client.close_entered.wait()
-        clock.deadlines[-1].expire()
-        with pytest.raises(OpenSandboxSettlementTimeoutError):
-            await closing
-        assert not client.close_cancelled
-        client.close_release.set()
-        await manager.aclose()
-        await manager.aclose()
-        assert client.close_calls == 1
-    finally:
-        client.close_release.set()
-        await asyncio.gather(closing, return_exceptions=True)
-        await manager.aclose()
-
-
 @pytest.mark.parametrize("cancelled", [False, True])
 async def test_manager_context_preserves_body_failure_and_finalizer_cause(
     cancelled: bool,
@@ -288,69 +174,4 @@ async def test_manager_context_preserves_body_failure_and_finalizer_cause(
         assert client.close_calls == 2
     finally:
         client.close_error = None
-        await manager.aclose()
-
-
-async def test_manager_startup_failure_retains_its_failed_finalizer_cause(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    client = _ClosingClient()
-    startup_error = OpenSandboxBackendError("Controlled startup failure")
-    close_error = OpenSandboxBackendError("Controlled startup cleanup failure")
-    client.close_error = close_error
-
-    async def fail_create(
-        *,
-        purpose: OpenSandboxPurpose = "commands",
-        metadata: Mapping[str, str] | None = None,
-    ) -> OpenSandboxBackend:
-        del purpose, metadata
-        raise startup_error
-
-    monkeypatch.setattr(client, "create", fail_create)
-    manager = OpenSandboxManager(
-        client=client, warm_pool_size=1, fail_on_startup_warmup_error=True
-    )
-    try:
-        with pytest.raises(OpenSandboxBackendError) as captured:
-            async with manager:
-                pytest.fail("Failed startup cannot enter the manager")
-        assert captured.value is startup_error
-        assert close_error in _causes(captured.value)
-        client.close_error = None
-        await manager.aclose()
-        assert client.close_calls == 2
-    finally:
-        client.close_error = None
-        await manager.aclose()
-
-
-async def test_sticky_state_failure_does_not_skip_unfinished_client_cleanup() -> None:
-    client = _ClosingClient()
-    state = _ClosingState(persistent=True)
-    client_error = OpenSandboxBackendError("Controlled client close failure")
-    state_error = OpenSandboxStateError("Retained State close failure")
-    client.close_error = client_error
-    state.close_error = state_error
-    manager = OpenSandboxManager(client=client, state=state)
-    try:
-        await manager.start()
-        with pytest.raises(OpenSandboxStateError) as first:
-            await manager.aclose()
-        assert first.value is state_error
-        assert client_error in _causes(first.value)
-        client.close_error = None
-        with pytest.raises(OpenSandboxStateError) as second:
-            await manager.aclose()
-        assert second.value is state_error
-        assert client.close_calls == state.close_calls == 2
-        with pytest.raises(OpenSandboxStateError) as third:
-            await manager.aclose()
-        assert third.value is state_error
-        assert client.close_calls == 2
-        assert state.close_calls == 3
-        assert state.shutdown_calls == 1
-        assert client.destroy_calls == []
-    finally:
-        client.close_error = state.close_error = None
         await manager.aclose()

@@ -473,7 +473,10 @@ class ConversationChatService:
         if thread is None:
             raise BusinessException(ConversationErrorCode.NOT_FOUND)
         thread_pk = thread.id
-        if await self._repository.get_run(thread_pk=thread_pk, run_id=run_id) is None:
+        registration = await self._repository.get_run(
+            thread_pk=thread_pk, run_id=run_id
+        )
+        if registration is None or registration.status == "rejected":
             raise BusinessException(ConversationErrorCode.RUN_NOT_FOUND)
         # 提交隐式只读事务可释放连接，并保留活跃流仍会读取的 thread 事实
         await self._repository.commit()

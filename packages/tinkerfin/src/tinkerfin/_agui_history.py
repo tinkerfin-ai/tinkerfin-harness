@@ -261,7 +261,7 @@ class AgUiHistory:
         history_cursor: str | None = None,
         projections: tuple[str, ...] = (),
     ) -> AgUiHistoryView:
-        """Read one fixed-prefix conversation and its pending interactions.
+        """Read one fixed-prefix conversation and its retained interactions.
 
         Args:
             thread_id: Application-authorized conversation within this reader's scope.

@@ -89,8 +89,9 @@ class AgUiTraceGraphNode(TraceGraphNode, frozen=True):
 class AgUiTraceInteraction(TraceInteraction, frozen=True):
     """Retain human input with public actions, or null when capture is insufficient.
 
-    Pending actions describe the retained request. Settled interactions export an
-    empty tuple because their payload records the decision, not the request.
+    Pending actions describe the retained request. Settled Plan clarification and
+    review interactions retain that description for read-only history. Other settled
+    interactions export an empty tuple because their request may be unavailable.
     Tool approval needs full inline argument capture for every action; selected
     content remains display data and is never interpreted as complete arguments.
     Exported actions do not authorize resume or replace checkpoint validation.

@@ -76,6 +76,14 @@ The framework validates the pending review, Tool correlation, and decision cover
 
 Cancellation does not become rejection. Mixed Tool decisions require TinkerFin approval support in the affected Tools. Plan and Tool approvals cannot share one batch.
 
+A completed whole-batch cancellation can be retried with the same Run identity and
+batch without executing the Graph or appending duplicate Trace history. Keep its
+checkpoints available. If Tracer already contains that Run, its input, terminal,
+and close must prove the same completed cancellation; incomplete or redacted
+evidence cannot confirm the retry. Changing that Run's request is
+rejected. A new Run can still answer or approve the pending batch. Observer failures
+on the current attempt continue to propagate.
+
 ## Retries, concurrency, and callbacks
 
 - Give each new approval request a new `run_id`. Retry the original request with the same `run_id`, `thread_id`, and decisions.
@@ -107,8 +115,10 @@ saved results:
 ```python
 from tinkerfin import AgUiResumeReceipt
 
+
 async def record_saved(receipt: AgUiResumeReceipt) -> None:
     await approval_repository.settle_resume(receipt=receipt)
+
 
 async with aclosing(
     runtime.open_agui_run(
@@ -156,11 +166,18 @@ async with aclosing(
         thread_id="conversation-1",
         run_id="discussion-1",
         mode="plan",
-        resume=AgUiResumeRequest(entries=(ResumeEntry(
-            interrupt_id=interrupt_id,
-            status="resolved",
-            payload={"type": "discuss", "message": "What does the third question mean?"},
-        ),)),
+        resume=AgUiResumeRequest(
+            entries=(
+                ResumeEntry(
+                    interrupt_id=interrupt_id,
+                    status="resolved",
+                    payload={
+                        "type": "discuss",
+                        "message": "What does the third question mean?",
+                    },
+                ),
+            )
+        ),
     )
 ) as events:
     async for event in events:

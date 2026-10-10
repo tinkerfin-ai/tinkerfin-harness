@@ -61,7 +61,7 @@ function history(runId?: string, phase: Phase = 'done', messageCount = 2): Conve
           : index % 2 ? `历史回答 ${index}` : `历史提问 ${index}`,
       contentOmitted: false, status: 'completed', createdAt: time, completedAt: time,
     })),
-    reasoning: [], graph: traceGraphWithNodes(nodes, asOfSeq), state: { root: {}, subgraphs: {} }, interactionAvailability: [], interactions: [],
+    reasoning: [], graph: traceGraphWithNodes(nodes, asOfSeq), state: { root: {}, subgraphs: {} }, submissionResult: null, planResults: [], interactionAvailability: [], interactions: [],
     status: { execution: nodeStatus, headRunId: runId ?? 'chat' },
     completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false },
     taskTrace: { status: 'ready', todoGroups: [] }, createdAt: time, updatedAt: time, runFailures: [],

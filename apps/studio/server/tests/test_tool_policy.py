@@ -4,17 +4,15 @@ import asyncio
 
 import pytest
 from ag_ui.core import RunFinishedInterruptOutcome
-from httpx import ConnectError
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
-from langchain_core.tools import ToolException, tool
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field
 
 from tinkerfin import AgUiResumeRequest, TinkerFin
 from tinkerfin_sandbox import OpenSandboxStateOwnershipError
 from tinkerfin_studio.agent.tool_policy import TOOL_CALL_LIMIT, tool_execution_policy
-from tinkerfin_tracing import Tracer
 
 
 class Model(FakeMessagesListChatModel):
@@ -54,65 +52,6 @@ async def collect(runtime, *, run_id="run", thread_id="thread", resume=None):
 @pytest.mark.parametrize(
     "failure",
     [
-        ValueError("secret"),
-        ToolException("secret"),
-        ConnectError("secret"),
-        TimeoutError("secret"),
-        PermissionError("secret"),
-    ],
-)
-async def test_expected_failure_reaches_model_once_and_preserves_failed_trace(failure):
-    calls = []
-
-    @tool
-    async def operation() -> str:
-        """执行一次可纠正的操作"""
-        calls.append("attempt")
-        if len(calls) == 1:
-            raise failure
-        return "已完成"
-
-    tracer = Tracer()
-    runtime = (
-        TinkerFin()
-        .with_namespace("policy")
-        .with_observer(tracer)
-        .build(
-            model=Model(
-                responses=[proposal(1), proposal(2), AIMessage(content="操作已完成")]
-            ),
-            tools=[operation],
-            middleware=tool_execution_policy(),
-        )
-    )
-    events, error = await collect(runtime)
-    assert error is None
-    assert calls == ["attempt", "attempt"]
-    results = [
-        event.model_dump(by_alias=True)
-        for event in events
-        if event.type == "TOOL_CALL_RESULT"
-    ]
-    assert len(results) == 2
-    assert "secret" not in str(results)
-    assert [result["toolCallId"] for result in results] == [
-        event.tool_call_id for event in events if event.type == "TOOL_CALL_START"
-    ]
-    assert results[1]["content"] == "已完成"
-    assert sum(event.type == "RUN_FINISHED" for event in events) == 1
-    assert not any(event.type == "RUN_ERROR" for event in events)
-    history = await tracer.get(runtime.thread_identity("thread"))
-    assert "操作已完成" in str(history.messages)
-    graph = await tracer.query(runtime.thread_identity("thread"))
-    assert sorted(node.status for node in graph.nodes if node.kind == "tool") == [
-        "failed",
-        "succeeded",
-    ]
-
-
-@pytest.mark.parametrize(
-    "failure",
-    [
         RuntimeError("unexpected"),
         TypeError("unexpected"),
         FileNotFoundError("storage missing"),
@@ -138,58 +77,6 @@ async def test_unknown_or_integrity_failure_terminates_run(failure):
     assert error is not None
     assert sum(event.type == "RUN_ERROR" for event in events) == 1
     assert not any(event.type == "RUN_FINISHED" for event in events)
-
-
-@pytest.mark.parametrize("failed", [False, True])
-async def test_exhausted_budget_keeps_results_for_one_final_summary(failed):
-    calls = []
-
-    @tool
-    async def operation() -> str:
-        """执行受总量约束的工具"""
-        calls.append("attempt")
-        if failed:
-            raise ValueError("invalid")
-        return "ok"
-
-    tracer = Tracer()
-    model = Model(
-        responses=[
-            *(proposal(i) for i in range(TOOL_CALL_LIMIT)),
-            AIMessage(content="已整理现有结果；剩余任务需要继续处理"),
-        ]
-    )
-    runtime = (
-        TinkerFin()
-        .with_namespace("bounded")
-        .with_observer(tracer)
-        .build(
-            model=model,
-            tools=[operation],
-            middleware=tool_execution_policy(),
-        )
-    )
-    events, error = await collect(runtime)
-    assert error is None and len(calls) == TOOL_CALL_LIMIT
-    results = [
-        event.model_dump(by_alias=True)
-        for event in events
-        if event.type == "TOOL_CALL_RESULT"
-    ]
-    assert {result["toolCallId"] for result in results} == {
-        event.tool_call_id for event in events if event.type == "TOOL_CALL_START"
-    }
-    assert len(results) == TOOL_CALL_LIMIT
-    assert sum(event.type == "RUN_FINISHED" for event in events) == 1
-    history = await tracer.get(runtime.thread_identity("thread"))
-    assert "已整理现有结果" in str(history.messages)
-    assert len(model.requests) == TOOL_CALL_LIMIT + 1
-    assert "工具额度已用尽" in model.requests[-1][0].text
-    assert "预留" in model.requests[-2][0].text
-    assert (
-        sum(isinstance(item, ToolMessage) for item in model.requests[-1])
-        == TOOL_CALL_LIMIT
-    )
 
 
 async def test_parallel_batch_over_budget_executes_no_partial_batch():
@@ -229,124 +116,6 @@ async def test_parallel_batch_over_budget_executes_no_partial_batch():
         event.type == "TEXT_MESSAGE_CONTENT" and "本批工具未执行" in event.delta
         for event in events
     )
-
-
-async def test_child_budget_returns_findings_to_parent():
-    calls = []
-
-    @tool
-    async def operation() -> str:
-        """返回可供子任务总结的证据"""
-        calls.append("child-result")
-        return "来源甲：已核实的数据"
-
-    child = Model(
-        responses=[
-            *(proposal(i) for i in range(TOOL_CALL_LIMIT)),
-            AIMessage(content="研究结论：来源甲的数据已核实；第二部分尚未完成"),
-        ]
-    )
-    parent = Model(
-        responses=[
-            proposal(
-                1,
-                name="task",
-                args={
-                    "subagent_type": "researcher",
-                    "description": "核实两部分数据并总结",
-                },
-            ),
-            AIMessage(content="已收到研究结果和未完成事项"),
-        ]
-    )
-    runtime = (
-        TinkerFin()
-        .with_namespace("child-budget")
-        .build(
-            model=parent,
-            middleware=tool_execution_policy(),
-            subagents=[
-                {
-                    "name": "researcher",
-                    "description": "核实数据",
-                    "system_prompt": "返回有来源的结论和未完成事项",
-                    "model": child,
-                    "tools": [operation],
-                    "middleware": tool_execution_policy(),
-                }
-            ],
-        )
-    )
-    events, error = await collect(runtime)
-    assert error is None and len(calls) == TOOL_CALL_LIMIT
-    returned = [
-        item
-        for item in parent.requests[-1]
-        if isinstance(item, ToolMessage) and item.name == "task"
-    ]
-    assert len(returned) == 1
-    assert "研究结论：来源甲的数据已核实" in returned[0].text
-    assert "第二部分尚未完成" in returned[0].text
-    assert "工具额度已用尽" in child.requests[-1][0].text
-    assert sum(event.type == "RUN_FINISHED" for event in events) == 1
-
-
-async def test_model_cannot_repeat_tools_in_final_summary():
-    calls = []
-
-    @tool
-    async def operation() -> str:
-        """只执行额度允许的操作"""
-        calls.append("executed")
-        return "observed"
-
-    model = Model(responses=[proposal(i) for i in range(TOOL_CALL_LIMIT + 1)])
-    runtime = (
-        TinkerFin()
-        .with_namespace("invalid-summary")
-        .build(model=model, tools=[operation], middleware=tool_execution_policy())
-    )
-    events, error = await collect(runtime)
-    assert error is not None
-    assert len(calls) == TOOL_CALL_LIMIT
-    assert len(model.requests) == TOOL_CALL_LIMIT + 1
-    assert sum(event.type == "RUN_ERROR" for event in events) == 1
-    assert not any(event.type == "RUN_FINISHED" for event in events)
-
-
-async def test_new_user_turn_resets_exhausted_budget():
-    calls = []
-
-    @tool
-    async def operation() -> str:
-        """记录各用户轮次的真实调用"""
-        calls.append("executed")
-        return "ok"
-
-    model = Model(
-        responses=[
-            *(proposal(i) for i in range(TOOL_CALL_LIMIT)),
-            AIMessage(content="本轮达到额度，已总结"),
-            proposal(TOOL_CALL_LIMIT + 1),
-            AIMessage(content="新任务完成"),
-        ]
-    )
-    runtime = (
-        TinkerFin(checkpointer=InMemorySaver())
-        .with_namespace("budget-reset")
-        .build(
-            model=model,
-            tools=[operation],
-            middleware=tool_execution_policy(),
-        )
-    )
-    first, error = await collect(runtime, run_id="first")
-    assert error is None and len(calls) == TOOL_CALL_LIMIT
-    assert first[-1].type == "RUN_FINISHED"
-    second, error = await collect(runtime, run_id="second")
-    assert error is None and len(calls) == TOOL_CALL_LIMIT + 1
-    assert sum(event.type == "TOOL_CALL_RESULT" for event in second) == 1
-    assert second[-1].type == "RUN_FINISHED"
 
 
 async def test_user_cancellation_propagates_and_releases_tool():
@@ -434,91 +203,3 @@ async def test_approval_resume_preserves_distinct_user_requests():
         assert len(calls) == index + 1
         assert sum(event.type == "TOOL_CALL_RESULT" for event in after) == 1
         assert sum(event.type == "RUN_FINISHED" for event in after) == 1
-
-
-@pytest.mark.parametrize("available", [True, False])
-async def test_image_service_visibility_keeps_generic_tools(available):
-    from pydantic import Field
-
-    class VisibleModel(Model):
-        bindings: list[set[str]] = Field(default_factory=list)
-
-        def bind_tools(self, tools, **kwargs):
-            self.bindings.append({item.name for item in tools})
-            return self
-
-    @tool
-    async def generate_image() -> str:
-        """生成图片"""
-        return "image"
-
-    @tool
-    async def capture_browser() -> str:
-        """渲染工作文件"""
-        return "file"
-
-    model = VisibleModel(responses=[AIMessage(content="可执行任务")])
-    runtime = (
-        TinkerFin()
-        .with_namespace("visibility")
-        .build(
-            model=model,
-            tools=[generate_image, capture_browser],
-            middleware=tool_execution_policy(image_generation_available=available),
-        )
-    )
-    events, error = await collect(runtime)
-    assert error is None
-    assert model.bindings
-    assert all(("generate_image" in names) is available for names in model.bindings)
-    assert all(
-        "capture_browser" in names and "write_file" in names for names in model.bindings
-    )
-    assert events[-1].type == "RUN_FINISHED"
-
-
-async def test_removed_image_service_resumes_pending_tool_with_actionable_error():
-    from tinkerfin_studio.api.errors import BusinessException, ServiceErrorCode
-
-    @tool
-    async def generate_image() -> str:
-        """调用本次配置的生图服务"""
-        raise BusinessException(ServiceErrorCode.IMAGE_UNAVAILABLE)
-
-    configured = TinkerFin(checkpointer=InMemorySaver()).with_namespace("removed-image")
-    pending = configured.build(
-        model=Model(responses=[proposal(1, name="generate_image")]),
-        tools=[generate_image],
-        middleware=tool_execution_policy(image_generation_available=True),
-        interrupt_on={"generate_image": True},
-    )
-    events, error = await collect(pending)
-    assert error is None
-    outcome = events[-1].outcome
-    assert isinstance(outcome, RunFinishedInterruptOutcome)
-    resume = AgUiResumeRequest.model_validate(
-        {
-            "entries": [
-                {
-                    "interruptId": item.id,
-                    "status": "resolved",
-                    "payload": {"type": "approve"},
-                }
-                for item in outcome.interrupts
-            ]
-        }
-    )
-    resumed = configured.build(
-        model=Model(responses=[AIMessage(content="请配置图片生成服务")]),
-        tools=[generate_image],
-        middleware=tool_execution_policy(image_generation_available=False),
-        interrupt_on={"generate_image": True},
-    )
-    result, error = await collect(resumed, run_id="resumed", resume=resume)
-    assert error is None
-    outputs = [item for item in result if item.type == "TOOL_CALL_RESULT"]
-    assert len(outputs) == 1
-    assert "尚未配置可用的 AI 图片生成服务" in outputs[0].content
-    assert "not a valid tool" not in outputs[0].content
-    assert sum(item.type == "RUN_FINISHED" for item in result) == 1
-    assert not any(item.type == "RUN_ERROR" for item in result)

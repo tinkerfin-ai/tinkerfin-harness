@@ -189,6 +189,8 @@ class ConversationRunPreparer:
             existing = await self._repository.get_run_for_update(
                 thread_pk=thread.id, run_id=prepared.identity.run_id
             )
+            if existing is not None and existing.resume_not_saved:
+                raise BusinessException(ConversationErrorCode.RESUME_NOT_SAVED)
             self._require_same_registration(existing, prepared=prepared, model=model)
             source_run_id = self._continuation_source_run_id(
                 intent,
@@ -201,7 +203,7 @@ class ConversationRunPreparer:
                     thread_pk=thread.id,
                     run_id=source_run_id,
                 )
-                if source_run is None:
+                if source_run is None or source_run.status == "rejected":
                     raise BusinessException(ConversationErrorCode.RUN_NOT_FOUND)
                 self._require_source_model(source_run, model=model)
                 if source_run.access_mode != prepared.access_mode:
@@ -345,7 +347,7 @@ class ConversationRunPreparer:
         registered: RegisteredRun,
         thread_created: bool,
     ) -> None:
-        """删除本次未启动的运行登记，并等待清理提交完成
+        """清理本次未受理登记，保留恢复提交的未保存结果
 
         请求取消不会中断已接受的清理，调用方等到数据库操作结束后才收到取消。
         清理期间独占借用的请求会话；已有登记只结束当前事务，不删除记录。
@@ -354,7 +356,7 @@ class ConversationRunPreparer:
             thread_pk: 已校验归属的会话主键
             thread_id: 当前会话的公开标识
             identity_run_id: 当前请求的运行 ID
-            registered: 本次登记结果，决定是否拥有删除权限
+            registered: 本次登记结果，决定是否拥有清理权限
             thread_created: 是否允许一并删除本次新建的空会话
 
         Raises:
@@ -372,9 +374,18 @@ class ConversationRunPreparer:
                         run_id=identity_run_id,
                         preparation_id=registered.preparation_id,
                         delete_empty_thread=thread_created,
+                        resume_not_saved=True,
                     )
                     await self._repository.commit()
-                    if result.run_deleted:
+                    if result.resume_released:
+                        await notify_change(
+                            self._notifications,
+                            user_id=self._user_id,
+                            topic="studio.conversation.interactions.changed",
+                            key=thread_id,
+                            details={"submissionRunId": identity_run_id},
+                        )
+                    if result.run_deleted or result.resume_released:
                         await notify_change(
                             self._notifications,
                             user_id=self._user_id,

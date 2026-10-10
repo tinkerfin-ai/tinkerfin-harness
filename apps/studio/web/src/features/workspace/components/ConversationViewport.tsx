@@ -198,14 +198,12 @@ export function ConversationViewport({
                     : []}
                 />)}
             {conversation.approval && !conversation.approval.submitted && <ApprovalStatusRow />}
-            {conversation.planInteraction?.kind === 'questions' && (
+            {conversation.planInteraction?.kind === 'questions' && !conversation.planInteraction.submitted && (
               <div className="plan-interaction-wait-state">
-                {conversation.planInteraction.submitted
-                  ? <span role="status">{t('正在确认提交状态')}</span>
-                  : <ActivityDots label={t('等待回答')} />}
+                <ActivityDots label={t('等待回答')} />
               </div>
             )}
-            {conversation.planInteraction?.kind === 'review' && (
+            {conversation.planInteraction?.kind === 'review' && !conversation.planInteraction.submitted && (
               <PlanReviewStatusRow interaction={conversation.planInteraction} />
             )}
             {(conversation.runStatus === 'detached' || (!conversation.threadId && conversation.runStatus === 'error') || conversation.notice?.recovery === 'history') && onRecoverConversation && (
@@ -213,7 +211,7 @@ export function ConversationViewport({
                 {t(conversation.notice?.recovery === 'history' ? '重新加载' : conversation.runStatus === 'error' ? '重试' : '恢复连接')}
               </Button>
             )}
-            {isRunning && !conversation.compactions?.some(operation => operation.runId === conversation.activeRunId) && <p className="message-stream-tail stream-pending-tail"><ActivityDots label={t('任务仍在继续')} /></p>}
+            {isRunning && !conversation.approval?.submitted && !conversation.planInteraction?.submitted && !conversation.compactions?.some(operation => operation.runId === conversation.activeRunId) && <p className="message-stream-tail stream-pending-tail"><ActivityDots label={t('任务仍在继续')} /></p>}
             <div ref={messageEndRef} />
           </div>
         )}

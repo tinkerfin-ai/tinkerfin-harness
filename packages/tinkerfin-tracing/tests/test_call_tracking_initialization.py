@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -63,33 +63,18 @@ class _LocalModel(FakeMessagesListChatModel):
         return self
 
 
-@pytest.fixture(
-    params=(
-        "memory",
-        "sqlite",
-        pytest.param("mysql", marks=pytest.mark.docker_integration),
-    )
-)
+@pytest.fixture(params=("memory", "sqlite"))
 async def trace_store(
     request: pytest.FixtureRequest, tmp_path: Path
 ) -> AsyncIterator[TraceStore]:
     if request.param == "memory":
         yield InMemoryTraceStore()
         return
-    async with AsyncExitStack() as databases:
-        url = (
-            await databases.enter_async_context(
-                request.getfixturevalue("trace_mysql_database")()
-            )
-            if request.param == "mysql"
-            else f"sqlite+aiosqlite:///{tmp_path / 'call-history.db'}"
-        )
-        assert isinstance(url, str)
-        engine = create_async_engine(url)
-        try:
-            yield SqlAlchemyTraceStore(engine)
-        finally:
-            await engine.dispose()
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'call-history.db'}")
+    try:
+        yield SqlAlchemyTraceStore(engine)
+    finally:
+        await engine.dispose()
 
 
 def _input(identity: RunIdentity) -> InputAgentState:

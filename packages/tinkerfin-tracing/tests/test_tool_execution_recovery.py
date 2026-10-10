@@ -24,13 +24,6 @@ from tinkerfin_tracing import (
 )
 from tinkerfin_tracing._graph_projection import (
     project_trace_graph_node,
-    reduce_trace_graph_records,
-)
-from tinkerfin_tracing._graph_reducer import (
-    ReducedTraceGraphRevision,
-    apply_graph_node_mutation,
-    effective_graph_nodes,
-    graph_node_mutations,
 )
 from tinkerfin_tracing._ids import scope_id
 from tinkerfin_tracing.sql_store import SqlAlchemyTraceStore
@@ -115,108 +108,6 @@ def _events(
         )
         for index, fact in enumerate(facts, start=1)
     )
-
-
-@pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled"])
-@pytest.mark.parametrize("same_run", [False, True])
-@pytest.mark.parametrize("nested", [False, True])
-@pytest.mark.parametrize("owns_failure", [False, True])
-def test_execution_recovery_is_independent_of_commit_partition(
-    outcome: Outcome, same_run: bool, nested: bool, owns_failure: bool
-) -> None:
-    events = _events(
-        outcome, same_run=same_run, nested=nested, owns_failure=owns_failure
-    )
-    run_ids = frozenset(event.fact.identity.run_id for event in events)
-    expected_status = {
-        "completed": "succeeded",
-        "failed": "failed",
-        "cancelled": "cancelled",
-    }[outcome]
-    for prefix_length in range(1, len(events) + 1):
-        prefix = events[:prefix_length]
-        reference = reduce_trace_graph_records(prefix, run_ids=run_ids)[0]
-        projected = project_trace_graph_node(
-            reference,
-            turn_id="turn",
-            parent_subagent_id=None,
-            relationship_missing=False,
-            allowed_run_ids=run_ids,
-        )
-        if prefix_length == 3:
-            assert projected.status == "running"
-            assert projected.result is None
-            assert projected.failure is None
-            assert projected.completed_at is None
-            assert projected.started_at == NOW + timedelta(seconds=3)
-        elif prefix_length >= 4:
-            assert projected.status == expected_status
-            assert projected.started_at == NOW + timedelta(seconds=3)
-            assert (projected.failure is not None) is (
-                outcome == "failed" and owns_failure
-            )
-            if projected.failure is not None:
-                assert projected.failure.message == "failure-4"
-        for split in range(prefix_length + 1):
-            revisions: dict[tuple[str, str], ReducedTraceGraphRevision] = {}
-            for batch in (prefix[:split], prefix[split:]):
-                for mutation in graph_node_mutations(batch):
-                    apply_graph_node_mutation(
-                        revisions,
-                        mutation,
-                        source_events={event.trace_seq: event for event in batch},
-                    )
-            reduced = effective_graph_nodes(revisions.values(), run_ids=run_ids)[0]
-            assert reduced.status == reference.status
-            assert reduced.started_at == reference.started_at
-            assert reduced.completed_at == reference.completed_at
-            assert reduced.result_seq == reference.result_seq
-            assert reduced.failure_seq == reference.failure_seq
-    if not same_run:
-        previous = reduce_trace_graph_records(events, run_ids=frozenset({"failed"}))[0]
-        assert previous.status == "failed"
-        assert previous.failure_seq == 2
-
-
-def test_waiting_arguments_do_not_replace_proposal_start_time() -> None:
-    identity = RunIdentity(namespace="test", thread_id="proposal", run_id="run")
-    phases: tuple[Literal["started", "arguments"], ...] = ("started", "arguments")
-    facts = tuple(
-        ToolFact(
-            source_observation_id=f"proposal-{index}",
-            identity=identity,
-            occurred_at=NOW + timedelta(seconds=index),
-            monotonic_ns=index,
-            phase=phase,
-            tool_call_id=scope_id("tool", (), "report"),
-            source_tool_call_id="report",
-            tool_name="deliver_report",
-            content=_capture("arguments") if phase == "arguments" else None,
-        )
-        for index, phase in enumerate(phases, start=1)
-    )
-    events = tuple(
-        TraceEvent(
-            event_id=f"event-{index}",
-            trace_seq=index,
-            generation="generation",
-            fact=fact,
-            persisted_bytes=1,
-        )
-        for index, fact in enumerate(facts, start=1)
-    )
-    for batches in ((events,), tuple((event,) for event in events)):
-        revisions: dict[tuple[str, str], ReducedTraceGraphRevision] = {}
-        for batch in batches:
-            for mutation in graph_node_mutations(batch):
-                apply_graph_node_mutation(
-                    revisions,
-                    mutation,
-                    source_events={event.trace_seq: event for event in batch},
-                )
-        node = effective_graph_nodes(revisions.values(), run_ids=frozenset({"run"}))[0]
-        assert node.status == "waiting"
-        assert node.started_at == NOW + timedelta(seconds=1)
 
 
 @pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled"])

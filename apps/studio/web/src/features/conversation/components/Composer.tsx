@@ -4,6 +4,7 @@ import type { KeyboardEvent, ReactNode } from 'react'
 import type { EditorState, Transaction } from '@codemirror/state'
 import { changeComposerText, composerSkillReferences, deleteComposerAtom, insertComposerSkill } from '../composerDraft'
 import { ComposerInput } from './ComposerInput'
+import { InteractionSubmission, type InteractionSubmissionState } from './InteractionSubmission'
 
 import { DraftAttachmentCard } from '../attachments/DraftAttachmentCard'
 import { useAttachmentPicker } from '../attachments/useAttachmentPicker'
@@ -50,6 +51,7 @@ export function Composer({
   disabledReason,
   hero,
   takeover,
+  submission,
   scrollToBottomControl,
   backgroundInert = false,
   modelControl,
@@ -82,6 +84,7 @@ export function Composer({
   disabledReason?: string
   hero?: ReactNode
   takeover?: ReactNode
+  submission?: InteractionSubmissionState
   scrollToBottomControl?: ReactNode
   backgroundInert?: boolean
   modelControl: ReactNode
@@ -322,15 +325,10 @@ export function Composer({
 
   return (
     <footer className={`composer-dock${hero ? ' is-hero' : ''}${takeover ? ' is-taken-over' : ''}`}>
-      {(!hero || scrollToBottomControl || (takeover && isRunning)) && (
+      {(!hero || scrollToBottomControl) && (
         <div className="composer-auxiliary-controls">
           {scrollToBottomControl && (
             <div className="composer-scroll-to-bottom-control">{scrollToBottomControl}</div>
-          )}
-          {takeover && isRunning && (
-            <div className="composer-stop-control" aria-hidden={backgroundInert || undefined} inert={backgroundInert || undefined}>
-              {stopControl}
-            </div>
           )}
         </div>
       )}
@@ -444,7 +442,7 @@ export function Composer({
           aria-hidden={backgroundInert || undefined}
           inert={backgroundInert || undefined}
         >
-          {takeover}
+          {submission ? <InteractionSubmission state={submission} stopControl={isRunning ? stopControl : undefined}>{takeover}</InteractionSubmission> : takeover}
         </div>
       )}
       <p className="composer-note">{t('TinkerFin 可能会犯错，请核对重要信息')}</p>

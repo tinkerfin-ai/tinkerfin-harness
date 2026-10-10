@@ -1,8 +1,5 @@
 import type { AccessMode } from '../../types'
 import type { Attachment } from '../conversation/attachments/content'
-
-/** 日期与时间按北京时间展示，不依赖浏览器时区 */
-export const AUTOMATION_TIME_ZONE = 'Asia/Shanghai'
 const DAY_MS = 86_400_000
 
 export type AutomationSchedule =
@@ -140,7 +137,6 @@ export function emptyDraft(): AutomationDraft {
 
 export const todayInBeijing = () => beijingDate(Date.now())
 export const dateBoundary = (date: string) => `${date}T00:00:00+08:00`
-export const isActiveRun = (status: RunStatus) => ['queued', 'running', 'interrupted', 'cancel_requested'].includes(status)
 export const presentRun = (run: AutomationRunRecord): AutomationRun => ({
   ...run, name: run.name ?? run.taskId ?? run.id,
   date: beijingDate(Date.parse(run.queuedAt)), time: beijingTime(Date.parse(run.queuedAt)),

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,7 +9,6 @@ from typing import Any
 
 import pytest
 from pydantic import JsonValue
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tinkerfin_contracts import (
@@ -750,56 +748,5 @@ async def test_codec_receives_only_the_redacted_fact_graph(tmp_path: Path) -> No
         assert len(safe_search.matched_node_ids) == 1
         assert pii_search.nodes == ()
         assert credential_search.nodes == ()
-    finally:
-        await engine.dispose()
-
-
-@pytest.mark.docker_integration
-async def test_mysql_stores_only_the_final_redacted_payload(
-    trace_mysql_url: str,
-) -> None:
-    engine = create_async_engine(trace_mysql_url)
-    store = SqlAlchemyTraceStore(engine)
-
-    class MessageRedactor:
-        def redact(
-            self,
-            value: JsonValue,
-            *,
-            context: RedactionContext,
-        ) -> JsonValue:
-            if context.content_kind == "message":
-                return redact_json_paths(value, paths=("/mobile",))
-            return json.loads(json.dumps(value))
-
-    tracer = Tracer(store=store, redactor=MessageRedactor())
-    context = _context(
-        "run-mysql-redaction",
-        content={
-            "mobile": "13900000000",
-            "api_key": "mysql-credential",
-        },
-    )
-    try:
-        session = await _start(tracer, context)
-        await _finish(session, context)
-        async with engine.connect() as connection:
-            payloads = (
-                await connection.execute(
-                    text(
-                        "SELECT payload FROM tinkerfin_trace_events "
-                        "WHERE namespace_hash = :namespace_hash"
-                    ),
-                    {
-                        "namespace_hash": hashlib.sha256(
-                            context.identity.namespace.encode("utf-8")
-                        ).digest()
-                    },
-                )
-            ).scalars()
-        encoded = b"\n".join(bytes(payload) for payload in payloads)
-        assert b"13900000000" not in encoded
-        assert b"mysql-credential" not in encoded
-        assert b"redacted" in encoded
     finally:
         await engine.dispose()

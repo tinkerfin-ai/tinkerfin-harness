@@ -204,10 +204,17 @@ class ConversationRunRegistration(Base):
         String(32),
         nullable=False,
         default="preparing",
-        comment="运行状态：preparing、starting、running、waiting、succeeded、failed、cancelled、abandoned",
+        comment="运行状态：preparing、starting、running、waiting、succeeded、failed、cancelled、abandoned；rejected 表示业务投递未受理，可已有准备阶段 Trace",
     )
     input_json: Mapped[dict[str, JsonValue]] = mapped_column(
         JSON, nullable=False, comment="运行请求内容"
+    )
+    resume_not_saved: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="0",
+        comment="本次恢复提交已确认未保存；false 不代表已保存",
     )
     service_bindings: Mapped[dict[str, JsonValue]] = mapped_column(
         JSON,

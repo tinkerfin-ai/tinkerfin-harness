@@ -37,16 +37,28 @@ Declare input files when building a Runtime that needs project-local resources:
 from tinkerfin import SkillSource, TinkerFin
 from tinkerfin_sandbox import WorkspaceDirectoryContents
 
-project = manager.workspace("users/7", workspace_key="project-a").with_directories([
-    WorkspaceDirectoryContents(
-        "/skills",
-        (("reports/SKILL.md", b"---\nname: reports\ndescription: Prepare reports\n---\nRead the project data."),),
-    ),
-])
-runtime = TinkerFin().build(
-    model=model, backend=project, skills=[SkillSource("/skills/")],
+project = manager.workspace("users/7", workspace_key="project-a").with_directories(
+    [
+        WorkspaceDirectoryContents(
+            "/skills",
+            (
+                (
+                    "reports/SKILL.md",
+                    b"---\nname: reports\ndescription: Prepare reports\n---\nRead the project data.",
+                ),
+            ),
+        ),
+    ]
 )
-await runtime.ainvoke(thread_id="report", input={"messages": [{"role": "user", "content": "Prepare a report"}]})
+runtime = TinkerFin().build(
+    model=model,
+    backend=project,
+    skills=[SkillSource("/skills/")],
+)
+await runtime.ainvoke(
+    thread_id="report",
+    input={"messages": [{"role": "user", "content": "Prepare a report"}]},
+)
 ```
 
 The Runtime publishes the declaration before starting execution. Files remain

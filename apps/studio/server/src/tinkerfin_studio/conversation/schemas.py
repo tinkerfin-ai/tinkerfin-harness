@@ -13,6 +13,7 @@ from tinkerfin.agui import (
 from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.conversation.failures import ConversationRunFailure
 from tinkerfin_studio.conversation.models import TitleGenerationStatus, TitleSource
+from tinkerfin_studio.conversation.plan_results import ConversationPlanResult
 from tinkerfin_studio.conversation.todo_groups import TaskTraceSnapshot
 from tinkerfin_studio.conversation.trace_responses import (
     ConversationGraph,
@@ -107,8 +108,19 @@ class ConversationInteractionAvailability(BaseModel):
     interrupt_id: str = Field(alias="interruptId")
     state: Literal["available", "confirming", "resolved", "cancelled"]
     submission_run_id: str | None = Field(
-        alias="submissionRunId", description="当前认领或已完成确认的提交 Run ID"
+        alias="submissionRunId",
+        description="当前认领或已结算的提交 Run ID；可提交时为空",
     )
+
+
+class ConversationSubmissionResult(BaseModel):
+    """指定提交已确认未保存，不代表交互当前没有其他认领者"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    submission_run_id: str = Field(alias="submissionRunId")
+    interrupt_ids: tuple[str, ...] = Field(alias="interruptIds", min_length=1)
+    state: Literal["not_saved"] = "not_saved"
 
 
 class ConversationHistoryDetail(ConversationTitle):
@@ -139,6 +151,11 @@ class ConversationHistoryDetail(ConversationTitle):
     interaction_availability: tuple[ConversationInteractionAvailability, ...] = Field(
         alias="interactionAvailability"
     )
+    submission_result: ConversationSubmissionResult | None = Field(
+        alias="submissionResult",
+        description="指定提交的未保存证明；为空时没有未保存结论",
+    )
+    plan_results: tuple[ConversationPlanResult, ...] = Field(alias="planResults")
     status: TraceStatus
     completeness: TraceCompleteness
     task_trace: TaskTraceSnapshot | None = Field(alias="taskTrace")

@@ -164,7 +164,11 @@ Neither entry point creates an agent or takes ownership of the Tracer or its Sto
 The application authorizes the namespace and conversation before querying.
 
 Snapshots and updates include live AG-UI references for messages, tools, subagents,
-and pending interactions. A missing reference or omitted interaction content is
+and pending interactions. Settled Plan clarification and review interactions retain
+their original request descriptions for read-only history; other settled interactions
+have an empty `agui` list. A retained description does not authorize another submission;
+resume requests still require a pending interaction in the current checkpoint.
+A missing reference or omitted interaction content is
 represented by `agui=None`; it cannot be reconstructed into an approval request.
 `view.trace` exposes original facts and registered application projections.
 

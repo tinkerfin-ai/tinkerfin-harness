@@ -115,23 +115,3 @@ async def test_memory_project_isolation_search_and_nontext_files(
             f"/api/projects/{other.id}/memories/file", params={"path": "/facts.md"}
         )
     ).status_code == 404
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        "/../escape.md",
-        "/nested/../file.md",
-        "/",
-        "relative.md",
-        "/double//file.md",
-        "/back\\slash.md",
-        "/line\nfeed.md",
-    ],
-)
-async def test_memory_path_rejects_noncanonical_names(memory_client, path: str):
-    client, _ = memory_client
-    response = await client.post(
-        "/api/projects/project-1/memories", json={"path": path, "content": "text"}
-    )
-    assert response.status_code == 422

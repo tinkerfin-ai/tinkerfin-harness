@@ -1,20 +1,19 @@
-import type { AccessMode } from "../../types"
-import { isInterrupt, isMessageSource, parseConversationAgUiEvent } from './eventParser'
-import type { InterruptEvent, ConversationAgUiEvent, MessageSource } from './types'
-import type { ConversationTitleSnapshot } from "./titles"
-import type { PendingInteractionKind, JsonObject, JsonValue } from '../../types'
+import type { AccessMode, JsonObject, JsonValue, PendingInteractionKind } from "../../types"
 import { requestEventStream, requestJson } from '../shared/http'
-import { ConversationError, isConversationPreparationFailure } from './errors'
 import { parseJsonSseStream } from '../shared/sse'
+import { ConversationError, isConversationPreparationFailure } from './errors'
+import { isInterrupt, isMessageSource, parseConversationAgUiEvent } from './eventParser'
 import type {
   ConversationGraph,
-  ConversationGraphDelta,
 } from './historyGraph'
-import { parseConversationGraph, parseConversationGraphDelta } from './historyGraph'
+import { parseConversationGraph } from './historyGraph'
+import { parsePlanResults, type PlanResult } from './planResults'
 import {
   parseTaskTraceSnapshot,
   type TaskTraceSnapshot,
 } from './taskTrace'
+import type { ConversationTitleSnapshot } from "./titles"
+import type { ConversationAgUiEvent, InterruptEvent, MessageSource } from './types'
 
 export interface ConversationHistoryListItem extends ConversationTitleSnapshot {
   projectId: string
@@ -142,6 +141,13 @@ export interface InteractionAvailability {
   submissionRunId: string | null
 }
 
+/** 指定提交未保存的完整凭据，与当前交互由谁认领无关 */
+export interface InteractionSubmissionResult {
+  submissionRunId: string
+  interruptIds: string[]
+  state: 'not_saved'
+}
+
 export interface ConversationHistoryDetail extends ConversationTitleSnapshot {
   projectId: string
   archived: boolean
@@ -166,6 +172,8 @@ export interface ConversationHistoryDetail extends ConversationTitleSnapshot {
   state: TraceState
   interactions: TraceInteraction[]
   interactionAvailability: InteractionAvailability[]
+  submissionResult: InteractionSubmissionResult | null
+  planResults: PlanResult[]
   status: TraceStatus
   completeness: TraceCompleteness
   taskTrace: TaskTraceSnapshot | null
@@ -175,42 +183,7 @@ export interface ConversationHistoryDetail extends ConversationTitleSnapshot {
 
 export type ConversationHistoryCoreDetail = Omit<ConversationHistoryDetail, 'taskTrace'>
 
-export interface TraceEntityDelta<T> {
-  upserts: T[]
-  removes: string[]
-}
-
-export interface ConversationTraceUpdate {
-  runFailures: ConversationRunFailure[]
-  asOfSeq: number
-  generation: string
-  observedAt: string
-  hasEvents: boolean
-  messages: TraceEntityDelta<TraceMessage>
-  reasoning: TraceEntityDelta<TraceReasoning>
-  graph: ConversationGraphDelta
-  interactions: TraceEntityDelta<TraceInteraction>
-  state: TraceState
-  status: TraceStatus
-  completeness: TraceCompleteness
-  messageCount: number
-  toolCallCount: number
-}
-
-export type ConversationTraceEvent =
-  | { type: 'snapshot'; snapshot: ConversationHistoryDetail }
-  | {
-      type: 'update'
-      update: ConversationTraceUpdate
-      taskTrace: TaskTraceSnapshot | null
-    }
-  | { type: 'error'; code: 'trace_unavailable' }
-
 const CONVERSATION_API_PATH = '/api/conversation'
-const TRACE_UPDATE_KEYS = new Set([
-  'generation', 'observedAt', 'asOfSeq', 'hasEvents', 'messages', 'reasoning', 'graph',
-  'interactions', 'state', 'status', 'completeness', 'messageCount', 'toolCallCount',
-])
 
 export const traceObservationTime = (value: string): bigint => {
   const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(?:Z|\+00:00)$/.exec(value)
@@ -270,6 +243,7 @@ export const fetchConversationHistoryDetail = (
   options: {
     includeTaskTrace: boolean
     historyCursor?: string | null
+    submissionRunId?: string
     limit?: number
     signal?: AbortSignal
     suppressGlobalError?: boolean
@@ -278,6 +252,7 @@ export const fetchConversationHistoryDetail = (
   const search = new URLSearchParams()
   search.set('includeTaskTrace', String(options.includeTaskTrace))
   if (options.historyCursor) search.set('historyCursor', options.historyCursor)
+  if (options.submissionRunId) search.set('submissionRunId', options.submissionRunId)
   if (options.limit) search.set('limit', String(options.limit))
   const query = search.toString() ? '?' + search.toString() : ''
   return requestJson<unknown>(
@@ -344,11 +319,25 @@ const parseHistoryDetail = (
   validateMessageReferences(value.messages)
   validateInteractionReferences(value.interactions)
   const interactionAvailability = parseInteractionAvailability(value.interactionAvailability)
+  const submissionResult = parseSubmissionResult(value.submissionResult)
+  const planResults = parsePlanResults(value.planResults)
   const graph = parseConversationGraph(value.graph)
   if (graph.asOfSeq !== value.asOfSeq) {
     throw new ConversationError('stream_event_invalid')
   }
-  return { ...value, graph, interactionAvailability, runFailures: parseRunFailures(value.runFailures) } as unknown as ConversationHistoryDetail
+  return { ...value, graph, interactionAvailability, submissionResult, planResults, runFailures: parseRunFailures(value.runFailures) } as unknown as ConversationHistoryDetail
+}
+
+export const parseSubmissionResult = (value: unknown): InteractionSubmissionResult | null => {
+  if (value === null) return null
+  const isId = (id: unknown): id is string => typeof id === 'string' && id.length > 0 && id === id.trim()
+  if (!isRecord(value) || value.state !== 'not_saved' || !isId(value.submissionRunId)
+    || !Array.isArray(value.interruptIds) || !value.interruptIds.length || !value.interruptIds.every(isId)
+    || new Set(value.interruptIds).size !== value.interruptIds.length
+    || Object.keys(value).some(key => !['submissionRunId', 'interruptIds', 'state'].includes(key))) {
+    throw new ConversationError('stream_event_invalid')
+  }
+  return { submissionRunId: value.submissionRunId, interruptIds: [...value.interruptIds], state: 'not_saved' }
 }
 
 export const parseInteractionAvailability = (value: unknown): InteractionAvailability[] => {
@@ -361,75 +350,12 @@ export const parseInteractionAvailability = (value: unknown): InteractionAvailab
         && item.state !== 'resolved' && item.state !== 'cancelled')
       || !(item.submissionRunId === null || (typeof item.submissionRunId === 'string'
         && item.submissionRunId.length > 0 && item.submissionRunId.trim() === item.submissionRunId))
-      || (item.state !== 'available' && item.submissionRunId === null)) {
+      || (item.state === 'available' ? item.submissionRunId !== null : item.submissionRunId === null)) {
       throw new ConversationError('stream_event_invalid')
     }
     ids.add(item.interruptId)
     return item as unknown as InteractionAvailability
   })
-}
-
-const parseTraceEvent = (
-  value: unknown,
-  includeTaskTrace: boolean,
-): ConversationTraceEvent => {
-  if (!isRecord(value)) throw new ConversationError('stream_event_invalid')
-  const record = value as Record<string, unknown>
-  if (record.type === 'snapshot') {
-    return {
-      type: 'snapshot',
-      snapshot: parseHistoryDetail(record.snapshot, includeTaskTrace),
-    }
-  }
-  if (record.type === 'update') {
-    if (!isRecord(record.update) || !Object.hasOwn(record, 'taskTrace')) {
-      throw new ConversationError('stream_event_invalid')
-    }
-    if (typeof record.update.hasEvents !== 'boolean'
-      || Object.keys(record.update).some(key => !TRACE_UPDATE_KEYS.has(key))) {
-      throw new ConversationError('stream_event_invalid')
-    }
-    validateTraceObservation(record.update)
-    if (record.taskTrace !== null) {
-      if (!includeTaskTrace) throw new ConversationError('stream_event_invalid')
-      parseTaskTraceSnapshot(record.taskTrace)
-    }
-    if (!isRecord(record.update.messages) || !isRecord(record.update.interactions)) {
-      throw new ConversationError('stream_event_invalid')
-    }
-    validateMessageReferences(record.update.messages.upserts)
-    validateInteractionReferences(record.update.interactions.upserts)
-    const graph = parseConversationGraphDelta(record.update.graph)
-    if (graph.asOfSeq !== record.update.asOfSeq) {
-      throw new ConversationError('stream_event_invalid')
-    }
-    return {
-      ...record,
-      update: { ...record.update, graph, runFailures: parseRunFailures(record.runFailures) },
-    } as unknown as ConversationTraceEvent
-  }
-  if (record.type === 'error' && record.code === 'trace_unavailable') {
-    return { type: 'error', code: 'trace_unavailable' }
-  }
-  throw new ConversationError('stream_event_invalid')
-}
-
-export async function* followConversationTrace(
-  threadId: string,
-  options: { includeTaskTrace: boolean; signal?: AbortSignal },
-): AsyncGenerator<ConversationTraceEvent> {
-  const search = new URLSearchParams({
-    includeTaskTrace: String(options.includeTaskTrace),
-  })
-  const response = await requestEventStream(
-    CONVERSATION_API_PATH + '/' + encodeURIComponent(threadId) + '/trace?' + search,
-    { signal: options.signal, suppressGlobalError: true },
-  )
-  if (!response.body) throw new ConversationError('stream_body_missing')
-  for await (const frame of parseJsonSseStream(response.body, options.signal)) {
-    if (frame.event !== 'trace') throw new ConversationError('stream_event_invalid')
-    yield parseTraceEvent(frame.data, options.includeTaskTrace)
-  }
 }
 
 /** 重命名或置顶会话，仅传需要修改的字段并返回更新后的会话摘要 */

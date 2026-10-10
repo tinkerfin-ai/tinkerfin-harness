@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 
 import pytest
-from ag_ui.core import RunFinishedEvent
+from ag_ui.core import RunErrorEvent, RunFinishedEvent
 from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain.agents.middleware.types import InputAgentState
 from langchain.tools import tool
@@ -30,6 +30,7 @@ from pydantic import BaseModel
 
 from tinkerfin import (
     AgentRuntime,
+    AgUiResumeRequest,
     RunObservationError,
     TinkerFin,
 )
@@ -1685,11 +1686,24 @@ async def test_propagated_subagent_interrupt_uses_the_deepest_trace_scope(
     assert thread.status.execution == "waiting"
 
 
-async def test_locked_subagent_hitl_remains_an_interrupt_with_tracing() -> None:
+@pytest.mark.parametrize("cancel_first", [False, True])
+async def test_locked_subagent_hitl_preserves_results_through_abandonment(
+    cancel_first: bool,
+) -> None:
+    class ApprovalReasoningExtractor:
+        @property
+        def name(self) -> str:
+            return "fixture.approval_reasoning"
+
+        def extract(self, message: BaseMessage, *, provider: str | None) -> str | None:
+            value = message.additional_kwargs.get("reasoning_content")
+            return value if isinstance(value, str) else None
+
     model = _SubagentToolBindingModel(
         responses=[
             AIMessage(
                 content="",
+                additional_kwargs={"reasoning_content": "Root proposal reasoning"},
                 tool_calls=[
                     {
                         "name": "task",
@@ -1704,6 +1718,7 @@ async def test_locked_subagent_hitl_remains_an_interrupt_with_tracing() -> None:
             ),
             AIMessage(
                 content="",
+                additional_kwargs={"reasoning_content": "Child proposal reasoning"},
                 tool_calls=[
                     {
                         "name": "reviewed_child_tool",
@@ -1713,13 +1728,27 @@ async def test_locked_subagent_hitl_remains_an_interrupt_with_tracing() -> None:
                     }
                 ],
             ),
-            AIMessage(content="child done"),
-            AIMessage(content="root done"),
+            AIMessage(
+                content="child done",
+                additional_kwargs={"reasoning_content": "Child completion reasoning"},
+            ),
+            AIMessage(
+                content="root done",
+                additional_kwargs={"reasoning_content": "Root completion reasoning"},
+            ),
         ]
     )
-    tracer = Tracer(store=InMemoryTraceStore())
+    tracer = Tracer(
+        store=InMemoryTraceStore(),
+        reasoning_capture_policy=ReasoningCapturePolicy.content(),
+    )
     tinkerfin = (
-        TinkerFin(checkpointer=InMemorySaver())
+        TinkerFin(
+            checkpointer=InMemorySaver(),
+            runtime_profile=DeepAgentsV2RuntimeProfile(
+                reasoning_extractors=(ApprovalReasoningExtractor(),)
+            ),
+        )
         .with_namespace("test")
         .with_observer(tracer)
     )
@@ -1756,6 +1785,92 @@ async def test_locked_subagent_hitl_remains_an_interrupt_with_tracing() -> None:
         node.status in {TraceGraphNodeStatus.RUNNING, TraceGraphNodeStatus.FAILED}
         for node in graph.nodes
     )
+    if cancel_first:
+        request = AgUiResumeRequest.model_validate(
+            {
+                "entries": [
+                    {"interruptId": item.id, "status": "cancelled"}
+                    for item in terminal.outcome.interrupts
+                ]
+            }
+        )
+        for run_id in ("cancel", "cancel", "cancel-next"):
+            abandoned = definition.open_agui_run(
+                thread_id=identity.thread_id, run_id=run_id, resume=request
+            )
+            events = [event async for event in abandoned]
+            assert abandoned.error is None
+            assert (
+                isinstance(events[-1], RunErrorEvent)
+                and events[-1].code == "resume_cancelled"
+            )
+            history = await tracer.get(identity.thread)
+            assert (
+                len(
+                    [
+                        node
+                        for node in history.graph.nodes
+                        if node.kind is TraceGraphNodeKind.MODEL
+                    ]
+                )
+                == 2
+            )
+            assert len(history.reasoning) == 2
+    answer = AgUiResumeRequest.model_validate(
+        {
+            "entries": [
+                {
+                    "interruptId": item.id,
+                    "status": "resolved",
+                    "payload": {"type": "approve"},
+                }
+                for item in terminal.outcome.interrupts
+            ]
+        }
+    )
+    resumed = definition.open_agui_run(
+        thread_id=identity.thread_id, run_id="answer", resume=answer
+    )
+    events = [event async for event in resumed]
+    assert resumed.error is None
+    assert isinstance(events[-1], RunFinishedEvent)
+    result = await tracer.get(identity.thread)
+    assert result.available_heads == ("answer",)
+    assert {
+        message.tool_call_id: message.content
+        for message in result.messages
+        if message.role == "tool"
+    } == {
+        "child-reviewed-call": "child",
+        "parent-task-call": "child done",
+    }
+    assert (
+        sum(
+            message.content == "child done" and message.role == "assistant"
+            for message in result.messages
+        )
+        == 1
+    )
+    assert (
+        sum(
+            message.content == "root done" and message.role == "assistant"
+            for message in result.messages
+        )
+        == 1
+    )
+    assert sorted(
+        item.content for item in result.reasoning if isinstance(item.content, str)
+    ) == [
+        "Child completion reasoning",
+        "Child proposal reasoning",
+        "Root completion reasoning",
+        "Root proposal reasoning",
+    ]
+    subagents = [
+        node for node in result.graph.nodes if node.kind is TraceGraphNodeKind.SUBAGENT
+    ]
+    assert len(subagents) == 1 and subagents[0].status is TraceGraphNodeStatus.SUCCEEDED
+    assert not result.graph.completeness.relationship_evidence_missing
 
 
 async def test_canonical_graph_links_messages_models_and_one_aggregated_tool() -> None:

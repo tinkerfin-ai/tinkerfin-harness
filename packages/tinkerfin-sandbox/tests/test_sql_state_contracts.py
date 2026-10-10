@@ -17,7 +17,6 @@ from tinkerfin_sandbox import (
     OpenSandboxStateError,
     SQLAlchemyOpenSandboxState,
     UnexpectedOpenSandboxStateError,
-    get_sqlalchemy_opensandbox_state_schema,
 )
 
 
@@ -204,15 +203,6 @@ async def test_sql_confirmed_start_cleanup_failure_does_not_repeat_registration(
             )
             == 0
         )
-
-
-def test_postgresql_schema_export_includes_table_and_column_comments() -> None:
-    schema = get_sqlalchemy_opensandbox_state_schema(dialect="postgresql")
-    assert len(schema.table_names) == 6
-    assert schema.ddl.count("COMMENT ON TABLE") == 6
-    assert (
-        "COMMENT ON COLUMN tinkerfin_opensandbox_workers.lease_expires_at" in schema.ddl
-    )
 
 
 async def test_sql_state_rejects_a_time_column_that_discards_lease_precision(

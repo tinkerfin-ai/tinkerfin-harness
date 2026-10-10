@@ -871,7 +871,9 @@ class TinkerFin:
 
         Args:
             checkpointer: Borrowed default checkpoint saver. The application opens
-                and closes it.
+                and closes it. Managed AG-UI runs require asynchronous checkpoint
+                reads, history listing, and writes, including ``alist`` for Run
+                identity validation before Graph preparation.
             run_coordinator: Optional exclusive scope provider for run identities.
             store: Borrowed long-term memory store, isolated by Runtime namespace.
             runtime_profile: Optional Native stream and checkpoint integration.
@@ -1971,6 +1973,52 @@ class AgentRuntime(Generic[ContextT]):
             resolved_mode = validate_agent_mode(requested_mode, name="mode")
             try:
                 owner.require_admission()
+                from ._agui_cancellation import find_cancellation
+
+                cancellation = await find_cancellation(
+                    definition._resume_checkpointer(),
+                    identity=identity,
+                    runtime_profile=self._runtime_profile.profile_id,
+                )
+                if cancellation is not None:
+                    cancellation.validate_request(resume, parent_run_id)
+                    binding = cancellation.binding()
+                    replay_context = source_context(
+                        identity=identity,
+                        runtime_profile=self._runtime_profile.profile_id,
+                        input_kind="abandon",
+                        parent_run_id=cancellation.parent_run_id,
+                        mode=resolved_mode,
+                        graph_input=binding.model_dump(mode="json", by_alias=True),
+                        config={} if config is None else config,
+                        private_state_keys=frozenset(),
+                        resume=binding._observation_summaries(),
+                    )
+
+                    async def abandoned_parts() -> AsyncIterator[Mapping[str, object]]:
+                        if (
+                            False
+                        ):  # pragma: no cover - async iterator without Graph work
+                            yield {}
+
+                    stream = self._run_agui(
+                        abandoned_parts,
+                        identity=identity,
+                        parent_run_id=parent_run_id,
+                        on_part=on_native_part,
+                        timeout=stream_timeout,
+                        settlement_timeout=cleanup_timeout,
+                        expose_reasoning_events=include_reasoning_events,
+                        expose_subagent_events=include_subagent_events,
+                        prior_tool_call_ids=frozenset(),
+                        private_state_keys=frozenset(),
+                        on_event=on_agui_event,
+                        observation=self._observation_hub(replay_context),
+                    )
+                    stream._resume_abandoned = True
+                    stream._adopt_resources(resources)
+                    await stream._ready()
+                    return stream
                 if messages is not None:
                     from .agui_input import _user_messages_to_input
 
@@ -2169,7 +2217,17 @@ class AgentRuntime(Generic[ContextT]):
             private_state_keys=frozenset(),
             resume=() if resume is None else resume._observation_summaries(),
         )
-        observation = self._observation_hub(context, initialization_error=error)
+        from ._agui_cancellation import CancellationConflict
+
+        # A rejected reuse has no new logical Run to observe. Opening its existing
+        # writer again would replace the actual identity error with an observer error.
+        observation = RuntimeObservationHub(
+            context=context,
+            observers=()
+            if isinstance(error, CancellationConflict)
+            else self._observers,
+            initialization_error=error,
+        )
 
         async def failed_parts() -> AsyncIterator[Mapping[str, object]]:
             if False:  # pragma: no cover - supplies the async iterator shape

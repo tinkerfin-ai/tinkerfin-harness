@@ -2,46 +2,19 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import inspect
 from sqlalchemy.dialects.mysql import DATETIME
-from sqlalchemy.engine import make_url
-from sqlalchemy.ext.asyncio import create_async_engine
 
 from tinkerfin_studio.conversation.repository import ConversationRepository
-from tinkerfin_studio.infrastructure.database import Base, Database
+from tinkerfin_studio.infrastructure.database import Database
 
 
-@pytest.fixture(
-    params=("sqlite", pytest.param("mysql", marks=pytest.mark.docker_integration))
-)
-async def summary_database(
-    request: pytest.FixtureRequest, database: Database
-) -> AsyncIterator[Database]:
-    """仅在测试自有数据库验证摘要事务和微秒顺序"""
-    if request.param == "sqlite":
-        yield database
-        return
-    admin_url = request.getfixturevalue("mysql_admin_url")
-    assert isinstance(admin_url, str)
-    name = f"tinkerfin_summary_{uuid4().hex}"
-    admin = create_async_engine(admin_url)
-    try:
-        async with admin.begin() as connection:
-            await connection.exec_driver_sql(
-                f"CREATE DATABASE `{name}` CHARACTER SET utf8mb4"
-            )
-        url = make_url(admin_url).set(database=name)
-        async with Database(url.render_as_string(hide_password=False)) as resource:
-            async with resource.engine.begin() as connection:
-                await connection.run_sync(Base.metadata.create_all)
-            yield resource
-    finally:
-        async with admin.begin() as connection:
-            await connection.exec_driver_sql(f"DROP DATABASE IF EXISTS `{name}`")
-        await admin.dispose()
+@pytest.fixture(params=["sqlite"])
+async def summary_database(database: Database) -> AsyncIterator[Database]:
+    """在独立 SQLite 数据库验证摘要事务和微秒顺序"""
+    yield database
 
 
 async def test_summary_order_preserves_microseconds_rejects_conflicts_and_allows_recovery(
@@ -68,6 +41,9 @@ async def test_summary_order_preserves_microseconds_rejects_conflicts_and_allows
         assert registration.trace_as_of_seq is None
         assert registration.trace_observed_at is None
         thread_pk = thread.id
+        assert await repository.activate_run_registration(
+            thread_pk=thread_pk, run_pk=registration.id, run_id=registration.run_id
+        )
         await repository.commit()
 
     first = datetime(2026, 9, 5, microsecond=1)

@@ -1,23 +1,17 @@
-import { mergeConversationTitle } from "../../../lib/workspace"
-import { translateCurrent } from '../../../i18n'
-import { compactionsFromTrace } from '../compaction/state'
-import { messageAttachments, messageText, type Attachment } from '../attachments/content'
+import { ConversationError } from '../../../api/conversation/errors'
 import type {
   ConversationHistoryCoreDetail,
   ConversationHistoryDetail,
-  ConversationTraceUpdate,
-  InteractionAvailability,
   TraceInteraction,
 } from '../../../api/conversation/history'
-import { parseInteractionAvailability, parseRunFailures, traceObservationTime } from '../../../api/conversation/history'
+import { parseInteractionAvailability, parseRunFailures, parseSubmissionResult, traceObservationTime } from '../../../api/conversation/history'
 import {
-  parseConversationGraph,
-  type ConversationGraph,
-  type ConversationGraphDelta,
   type ConversationGraphNode,
 } from '../../../api/conversation/historyGraph'
+import { parsePlanResults } from '../../../api/conversation/planResults'
 import type { TaskTraceSnapshot } from '../../../api/conversation/taskTrace'
-import { ConversationError } from '../../../api/conversation/errors'
+import { translateCurrent } from '../../../i18n'
+import { mergeConversationTitle } from "../../../lib/workspace"
 import type {
   ApprovalState,
   Conversation,
@@ -30,6 +24,9 @@ import type {
   WebTaskTraceViewState,
 } from '../../../types'
 import { approvalItemsFromInterrupts, planInteractionFromInterrupts } from '../agui'
+import { messageAttachments, messageText, type Attachment } from '../attachments/content'
+import { compactionsFromTrace } from '../compaction/state'
+import { interactionInterruptIds, resolveInteractionSubmission, upsertConfirmedPlanHistory } from '../interactionConfirmation'
 
 type TraceSnapshot = DeepReadonly<ConversationHistoryCoreDetail>
 type TraceNode = DeepReadonly<ConversationGraphNode>
@@ -90,75 +87,7 @@ const modeFromState = (root: DeepReadonly<JsonObject>): Conversation['mode'] => 
   return isObject(plan) && plan.effectiveMode === 'plan' ? 'plan' : 'default'
 }
 
-const applyEntityDelta = <T extends { id: string }>(
-  current: readonly T[],
-  upserts: readonly T[],
-  removes: readonly string[],
-): readonly T[] => {
-  if (!upserts.length && !removes.length) return current
-  const values = new Map(current.map((item) => [item.id, item]))
-  for (const id of removes) values.delete(id)
-  for (const item of upserts) values.set(item.id, structuredClone(item))
-  return [...values.values()]
-}
 
-const applyTraceGraphDelta = (
-  current: DeepReadonly<ConversationGraph>,
-  delta: ConversationGraphDelta,
-): DeepReadonly<ConversationGraph> => {
-  if (delta.asOfSeq < current.asOfSeq) throw new ConversationError('stream_event_invalid')
-  if (delta.asOfSeq === current.asOfSeq && (
-    delta.turnUpserts.length || delta.turnRemoves.length
-    || delta.nodeUpserts.length || delta.nodeRemoves.length
-    || JSON.stringify(delta.orderedNodeIds) !== JSON.stringify(current.orderedNodeIds)
-    || JSON.stringify(delta.matchedNodeIds) !== JSON.stringify(current.matchedNodeIds)
-    || JSON.stringify(delta.completeness) !== JSON.stringify(current.completeness)
-  )) throw new ConversationError('stream_event_invalid')
-  const currentTurns = new Map(current.turns.map((turn) => [turn.id, turn]))
-  delta.turnUpserts.forEach((turn) => {
-    const previous = currentTurns.get(turn.id)
-    if (previous && (
-      previous.ordinal !== turn.ordinal
-      || previous.startedAt !== turn.startedAt
-    )) throw new ConversationError('stream_event_invalid')
-  })
-  const currentNodes = new Map(current.nodes.map((node) => [node.id, node]))
-  delta.nodeUpserts.forEach((node) => {
-    const previous = currentNodes.get(node.id)
-    if (previous && (
-      node.updatedSeq < previous.updatedSeq
-      || node.turnId !== previous.turnId
-      || node.kind !== previous.kind
-      || node.name !== previous.name
-      || JSON.stringify(node.graphNamespace) !== JSON.stringify(previous.graphNamespace)
-    )) throw new ConversationError('stream_event_invalid')
-  })
-  const nodeValues = applyEntityDelta(
-    current.nodes,
-    delta.nodeUpserts,
-    delta.nodeRemoves,
-  )
-  const nodesById = new Map(nodeValues.map((node) => [node.id, node]))
-  if (
-    delta.orderedNodeIds.length !== nodeValues.length
-    || new Set(delta.orderedNodeIds).size !== nodeValues.length
-    || delta.orderedNodeIds.some((id) => !nodesById.has(id))
-    || delta.matchedNodeIds.some((id) => !nodesById.has(id))
-  ) throw new ConversationError('stream_event_invalid')
-  const turns = [...applyEntityDelta(
-    current.turns,
-    delta.turnUpserts,
-    delta.turnRemoves,
-  )].sort((left, right) => left.ordinal - right.ordinal || left.id.localeCompare(right.id))
-  return parseConversationGraph({
-    turns,
-    nodes: delta.orderedNodeIds.map((id) => nodesById.get(id)),
-    orderedNodeIds: [...delta.orderedNodeIds],
-    matchedNodeIds: [...delta.matchedNodeIds],
-    asOfSeq: delta.asOfSeq,
-    completeness: { ...delta.completeness },
-  })
-}
 
 const scopedSourceKey = (graphNamespace: readonly string[], sourceId: string): string => (
   JSON.stringify([graphNamespace, sourceId])
@@ -206,45 +135,21 @@ const actionableInteraction = (
   previous?: Conversation,
 ): ReturnType<typeof interactionState> => {
   const projected = interactionState(trace.interactions)
-  const permissions = new Map(parseInteractionAvailability(trace.interactionAvailability)
-    .map(item => [item.interruptId, item]))
-  const groupIds = (value: ReturnType<typeof interactionState>): string[] => value.approval
-    ? value.approval.items.map(item => item.interruptId)
-    : value.planInteraction ? [value.planInteraction.interruptId] : []
-  const previousIds = previous ? groupIds(previous) : []
-  const incomingIds = groupIds(projected)
+  const permissions = parseInteractionAvailability(trace.interactionAvailability)
+  const previousIds = previous ? interactionInterruptIds(previous) : []
+  const incomingIds = interactionInterruptIds(projected)
   const previousForm = previous?.approval ?? previous?.planInteraction
-  const matchesSubmission = (values: Array<InteractionAvailability | undefined>) => (
-    values.length > 0 && values.every(item => item
-      && (!previousForm?.submitted || previousForm.submissionRunId == null
-        || item.submissionRunId === previousForm.submissionRunId))
-  )
-  const previousPermissions = previousIds.map(id => permissions.get(id))
-  const settled = matchesSubmission(previousPermissions)
-    && previousPermissions.every(item => item?.state === 'resolved' || item?.state === 'cancelled')
+  const previousResolution = previous
+    ? resolveInteractionSubmission(previous, permissions, trace.submissionResult) : undefined
+  const settled = previousResolution?.state === 'settled'
   const sameGroup = previousIds.length > 0 && previousIds.length === incomingIds.length
     && previousIds.every(id => incomingIds.includes(id))
   const incomplete = trace.interactions.some(item => item.status === 'pending' && item.agui === null)
-  const retained = previous && !settled && (sameGroup || previousForm?.submitted || incomplete)
+  const retained = previous && !settled && (sameGroup || (previousForm?.submitted && !previousResolution?.notSaved) || incomplete)
     ? { approval: previous.approval, planInteraction: previous.planInteraction,
         pendingInteractionKind: previous.pendingInteractionKind ?? projected.pendingInteractionKind }
     : projected
-  const ids = groupIds(retained)
-  if (!ids.length) return retained
-  const values = ids.map(id => permissions.get(id))
-  const matches = retained === projected && !sameGroup ? values.every(Boolean) : matchesSubmission(values)
-  if (matches && values.every(item => item?.state === 'resolved' || item?.state === 'cancelled')) return {}
-  const submitted = !(matches && values.every(item => item?.state === 'available'))
-  const owners = new Set(values.map(item => item?.submissionRunId).filter((id): id is string => !!id))
-  const submissionRunId = submitted
-    ? (!settled ? previousForm?.submissionRunId : undefined)
-      ?? (owners.size === 1 ? [...owners][0] : undefined)
-    : undefined
-  return {
-    ...retained,
-    approval: retained.approval ? { ...retained.approval, submitted, submissionRunId } : undefined,
-    planInteraction: retained.planInteraction ? { ...retained.planInteraction, submitted, submissionRunId } : undefined,
-  }
+  return resolveInteractionSubmission(retained, permissions, trace.submissionResult).view
 }
 
 const submissionNotice = (
@@ -265,19 +170,21 @@ const retainConfirmedPlanHistory = (
   previous?: Conversation,
 ): Message[] => {
   if (!previous) return messages
+  const results = new Map(parsePlanResults(trace.planResults).map(result => [result.interruptId, result]))
   const visibleRuns = new Set(trace.messages.map(item => item.runId))
   const retained = previous.messages.filter(item => item.meta?.planHistory
     && item.meta.runId && visibleRuns.has(item.meta.runId))
   const plan = previous.planInteraction
-  const confirmation = plan?.submitted && plan.submissionRunId
+  const settlement = resolveInteractionSubmission(previous, trace.interactionAvailability, trace.submissionResult)
+  const confirmation = plan?.submitted && settlement.state === 'settled'
     ? trace.interactionAvailability.find(item => item.interruptId === plan.interruptId
-      && item.submissionRunId === plan.submissionRunId
+      && item.submissionRunId === settlement.submissionRunId
       && (item.state === 'resolved' || item.state === 'cancelled'))
     : undefined
   const origin = plan && previous.trace?.interactions.find(item => item.agui?.some(action => action.id === plan.interruptId))
   if (plan && confirmation && origin) retained.push({
     id: `plan-history:${plan.interruptId}`, role: 'process', content: '', createdAt: origin.openedAt,
-    meta: { planHistory: structuredClone(plan), status: confirmation.state === 'cancelled' ? 'cancelled' : 'completed', runId: origin.runId },
+    meta: { planHistory: structuredClone(plan), planResult: results.get(plan.interruptId), status: confirmation.state === 'cancelled' ? 'cancelled' : 'completed', runId: origin.runId },
   })
   const existing = new Set(messages.map(item => item.id))
   const localHistory = new Map(retained.map(item => [item.id, item]))
@@ -285,7 +192,7 @@ const retainConfirmedPlanHistory = (
     const local = localHistory.get(item.id)
     return item.meta?.planHistory && local?.meta?.planHistory
       && item.meta.runId === local.meta.runId
-      ? { ...item, meta: { ...item.meta, planHistory: local.meta.planHistory } }
+      ? { ...item, meta: { ...item.meta, planHistory: local.meta.planHistory, planResult: item.meta.planResult ?? local.meta.planResult } }
       : item
   })
   const additions = retained.filter(item => {
@@ -293,11 +200,14 @@ const retainConfirmedPlanHistory = (
     existing.add(item.id)
     return true
   })
-  return additions.length ? [...restored, ...additions]
+  return additions.length ? additions.reduce((entries, item) => upsertConfirmedPlanHistory(
+    entries, item, item.meta?.planResult?.submissionRunId ?? item.meta?.planHistory?.submissionRunId,
+  ), restored)
     : restored.some((item, index) => item !== messages[index]) ? restored : messages
 }
 
 const traceMessages = (trace: TraceSnapshot): Message[] => {
+  const planResults = new Map(parsePlanResults(trace.planResults).map(result => [result.interruptId, result]))
   const reasoning = new Map(
     trace.reasoning
       .filter((item) => !item.contentOmitted && item.content != null)
@@ -440,13 +350,15 @@ const traceMessages = (trace: TraceSnapshot): Message[] => {
     })
   })
   for (const interaction of trace.interactions) {
-    if (interaction.status === 'pending' || !interaction.agui) continue
+    if (!interaction.agui) continue
     const plan = planInteractionFromInterrupts(interaction.agui)
     if (!plan) continue
+    const result = planResults.get(plan.interruptId)
+    if (interaction.status === 'pending' && !result) continue
     ordered.push({ sequence: interaction.traceSeq, value: {
       id: `plan-history:${plan.interruptId}`, role: 'process', content: '',
       createdAt: interaction.openedAt,
-      meta: { planHistory: plan, status: 'completed', runId: interaction.runId },
+      meta: { planHistory: plan, planResult: result, status: interaction.status === 'cancelled' || result?.outcome === 'cancelled' ? 'cancelled' : 'completed', runId: interaction.runId },
     } })
   }
   return ordered.sort((left, right) => (
@@ -541,9 +453,15 @@ export const restoreConversationFromTrace = (
     preserveHistory?: boolean
   },
 ): Conversation => {
+  if ((options.previous && options.previous.threadId !== detail.threadId)
+    || (options.preserveInputFrom && options.preserveInputFrom.threadId !== detail.threadId)) {
+    throw new ConversationError('stream_event_invalid')
+  }
+  const submissionResult = parseSubmissionResult(detail.submissionResult)
   const current = options.previous?.trace
+  const inputOwner = options.previous ?? options.preserveInputFrom
   const order = current ? compareTraceObservation(current, detail) : 1
-  const settled = new Map(current?.interactionAvailability
+  const settled = new Map(inputOwner?.trace?.interactionAvailability
     .filter(item => item.state === 'resolved' || item.state === 'cancelled')
     .map(item => [item.interruptId, item]))
   const availability = parseInteractionAvailability(detail.interactionAvailability).map(item => {
@@ -559,8 +477,8 @@ export const restoreConversationFromTrace = (
   const pending = detail.interactions.filter(item => item.status === 'pending')
   const pendingIds = new Set(pending.flatMap(item => item.agui?.map(action => action.id) ?? []))
   const retainedIds = new Set([
-    ...(options.previous?.approval?.submitted ? options.previous.approval.items.map(item => item.interruptId) : []),
-    ...(options.previous?.planInteraction?.submitted ? [options.previous.planInteraction.interruptId] : []),
+    ...(inputOwner?.approval?.submitted ? inputOwner.approval.items.map(item => item.interruptId) : []),
+    ...(inputOwner?.planInteraction?.submitted ? [inputOwner.planInteraction.interruptId] : []),
   ])
   const completeNewPrefix = current && detail.generation === current.generation && detail.asOfSeq > current.asOfSeq
     && pending.every(item => item.agui !== null)
@@ -588,7 +506,10 @@ export const restoreConversationFromTrace = (
       if (!previous.approval && !previous.planInteraction) {
         return title.titleSeq === previous.titleSeq ? previous : { ...previous, ...title }
       }
-      const trace = { ...current, interactionAvailability: availability }
+      // 认领与答案来自独立业务结算，即使 Trace 前缀较旧也必须一起收束
+      const results = new Map(current.planResults.map(item => [item.interruptId, item]))
+      for (const result of parsePlanResults(detail.planResults)) results.set(result.interruptId, result)
+      const trace = { ...current, interactionAvailability: availability, submissionResult, planResults: [...results.values()] }
       const interaction = actionableInteraction(trace, previous)
       return {
         ...previous, ...title, trace,
@@ -627,7 +548,7 @@ export const restoreConversationFromTrace = (
       completeness: current.completeness,
     }
   }
-  trace = { ...trace, interactionAvailability: availability }
+  trace = { ...trace, interactionAvailability: availability, submissionResult }
   if (options.includeTaskTrace && wireTaskTrace == null) {
     throw new ConversationError('stream_event_invalid')
   }
@@ -689,63 +610,4 @@ const projectTraceConversation = (
     isHydrated: true,
     historySynchronized: true,
   }
-}
-
-export const applyConversationTraceUpdate = (
-  conversation: Conversation,
-  update: ConversationTraceUpdate,
-  taskTraceReplacement: TaskTraceSnapshot | null,
-  includeTaskTrace: boolean,
-): Conversation => {
-  const previous = conversation.trace
-  if (!previous) throw new ConversationError('stream_event_invalid')
-  if (compareTraceObservation(previous, update) < 0) return conversation
-  if (update.asOfSeq === previous.asOfSeq) {
-    if (update.hasEvents) return conversation
-    if (!sameTraceValue(update.runFailures, previous.runFailures)
-      || update.messages.upserts.length || update.messages.removes.length
-      || update.reasoning.upserts.length || update.reasoning.removes.length
-      || update.interactions.upserts.length || update.interactions.removes.length
-      || update.status.headRunId !== previous.headRunId
-      || update.messageCount !== previous.messageCount
-      || update.toolCallCount !== previous.toolCallCount
-      || JSON.stringify(update.state) !== JSON.stringify(previous.state)) {
-      throw new ConversationError('stream_event_invalid')
-    }
-  }
-  if (update.graph.asOfSeq !== update.asOfSeq) {
-    throw new ConversationError('stream_event_invalid')
-  }
-  const next: TraceSnapshot = {
-    ...previous,
-    asOfSeq: update.asOfSeq,
-    generation: update.generation,
-    observedAt: update.observedAt,
-    headRunId: update.status.headRunId,
-    messages: applyEntityDelta(previous.messages, update.messages.upserts, update.messages.removes),
-    runFailures: parseRunFailures(update.runFailures),
-    reasoning: applyEntityDelta(previous.reasoning, update.reasoning.upserts, update.reasoning.removes),
-    graph: applyTraceGraphDelta(previous.graph, update.graph),
-    interactions: applyEntityDelta(
-      previous.interactions,
-      update.interactions.upserts,
-      update.interactions.removes,
-    ),
-    state: structuredClone(update.state),
-    status: { ...update.status },
-    completeness: { ...update.completeness },
-    messageCount: update.messageCount,
-    toolCallCount: update.toolCallCount,
-    historyCursor: update.asOfSeq === previous.asOfSeq ? previous.historyCursor : null,
-  }
-  const taskTrace = includeTaskTrace && taskTraceReplacement != null
-    ? taskTraceView(taskTraceReplacement)
-    : includeTaskTrace
-      ? conversation.taskTrace
-      : { phase: 'unloaded' as const }
-  return projectTraceConversation(next, taskTrace, {
-    model: conversation.model,
-    lastDeliveredSeq: conversation.lastSeq,
-    previous: conversation,
-  })
 }

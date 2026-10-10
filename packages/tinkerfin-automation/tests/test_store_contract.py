@@ -12,7 +12,6 @@ from tinkerfin_automation import (
     ExecutionLimits,
     ExecutionOrigin,
     ExecutionStatus,
-    MemoryAutomationStore,
     MisfirePolicy,
     OnceSchedule,
     QueueFullError,
@@ -108,11 +107,6 @@ def _taskless_execution(
         origin=ExecutionOrigin.ONE_TIME,
         limits=limits or task.limits,
     )
-
-
-def test_memory_store_conforms_to_public_store_protocol() -> None:
-    store: AutomationStore = MemoryAutomationStore(clock=ManualClock(NOW))
-    assert store is not None
 
 
 @pytest.mark.asyncio

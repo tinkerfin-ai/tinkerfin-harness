@@ -1,6 +1,5 @@
 import type {
   TraceGraph,
-  TraceGraphDelta,
   TraceGraphNode,
   TraceGraphTurn,
 } from '../api/conversation/traceGraph'
@@ -21,18 +20,6 @@ export const emptyTraceGraph = (asOfSeq: number): TraceGraph => ({
   orderedNodeIds: [],
   matchedNodeIds: [],
   asOfSeq,
-  completeness: completeness(),
-})
-
-export const emptyTraceGraphDelta = (asOfSeq: number): TraceGraphDelta => ({
-  asOfSeq,
-  nextCursor: null,
-  turnUpserts: [],
-  turnRemoves: [],
-  nodeUpserts: [],
-  nodeRemoves: [],
-  orderedNodeIds: [],
-  matchedNodeIds: [],
   completeness: completeness(),
 })
 

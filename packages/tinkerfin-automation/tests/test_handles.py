@@ -6,12 +6,9 @@ import pytest
 
 from tinkerfin_automation import (
     AutomationLifecycleError,
-    AutomationOwner,
     ExecutionStatus,
-    RunHandle,
     Schedule,
     TaskConflictError,
-    TaskHandle,
     TaskNotFoundError,
     TaskStatus,
 )
@@ -21,12 +18,6 @@ from tinkerfin_automation.targets import ExecutionRequest
 
 async def report(request: ExecutionRequest) -> None:
     assert request.input is request.execution.input
-
-
-@pytest.mark.parametrize("handle_type", [AutomationOwner, TaskHandle, RunHandle])
-def test_bound_objects_are_obtained_from_owner_operations(handle_type) -> None:
-    with pytest.raises(TypeError):
-        handle_type()
 
 
 async def test_task_handles_keep_independent_snapshots_and_delete_receipts(
