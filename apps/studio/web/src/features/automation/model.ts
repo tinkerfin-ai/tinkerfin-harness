@@ -33,6 +33,10 @@ export const runStatusLabels = {
 } as const
 export type RunStatus = keyof typeof runStatusLabels
 
+export function isRunInProgress(run: { status: RunStatus }): boolean {
+  return run.status === 'queued' || run.status === 'running' || run.status === 'cancel_requested'
+}
+
 /** 时间展示只从服务端事实推导，不模拟执行或生成结果 */
 export interface AutomationRunRecord {
   id: string

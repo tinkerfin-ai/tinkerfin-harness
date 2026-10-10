@@ -9,7 +9,7 @@ import { messageText, type Attachment } from '../conversation/attachments/conten
 import { useAttachmentDownload } from '../conversation/attachments/useAttachmentDownload'
 import { fetchRunDetail, type RunDetail } from './api'
 import { watchResource } from '../../api/shared/watchResource'
-import { presentRun, type AutomationRun } from './model'
+import { isRunInProgress, presentRun, type AutomationRun } from './model'
 import { RunStatus } from './AutomationHistory'
 
 function ResultFile({ file }: { file: Attachment }) {
@@ -53,6 +53,7 @@ export function AutomationRunDialog({ projectId, run, trigger, onToast, onClose 
         || (change.topic === 'trace.changed' && (!observed || change.key === observed.threadId))
       ),
       read: signal => fetchRunDetail(projectId, id, signal),
+      refreshWhile: isRunInProgress,
       update: result => { observed = result; setDetail(result); setFailure(false) },
       onError: () => {
         setFailure(true)

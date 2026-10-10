@@ -1,3 +1,4 @@
+import { runCalendarFixture } from '../../src/test/automationFixtures'
 import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
@@ -20,12 +21,14 @@ async function prepare(page: Page, theme: string) {
     localStorage.setItem('tinkerfin:theme', theme)
   }, { user, theme })
   await page.route('**/api/**', async route => {
-    const path = new URL(route.request().url()).pathname
+    const url = new URL(route.request().url())
+    const path = url.pathname
     let data: unknown = {}
     if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00Z', user }
     else if (path === '/api/skills/installations') data = []
     else if (path === '/api/models') data = { items: models, defaultModelId: 'model-0' }
     else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
+    else if (path === '/api/automation/runs/calendar') data = runCalendarFixture([], url.searchParams.get('weekStart')!)
     else if (path === '/api/conversation/history' || path === '/api/automation/tasks' || path === '/api/automation/runs') data = { items: [], nextCursor: null }
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })

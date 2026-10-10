@@ -25,6 +25,7 @@ from tinkerfin_studio.api.errors import (
     ServiceErrorCode,
 )
 from tinkerfin_studio.auth.models import User
+from tinkerfin_studio.changes import notify_change
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.service import AgentModelService
 from tinkerfin_studio.projects.repository import ProjectRepository
@@ -218,9 +219,18 @@ class StudioAutomationTarget:
             prepared = replace(
                 execution, input={"messages": [{"role": "user", "content": content}]}
             )
-            return await TinkerFinTarget(runtime).run(
-                ExecutionRequest(execution=prepared, deadline=request.deadline)
-            )
+            try:
+                return await TinkerFinTarget(runtime).run(
+                    ExecutionRequest(execution=prepared, deadline=request.deadline)
+                )
+            finally:
+                # 任务也能写入项目记忆，正常、失败或取消后都重新读取已保存内容
+                await notify_change(
+                    self._resources.notifications,
+                    user_id=user_id,
+                    topic="studio.memories.changed",
+                    key=config.project_id,
+                )
         except BusinessException as error:
             if error.error_code == ServiceErrorCode.CONFIGURATION_CHANGED:
                 return ExecutionFailed(

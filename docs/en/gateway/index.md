@@ -172,8 +172,9 @@ send. Expiry or revocation ends the stream.
 Use a Bearer-authenticated fetch stream when the host requires authorization
 headers. Keep one notification connection per visible tab, coalesce duplicate
 invalidations, and serialize reads of each resource. Reconnect and reload the
-baseline after interruption. Periodic repair reads remain necessary because
-notifications are advisory. Agent replies use the separate run output stream.
+baseline after interruption. Notifications are advisory: keep periodic confirmation
+for unfinished operations, while idle resources can refresh when visible again or
+on user request. Agent replies use the separate run output stream.
 
 For a resource with its own bound watch, use `resource_changes`:
 

@@ -5,9 +5,11 @@ import type { ResourceChange, ResourceNotice } from '../api/notifications'
 /** 通过公开订阅边界向业务读取者提供确定性的变化信号 */
 export function mockResourceNotices() {
   const listeners = new Set<(notice: ResourceNotice) => void>()
+  const subscribe = notifications.subscribeResourceChanges
   vi.spyOn(notifications, 'subscribeResourceChanges').mockImplementation(listener => {
     listeners.add(listener)
-    return () => { listeners.delete(listener) }
+    const release = subscribe(listener)
+    return () => { listeners.delete(listener); release() }
   })
   return {
     changed: (topic: string, key: string, details: ResourceChange['details'] = {}) => {

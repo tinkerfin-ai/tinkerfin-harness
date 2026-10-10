@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { runFixture, taskFixture } from '../../src/test/automationFixtures'
+import { runCalendarFixture, runFixture, taskFixture } from '../../src/test/automationFixtures'
 import type { AutomationTask } from '../../src/features/automation/model'
 import type { ServiceConfiguration, ServiceSettings } from '../../src/features/settings/serviceSettings'
 import { installProjectScope } from './fixtures/projects'
@@ -32,6 +32,7 @@ async function prepare(page: Page, theme: 'light' | 'dark', { locale = 'zh-CN', 
     else if (path === '/api/conversation/history') data = { items: [], nextCursor: null }
     else if (path === '/api/automation/tasks') data = { items: [task], nextCursor: null }
     else if (path === '/api/automation/runs') data = { items: Date.parse(run.queuedAt) >= Date.parse(url.searchParams.get('from') ?? '2000-01-01') && Date.parse(run.queuedAt) < Date.parse(url.searchParams.get('until') ?? '2100-01-01') ? [run] : [], nextCursor: null }
+    else if (path === '/api/automation/runs/calendar') data = runCalendarFixture([run], url.searchParams.get('weekStart')!)
     else if (path === '/api/automation/runs/report-run') data = { ...run, threadId: 'report-thread', runId: run.id, resultAvailable: true, messages: [{ id: 'result', role: 'assistant', content: reportText }], outputFiles: [{ id: 'report', name: 'report.md', mime_type: 'text/markdown', size_bytes: 6 }] }
     else if (path === '/api/attachments/report/download-url') {
       downloadAttempts += 1

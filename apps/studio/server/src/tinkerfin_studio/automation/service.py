@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from asyncio import TaskGroup
+from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING
 from uuid import NAMESPACE_URL, uuid5
 
@@ -37,8 +38,11 @@ from tinkerfin_tracing import TraceThreadNotFound
 
 from .ownership import automation_owner
 from .schemas import (
+    ZONE,
     BatchCommand,
     BatchResult,
+    RunCalendar,
+    RunCalendarDay,
     RunDetail,
     RunList,
     RunView,
@@ -314,6 +318,60 @@ class StudioAutomationService:
             items=[run_view(run.snapshot) for run in page.items],
             next_cursor=page.next_cursor,
         )
+
+    async def run_calendar(
+        self,
+        *,
+        week_start: date,
+        query: str | None = None,
+        status: ExecutionStatus | None = None,
+        limit: int = 50,
+    ) -> RunCalendar:
+        """一次读取七天的周历，每天独立分页，繁忙日期不会挤掉其他日期
+
+        Args:
+            week_start: 北京时间起始日期，范围包含连续七天
+            query: 执行名称筛选，与后续每日分页使用相同条件
+            status: 执行状态筛选
+            limit: 每天的单页数量，取值为一至一百
+
+        Returns:
+            按日期升序排列的七个执行页，游标用于对应日期的 list_runs
+
+        Raises:
+            ValueError: 日期范围或分页数量无效
+            AutomationError: 授权范围内的历史读取失败
+        """
+        if week_start > date.max - timedelta(days=7):
+            raise ValueError("周历日期范围无效")
+
+        async def read_day(day: date) -> RunCalendarDay:
+            page = await self.list_runs(
+                queued_from=datetime.combine(day, time(), ZONE),
+                queued_until=datetime.combine(day + timedelta(days=1), time(), ZONE),
+                query=query,
+                status=status,
+                limit=limit,
+            )
+            return RunCalendarDay(
+                date=day, items=page.items, next_cursor=page.next_cursor
+            )
+
+        # 七个有界查询均由本次请求等待，任一失败或取消会回收其余查询
+        try:
+            async with TaskGroup() as reads:
+                days = [
+                    reads.create_task(read_day(week_start + timedelta(days=index)))
+                    for index in range(7)
+                ]
+        except ExceptionGroup as errors:
+            if all(
+                isinstance(error, (AutomationError, ValueError))
+                for error in errors.exceptions
+            ):
+                raise errors.exceptions[0] from errors
+            raise
+        return RunCalendar(days=[day.result() for day in days])
 
     async def result(self, execution_id: str) -> RunDetail:
         """先核验执行归属，再读取框架的只读消息与当前执行附件"""

@@ -35,9 +35,6 @@ class RouteAuthService:
     async def logout(self, token: str) -> None:
         self.logged_out.append(token)
 
-    async def get_user(self, user_id: int) -> UserContext | None:
-        return self.user if user_id == self.user.user_id else None
-
 
 class RouteModelService:
     """路由测试使用的安全模型目录服务"""
@@ -58,8 +55,8 @@ class RouteModelService:
         )
 
 
-async def test_auth_user_and_model_routes_keep_the_public_contract() -> None:
-    """认证、用户和模型目录应使用统一包络且不暴露模型密钥"""
+async def test_auth_and_model_routes_keep_the_public_contract() -> None:
+    """认证与模型目录应使用统一包络且不暴露模型密钥"""
 
     user = UserContext(
         user_id=7,
@@ -89,10 +86,6 @@ async def test_auth_user_and_model_routes_keep_the_public_contract() -> None:
             json={"username": "alice", "password": "secret"},
         )
         me = await client.get("/api/auth/me")
-        lookup = await client.get("/api/user/7")
-        for field in ("username", "display_name"):
-            rejected = await client.patch("/api/user/me", json={field: "changed"})
-            assert rejected.status_code == 405
         models = await client.get("/api/models")
         logout = await client.post(
             "/api/auth/logout",
@@ -115,7 +108,6 @@ async def test_auth_user_and_model_routes_keep_the_public_contract() -> None:
         "expires_at": "2026-08-23T10:00:00Z",
         "user": login.json()["data"]["user"],
     }
-    assert lookup.json()["data"] == login.json()["data"]["user"]
     assert models.json()["data"] == {
         "items": [
             {

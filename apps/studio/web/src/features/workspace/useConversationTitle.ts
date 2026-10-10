@@ -14,6 +14,7 @@ export function useConversationTitle(
     const watch = watchResource({
       matches: change => change.topic === 'studio.conversation.title.changed' && change.key === threadId,
       read: signal => fetchConversationTitle(threadId, signal),
+      refreshWhile: title => title.titleGenerationStatus === 'running',
       update: (title, signal) => setWorkspace(state => {
         if (signal.aborted || state.currentThreadId !== threadId) return state
         const current = state.conversations.find(item => item.threadId === threadId)

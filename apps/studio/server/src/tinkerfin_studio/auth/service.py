@@ -124,14 +124,6 @@ class AuthService:
         except RedisError as error:
             raise SystemException(AuthErrorCode.SERVICE_UNAVAILABLE) from error
 
-    async def get_user(self, user_id: int) -> UserContext | None:
-        """按用户 ID 返回安全上下文"""
-
-        user = await self._users.get_by_id(user_id)
-        user_context = None if user is None else self._context(user)
-        await self._users.commit()
-        return user_context
-
     async def save_avatar(self, user_id: int, avatar_url: str) -> UserContext | None:
         """保存已成功上传到对象存储的头像地址"""
 

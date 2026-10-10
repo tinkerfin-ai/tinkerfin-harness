@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ag_ui.core import RunErrorEvent, RunStartedEvent
+from ag_ui.core import RunErrorEvent, RunFinishedEvent, RunStartedEvent
 
 from tinkerfin import AgUiResumeReceipt, RunIdentity
 from tinkerfin_gateway import CommittedRunEvent, RunAcceptance
@@ -119,13 +119,15 @@ class ConversationResumeSettlement:
 
 
 class ConversationRunObserver:
-    """启动标题总结并记录主运行失败，重播不重复执行业务副作用"""
+    """启动标题总结、记录失败并在运行结束后刷新记忆，重播不重复执行"""
 
     def __init__(
         self,
         resources: ApplicationResources,
         *,
         thread_pk: int,
+        user_id: int,
+        project_id: str,
         title_text: str,
         model: AgentModelConfig,
         search_service: ResolvedService | None,
@@ -133,6 +135,8 @@ class ConversationRunObserver:
     ) -> None:
         self._resources = resources
         self._thread_pk = thread_pk
+        self._user_id = user_id
+        self._project_id = project_id
         self._title_text = title_text
         self._model = model
         self._search_service = search_service
@@ -154,12 +158,22 @@ class ConversationRunObserver:
                         text=self._title_text,
                         model=self._model,
                     )
-        elif isinstance(event, RunErrorEvent) and event.code != "cancelled":
-            await log_conversation_error(
-                identity=committed.identity,
-                model=self._model,
-                search_service=self._search_service,
-                image_service=self._image_service,
-                code=event.code,
-                error=committed.diagnostic_error,
-            )
+        elif isinstance(event, (RunFinishedEvent, RunErrorEvent)):
+            try:
+                if isinstance(event, RunErrorEvent) and event.code != "cancelled":
+                    await log_conversation_error(
+                        identity=committed.identity,
+                        model=self._model,
+                        search_service=self._search_service,
+                        image_service=self._image_service,
+                        code=event.code,
+                        error=committed.diagnostic_error,
+                    )
+            finally:
+                # Agent 与页面共用记忆集合；主运行结束后提示页面重读其持久写入
+                await notify_change(
+                    self._resources.notifications,
+                    user_id=self._user_id,
+                    topic="studio.memories.changed",
+                    key=self._project_id,
+                )

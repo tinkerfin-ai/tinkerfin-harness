@@ -1,6 +1,7 @@
 import type { EditorState } from '@codemirror/state'
 import { FolderPlus, Plus } from 'lucide-react'
-import { useRef, useState, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { startNotificationFeed } from '../../api/notifications'
 import type { AuthUser } from '../../api/auth/types'
 import { BrandLogo } from '../../components/ui/BrandLogo'
 import { Button, Dialog, FeedbackState, TextField, ValidatedForm } from '../../components/ui'
@@ -39,6 +40,8 @@ export function ProjectsWorkspace({ user, onLogout, children }: {
   const [drafts] = useState(() => new Map<string, EditorState>())
   const [attachments] = useState(() => new Map<string, DraftAttachment[]>())
   const { project, projects, status, editor, name, error, validationAttempt, saving, select, openEditor, submit, setName, closeEditor, retry } = useProjectManagement(user)
+  const projectId = project?.id
+  useLayoutEffect(() => startNotificationFeed(projectId), [projectId])
   return <>
     {project ? children({ project, projects, select, create: () => openEditor(null), rename: () => openEditor(project),
       renameForm: editor?.project?.id === project.id ? { name, error, validationAttempt, saving, change: setName, submit, cancel: closeEditor } : null,

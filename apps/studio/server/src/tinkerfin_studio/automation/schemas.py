@@ -274,6 +274,18 @@ class RunList(Boundary):
     next_cursor: str | None
 
 
+class RunCalendarDay(RunList):
+    """周历中一个北京时间日期的执行页"""
+
+    date: Annotated[date, Field(description="执行入队时间对应的北京时间日期")]
+
+
+class RunCalendar(Boundary):
+    """连续七天的独立执行页，空白日期也保留分页状态"""
+
+    days: list[RunCalendarDay] = Field(min_length=7, max_length=7)
+
+
 class RunDetail(RunView):
     """经过归属校验的只读消息和运行附件"""
 

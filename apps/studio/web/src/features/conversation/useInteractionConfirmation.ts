@@ -35,6 +35,9 @@ export function useInteractionConfirmation(
           requestRejected ? submittedIds : undefined))
       },
       matches: change => change.topic === 'studio.conversation.interactions.changed' && change.key === threadId,
+      refreshWhile: detail => detail.submissionResult?.state !== 'not_saved'
+        && submittedIds.some(id => !detail.interactionAvailability.some(item => item.interruptId === id
+          && item.submissionRunId === submissionRunId && (item.state === 'resolved' || item.state === 'cancelled'))),
       onError: () => setStatus({ key, failed: true, checking: false }),
     })
     watcher.current = current

@@ -1,4 +1,4 @@
-import { presentRun, type AutomationRun, type AutomationRunRecord, type AutomationTask } from '../features/automation/model'
+import { presentRun, shiftDate, type AutomationRun, type AutomationRunRecord, type AutomationTask } from '../features/automation/model'
 export const taskFixture = (overrides: Partial<AutomationTask> = {}): AutomationTask => ({projectId: 'project-1',
   id: 'news', name: '每日 AI 新闻简报', prompt: '整理新闻', modelId: 'main', accessMode: 'full',
   schedule: { kind: 'daily', time: '09:00' }, startsOn: '', endsOn: '', enabled: true,
@@ -31,4 +31,12 @@ export function createAutomationFixture(): { tasks: AutomationTask[]; runs: Auto
     error: status === 'failed' ? '资讯来源暂时无法访问，本次未生成完整结果' : null,
   }))
   return { tasks, runs }
+}
+
+
+export function runCalendarFixture(runs: AutomationRun[], weekStart: string) {
+  return { days: Array.from({ length: 7 }, (_, index) => {
+    const date = shiftDate(weekStart, index)
+    return { date, items: runs.filter(run => run.date === date), nextCursor: null }
+  }) }
 }

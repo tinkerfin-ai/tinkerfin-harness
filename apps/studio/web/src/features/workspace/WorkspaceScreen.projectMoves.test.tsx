@@ -28,7 +28,7 @@ it.each([false, true])('会话移动在导航前后提交都保留未发送文�
     const request = input instanceof Request ? input : new Request(input, init)
     const url = new URL(request.url), path = url.pathname
     if (path === '/api/projects') return jsonResponse(projects)
-    if (path === '/api/notifications') return new Response(new ReadableStream(), { headers: { 'Content-Type': 'text/event-stream' } })
+    if (path === '/api/notifications') return new Response(new ReadableStream({ start(reader) { reader.enqueue(new TextEncoder().encode('event: ready\ndata: {}\n\n')) } }), { headers: { 'Content-Type': 'text/event-stream' } })
     if (path === '/api/models') return jsonResponse({ items: [{ modelId: 'main', displayName: 'Main', connectionId: 'provider', connectionDisplayName: '模型', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' })
     if (path === '/api/skills/installations') return jsonResponse([])
     if (path === '/api/conversation/config') return jsonResponse({ dayRanges: [7, 30] })

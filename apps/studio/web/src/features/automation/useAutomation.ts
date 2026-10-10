@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-import { fetchRunPage, fetchTaskPage, type Page } from './api'
+import { fetchRunCalendar, fetchRunPage, fetchTaskPage, type Page } from './api'
 import { watchResource } from '../../api/shared/watchResource'
-import { dateBoundary, shiftDate, type AutomationRun, type AutomationTask } from './model'
+import { dateBoundary, isRunInProgress, shiftDate, type AutomationRun, type AutomationTask } from './model'
 
 interface Snapshot {
   tasks: AutomationTask[]
@@ -13,7 +13,19 @@ interface Snapshot {
 }
 const initial: Snapshot = { tasks: [], runs: [], cursors: {}, loading: true, error: false }
 
-/** 按当前视图读取服务端分页；刷新已加载页，隐藏或离开页面时取消请求 */
+async function readPages<T>(read: (cursor?: string) => Promise<Page<T>>, count: number, first?: Page<T>): Promise<Page<T>> {
+  const result = first ?? await read()
+  const items = [...result.items]
+  let nextCursor = result.nextCursor
+  for (let index = 1; index < count && nextCursor; index += 1) {
+    const next = await read(nextCursor)
+    items.push(...next.items)
+    nextCursor = next.nextCursor
+  }
+  return { items, nextCursor }
+}
+
+/** 周历一次读取七天，追加分页只读取所选分组；筛选或离页会取消旧请求 */
 export function useAutomation({ projectId, page, query, status, dates, view, onLoadError }: {
   projectId: string
   page: 'tasks' | 'history'
@@ -23,62 +35,86 @@ export function useAutomation({ projectId, page, query, status, dates, view, onL
   view: 'week' | 'list'
   onLoadError?: () => void
 }) {
-  const key = JSON.stringify([projectId, page, query, status, dates, view])
-  const [pages, setPages] = useState<{ key: string; counts: Record<string, number> }>({ key: '', counts: {} })
-  const [revision, setRevision] = useState(0)
-  const [snapshot, setSnapshot] = useState<Snapshot>(initial)
+  const search = query.trim()
+  const dateKey = dates.join(',')
+  const key = JSON.stringify([projectId, page, search, status, dateKey, view])
+  const [snapshot, setSnapshot] = useState<{ key: string; value: Snapshot }>({ key, value: initial })
+  const actions = useRef<{ reload: () => void; loadMore: (group: string) => void } | null>(null)
   const latestLoadError = useRef(onLoadError)
   latestLoadError.current = onLoadError
-  const displayedKey = useRef('')
-  const pageCounts = JSON.stringify(pages.key === key ? pages.counts : {})
-  const dateKey = dates.join(',')
   useEffect(() => {
     const days = dateKey.split(',')
-    const counts = JSON.parse(pageCounts) as Record<string, number>
-    let first = true
-    const watch = watchResource({
-      matches: change => change.topic === 'automation.task.changed' || change.topic === 'automation.execution.changed',
-      read: async (signal) => {
-        if (first) {
-          if (displayedKey.current !== key) setSnapshot({ ...initial })
-          else setSnapshot(current => ({ ...current, loading: true, error: false }))
-          displayedKey.current = key
-        }
-        async function readPages<T>(read: (cursor: string | undefined) => Promise<Page<T>>, count: number) {
-          const items: T[] = []
-          let cursor: string | undefined
-          let nextCursor: string | null = null
-          for (let index = 0; index < count; index += 1) {
-            const result = await read(cursor)
-            items.push(...result.items)
-            nextCursor = result.nextCursor
-            if (!nextCursor) break
-            cursor = nextCursor
+    const counts: Record<string, number> = {}
+    const base = { projectId, query: search || undefined, status: status === 'all' ? undefined : status }
+    let value = initial
+    let baseline: AbortSignal | null = null
+    let pagination: AbortController | null = null
+    let watch: ReturnType<typeof watchResource<Snapshot>> | undefined
+    const publish = (next: Snapshot) => { value = next; setSnapshot({ key, value }) }
+    const fail = () => { publish({ ...value, loading: false, error: true }); latestLoadError.current?.() }
+    const readRuns = (day: string, signal: AbortSignal, cursor?: string) => fetchRunPage({
+      ...base, from: dateBoundary(day),
+      until: dateBoundary(shiftDate(view === 'week' ? day : days[6], 1)), cursor,
+    }, signal)
+    const start = () => {
+      watch = watchResource({
+        matches: change => change.topic === (page === 'tasks' ? 'automation.task.changed' : 'automation.execution.changed'),
+        read: async signal => {
+          pagination?.abort()
+          baseline = null
+          publish({ ...value, loading: true, error: false })
+          if (page === 'tasks') {
+            const tasks = await readPages(cursor => fetchTaskPage({ ...base, cursor }, signal), counts.tasks ?? 1)
+            return { ...initial, tasks: tasks.items, cursors: { tasks: tasks.nextCursor }, loading: false }
           }
-          return { items, nextCursor }
+          const firstPages = view === 'week' ? await fetchRunCalendar({ ...base, weekStart: days[0] }, signal)
+            : [{ date: days[0], ...await readRuns(days[0], signal) }]
+          const groups = await Promise.all(firstPages.map(async first => ({
+            date: first.date,
+            ...await readPages(cursor => readRuns(first.date, signal, cursor), counts[first.date] ?? 1, first),
+          })))
+          return { ...initial, runs: groups.flatMap(group => group.items),
+            cursors: Object.fromEntries(groups.map(group => [group.date, group.nextCursor])), loading: false }
+        },
+        update: (next, signal) => { baseline = signal; publish(next) },
+        refreshWhile: next => next.runs.some(isRunInProgress),
+        onError: fail,
+      })
+    }
+    const loadMore = async (group: string) => {
+      const cursor = value.cursors[group]
+      if (!cursor || value.loading || value.error || !baseline || baseline.aborted || document.hidden) return
+      const controller = new AbortController()
+      pagination = controller
+      // 分页归属于已显示的基线；刷新、隐藏或身份切换会同时使其失效
+      const signal = AbortSignal.any([baseline, controller.signal])
+      publish({ ...value, loading: true })
+      try {
+        let update: Snapshot
+        if (page === 'tasks') {
+          const next = await fetchTaskPage({ ...base, cursor }, signal)
+          const tasks = [...value.tasks, ...next.items]
+          update = { ...value, tasks: [...new Map(tasks.map(task => [task.id, task])).values()],
+            cursors: { ...value.cursors, [group]: next.nextCursor }, loading: false }
+        } else {
+          const next = await readRuns(group, signal, cursor)
+          const runs = [...value.runs, ...next.items]
+          update = { ...value, runs: [...new Map(runs.map(run => [run.id, run])).values()],
+            cursors: { ...value.cursors, [group]: next.nextCursor }, loading: false }
         }
-        const selectedStatus = status === 'all' ? undefined : status
-        const base = { projectId, query: query.trim() || undefined, from: dateBoundary(days[0]), until: dateBoundary(shiftDate(days[6], 1)) }
-        const taskRead = page === 'tasks' ? readPages(cursor => fetchTaskPage({ projectId, query: base.query, status: selectedStatus, cursor }, signal), counts.tasks ?? 1) : Promise.resolve({ items: [], nextCursor: null })
-        const runKeys = page === 'history' ? view === 'week' ? days : [days[0]] : []
-        const [tasks, runs] = await Promise.all([
-          taskRead,
-          Promise.all(runKeys.map(async day => ({ day, ...await readPages(cursor => fetchRunPage({ ...base, from: dateBoundary(day), until: view === 'week' ? dateBoundary(shiftDate(day, 1)) : base.until, status: selectedStatus, cursor }, signal), counts[day] ?? 1) }))),
-        ])
-        return { tasks: tasks.items, runs: runs.flatMap(group => group.items),
-          cursors: Object.fromEntries([['tasks', tasks.nextCursor], ...runs.map(group => [group.day, group.nextCursor])]), loading: false, error: false }
-      },
-      update: value => { setSnapshot(value); first = false },
-      onError: () => {
-        setSnapshot(current => ({ ...current, loading: false, error: true }))
-        latestLoadError.current?.()
-      },
-    })
-    return watch.close
-  }, [projectId, key, pageCounts, revision, page, query, status, dateKey, view])
+        if (signal.aborted) return
+        counts[group] = (counts[group] ?? 1) + 1
+        watch?.update(update)
+      } catch { if (!signal.aborted) fail() }
+    }
+    const debounce = search ? setTimeout(start, 250) : undefined
+    if (!search) start()
+    actions.current = { reload: () => watch?.refresh(), loadMore: group => { void loadMore(group) } }
+    return () => { clearTimeout(debounce); watch?.close(); pagination?.abort(); actions.current = null }
+  }, [projectId, key, page, search, status, dateKey, view])
 
-  return useMemo(() => ({ ...snapshot,
-    reload: () => setRevision(value => value + 1),
-    loadMore: (group: string) => setPages(current => ({ key, counts: { ...(current.key === key ? current.counts : {}), [group]: (current.key === key ? current.counts[group] ?? 1 : 1) + 1 } })),
-  }), [snapshot, key])
+  return { ...(snapshot.key === key ? snapshot.value : initial),
+    reload: () => actions.current?.reload(),
+    loadMore: (group: string) => actions.current?.loadMore(group),
+  }
 }

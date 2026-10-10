@@ -30,6 +30,8 @@ def create_application(
         title="TinkerFin Studio",
         version=__version__,
         lifespan=lifespan,
+        redoc_url=None,
+        swagger_ui_oauth2_redirect_url=None,
     )
     # 浏览器可从任意来源连接，认证仍使用显式 Bearer 令牌，不依赖 Cookie
     application.add_middleware(
@@ -57,12 +59,6 @@ def create_application(
         cast(ExceptionHandler, unexpected_exception_handler),
     )
     application.include_router(create_api_router())
-
-    @application.get("/health/live", include_in_schema=False)
-    async def liveness() -> dict[str, str]:
-        """返回进程存活状态"""
-
-        return {"status": "ok"}
 
     @application.get("/health/ready", include_in_schema=False)
     async def readiness() -> JSONResponse:

@@ -18,7 +18,6 @@ from tinkerfin_studio.conversation.todo_groups import TaskTraceSnapshot
 from tinkerfin_studio.conversation.trace_responses import (
     ConversationGraph,
     ConversationGraphQueryPage,
-    ConversationTraceUpdate,
 )
 from tinkerfin_tracing import (
     TraceCompleteness,
@@ -166,35 +165,12 @@ class ConversationHistoryDetail(ConversationTitle):
     )
 
 
-class ConversationTraceSnapshotEvent(BaseModel):
-    """Trace SSE 建立连接后首先发送的完整权威快照"""
-
-    type: Literal["snapshot"] = "snapshot"
-    snapshot: ConversationHistoryDetail
-
-
 class ConversationRunSnapshotEvent(BaseModel):
     """已有运行续播前的历史基线，以及后续是否还有运行事件"""
 
     type: Literal["snapshot"] = "snapshot"
     snapshot: ConversationHistoryDetail
     replay: bool = Field(description="是否继续发送该运行已提交及后续产生的事件")
-
-
-class ConversationTraceUpdateEvent(BaseModel):
-    """Trace SSE 在快照之后发送的语义增量"""
-
-    type: Literal["update"] = "update"
-    update: ConversationTraceUpdate
-    run_failures: tuple[ConversationRunFailure, ...] = Field(alias="runFailures")
-    task_trace: TaskTraceSnapshot | None = Field(alias="taskTrace")
-
-
-class ConversationTraceErrorEvent(BaseModel):
-    """Trace SSE 已开始后可安全重试的终止信号"""
-
-    type: Literal["error"] = "error"
-    code: Literal["trace_unavailable"] = "trace_unavailable"
 
 
 class ConversationTraceGraphSnapshotEvent(BaseModel):
@@ -244,11 +220,8 @@ __all__ = [
     "ConversationHistoryListItem",
     "ConversationHistoryListResponse",
     "ConversationThreadUpdate",
-    "ConversationTraceErrorEvent",
     "ConversationTraceGraphErrorEvent",
     "ConversationTraceGraphSnapshotEvent",
     "ConversationTraceGraphUpdateEvent",
-    "ConversationTraceSnapshotEvent",
-    "ConversationTraceUpdateEvent",
     "PendingInteractionKind",
 ]

@@ -36,7 +36,7 @@ async def test_browser_origin_preflight_and_http_error(
         assert "x-client" in preflight.headers["access-control-allow-headers"]
         assert "access-control-allow-credentials" not in preflight.headers
         for route, status in (
-            ("/health/live", 200),
+            ("/health/ready", 503),
             ("/missing", 404),
             ("/api/auth/me", 401),
         ):
