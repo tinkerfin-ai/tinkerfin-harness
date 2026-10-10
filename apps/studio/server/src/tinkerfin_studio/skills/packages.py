@@ -156,7 +156,7 @@ def parse_package(files: tuple[SkillFile, ...]) -> SkillPackage:
             SkillErrorCode.INVALID_PACKAGE, message="技能需要不超过 1 MiB 的 SKILL.md"
         )
     try:
-        markdown = main.content.decode("utf-8")
+        markdown = main.content.decode("utf-8-sig")
         if re.match(r"^---\r?\n.*?\n---\s*\n", markdown, re.DOTALL) is None:
             raise ValueError("技能元数据需要完整分隔符，结束分隔符后须换行")
         parsed, _ = frontmatter.parse(markdown, handler=YAMLHandler())
@@ -245,20 +245,20 @@ def parse_archive(content: bytes, subdirectory: str = "") -> tuple[SkillPackage,
             for file in files
             if file.path.startswith(prefix)
         ]
-    roots = [
+    candidates = [
         file.path.removesuffix("SKILL.md")
         for file in files
         if PurePosixPath(file.path).name == "SKILL.md"
     ]
+    # 最外层入口确定技能归属，内部同名文档作为资源保留，不另建候选
+    roots = [
+        root
+        for root in candidates
+        if not any(root != parent and root.startswith(parent) for parent in candidates)
+    ]
     if not roots or len(roots) > MAX_SKILLS:
         raise BusinessException(
             SkillErrorCode.INVALID_PACKAGE, message="压缩包需要包含 1 至 64 个技能"
-        )
-    if any(
-        left != right and right.startswith(left) for left in roots for right in roots
-    ):
-        raise BusinessException(
-            SkillErrorCode.INVALID_PACKAGE, message="技能目录不能互相嵌套"
         )
     packages = tuple(
         parse_package(

@@ -1,9 +1,11 @@
 """Discover current skill instructions before each model step."""
 
+from codecs import BOM_UTF8
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
-from deepagents.backends.protocol import BackendProtocol
+from deepagents.backends.protocol import BackendProtocol, FileDownloadResponse, LsResult
 from deepagents.middleware.skills import (
     SKILLS_SYSTEM_PROMPT,
     SkillMetadata,
@@ -14,6 +16,35 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import Runtime
 
 from .skills import SkillSource
+
+
+class _SkillDiscoveryBackend(BackendProtocol):
+    """Decode UTF-8 signatures for discovery while preserving stored file bytes.
+
+    Deep Agents 0.7.19's ``_skill_metadata_from_response`` decodes plain UTF-8,
+    leaving a BOM in front of its required frontmatter delimiter. Only metadata
+    discovery receives this view; file tools retain the original backend. The
+    borrowed backend keeps ownership of reads, errors, and cancellation.
+    """
+
+    def __init__(self, backend: BackendProtocol) -> None:
+        self._backend = backend
+
+    async def als(self, path: str) -> LsResult:
+        """List the original directories with the same access restrictions."""
+        return await self._backend.als(path)
+
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        """Remove only a leading UTF-8 signature from successful metadata reads."""
+        responses = await self._backend.adownload_files(paths)
+        return [
+            replace(response, content=response.content[len(BOM_UTF8) :])
+            if response.error is None
+            and response.content is not None
+            and response.content.startswith(BOM_UTF8)
+            else response
+            for response in responses
+        ]
 
 
 class SourceSkillsMiddleware(SkillsMiddleware):
@@ -43,8 +74,12 @@ class SourceSkillsMiddleware(SkillsMiddleware):
             )
         )
         super().__init__(backend=backend, sources=native, system_prompt=system_prompt)
+        discovery_backend = _SkillDiscoveryBackend(backend)
         self._readers = tuple(
-            (source, SkillsMiddleware(backend=backend, sources=[source.directory]))
+            (
+                source,
+                SkillsMiddleware(backend=discovery_backend, sources=[source.directory]),
+            )
             for source in configured
             if source.names != ()
         )
