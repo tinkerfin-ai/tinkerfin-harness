@@ -1,6 +1,4 @@
 import { presentRun, type AutomationRun, type AutomationRunRecord, type AutomationTask } from '../features/automation/model'
-
-export const AUTOMATION_TEST_NOW = '2026-09-10T07:00:00Z'
 export const taskFixture = (overrides: Partial<AutomationTask> = {}): AutomationTask => ({projectId: 'project-1',
   id: 'news', name: '每日 AI 新闻简报', prompt: '整理新闻', modelId: 'main', accessMode: 'full',
   schedule: { kind: 'daily', time: '09:00' }, startsOn: '', endsOn: '', enabled: true,

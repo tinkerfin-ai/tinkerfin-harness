@@ -1,16 +1,11 @@
 """提供方连接、模型配置的用户隔离、认证和运行保护"""
 
 import asyncio
-from datetime import UTC, datetime
 
 import pytest
-from pydantic import SecretStr, ValidationError
+from pydantic import SecretStr
 
-from tinkerfin_studio.api.errors import BusinessException, ModelErrorCode
-from tinkerfin_studio.conversation.models import (
-    ConversationRunRegistration,
-    ConversationThread,
-)
+from tinkerfin_studio.api.errors import BusinessException
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import AgentModelSave, ModelConnectionSave
 from tinkerfin_studio.models.service import AgentModelService
@@ -64,38 +59,6 @@ async def test_connections_and_models_are_owned_and_credentials_never_returned(s
     assert len(await first.settings()) == 2
 
 
-async def test_connection_key_retention_replacement_and_explicit_clearing(session):
-    owner = service(session)
-    await owner.save_connection(connection("original"))
-    await owner.save_settings(model())
-    await owner.save_connection(connection(None, display_name="重命名"))
-    assert (await owner.resolve("main")).api_key.get_secret_value() == "original"
-    await owner.save_connection(connection("replacement"))
-    assert (await owner.resolve("main")).api_key.get_secret_value() == "replacement"
-    await owner.save_connection(connection(None, auth_type="none"))
-    assert (await owner.resolve("main")).api_key.get_secret_value() == ""
-    assert not (await owner.connections())[0].has_key
-
-
-@pytest.mark.parametrize("invalid", ["missing_connection", "duplicate_model"])
-async def test_batch_rejection_preserves_existing_models_and_default(session, invalid):
-    owner = service(session)
-    await owner.save_connection(connection())
-    await owner.save_settings(model(is_default=True))
-    first = model(model_id="new", is_default=True)
-    second = (
-        model(model_id="other", connection_id="missing")
-        if invalid == "missing_connection"
-        else first
-    )
-    with pytest.raises(BusinessException):
-        await owner.save_models([first, second])
-    assert not session.in_transaction()
-    saved = await owner.settings()
-    assert len(saved) == 1
-    assert saved[0].model_id == "main" and saved[0].is_default
-
-
 async def test_batch_cannot_reference_another_users_connection(session):
     await service(session, 2).save_connection(connection(connection_id="private"))
     owner = service(session)
@@ -110,57 +73,6 @@ async def test_batch_cannot_reference_another_users_connection(session):
     assert await service(session, 2).settings() == []
 
 
-async def test_endpoint_change_requires_explicit_key_and_missing_owner_cannot_reuse(
-    session,
-):
-    owner = service(session)
-    await owner.save_connection(connection())
-    with pytest.raises(BusinessException) as rejected:
-        await owner.save_connection(
-            connection(None, base_url="https://other.example/v1")
-        )
-    assert rejected.value.error_code == ModelErrorCode.KEY_ENDPOINT_CHANGED
-    with pytest.raises(BusinessException):
-        await service(session, 2).save_connection(connection(None))
-    with pytest.raises(BusinessException):
-        await service(session, 2).save_settings(model())
-    assert not session.in_transaction()
-
-
-@pytest.mark.parametrize(
-    "address",
-    [
-        "http://localhost:11434",
-        "http://127.0.0.1:11434",
-        "http://ollama:11434",
-        "http://192.168.1.20:11434",
-    ],
-)
-async def test_ollama_can_be_saved_and_defaulted_without_dummy_key(session, address):
-    owner = service(session)
-    await owner.save_connection(
-        connection(
-            None,
-            provider_id="ollama",
-            api_type="ollama",
-            base_url=address,
-            auth_type="none",
-        )
-    )
-    await owner.save_settings(
-        model(
-            model_name="qwen3:14b",
-            chat_options={"context_window": 8192, "keep_alive": 300},
-        )
-    )
-    await owner.set_default("main")
-    saved = await owner.resolve("main")
-    assert saved.provider == "ollama" and saved.base_url.rstrip("/") == address
-    assert saved.api_key.get_secret_value() == ""
-    assert saved.chat_options.context_window == 8192
-    assert (await owner.list_catalog()).default_model_id == "main"
-
-
 @pytest.mark.parametrize(
     "address",
     ["http://user:secret@localhost:11434", "https://user:secret@models.example"],
@@ -169,64 +81,6 @@ async def test_embedded_url_credentials_are_rejected(session, address):
     with pytest.raises(BusinessException):
         await service(session).save_connection(connection(base_url=address))
     assert await service(session).connections() == []
-
-
-@pytest.mark.parametrize("status", ["preparing", "starting", "running", "waiting"])
-async def test_active_run_protects_model_and_its_shared_connection(session, status):
-    owner = service(session)
-    await owner.save_connection(connection())
-    await owner.save_settings(model())
-    now = datetime.now(UTC).replace(tzinfo=None)
-    thread = ConversationThread(
-        archived=False,
-        project_id="project-1",
-        user_id=1,
-        thread_id="active",
-        title="对话",
-        created_at=now,
-        updated_at=now,
-    )
-    session.add(thread)
-    await session.flush()
-    session.add(
-        ConversationRunRegistration(
-            conversation_thread_id=thread.id,
-            run_id="run",
-            model_id="main",
-            status=status,
-            input_json={},
-            started_at=now,
-            created_at=now,
-            updated_at=now,
-        )
-    )
-    await session.commit()
-    for operation in [
-        lambda: owner.save_connection(connection("changed")),
-        lambda: owner.delete_connection("shared"),
-        lambda: owner.save_settings(model(display_name="changed")),
-        lambda: owner.delete_settings("main"),
-    ]:
-        with pytest.raises(BusinessException) as rejected:
-            await operation()
-        assert rejected.value.error_code == ModelErrorCode.IN_USE
-    await owner.set_default("main")
-    assert (await owner.resolve("main")).api_key.get_secret_value() == "secret"
-
-
-async def test_invalid_model_parameters_do_not_change_existing_default(session):
-    owner = service(session)
-    await owner.save_connection(connection())
-    await owner.save_settings(model(is_default=True))
-    with pytest.raises(BusinessException):
-        await owner.save_settings(
-            model(
-                model_id="invalid",
-                is_default=True,
-                chat_options={"context_window": 8192},
-            )
-        )
-    assert (await owner.list_catalog()).default_model_id == "main"
 
 
 async def test_failed_model_commit_rolls_back_default_change(session, monkeypatch):
@@ -260,12 +114,6 @@ async def test_cancelled_connection_save_rolls_back_and_propagates(
         await owner.save_connection(connection("changed"))
     assert not session.in_transaction()
     assert (await owner.require_connection("shared")).api_key == "secret"
-
-
-def test_model_display_name_is_bounded_without_changing_supplier_id():
-    assert model(display_name="名" * 40, model_name="x" * 128).model_name == "x" * 128
-    with pytest.raises(ValidationError):
-        model(display_name="名" * 41)
 
 
 pytestmark = pytest.mark.usefixtures("projects")

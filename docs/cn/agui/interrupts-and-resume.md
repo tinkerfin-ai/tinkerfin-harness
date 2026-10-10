@@ -76,6 +76,8 @@ async with aclosing(
 
 放弃不会转换成拒绝。混合工具审批要求对应工具具备 TinkerFin 的审批支持；Plan 与工具审批不能合为一个批次。
 
+整批取消完成后，可使用相同 Run 身份和批次重试，不执行 Graph，也不追加重复的 Trace 历史。重试时须保留原 checkpoint。若 Tracer 已记录该 Run，其输入、终态和关闭记录须能证明相同的取消已完成；证据不完整或被脱敏时无法确认重试。同一 Run 改交其他请求会被拒绝；新的 Run 仍可回答或批准该待处理批次。本次请求中的 Observer 错误仍会向调用方传播。
+
 ## 重试、并发与回调
 
 - 每个新审批请求使用新的 `run_id`；重试原请求时保留相同的 `run_id`、`thread_id` 和决定。
@@ -100,8 +102,10 @@ async with aclosing(
 ```python
 from tinkerfin import AgUiResumeReceipt
 
+
 async def record_saved(receipt: AgUiResumeReceipt) -> None:
     await approval_repository.settle_resume(receipt=receipt)
+
 
 async with aclosing(
     runtime.open_agui_run(
@@ -146,11 +150,15 @@ async with aclosing(
         thread_id="conversation-1",
         run_id="discussion-1",
         mode="plan",
-        resume=AgUiResumeRequest(entries=(ResumeEntry(
-            interrupt_id=interrupt_id,
-            status="resolved",
-            payload={"type": "discuss", "message": "第三题是什么意思？"},
-        ),)),
+        resume=AgUiResumeRequest(
+            entries=(
+                ResumeEntry(
+                    interrupt_id=interrupt_id,
+                    status="resolved",
+                    payload={"type": "discuss", "message": "第三题是什么意思？"},
+                ),
+            )
+        ),
     )
 ) as events:
     async for event in events:

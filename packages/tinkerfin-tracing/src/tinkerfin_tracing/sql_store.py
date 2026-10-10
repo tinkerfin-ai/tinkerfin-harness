@@ -158,8 +158,7 @@ class _SqlAlchemyTraceLedgerBackend:
     The Backend supports SQLite, MySQL, and PostgreSQL, prepares its schema, and applies
     framework-resolved effects under database locks. It never changes pool sizing or
     disposes the host Engine. Contract coverage lives in
-    ``tests/test_store_implementations.py``, ``tests/test_sqlite_store.py``, and
-    ``tests/test_mysql_store.py``.
+    ``tests/test_store_implementations.py`` and ``tests/test_sqlite_store.py``.
 
     Args:
         engine: Borrowed asynchronous SQLite, MySQL, or PostgreSQL Engine.

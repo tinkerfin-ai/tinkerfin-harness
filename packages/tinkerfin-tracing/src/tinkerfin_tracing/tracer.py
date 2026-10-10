@@ -15,6 +15,7 @@ from tinkerfin_contracts import (
     ThreadIdentity,
 )
 
+from ._abandonment import AbandonmentReplay
 from ._follow_lineage import PendingTraceLineage, head_selection_pending
 from ._graph_projection import project_trace_graph_records
 from ._model_requests import read_model_request
@@ -26,7 +27,7 @@ from .capture import (
     ReasoningCapturePolicy,
 )
 from .durable_store import InMemoryTraceStore
-from .errors import TraceStoreProtocolError
+from .errors import TraceRunConflict, TraceStoreProtocolError, TraceThreadNotFound
 from .graph import (
     TraceGraphCompleteness,
     TraceGraphFilter,
@@ -47,6 +48,7 @@ from .query import (
     TraceThread,
     build_trace_thread,
     load_core_projection_state,
+    read_lineage_events,
     resolve_history_request,
 )
 from .redaction import (
@@ -170,8 +172,9 @@ class Tracer:
     async def open_run(self, context: RunSourceContext) -> RunObservationSession:
         """Open one fail-closed request-scoped semantic observation session.
 
-        The Store remains borrowed by the Tracer. The returned session owns the exact
-        Run writer and freezes its prior prefix. Parent hydration waits for the
+        The Store remains borrowed by the Tracer. A new Run session owns its writer
+        and freezes its prior prefix; a matching completed abandonment is checked
+        read-only without reopening its writer. Parent hydration waits for the
         resolved input observation, so early Run start cannot select a different
         ancestor. Partial-open failures close the writer before propagation.
 
@@ -190,6 +193,22 @@ class Tracer:
 
         if not isinstance(context, RunSourceContext):
             raise TypeError("context must be a RunSourceContext")
+        if context.input_kind == "abandon" and context.resume:
+            try:
+                existing = await self._store.snapshot(context.identity.thread)
+            except TraceThreadNotFound:
+                existing = None
+            if existing is not None:
+                if context.identity.run_id in existing.active_run_ids:
+                    raise TraceRunConflict("Abandonment writer is still active")
+                events = await read_lineage_events(
+                    self._store,
+                    existing.key,
+                    run_ids=frozenset({context.identity.run_id}),
+                    as_of_seq=existing.as_of_seq,
+                )
+                if events:
+                    return AbandonmentReplay(context, events)
         writer = await self._store.open_writer(context.identity)
         if not isinstance(writer, TraceWriter):
             raise TraceStoreProtocolError("Trace Store returned an invalid writer")

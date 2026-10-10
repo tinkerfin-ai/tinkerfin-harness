@@ -22,7 +22,7 @@ const traceDetail = (overrides: Partial<ConversationHistoryDetail>): Conversatio
     agui: null, id: 'answer', sourceId: 'answer', traceSeq: 2, graphNamespace: [], runId: 'run', role: 'assistant',
     content: '来自 Trace 的历史回复', contentOmitted: false, status: 'completed', createdAt: time, completedAt: time,
   }],
-  reasoning: [], runFailures: [], state: { root: {}, subgraphs: {} }, interactionAvailability: [], interactions: [],
+  reasoning: [], runFailures: [], state: { root: {}, subgraphs: {} }, submissionResult: null, planResults: [], interactionAvailability: [], interactions: [],
   status: { execution: 'succeeded', headRunId: 'run' }, completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false },
   graph: emptyTraceGraph(3), taskTrace: { status: 'ready', todoGroups: [] }, ...overrides,
 })

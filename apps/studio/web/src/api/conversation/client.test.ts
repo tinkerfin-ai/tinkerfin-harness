@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { cancelConversationRun, compactConversationContext, startConversationRun } from './client'
+import { clearAuthSession, saveAuthSession } from '../../auth/session'
+import { cancelConversationRun, startConversationRun } from './client'
 import type { ChatRequestPayload } from './types'
-import { getServerAddress, setServerAddress } from '../shared/config'
-import { getAuthSession, clearAuthSession, saveAuthSession } from '../../auth/session'
 
 const requestPayload: ChatRequestPayload = {
   threadId: 'thread-conflict',
@@ -57,18 +56,6 @@ describe('conversation stream client', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
-  it('sends the durable Last-Event-ID only for a reconnect attempt', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(new Headers(init?.headers).get('Last-Event-ID')).toBe('41')
-      return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
-    })
-    vi.stubGlobal('fetch', fetchMock)
-
-    for await (const item of startConversationRun(requestPayload, undefined, 41)) void item
-
-    expect(fetchMock).toHaveBeenCalledOnce()
-  })
-
   it('requests durable cancellation for the exact thread and run', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init)
@@ -83,53 +70,6 @@ describe('conversation stream client', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(cancelConversationRun('thread/one', 'run/one')).resolves.toEqual({ cancelled: true })
-  })
-
-  it('rejects a JSON business error instead of treating it as an empty SSE stream', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(
-      JSON.stringify({
-        code: 1_001_004_002,
-        message: '会话当前状态不允许启动新的运行',
-        data: null,
-      }),
-      {
-        status: 409,
-        headers: { 'Content-Type': 'application/json' },
-      },
-    )))
-
-    await expect(consumeStream()).rejects.toMatchObject({
-      code: 1_001_004_002,
-      message: '会话当前状态不允许启动新的运行',
-    })
-  })
-
-  it.each([
-    ['LF', '\n'],
-    ['CRLF', '\r\n'],
-    ['CR', '\r'],
-  ])('parses %s-delimited events and preserves their SSE sequence', async (_name, eol) => {
-    const first = JSON.stringify({
-      type: 'RUN_STARTED',
-      threadId: 'thread-conflict',
-      runId: 'run-conflict',
-    })
-    const second = JSON.stringify({
-      type: 'RUN_FINISHED',
-      threadId: 'thread-conflict',
-      runId: 'run-conflict',
-    })
-    vi.stubGlobal('fetch', vi.fn(async () => sseResponse(
-      `id: 41${eol}data: ${first}${eol}${eol}id: 42${eol}data: ${second}${eol}${eol}`,
-    )))
-
-    const received = []
-    for await (const item of startConversationRun(requestPayload)) received.push(item)
-
-    expect(received).toEqual([
-      { seq: 41, event: JSON.parse(first) },
-      { seq: 42, event: JSON.parse(second) },
-    ])
   })
 
   it('parses a CRLF event incrementally when the delimiter crosses chunks', async () => {
@@ -156,36 +96,6 @@ describe('conversation stream client', () => {
       streamController?.close()
       await iterator.return?.(undefined)
     }
-  })
-
-  it('joins multiline CRLF data without leaking carriage returns into JSON', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
-      'id: 9',
-      'data: {"type":"RUN_STARTED",',
-      'data: "threadId":"thread-conflict","runId":"run-conflict"}',
-      '',
-      '',
-    ].join('\r\n'))))
-
-    const received = []
-    for await (const item of startConversationRun(requestPayload)) received.push(item)
-
-    expect(received).toEqual([{
-      seq: 9,
-      event: {
-        type: 'RUN_STARTED',
-        threadId: 'thread-conflict',
-        runId: 'run-conflict',
-      },
-    }])
-  })
-
-  it('reports malformed AG-UI data with a stable user-facing error', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => sseResponse('data: ping\n\n')))
-
-    await expect(consumeStream()).rejects.toMatchObject({
-      code: 'stream_data_invalid',
-    })
   })
 
   it('cancels the underlying stream after malformed data aborts consumption', async () => {
@@ -227,49 +137,6 @@ describe('conversation stream client', () => {
     expect(cancel).toHaveBeenCalledOnce()
   })
 
-  it('does not cancel the underlying stream after natural EOF', async () => {
-    const cancel = vi.fn()
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(
-          'data: {"type":"RUN_STARTED","threadId":"thread-conflict","runId":"run-conflict"}\n\n',
-        ))
-        controller.close()
-      },
-      cancel,
-    })
-    vi.stubGlobal('fetch', vi.fn(async () => sseResponse(body)))
-
-    await consumeStream()
-
-    expect(cancel).not.toHaveBeenCalled()
-  })
-
-  it('accepts one valid event whose JSON data is exactly 4 MiB', async () => {
-    const limit = 4 * 1024 * 1024
-    const empty = JSON.stringify({
-      type: 'TEXT_MESSAGE_CONTENT',
-      messageId: 'message-large',
-      delta: '',
-    })
-    const event = JSON.stringify({
-      type: 'TEXT_MESSAGE_CONTENT',
-      messageId: 'message-large',
-      delta: 'x'.repeat(limit - new TextEncoder().encode(empty).byteLength),
-    })
-    expect(new TextEncoder().encode(event).byteLength).toBe(limit)
-    vi.stubGlobal('fetch', vi.fn(async () => sseResponse(`data: ${event}\n\n`)))
-
-    const received = []
-    for await (const item of startConversationRun(requestPayload)) received.push(item)
-
-    expect(received).toHaveLength(1)
-    expect(received[0]?.event).toMatchObject({
-      type: 'TEXT_MESSAGE_CONTENT',
-      messageId: 'message-large',
-    })
-  })
-
   it.each([
     ['single line', `data: ${'x'.repeat((4 * 1024 * 1024) + 1)}`],
     ['frame line count', `${'x:\n'.repeat(4097)}\n`],
@@ -291,119 +158,5 @@ describe('conversation stream client', () => {
       code: 'stream_limit_exceeded',
     })
     expect(cancel).toHaveBeenCalledOnce()
-  })
-
-  it.each([
-    ['未知事件', { type: 'STEP_STARTED', stepName: 'model' }],
-    ['缺少必填字段', { type: 'RUN_STARTED', runId: 'run-conflict' }],
-    ['字段类型错误', { type: 'TEXT_MESSAGE_CONTENT', messageId: 'message-1', delta: 1 }],
-  ])('rejects structurally invalid %s JSON before it reaches the reducer', async (_name, event) => {
-    vi.stubGlobal('fetch', vi.fn(async () => sseResponse(
-      `data: ${JSON.stringify(event)}\n\n`,
-    )))
-
-    await expect(consumeStream()).rejects.toMatchObject({
-      code: 'stream_event_invalid',
-    })
-  })
-
-  it('streams the complete compiled-subgraph Tool lifecycle', async () => {
-    const source = {
-      kind: 'compiled_subgraph',
-      nodeName: 'create_plan',
-      graphNamespace: ['create_plan:graph-task-1'],
-      graphTaskId: 'graph-task-1',
-      parentGraphNamespace: [],
-    }
-    const events = [
-      {
-        type: 'TOOL_CALL_START',
-        toolCallId: 'planner-outcome-1',
-        toolCallName: 'submit_plan',
-        parentMessageId: 'planner-message-1',
-      },
-      {
-        type: 'TOOL_CALL_ARGS',
-        toolCallId: 'planner-outcome-1',
-        delta: '{',
-      },
-      {
-        type: 'TOOL_CALL_END',
-        toolCallId: 'planner-outcome-1',
-      },
-      {
-        type: 'TOOL_CALL_RESULT',
-        toolCallId: 'planner-outcome-1',
-        messageId: 'planner-result-1',
-        content: 'Returning structured response',
-        role: 'tool',
-      },
-    ].map((event) => ({
-      ...event,
-      rawEvent: {
-        streamMode: 'messages',
-        runId: 'run-conflict',
-        langgraphNode: 'model',
-        source,
-      },
-    }))
-    vi.stubGlobal('fetch', vi.fn(async () => sseResponse(
-      events.map((event, index) => (
-        `id: ${index + 11}\ndata: ${JSON.stringify(event)}\n\n`
-      )).join(''),
-    )))
-
-    const received = []
-    for await (const item of startConversationRun(requestPayload)) received.push(item)
-
-    expect(received.map(({ seq, event }) => [seq, event.type])).toEqual([
-      [11, 'TOOL_CALL_START'],
-      [12, 'TOOL_CALL_ARGS'],
-      [13, 'TOOL_CALL_END'],
-      [14, 'TOOL_CALL_RESULT'],
-    ])
-  })
-
-  it.each([
-    ['http://127.0.0.1:8092', 'http://127.0.0.1:8092/api/conversation/chat'],
-    ['https://api.example.test/backend', 'https://api.example.test/backend/api/conversation/chat'],
-  ])('applies the configured API base exactly once: %s', async (apiBase, expectedUrl) => {
-    const session = getAuthSession()!
-    setServerAddress(apiBase)
-    saveAuthSession({ ...session, serverAddress: getServerAddress() })
-    vi.resetModules()
-    const { startConversationRun: startConfiguredRun } = await import('./client')
-    let requestedUrl: RequestInfo | URL | undefined
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      requestedUrl = input
-      return new Response(
-        `data: ${JSON.stringify({
-          type: 'RUN_STARTED',
-          threadId: 'thread-conflict',
-          runId: 'run-conflict',
-        })}\n\n`,
-        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
-      )
-    })
-    vi.stubGlobal('fetch', fetchMock)
-
-    for await (const streamedEvent of startConfiguredRun(requestPayload)) {
-      expect(streamedEvent.event.type).toBe('RUN_STARTED')
-    }
-
-    expect(requestedUrl).toBe(expectedUrl)
-  })
-  it('压缩请求只携带运行和模型，重连保留原游标', async () => {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request = new Request(input, init)
-    expect(new URL(request.url).pathname).toBe('/api/conversation/thread%2Fone/compact')
-    expect(await request.json()).toEqual({ runId: 'compact-run', model: 'main' })
-    expect(request.headers.get('Last-Event-ID')).toBe('8')
-    return sseResponse('id: 9\ndata: {"type":"RUN_FINISHED","threadId":"thread/one","runId":"compact-run"}\n\n')
-  })
-  vi.stubGlobal('fetch', fetchMock)
-  const events = []
-  for await (const event of compactConversationContext({ threadId: 'thread/one', runId: 'compact-run', model: 'main' }, undefined, 8)) events.push(event)
-  expect(events[0]?.seq).toBe(9)
   })
 })

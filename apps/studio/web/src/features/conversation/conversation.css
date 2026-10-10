@@ -1036,15 +1036,45 @@
   .composer-default { display: contents; }
   .composer-default.is-taken-over { display: none; }
 
-  .plan-history-card {
-    margin-block: var(--space-3);
-    padding: var(--space-3);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-lg);
-    background: var(--color-layer-1);
+  .plan-history-card { position: relative; margin: 0 0 var(--space-4); color: var(--color-text-primary); font-size: var(--type-ui-size); line-height: var(--type-title-line); }
+  .plan-history-card > summary { list-style: none; cursor: pointer; border-radius: var(--radius-sm); }
+  .plan-history-card > summary::-webkit-details-marker { display: none; }
+  .plan-history-card > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .plan-history-card-heading { display: grid; grid-template-columns: var(--icon-sm) minmax(0, 1fr) calc(var(--space-16) + var(--space-4)) var(--icon-xs); align-items: center; gap: var(--space-1-5); min-height: var(--type-title-line); }
+  .plan-history-card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--weight-ui); }
+  .plan-history-card-status, .plan-history-card-chevron { color: var(--color-text-secondary); }
+  .plan-history-card-status { font-size: inherit; font-weight: var(--weight-ui); }
+  .plan-history-card-icon { display: flex; align-items: center; color: var(--color-plan-panel-accent); }
+  .plan-history-card.is-review .plan-history-card-icon { color: var(--color-warning-panel-accent); }
+  .plan-history-card-heading svg { width: var(--icon-xs); height: var(--icon-xs); }
+  .plan-history-card[open] .plan-history-card-chevron { transform: rotate(180deg); }
+  .plan-history-card > summary:hover .plan-history-card-title { color: var(--color-brand-text); }
+  .plan-history-card > summary:active .plan-history-card-title { color: var(--color-text-primary); }
+  .plan-history-card-preview { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: var(--space-1) 0 0 calc(var(--icon-sm) + var(--space-1-5)); color: var(--color-text-secondary); }
+  .plan-history-card-body { margin-left: calc(var(--icon-sm) + var(--space-1-5)); padding-top: var(--space-3); }
+  .plan-history-card-body dl { display: grid; gap: var(--space-2); margin: 0; }
+  .plan-history-card-questions { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; color: var(--color-text-secondary); }
+  .plan-history-card-body dl > div { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); }
+  .plan-history-card-body dt { flex: 0 1 calc(var(--space-16) + var(--space-8)); color: var(--color-text-secondary); }
+  .plan-history-card-body dd { flex: 1 1 var(--space-16); min-width: 0; margin: 0; overflow-wrap: anywhere; }
+  .plan-history-card-decision { margin: 0 0 var(--space-3); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .plan-history-card:has(+ .plan-history-card)::after { position: absolute; top: var(--type-title-line); bottom: calc(-1 * var(--space-4)); left: calc(var(--icon-xs) / 2); width: 1px; background: var(--color-border); content: ''; }
+  .interaction-submission { width: min(100%, var(--layout-composer-width)); min-width: 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-2xl); background: var(--color-layer-1); }
+  .interaction-submission-heading { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; font-size: var(--type-ui-size); }
+  .interaction-submission-icon { display: flex; color: var(--color-plan-panel-accent); }
+  .interaction-submission-actions { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }
+  .interaction-submission-details > summary { display: flex; align-items: center; gap: var(--space-1); width: fit-content; min-height: var(--control-sm); margin-top: var(--space-1); color: var(--color-text-secondary); font-size: var(--type-meta-size); cursor: pointer; list-style: none; border-radius: var(--radius-sm); }
+  .interaction-submission-details > summary::-webkit-details-marker { display: none; }
+  .interaction-submission-details > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .interaction-submission-details > summary:hover, .interaction-submission-details > summary:active { color: var(--color-text-primary); }
+  .interaction-submission-details[open] > summary svg { transform: rotate(180deg); }
+  .interaction-submission-content { margin-top: var(--space-3); }
+  .interaction-submission-content :is(.plan-interaction-card, .approval-composer) { width: 100%; box-shadow: none; }
+  @media (pointer: coarse) {
+    .plan-history-card > summary, .interaction-submission-details > summary { min-height: var(--control-lg); }
+    .plan-history-card-heading { min-height: var(--control-lg); }
   }
-  .plan-history-card > summary { cursor: pointer; }
-  .plan-history-card__body { padding-top: var(--space-3); }
+
   .composer-takeover { display: flex; width: 100%; justify-content: center; pointer-events: auto; }
 
   .approval-composer,
@@ -1621,15 +1651,7 @@
     justify-self: center;
   }
 
-  .composer-stop-control {
-    grid-column: 3;
-    justify-self: end;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .composer-scroll-to-bottom-control,
-  .composer-stop-control { display: flex; min-width: 0; pointer-events: auto; }
+  .composer-scroll-to-bottom-control { display: flex; min-width: 0; pointer-events: auto; }
 
   .composer-auxiliary-control {
     display: inline-flex;
@@ -1880,13 +1902,12 @@
     .composer-dock { --composer-inline-inset: var(--layout-page-gutter); }
     .composer-auxiliary-controls { gap: var(--space-4); }
     .composer-auxiliary-control { padding-inline: var(--space-1-5); }
-    .composer-stop-control { gap: var(--space-1); }
-    :is(.composer-scroll-to-bottom-control, .composer-stop-control)
+    .composer-scroll-to-bottom-control
     .composer-auxiliary-control {
       width: var(--control-sm);
       padding-inline: 0;
     }
-    :is(.composer-scroll-to-bottom-control, .composer-stop-control)
+    .composer-scroll-to-bottom-control
     .composer-auxiliary-control > span { display: none; }
     .tool-detail-card { margin-left: 0; }
     .tool-detail-section { grid-template-columns: minmax(0, 1fr); }

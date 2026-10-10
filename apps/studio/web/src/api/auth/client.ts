@@ -1,8 +1,8 @@
+import type { AuthSession } from '../../auth/session'
+import { getAuthorizationHeader, getAuthSession, updateAuthSession } from '../../auth/session'
 import type { ApiError } from '../shared/http'
 import { AuthError, requestJson } from '../shared/http'
 import type { AuthSessionResponse, AuthUser, LoginRequest, LoginResponse } from './types'
-import type { AuthSession } from '../../auth/session'
-import { getAuthorizationHeader, getAuthSession, updateAuthSession } from '../../auth/session'
 
 export interface BootstrapAuthResult {
   status: 'authenticated' | 'unauthenticated' | 'stale'
@@ -35,13 +35,12 @@ export function login(input: LoginRequest, signal?: AbortSignal) {
     body: input,
     signal,
     requiresAuth: false,
-    suppressAuthFailure: true,
   })
 }
 
 export function getCurrentSession(
   signal?: AbortSignal,
-  options?: { suppressAuthFailure?: boolean; authorization?: string },
+  options?: { authorization?: string },
 ) {
   return requestJson<AuthSessionResponse>('/api/auth/me', {
     signal,
@@ -49,7 +48,6 @@ export function getCurrentSession(
       ? { Authorization: options.authorization }
       : undefined,
     suppressGlobalError: true,
-    suppressAuthFailure: options?.suppressAuthFailure ?? false,
   })
 }
 
@@ -60,7 +58,6 @@ export function logout(signal?: AbortSignal) {
     headers: authorization ? { Authorization: authorization } : undefined,
     signal,
     suppressGlobalError: true,
-    suppressAuthFailure: true,
   })
 }
 
@@ -85,7 +82,6 @@ export function bootstrapAuthSession(): Promise<BootstrapAuthResult> {
     session: getAuthSession(),
   })
   const request = getCurrentSession(undefined, {
-    suppressAuthFailure: true,
     authorization: requestAuthorization,
   })
     .then((payload) => {

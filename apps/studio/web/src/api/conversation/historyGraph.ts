@@ -1,10 +1,8 @@
 import { ConversationError } from './errors'
 import {
-  parseTraceGraphDeltaWithNodes,
   parseTraceGraphNode,
   parseTraceGraphWithNodes,
   type TraceGraph,
-  type TraceGraphDelta,
   type TraceGraphNode,
   type TraceGraphNodeKind,
 } from './traceGraph'
@@ -16,10 +14,6 @@ export type ConversationGraphNode =
 
 export type ConversationGraph = Omit<TraceGraph, 'nodes'> & {
   nodes: ConversationGraphNode[]
-}
-
-export type ConversationGraphDelta = Omit<TraceGraphDelta, 'nodeUpserts'> & {
-  nodeUpserts: ConversationGraphNode[]
 }
 
 const isConversationNode = (node: TraceGraphNode): node is ConversationGraphNode => (
@@ -36,8 +30,4 @@ const parseConversationNode = (value: unknown): ConversationGraphNode => {
 
 export const parseConversationGraph = (value: unknown): ConversationGraph => (
   parseTraceGraphWithNodes(value, parseConversationNode)
-)
-
-export const parseConversationGraphDelta = (value: unknown): ConversationGraphDelta => (
-  parseTraceGraphDeltaWithNodes(value, parseConversationNode)
 )

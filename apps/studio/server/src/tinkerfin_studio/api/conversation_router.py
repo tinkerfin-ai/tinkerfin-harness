@@ -186,6 +186,9 @@ async def get_history(
     ] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 100,
     include_task_trace: Annotated[bool, Query(alias="includeTaskTrace")] = True,
+    submission_run_id: Annotated[
+        str | None, Query(alias="submissionRunId", min_length=1, max_length=128)
+    ] = None,
 ) -> Response:
     """返回一个会话的固定前缀 Trace 视图"""
 
@@ -194,6 +197,7 @@ async def get_history(
         history_cursor=history_cursor,
         limit=limit,
         include_task_trace=include_task_trace,
+        submission_run_id=submission_run_id,
     )
     envelope = ApiResponse[ConversationHistoryDetail].success(detail)
     content = envelope.model_dump_json(by_alias=True, exclude_none=False).encode()

@@ -353,7 +353,7 @@ function MessageBlockView({
     )
   }
   if (message.role === 'process') {
-    return message.meta?.planHistory ? <PlanHistoryCard id={message.id} interaction={message.meta.planHistory} /> : null
+    return message.meta?.planHistory ? <PlanHistoryCard id={message.id} interaction={message.meta.planHistory} result={message.meta.planResult} /> : null
   }
   if (message.role === 'subagent') {
     return <SubagentCard message={message} childTools={childTools} />

@@ -472,6 +472,8 @@
     "subgraphs": {}
   },
   "interactions": [],
+  "submissionResult": null,
+  "planResults": [],
   "interactionAvailability": [],
   "status": {
     "execution": "succeeded",

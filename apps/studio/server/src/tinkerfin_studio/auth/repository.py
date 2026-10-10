@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol, cast
 
@@ -31,11 +31,6 @@ class UserRepository:
 
         return cast(User | None, await self._session.get(User, user_id))
 
-    def add(self, user: User) -> None:
-        """把新用户加入当前事务"""
-
-        self._session.add(user)
-
     async def commit(self) -> None:
         """提交用户写入或结束已物化用户事实的只读事务"""
 
@@ -54,11 +49,6 @@ class TokenRecord:
     @property
     def is_expired(self) -> bool:
         return datetime.now(UTC) >= self.expires_at
-
-    def with_revoked(self, revoked: bool) -> TokenRecord:
-        """返回修改撤销状态后的新记录"""
-
-        return replace(self, revoked=revoked)
 
 
 class TokenRepository(Protocol):

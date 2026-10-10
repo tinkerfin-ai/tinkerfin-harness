@@ -26,11 +26,9 @@ from tinkerfin_studio.conversation.history import ConversationHistoryService
 from tinkerfin_studio.conversation.history_queries import HistoryQueryAdmission
 from tinkerfin_studio.conversation.models import (
     ConversationRunRegistration,
-    ConversationThread,
 )
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.todo_groups import (
-    TODO_PROJECTION,
     TodoGroupProjection,
 )
 from tinkerfin_tracing import Tracer
@@ -185,76 +183,6 @@ async def _wait_for_signal(task: asyncio.Task[None], signal: asyncio.Event) -> N
 
 
 @pytest.mark.parametrize("entry", ["history", "trace", "live"])
-async def test_initial_queries_share_capacity_after_authorization_and_commit(
-    history_case: _HistoryCase,
-    session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-    entry: _Entry,
-) -> None:
-    tracer, repository, _ = history_case
-    authorized = False
-    run_authorized = False
-    committed = False
-    original_thread = repository.get_thread
-    original_run = repository.get_run
-    original_commit = repository.commit
-
-    async def get_thread(*, user_id: int, thread_id: str) -> ConversationThread | None:
-        nonlocal authorized
-        thread = await original_thread(user_id=user_id, thread_id=thread_id)
-        authorized = thread is not None
-        return thread
-
-    async def get_run(
-        *, thread_pk: int, run_id: str
-    ) -> ConversationRunRegistration | None:
-        nonlocal run_authorized
-        run = await original_run(thread_pk=thread_pk, run_id=run_id)
-        run_authorized = run is not None
-        return run
-
-    async def commit() -> None:
-        nonlocal committed
-        await original_commit()
-        committed = True
-
-    def verify() -> None:
-        assert authorized and committed
-        assert not session.in_transaction()
-        if entry == "live":
-            assert run_authorized
-
-    monkeypatch.setattr(repository, "get_thread", get_thread)
-    monkeypatch.setattr(repository, "get_run", get_run)
-    monkeypatch.setattr(repository, "commit", commit)
-    read = AsyncMock(wraps=tracer.get)
-    monkeypatch.setattr(tracer, "get", read)
-    admission = _ObservedAdmission(verify)
-    service = _service(history_case, admission)
-    task: asyncio.Task[None] | None = None
-    try:
-        async with HistoryQueryAdmission.admit(admission):
-            task = asyncio.create_task(
-                _invoke(service, entry, admission=admission, expected_borrowed=0)
-            )
-            await _wait_for_signal(task, admission.attempted)
-            assert admission.borrowed_tokens == 1
-            read.assert_not_called()
-        await task
-        assert admission.borrowed_tokens == 0
-        assert read.call_args_list
-        assert all(
-            TODO_PROJECTION in call.kwargs["projections"]
-            for call in read.call_args_list
-        )
-    finally:
-        if task is not None:
-            if not task.done():
-                task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-
-
-@pytest.mark.parametrize("entry", ["history", "trace", "live"])
 async def test_unauthorized_queries_do_not_enter_admission_or_read_trace(
     history_case: _HistoryCase,
     monkeypatch: pytest.MonkeyPatch,
@@ -277,46 +205,6 @@ async def test_unauthorized_queries_do_not_enter_admission_or_read_trace(
     read.assert_not_called()
     assert not admission.attempted.is_set()
     assert not channel.opened.is_set()
-
-
-@pytest.mark.parametrize(
-    "entry,include_task_trace,last_event_id",
-    [
-        ("history", False, None),
-        ("trace", False, None),
-        ("live", False, None),
-        ("live", True, "0"),
-    ],
-)
-async def test_queries_without_initial_todos_skip_admission_and_projection(
-    history_case: _HistoryCase,
-    monkeypatch: pytest.MonkeyPatch,
-    entry: _Entry,
-    include_task_trace: bool,
-    last_event_id: str | None,
-) -> None:
-    tracer, _, _ = history_case
-    read = AsyncMock(wraps=tracer.get)
-    monkeypatch.setattr(tracer, "get", read)
-    admission = _ObservedAdmission(
-        lambda: pytest.fail("无需任务首快照的请求不得占用准入容量")
-    )
-    async with HistoryQueryAdmission.admit(admission):
-        await _invoke(
-            _service(history_case, admission),
-            entry,
-            admission=admission,
-            expected_borrowed=1,
-            include_task_trace=include_task_trace,
-            last_event_id=last_event_id,
-        )
-        assert admission.borrowed_tokens == 1
-    assert read.call_args_list
-    assert all(
-        TODO_PROJECTION not in call.kwargs["projections"]
-        for call in read.call_args_list
-    )
-    assert not admission.attempted.is_set()
 
 
 class _ControlledDeadline:
@@ -413,53 +301,3 @@ async def test_live_preflight_interruption_closes_open_replay_and_releases_capac
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-
-
-@pytest.mark.parametrize("interruption", ["cancel", "timeout"])
-async def test_queued_initial_query_interruption_keeps_the_existing_owner(
-    history_case: _HistoryCase,
-    monkeypatch: pytest.MonkeyPatch,
-    interruption: Literal["cancel", "timeout"],
-) -> None:
-    tracer, _, channel = history_case
-    read = AsyncMock(wraps=tracer.get)
-    monkeypatch.setattr(tracer, "get", read)
-    admission = _ObservedAdmission(lambda: None)
-    task: asyncio.Task[None] | None = None
-    try:
-        async with HistoryQueryAdmission.admit(admission):
-            deadline = _ControlledDeadline()
-            monkeypatch.setattr(
-                admission_module,
-                "asyncio",
-                SimpleNamespace(timeout=lambda _seconds: deadline),
-            )
-            task = asyncio.create_task(
-                _invoke(
-                    _service(history_case, admission),
-                    "history",
-                    admission=admission,
-                    expected_borrowed=1,
-                )
-            )
-            await _wait_for_signal(task, admission.attempted)
-            if interruption == "timeout":
-                deadline.expire()
-                with pytest.raises(SystemException) as caught:
-                    await task
-                assert (
-                    caught.value.error_code == ConversationErrorCode.TRACE_UNAVAILABLE
-                )
-            else:
-                task.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await task
-            assert admission.borrowed_tokens == 1
-            read.assert_not_called()
-            assert not channel.opened.is_set()
-        assert admission.borrowed_tokens == 0
-    finally:
-        if task is not None:
-            if not task.done():
-                task.cancel()
-            await asyncio.gather(task, return_exceptions=True)

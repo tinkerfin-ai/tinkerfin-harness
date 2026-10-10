@@ -58,11 +58,17 @@ from tinkerfin import SkillSource
 
 scoped = TinkerFin(store=store, checkpointer=checkpointer).with_namespace("support")
 await scoped.store.aput(
-    ("files",), "/skills/reporting/SKILL.md",
-    dict(create_file_data("---\nname: reporting\ndescription: Prepare reports\n---\nVerify sources.")),
+    ("files",),
+    "/skills/reporting/SKILL.md",
+    dict(
+        create_file_data(
+            "---\nname: reporting\ndescription: Prepare reports\n---\nVerify sources."
+        )
+    ),
 )
 runtime = scoped.build(
-    model=model, skills=[SkillSource("/skills/")],
+    model=model,
+    skills=[SkillSource("/skills/")],
     backend=StoreBackend(namespace=lambda _: ("files",)),
 )
 ```
@@ -73,6 +79,7 @@ runtime = scoped.build(
 名称筛选只控制技能说明，不代替文件或执行权限。
 
 可恢复的工具审批和 Plan 必须使用具体 checkpointer。checkpointer 已保存 thread 历史时，只提交新的用户消息。
+托管 AG-UI 执行要求自定义 saver 实现异步 `aget_tuple`、`alist`、`aput` 和 `aput_writes`。请求准入会读取 checkpoint 历史，防止将已完成取消的 Run 身份用于不同输入。
 
 ```python
 runtime = (

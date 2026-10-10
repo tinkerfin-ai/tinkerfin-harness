@@ -266,6 +266,9 @@ class ConversationErrorCode(ErrorCode):
         409,
         "该审批已被另一次恢复运行认领",
     )
+    RESUME_NOT_SAVED = _ErrorCodeValue(
+        1_001_004_034, 409, "该提交已确认未保存，请重新提交"
+    )
     MESSAGING_FAILURE = _ErrorCodeValue(1_001_004_027, 500, "会话消息处理失败")
     MESSAGING_QUOTA_EXCEEDED = _ErrorCodeValue(
         1_001_004_029,

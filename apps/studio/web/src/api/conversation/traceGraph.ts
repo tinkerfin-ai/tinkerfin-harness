@@ -1,8 +1,8 @@
 import type { JsonValue } from '../../types'
 import { requestEventStream, requestJson } from '../shared/http'
+import { parseJsonSseStream } from '../shared/sse'
 import { ConversationError } from './errors'
 import { isJsonValue } from './eventParser'
-import { parseJsonSseStream } from '../shared/sse'
 import {
   compareTraceGraphIds,
   compareTraceGraphNodes,
@@ -10,7 +10,7 @@ import {
 
 export {
   compareTraceGraphIds,
-  compareTraceGraphNodes,
+  compareTraceGraphNodes
 } from './traceGraphOrder'
 
 export type TraceGraphNodeKind =
@@ -535,10 +535,6 @@ export const parseTraceGraphWithNodes = <Node extends TraceGraphNode>(
   parseNode: (value: unknown) => Node,
 ): Omit<TraceGraph, 'nodes'> & { nodes: Node[] } => (
   parseTraceGraphValue(value, GRAPH_KEYS, parseNode)
-)
-
-export const parseTraceGraph = (value: unknown): TraceGraph => (
-  parseTraceGraphWithNodes(value, parseTraceGraphNode)
 )
 
 export const parseTraceGraphPage = (value: unknown): TraceGraphPage => {

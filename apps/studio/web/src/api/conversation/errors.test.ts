@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { LANGUAGE_STORAGE_KEY } from '../../i18n'
 import { ConversationError, conversationErrorMessage, conversationRunError } from './errors'
+import { ApiError } from '../shared/http'
 
 describe('conversation error boundary', () => {
   beforeEach(() => {
@@ -27,6 +28,13 @@ describe('conversation error boundary', () => {
       new Error('底层连接信息'),
       'stream_recovery_failed',
     )).toBe('会话 Trace 恢复失败，请重试')
+  })
+
+  it('明确未保存的 HTTP 错误使用稳定本地化提示，不展示服务端诊断', () => {
+    const error = new ApiError('private registration details', { status: 409, code: 1_001_004_034 })
+    expect(conversationErrorMessage(error, 'run_request_failed')).toBe('提交未保存，请重试')
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, 'en')
+    expect(conversationErrorMessage(error, 'run_request_failed')).toBe('Your submission was not saved, please try again')
   })
 })
 

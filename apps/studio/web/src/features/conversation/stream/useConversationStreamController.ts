@@ -62,6 +62,7 @@ const RECONNECT_MAX_DELAY_MS = 5000
 const RECONNECT_LIMIT = 3
 const ACTIVE_RUN_PERSIST_INTERVAL_MS = 250
 const TEXT_RENDER_INTERVAL_MS = 50
+const TEXT_RENDER_UPDATE_LIMIT = 64
 const DETACHED_TRACE_RECONNECT_LIMIT = 3
 
 const isTransportFailure = (error: unknown) => error instanceof TypeError
@@ -372,27 +373,33 @@ export function useConversationStreamController({
       let completed = false
       let projector: LiveTodoTraceProjector | null = null
       let publishTimer: number | undefined
-      let pendingProjection: Conversation | undefined
+      let pendingUpdates: Array<(current: Conversation) => Conversation> = []
       const discardPending = () => {
         window.clearTimeout(publishTimer)
         publishTimer = undefined
-        pendingProjection = undefined
+        pendingUpdates = []
       }
       const flushPublish = () => {
-        const value = pendingProjection
+        const updates = pendingUpdates
         discardPending()
-        if (!value || signal.aborted || !isMounted.current || isActiveThread(threadId)) return
-        setWorkspace((state) => updateConversation(state, threadId, (item) => (
-          signal.aborted || !isMounted.current || isActiveThread(threadId)
-            ? item : { ...value, pinned: item.pinned, ...mergeConversationTitle(item, value) }
-        )))
+        if (!updates.length || signal.aborted || !isMounted.current || isActiveThread(threadId)) return
+        setWorkspace((state) => updateConversation(state, threadId, (item) => {
+          if (signal.aborted || !isMounted.current || isActiveThread(threadId)) return item
+          try {
+            const value = updates.reduce((current, update) => update(current), item)
+            return { ...value, pinned: item.pinned, ...mergeConversationTitle(item, value) }
+          } catch {
+            return { ...item, notice: historySyncNotice(`${runId}:history`) }
+          }
+        }))
       }
-      const publish = (deferTextRender = false) => {
-        pendingProjection = projected
-        if (!deferTextRender) {
+      const publish = (update: (current: Conversation) => Conversation, deferTextRender = false) => {
+        pendingUpdates.push(update)
+        // 写回已验证的操作而非旧会话副本；突发输出达到上限时提前合并，避免无界排队
+        if (!deferTextRender || pendingUpdates.length >= TEXT_RENDER_UPDATE_LIMIT) {
           flushPublish()
         } else if (publishTimer === undefined) {
-          // 只保留已按序应用的最新正文，恢复读取不等待页面展示
+          // 合并连续正文的展示，恢复读取不等待页面刷新
           publishTimer = window.setTimeout(flushPublish, TEXT_RENDER_INTERVAL_MS)
         }
       }
@@ -417,28 +424,35 @@ export function useConversationStreamController({
                     headRunId: runId, latestTurn: latestUserTurn(projected, true), isRunning: !completed,
                   })
                 }
-                publish()
+                publish(current => {
+                  const restored = restoreConversationFromTrace(item.snapshot, {
+                    model: current.model, includeTaskTrace, preserveInputFrom: current,
+                  })
+                  return item.replay ? { ...restored, runStatus: 'streaming' } : restored
+                })
                 continue
               }
               if (lastSeq == null && (item.event.type !== 'RUN_STARTED' || item.event.runId !== runId || item.event.threadId !== threadId)) throw new ConversationError('stream_sequence_invalid')
               if (lastSeq != null && item.seq <= lastSeq) continue
               if (lastSeq != null && item.seq !== lastSeq + 1) throw new ConversationError('stream_sequence_invalid')
-              projected = applyConversationEvent(projected, item.event)
-              if (item.replayed) {
+              const applyEvent = (current: Conversation): Conversation => {
+                const withEvent = applyConversationEvent(current, item.event)
                 // 已提交正文直接恢复；后续新增量以完整正文作为逐字显示起点
-                projected = { ...projected, messages: projected.messages.map(message => (
+                const messages = item.replayed ? withEvent.messages.map(message => (
                   message.liveText ? { ...message, liveText: undefined } : message
-                )) }
+                )) : withEvent.messages
+                return { ...withEvent, messages, lastSeq: item.seq }
               }
+              projected = applyEvent(projected)
               if (projector) {
                 const snapshot = projector.consume(item.event, { receivedAt: new Date().toISOString(), rootState: projected.serverState })
                 projected = { ...projected, taskTrace: taskTraceView(snapshot) }
               }
               lastSeq = item.seq
-              projected = { ...projected, lastSeq }
+              const taskTrace = projected.taskTrace
               completed = (item.event.type === 'RUN_FINISHED' && item.event.runId === runId)
                 || (item.event.type === 'RUN_ERROR' && item.event.rawEvent?.source?.agentType !== 'subagent')
-              publish(item.event.type === 'TEXT_MESSAGE_CONTENT')
+              publish(current => ({ ...applyEvent(current), taskTrace }), item.event.type === 'TEXT_MESSAGE_CONTENT')
             }
             if (completed) break
             throw new ConversationError('stream_disconnected')
@@ -454,9 +468,15 @@ export function useConversationStreamController({
         if (signal.aborted) return
         clearActiveRunPersistence(runId)
         clearCancelPending(runId)
-        const detail = await fetchConversationHistoryDetail(threadId, { includeTaskTrace, signal, suppressGlobalError: true })
+        const submission = projected.approval ?? projected.planInteraction
+        const detail = await fetchConversationHistoryDetail(threadId, {
+          includeTaskTrace, signal, suppressGlobalError: true,
+          submissionRunId: submission?.submitted ? submission.submissionRunId : undefined,
+        })
         projected = restoreConversationFromTrace(detail, { previous: projected, model: projected.model, includeTaskTrace })
-        publish()
+        publish(current => restoreConversationFromTrace(detail, {
+          previous: current, model: current.model, includeTaskTrace, lastDeliveredSeq: current.lastSeq,
+        }))
       } catch (error) {
         if (signal.aborted || !isMounted.current || isActiveThread(threadId)) return
         flushPublish()
@@ -780,8 +800,10 @@ export function useConversationStreamController({
         if (mainTerminalReceived && target === 'workspace') {
           const includeTaskTrace = latestWorkspace.current.currentThreadId === targetThreadId
           if (includeTaskTrace) await handoffTaskTraceFollow(targetThreadId)
+          const submission = validationTarget?.approval ?? validationTarget?.planInteraction
           const detail = await fetchConversationHistoryDetail(targetThreadId, {
             includeTaskTrace,
+            submissionRunId: submission?.submitted ? submission.submissionRunId : undefined,
             signal: controller.signal,
             suppressGlobalError: true,
           })
@@ -798,9 +820,16 @@ export function useConversationStreamController({
             (state) => updateConversation(
               state,
               targetThreadId,
-              (item) => !belongsToRun(item) ? item : {
-                ...authoritative,
-                ...mergeConversationTitle(item, authoritative),
+              (item) => {
+                if (!belongsToRun(item)) return item
+                // 协议已在写回前验证；独立确认后可继续编辑，必须使用此刻仍有效的输入
+                try {
+                  return restoreConversationFromTrace(detail, {
+                    previous: item, model: item.model, lastDeliveredSeq: item.lastSeq, includeTaskTrace,
+                  })
+                } catch {
+                  return { ...item, notice: historySyncNotice(`${payload.runId}:history:${streamEpoch}`) }
+                }
               },
             ),
           )
@@ -824,7 +853,8 @@ export function useConversationStreamController({
           isTransportFailure(error)
           || hasConversationErrorCode(error, 'stream_disconnected')
         )
-        if (!receivedEvent && error instanceof ApiError && error.status >= 400 && error.status < 500) {
+        if (!receivedEvent && error instanceof ApiError && error.status >= 400 && error.status < 500
+          && (mode !== 'resume' || options.initialAfterSeq == null)) {
           options.onRequestRejected?.()
         }
         // 协议诊断留在错误对象中，notice 只使用稳定错误码对应的恢复文案
@@ -841,7 +871,7 @@ export function useConversationStreamController({
             mode,
             options: {
               ...options,
-              onRequestRejected: inputAccepted ? undefined : options.onRequestRejected,
+              onRequestRejected: mode === 'resume' || inputAccepted ? undefined : options.onRequestRejected,
               target,
               initialConversation: draftTarget,
               initialAfterSeq: lastAppliedSeq ?? 0,
@@ -978,18 +1008,27 @@ export function useConversationStreamController({
         await taskTraceFollowOwnership.current.follow(threadId, async ({ includeTaskTrace, signal }) => {
           if (!isActiveRunOwnerCurrent(runSessionOwner)) return
           try {
-            const detail = await fetchConversationHistoryDetail(threadId, { includeTaskTrace, signal, suppressGlobalError: true })
+            const submission = current.approval ?? current.planInteraction
+            const detail = await fetchConversationHistoryDetail(threadId, {
+              includeTaskTrace, signal, suppressGlobalError: true,
+              submissionRunId: submission?.submitted ? submission.submissionRunId : undefined,
+            })
             if (signal.aborted || !isMounted.current || isActiveThread(threadId)) return
             const previous = latestWorkspace.current.conversations.find((item) => item.threadId === threadId)
             if (!previous) return
-            const restored = restoreConversationFromTrace(detail, {
+            restoreConversationFromTrace(detail, {
               previous, model: previous.model, lastDeliveredSeq: previous.lastSeq, includeTaskTrace, taskTrace: previous.taskTrace,
             })
-            setWorkspace((state) => updateConversation(state, threadId, (item) => (
-              signal.aborted || !isMounted.current || isActiveThread(threadId)
-                ? item
-                : { ...restored, ...mergeConversationTitle(item, restored) }
-            )))
+            setWorkspace((state) => updateConversation(state, threadId, (item) => {
+              if (signal.aborted || !isMounted.current || isActiveThread(threadId)) return item
+              try {
+                return restoreConversationFromTrace(detail, {
+                  previous: item, model: item.model, lastDeliveredSeq: item.lastSeq, includeTaskTrace, taskTrace: item.taskTrace,
+                })
+              } catch {
+                return { ...item, notice: historySyncNotice(`${threadId}:history`) }
+              }
+            }))
           } catch {
             if (signal.aborted || !isMounted.current) return
             setWorkspace((state) => updateConversation(state, threadId, (item) => ({
@@ -1025,6 +1064,7 @@ export function useConversationStreamController({
       }
       await streamRun(threadId, request.payload, request.mode, {
         ...request.options,
+        onRequestRejected: request.mode === 'resume' ? undefined : request.options.onRequestRejected,
         notifyRunError: false,
         initialConversation: request.options.initialConversation
           ? { ...request.options.initialConversation, activeRunId: request.payload.runId, runStatus: 'streaming', notice: undefined }

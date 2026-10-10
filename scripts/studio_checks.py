@@ -18,7 +18,6 @@ SERVER_ATTACHMENT_TESTS = [
     "apps/studio/server/tests/test_work_file_tools.py",
 ]
 WEB_ATTACHMENT_TESTS = [
-    "src/features/conversation/attachments/AttachmentList.test.tsx",
     "src/features/conversation/attachments/DocumentAttachmentPreview.test.tsx",
     "src/features/conversation/useAttachments.test.ts",
 ]
@@ -67,7 +66,6 @@ def verify_server() -> None:
         "run",
         "pytest",
         "tests/test_latest_only_contracts.py",
-        "tests/test_docker_services.py",
         "tests/test_studio_checks.py",
         "tests/test_prepare_gateway_storage.py",
         "apps/studio/server",

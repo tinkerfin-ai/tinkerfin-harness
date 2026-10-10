@@ -1,5 +1,5 @@
-import { getServerAddress } from '../api/shared/config'
 import type { AuthSessionResponse, AuthUser, LoginResponse } from '../api/auth/types'
+import { getServerAddress } from '../api/shared/config'
 
 export const AUTH_SESSION_STORAGE_KEY = 'tinkerfin.auth.session'
 
@@ -15,16 +15,9 @@ export interface AuthSessionLifecycleOptions {
   onExternalSession?: (session: AuthSession) => void
 }
 
-export interface AuthFailureEvent {
-  code: number
-  message: string
-}
-
 type SessionListener = (session: AuthSession | null) => void
-type FailureListener = (event: AuthFailureEvent) => void
 
 const sessionListeners = new Set<SessionListener>()
-const failureListeners = new Set<FailureListener>()
 
 let currentSession: AuthSession | null | undefined
 
@@ -228,17 +221,6 @@ export function subscribeAuthSession(listener: SessionListener) {
   return () => {
     sessionListeners.delete(listener)
   }
-}
-
-export function subscribeAuthFailure(listener: FailureListener) {
-  failureListeners.add(listener)
-  return () => {
-    failureListeners.delete(listener)
-  }
-}
-
-export function notifyAuthFailure(event: AuthFailureEvent) {
-  for (const listener of failureListeners) listener(event)
 }
 
 export function getAuthorizationHeader(): string | null {

@@ -7,11 +7,10 @@ import axios, {
 import {
   clearAuthSession,
   getAuthorizationHeader,
-  notifyAuthFailure,
 } from '../../auth/session'
+import { translateCurrent } from '../../i18n'
 import { buildApiUrl, getServerAddress } from './config'
 import { GLOBAL_ERROR_CODES } from './errorCodes'
-import { translateCurrent } from '../../i18n'
 
 interface ApiEnvelope<T> {
   code: number
@@ -22,7 +21,6 @@ interface ApiEnvelope<T> {
 interface ErrorPolicy {
   serverAddress?: string
   suppressGlobalError?: boolean
-  suppressAuthFailure?: boolean
   authorization?: string | null
 }
 
@@ -100,12 +98,6 @@ function handleAuthFailure(error: ApiError, policy: ErrorPolicy) {
     : currentAuthorization === null
   if (!isCurrentSession) return
   clearAuthSession()
-  if (!policy.suppressAuthFailure) {
-    notifyAuthFailure({
-      code: error.code,
-      message: error.message || translateCurrent('登录已失效，请重新登录'),
-    })
-  }
 }
 
 function finalizeError(error: ApiError, policy: ErrorPolicy) {
@@ -160,7 +152,6 @@ function requestPolicy(config?: ApiAxiosRequestConfig): ErrorPolicy {
   return {
     serverAddress: config?.baseURL,
     suppressGlobalError: config?.suppressGlobalError,
-    suppressAuthFailure: config?.suppressAuthFailure,
     authorization: readConfigAuthorization(config),
   }
 }
@@ -366,7 +357,6 @@ export async function requestJson<T>(path: string, options: RequestOptions = {})
         : undefined,
     requiresAuth: options.requiresAuth,
     suppressGlobalError: options.suppressGlobalError,
-    suppressAuthFailure: options.suppressAuthFailure,
   }
   const response = await apiClient.request<T>(config)
   return response.data

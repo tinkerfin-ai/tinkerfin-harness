@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
@@ -25,7 +26,7 @@ class TokenMemoryStore:
     async def revoke(self, token: str) -> None:
         record = self.records.get(token)
         if record is not None:
-            self.records[token] = record.with_revoked(True)
+            self.records[token] = replace(record, revoked=True)
 
 
 async def test_password_hash_uses_independent_salts() -> None:

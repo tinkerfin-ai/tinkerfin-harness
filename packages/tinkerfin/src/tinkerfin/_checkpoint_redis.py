@@ -3,8 +3,7 @@
 AsyncRedisSaver 0.5.2 caps alist and adelete_thread at 10000 indexed rows. This
 integration keeps its documents, indexes, serializers, and tuple loading intact.
 Ordered pages bound client memory; exact key scans also cover orphan writes and
-auxiliary keys that neither checkpoint index can enumerate. The regression lives
-in test_redis_checkpoint_history.py.
+auxiliary keys that neither checkpoint index can enumerate.
 """
 
 from __future__ import annotations

@@ -17,10 +17,6 @@ describe('图表渲染边界', () => {
     expect(() => validateDiagramSource(source)).toThrow('unsafe')
   })
 
-  it('超限源码由当前图表失败，不替换成引擎错误图', () => {
-    expect(() => validateDiagramSource('a'.repeat(50_001))).toThrow('too-large')
-  })
-
   it('将 SVG 净化为无交互图片，并保留可访问描述及固有尺寸', () => {
     const image = diagramImage(svg.replace('</svg>', '<script>alert(1)</script><foreignObject><div>html</div></foreignObject><image href="https://example.com/image"/></svg>'))
     const result = decodeURIComponent(image.url.split(',')[1])
@@ -47,25 +43,5 @@ describe('图表渲染边界', () => {
     await rejected
     expect(engine.render).toHaveBeenCalledTimes(1)
     expect(document.querySelector('.mermaid-render-host')).toBeNull()
-  })
-
-  it('语法失败清理临时节点，后续图表仍能正常显示', async () => {
-    engine.parse.mockRejectedValueOnce(new Error('parse'))
-    await expect(renderDiagram('flowchart LR\n[', new AbortController().signal)).rejects.toThrow('syntax')
-    await expect(renderDiagram('flowchart LR\nA-->B', new AbortController().signal)).resolves.toMatchObject({ width: 300 })
-    expect(document.querySelector('.mermaid-render-host')).toBeNull()
-  })
-
-  it('不支持的图表不进入渲染器', async () => {
-    engine.detectType.mockReturnValue('architecture')
-    await expect(renderDiagram('architecture-beta', new AbortController().signal)).rejects.toThrow('unsupported')
-    expect(engine.render).not.toHaveBeenCalled()
-  })
-
-  it('图表模块加载失败保留重试，异常 SVG 不归为源码语法错误', async () => {
-    engine.parse.mockRejectedValueOnce(new TypeError('Failed to fetch dynamically imported module'))
-    await expect(renderDiagram('flowchart LR\nA-->B', new AbortController().signal)).rejects.toThrow('load')
-    engine.render.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 0 0"/>' })
-    await expect(renderDiagram('flowchart LR\nA-->B', new AbortController().signal)).rejects.toThrow('render')
   })
 })

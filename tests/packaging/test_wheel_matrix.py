@@ -41,7 +41,6 @@ class _InstallCase:
     forbidden_distributions: tuple[str, ...] = ()
     forbidden_modules: tuple[str, ...] = ()
     smoke: str | None = None
-    full_matrix_only: bool = False
 
 
 _PROJECTS = (
@@ -242,7 +241,7 @@ _CORE_CASES = (
     ),
 )
 
-_FULL_CASES = (
+_EXTRA_CASES = (
     _InstallCase(
         "notifications-redis",
         "tinkerfin-notifications[redis]==0.1.0",
@@ -250,7 +249,6 @@ _FULL_CASES = (
         ("tinkerfin-notifications", "redis"),
         ("tinkerfin", "langgraph", "sqlalchemy", "fastapi", "starlette"),
         ("tinkerfin", "langgraph", "sqlalchemy", "fastapi", "starlette"),
-        full_matrix_only=True,
     ),
     _InstallCase(
         "gateway-starlette",
@@ -260,7 +258,6 @@ _FULL_CASES = (
         ("fastapi", "redis"),
         ("fastapi", "redis"),
         smoke="gateway_starlette",
-        full_matrix_only=True,
     ),
     _InstallCase(
         "messaging-sqlalchemy",
@@ -269,7 +266,6 @@ _FULL_CASES = (
         ("tinkerfin-messaging", "tinkerfin-sqlalchemy", "sqlalchemy"),
         ("asyncmy", "asyncpg", "aiosqlite", "redis"),
         ("asyncmy", "asyncpg", "aiosqlite", "redis"),
-        full_matrix_only=True,
     ),
     _InstallCase(
         "langgraph-store-sqlalchemy",
@@ -278,7 +274,6 @@ _FULL_CASES = (
         ("tinkerfin-langgraph-store", "tinkerfin-sqlalchemy", "sqlalchemy"),
         ("asyncmy", "asyncpg", "aiosqlite"),
         ("asyncmy", "asyncpg", "aiosqlite"),
-        full_matrix_only=True,
     ),
     _InstallCase(
         "automation-sqlalchemy",
@@ -287,7 +282,6 @@ _FULL_CASES = (
         ("tinkerfin-automation", "tinkerfin-sqlalchemy", "sqlalchemy"),
         ("apscheduler", "asyncmy", "asyncpg", "aiosqlite"),
         ("apscheduler", "asyncmy", "asyncpg", "aiosqlite"),
-        full_matrix_only=True,
     ),
     _InstallCase(
         "runtime-agui",
@@ -296,7 +290,6 @@ _FULL_CASES = (
         ("tinkerfin", "tinkerfin-agui-adapter", "ag-ui-protocol"),
         ("redis",),
         ("redis",),
-        full_matrix_only=True,
     ),
     _InstallCase(
         "runtime-redis",
@@ -305,14 +298,12 @@ _FULL_CASES = (
         ("tinkerfin", "redis"),
         ("ag-ui-protocol", "tinkerfin-agui-adapter"),
         ("ag_ui", "tinkerfin_agui_adapter"),
-        full_matrix_only=True,
     ),
     _InstallCase(
         "runtime-agui-redis",
         "tinkerfin[agui,redis]==0.1.0",
         ("tinkerfin", "tinkerfin_agui_adapter", "ag_ui", "redis"),
         ("tinkerfin", "tinkerfin-agui-adapter", "ag-ui-protocol", "redis"),
-        full_matrix_only=True,
     ),
     _InstallCase(
         "messaging-agui",
@@ -321,7 +312,6 @@ _FULL_CASES = (
         ("tinkerfin-messaging", "ag-ui-protocol"),
         ("tinkerfin", "redis", "tinkerfin-native-stream"),
         ("tinkerfin", "redis", "tinkerfin_native_stream"),
-        full_matrix_only=True,
     ),
     _InstallCase(
         "messaging-native",
@@ -330,7 +320,6 @@ _FULL_CASES = (
         ("tinkerfin-messaging", "tinkerfin-native-stream"),
         ("tinkerfin", "deepagents", "ag-ui-protocol", "redis"),
         ("tinkerfin", "deepagents", "ag_ui", "redis"),
-        full_matrix_only=True,
     ),
     _InstallCase(
         "messaging-redis",
@@ -339,7 +328,6 @@ _FULL_CASES = (
         ("tinkerfin-messaging", "redis"),
         ("tinkerfin", "ag-ui-protocol", "tinkerfin-native-stream"),
         ("tinkerfin", "ag_ui", "tinkerfin_native_stream"),
-        full_matrix_only=True,
     ),
     _InstallCase(
         "messaging-agui-redis",
@@ -348,7 +336,6 @@ _FULL_CASES = (
         ("tinkerfin-messaging", "ag-ui-protocol", "redis"),
         ("tinkerfin", "tinkerfin-native-stream"),
         ("tinkerfin", "tinkerfin_native_stream"),
-        full_matrix_only=True,
     ),
     _InstallCase(
         "tracing-sqlalchemy",
@@ -357,7 +344,6 @@ _FULL_CASES = (
         ("tinkerfin-tracing", "tinkerfin-sqlalchemy", "sqlalchemy"),
         ("asyncmy", "asyncpg", "aiosqlite"),
         ("asyncmy", "asyncpg", "aiosqlite"),
-        full_matrix_only=True,
     ),
     _InstallCase(
         "sandbox-sqlalchemy",
@@ -366,7 +352,6 @@ _FULL_CASES = (
         ("tinkerfin-sandbox", "tinkerfin-sqlalchemy", "sqlalchemy"),
         ("asyncmy", "asyncpg", "aiosqlite"),
         ("asyncmy", "asyncpg", "aiosqlite"),
-        full_matrix_only=True,
     ),
 )
 
@@ -397,7 +382,7 @@ _STUDIO_CASE = _InstallCase(
     ("aiomysql", "pymysql"),
 )
 
-_CASES = (*_CORE_CASES, *_FULL_CASES, _STUDIO_CASE)
+_CASES = (*_CORE_CASES, *_EXTRA_CASES, _STUDIO_CASE)
 
 
 def _run(command: list[str], *, environment: dict[str, str] | None = None) -> None:
@@ -741,8 +726,6 @@ def test_isolated_wheel_installation(
 ) -> None:
     """Resolve, import, and smoke-test one public installation combination."""
 
-    if case.full_matrix_only and sys.version_info[:2] != (3, 11):
-        pytest.skip("single-extra combinations run on the Python 3.11 full matrix")
     environment = dict(os.environ)
     environment.pop("PYTHONPATH", None)
     environment["TINKERFIN_WHEEL_CASE"] = json.dumps(
@@ -790,9 +773,6 @@ def test_studio_deploy_wheel_set_is_self_contained(
     tmp_path: Path,
 ) -> None:
     """Install the exact deployment wheel set after external locked dependencies."""
-
-    if sys.version_info[:2] != (3, 11):
-        pytest.skip("the production deployment set runs on the Python 3.11 matrix")
 
     expected_paths = tuple(
         str(project.path.relative_to(_ROOT)) for project in _PROJECTS

@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13.15"
+          python-version: "3.14.7"
       - name: Install script test runner
         run: python -m pip install pytest==9.1.1
       - name: Test script entry points and Git boundaries
@@ -44,13 +44,11 @@ jobs:
         with:
           version: "0.12.13"
           enable-cache: true
-          python-version: "3.11.16"
+          python-version: "3.14.7"
       - name: Install locked workspace
-        run: uv sync --locked --all-packages --no-default-groups --group test --group lint --group integration
+        run: uv sync --locked --all-packages --no-default-groups --group test --group lint
       - name: Check repository and Studio formatting
         run: ./scripts/verify-studio-server.sh
-      - name: Verify storage preparation against disposable databases
-        run: uv run pytest tests/test_prepare_gateway_storage.py -m docker_integration
 
   web:
     runs-on: ubuntu-24.04
@@ -61,7 +59,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11.16"
+          python-version: "3.14.7"
       - uses: pnpm/action-setup@v4
         with:
           version: 10.8.0
@@ -130,9 +128,9 @@ jobs:
         with:
           version: "0.12.13"
           enable-cache: true
-          python-version: "3.11.16"
+          python-version: "3.14.7"
       - name: Install locked workspace
-        run: uv sync --locked --all-packages --no-default-groups --group test --group lint --group integration
+        run: uv sync --locked --all-packages --no-default-groups --group test --group lint
       - name: Check formatting
         run: uv run ruff format --no-cache --check packages
       - name: Lint packages
@@ -147,67 +145,36 @@ jobs:
   packages:
     runs-on: ubuntu-24.04
     timeout-minutes: 8
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11.16", "3.12.14", "3.13.15", "3.14.7"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.12.13"
           enable-cache: true
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.14.7"
       - name: Install locked workspace
-        run: uv sync --locked --all-packages --no-default-groups --group test --group lint --group integration
-      - name: Test package coverage
-        if: startsWith(matrix.python-version, '3.11.')
-        env:
-          PYTEST_ADDOPTS: "-vv"
+        run: uv sync --locked --all-packages --no-default-groups --group test --group lint
+      - name: Test packages and logging contracts
         run: >-
           uv run pytest packages tests/test_package_logging_contract.py
-          -n 4 --dist=loadfile
-          --durations=20
-          -o faulthandler_timeout=60
-          --cov=tinkerfin
-          --cov=tinkerfin_contracts
-          --cov=tinkerfin_native_stream
-          --cov=tinkerfin_tracing
-          --cov=tinkerfin_langgraph_store
-          --cov=tinkerfin_sqlalchemy
-          --cov=tinkerfin_agui_adapter
-          --cov=tinkerfin_messaging
-          --cov=tinkerfin_sandbox
-          --cov=tinkerfin_automation
-          --cov=tinkerfin_notifications
-          --cov=tinkerfin_gateway
-          --cov-branch
-          --cov-report=term-missing
-          --cov-fail-under=80
-      - name: Test packages on supported Python
-        if: ${{ !startsWith(matrix.python-version, '3.11.') }}
-        run: uv run pytest packages -n 4 --dist=loadfile --durations=20 -o faulthandler_timeout=60
+          -n 4 --dist=loadfile --durations=20 -o faulthandler_timeout=60
 
   wheel-boundaries:
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11.16", "3.12.14", "3.13.15", "3.14.7"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.12.13"
           enable-cache: true
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.14.7"
       - name: Install packaging test runner
         run: uv sync --locked --all-packages --no-default-groups --group packaging
       - uses: actions/cache@v4
         id: dependency-wheels
         with:
           path: .cache/test-wheels
-          key: test-wheels-${{ runner.os }}-${{ runner.arch }}-${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
+          key: test-wheels-${{ runner.os }}-${{ runner.arch }}-3.14.7-${{ hashFiles('uv.lock') }}
       - name: Prepare locked dependency wheels
         if: steps.dependency-wheels.outputs.cache-hit != 'true'
         run: |

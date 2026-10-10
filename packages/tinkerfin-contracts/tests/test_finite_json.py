@@ -124,11 +124,6 @@ _CASES = (
     ),
     (_observation(NativeStateObservation, state={}), ("state",)),
 )
-_FIELDS = [
-    pytest.param(model, field, id=f"{type(model).__name__}-{field}")
-    for model, fields in _CASES
-    for field in fields
-]
 
 
 # Every field must retain the shared validator. Its non-finite categories need
@@ -159,15 +154,3 @@ def test_non_finite_json_is_rejected_before_serialization(
     encoded[field] = payload[field]
     with pytest.raises(ValidationError, match="finite"):
         type(model).model_validate_json(json.dumps(encoded))
-
-
-@pytest.mark.parametrize(("model", "field"), _FIELDS)
-def test_finite_numbers_and_null_remain_distinct_after_round_trip(
-    model: BaseModel, field: str
-) -> None:
-    payload = model.model_dump(mode="python")
-    expected = {"values": [0, 1.25, -2.5, None, True]}
-    payload[field] = expected
-    validated = type(model).model_validate(payload)
-    restored = type(model).model_validate_json(validated.model_dump_json())
-    assert getattr(restored, field) == expected

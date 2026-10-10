@@ -1,6 +1,7 @@
 import type { ConversationTitleSnapshot } from "./api/conversation/titles"
 import type { MessageSource, SubagentProvenance } from './api/conversation/types'
 import type { ConversationHistoryCoreDetail } from './api/conversation/history'
+import type { PlanResult } from './api/conversation/planResults'
 import type {
   ReadyTaskTraceSnapshot,
   UnavailableTaskTraceSnapshot,
@@ -53,8 +54,9 @@ export interface Message {
   meta?: {
     source?: DeepReadonly<MessageSource>
     selectedSkills?: { id: string; name: string }[]
-    /** 历史消息的 Trace 关联键，用于将任务定位到对应的会话消息 */
     planHistory?: PlanInteraction
+    planResult?: PlanResult
+    /** 历史消息的 Trace 关联键，用于将任务定位到对应的会话消息 */
     traceMessageId?: string
     contentOmitted?: boolean
     title?: string
@@ -117,6 +119,7 @@ export interface ApprovalState {
   activeIndex: number
   submitted: boolean
   submissionRunId?: string
+  requestRejected?: boolean
   mode?: ApprovalMode
   error?: string
 }
@@ -200,6 +203,7 @@ export interface PlanQuestionState {
   questions: PlanQuestionItem[]
   submitted: boolean
   submissionRunId?: string
+  requestRejected?: boolean
   error?: string
 }
 
@@ -229,6 +233,7 @@ export interface PlanReviewState {
   message?: string
   submitted: boolean
   submissionRunId?: string
+  requestRejected?: boolean
   error?: string
 }
 

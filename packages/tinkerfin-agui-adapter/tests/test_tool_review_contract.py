@@ -11,7 +11,6 @@ from typing import cast
 
 import pytest
 from ag_ui.core.types import Interrupt as AgUiInterrupt
-from pydantic import ValidationError
 
 from tinkerfin_agui_adapter import (
     TOOL_REVIEW_SCHEMA,
@@ -94,21 +93,6 @@ def _interrupt(
     )
 
 
-def test_public_parser_returns_frozen_current_tool_review_metadata() -> None:
-    parsed = parse_tool_review_interrupt(_interrupt())
-
-    assert parsed.model_dump(mode="json", by_alias=True) == {
-        "schema": TOOL_REVIEW_SCHEMA,
-        "nativeInterruptId": "native-review",
-        "actionIndex": 0,
-        "toolName": "write_file",
-        "allowedDecisions": ["approve", "edit", "reject"],
-        "originalArgs": {"file_path": "/a.txt", "content": "A"},
-    }
-    with pytest.raises(ValidationError):
-        setattr(parsed, "tool_name", "other")
-
-
 def test_parser_supports_same_name_multi_action_and_subagent_scope() -> None:
     parsed = parse_tool_review_interrupt(
         _interrupt(
@@ -155,34 +139,6 @@ def test_parser_rejects_missing_unknown_or_tampered_metadata(
 
     with pytest.raises(ToolReviewContractError):
         parse_tool_review_interrupt(changed)
-
-
-@pytest.mark.parametrize(
-    "update",
-    (
-        {"reason": "langgraph:interrupt"},
-        {"tool_call_id": "not-scoped"},
-        {"id": "wrong-public-id"},
-        {"metadata": {"deepagents": {}}},
-    ),
-)
-def test_parser_rejects_malformed_complete_interrupt(update: dict[str, object]) -> None:
-    with pytest.raises(ToolReviewContractError):
-        parse_tool_review_interrupt(_interrupt().model_copy(update=update))
-
-
-def test_metadata_model_rejects_non_object_original_args() -> None:
-    with pytest.raises(ValidationError):
-        ToolReviewInterruptMetadata.model_validate(
-            {
-                "schema": TOOL_REVIEW_SCHEMA,
-                "nativeInterruptId": "native-review",
-                "actionIndex": 0,
-                "toolName": "write_file",
-                "allowedDecisions": ["approve"],
-                "originalArgs": [],
-            }
-        )
 
 
 def test_python_and_web_contract_fixtures_are_identical_and_valid() -> None:

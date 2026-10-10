@@ -94,7 +94,12 @@ def _node(node: TraceGraphNode, identity: ThreadIdentity) -> AgUiTraceGraphNode:
 def _interaction(interaction: TraceInteraction) -> AgUiTraceInteraction:
     actions: tuple[Interrupt, ...] | None = None
     payload = interaction.payload
-    if interaction.status != "pending":
+    # Plan settlement retains the request, unlike Tool approval decisions.
+    # Its public descriptor remains readable; checkpoint state authorizes resume.
+    if interaction.status != "pending" and interaction.kind not in {
+        "tinkerfin:plan_clarification",
+        "tinkerfin:plan_review",
+    }:
         return AgUiTraceInteraction(**interaction.model_dump(exclude={"agui"}), agui=())
     if not interaction.payload_omitted:
         if interaction.kind == "tool_approval":

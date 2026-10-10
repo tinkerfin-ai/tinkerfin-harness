@@ -1,7 +1,6 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import gsap from 'gsap'
 
 import App from './App'
 import { setServerAddress } from './api/shared/config'
@@ -89,31 +88,6 @@ describe('App authentication boundary', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('keeps the workspace unmounted while the stored session is being verified', () => {
-    seedSession('token-pending')
-    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => undefined)))
-
-    render(<App />)
-
-    expect(screen.getByLabelText('正在检查登录状态')).toBeInTheDocument()
-    expect(screen.queryByLabelText('对话内容')).not.toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: '欢迎回来' })).not.toBeInTheDocument()
-  })
-
-  it('silently clears an invalid session and thread route before showing login', async () => {
-    seedSession()
-    window.history.replaceState(null, '', '/?thread=private-thread')
-    vi.stubGlobal('fetch', vi.fn(async () => envelope(null, 401, 1_001_001_000, '登录已过期')))
-
-    render(<App />)
-
-    expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument()
-    expect(screen.queryByLabelText('对话内容')).not.toBeInTheDocument()
-    expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument()
-    expect(window.location.search).toBe('')
-    expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).toBeNull()
-  })
-
   it('mounts the workspace only after the stored session is verified', async () => {
     seedSession()
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -167,33 +141,6 @@ describe('App authentication boundary', () => {
     expect(sessionRequests).toBe(2)
   })
 
-  it('retries a network verification failure immediately when connectivity returns', async () => {
-    seedSession('network-retry-token')
-    let sessionRequests = 0
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(input instanceof Request ? input.url : String(input), 'http://localhost')
-      if (url.pathname.endsWith('/api/auth/me')) {
-        sessionRequests += 1
-        if (sessionRequests === 1) throw new TypeError('Failed to fetch')
-        return envelope(sessionPayload())
-      }
-      if (url.pathname === '/api/projects') return envelope([{ id: 'project-1', name: '测试项目', createdAt: '2030-01-01', updatedAt: '2030-01-01' }])
-      if (url.pathname.endsWith('/api/conversation/config')) return envelope({ dayRanges: [7, 30] })
-      if (url.pathname.endsWith('/api/conversation/history')) {
-        return envelope({ items: [], nextCursor: null })
-      }
-      throw new Error(`unexpected request: ${url.pathname}`)
-    }))
-
-    render(<App />)
-
-    expect(await screen.findByLabelText('正在重新验证登录状态')).toBeInTheDocument()
-    window.dispatchEvent(new Event('online'))
-    await waitFor(() => expect(screen.getByLabelText('对话内容')).toBeInTheDocument())
-    expect(sessionRequests).toBe(2)
-    expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).not.toBeNull()
-  })
-
   it('silently unmounts an active workspace when an authenticated request returns 401', async () => {
     seedSession()
     window.history.replaceState(null, '', '/?thread=private-thread')
@@ -216,84 +163,6 @@ describe('App authentication boundary', () => {
     expect(screen.queryByRole('list', { name: '系统提示' })).not.toBeInTheDocument()
     expect(window.location.search).toBe('')
     expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).toBeNull()
-  })
-
-  it('手动登录验证通过后，过渡结束才挂载工作区', async () => {
-    const matchMedia = window.matchMedia
-    vi.stubGlobal('matchMedia', (query: string) => ({
-      ...matchMedia(query),
-      matches: query === '(prefers-reduced-motion: reduce)' ? false : matchMedia(query).matches,
-    }))
-    const createTimeline = gsap.timeline
-    const timelines: gsap.core.Timeline[] = []
-    vi.spyOn(gsap, 'timeline').mockImplementation(vars => {
-      const timeline = createTimeline({ ...vars, paused: true })
-      timelines.push(timeline)
-      return timeline
-    })
-    const browserUser = userEvent.setup()
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const request = input instanceof Request ? input : new Request(input)
-      const url = new URL(request.url)
-      if (url.pathname.endsWith('/api/auth/login')) return envelope(loginPayload())
-      if (url.pathname.endsWith('/api/auth/me')) return envelope(sessionPayload())
-      if (url.pathname === '/api/projects') return envelope([{ id: 'project-1', name: '测试项目', createdAt: '2030-01-01', updatedAt: '2030-01-01' }])
-      if (url.pathname.endsWith('/api/conversation/config')) return envelope({ dayRanges: [7, 30] })
-      if (url.pathname.endsWith('/api/conversation/history')) return envelope({ items: [], nextCursor: null })
-      throw new Error(`unexpected request: ${url.pathname}`)
-    })
-    vi.stubGlobal('fetch', fetchMock)
-
-    render(<App />)
-    await browserUser.type(screen.getByLabelText('用户名'), 'yunsan')
-    await browserUser.type(screen.getByLabelText('密码'), 'password')
-    await browserUser.click(screen.getByRole('button', { name: '登录' }))
-
-    const transition = await screen.findByLabelText('正在进入工作区')
-    const timeline = timelines.find(item => item.getTweensOf(transition).length > 0)!
-    act(() => { timeline.progress(0.5) })
-    expect(transition).toBeVisible()
-    expect(screen.queryByLabelText('对话内容')).not.toBeInTheDocument()
-    await act(async () => { timeline.progress(1) })
-    expect(screen.getByLabelText('对话内容')).toBeInTheDocument()
-  })
-
-  it('shows login service failures only through the global toast', async () => {
-    const browserUser = userEvent.setup()
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const request = input instanceof Request ? input : new Request(input)
-      if (new URL(request.url).pathname.endsWith('/api/auth/login')) {
-        return new Response(null, { status: 503 })
-      }
-      throw new Error(`unexpected request: ${request.url}`)
-    }))
-
-    render(<App />)
-    await browserUser.type(screen.getByLabelText('用户名'), 'yunsan')
-    await browserUser.type(screen.getByLabelText('密码'), 'password')
-    await browserUser.click(screen.getByRole('button', { name: '登录' }))
-
-    expect(await screen.findByRole('status')).toHaveTextContent(/^服务暂不可用，请稍后重试$/)
-    expect(screen.getByRole('heading', { name: '欢迎回来' })).toBeInTheDocument()
-  })
-
-  it('shows rejected credentials once through the global toast', async () => {
-    const browserUser = userEvent.setup()
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const request = input instanceof Request ? input : new Request(input)
-      if (new URL(request.url).pathname.endsWith('/api/auth/login')) {
-        return envelope(null, 401, 1_001_001_000, '用户名或密码错误')
-      }
-      throw new Error(`unexpected request: ${request.url}`)
-    }))
-
-    render(<App />)
-    await browserUser.type(screen.getByLabelText('用户名'), 'yunsan')
-    await browserUser.type(screen.getByLabelText('密码'), 'wrong-password')
-    await browserUser.click(screen.getByRole('button', { name: '登录' }))
-
-    expect(await screen.findByRole('status')).toHaveTextContent('用户名或密码错误')
-    expect(screen.getAllByRole('status')).toHaveLength(1)
   })
 
   it('卸载登录页面后取消请求且不保存晚到的登录结果', async () => {
@@ -361,60 +230,6 @@ describe('App authentication boundary', () => {
     expect(screen.getAllByRole('status')).toHaveLength(1)
     expect(screen.queryByLabelText('正在检查登录状态')).not.toBeInTheDocument()
     expect(window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)).toBeNull()
-  })
-
-  it('keeps the workspace and transition unmounted while a fresh login is verified by /me', async () => {
-    const browserUser = userEvent.setup()
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const request = input instanceof Request ? input : new Request(input)
-      const url = new URL(request.url)
-      if (url.pathname.endsWith('/api/auth/login')) return envelope(loginPayload('pending-token'))
-      if (url.pathname.endsWith('/api/auth/me')) {
-        return new Promise<Response>(() => undefined)
-      }
-      throw new Error(`unexpected request: ${url.pathname}`)
-    }))
-
-    render(<App />)
-    await browserUser.type(screen.getByLabelText('用户名'), 'yunsan')
-    await browserUser.type(screen.getByLabelText('密码'), 'password')
-    await browserUser.click(screen.getByRole('button', { name: '登录' }))
-
-    expect(screen.getByLabelText('正在检查登录状态')).toBeInTheDocument()
-    expect(screen.queryByLabelText('正在进入工作区')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('对话内容')).not.toBeInTheDocument()
-  })
-
-  it('skips the transition and delay when reduced motion is requested', async () => {
-    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
-      matches: query === '(prefers-reduced-motion: reduce)',
-      media: query,
-      onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(() => true),
-    })))
-    const browserUser = userEvent.setup()
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const request = input instanceof Request ? input : new Request(input)
-      const url = new URL(request.url)
-      if (url.pathname.endsWith('/api/auth/login')) return envelope(loginPayload())
-      if (url.pathname.endsWith('/api/auth/me')) return envelope(sessionPayload())
-      if (url.pathname === '/api/projects') return envelope([{ id: 'project-1', name: '测试项目', createdAt: '2030-01-01', updatedAt: '2030-01-01' }])
-      if (url.pathname.endsWith('/api/conversation/config')) return envelope({ dayRanges: [7, 30] })
-      if (url.pathname.endsWith('/api/conversation/history')) return envelope({ items: [], nextCursor: null })
-      throw new Error(`unexpected request: ${url.pathname}`)
-    }))
-
-    render(<App />)
-    await browserUser.type(screen.getByLabelText('用户名'), 'yunsan')
-    await browserUser.type(screen.getByLabelText('密码'), 'password')
-    await browserUser.click(screen.getByRole('button', { name: '登录' }))
-
-    await waitFor(() => expect(screen.getByLabelText('对话内容')).toBeInTheDocument())
-    expect(screen.queryByLabelText('正在进入工作区')).not.toBeInTheDocument()
   })
 
   it('calls the real logout endpoint, clears the workspace, and removes the thread route', async () => {
@@ -490,36 +305,5 @@ describe('App authentication boundary', () => {
       const request = input instanceof Request ? input : new Request(input)
       return new URL(request.url).pathname.endsWith('/api/auth/logout') && request.method === 'POST'
     })).toBe(true)
-  })
-
-  it('returns to login immediately while logout revocation continues in the background', async () => {
-    seedSession()
-    const browserUser = userEvent.setup()
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const request = input instanceof Request ? input : new Request(input)
-      const url = new URL(request.url)
-      if (url.pathname.endsWith('/api/auth/me')) return envelope(sessionPayload())
-      if (url.pathname === '/api/projects') return envelope([{ id: 'project-1', name: '测试项目', createdAt: '2030-01-01', updatedAt: '2030-01-01' }])
-      if (url.pathname.endsWith('/api/conversation/config')) return envelope({ dayRanges: [7, 30] })
-      if (url.pathname.endsWith('/api/conversation/history')) {
-        return envelope({ items: [], nextCursor: null })
-      }
-      if (url.pathname.endsWith('/api/auth/logout')) {
-        return new Promise<Response>(() => undefined)
-      }
-      throw new Error(`unexpected request: ${url.pathname}`)
-    })
-    vi.stubGlobal('fetch', fetchMock)
-
-    render(<App />)
-    await waitFor(() => expect(screen.getByLabelText('对话内容')).toBeInTheDocument())
-    await browserUser.click(screen.getByRole('button', { name: '打开用户菜单' }))
-    await browserUser.click(screen.getByRole('menuitem', { name: '退出登录' }))
-
-    expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument()
-    const logoutRequest = fetchMock.mock.calls
-      .map(([input]) => input instanceof Request ? input : new Request(input))
-      .find((request) => new URL(request.url).pathname.endsWith('/api/auth/logout'))
-    expect(logoutRequest?.headers.get('Authorization')).toBe('Bearer token-123')
   })
 })

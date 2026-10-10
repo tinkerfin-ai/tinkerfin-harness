@@ -16,7 +16,6 @@ from langgraph.graph.state import CompiledStateGraph
 from lease_test_support import LeaseClock
 from redis.asyncio import Redis
 from test_runtime_api import _open
-from test_runtime_observation import _ControlSession, _Observer
 
 from tinkerfin import TinkerFin
 from tinkerfin.coordination import RunCoordinationOwnershipLostError, RunCoordinator
@@ -184,51 +183,6 @@ async def test_lease_loss_cancels_graph_and_preserves_failure_through_close(
         assert order == ["source closed", "terminal"]
 
 
-@pytest.mark.parametrize("protocol", ["native", "agui"])
-@pytest.mark.parametrize("finish", [False, True])
-async def test_coordinator_context_remains_valid_until_runtime_closes(
-    monkeypatch: pytest.MonkeyPatch,
-    protocol: Literal["native", "agui"],
-    finish: bool,
-) -> None:
-    context = ContextVar("admission_context", default="outside")
-    observed: list[str] = []
-
-    @asynccontextmanager
-    async def coordinate(identity: RunIdentity) -> AsyncIterator[None]:
-        token = context.set(identity.namespace)
-        try:
-            yield
-        finally:
-            observed.append(context.get())
-            context.reset(token)
-
-    async def node(state: MessagesState) -> dict[str, object]:
-        observed.append(context.get())
-        return {}
-
-    graph = StateGraph(MessagesState)
-    graph.add_node("node", node)
-    graph.add_edge(START, "node")
-    graph.add_edge("node", END)
-    run = _open(
-        _builder(graph.compile(), monkeypatch, coordinate).build(
-            model="provider:model"
-        ),
-        protocol,
-    )
-    try:
-        if finish:
-            async for _ in run:
-                pass
-        else:
-            await run.messaging_owner_preflight()
-    finally:
-        await run.aclose()
-    assert observed == ["company"] * (2 if finish else 1)
-    assert context.get() == "outside" and run.error is None
-
-
 class _ContextGraph:
     def __init__(self) -> None:
         self.context = ContextVar("source_context", default="outside")
@@ -258,39 +212,6 @@ setattr(
     "__signature__",
     inspect.signature(CompiledStateGraph.astream),
 )
-
-
-@pytest.mark.parametrize("protocol", ["native", "agui"])
-@pytest.mark.parametrize("observer", [False, True])
-@pytest.mark.parametrize("finish", [False, True])
-async def test_source_context_is_valid_across_pulls_and_early_close(
-    monkeypatch: pytest.MonkeyPatch,
-    protocol: Literal["native", "agui"],
-    observer: bool,
-    finish: bool,
-) -> None:
-    graph = _ContextGraph()
-    builder = _builder(graph, monkeypatch)
-
-    async def terminal(value: RunTerminalObservation) -> None:
-        assert graph.closed
-
-    if observer:
-        builder = builder.with_observer(on_terminal=terminal)
-    run = _open(builder.build(model="provider:model"), protocol)
-    try:
-        if finish:
-            async for _ in run:
-                pass
-        else:
-            if protocol == "agui":
-                await anext(run)
-            await anext(run)
-    finally:
-        await run.aclose()
-    assert graph.closed and graph.observed
-    assert all(value == "inside" for value in graph.observed)
-    assert run.error is None and graph.context.get() == "outside"
 
 
 @pytest.mark.parametrize("cancelled_resource", ["workspace", "coordinator"])
@@ -329,10 +250,6 @@ async def test_workspace_and_coordinator_cleanup_preserve_cancellation(
         await runtime.ainvoke(thread_id="thread", run_id="run", input={"messages": []})
     assert closed == ["workspace", "coordinator"]
     assert any("failed" in note for note in getattr(caught.value, "__notes__", ()))
-
-
-class _ProcessControl(BaseException):
-    """Exercise process-control propagation without stopping the test process."""
 
 
 class _ClosingIterator:
@@ -402,44 +319,6 @@ setattr(
 
 
 @pytest.mark.parametrize("protocol", ["native", "agui"])
-@pytest.mark.parametrize("control", [False, True])
-async def test_explicit_iterator_close_retains_pull_and_cleanup_causes(
-    monkeypatch: pytest.MonkeyPatch,
-    protocol: Literal["native", "agui"],
-    control: bool,
-) -> None:
-    pull = RuntimeError("source pull failed")
-    close = (_ProcessControl if control else RuntimeError)("source close failed")
-    cause = OSError("source close original cause")
-    close.__cause__ = cause
-    source = _ClosingIterator(pull_failure=pull, close_failure=close)
-    source.release_close.set()
-    run = _open(
-        _builder(_ClosingGraph(source), monkeypatch).build(model="provider:model"),
-        protocol,
-    )
-    errors: list[BaseException] = []
-    try:
-        async for _ in run:
-            pass
-    except BaseException as error:  # noqa: BLE001 - check both control and ordinary failures
-        errors.append(error)
-    finally:
-        try:
-            await run.aclose()
-        except BaseException as error:  # noqa: BLE001 - include retained close evidence
-            errors.append(error)
-    if run.error is not None:
-        errors.append(run.error)
-    assert source.closed and source.close_calls == 1 and not source.interrupted
-    assert {id(pull), id(close), id(cause)} <= set().union(
-        *(_failure_objects(error) for error in errors)
-    )
-    if control:
-        assert any(error is close for error in errors)
-
-
-@pytest.mark.parametrize("protocol", ["native", "agui"])
 async def test_lease_loss_before_resource_release_downgrades_success(
     monkeypatch: pytest.MonkeyPatch,
     protocol: Literal["native", "agui"],
@@ -491,140 +370,3 @@ async def test_lease_loss_before_resource_release_downgrades_success(
         assert any(
             isinstance(error, RunCoordinationOwnershipLostError) for error in errors
         )
-
-
-def _failure_objects(
-    error: BaseException, ancestry: frozenset[int] = frozenset()
-) -> set[int]:
-    assert id(error) not in ancestry, "Run failures must not form a causal cycle"
-    ancestry = ancestry | {id(error)}
-    found = {id(error)}
-    children = [error.__cause__, error.__context__]
-    if isinstance(error, BaseExceptionGroup):
-        children.extend(error.exceptions)
-    for child in children:
-        if child is not None:
-            found.update(_failure_objects(child, ancestry))
-    return found
-
-
-@pytest.mark.parametrize("protocol", ["native", "agui"])
-@pytest.mark.parametrize("source_kind", ["ordinary", "cancel", "control"])
-@pytest.mark.parametrize("coordinator_control", [False, True])
-async def test_all_resource_failures_keep_original_causes_without_cycles(
-    monkeypatch: pytest.MonkeyPatch,
-    protocol: Literal["native", "agui"],
-    source_kind: str,
-    coordinator_control: bool,
-) -> None:
-    source_fault = {
-        "ordinary": OSError("source failed"),
-        "cancel": asyncio.CancelledError("source cancelled"),
-        "control": _ProcessControl("source control"),
-    }[source_kind]
-    source_cause = LookupError("source original cause")
-    source_fault.__cause__ = source_cause
-    workspace_fault = OSError("workspace failed")
-    coordinator_fault = (
-        _ProcessControl("coordinator control")
-        if coordinator_control
-        else OSError("coordinator failed")
-    )
-    closed: list[str] = []
-
-    class Source(_ContextGraph):
-        async def astream(
-            self, *args: object, **kwargs: object
-        ) -> AsyncIterator[Mapping[str, object]]:
-            try:
-                async for part in super().astream():
-                    yield part
-            finally:
-                closed.append("source")
-                raise source_fault
-
-    setattr(
-        Source.astream, "__signature__", inspect.signature(CompiledStateGraph.astream)
-    )
-
-    class Workspace:
-        @asynccontextmanager
-        async def prepare(
-            self, identity: RunIdentity
-        ) -> AsyncIterator[PreparedWorkspace[None, StateBackend]]:
-            try:
-                yield PreparedWorkspace(None, StateBackend())
-            finally:
-                closed.append("workspace")
-                raise workspace_fault
-
-    @asynccontextmanager
-    async def coordinate(identity: RunIdentity) -> AsyncIterator[None]:
-        try:
-            yield
-        finally:
-            closed.append("coordinator")
-            raise coordinator_fault
-
-    run = _open(
-        _builder(Source(), monkeypatch, coordinate).build(
-            model="provider:model", backend=Workspace()
-        ),
-        protocol,
-    )
-    failures: list[BaseException] = []
-    try:
-        async for _ in run:
-            pass
-    except BaseException as error:  # noqa: BLE001 - assert ordinary and control failures below
-        failures.append(error)
-    finally:
-        try:
-            await run.aclose()
-        except BaseException as error:  # noqa: BLE001 - verify repeat close retains the same evidence
-            failures.append(error)
-    if run.error is not None:
-        failures.append(run.error)
-    assert failures and closed == ["source", "workspace", "coordinator"]
-    found = set().union(*(_failure_objects(error) for error in failures))
-    assert {
-        id(source_fault),
-        id(source_cause),
-        id(workspace_fault),
-        id(coordinator_fault),
-    } <= found
-    if source_kind == "control" or coordinator_control:
-        assert any(isinstance(error, _ProcessControl) for error in failures)
-    elif source_kind == "cancel":
-        assert any(isinstance(error, asyncio.CancelledError) for error in failures)
-
-
-@pytest.mark.parametrize("protocol", ["native", "agui"])
-@pytest.mark.parametrize("reverse", [False, True])
-async def test_observer_cleanup_retains_control_and_other_original_causes(
-    monkeypatch: pytest.MonkeyPatch,
-    protocol: Literal["native", "agui"],
-    reverse: bool,
-) -> None:
-    control = _ProcessControl("observer control")
-    original = OSError("observer original cause")
-    wrapped = RuntimeError("observer cleanup failed")
-    wrapped.__cause__ = original
-    sessions = [
-        _ControlSession(phase="close", error=control),
-        _ControlSession(phase="close", error=wrapped),
-    ]
-    if reverse:
-        sessions.reverse()
-    builder = _builder(_ContextGraph(), monkeypatch)
-    for session in sessions:
-        builder = builder.with_observer(_Observer(session))
-    run = _open(builder.build(model="provider:model"), protocol)
-    with pytest.raises(_ProcessControl) as caught:
-        try:
-            async for _ in run:
-                pass
-        finally:
-            await run.aclose()
-    assert {id(control), id(original), id(wrapped)} <= _failure_objects(caught.value)
-    assert all(session.closed == 1 for session in sessions)

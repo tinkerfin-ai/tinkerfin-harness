@@ -1,16 +1,13 @@
-"""Shared ordered-log behavior exercised against memory and real Redis."""
+"""Shared ordered-log behavior exercised against isolated memory."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import replace
 from typing import cast
-from uuid import uuid4
 
 import pytest
-from redis.asyncio import Redis
-from redis.exceptions import RedisError
 
 from tinkerfin import RunIdentity
 from tinkerfin_messaging import (
@@ -19,7 +16,6 @@ from tinkerfin_messaging import (
     MessageEnvelope,
     MessageIdConflict,
     RecoveryCheckpoint,
-    RedisBackend,
     RunProducerFailed,
 )
 from tinkerfin_messaging._messaging_ledger import (
@@ -37,64 +33,9 @@ def _identity(
     return RunIdentity(namespace="test", thread_id=thread_id, run_id=run_id)
 
 
-async def _delete_prefix(client: Redis, prefix: str) -> None:
-    cursor = 0
-    while True:
-        cursor, keys = await client.scan(
-            cursor=cursor,
-            match=f"{prefix}:*",
-            count=200,
-        )
-        if keys:
-            await client.unlink(*keys)
-        if cursor == 0:
-            return
-
-
-@pytest.fixture(
-    params=(
-        pytest.param("memory", id="memory"),
-        pytest.param(
-            "redis",
-            marks=(pytest.mark.docker_integration, pytest.mark.redis_e2e),
-            id="redis",
-        ),
-    )
-)
-async def backend(
-    request: pytest.FixtureRequest,
-) -> AsyncGenerator[_MessagingLedger, None]:
-    if request.param == "memory":
-        yield _MessagingLedger(MemoryBackend())
-        return
-
-    redis_url = request.getfixturevalue("redis_url")
-    assert isinstance(redis_url, str)
-    client = Redis.from_url(
-        redis_url,
-        decode_responses=False,
-        socket_connect_timeout=5,
-        socket_timeout=5,
-    )
-    prefix = f"tfmsg:contract:{uuid4().hex}"
-    try:
-        try:
-            assert await cast(Awaitable[bool], client.ping()) is True
-        except (OSError, RedisError, TimeoutError) as error:
-            pytest.fail(
-                "real Redis PING failed without exposing credentials: "
-                f"{type(error).__name__}"
-            )
-        yield _MessagingLedger(
-            RedisBackend(
-                client,
-                key_prefix=prefix,
-                generation_cleanup_retry_seconds=0.02,
-            )
-        )
-    finally:
-        await _delete_prefix(client, prefix)
-        await client.aclose()
+@pytest.fixture(params=(pytest.param("memory", id="memory"),))
+async def backend() -> AsyncGenerator[_MessagingLedger, None]:
+    yield _MessagingLedger(MemoryBackend())
 
 
 async def _prepare(

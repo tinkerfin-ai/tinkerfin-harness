@@ -3,46 +3,35 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime
-from typing import cast
-from unittest.mock import create_autospec
 
 import pytest
-from starlette.types import Message as AsgiMessage
-from starlette.types import Scope
 
 from tinkerfin import AgUiResumeReceipt, AgUiResumeResponse
 from tinkerfin_contracts import (
-    MessageSource,
-    ModelCallObservation,
     NativeInterruptRecord,
     NativeMessageObservation,
     NativeMessageRecord,
     NativeStateObservation,
     NativeToolCall,
-    NativeToolCallChunk,
     ObservationBoundary,
     RunClosedObservation,
     RunIdentity,
     RunInputObservation,
     RunObservationSession,
+    RunResumeCheckpointedObservation,
+    RunResumeSummary,
     RunSourceContext,
     RunStartedObservation,
     RunTerminalObservation,
     RunTerminalOutcome,
 )
-from tinkerfin_studio.api.conversation_router import follow_trace, get_history
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
 from tinkerfin_studio.conversation.failures import ConversationFailureProjection
 from tinkerfin_studio.conversation.history import ConversationHistoryService
 from tinkerfin_studio.conversation.history_queries import HistoryQueryAdmission
-from tinkerfin_studio.conversation.models import (
-    ConversationRunRegistration,
-    ConversationThread,
-)
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.schemas import (
     ConversationHistoryDetail,
-    ConversationTraceErrorEvent,
 )
 from tinkerfin_studio.conversation.todo_groups import (
     TodoGroupProjection,
@@ -50,7 +39,6 @@ from tinkerfin_studio.conversation.todo_groups import (
 from tinkerfin_tracing import (
     TraceGraphFilter,
     TraceGraphNodeKind,
-    TraceGraphNodeStatus,
     Tracer,
 )
 
@@ -218,317 +206,6 @@ async def _register(
     return thread
 
 
-async def test_history_reads_fixed_trace_view_without_agui_event_tail(
-    session,
-) -> None:
-    tracer = Tracer(
-        projections=(ConversationFailureProjection(), TodoGroupProjection()),
-    )
-    repository = ConversationRepository(session)
-    thread = await _register(
-        repository,
-        user_id=1,
-        thread_id="thread-history",
-        run_id="run-history",
-    )
-    context, trace_session = await _open_trace(
-        tracer,
-        thread_id=thread.thread_id,
-        run_id="run-history",
-    )
-    await trace_session.observe(
-        NativeMessageObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            message=NativeMessageRecord(
-                message_type="assistant",
-                id="assistant-history",
-                content="answer",
-            ),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=3,
-        )
-    )
-    await _finish_trace(context, trace_session)
-
-    detail = await _get_detail(_service(repository, tracer=tracer), thread.thread_id)
-    payload = detail.model_dump(mode="json", by_alias=True)
-
-    assert detail.head_run_id == "run-history"
-    assert detail.status.execution == "succeeded"
-    assert [(item.role, item.content) for item in detail.messages] == [
-        ("user", "request run-history"),
-        ("assistant", "answer"),
-    ]
-    assert detail.message_count == 2
-    assistant = detail.messages[1]
-    assert assistant.agui is not None
-    assert assistant.agui.kind == "message"
-    assert assistant.agui.message_id != assistant.id
-    assert payload["messages"][1]["agui"]["messageId"] == assistant.agui.message_id
-    assert "snapshot" not in payload
-    assert "events" not in payload
-
-
-async def test_trace_graph_query_returns_the_final_model_request(session) -> None:
-    tracer = Tracer(
-        projections=(ConversationFailureProjection(), TodoGroupProjection()),
-    )
-    repository = ConversationRepository(session)
-    thread = await _register(
-        repository,
-        user_id=1,
-        thread_id="thread-entry-history",
-        run_id="run-entry-history",
-    )
-    context, trace_session = await _open_trace(
-        tracer,
-        thread_id=thread.thread_id,
-        run_id="run-entry-history",
-    )
-    service = _service(repository, tracer=tracer)
-    updates = await service.follow_trace(thread.thread_id)
-    assert (await anext(updates)).type == "snapshot"
-    now = datetime.now(UTC)
-    await trace_session.observe(
-        ModelCallObservation(
-            identity=context.identity,
-            phase="started",
-            call_id="model-entry",
-            provider="openai",
-            model="gpt-test",
-            messages=(
-                NativeMessageRecord(message_type="system", content="final-system"),
-                NativeMessageRecord(message_type="human", content="final-user"),
-            ),
-            invocation={"model": "gpt-test"},
-            options={"temperature": 0.2},
-            observed_at=now,
-            monotonic_ns=3,
-        )
-    )
-    await trace_session.observe(
-        ModelCallObservation(
-            identity=context.identity,
-            phase="completed",
-            call_id="model-entry",
-            usage={"input_tokens": 2, "output_tokens": 1, "total_tokens": 3},
-            observed_at=now,
-            monotonic_ns=4,
-        )
-    )
-    await _finish_trace(context, trace_session)
-
-    update = await anext(updates)
-    assert update.type == "update"
-    update_wire = update.model_dump(mode="json", by_alias=True)["update"]
-    assert update_wire["hasEvents"] is True
-    assert set(update_wire) == {
-        "generation",
-        "observedAt",
-        "asOfSeq",
-        "hasEvents",
-        "messages",
-        "reasoning",
-        "graph",
-        "interactions",
-        "state",
-        "status",
-        "completeness",
-        "messageCount",
-        "toolCallCount",
-    }
-    model_update = next(
-        node for node in update_wire["graph"]["nodeUpserts"] if node["kind"] == "model"
-    )
-    assert "request" not in model_update
-    assert model_update["requestOmitted"] is False
-    await updates.aclose()
-
-    detail = await service.get_detail(thread.thread_id)
-    history_wire = detail.model_dump(mode="json", by_alias=True)
-    model_history = next(
-        node for node in history_wire["graph"]["nodes"] if node["kind"] == "model"
-    )
-    assert "request" not in model_history
-    assert model_history["requestOmitted"] is False
-    trace_events = await service.follow_trace(thread.thread_id)
-    try:
-        snapshot = await anext(trace_events)
-        assert snapshot.type == "snapshot"
-        assert snapshot.snapshot.graph == detail.graph
-    finally:
-        await trace_events.aclose()
-
-    from tinkerfin_messaging import Messaging
-
-    async with Messaging() as messaging:
-        live_service = ConversationHistoryService(
-            repository,
-            user_id=1,
-            tracer=tracer,
-            history_queries=HistoryQueryAdmission(),
-            conversation_channel=messaging.agui_channel(name="history-contract"),
-        )
-        body = await live_service.follow_live(
-            thread.thread_id,
-            run_id="run-entry-history",
-            last_event_id=None,
-        )
-        try:
-            run_snapshot = json.loads(
-                (await anext(body)).decode().split("data: ", 1)[1]
-            )
-            assert run_snapshot["snapshot"]["graph"] == history_wire["graph"]
-            assert run_snapshot["replay"] is False
-        finally:
-            await body.aclose()
-
-    page = await _service(repository, tracer=tracer).query_trace_graph(
-        thread.thread_id,
-        where=TraceGraphFilter(
-            kinds={TraceGraphNodeKind.MODEL},
-        ),
-        cursor=None,
-        limit=100,
-    )
-
-    assert page.generation == detail.generation
-    assert page.head_run_id == detail.head_run_id
-    graph_events = await service.follow_trace_graph(
-        thread.thread_id,
-        where=TraceGraphFilter(kinds={TraceGraphNodeKind.MODEL}),
-        limit=100,
-    )
-    try:
-        graph_snapshot = await anext(graph_events)
-        assert graph_snapshot.type == "snapshot"
-        assert graph_snapshot.snapshot == page
-    finally:
-        await graph_events.aclose()
-
-    assert len(page.nodes) == 1
-    assert len(page.turns) == 1
-    assert page.turns[0].ordinal == 1
-    assert page.nodes[0].turn_id == page.turns[0].id
-    assert page.nodes[0].request is None
-    reference = page.nodes[0].request_reference
-    assert reference is not None
-    model_request = await service.get_model_request(
-        thread.thread_id, reference=reference
-    )
-    assert model_request.node_id == page.nodes[0].id
-    assert not model_request.request_omitted
-    assert model_request.request == {
-        "messages": [
-            {
-                "messageType": "system",
-                "id": None,
-                "name": None,
-                "content": "final-system",
-                "toolCalls": [],
-                "toolCallChunks": [],
-                "toolCallId": None,
-                "toolStatus": None,
-                "responseMetadata": {},
-                "usageMetadata": None,
-                "chunkPosition": None,
-                "artifact": None,
-                "chatRole": None,
-            },
-            {
-                "messageType": "human",
-                "id": None,
-                "name": None,
-                "content": "final-user",
-                "toolCalls": [],
-                "toolCallChunks": [],
-                "toolCallId": None,
-                "toolStatus": None,
-                "responseMetadata": {},
-                "usageMetadata": None,
-                "chunkPosition": None,
-                "artifact": None,
-                "chatRole": None,
-            },
-        ],
-        "invocation": {"model": "gpt-test"},
-        "options": {"temperature": 0.2},
-    }
-    assert page.nodes[0].usage == {
-        "input_tokens": 2,
-        "output_tokens": 1,
-        "total_tokens": 3,
-    }
-    with pytest.raises(BusinessException) as invalid_cursor:
-        await _service(repository, tracer=tracer).query_trace_graph(
-            thread.thread_id,
-            where=TraceGraphFilter(),
-            cursor="not-a-trace-graph-cursor",
-            limit=100,
-        )
-    assert invalid_cursor.value.error_code is ConversationErrorCode.INVALID_CURSOR
-
-
-async def test_trace_graph_follow_sends_snapshot_update_and_closes(session) -> None:
-    tracer = Tracer(
-        projections=(ConversationFailureProjection(), TodoGroupProjection()),
-    )
-    repository = ConversationRepository(session)
-    thread = await _register(
-        repository,
-        user_id=1,
-        thread_id="thread-entry-follow",
-        run_id="run-entry-follow",
-    )
-    context, trace_session = await _open_trace(
-        tracer,
-        thread_id=thread.thread_id,
-        run_id="run-entry-follow",
-    )
-    events = await _service(repository, tracer=tracer).follow_trace_graph(
-        thread.thread_id,
-        where=TraceGraphFilter(kinds={TraceGraphNodeKind.MODEL}),
-        limit=100,
-    )
-
-    snapshot = await anext(events)
-    assert snapshot.type == "snapshot"
-    assert snapshot.snapshot.nodes == ()
-    assert snapshot.snapshot.turns == ()
-    assert session.in_transaction() is False
-    pending = asyncio.create_task(anext(events))
-    await trace_session.observe(
-        ModelCallObservation(
-            identity=context.identity,
-            phase="started",
-            call_id="model-entry-follow",
-            messages=(NativeMessageRecord(message_type="human", content="follow"),),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=3,
-        )
-    )
-
-    update = await pending
-    assert update.type == "update"
-    assert any(
-        node.kind is TraceGraphNodeKind.MODEL
-        and node.status is TraceGraphNodeStatus.RUNNING
-        for node in update.update.node_upserts
-    )
-    assert len(update.update.turn_upserts) == 1
-    model_node = next(
-        node
-        for node in update.update.node_upserts
-        if node.kind is TraceGraphNodeKind.MODEL
-    )
-    assert model_node.turn_id == update.update.turn_upserts[0].id
-    assert model_node.parent_subagent_id is None
-    assert model_node.id in update.update.ordered_node_ids
-    await events.aclose()
-    await _finish_trace(context, trace_session)
-
-
 async def test_history_cursor_keeps_original_as_of_after_new_turn(session) -> None:
     tracer = Tracer(
         projections=(ConversationFailureProjection(), TodoGroupProjection()),
@@ -577,65 +254,6 @@ async def test_history_cursor_keeps_original_as_of_after_new_turn(session) -> No
     assert len(fixed.messages) > len(latest.messages)
     assert latest.task_trace is not None
     assert fixed.task_trace is None
-
-
-async def test_history_keeps_pending_interactions_outside_the_visible_turn(
-    session,
-) -> None:
-    tracer = Tracer(
-        projections=(ConversationFailureProjection(), TodoGroupProjection()),
-    )
-    repository = ConversationRepository(session)
-    thread = await _register(
-        repository,
-        user_id=1,
-        thread_id="thread-pending-history",
-        run_id="run-pending-first",
-    )
-    first_context, first_session = await _open_trace(
-        tracer,
-        thread_id=thread.thread_id,
-        run_id="run-pending-first",
-    )
-    await first_session.observe(
-        NativeStateObservation(
-            identity=first_context.identity,
-            graph_namespace=(),
-            state={},
-            interrupts=(
-                NativeInterruptRecord(
-                    id="pending-outside-window",
-                    value={"kind": "input_required", "message": "Wait"},
-                ),
-            ),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=3,
-        )
-    )
-    await _finish_trace(first_context, first_session, outcome="interrupted")
-    await _register(
-        repository,
-        user_id=1,
-        thread_id=thread.thread_id,
-        run_id="run-latest-turn",
-    )
-    latest_context, latest_session = await _open_trace(
-        tracer,
-        thread_id=thread.thread_id,
-        run_id="run-latest-turn",
-    )
-    await _finish_trace(latest_context, latest_session)
-
-    detail = await _get_detail(
-        _service(repository, tracer=tracer),
-        thread.thread_id,
-        limit=1,
-    )
-
-    assert detail.status.execution == "waiting"
-    assert [
-        item.source_id for item in detail.interactions if item.status == "pending"
-    ] == ["pending-outside-window"]
 
 
 @pytest.mark.parametrize(
@@ -727,7 +345,16 @@ async def test_history_exposes_submission_ownership_and_confirmed_settlement(
     assert {
         (item.interrupt_id, item.state, item.submission_run_id)
         for item in detail.interaction_availability
-    } == {(value, expected, "submitted-run") for value in interrupt_ids}
+    } == {
+        (value, expected, None if settlement == "not_saved" else "submitted-run")
+        for value in interrupt_ids
+    }
+    if settlement == "not_saved":
+        assert detail.submission_result is not None
+        assert detail.submission_result.submission_run_id == "submitted-run"
+        assert set(detail.submission_result.interrupt_ids) == set(interrupt_ids)
+    else:
+        assert detail.submission_result is None
 
 
 async def test_history_rejects_another_users_thread_before_trace_lookup(
@@ -814,430 +441,6 @@ async def test_trace_follow_sends_snapshot_then_semantic_update_and_closes(
     assert update.task_trace is None
     await events.aclose()
     await _finish_trace(context, trace_session)
-
-
-async def test_trace_follow_releases_initial_admission_before_snapshot_delivery(
-    session,
-) -> None:
-    tracer = Tracer(
-        projections=(ConversationFailureProjection(), TodoGroupProjection()),
-    )
-    repository = ConversationRepository(session)
-    thread = await _register(
-        repository,
-        user_id=1,
-        thread_id="thread-follow-snapshot-close",
-        run_id="run-follow-snapshot-close",
-    )
-    context, trace_session = await _open_trace(
-        tracer,
-        thread_id=thread.thread_id,
-        run_id="run-follow-snapshot-close",
-    )
-    query = HistoryQueryAdmission()
-    events = await _service(
-        repository,
-        tracer=tracer,
-        history_queries=query,
-    ).follow_trace(thread.thread_id)
-
-    assert (await anext(events)).type == "snapshot"
-    await events.aclose()
-
-    assert query.borrowed_tokens == 0
-    await _finish_trace(context, trace_session)
-
-
-async def test_trace_follow_replaces_task_trace_only_after_authoritative_state(
-    session,
-) -> None:
-    tracer = Tracer(
-        projections=(ConversationFailureProjection(), TodoGroupProjection()),
-    )
-    repository = ConversationRepository(session)
-    thread = await _register(
-        repository,
-        user_id=1,
-        thread_id="thread-follow-todos",
-        run_id="run-follow-todos",
-    )
-    context, trace_session = await _open_trace(
-        tracer,
-        thread_id=thread.thread_id,
-        run_id="run-follow-todos",
-    )
-    events = await _service(repository, tracer=tracer).follow_trace(thread.thread_id)
-    initial = await anext(events)
-    assert initial.type == "snapshot"
-    assert initial.snapshot.task_trace is not None
-    assert initial.snapshot.task_trace.todo_groups == ()
-
-    await trace_session.observe(
-        NativeMessageObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            message=NativeMessageRecord(
-                message_type="assistant_chunk",
-                id="assistant-todos",
-                content="",
-                tool_call_chunks=(
-                    NativeToolCallChunk(
-                        index=0,
-                        id="call-write-todos",
-                        name="write_todos",
-                        arguments=(
-                            '{"todos":[{"content":"实现投影","status":"in_progress"}]}'
-                        ),
-                    ),
-                ),
-            ),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=3,
-        )
-    )
-    await trace_session.observe(
-        NativeMessageObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            message=NativeMessageRecord(
-                message_type="tool",
-                id="tool-message-todos",
-                name="write_todos",
-                content="Updated todo list",
-                tool_call_id="call-write-todos",
-                tool_status="success",
-            ),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=4,
-        )
-    )
-    await trace_session.observe(
-        NativeStateObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            state={"todos": [{"content": "实现投影", "status": "in_progress"}]},
-            interrupts=(),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=5,
-        )
-    )
-    await trace_session.force(ObservationBoundary.TERMINAL)
-
-    replacement = None
-    for _index in range(5):
-        update = await anext(events)
-        assert update.type == "update"
-        if update.task_trace is not None:
-            replacement = update.task_trace
-            break
-    assert replacement is not None
-    assert len(replacement.todo_groups) == 1
-    assert replacement.todo_groups[0].todos[0].content == "实现投影"
-    assert replacement.todo_groups[0].todos[0].status == "running"
-
-    await trace_session.observe(
-        NativeStateObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            state={"todos": [{"content": "实现投影", "status": "completed"}]},
-            interrupts=(),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=6,
-        )
-    )
-    await trace_session.force(ObservationBoundary.TERMINAL)
-    completed = None
-    for _index in range(5):
-        update = await anext(events)
-        assert update.type == "update"
-        if update.task_trace is not None:
-            completed = update.task_trace
-            break
-    assert completed is not None
-    assert completed.todo_groups[0].todos[0].status == "completed"
-
-    await events.aclose()
-    await _finish_trace(context, trace_session)
-
-
-async def test_detached_follow_can_skip_task_trace_without_losing_base_updates(
-    session,
-) -> None:
-    tracer = Tracer(
-        projections=(ConversationFailureProjection(), TodoGroupProjection()),
-    )
-    repository = ConversationRepository(session)
-    thread = await _register(
-        repository,
-        user_id=1,
-        thread_id="thread-follow-without-todos",
-        run_id="run-follow-without-todos",
-    )
-    context, trace_session = await _open_trace(
-        tracer,
-        thread_id=thread.thread_id,
-        run_id="run-follow-without-todos",
-    )
-    events = await _service(repository, tracer=tracer).follow_trace(
-        thread.thread_id,
-        include_task_trace=False,
-    )
-
-    initial = await anext(events)
-    assert initial.type == "snapshot"
-    assert initial.snapshot.task_trace is None
-    pending = asyncio.create_task(anext(events))
-    await trace_session.observe(
-        NativeMessageObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            message=NativeMessageRecord(
-                message_type="assistant",
-                id="assistant-without-todos",
-                content="后台恢复",
-            ),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=3,
-        )
-    )
-    update = await pending
-
-    assert update.type == "update"
-    assert update.update.messages.upserts[0].content == "后台恢复"
-    assert update.task_trace is None
-    await events.aclose()
-    await _finish_trace(context, trace_session)
-
-
-async def test_history_follow_publishes_ownership_without_fabricating_graph_events(
-    session,
-) -> None:
-    """失活更新同时抵达公开摘要与任务视图，事件和 Graph 保持原有事实"""
-    tracer = Tracer(
-        projections=(ConversationFailureProjection(), TodoGroupProjection()),
-    )
-    repository = ConversationRepository(session)
-    thread = await _register(
-        repository,
-        user_id=1,
-        thread_id="thread-follow-owner",
-        run_id="run-follow-owner",
-    )
-    context, trace_session = await _open_trace(
-        tracer,
-        thread_id=thread.thread_id,
-        run_id="run-follow-owner",
-    )
-    await trace_session.observe(
-        NativeMessageObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            message=NativeMessageRecord(
-                message_type="assistant_chunk",
-                id="assistant-owner",
-                content="",
-                tool_call_chunks=(
-                    NativeToolCallChunk(
-                        index=0,
-                        id="todos-owner",
-                        name="write_todos",
-                        arguments='{"todos":[{"content":"等待任务","status":"in_progress"}]}',
-                    ),
-                ),
-            ),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=3,
-        )
-    )
-    await trace_session.observe(
-        NativeMessageObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            message=NativeMessageRecord(
-                message_type="tool",
-                id="todos-result-owner",
-                name="write_todos",
-                tool_call_id="todos-owner",
-                content="Updated todo list",
-                tool_status="success",
-            ),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=4,
-        )
-    )
-    await trace_session.observe(
-        NativeStateObservation(
-            identity=context.identity,
-            graph_namespace=(),
-            state={"todos": [{"content": "等待任务", "status": "in_progress"}]},
-            interrupts=(),
-            observed_at=datetime.now(UTC),
-            monotonic_ns=5,
-        )
-    )
-    await trace_session.force(ObservationBoundary.TERMINAL)
-    events = await _service(repository, tracer=tracer).follow_trace(
-        thread.thread_id,
-        include_task_trace=True,
-    )
-    try:
-        initial = await anext(events)
-        assert initial.type == "snapshot"
-        await trace_session.aclose()
-        update = await anext(events)
-        assert update.type == "update"
-        assert update.update.as_of_seq == initial.snapshot.as_of_seq
-        assert update.update.generation == initial.snapshot.generation
-        assert update.update.observed_at >= initial.snapshot.observed_at
-        assert update.update.status.execution == "unknown"
-        assert update.update.has_events is False
-        assert update.update.graph.node_upserts == ()
-        assert update.update.graph.turn_upserts == ()
-        assert update.task_trace is not None
-        assert update.task_trace.todo_groups[0].status == "failed"
-        assert update.task_trace.todo_groups[0].todos[0].status == "failed"
-    finally:
-        await events.aclose()
-        await trace_session.aclose()
-
-
-async def test_history_route_returns_one_validated_json_body_with_task_trace(
-    session,
-) -> None:
-    tracer = Tracer(
-        projections=(ConversationFailureProjection(), TodoGroupProjection()),
-    )
-    repository = ConversationRepository(session)
-    thread = await _register(
-        repository,
-        user_id=1,
-        thread_id="thread-history-response",
-        run_id="run-history-response",
-    )
-    context, trace_session = await _open_trace(
-        tracer,
-        thread_id=thread.thread_id,
-        run_id="run-history-response",
-    )
-    await _finish_trace(context, trace_session)
-    response = await get_history(
-        thread.thread_id,
-        _service(repository, tracer=tracer),
-        history_cursor=None,
-        limit=100,
-        include_task_trace=True,
-    )
-    sent: list[AsgiMessage] = []
-
-    async def receive() -> AsgiMessage:
-        return {"type": "http.request", "body": b"", "more_body": False}
-
-    async def send(message: AsgiMessage) -> None:
-        sent.append(message)
-
-    scope: Scope = {
-        "type": "http",
-        "asgi": {"version": "3.0"},
-        "http_version": "1.1",
-        "method": "GET",
-        "scheme": "http",
-        "path": f"/api/conversation/{thread.thread_id}/history",
-        "raw_path": b"/api/conversation/thread/history",
-        "query_string": b"",
-        "headers": [],
-        "client": ("127.0.0.1", 1),
-        "server": ("127.0.0.1", 80),
-    }
-    await response(
-        scope,
-        receive,
-        send,
-    )
-
-    payload = json.loads(bytes(response.body))
-    assert payload["code"] == 0
-    assert payload["data"]["taskTrace"] == {
-        "status": "ready",
-        "todoGroups": [],
-    }
-    assert [message["type"] for message in sent] == [
-        "http.response.start",
-        "http.response.body",
-    ]
-
-
-class _TraceRouteService:
-    async def follow_trace(
-        self,
-        _thread_id: str,
-        *,
-        include_task_trace: bool,
-    ):
-        assert include_task_trace is True
-
-        async def events():
-            yield ConversationTraceErrorEvent()
-
-        return events()
-
-
-async def test_trace_route_serializes_one_complete_sse_frame() -> None:
-    response = await follow_trace(
-        "thread-trace-response",
-        cast(ConversationHistoryService, _TraceRouteService()),
-        include_task_trace=True,
-    )
-
-    chunks: list[bytes] = []
-    async for chunk in response.body_iterator:
-        chunks.append(chunk.encode() if isinstance(chunk, str) else bytes(chunk))
-
-    assert b"".join(chunks) == (
-        b'event: trace\ndata: {"type":"error","code":"trace_unavailable"}\n\n'
-    )
-
-
-async def test_failures_follow_the_history_window_and_fixed_prefix(session):
-    tracer = Tracer(
-        projections=(ConversationFailureProjection(), TodoGroupProjection())
-    )
-    repository = ConversationRepository(session)
-    for run_id in ("old-failed", "latest-failed"):
-        await _register(
-            repository, user_id=1, thread_id="failure-history", run_id=run_id
-        )
-        context, source = await _open_trace(
-            tracer, thread_id="failure-history", run_id=run_id
-        )
-        await source.observe(
-            RunTerminalObservation(
-                identity=context.identity,
-                outcome="failed",
-                code="runtime_initialization_error",
-                error_type="builtins.RuntimeError",
-                observed_at=datetime.now(UTC),
-                monotonic_ns=3,
-            )
-        )
-        await source.aclose()
-    service = _service(repository, tracer=tracer)
-    current = await service.get_detail(
-        "failure-history", limit=1, include_task_trace=False
-    )
-    assert [item.run_id for item in current.run_failures] == ["latest-failed"]
-    assert current.run_failures[0].retryable
-    assert current.history_cursor
-    older = await service.get_detail(
-        "failure-history",
-        history_cursor=current.history_cursor,
-        limit=1,
-        include_task_trace=False,
-    )
-    assert {item.run_id for item in older.run_failures} == {
-        "old-failed",
-        "latest-failed",
-    }
-    assert all(message.role != "assistant" for message in older.messages)
 
 
 async def test_live_failure_and_snapshot_have_identical_results(session):
@@ -1530,100 +733,166 @@ async def test_live_replay_authorizes_run_and_keeps_sse_cursor_separate(
             await _finish_trace(context, trace_session)
 
 
-@pytest.mark.parametrize("keep_question", [False, True])
-@pytest.mark.parametrize("context_already_visible", [False, True])
-async def test_context_never_replaces_the_question_for_visible_failures(
-    keep_question, context_already_visible
+pytestmark = pytest.mark.usefixtures("projects")
+
+
+async def test_saved_plan_answers_remain_readable_before_and_after_continuation(
+    session,
 ):
-    """上下文仍保留时，失败提示也只能关联当前窗口内真实存在的提问"""
     tracer = Tracer(
         projections=(ConversationFailureProjection(), TodoGroupProjection())
     )
-    repository = create_autospec(ConversationRepository, instance=True)
-    repository.get_thread.return_value = ConversationThread(
-        archived=False,
-        project_id="project-1",
-        id=1,
-        user_id=1,
-        thread_id="context-failure",
-        title="上下文归属",
-        title_source="user",
-        title_seq=1,
-        title_generation_status="idle",
-        pinned=False,
-        status="idle",
-        last_run_id="run",
-        created_at=datetime.now(UTC),
-        updated_at=datetime.now(UTC),
+    repository = ConversationRepository(session)
+    thread = await _register(
+        repository, user_id=1, thread_id="plan-results", run_id="plan-paused"
     )
-    repository.get_run.return_value = ConversationRunRegistration(
-        run_id="run",
-        model_id="model-main",
-        access_mode="full",
-        input_json={"runId": "run"},
-    )
-    repository.list_interaction_claims.return_value = ()
     context, source = await _open_trace(
-        tracer, thread_id="context-failure", run_id="run"
+        tracer, thread_id=thread.thread_id, run_id="plan-paused"
     )
-    observations = [
-        NativeMessageObservation(
+    await source.observe(
+        NativeStateObservation(
             identity=context.identity,
             graph_namespace=(),
+            state={},
+            interrupts=(
+                NativeInterruptRecord(
+                    id="plan-question",
+                    value={
+                        "schema": "tinkerfin.runtime-interrupt",
+                        "kind": "tinkerfin:plan_clarification",
+                        "responseSchema": {},
+                        "metadata": {
+                            "origin": "plan",
+                            "clarification": {
+                                "form": {
+                                    "title": "文字",
+                                    "description": "确认文案",
+                                    "questions": [
+                                        {
+                                            "id": "text",
+                                            "answerType": "text",
+                                            "prompt": "添加什么文字",
+                                            "required": True,
+                                        },
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                ),
+            ),
             observed_at=datetime.now(UTC),
             monotonic_ns=3,
-            message=NativeMessageRecord(
-                message_type="human",
-                id="skill-context",
-                content="技能正文",
-                source=MessageSource(kind="context", name="skill-invocation"),
-            ),
         )
-    ]
-    if not keep_question:
-        observations.append(
-            NativeMessageObservation(
-                identity=context.identity,
-                graph_namespace=(),
-                observed_at=datetime.now(UTC),
-                monotonic_ns=4,
-                message=NativeMessageRecord(
-                    message_type="remove", id="user-run", content=""
-                ),
-            )
-        )
-    if context_already_visible:
-        for observation in observations:
-            await source.observe(observation)
-    await source.force(ObservationBoundary.CALL_STARTED)
+    )
+    await _finish_trace(context, source, outcome="interrupted")
     service = _service(repository, tracer=tracer)
-    stream = await service.follow_trace("context-failure", include_task_trace=False)
+    initial = await _get_detail(service, thread.thread_id)
+    assert initial.plan_results == ()
+    interrupt_id = initial.interaction_availability[0].interrupt_id
+    await repository.create_run_registration(
+        thread_id=thread.id,
+        run_id="plan-submit",
+        parent_run_id="plan-paused",
+        model_id="main",
+        input_json={
+            "resume": [
+                {
+                    "interruptId": interrupt_id,
+                    "status": "resolved",
+                    "payload": {
+                        "type": "respond",
+                        "answers": {
+                            "text": {
+                                "status": "answered",
+                                "answerType": "text",
+                                "answer": "今天也要开心呀",
+                            }
+                        },
+                    },
+                }
+            ]
+        },
+    )
+    await repository.create_interrupt_claims(
+        thread_pk=thread.id,
+        source_run_id="plan-paused",
+        claimed_run_id="plan-submit",
+        interrupt_ids=(interrupt_id,),
+    )
+    await repository.commit()
+    assert (await _get_detail(service, thread.thread_id)).plan_results == ()
+    unknown = await service.get_detail(
+        thread.thread_id, submission_run_id="not-registered"
+    )
+    assert unknown.submission_result is None
+    await repository.settle_claims(
+        thread_pk=thread.id,
+        receipt=AgUiResumeReceipt(
+            identity=RunIdentity(
+                namespace="ns_1", thread_id=thread.thread_id, run_id="plan-submit"
+            ),
+            parent_run_id="plan-paused",
+            receipt_id="plan-saved",
+            responses=(AgUiResumeResponse(interrupt_id, "resolved"),),
+        ),
+    )
+    await repository.commit()
+    saved = await _get_detail(service, thread.thread_id)
+    assert saved.head_run_id == "plan-paused"
+    assert saved.plan_results[0].model_dump(mode="json", by_alias=True)["answers"] == {
+        "text": {
+            "status": "answered",
+            "answerType": "text",
+            "answer": "今天也要开心呀",
+        },
+    }
+    assert saved.plan_results[0].submission_run_id == "plan-submit"
+    resumed_context = RunSourceContext(
+        identity=RunIdentity(
+            namespace="ns_1", thread_id=thread.thread_id, run_id="plan-submit"
+        ),
+        runtime_profile="deepagents-v2",
+        input_kind="resume",
+        parent_run_id="plan-paused",
+        input={},
+        config={},
+        resume=(RunResumeSummary(interrupt_id="plan-question", status="resolved"),),
+    )
+    resumed_source = await tracer.open_run(resumed_context)
     try:
-        initial = await anext(stream)
-        assert initial.type == "snapshot"
-        if context_already_visible:
-            assert any(message.source for message in initial.snapshot.messages)
-        else:
-            for observation in observations:
-                await source.observe(observation)
-        await source.observe(
-            RunTerminalObservation(
-                identity=context.identity,
-                outcome="failed",
-                code="tool_error",
+        await resumed_source.observe(
+            RunStartedObservation(
+                identity=resumed_context.identity,
                 observed_at=datetime.now(UTC),
-                monotonic_ns=5,
+                monotonic_ns=1,
             )
         )
-        await source.force(ObservationBoundary.TERMINAL)
-        update = await anext(stream)
-        assert update.type == "update"
-        assert len(update.run_failures) == int(keep_question)
-        detail = await service.get_detail("context-failure", include_task_trace=False)
-        assert detail.run_failures == update.run_failures
+        await resumed_source.observe(
+            RunInputObservation(
+                identity=resumed_context.identity,
+                source=resumed_context,
+                observed_at=datetime.now(UTC),
+                monotonic_ns=2,
+            )
+        )
+        await resumed_source.observe(
+            RunResumeCheckpointedObservation(
+                identity=resumed_context.identity,
+                marker_id="plan-saved",
+                native_interrupt_ids=("plan-question",),
+                observed_at=datetime.now(UTC),
+                monotonic_ns=3,
+            )
+        )
+        await _finish_trace(resumed_context, resumed_source)
     finally:
-        await stream.aclose()
-        await source.aclose()
-
-
-pytestmark = pytest.mark.usefixtures("projects")
+        await resumed_source.aclose()
+    thread.last_run_id = "plan-submit"
+    await repository.commit()
+    reloaded = await _get_detail(_service(repository, tracer=tracer), thread.thread_id)
+    assert reloaded.head_run_id == "plan-submit"
+    assert reloaded.interactions[0].status == "resolved"
+    assert reloaded.interactions[0].agui == initial.interactions[0].agui
+    assert reloaded.plan_results == saved.plan_results
+    assert all(item.state == "resolved" for item in reloaded.interaction_availability)

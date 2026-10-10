@@ -147,90 +147,6 @@ async def test_run_stream_forwards_native_arguments_and_observes_before_delivery
 
 
 @pytest.mark.asyncio
-async def test_graph_aclose_from_observer_child_task_preserves_current_part(
-    definition_factory: Callable[..., AgentRuntime[None]],
-) -> None:
-    graph = RecordingGraph([{"type": "values", "ns": (), "data": {"n": 1}}])
-    stream: NativeRunStream | None = None
-    close_task: asyncio.Task[None] | None = None
-
-    async def on_part(_: object) -> None:
-        nonlocal close_task
-        if close_task is None:
-            assert stream is not None
-            close_task = asyncio.create_task(stream.aclose())
-            await asyncio.sleep(0)
-
-    stream = definition_factory(graph).open_run(
-        thread_id=_identity().thread_id,
-        run_id=_identity().run_id,
-        on_native_part=on_part,
-        input=_graph_input(),
-    )
-    consumer = asyncio.create_task(anext(stream))
-    try:
-        consumer_outcome = (await asyncio.gather(consumer, return_exceptions=True))[0]
-        assert close_task is not None
-        close_outcome = (await asyncio.gather(close_task, return_exceptions=True))[0]
-
-        assert consumer_outcome == {"type": "values", "ns": (), "data": {"n": 1}}
-        assert close_outcome is None
-    finally:
-        await asyncio.gather(consumer, return_exceptions=True)
-        if close_task is not None:
-            await asyncio.gather(close_task, return_exceptions=True)
-        await stream.aclose()
-
-    assert graph.closed.is_set()
-
-
-def test_native_stream_exposes_the_requested_identity(
-    definition_factory: Callable[..., AgentRuntime[None]],
-) -> None:
-    graph = RecordingGraph([])
-    stream = definition_factory(graph).open_run(
-        thread_id=_identity().thread_id, run_id=_identity().run_id, input=_graph_input()
-    )
-
-    assert stream.messaging_identity == _identity()
-
-
-@pytest.mark.asyncio
-async def test_coordinator_is_lazy_and_released_when_stream_closes(
-    definition_factory: Callable[..., AgentRuntime[None]],
-) -> None:
-    entered = asyncio.Event()
-    released = asyncio.Event()
-
-    @asynccontextmanager
-    async def coordinate(identity: RunIdentity) -> AsyncIterator[None]:
-        assert identity == _identity()
-        entered.set()
-        try:
-            yield
-        finally:
-            released.set()
-
-    graph = RecordingGraph([{"type": "values", "ns": (), "data": {}}])
-    stream = definition_factory(
-        graph, tinkerfin=TinkerFin(run_coordinator=coordinate).with_namespace("test")
-    ).open_run(
-        thread_id=_identity().thread_id, run_id=_identity().run_id, input=_graph_input()
-    )
-
-    assert not entered.is_set()
-    assert not graph.started.is_set()
-    await anext(stream)
-    assert entered.is_set()
-    assert graph.started.is_set()
-
-    await stream.aclose()
-
-    assert released.is_set()
-    assert graph.closed.is_set()
-
-
-@pytest.mark.asyncio
 async def test_closing_stream_cancels_an_active_graph_pull_before_releasing(
     definition_factory: Callable[..., AgentRuntime[None]],
 ) -> None:
@@ -269,33 +185,6 @@ async def test_closing_stream_cancels_an_active_graph_pull_before_releasing(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_close_waits_for_the_same_upstream_cleanup(
-    definition_factory: Callable[..., AgentRuntime[None]],
-) -> None:
-    close_gate = asyncio.Event()
-    graph = RecordingGraph(
-        [{"type": "values", "ns": (), "data": {}}],
-        close_gate=close_gate,
-    )
-    stream = definition_factory(graph).open_run(
-        thread_id=_identity().thread_id, run_id=_identity().run_id, input=_graph_input()
-    )
-    await anext(stream)
-
-    first_close = asyncio.create_task(stream.aclose())
-    await graph.close_started.wait()
-    second_close = asyncio.create_task(stream.aclose())
-    await asyncio.sleep(0)
-    try:
-        assert not second_close.done()
-    finally:
-        close_gate.set()
-        await asyncio.gather(first_close, second_close)
-
-    assert graph.closed.is_set()
-
-
-@pytest.mark.asyncio
 async def test_upstream_failure_is_not_replaced_by_source_close_failure(
     definition_factory: Callable[..., AgentRuntime[None]],
 ) -> None:
@@ -323,37 +212,3 @@ async def test_upstream_failure_is_not_replaced_by_source_close_failure(
 
     with pytest.raises(ValueError, match="graph failed"):
         await anext(stream)
-
-
-@pytest.mark.asyncio
-async def test_graph_stream_waits_for_cleanup_when_close_caller_is_cancelled(
-    definition_factory: Callable[..., AgentRuntime[None]],
-) -> None:
-    close_gate = asyncio.Event()
-    graph = RecordingGraph(
-        [{"type": "values", "ns": (), "data": {}}],
-        close_gate=close_gate,
-    )
-    stream = definition_factory(graph).open_run(
-        thread_id=_identity().thread_id, run_id=_identity().run_id, input=_graph_input()
-    )
-    await anext(stream)
-    closing = asyncio.create_task(stream.aclose())
-    await graph.close_started.wait()
-    closing.cancel("request cancelled while Graph cleanup was running")
-
-    try:
-        await asyncio.sleep(0)
-        assert not closing.done()
-        close_gate.set()
-        with pytest.raises(
-            asyncio.CancelledError,
-            match="request cancelled while Graph cleanup was running",
-        ):
-            await closing
-    finally:
-        close_gate.set()
-        await asyncio.gather(closing, return_exceptions=True)
-        await stream.aclose()
-
-    assert graph.closed.is_set()

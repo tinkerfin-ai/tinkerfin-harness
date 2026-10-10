@@ -22,10 +22,11 @@ from tinkerfin_studio.services.schemas import ServiceBindings
 
 @dataclass(frozen=True, slots=True)
 class UnstartedRunCleanup:
-    """描述未启动 Run 清理是否删除注册和空会话"""
+    """未启动登记清理结果；resume_released 表示已有可信的未保存证明"""
 
     run_deleted: bool
     thread_deleted: bool
+    resume_released: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +249,21 @@ class ConversationRepository:
         )
         return tuple(rows)
 
+    async def get_runs(
+        self, *, thread_pk: int, run_ids: frozenset[str]
+    ) -> tuple[ConversationRunRegistration, ...]:
+        """批量读取同一会话的提交快照，供已结算交互恢复原决定"""
+
+        if not run_ids:
+            return ()
+        rows = await self._session.scalars(
+            select(ConversationRunRegistration).where(
+                ConversationRunRegistration.conversation_thread_id == thread_pk,
+                ConversationRunRegistration.run_id.in_(run_ids),
+            )
+        )
+        return tuple(rows)
+
     async def create_interrupt_claims(
         self,
         *,
@@ -258,6 +274,9 @@ class ConversationRepository:
     ) -> tuple[ConversationInterruptClaim, ...]:
         """创建不含第三方 payload 的恢复认领记录"""
 
+        registration = await self.get_run(thread_pk=thread_pk, run_id=claimed_run_id)
+        if registration is not None and registration.resume_not_saved:
+            raise RuntimeError("已确认未保存的提交不能重新认领")
         now = datetime.now(UTC).replace(tzinfo=None)
         claims = tuple(
             ConversationInterruptClaim(
@@ -285,6 +304,12 @@ class ConversationRepository:
     ) -> None:
         """按恢复回执中的公开审批结果幂等结算当前运行的认领"""
 
+        await self.lock_thread(thread_pk)
+        registration = await self.get_run_for_update(
+            thread_pk=thread_pk, run_id=receipt.identity.run_id
+        )
+        if registration is not None and registration.resume_not_saved:
+            raise RuntimeError("恢复回执与已确认未保存的提交冲突")
         claims = await self.list_claims_for_update(
             thread_pk=thread_pk,
             interrupt_ids=frozenset(
@@ -307,9 +332,55 @@ class ConversationRepository:
             claim.resolved_at = now
             claim.updated_at = now
 
-    async def release_claims(self, *, thread_pk: int, run_id: str) -> None:
-        """删除尚未由恢复回执结算的当前运行认领"""
+    async def release_claims(
+        self, *, thread_pk: int, run_id: str
+    ) -> ConversationRunRegistration | None:
+        """在已证明未保存时保留提交结果并释放认领
 
+        仅由框架未保存回调或本次未受理投递的所有者调用。调用方负责提交；
+        原登记上的确认标记与认领释放在同一事务内完成。后台清理只能复用
+        已存在的标记，不能从缺失观测推断未保存。
+
+        Args:
+            thread_pk: 已核实归属的会话主键
+            run_id: 已确认未保存的恢复提交 ID
+
+        Returns:
+            已标记的原运行登记；尚无确认标记且没有认领，或登记已删除时返回 None
+
+        Raises:
+            RuntimeError: 已有保存或取消结果，或未保存证明与当前认领冲突
+        """
+
+        if await self.lock_thread(thread_pk) is None:
+            return None
+        registration = await self.get_run_for_update(thread_pk=thread_pk, run_id=run_id)
+        if registration is None:
+            return None
+        claims = tuple(
+            await self._session.scalars(
+                select(ConversationInterruptClaim)
+                .where(
+                    ConversationInterruptClaim.conversation_thread_id == thread_pk,
+                    ConversationInterruptClaim.claimed_run_id == run_id,
+                )
+                .order_by(ConversationInterruptClaim.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        )
+        if registration.resume_not_saved:
+            if claims:
+                raise RuntimeError("已确认未保存的提交仍持有认领")
+            return registration
+        if not claims:
+            return None
+        if any(claim.status != "claimed" or claim.resolution_id for claim in claims):
+            raise RuntimeError("已保存或取消的决定不能结算为未保存")
+        resume = registration.input_json.get("resume")
+        if not isinstance(resume, list) or not resume:
+            raise RuntimeError("恢复认领缺少原始提交")
+        registration.resume_not_saved = True
         await self._session.execute(
             delete(ConversationInterruptClaim).where(
                 ConversationInterruptClaim.conversation_thread_id == thread_pk,
@@ -317,6 +388,7 @@ class ConversationRepository:
                 ConversationInterruptClaim.status == "claimed",
             )
         )
+        return registration
 
     async def cancel_claims(
         self,
@@ -327,6 +399,10 @@ class ConversationRepository:
     ) -> None:
         """以 Trace abandonment 证据结算未继续执行的整批取消"""
 
+        await self.lock_thread(thread_pk)
+        registration = await self.get_run_for_update(thread_pk=thread_pk, run_id=run_id)
+        if registration is not None and registration.resume_not_saved:
+            raise RuntimeError("取消凭据与已确认未保存的提交冲突")
         rows = await self._session.scalars(
             select(ConversationInterruptClaim)
             .where(
@@ -549,6 +625,16 @@ class ConversationRepository:
         if thread is None or thread.status == "deleting":
             return TraceSummaryWrite("applied")
         registration = await self.get_run_for_update(thread_pk=thread_pk, run_id=run_id)
+        # 准备阶段 Trace 不证明业务已受理，不能消耗所有者的清理权或发布 head
+        admission_status = (
+            registration.status
+            if registration is not None
+            and registration.status in ("preparing", "rejected")
+            else None
+        )
+        registration_status = admission_status or _registration_status(
+            status, terminal_outcome
+        )
         if registration is not None:
             generation = registration.trace_generation
             if generation is not None and generation != trace_generation:
@@ -562,12 +648,19 @@ class ConversationRepository:
                     return TraceSummaryWrite("stale")
                 if incoming_order == current_order:
                     same_result = (
-                        registration.status
-                        == _registration_status(status, terminal_outcome)
+                        (
+                            registration.status == "starting"
+                            or registration.status == registration_status
+                        )
                         and registration.terminal_outcome == terminal_outcome
                         and registration.error_code == error_code
                     )
-                    if thread.last_run_id in (None, run_id):
+                    # starting 是确认后的首次投影；同前缀准备诊断尚未成为列表摘要
+                    if (
+                        admission_status is None
+                        and registration.status != "starting"
+                        and thread.last_run_id in (None, run_id)
+                    ):
                         same_result = same_result and (
                             thread.status == status
                             and thread.message_count == message_count
@@ -582,15 +675,17 @@ class ConversationRepository:
             registration.trace_generation = trace_generation
             registration.trace_as_of_seq = trace_as_of_seq
             registration.trace_observed_at = trace_observed_at
-            registration.status = _registration_status(status, terminal_outcome)
+            registration.status = registration_status
             registration.terminal_outcome = terminal_outcome
             registration.error_code = error_code
             registration.finished_at = (
                 updated_at if terminal_outcome is not None else None
             )
-            registration.updated_at = max(registration.updated_at, updated_at)
-        # 较早 Run 的延迟终态不能覆盖已经注册的新 head 摘要
-        if thread.last_run_id not in (None, run_id):
+            if admission_status is None:
+                registration.updated_at = max(registration.updated_at, updated_at)
+        # 未受理请求继续保留真实 Trace 诊断，但不能成为会话 head
+        # 较早 Run 的延迟终态也不能覆盖已经注册的新 head 摘要
+        if admission_status is not None or thread.last_run_id not in (None, run_id):
             await self._session.flush()
             return TraceSummaryWrite("applied")
         # 更新时间随逐字输出推进；只有列表内容变化才发送列表失效提示
@@ -674,14 +769,16 @@ class ConversationRepository:
         delete_empty_thread: bool,
         expected_updated_at: datetime | None = None,
         expected_status: Literal["preparing", "starting"] = "preparing",
+        resume_not_saved: bool = False,
     ) -> UnstartedRunCleanup:
-        """删除未启动注册、未结算认领和可选空会话"""
+        """清理未启动登记；已确认未保存的恢复提交保留为未受理记录"""
 
         thread = await self.lock_thread(thread_pk)
         if thread is None:
             return UnstartedRunCleanup(run_deleted=False, thread_deleted=False)
         run = await self.get_run_for_update(thread_pk=thread_pk, run_id=run_id)
         deleted = False
+        resume_released = False
         # 激活可发生在同一时间精度内，清理必须同时匹配检查时的业务状态
         if (
             run is not None
@@ -692,10 +789,25 @@ class ConversationRepository:
             and run.status == expected_status
             and (expected_updated_at is None or run.updated_at == expected_updated_at)
         ):
-            await self.release_claims(thread_pk=thread_pk, run_id=run_id)
-            await self._session.delete(run)
+            resume = run.input_json.get("resume")
+            if isinstance(resume, list) and resume:
+                # 失活或缺少 Trace 不证明未保存；只有本次所有者或已有标记能结算
+                if not resume_not_saved and not (
+                    run.resume_not_saved and run.status == "preparing"
+                ):
+                    return UnstartedRunCleanup(run_deleted=False, thread_deleted=False)
+                resume_released = (
+                    await self.release_claims(thread_pk=thread_pk, run_id=run_id)
+                ) is not None
+                if not resume_released:
+                    return UnstartedRunCleanup(run_deleted=False, thread_deleted=False)
+                # rejected 是业务未受理，不覆盖准备阶段可能已写入的 Trace 终态
+                run.status = "rejected"
+                run.updated_at = datetime.now(UTC).replace(tzinfo=None)
+            else:
+                await self._session.delete(run)
+                deleted = True
             await self._session.flush()
-            deleted = True
         thread_deleted = False
         if delete_empty_thread and deleted:
             remaining = await self._session.scalar(
@@ -706,10 +818,19 @@ class ConversationRepository:
             if not remaining:
                 await self._session.delete(thread)
                 thread_deleted = True
-        if deleted and not thread_deleted and thread.last_run_id == run_id:
+        if (
+            (deleted or resume_released)
+            and not thread_deleted
+            and thread.last_run_id == run_id
+        ):
             previous = await self._session.scalar(
                 select(ConversationRunRegistration)
-                .where(ConversationRunRegistration.conversation_thread_id == thread_pk)
+                .where(
+                    ConversationRunRegistration.conversation_thread_id == thread_pk,
+                    ConversationRunRegistration.status.not_in(
+                        ("preparing", "rejected")
+                    ),
+                )
                 .order_by(ConversationRunRegistration.id.desc())
                 .limit(1)
             )
@@ -729,11 +850,11 @@ class ConversationRepository:
         return UnstartedRunCleanup(
             run_deleted=deleted,
             thread_deleted=thread_deleted,
+            resume_released=resume_released,
         )
 
     async def delete_thread_cascade(self, thread_pk: int) -> None:
-        """删除 Studio 自有认领、Run 注册和会话业务记录"""
-
+        """删除会话的认领、保留提交结果的 Run 注册和业务记录"""
         await self._session.execute(
             delete(ConversationInterruptClaim).where(
                 ConversationInterruptClaim.conversation_thread_id == thread_pk

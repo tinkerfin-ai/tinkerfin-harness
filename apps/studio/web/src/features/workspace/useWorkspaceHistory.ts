@@ -558,6 +558,7 @@ export function useWorkspaceHistory({
       if (options.signal?.aborted) return false
       const preferredItem = response.items.find(item => item.threadId === preferredThreadId)
       const previous = latestWorkspace.current.conversations.find(item => item.threadId === preferredThreadId)
+      const submission = previous?.approval ?? previous?.planInteraction
       const reusable = selection.kind === 'list' && previous && preferredItem
         && previous.projectId === projectId && previous.archived === archived
         && mergeHistoryConversations([previous], [preferredItem], defaultModelId)[0]?.isHydrated
@@ -566,6 +567,7 @@ export function useWorkspaceHistory({
         ? await prepareTaskTraceOwner(preferredThreadId)
           .then(() => fetchConversationHistoryDetail(preferredThreadId, {
             includeTaskTrace: true,
+            submissionRunId: submission?.submitted ? submission.submissionRunId : undefined,
             signal: options.signal,
             suppressGlobalError: true,
           }))
@@ -1106,6 +1108,7 @@ export function useWorkspaceHistory({
             if (!owner || latestWorkspace.current.currentThreadId !== threadId
               || !ownsHydrationRequest(owner, requestIdentity)) return
             const requestedForeground = latestForeground.current
+            const submission = owner.approval ?? owner.planInteraction
             const prefetched = prefetchedHistoryDetails.current.get(threadId)
             prefetchedHistoryDetails.current.delete(threadId)
             let detail: ConversationHistoryDetail
@@ -1113,6 +1116,7 @@ export function useWorkspaceHistory({
               detail = (options.refresh ? undefined : prefetched)
                 ?? await fetchConversationHistoryDetail(threadId, {
                   includeTaskTrace: true,
+                  submissionRunId: submission?.submitted ? submission.submissionRunId : undefined,
                   signal: controller.signal,
                   suppressGlobalError: true,
                 })
@@ -1255,8 +1259,10 @@ export function useWorkspaceHistory({
     options.signal?.addEventListener('abort', abortFromCaller, { once: true })
     olderTraceRequests.current.set(threadId, controller)
     try {
+      const submission = target.approval ?? target.planInteraction
       const detail = await fetchConversationHistoryDetail(threadId, {
         includeTaskTrace: false,
+        submissionRunId: submission?.submitted ? submission.submissionRunId : undefined,
         historyCursor: cursor,
         limit: 100,
         signal: controller.signal,

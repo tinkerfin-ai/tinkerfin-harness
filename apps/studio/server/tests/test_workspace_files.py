@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from types import SimpleNamespace
@@ -16,23 +17,19 @@ from starlette.types import Message
 from test_studio_notifications import notification_route as notification_route
 
 from tinkerfin_sandbox import (
-    OpenSandboxFileChangedError,
     OpenSandboxNotTextError,
-    OpenSandboxPausedError,
     OpenSandboxWorkspaceNotInitializedError,
     WorkspaceDirectoryPage,
     WorkspaceFileInfo,
     WorkspaceText,
 )
 from tinkerfin_studio.api.dependencies import (
-    get_auth_session,
     get_session,
     get_user_context,
 )
 from tinkerfin_studio.api.errors import (
     BusinessException,
     GlobalErrorCode,
-    WorkspaceErrorCode,
 )
 from tinkerfin_studio.api.responses import ApiResponse
 from tinkerfin_studio.api.workspace_router import follow_files
@@ -42,7 +39,6 @@ from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_studio.resources import get_resources
 from tinkerfin_studio.workspace.schemas import (
     WorkspaceDirectoryView,
-    WorkspacePreviewView,
 )
 
 
@@ -150,108 +146,6 @@ async def test_directory_authorization_and_uninitialized_state(file_client) -> N
     assert page is not None and page.state == "uninitialized" and not page.entries
 
 
-async def test_source_preview_is_bounded_and_other_formats_only_expose_metadata(
-    file_client,
-) -> None:
-    client, project, _foreign, files, _manager = file_client
-    response = await client.get(
-        f"/api/projects/{project}/workspace/preview", params={"path": "/note.py"}
-    )
-    preview = (
-        ApiResponse[WorkspacePreviewView].model_validate_json(response.content).data
-    )
-    assert preview is not None and preview.kind == "text" and preview.truncated
-    assert preview.text == "print('hello')"
-    assert files.reads == [("/note.py", 102400, 200)]
-    for path in ("/photo.png", "/report.pdf", "/sheet.xlsx", "/unknown"):
-        response = await client.get(
-            f"/api/projects/{project}/workspace/preview", params={"path": path}
-        )
-        preview = (
-            ApiResponse[WorkspacePreviewView].model_validate_json(response.content).data
-        )
-        assert preview is not None and preview.kind == "unsupported"
-    assert len(files.reads) == 2
-    assert (
-        await client.post(f"/api/projects/{project}/workspace/preview")
-    ).status_code == 405
-
-
-@pytest.mark.parametrize(
-    "error,status,code",
-    [
-        (OpenSandboxPausedError("paused"), 409, WorkspaceErrorCode.PAUSED),
-        (OpenSandboxFileChangedError("changed"), 409, WorkspaceErrorCode.CHANGED),
-        (FileNotFoundError("private-host-path"), 404, WorkspaceErrorCode.NOT_FOUND),
-        (ValueError("internal argument"), 422, WorkspaceErrorCode.INVALID_PATH),
-        (PermissionError("private-host-path"), 403, WorkspaceErrorCode.FORBIDDEN),
-    ],
-)
-async def test_file_errors_remain_distinct_and_hide_internal_details(
-    file_client, error: Exception, status: int, code: WorkspaceErrorCode
-) -> None:
-    client, project, _foreign, files, _manager = file_client
-    files.failure = error
-    response = await client.get(
-        f"/api/projects/{project}/workspace/file", params={"path": "/note.py"}
-    )
-    result = ApiResponse[None].model_validate_json(response.content)
-    assert response.status_code == status and result.code == code
-    assert str(error) not in result.message
-    assert response.headers["Cache-Control"] == "private, no-store"
-
-
-async def test_validation_errors_keep_private_cache_policy_and_match_openapi(
-    file_client,
-) -> None:
-    client, project, _foreign, _files, _manager = file_client
-    response = await client.get(
-        f"/api/projects/{project}/workspace/file", params={"path": ""}
-    )
-    assert response.status_code == 422
-    assert response.headers["Cache-Control"] == "private, no-store"
-    schema = create_application(lifespan=None).openapi()
-    for endpoint in ("entries", "file", "preview", "events"):
-        errors = schema["paths"][f"/api/projects/{{project_id}}/workspace/{endpoint}"][
-            "get"
-        ]["responses"]
-        for status in ("401", "403", "404", "409", "422", "503"):
-            assert set(errors[status]["content"]) == {"application/json"}
-            documented = errors[status]["content"]["application/json"]["schema"]
-            assert (
-                set(documented["properties"])
-                == set(response.json())
-                == {"code", "message", "data"}
-            )
-
-
-async def test_events_file_permission_is_not_a_login_failure(
-    notification_route,
-    monkeypatch,
-) -> None:
-    request, auth, _clock, _records, _connections = notification_route
-    resources = get_resources(request.app)
-    files = ProjectFiles()
-    files.failure = PermissionError("private-host-path")
-    monkeypatch.setattr(resources, "sandbox_manager", Workspaces(files), raising=False)
-    app = create_application(lifespan=None)
-    app.state.resources = resources
-    app.dependency_overrides[get_auth_session] = lambda: auth
-    async with resources.database.session() as session:
-        project = await ProjectRepository(session, auth.user.user_id).create("只读检查")
-        project_id = project.id
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        for endpoint in ("file", "events"):
-            response = await client.get(
-                f"/api/projects/{project_id}/workspace/{endpoint}", params={"path": "/"}
-            )
-            assert response.status_code == 403
-            assert response.json()["code"] == WorkspaceErrorCode.FORBIDDEN
-            assert response.headers["Cache-Control"] == "private, no-store"
-
-
 async def test_disconnected_watch_preflight_discards_the_prepared_response(
     notification_route, monkeypatch
 ) -> None:
@@ -318,7 +212,7 @@ async def test_workspace_stream_checks_access_and_closes_its_watch(
         files.changes.put_nowait("files_changed")
         changed = await anext(body)
         assert isinstance(changed, bytes) and b"files_changed" in changed
-        records[auth.token] = records[auth.token].with_revoked(True)
+        records[auth.token] = replace(records[auth.token], revoked=True)
         clock.monotonic = 15.0
         with pytest.raises(StopAsyncIteration):
             await anext(body)

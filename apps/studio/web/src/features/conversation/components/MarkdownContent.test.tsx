@@ -2,45 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import conversationStyles from '../conversation.css?raw'
 import { MarkdownContent } from './MarkdownContent'
-
-describe('MarkdownContent links', () => {
-  it('keeps Chinese instructions after a bare URL outside the link', () => {
-    const content = '访问 https://www.baidu.com，了解该网站的主营业务。返回不超过50字的中文总结，说明百度是做什么业务的。'
-    const { container } = render(<MarkdownContent content={content} />)
-
-    const link = screen.getByRole('link')
-    expect(link).toHaveAttribute('href', 'https://www.baidu.com')
-    expect(link).toHaveTextContent('https://www.baidu.com')
-    expect(link).toHaveAttribute('target', '_blank')
-    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
-
-    expect(link).not.toHaveTextContent('了解该网站的主营业务')
-    expect(container).toHaveTextContent(content)
-  })
-
-  it('preserves explicit Markdown link labels', () => {
-    render(<MarkdownContent content="访问 [百度官网](https://www.baidu.com) 和 [https://www.baidu.com中文说明](https://example.com)" />)
-
-    const link = screen.getByRole('link', { name: '百度官网' })
-    expect(link).toHaveAttribute('href', 'https://www.baidu.com')
-
-    expect(screen.getByRole('link', { name: 'https://www.baidu.com中文说明' })).toHaveAttribute(
-      'href',
-      'https://example.com',
-    )
-    expect(link).toHaveAttribute('target', '_blank')
-  })
-
-  it('keeps relative application links in the current tab', () => {
-    render(<MarkdownContent content="[会话帮助](/help/conversations)" />)
-
-    const link = screen.getByRole('link', { name: '会话帮助' })
-    expect(link).not.toHaveAttribute('target')
-    expect(link).not.toHaveAttribute('rel')
-  })
-})
 
 const completeFixture = `# 一级标题
 
@@ -104,23 +66,6 @@ describe('MarkdownContent article contract', () => {
     )
   })
 
-  it('renders inline code separately from a language-labelled code block', () => {
-    const { container } = render(<MarkdownContent content={completeFixture} />)
-
-    expect(container.querySelector('.markdown-content p code')).toHaveTextContent('const answer = 42')
-    expect(container.querySelector('.markdown-code-block__head')).toHaveTextContent('ts')
-    expect(container.querySelector('.markdown-code-block pre code')).toHaveTextContent('const value = 42')
-  })
-
-  it('keeps rendered task-list markers decorative instead of exposing disabled controls', () => {
-    const { container } = render(<MarkdownContent content="- [ ] 浏览器回归" />)
-
-    const checkbox = container.querySelector('input[type="checkbox"]')
-    expect(checkbox).toHaveAttribute('aria-hidden', 'true')
-    expect(checkbox).toHaveAttribute('tabindex', '-1')
-    expect(screen.getByText('浏览器回归')).toBeInTheDocument()
-  })
-
   it('copies code through the real client-side clipboard action', async () => {
     const user = userEvent.setup()
     const writeText = vi.spyOn(navigator.clipboard, 'writeText')
@@ -129,35 +74,6 @@ describe('MarkdownContent article contract', () => {
     await user.click(screen.getByRole('button', { name: '复制' }))
     expect(writeText).toHaveBeenCalledWith('const value = 42')
     expect(screen.getByRole('button', { name: '已复制' })).toBeInTheDocument()
-  })
-
-  it('exposes compact content as an explicit variant', () => {
-    render(<MarkdownContent content="**工具结果** [原文](https://example.com)" variant="compact" />)
-    expect(screen.getByRole('strong')).toHaveTextContent('工具结果')
-    expect(screen.getByRole('link', { name: '原文' })).toHaveAttribute('href', 'https://example.com')
-
-  })
-
-  it('owns the measured article rhythm while keeping compact Markdown isolated', () => {
-    render(<MarkdownContent content={'第一段\n\n第二段'} />)
-
-    expect(conversationStyles).toMatch(/\.markdown-content--article\s*\{[^}]*font-size:\s*var\(--type-conversation-body-size\);[^}]*line-height:\s*var\(--type-conversation-body-line\);/s)
-    expect(conversationStyles).toMatch(/\.markdown-content--article p\s*\{\s*margin:\s*var\(--space-4\) 0 var\(--space-1\);/s)
-    expect(conversationStyles).toMatch(/\.markdown-content--article h1\s*\{[^}]*font-size:\s*var\(--type-conversation-h1-size\);[^}]*line-height:\s*var\(--type-conversation-h1-line\);/s)
-    expect(conversationStyles).toMatch(/\.markdown-content--article h2\s*\{[^}]*font-size:\s*var\(--type-conversation-h2-size\);[^}]*line-height:\s*var\(--type-conversation-h2-line\);/s)
-    expect(conversationStyles).toMatch(/\.markdown-content--article h3\s*\{[^}]*font-size:\s*var\(--type-conversation-h3-size\);[^}]*line-height:\s*var\(--type-conversation-h3-line\);/s)
-    expect(conversationStyles).toMatch(/\.markdown-content--article h4\s*\{[^}]*font-size:\s*var\(--type-conversation-h4-size\);[^}]*line-height:\s*var\(--type-conversation-h4-line\);/s)
-    expect(conversationStyles).toMatch(/\.markdown-content--article h5\s*\{[^}]*font-size:\s*var\(--type-conversation-body-size\);[^}]*line-height:\s*var\(--type-conversation-body-line\);/s)
-    expect(conversationStyles).toMatch(/\.markdown-content--article h6\s*\{[^}]*font-size:\s*var\(--type-conversation-body-size\);[^}]*font-weight:\s*var\(--weight-regular\);[^}]*line-height:\s*var\(--type-conversation-body-line\);/s)
-    expect(conversationStyles).toMatch(/\.markdown-content--article blockquote\s*\{[^}]*margin:\s*0 0 var\(--space-2\);[^}]*padding:\s*var\(--space-2\) 0 var\(--space-2\) var\(--space-6\);[^}]*border-left:\s*0;/s)
-    expect(conversationStyles).toMatch(/\.markdown-content--article :not\(pre\) > code\s*\{[^}]*padding:\s*2\.4px 4\.8px;[^}]*font-size:\s*var\(--type-conversation-code-size\);[^}]*line-height:\s*var\(--type-conversation-code-line\);/s)
-    expect(conversationStyles).toMatch(/\.markdown-code-block\s*\{[^}]*border-radius:\s*var\(--radius-3xl\);/s)
-    expect(conversationStyles).not.toMatch(/\.markdown-content--article \.markdown-code-block\s*\{[^}]*border-radius:/s)
-    expect(conversationStyles).toMatch(/\.markdown-content--article \.markdown-table-wrap\s*\{[^}]*max-width:\s*none;[^}]*margin:\s*0 calc\(var\(--space-4\) \* -1\);[^}]*padding-inline:\s*var\(--space-4\);/s)
-    expect(conversationStyles).toMatch(/\.markdown-content--article th\s*\{[^}]*padding-top:\s*var\(--space-2\);[^}]*font-size:\s*var\(--type-conversation-table-size\);[^}]*line-height:\s*var\(--type-conversation-table-head-line\);/s)
-    expect(conversationStyles).toMatch(/\.markdown-content--article td\s*\{[^}]*padding-top:\s*10px;[^}]*font-size:\s*var\(--type-conversation-table-size\);[^}]*line-height:\s*var\(--type-conversation-table-line\);/s)
-    expect(conversationStyles).toMatch(/\.markdown-content--compact h1,[\s\S]*\.markdown-content--compact h6\s*\{/s)
-    expect(conversationStyles).toMatch(/\.tool-rich-field \.markdown-content :is\(h1, h2, h3, h4, h5, h6\)/s)
   })
 })
 

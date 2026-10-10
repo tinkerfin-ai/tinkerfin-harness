@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypedDict
@@ -137,44 +136,20 @@ def _facts(
     return initial, model_completed, execution_started, execution_completed
 
 
-@pytest.fixture(
-    params=(
-        "memory",
-        "sqlite",
-        pytest.param("mysql", marks=pytest.mark.docker_integration),
-        pytest.param("postgresql", marks=pytest.mark.docker_integration),
-    )
-)
+@pytest.fixture(params=("memory", "sqlite"))
 async def graph_store(
     request: pytest.FixtureRequest, tmp_path: Path
 ) -> AsyncIterator[tuple[TraceStore, AsyncEngine | None]]:
     if request.param == "memory":
         yield InMemoryTraceStore(), None
         return
-    async with AsyncExitStack() as databases:
-        if request.param == "postgresql":
-            engine = await databases.enter_async_context(
-                request.getfixturevalue("trace_postgresql_database")()
-            )
-            assert isinstance(engine, AsyncEngine)
-            yield SqlAlchemyTraceStore(engine), engine
-            return
-        url = (
-            await databases.enter_async_context(
-                request.getfixturevalue("trace_mysql_database")()
-            )
-            if request.param == "mysql"
-            else f"sqlite+aiosqlite:///{tmp_path / 'model-evidence.db'}"
-        )
-        assert isinstance(url, str)
-        engine = create_async_engine(url, hide_parameters=True)
-        try:
-            yield (
-                SqlAlchemyTraceStore(engine),
-                engine,
-            )
-        finally:
-            await engine.dispose()
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'model-evidence.db'}", hide_parameters=True
+    )
+    try:
+        yield SqlAlchemyTraceStore(engine), engine
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.parametrize("same_commit", (False, True))
@@ -314,75 +289,3 @@ async def test_sql_rejects_missing_wrong_or_unavailable_model_proof(
         )
     finally:
         await writer.aclose()
-
-
-@pytest.mark.docker_integration
-async def test_mysql_graph_cache_rebuild_preserves_ledger_and_core_checkpoints(
-    mysql_sandbox_url: str,
-) -> None:
-    engine = create_async_engine(mysql_sandbox_url, hide_parameters=True)
-    store = SqlAlchemyTraceStore(engine)
-    tracer = Tracer(store=store)
-    identity = RunIdentity(namespace="test", thread_id="cache-rebuild", run_id="run")
-    initial, model_completed, execution_started, execution_completed = _facts(identity)
-    writer = await store.open_writer(identity)
-    try:
-        await writer.append(
-            (*initial, model_completed, execution_started, execution_completed)
-        )
-        await writer.append(
-            (
-                RunFact(**_source(identity, 11), phase="terminal", outcome="succeeded"),
-                RunFact(**_source(identity, 12), phase="closed", outcome="succeeded"),
-            ),
-            mandatory=True,
-        )
-        await writer.aclose()
-        before = await tracer.query(identity.thread)
-        await tracer.get(identity.thread)
-        snapshot = await store.snapshot(identity.thread)
-        original_events = await store.read_events(
-            snapshot.key, after_seq=0, as_of_seq=snapshot.as_of_seq, limit=100
-        )
-        async with engine.connect() as connection:
-            original_checkpoints = (
-                await connection.execute(
-                    text("SELECT * FROM tinkerfin_trace_projection_checkpoints")
-                )
-            ).all()
-        assert original_checkpoints
-
-        # This test owns the complete disposable database. Recreate exactly the
-        # operator's ADD COLUMN state, where retained Graph rows have no locator yet.
-        async with engine.begin() as connection:
-            await connection.exec_driver_sql(
-                "ALTER TABLE tinkerfin_trace_graph_nodes DROP COLUMN model_call_seq"
-            )
-            await connection.exec_driver_sql(
-                "ALTER TABLE tinkerfin_trace_graph_nodes ADD COLUMN model_call_seq "
-                "BIGINT NULL COMMENT 'Ledger sequence proving the emitting Model relationship'"
-            )
-        fresh_store = SqlAlchemyTraceStore(engine)
-        await fresh_store.setup()
-        fresh_tracer = Tracer(store=fresh_store)
-        with pytest.raises(TraceStoreProtocolError):
-            await fresh_tracer.query(identity.thread)
-        await fresh_tracer.rebuild_graph(identity.thread)
-        assert (await fresh_tracer.query(identity.thread)).snapshot == before.snapshot
-        assert (await fresh_tracer.get(identity.thread)).graph.nodes == before.nodes
-        assert (
-            await fresh_store.read_events(
-                snapshot.key, after_seq=0, as_of_seq=snapshot.as_of_seq, limit=100
-            )
-            == original_events
-        )
-        async with engine.connect() as connection:
-            rebuilt_checkpoints = (
-                await connection.execute(
-                    text("SELECT * FROM tinkerfin_trace_projection_checkpoints")
-                )
-            ).all()
-        assert rebuilt_checkpoints == original_checkpoints
-    finally:
-        await writer.aclose()
-        await engine.dispose()

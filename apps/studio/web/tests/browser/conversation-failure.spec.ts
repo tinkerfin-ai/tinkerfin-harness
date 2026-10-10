@@ -20,7 +20,7 @@ const detail: ConversationHistoryDetail = {projectId: 'project-1', archived: fal
     { ...messages[0], id: 'normal-question', runId: 'normal-run', traceSeq: 0, content: '正常问题' },
     { ...messages[0], id: 'normal-answer', runId: 'normal-run', traceSeq: 0, role: 'assistant', content: '图中左边是一个蓝色的圆形，右边是一个橙色的三角形。' },
     ...messages,
-  ], reasoning: [], graph: emptyTraceGraph(10), state: { root: {}, subgraphs: {} }, interactionAvailability: [], interactions: [],
+  ], reasoning: [], graph: emptyTraceGraph(10), state: { root: {}, subgraphs: {} }, submissionResult: null, planResults: [], interactionAvailability: [], interactions: [],
   status: { execution: 'failed', headRunId: 'run-3' }, completeness: { missingPrefix: false, missingTail: false, payloadOmitted: false },
   taskTrace: { status: 'ready', todoGroups: [] }, createdAt: time, updatedAt: time,
   runFailures: messages.map(message => ({ runId: message.runId, errorCode: 'runtime_initialization_error', failedAt: time, retryable: true })),

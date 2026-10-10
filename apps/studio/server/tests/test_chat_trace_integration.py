@@ -1841,3 +1841,126 @@ async def test_retried_registration_survives_first_submission_cleanup(
         )
         assert saved is not None
         assert saved.preparation_id != execution.registered.preparation_id
+
+
+@pytest.mark.parametrize("continuation", ["resume", "branch"])
+async def test_rejected_submission_is_not_a_continuation_source(
+    notifications, session, attachments, continuation
+) -> None:
+    repository = ConversationRepository(session)
+    thread = await repository.create_thread(
+        project_id="project-1",
+        user_id=1,
+        thread_id="rejected-source",
+        title="未受理恢复",
+        model_id="model-main",
+    )
+    source = await repository.create_run_registration(
+        thread_id=thread.id,
+        run_id="rejected",
+        parent_run_id="paused",
+        model_id="model-main",
+        input_json={"resume": [{"interruptId": "interrupt-root#0"}]},
+    )
+    source.status = "rejected"
+    source.resume_not_saved = True
+    thread.last_run_id = "rejected"
+    await repository.commit()
+    request = (
+        _resume_request(thread_id=thread.thread_id, run_id="continuation")
+        if continuation == "resume"
+        else _ordinary_request(
+            thread_id=thread.thread_id,
+            run_id="continuation",
+            parent_run_id="rejected",
+        )
+    )
+    thread_pk = thread.id
+    with pytest.raises(BusinessException) as denied:
+        await ConversationRunPreparer(
+            session, user_id=1, attachments=attachments, notifications=notifications
+        ).register(
+            intent=classify_intent(request),
+            prepared=prepare_run_request(
+                request, project_id="project-1", user_id=1, thread_id=thread.thread_id
+            ),
+            model=_model(),
+            thread=thread,
+        )
+    assert denied.value.error_code is ConversationErrorCode.RUN_NOT_FOUND
+    assert await repository.get_run(thread_pk=thread_pk, run_id="continuation") is None
+
+
+@pytest.mark.parametrize("owned_cleanup", [False, True])
+async def test_not_saved_resume_requires_a_new_run_id(
+    notifications, session, attachments, owned_cleanup
+) -> None:
+    """失败提交的同 ID 重播不会再次认领，用户可用新 ID 重新提交"""
+    repository = ConversationRepository(session)
+    thread = await repository.create_thread(
+        project_id="project-1",
+        user_id=1,
+        thread_id="retry-resume",
+        title="恢复提交",
+        model_id="model-main",
+    )
+    await repository.create_run_registration(
+        thread_id=thread.id,
+        run_id="paused",
+        parent_run_id=None,
+        model_id="model-main",
+        input_json={"runId": "paused"},
+    )
+    thread.last_run_id = "paused"
+    thread.has_pending_interrupt = True
+    await SkillRepository(session, 1).capture(
+        RunIdentity(namespace="ns_1", thread_id=thread.thread_id, run_id="paused"),
+        project_id="project-1",
+    )
+    await repository.commit()
+    preparer = ConversationRunPreparer(
+        session, user_id=1, attachments=attachments, notifications=notifications
+    )
+
+    async def register(run_id: str):
+        request = _resume_request(thread_id="retry-resume", run_id=run_id)
+        current = await repository.get_thread(user_id=1, thread_id="retry-resume")
+        assert current is not None
+        return await preparer.register(
+            intent=classify_intent(request),
+            prepared=prepare_run_request(
+                request, project_id="project-1", user_id=1, thread_id="retry-resume"
+            ),
+            model=_model(),
+            thread=current,
+        )
+
+    execution = await register("first")
+    if owned_cleanup:
+        await preparer.cleanup_unstarted(
+            thread_pk=thread.id,
+            thread_id=thread.thread_id,
+            identity_run_id="first",
+            registered=execution.registered,
+            thread_created=False,
+        )
+    else:
+        await repository.release_claims(thread_pk=thread.id, run_id="first")
+        await repository.commit()
+    thread_pk = thread.id
+    with pytest.raises(BusinessException) as rejected:
+        await register("first")
+    assert rejected.value.error_code.value == 1_001_004_034
+    assert (
+        await repository.list_claims_for_update(
+            thread_pk=thread_pk, interrupt_ids=frozenset({"interrupt-root#0"})
+        )
+        == ()
+    )
+    await repository.commit()
+    fresh = await register("second")
+    assert fresh.registered.created
+    claims = await repository.list_claims_for_update(
+        thread_pk=thread_pk, interrupt_ids=frozenset({"interrupt-root#0"})
+    )
+    assert [claim.claimed_run_id for claim in claims] == ["second"]

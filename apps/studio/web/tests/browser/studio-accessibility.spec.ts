@@ -14,6 +14,7 @@ import {
   traceGraphWithNodes,
 } from '../../src/test/traceFixtures'
 import type { JsonObject, JsonValue, Message } from '../../src/types'
+import type { ChatRequestPayload } from '../../src/api/conversation/types'
 import { attachmentInput } from '../../src/features/conversation/attachments/content'
 
 const THREAD_ID = 'browser-thread'
@@ -792,7 +793,7 @@ async function mockStudio(page: Page, {
         subgraphs: {},
       },
       interactions,
-      interactionAvailability: interactions.flatMap(interaction => interaction.agui ?? [])
+      submissionResult: null, planResults: [], interactionAvailability: interactions.flatMap(interaction => interaction.agui ?? [])
         .map(action => ({ interruptId: action.id, state: 'available' as const, submissionRunId: null })),
       status: { execution, headRunId: 'browser-run' },
       completeness: {
@@ -1424,6 +1425,7 @@ for (const card of ['question', 'review'] as const) {
     release()
     const reload = page.getByRole('button', { name: '重新加载', exact: true })
     await expect(reload).toBeVisible()
+    await page.getByText('查看提交内容', { exact: true }).click()
     await expect(close).toBeDisabled()
     await expect(input).toHaveCount(0)
     await page.route(`**/api/conversation/${THREAD_ID}/history*`, async route => {
@@ -1435,18 +1437,24 @@ for (const card of ['question', 'review'] as const) {
         headRunId: submittedRunId,
         availableHeads: [submittedRunId],
         status: { execution: 'succeeded', headRunId: submittedRunId },
-        interactions: source.interactions.map(item => ({ ...item, status: 'resolved', agui: [] })),
+        interactions: source.interactions.map(item => ({ ...item, status: 'resolved' })),
         interactionAvailability: [{ interruptId: card === 'question' ? 'browser-plan-question' : 'browser-plan-review',
           state: 'resolved', submissionRunId: submittedRunId }],
+        submissionResult: null, planResults: [{ interruptId: card === 'question' ? 'browser-plan-question' : 'browser-plan-review',
+          submissionRunId: submittedRunId, outcome: 'dismissed', answers: null, reason: null }],
       })
     })
     await reload.click()
     await expect(input).toBeVisible()
     await expect(input).toBeFocused()
-    await expect(page.getByText(/ · 已结束$/)).toBeVisible()
+    await expect(page.getByRole('group', { name: / · 已关闭$/ })).toBeVisible()
     await expect(page.getByRole('button', { name: '提交回答', exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '批准', exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Plan 已开启，点击关闭' })).toBeVisible()
+    await page.reload()
+    await expect(page.getByRole('group', { name: / · 已关闭$/ })).toBeVisible()
+    await expect(page.getByRole('button', { name: '提交回答', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '批准', exact: true })).toHaveCount(0)
     await page.screenshot({ path: testInfo.outputPath(`plan-${card}-closed.png`) })
   })
 }
@@ -4004,4 +4012,142 @@ test('工具图标、展开箭头和错误状态点共用第一行图标中心�
       await page.screenshot({ path: testInfo.outputPath(`icon-centers-${theme}-${width}.png`) })
     }
   }
+})
+
+test('Plan 保存通知在任务仍运行时退出确认区并保留实时正文', async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.setViewportSize({ width: 1440, height: 960 })
+  const buildHistory = await mockStudio(page, { planReview: true })
+  let saved = false
+  let submittedRunId = ''
+  await page.route(`**/api/conversation/${THREAD_ID}/history*`, async route => {
+    const query = new URL(route.request().url()).searchParams
+    submittedRunId = query.get('submissionRunId') ?? submittedRunId
+    const source = buildHistory(query.get('includeTaskTrace') !== 'false')
+    await fulfillJson(route, { ...source,
+      interactionAvailability: [{ interruptId: 'browser-plan-review', submissionRunId: submittedRunId || null, state: saved ? 'resolved' : submittedRunId ? 'confirming' : 'available' }],
+      submissionResult: null, planResults: saved ? [{ interruptId: 'browser-plan-review', submissionRunId: submittedRunId, outcome: 'approved', answers: null, reason: null }] : [],
+    })
+  })
+  await page.evaluate(() => {
+    const original = window.fetch
+    window.fetch = async (input, init) => {
+      const request = new Request(input, init)
+      if (new URL(request.url).pathname !== '/api/conversation/chat') return original(input, init)
+      const payload: unknown = await request.json()
+      if (!payload || typeof payload !== 'object' || !('runId' in payload) || typeof payload.runId !== 'string'
+        || !('threadId' in payload) || typeof payload.threadId !== 'string') throw new Error('无效的测试请求')
+      const { runId, threadId } = payload
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+        let sequence = 0
+        let closed = false
+        const emit = (event: object) => controller.enqueue(new TextEncoder().encode(`id: ${++sequence}\ndata: ${JSON.stringify(event)}\n\n`))
+        const cleanup = () => { window.removeEventListener('finish-plan-run', finish); request.signal.removeEventListener('abort', abort) }
+        const finish = () => { if (closed) return; closed = true; emit({ type: 'RUN_FINISHED', threadId, runId, outcome: { type: 'success' } }); controller.close(); cleanup() }
+        const abort = () => { if (!closed) { closed = true; controller.close() }; cleanup() }
+        window.addEventListener('finish-plan-run', finish, { once: true })
+        request.signal.addEventListener('abort', abort, { once: true })
+        emit({ type: 'RUN_STARTED', threadId, runId })
+        emit({ type: 'TEXT_MESSAGE_START', messageId: 'continuing-plan', role: 'assistant' })
+        emit({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'continuing-plan', delta: '正在执行已经批准的计划' })
+        emit({ type: 'TEXT_MESSAGE_END', messageId: 'continuing-plan' })
+      } }), { headers: { 'Content-Type': 'text/event-stream' } })
+    }
+  })
+  await page.getByRole('button', { name: '批准', exact: true }).click()
+  const confirmation = page.getByRole('region', { name: '提交确认', exact: true })
+  await expect(confirmation).toBeVisible()
+  await expect(confirmation.getByRole('button', { name: '停止任务', exact: true })).toBeVisible()
+  await expect(page.getByText('正在执行已经批准的计划', { exact: true })).toBeVisible()
+  saved = true
+  expect(await page.evaluate(threadId => window.emitResourceChange('studio.conversation.interactions.changed', threadId), THREAD_ID)).toBeGreaterThan(0)
+  await expect(confirmation).toHaveCount(0)
+  await expect(page.getByRole('textbox', { name: '消息输入' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '停止任务', exact: true })).toBeVisible()
+  await expect(page.getByText('正在执行已经批准的计划', { exact: true })).toBeVisible()
+  const history = page.getByRole('group', { name: '保持现有会话行为并完成响应式验证 · 已批准', exact: true })
+  await expect(history).toBeVisible()
+  await history.locator('summary').focus()
+  await page.keyboard.press('Space')
+  await expect(history.getByRole('heading', { name: '浏览器计划草稿', exact: true })).toBeVisible()
+  for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440]) {
+    await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
+    await page.setViewportSize({ width, height: 960 })
+    const closeNavigation = page.getByRole('button', { name: '关闭导航', exact: true })
+    if (await closeNavigation.isVisible()) await closeNavigation.click()
+    await expect(history).toBeInViewport()
+    await expect(history.getByText('保持现有会话行为并完成响应式验证', { exact: true })).toHaveCSS('font-size', '14px')
+    await expect(history.locator('summary svg').first()).toHaveCSS('width', '14px')
+    await page.screenshot({ path: testInfo.outputPath(`plan-confirmed-${theme}-${width}.png`) })
+  }
+  await page.evaluate(() => window.dispatchEvent(new Event('finish-plan-run')))
+})
+
+test('Plan 首次提交未保存后保留拒绝原因，新提交成功收束到历史', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 960 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const buildHistory = await mockStudio(page, { planReview: true })
+  const submitted: ChatRequestPayload[] = []
+  let failedRunId = ''
+  let savedRunId = ''
+  let releaseFailure!: () => void
+  const failureAllowed = new Promise<void>(resolve => { releaseFailure = resolve })
+  let receiveSubmission!: () => void
+  const firstSubmitted = new Promise<void>(resolve => { receiveSubmission = resolve })
+  const reason = '请先缩小执行范围，并保留原文件'
+  await page.route(`**/api/conversation/${THREAD_ID}/history*`, async route => {
+    const query = new URL(route.request().url()).searchParams
+    const source = buildHistory(query.get('includeTaskTrace') !== 'false')
+    await fulfillJson(route, { ...source,
+      submissionResult: failedRunId && query.get('submissionRunId') === failedRunId
+        ? { submissionRunId: failedRunId, interruptIds: ['browser-plan-review'], state: 'not_saved' } : null,
+      interactionAvailability: [{ interruptId: 'browser-plan-review', state: savedRunId ? 'resolved' : 'available', submissionRunId: savedRunId || null }],
+      ...(savedRunId ? {
+        asOfSeq: source.asOfSeq + 1, graph: { ...source.graph, asOfSeq: source.asOfSeq + 1 },
+        headRunId: savedRunId, availableHeads: [savedRunId], status: { execution: 'succeeded', headRunId: savedRunId },
+        interactions: source.interactions.map(item => ({ ...item, status: 'resolved' })),
+        planResults: [{ interruptId: 'browser-plan-review', submissionRunId: savedRunId, outcome: 'rejected', answers: null, reason }],
+      } : {}),
+    })
+  })
+  await page.route('**/api/conversation/chat', async route => {
+    const payload: ChatRequestPayload = route.request().postDataJSON()
+    submitted.push(payload)
+    expect(payload.resume).toEqual([{ interruptId: 'browser-plan-review', status: 'resolved', payload: { type: 'reject', baseRevision: 3, message: reason } }])
+    if (submitted.length === 1) {
+      receiveSubmission()
+      await failureAllowed
+      failedRunId = payload.runId
+      await fulfillExpectedHttpError(route, 400, '验证首次 Plan 提交在受理前被拒绝')
+      return
+    }
+    savedRunId = payload.runId
+    const events = [
+      { type: 'RUN_STARTED', threadId: THREAD_ID, runId: payload.runId },
+      { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: payload.runId, outcome: { type: 'success' } },
+    ]
+    await route.fulfill({ status: 200, contentType: 'text/event-stream', body: events.map((event, index) => `id: ${index + 1}\ndata: ${JSON.stringify(event)}\n\n`).join('') })
+  })
+  await page.getByRole('button', { name: '拒绝', exact: true }).click()
+  const input = page.getByRole('textbox', { name: '拒绝原因（可选）', exact: true })
+  await input.fill(reason)
+  await page.getByRole('button', { name: '确认拒绝', exact: true }).click()
+  await firstSubmitted
+  try {
+    await expect(page.getByRole('region', { name: '提交确认', exact: true })).toBeVisible()
+  } finally {
+    releaseFailure()
+  }
+  await expect(page.getByRole('region', { name: '提交确认', exact: true })).toHaveCount(0)
+  await expect(input).toHaveValue(reason)
+  await expect(page.getByText('提交未保存，请重试', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '确认拒绝', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: '确认拒绝', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: '消息输入', exact: true })).toBeVisible()
+  expect(submitted).toHaveLength(2)
+  expect(submitted[1].runId).not.toBe(submitted[0].runId)
+  const history = page.getByRole('group', { name: '保持现有会话行为并完成响应式验证 · 已拒绝', exact: true })
+  await expect(history).toBeVisible()
+  await history.locator('summary').click()
+  await expect(history.getByRole('region').getByText(reason, { exact: true })).toBeVisible()
 })

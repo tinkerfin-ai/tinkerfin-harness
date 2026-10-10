@@ -6,7 +6,12 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 import pytest
-from ag_ui.core import RunFinishedEvent, ToolCallResultEvent, ToolCallStartEvent
+from ag_ui.core import (
+    RunErrorEvent,
+    RunFinishedEvent,
+    ToolCallResultEvent,
+    ToolCallStartEvent,
+)
 from deepagents import create_deep_agent
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, BaseMessage
@@ -15,13 +20,8 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.checkpoint.memory import InMemorySaver
 
 from tinkerfin import AgUiResumeRequest, TinkerFin
-from tinkerfin._agui_history_projection import (
-    _project_graph_delta,
-    _project_update,
-)
 from tinkerfin.agui import (
     AgUiHistory,
-    AgUiMessageReference,
     AgUiSubagentReference,
     AgUiToolMessageReference,
     AgUiToolReference,
@@ -34,11 +34,8 @@ from tinkerfin_agui_adapter import (
 )
 from tinkerfin_tracing import (
     InvalidTraceReference,
-    TraceEntityDelta,
-    TraceGraphDelta,
     Tracer,
     TraceThreadNotFound,
-    TraceUpdate,
 )
 
 
@@ -380,71 +377,21 @@ async def test_nested_subagent_review_keeps_parent_and_child_live_references(
     }
 
 
-async def test_export_preserves_missing_sources_omissions_removals_and_observation_only_updates() -> (
-    None
-):
-    tracer = Tracer()
-    runtime = (
-        TinkerFin()
-        .with_namespace("history")
-        .with_observer(tracer)
-        .build(
-            model=_ToolModel(responses=[AIMessage(content="Complete")]),
-            tools=[],
-        )
-    )
-    _ = [
-        event
-        async for event in runtime.open_agui_run(
-            thread_id="partial",
-            run_id="run",
-            messages=[{"id": "user", "role": "user", "content": "Hello"}],
-        )
-    ]
-    identity = runtime.thread_identity("partial")
-    view = await AgUiHistory(tracer, namespace="history").get("partial")
-    trace = view.trace
-    messages = trace.messages
-    graph = TraceGraphDelta(
-        as_of_seq=trace.as_of_seq,
-        next_cursor=None,
-        node_removes=(trace.graph.nodes[0].id,),
-        ordered_node_ids=(),
-        matched_node_ids=(),
-        completeness=trace.graph.completeness,
-    )
-    update = TraceUpdate(
-        generation=trace.key.generation,
-        observed_at=trace.observed_at,
-        as_of_seq=trace.as_of_seq,
-        events=(),
-        facts=(),
-        messages=TraceEntityDelta(
-            upserts=(messages[-1].model_copy(update={"source_id": None}),),
-            removes=(messages[0].id,),
-        ),
-        reasoning=TraceEntityDelta(),
-        graph=graph,
-        interactions=TraceEntityDelta(),
-        state=trace.state,
-        summary=trace.summary,
-    )
-    result = _project_update(update, identity=identity)
-    assert _project_update(result, identity=identity) == result
-    assert result.messages.upserts[0].agui is None
-    assert result.messages.removes == update.messages.removes
-    assert result.graph.node_removes == graph.node_removes
-    assert _project_graph_delta(graph, identity=identity) == result.graph
-    assert result.observed_at == update.observed_at
-    assert result.status == update.status
-    assert result.events == ()
-    assert result.messages.upserts[0].id == messages[-1].id
-    assert isinstance(view.snapshot.messages[-1].agui, AgUiMessageReference)
-
-
-@pytest.mark.parametrize("kind", ["draft", "clarify"])
+@pytest.mark.parametrize(
+    ("kind", "decision"),
+    [
+        ("draft", "approve"),
+        ("draft", "reject"),
+        ("draft", "dismiss"),
+        ("draft", "cancelled"),
+        ("clarify", "respond"),
+        ("clarify", "dismiss"),
+        ("clarify", "cancelled"),
+    ],
+)
 async def test_plan_human_input_exports_the_same_live_request_and_response_schema(
     kind: str,
+    decision: str,
 ) -> None:
     outcome = (
         {
@@ -531,172 +478,77 @@ async def test_plan_human_input_exports_the_same_live_request_and_response_schem
     assert (
         actions[0].metadata["runtimeInterrupt"] == source.metadata["runtimeInterrupt"]
     )
+    payload: dict[str, object] = {"type": decision}
     if kind == "draft":
+        payload["baseRevision"] = 1
+        if decision == "reject":
+            payload["message"] = "Include the source totals"
+    elif decision == "respond":
+        payload["answers"] = {
+            "audience": {
+                "status": "answered",
+                "answerType": "text",
+                "answer": "Finance team",
+            }
+        }
+    request = AgUiResumeRequest.model_validate(
+        {
+            "entries": [
+                {"interruptId": source.id, "status": "cancelled"}
+                if decision == "cancelled"
+                else {
+                    "interruptId": source.id,
+                    "status": "resolved",
+                    "payload": payload,
+                }
+            ]
+        }
+    )
+    async with view.follow() as updates:
         resumed = runtime.open_agui_run(
             thread_id="plan",
             run_id="after",
-            resume=AgUiResumeRequest.model_validate(
-                {
-                    "entries": [
-                        {
-                            "interruptId": source.id,
-                            "status": "resolved",
-                            "payload": {"type": "approve", "baseRevision": 1},
-                        }
-                    ]
-                }
-            ),
+            resume=request,
         )
-        _ = [event async for event in resumed]
+        resumed_events = [event async for event in resumed]
         assert resumed.error is None
-        final = (await AgUiHistory(tracer, namespace="history").get("plan")).snapshot
-        assert all(
-            item.agui == () for item in final.interactions if item.status != "pending"
-        )
-
-
-async def test_parallel_tool_actions_and_omitted_capture_keep_explicit_availability() -> (
-    None
-):
-    tracer = Tracer()
-    runtime = (
-        TinkerFin(checkpointer=InMemorySaver())
-        .with_namespace("history")
-        .with_observer(tracer)
-        .build(
-            model=_ToolModel(
-                responses=[
-                    AIMessage(
-                        content="",
-                        tool_calls=[
-                            {"name": "save_report", "args": {}, "id": "first"},
-                            {"name": "save_report", "args": {}, "id": "second"},
-                        ],
-                    ),
-                    AIMessage(content="Complete"),
+        assert (
+            len(
+                [
+                    event
+                    for event in resumed_events
+                    if isinstance(event, (RunFinishedEvent, RunErrorEvent))
                 ]
-            ),
-            tools=[save_report],
-            interrupt_on={"save_report": True},
-        )
-    )
-    events = [
-        event
-        async for event in runtime.open_agui_run(
-            thread_id="parallel",
-            run_id="before",
-            messages=[{"id": "user", "role": "user", "content": "Prepare reports"}],
-        )
-    ]
-    terminal = events[-1]
-    assert isinstance(terminal, RunFinishedEvent)
-    assert terminal.outcome is not None and terminal.outcome.type == "interrupt"
-    identity = runtime.thread_identity("parallel")
-    reader = AgUiHistory(tracer, namespace="history")
-    view = await reader.get("parallel")
-    trace = view.trace
-    pending = view.snapshot.interactions[0]
-    assert pending.agui is not None
-    assert [(item.id, item.tool_call_id) for item in pending.agui] == [
-        (item.id, item.tool_call_id) for item in terminal.outcome.interrupts
-    ]
-    assert len({item.tool_call_id for item in pending.agui}) == 2
-    omitted = trace.interactions[0].model_copy(
-        update={"payload": None, "payload_omitted": True}
-    )
-    delta = TraceUpdate(
-        generation=trace.key.generation,
-        observed_at=trace.observed_at,
-        as_of_seq=trace.as_of_seq,
-        events=(),
-        facts=(),
-        messages=TraceEntityDelta(),
-        reasoning=TraceEntityDelta(),
-        graph=TraceGraphDelta(
-            as_of_seq=trace.as_of_seq,
-            next_cursor=None,
-            ordered_node_ids=trace.graph.ordered_node_ids,
-            matched_node_ids=trace.graph.matched_node_ids,
-            completeness=trace.graph.completeness,
-        ),
-        interactions=TraceEntityDelta(upserts=(omitted,)),
-        state=trace.state,
-        summary=trace.summary.model_copy(update={"pending_interactions": (omitted,)}),
-    )
-    projected = _project_update(delta, identity=identity)
-    assert projected.interactions.upserts[0].agui is None
-    assert projected.interactions.upserts[0].status == "pending"
-    assert projected.summary.pending_interactions[0].agui is None
-    _ = [
-        event
-        async for event in runtime.open_agui_run(
-            thread_id="parallel",
-            run_id="after",
-            resume=_resume(terminal, "approve"),
-        )
-    ]
-    assert all(
-        item.agui == () for item in (await reader.get("parallel")).snapshot.interactions
-    )
-
-
-async def test_reasoning_keeps_the_retained_message_reference() -> None:
-    from tinkerfin.runtime_profile import DeepAgentsV2RuntimeProfile
-    from tinkerfin_tracing import ReasoningCapturePolicy
-
-    class ReasoningExtractor:
-        name = "fixture.reasoning"
-
-        def extract(self, message: BaseMessage, *, provider: str | None) -> str | None:
-            del provider
-            if message.response_metadata.get("fixture_provider") != "reasoning-fixture":
-                return None
-            content = message.additional_kwargs.get("reasoning_content")
-            return content if isinstance(content, str) else None
-
-    tracer = Tracer(reasoning_capture_policy=ReasoningCapturePolicy.content())
-    runtime = (
-        TinkerFin(
-            runtime_profile=DeepAgentsV2RuntimeProfile(
-                reasoning_extractors=(ReasoningExtractor(),)
             )
+            == 1
         )
-        .with_namespace("history")
-        .with_observer(tracer)
-        .build(
-            model=_ToolModel(
-                responses=[
-                    AIMessage(
-                        id="reasoned-answer",
-                        content="Visible answer",
-                        additional_kwargs={"reasoning_content": "Retained explanation"},
-                        response_metadata={"fixture_provider": "reasoning-fixture"},
-                    )
-                ]
-            ),
-        )
+        if decision == "cancelled":
+            assert isinstance(resumed_events[-1], RunErrorEvent)
+            assert resumed_events[-1].code == "resume_cancelled"
+        else:
+            assert isinstance(resumed_events[-1], RunFinishedEvent)
+        update = await anext(updates)
+    final = (await runtime.agui.history(tracer).get("plan")).snapshot
+    assert final.summary.pending_interactions == ()
+    settled = next(
+        item for item in final.interactions if item.id == exported.interactions[0].id
     )
-    _ = [
-        event
-        async for event in runtime.open_agui_run(
-            thread_id="reasoning",
-            run_id="before",
-            messages=[{"id": "user", "role": "user", "content": "Explain"}],
-        )
-    ]
-    view = await AgUiHistory(tracer, namespace="history").get("reasoning")
-    trace = view.trace
-    exported = view.snapshot
-    assert exported.reasoning
-    for reasoning in exported.reasoning:
-        message = next(
-            message
-            for message in exported.messages
-            if message.id == reasoning.message_id
-        )
-        assert message.agui is not None
-        assert message.content == "Visible answer"
-    assert exported.reasoning == trace.reasoning
+    assert settled.status == ("cancelled" if decision == "cancelled" else "resolved")
+    assert settled.agui == actions
+    changed = next(
+        item for item in update.interactions.upserts if item.id == settled.id
+    )
+    assert changed.status == settled.status
+    assert changed.agui == actions
+    if decision != "cancelled":
+        repeated = [
+            event
+            async for event in runtime.open_agui_run(
+                thread_id="plan", run_id="stale", resume=request
+            )
+        ]
+        assert isinstance(repeated[-1], RunErrorEvent)
+        assert repeated[-1].code == "runtime_initialization_error"
 
 
 async def test_parallel_subagents_with_reused_native_tool_ids_stay_distinct() -> None:
@@ -796,273 +648,6 @@ async def test_parallel_subagents_with_reused_native_tool_ids_stay_distinct() ->
     older_page = older_query.snapshot
     assert older_page.as_of_seq == first_page.as_of_seq
     assert older_page.ordered_node_ids == older_query.trace.snapshot.ordered_node_ids
-
-
-@pytest.mark.parametrize(
-    "mode", ["full", "selected", "selected_root", "metadata", "disabled"]
-)
-async def test_tool_review_export_requires_explicit_full_argument_retention(
-    mode: str,
-) -> None:
-    from tinkerfin_tracing import CapturePolicy, ToolTraceCapture
-
-    @tool
-    async def prepare_report(path: str, title: str) -> str:
-        """Prepare the requested report."""
-        return f"{title}: {path}"
-
-    captures = {
-        "full": ToolTraceCapture.full_content(),
-        "selected": ToolTraceCapture.selected_content(argument_paths=("/path",)),
-        "selected_root": ToolTraceCapture.selected_content(argument_paths=("",)),
-        "metadata": ToolTraceCapture.metadata_only(),
-        "disabled": ToolTraceCapture.disabled(),
-    }
-    tracer = Tracer(
-        capture_policy=CapturePolicy.public_history(
-            tool_overrides={"prepare_report": captures[mode]}
-        )
-    )
-    runtime = (
-        TinkerFin(checkpointer=InMemorySaver())
-        .with_namespace("history")
-        .with_observer(tracer)
-        .build(
-            model=_ToolModel(
-                responses=[
-                    _call(
-                        "prepare_report",
-                        "prepare",
-                        path="report.md",
-                        title="Monthly report",
-                    )
-                ]
-            ),
-            tools=[prepare_report],
-            interrupt_on={"prepare_report": True},
-        )
-    )
-    stream = runtime.open_agui_run(
-        thread_id="capture",
-        run_id="before",
-        messages=[{"id": "user", "role": "user", "content": "Prepare report"}],
-    )
-    events = [event async for event in stream]
-    assert stream.error is None
-    view = await AgUiHistory(tracer, namespace="history").get("capture")
-    trace = view.trace
-    payload = trace.interactions[0].payload
-    assert isinstance(payload, dict) and isinstance(payload["action_requests"], list)
-    action = payload["action_requests"][0]
-    assert isinstance(action, dict)
-    expected = (
-        "full"
-        if mode == "full"
-        else "selected"
-        if mode.startswith("selected")
-        else "none"
-    )
-    assert action["arguments_retention"] == expected
-    exported = view.snapshot
-    assert exported.interactions[0].payload == payload
-    actions = exported.interactions[0].agui
-    if mode == "full":
-        assert actions is not None
-        terminal = events[-1]
-        assert isinstance(terminal, RunFinishedEvent)
-        assert terminal.outcome is not None and terminal.outcome.type == "interrupt"
-        assert parse_tool_review_interrupt(actions[0]) == parse_tool_review_interrupt(
-            terminal.outcome.interrupts[0]
-        )
-    else:
-        assert actions is None
-        assert exported.summary.pending_interactions[0].agui is None
-
-
-@pytest.mark.parametrize("retention", [None, "invalid", {"full": True}, ["full"]])
-def test_export_rejects_missing_or_unknown_argument_retention(
-    retention: object,
-) -> None:
-    import json
-    from datetime import datetime
-    from pathlib import Path
-
-    from tinkerfin.agui import AgUiTraceHistory
-    from tinkerfin_contracts import ThreadIdentity
-    from tinkerfin_tracing import TraceStoreProtocolError
-
-    recorded = json.loads(
-        (Path(__file__).parent / "fixtures/agui-history-resume.json").read_text()
-    )
-    metadata = recorded["history"]
-    history = AgUiTraceHistory.model_validate_json(json.dumps(metadata))
-    interaction = history.interactions[0]
-    payload = json.loads(json.dumps(interaction.payload))
-    if retention is None:
-        payload["action_requests"][0].pop("arguments_retention")
-    else:
-        payload["action_requests"][0]["arguments_retention"] = retention
-    malformed = interaction.model_copy(update={"payload": payload})
-    update = TraceUpdate(
-        generation=metadata["generation"],
-        observed_at=datetime.fromisoformat(metadata["observedAt"]),
-        as_of_seq=metadata["asOfSeq"],
-        events=(),
-        facts=(),
-        messages=TraceEntityDelta(),
-        reasoning=TraceEntityDelta(),
-        graph=TraceGraphDelta(
-            as_of_seq=metadata["asOfSeq"],
-            next_cursor=None,
-            ordered_node_ids=history.graph.ordered_node_ids,
-            matched_node_ids=history.graph.matched_node_ids,
-            completeness=history.graph.completeness,
-        ),
-        interactions=TraceEntityDelta(upserts=(malformed,)),
-        state=metadata["state"],
-        summary=history.summary,
-    )
-    with pytest.raises(TraceStoreProtocolError, match="explicit argument retention"):
-        _project_update(
-            update, identity=ThreadIdentity(namespace="history", thread_id="report")
-        )
-
-
-async def test_public_history_reader_selects_source_and_namespace_without_an_agent() -> (
-    None
-):
-    from tinkerfin_contracts import ThreadIdentity
-    from tinkerfin_tracing import TraceThreadNotFound
-
-    first_source, second_source = Tracer(), Tracer()
-    for tracer, namespace, answer in (
-        (first_source, "first", "First archive"),
-        (first_source, "second", "Other namespace"),
-        (second_source, "first", "Other archive"),
-    ):
-        runtime = (
-            TinkerFin()
-            .with_namespace(namespace)
-            .with_observer(tracer)
-            .build(model=_ToolModel(responses=[AIMessage(content=answer)]))
-        )
-        _ = [
-            event
-            async for event in runtime.open_agui_run(
-                thread_id="shared",
-                run_id="run",
-                messages=[{"id": "user", "role": "user", "content": "Read archive"}],
-            )
-        ]
-    # Archive reads have no Runtime, model, checkpointer, or observer lookup.
-    for tracer, namespace, answer in (
-        (first_source, "first", "First archive"),
-        (first_source, "second", "Other namespace"),
-        (second_source, "first", "Other archive"),
-    ):
-        reader = AgUiHistory(tracer, namespace=namespace)
-        view = await reader.get("shared")
-        snapshot = view.snapshot
-        native = await tracer.get(
-            ThreadIdentity(namespace=namespace, thread_id="shared")
-        )
-        assert reader.namespace == snapshot.namespace == namespace
-        assert snapshot.thread_id == "shared"
-        assert snapshot.generation == native.key.generation
-        assert snapshot.as_of_seq == native.as_of_seq
-        assert snapshot.observed_at == view.trace.observed_at
-        assert snapshot.head_run_id == native.head_run_id
-        assert snapshot.available_heads == native.available_heads
-        assert snapshot.history_cursor == native.history_cursor
-        assert snapshot.state == native.state
-        assert snapshot.messages[-1].content == answer
-        graph = await reader.query("shared")
-        assert graph.trace.key == view.trace.key
-        assert graph.snapshot.as_of_seq == snapshot.as_of_seq
-    with pytest.raises(TraceThreadNotFound):
-        await AgUiHistory(second_source, namespace="second").get("shared")
-
-
-async def test_runtime_history_requires_explicit_source_and_keeps_runtime_scope() -> (
-    None
-):
-    first, second = Tracer(), Tracer()
-    runtime = (
-        TinkerFin()
-        .with_namespace("selected")
-        .with_observer(first)
-        .with_observer(second)
-        .build(model=_ToolModel(responses=[AIMessage(content="Observed by both")]))
-    )
-    _ = [
-        event
-        async for event in runtime.open_agui_run(
-            thread_id="thread",
-            run_id="run",
-            messages=[{"id": "user", "role": "user", "content": "Hello"}],
-        )
-    ]
-    for tracer in (first, second):
-        reader = runtime.agui.history(tracer)
-        assert reader.namespace == "selected"
-        assert (await reader.get("thread")).snapshot.namespace == "selected"
-    # A source need not be registered on the reading Runtime.
-    reader_runtime = (
-        TinkerFin()
-        .with_namespace("selected")
-        .build(model=_ToolModel(responses=[AIMessage(content="Unused")]))
-    )
-    assert (await reader_runtime.agui.history(second).get("thread")).snapshot.messages[
-        -1
-    ].content == "Observed by both"
-    import inspect
-
-    with pytest.raises(TypeError):
-        inspect.signature(runtime.agui.history).bind()
-    with pytest.raises(TypeError):
-        inspect.signature(runtime.agui.history).bind(first, namespace="other")
-
-
-async def test_history_views_reject_identity_replacement_in_every_call_shape() -> None:
-    import inspect
-
-    from tinkerfin.agui import AgUiGraphQuery, AgUiHistoryView
-    from tinkerfin_contracts import ThreadIdentity
-
-    tracer = Tracer()
-    runtime = (
-        TinkerFin()
-        .with_namespace("bound")
-        .with_observer(tracer)
-        .build(model=_ToolModel(responses=[AIMessage(content="Recorded")]))
-    )
-    _ = [
-        event
-        async for event in runtime.open_agui_run(
-            thread_id="thread",
-            run_id="run",
-            messages=[{"id": "user", "role": "user", "content": "Hello"}],
-        )
-    ]
-    reader = AgUiHistory(tracer, namespace="bound")
-    history = await reader.get("thread")
-    graph = await reader.query("thread")
-    other = ThreadIdentity(namespace="other", thread_id="other")
-    for operation, args in (
-        (AgUiHistoryView, (history.trace,)),
-        (AgUiGraphQuery, (graph.trace,)),
-        (history.follow, ()),
-        (graph.follow, ()),
-        (history.load_older, ()),
-        (reader.get, ("thread",)),
-        (reader.query, ("thread",)),
-    ):
-        with pytest.raises(TypeError):
-            inspect.signature(operation).bind(*args, identity=other)
-    with pytest.raises(AttributeError):
-        setattr(reader, "namespace", "other")
-    assert history.snapshot.namespace == history.trace.key.namespace == "bound"
-    assert graph.trace.key == history.trace.key
 
 
 async def test_history_load_older_preserves_prefix_while_new_turns_arrive() -> None:

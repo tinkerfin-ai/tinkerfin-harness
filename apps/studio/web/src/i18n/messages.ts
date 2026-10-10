@@ -1,4 +1,17 @@
 export const englishMessages = {
+  "提交确认": "Submission confirmation",
+  "暂时无法确认提交结果": "Unable to confirm your submission",
+  "重新检查状态": "Check status again",
+  "查看提交内容": "View submission",
+  "已回答": "Answered",
+  "已批准": "Approved",
+  "已拒绝": "Rejected",
+  "已关闭": "Dismissed",
+  "已跳过": "Skipped",
+  "已反馈": "Feedback sent",
+  "结果不可用": "Unavailable",
+
+  "提交未保存，请重试": "Your submission was not saved, please try again",
   "文件路径": "File path",
   "名称": "Name",
   "大小": "Size",
