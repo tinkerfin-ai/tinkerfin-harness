@@ -179,12 +179,25 @@ _CORE_CASES = (
             "tzdata",
         ),
         (
+            "ag-ui-protocol",
+            "tinkerfin-agui-adapter",
+            "tinkerfin-gateway",
+            "tinkerfin-messaging",
             "apscheduler",
             "sqlalchemy",
             "aiosqlite",
             "asyncmy",
         ),
-        ("apscheduler", "sqlalchemy", "aiosqlite", "asyncmy"),
+        (
+            "ag_ui",
+            "tinkerfin_agui_adapter",
+            "tinkerfin_gateway",
+            "tinkerfin_messaging",
+            "apscheduler",
+            "sqlalchemy",
+            "aiosqlite",
+            "asyncmy",
+        ),
         smoke="automation_core",
     ),
     _InstallCase(
@@ -274,6 +287,27 @@ _EXTRA_CASES = (
         ("tinkerfin-langgraph-store", "tinkerfin-sqlalchemy", "sqlalchemy"),
         ("asyncmy", "asyncpg", "aiosqlite"),
         ("asyncmy", "asyncpg", "aiosqlite"),
+    ),
+    _InstallCase(
+        "automation-gateway",
+        "tinkerfin-automation[gateway]==0.1.0",
+        (
+            "tinkerfin_automation",
+            "tinkerfin_gateway",
+            "tinkerfin_agui_adapter",
+            "tinkerfin_messaging.agui",
+            "ag_ui.core",
+        ),
+        (
+            "tinkerfin-automation",
+            "tinkerfin-gateway",
+            "tinkerfin-agui-adapter",
+            "tinkerfin-messaging",
+            "ag-ui-protocol",
+        ),
+        ("redis", "starlette", "fastapi", "sqlalchemy", "asyncmy", "aiosqlite"),
+        ("redis", "starlette", "fastapi", "sqlalchemy", "asyncmy", "aiosqlite"),
+        smoke="automation_gateway",
     ),
     _InstallCase(
         "automation-sqlalchemy",
@@ -690,6 +724,37 @@ async def smoke() -> None:
             assert TinkerFinTarget is not None
         finally:
             await automation.aclose()
+    elif case["smoke"] == "automation_gateway":
+        from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+        from langchain_core.messages import AIMessage
+        from langgraph.checkpoint.memory import InMemorySaver
+        from tinkerfin import TinkerFin
+        from tinkerfin_automation import Automation, ExecutionStatus, TinkerFinTarget
+        from tinkerfin_gateway import Gateway
+        from tinkerfin_messaging import Messaging
+        from tinkerfin_notifications import Notifications
+
+        class Model(FakeMessagesListChatModel):
+            def bind_tools(self, tools, **kwargs):
+                return self
+
+        runtime = TinkerFin(checkpointer=InMemorySaver()).with_namespace("installed").build(
+            Model(responses=[AIMessage(content="installed conversation")])
+        )
+        async with Messaging() as messaging, Notifications() as notifications:
+            gateway = Gateway(messaging=messaging, notifications=notifications)
+            automation = Automation(namespace="wheel-matrix")
+            automation.target("conversation", TinkerFinTarget(runtime, gateway=gateway))
+            try:
+                async with automation.worker() as worker:
+                    run = await automation.for_owner("wheel-owner").run(
+                        "conversation", input={"messages": [{"role": "user", "content": "hello"}]}
+                    )
+                    await worker.wait_until_idle()
+                    await run.refresh()
+                    assert run.status == ExecutionStatus.SUCCEEDED, run.snapshot.failure_code
+            finally:
+                await automation.aclose()
     elif case["smoke"] == "automation_sqlite":
         from sqlalchemy.ext.asyncio import create_async_engine
         from tinkerfin_automation import SqlAlchemyAutomationStore

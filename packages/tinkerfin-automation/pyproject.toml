@@ -28,7 +28,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gateway = ["tinkerfin-gateway==0.1.0"]
+gateway = [
+    "ag-ui-protocol==0.1.19",
+    "tinkerfin-agui-adapter==0.1.0",
+    "tinkerfin-gateway==0.1.0",
+    "tinkerfin-messaging[agui]==0.1.0",
+]
 sqlalchemy = [
     "sqlalchemy[asyncio]==2.0.52",
     "tinkerfin-sqlalchemy==0.1.0",
@@ -56,3 +61,5 @@ tinkerfin-native-stream = { workspace = true }
 tinkerfin = { workspace = true }
 tinkerfin-sqlalchemy = { workspace = true }
 tinkerfin-gateway = { workspace = true }
+tinkerfin-agui-adapter = { workspace = true }
+tinkerfin-messaging = { workspace = true }
