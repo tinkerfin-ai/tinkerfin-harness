@@ -28,6 +28,8 @@ export function AutomationEditor({ projectId, task, trigger, onSave, onClose, de
   const { locale, t } = useI18n()
   const id = useId()
   const nameRef = useRef<HTMLInputElement>(null)
+  const startsOnRef = useRef<HTMLButtonElement>(null)
+  const endsOnRef = useRef<HTMLButtonElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [draft, setDraft] = useState<AutomationDraft>(() => task ? {
     ...task, name: task.name, prompt: task.prompt,
@@ -101,7 +103,7 @@ export function AutomationEditor({ projectId, task, trigger, onSave, onClose, de
     : draft.startsOn ? t('{date}起', { date: draft.startsOn })
       : draft.endsOn ? t('截至{date}', { date: draft.endsOn }) : t('长期有效')
 
-  return <Dialog open title={t(task ? '编辑自动化' : '新建自动化')} className="automation-editor"
+  return <Dialog open title={t(task ? '编辑定时任务' : '新建定时任务')} className="automation-editor"
     initialFocusRef={nameRef} restoreFocusTo={trigger} closeDisabled={saving} onClose={onClose}>
     <ValidatedForm errors={errors} validationAttempt={validationAttempt} className="automation-form" onSubmit={(event) => {
       event.preventDefault()
@@ -171,16 +173,22 @@ export function AutomationEditor({ projectId, task, trigger, onSave, onClose, de
             onClick={() => update('schedule', { ...schedule, weekdays: schedule.weekdays.includes(day) ? schedule.weekdays.filter((value) => value !== day) : [...schedule.weekdays, day] })}>
             {formatDate(shiftDate('2026-09-07', day), locale, true)}</Button>)}
         </div>}
-        <div className="automation-config-footer"><small>{t(schedule.kind === 'monthly' ? '当月无该日期时跳过' : '北京时间')}</small><Button type="button" variant="ghost" onClick={() => setPanel(null)}>{t('完成')}</Button></div>
+        <p className="automation-schedule-note">{t(schedule.kind === 'monthly' ? '当月无该日期时跳过' : '北京时间')}</p>
       </fieldset>}
-      {panel === 'validity' && <fieldset id={`${id}-validity`} className="automation-config-panel">
+      {panel === 'validity' && <fieldset id={`${id}-validity`} className="automation-config-panel automation-validity-panel">
         <legend className="visually-hidden">{t('有效期')}</legend>
-        <p className="automation-caption">{t('手动运行不受计划有效期限制')}</p>
         <div className="automation-config-fields">
-          <div className="automation-labeled-control"><span>{t('开始日期')}</span><DatePicker value={draft.startsOn} label={t('开始日期')} onChange={(date) => update('startsOn', date)} /></div>
-          <div className="automation-labeled-control"><span>{t('结束日期')}</span><DatePicker value={draft.endsOn} label={t('结束日期')} onChange={(date) => update('endsOn', date)} /></div>
+          <div className="automation-labeled-control"><span>{t('开始日期')}</span><div className="automation-date-control">
+            <DatePicker ref={startsOnRef} value={draft.startsOn} label={t('开始日期')} onChange={(date) => update('startsOn', date)} />
+            {draft.startsOn && <IconButton type="button" variant="ghost" size="xs" label={t('清除开始日期')} tooltip={t('清除开始日期')} icon={<X size={16} />}
+              onClick={() => { update('startsOn', ''); startsOnRef.current?.focus() }} />}
+          </div></div>
+          <div className="automation-labeled-control"><span>{t('结束日期')}</span><div className="automation-date-control">
+            <DatePicker ref={endsOnRef} value={draft.endsOn} label={t('结束日期')} onChange={(date) => update('endsOn', date)} />
+            {draft.endsOn && <IconButton type="button" variant="ghost" size="xs" label={t('清除结束日期')} tooltip={t('清除结束日期')} icon={<X size={16} />}
+              onClick={() => { update('endsOn', ''); endsOnRef.current?.focus() }} />}
+          </div></div>
         </div>
-        <div className="automation-config-footer"><Button type="button" variant="ghost" onClick={() => setDraft((current) => ({ ...current, startsOn: '', endsOn: '' }))}>{t('清除日期')}</Button><Button type="button" variant="ghost" onClick={() => setPanel(null)}>{t('完成')}</Button></div>
       </fieldset>}
       </fieldset>
       <div className="automation-form-footer">

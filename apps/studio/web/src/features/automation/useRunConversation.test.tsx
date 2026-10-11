@@ -59,7 +59,7 @@ it.each(['close', 'navigate', 'unmount', 'supersede'] as const)('%s 后的迟到
   expect(draft).not.toHaveBeenCalled(); expect(toast).not.toHaveBeenCalled()
 })
 
-it('卸载后的通知回调不能重新创建请求', async () => {
+it('卸载后的会话入口不能重新创建请求', async () => {
   const { result, unmount } = renderHook(() => useRunConversation(vi.fn(), vi.fn()))
   const open = result.current
   unmount()

@@ -35,14 +35,14 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); clearAuthSession(); vi.restoreAllMocks(); vi.useRealTimers() })
 
-it('终态立即解除执行按钮 loading，会话开放后只提示一次并可打开会话', async () => {
-  const reply = deferred<AutomationRunRecord>(), toast = vi.fn(), open = vi.fn(), task = taskFixture()
+it('pending 终态立即解除执行按钮 loading 并提示一次，Toast 不包含会话操作', async () => {
+  const reply = deferred<AutomationRunRecord>(), toast = vi.fn(), task = taskFixture()
   vi.mocked(executeTask).mockReturnValue(reply.promise)
   const queued = runFixture({ status: 'queued', updatedAt: '2030-01-01T00:00:00Z', finishedAt: null })
   vi.mocked(fetchRunStatus).mockResolvedValue(queued)
   function Harness() {
-    const runs = useAutomationRuns(1, ['project-1'], toast, open)
-    return <AutomationTaskList tasks={[task]} query="" status="all" busy={new Set()} executions={runs.states} onEdit={vi.fn()}
+    const runs = useAutomationRuns(1, ['project-1'], toast)
+    return <AutomationTaskList tasks={[task]} query="" status="all" busy={new Set()} executions={runs.states} batch={false} onFinishSelection={vi.fn()} onEdit={vi.fn()}
       onExecute={() => { void runs.execute(task) }} onToggle={vi.fn()} onPause={async () => new Set()} onDelete={async () => new Set()} onClearFilter={vi.fn()} />
   }
   render(<Harness />); await settle()
@@ -51,83 +51,100 @@ it('终态立即解除执行按钮 loading，会话开放后只提示一次并�
   expect(button).toBeDisabled(); expect(button).toHaveAttribute('aria-busy', 'true')
   await act(async () => reply.resolve(queued)); await settle()
   expect(button).toBeDisabled(); expect(screen.getByRole('status')).toHaveTextContent('排队中')
-  const done = runFixture({ updatedAt: '2030-01-01T00:00:01Z', conversation: { state: 'available', projectId: 'project-1', threadId: 'conversation' } })
-  vi.mocked(fetchRunStatus).mockResolvedValue({ ...done, conversation: { state: 'pending' } })
+  const done = runFixture({ updatedAt: '2030-01-01T00:00:01Z', conversation: { state: 'pending' } })
+  vi.mocked(fetchRunStatus).mockResolvedValue(done)
   act(() => change()); await settle()
   expect(button).toBeEnabled(); expect(screen.getByRole('status')).toHaveTextContent('运行完成')
-  expect(toast.mock.calls.filter(call => call[0] === 'success')).toHaveLength(0)
-  vi.mocked(fetchRunStatus).mockResolvedValue(done)
+  expect(toast.mock.calls).toEqual([
+    ['info', '已加入运行队列'],
+    ['success', expect.stringContaining('运行完成')],
+  ])
+  const reads = vi.mocked(fetchRunStatus).mock.calls.length
+  vi.mocked(fetchRunStatus).mockResolvedValue({ ...done, conversation: { state: 'available', projectId: 'project-1', threadId: 'conversation' } })
   act(() => published()); await settle()
-  expect(toast.mock.calls.filter(call => call[0] === 'success')).toHaveLength(1)
-  act(() => { published(); change() }); await settle()
-  expect(toast.mock.calls.filter(call => call[0] === 'success')).toHaveLength(1)
-  toast.mock.calls.find(call => call[0] === 'success')![2].onSelect()
-  expect(open).toHaveBeenCalledWith(done)
+  expect(fetchRunStatus).toHaveBeenCalledTimes(reads)
+  act(() => change()); await settle()
+  expect(toast.mock.calls).toEqual([
+    ['info', '已加入运行队列'],
+    ['success', expect.stringContaining('运行完成')],
+  ])
 })
 
-it('在线失败先结算，漏掉会话开放通知时校准仍兑现一次完成提示并停止轮询', async () => {
-  const toast = vi.fn(), open = vi.fn()
+it('在线失败在会话 pending 时立即提示一次并停止轮询', async () => {
+  const toast = vi.fn()
   const failure = runFixture({ status: 'failed', conversation: { state: 'pending' } })
   vi.mocked(fetchRunStatus).mockResolvedValue(failure)
-  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast, open))
+  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast))
   await settle(); act(() => change()); await settle()
   expect(result.current.states.get('news')).toBe('failed')
-  expect(toast).not.toHaveBeenCalled()
-  const available = { ...failure, conversation: { state: 'available', projectId: 'moved-project', threadId: 'conversation' } } as const
-  vi.mocked(fetchRunStatus).mockResolvedValue(available)
-  await act(() => vi.advanceTimersByTimeAsync(30_000))
-  expect(toast).toHaveBeenCalledExactlyOnceWith('error', expect.stringContaining('运行失败'), expect.objectContaining({ label: '查看关联会话' }))
-  toast.mock.calls[0][2].onSelect()
-  expect(open).toHaveBeenCalledExactlyOnceWith(available)
-  expect(fetchRunStatus).toHaveBeenLastCalledWith('project-1', 'run', expect.any(AbortSignal))
+  expect(toast).toHaveBeenCalledExactlyOnceWith('error', expect.stringContaining('运行失败'))
+  act(() => published()); await settle()
   await act(() => vi.advanceTimersByTimeAsync(90_000))
-  expect(fetchRunStatus).toHaveBeenCalledTimes(2)
+  expect(fetchRunStatus).toHaveBeenCalledExactlyOnceWith('project-1', 'run', expect.any(AbortSignal))
+  expect(fetchActiveRunPage).toHaveBeenCalledOnce()
+  expect(toast).toHaveBeenCalledExactlyOnceWith('error', expect.stringContaining('运行失败'))
+  act(() => change()); await settle()
+  expect(toast).toHaveBeenCalledExactlyOnceWith('error', expect.stringContaining('运行失败'))
 })
 
-it.each(['initial', 'reconnect', 'identity', 'hidden'] as const)('%s 后不会把会话公开当作新的在线完成通知', async mode => {
+it.each(['initial', 'reconnect', 'identity', 'hidden'] as const)('%s 基线与会话公开不会补弹完成提示', async mode => {
   const toast = vi.fn()
+  vi.mocked(fetchActiveRunPage).mockResolvedValueOnce({ items: [runFixture({ status: 'running', conversation: { state: 'pending' } })], nextCursor: null })
   vi.mocked(fetchRunStatus).mockResolvedValue(runFixture({ conversation: { state: 'pending' } }))
-  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast, vi.fn()))
+  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast))
   await settle()
-  if (mode !== 'initial') { act(() => change()); await settle() }
+  expect(result.current.states.get('news')).toBe('running')
+  if (mode === 'initial') { act(() => result.current.refresh()); await settle() }
   if (mode === 'reconnect') {
     act(() => emit({ kind: 'connection', state: 'disconnected' }))
     act(() => emit({ kind: 'resync' })); await settle()
   }
-  if (mode === 'identity') act(() => {
-    saveAuthSession(createAuthSession({ access_token: 'new-session', token_type: 'Bearer', expires_at: '2099-01-01T00:00:00Z',
-      user: { user_id: 1, username: 'owner', avatar_url: null, roles: [], disabled: false } }))
-  })
+  if (mode === 'identity') {
+    act(() => {
+      saveAuthSession(createAuthSession({ access_token: 'new-session', token_type: 'Bearer', expires_at: '2099-01-01T00:00:00Z',
+        user: { user_id: 1, username: 'owner', avatar_url: null, roles: [], disabled: false } }))
+      emit({ kind: 'resync' })
+    }); await settle()
+  }
   if (mode === 'hidden') {
     const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
-    act(() => document.dispatchEvent(new Event('visibilitychange')))
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); change() }); await settle()
+    expect(fetchRunStatus).not.toHaveBeenCalled()
     hidden.mockReturnValue(false)
     act(() => { document.dispatchEvent(new Event('visibilitychange')); emit({ kind: 'resync' }) })
     await settle()
   }
+  expect(result.current.states.get('news')).toBe(mode === 'identity' ? undefined : 'succeeded')
+  expect(toast).not.toHaveBeenCalled()
+  const reads = vi.mocked(fetchRunStatus).mock.calls.length
+  const baselines = vi.mocked(fetchActiveRunPage).mock.calls.length
   vi.mocked(fetchRunStatus).mockResolvedValue(runFixture({ conversation: { state: 'available', projectId: 'project-1', threadId: 'conversation' } }))
   act(() => published()); await settle()
-  expect(result.current.states.get('news')).toBe('succeeded')
+  expect(fetchRunStatus).toHaveBeenCalledTimes(reads)
+  expect(fetchActiveRunPage).toHaveBeenCalledTimes(baselines)
   expect(toast).not.toHaveBeenCalled()
 })
 
-it('读取期间合并终态与公开通知时保留在线提示资格，并忽略其他身份或项目', async () => {
+it('读取期间的在线终态仍提示，并忽略会话发布与其他身份或项目事件', async () => {
   const baseline = deferred<{ items: AutomationRunRecord[]; nextCursor: null }>(), toast = vi.fn()
   vi.mocked(fetchActiveRunPage).mockReturnValueOnce(baseline.promise)
   vi.mocked(fetchRunStatus).mockResolvedValue(runFixture({ conversation: { state: 'available', projectId: 'moved', threadId: 'conversation' } }))
-  renderHook(() => useAutomationRuns(1, ['project-1'], toast, vi.fn()))
-  act(() => { change(); published(); published('foreign', 'other'); published('foreign', 'project-1', 2) })
+  renderHook(() => useAutomationRuns(1, ['project-1'], toast))
+  act(() => { change(); published(); change('foreign', 'other'); change('foreign', 'project-1', 2) })
   await act(async () => baseline.resolve({ items: [], nextCursor: null })); await settle()
   expect(fetchRunStatus).toHaveBeenCalledExactlyOnceWith('project-1', 'run', expect.any(AbortSignal))
-  expect(toast.mock.calls.filter(call => call[0] === 'success')).toHaveLength(1)
+  expect(toast).toHaveBeenCalledExactlyOnceWith('success', expect.stringContaining('运行完成'))
+  act(() => { published(); published('foreign', 'other'); published('foreign', 'project-1', 2) }); await settle()
+  expect(fetchRunStatus).toHaveBeenCalledOnce()
+  expect(toast).toHaveBeenCalledOnce()
 })
 
-it('匹配提交回执的终态先于 POST 回复时立即解除 loading，公开后提示一次', async () => {
+it('匹配提交回执的 pending 终态先于 POST 回复时立即解除 loading 并提示一次', async () => {
   const reply = deferred<AutomationRunRecord>(), toast = vi.fn()
   vi.mocked(executeTask).mockReturnValue(reply.promise)
   const done = runFixture({ updatedAt: '2030-01-01T00:00:02Z', conversation: { state: 'pending' } })
   vi.mocked(fetchRunStatus).mockResolvedValue(done)
-  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast, vi.fn()))
+  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast))
   await settle()
   let submitted!: Promise<void>
   act(() => { submitted = result.current.execute(taskFixture()) })
@@ -137,41 +154,23 @@ it('匹配提交回执的终态先于 POST 回复时立即解除 loading，公�
   act(() => change()); await settle()
   expect(result.current.states.get('news')).toBe('succeeded')
   expect(fetchSubmission).toHaveBeenLastCalledWith('project-1', 'news', vi.mocked(executeTask).mock.calls[0][1], expect.any(AbortSignal))
-  expect(toast).not.toHaveBeenCalled()
+  expect(toast).toHaveBeenCalledExactlyOnceWith('success', expect.stringContaining('运行完成'))
   await act(async () => { reply.resolve(runFixture({ status: 'queued', updatedAt: '2030-01-01T00:00:00Z' })); await submitted })
   await settle()
   expect(result.current.states.get('news')).toBe('succeeded')
-  expect(toast).not.toHaveBeenCalled()
+  expect(toast).toHaveBeenCalledExactlyOnceWith('success', expect.stringContaining('运行完成'))
+  const reads = vi.mocked(fetchRunStatus).mock.calls.length
   vi.mocked(fetchRunStatus).mockResolvedValue({ ...done, conversation: { state: 'available', projectId: 'project-1', threadId: 'conversation' } })
   act(() => published()); await settle()
-  expect(toast.mock.calls.filter(call => call[0] === 'success')).toHaveLength(1)
-})
-
-it('会话公开早于提交响应时，迟到的 pending 不会重新启动开放等待', async () => {
-  const reply = deferred<AutomationRunRecord>(), toast = vi.fn()
-  vi.mocked(executeTask).mockReturnValue(reply.promise)
-  const done = runFixture({ conversation: { state: 'available', projectId: 'project-1', threadId: 'conversation' } })
-  vi.mocked(fetchRunStatus).mockResolvedValue(done)
-  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast, vi.fn()))
-  await settle()
-  let submitted!: Promise<void>
-  act(() => { submitted = result.current.execute(taskFixture()) })
-  vi.mocked(fetchSubmission).mockResolvedValue(done)
-  act(() => change()); await settle()
-  expect(result.current.states.get('news')).toBe('succeeded')
-  await act(async () => { reply.resolve({ ...done, conversation: { state: 'pending' } }); await submitted })
-  await settle()
-  await act(() => vi.advanceTimersByTimeAsync(90_000))
-  expect(result.current.states.get('news')).toBe('succeeded')
-  expect(fetchRunStatus).toHaveBeenCalledOnce()
-  expect(toast.mock.calls.filter(call => call[0] === 'success')).toHaveLength(1)
+  expect(fetchRunStatus).toHaveBeenCalledTimes(reads)
+  expect(toast).toHaveBeenCalledExactlyOnceWith('success', expect.stringContaining('运行完成'))
 })
 
 it.each(['manual', 'scheduled'])('同一任务的其他 %s 终态没有匹配回执时不能解除本页提交', async trigger => {
   const reply = deferred<AutomationRunRecord>()
   vi.mocked(executeTask).mockReturnValue(reply.promise)
   vi.mocked(fetchRunStatus).mockResolvedValue(runFixture({ id: 'other-run', trigger, conversation: { state: 'pending' } }))
-  const { result, unmount } = renderHook(() => useAutomationRuns(1, ['project-1'], vi.fn(), vi.fn()))
+  const { result, unmount } = renderHook(() => useAutomationRuns(1, ['project-1'], vi.fn()))
   await settle()
   let submitted!: Promise<void>
   act(() => { submitted = result.current.execute(taskFixture()) })
@@ -188,7 +187,7 @@ it.each(['queued', 'running'] as const)('匹配回执为 %s 时保持运行中�
   vi.mocked(executeTask).mockReturnValue(reply.promise)
   vi.mocked(fetchSubmission).mockResolvedValue(active)
   vi.mocked(fetchRunStatus).mockResolvedValue(active)
-  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast, vi.fn()))
+  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast))
   await settle()
   let submitted!: Promise<void>
   act(() => { submitted = result.current.execute(taskFixture()) }); await settle()
@@ -205,7 +204,7 @@ it.each(['success', 'failure'] as const)('旧 POST 的迟到 %s 不影响已开�
   vi.mocked(executeTask).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
   const done = runFixture({ conversation: { state: 'pending' } })
   vi.mocked(fetchRunStatus).mockResolvedValue(done)
-  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast, vi.fn()))
+  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast))
   await settle()
   let firstRequest!: Promise<void>, secondRequest!: Promise<void>
   act(() => { firstRequest = result.current.execute(taskFixture()) }); await settle()
@@ -222,12 +221,15 @@ it.each(['success', 'failure'] as const)('旧 POST 的迟到 %s 不影响已开�
     await firstRequest
   })
   expect(result.current.states.get('news')).toBe('submitting')
-  expect(toast).not.toHaveBeenCalled()
+  expect(toast).toHaveBeenCalledExactlyOnceWith('success', expect.stringContaining('运行完成'))
   const active = runFixture({ id: 'next-run', status: 'queued', conversation: { state: 'pending' }, finishedAt: null })
   vi.mocked(fetchRunStatus).mockResolvedValue(active)
   await act(async () => { second.resolve(active); await secondRequest }); await settle()
   expect(result.current.states.get('news')).toBe('queued')
-  expect(toast).toHaveBeenCalledExactlyOnceWith('info', '已加入运行队列')
+  expect(toast.mock.calls).toEqual([
+    ['success', expect.stringContaining('运行完成')],
+    ['info', '已加入运行队列'],
+  ])
 })
 
 it('旧回执读取在途时 POST 已确认并开始新提交，旧回执不能释放新提交', async () => {
@@ -235,7 +237,7 @@ it('旧回执读取在途时 POST 已确认并开始新提交，旧回执不能�
   const toast = vi.fn()
   vi.mocked(executeTask).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
   vi.mocked(fetchSubmission).mockReturnValueOnce(receipt.promise)
-  const { result, unmount } = renderHook(() => useAutomationRuns(1, ['project-1'], toast, vi.fn()))
+  const { result, unmount } = renderHook(() => useAutomationRuns(1, ['project-1'], toast))
   await settle()
   let firstRequest!: Promise<void>, secondRequest!: Promise<void>
   act(() => { firstRequest = result.current.execute(taskFixture()) }); await settle()
@@ -253,7 +255,7 @@ it('旧回执读取在途时 POST 已确认并开始新提交，旧回执不能�
 it('未知提交通过只读回执校准恢复，null 保留待确认且不自动重发 POST', async () => {
   vi.mocked(executeTask).mockRejectedValueOnce(new Error('network'))
   const toast = vi.fn(), done = runFixture({ conversation: { state: 'pending' } })
-  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast, vi.fn()))
+  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast))
   await settle(); await act(async () => result.current.execute(taskFixture())); await settle()
   expect(result.current.states.get('news')).toBe('uncertain')
   vi.mocked(fetchSubmission).mockResolvedValue(done)
@@ -261,14 +263,14 @@ it('未知提交通过只读回执校准恢复，null 保留待确认且不自�
   expect(result.current.states.get('news')).toBe('succeeded')
   expect(executeTask).toHaveBeenCalledOnce()
   expect(fetchSubmission).toHaveBeenCalledTimes(2)
-  expect(toast.mock.calls.filter(call => call[0] === 'success')).toHaveLength(0)
+  expect(toast.mock.calls.filter(call => call[0] === 'success')).toEqual([['success', expect.stringContaining('运行完成')]])
 })
 
 it.each(['reconnect', 'identity'] as const)('提交回执在途时 %s 不应用旧查询或补发完成提示', async mode => {
   const post = deferred<AutomationRunRecord>(), receipt = deferred<AutomationRunRecord | null>(), toast = vi.fn()
   vi.mocked(executeTask).mockReturnValue(post.promise)
   vi.mocked(fetchSubmission).mockReturnValueOnce(receipt.promise)
-  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast, vi.fn()))
+  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast))
   await settle()
   let submitted!: Promise<void>
   act(() => { submitted = result.current.execute(taskFixture()) }); await settle()
@@ -287,7 +289,7 @@ it.each(['reconnect', 'identity'] as const)('提交回执在途时 %s 不应用�
 it('所有授权项目实时执行都通知，初始和重连基线不补弹离线完成', async () => {
   const active = runFixture({ status: 'running', projectId: 'second' }), toast = vi.fn()
   vi.mocked(fetchActiveRunPage).mockResolvedValueOnce({ items: [active], nextCursor: null })
-  const { result, rerender } = renderHook(({ projects }) => useAutomationRuns(1, projects, toast, vi.fn()), { initialProps: { projects: ['project-1', 'second'] } })
+  const { result, rerender } = renderHook(({ projects }) => useAutomationRuns(1, projects, toast), { initialProps: { projects: ['project-1', 'second'] } })
   await settle(); expect(result.current.states.get('news')).toBe('running'); expect(toast).not.toHaveBeenCalled()
   act(() => emit({ kind: 'connection', state: 'disconnected' }))
   vi.mocked(fetchRunStatus).mockResolvedValue(runFixture({ projectId: 'second' }))
@@ -296,7 +298,7 @@ it('所有授权项目实时执行都通知，初始和重连基线不补弹离�
   rerender({ projects: ['second', 'project-1'] })
   vi.mocked(fetchRunStatus).mockResolvedValue(runFixture({ id: 'scheduled', taskId: 'scheduled-task', projectId: 'second', status: 'failed' }))
   act(() => change('scheduled', 'second')); await settle()
-  expect(toast).toHaveBeenCalledWith('error', expect.stringContaining('运行失败'), undefined)
+  expect(toast).toHaveBeenCalledExactlyOnceWith('error', expect.stringContaining('运行失败'))
   const count = vi.mocked(fetchRunStatus).mock.calls.length
   act(() => change('foreign', 'project-1', 2)); await settle()
   expect(fetchRunStatus).toHaveBeenCalledTimes(count)
@@ -305,7 +307,7 @@ it('所有授权项目实时执行都通知，初始和重连基线不补弹离�
 it('未知提交重试保留原命令与请求 ID，任务编辑不改写它，卸载取消在途请求', async () => {
   const task = taskFixture(), toast = vi.fn()
   vi.mocked(executeTask).mockRejectedValueOnce(new Error('network'))
-  const { result, unmount } = renderHook(() => useAutomationRuns(1, ['project-1'], toast, vi.fn()))
+  const { result, unmount } = renderHook(() => useAutomationRuns(1, ['project-1'], toast))
   await settle(); await act(async () => result.current.execute(task))
   expect(result.current.states.get(task.id)).toBe('uncertain')
   const second = deferred<AutomationRunRecord>()
@@ -326,7 +328,7 @@ it('更新同一登录会话的头像保留未知提交身份和在线通知', a
   saveAuthSession(createAuthSession({ access_token: 'unchanged-token', token_type: 'Bearer', expires_at, user }))
   vi.mocked(executeTask).mockRejectedValueOnce(new Error('network')).mockResolvedValue(runFixture())
   const toast = vi.fn()
-  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast, vi.fn()))
+  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast))
   await settle(); await act(async () => result.current.execute(taskFixture()))
   act(() => { updateAuthSession({ expires_at, user: { ...user, avatar_url: 'data:image/png;base64,AA' } }) })
   expect(result.current.states.get('news')).toBe('uncertain')
@@ -338,7 +340,7 @@ it('更新同一登录会话的头像保留未知提交身份和在线通知', a
 it('终态事件状态查询失败后，重试仍读取原执行并只通知一次', async () => {
   const toast = vi.fn()
   vi.mocked(fetchRunStatus).mockRejectedValueOnce(new Error('network')).mockResolvedValue(runFixture())
-  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast, vi.fn()))
+  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast))
   await settle(); act(() => change()); await settle()
   expect(result.current.syncError).toBe(true)
   expect(toast).not.toHaveBeenCalled()
@@ -356,7 +358,7 @@ it('活跃列表读取失败也保留读取期间的在线终态，基线重试�
     .mockResolvedValue({ items: [], nextCursor: null })
   vi.mocked(fetchRunStatus).mockResolvedValue(runFixture())
   const toast = vi.fn()
-  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast, vi.fn()))
+  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], toast))
   await settle(); act(() => change()); await settle()
   expect(result.current.syncError).toBe(true)
   act(() => result.current.refresh()); await settle()
@@ -370,7 +372,7 @@ it('同一毫秒内的运行状态不会被较早排队响应覆盖', async () =
   const response = deferred<AutomationRunRecord>()
   vi.mocked(executeTask).mockReturnValue(response.promise)
   vi.mocked(fetchRunStatus).mockResolvedValue(runFixture({ status: 'running', updatedAt: '2030-01-01T00:00:00.000200Z' }))
-  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], vi.fn(), vi.fn()))
+  const { result } = renderHook(() => useAutomationRuns(1, ['project-1'], vi.fn()))
   await settle()
   let submission!: Promise<void>
   act(() => { submission = result.current.execute(taskFixture()) })

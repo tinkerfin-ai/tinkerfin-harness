@@ -219,6 +219,7 @@ describe('前端视觉契约', () => {
       for (const [, selector, block] of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
         const weight = block.match(/font-weight:\s*([^;]+);/)?.[1].trim()
         const interfaceWeights = new Map([
+          ['.automation-task-name', 'var(--weight-semibold)'],
           ['.skills-icon', 'var(--weight-semibold)'],
           ['.ui-breadcrumbs span[aria-current]', 'var(--weight-semibold)'],
           ['.workspace-files-drawer .ui-drawer-header h2', 'var(--weight-semibold)'],

@@ -1,7 +1,7 @@
-import { Plus } from 'lucide-react'
+import { MoreHorizontal, Plus } from 'lucide-react'
 import { useLayoutEffect, useMemo, useState, type ReactNode, type RefObject } from 'react'
 
-import { Button, Dialog, ExpandableSearch, FeedbackState, ViewTabs } from '../../components/ui'
+import { Button, Dialog, ExpandableSearch, FeedbackState, IconButton, ViewTabs } from '../../components/ui'
 import type { ToastKind } from '../../components/ui/ToastViewport'
 import { useI18n } from '../../i18n'
 import { WorkspaceHeader } from '../workspace/components/WorkspaceHeader'
@@ -35,7 +35,8 @@ export function AutomationPage({ projectId, executions, onOpenConversation, navi
   renderModelChoice: (value: string, onChange: (value: string) => void) => ReactNode
 }) {
   const { t } = useI18n()
-  const [page, setPage] = useState<'tasks' | 'history'>('history')
+  const [page, setPage] = useState<'tasks' | 'history'>('tasks')
+  const [batch, setBatch] = useState(false)
   const [view, setView] = useState<'week' | 'list'>('week')
   const [query, setQuery] = useState('')
   const [weekOffset, setWeekOffset] = useState(0)
@@ -45,7 +46,7 @@ export function AutomationPage({ projectId, executions, onOpenConversation, navi
   const today = todayInBeijing()
   const dates = useMemo(() => weekDates(today, weekOffset), [today, weekOffset])
   const data = useAutomation({ projectId, page, query, status: filter, dates, view,
-    onLoadError: () => onToast('error', t('自动化数据加载失败')),
+    onLoadError: () => onToast('error', t('定时任务数据加载失败')),
   })
 
   const actions = useAutomationTaskActions(projectId, data.tasks, data.reload, onToast)
@@ -60,26 +61,28 @@ export function AutomationPage({ projectId, executions, onOpenConversation, navi
   const filters: AutomationFilter[] = page === 'history' ? ['all', ...Object.keys(runStatusLabels) as (keyof typeof runStatusLabels)[]] : ['all', 'enabled', 'paused']
 
   return <>
-    <WorkspaceHeader conversationTitle={t('自动化')} overlayTriggerRef={navigationTriggerRef} onOpenOverlay={onOpenNavigation}
-      navigation={<ViewTabs value={page} label={t('自动化视图')} options={[
+    <WorkspaceHeader conversationTitle={t('定时任务')} overlayTriggerRef={navigationTriggerRef} onOpenOverlay={onOpenNavigation}
+      navigation={<ViewTabs value={page} label={t('定时任务视图')} options={[
         { value: 'tasks', label: t('任务'), controls: 'automation-panel' },
         { value: 'history', label: t('历史'), controls: 'automation-panel' },
-      ]} onChange={value => { setPage(value); clearFilters() }} className="workspace-view-tabs" />}
+      ]} onChange={value => { setPage(value); setBatch(false); clearFilters() }} className="workspace-view-tabs" />}
       actions={<div className="workspace-search-actions automation-header-actions">
         <ExpandableSearch open={searchOpen} onOpenChange={setSearchOpen} label={t('搜索任务或运行历史')}
           placeholder={t('搜索任务或运行历史')} closeLabel={t('关闭搜索')} value={query} onChange={setQuery} />
+        {page === 'tasks' && <IconButton type="button" variant="ghost" size="xs" className="workspace-header-action" label={t('批量选择')}
+          tooltip={t('批量选择')} selected={batch} icon={<MoreHorizontal size={17} />} onClick={() => setBatch(value => !value)} />}
         <AutomationStatusFilter value={filter} options={filters.map(value => ({ value, label: t(filterLabels[value]) }))} onChange={setFilter} />
-        <Button type="button" size="sm" variant="primary" className="workspace-header-action" leadingIcon={<Plus size={16} />} aria-label={t('新建自动化')}
+        <Button type="button" size="sm" variant="primary" className="workspace-header-action" leadingIcon={<Plus size={16} />} aria-label={t('新建定时任务')}
           onClick={event => setDialog({ kind: 'editor', trigger: event.currentTarget })}><span className="workspace-header-action-label">{t('新建')}</span></Button>
       </div>} />
     <div className="automation-scroll ui-scrollbar">
       <section className="automation-content">
         <div id="automation-panel" role="tabpanel" aria-label={t(page === 'history' ? '历史' : '任务')} aria-busy={data.loading}>
           {executions.syncError && <FeedbackState kind="error" appearance="retry" title={t('执行状态同步失败')} onRetry={executions.refresh} />}
-          {data.error && <div className={`automation-load-failure is-${page}`}><FeedbackState kind="error" appearance="retry" title={t('自动化数据加载失败')} retryLabel={t('重新加载')} onRetry={data.reload} /></div>}
-          {data.loading && !data.tasks.length && !data.runs.length ? <FeedbackState kind="loading" title={t('正在加载自动化')} /> : page === 'history'
+          {data.error && <div className={`automation-load-failure is-${page}`}><FeedbackState kind="error" appearance="retry" title={t('定时任务数据加载失败')} retryLabel={t('重新加载')} onRetry={data.reload} /></div>}
+          {data.loading && !data.tasks.length && !data.runs.length ? <FeedbackState kind="loading" title={t('正在加载定时任务')} /> : page === 'history'
             ? <AutomationHistory offset={weekOffset} onOffsetChange={setWeekOffset} runs={data.runs} query={query} status={filter === 'enabled' || filter === 'paused' ? 'all' : filter} onOpenRun={(run, trigger) => setDialog({ kind: 'result', run, trigger })} view={view} onViewChange={setView} cursors={data.cursors} onLoadMore={data.loadMore} loading={data.loading} loadFailed={data.error && !data.runs.length} />
-            : data.error && !data.tasks.length ? null : <><AutomationTaskList tasks={data.tasks} query={query} status={filter === 'enabled' || filter === 'paused' ? filter : 'all'} busy={busy} executions={executions.states}
+            : data.error && !data.tasks.length ? null : <><AutomationTaskList key={batch ? 'selection' : 'browse'} tasks={data.tasks} query={query} status={filter === 'enabled' || filter === 'paused' ? filter : 'all'} busy={busy} executions={executions.states} batch={batch} onFinishSelection={() => setBatch(false)}
               onEdit={(task, trigger) => setDialog({ kind: 'editor', task, trigger })} onExecute={id => { const task = data.tasks.find(item => item.id === id); if (task) void executions.execute(task) }}
               onToggle={id => void actions.execute(id, data.tasks.find(task => task.id === id)?.enabled ? 'pause' : 'enable')}
               onPause={actions.pause} onDelete={actions.requestDelete} onClearFilter={clearFilters} />

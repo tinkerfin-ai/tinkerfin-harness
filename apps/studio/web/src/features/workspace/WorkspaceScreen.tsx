@@ -221,6 +221,7 @@ function ProjectWorkspaceScreen({
   const [pendingResume, setPendingResume] = useState<PendingResume | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [activePage, setActivePage] = useState(readPageFromLocation)
+  const [automationEntryKey, setAutomationEntryKey] = useState(0)
   const composerSkills = useComposerSkills(projectId, activePage === 'conversation', composerDraft.references)
   const retrySkillRequest = useRef<AbortController | null>(null)
   useEffect(() => () => retrySkillRequest.current?.abort(), [])
@@ -374,7 +375,7 @@ function ProjectWorkspaceScreen({
 
   useEffect(() => {
     if (activePage !== 'conversation') {
-      const pageTitles = { skills: t('技能库'), automation: t('自动化'), memories: t('记忆管理') }
+      const pageTitles = { skills: t('技能库'), automation: t('定时任务'), memories: t('记忆管理') }
       document.title = `TinkerFin - ${pageTitles[activePage]}`
       return
     }
@@ -1276,6 +1277,7 @@ function ProjectWorkspaceScreen({
           taskDrawer.close(false)
           changeDirectoryOpen(false)
           navigation.closeOverlay(false)
+          setAutomationEntryKey(value => value + 1)
           setActivePage('automation')
         }}
         onNew={() => {
@@ -1326,9 +1328,9 @@ function ProjectWorkspaceScreen({
             <SkillsPage project={scope.project} navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay} onModalChange={setSkillsModalOpen} onToast={pushToast} />
           </ErrorBoundary>
         ) : activePage === 'automation' ? (
-          <ErrorBoundary onError={() => pushToast('error', t('自动化区域无法显示'))}
-            fallback={({ reset }) => <div className="automation-empty"><p>{t('自动化区域无法显示')}</p><Button type="button" onClick={reset}>{t('重新加载')}</Button></div>}>
-            <AutomationPage projectId={projectId} executions={scope.automation} onOpenConversation={(run, attachment, signal) => scope.openRunConversation(run, {
+          <ErrorBoundary onError={() => pushToast('error', t('定时任务区域无法显示'))}
+            fallback={({ reset }) => <div className="automation-empty"><p>{t('定时任务区域无法显示')}</p><Button type="button" onClick={reset}>{t('重新加载')}</Button></div>}>
+            <AutomationPage key={automationEntryKey} projectId={projectId} executions={scope.automation} onOpenConversation={(run, attachment, signal) => scope.openRunConversation(run, {
               signal,
               prepareDraft: attachment ? target => localAttachments.addReference(attachment, { key: `thread:${target.threadId}`, store: scope.attachments }) : undefined,
             })} navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay}

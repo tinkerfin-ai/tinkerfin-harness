@@ -638,7 +638,7 @@ export function Sidebar({
           <nav className="sidebar-feature-nav ui-scrollbar" aria-label={t('工作区功能')}>
             <Button type="button" variant="ghost" leadingIcon={<BookOpenCheck size={18} />} selected={skillsActive} aria-current={skillsActive ? 'page' : undefined} onClick={onOpenSkills}>{t('技能库')}</Button>
             <Button type="button" variant="ghost" leadingIcon={<BrainCircuit size={18} />} selected={memoriesActive} aria-current={memoriesActive ? 'page' : undefined} onClick={onOpenMemories}>{t('记忆管理')}</Button>
-            <Button type="button" variant="ghost" leadingIcon={<AlarmClock size={18} />} selected={automationActive} aria-current={automationActive ? 'page' : undefined} onClick={onOpenAutomation}>{t('自动化')}</Button>
+            <Button type="button" variant="ghost" leadingIcon={<AlarmClock size={18} />} selected={automationActive} aria-current={automationActive ? 'page' : undefined} onClick={onOpenAutomation}>{t('定时任务')}</Button>
             <Button type="button" variant="ghost" leadingIcon={<CircleEllipsis size={18} />} disabled>{t('更多')}</Button>
           </nav>
           <div className="sidebar-history-toolbar">
@@ -803,7 +803,7 @@ export function Sidebar({
           <IconButton label={t('会话')} tooltipPlacement="right" tooltip={t('会话')} icon={<MessageSquare size={18} />} tabIndex={railInteractive ? 0 : -1} selected={!skillsActive && !memoriesActive && !automationActive && !newConversationActive} onClick={onOpenConversation} />
           <IconButton label={t('技能库')} tooltipPlacement="right" tooltip={t('技能库')} icon={<BookOpenCheck size={18} />} selected={skillsActive} aria-current={skillsActive ? 'page' : undefined} tabIndex={railInteractive ? 0 : -1} onClick={onOpenSkills} />
           <IconButton label={t('记忆管理')} tooltipPlacement="right" tooltip={t('记忆管理')} icon={<BrainCircuit size={18} />} tabIndex={railInteractive ? 0 : -1} selected={memoriesActive} aria-current={memoriesActive ? 'page' : undefined} onClick={onOpenMemories} />
-          <IconButton label={t('自动化')} tooltipPlacement="right" tooltip={t('自动化')} icon={<AlarmClock size={18} />} selected={automationActive} aria-current={automationActive ? 'page' : undefined} tabIndex={railInteractive ? 0 : -1} onClick={onOpenAutomation} />
+          <IconButton type="button" label={t('定时任务')} tooltipPlacement="right" tooltip={t('定时任务')} icon={<AlarmClock size={18} />} selected={automationActive} aria-current={automationActive ? 'page' : undefined} tabIndex={railInteractive ? 0 : -1} onClick={onOpenAutomation} />
           <IconButton
             label={t(archivedHistory ? '返回会话记录' : '已归档会话')}
             tooltipPlacement="right" tooltip={t(archivedHistory ? '返回会话记录' : '已归档会话')}
