@@ -60,6 +60,7 @@ from .schemas import (
     TaskConfiguration,
     TaskList,
     TaskView,
+    UnavailableRunConversation,
 )
 
 if TYPE_CHECKING:
@@ -209,6 +210,8 @@ class StudioAutomationService:
                     ConversationRunRegistration.automation_execution_id,
                     ConversationThread.thread_id,
                     ConversationThread.project_id,
+                    ConversationThread.deleted_at,
+                    ConversationThread.last_run_id,
                 )
                 .join(
                     ConversationThread,
@@ -220,18 +223,24 @@ class StudioAutomationService:
                         [run.execution_id for run in runs]
                     ),
                     ConversationThread.user_id == self._user_id,
-                    ConversationThread.deleted_at.is_(None),
                 )
             )
             links = {
-                execution_id: RunConversation(
-                    thread_id=thread_id, project_id=project_id
-                )
-                for execution_id, thread_id, project_id in rows
+                execution_id: UnavailableRunConversation(state="deleted")
+                if deleted_at is not None
+                else UnavailableRunConversation(state="not_created")
+                if last_run_id is None
+                else RunConversation(thread_id=thread_id, project_id=project_id)
+                for execution_id, thread_id, project_id, deleted_at, last_run_id in rows
             }
         return [
             run_view(run).model_copy(
-                update={"conversation": links.get(run.execution_id)}
+                update={
+                    "conversation": links.get(
+                        run.execution_id,
+                        UnavailableRunConversation(state="not_created"),
+                    )
+                }
             )
             for run in runs
         ]

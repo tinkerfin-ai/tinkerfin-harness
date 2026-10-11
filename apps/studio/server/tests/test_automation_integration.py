@@ -866,3 +866,37 @@ async def test_removed_automation_rejects_followup_waiting_for_registration(
             is None
         )
     assert (await service.result(execution.id)).messages
+
+
+async def test_preparing_automation_does_not_expose_conversation(
+    automation_resources, automation_worker, monkeypatch
+):
+    resources = automation_resources
+    service = StudioAutomationService(resources, user_id=1, project_id="project-1")
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original_stream = resources.gateway.stream
+
+    async def paused_stream(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return await original_stream(*args, **kwargs)
+
+    monkeypatch.setattr(resources.gateway, "stream", paused_stream)
+    task = await service.save(
+        SaveTask(
+            request_id="preparing",
+            configuration=TaskConfiguration.model_validate(configuration()),
+        )
+    )
+    handle = await resources.automation.for_owner("1:project-1").task(task.id)
+    run = await handle.run()
+    try:
+        await entered.wait()
+        assert (await service.status(run.id)).conversation.state == "not_created"
+    finally:
+        release.set()
+        await automation_worker.wait_until_idle()
+    status = await service.status(run.id)
+    assert status.conversation.state == "available"
+    assert status.conversation.thread_id == run.identity.thread_id

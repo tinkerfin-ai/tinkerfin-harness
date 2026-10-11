@@ -7,7 +7,7 @@ import type { ToastHandler } from './components/ui/ToastViewport'
 
 vi.mock('./features/workspace/WorkspaceScreen', () => ({
   WorkspaceScreen: ({ onToast, user }: { onToast: ToastHandler; user: { user_id: number } }) =>
-    <button type="button" onClick={() => onToast('success', `账号 ${user.user_id} 的自动化已完成`, { label: '打开会话', onSelect: vi.fn() })}>在线完成</button>,
+    <button type="button" onClick={() => onToast('success', `账号 ${user.user_id} 的自动化已完成`, { label: '查看关联会话', onSelect: vi.fn() })}>在线完成</button>,
 }))
 
 afterEach(() => { cleanup(); clearAuthSession(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers() })
@@ -33,6 +33,6 @@ it('外部身份切换清除完成消息与操作，切回原身份也不会补�
     })
     expect(screen.getByRole('button', { name: '在线完成' })).toBeVisible()
     expect(screen.queryByText('账号 7 的自动化已完成')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '打开会话' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '查看关联会话' })).not.toBeInTheDocument()
   }
 })

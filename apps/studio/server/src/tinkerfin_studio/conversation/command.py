@@ -29,7 +29,7 @@ from tinkerfin_tracing import TraceRunConflict, TraceThreadNotFound, TracingErro
 
 
 class ConversationCommandService:
-    """更新会话元信息，并按固定次序删除四个存储域"""
+    """更新会话元信息，删除会话时保留自动化原始结果"""
 
     def __init__(
         self,

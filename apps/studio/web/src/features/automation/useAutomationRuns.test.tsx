@@ -45,7 +45,7 @@ it('执行按钮立即 loading，入队响应保留 loading，实时成功只提
   expect(button).toBeDisabled(); expect(button).toHaveAttribute('aria-busy', 'true')
   await act(async () => reply.resolve(queued)); await settle()
   expect(button).toBeDisabled(); expect(screen.getByRole('status')).toHaveTextContent('排队中')
-  const done = runFixture({ updatedAt: '2030-01-01T00:00:01Z', conversation: { projectId: 'project-1', threadId: 'conversation' } })
+  const done = runFixture({ updatedAt: '2030-01-01T00:00:01Z', conversation: { state: 'available', projectId: 'project-1', threadId: 'conversation' } })
   vi.mocked(fetchRunStatus).mockResolvedValue(done)
   act(() => change()); await settle()
   expect(button).toBeEnabled(); expect(screen.getByRole('status')).toHaveTextContent('运行完成')
@@ -53,7 +53,7 @@ it('执行按钮立即 loading，入队响应保留 loading，实时成功只提
   act(() => change()); await settle()
   expect(toast.mock.calls.filter(call => call[0] === 'success')).toHaveLength(1)
   toast.mock.calls.find(call => call[0] === 'success')![2].onSelect()
-  expect(open).toHaveBeenCalledWith(done.conversation)
+  expect(open).toHaveBeenCalledWith(done)
 })
 
 it('在线极快完成早于入队响应时，迟到响应不能恢复 loading 或重复成功提示', async () => {

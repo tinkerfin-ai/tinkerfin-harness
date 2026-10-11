@@ -63,3 +63,23 @@ it('项目组件在同一次提交交接时，旧上传清理不能覆盖目标�
   expect(store.get('thread:thread')?.[0].attachment).toBeUndefined()
   view.unmount()
 })
+
+it('引用交付物只修改目标会话草稿，保留当前草稿并复用去重和限额', () => {
+  const file = { id: 'report', name: 'report.md', mime_type: 'text/markdown', size_bytes: 10 }
+  const store = new Map<string, DraftAttachment[]>()
+  const onError = vi.fn()
+  const { result, rerender } = renderHook(({ key }) => useAttachments('project-1', onError, { key, store }), { initialProps: { key: 'thread:current' } })
+  act(() => result.current.addReference({ ...file, id: 'current-file' }))
+  const current = result.current.attachments
+  act(() => { expect(result.current.addReference(file, { key: 'thread:target', store })).toBe(true) })
+  expect(result.current.attachments).toEqual(current)
+  expect(store.get('thread:target')).toHaveLength(1)
+  act(() => { expect(result.current.addReference(file, { key: 'thread:target', store })).toBe(true) })
+  expect(store.get('thread:target')).toHaveLength(1)
+  act(() => { expect(result.current.addReference({ ...file, id: 'large', size_bytes: 25 * 1024 ** 2 }, { key: 'thread:target', store })).toBe(false) })
+  expect(onError).toHaveBeenCalledExactlyOnceWith('附件数量或总大小超过限制')
+  rerender({ key: 'thread:target' })
+  expect(result.current.attachments).toEqual(store.get('thread:target'))
+  expect(result.current.attachments[0]).toMatchObject({ attachment: file, kind: 'document', reference: true })
+  expect(store.get('thread:current')).toEqual(current)
+})

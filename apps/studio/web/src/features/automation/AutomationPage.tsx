@@ -11,7 +11,7 @@ import { AutomationStatusFilter, type AutomationFilter } from './AutomationStatu
 import { AutomationRunDialog } from './AutomationRunDialog'
 import { AutomationTaskList } from './AutomationTaskList'
 import type { AutomationRuns } from './useAutomationRuns'
-import type { RunConversation } from './model'
+import type { OpenAutomationConversation } from './AutomationRunDialog'
 import { useAutomationTaskActions } from './useAutomationTaskActions'
 import { runStatusLabels, todayInBeijing, weekDates, type AutomationRun, type AutomationTask } from './model'
 import { useAutomation } from './useAutomation'
@@ -26,7 +26,7 @@ const filterLabels = { all: '全部状态', enabled: '已启用', paused: '已�
 export function AutomationPage({ projectId, executions, onOpenConversation, navigationTriggerRef, onOpenNavigation, onModalChange, onToast, defaultModelId, renderModelChoice }: {
   projectId: string
   executions: AutomationRuns
-  onOpenConversation: (target: RunConversation) => void
+  onOpenConversation: OpenAutomationConversation
   navigationTriggerRef: RefObject<HTMLButtonElement | null>
   onOpenNavigation: () => void
   onModalChange: (open: boolean) => void
@@ -88,7 +88,7 @@ export function AutomationPage({ projectId, executions, onOpenConversation, navi
       </section>
     </div>
     {dialog?.kind === 'editor' && <AutomationEditor projectId={projectId} task={dialog.task} trigger={dialog.trigger} defaultModelId={defaultModelId} renderModelChoice={renderModelChoice} onClose={() => setDialog(null)} onSave={() => { setDialog(null); data.reload(); onToast('info', t('任务已保存')) }} />}
-    {dialog?.kind === 'result' && <AutomationRunDialog projectId={projectId} onOpenConversation={onOpenConversation} run={dialog.run} trigger={dialog.trigger} onToast={onToast} onClose={() => setDialog(null)} />}
+    {dialog?.kind === 'result' && <AutomationRunDialog key={dialog.run.id} projectId={projectId} onOpenConversation={onOpenConversation} run={dialog.run} trigger={dialog.trigger} onToast={onToast} onClose={() => setDialog(null)} />}
     {deletion && <Dialog open title={t('删除所选任务')} restoreFocusTo={deletion.trigger} closeDisabled={busy.size > 0} onClose={actions.cancelDelete}>
       <p>{t('将删除 {count} 个任务并取消排队执行，运行历史会保留，此操作不可撤销', { count: deletion.tasks.length })}</p>
       <div className="automation-form-footer"><Button variant="ghost" disabled={busy.size > 0} onClick={actions.cancelDelete}>{t('取消')}</Button>

@@ -6,8 +6,9 @@ import { getAuthorizationHeader, subscribeAuthSession } from '../../auth/session
 import { getServerAddress, subscribeServerAddress } from '../../api/shared/config'
 import type { ToastHandler } from '../../components/ui/ToastViewport'
 import { useI18n } from '../../i18n'
+import type { OpenRunConversation } from './useRunConversation'
 import { executeTask, fetchActiveRunPage, fetchRunStatus } from './api'
-import { isRunInProgress, runStatusLabels, type AutomationRunRecord, type AutomationTask, type RunConversation, type RunStatus } from './model'
+import { isRunInProgress, runStatusLabels, type AutomationRunRecord, type AutomationTask, type RunStatus } from './model'
 
 interface Submission { task: AutomationTask; requestId: string; pending: boolean }
 export type TaskExecutionState = RunStatus | 'submitting' | 'uncertain'
@@ -19,7 +20,7 @@ export interface AutomationRuns {
 }
 
 /** 登录工作区拥有执行请求和状态；重连只刷新基线，完成提示必须来自在线事件 */
-export function useAutomationRuns(userId: number, projectIds: string[], onToast: ToastHandler | undefined, openConversation: (target: RunConversation) => void): AutomationRuns {
+export function useAutomationRuns(userId: number, projectIds: string[], onToast: ToastHandler | undefined, openConversation: OpenRunConversation): AutomationRuns {
   const { t } = useI18n()
   const latest = useRef({ projectIds, onToast, openConversation, t })
   latest.current = { projectIds, onToast, openConversation, t }
@@ -60,7 +61,7 @@ export function useAutomationRuns(userId: number, projectIds: string[], onToast:
         onToast?.(run.status === 'succeeded' ? 'success' : run.status === 'cancelled' ? 'info'
           : run.status === 'needs_attention' || run.status === 'interrupted' ? 'warning' : 'error',
         t('{name}：{status}', { name: run.name || t('自动化'), status: t(runStatusLabels[run.status]) }),
-        run.conversation ? { label: t('打开会话'), onSelect: () => openConversation(run.conversation!) } : undefined)
+        run.conversation.state !== 'not_created' ? { label: t('查看关联会话'), onSelect: () => { void openConversation(run) } } : undefined)
       }
       const completed = [...runs.values()].filter(item => !isRunInProgress(item))
       for (const item of completed.slice(0, Math.max(0, completed.length - 256))) runs.delete(item.id)

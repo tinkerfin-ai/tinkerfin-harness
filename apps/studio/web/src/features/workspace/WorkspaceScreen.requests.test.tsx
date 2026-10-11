@@ -177,7 +177,7 @@ it('完成通知打开尚未在目录中的会话', async () => {
     } }), { headers: { 'Content-Type': 'text/event-stream' } })
     if (path === '/api/automation/runs/active') return jsonResponse({ items: [], nextCursor: null })
     if (path === '/api/automation/runs/calendar') return jsonResponse({ days: [] })
-    if (path === '/api/automation/runs/run/status') return jsonResponse({ id: 'run', projectId: 'project-1', taskId: 'task', name: '任务', conversation: { projectId: 'project-1', threadId: 'fresh' }, status: 'succeeded', updatedAt: time, queuedAt: time, startedAt: time, finishedAt: time, trigger: 'scheduled', error: null })
+    if (path === '/api/automation/runs/run/status') return jsonResponse({ id: 'run', projectId: 'project-1', taskId: 'task', name: '任务', conversation: { state: 'available', projectId: 'project-1', threadId: 'fresh' }, status: 'succeeded', updatedAt: time, queuedAt: time, startedAt: time, finishedAt: time, trigger: 'scheduled', error: null })
     return original(input, init)
   })
   render(<WorkspaceScreen user={user} onLogout={vi.fn()} onToast={toast} />)
@@ -189,7 +189,7 @@ it('完成通知打开尚未在目录中的会话', async () => {
     await vi.advanceTimersByTimeAsync(0)
   })
   const success = toast.mock.calls.find(call => call[0] === 'success')!
-  expect(success[2].label).toBe('打开会话')
+  expect(success[2].label).toBe('查看关联会话')
   await act(async () => { success[2].onSelect(); await vi.advanceTimersByTimeAsync(0) })
   const newHistoryReads = fetch.mock.calls.filter(([input]) => new URL(input instanceof Request ? input.url : String(input)).pathname === '/api/conversation/fresh/history')
   expect(newHistoryReads.length).toBeGreaterThan(0)

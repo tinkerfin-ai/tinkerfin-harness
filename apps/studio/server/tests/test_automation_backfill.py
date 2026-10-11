@@ -104,7 +104,7 @@ async def test_backfill_preserves_original_evidence_and_never_resurrects_removed
     assert report.created == [queued.id]
     restored = await service.result(queued.id)
     assert restored.messages == original.messages
-    assert restored.conversation is not None
+    assert restored.conversation.state == "available"
     async with resources.database.session() as session:
         thread = await ConversationRepository(session).get_thread(
             user_id=1, thread_id=original.thread_id
@@ -131,7 +131,7 @@ async def test_backfill_preserves_original_evidence_and_never_resurrects_removed
         resources.database, resources.automation, resources.tracer, apply=True
     )
     assert again.present == [queued.id] and not again.created
-    assert (await service.result(queued.id)).conversation is None
+    assert (await service.result(queued.id)).conversation.state == "deleted"
 
 
 async def test_cli_inspects_saved_runs_with_an_owned_read_client(

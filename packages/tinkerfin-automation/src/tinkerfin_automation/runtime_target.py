@@ -98,18 +98,20 @@ class TinkerFinTarget:
         return False
 
     async def run(self, request: ExecutionRequest) -> ExecutionOutcome:
-        """Run the assigned attempt and return success or an unfinished interrupt.
+        """Run the assigned attempt and report its outcome after cleanup.
 
         Args:
             request: Authorized execution input and immutable attempt identity.
 
         Returns:
             Success without copying private state, or the pending interrupt IDs.
+            Gateway delivery can also report failure or an uncertain outcome.
 
         Raises:
             TargetExecutionError: The execution identity belongs to another Runtime
                 namespace; the scheduling namespace does not select Runtime resources.
-            BaseException: Runtime execution fails or is cancelled after cleanup.
+            BaseException: Direct Runtime execution fails, or execution is cancelled
+                after cleanup. Gateway admission and delivery errors may also propagate.
         """
 
         if self._gateway is not None:

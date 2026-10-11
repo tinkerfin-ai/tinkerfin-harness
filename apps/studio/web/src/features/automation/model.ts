@@ -37,11 +37,11 @@ export function isRunInProgress(run: { status: RunStatus }): boolean {
   return run.status === 'queued' || run.status === 'running' || run.status === 'cancel_requested'
 }
 
-export interface RunConversation { threadId: string; projectId: string }
+export interface RunConversation { state: 'available'; threadId: string; projectId: string }
 export interface AutomationRunRecord {
   id: string
   projectId: string
-  conversation: RunConversation | null
+  conversation: RunConversation | { state: 'deleted' | 'not_created' }
   updatedAt: string
   taskId: string | null
   name: string | null

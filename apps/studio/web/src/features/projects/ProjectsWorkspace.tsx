@@ -8,6 +8,7 @@ import type { AuthUser } from '../../api/auth/types'
 import { BrandLogo } from '../../components/ui/BrandLogo'
 import { Button, Dialog, FeedbackState, TextField, ValidatedForm } from '../../components/ui'
 import { useI18n } from '../../i18n'
+import { useRunConversation, type OpenRunConversation } from '../automation/useRunConversation'
 import type { DraftAttachment } from '../conversation/useAttachments'
 import type { Project } from './api'
 import { useProjectManagement } from './useProjectManagement'
@@ -15,6 +16,7 @@ import './projects.css'
 
 export interface ProjectWorkspaceScope {
   automation: AutomationRuns
+  openRunConversation: OpenRunConversation
   project: Project
   projects: Project[]
   select: (id: string, threadId?: string) => void
@@ -45,12 +47,13 @@ export function ProjectsWorkspace({ user, onLogout, onToast, children }: {
   const { project, projects, status, editor, name, error, validationAttempt, saving, select, openEditor, submit, setName, closeEditor, retry } = useProjectManagement(user)
   const projectKey = projects.map(item => item.id).sort().join(',')
   useLayoutEffect(() => startNotificationFeed(), [projectKey])
-  const automation = useAutomationRuns(user.user_id, projects.map(item => item.id), onToast, target => {
+  const openRunConversation = useRunConversation(target => {
     select(target.projectId, target.threadId)
     window.dispatchEvent(new PopStateEvent('popstate'))
-  })
+  }, onToast)
+  const automation = useAutomationRuns(user.user_id, projects.map(item => item.id), onToast, openRunConversation)
   return <>
-    {project ? children({ automation, project, projects, select, create: () => openEditor(null), rename: () => openEditor(project),
+    {project ? children({ automation, openRunConversation, project, projects, select, create: () => openEditor(null), rename: () => openEditor(project),
       renameForm: editor?.project?.id === project.id ? { name, error, validationAttempt, saving, change: setName, submit, cancel: closeEditor } : null,
       modalOpen: editor !== null && editor.project === null, drafts, attachments }) : (
       <main className="projects-onboarding" inert={editor !== null || undefined} aria-hidden={editor !== null || undefined}>

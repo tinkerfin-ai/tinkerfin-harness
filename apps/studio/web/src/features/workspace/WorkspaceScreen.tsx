@@ -1328,10 +1328,10 @@ function ProjectWorkspaceScreen({
         ) : activePage === 'automation' ? (
           <ErrorBoundary onError={() => pushToast('error', t('自动化区域无法显示'))}
             fallback={({ reset }) => <div className="automation-empty"><p>{t('自动化区域无法显示')}</p><Button type="button" onClick={reset}>{t('重新加载')}</Button></div>}>
-            <AutomationPage projectId={projectId} executions={scope.automation} onOpenConversation={target => {
-              scope.select(target.projectId, target.threadId)
-              window.dispatchEvent(new PopStateEvent('popstate'))
-            }} navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay}
+            <AutomationPage projectId={projectId} executions={scope.automation} onOpenConversation={(run, attachment, signal) => scope.openRunConversation(run, {
+              signal,
+              prepareDraft: attachment ? target => localAttachments.addReference(attachment, { key: `thread:${target.threadId}`, store: scope.attachments }) : undefined,
+            })} navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay}
               onModalChange={setAutomationModalOpen} onToast={pushToast} defaultModelId={defaultModelId}
               renderModelChoice={(model, onSelect) => <ComposerModelPicker model={model} models={models} defaultModelId={defaultModelId}
                 status={modelCatalogStatus} open={isModelPickerOpen} onOpenChange={setModelPickerOpen}

@@ -4,16 +4,17 @@ import pytest
 from test_automation_integration import (
     automation_environment,
     automation_resources,
+    automation_worker,
     configuration,
 )
 
 from tinkerfin_automation.errors import TaskNotFoundError
 from tinkerfin_studio.api.errors import BusinessException
-from tinkerfin_studio.automation.schemas import SaveTask, TaskConfiguration
+from tinkerfin_studio.automation.schemas import SaveTask, TaskCommand, TaskConfiguration
 from tinkerfin_studio.automation.service import StudioAutomationService
 from tinkerfin_studio.projects.repository import ProjectRepository
 
-__all__ = ["automation_environment", "automation_resources"]
+__all__ = ["automation_environment", "automation_resources", "automation_worker"]
 
 
 async def test_automation_pages_and_commands_are_project_owned(
@@ -111,6 +112,7 @@ async def test_active_execution_pages_and_status_authorize_each_project(
         )
         assert status.status_code == 200, status.text
         assert status.json()["data"]["status"] == "queued"
+        assert status.json()["data"]["conversation"] == {"state": "not_created"}
         assert "messages" not in status.json()["data"]
         assert (
             await client.get(
@@ -118,3 +120,58 @@ async def test_active_execution_pages_and_status_authorize_each_project(
                 params={"projectId": "project-1"},
             )
         ).status_code == 404
+
+
+async def test_run_conversation_tracks_move_and_deletion_without_losing_results(
+    automation_resources, automation_worker
+):
+    from datetime import datetime
+
+    from tinkerfin_automation.errors import ExecutionNotFoundError
+    from tinkerfin_studio.conversation.repository import ConversationRepository
+
+    resources = automation_resources
+    service = StudioAutomationService(resources, user_id=1, project_id="project-1")
+    task = await service.save(
+        SaveTask(
+            request_id="navigation",
+            configuration=TaskConfiguration.model_validate(configuration()),
+        )
+    )
+    queued = await service.task_command(
+        task.id, "run", TaskCommand(request_id="run", expected_revision=task.revision)
+    )
+    assert queued is not None
+    await automation_worker.wait_until_idle()
+    original = await service.result(queued.id)
+    assert original.conversation.state == "available"
+    assert original.conversation.thread_id == original.thread_id
+    assert original.conversation.project_id == "project-1"
+    async with resources.database.session() as session:
+        destination = await ProjectRepository(session, 1).create("会话归属项目")
+        thread = await ConversationRepository(session).get_thread(
+            user_id=1, thread_id=original.thread_id
+        )
+        assert thread is not None
+        thread.project_id = destination.id
+        await session.commit()
+    moved = await service.status(queued.id)
+    assert moved.project_id == "project-1"
+    assert moved.conversation.state == "available"
+    assert moved.conversation.project_id == destination.id
+    async with resources.database.session() as session:
+        thread = await ConversationRepository(session).get_thread(
+            user_id=1, thread_id=original.thread_id
+        )
+        assert thread is not None
+        thread.deleted_at = datetime(2030, 1, 1)
+        await session.commit()
+    deleted = await service.result(queued.id)
+    assert deleted.conversation.model_dump() == {"state": "deleted"}
+    assert (await service.status(queued.id)).conversation.state == "deleted"
+    assert deleted.messages == original.messages
+    assert deleted.output_files == original.output_files
+    with pytest.raises(ExecutionNotFoundError):
+        await StudioAutomationService(
+            resources, user_id=2, project_id="project-2"
+        ).status(queued.id)
