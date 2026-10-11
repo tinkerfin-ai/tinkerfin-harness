@@ -45,7 +45,9 @@ async def run_selection(
 ) -> ApiResponse[list[SelectedSkill]]:
     """重试提问时读取本人原运行的选择，不依赖当前安装状态"""
     conversations = ConversationRepository(session)
-    thread = await conversations.get_thread(user_id=user.user_id, thread_id=thread_id)
+    thread = await conversations.get_accessible_thread(
+        user_id=user.user_id, thread_id=thread_id
+    )
     if thread is None:
         raise BusinessException(ConversationErrorCode.NOT_FOUND)
     if await conversations.get_run(thread_pk=thread.id, run_id=run_id) is None:

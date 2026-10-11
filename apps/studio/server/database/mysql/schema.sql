@@ -96,6 +96,7 @@ CREATE TABLE conversation_threads (
   title_seq INT NOT NULL DEFAULT 0 COMMENT '标题更新序号',
   status VARCHAR(32) NOT NULL COMMENT '会话状态：idle、running、waiting_approval、error、deleting',
   last_run_id VARCHAR(128) COMMENT '最近主运行 ID',
+  published_at DATETIME(6) COMMENT 'UTC 会话首次开放时间；NULL 表示尚未开放',
   last_access_mode VARCHAR(32) NOT NULL DEFAULT 'full' COMMENT '最近主运行文件审批模式：full、write_approval',
   last_model VARCHAR(64) COMMENT '最近主运行模型 ID',
   message_count INTEGER NOT NULL COMMENT '用户与助手消息总数',
@@ -108,6 +109,7 @@ CREATE TABLE conversation_threads (
   deleted_at DATETIME COMMENT 'UTC 删除时间',
   CONSTRAINT pk_conversation_threads PRIMARY KEY (id),
   CONSTRAINT uq_conversation_threads_thread UNIQUE (thread_id),
+  KEY ix_conversation_threads_publication (published_at, id),
   KEY ix_conversation_threads_user_pinned_updated (user_id, deleted_at, pinned, updated_at, id),
   KEY ix_conversation_threads_user_status_updated (user_id, status, updated_at, id),
   KEY ix_conversation_threads_user_updated (user_id, deleted_at, updated_at, id)

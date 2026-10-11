@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo
 
 from pydantic import JsonValue
 from sqlalchemy.exc import IntegrityError
@@ -14,6 +13,7 @@ from tinkerfin_studio.conversation.run_preparation import (
     AutomationRunContext,
     PreparedRunRequest,
     StartChatIntent,
+    initial_conversation_title,
 )
 from tinkerfin_studio.conversation.run_registration import (
     ConversationRunPreparer,
@@ -40,8 +40,7 @@ async def register_conversation(
 ) -> tuple[PreparedRunRequest, PreparedExecution]:
     """按已授权执行身份幂等登记会话，并沿用普通会话的并发与快照校验"""
     identity = execution.identity
-    stamp = execution.queued_at.astimezone(ZoneInfo("Asia/Shanghai"))
-    title = f"{configuration.name[:18]} · {stamp:%m-%d %H:%M}"
+    title = initial_conversation_title(configuration.prompt)
     message_id = f"automation-message-{execution.execution_id}"
     message: dict[str, JsonValue] = {
         "id": message_id,
@@ -51,7 +50,7 @@ async def register_conversation(
     forwarded: dict[str, JsonValue] = {
         "projectId": configuration.project_id,
         "model": configuration.model_id,
-        "accessMode": configuration.access_mode,
+        "accessMode": "full",
         "command": {"plan": "off"},
     }
     prepared = PreparedRunRequest(
@@ -71,7 +70,7 @@ async def register_conversation(
         parameters={"forwarded_props": forwarded},
         message_ids=(message_id,),
         mode="default",
-        access_mode=configuration.access_mode,
+        access_mode="full",
     )
     async with resources.database.session() as session:
         repository = ConversationRepository(session)
@@ -88,11 +87,6 @@ async def register_conversation(
                     title=title,
                     model_id=model.model_id,
                 )
-                thread.title_source = "generated"
-                thread.title_generation_status = "succeeded"
-                thread.title_seq = 1
-                # 登记会重新锁定并刷新会话，先写入自动化标题，避免被旧默认值覆盖
-                await session.flush()
                 created = True
             except IntegrityError:
                 await repository.rollback()

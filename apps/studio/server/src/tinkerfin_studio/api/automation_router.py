@@ -78,6 +78,16 @@ async def create_task(command: SaveTask, service: Service) -> ApiResponse[TaskVi
     return ApiResponse.success(await service.save(command))
 
 
+@router.get("/tasks/{task_id}/submission", response_model=ApiResponse[RunView | None])
+async def get_submission(
+    task_id: str,
+    service: Service,
+    request_id: Annotated[str, Query(alias="requestId", min_length=1, max_length=128)],
+) -> ApiResponse[RunView | None]:
+    """确认原手动请求对应的执行；尚无已提交回执时返回空结果"""
+    return ApiResponse.success(await service.submission(task_id, request_id))
+
+
 @router.post("/tasks/batch", response_model=ApiResponse[list[BatchResult]])
 async def batch_tasks(
     command: BatchCommand, service: Service

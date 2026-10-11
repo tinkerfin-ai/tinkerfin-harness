@@ -1,4 +1,4 @@
-"""会话与自动化共享的文件审批选择"""
+"""会话运行的文件审批策略"""
 
 from typing import Literal, TypeAlias
 

@@ -1,8 +1,9 @@
 import type { Page } from '@playwright/test'
+import type { ResourceChange } from '../../../src/api/notifications'
 
 declare global {
   interface Window {
-    emitResourceChange: (topic: string, key: string) => number
+    emitResourceChange: (topic: string, key: string, options?: Pick<ResourceChange, 'details' | 'scope'>) => number
   }
 }
 
@@ -15,8 +16,8 @@ export async function installNotificationStream(page: Page, mockActiveRuns = tru
   await page.addInitScript(({ mockActiveRuns }) => {
     const original = window.fetch
     const readers = new Set<ReadableStreamDefaultController<Uint8Array>>()
-    window.emitResourceChange = (topic, key) => {
-      const data = { scope: { namespace: 'ns_1', owner_id: null }, topic, key, details: {} }
+    window.emitResourceChange = (topic, key, options) => {
+      const data = { scope: { namespace: 'ns_1', owner_id: null }, topic, key, details: {}, ...options }
       for (const reader of readers) reader.enqueue(new TextEncoder().encode(`event: change\ndata: ${JSON.stringify(data)}\n\n`))
       return readers.size
     }

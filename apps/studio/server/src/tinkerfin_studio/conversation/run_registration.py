@@ -100,7 +100,7 @@ class ConversationRunPreparer:
 
         await ProjectRepository(self._session, self._user_id).require(project_id)
         if thread_id:
-            thread = await self._repository.get_thread(
+            thread = await self._repository.get_accessible_thread(
                 user_id=self._user_id,
                 thread_id=thread_id,
             )
@@ -355,6 +355,7 @@ class ConversationRunPreparer:
                     run_id=existing.id,
                     created=created,
                     preparation_id=existing.preparation_id,
+                    automation_execution_id=existing.automation_execution_id,
                 ),
                 resume=(
                     AgUiResumeRequest(entries=intent.entries)

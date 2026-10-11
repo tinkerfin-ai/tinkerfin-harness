@@ -47,7 +47,8 @@ export function useRunConversation(onOpen: (target: RunConversation) => void, on
       if (!current()) return false
       const { onOpen, onToast, t } = latest.current
       if (status.conversation.state !== 'available') {
-        onToast?.('error', t(status.conversation.state === 'deleted' ? '关联会话已删除' : '关联会话尚未创建'))
+        onToast?.('error', t(status.conversation.state === 'deleted' ? '关联会话已删除'
+          : status.conversation.state === 'pending' ? '关联会话尚未开放' : '关联会话尚未创建'))
         return false
       }
       if (options?.prepareDraft && !options.prepareDraft(status.conversation)) return false

@@ -7,6 +7,7 @@ from typing import cast
 
 import httpx
 import pytest
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import SecretStr
 from test_agent_runtime import _ToolModel, _Workspace
@@ -31,6 +32,7 @@ from tinkerfin_studio.auth.models import User
 from tinkerfin_studio.auth.types import UserContext
 from tinkerfin_studio.automation import target as target_module
 from tinkerfin_studio.automation.ownership import automation_execution_namespace
+from tinkerfin_studio.automation.publication import AutomationConversationPublications
 from tinkerfin_studio.automation.schemas import SaveTask, TaskConfiguration
 from tinkerfin_studio.automation.service import NAMESPACE, StudioAutomationService
 from tinkerfin_studio.automation.target import (
@@ -42,7 +44,7 @@ from tinkerfin_studio.conversation.coordinator import ConversationTraceCoordinat
 from tinkerfin_studio.conversation.failures import ConversationFailureProjection
 from tinkerfin_studio.conversation.history_queries import HistoryQueryAdmission
 from tinkerfin_studio.conversation.repository import ConversationRepository
-from tinkerfin_studio.conversation.service import ConversationChatService
+from tinkerfin_studio.conversation.titles import ConversationTitles
 from tinkerfin_studio.conversation.todo_groups import TodoGroupProjection
 from tinkerfin_studio.models.entity import AgentModel, ModelConnection
 from tinkerfin_studio.projects.repository import ProjectRepository
@@ -102,6 +104,10 @@ async def automation_environment(
         "create_chat_model",
         lambda *args, **kwargs: _ToolModel(responses=["任务完成"]),
     )
+    monkeypatch.setattr(
+        "tinkerfin_studio.conversation.titles.create_chat_model",
+        lambda *args, **kwargs: FakeListChatModel(responses=["模型总结标题"]),
+    )
     workspace = _Workspace()
 
     class Sandboxes:
@@ -122,6 +128,7 @@ async def automation_environment(
             httpx.AsyncClient(
                 transport=httpx.MockTransport(lambda _: httpx.Response(500))
             ) as client,
+            Automation(namespace=NAMESPACE, store=store) as reader,
             Messaging() as messaging,
         ):
             channel = messaging.agui_channel(name="automation-test")
@@ -134,6 +141,16 @@ async def automation_environment(
                 tracer=tracer,
                 conversation_channel=channel,
             )
+            titles = ConversationTitles(
+                database=database,
+                notifications=notifications,
+                http_client=client,
+                http_transport=None,
+            )
+            publications = AutomationConversationPublications(
+                database=database, automation=reader, notifications=notifications
+            )
+            await publications.start()
             resources = cast(
                 ApplicationResources,
                 SimpleNamespace(
@@ -142,12 +159,15 @@ async def automation_environment(
                     attachments=attachments,
                     skills=skill_library,
                     automation=automation,
+                    automation_store=store,
                     tracer=tracer,
                     notifications=notifications,
                     gateway=gateway,
                     messaging=messaging,
                     conversation_channel=channel,
                     conversation_trace=coordinator,
+                    conversation_titles=titles,
+                    automation_publications=publications,
                     history_queries=HistoryQueryAdmission(),
                     tinkerfin=TinkerFin(
                         checkpointer=InMemorySaver(), store=persistent_store
@@ -170,7 +190,11 @@ async def automation_environment(
                 ) as worker:
                     yield resources, worker
             finally:
+                await messaging.aclose()
+                await coordinator.settle()
                 await coordinator.aclose()
+                await publications.aclose()
+                await titles.aclose()
     finally:
         await store.close()
 
@@ -191,7 +215,6 @@ def configuration():
         "name": "日报",
         "prompt": "生成日报",
         "modelId": "main",
-        "accessMode": "full",
         "schedule": {
             "kind": "once",
             "date": "2099-09-22",
@@ -292,6 +315,19 @@ def test_interval_with_start_date_keeps_the_requested_midnight():
     )
 
 
+async def wait_for_published_conversation(resources, execution_id):
+    service = StudioAutomationService(resources, user_id=1, project_id="project-1")
+    async with resources.notifications.subscribe(
+        scope=NotificationScope("ns_1"), topics=("studio.conversation.changed",)
+    ) as changes:
+        while True:
+            view = await service.status(execution_id)
+            if view.conversation.state != "pending":
+                assert view.conversation.state == "available"
+                return view
+            await anext(changes)
+
+
 async def test_http_crud_idempotency_real_result_and_owner_isolation(
     automation_resources,
     automation_worker,
@@ -315,6 +351,13 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
         created = await client.post("/api/automation/tasks", json=payload)
         assert created.status_code == 200, created.text
         task = created.json()["data"]
+        submission_path = f"/api/automation/tasks/{task['id']}/submission"
+        missing = await client.get(submission_path, params={"requestId": "run/id"})
+        assert missing.status_code == 200, missing.text
+        assert missing.json()["data"] is None
+        assert (
+            await client.get(submission_path, params={"requestId": "create"})
+        ).status_code == 422
         repeat = await client.post("/api/automation/tasks", json=payload)
         assert repeat.status_code == 200, repeat.text
         assert repeat.json()["data"]["id"] == task["id"]
@@ -326,7 +369,7 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
             )
             == 1
         )
-        command = {"requestId": "run", "expectedRevision": task["revision"]}
+        command = {"requestId": "run/id", "expectedRevision": task["revision"]}
         queued = await client.post(
             f"/api/automation/tasks/{task['id']}/run", json=command
         )
@@ -350,7 +393,25 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
             saved_run.failure_code,
             saved_run.failure_message,
         )
+        receipt = await client.get(submission_path, params={"requestId": "run/id"})
+        assert receipt.status_code == 200, receipt.text
+        assert receipt.json()["data"]["id"] == execution_id
+        assert receipt.json()["data"]["status"] == "succeeded"
+        assert (
+            await client.get(
+                "/api/automation/tasks/another-task/submission",
+                params={"requestId": "run/id"},
+            )
+        ).status_code == 422
+        handle = await resources.automation.for_owner("1:project-1").get_run(
+            execution_id
+        )
+        await handle.cancel(request_id="cancel-receipt")
+        assert (
+            await client.get(submission_path, params={"requestId": "cancel-receipt"})
+        ).status_code == 422
         assert any(message["content"] == "任务完成" for message in detail["messages"])
+        await wait_for_published_conversation(resources, saved_run.execution_id)
         history = (await client.get("/api/conversation/history")).json()["data"]
         assert len(history["items"]) == 1
         conversation = history["items"][0]
@@ -419,6 +480,9 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
         )
         assert deleted.status_code == 200, deleted.text
         assert deleted.json()["data"][0]["succeeded"] is True
+        retained = await client.get(submission_path, params={"requestId": "run/id"})
+        assert retained.status_code == 200, retained.text
+        assert retained.json()["data"]["id"] == execution_id
         assert (await client.get(f"/api/automation/runs/{execution_id}")).json()[
             "data"
         ]["name"] == "日报"
@@ -429,6 +493,15 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
             disabled=False,
         )
         client.params = {"projectId": "project-2"}
+        foreign = await client.get(submission_path, params={"requestId": "run/id"})
+        assert foreign.status_code == 200, foreign.text
+        assert foreign.json()["data"] is None
+        assert (
+            await client.get(
+                submission_path,
+                params={"projectId": "project-1", "requestId": "run/id"},
+            )
+        ).status_code == 404
         assert (
             await client.get(f"/api/automation/runs/{execution_id}")
         ).status_code == 404
@@ -604,57 +677,51 @@ async def test_saved_schedule_survives_service_restart(automation_resources):
         await second_store.close()
 
 
-async def test_automation_requiring_write_approval_stops_for_human_review(
+async def test_automation_reports_unexpected_runtime_interrupt(
     automation_resources, automation_worker, monkeypatch
 ):
-    from collections.abc import Callable, Sequence
-    from typing import Any
-
-    from langchain_core.language_models import BaseChatModel
-    from langchain_core.language_models.fake_chat_models import (
-        FakeMessagesListChatModel,
-    )
     from langchain_core.messages import AIMessage
-    from langchain_core.tools import BaseTool
+    from langchain_core.tools import tool
+    from langgraph.types import interrupt
+    from test_automation_titles_permissions import _ActionsModel
 
-    class WriteModel(FakeMessagesListChatModel):
-        def bind_tools(
-            self,
-            tools: Sequence[dict[str, Any] | type | Callable[..., Any] | BaseTool],
-            **kwargs: Any,
-        ) -> BaseChatModel:
-            return self
+    @tool
+    def external_request() -> str:
+        """模拟外部工具意外要求人工输入"""
+        return str(interrupt({"question": "提供输入"}))
 
+    resources = automation_resources
+    model = _ActionsModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "external_request",
+                        "id": "external",
+                        "args": {},
+                    }
+                ],
+            )
+        ]
+    )
     monkeypatch.setattr(
-        runtime_module,
-        "create_chat_model",
-        lambda *args, **kwargs: WriteModel(
-            responses=[
-                AIMessage(
-                    content="",
-                    tool_calls=[
-                        {
-                            "name": "write_file",
-                            "id": "write",
-                            "args": {"file_path": "/result.txt", "content": "result"},
-                        }
-                    ],
-                ),
-                AIMessage(content="完成"),
-            ]
+        target_module,
+        "build_automation_runtime",
+        lambda **kwargs: resources.tinkerfin.with_namespace("ns_1").build(
+            model=model, tools=[external_request], backend=_Workspace()
         ),
     )
-    resources = automation_resources
     service = StudioAutomationService(resources, project_id="project-1", user_id=1)
-    config = {**configuration(), "accessMode": "write_approval"}
     task = await service.save(
         SaveTask(
-            request_id="approval",
-            configuration=TaskConfiguration.model_validate(config),
+            request_id="unexpected-interrupt",
+            configuration=TaskConfiguration.model_validate(configuration()),
         )
     )
-    task_handle = await resources.automation.for_owner("1:project-1").task(task.id)
-    run = await task_handle.run()
+    run = await (
+        await resources.automation.for_owner("1:project-1").task(task.id)
+    ).run()
     await automation_worker.wait_until_idle()
     result = await service.result(run.id)
     assert result.status == "failed"
@@ -767,15 +834,7 @@ async def test_cancelled_automation_announces_project_memories(
         handle = await resources.automation.for_owner("1:project-1").task(task.id)
         execution = await handle.run()
         await entered.wait()
-        async with resources.database.session() as session:
-            response = await ConversationChatService(
-                session,
-                user=UserContext(user_id=1, username="owner", roles=(), disabled=False),
-                resources=resources,
-            ).cancel(
-                thread_id=execution.identity.thread_id, run_id=execution.identity.run_id
-            )
-        assert response.cancelled is False
+        await execution.cancel()
         await automation_worker.wait_until_idle()
         notice = await anext(changes)
         assert isinstance(notice, Notification)
@@ -800,16 +859,12 @@ async def test_removed_automation_rejects_followup_waiting_for_registration(
         await resources.automation.for_owner("1:project-1").task(task.id)
     ).run()
     await automation_worker.wait_until_idle()
+    await wait_for_published_conversation(resources, execution.id)
     async with resources.database.session() as session:
         thread = await ConversationRepository(session).get_thread(
             user_id=1, thread_id=execution.identity.thread_id
         )
         assert thread is not None
-        assert (
-            thread.title_source,
-            thread.title_generation_status,
-            thread.title_seq,
-        ) == ("generated", "succeeded", 1)
     entered, release = asyncio.Event(), asyncio.Event()
     register = ConversationRunPreparer.register
 
@@ -897,6 +952,6 @@ async def test_preparing_automation_does_not_expose_conversation(
     finally:
         release.set()
         await automation_worker.wait_until_idle()
-    status = await service.status(run.id)
+    status = await wait_for_published_conversation(resources, run.id)
     assert status.conversation.state == "available"
     assert status.conversation.thread_id == run.identity.thread_id

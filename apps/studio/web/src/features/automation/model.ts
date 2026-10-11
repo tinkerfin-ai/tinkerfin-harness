@@ -1,4 +1,3 @@
-import type { AccessMode } from '../../types'
 import type { Attachment } from '../conversation/attachments/content'
 const DAY_MS = 86_400_000
 
@@ -20,7 +19,6 @@ export interface AutomationTask {
   startsOn: string
   endsOn: string
   modelId: string
-  accessMode: AccessMode
   attachments: string[]
   inputFiles: Attachment[]
   revision: number
@@ -41,7 +39,7 @@ export interface RunConversation { state: 'available'; threadId: string; project
 export interface AutomationRunRecord {
   id: string
   projectId: string
-  conversation: RunConversation | { state: 'deleted' | 'not_created' }
+  conversation: RunConversation | { state: 'deleted' | 'not_created' | 'pending' }
   updatedAt: string
   taskId: string | null
   name: string | null
@@ -51,6 +49,11 @@ export interface AutomationRunRecord {
   status: RunStatus
   trigger: string
   error: string | null
+}
+
+/** 执行结算与会话开放分别确认，终态不再维持任务按钮的运行状态 */
+export function isRunAwaitingUpdate(run: AutomationRunRecord): boolean {
+  return isRunInProgress(run) || run.conversation.state === 'pending'
 }
 export interface AutomationRun extends Omit<AutomationRunRecord, 'name'> {
   name: string
@@ -65,7 +68,6 @@ export interface AutomationDraft {
   startsOn: string
   endsOn: string
   modelId: string
-  accessMode: AccessMode
   attachments: string[]
   inputFiles: Attachment[]
 }
@@ -137,7 +139,7 @@ export function validateDraft(draft: AutomationDraft): DraftErrors {
 export function emptyDraft(): AutomationDraft {
   return {
     name: '', prompt: '', schedule: { kind: 'daily', time: '09:00' },
-    startsOn: '', endsOn: '', modelId: '', accessMode: 'full', attachments: [], inputFiles: [],
+    startsOn: '', endsOn: '', modelId: '', attachments: [], inputFiles: [],
   }
 }
 

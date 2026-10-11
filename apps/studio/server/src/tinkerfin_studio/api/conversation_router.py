@@ -165,7 +165,7 @@ async def get_title(
     user: UserContextDep,
 ) -> ApiResponse[ConversationTitle]:
     """读取当前用户的标题快照，聊天结束后仍可查询总结结果"""
-    thread = await ConversationRepository(session).get_thread(
+    thread = await ConversationRepository(session).get_accessible_thread(
         user_id=user.user_id,
         thread_id=thread_id,
     )

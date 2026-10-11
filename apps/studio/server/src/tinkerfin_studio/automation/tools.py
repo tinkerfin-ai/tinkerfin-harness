@@ -11,7 +11,6 @@ from pydantic import BaseModel, JsonValue
 
 from tinkerfin.tools import ToolRuntime
 from tinkerfin_automation import AutomationError, ExecutionStatus, TaskStatus
-from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.agent.tool_requests import tool_request_id
 
 from .schemas import SaveTask, ScheduleInput, TaskCommand, TaskConfiguration
@@ -27,7 +26,6 @@ def build_automation_tools(
     user_id: int,
     project_id: str,
     model_id: str,
-    access_mode: AccessMode,
 ) -> tuple[BaseTool, ...]:
     """把当前用户的任务管理交给对话主 Agent，后台与子 Agent 不注册
 
@@ -36,7 +34,6 @@ def build_automation_tools(
         user_id: 已认证用户，不能由模型参数覆盖
         project_id: 当前会话已授权的固定项目
         model_id: 创建任务时采用的当前会话模型
-        access_mode: 创建任务时沿用的文件审批选择
 
     Returns:
         任务管理、执行查询及已有产物交付工具；写操作保留明确任务版本
@@ -64,7 +61,7 @@ def build_automation_tools(
         ends_on: date | None = None,
         attachments: list[str] | None = None,
     ) -> str:
-        """为当前用户创建并启用独立的定时任务，成功后才报告已创建
+        """为当前用户创建并启用完全访问的定时任务，成功后才报告已创建
 
         Args:
             name: 简短明确的任务名称
@@ -90,7 +87,6 @@ def build_automation_tools(
             starts_on=starts_on,
             ends_on=ends_on,
             model_id=model_id,
-            access_mode=access_mode,
             attachments=attachments or [],
         )
         return await result(
@@ -116,7 +112,7 @@ def build_automation_tools(
         Args:
             task_id: get_automation 或 list_automations 返回的任务 ID
             expected_revision: 读取该任务时返回的 revision，不猜测或自动采用新版本
-            configuration: 修改后的完整任务配置，保留原模型、权限、附件和未修改日程字段
+            configuration: 修改后的完整任务配置，保留原模型、附件和未修改日程字段
 
         Returns:
             保存后的任务及新的修订号

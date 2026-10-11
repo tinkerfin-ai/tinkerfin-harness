@@ -79,6 +79,22 @@ it('只校准进行中的执行，完成或请求失败后停止，支持主动�
   expect(result.current.error).toBe(false)
 })
 
+it('终态会话待开放仍校准，公开通知刷新原项目，开放后停止校准', async () => {
+  const pending = { ...run('completed'), conversation: { state: 'pending' } } as const
+  vi.mocked(fetchRunCalendar).mockResolvedValue([{ date: dates[0], items: [pending], nextCursor: null }])
+  const { result } = renderHook(() => useAutomation(options))
+  await settle()
+  await act(() => vi.advanceTimersByTimeAsync(30_000))
+  expect(fetchRunCalendar).toHaveBeenCalledTimes(2)
+  const available = { ...pending, conversation: { state: 'available', projectId: 'moved', threadId: 'conversation' } } as const
+  vi.mocked(fetchRunCalendar).mockResolvedValue([{ date: dates[0], items: [available], nextCursor: null }])
+  act(() => notices.changed('studio.conversation.changed', 'conversation', { automation_execution_id: pending.id, automation_project_id: 'first' }))
+  await settle()
+  expect(result.current.runs[0].conversation).toEqual(available.conversation)
+  await act(() => vi.advanceTimersByTimeAsync(90_000))
+  expect(fetchRunCalendar).toHaveBeenCalledTimes(3)
+})
+
 
 it('追加页出现进行中运行后启动确认，刷新后完成则停止', async () => {
   vi.mocked(fetchRunPage).mockResolvedValueOnce({ items: [run('older-active', dates[0], 'running')], nextCursor: null })
