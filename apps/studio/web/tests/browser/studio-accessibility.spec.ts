@@ -1040,21 +1040,18 @@ test('新会话工具栏保持动作样式，折叠菜单在空白页显示选�
   }
 })
 
-test('折叠侧栏 tooltip 与 Rail 外边界保持稳定间距', async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: 'reduce' })
-  await mockStudio(page)
-  const shell = page.locator('.app-shell')
-  const rail = page.locator('.sidebar-rail')
-  const searchButton = rail.getByRole('button', { name: '搜索会话' })
-  const tooltip = page.getByRole('tooltip', { name: '搜索会话', exact: true })
-
-  for (const colorScheme of ['light', 'dark'] as const) {
-    await page.emulateMedia({ colorScheme })
-    for (const width of [768, 1024, 1440]) {
+for (const colorScheme of ['light', 'dark'] as const) {
+  for (const width of [768, 1024, 1440]) {
+    test(`折叠侧栏 tooltip 与 Rail 外边界保持稳定间距 ${colorScheme} ${width}`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
       await page.setViewportSize({ width, height: 900 })
-      if (await shell.getAttribute('data-sidebar-mode') !== 'rail') {
-        await page.getByRole('button', { name: '收起侧边栏' }).click()
-      }
+      await mockStudio(page)
+      const shell = page.locator('.app-shell')
+      const rail = page.locator('.sidebar-rail')
+      const searchButton = rail.getByRole('button', { name: '搜索会话' })
+      const tooltip = page.getByRole('tooltip', { name: '搜索会话', exact: true })
+
+      if (width >= 1024) await page.getByRole('button', { name: '收起侧边栏', exact: true }).click()
       await expect(shell).toHaveAttribute('data-sidebar-mode', 'rail')
       await searchButton.hover()
       await expect(tooltip).toBeVisible()
@@ -1077,9 +1074,9 @@ test('折叠侧栏 tooltip 与 Rail 外边界保持稳定间距', async ({ page 
         (tooltipBounds.y + (tooltipBounds.height / 2))
         - (buttonBounds.y + (buttonBounds.height / 2)),
       )).toBeLessThanOrEqual(1)
-    }
+    })
   }
-})
+}
 
 test('侧栏切换控件共享纵向锚点且 tooltip 避开相邻操作区', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
