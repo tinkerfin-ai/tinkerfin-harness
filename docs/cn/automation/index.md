@@ -224,6 +224,45 @@ TinkerFinTarget 成功只记录完成状态，result=None；消息从已配置�
 普通异步 callable 的有限 JSON 返回值会成为结果；默认取消保证为 False。
 只有确实能保证外部工作停止时，才显式使用 FunctionTarget(..., cancellation_is_final=True)。
 
+### 将执行交付为会话
+
+安装 `tinkerfin-automation[gateway]` 和 `tinkerfin[tracing]`，在 `TinkerFinTarget` 上绑定 Gateway。
+宿主打开和关闭 Messaging、Notifications、Runtime 持久化及业务登记资源；
+Automation 拥有调度执行与取消职责。目标沿用分配的身份，等待投递结算完成：
+
+示例中的模型还需安装 `langchain-openai` 并配置 `OPENAI_API_KEY`。
+
+```python
+from tinkerfin_automation import Automation, TinkerFinTarget
+from tinkerfin_gateway import Gateway
+from tinkerfin import TinkerFin
+from tinkerfin_tracing import Tracer
+from langgraph.checkpoint.memory import InMemorySaver
+from tinkerfin_messaging import Messaging
+from tinkerfin_notifications import Notifications
+
+tracer = Tracer()
+runtime = (TinkerFin(checkpointer=InMemorySaver()).with_namespace("alice")
+           .with_observer(tracer).build("openai:gpt-4.1-mini"))
+async with Messaging() as messaging, Notifications() as notifications:
+    gateway = Gateway(messaging=messaging, notifications=notifications)
+    automation = Automation(namespace="reports")
+    automation.target("report", TinkerFinTarget(runtime, gateway=gateway))
+    async with automation.worker() as worker:
+        run = await automation.for_owner("alice").run(
+            "report", input={"messages": [{"role": "user", "content": "Summarize today"}]}
+        )
+        await run.wait()
+        result = await runtime.agui.history(tracer).get_run(
+            run.identity.thread_id, run_id=run.identity.run_id
+        )
+```
+
+读取历史结果要求 Runtime 已配置 `tracer`。会话模式只接受 messages 输入；框架负责
+转换用户消息的原生附件块，文件授权仍由宿主负责。缺少的消息 ID 会稳定分配，重试保持一致。
+可选 `registration`、`on_committed` 和 `presentation` 使用 Gateway 的公共宿主契约。
+目标借用上述资源；取消新受理执行会取消其 producer，附着已有投递不会取得原 producer 的取消权。
+
 ## Graph interrupt
 
 非空原生中断使执行进入 interrupted，Automation 不审批或恢复 graph。

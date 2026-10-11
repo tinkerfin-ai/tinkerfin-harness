@@ -11,9 +11,9 @@ afterEach(() => { release.splice(0).reverse().forEach(close => close()); vi.useR
 it('共享连接的 ready 只触发一次基线，最后一个使用者退出时释放连接', async () => {
   const close = vi.fn()
   vi.mocked(startResourceFeed).mockReturnValue(close)
-  const first = startNotificationFeed('project')
+  const first = startNotificationFeed()
   release.push(first)
-  const second = startNotificationFeed('project')
+  const second = startNotificationFeed()
   release.push(second)
   const read = vi.fn(async () => 'current')
   const watch = watchResource({ read, update: vi.fn(), matches: () => true })
@@ -35,7 +35,7 @@ it('共享连接的 ready 只触发一次基线，最后一个使用者退出时
 
 it('通知连接失败仍能读基线，连续连接失败不反复查询数据，恢复后再同步', async () => {
   vi.mocked(startResourceFeed).mockReturnValue(vi.fn())
-  release.push(startNotificationFeed('project'))
+  release.push(startNotificationFeed())
   const read = vi.fn(async () => 'current')
   release.push(watchResource({ read, update: vi.fn(), matches: () => true }).close)
   const feed = vi.mocked(startResourceFeed).mock.calls[0][0]

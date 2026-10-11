@@ -10,6 +10,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from tinkerfin_contracts import (
+    RunIdentity,
     RunObservationSession,
     RunSourceContext,
     ThreadIdentity,
@@ -41,6 +42,7 @@ from .model_requests import TraceModelRequest
 from .projection import (
     RegisteredTraceProjection,
     TraceProjection,
+    project_run_checkpoint,
     select_core_projection_window,
     trace_graph_turns,
 )
@@ -63,6 +65,7 @@ from .store import (
     TraceThreadKey,
     TraceWriter,
 )
+from .views import TraceRun
 from .writing import TraceWritePolicy
 
 _GRAPH_QUERY_STABILITY_ATTEMPTS = 4
@@ -344,6 +347,51 @@ class Tracer:
             projections=self._projections,
             projection_names=projections,
             at_run_start=at_run_start,
+        )
+
+    async def get_run(self, identity: RunIdentity) -> TraceRun:
+        """Read exactly one Run without following descendants or selecting a branch.
+
+        Args:
+            identity: Application-authorized namespace, thread and Run to inspect.
+
+        Returns:
+            Fixed-generation output and status. Messages exclude inherited history;
+            state and completeness describe the context observed by this Run.
+
+        Raises:
+            TypeError: The identity is not a RunIdentity.
+            TraceThreadNotFound: The thread is unavailable.
+            TraceRunNotFound: The Run is absent from the current generation.
+            TraceStoreError: Recorded facts or projection checkpoints cannot be read.
+        """
+        if not isinstance(identity, RunIdentity):
+            raise TypeError("identity must be a RunIdentity")
+        sessions = tuple(self._sessions.get(_thread_scope(identity.thread), ()))
+        if sessions:
+            await asyncio.gather(*(session.flush() for session in sessions))
+        snapshot = await self._store.snapshot(identity.thread)
+        if not isinstance(snapshot, StoreThreadSnapshot) or _thread_scope(
+            snapshot.key
+        ) != _thread_scope(identity.thread):
+            raise TraceStoreProtocolError(
+                "Trace Store returned an invalid thread snapshot"
+            )
+        state = await load_core_projection_state(
+            self._store, snapshot.key, as_of_seq=snapshot.as_of_seq
+        )
+        result = project_run_checkpoint(
+            state, run_id=identity.run_id, active_run_ids=snapshot.active_run_ids
+        )
+        return TraceRun(
+            identity=identity,
+            generation=snapshot.key.generation,
+            as_of_seq=snapshot.as_of_seq,
+            observed_at=snapshot.observed_at,
+            state=result.state,
+            messages=result.messages,
+            reasoning=result.reasoning,
+            summary=result.summary,
         )
 
     async def model_request(

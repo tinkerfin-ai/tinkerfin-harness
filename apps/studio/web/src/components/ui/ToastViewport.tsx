@@ -7,18 +7,22 @@ import { MOTION_DURATION_SECONDS } from './motion'
 import { useI18n } from '../../i18n'
 import type { TranslationKey } from '../../i18n'
 import { FeedbackIcon } from './FeedbackState'
+import { Button } from './Button'
 
 gsap.registerPlugin(useGSAP)
 
 export type ToastKind = 'success' | 'info' | 'error' | 'warning'
 
+export interface ToastAction { label: string; onSelect: () => void }
+
 export interface ToastItem {
   id: string
   kind: ToastKind
   message: string
+  action?: ToastAction
 }
 
-export type ToastHandler = (kind: ToastKind, message: string) => void
+export type ToastHandler = (kind: ToastKind, message: string, action?: ToastAction) => void
 
 const TOAST_TITLE: TranslationKey = '提示'
 
@@ -182,6 +186,7 @@ function ToastCard({
       <div className="toast-card__copy">
         <p className="toast-card__title">{title}</p>
         <p className="toast-card__message" role="status">{message}</p>
+        {toast.action && <Button type="button" size="sm" variant="text" onClick={() => { toast.action?.onSelect(); requestDismissRef.current() }}>{toast.action.label}</Button>}
       </div>
       <button type="button" aria-label={t('关闭提示：{message}', { message })} onClick={() => requestDismissRef.current()}>
         <X size={16} />

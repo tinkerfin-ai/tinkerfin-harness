@@ -4,12 +4,17 @@ import { createContext } from 'react'
 export const DialogContext = createContext(false)
 
 export interface DialogDetailOptions {
-  title: string
+  title?: string
+  labelledBy?: string
+  closeDisabled?: boolean
   onClose: () => void
 }
 
 /** 已有弹窗借出同一焦点范围展示详情，原内容保持挂载 */
 export const DialogDetailContext = createContext<{
   target: HTMLDivElement | null
-  show: (detail: DialogDetailOptions) => () => void
+  show: (detail: DialogDetailOptions) => {
+    update: (detail: DialogDetailOptions) => void
+    close: () => void
+  }
 } | null>(null)

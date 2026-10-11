@@ -66,3 +66,22 @@ Adapter 的 `RunIdentity` 包含必填的 `namespace`、`thread_id` 和 `run_id`
 | `SubagentProvenance` | 稳定的子任务身份与父 Tool 请求 |
 
 公开工具决定包括 `approve`、`edit`、`reject` 和 `respond`。编辑后的参数在转换为原生 resume 前按动作 Schema 校验。完整流程见 [Interrupt 与恢复](interrupts-and-resume.md)。
+
+## 已保存的单次运行结果
+
+通过已绑定 namespace 的历史读取器查看一次执行，消息引用与实时投递保持一致。
+此操作仅读取保留事实，不运行 Agent 或打开流：
+
+```python
+from tinkerfin.agui import AgUiHistory
+
+result = await AgUiHistory(tracer, namespace="alice").get_run(
+    "conversation", run_id="scheduled-run"
+)
+for message in result.messages:
+    print(message.content)
+```
+
+`AgUiTraceRun` 保留精确运行身份与固定 Trace 前缀。消息不包含祖先或后代运行的消息，
+后续追问和分支不会改变所选输出。宿主应先核验会话访问权限；读取器借用 Tracer 和 Store，
+不会关闭它们。

@@ -26,6 +26,7 @@ Tracer(
 | `graph_query_limits` | Direct-node, Subagent-expanded total-node, and serialized Graph byte limits |
 | `open_run(context)` | `RuntimeObserver` entry used by TinkerFin Runtime |
 | `get(identity, head_run_id=None, limit=100, history_cursor=None, projections=(), at_run_start=False)` | Fixed-prefix conversation history |
+| `get_run(identity)` | Exact `RunIdentity` output and status, independent of subsequent conversations or forks |
 | `query(identity, where=None, head_run_id=None, cursor=None, limit=100)` | Current indexed `TraceGraphQuery` |
 | `rebuild_graph(identity)` | Reconstruct the disposable Graph index from Ledger facts |
 
@@ -41,6 +42,12 @@ cursors, checkpoints, and deletion retain that namespace. `max_tracer_threads` a
 
 
 `at_run_start=True` reads history before the selected run produces output, retaining admitted user input and earlier runs. It cannot be combined with `history_cursor`.
+
+`get_run(RunIdentity(...))` returns `TraceRun` with its identity, generation,
+`as_of_seq`, observation time, messages, reasoning, state, and summary. Messages
+and reasoning belong only to that Run; state and completeness describe the context
+it observed, including inherited state. A missing Run raises `TraceRunNotFound`.
+Use this query for a fixed task result after a conversation has continued.
 
 ## Graph values
 

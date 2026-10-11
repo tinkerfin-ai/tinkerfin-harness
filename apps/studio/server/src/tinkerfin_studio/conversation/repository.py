@@ -87,6 +87,7 @@ class ConversationRepository:
         input_json: dict[str, JsonValue],
         service_bindings: ServiceBindings = ServiceBindings.empty(),
         access_mode: AccessMode = "full",
+        automation_execution_id: str | None = None,
     ) -> ConversationRunRegistration:
         """创建固定模型与请求快照的主 Run 注册"""
 
@@ -95,6 +96,7 @@ class ConversationRepository:
             conversation_thread_id=thread_id,
             run_id=run_id,
             parent_run_id=parent_run_id,
+            automation_execution_id=automation_execution_id,
             model_id=model_id,
             access_mode=access_mode,
             status="preparing",
@@ -121,7 +123,11 @@ class ConversationRepository:
         """在框架 Run 可查询后以 CAS 发布业务 head"""
 
         thread = await self.lock_thread(thread_pk)
-        if thread is None or thread.status == "deleting":
+        if (
+            thread is None
+            or thread.deleted_at is not None
+            or thread.status == "deleting"
+        ):
             return False
         run = await self.get_run_for_update(
             thread_pk=thread_pk,
@@ -622,7 +628,11 @@ class ConversationRepository:
         """按 Trace 前缀和存储观测时间拒绝迟到的旧摘要"""
 
         thread = await self.lock_thread(thread_pk)
-        if thread is None or thread.status == "deleting":
+        if (
+            thread is None
+            or thread.deleted_at is not None
+            or thread.status == "deleting"
+        ):
             return TraceSummaryWrite("applied")
         registration = await self.get_run_for_update(thread_pk=thread_pk, run_id=run_id)
         # 准备阶段 Trace 不证明业务已受理，不能消耗所有者的清理权或发布 head
@@ -851,6 +861,20 @@ class ConversationRepository:
             run_deleted=deleted,
             thread_deleted=thread_deleted,
             resume_released=resume_released,
+        )
+
+    async def has_automation_execution(self, thread_pk: int) -> bool:
+        """判断会话是否承担自动化执行的结果保留职责"""
+        return (
+            await self._session.scalar(
+                select(ConversationRunRegistration.id)
+                .where(
+                    ConversationRunRegistration.conversation_thread_id == thread_pk,
+                    ConversationRunRegistration.automation_execution_id.is_not(None),
+                )
+                .limit(1)
+            )
+            is not None
         )
 
     async def delete_thread_cascade(self, thread_pk: int) -> None:

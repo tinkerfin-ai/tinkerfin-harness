@@ -118,6 +118,7 @@ CREATE TABLE conversation_run_registrations (
   conversation_thread_id BIGINT NOT NULL COMMENT '所属会话主键',
   run_id VARCHAR(128) NOT NULL COMMENT '主运行 ID',
   parent_run_id VARCHAR(128) COMMENT '分支或恢复的来源运行 ID',
+  automation_execution_id VARCHAR(36) COMMENT '自动化执行 ID；普通会话运行为 NULL',
   access_mode VARCHAR(32) NOT NULL DEFAULT 'full' COMMENT '文件审批模式：full、write_approval',
   model_id VARCHAR(64) NOT NULL COMMENT '主运行模型 ID',
   status VARCHAR(32) NOT NULL COMMENT '运行状态：preparing、starting、running、waiting、succeeded、failed、cancelled、abandoned；rejected 表示业务投递未受理，可已有准备阶段 Trace',
@@ -136,6 +137,7 @@ CREATE TABLE conversation_run_registrations (
   updated_at DATETIME NOT NULL COMMENT 'UTC 最近状态更新时间',
   CONSTRAINT pk_conversation_run_registrations PRIMARY KEY (id),
   CONSTRAINT uq_conversation_run_registrations_thread_run UNIQUE (conversation_thread_id, run_id),
+  CONSTRAINT uq_conversation_run_registrations_automation UNIQUE (automation_execution_id),
   KEY ix_conversation_run_registrations_thread_started (conversation_thread_id, started_at, id),
   KEY ix_conversation_run_registrations_thread_status (conversation_thread_id, status, updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='会话运行记录';

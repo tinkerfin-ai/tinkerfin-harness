@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { useRef, useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { Dialog } from './Dialog'
+import { DialogDetail } from './DialogDetail'
 
 function Example({
   intercept = false,
@@ -136,4 +137,63 @@ describe('Dialog组合契约', () => {
     expect(screen.getByRole('button', { name: '关闭对话框' })).toHaveFocus()
   })
 
+})
+
+it('详情借用同一弹窗，键盘关闭详情后恢复原内容与焦点', async () => {
+  const user = userEvent.setup()
+  function Host() {
+    const [detail, setDetail] = useState(false)
+    return <Dialog open title="运行详情" onClose={vi.fn()}>
+      <input aria-label="保留输入" defaultValue="原内容" />
+      <button type="button" onClick={() => setDetail(true)}>预览附件</button>
+      <Dialog open={detail} fullScreen presentation="detail" title={<span>报告.md</span>} onClose={() => setDetail(false)}>
+        <button type="button">下载报告</button>
+        <button type="button" disabled>不可用</button>
+      </Dialog>
+    </Dialog>
+  }
+  render(<Host />)
+  await user.click(screen.getByRole('button', { name: '预览附件' }))
+  expect(screen.getAllByRole('dialog')).toHaveLength(1)
+  expect(screen.getByRole('dialog', { name: '报告.md' })).toBeVisible()
+  expect(screen.queryByRole('textbox', { name: '保留输入' })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '关闭对话框' })).toHaveFocus()
+  await user.tab({ shift: true })
+  expect(screen.getByRole('button', { name: '下载报告' })).toHaveFocus()
+  await user.keyboard('{Escape}')
+  expect(screen.getByRole('dialog', { name: '运行详情' })).toBeVisible()
+  expect(screen.getByRole('textbox', { name: '保留输入' })).toHaveValue('原内容')
+  expect(screen.getByRole('button', { name: '预览附件' })).toHaveFocus()
+})
+
+it('附件内图表详情有独立宿主，逐层返回并保留每层焦点', async () => {
+  const user = userEvent.setup()
+  function Document() {
+    const [chart, setChart] = useState(false)
+    return <>
+      <button type="button" onClick={() => setChart(true)}>放大图表</button>
+      {chart && <DialogDetail title="图表" onClose={() => setChart(false)}>
+        <button type="button" onClick={() => setChart(false)}>返回文档</button>
+      </DialogDetail>}
+    </>
+  }
+  function Host() {
+    const [document, setDocument] = useState(false)
+    return <Dialog open title="运行详情" onClose={vi.fn()}>
+      <button type="button" onClick={() => setDocument(true)}>预览附件</button>
+      <Dialog open={document} fullScreen presentation="detail" title="报告.md" onClose={() => setDocument(false)}><Document /></Dialog>
+    </Dialog>
+  }
+  render(<Host />)
+  await user.click(screen.getByRole('button', { name: '预览附件' }))
+  await user.click(screen.getByRole('button', { name: '放大图表' }))
+  expect(screen.getAllByRole('dialog')).toHaveLength(1)
+  expect(screen.getByRole('dialog', { name: '图表' })).toBeVisible()
+  expect(screen.queryByRole('button', { name: '放大图表' })).not.toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  expect(screen.getByRole('dialog', { name: '报告.md' })).toBeVisible()
+  expect(screen.getByRole('button', { name: '放大图表' })).toHaveFocus()
+  await user.keyboard('{Escape}')
+  expect(screen.getByRole('dialog', { name: '运行详情' })).toBeVisible()
+  expect(screen.getByRole('button', { name: '预览附件' })).toHaveFocus()
 })

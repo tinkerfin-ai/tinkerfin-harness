@@ -12,12 +12,12 @@ it('未确认的单条操作复用身份，确认成功后的新操作获得新�
   vi.mocked(commandTask).mockRejectedValueOnce(new Error('network')).mockResolvedValue(task)
   const reload = vi.fn()
   const { result } = renderHook(() => useAutomationTaskActions('project-1', [task], reload, vi.fn()))
-  await act(async () => result.current.execute(task.id, 'run'))
-  await act(async () => result.current.execute(task.id, 'run'))
+  await act(async () => result.current.execute(task.id, 'enable'))
+  await act(async () => result.current.execute(task.id, 'enable'))
   const calls = vi.mocked(commandTask).mock.calls
   expect(calls[0][2]).toBe(calls[1][2])
   expect(reload).toHaveBeenCalledOnce()
-  await act(async () => result.current.execute(task.id, 'run'))
+  await act(async () => result.current.execute(task.id, 'enable'))
   expect(calls[2][2]).not.toBe(calls[1][2])
 })
 
@@ -29,7 +29,7 @@ it('同一任务的单条和批量操作互斥，卸载取消请求并拒绝延�
   const reload = vi.fn(), toast = vi.fn()
   const { result, unmount } = renderHook(() => useAutomationTaskActions('project-1', [task], reload, toast))
   let first!: Promise<void>
-  act(() => { first = result.current.execute(task.id, 'run') })
+  act(() => { first = result.current.execute(task.id, 'enable') })
   await act(async () => {
     await result.current.execute(task.id, 'pause')
     expect(await result.current.pause(new Set([task.id]))).toEqual(new Set([task.id]))

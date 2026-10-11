@@ -10,6 +10,8 @@ import { AutomationHistory } from './AutomationHistory'
 import { AutomationStatusFilter, type AutomationFilter } from './AutomationStatusFilter'
 import { AutomationRunDialog } from './AutomationRunDialog'
 import { AutomationTaskList } from './AutomationTaskList'
+import type { AutomationRuns } from './useAutomationRuns'
+import type { OpenAutomationConversation } from './AutomationRunDialog'
 import { useAutomationTaskActions } from './useAutomationTaskActions'
 import { runStatusLabels, todayInBeijing, weekDates, type AutomationRun, type AutomationTask } from './model'
 import { useAutomation } from './useAutomation'
@@ -21,8 +23,10 @@ type ActiveDialog = { kind: 'editor'; task?: AutomationTask; trigger: HTMLElemen
 const filterLabels = { all: '全部状态', enabled: '已启用', paused: '已暂停', ...runStatusLabels } as const
 
 /** 使用服务端任务与执行事实，所有命令先确认结果再更新界面 */
-export function AutomationPage({ projectId, navigationTriggerRef, onOpenNavigation, onModalChange, onToast, defaultModelId, renderModelChoice }: {
+export function AutomationPage({ projectId, executions, onOpenConversation, navigationTriggerRef, onOpenNavigation, onModalChange, onToast, defaultModelId, renderModelChoice }: {
   projectId: string
+  executions: AutomationRuns
+  onOpenConversation: OpenAutomationConversation
   navigationTriggerRef: RefObject<HTMLButtonElement | null>
   onOpenNavigation: () => void
   onModalChange: (open: boolean) => void
@@ -71,11 +75,12 @@ export function AutomationPage({ projectId, navigationTriggerRef, onOpenNavigati
     <div className="automation-scroll ui-scrollbar">
       <section className="automation-content">
         <div id="automation-panel" role="tabpanel" aria-label={t(page === 'history' ? '历史' : '任务')} aria-busy={data.loading}>
+          {executions.syncError && <FeedbackState kind="error" appearance="retry" title={t('执行状态同步失败')} onRetry={executions.refresh} />}
           {data.error && <div className={`automation-load-failure is-${page}`}><FeedbackState kind="error" appearance="retry" title={t('自动化数据加载失败')} retryLabel={t('重新加载')} onRetry={data.reload} /></div>}
           {data.loading && !data.tasks.length && !data.runs.length ? <FeedbackState kind="loading" title={t('正在加载自动化')} /> : page === 'history'
             ? <AutomationHistory offset={weekOffset} onOffsetChange={setWeekOffset} runs={data.runs} query={query} status={filter === 'enabled' || filter === 'paused' ? 'all' : filter} onOpenRun={(run, trigger) => setDialog({ kind: 'result', run, trigger })} view={view} onViewChange={setView} cursors={data.cursors} onLoadMore={data.loadMore} loading={data.loading} loadFailed={data.error && !data.runs.length} />
-            : data.error && !data.tasks.length ? null : <><AutomationTaskList tasks={data.tasks} query={query} status={filter === 'enabled' || filter === 'paused' ? filter : 'all'} busy={busy}
-              onEdit={(task, trigger) => setDialog({ kind: 'editor', task, trigger })} onExecute={id => void actions.execute(id, 'run')}
+            : data.error && !data.tasks.length ? null : <><AutomationTaskList tasks={data.tasks} query={query} status={filter === 'enabled' || filter === 'paused' ? filter : 'all'} busy={busy} executions={executions.states}
+              onEdit={(task, trigger) => setDialog({ kind: 'editor', task, trigger })} onExecute={id => { const task = data.tasks.find(item => item.id === id); if (task) void executions.execute(task) }}
               onToggle={id => void actions.execute(id, data.tasks.find(task => task.id === id)?.enabled ? 'pause' : 'enable')}
               onPause={actions.pause} onDelete={actions.requestDelete} onClearFilter={clearFilters} />
               {data.cursors.tasks && <Button variant="text" loading={data.loading} onClick={() => data.loadMore('tasks')}>{t('加载更多')}</Button>}</>}
@@ -83,7 +88,7 @@ export function AutomationPage({ projectId, navigationTriggerRef, onOpenNavigati
       </section>
     </div>
     {dialog?.kind === 'editor' && <AutomationEditor projectId={projectId} task={dialog.task} trigger={dialog.trigger} defaultModelId={defaultModelId} renderModelChoice={renderModelChoice} onClose={() => setDialog(null)} onSave={() => { setDialog(null); data.reload(); onToast('info', t('任务已保存')) }} />}
-    {dialog?.kind === 'result' && <AutomationRunDialog projectId={projectId} run={dialog.run} trigger={dialog.trigger} onToast={onToast} onClose={() => setDialog(null)} />}
+    {dialog?.kind === 'result' && <AutomationRunDialog key={dialog.run.id} projectId={projectId} onOpenConversation={onOpenConversation} run={dialog.run} trigger={dialog.trigger} onToast={onToast} onClose={() => setDialog(null)} />}
     {deletion && <Dialog open title={t('删除所选任务')} restoreFocusTo={deletion.trigger} closeDisabled={busy.size > 0} onClose={actions.cancelDelete}>
       <p>{t('将删除 {count} 个任务并取消排队执行，运行历史会保留，此操作不可撤销', { count: deletion.tasks.length })}</p>
       <div className="automation-form-footer"><Button variant="ghost" disabled={busy.size > 0} onClick={actions.cancelDelete}>{t('取消')}</Button>

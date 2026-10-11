@@ -253,15 +253,34 @@ class TaskList(Boundary):
     next_cursor: str | None
 
 
+class RunConversation(Boundary):
+    """执行关联会话的当前位置"""
+
+    state: Literal["available"] = "available"
+    thread_id: str
+    project_id: str
+
+
+class UnavailableRunConversation(Boundary):
+    """区分已删除的会话与执行准备阶段尚未创建的会话"""
+
+    state: Literal["deleted", "not_created"]
+
+
 class RunView(Boundary):
     """一次执行的真实时间和状态，任务改名不会改变当次名称"""
 
     id: str
+    project_id: str
+    conversation: Annotated[
+        RunConversation | UnavailableRunConversation, Field(discriminator="state")
+    ] = Field(default_factory=lambda: UnavailableRunConversation(state="not_created"))
     task_id: str | None
     name: str | None
     status: ExecutionStatus
     trigger: str
     queued_at: datetime
+    updated_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
     error: str | None = None

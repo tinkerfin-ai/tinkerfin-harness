@@ -8,6 +8,8 @@ from ag_ui.core import BaseEvent
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tinkerfin import RunIdentity
+from tinkerfin_automation import ExecutionStatus
+from tinkerfin_automation.errors import AutomationError
 from tinkerfin_gateway import (
     CompactRun,
     ResumeRun,
@@ -32,6 +34,8 @@ from tinkerfin_studio.api.errors import (
     SystemException,
 )
 from tinkerfin_studio.auth.types import UserContext
+from tinkerfin_studio.automation.ownership import automation_owner
+from tinkerfin_studio.automation.service import automation_error
 from tinkerfin_studio.conversation.delivery import (
     ConversationAdmission,
     ConversationResumeSettlement,
@@ -486,7 +490,29 @@ class ConversationChatService:
             identity = conversation_identity(
                 thread_id, run_id, user_id=self._user.user_id
             )
-            cancelled = await self._resources.gateway.run(identity).cancel()
+            if registration.automation_execution_id is not None:
+                props = registration.input_json.get("forwardedProps")
+                project_id = props.get("projectId") if isinstance(props, dict) else None
+                if not isinstance(project_id, str):
+                    raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
+                run = await self._resources.automation.for_owner(
+                    automation_owner(self._user.user_id, project_id)
+                ).get_run(registration.automation_execution_id)
+                if run.identity != identity:
+                    raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
+                if run.status in {
+                    ExecutionStatus.QUEUED,
+                    ExecutionStatus.RUNNING,
+                    ExecutionStatus.INTERRUPTED,
+                    ExecutionStatus.CANCEL_REQUESTED,
+                }:
+                    await run.cancel(request_id=f"conversation-stop:{run_id}")
+                    await run.wait()
+                cancelled = run.status == ExecutionStatus.CANCELLED
+            else:
+                cancelled = await self._resources.gateway.run(identity).cancel()
+        except AutomationError as error:
+            raise automation_error(error) from error
         except RunProducerFailed:
             # run 已经失败时“停止”是幂等确认，用户应回到可重试状态而不是看到 500
             await self._reconcile_trace(thread_pk=thread_pk, identity=identity)

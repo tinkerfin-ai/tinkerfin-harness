@@ -5,7 +5,7 @@ export const taskFixture = (overrides: Partial<AutomationTask> = {}): Automation
   attachments: [], inputFiles: [], revision: 1, nextRunAt: '2026-09-11T01:00:00Z', ...overrides,
 })
 export const runFixture = (overrides: Partial<AutomationRunRecord> = {}): AutomationRun => presentRun({
-  id: 'run', taskId: 'news', name: '每日 AI 新闻简报', queuedAt: '2026-09-10T01:00:00Z', startedAt: '2026-09-10T01:00:01Z', finishedAt: '2026-09-10T01:00:05Z', status: 'succeeded', trigger: 'scheduled', error: null, ...overrides,
+  id: 'run', projectId: 'project-1', conversation: { state: 'not_created' }, updatedAt: '2026-09-10T01:00:05Z', taskId: 'news', name: '每日 AI 新闻简报', queuedAt: '2026-09-10T01:00:00Z', startedAt: '2026-09-10T01:00:01Z', finishedAt: '2026-09-10T01:00:05Z', status: 'succeeded', trigger: 'scheduled', error: null, ...overrides,
 })
 export function createAutomationFixture(): { tasks: AutomationTask[]; runs: AutomationRun[] } {
   const tasks = [

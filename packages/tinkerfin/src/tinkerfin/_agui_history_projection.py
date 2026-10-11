@@ -20,6 +20,7 @@ from tinkerfin_tracing import (
     TraceGraphPage,
     TraceInteraction,
     TraceMessage,
+    TraceRun,
     TraceStoreProtocolError,
     TraceSummary,
     TraceThread,
@@ -38,6 +39,7 @@ from ._agui_history_models import (
     AgUiTraceHistory,
     AgUiTraceInteraction,
     AgUiTraceMessage,
+    AgUiTraceRun,
     AgUiTraceSummary,
     AgUiTraceUpdate,
 )
@@ -291,5 +293,19 @@ __all__ = [
     "_project_graph_delta",
     "_project_graph_page",
     "_project_history",
+    "_project_run",
     "_project_update",
 ]
+
+
+def _project_run(result: TraceRun) -> AgUiTraceRun:
+    return AgUiTraceRun(
+        identity=result.identity,
+        generation=result.generation,
+        as_of_seq=result.as_of_seq,
+        observed_at=result.observed_at,
+        state=result.state,
+        messages=tuple(_message(message) for message in result.messages),
+        reasoning=result.reasoning,
+        summary=result.summary,
+    )

@@ -26,6 +26,7 @@ Tracer(
 | `graph_query_limits` | Graph 直接节点、补齐 Subagent 后的总节点与序列化字节上限 |
 | `open_run(context)` | TinkerFin Runtime 使用的 `RuntimeObserver` 入口 |
 | `get(identity, head_run_id=None, limit=100, history_cursor=None, projections=(), at_run_start=False)` | 固定前缀的会话历史 |
+| `get_run(identity)` | 按完整 `RunIdentity` 读取单次输出和状态，不跟随后续对话或分支 |
 | `query(identity, where=None, head_run_id=None, cursor=None, limit=100)` | 当前索引上的 `TraceGraphQuery` |
 | `rebuild_graph(identity)` | 从 Ledger fact 重建可丢弃的 Graph 索引 |
 
@@ -40,6 +41,11 @@ Store 可被多个 namespace 共用：`open_writer(identity)` 使用完整运行
 
 
 `at_run_start=True` 读取所选运行开始输出之前的历史，保留已受理的用户输入和先前运行内容；不能与 `history_cursor` 同时使用。
+
+`get_run(RunIdentity(...))` 返回 `TraceRun`，包含身份、generation、`as_of_seq`、
+观测时间、消息、reasoning、状态及摘要。消息和 reasoning 仅属于指定运行；状态与完整性
+反映该运行观察到的上下文，包括继承状态。运行不存在时抛出 `TraceRunNotFound`。
+会话继续后仍需查看原任务结果时，使用此入口。
 
 ## Graph 数据
 

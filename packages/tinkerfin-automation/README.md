@@ -146,6 +146,14 @@ shows a complete task, manual execution, filtering, and aggregation.
 ### Interrupts
 
 Register Agent work with `automation.target("agent", TinkerFinTarget(runtime))`.
+For replayable conversation output, install `tinkerfin-automation[gateway]` and
+bind the host's Gateway with `TinkerFinTarget(runtime, gateway=gateway)` after
+starting its Messaging and Notifications resources.
+This accepts a messages-only input, preserves the execution's thread and run IDs,
+and waits for durable delivery to finish. The host can supply `registration`,
+`on_committed`, and `presentation` using the Gateway's public business hooks.
+Closing a browser subscription does not stop execution. Cancelling the scheduled
+execution settles its newly admitted producer without closing the borrowed Gateway.
 The target supplies its Runtime's namespace automatically, independently of the
 Automation scheduling namespace. Bind only ownership with `for_owner(owner_id)`.
 Owners sharing one Runtime also share that Runtime's memory and workspace.

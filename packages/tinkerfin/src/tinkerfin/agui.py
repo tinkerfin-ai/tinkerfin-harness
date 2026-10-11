@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from ._agui_history_models import (
         AgUiTraceMessage as AgUiTraceMessage,
     )
+    from ._agui_history_models import AgUiTraceRun as AgUiTraceRun
     from ._agui_history_models import (
         AgUiTraceSummary as AgUiTraceSummary,
     )
@@ -153,6 +154,7 @@ _HISTORY_TYPES = frozenset(
         "AgUiTraceSummary",
         "AgUiTraceUpdate",
         "AgUiTraceHistory",
+        "AgUiTraceRun",
     ]
 )
 _HISTORY_READERS = frozenset(
@@ -198,6 +200,7 @@ __all__ = [
     "AgUiTraceHistory",
     "AgUiTraceInteraction",
     "AgUiTraceMessage",
+    "AgUiTraceRun",
     "AgUiTraceSummary",
     "AgUiTraceUpdate",
     "RuntimeAgUi",

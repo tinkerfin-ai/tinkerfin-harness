@@ -109,7 +109,7 @@ export function DocumentAttachmentPreview({
           : t('未知文件')
   return (
     <Dialog
-      open
+      open fullScreen presentation="detail"
       title={<AttachmentViewerTitle attachment={attachment} />}
       className="attachment-document-viewer"
       onClose={onClose}

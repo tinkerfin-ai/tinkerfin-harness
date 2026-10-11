@@ -52,6 +52,7 @@ callable receives the original exception once and chooses the tool's public erro
 | API | Result |
 | --- | --- |
 | `runtime.namespace` | Namespace fixed when the Runtime was built |
+| `runtime.default_mode` | Execution mode used when a request does not select one |
 | `runtime.thread_identity(thread_id)` | Complete namespaced thread identity |
 | `runtime.run_identity(thread_id, run_id)` | Complete namespaced run identity |
 | `await runtime.ainvoke(...)` | Final defensive state mapping |

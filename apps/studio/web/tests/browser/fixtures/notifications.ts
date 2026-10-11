@@ -8,11 +8,11 @@ declare global {
 
 const installed = new WeakSet<Page>()
 
-/** 为使用模拟业务接口的页面提供可取消的通知连接，不访问共享后端 */
-export async function installNotificationStream(page: Page): Promise<void> {
+/** 提供可取消的通知连接和空运行基线；自动化用例可保留自己的运行接口 */
+export async function installNotificationStream(page: Page, mockActiveRuns = true): Promise<void> {
   if (installed.has(page)) return
   installed.add(page)
-  await page.addInitScript(() => {
+  await page.addInitScript(({ mockActiveRuns }) => {
     const original = window.fetch
     const readers = new Set<ReadableStreamDefaultController<Uint8Array>>()
     window.emitResourceChange = (topic, key) => {
@@ -22,7 +22,11 @@ export async function installNotificationStream(page: Page): Promise<void> {
     }
     window.fetch = async (input, init) => {
       const url = input instanceof Request ? input.url : String(input)
-      if (new URL(url, location.href).pathname !== '/api/notifications') return original(input, init)
+      const path = new URL(url, location.href).pathname
+      if (mockActiveRuns && path === '/api/automation/runs/active') {
+        return new Response(JSON.stringify({ code: 0, message: 'success', data: { items: [], nextCursor: null } }), { headers: { 'Content-Type': 'application/json' } })
+      }
+      if (path !== '/api/notifications') return original(input, init)
       const request = new Request(input, init)
       let close: () => void
       return new Response(new ReadableStream<Uint8Array>({
@@ -37,5 +41,5 @@ export async function installNotificationStream(page: Page): Promise<void> {
         cancel() { close() },
       }), { headers: { 'Content-Type': 'text/event-stream' } })
     }
-  })
+  }, { mockActiveRuns })
 }

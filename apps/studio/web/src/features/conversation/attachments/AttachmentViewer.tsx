@@ -63,19 +63,6 @@ export function AttachmentViewer({
   const [selectedId, setSelectedId] = useState(initialId)
   const index = attachments.findIndex((item) => item.id === selectedId)
   const attachment = attachments[index]
-  // 预览只阻止背景应用交互，关闭时恢复调用前状态
-  useEffect(() => {
-    const root = document.getElementById('root')
-    const inert = root?.inert
-    const overflow = document.body.style.overflow
-    if (root) root.inert = true
-    document.body.style.overflow = 'hidden'
-    return () => {
-      if (root) root.inert = inert ?? false
-      document.body.style.overflow = overflow
-      returnFocus?.focus()
-    }
-  }, [returnFocus])
   useEffect(() => {
     if (!attachment) onClose()
   }, [attachment, onClose])
@@ -137,7 +124,7 @@ function ViewerImage({
   }
   return (
     <Dialog
-      open
+      open fullScreen presentation="detail"
       title={<AttachmentViewerTitle attachment={attachment} />}
       className="attachment-viewer"
       restoreFocusTo={returnFocus}

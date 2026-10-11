@@ -26,7 +26,9 @@ function attachmentsForProject(items: DraftAttachment[], projectId: string): Dra
   })
 }
 
-export function useAttachments(projectId: string, onError?: (message: string) => void, retention?: { key: string; store: Map<string, DraftAttachment[]> }) {
+interface AttachmentDraft { key: string; store: Map<string, DraftAttachment[]> }
+
+export function useAttachments(projectId: string, onError?: (message: string) => void, retention?: AttachmentDraft) {
   const latestErrorHandler = useRef(onError)
   latestErrorHandler.current = onError
   const [attachments, setAttachments] = useState<DraftAttachment[]>(() => attachmentsForProject(retention?.store.get(retention.key) ?? [], projectId))
@@ -237,20 +239,22 @@ export function useAttachments(projectId: string, onError?: (message: string) =>
     }
   }, [])
   const addReference = useCallback(
-    (attachment: Attachment) => {
-      if (latest.current.some((item) => item.attachment?.id === attachment.id))
-        return
+    (attachment: Attachment, destination?: AttachmentDraft): boolean => {
+      const active = !destination || (destination.key === owner.current?.key && destination.store === owner.current.store)
+      const items = active ? latest.current : destination.store.get(destination.key) ?? []
+      if (items.some((item) => item.attachment?.id === attachment.id))
+        return true
       if (
-        latest.current.length >= 5 ||
-        latest.current.reduce((sum, item) => sum + item.size, 0) +
+        items.length >= 5 ||
+        items.reduce((sum, item) => sum + item.size, 0) +
           attachment.size_bytes >
           25 * 1024 ** 2
       ) {
         latestErrorHandler.current?.('附件数量或总大小超过限制')
-        return
+        return false
       }
-      update([
-        ...latest.current,
+      const next: DraftAttachment[] = [
+        ...items,
         {
           id: crypto.randomUUID(),
           name: attachment.name,
@@ -263,7 +267,10 @@ export function useAttachments(projectId: string, onError?: (message: string) =>
           attachment,
           reference: true,
         },
-      ])
+      ]
+      if (active) update(next)
+      else destination.store.set(destination.key, next)
+      return true
     },
     [update],
   )

@@ -73,3 +73,24 @@ fields. The host chooses the namespace and enforces authorization.
 Public tool decisions are `approve`, `edit`, `reject`, and `respond`. Edited arguments
 are validated against the action schema before native resume translation. See
 [Interrupts and resume](interrupts-and-resume.md) for the complete flow.
+
+## Recorded run results
+
+Use the namespace-bound history reader to inspect one execution with the same
+message references as live delivery. This reads retained facts without running the
+agent or opening a stream:
+
+```python
+from tinkerfin.agui import AgUiHistory
+
+result = await AgUiHistory(tracer, namespace="alice").get_run(
+    "conversation", run_id="scheduled-run"
+)
+for message in result.messages:
+    print(message.content)
+```
+
+`AgUiTraceRun` retains the exact Run identity and fixed Trace prefix. Its messages
+exclude ancestor and descendant messages; later follow-ups and forks do not change
+the selected output. The host authorizes the thread before querying. The reader
+borrows the Tracer and Store and never closes them.

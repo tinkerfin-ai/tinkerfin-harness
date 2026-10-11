@@ -11,7 +11,7 @@ import { useAuthVerification } from './features/auth/useAuthVerification'
 import { ApiError, AuthError, subscribeApiErrors } from './api/shared/http'
 import { FeedbackState } from './components/ui/FeedbackState'
 import { ToastViewport } from './components/ui/ToastViewport'
-import type { ToastItem, ToastKind } from './components/ui/ToastViewport'
+import type { ToastAction, ToastItem, ToastKind } from './components/ui/ToastViewport'
 import {
   clearAuthSession,
   createAuthSession,
@@ -44,7 +44,9 @@ export default function App() {
   ))
   const [isLoginPending, setLoginPending] = useState(false)
   const [authCheckVersion, setAuthCheckVersion] = useState(0)
-  const [toasts, setToasts] = useState<ToastItem[]>([])
+  const toastOwner = session ? `${session.serverAddress}\n${session.user.user_id}\n${session.token}` : ''
+  const [toasts, setToasts] = useState<Array<ToastItem & { owner: string }>>([])
+  const lastToastOwner = useRef(toastOwner)
   const authEntry = useRef<AuthEntry>('restore')
   const loginRequest = useRef<AbortController | null>(null)
   useEffect(() => () => loginRequest.current?.abort(), [])
@@ -67,13 +69,13 @@ export default function App() {
     },
   })
 
-  const pushToast = useCallback((kind: ToastKind, message: string) => {
+  const pushToast = useCallback((kind: ToastKind, message: string, action?: ToastAction) => {
     toastSequence += 1
     setToasts((current) => [
       ...current,
-      { id: `toast-${toastSequence}`, kind, message },
+      { id: `toast-${toastSequence}`, kind, message, action, owner: toastOwner },
     ].slice(-4))
-  }, [])
+  }, [toastOwner])
 
   useEffect(() => subscribeServerAddress(() => {
     loginRequest.current?.abort()
@@ -90,6 +92,11 @@ export default function App() {
   }), [pushToast])
 
   useEffect(() => subscribeAuthSession((session) => {
+    const owner = session ? `${session.serverAddress}\n${session.user.user_id}\n${session.token}` : ''
+    if (owner !== lastToastOwner.current) {
+      lastToastOwner.current = owner
+      setToasts([])
+    }
     if (session) return
     authEntry.current = 'restore'
     clearActiveRunSession()
@@ -182,7 +189,7 @@ export default function App() {
         {content}
       </Suspense>
       <ToastViewport
-        toasts={toasts}
+        toasts={toasts.filter(toast => toast.owner === toastOwner)}
         onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))}
       />
     </>

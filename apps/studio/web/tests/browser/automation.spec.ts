@@ -73,7 +73,9 @@ async function prepare(page: Page, language = 'zh-CN') {
       const command: { configuration: AutomationDraft } = route.request().postDataJSON()
       const task = state.tasks.find(task => task.id === path.split('/').at(-1))!
       Object.assign(task, command.configuration, { revision: task.revision + 1 }); data = task
-    } else if (path === '/api/automation/runs') data = { items: matchingRuns.filter(run => !status || run.status === status), nextCursor: null }
+    } else if (path === '/api/automation/runs/active') data = { items: state.runs.filter(run => ['queued', 'running', 'cancel_requested'].includes(run.status)), nextCursor: null }
+    else if (/^\/api\/automation\/runs\/[^/]+\/status$/.test(path)) data = state.runs.find(run => run.id === path.split('/').at(-2))
+    else if (path === '/api/automation/runs') data = { items: matchingRuns.filter(run => !status || run.status === status), nextCursor: null }
     else if (path === '/api/automation/runs/calendar') data = runCalendarFixture(matchingRuns.filter(run => !status || run.status === status), url.searchParams.get('weekStart')!)
     else if (path.startsWith('/api/automation/runs/')) {
       const run = state.runs.find(run => run.id === path.split('/').at(-1))!
@@ -81,7 +83,7 @@ async function prepare(page: Page, language = 'zh-CN') {
     } else throw new Error(`Unexpected request: ${method} ${path}`)
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
-  await installNotificationStream(page)
+  await installNotificationStream(page, false)
   await installProjectScope(page)
   await page.goto('/')
   await expect(page.getByRole('textbox', { name: language === 'en' ? 'Message input' : '消息输入', exact: true })).toBeVisible()
@@ -99,7 +101,7 @@ test('自动化通过任务接口保存和运行，历史只读且删除保留�
   page.on('pageerror', error => errors.push(error.message))
   const requests = await prepare(page)
   await page.getByRole('button', { name: /查看运行：每日 AI 新闻简报，2026-09-09 09:00/ }).click()
-  const result = page.getByRole('dialog', { name: '运行结果' })
+  const result = page.getByRole('dialog', { name: '每日 AI 新闻简报' })
   await expect(result.getByText('资讯来源暂时无法访问，本次未生成完整结果')).toBeVisible()
   await expect(result.getByRole('button', { name: /执行|审批/ })).toHaveCount(0)
   await result.getByRole('button', { name: '关闭对话框' }).click()
@@ -177,7 +179,7 @@ test('自动化读取失败在内容区展示统一重试并通知全局 Toast',
   const runFailure = '**/api/automation/runs/run-*'
   await page.route(runFailure, route => route.fulfill({ status: 503, json: { code: 1001007004, message: 'unavailable', data: null } }))
   await page.getByRole('button', { name: /查看运行：每日 AI 新闻简报/ }).first().click()
-  const dialog = page.getByRole('dialog', { name: '运行结果' })
+  const dialog = page.getByRole('dialog', { name: '每日 AI 新闻简报' })
   const resultAlert = dialog.getByRole('alert')
   await expect(resultAlert).toContainText('运行结果加载失败')
   await expect(page.getByRole('list', { name: '系统提示' })).toContainText('运行结果加载失败')
@@ -351,9 +353,9 @@ test('自动化弹窗标题正文在断点前后对齐，浅深主题占位文�
       expect(contrast).toBeGreaterThanOrEqual(4.5)
       await editor.getByRole('button', { name: '取消', exact: true }).click()
       await page.getByRole('button', { name: /^14:25 投资组合收盘复盘/ }).click()
-      const result = page.getByRole('dialog', { name: '运行结果', exact: true })
-      const resultTitle = await result.getByRole('heading', { name: '运行结果', exact: true }).boundingBox()
-      const resultContent = await result.getByRole('heading', { name: '投资组合收盘复盘', exact: true }).boundingBox()
+      const result = page.getByRole('dialog', { name: '投资组合收盘复盘', exact: true })
+      const resultTitle = await result.getByRole('heading', { name: '投资组合收盘复盘', exact: true }).boundingBox()
+      const resultContent = await result.getByRole('heading', { name: '结果', exact: true }).boundingBox()
       expect(Math.abs(resultTitle!.x - resultContent!.x)).toBeLessThanOrEqual(1)
       await result.getByRole('button', { name: '关闭对话框', exact: true }).click()
     }
@@ -760,4 +762,75 @@ test('历史周历只查询一次，空闲无请求，任务变化不刷新历�
   await page.clock.fastForward(90_000)
   expect(calendars()).toBe(3)
   expect(requests.filter(path => path === 'GET /api/automation/tasks')).toHaveLength(1)
+})
+
+test('运行详情区分完整回答和交付物，复用附件预览并在会话删除时保留详情', async ({ page }, info) => {
+  await prepare(page)
+  const run = createAutomationFixture().runs.find(item => item.id === 'run-2')!
+  const files = [
+    { id: 'detail-report', name: '研究报告.md', mime_type: 'text/markdown', size_bytes: 32 },
+    { id: 'detail-image', name: '趋势图.svg', mime_type: 'image/svg+xml', size_bytes: 220 },
+  ]
+  const answer = '## 本次研究结果\n\n完整回答与交付物分别呈现。\n\n- 已核对运行数据\n- 可继续在关联会话讨论'
+  let deleted = false
+  await page.route('**/api/automation/runs/run-2?*', route => route.fulfill({ json: { code: 0, message: 'success', data: {
+    ...run, conversation: { state: 'available', projectId: 'project-1', threadId: 'detail-thread' },
+    threadId: 'detail-thread', runId: 'detail-run', resultAvailable: true, messages: [{ id: 'answer', role: 'assistant', content: answer }], outputFiles: files,
+  } } }))
+  await page.route('**/api/automation/runs/run-2/status?*', route => route.fulfill({ json: { code: 0, message: 'success', data: {
+    ...run, conversation: deleted ? { state: 'deleted' } : { state: 'available', projectId: 'project-1', threadId: 'detail-thread' },
+  } } }))
+  await page.route('**/api/attachments/detail-*/download-url?*', route => {
+    const id = new URL(route.request().url()).pathname.split('/')[3]
+    return route.fulfill({ json: { code: 0, message: 'success', data: { url: `https://files.example/${id}`, expires_in: 60 } } })
+  })
+  await page.route('https://files.example/*', route => route.fulfill({
+    headers: { 'Access-Control-Allow-Origin': '*' },
+    contentType: route.request().url().endsWith('image') ? 'image/svg+xml' : 'text/markdown',
+    body: route.request().url().endsWith('image') ? '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#f6f7f8"/><path d="M20 150L80 110L150 120L220 50L300 30" fill="none" stroke="#326d67" stroke-width="4"/></svg>' : '# 研究报告\n\n交付文件正文\n\n```mermaid\ngraph LR; A[开始] --> B[完成]\n```',
+  }))
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.getByRole('button', { name: /查看运行：每日 AI 新闻简报，2026-09-10 09:00/ }).click()
+  const dialog = page.getByRole('dialog', { name: run.name })
+  await expect(dialog.getByRole('heading', { name: '结果', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: /^交付物/ })).toBeVisible()
+  await expect(dialog.getByText('完整回答', { exact: true })).toHaveCount(0)
+  await expect(dialog.getByText('可在关联会话中继续追问', { exact: true })).toHaveCount(0)
+  await dialog.getByRole('button', { name: '复制完整回答', exact: true }).click()
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(answer)
+  await expect(dialog.getByRole('button', { name: '已复制', exact: true })).toBeVisible()
+  const preview = dialog.getByRole('button', { name: '预览文档：研究报告.md', exact: true })
+  await preview.click()
+  await expect(page.getByRole('dialog')).toHaveCount(1)
+  await expect(page.getByRole('dialog', { name: '研究报告.md', exact: true }).getByText('交付文件正文')).toBeVisible()
+  await page.getByRole('button', { name: '放大图表', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '图表', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '放大图表', exact: true })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog', { name: '研究报告.md', exact: true }).getByRole('button', { name: '放大图表', exact: true })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(preview).toBeFocused()
+  const image = dialog.getByRole('button', { name: '放大图片：趋势图.svg', exact: true })
+  await image.click()
+  await expect(page.getByRole('dialog')).toHaveCount(1)
+  await expect(page.getByRole('dialog', { name: '趋势图.svg', exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(image).toBeFocused()
+  for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
+    await expect(dialog.getByRole('button', { name: '查看关联会话', exact: true })).toBeInViewport()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+    await page.screenshot({ path: info.outputPath(`run-detail-${theme}-${width}.png`) })
+  }
+  deleted = true
+  const url = page.url()
+  await dialog.getByRole('button', { name: '查看关联会话', exact: true }).click()
+  await expect(page.getByRole('list', { name: '系统提示' })).toContainText('关联会话已删除')
+  await expect(dialog).toBeVisible()
+  expect(page.url()).toBe(url)
+  const download = page.waitForEvent('download')
+  await preview.hover()
+  await dialog.getByRole('button', { name: '下载附件：研究报告.md', exact: true }).click()
+  expect((await download).suggestedFilename()).toBe('研究报告.md')
 })

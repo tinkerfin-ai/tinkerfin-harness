@@ -9,7 +9,7 @@ vi.mock('./api', () => ({ fetchRunCalendar: vi.fn(), fetchRunPage: vi.fn(), fetc
 const dates = weekDates('2030-01-01')
 const options = { projectId: 'first', page: 'history' as const, query: '', status: 'all', dates, view: 'week' as const }
 const run = (id: string, date = dates[0], status: AutomationRun['status'] = 'succeeded') => presentRun({
-  id, taskId: null, name: id, queuedAt: `${date}T12:00:00+08:00`, startedAt: null, finishedAt: null, status, trigger: 'manual', error: null,
+  id, projectId: 'first', conversation: { state: 'not_created' }, updatedAt: `${date}T12:00:00+08:00`, taskId: null, name: id, queuedAt: `${date}T12:00:00+08:00`, startedAt: null, finishedAt: null, status, trigger: 'manual', error: null,
 })
 const calendar = () => dates.map(date => ({ date, items: [run(date, date)], nextCursor: date === dates[0] ? 'next' : null }))
 const settle = () => act(() => vi.advanceTimersByTimeAsync(0))

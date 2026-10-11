@@ -93,6 +93,7 @@ from .views import TraceEventPage as TraceEventPage
 from .views import TraceInteraction as TraceInteraction
 from .views import TraceMessage as TraceMessage
 from .views import TraceReasoning as TraceReasoning
+from .views import TraceRun as TraceRun
 from .views import TraceState as TraceState
 from .views import TraceStatus as TraceStatus
 from .views import TraceSummary as TraceSummary
@@ -174,6 +175,7 @@ __all__ = [
     "TraceQuotaExceeded",
     "TraceReasoning",
     "TraceRedactor",
+    "TraceRun",
     "TraceRunConflict",
     "TraceRunNotFound",
     "TraceSemanticFact",

@@ -2,16 +2,21 @@ import type { EditorState } from '@codemirror/state'
 import { FolderPlus, Plus } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { startNotificationFeed } from '../../api/notifications'
+import type { ToastHandler } from '../../components/ui/ToastViewport'
+import { useAutomationRuns, type AutomationRuns } from '../automation/useAutomationRuns'
 import type { AuthUser } from '../../api/auth/types'
 import { BrandLogo } from '../../components/ui/BrandLogo'
 import { Button, Dialog, FeedbackState, TextField, ValidatedForm } from '../../components/ui'
 import { useI18n } from '../../i18n'
+import { useRunConversation, type OpenRunConversation } from '../automation/useRunConversation'
 import type { DraftAttachment } from '../conversation/useAttachments'
 import type { Project } from './api'
 import { useProjectManagement } from './useProjectManagement'
 import './projects.css'
 
 export interface ProjectWorkspaceScope {
+  automation: AutomationRuns
+  openRunConversation: OpenRunConversation
   project: Project
   projects: Project[]
   select: (id: string, threadId?: string) => void
@@ -32,18 +37,23 @@ export interface ProjectWorkspaceScope {
 }
 
 /** 项目变化使旧页面卸载；未发送的输入按项目和会话留在当前登录工作区 */
-export function ProjectsWorkspace({ user, onLogout, children }: {
-  user: AuthUser; onLogout: () => void; children: (scope: ProjectWorkspaceScope) => ReactNode
+export function ProjectsWorkspace({ user, onLogout, onToast, children }: {
+  user: AuthUser; onLogout: () => void; onToast?: ToastHandler; children: (scope: ProjectWorkspaceScope) => ReactNode
 }) {
   const { t } = useI18n()
   const input = useRef<HTMLInputElement>(null)
   const [drafts] = useState(() => new Map<string, EditorState>())
   const [attachments] = useState(() => new Map<string, DraftAttachment[]>())
   const { project, projects, status, editor, name, error, validationAttempt, saving, select, openEditor, submit, setName, closeEditor, retry } = useProjectManagement(user)
-  const projectId = project?.id
-  useLayoutEffect(() => startNotificationFeed(projectId), [projectId])
+  const projectKey = projects.map(item => item.id).sort().join(',')
+  useLayoutEffect(() => startNotificationFeed(), [projectKey])
+  const openRunConversation = useRunConversation(target => {
+    select(target.projectId, target.threadId)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  }, onToast)
+  const automation = useAutomationRuns(user.user_id, projects.map(item => item.id), onToast, openRunConversation)
   return <>
-    {project ? children({ project, projects, select, create: () => openEditor(null), rename: () => openEditor(project),
+    {project ? children({ automation, openRunConversation, project, projects, select, create: () => openEditor(null), rename: () => openEditor(project),
       renameForm: editor?.project?.id === project.id ? { name, error, validationAttempt, saving, change: setName, submit, cancel: closeEditor } : null,
       modalOpen: editor !== null && editor.project === null, drafts, attachments }) : (
       <main className="projects-onboarding" inert={editor !== null || undefined} aria-hidden={editor !== null || undefined}>

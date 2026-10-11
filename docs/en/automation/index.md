@@ -259,6 +259,49 @@ An ordinary async callable's finite JSON return value becomes its execution resu
 Cancellation guarantees default to false. Use an explicit
 FunctionTarget(..., cancellation_is_final=True) only when external work is provably stopped.
 
+### Deliver executions as conversations
+
+Install `tinkerfin-automation[gateway]` and `tinkerfin[tracing]`, then bind a Gateway to `TinkerFinTarget`.
+The host opens and closes Messaging, Notifications, the Runtime's persistence, and
+any business registration; Automation owns scheduled execution and cancellation.
+The target keeps the assigned identity and waits for delivery settlement:
+
+This example also requires `langchain-openai` and `OPENAI_API_KEY` for its model.
+
+```python
+from tinkerfin_automation import Automation, TinkerFinTarget
+from tinkerfin_gateway import Gateway
+from tinkerfin import TinkerFin
+from tinkerfin_tracing import Tracer
+from langgraph.checkpoint.memory import InMemorySaver
+from tinkerfin_messaging import Messaging
+from tinkerfin_notifications import Notifications
+
+tracer = Tracer()
+runtime = (TinkerFin(checkpointer=InMemorySaver()).with_namespace("alice")
+           .with_observer(tracer).build("openai:gpt-4.1-mini"))
+async with Messaging() as messaging, Notifications() as notifications:
+    gateway = Gateway(messaging=messaging, notifications=notifications)
+    automation = Automation(namespace="reports")
+    automation.target("report", TinkerFinTarget(runtime, gateway=gateway))
+    async with automation.worker() as worker:
+        run = await automation.for_owner("alice").run(
+            "report", input={"messages": [{"role": "user", "content": "Summarize today"}]}
+        )
+        await run.wait()
+        result = await runtime.agui.history(tracer).get_run(
+            run.identity.thread_id, run_id=run.identity.run_id
+        )
+```
+
+The Runtime must record to `tracer` for historical results. Conversation mode
+accepts a messages-only input; native user attachment blocks are converted by the
+framework, while the host remains responsible for file authorization. Missing
+message IDs are allocated consistently for retries. Optional `registration`,
+`on_committed`, and `presentation` use Gateway's public host contracts. Resources
+are borrowed. Cancelling a newly admitted execution cancels its producer; attaching
+to existing delivery does not acquire that producer's cancellation ownership.
+
 ## Graph interrupts
 
 A nonempty native interrupt becomes interrupted. Automation does not approve or resume

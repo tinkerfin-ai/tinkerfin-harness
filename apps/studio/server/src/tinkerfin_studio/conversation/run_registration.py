@@ -26,6 +26,7 @@ from tinkerfin_studio.conversation.models import (
 )
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.conversation.run_preparation import (
+    AutomationRunContext,
     ChatIntent,
     CompactIntent,
     PreparedRunRequest,
@@ -151,14 +152,23 @@ class ConversationRunPreparer:
         model: AgentModelConfig,
         thread: ConversationThread,
         thread_created: bool = False,
+        automation: AutomationRunContext | None = None,
     ) -> PreparedExecution:
         """原子认领客户端 interrupt ID 并固定 Run 的模型"""
 
+        if automation is not None and not isinstance(intent, StartChatIntent):
+            raise ValueError("自动化登记只接受新的会话提问")
+        automation_id = None if automation is None else automation.execution_id
         existing = await self._repository.get_run(
             thread_pk=thread.id,
             run_id=prepared.identity.run_id,
         )
-        self._require_same_registration(existing, prepared=prepared, model=model)
+        self._require_same_registration(
+            existing,
+            prepared=prepared,
+            model=model,
+            automation_execution_id=automation_id,
+        )
         try:
             models = AgentModelRepository(self._session, user_id=self._user_id)
             await models.lock_owner()
@@ -178,7 +188,11 @@ class ConversationRunPreparer:
             if current != model:
                 raise BusinessException(ModelErrorCode.CONFIGURATION_CHANGED)
             locked = await self._repository.lock_thread(thread.id)
-            if locked is None or locked.status == "deleting":
+            if (
+                locked is None
+                or locked.deleted_at is not None
+                or locked.status == "deleting"
+            ):
                 raise BusinessException(ConversationErrorCode.NOT_FOUND)
             if locked.project_id != prepared.project_id:
                 raise BusinessException(ConversationErrorCode.RUN_CONFLICT)
@@ -191,7 +205,12 @@ class ConversationRunPreparer:
             )
             if existing is not None and existing.resume_not_saved:
                 raise BusinessException(ConversationErrorCode.RESUME_NOT_SAVED)
-            self._require_same_registration(existing, prepared=prepared, model=model)
+            self._require_same_registration(
+                existing,
+                prepared=prepared,
+                model=model,
+                automation_execution_id=automation_id,
+            )
             source_run_id = self._continuation_source_run_id(
                 intent,
                 prepared=prepared,
@@ -214,12 +233,16 @@ class ConversationRunPreparer:
             if isinstance(intent, CompactIntent):
                 search_service = None
                 image_service = None
-            elif isinstance(intent, ResumeChatIntent):
-                if source_run is None:
+            elif isinstance(intent, ResumeChatIntent) or automation is not None:
+                if source_run is None and automation is None:
                     raise BusinessException(ConversationErrorCode.RUN_NOT_FOUND)
-                source_bindings = ServiceBindings.model_validate(
-                    source_run.service_bindings
-                )
+                if automation is not None:
+                    source_bindings = automation.services
+                else:
+                    assert source_run is not None
+                    source_bindings = ServiceBindings.model_validate(
+                        source_run.service_bindings
+                    )
                 search_service = (
                     None
                     if source_bindings.web_search is None
@@ -278,8 +301,14 @@ class ConversationRunPreparer:
                     model=model,
                     thread=thread,
                     bindings=bindings,
+                    automation_execution_id=automation_id,
                 )
-            self._require_same_registration(existing, prepared=prepared, model=model)
+            self._require_same_registration(
+                existing,
+                prepared=prepared,
+                model=model,
+                automation_execution_id=automation_id,
+            )
             if ServiceBindings.model_validate(existing.service_bindings) != bindings:
                 raise BusinessException(ServiceErrorCode.CONFIGURATION_CHANGED)
             if not created and existing.status in {"preparing", "starting"}:
@@ -520,6 +549,7 @@ class ConversationRunPreparer:
         model: AgentModelConfig,
         thread: ConversationThread,
         bindings: ServiceBindings,
+        automation_execution_id: str | None = None,
     ) -> tuple[ConversationRunRegistration, bool]:
         """创建或读取同一幂等 Run 注册"""
 
@@ -534,6 +564,7 @@ class ConversationRunPreparer:
                     input_json=prepared.input_json,
                     service_bindings=bindings,
                     access_mode=prepared.access_mode,
+                    automation_execution_id=automation_execution_id,
                 )
                 return created, True
         except IntegrityError:
@@ -550,7 +581,12 @@ class ConversationRunPreparer:
             )
             if existing is None:
                 raise
-            self._require_same_registration(existing, prepared=prepared, model=model)
+            self._require_same_registration(
+                existing,
+                prepared=prepared,
+                model=model,
+                automation_execution_id=automation_execution_id,
+            )
             if ServiceBindings.model_validate(existing.service_bindings) != bindings:
                 raise BusinessException(ServiceErrorCode.CONFIGURATION_CHANGED)
             return existing, False
@@ -561,12 +597,17 @@ class ConversationRunPreparer:
         *,
         prepared: PreparedRunRequest,
         model: AgentModelConfig,
+        automation_execution_id: str | None = None,
     ) -> None:
         """拒绝同 Run 改写输入或模型"""
 
         if run is None:
             return
-        if run.input_json != prepared.input_json or run.model_id != model.model_id:
+        if (
+            run.input_json != prepared.input_json
+            or run.model_id != model.model_id
+            or run.automation_execution_id != automation_execution_id
+        ):
             raise BusinessException(ConversationErrorCode.RUN_IDENTITY_CONFLICT)
 
 

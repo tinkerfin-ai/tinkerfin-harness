@@ -3,14 +3,16 @@ import { useLayoutEffect, useRef, useState } from 'react'
 
 import { Button, IconButton } from '../../components/ui'
 import { useI18n } from '../../i18n'
-import { beijingDate, beijingTime, type AutomationTask } from './model'
+import type { TaskExecutionState } from './useAutomationRuns'
+import { runStatusLabels, beijingDate, beijingTime, type AutomationTask } from './model'
 import { formatDate, formatSchedule } from './presentation'
 
-export function AutomationTaskList({ tasks, query, status, busy, onEdit, onExecute, onToggle, onPause, onDelete, onClearFilter }: {
+export function AutomationTaskList({ tasks, query, status, busy, executions, onEdit, onExecute, onToggle, onPause, onDelete, onClearFilter }: {
   tasks: AutomationTask[]
   query: string
   status: 'all' | 'enabled' | 'paused'
   busy: ReadonlySet<string>
+  executions: ReadonlyMap<string, TaskExecutionState>
   onEdit: (task: AutomationTask, trigger: HTMLElement) => void
   onExecute: (id: string) => void
   onToggle: (id: string) => void
@@ -48,6 +50,9 @@ export function AutomationTaskList({ tasks, query, status, busy, onEdit, onExecu
       </div>
     </div>
     {visible.length ? visible.map((task) => {
+      const execution = executions.get(task.id)
+      const running = execution !== undefined && ['submitting', 'queued', 'running', 'cancel_requested'].includes(execution)
+      const label = execution === 'submitting' ? t('正在提交') : execution === 'uncertain' ? t('提交结果待确认') : execution ? t(runStatusLabels[execution]) : null
       const next = task.nextRunAt ? Date.parse(task.nextRunAt) : undefined
       return <article key={task.id} className="automation-task-row">
         {batch ? <label className="automation-select"><input type="checkbox" aria-label={t('选择 {name}', { name: task.name })}
@@ -66,11 +71,12 @@ export function AutomationTaskList({ tasks, query, status, busy, onEdit, onExecu
               <span className="automation-task-meta"><span>{formatSchedule(task.schedule, locale, t)}</span><span aria-hidden="true">·</span>
             <span>{!task.enabled ? t('已暂停') : next ? t('{date} {time}运行', { date: formatDate(beijingDate(next), locale), time: beijingTime(next) }) : t('有效期内无计划')}</span>
               </span>
+              {label && <span className="automation-caption" role="status">{label}</span>}
             </span>
           </span>
         </Button>
         <div className="automation-task-actions">
-          <Button type="button" variant="ghost" size="sm" leadingIcon={<Play size={14} />} aria-label={t('执行 {name}', { name: task.name })} disabled={busy.has(task.id)} onClick={() => onExecute(task.id)}>{t('执行')}</Button>
+          <Button type="button" variant="ghost" size="sm" leadingIcon={<Play size={14} />} aria-label={t(execution === 'uncertain' ? '重试确认 {name}' : '执行 {name}', { name: task.name })} loading={running} disabled={busy.has(task.id)} onClick={() => onExecute(task.id)}>{t(execution === 'uncertain' ? '重试确认' : '执行')}</Button>
           <Button type="button" variant="ghost" className="automation-task-switch" role="switch" aria-checked={task.enabled}
             aria-label={t(task.enabled ? '暂停 {name}' : '启用 {name}', { name: task.name })} disabled={busy.has(task.id)} onClick={() => onToggle(task.id)}><span aria-hidden="true" className="automation-switch-track" /></Button>
         </div>

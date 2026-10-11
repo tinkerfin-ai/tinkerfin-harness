@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field, JsonValue, computed_field, field_validator
 
-from tinkerfin_contracts import MessageSource
+from tinkerfin_contracts import MessageSource, RunIdentity
 
 from ._models import TraceModel
 from .facts import TraceEvent, TraceSemanticFact
@@ -143,6 +144,25 @@ class TraceEventPage(TraceModel, frozen=True):
 EntityT = TypeVar("EntityT", bound=BaseModel, covariant=True)
 
 
+@dataclass(frozen=True, slots=True)
+class TraceRun:
+    """Read one exact Run at a fixed recorded prefix, independent of later branches.
+
+    Messages and reasoning belong only to this Run. State and completeness retain
+    inherited context as observed by this Run; descendants never contribute.
+    The result owns no resources and does not authorize execution or resume.
+    """
+
+    identity: RunIdentity
+    generation: str
+    as_of_seq: int
+    observed_at: datetime
+    state: TraceState
+    messages: tuple[TraceMessage, ...]
+    reasoning: tuple[TraceReasoning, ...]
+    summary: TraceSummary
+
+
 class TraceEntityDelta(TraceModel, Generic[EntityT], frozen=True):
     """Upsert and remove immutable entities by their stable IDs."""
 
@@ -209,6 +229,7 @@ __all__ = [
     "TraceInteraction",
     "TraceMessage",
     "TraceReasoning",
+    "TraceRun",
     "TraceState",
     "TraceStatus",
     "TraceSummary",

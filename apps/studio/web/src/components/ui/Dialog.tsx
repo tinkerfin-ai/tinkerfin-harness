@@ -1,5 +1,5 @@
 import { X } from 'lucide-react'
-import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode, RefObject } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -8,6 +8,7 @@ import { IconButton } from './IconButton'
 import { DialogContext, DialogDetailContext } from './DialogContext'
 import type { DialogDetailOptions } from './DialogContext'
 import { restoreFocus } from './focus'
+import { DialogDetail } from './DialogDetail'
 
 const FOCUSABLE_SELECTOR = [
   'button:not([disabled])',
@@ -25,6 +26,8 @@ export interface DialogProps {
   children: ReactNode
   className?: string
   fullScreen?: boolean
+  /** 预览等详情借用已有弹窗；独立打开时仍使用自身弹窗 */
+  presentation?: 'modal' | 'detail'
   header?: ReactNode
   closeDisabled?: boolean
   restoreFocusTo?: HTMLElement | null
@@ -42,6 +45,7 @@ export function Dialog({
   className,
   closeDisabled = false,
   fullScreen = false,
+  presentation = 'modal',
   header,
   restoreFocusTo,
   initialFocusRef,
@@ -50,41 +54,53 @@ export function Dialog({
   onClose,
 }: DialogProps) {
   const { t } = useI18n()
+  const parent = useContext(DialogDetailContext)
+  const hosted = presentation === 'detail' && parent !== null
   const titleId = useId()
   const descriptionId = useId()
   const dialogRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   const restoreFocusRef = useRef(restoreFocusTo)
   const [detail, setDetail] = useState<DialogDetailOptions | null>(null)
+  const detailOwner = useRef<symbol | null>(null)
   const [detailTarget, setDetailTarget] = useState<HTMLDivElement | null>(null)
   const showDetail = useCallback((next: DialogDetailOptions) => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const owner = Symbol()
+    detailOwner.current = owner
     setDetail(next)
-    return () => {
-      setDetail(current => current === next ? null : current)
-      queueMicrotask(() => { if (previous?.isConnected && !previous.closest('[inert], [hidden]')) restoreFocus(previous, { preventScroll: true }) })
+    // 内层标题和关闭目标可以变化，返回焦点仍属于首次进入这一层的入口
+    return {
+      update: (options: DialogDetailOptions) => { if (detailOwner.current === owner) setDetail(options) },
+      close: () => {
+        if (detailOwner.current !== owner) return
+        detailOwner.current = null
+        setDetail(null)
+        queueMicrotask(() => { if (previous?.isConnected && !previous.closest('[inert], [hidden]')) restoreFocus(previous, { preventScroll: true }) })
+      },
     }
   }, [])
   const detailHost = useMemo(() => ({ target: detailTarget, show: showDetail }), [detailTarget, showDetail])
   const expanded = fullScreen || Boolean(detail)
+  const detailOpen = Boolean(detail)
   useLayoutEffect(() => {
-    if (detail) detailTarget?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)?.focus()
-  }, [detail, detailTarget])
+    if (detailOpen) detailTarget?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)?.focus()
+  }, [detailOpen, detailTarget])
   useLayoutEffect(() => {
-    if (!open || !expanded) return
+    if (!open || !expanded || hosted) return
     const root = document.getElementById('root')
     const inert = root?.inert
     const overflow = document.body.style.overflow
     if (root) root.inert = true
     document.body.style.overflow = 'hidden'
     return () => { if (root) root.inert = inert ?? false; document.body.style.overflow = overflow }
-  }, [open, expanded])
+  }, [open, expanded, hosted])
 
 
   useLayoutEffect(() => { restoreFocusRef.current = restoreFocusTo }, [restoreFocusTo])
 
   useLayoutEffect(() => {
-    if (!open) return
+    if (!open || hosted) return
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
     ;(initialFocusRef?.current ?? closeRef.current ?? dialogRef.current)?.focus()
     return () => {
@@ -94,7 +110,7 @@ export function Dialog({
         if (document.activeElement === document.body && target?.isConnected && !target.closest('[inert], [hidden], [aria-hidden="true"]')) restoreFocus(target)
       })
     }
-  }, [initialFocusRef, open])
+  }, [initialFocusRef, open, hosted])
 
   if (!open) return null
 
@@ -102,7 +118,7 @@ export function Dialog({
     if (!detail) onKeyDown?.(event)
     // 内层列表框等浮层先处理键盘事件时，外层对话框必须保持不变
     if (event.defaultPrevented) return
-    if (event.key === 'Escape' && !closeDisabled) {
+    if (event.key === 'Escape' && !(detail?.closeDisabled ?? closeDisabled)) {
       event.preventDefault()
       if (detail) detail.onClose()
       else onClose()
@@ -132,9 +148,32 @@ export function Dialog({
     }
   }
 
+  const content = <>
+    {header === undefined ? <header className="modal-dialog-head">
+      <div>
+        <h2 id={titleId}>{title}</h2>
+        {description && <div id={descriptionId} className="modal-dialog-description">{description}</div>}
+      </div>
+      {headerActions}
+      <IconButton ref={closeRef} type="button" className="modal-dialog-close" label={t('关闭对话框')}
+        icon={<X size={18} />} disabled={closeDisabled} onClick={onClose} />
+    </header> : header}
+    {children}
+  </>
+  const contents = <DialogDetailContext.Provider value={detailHost}>
+    <div className="ui-dialog-content" hidden={Boolean(detail)} inert={Boolean(detail)}>{content}</div>
+    <div ref={setDetailTarget} className="ui-dialog-detail" hidden={!detail} />
+  </DialogDetailContext.Provider>
+  if (hosted) return <DialogDetail title={detail?.title ?? (typeof title === 'string' ? title : undefined)}
+    labelledBy={detail ? detail.labelledBy : header === undefined ? titleId : undefined}
+    closeDisabled={detail?.closeDisabled ?? closeDisabled} onClose={detail?.onClose ?? onClose}>
+    {/* 详情的快捷键先于宿主的 Escape 和焦点循环处理 */}
+    {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+    <div className={`ui-dialog-hosted${!detail && className ? ` ${className}` : ''}`} onKeyDown={event => { if (!detail) onKeyDown?.(event) }}>{contents}</div>
+  </DialogDetail>
+
   return createPortal(
     <DialogContext.Provider value={true}>
-    <DialogDetailContext.Provider value={detailHost}>
     {/* 遮罩只处理对话框外部的指针取消，不进入键盘顺序，键盘关闭由对话框自身负责 */}
     {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
     <div
@@ -150,36 +189,15 @@ export function Dialog({
         className={`modal-dialog${className ? ` ${className}` : ''}${expanded ? ' modal-dialog--fullscreen' : ''}`}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={!detail && header === undefined ? titleId : undefined}
+        aria-labelledby={detail ? detail.labelledBy : header === undefined ? titleId : undefined}
         aria-label={detail?.title ?? (header !== undefined && typeof title === 'string' ? title : undefined)}
         aria-describedby={!detail && description ? descriptionId : undefined}
         tabIndex={-1}
         onKeyDown={handleKeyDown}
       >
-        <div className="ui-dialog-content" hidden={Boolean(detail)} inert={Boolean(detail)}>
-        {header === undefined ? <header className="modal-dialog-head">
-          <div>
-            <h2 id={titleId}>{title}</h2>
-            {description && (
-              <div id={descriptionId} className="modal-dialog-description">{description}</div>
-            )}
-          </div>
-          {headerActions}
-          <IconButton
-            ref={closeRef}
-            className="modal-dialog-close"
-            label={t('关闭对话框')}
-            icon={<X size={18} />}
-            disabled={closeDisabled}
-            onClick={onClose}
-          />
-        </header> : header}
-        {children}
-        </div>
-        <div ref={setDetailTarget} className="ui-dialog-detail" hidden={!detail} />
+        {contents}
       </div>
     </div>
-    </DialogDetailContext.Provider>
     </DialogContext.Provider>,
     document.body,
   )
