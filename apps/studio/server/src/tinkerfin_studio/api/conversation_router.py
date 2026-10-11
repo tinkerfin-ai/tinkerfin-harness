@@ -282,7 +282,7 @@ async def update_thread(
     payload: ConversationThreadUpdate,
     service: ConversationCommandDep,
 ) -> ApiResponse[ConversationHistoryListItem]:
-    """重命名或置顶会话"""
+    """更新会话名称、置顶、归档或所属项目"""
 
     return ApiResponse.success(
         await service.update(
@@ -300,7 +300,7 @@ async def delete_thread(
     thread_id: ThreadIdPath,
     service: ConversationCommandDep,
 ) -> ApiResponse[None]:
-    """删除已终止会话的全部关联数据"""
+    """删除普通会话历史，或移除自动化会话入口并保留执行结果"""
 
     await service.delete(thread_id=thread_id)
     return ApiResponse.success()
