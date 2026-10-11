@@ -45,8 +45,8 @@ for (const theme of ['light', 'dark']) {
       page.on('pageerror', error => errors.push(error.message))
       await prepare(page, theme)
       if (entry === 'automation') {
-        await page.getByRole('button', { name: '自动化', exact: true }).click()
-        await page.getByRole('button', { name: '新建自动化', exact: true }).click()
+        await page.getByRole('button', { name: '定时任务', exact: true }).click()
+        await page.getByRole('button', { name: '新建定时任务', exact: true }).click()
       }
       const trigger = page.getByRole('button', { name: '选择模型', exact: true })
       for (const width of [320, 768, 1024, 1440]) {

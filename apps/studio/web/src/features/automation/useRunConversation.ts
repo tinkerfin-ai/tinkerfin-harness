@@ -11,7 +11,7 @@ export type OpenRunConversation = (
   options?: { signal?: AbortSignal; prepareDraft?: (target: RunConversation) => boolean },
 ) => Promise<boolean>
 
-/** 详情和完成通知都重新确认会话位置；请求退出原身份或页面后不再导航 */
+/** 从运行详情打开会话前确认当前位置；请求退出原身份或页面后不再导航 */
 export function useRunConversation(onOpen: (target: RunConversation) => void, onToast?: ToastHandler): OpenRunConversation {
   const { t } = useI18n()
   const latest = useRef({ onOpen, onToast, t })

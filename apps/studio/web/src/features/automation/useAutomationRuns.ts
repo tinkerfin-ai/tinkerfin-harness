@@ -6,9 +6,8 @@ import { getAuthorizationHeader, subscribeAuthSession } from '../../auth/session
 import { getServerAddress, subscribeServerAddress } from '../../api/shared/config'
 import type { ToastHandler } from '../../components/ui/ToastViewport'
 import { useI18n } from '../../i18n'
-import type { OpenRunConversation } from './useRunConversation'
 import { executeTask, fetchActiveRunPage, fetchRunStatus, fetchSubmission } from './api'
-import { isRunAwaitingUpdate, isRunInProgress, runStatusLabels, type AutomationRunRecord, type AutomationTask, type RunStatus } from './model'
+import { isRunInProgress, runStatusLabels, type AutomationRunRecord, type AutomationTask, type RunStatus } from './model'
 
 interface Submission { task: AutomationTask; requestId: string; pending: boolean; epoch: number }
 export type TaskExecutionState = RunStatus | 'submitting' | 'uncertain'
@@ -20,10 +19,10 @@ export interface AutomationRuns {
 }
 
 /** 登录工作区确认本页提交并跟踪在线执行；重连只刷新基线，不补发离线完成提示 */
-export function useAutomationRuns(userId: number, projectIds: string[], onToast: ToastHandler | undefined, openConversation: OpenRunConversation): AutomationRuns {
+export function useAutomationRuns(userId: number, projectIds: string[], onToast: ToastHandler | undefined): AutomationRuns {
   const { t } = useI18n()
-  const latest = useRef({ projectIds, onToast, openConversation, t })
-  latest.current = { projectIds, onToast, openConversation, t }
+  const latest = useRef({ projectIds, onToast, t })
+  latest.current = { projectIds, onToast, t }
   const [states, setStates] = useState<ReadonlyMap<string, TaskExecutionState>>(new Map())
   const [syncError, setSyncError] = useState(false)
   const actions = useRef<Pick<AutomationRuns, 'execute' | 'refresh'> | null>(null)
@@ -31,7 +30,6 @@ export function useAutomationRuns(userId: number, projectIds: string[], onToast:
     const runs = new Map<string, AutomationRunRecord>()
     const submissions = new Map<string, Submission>()
     const notified = new Set<string>()
-    const awaitingNotification = new Set<string>()
     const requests = new Set<AbortController>()
     const pending = new Map<string, { projectId: string; live: boolean }>()
     let identity = `${getServerAddress()}\n${getAuthorizationHeader()}`
@@ -52,25 +50,18 @@ export function useAutomationRuns(userId: number, projectIds: string[], onToast:
       if (previous && (Date.parse(previous.updatedAt) > Date.parse(run.updatedAt)
         || (previous.status !== 'queued' && run.status === 'queued')
         || (previous.status === 'cancel_requested' && run.status === 'running')
-        || ((previous.conversation.state === 'available' || previous.conversation.state === 'deleted')
-          && (run.conversation.state === 'pending' || run.conversation.state === 'not_created'))
         || (!isRunInProgress(previous) && isRunInProgress(run)))) return
       runs.set(run.id, run)
       const key = `${run.id}:${run.status}`
-      if (live && !isRunInProgress(run) && !notified.has(key)) awaitingNotification.add(run.id)
-      // 在线终态先结束 loading；会话开放后再兑现提示，重连不会补弹离线结果
-      if (awaitingNotification.has(run.id) && !isRunInProgress(run) && run.conversation.state !== 'pending') {
-        awaitingNotification.delete(run.id)
+      if (live && !isRunInProgress(run) && !notified.has(key)) {
         notified.add(key)
         if (notified.size > 1024) notified.delete(notified.values().next().value!)
-        const { t, onToast, openConversation } = latest.current
+        const { t, onToast } = latest.current
         onToast?.(run.status === 'succeeded' ? 'success' : run.status === 'cancelled' ? 'info'
           : run.status === 'needs_attention' || run.status === 'interrupted' ? 'warning' : 'error',
-        t('{name}：{status}', { name: run.name || t('自动化'), status: t(runStatusLabels[run.status]) }),
-        run.conversation.state === 'available' || run.conversation.state === 'deleted'
-          ? { label: t('查看关联会话'), onSelect: () => { void openConversation(run) } } : undefined)
+        t('{name}：{status}', { name: run.name || t('定时任务'), status: t(runStatusLabels[run.status]) }))
       }
-      const completed = [...runs.values()].filter(item => !isRunAwaitingUpdate(item))
+      const completed = [...runs.values()].filter(item => !isRunInProgress(item))
       for (const item of completed.slice(0, Math.max(0, completed.length - 256))) runs.delete(item.id)
     }
     const confirmSubmission = (submission: Submission, run: AutomationRunRecord) => {
@@ -85,11 +76,6 @@ export function useAutomationRuns(userId: number, projectIds: string[], onToast:
         const projectId = latest.current.projectIds.find(id => change.scope.owner_id === `${userId}:${id}`)
         return projectId ? { id: change.key, projectId, live: online } : null
       }
-      const { automation_execution_id: id, automation_project_id: projectId } = change.details
-      if (change.topic === 'studio.conversation.changed' && change.scope.namespace === `ns_${userId}`
-        && typeof id === 'string' && typeof projectId === 'string' && latest.current.projectIds.includes(projectId)) {
-        return { id, projectId, live: false }
-      }
       return null
     }
     const release = subscribeResourceChanges(notice => {
@@ -98,7 +84,6 @@ export function useAutomationRuns(userId: number, projectIds: string[], onToast:
         epoch += 1
         baseline = true
         pending.clear()
-        awaitingNotification.clear()
       } else {
         const change = changedRun(notice.change)
         if (change) pending.set(change.id, { projectId: change.projectId, live: change.live || pending.get(change.id)?.live === true })
@@ -120,9 +105,9 @@ export function useAutomationRuns(userId: number, projectIds: string[], onToast:
             for (const run of page.items) { active.add(run.id); values.push({ run, live: false }) }
             cursor = page.nextCursor ?? undefined
           } while (cursor && !signal.aborted)
-          for (const run of runs.values()) if (isRunAwaitingUpdate(run) && !active.has(run.id) && !changes.has(run.id)) changes.set(run.id, { projectId: run.projectId, live: false })
+          for (const run of runs.values()) if (isRunInProgress(run) && !active.has(run.id) && !changes.has(run.id)) changes.set(run.id, { projectId: run.projectId, live: false })
         } else {
-          for (const run of runs.values()) if (isRunAwaitingUpdate(run) && !changes.has(run.id)) changes.set(run.id, { projectId: run.projectId, live: false })
+          for (const run of runs.values()) if (isRunInProgress(run) && !changes.has(run.id)) changes.set(run.id, { projectId: run.projectId, live: false })
         }
         for (const [id, change] of changes) {
           if (signal.aborted) break
@@ -144,20 +129,20 @@ export function useAutomationRuns(userId: number, projectIds: string[], onToast:
         for (const { submission, run } of receipts) confirmSubmission(submission, run)
         setSyncError(false); publish()
       },
-      refreshWhile: () => submissions.size > 0 || [...runs.values()].some(isRunAwaitingUpdate),
+      refreshWhile: () => submissions.size > 0 || [...runs.values()].some(isRunInProgress),
       onError: () => { baseline = true; setSyncError(true) },
     })
     const reset = () => {
       identity = `${getServerAddress()}\n${getAuthorizationHeader()}`
       epoch += 1; baseline = true; online = false
       requests.forEach(request => request.abort()); requests.clear()
-      runs.clear(); pending.clear(); submissions.clear(); notified.clear(); awaitingNotification.clear(); publish()
+      runs.clear(); pending.clear(); submissions.clear(); notified.clear(); publish()
     }
     const releaseAuth = subscribeAuthSession(() => {
       if (identity !== `${getServerAddress()}\n${getAuthorizationHeader()}`) reset()
     })
     const releaseServer = subscribeServerAddress(reset)
-    const visibility = () => { epoch += 1; baseline = true; pending.clear(); awaitingNotification.clear(); online = false }
+    const visibility = () => { epoch += 1; baseline = true; pending.clear(); online = false }
     document.addEventListener('visibilitychange', visibility)
     actions.current = {
       refresh: watch.refresh,

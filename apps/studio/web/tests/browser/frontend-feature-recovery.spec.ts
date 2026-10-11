@@ -71,10 +71,10 @@ for (const hasTouch of [false, true]) {
         const task = taskFixture({ schedule: { kind: 'once', date: '2026-09-14', time: '09:00' }, startsOn: '2026-09-10', endsOn: '2026-10-01' })
         await prepare(page, theme, { locale, task })
         expect(await page.evaluate(() => matchMedia('(any-pointer: coarse)').matches)).toBe(hasTouch)
-        await navigate(page, en ? 'Automation' : '自动化', locale)
+        await navigate(page, en ? 'Scheduled tasks' : '定时任务', locale)
         await page.getByRole('tab', { name: en ? 'Tasks' : '任务', exact: true }).click()
         await page.getByRole('button', { name: task.name, exact: true }).click()
-        const dialog = page.getByRole('dialog', { name: en ? 'Edit automation' : '编辑自动化' })
+        const dialog = page.getByRole('dialog', { name: en ? 'Edit scheduled task' : '编辑定时任务' })
         await page.evaluate(() => document.fonts.ready)
         for (const section of [
           { name: en ? /Frequency/ : /执行频率/, labels: en ? ['Run date', 'Run time'] : ['执行日期', '执行时间'] },
@@ -95,6 +95,14 @@ for (const hasTouch of [false, true]) {
               if (hasTouch) {
                 expect(bounds!.width).toBeGreaterThanOrEqual(44)
                 expect(bounds!.height).toBeGreaterThanOrEqual(44)
+                if (label === (en ? 'Start date' : '开始日期') || label === (en ? 'End date' : '结束日期')) {
+                  const clear = dialog.getByRole('button', { name: en ? `Clear ${label.toLowerCase()}` : `清除${label}`, exact: true })
+                  const clearBox = (await clear.boundingBox())!
+                  expect(clearBox.width).toBeGreaterThanOrEqual(44)
+                  expect(clearBox.height).toBeGreaterThanOrEqual(44)
+                  expect(clearBox.x).toBeGreaterThanOrEqual(bounds!.x + bounds!.width)
+                  expect(clearBox.x + clearBox.width).toBeLessThanOrEqual(width)
+                }
               }
               if (width === 320) {
                 if (hasTouch) await control.tap()
@@ -119,7 +127,8 @@ for (const hasTouch of [false, true]) {
 for (const theme of ['light', 'dark'] as const) {
   test(`长运行结果可完整阅读且附件下载可恢复 ${theme}`, async ({ page }, info) => {
     const api = await prepare(page, theme)
-    await navigate(page, '自动化')
+    await navigate(page, '定时任务')
+    await page.getByRole('tab', { name: '历史', exact: true }).click()
     await page.getByRole('button', { name: /查看运行：审计长结果/ }).click()
     const dialog = page.getByRole('dialog', { name: '审计长结果' })
     const content = dialog.getByRole('region', { name: '结果', exact: true })
@@ -206,11 +215,11 @@ test.describe('触控控件与搜索标签', () => {
   for (const theme of ['light', 'dark'] as const) {
     test(`日期网格、跨月日期与搜索目标 ${theme}`, async ({ page }, info) => {
       await prepare(page, theme)
-      await navigate(page, '自动化')
+      await navigate(page, '定时任务')
       for (const width of widths) {
         await page.setViewportSize({ width, height: 768 })
-        await page.getByRole('button', { name: '新建自动化', exact: true }).click()
-        const dialog = page.getByRole('dialog', { name: '新建自动化' })
+        await page.getByRole('button', { name: '新建定时任务', exact: true }).click()
+        const dialog = page.getByRole('dialog', { name: '新建定时任务' })
         await dialog.getByRole('button', { name: /执行频率/ }).click()
         await dialog.getByRole('button', { name: '重复', exact: true }).click()
         await dialog.getByRole('option', { name: '单次', exact: true }).click()
@@ -262,10 +271,10 @@ test.describe('触控控件与搜索标签', () => {
         await expect(search).toBeFocused()
         await page.screenshot({ path: info.outputPath(`skills-${theme}-${width}.png`) })
       }
-      for (const name of ['自动化', '记忆管理']) {
+      for (const name of ['定时任务', '记忆管理']) {
         await navigate(page, name)
         await expect(page).toHaveTitle(`TinkerFin - ${name}`)
-        const label = name === '自动化' ? '搜索任务或运行历史' : '搜索记忆'
+        const label = name === '定时任务' ? '搜索任务或运行历史' : '搜索记忆'
         await page.getByRole('button', { name: label, exact: true }).click()
         const input = page.getByRole('searchbox', { name: label, exact: true })
         await expect(input).toBeFocused()

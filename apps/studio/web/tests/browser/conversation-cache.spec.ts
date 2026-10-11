@@ -157,7 +157,7 @@ test(`${reason}取消未完成的阅读恢复，迟到历史页不改变当前�
   if (reason === '切换会话') {
     await page.getByRole('button', { name: `打开会话：${title('cache-2')}`, exact: true }).click()
   } else if (reason === '自动化导航') {
-    await page.getByRole('button', { name: '自动化', exact: true }).click()
+    await page.getByRole('button', { name: '定时任务', exact: true }).click()
   } else if (reason === '链接空格') {
     await page.getByRole('link', { name: '阅读参考', exact: true }).press('Space')
   } else if (reason === '键盘翻页') {
@@ -187,7 +187,7 @@ test(`${reason}取消未完成的阅读恢复，迟到历史页不改变当前�
 test('进入自动化再返回同一会话仍恢复原阅读位置', async ({ page }) => {
   const fixture = await openFixture(page)
   await readEarlierPage(page)
-  await page.getByRole('button', { name: '自动化', exact: true }).click()
+  await page.getByRole('button', { name: '定时任务', exact: true }).click()
   await expect(pane(page)).not.toBeAttached()
   await expect(page.getByRole('tab', { name: '历史', exact: true })).toBeVisible()
   await page.getByRole('button', { name: `打开会话：${title('cache-1')}`, exact: true }).click()

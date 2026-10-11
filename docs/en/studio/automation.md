@@ -1,6 +1,7 @@
 # Studio automation
 
-Select a project, then open Automation from the sidebar and create a task with a
+Select a project, then open Scheduled tasks from the sidebar. The Tasks tab opens
+by default. Create a task with a
 name, prompt, model, and schedule. A task stays in the project where it was created;
 switching projects shows that project's tasks and history. Choose once, daily,
 weekdays, weekly, monthly, or a fixed interval. All
@@ -36,7 +37,10 @@ can still use Require write approval. Automation results are read-only: a
 human-interaction interrupt fails that execution. Studio never automatically approves
 or resumes it.
 
-The task list shows the next run. Search, pause, enable, or run a task manually.
+Task cards show an instruction preview, schedule, and next run. Search, pause,
+enable, or run a task manually. The run button appears when a card is hovered or
+has keyboard focus; it stays visible on touch devices. Select the card to edit the
+full instructions.
 Deletion from the task page requires confirmation, cancels queued work, and preserves history. It does not forcibly stop work that has already started.
 Pausing affects future scheduled triggers.
 
@@ -46,11 +50,11 @@ or download files. The calendar groups runs by queue time. Deleting a task retai
 Each started execution appears as a separate conversation in its project after it
 ends. The model generates a conversation title from the task prompt; you can also
 rename it manually. Run-now
-stays on the current page and shows submission, queue, and execution progress.
+stays on the current page and shows submission, queue, and execution progress on the card.
 While Studio is connected, completions and failures from all your projects produce
-a notification with **View linked conversation** when an entry is available. Initial load
+a notification. Initial load
 and reconnection refresh status without replaying offline completion notifications.
-The result panel also opens the conversation for follow-up questions; its task result
+Select **View linked conversation** in the result panel for follow-up questions; its task result
 continues to show only the original execution. Moving a conversation changes where
 it opens, while task history remains in the task's project. Deleting an automation
 conversation removes its entry and retains the execution history, messages, and files.

@@ -1,9 +1,10 @@
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ConversationHistoryDetail, ConversationHistoryListItem } from '../../api/conversation/history'
 import { clearAuthSession, saveAuthSession } from '../../auth/session'
 import { emptyTraceGraph } from '../../test/traceFixtures'
 import { mockResourceNotices } from '../../test/resourceNotices'
+import { runFixture } from '../../test/automationFixtures'
 import { WorkspaceScreen } from './WorkspaceScreen'
 import { ProjectsWorkspace } from '../projects/ProjectsWorkspace'
 import type { Project } from '../projects/api'
@@ -157,40 +158,49 @@ it('空项目工作区也接收其他窗口创建项目的通知，始终只保�
   expect(readers.size).toBe(0)
 })
 
-it('完成通知打开尚未在目录中的会话', async () => {
+it('运行详情打开尚未在目录中的会话', async () => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date(time))
   window.history.replaceState({}, '', '/?project=project-1&page=automation')
   const list = [historyItem({ threadId: 'old', title: '已有会话' })]
+  const run = runFixture({ name: '任务', conversation: { state: 'available', projectId: 'project-1', threadId: 'fresh' },
+    updatedAt: time, queuedAt: time, startedAt: time, finishedAt: time })
   const toast = vi.fn()
   const fetch = installFetch({ list, details: {
     old: traceDetail({ threadId: 'old', title: '已有会话' }),
     fresh: traceDetail({ threadId: 'fresh', title: '自动化新会话', messages: [{ ...traceDetail({}).messages[0]!, id: 'fresh-message', content: '自动化新会话正文' }] }),
   } })
   const original = fetch.getMockImplementation()!
-  let reader: ReadableStreamDefaultController<Uint8Array>
   fetch.mockImplementation(async (input, init) => {
     const path = new URL(input instanceof Request ? input.url : String(input)).pathname
     if (path === '/api/notifications') return new Response(new ReadableStream({ start(value) {
-      reader = value
       value.enqueue(new TextEncoder().encode('event: ready\ndata: {}\n\n'))
     } }), { headers: { 'Content-Type': 'text/event-stream' } })
+    if (path === '/api/automation/tasks') return jsonResponse({ items: [], nextCursor: null })
     if (path === '/api/automation/runs/active') return jsonResponse({ items: [], nextCursor: null })
-    if (path === '/api/automation/runs/calendar') return jsonResponse({ days: [] })
-    if (path === '/api/automation/runs/run/status') return jsonResponse({ id: 'run', projectId: 'project-1', taskId: 'task', name: '任务', conversation: { state: 'available', projectId: 'project-1', threadId: 'fresh' }, status: 'succeeded', updatedAt: time, queuedAt: time, startedAt: time, finishedAt: time, trigger: 'scheduled', error: null })
+    if (path === '/api/automation/runs/calendar') return jsonResponse({ days: [{ date: run.date, items: [run], nextCursor: null }] })
+    if (path === '/api/automation/runs/run') return jsonResponse({ ...run, threadId: 'fresh', runId: 'run', messages: [], outputFiles: [], resultAvailable: true })
+    if (path === '/api/automation/runs/run/status') return jsonResponse(run)
     return original(input, init)
   })
   render(<WorkspaceScreen user={user} onLogout={vi.fn()} onToast={toast} />)
   await act(async () => vi.advanceTimersByTimeAsync(0))
   expect(screen.getByRole('button', { name: '打开会话：已有会话' })).toBeVisible()
+  expect(screen.queryByRole('button', { name: '打开会话：自动化新会话' })).not.toBeInTheDocument()
   await act(async () => {
-    const change = { scope: { namespace: 'studio_automation', owner_id: '7:project-1' }, topic: 'automation.execution.changed', key: 'run', details: {} }
-    reader.enqueue(new TextEncoder().encode('event: change\ndata: ' + JSON.stringify(change) + '\n\n'))
+    fireEvent.click(screen.getByRole('tab', { name: '历史' }))
     await vi.advanceTimersByTimeAsync(0)
   })
-  const success = toast.mock.calls.find(call => call[0] === 'success')!
-  expect(success[2].label).toBe('查看关联会话')
-  await act(async () => { success[2].onSelect(); await vi.advanceTimersByTimeAsync(0) })
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: /^查看运行：任务，/ }))
+    await vi.advanceTimersByTimeAsync(0)
+  })
+  const dialog = screen.getByRole('dialog', { name: '任务' })
+  expect(within(dialog).getByRole('button', { name: '查看关联会话' })).toBeEnabled()
+  await act(async () => {
+    fireEvent.click(within(dialog).getByRole('button', { name: '查看关联会话' }))
+    await vi.advanceTimersByTimeAsync(0)
+  })
   const newHistoryReads = fetch.mock.calls.filter(([input]) => new URL(input instanceof Request ? input.url : String(input)).pathname === '/api/conversation/fresh/history')
   expect(newHistoryReads.length).toBeGreaterThan(0)
   expect(window.location.search).toBe('?project=project-1&thread=fresh')

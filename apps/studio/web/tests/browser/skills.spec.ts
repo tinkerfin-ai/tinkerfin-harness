@@ -133,7 +133,7 @@ async function actionGeometry(button: Locator) {
 }
 
 for (const width of [320, 768, 1024, 1440]) {
-  test(`技能页和自动化页的页签位置与下划线一致 ${width}`, async ({ page }, testInfo) => {
+  test(`技能页与定时任务页保持控件规格，窄屏任务操作分行 ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
     await prepare(page)
     await installProjectScope(page)
@@ -147,13 +147,22 @@ for (const width of [320, 768, 1024, 1440]) {
     await installProjectScope(page)
     await page.goto('/?page=automation')
     await expect(page.getByRole('tab', { name: '任务', exact: true })).toBeVisible()
-    await page.getByRole('tab', { name: '任务', exact: true }).click()
     await expect(page.getByRole('tab', { name: '任务', exact: true })).toHaveAttribute('aria-selected', 'true')
     await page.evaluate(() => document.fonts.ready)
     const automation = await tabGeometry(page.getByRole('tab', { name: '任务', exact: true }))
-    const createButton = await actionGeometry(page.getByRole('button', { name: '新建自动化', exact: true }))
-    expect(skills).toEqual(automation)
-    expect(importButton).toEqual(createButton)
+    const createButton = await actionGeometry(page.getByRole('button', { name: '新建定时任务', exact: true }))
+    if (width <= 440) {
+      const { y: importY, ...importAppearance } = importButton
+      const { y: createY, ...createAppearance } = createButton
+      expect(importAppearance).toEqual(createAppearance)
+      expect(createY).toBeGreaterThan(importY)
+      expect({ x: skills.x, width: skills.width, height: skills.height }).toEqual({ x: automation.x, width: automation.width, height: automation.height })
+      expect(skills.underlineY - skills.y).toBe(automation.underlineY - automation.y)
+      expect(automation.y + automation.height).toBeLessThanOrEqual(createY)
+    } else {
+      expect(importButton).toEqual(createButton)
+      expect(skills).toEqual(automation)
+    }
     await testInfo.attach('header-geometry', { body: JSON.stringify({ width, skills, automation }), contentType: 'application/json' })
   })
 }

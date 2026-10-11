@@ -225,6 +225,7 @@
     --layout-workspace-info-label-width: 58px;
     --layer-content-toolbar: 1;
     --layout-header-height: var(--space-16);
+    --layout-header-stacked-height: calc(var(--control-lg) * 2 + var(--space-4));
     --layout-drawer-header-height: calc(var(--layout-header-height) + var(--space-3));
     --layout-settings-dialog: 960px;
     --layout-settings-nav: 180px;

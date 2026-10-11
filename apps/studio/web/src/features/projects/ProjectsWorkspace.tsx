@@ -51,7 +51,7 @@ export function ProjectsWorkspace({ user, onLogout, onToast, children }: {
     select(target.projectId, target.threadId)
     window.dispatchEvent(new PopStateEvent('popstate'))
   }, onToast)
-  const automation = useAutomationRuns(user.user_id, projects.map(item => item.id), onToast, openRunConversation)
+  const automation = useAutomationRuns(user.user_id, projects.map(item => item.id), onToast)
   return <>
     {project ? children({ automation, openRunConversation, project, projects, select, create: () => openEditor(null), rename: () => openEditor(project),
       renameForm: editor?.project?.id === project.id ? { name, error, validationAttempt, saving, change: setName, submit, cancel: closeEditor } : null,

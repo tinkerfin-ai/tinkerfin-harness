@@ -1057,7 +1057,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
       await expect(tooltip).toBeVisible()
 
       if (width === 768) {
-        const labels = ['打开侧边栏', '选择项目', '会话', '技能库', '记忆管理', '自动化', '搜索会话', '新会话']
+        const labels = ['打开侧边栏', '选择项目', '会话', '技能库', '记忆管理', '定时任务', '搜索会话', '新会话']
         for (const label of labels) {
           await rail.getByRole('button', { name: label, exact: true }).hover()
           await expect(page.getByRole('tooltip', { name: label, exact: true })).toBeVisible()
