@@ -27,10 +27,10 @@ export const fetchRunCalendar = async (params: Record<string, string | undefined
   return result.days.map(day => ({ ...day, items: day.items.map(presentRun) }))
 }
 export const saveTask = async (projectId: string, draft: AutomationDraft, requestId: string, task: AutomationTask | undefined, signal: AbortSignal) => {
-  const { name, prompt, schedule, modelId, accessMode, attachments, startsOn, endsOn } = draft
+  const { name, prompt, schedule, modelId, attachments, startsOn, endsOn } = draft
   return taskView(await requestJson<TaskResponse>(path(task ? `tasks/${encodeURIComponent(task.id)}` : 'tasks', { projectId }), {
     method: task ? 'PUT' : 'POST', signal, suppressGlobalError: true,
-    body: { requestId, expectedRevision: task?.revision ?? null, configuration: { projectId, name, prompt, schedule, modelId, accessMode, attachments, startsOn: startsOn || null, endsOn: endsOn || null } },
+    body: { requestId, expectedRevision: task?.revision ?? null, configuration: { projectId, name, prompt, schedule, modelId, attachments, startsOn: startsOn || null, endsOn: endsOn || null } },
   }))
 }
 export const commandTask = (task: AutomationTask, operation: 'pause' | 'enable', requestId: string, signal: AbortSignal) => requestJson<TaskResponse>(path(`tasks/${encodeURIComponent(task.id)}/${operation}`, { projectId: task.projectId }), { method: 'POST', signal, suppressGlobalError: true, body: { requestId, expectedRevision: task.revision } })
@@ -39,4 +39,5 @@ export const fetchRunDetail = (projectId: string, id: string, signal: AbortSigna
 
 export const fetchActiveRunPage = (cursor: string | undefined, signal: AbortSignal) => requestJson<Page<AutomationRunRecord>>(path('runs/active', { cursor }), { signal, suppressGlobalError: true })
 export const fetchRunStatus = (projectId: string, id: string, signal: AbortSignal) => requestJson<AutomationRunRecord>(path(`runs/${encodeURIComponent(id)}/status`, { projectId }), { signal, suppressGlobalError: true })
+export const fetchSubmission = (projectId: string, taskId: string, requestId: string, signal: AbortSignal) => requestJson<AutomationRunRecord | null>(path(`tasks/${encodeURIComponent(taskId)}/submission`, { projectId, requestId }), { signal, suppressGlobalError: true })
 export const executeTask = (task: AutomationTask, requestId: string, signal: AbortSignal) => requestJson<AutomationRunRecord>(path(`tasks/${encodeURIComponent(task.id)}/run`, { projectId: task.projectId }), { method: 'POST', signal, suppressGlobalError: true, body: { requestId, expectedRevision: task.revision } })

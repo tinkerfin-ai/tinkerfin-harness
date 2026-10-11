@@ -381,7 +381,7 @@ class ConversationChatService:
         """完成 thread 解析、权威快照和短事务 run 注册"""
 
         if isinstance(request, CompactRequest):
-            existing = await self._repository.get_thread(
+            existing = await self._repository.get_accessible_thread(
                 user_id=self._user.user_id, thread_id=thread_id
             )
             if existing is None:
@@ -472,7 +472,7 @@ class ConversationChatService:
     async def cancel(self, *, thread_id: str, run_id: str) -> CancelRunResponse:
         """验证用户归属后请求并等待 durable run 取消"""
 
-        thread = await self._repository.get_thread(
+        thread = await self._repository.get_accessible_thread(
             user_id=self._user.user_id,
             thread_id=thread_id,
         )

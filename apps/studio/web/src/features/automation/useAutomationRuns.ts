@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { getResourceConnectionState, subscribeResourceChanges } from '../../api/notifications'
+import { getResourceConnectionState, subscribeResourceChanges, type ResourceChange } from '../../api/notifications'
 import { ApiError } from '../../api/shared/http'
 import { watchResource } from '../../api/shared/watchResource'
 import { getAuthorizationHeader, subscribeAuthSession } from '../../auth/session'
@@ -7,10 +7,10 @@ import { getServerAddress, subscribeServerAddress } from '../../api/shared/confi
 import type { ToastHandler } from '../../components/ui/ToastViewport'
 import { useI18n } from '../../i18n'
 import type { OpenRunConversation } from './useRunConversation'
-import { executeTask, fetchActiveRunPage, fetchRunStatus } from './api'
-import { isRunInProgress, runStatusLabels, type AutomationRunRecord, type AutomationTask, type RunStatus } from './model'
+import { executeTask, fetchActiveRunPage, fetchRunStatus, fetchSubmission } from './api'
+import { isRunAwaitingUpdate, isRunInProgress, runStatusLabels, type AutomationRunRecord, type AutomationTask, type RunStatus } from './model'
 
-interface Submission { task: AutomationTask; requestId: string; pending: boolean }
+interface Submission { task: AutomationTask; requestId: string; pending: boolean; epoch: number }
 export type TaskExecutionState = RunStatus | 'submitting' | 'uncertain'
 export interface AutomationRuns {
   states: ReadonlyMap<string, TaskExecutionState>
@@ -19,7 +19,7 @@ export interface AutomationRuns {
   refresh: () => void
 }
 
-/** 登录工作区拥有执行请求和状态；重连只刷新基线，完成提示必须来自在线事件 */
+/** 登录工作区确认本页提交并跟踪在线执行；重连只刷新基线，不补发离线完成提示 */
 export function useAutomationRuns(userId: number, projectIds: string[], onToast: ToastHandler | undefined, openConversation: OpenRunConversation): AutomationRuns {
   const { t } = useI18n()
   const latest = useRef({ projectIds, onToast, openConversation, t })
@@ -31,6 +31,7 @@ export function useAutomationRuns(userId: number, projectIds: string[], onToast:
     const runs = new Map<string, AutomationRunRecord>()
     const submissions = new Map<string, Submission>()
     const notified = new Set<string>()
+    const awaitingNotification = new Set<string>()
     const requests = new Set<AbortController>()
     const pending = new Map<string, { projectId: string; live: boolean }>()
     let identity = `${getServerAddress()}\n${getAuthorizationHeader()}`
@@ -51,20 +52,45 @@ export function useAutomationRuns(userId: number, projectIds: string[], onToast:
       if (previous && (Date.parse(previous.updatedAt) > Date.parse(run.updatedAt)
         || (previous.status !== 'queued' && run.status === 'queued')
         || (previous.status === 'cancel_requested' && run.status === 'running')
+        || ((previous.conversation.state === 'available' || previous.conversation.state === 'deleted')
+          && (run.conversation.state === 'pending' || run.conversation.state === 'not_created'))
         || (!isRunInProgress(previous) && isRunInProgress(run)))) return
       runs.set(run.id, run)
       const key = `${run.id}:${run.status}`
-      if (live && !isRunInProgress(run) && !notified.has(key)) {
+      if (live && !isRunInProgress(run) && !notified.has(key)) awaitingNotification.add(run.id)
+      // 在线终态先结束 loading；会话开放后再兑现提示，重连不会补弹离线结果
+      if (awaitingNotification.has(run.id) && !isRunInProgress(run) && run.conversation.state !== 'pending') {
+        awaitingNotification.delete(run.id)
         notified.add(key)
         if (notified.size > 1024) notified.delete(notified.values().next().value!)
         const { t, onToast, openConversation } = latest.current
         onToast?.(run.status === 'succeeded' ? 'success' : run.status === 'cancelled' ? 'info'
           : run.status === 'needs_attention' || run.status === 'interrupted' ? 'warning' : 'error',
         t('{name}：{status}', { name: run.name || t('自动化'), status: t(runStatusLabels[run.status]) }),
-        run.conversation.state !== 'not_created' ? { label: t('查看关联会话'), onSelect: () => { void openConversation(run) } } : undefined)
+        run.conversation.state === 'available' || run.conversation.state === 'deleted'
+          ? { label: t('查看关联会话'), onSelect: () => { void openConversation(run) } } : undefined)
       }
-      const completed = [...runs.values()].filter(item => !isRunInProgress(item))
+      const completed = [...runs.values()].filter(item => !isRunAwaitingUpdate(item))
       for (const item of completed.slice(0, Math.max(0, completed.length - 256))) runs.delete(item.id)
+    }
+    const confirmSubmission = (submission: Submission, run: AutomationRunRecord) => {
+      // 回执与 POST 只确认它们所属的提交，迟到回复不能释放同一任务的新请求
+      if (submissions.get(submission.task.id) !== submission) return
+      submissions.delete(submission.task.id)
+      accept(run, submission.epoch === epoch && !document.hidden)
+      if (isRunInProgress(runs.get(run.id) ?? run)) latest.current.onToast?.('info', latest.current.t('已加入运行队列'))
+    }
+    const changedRun = (change: ResourceChange) => {
+      if (change.topic === 'automation.execution.changed' && change.scope.namespace === 'studio_automation') {
+        const projectId = latest.current.projectIds.find(id => change.scope.owner_id === `${userId}:${id}`)
+        return projectId ? { id: change.key, projectId, live: online } : null
+      }
+      const { automation_execution_id: id, automation_project_id: projectId } = change.details
+      if (change.topic === 'studio.conversation.changed' && change.scope.namespace === `ns_${userId}`
+        && typeof id === 'string' && typeof projectId === 'string' && latest.current.projectIds.includes(projectId)) {
+        return { id, projectId, live: false }
+      }
+      return null
     }
     const release = subscribeResourceChanges(notice => {
       if (notice.kind === 'connection' || notice.kind === 'resync') {
@@ -72,18 +98,20 @@ export function useAutomationRuns(userId: number, projectIds: string[], onToast:
         epoch += 1
         baseline = true
         pending.clear()
-      } else if (notice.change.topic === 'automation.execution.changed' && notice.change.scope.namespace === 'studio_automation') {
-        const projectId = latest.current.projectIds.find(id => notice.change.scope.owner_id === `${userId}:${id}`)
-        if (projectId) pending.set(notice.change.key, { projectId, live: online })
+        awaitingNotification.clear()
+      } else {
+        const change = changedRun(notice.change)
+        if (change) pending.set(change.id, { projectId: change.projectId, live: change.live || pending.get(change.id)?.live === true })
       }
     })
     const watch = watchResource({
-      matches: change => change.topic === 'automation.execution.changed'
-        && latest.current.projectIds.some(id => change.scope.owner_id === `${userId}:${id}`),
+      matches: change => changedRun(change) !== null,
       read: async signal => {
         const readEpoch = epoch
         const changes = new Map(pending)
+        const unconfirmed = [...submissions.values()]
         const values: Array<{ run: AutomationRunRecord; live: boolean }> = []
+        const receipts: Array<{ submission: Submission; run: AutomationRunRecord }> = []
         if (baseline) {
           let cursor: string | undefined
           const active = new Set<string>()
@@ -92,57 +120,64 @@ export function useAutomationRuns(userId: number, projectIds: string[], onToast:
             for (const run of page.items) { active.add(run.id); values.push({ run, live: false }) }
             cursor = page.nextCursor ?? undefined
           } while (cursor && !signal.aborted)
-          for (const run of runs.values()) if (isRunInProgress(run) && !active.has(run.id) && !changes.has(run.id)) changes.set(run.id, { projectId: run.projectId, live: false })
+          for (const run of runs.values()) if (isRunAwaitingUpdate(run) && !active.has(run.id) && !changes.has(run.id)) changes.set(run.id, { projectId: run.projectId, live: false })
         } else {
-          for (const run of runs.values()) if (isRunInProgress(run) && !changes.has(run.id)) changes.set(run.id, { projectId: run.projectId, live: false })
+          for (const run of runs.values()) if (isRunAwaitingUpdate(run) && !changes.has(run.id)) changes.set(run.id, { projectId: run.projectId, live: false })
         }
         for (const [id, change] of changes) {
           if (signal.aborted) break
           values.push({ run: await fetchRunStatus(change.projectId, id, signal), live: change.live })
         }
-        return { values, readEpoch, changes }
+        for (const submission of unconfirmed) {
+          if (signal.aborted) break
+          const run = await fetchSubmission(submission.task.projectId, submission.task.id, submission.requestId, signal)
+          if (run) receipts.push({ submission, run })
+        }
+        return { values, receipts, readEpoch, changes }
       },
-      update: ({ values, readEpoch, changes }) => {
+      update: ({ values, receipts, readEpoch, changes }) => {
         if (readEpoch !== epoch) return
         baseline = false
         // 只有成功应用的同周期查询才能消费事件，读取期间的新事件保留下一轮
         for (const [id, change] of changes) if (pending.get(id) === change) pending.delete(id)
         for (const { run, live } of values) accept(run, live)
+        for (const { submission, run } of receipts) confirmSubmission(submission, run)
         setSyncError(false); publish()
       },
-      refreshWhile: () => [...runs.values()].some(isRunInProgress),
+      refreshWhile: () => submissions.size > 0 || [...runs.values()].some(isRunAwaitingUpdate),
       onError: () => { baseline = true; setSyncError(true) },
     })
     const reset = () => {
       identity = `${getServerAddress()}\n${getAuthorizationHeader()}`
       epoch += 1; baseline = true; online = false
       requests.forEach(request => request.abort()); requests.clear()
-      runs.clear(); pending.clear(); submissions.clear(); notified.clear(); publish()
+      runs.clear(); pending.clear(); submissions.clear(); notified.clear(); awaitingNotification.clear(); publish()
     }
     const releaseAuth = subscribeAuthSession(() => {
       if (identity !== `${getServerAddress()}\n${getAuthorizationHeader()}`) reset()
     })
     const releaseServer = subscribeServerAddress(reset)
-    const visibility = () => { epoch += 1; baseline = true; pending.clear(); online = false }
+    const visibility = () => { epoch += 1; baseline = true; pending.clear(); awaitingNotification.clear(); online = false }
     document.addEventListener('visibilitychange', visibility)
     actions.current = {
       refresh: watch.refresh,
       execute: async task => {
         if (closed || submissions.get(task.id)?.pending || (!submissions.has(task.id) && [...runs.values()].some(run => run.taskId === task.id && isRunInProgress(run)))) return
         // 未确认提交重用完整原命令；即使用户已编辑任务，也不能将同一请求 ID 配给新内容
-        const submission = submissions.get(task.id) ?? { task: structuredClone(task), requestId: crypto.randomUUID(), pending: false }
-        submission.pending = true; submissions.set(task.id, submission); publish()
-        const controller = new AbortController(), submittedEpoch = epoch
+        const submission = submissions.get(task.id) ?? { task: structuredClone(task), requestId: crypto.randomUUID(), pending: false, epoch }
+        submission.pending = true; submission.epoch = epoch; submissions.set(task.id, submission); publish()
+        const controller = new AbortController()
         requests.add(controller)
+        const current = () => !closed && !controller.signal.aborted && submissions.get(task.id) === submission
         try {
-          const run = await executeTask(submission.task, submission.requestId, controller.signal)
-          if (closed || controller.signal.aborted) return
-          submissions.delete(task.id)
-          accept(run, submittedEpoch === epoch && !document.hidden)
-          if (isRunInProgress(runs.get(run.id) ?? run)) latest.current.onToast?.('info', latest.current.t('已加入运行队列'))
+          const response = executeTask(submission.task, submission.requestId, controller.signal)
+          watch.refresh()
+          const run = await response
+          if (!current()) return
+          confirmSubmission(submission, run)
           watch.refresh()
         } catch (error) {
-          if (closed || controller.signal.aborted) return
+          if (!current()) return
           submission.pending = false
           if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
             submissions.delete(task.id)

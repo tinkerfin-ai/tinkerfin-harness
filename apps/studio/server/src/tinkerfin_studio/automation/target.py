@@ -215,7 +215,6 @@ class StudioAutomationTarget:
                 model_config=model,
                 search_service=search_service,
                 image_service=image_service,
-                access_mode=config.access_mode,
             )
             prepared, conversation = await register_conversation(
                 self._resources,
@@ -243,7 +242,7 @@ class StudioAutomationTarget:
                     thread_pk=conversation.thread.id,
                     user_id=user_id,
                     project_id=config.project_id,
-                    title_text="",
+                    title_text=config.prompt,
                     model=model,
                     search_service=search_service,
                     image_service=image_service,

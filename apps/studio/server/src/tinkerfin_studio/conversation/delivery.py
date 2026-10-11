@@ -65,6 +65,8 @@ class ConversationAdmission:
             self._resources.conversation_trace.ensure(
                 thread_pk=self._thread_pk, identity=self._identity
             )
+        if self._registered.automation_execution_id is not None:
+            self._resources.automation_publications.wake()
 
     async def release(self) -> None:
         """清理未受理的本次登记，不保留已结束的请求会话"""

@@ -23,7 +23,6 @@ from tinkerfin_automation import (
 )
 from tinkerfin_automation.schedules import ScheduleSpec
 from tinkerfin_contracts.media import Attachment
-from tinkerfin_studio.agent.access import AccessMode
 
 ZONE = ZoneInfo("Asia/Shanghai")
 TimeText = Annotated[str, Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")]
@@ -120,7 +119,6 @@ class TaskConfiguration(Boundary):
     starts_on: date | None = None
     ends_on: date | None = None
     model_id: str = Field(min_length=1, max_length=64)
-    access_mode: AccessMode = "full"
     attachments: list[str] = Field(default_factory=list, max_length=5)
 
     @field_validator("name", "prompt", "model_id")
@@ -262,9 +260,9 @@ class RunConversation(Boundary):
 
 
 class UnavailableRunConversation(Boundary):
-    """区分已删除的会话与执行准备阶段尚未创建的会话"""
+    """区分已删除、执行中尚未开放与准备阶段尚未创建的会话"""
 
-    state: Literal["deleted", "not_created"]
+    state: Literal["deleted", "not_created", "pending"]
 
 
 class RunView(Boundary):

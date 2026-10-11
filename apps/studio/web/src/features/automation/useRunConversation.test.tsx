@@ -22,12 +22,12 @@ it('读取会话当前位置后准备目标草稿并导航，不使用详情中�
   expect(open).toHaveBeenCalledWith(target)
 })
 
-it.each(['deleted', 'not_created'] as const)('会话 %s 显示准确全局提示且不改变草稿或导航', async state => {
+it.each(['deleted', 'not_created', 'pending'] as const)('会话 %s 显示准确全局提示且不改变草稿或导航', async state => {
   vi.mocked(fetchRunStatus).mockResolvedValue(runFixture({ conversation: { state } }))
   const open = vi.fn(), toast = vi.fn(), draft = vi.fn(() => true)
   const { result } = renderHook(() => useRunConversation(open, toast))
   await act(async () => { expect(await result.current(runFixture(), { prepareDraft: draft })).toBe(false) })
-  expect(toast).toHaveBeenCalledExactlyOnceWith('error', state === 'deleted' ? '关联会话已删除' : '关联会话尚未创建')
+  expect(toast).toHaveBeenCalledExactlyOnceWith('error', state === 'deleted' ? '关联会话已删除' : state === 'pending' ? '关联会话尚未开放' : '关联会话尚未创建')
   expect(open).not.toHaveBeenCalled(); expect(draft).not.toHaveBeenCalled()
 })
 

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { fetchRunCalendar, fetchRunPage, fetchTaskPage, type Page } from './api'
 import { watchResource } from '../../api/shared/watchResource'
-import { dateBoundary, isRunInProgress, shiftDate, type AutomationRun, type AutomationTask } from './model'
+import { dateBoundary, isRunAwaitingUpdate, shiftDate, type AutomationRun, type AutomationTask } from './model'
 
 interface Snapshot {
   tasks: AutomationTask[]
@@ -58,7 +58,10 @@ export function useAutomation({ projectId, page, query, status, dates, view, onL
     }, signal)
     const start = () => {
       watch = watchResource({
-        matches: change => change.topic === (page === 'tasks' ? 'automation.task.changed' : 'automation.execution.changed'),
+        matches: change => change.topic === (page === 'tasks' ? 'automation.task.changed' : 'automation.execution.changed')
+          || (page === 'history' && change.topic === 'studio.conversation.changed'
+            && (change.details.automation_project_id === projectId
+              || value.runs.some(run => run.conversation.state === 'available' && run.conversation.threadId === change.key))),
         read: async signal => {
           pagination?.abort()
           baseline = null
@@ -77,7 +80,7 @@ export function useAutomation({ projectId, page, query, status, dates, view, onL
             cursors: Object.fromEntries(groups.map(group => [group.date, group.nextCursor])), loading: false }
         },
         update: (next, signal) => { baseline = signal; publish(next) },
-        refreshWhile: next => next.runs.some(isRunInProgress),
+        refreshWhile: next => next.runs.some(isRunAwaitingUpdate),
         onError: fail,
       })
     }

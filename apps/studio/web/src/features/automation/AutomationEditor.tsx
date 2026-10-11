@@ -2,7 +2,6 @@ import { ChevronDown, Paperclip, X } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 
 import { Button, DatePicker, Dialog, IconButton, TextField, TimePicker, ValidatedForm, ViewTabs } from '../../components/ui'
-import { AccessModePicker } from '../../components/AccessModePicker'
 import { ApiError } from '../../api/shared/http'
 import { uploadAttachment } from '../conversation/attachments/client'
 import { saveTask } from './api'
@@ -176,16 +175,13 @@ export function AutomationEditor({ projectId, task, trigger, onSave, onClose, de
       </fieldset>}
       {panel === 'validity' && <fieldset id={`${id}-validity`} className="automation-config-panel">
         <legend className="visually-hidden">{t('有效期')}</legend>
+        <p className="automation-caption">{t('手动运行不受计划有效期限制')}</p>
         <div className="automation-config-fields">
           <div className="automation-labeled-control"><span>{t('开始日期')}</span><DatePicker value={draft.startsOn} label={t('开始日期')} onChange={(date) => update('startsOn', date)} /></div>
           <div className="automation-labeled-control"><span>{t('结束日期')}</span><DatePicker value={draft.endsOn} label={t('结束日期')} onChange={(date) => update('endsOn', date)} /></div>
         </div>
         <div className="automation-config-footer"><Button type="button" variant="ghost" onClick={() => setDraft((current) => ({ ...current, startsOn: '', endsOn: '' }))}>{t('清除日期')}</Button><Button type="button" variant="ghost" onClick={() => setPanel(null)}>{t('完成')}</Button></div>
       </fieldset>}
-      <details className="automation-advanced"><summary><span>{t('更多设置')}</span><ChevronDown size={14} aria-hidden="true" /></summary>
-        <div className="automation-permission"><span>{t('访问权限')}</span><AccessModePicker value={draft.accessMode} onChange={value => update('accessMode', value)} disabled={saving || uncertain} /></div>
-        <p className="automation-caption">{t('手动运行不受计划有效期限制；需要人工处理时自动化将结束')}</p>
-      </details>
       </fieldset>
       <div className="automation-form-footer">
         <Button type="button" variant="ghost" disabled={saving} onClick={onClose}>{t('取消')}</Button><Button type="submit" variant="primary" loading={saving} disabled={uploading}>{t(task ? '保存修改' : '创建任务')}</Button>

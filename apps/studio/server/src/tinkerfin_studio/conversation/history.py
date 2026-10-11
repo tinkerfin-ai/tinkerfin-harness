@@ -651,7 +651,7 @@ class ConversationHistoryService:
         )
 
     async def _require_thread(self, thread_id: str) -> ConversationThread:
-        thread = await self._repository.get_thread(
+        thread = await self._repository.get_accessible_thread(
             user_id=self._user_id,
             thread_id=thread_id,
         )

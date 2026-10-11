@@ -11,7 +11,7 @@ import { AttachmentReferenceContext } from '../conversation/attachments/context'
 import { messageText, type Attachment } from '../conversation/attachments/content'
 import { fetchRunDetail, type RunDetail } from './api'
 import { watchResource } from '../../api/shared/watchResource'
-import { isRunInProgress, presentRun, type AutomationRun, type AutomationRunRecord } from './model'
+import { isRunAwaitingUpdate, isRunInProgress, presentRun, type AutomationRun, type AutomationRunRecord } from './model'
 import { RunStatus } from './AutomationHistory'
 
 export type OpenAutomationConversation = (run: Pick<AutomationRunRecord, 'id' | 'projectId'>, attachment?: Attachment, signal?: AbortSignal) => Promise<boolean>
@@ -44,10 +44,11 @@ export function AutomationRunDialog({ projectId, run, trigger, onToast, onClose,
         (change.topic === 'automation.execution.changed' && change.key === run.id)
         || (change.topic === 'studio.attachments.changed' && change.details.collection_id === run.id)
         || (change.topic === 'trace.changed' && (!observed || change.key === observed.threadId))
-        || (change.topic === 'studio.conversation.changed' && change.key === observed?.threadId)
+        || (change.topic === 'studio.conversation.changed'
+          && (change.key === observed?.threadId || change.details.automation_execution_id === run.id))
       ),
       read: signal => fetchRunDetail(projectId, run.id, signal),
-      refreshWhile: isRunInProgress,
+      refreshWhile: isRunAwaitingUpdate,
       update: result => { observed = result; setDetail(result); setFailure(false) },
       onError: () => {
         setFailure(true)
@@ -59,6 +60,7 @@ export function AutomationRunDialog({ projectId, run, trigger, onToast, onClose,
   useEffect(() => () => navigationRequest.current?.abort(), [])
   const current = detail ? presentRun(detail) : run
   const active = isRunInProgress(current)
+  const conversationUnavailable = !detail || detail.conversation.state === 'not_created' || detail.conversation.state === 'pending'
   const answers = detail?.messages.filter(message => message.role === 'assistant').map(message => ({ id: message.id, text: messageText(message.content) })).filter(message => message.text.trim()) ?? []
   const content = answers.map(message => message.text).join('\n\n')
   const copyLabel = t(copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制完整回答')
@@ -106,14 +108,15 @@ export function AutomationRunDialog({ projectId, run, trigger, onToast, onClose,
       <aside className="automation-result-files ui-scrollbar" role="region" aria-labelledby={filesId} tabIndex={0}>
         <header className="automation-result-section-head"><h3 id={filesId} ref={filesHeading} tabIndex={-1}><Files size={17} aria-hidden="true" />{t('交付物')}<span className="automation-result-count">{detail?.outputFiles.length ?? 0}</span></h3></header>
         {!detail ? !failure && <FeedbackState kind="loading" title={t('正在加载运行结果')} /> : detail.outputFiles.length ?
-          <AttachmentReferenceContext.Provider value={attachment => { void openConversation(attachment) }}>
+          <AttachmentReferenceContext.Provider value={detail.conversation.state === 'available' ? attachment => { void openConversation(attachment) } : null}>
             <AttachmentList attachments={detail.outputFiles} />
           </AttachmentReferenceContext.Provider> : active ? <FeedbackState kind="loading" compact title={t('交付物正在准备中')} /> : <p className="automation-result-empty">{t('本次未生成交付物')}</p>}
       </aside>
     </div>
     <footer className="automation-result-footer">
-      <Button type="button" variant="primary" size="lg" loading={opening} disabled={!detail || detail.conversation.state === 'not_created'}
-        tooltip={detail?.conversation.state === 'not_created' ? t('关联会话尚未创建') : undefined}
+      <Button type="button" variant="primary" size="xs" loading={opening} disabled={conversationUnavailable}
+        tooltip={detail?.conversation.state === 'not_created' ? t('关联会话尚未创建')
+          : detail?.conversation.state === 'pending' ? t('关联会话尚未开放') : undefined}
         trailingIcon={<ArrowUpRight size={18} />} onClick={() => { void openConversation() }}>{t('查看关联会话')}</Button>
     </footer>
   </Dialog>

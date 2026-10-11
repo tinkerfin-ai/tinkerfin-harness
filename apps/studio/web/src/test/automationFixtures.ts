@@ -1,6 +1,6 @@
 import { presentRun, shiftDate, type AutomationRun, type AutomationRunRecord, type AutomationTask } from '../features/automation/model'
 export const taskFixture = (overrides: Partial<AutomationTask> = {}): AutomationTask => ({projectId: 'project-1',
-  id: 'news', name: '每日 AI 新闻简报', prompt: '整理新闻', modelId: 'main', accessMode: 'full',
+  id: 'news', name: '每日 AI 新闻简报', prompt: '整理新闻', modelId: 'main',
   schedule: { kind: 'daily', time: '09:00' }, startsOn: '', endsOn: '', enabled: true,
   attachments: [], inputFiles: [], revision: 1, nextRunAt: '2026-09-11T01:00:00Z', ...overrides,
 })

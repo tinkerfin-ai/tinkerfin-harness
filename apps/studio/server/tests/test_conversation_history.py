@@ -92,6 +92,7 @@ async def test_preparing_conversations_do_not_fill_history_pages(
         thread.pinned = pinned and index > 0
         if index < 3:
             thread.last_run_id = f"run-{index}"
+            thread.published_at = thread.created_at
     await repository.commit()
     service = _service(repository, tracer=Tracer())
     first = await service.list_history(

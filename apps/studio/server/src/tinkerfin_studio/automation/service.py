@@ -16,6 +16,7 @@ from tinkerfin_automation import (
     AutomationExecution,
     AutomationTask,
     ExecutionFilter,
+    ExecutionOrigin,
     ExecutionStatus,
     TaskFilter,
     TaskStatus,
@@ -212,6 +213,7 @@ class StudioAutomationService:
                     ConversationThread.project_id,
                     ConversationThread.deleted_at,
                     ConversationThread.last_run_id,
+                    ConversationThread.published_at,
                 )
                 .join(
                     ConversationThread,
@@ -230,8 +232,17 @@ class StudioAutomationService:
                 if deleted_at is not None
                 else UnavailableRunConversation(state="not_created")
                 if last_run_id is None
+                else UnavailableRunConversation(state="pending")
+                if published_at is None
                 else RunConversation(thread_id=thread_id, project_id=project_id)
-                for execution_id, thread_id, project_id, deleted_at, last_run_id in rows
+                for (
+                    execution_id,
+                    thread_id,
+                    project_id,
+                    deleted_at,
+                    last_run_id,
+                    published_at,
+                ) in rows
             }
         return [
             run_view(run).model_copy(
@@ -249,6 +260,30 @@ class StudioAutomationService:
         """读取本人执行状态和会话位置，不加载消息或文件"""
         run = (await self._automation.get_run(execution_id)).snapshot
         return (await self._run_views([run]))[0]
+
+    async def submission(self, task_id: str, request_id: str) -> RunView | None:
+        """按原提交标识确认手动执行，不重发命令或推断执行 ID
+
+        读取框架已提交回执只确定本次请求的执行身份；状态仍从权威执行读取。
+        任务被删除后仍可确认原提交，其他用户或项目的回执不可访问。
+        """
+        receipt = await self._resources.automation_store.get_command_receipt(
+            NAMESPACE, automation_owner(self._user_id, self._project_id), request_id
+        )
+        if receipt is None:
+            return None
+        execution = receipt.result
+        if (
+            not isinstance(execution, AutomationExecution)
+            or execution.task_id != task_id
+            or execution.origin != ExecutionOrigin.MANUAL
+            or execution.status != ExecutionStatus.QUEUED
+            or execution.target != TARGET
+            or execution.owner_id != automation_owner(self._user_id, self._project_id)
+            or execution.namespace != NAMESPACE
+        ):
+            raise BusinessException(AutomationErrorCode.INVALID_CONFIGURATION)
+        return await self.status(execution.execution_id)
 
     async def _task_view(self, task: AutomationTask) -> TaskView:
         config = task_configuration(task)

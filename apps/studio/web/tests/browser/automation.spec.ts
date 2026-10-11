@@ -2,7 +2,7 @@ import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { createAutomationFixture, runCalendarFixture, runFixture, taskFixture } from '../../src/test/automationFixtures'
-import type { AutomationDraft } from '../../src/features/automation/model'
+import type { AutomationDraft, AutomationRunRecord } from '../../src/features/automation/model'
 
 const user = { user_id: 1, username: 'automation-preview', avatar_url: null, roles: [], disabled: false }
 
@@ -17,10 +17,37 @@ const menuAppearance = (menu: Locator) => Promise.all([
   }),
 ])
 
+async function dialogMeasurements(dialog: Locator, titleName: string, actionName: string) {
+  const frame = (await dialog.boundingBox())!
+  const border = await dialog.evaluate(element => {
+    const style = getComputedStyle(element)
+    return { top: parseFloat(style.borderTopWidth), left: parseFloat(style.borderLeftWidth),
+      right: parseFloat(style.borderRightWidth), bottom: parseFloat(style.borderBottomWidth) }
+  })
+  const title = (await dialog.getByRole('heading', { name: titleName, exact: true }).boundingBox())!
+  const close = (await dialog.getByRole('button', { name: '关闭对话框', exact: true }).boundingBox())!
+  const action = dialog.getByRole('button', { name: actionName, exact: true })
+  const actionBox = (await action.boundingBox())!
+  return {
+    titleLeft: title.x - frame.x - border.left,
+    closeRight: frame.x + frame.width - border.right - close.x - close.width,
+    closeTop: close.y - frame.y - border.top,
+    closeSize: [close.width, close.height],
+    actionRight: frame.x + frame.width - border.right - actionBox.x - actionBox.width,
+    actionBottom: frame.y + frame.height - border.bottom - actionBox.y - actionBox.height,
+    actionHeight: actionBox.height,
+    actionStyle: await action.evaluate(element => {
+      const style = getComputedStyle(element)
+      return [style.fontSize, style.lineHeight, style.paddingInline, style.borderRadius]
+    }),
+  }
+}
+
 async function prepare(page: Page, language = 'zh-CN') {
   const requests: string[] = []
   const state = createAutomationFixture()
   const operations = new Map<string, unknown>()
+  const submissions = new Map<string, string>()
   await page.clock.setFixedTime(new Date('2026-09-10T07:00:00Z'))
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.addInitScript(({ user, language }) => {
@@ -43,8 +70,13 @@ async function prepare(page: Page, language = 'zh-CN') {
     else if (path === '/api/skills/installations') data = []
     else if (path === '/api/conversation/history') data = { items: [], nextCursor: null }
     else if (path === '/api/automation/tasks' && method === 'GET') data = { items: matchingTasks.filter(task => !status || task.enabled === (status === 'enabled')), nextCursor: null }
+    else if (/^\/api\/automation\/tasks\/[^/]+\/submission$/.test(path) && method === 'GET') {
+      const runId = submissions.get(url.searchParams.get('requestId') ?? '')
+      data = state.runs.find(run => run.id === runId && run.taskId === path.split('/')[4]) ?? null
+    }
     else if (path === '/api/automation/tasks' && method === 'POST') {
       const command: { requestId: string; configuration: AutomationDraft } = route.request().postDataJSON()
+      expect(command.configuration).not.toHaveProperty('accessMode')
       if (operations.has(command.requestId)) data = operations.get(command.requestId)
       else {
         data = taskFixture({ ...command.configuration, inputFiles: [], id: `created-${state.tasks.length}` })
@@ -68,6 +100,7 @@ async function prepare(page: Page, language = 'zh-CN') {
       else if (operation === 'run') {
         const run = runFixture({ id: `manual-${state.runs.length}`, taskId: id, name: task.name, queuedAt: '2026-09-10T07:00:00Z', startedAt: null, finishedAt: null, status: 'queued', trigger: 'manual' })
         state.runs.push(run); data = run; operations.set(command.requestId, data)
+        submissions.set(command.requestId, run.id)
       } else { task.enabled = operation === 'enable'; task.revision += 1; data = task; operations.set(command.requestId, data) }
     } else if (path.startsWith('/api/automation/tasks/') && method === 'PUT') {
       const command: { configuration: AutomationDraft } = route.request().postDataJSON()
@@ -111,8 +144,10 @@ test('自动化通过任务接口保存和运行，历史只读且删除保留�
   await page.getByRole('button', { name: '新建自动化', exact: true }).click()
   await page.getByRole('textbox', { name: '任务名称' }).fill('浏览器任务')
   await page.getByRole('textbox', { name: '任务指令' }).fill('整理今天的公开新闻')
-  await page.getByText('更多设置', { exact: true }).click()
-  await expect(page.getByRole('button', { name: '选择访问权限' })).toContainText('完全访问')
+  await expect(page.getByText('更多设置', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '选择访问权限' })).toHaveCount(0)
+  await page.getByRole('button', { name: '有效期 长期有效', exact: true }).click()
+  await expect(page.getByText('手动运行不受计划有效期限制', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '创建任务', exact: true }).click()
   await expect(page.getByRole('button', { name: '浏览器任务', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '批量选择' }).click()
@@ -616,7 +651,7 @@ test('状态筛选独立于搜索，关闭搜索保留筛选且切换视图重�
   expect(requests.filter(request => /\/automation\/(tasks|runs)\/counts/.test(request))).toEqual([])
 })
 
-test('会话与自动化默认完全访问，权限选择沿用模型样式', async ({ page }, testInfo) => {
+test('普通会话默认完全访问，权限选择沿用模型样式', async ({ page }, testInfo) => {
   await prepare(page)
   await page.locator('[aria-keyshortcuts~="Meta+K"]').click()
   const access = page.getByRole('button', { name: '选择访问权限' })
@@ -638,30 +673,40 @@ test('会话与自动化默认完全访问，权限选择沿用模型样式', as
 })
 
 
-test('触控环境的会话与自动化权限按钮及选项达到44像素', async ({ browser, baseURL }) => {
+test('触控环境保留普通会话权限选择，自动化创建与详情操作达到44像素', async ({ browser, baseURL }) => {
   const context = await browser.newContext({ baseURL, hasTouch: true, viewport: { width: 390, height: 844 } })
   try {
     const page = await context.newPage()
     await prepare(page)
-    for (const location of ['conversation', 'automation']) {
-      await page.getByRole('button', { name: '打开导航', exact: true }).click()
-      if (location === 'conversation') {
-        await page.locator('[aria-keyshortcuts~="Meta+K"]').click()
-        await page.getByRole('button', { name: '关闭导航', exact: true }).click()
-      } else {
-        await page.getByRole('button', { name: '自动化', exact: true }).click()
-        await page.getByRole('button', { name: '新建自动化', exact: true }).click()
-        await page.getByText('更多设置', { exact: true }).click()
-      }
-      const access = page.getByRole('button', { name: '选择访问权限' })
-      const box = await access.boundingBox()
+    await page.getByRole('button', { name: '打开导航', exact: true }).click()
+    await page.locator('[aria-keyshortcuts~="Meta+K"]').click()
+    await page.getByRole('button', { name: '关闭导航', exact: true }).click()
+    const access = page.getByRole('button', { name: '选择访问权限' })
+    const box = await access.boundingBox()
+    expect(box!.width).toBeGreaterThanOrEqual(44)
+    expect(box!.height).toBeGreaterThanOrEqual(44)
+    await access.tap()
+    for (const option of await page.getByRole('option').all()) {
+      expect((await option.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    }
+    await page.getByRole('option', { name: '完全访问' }).tap()
+    await page.getByRole('button', { name: '打开导航', exact: true }).click()
+    await page.getByRole('button', { name: '自动化', exact: true }).click()
+    await page.getByRole('button', { name: '新建自动化', exact: true }).click()
+    const editor = page.getByRole('dialog', { name: '新建自动化', exact: true })
+    await expect(editor.getByRole('button', { name: '选择访问权限' })).toHaveCount(0)
+    for (const name of ['创建任务', '关闭对话框']) {
+      const box = await editor.getByRole('button', { name, exact: true }).boundingBox()
       expect(box!.width).toBeGreaterThanOrEqual(44)
       expect(box!.height).toBeGreaterThanOrEqual(44)
-      await access.tap()
-      for (const option of await page.getByRole('option').all()) {
-        expect((await option.boundingBox())!.height).toBeGreaterThanOrEqual(44)
-      }
-      await page.getByRole('option', { name: '完全访问' }).tap()
+    }
+    await editor.getByRole('button', { name: '关闭对话框', exact: true }).tap()
+    await page.getByRole('button', { name: /查看运行：每日 AI 新闻简报/ }).first().tap()
+    const detail = page.getByRole('dialog', { name: '每日 AI 新闻简报', exact: true })
+    for (const name of ['查看关联会话', '关闭对话框']) {
+      const box = await detail.getByRole('button', { name, exact: true }).boundingBox()
+      expect(box!.width).toBeGreaterThanOrEqual(44)
+      expect(box!.height).toBeGreaterThanOrEqual(44)
     }
   } finally { await context.close() }
 })
@@ -816,15 +861,44 @@ test('运行详情区分完整回答和交付物，复用附件预览并在会�
   await expect(page.getByRole('dialog', { name: '趋势图.svg', exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(image).toBeFocused()
+  const measurements: unknown[] = []
   for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 })
     await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
     await expect(dialog.getByRole('button', { name: '查看关联会话', exact: true })).toBeInViewport()
+    const detailSize = await dialogMeasurements(dialog, run.name, '查看关联会话')
+    const answerPadding = await dialog.getByRole('region', { name: '结果', exact: true }).evaluate(element => getComputedStyle(element).paddingInline)
+    const filesPadding = await dialog.getByRole('region', { name: /^交付物/ }).evaluate(element => getComputedStyle(element).paddingInline)
+    expect(answerPadding).toBe(`${detailSize.titleLeft}px`)
+    expect(filesPadding).toBe(`${detailSize.titleLeft}px`)
+    if (width < 768) {
+      expect(await dialog.getByRole('navigation', { name: '详情分区' }).evaluate(element => getComputedStyle(element).paddingInline)).toBe(answerPadding)
+    }
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
     await page.screenshot({ path: info.outputPath(`run-detail-${theme}-${width}.png`) })
+    await dialog.getByRole('button', { name: '关闭对话框', exact: true }).click()
+    await page.getByRole('button', { name: '新建自动化', exact: true }).click()
+    const editor = page.getByRole('dialog', { name: '新建自动化', exact: true })
+    const editorSize = await dialogMeasurements(editor, '新建自动化', '创建任务')
+    expect(detailSize).toEqual(editorSize)
+    measurements.push({ theme, width, detail: detailSize, editor: editorSize })
+    await page.screenshot({ path: info.outputPath(`automation-editor-${theme}-${width}.png`) })
+    await editor.getByRole('button', { name: '关闭对话框', exact: true }).click()
+    await page.getByRole('button', { name: /查看运行：每日 AI 新闻简报，2026-09-10 09:00/ }).click()
+    await expect(preview).toBeVisible()
   }
+  await info.attach('dialog-measurements', { body: JSON.stringify(measurements, null, 2), contentType: 'application/json' })
   deleted = true
+  await dialog.getByRole('button', { name: '关闭对话框', exact: true }).click()
+  await page.unroute('**/api/automation/runs/run-2?*')
+  await page.route('**/api/automation/runs/run-2?*', route => route.fulfill({ json: { code: 0, message: 'success', data: {
+    ...run, conversation: { state: 'deleted' }, threadId: 'detail-thread', runId: 'detail-run', resultAvailable: true,
+    messages: [{ id: 'answer', role: 'assistant', content: answer }], outputFiles: files,
+  } } }))
+  await page.getByRole('button', { name: /查看运行：每日 AI 新闻简报，2026-09-10 09:00/ }).click()
   const url = page.url()
+  await expect(dialog.getByRole('button', { name: '查看关联会话', exact: true })).toBeEnabled()
+  await expect(dialog.getByRole('button', { name: /^引用附件：/ })).toHaveCount(0)
   await dialog.getByRole('button', { name: '查看关联会话', exact: true }).click()
   await expect(page.getByRole('list', { name: '系统提示' })).toContainText('关联会话已删除')
   await expect(dialog).toBeVisible()
@@ -833,4 +907,111 @@ test('运行详情区分完整回答和交付物，复用附件预览并在会�
   await preview.hover()
   await dialog.getByRole('button', { name: '下载附件：研究报告.md', exact: true }).click()
   expect((await download).suggestedFilename()).toBe('研究报告.md')
+})
+
+for (const state of ['pending', 'not_created'] as const) {
+  test(`关联会话 ${state} 时禁止跳转和引用，交付物仍可预览下载`, async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-09-10T07:00:00Z') })
+    await prepare(page)
+    await page.clock.pauseAt(new Date('2026-09-10T07:00:01Z'))
+    await page.clock.setSystemTime(new Date('2026-09-10T07:00:00Z'))
+    const run = createAutomationFixture().runs.find(item => item.id === 'run-2')!
+    let conversation: AutomationRunRecord['conversation'] = { state }
+    const file = { id: 'pending-file', name: '交付报告.md', mime_type: 'text/markdown', size_bytes: 32 }
+    let detailReads = 0
+    await page.route('**/api/automation/runs/run-2?*', route => {
+      detailReads += 1
+      return route.fulfill({ json: { code: 0, message: 'success', data: {
+        ...run, conversation, threadId: 'pending-thread', runId: 'pending-run', resultAvailable: true,
+        messages: [{ id: 'answer', role: 'assistant', content: '任务结果已保留' }], outputFiles: [file],
+      } } })
+    })
+    await page.route('**/api/attachments/pending-file/download-url?*', route => route.fulfill({
+      json: { code: 0, message: 'success', data: { url: 'https://files.example/pending-file', expires_in: 60 } },
+    }))
+    await page.route('https://files.example/pending-file', route => route.fulfill({
+      headers: { 'Access-Control-Allow-Origin': '*' }, contentType: 'text/markdown', body: '# 交付报告\n\n待公开时仍可阅读和下载',
+    }))
+    await page.getByRole('button', { name: /查看运行：每日 AI 新闻简报，2026-09-10 09:00/ }).click()
+    const dialog = page.getByRole('dialog', { name: run.name })
+    const open = dialog.getByRole('button', { name: '查看关联会话', exact: true })
+    await expect(open).toBeDisabled()
+    await expect(dialog.getByText('运行完成', { exact: true })).toBeVisible()
+    await expect(dialog.getByRole('button', { name: /^引用附件：/ })).toHaveCount(0)
+    const preview = dialog.getByRole('button', { name: '预览文档：交付报告.md', exact: true })
+    await preview.click()
+    await expect(page.getByRole('dialog', { name: '交付报告.md', exact: true }).getByText('待公开时仍可阅读和下载')).toBeVisible()
+    await expect(page.getByRole('button', { name: '引用附件', exact: true })).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(preview).toBeFocused()
+    const download = page.waitForEvent('download')
+    await preview.hover()
+    await dialog.getByRole('button', { name: '下载附件：交付报告.md', exact: true }).click()
+    expect((await download).suggestedFilename()).toBe(file.name)
+    const before = detailReads
+    await page.clock.fastForward(30_000)
+    if (state === 'pending') await expect.poll(() => detailReads).toBe(before + 1)
+    else expect(detailReads).toBe(before)
+    if (state === 'not_created') return
+    conversation = { state: 'available', projectId: 'project-1', threadId: 'pending-thread' }
+    await page.evaluate(() => window.emitResourceChange('studio.conversation.changed', 'pending-thread', {
+      scope: { namespace: 'ns_1', owner_id: null }, details: { automation_execution_id: 'run-2', automation_project_id: 'project-1' },
+    }))
+    await page.clock.runFor(2000)
+    await expect(open).toBeEnabled()
+    await expect(dialog.getByRole('button', { name: '引用附件：交付报告.md', exact: true })).toHaveCount(1)
+  })
+}
+
+test('匹配回执的权威终态早于 POST 回复时解除加载，公开后完成提示才提供入口', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-09-10T07:00:00Z') })
+  await prepare(page)
+  let run: AutomationRunRecord = runFixture({ id: 'online-run', status: 'queued', conversation: { state: 'pending' }, finishedAt: null })
+  const queued = run
+  let requestId: string | null = null
+  let receiptAvailable = false
+  let releasePost!: () => void
+  const response = new Promise<void>(resolve => { releasePost = resolve })
+  await page.route('**/api/automation/tasks/news/run?*', async route => {
+    requestId = route.request().postDataJSON().requestId
+    await response
+    await route.fulfill({ json: { code: 0, message: 'success', data: queued } })
+  })
+  await page.route('**/api/automation/tasks/news/submission?*', route => {
+    const query = new URL(route.request().url()).searchParams
+    expect(route.request().method()).toBe('GET')
+    expect(query.get('projectId')).toBe('project-1')
+    return route.fulfill({ json: { code: 0, message: 'success', data: receiptAvailable && query.get('requestId') === requestId ? run : null } })
+  })
+  await page.route('**/api/automation/runs/online-run/status?*', route => route.fulfill({ json: { code: 0, message: 'success', data: run } }))
+  await page.getByRole('tab', { name: '任务', exact: true }).click()
+  const execute = page.getByRole('button', { name: '执行 每日 AI 新闻简报', exact: true })
+  await execute.click()
+  await expect(execute).toBeDisabled()
+  await expect(execute).toHaveAttribute('aria-busy', 'true')
+  await expect.poll(() => requestId).not.toBeNull()
+  run = { ...run, status: 'succeeded', updatedAt: '2026-09-10T07:00:01Z', finishedAt: '2026-09-10T07:00:01Z' }
+  receiptAvailable = true
+  await page.evaluate(() => window.emitResourceChange('automation.execution.changed', 'online-run', {
+    scope: { namespace: 'studio_automation', owner_id: '1:project-1' }, details: {},
+  }))
+  await expect(execute).toBeEnabled()
+  const toasts = page.getByRole('list', { name: '系统提示' })
+  await expect(toasts.getByText('每日 AI 新闻简报：运行完成', { exact: true })).toHaveCount(0)
+  await expect(toasts.getByRole('button', { name: '查看关联会话', exact: true })).toHaveCount(0)
+  const replied = page.waitForResponse(response => new URL(response.url()).pathname === '/api/automation/tasks/news/run')
+  releasePost()
+  await replied
+  await expect(execute).toBeEnabled()
+  await expect(toasts.getByText('已加入运行队列', { exact: true })).toHaveCount(0)
+  run = { ...run, conversation: { state: 'available', projectId: 'project-1', threadId: 'online-thread' } }
+  await page.evaluate(() => window.emitResourceChange('studio.conversation.changed', 'online-thread', {
+    scope: { namespace: 'ns_1', owner_id: null }, details: { automation_execution_id: 'online-run', automation_project_id: 'project-1' },
+  }))
+  await expect(toasts.getByText('每日 AI 新闻简报：运行完成', { exact: true })).toHaveCount(1)
+  await expect(toasts.getByRole('button', { name: '查看关联会话', exact: true })).toBeVisible()
+  await page.evaluate(() => window.emitResourceChange('studio.conversation.changed', 'online-thread', {
+    scope: { namespace: 'ns_1', owner_id: null }, details: { automation_execution_id: 'online-run', automation_project_id: 'project-1' },
+  }))
+  await expect(toasts.getByText('每日 AI 新闻简报：运行完成', { exact: true })).toHaveCount(1)
 })

@@ -35,6 +35,7 @@ from tinkerfin_studio.agent.persistence import AgentPersistence
 from tinkerfin_studio.agent.subagents import SubagentSettings, load_subagents
 from tinkerfin_studio.attachments.service import AttachmentService
 from tinkerfin_studio.automation.ownership import automation_execution_namespace
+from tinkerfin_studio.automation.publication import AutomationConversationPublications
 from tinkerfin_studio.automation.target import (
     StudioAutomationTarget,
     fail_interactive_execution,
@@ -276,6 +277,8 @@ class ApplicationResources:
     conversation_titles: ConversationTitles
     readiness: ReadinessService
     automation: Automation
+    automation_store: SqlAlchemyAutomationStore
+    automation_publications: AutomationConversationPublications
 
 
 def build_lifespan():
@@ -435,6 +438,26 @@ def build_lifespan():
                 )
                 # 先关闭聊天生产者，再结算标题，最后释放模型客户端与数据库
                 stack.push_async_callback(conversation_titles.aclose)
+                automation_store = SqlAlchemyAutomationStore(
+                    components_database.engine, notifications=notifications
+                )
+                stack.push_async_callback(automation_store.close)
+                automation = Automation(
+                    namespace="studio_automation", store=automation_store
+                )
+                automation_reader = await _enter_lifespan_context(
+                    stack,
+                    outcome,
+                    Automation(namespace="studio_automation", store=automation_store),
+                )
+                automation_publications = AutomationConversationPublications(
+                    database=database,
+                    automation=automation_reader,
+                    notifications=notifications,
+                )
+                # worker 与会话先结算，再关闭发布观察，最后释放独立查询客户端
+                stack.push_async_callback(automation_publications.aclose)
+                await automation_publications.start()
                 messaging_backend = RedisBackend(
                     redis_runtime,
                     key_prefix=MESSAGING_KEY_PREFIX,
@@ -456,13 +479,6 @@ def build_lifespan():
                     tracer=tracer,
                 )
                 agent_subagents = await load_subagents()
-                automation_store = SqlAlchemyAutomationStore(
-                    components_database.engine, notifications=notifications
-                )
-                stack.push_async_callback(automation_store.close)
-                automation = Automation(
-                    namespace="studio_automation", store=automation_store
-                )
 
                 async def check_automation() -> None:
                     await automation_worker.check_ready()
@@ -494,6 +510,8 @@ def build_lifespan():
                         notifications=notifications,
                     ),
                     automation=automation,
+                    automation_store=automation_store,
+                    automation_publications=automation_publications,
                     model_http_client=model_http_client,
                     model_http_transport=model_http_transport,
                     attachments=attachments,

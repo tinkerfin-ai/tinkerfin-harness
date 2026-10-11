@@ -10,7 +10,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.dml import Update
 
-from tinkerfin import AgUiResumeReceipt
+from tinkerfin import AgUiResumeReceipt, RunIdentity
 from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.conversation.models import (
     ConversationInterruptClaim,
@@ -35,6 +35,17 @@ class TraceSummaryWrite:
 
     status: Literal["applied", "stale", "ambiguous", "generation_conflict"]
     changed_thread: ConversationThread | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UnpublishedAutomationConversation:
+    """待开放入口的固定执行身份；项目来自原提交，不随会话移动变化"""
+
+    thread_pk: int
+    user_id: int
+    project_id: str
+    execution_id: str
+    identity: RunIdentity
 
 
 class ConversationRepository:
@@ -139,6 +150,8 @@ class ConversationRepository:
         run.status = "starting"
         run.updated_at = now
         thread.last_run_id = run_id
+        if run.automation_execution_id is None and thread.published_at is None:
+            thread.published_at = now
         thread.last_model = run.model_id
         thread.last_access_mode = run.access_mode
         thread.status = "running"
@@ -177,6 +190,103 @@ class ConversationRepository:
 
         self._session.expire_all()
         return await self.get_thread(user_id=user_id, thread_id=thread_id)
+
+    async def get_accessible_thread(
+        self, *, user_id: int, thread_id: str
+    ) -> ConversationThread | None:
+        """普通会话允许准备期重连，自动化须先开放用户入口"""
+        automated = (
+            select(ConversationRunRegistration.id)
+            .where(
+                ConversationRunRegistration.conversation_thread_id
+                == ConversationThread.id,
+                ConversationRunRegistration.automation_execution_id.is_not(None),
+            )
+            .exists()
+        )
+        return await self._session.scalar(
+            select(ConversationThread).where(
+                ConversationThread.user_id == user_id,
+                ConversationThread.thread_id == thread_id,
+                ConversationThread.deleted_at.is_(None),
+                or_(ConversationThread.published_at.is_not(None), ~automated),
+            )
+        )
+
+    async def unpublished_automations(
+        self, *, after: int = 0, limit: int = 100
+    ) -> tuple[UnpublishedAutomationConversation, ...]:
+        """按稳定主键读取有限已受理候选，不依赖 Trace 是否已结束"""
+        rows = await self._session.execute(
+            select(ConversationThread, ConversationRunRegistration)
+            .join(
+                ConversationRunRegistration,
+                ConversationRunRegistration.conversation_thread_id
+                == ConversationThread.id,
+            )
+            .where(
+                ConversationThread.id > after,
+                ConversationThread.published_at.is_(None),
+                ConversationThread.deleted_at.is_(None),
+                ConversationThread.status != "deleting",
+                ConversationThread.last_run_id == ConversationRunRegistration.run_id,
+                ConversationRunRegistration.automation_execution_id.is_not(None),
+            )
+            .order_by(ConversationThread.id)
+            .limit(limit)
+        )
+        candidates: list[UnpublishedAutomationConversation] = []
+        for thread, run in rows:
+            props = run.input_json.get("forwardedProps")
+            project_id = props.get("projectId") if isinstance(props, dict) else None
+            if not isinstance(project_id, str) or not project_id:
+                raise ValueError("自动化会话缺少原项目身份")
+            assert run.automation_execution_id is not None
+            candidates.append(
+                UnpublishedAutomationConversation(
+                    thread_pk=thread.id,
+                    user_id=thread.user_id,
+                    project_id=project_id,
+                    execution_id=run.automation_execution_id,
+                    identity=RunIdentity(
+                        namespace=f"ns_{thread.user_id}",
+                        thread_id=thread.thread_id,
+                        run_id=run.run_id,
+                    ),
+                )
+            )
+        return tuple(candidates)
+
+    async def publish_automation(
+        self, candidate: UnpublishedAutomationConversation, *, at: datetime
+    ) -> bool:
+        """调用方确认权威结算后首次开放入口，不改变最近 Trace 活动时间"""
+        association = (
+            select(ConversationRunRegistration.id)
+            .where(
+                ConversationRunRegistration.conversation_thread_id
+                == candidate.thread_pk,
+                ConversationRunRegistration.run_id == candidate.identity.run_id,
+                ConversationRunRegistration.automation_execution_id
+                == candidate.execution_id,
+            )
+            .exists()
+        )
+        result = await self._session.execute(
+            update(ConversationThread)
+            .where(
+                ConversationThread.id == candidate.thread_pk,
+                ConversationThread.user_id == candidate.user_id,
+                ConversationThread.thread_id == candidate.identity.thread_id,
+                ConversationThread.last_run_id == candidate.identity.run_id,
+                ConversationThread.published_at.is_(None),
+                ConversationThread.deleted_at.is_(None),
+                ConversationThread.status != "deleting",
+                association,
+            )
+            .values(published_at=at)
+        )
+        return isinstance(result, CursorResult) and result.rowcount == 1
 
     async def get_run(
         self,
@@ -446,6 +556,7 @@ class ConversationRepository:
             ConversationThread.deleted_at.is_(None),
             ConversationThread.archived.is_(archived),
             ConversationThread.last_run_id.is_not(None),
+            ConversationThread.published_at.is_not(None),
         )
         if project_id is not None:
             statement = statement.where(ConversationThread.project_id == project_id)
@@ -497,7 +608,7 @@ class ConversationRepository:
         )
         from tinkerfin_studio.projects.repository import ProjectRepository
 
-        thread = await self.get_thread(user_id=user_id, thread_id=thread_id)
+        thread = await self.get_accessible_thread(user_id=user_id, thread_id=thread_id)
         if thread is None:
             raise BusinessException(ConversationErrorCode.NOT_FOUND)
         thread = await self.lock_thread(thread.id)

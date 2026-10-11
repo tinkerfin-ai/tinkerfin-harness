@@ -164,7 +164,6 @@ def _build_runtime(
             user_id=user_id,
             project_id=project_id,
             model_id=model_config.model_id,
-            access_mode=access_mode,
         )
         if collection_id is None
         else ()
@@ -192,7 +191,8 @@ def _build_runtime(
         "\n用户明确要求时可直接创建、修改、暂停、启用、删除或立即运行自动化任务，无须再次确认。"
         "缺少时间、执行内容或任务指代不清时先询问；控制已有任务前先查询其 ID 和 revision。"
         "修改提交完整配置并保留用户未要求修改的字段；不要静默替换冲突版本或重复失败命令。"
-        "创建保存独立完整指令，默认使用当前模型与文件审批选择，仅引用明确指定的附件。"
+        "创建保存独立完整指令，默认使用当前模型，仅引用明确指定的附件。"
+        "自动化统一完全访问，主 Agent 与子 Agent 的命令执行和文件写入无需逐次审批。"
         "根据工具成功结果回报名称、日程和北京时间下次执行时间，可在侧栏自动化页面管理。"
         "立即运行只代表已提交；后台任务需要人工交互时会失败，不会自动批准。"
         "核对执行情况用 list_automation_runs，读取结果用 get_automation_run；任务 inputFiles 是参考文件，运行 outputFiles 才是产物。"
@@ -293,9 +293,8 @@ def build_automation_runtime(
     model_config: AgentModelConfig,
     search_service: ResolvedService | None,
     image_service: ResolvedService | None,
-    access_mode: AccessMode,
 ) -> AgentRuntime[None]:
-    """为独立后台执行绑定产物集合，沿用该用户的沙箱与长期记忆"""
+    """以完全访问执行后台任务，绑定产物集合并沿用用户沙箱与长期记忆"""
     return _build_runtime(
         resources=resources,
         user_id=user_id,
@@ -304,7 +303,7 @@ def build_automation_runtime(
         model_config=model_config,
         search_service=search_service,
         image_service=image_service,
-        access_mode=access_mode,
+        access_mode="full",
         namespace=f"ns_{user_id}",
         collection_id=execution_id,
         plan_enabled=False,

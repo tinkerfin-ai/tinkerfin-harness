@@ -33,6 +33,7 @@ class ConversationThread(Base):
     __tablename__ = "conversation_threads"
     __table_args__ = (
         UniqueConstraint("thread_id", name="uq_conversation_threads_thread"),
+        Index("ix_conversation_threads_publication", "published_at", "id"),
         Index(
             "ix_conversation_threads_project_history",
             "user_id",
@@ -116,6 +117,11 @@ class ConversationThread(Base):
     )
     last_run_id: Mapped[str | None] = mapped_column(
         String(128), nullable=True, comment="最近主运行 ID"
+    )
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime().with_variant(DATETIME(fsp=6), "mysql"),
+        nullable=True,
+        comment="UTC 会话首次开放时间；NULL 表示尚未开放",
     )
     last_access_mode: Mapped[AccessMode] = mapped_column(
         String(32),

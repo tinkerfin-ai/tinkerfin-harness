@@ -49,6 +49,11 @@ class CompactIntent:
 ChatIntent = StartChatIntent | ResumeChatIntent | CompactIntent
 
 
+def initial_conversation_title(text: str) -> str:
+    """模型总结完成前，用提问文本的前16字作为会话标题"""
+    return text.strip()[:16] or "附件提问"
+
+
 @dataclass(frozen=True, slots=True)
 class PreparedRunRequest:
     """数据库、Messaging、Agent 与主开始事件共用的权威请求事实"""
@@ -72,6 +77,7 @@ class RegisteredRun:
     run_id: int
     created: bool
     preparation_id: str
+    automation_execution_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +101,7 @@ def classify_intent(request: ChatRequest) -> ChatIntent:
     submission = request.user_input
     return StartChatIntent(
         attachments=submission.attachments,
-        title=submission.text.strip()[:16] or "附件提问",
+        title=initial_conversation_title(submission.text),
         skill_ids=tuple(request.forwarded_props.skill_ids),
     )
 
@@ -171,5 +177,6 @@ __all__ = [
     "StartChatIntent",
     "classify_intent",
     "conversation_identity",
+    "initial_conversation_title",
     "prepare_run_request",
 ]

@@ -38,6 +38,7 @@ async def test_history_filters_before_pagination_and_rejects_cross_project_curso
             model_id="main",
         )
         thread.last_run_id = thread_id
+        thread.published_at = thread.created_at
     await repository.commit()
     history = ConversationHistoryService(
         repository, user_id=1, tracer=Tracer(), history_queries=HistoryQueryAdmission()
@@ -73,6 +74,7 @@ async def test_archive_restore_and_move_preserve_conversation_and_attachments(
         model_id="main",
     )
     thread.last_run_id = "run"
+    thread.published_at = thread.created_at
     file = AttachmentFile(
         id="file",
         user_id=1,
