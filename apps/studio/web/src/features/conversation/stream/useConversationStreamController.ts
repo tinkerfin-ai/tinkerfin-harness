@@ -531,9 +531,6 @@ export function useConversationStreamController({
     const requestLifetime = lifetime.current
     const retention = retainConversationDetails(threadIdToStream)
     try {
-      if (threadIdToStream) setWorkspace(state => updateConversation(state, threadIdToStream, item => ({
-        ...item, historySynchronized: false,
-      })))
       if (threadIdToStream) await taskTraceFollowOwnership.current.stop(threadIdToStream)
       if (!isMounted.current || requestLifetime !== lifetime.current || !isActiveRunOwnerCurrent(runSessionOwner)) return
       if (threadIdToStream && isActiveThread(threadIdToStream)) return
@@ -545,6 +542,9 @@ export function useConversationStreamController({
       }
       const owner = { threadId: threadIdToStream, runId: payload.runId, controller, receiving: true, superseded: false, todoProjector: null as LiveTodoTraceProjector | null }
       streams.current.set(streamEpoch, owner)
+      if (threadIdToStream) setWorkspace(state => updateConversation(state, threadIdToStream, item => ({
+        ...item, historySynchronized: false,
+      })))
       liveEpochs.current.add(streamEpoch)
       if (options.target === 'draft') draftStreamEpoch.current = streamEpoch
       recoveryRequests.current.delete(threadIdToStream || payload.runId)

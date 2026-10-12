@@ -181,6 +181,7 @@ for (const [gesture, position] of [['click', '目录'], ['Enter', '上翻'], ['T
       await expect(page.getByText('compact_conversation', { exact: true })).toBeVisible()
       await expect(page.getByRole('button', { name: '停止任务', exact: true })).toBeEnabled()
       await input.fill('压缩期间编辑的新草稿')
+      await expect(page.getByRole('button', { name: '停止任务', exact: true })).toBeEnabled()
       await expect.poll(() => setup.requests.length).toBe(1)
       expect(setup.requests[0].path).toBe(`/api/conversation/${threadId}/compact`)
       expect(Object.keys(setup.requests[0].payload).sort()).toEqual(['model', 'runId'])
