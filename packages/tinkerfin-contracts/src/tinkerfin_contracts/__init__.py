@@ -31,6 +31,8 @@ from .observations import RunInputKind as RunInputKind
 from .observations import RunInputObservation as RunInputObservation
 from .observations import RunMode as RunMode
 from .observations import RunObserverFailedObservation as RunObserverFailedObservation
+from .observations import RunPhase as RunPhase
+from .observations import RunPhaseObservation as RunPhaseObservation
 from .observations import (
     RunResumeCheckpointedObservation as RunResumeCheckpointedObservation,
 )
@@ -76,6 +78,8 @@ __all__ = [
     "RunMode",
     "RunObservationSession",
     "RunObserverFailedObservation",
+    "RunPhase",
+    "RunPhaseObservation",
     "RunResumeCheckpointedObservation",
     "RunResumeSummary",
     "RunSourceContext",

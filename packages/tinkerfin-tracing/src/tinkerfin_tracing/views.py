@@ -8,7 +8,7 @@ from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field, JsonValue, computed_field, field_validator
 
-from tinkerfin_contracts import MessageSource, RunIdentity
+from tinkerfin_contracts import MessageSource, RunIdentity, RunPhase
 
 from ._models import TraceModel
 from .facts import TraceEvent, TraceSemanticFact
@@ -99,6 +99,11 @@ class TraceStatus(TraceModel, frozen=True):
         "unknown",
     ]
     head_run_id: str
+    phase: RunPhase | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="Preparation or execution phase when reported by an active Run",
+    )
 
 
 class TraceCompleteness(TraceModel, frozen=True):

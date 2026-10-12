@@ -406,3 +406,55 @@ describe('历史恢复与实时续流联合验证', () => {
     expect(conversation.trace?.messages[1]?.id).toBe('message:assistant-1')
   })
 })
+
+it('相同事实序号的新租约观测能结束旧运行提示，迟到观测不能恢复转圈', () => {
+  const source = detail()
+  source.status = { execution: 'running', headRunId: source.headRunId, phase: 'preparing' }
+  const preparing = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+  expect(preparing.runPhase).toBe('preparing')
+  expect(preparing.runStatus).toBe('detached')
+  const lost: ConversationHistoryDetail = { ...source,
+    observedAt: '2026-09-05T00:00:00.000001Z',
+    status: { execution: 'unknown', headRunId: source.headRunId },
+    completeness: { ...source.completeness, missingTail: true },
+  }
+  const interrupted = restoreConversationFromTrace(lost, { previous: preparing, model: 'main', includeTaskTrace: false })
+  expect(interrupted).toMatchObject({ runStatus: 'error', notice: { content: '执行已中断，结果未确认', recovery: 'history' } })
+  expect(interrupted.activeRunId).toBeUndefined()
+  expect(interrupted.runPhase).toBeUndefined()
+  const delayed = restoreConversationFromTrace(source, { previous: interrupted, model: 'main', includeTaskTrace: false })
+  expect(delayed.notice).toEqual(interrupted.notice)
+  expect(delayed.runStatus).toBe('error')
+  expect(restoreConversationFromTrace(lost, { model: 'main', includeTaskTrace: false }).notice).toEqual(interrupted.notice)
+})
+
+
+it('恢复运行的环境原因在历史中常驻，审批编辑与未保存确认同时保留', () => {
+  const source = approvalDetail()
+  source.headRunId = 'resume-failed'
+  source.status = { execution: 'failed', headRunId: source.headRunId }
+  source.availableHeads = [source.headRunId]
+  source.runFailures = [{ runId: source.headRunId, errorCode: 'workspace_paused', failedAt: '2026-10-12T00:00:00Z', retryable: false }]
+  const view = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+  expect(view.notice?.content).toBe('运行环境已暂停，请恢复沙箱后重试')
+  expect(view.approval?.items).toHaveLength(2)
+  expect(view.runFailures?.[0].retryable).toBe(false)
+})
+
+it('审批确认期间的迟到观测不会覆盖已知环境失败提示', () => {
+  const source = approvalDetail()
+  source.headRunId = 'resume-failed'
+  source.status = { execution: 'failed', headRunId: source.headRunId }
+  source.availableHeads = [source.headRunId]
+  source.observedAt = '2026-09-05T00:00:00.000001Z'
+  source.runFailures = [{ runId: source.headRunId, errorCode: 'workspace_paused', failedAt: '2026-10-12T00:00:00Z', retryable: false }]
+  source.interactionAvailability = source.interactionAvailability.map(item => ({ ...item, state: 'confirming', submissionRunId: source.headRunId }))
+  const view = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
+  expect(view.notice?.content).toBe('运行环境已暂停，请恢复沙箱后重试')
+  const delayed = restoreConversationFromTrace({ ...source, observedAt: '2026-09-05T00:00:00.000000Z' }, {
+    previous: view, model: 'main', includeTaskTrace: false,
+  })
+  expect(delayed.notice).toEqual(view.notice)
+  expect(delayed.runFailures).toEqual(view.runFailures)
+  expect(delayed.approval?.items).toHaveLength(2)
+})

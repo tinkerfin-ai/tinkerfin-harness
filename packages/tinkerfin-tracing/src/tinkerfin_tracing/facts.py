@@ -55,6 +55,8 @@ class RunFact(TraceFactBase, frozen=True):
     kind: Literal["run"] = "run"
     phase: Literal[
         "started",
+        "preparing",
+        "running",
         "input",
         "resumed",
         "resume_checkpointed",
@@ -70,8 +72,8 @@ class RunFact(TraceFactBase, frozen=True):
         min_length=1,
         max_length=1024,
         description=(
-            "Client-safe terminal code. runtime_initialization_error, workspace_busy "
-            "and workspace_file_conflict prove that Agent execution did not start"
+            "Client-safe terminal code. runtime_initialization_error and workspace_* "
+            "preparation failures prove that Agent execution did not start"
         ),
     )
     error_type: str | None = Field(default=None, min_length=1, max_length=1024)
@@ -139,10 +141,13 @@ class MessageFact(TraceFactBase, frozen=True):
 
     A cancelled, interrupted, or abandoned Assistant retains only the content actually
     observed before Run settlement. Those phases never assert a complete response.
+    Submitted root user-role messages retain accepted request content before resource
+    preparation; they do not establish execution, resolved input, or Run ancestry.
     """
 
     kind: Literal["message"] = "message"
     phase: Literal[
+        "submitted",
         "started",
         "content",
         "completed",
@@ -171,6 +176,13 @@ class MessageFact(TraceFactBase, frozen=True):
     def content_phase_is_explicit(self) -> MessageFact:
         """Require content ownership or an explicit Tool-result reference."""
 
+        if self.phase == "submitted" and (
+            self.role != "user"
+            or self.graph_namespace
+            or self.parent_subagent_id is not None
+            or self.from_state_snapshot
+        ):
+            raise ValueError("submitted messages require the root request scope")
         if self.phase in {"cancelled", "interrupted", "abandoned"} and (
             self.role != "assistant" or self.from_state_snapshot
         ):
@@ -181,7 +193,7 @@ class MessageFact(TraceFactBase, frozen=True):
             and self.tool_call_id is not None
         )
         if (
-            self.phase in {"content", "reconciled"}
+            self.phase in {"submitted", "content", "reconciled"}
             and self.content is None
             and not tool_result_reference
         ):

@@ -85,3 +85,10 @@ describe('AG-UI 事件边界解析', () => {
     })).toThrow('事件流包含无效的 AG-UI 事件')
   })
 })
+
+it('运行阶段校验身份与当前阶段值', () => {
+  const event = { type: 'CUSTOM', name: 'tinkerfin.run.phase', value: { threadId: 'thread', runId: 'run', phase: 'preparing' } }
+  expect(parseConversationAgUiEvent(event)).toEqual(event)
+  expect(() => parseConversationAgUiEvent({ ...event, value: { ...event.value, phase: 'retrying' } })).toThrow()
+  expect(() => parseConversationAgUiEvent({ ...event, value: { ...event.value, runId: '' } })).toThrow()
+})

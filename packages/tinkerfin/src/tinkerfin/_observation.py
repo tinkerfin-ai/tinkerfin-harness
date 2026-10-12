@@ -46,6 +46,8 @@ from tinkerfin_contracts import (
     RunMode,
     RunObservationSession,
     RunObserverFailedObservation,
+    RunPhase,
+    RunPhaseObservation,
     RunResumeCheckpointedObservation,
     RunResumeSummary,
     RunSourceContext,
@@ -89,7 +91,14 @@ def initialization_error_code(error: BaseException) -> str:
     """Keep public preparation reasons identical in live and recorded terminals."""
     if isinstance(error, WorkspacePreparationFailure):
         reason = error.workspace_failure
-        if isinstance(reason, str) and reason in {"busy", "file_conflict"}:
+        if isinstance(reason, str) and reason in {
+            "busy",
+            "file_conflict",
+            "stopped",
+            "paused",
+            "unavailable",
+            "timeout",
+        }:
             return f"workspace_{reason}"
     return "runtime_initialization_error"
 
@@ -422,6 +431,7 @@ class RuntimeObservationHub:
         self._started = False
         self._defer_input = defer_input
         self._input_recorded = False
+        self._phase: RunPhase | None = None
         self._terminal: RunTerminalOutcome | None = None
         self._closed = False
         self._claimed_errors: list[BaseException] = []
@@ -554,6 +564,24 @@ class RuntimeObservationHub:
         )
         if not self._defer_input:
             await self.record_input()
+
+    async def record_phase(self, phase: RunPhase) -> None:
+        """Commit preparation progress before publishing it to a live consumer."""
+        if self._terminal is not None or (
+            (phase == "preparing" and self._phase is not None)
+            or (phase == "running" and self._phase != "preparing")
+        ):
+            raise RuntimeError("Run preparation phase is out of order")
+        self._phase = phase
+        observed_at, monotonic_ns = _stamp()
+        await self.observe(
+            RunPhaseObservation(
+                identity=self.context.identity,
+                phase=phase,
+                observed_at=observed_at,
+                monotonic_ns=monotonic_ns,
+            )
+        )
 
     async def record_input(self, context: RunSourceContext | None = None) -> None:
         """Publish the determined input once, before any Native continuation.

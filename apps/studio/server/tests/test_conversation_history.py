@@ -832,3 +832,62 @@ async def test_saved_plan_answers_remain_readable_before_and_after_continuation(
     assert reloaded.interactions[0].agui == initial.interactions[0].agui
     assert reloaded.plan_results == saved.plan_results
     assert all(item.state == "resolved" for item in reloaded.interaction_availability)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "workspace_stopped",
+        "workspace_paused",
+        "workspace_unavailable",
+        "workspace_timeout",
+    ],
+)
+async def test_resume_preparation_failure_is_visible_without_a_new_user_message(
+    session, code
+):
+    tracer = Tracer(
+        projections=(ConversationFailureProjection(), TodoGroupProjection())
+    )
+    repository = ConversationRepository(session)
+    await _register(
+        repository, user_id=1, thread_id="resume-environment", run_id="resume-failed"
+    )
+    context = _context("resume-environment", "resume-failed").model_copy(
+        update={"input_kind": "resume", "input": None}
+    )
+    source = await tracer.open_run(context)
+    now = datetime.now(UTC)
+    try:
+        await source.observe(
+            RunStartedObservation(
+                identity=context.identity, observed_at=now, monotonic_ns=1
+            )
+        )
+        await source.observe(
+            RunInputObservation(
+                identity=context.identity,
+                source=context,
+                observed_at=now,
+                monotonic_ns=2,
+            )
+        )
+        await source.observe(
+            RunTerminalObservation(
+                identity=context.identity,
+                outcome="failed",
+                code=code,
+                observed_at=now,
+                monotonic_ns=3,
+            )
+        )
+        await source.force(ObservationBoundary.TERMINAL)
+        detail = await _service(repository, tracer=tracer).get_detail(
+            "resume-environment", include_task_trace=False
+        )
+        assert detail.messages == ()
+        assert len(detail.run_failures) == 1
+        assert detail.run_failures[0].error_code == code
+        assert not detail.run_failures[0].retryable
+    finally:
+        await source.aclose()

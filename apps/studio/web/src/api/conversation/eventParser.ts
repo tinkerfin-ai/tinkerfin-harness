@@ -267,6 +267,11 @@ const isConversationAgUiEvent = (value: unknown): value is ConversationAgUiEvent
         && typeof value.role === 'string'
 
     case 'CUSTOM':
+      if (value.name === 'tinkerfin.run.phase') return hasOptionalRawEvent(value)
+        && isRecord(value.value)
+        && typeof value.value.threadId === 'string' && value.value.threadId.length > 0
+        && typeof value.value.runId === 'string' && value.value.runId.length > 0
+        && (value.value.phase === 'preparing' || value.value.phase === 'running')
       if (value.name === 'tinkerfin.message.attachments') return hasOptionalRawEvent(value) && isRecord(value.value) && typeof value.value.messageId === 'string' && Array.isArray(value.value.attachments) && value.value.attachments.every(isAttachment)
       return hasOptionalRawEvent(value)
         && typeof value.name === 'string'

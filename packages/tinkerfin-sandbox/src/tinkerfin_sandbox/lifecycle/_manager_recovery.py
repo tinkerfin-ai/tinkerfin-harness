@@ -18,7 +18,7 @@ from ..errors import (
 from ..models import OpenSandboxPurpose
 from ._notifications import failure_reason
 from ._purpose import require_binding_purpose
-from .client import _connection_deadline
+from .client import _connection_deadline, _require_running_state
 from .notifications import OpenSandboxLifecycleReason
 from .state import OpenSandboxOwnerClaim
 
@@ -50,6 +50,13 @@ async def _check_health(
     self: OpenSandboxManager[KeyT], backend: OpenSandboxBackend | OpenSandboxHandle
 ) -> None:
     try:
+        info = await self._client.get_runtime_info(backend.id)
+        if not info.available or info.status is None:
+            raise OpenSandboxBackendUnavailableError(
+                "OpenSandbox control-plane status is unavailable",
+                context={"reason": info.unavailable_reason or "unreachable"},
+            )
+        _require_running_state(info.status.state)
         response = await backend.aexecute(self._client.config.health_command)
     except OpenSandboxBackendError:
         raise

@@ -117,13 +117,16 @@ async def test_coordination_precedes_graph_preparation_and_lasts_until_close(
     admitted.set()
     await preflight
     assert graph.builds == 0 and not exited.is_set()
-    if protocol == "agui":
-        assert isinstance(stream, AgUiRunStream)
-        assert (await anext(stream)).type == "RUN_STARTED"
-        assert graph.builds == 0
-    await anext(stream)
-    assert graph.builds == 1 and not exited.is_set()
-    await stream.aclose()
+    try:
+        if protocol == "agui":
+            assert isinstance(stream, AgUiRunStream)
+            assert (await anext(stream)).type == "RUN_STARTED"
+            assert graph.builds == 0
+        await anext(stream)
+        await graph.started.wait()
+        assert graph.builds == 1 and not exited.is_set()
+    finally:
+        await stream.aclose()
     await stream.aclose()
     assert exited.is_set()
 
@@ -167,6 +170,8 @@ async def test_concurrent_agui_abort_delivers_one_terminal(
         thread_id="thread", run_id="run", input={"messages": []}
     )
     assert (await anext(stream)).type.value == "RUN_STARTED"
+    assert (await anext(stream)).type.value == "CUSTOM"
+    assert (await anext(stream)).type.value == "CUSTOM"
     consumer = asyncio.create_task(anext(stream))
     await graph.started.wait()
     tails = await asyncio.gather(stream.abort(), stream.abort())

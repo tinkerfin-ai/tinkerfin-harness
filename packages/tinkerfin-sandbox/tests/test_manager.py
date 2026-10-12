@@ -217,6 +217,9 @@ class _FakeClient:
                 }
             )
         self.backends.append(backend)
+        self.inspection_results[backend.id] = _runtime_info(backend.id).model_copy(
+            update={"metadata": {"tinkerfin.ai/purpose": purpose}}
+        )
         return cast(OpenSandboxBackend, backend)
 
     async def connect(

@@ -1120,6 +1120,7 @@ const reduceConversationEvent = (
         ...(event.title !== undefined ? mergeConversationTitle(conversation, { ...event, title: event.title.trim() || conversation.title }) : {}),
         activeRunId: event.runId,
         runStatus: "streaming",
+        runPhase: undefined,
         notice: undefined,
         approval: conversation.approval?.submitted
           ? { ...conversation.approval, submissionRunId: event.runId }
@@ -1131,6 +1132,13 @@ const reduceConversationEvent = (
     }
 
     case "CUSTOM": {
+      if (event.name === 'tinkerfin.run.phase' && isJsonObject(event.value)) {
+        const { threadId, runId, phase } = event.value
+        if (threadId !== conversation.threadId || runId !== conversation.activeRunId
+          || (phase !== 'preparing' && phase !== 'running')
+          || (conversation.runPhase === 'running' && phase === 'preparing')) return conversation
+        return { ...conversation, runPhase: phase }
+      }
       if (event.name !== 'tinkerfin.message.attachments' || !isJsonObject(event.value)) return conversation
       const messageId = event.value.messageId
       const attachments = event.value.attachments
@@ -1432,6 +1440,7 @@ const reduceConversationEvent = (
         if (conversation.activeRunId && event.runId !== conversation.activeRunId) {
           return conversation
         }
+        conversation = { ...conversation, runPhase: undefined }
 
       if (outcome.type === "interrupt") {
         if (conversation.approval?.submitted || conversation.planInteraction?.submitted) {
@@ -1487,12 +1496,12 @@ const reduceConversationEvent = (
           : errorMessage
         const errorRunId = rawEvent.runId ?? conversation.activeRunId
         const runFailures = !isCancelled && errorRunId
-              && conversation.messages.some(message => message.role === 'user' && message.meta?.runId === errorRunId)
               ? [...(conversation.runFailures ?? []).filter(item => item.runId !== errorRunId), {
                   runId: errorRunId,
                   errorCode: event.code ?? null,
                   failedAt: completedAt,
-                  retryable: isConversationPreparationFailure(event.code),
+                  retryable: isConversationPreparationFailure(event.code)
+                    && conversation.messages.some(message => message.role === 'user' && message.meta?.runId === errorRunId),
                 }]
               : conversation.runFailures
         if (conversation.activeRunId && errorRunId && conversation.activeRunId !== errorRunId) {
@@ -1501,9 +1510,11 @@ const reduceConversationEvent = (
         // 用户主动停止是正常业务终态，不能把未完成工作渲染成系统故障
         return {
             ...conversation,
-            notice: undefined,
+            notice: !isCancelled && !conversation.messages.some(message => message.role === 'user' && message.meta?.runId === errorRunId)
+              ? { kind: 'error', content: errorMessage, id: `${errorRunId}:terminal` } : undefined,
             runFailures,
             runStatus: isCancelled ? "idle" : "error",
+            runPhase: undefined,
             activeRunId: undefined,
             approval: conversation.approval?.submitted ? conversation.approval : undefined,
             planInteraction: conversation.planInteraction?.submitted ? conversation.planInteraction : undefined,

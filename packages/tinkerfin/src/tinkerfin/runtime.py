@@ -39,6 +39,7 @@ from langgraph.typing import ContextT
 
 from tinkerfin_contracts import (
     RunIdentity,
+    RunPhase,
     RunSourceContext,
     RunTerminalOutcome,
     RuntimeObserver,
@@ -556,6 +557,10 @@ class AgUiEventStream:
         self._upstream = aiter(parts)
         self._start_parts = parts._ready if isinstance(parts, _GraphRunStream) else None
         self._upstream_closed = False
+        self._preparation_phases = False
+        self._phase_queue: asyncio.Queue[BaseEvent] = asyncio.Queue(maxsize=1)
+        self._phase_available = asyncio.Event()
+        self._pending_part: asyncio.Task[_OperationOutcome[object]] | None = None
         self._prior_tool_call_ids = prior_tool_call_ids
         self._adapter_instance: DeepAgentAgUiAdapter | None = None
 
@@ -705,11 +710,14 @@ class AgUiEventStream:
         )
 
     async def _close_once(
-        self, active: asyncio.Task[_OperationOutcome[BaseEvent]] | None
+        self,
+        active: asyncio.Task[_OperationOutcome[BaseEvent]] | None,
+        failure_owner: BaseException | None,
     ) -> None:
         return await self._runtime_agui._close_once(
             self,
             active,
+            failure_owner,
         )
 
     async def _observe(self, event: BaseEvent) -> None:
@@ -723,6 +731,9 @@ class AgUiEventStream:
             self,
             primary,
         )
+
+    async def _publish_phase(self, phase: RunPhase) -> None:
+        await self._runtime_agui._publish_phase(self, phase)
 
     def _record_secondary_error_note(self, note: str) -> None:
         """Retain cleanup evidence across the micro-batch cancellation boundary."""
@@ -749,11 +760,14 @@ class AgUiEventStream:
             yield initial_event
             while True:
                 try:
-                    part = await self._next_part()
+                    part = await self._runtime_agui._next_part_or_phase(self)
                 except StopAsyncIteration:
                     break
                 if self._aborted:
                     return
+                if isinstance(part, self._runtime_agui._RunPhaseEvent):
+                    yield part
+                    continue
                 resolver = self._native_frame_resolver
                 events = (
                     self._adapter.process(part)

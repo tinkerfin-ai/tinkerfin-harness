@@ -623,6 +623,8 @@ def _create_graph_agui_stream(
             bound.arguments["input"] = {
                 **cast(Mapping[str, object], ordinary_input),
             }
+        await observation.record_phase("running")
+        await stream._publish_phase("running")
         native = native_astream(*bound.args, **bound.kwargs)
         if not isinstance(native, AsyncIterator):
             raise TypeError("source_factory must return an async iterator")
@@ -645,6 +647,9 @@ def _create_graph_agui_stream(
     async def deferred_source() -> AsyncIterator[Mapping[str, object]]:
         nonlocal resume, effective_checkpointer
         try:
+            if not abandoned:
+                await observation.record_phase("preparing")
+                await stream._publish_phase("preparing")
             native_astream = await resolve_native_astream()
             if resolve_resume is not None:
                 if effective_checkpointer is None and not abandoned:
@@ -700,6 +705,7 @@ def _create_graph_agui_stream(
             else None
         ),
     )
+    stream._preparation_phases = not abandoned
     claim.claim()
     return stream
 

@@ -1,4 +1,4 @@
-import { ConversationError } from '../../../api/conversation/errors'
+import { ConversationError, conversationErrorMessage, conversationRunError } from '../../../api/conversation/errors'
 import type {
   ConversationHistoryCoreDetail,
   ConversationHistoryDetail,
@@ -444,6 +444,17 @@ interface TraceViewOptions {
   preserveInputFrom?: Conversation
 }
 
+const executionNotice = (trace: TraceSnapshot, messages: readonly Message[]): Conversation['notice'] => {
+  if (trace.status.execution === 'unknown' && trace.completeness.missingTail) {
+    return { id: `${trace.headRunId}:unconfirmed`, kind: 'warning',
+      content: translateCurrent('执行已中断，结果未确认'), recovery: 'history' }
+  }
+  const headFailure = parseRunFailures(trace.runFailures).find(item => item.runId === trace.headRunId)
+  return headFailure && !messages.some(message => message.role === 'user' && message.meta?.runId === headFailure.runId)
+    ? { kind: 'error', id: `${headFailure.runId}:terminal`,
+        content: conversationErrorMessage(conversationRunError(headFailure.errorCode), 'run_failed') } : undefined
+}
+
 export const restoreConversationFromTrace = (
   detail: ConversationHistoryDetail,
   options: TraceViewOptions & {
@@ -517,7 +528,8 @@ export const restoreConversationFromTrace = (
         planInteraction: interaction.planInteraction,
         pendingInteractionKind: interaction.pendingInteractionKind,
         messages: retainConfirmedPlanHistory(previous.messages, trace, previous),
-        notice: submissionNotice(interaction, current.headRunId, previous.runStatus)
+        notice: executionNotice(current, previous.messages)
+          ?? submissionNotice(interaction, current.headRunId, previous.runStatus)
           ?? (previous.notice?.recovery === 'history' ? undefined : previous.notice),
       }
     }
@@ -582,6 +594,7 @@ const projectTraceConversation = (
     return liveText ? { ...message, liveText } : message
   })
 
+  const runFailures = parseRunFailures(trace.runFailures)
   return {
     projectId: trace.projectId,
     archived: trace.archived,
@@ -594,14 +607,15 @@ const projectTraceConversation = (
     mode: modeFromState(trace.state.root),
     messages: retainConfirmedPlanHistory(messages, trace, options.previous ?? options.preserveInputFrom),
     compactions: compactionsFromTrace(trace.graph.nodes, messages),
-    runFailures: parseRunFailures(trace.runFailures),
+    runFailures,
     todos: todosFromState(trace.state.root),
     taskTrace,
     approval: interaction.approval,
     planInteraction: interaction.planInteraction,
     pendingInteractionKind: interaction.pendingInteractionKind,
-    notice: submissionNotice(interaction, trace.headRunId, status),
+    notice: executionNotice(trace, messages) ?? submissionNotice(interaction, trace.headRunId, status),
     runStatus: status,
+    runPhase: trace.status.phase,
     activeRunId: status === 'detached' ? trace.headRunId : undefined,
     serverState: trace.state.root,
     // Trace 序号与 Messaging 投递序号相互独立；实时调用方保留已知游标，纯历史水化保持未知

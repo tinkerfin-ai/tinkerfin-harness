@@ -60,10 +60,12 @@ for (const theme of ['light', 'dark']) {
         expect((await recovery.boundingBox())!.width).toBeGreaterThanOrEqual(44)
         await device.detach()
       }
+      await input.fill('保留这份草稿')
       await recovery.press('Enter')
       await expect.poll(() => submitted.length).toBeGreaterThan(1)
       expect(submitted[1]).toEqual(submitted[0])
       expect(cancelled).toBe(0)
+      await expect(input).toHaveValue('保留这份草稿')
     })
   }
 }

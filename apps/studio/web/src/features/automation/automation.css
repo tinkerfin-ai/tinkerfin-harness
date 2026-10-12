@@ -311,8 +311,9 @@
   }
 
   @media (max-width: 440px) {
+    /* 全局提示与应用容器并列，避开裁剪并跟随双行标题 */
     .workspace-main:has(.automation-header-actions),
-    :root:has(.automation-header-actions) .toast-viewport { --layout-header-height: var(--layout-header-stacked-height); }
+    .app-shell:has(.automation-header-actions) ~ .toast-viewport { --layout-header-height: var(--layout-header-stacked-height); }
     .chat-header:has(.header-navigation):has(.automation-header-actions) { grid-template-columns: auto minmax(0, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr)); }
     .chat-header:has(.automation-header-actions) > .header-left { grid-area: 1 / 1; }
     .chat-header:has(.automation-header-actions) > .header-navigation { grid-area: 1 / 2; }

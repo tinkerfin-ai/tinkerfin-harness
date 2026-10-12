@@ -129,6 +129,7 @@ class _WorkspaceService(_ServiceTransport):
         self.headers_cancelled = asyncio.Event()
         self.release = asyncio.Event()
         self.metadata = {"tinkerfin.ai/purpose": "workspaces"}
+        self.runtime_state = "Running"
         self.statuses: deque[int] = deque()
         self.failures: deque[Exception] = deque()
         self.payloads: deque[str] = deque()
@@ -207,6 +208,7 @@ class _WorkspaceService(_ServiceTransport):
                 200,
                 json={
                     **_sandbox_info(path.rsplit("/", 1)[1]),
+                    "status": {"state": self.runtime_state},
                     "metadata": self.metadata,
                 },
             )

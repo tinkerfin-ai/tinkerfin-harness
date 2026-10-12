@@ -16,6 +16,10 @@ const conversationErrorMessageKeys = {
   run_initialization_failed: '任务初始化失败，请重试',
   workspace_busy: '项目中还有任务在执行，请等待结束后再试',
   workspace_file_conflict: '技能文件有本地修改，请先处理文件冲突后再试',
+  workspace_stopped: '运行环境已停止，请启动沙箱后重试',
+  workspace_paused: '运行环境已暂停，请恢复沙箱后重试',
+  workspace_unavailable: '暂时无法连接运行环境，请检查 Docker 和沙箱服务后重试',
+  workspace_timeout: '连接运行环境超时，请检查服务后重试',
   resume_failed: '继续任务失败，请重新提交',
   resume_not_saved: '提交未保存，请重试',
   approval_stale: '当前审批已更新，请重新检查',
@@ -66,14 +70,17 @@ export const hasConversationErrorCode = (
 ) => (error instanceof ConversationError || error instanceof SseError) && error.code === code
 
 /** 将运行失败类别映射为可处理的提示，诊断正文不进入界面 */
+const workspacePreparationCodes = new Set([
+  'workspace_busy', 'workspace_file_conflict', 'workspace_stopped',
+  'workspace_paused', 'workspace_unavailable', 'workspace_timeout',
+])
+
 export const conversationRunError = (code: string | null | undefined, diagnostic?: unknown) => new ConversationError(
-  code === 'workspace_busy' ? 'workspace_busy'
-    : code === 'workspace_file_conflict' ? 'workspace_file_conflict'
-      : code === 'runtime_initialization_error' ? 'run_initialization_failed' : 'run_failed',
+  code && workspacePreparationCodes.has(code) ? code as ConversationErrorCode
+    : code === 'runtime_initialization_error' ? 'run_initialization_failed' : 'run_failed',
   diagnostic,
 )
 
-
 export const isConversationPreparationFailure = (code: string | null | undefined) => (
-  code === 'runtime_initialization_error' || code === 'workspace_busy' || code === 'workspace_file_conflict'
+  code === 'runtime_initialization_error' || (code != null && workspacePreparationCodes.has(code))
 )

@@ -23,7 +23,12 @@ class WorkspacePreparationFailure(Protocol):
     """
 
     @property
-    def workspace_failure(self) -> Literal["busy", "file_conflict"] | None:
+    def workspace_failure(
+        self,
+    ) -> (
+        Literal["busy", "file_conflict", "stopped", "paused", "unavailable", "timeout"]
+        | None
+    ):
         """Identify an actionable condition, or leave it unclassified."""
         ...
 

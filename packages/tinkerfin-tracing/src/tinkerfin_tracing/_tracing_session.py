@@ -25,6 +25,7 @@ from tinkerfin_contracts import (
     RunClosedObservation,
     RunInputObservation,
     RunObserverFailedObservation,
+    RunPhaseObservation,
     RunResumeCheckpointedObservation,
     RunResumeSummary,
     RunSourceContext,
@@ -314,7 +315,13 @@ class _TracingSession:
                         fact.content,
                         append=fact.phase == "content",
                     )
-                if fact.phase in {"completed", "reconciled", "cancelled", "abandoned"}:
+                if fact.phase in {
+                    "submitted",
+                    "completed",
+                    "reconciled",
+                    "cancelled",
+                    "abandoned",
+                }:
                     self._message_completed.add(key)
                     self._waiting_assistant_messages.discard(key)
                 elif fact.phase == "interrupted":
@@ -440,7 +447,7 @@ class _TracingSession:
             raise RuntimeError("Trace observation session is closed")
         if isinstance(observation, RunInputObservation):
             await self._hydrate_context(observation.source)
-        elif not isinstance(observation, RunStartedObservation):
+        elif not isinstance(observation, RunStartedObservation | RunPhaseObservation):
             await self._hydrate_context(self._context)
         if isinstance(
             observation,
@@ -505,7 +512,10 @@ class _TracingSession:
         )
         await self._append(tuple(facts), mandatory=mandatory)
         self._advance_context_anchors(tuple(facts))
-        if isinstance(observation, RunStartedObservation | RunInputObservation):
+        if isinstance(
+            observation,
+            RunStartedObservation | RunInputObservation | RunPhaseObservation,
+        ):
             await self._batch_writer.force()
 
     def _model_context_started_at(
@@ -677,6 +687,43 @@ class _TracingSession:
                 self._closed = True
                 self._on_closed(self)
 
+    def _input_message_facts(
+        self,
+        source: RunSourceContext,
+        common: Mapping[str, object],
+        *,
+        submitted: bool = False,
+    ) -> list[TraceSemanticFact]:
+        # A submitted message is already known before workspace preparation. Keep
+        # it durable without claiming that resume input or lineage is resolved.
+        # The later input observation binds the same message to its resolved Turn;
+        # both facts keep one logical message ID and never imply a second request.
+        if source.input_kind not in {"ordinary", "branch"}:
+            return []
+        public_input = discard_private_state(source.input, self._private_state_keys)
+        facts: list[TraceSemanticFact] = []
+        for input_message in extract_input_messages(public_input):
+            user_message_id, user_content = input_message.id, input_message.content
+            assert user_message_id is not None
+            user_key = ((), user_message_id)
+            captured = self._capture(user_content, content_kind="message")
+            self._message_seen.add(user_key)
+            self._track_message_content(user_key, captured, append=False)
+            self._message_completed.add(user_key)
+            facts.append(
+                make_fact(
+                    MessageFact,
+                    common,
+                    phase="submitted" if submitted else "reconciled",
+                    message_id=_scope_id("message", (), user_message_id),
+                    source_message_id=user_message_id,
+                    role="user",
+                    content=captured,
+                    source=input_message.source,
+                )
+            )
+        return facts
+
     def _facts(
         self,
         observation: RuntimeObservation,
@@ -697,8 +744,11 @@ class _TracingSession:
                     phase="started",
                     input_kind=self._context.input_kind,
                     parent_run_id=self._context.parent_run_id,
-                )
+                ),
+                *self._input_message_facts(self._context, common, submitted=True),
             ]
+        if isinstance(observation, RunPhaseObservation):
+            return [make_fact(RunFact, common, phase=observation.phase)]
         if isinstance(observation, RunInputObservation):
             source = observation.source
             facts: list[TraceSemanticFact] = []
@@ -786,38 +836,7 @@ class _TracingSession:
             )
             if source.call_tracking_enabled:
                 facts.append(make_fact(CallTrackingFact, common))
-            for input_message in extract_input_messages(public_input):
-                if source.input_kind not in {"ordinary", "branch"}:
-                    break
-                user_message_id, user_content = input_message.id, input_message.content
-                assert user_message_id is not None
-                scoped_message_id = _scope_id("message", (), user_message_id)
-                user_key = ((), user_message_id)
-                self._message_seen.add(user_key)
-                captured_user_content = self._capture(
-                    user_content,
-                    content_kind="message",
-                )
-                self._track_message_content(
-                    user_key,
-                    captured_user_content,
-                    append=False,
-                )
-                self._message_completed.add(user_key)
-                facts.append(
-                    MessageFact(
-                        source_observation_id=source_id,
-                        identity=observation.identity,
-                        occurred_at=observation.observed_at,
-                        monotonic_ns=observation.monotonic_ns,
-                        phase="reconciled",
-                        message_id=scoped_message_id,
-                        source_message_id=user_message_id,
-                        role="user",
-                        content=captured_user_content,
-                        source=input_message.source,
-                    )
-                )
+            facts.extend(self._input_message_facts(source, common))
             if source.input_kind == "abandon":
                 facts.extend(self._resolved_interaction_facts(source.resume, common))
             # An unbound request is not proof of native resume either. Native
