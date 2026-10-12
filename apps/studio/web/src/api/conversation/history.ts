@@ -103,6 +103,7 @@ export interface TraceState {
 export interface TraceStatus {
   execution: 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'abandoned' | 'unknown'
   headRunId: string
+  phase?: import('../../types').ConversationRunPhase
 }
 
 export interface TraceCompleteness {
@@ -200,6 +201,11 @@ const validateTraceObservation = (value: Record<string, unknown>) => {
     throw new ConversationError('stream_event_invalid')
   }
   traceObservationTime(value.observedAt)
+  if (isRecord(value.status) && value.status.phase !== undefined
+    && (value.status.execution !== 'running'
+      || (value.status.phase !== 'preparing' && value.status.phase !== 'running'))) {
+    throw new ConversationError('stream_event_invalid')
+  }
 }
 
 export const fetchConversationHistoryList = (

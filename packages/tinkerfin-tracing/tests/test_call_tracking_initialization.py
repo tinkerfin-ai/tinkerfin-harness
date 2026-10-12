@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -15,6 +16,7 @@ from langchain.agents.middleware.types import InputAgentState
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import BaseTool
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -38,6 +40,12 @@ from tinkerfin_tracing import (
     TraceGraphNodeKind,
     Tracer,
     TraceStore,
+)
+from tinkerfin_tracing.projection import (
+    CoreProjectionState,
+    advance_core_projection_state,
+    project_core,
+    project_core_checkpoint,
 )
 
 
@@ -219,7 +227,7 @@ async def test_initialization_failure_keeps_existing_and_future_call_history(
         )
         try:
             lifecycle = [item.type.value async for item in agui]
-            assert lifecycle == ["RUN_STARTED", "RUN_ERROR"]
+            assert lifecycle == ["RUN_STARTED", "CUSTOM", "RUN_ERROR"]
             assert agui.error is failure
         finally:
             await agui.aclose()
@@ -234,7 +242,13 @@ async def test_initialization_failure_keeps_existing_and_future_call_history(
         fact.kind in {"model.call", "tool.execution", "tool"} for fact in failed_facts
     )
     phases = [fact.phase for fact in failed_facts if isinstance(fact, RunFact)]
-    assert phases == ["started", "input", "terminal", "closed"]
+    assert phases == [
+        "started",
+        *(["preparing"] if transport == "agui" else []),
+        "input",
+        "terminal",
+        "closed",
+    ]
     terminal = next(
         fact
         for fact in failed_facts
@@ -246,6 +260,11 @@ async def test_initialization_failure_keeps_existing_and_future_call_history(
 
     after_failure = await tracer.query(first.thread)
     assert not after_failure.completeness.call_tracking_missing
+    messages = (await tracer.get(first.thread)).messages
+    assert {item.source_id for item in messages if item.role == "user"} == {
+        f"user-{first.run_id}",
+        f"user-{failed.run_id}",
+    }
     assert original_models <= {node.id for node in after_failure.nodes}
     assert any(node.run_id == failed.run_id for node in after_failure.nodes)
     response = await tracer.query(
@@ -380,6 +399,7 @@ async def test_cancelled_initialization_preserves_cancellation_and_next_run(
     )
     if transport == "agui":
         await anext(stream)
+        await anext(stream)
     pending = asyncio.create_task(anext(stream))
     try:
         await entered.wait()
@@ -397,7 +417,13 @@ async def test_cancelled_initialization_preserves_cancellation_and_next_run(
         snapshot.key, after_seq=0, as_of_seq=snapshot.as_of_seq, limit=100
     )
     facts = [event.fact for event in events if isinstance(event.fact, RunFact)]
-    assert [fact.phase for fact in facts] == ["started", "input", "terminal", "closed"]
+    assert [fact.phase for fact in facts] == [
+        "started",
+        *(["preparing"] if transport == "agui" else []),
+        "input",
+        "terminal",
+        "closed",
+    ]
     assert facts[-2].outcome == "cancelled"
     assert facts[-2].code == "cancelled"
     await _run_healthy(
@@ -407,3 +433,160 @@ async def test_cancelled_initialization_preserves_cancellation_and_next_run(
         ),
     )
     assert not (await tracer.query(identity.thread)).completeness.call_tracking_missing
+
+
+async def test_preparation_phase_is_live_and_durable_before_workspace_ready(
+    trace_store: TraceStore,
+) -> None:
+    entered, release = asyncio.Event(), asyncio.Event()
+    workspace_context = ContextVar("phase_workspace", default="outside")
+    closed: list[str] = []
+
+    class Workspace:
+        @asynccontextmanager
+        async def prepare(
+            self, identity: RunIdentity
+        ) -> AsyncIterator[PreparedWorkspace[None, StateBackend]]:
+            token = workspace_context.set(identity.run_id)
+            try:
+                entered.set()
+                await release.wait()
+                yield PreparedWorkspace(None, StateBackend())
+            finally:
+                workspace_context.reset(token)
+                closed.append(identity.run_id)
+
+    tracer = Tracer(store=trace_store)
+    identity = RunIdentity(namespace="test", thread_id="phases", run_id="run")
+    runtime = (
+        TinkerFin()
+        .with_namespace("test")
+        .with_observer(tracer)
+        .build(
+            model=_LocalModel(responses=[AIMessage(content="ready")]),
+            backend=Workspace(),
+        )
+    )
+    stream = runtime.open_agui_run(
+        thread_id=identity.thread_id, run_id=identity.run_id, input=_input(identity)
+    )
+    try:
+        assert (await anext(stream)).type.value == "RUN_STARTED"
+        preparing = (await anext(stream)).model_dump(mode="json", by_alias=True)
+        assert preparing["name"] == "tinkerfin.run.phase"
+        assert preparing["value"] == {
+            "threadId": "phases",
+            "runId": "run",
+            "phase": "preparing",
+        }
+        await entered.wait()
+        prepared_view = await tracer.get(identity.thread)
+        assert prepared_view.status.phase == "preparing"
+        assert prepared_view.status.execution == "running"
+        assert [(item.role, item.content) for item in prepared_view.messages] == [
+            ("user", "local test")
+        ]
+        prefix = tuple(
+            event.fact for event in (await prepared_view.events(limit=100)).items
+        )
+        recovered_store = InMemoryTraceStore()
+        recovered_writer = await recovered_store.open_writer(identity)
+        try:
+            await recovered_writer.append(prefix)
+        finally:
+            await recovered_writer.aclose()
+        recovered = await Tracer(store=recovered_store).get(identity.thread)
+        assert recovered.status.execution == "unknown"
+        assert recovered.completeness.missing_tail
+        assert recovered.messages == prepared_view.messages
+        assert not any(
+            isinstance(fact, RunFact) and fact.phase == "terminal" for fact in prefix
+        )
+        release.set()
+        running = (await anext(stream)).model_dump(mode="json", by_alias=True)
+        assert running["value"] == {
+            "threadId": "phases",
+            "runId": "run",
+            "phase": "running",
+        }
+        assert (await tracer.get(identity.thread)).status.phase == "running"
+        tail = [event.type.value async for event in stream]
+        assert tail[-1] == "RUN_FINISHED"
+        assert tail.count("RUN_FINISHED") == 1
+    finally:
+        release.set()
+        await stream.aclose()
+    assert closed == ["run"]
+    assert workspace_context.get() == "outside"
+    view = await tracer.get(identity.thread)
+    assert view.status.execution == "succeeded"
+    assert view.status.phase is None
+    facts = [event.fact for event in (await view.events(limit=100)).items]
+    assert [
+        fact.phase
+        for fact in facts
+        if isinstance(fact, RunFact) and fact.phase in {"preparing", "running"}
+    ] == ["preparing", "running"]
+
+
+async def test_submitted_message_inherits_history_and_preserves_reused_identity(
+    trace_store: TraceStore,
+) -> None:
+    tracer = Tracer(store=trace_store)
+    runtime = (
+        TinkerFin(checkpointer=InMemorySaver())
+        .with_namespace("test")
+        .with_observer(tracer)
+        .build(
+            model=_LocalModel(
+                responses=[
+                    AIMessage(id="answer-one", content="first"),
+                    AIMessage(id="answer-two", content="second"),
+                ]
+            ),
+        )
+    )
+    first_message = None
+    for run_id, text in (("first", "question one"), ("second", "question two")):
+        stream = runtime.open_agui_run(
+            thread_id="same-message",
+            run_id=run_id,
+            input=InputAgentState(messages=[HumanMessage(id="user", content=text)]),
+        )
+        try:
+            async for _ in stream:
+                pass
+        finally:
+            await stream.aclose()
+        identity = RunIdentity(
+            namespace="test", thread_id="same-message", run_id=run_id
+        )
+        snapshot = await trace_store.snapshot(identity.thread)
+        events = await trace_store.read_events(
+            snapshot.key, after_seq=0, as_of_seq=snapshot.as_of_seq, limit=100
+        )
+        expected = project_core(
+            events, head_run_id=run_id, turn_limit=100, active_run_ids=()
+        )
+        checkpoint = CoreProjectionState()
+        for event in events:
+            checkpoint = advance_core_projection_state(checkpoint, (event,))
+            checkpoint = CoreProjectionState.model_validate_json(
+                checkpoint.model_dump_json()
+            )
+        view = project_core_checkpoint(
+            checkpoint, head_run_id=run_id, turn_limit=100, active_run_ids=()
+        )
+        assert view.messages == expected.messages
+        message = next(item for item in view.messages if item.role == "user")
+        if first_message is None:
+            first_message = message
+        else:
+            assert message.id == first_message.id
+            assert message.run_id == first_message.run_id
+            assert message.trace_seq == first_message.trace_seq
+            assert message.created_at == first_message.created_at
+            assert message.content == "question two"
+            assert [
+                item.content for item in view.messages if item.role == "assistant"
+            ] == ["first", "second"]

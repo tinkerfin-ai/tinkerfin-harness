@@ -240,6 +240,7 @@ export interface PlanReviewState {
 export type PlanInteraction = PlanQuestionState | PlanReviewState
 
 export type AccessMode = "full" | "write_approval"
+export type ConversationRunPhase = 'preparing' | 'running'
 
 export interface Conversation extends Partial<Pick<ConversationTitleSnapshot, "titleSource" | "titleGenerationStatus" | "titleSeq">> {
   projectId: string
@@ -262,6 +263,7 @@ export interface Conversation extends Partial<Pick<ConversationTitleSnapshot, "t
   planInteraction?: PlanInteraction
   pendingInteractionKind?: PendingInteractionKind
   runStatus: ConversationRunStatus
+  runPhase?: ConversationRunPhase
   activeRunId?: string
   serverState?: DeepReadonly<JsonObject>
   /** 最后一条已持久化 AG-UI 事件序号，用于 afterSeq 续传 */

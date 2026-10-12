@@ -11,7 +11,7 @@ export function ConversationRunFailure({ id, errorCode, retryable, disabled, onR
   onRetry?: () => void
 }) {
   const { t } = useI18n()
-  const title = errorCode === 'workspace_busy' || errorCode === 'workspace_file_conflict'
+  const title = errorCode?.startsWith('workspace_')
     ? conversationErrorMessage(conversationRunError(errorCode), 'run_failed')
     : t('会话异常')
   return (

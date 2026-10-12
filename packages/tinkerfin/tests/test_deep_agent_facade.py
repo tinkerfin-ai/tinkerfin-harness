@@ -124,7 +124,11 @@ async def test_open_agui_run_emits_one_lifecycle_for_preparation_failure(
         thread_id="thread-1", run_id="run-1", input=_graph_input()
     )
     events = [event async for event in stream]
-    assert [event.type.value for event in events] == ["RUN_STARTED", "RUN_ERROR"]
+    assert [event.type.value for event in events] == [
+        "RUN_STARTED",
+        "CUSTOM",
+        "RUN_ERROR",
+    ]
     assert isinstance(stream.error, RuntimeError)
 
 

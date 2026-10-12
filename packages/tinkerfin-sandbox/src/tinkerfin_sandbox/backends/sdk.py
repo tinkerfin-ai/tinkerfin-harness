@@ -190,7 +190,7 @@ def _connection_failure_reason(error: Exception) -> str | None:
         return _connection_failure_reason(error.__cause__)
     if isinstance(error, httpx.TimeoutException):
         return "timeout"
-    if isinstance(error, httpx.NetworkError):
+    if isinstance(error, httpx.NetworkError | httpx.RemoteProtocolError):
         return "unreachable"
     if isinstance(error, SandboxApiException):
         status = error.status_code

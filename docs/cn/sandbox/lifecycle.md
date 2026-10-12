@@ -106,8 +106,10 @@ Sandbox 前应先检查诊断信息；并非所有控制故障都能在保留全
 连接初始化函数会重新执行，因此初始化必须幂等。
 连接刷新失败的 handle 暂时不可用。
 
-官方 OpenSandbox Server 0.2.3 使用 Docker pause/unpause。`resume()` 不能启动通过 Docker 停止的
-容器，也不能恢复已到期的实例。暂停不会冻结或延长远端 TTL；采用有限生存时间的暂停实例仍可能到期。
+受控 [OpenSandbox Server](https://github.com/tinkerfin-ai/sandbox-runtime/tree/main/opensandbox-server)
+会在 Docker 重启后自动恢复持久实例。明确暂停的实例在重启后仍需调用 `resume()`；
+通过 Docker 手动停止的容器需要显式启动。有限 TTL 实例遵循供应商生命周期，
+暂停不会冻结或延长 TTL，也不能恢复已到期的实例。
 
 ## 诊断查询
 
@@ -172,9 +174,9 @@ State 和 Client 关闭失败会向调用方报告，不能视为关闭成功。
 ## 健康检查与替换
 
 `OpenSandboxConfig.health_command` 用于检查数据面是否可用，默认是 `printf ok`。
-`get()` 默认使用 30 秒工作预算恢复同一实例，最多 3 次，包含首次检查。重试间隔从 0.5 秒开始翻倍，
-上限为 2 秒。重试耗尽后抛出 `OpenSandboxBackendUnavailableError`，保留原实例和绑定。
-已确认实例不存在时会跳过无效重试。
+访问时先检查控制面状态，再探测连接。暂时连接失败时，默认在 15 秒后最多重试一次，
+共用 30 秒工作预算。重试耗尽后抛出 `OpenSandboxBackendUnavailableError`，保留原实例和绑定。
+已确认停止、暂停或不存在时立即报错；访问操作不会自动启动或恢复这些实例。
 
 允许丢弃整个 Sandbox 内容时，可以显式选择自动重建：
 

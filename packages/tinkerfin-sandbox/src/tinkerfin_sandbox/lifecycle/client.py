@@ -15,7 +15,6 @@ from typing import Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-import httpx
 from opensandbox import Sandbox
 from opensandbox import SandboxManager as OpenSandboxSDKManager
 from opensandbox.config import ConnectionConfig
@@ -42,6 +41,7 @@ from ..errors import (
     OpenSandboxBackendUnavailableError,
     OpenSandboxError,
     OpenSandboxInitializationError,
+    OpenSandboxPausedError,
     OpenSandboxPurposeError,
     UnexpectedOpenSandboxBackendError,
 )
@@ -57,8 +57,8 @@ from ._sql_tasks import select_failure
 from ._transport import _join_owned_task, _SDKRequestTracker
 
 _CREATE_TOKEN_METADATA_KEY = "tinkerfin.ai/create-token"
-_WORKSPACE_PROBE_SECONDS = 30.0
-_WORKSPACE_POLL_SECONDS = 0.2
+_READINESS_BUDGET_SECONDS = 30.0
+_READINESS_RETRY_SECONDS = 15.0
 # Manager recovery scopes this deadline to its same-instance work. Child SDK tasks
 # inherit it so cancellation can settle under the owner claim without extending
 # connection or initialization work to the client's longer standalone deadline.
@@ -75,11 +75,29 @@ class _WorkspaceReadiness(BaseModel):
     ready: bool
 
 
+def _require_running_state(state: str) -> None:
+    """Reject unusable control-plane states before contacting an execution port.
+
+    Server 0.2.3 still returns endpoints for exited containers. Its resume API
+    unpauses containers and cannot authorize starting an externally stopped one.
+    """
+    normalized = state.casefold()
+    if normalized == "paused":
+        raise OpenSandboxPausedError("Sandbox is paused; resume it before use")
+    if normalized in {"terminated", "failed", "stopping"}:
+        raise OpenSandboxBackendUnavailableError(
+            "Sandbox is stopped; start the existing instance before use",
+            context={"reason": "stopped"},
+        )
+    if normalized != "running":
+        raise OpenSandboxBackendUnavailableError(
+            "Sandbox is not ready", context={"reason": "unhealthy"}
+        )
+
+
 def _transient_workspace_probe(error: Exception) -> bool:
     """Retry only this read-only probe's typed connectivity or service failures."""
     if _connection_failure_reason(error) in {"timeout", "unreachable"}:
-        return True
-    if isinstance(error, httpx.RemoteProtocolError):
         return True
     if isinstance(error, SandboxInternalException) and isinstance(
         error.__cause__, Exception
@@ -280,73 +298,87 @@ class OpenSandboxClient(_SandboxClient):
             [WriteEntry(path=workspace_root, mode=755)]
         )
 
-    async def _wait_workspace_ready(self, sandbox: Sandbox, *, deadline: float) -> None:
-        """Bound every probe and interval by one workspace readiness deadline.
+    async def _wait_ready(
+        self,
+        sandbox: Sandbox,
+        *,
+        purpose: OpenSandboxPurpose,
+        deadline: float,
+        attempts: int = 1,
+    ) -> None:
+        """Probe once per connection; only a new instance owns one readiness retry.
 
-        OpenSandbox 0.1.16 disables SSE read timeouts and its health loop hides
-        typed failures. Direct command probes retain those causes and close their
-        response on cancellation. Only workspace-purpose instances use this path;
-        ordinary command instances retain the SDK's existing ping contract.
+        Manager recovery owns existing-instance retries. SDK 0.1.16 disables SSE
+        read timeouts, so the probe and optional creation wait share one deadline.
+        The read-only status command can be retried; user commands never are.
         """
         loop = asyncio.get_running_loop()
-        last_error: Exception | None = None
-        while loop.time() < deadline:
+        deadline = min(deadline, loop.time() + _READINESS_BUDGET_SECONDS)
+        failure: OpenSandboxError = OpenSandboxBackendUnavailableError(
+            "OpenSandbox workspace is not ready", context={"reason": "unhealthy"}
+        )
+        for attempt in range(attempts):
+            if loop.time() >= deadline:
+                raise OpenSandboxBackendTimeoutError(
+                    "OpenSandbox workspace readiness timed out", cause=failure
+                ) from failure
             probe_timeout = asyncio.timeout_at(
-                min(deadline, loop.time() + _WORKSPACE_PROBE_SECONDS)
+                min(deadline, loop.time() + _READINESS_BUDGET_SECONDS)
             )
             try:
                 async with probe_timeout:
                     result = await sandbox.commands.run(
-                        "/opt/sandbox-runtime/venv/bin/python -I -S "
-                        "/opt/sandbox-runtime/workspaces/network.py status",
+                        self.config.health_command
+                        if purpose == "commands"
+                        else (
+                            "/opt/sandbox-runtime/venv/bin/python -I -S "
+                            "/opt/sandbox-runtime/workspaces/network.py status"
+                        ),
                         opts=RunCommandOpts(
-                            timeout=timedelta(seconds=_WORKSPACE_PROBE_SECONDS)
+                            timeout=timedelta(seconds=_READINESS_BUDGET_SECONDS)
                         ),
                     )
-                if result.error is not None or result.exit_code != 0:
-                    raise OpenSandboxBackendProtocolError(
-                        "OpenSandbox workspace readiness command did not succeed",
-                        diagnostic_context={
-                            "operation": "workspace readiness",
-                            "exit_code": result.exit_code,
-                            "command_error": result.error is not None,
-                        },
-                    )
-                payload = "".join(message.text for message in result.logs.stdout)
-                if _WorkspaceReadiness.model_validate_json(payload).ready:
-                    return
+                    if purpose == "commands":
+                        ready = result.error is None and result.exit_code == 0
+                    else:
+                        if result.error is not None or result.exit_code != 0:
+                            raise OpenSandboxBackendProtocolError(
+                                "OpenSandbox workspace readiness command did not succeed",
+                                diagnostic_context={
+                                    "operation": "workspace readiness",
+                                    "exit_code": result.exit_code,
+                                    "command_error": result.error is not None,
+                                },
+                            )
+                        payload = "".join(
+                            message.text for message in result.logs.stdout
+                        )
+                        ready = _WorkspaceReadiness.model_validate_json(payload).ready
+                    if ready:
+                        return
             except Exception as error:
                 if (
                     isinstance(error, TimeoutError) and probe_timeout.expired()
                 ) or _transient_workspace_probe(error):
-                    last_error = error
+                    failure = _backend_error("workspace readiness", error)
                 else:
                     translated = _backend_error("workspace readiness", error)
                     if translated is error:
                         raise
                     raise translated from error
-            remaining = deadline - loop.time()
-            if remaining <= 0:
+            if attempt + 1 == attempts:
                 break
             interval_timeout = asyncio.timeout_at(deadline)
             try:
                 async with interval_timeout:
-                    await asyncio.sleep(min(_WORKSPACE_POLL_SECONDS, remaining))
-            except TimeoutError:
+                    await asyncio.sleep(_READINESS_RETRY_SECONDS)
+            except TimeoutError as error:
                 if not interval_timeout.expired():
                     raise
-                break
-        failure = OpenSandboxBackendTimeoutError(
-            "OpenSandbox workspace readiness timed out",
-            diagnostic_context={
-                "operation": "workspace readiness",
-                "last_result": "probe_failed"
-                if last_error is not None
-                else "not_ready",
-            },
-            cause=last_error,
-        )
-        raise failure from last_error
+                raise OpenSandboxBackendTimeoutError(
+                    "OpenSandbox workspace readiness timed out", cause=error
+                ) from error
+        raise failure
 
     def _connect_deadline(self) -> float:
         deadline = (
@@ -464,16 +496,13 @@ class OpenSandboxClient(_SandboxClient):
                     timeout=self.config.ttl,
                     ready_timeout=self.config.ready_timeout,
                     connection_config=self._sdk_connection_config,
-                    skip_health_check=purpose == "workspaces",
+                    skip_health_check=True,
                     extensions={"bootstrap.execd.isolation": "enable"}
                     if purpose == "workspaces"
                     else None,
                 )
-                ready_deadline = (
-                    asyncio.get_running_loop().time()
-                    + self.config.ready_timeout.total_seconds()
-                    if purpose == "workspaces"
-                    else None
+                ready_deadline = asyncio.get_running_loop().time() + min(
+                    self.config.ready_timeout.total_seconds(), _READINESS_BUDGET_SECONDS
                 )
             except Exception as error:
                 try:
@@ -493,11 +522,12 @@ class OpenSandboxClient(_SandboxClient):
             backend = self._wrap(sandbox)
             owned_instance.set()
             try:
-                if purpose == "workspaces":
-                    if cancellation_requested.is_set():
-                        raise asyncio.CancelledError
-                    assert ready_deadline is not None
-                    await self._wait_workspace_ready(sandbox, deadline=ready_deadline)
+                if purpose == "workspaces" and cancellation_requested.is_set():
+                    raise asyncio.CancelledError
+                assert ready_deadline is not None
+                await self._wait_ready(
+                    sandbox, purpose=purpose, deadline=ready_deadline, attempts=2
+                )
                 await self._initialize_workspace(sandbox)
                 await self._initialize(backend)
             except BaseException as error:
@@ -570,7 +600,7 @@ class OpenSandboxClient(_SandboxClient):
                             candidate.id,
                             connection_config=self._sdk_connection_config,
                             connect_timeout=self.config.connect_timeout,
-                            skip_health_check=purpose == "workspaces",
+                            skip_health_check=True,
                         )
                         return sandbox, deadline
                     except BaseException as error:
@@ -723,23 +753,31 @@ class OpenSandboxClient(_SandboxClient):
             deadline = self._connect_deadline()
             try:
                 async with asyncio.timeout_at(deadline):
+                    manager = await OpenSandboxSDKManager.create(
+                        connection_config=self._sdk_connection_config
+                    )
+                    try:
+                        info = await manager.get_sandbox_info(sandbox_id)
+                    finally:
+                        await manager.close()
+                    require_remote_purpose(info.metadata, purpose)
+                    _require_running_state(info.status.state)
                     sandbox = await Sandbox.connect(
                         sandbox_id,
                         connection_config=self._sdk_connection_config,
                         connect_timeout=self.config.connect_timeout,
-                        skip_health_check=purpose == "workspaces",
+                        skip_health_check=True,
                     )
             except Exception as error:
                 translated = _backend_error("connect", error)
+                if translated is error:
+                    raise
                 raise translated from error
             backend = self._wrap(sandbox)
             connection_acquired.set()
             try:
                 if purpose == "workspaces" and cancellation_requested.is_set():
                     raise asyncio.CancelledError
-                async with asyncio.timeout_at(deadline):
-                    info = await sandbox.get_info()
-                    require_remote_purpose(info.metadata, purpose)
             except BaseException as error:
                 failure = (
                     _backend_error("connect", error)
@@ -751,8 +789,7 @@ class OpenSandboxClient(_SandboxClient):
             if not initialize:
                 return backend
             try:
-                if purpose == "workspaces":
-                    await self._wait_workspace_ready(sandbox, deadline=deadline)
+                await self._wait_ready(sandbox, purpose=purpose, deadline=deadline)
                 async with asyncio.timeout_at(deadline):
                     await self._initialize_workspace(sandbox)
                     await self._initialize(backend)

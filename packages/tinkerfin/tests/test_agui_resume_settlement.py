@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from typing import Any, cast
 
 import pytest
-from ag_ui.core import BaseEvent, RunFinishedEvent
+from ag_ui.core import BaseEvent, CustomEvent, RunFinishedEvent
 from ag_ui.core.types import ResumeEntry
 from deepagents.backends import StateBackend
 from langchain_core.messages import AIMessage, ToolMessage
@@ -36,6 +36,18 @@ from tinkerfin_contracts import (
     RunSourceContext,
     RuntimeObservation,
 )
+
+
+def _is_run_phase(event: BaseEvent) -> bool:
+    return isinstance(event, CustomEvent) and event.name == "tinkerfin.run.phase"
+
+
+async def _next_non_phase_event(stream: AsyncIterator[BaseEvent]) -> BaseEvent:
+    # These cases exercise durable resume settlement after progress is delivered.
+    while True:
+        event = await anext(stream)
+        if not _is_run_phase(event):
+            return event
 
 
 class _SetupWorkspace:
@@ -361,7 +373,10 @@ async def test_open_agui_run_releases_only_proven_unsaved_preparation(
     )
     events = [event async for event in stream]
 
-    assert [event.type.value for event in events] == ["RUN_STARTED", "RUN_ERROR"]
+    assert [event.type.value for event in events if not _is_run_phase(event)] == [
+        "RUN_STARTED",
+        "RUN_ERROR",
+    ]
     assert releases == int(has_saver and not abandon)
 
 
@@ -395,13 +410,13 @@ async def test_resumed_start_precedes_blocked_workspace_and_native_execution(
         resume=request,
         on_resume_not_saved=not_saved,
     )
-    first = asyncio.create_task(anext(stream))
+    first = asyncio.create_task(_next_non_phase_event(stream))
     preparing = asyncio.create_task(entered.wait())
     try:
         await asyncio.wait((first, preparing), return_when=asyncio.FIRST_COMPLETED)
         assert first.done(), "Resumed RUN_STARTED waited for the workspace"
         assert (await first).type.value == "RUN_STARTED"
-        pending = asyncio.create_task(anext(stream))
+        pending = asyncio.create_task(_next_non_phase_event(stream))
         await preparing
         release.set()
         assert (await pending).type.value == "RUN_ERROR"
@@ -455,7 +470,10 @@ async def test_resume_preparation_uses_the_configured_saver() -> None:
     )
     events = [event async for event in stream]
 
-    assert [event.type.value for event in events] == ["RUN_STARTED", "RUN_ERROR"]
+    assert [event.type.value for event in events if not _is_run_phase(event)] == [
+        "RUN_STARTED",
+        "RUN_ERROR",
+    ]
     assert releases == 1
 
 
@@ -535,8 +553,8 @@ async def test_open_agui_run_settles_preparation_cancellation_once(
         resume=request,
         on_resume_not_saved=release_unprepared,
     )
-    assert (await anext(stream)).type.value == "RUN_STARTED"
-    task = asyncio.create_task(anext(stream))
+    assert (await _next_non_phase_event(stream)).type.value == "RUN_STARTED"
+    task = asyncio.create_task(_next_non_phase_event(stream))
     await entered.wait()
     task.cancel()
     task.cancel()
@@ -629,8 +647,8 @@ async def test_open_agui_run_retains_marker_probe_across_repeated_cancellation(
         resume=request,
         on_resume_not_saved=release_unprepared,
     )
-    assert (await anext(stream)).type.value == "RUN_STARTED"
-    task = asyncio.create_task(anext(stream))
+    assert (await _next_non_phase_event(stream)).type.value == "RUN_STARTED"
+    task = asyncio.create_task(_next_non_phase_event(stream))
     await factory_started.wait()
     task.cancel("first")
     await probe_started.wait()
@@ -881,7 +899,9 @@ async def test_saved_callback_failure_retries_without_reexecuting_decision(
     )
     failed_events = [event async for event in failed_stream]
 
-    assert [event.type.value for event in failed_events] == [
+    assert [
+        event.type.value for event in failed_events if not _is_run_phase(event)
+    ] == [
         "RUN_STARTED",
         "RUN_ERROR",
     ]
@@ -962,7 +982,10 @@ async def test_resume_staging_failure_releases_unprepared_host_claim_once(
     )
     events = [event async for event in stream]
 
-    assert [event.type.value for event in events] == ["RUN_STARTED", "RUN_ERROR"]
+    assert [event.type.value for event in events if not _is_run_phase(event)] == [
+        "RUN_STARTED",
+        "RUN_ERROR",
+    ]
     assert releases == 1
     assert checkpoints == []
     assert executions == []
@@ -1032,8 +1055,8 @@ async def test_resume_staging_cancellation_releases_unprepared_host_claim_once(
         resume=binding,
         on_resume_not_saved=release_unprepared,
     )
-    assert (await anext(stream)).type.value == "RUN_STARTED"
-    pull = asyncio.create_task(anext(stream))
+    assert (await _next_non_phase_event(stream)).type.value == "RUN_STARTED"
+    pull = asyncio.create_task(_next_non_phase_event(stream))
     await entered.wait()
 
     pull.cancel()
@@ -1085,10 +1108,10 @@ async def test_resume_post_write_cancellation_keeps_the_durable_host_claim(
         resume=binding,
         on_resume_not_saved=release_unprepared,
     )
-    assert (await anext(stream)).type.value == "RUN_STARTED"
+    assert (await _next_non_phase_event(stream)).type.value == "RUN_STARTED"
 
     with pytest.raises(asyncio.CancelledError):
-        await anext(stream)
+        await _next_non_phase_event(stream)
     await stream.aclose()
 
     head = await NamespaceCheckpointer(saver, "test").aget_tuple(
@@ -1142,14 +1165,14 @@ async def test_resume_graph_factory_failure_uses_pre_marker_settlement(
         on_resume_not_saved=release_unprepared,
     )
     if isinstance(error, Exception):
-        first = await anext(stream)
-        second = await anext(stream)
+        first = await _next_non_phase_event(stream)
+        second = await _next_non_phase_event(stream)
         assert first.type.value == "RUN_STARTED"
         assert second.type.value == "RUN_ERROR"
     else:
-        assert (await anext(stream)).type.value == "RUN_STARTED"
+        assert (await _next_non_phase_event(stream)).type.value == "RUN_STARTED"
         with pytest.raises(type(error)) as captured:
-            await anext(stream)
+            await _next_non_phase_event(stream)
         assert captured.value is error
     await stream.aclose()
     assert releases == 1
@@ -1289,9 +1312,9 @@ async def test_close_during_checkpoint_callback_keeps_exactly_once_marker(
         resume=binding,
         on_resume_saved=checkpointed,
     )
-    first = await anext(stream)
+    first = await _next_non_phase_event(stream)
     assert first.type.value == "RUN_STARTED"
-    next_event = asyncio.create_task(anext(stream))
+    next_event = asyncio.create_task(_next_non_phase_event(stream))
     await checkpoint_entered.wait()
     assert len(checkpoints) == 1
     assert executions == []

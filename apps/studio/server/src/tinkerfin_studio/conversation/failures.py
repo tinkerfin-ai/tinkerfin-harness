@@ -10,7 +10,7 @@ FAILURE_PROJECTION = "studio.conversation.failures"
 
 
 class ConversationRunFailure(BaseModel):
-    """普通提问的失败事实；重试表示将原问题重新发送为新一轮"""
+    """运行的失败事实；普通提问可根据执行前失败证明重新发送"""
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -21,20 +21,20 @@ class ConversationRunFailure(BaseModel):
 
 
 class ConversationFailures(BaseModel):
-    """固定 Trace 前缀中普通提问的失败记录"""
+    """固定 Trace 前缀中的运行失败记录"""
 
     failures: tuple[ConversationRunFailure, ...] = ()
 
 
 class FailureProjectionState(BaseModel):
-    """保存尚未终止的普通提问及已确认失败，供框架缓存和重放"""
+    """保存普通提问身份与已确认失败，供框架缓存和重放"""
 
     ordinary_runs: set[str] = Field(default_factory=set)
     failures: dict[str, ConversationRunFailure] = Field(default_factory=dict)
 
 
 class ConversationFailureProjection:
-    """使用框架业务投影关联普通提问和终态，不推断缺失的执行结果"""
+    """使用框架业务投影提供失败原因，不推断缺失的执行结果"""
 
     name = FAILURE_PROJECTION
     state_type = FailureProjectionState
@@ -53,7 +53,7 @@ class ConversationFailureProjection:
             return state.model_copy(
                 update={"ordinary_runs": state.ordinary_runs | {run_id}}
             )
-        if fact.phase != "terminal" or run_id not in state.ordinary_runs:
+        if fact.phase != "terminal":
             return state
         failures = dict(state.failures)
         if fact.outcome == "failed":
@@ -61,11 +61,16 @@ class ConversationFailureProjection:
                 runId=run_id,
                 errorCode=fact.code,
                 failedAt=fact.occurred_at,
-                retryable=fact.code
+                retryable=run_id in state.ordinary_runs
+                and fact.code
                 in {
                     "runtime_initialization_error",
                     "workspace_busy",
                     "workspace_file_conflict",
+                    "workspace_stopped",
+                    "workspace_paused",
+                    "workspace_unavailable",
+                    "workspace_timeout",
                 },
             )
         return state.model_copy(
@@ -82,7 +87,7 @@ class ConversationFailureProjection:
 def visible_run_failures(
     result: object, run_ids: set[str]
 ) -> tuple[ConversationRunFailure, ...]:
-    """仅返回同一历史窗口内用户提问的失败，不混入其他分页"""
+    """仅返回所选历史窗口与当前运行的失败，不混入其他分页"""
 
     return tuple(
         failure

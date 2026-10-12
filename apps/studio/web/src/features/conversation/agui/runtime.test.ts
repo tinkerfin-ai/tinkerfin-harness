@@ -26,10 +26,12 @@ it('准备失败后保留已提交审批和暂停工具，等待历史确认而�
   const submitted = prepareResumeSubmission(waiting)
   const started = applyConversationEvent(submitted, { type: 'RUN_STARTED', threadId: THREAD_ID, runId: 'resume-prepare' })
   const failed = applyConversationEvent(started, {
-    type: 'RUN_ERROR', code: 'runtime_initialization_error', message: '准备失败', rawEvent: { runId: 'resume-prepare' },
+    type: 'RUN_ERROR', code: 'workspace_stopped', message: '准备失败', rawEvent: { runId: 'resume-prepare' },
   })
   expect(started.approval?.submitted).toBe(true)
   expect(failed.approval).toEqual(started.approval)
+  expect(failed.notice?.content).toBe('运行环境已停止，请启动沙箱后重试')
+  expect(failed.runFailures).toContainEqual(expect.objectContaining({ runId: 'resume-prepare', retryable: false, errorCode: 'workspace_stopped' }))
   expect(failed.messages.find(message => message.meta?.toolCallId === 'pending-write')?.meta).toMatchObject({
     status: 'paused', interruptId: 'approval-write',
   })
@@ -600,4 +602,20 @@ it('旧运行错误到达时只记录原运行失败，不停止当前新运行'
   expect(updated.activeRunId).toBe('new-run')
   expect(updated.runFailures).toMatchObject([{ runId: 'old-run', retryable: true }])
   expect(updated.notice).toBeUndefined()
+})
+
+it('准备进度归属当前运行，过期和倒退阶段不能覆盖执行中状态', () => {
+  const started = applyConversationEvent(buildEmptyConversation({ projectId: 'project-1', threadId: THREAD_ID, now: '2026-10-12T00:00:00Z' }), {
+    type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID,
+  })
+  const event = { type: 'CUSTOM', name: 'tinkerfin.run.phase', value: { threadId: THREAD_ID, runId: RUN_ID, phase: 'preparing' } } as const
+  const preparing = applyConversationEvent(started, event)
+  expect(preparing.runPhase).toBe('preparing')
+  const running = applyConversationEvent(preparing, { ...event, value: { ...event.value, phase: 'running' } })
+  expect(running.runPhase).toBe('running')
+  expect(applyConversationEvent(running, event).runPhase).toBe('running')
+  expect(applyConversationEvent(started, { ...event, value: { ...event.value, runId: 'previous' } })).toBe(started)
+  const failed = applyConversationEvent(preparing, { type: 'RUN_ERROR', code: 'workspace_stopped', rawEvent: { runId: RUN_ID } })
+  expect(failed.runPhase).toBeUndefined()
+  expect(failed.runStatus).toBe('error')
 })

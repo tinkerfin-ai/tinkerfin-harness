@@ -179,6 +179,10 @@ def graph_node_mutations(
             )
             continue
         if isinstance(fact, MessageFact):
+            # Accepted input remains queryable before preparation, but only a
+            # resolved Turn binds it to the execution graph and selected lineage.
+            if fact.phase == "submitted":
+                continue
             if fact.phase == "removed":
                 mutations.append(
                     TraceGraphNodeMutation(

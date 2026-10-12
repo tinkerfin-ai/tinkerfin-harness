@@ -180,8 +180,9 @@ JSON、非有限数字或破坏 state、模型消息及 HITL 必需结构时，�
 子 Agent 执行使用 `SubagentFact`。构造时会拒绝其他作用域。Writer 也会在提交前原子拒绝含有
 非法 Run 作用域的整批事实，包括通过不执行校验的模型复制方式构造的输入。
 
-`MessageFact.phase` 包含 `started`、`content`、`completed`、`reconciled`、`removed`、
-`cancelled`、`interrupted` 和 `abandoned`。最后三项表示 Run 结算时仍未完整交付的助手消息，
+`MessageFact.phase` 包含 `submitted`、`started`、`content`、`completed`、`reconciled`、`removed`、
+`cancelled`、`interrupted` 和 `abandoned`。`submitted` 在资源准备前留存根作用域已提交的
+user 角色正文，不表示开始执行，也不确定运行的祖先关系。最后三项表示 Run 结算时仍未完整交付的助手消息，
 可以携带已保留的部分正文，不能表示状态快照或其他消息角色。`TraceMessage.status` 在交付结束
 或暂停时使用 `completed`；Graph 单独表达成功、取消、等待或放弃。恢复后的消息可以重新进入
 `streaming`，且不会重复已有正文。

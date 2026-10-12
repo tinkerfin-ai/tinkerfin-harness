@@ -394,6 +394,11 @@ function ProjectWorkspaceScreen({
     || conversation.pendingInteractionKind,
   )
   const isRunning = isConversationRunning(conversation)
+  const canStopConversation = Boolean(conversation.threadId && (
+    isActiveThread(conversation.threadId)
+    || (conversation.trace?.status.execution === 'running'
+      && conversation.trace.headRunId === conversation.activeRunId)
+  ))
   const {
     isFollowingLatest,
     resizeContent: resizeConversationContent,
@@ -1109,7 +1114,9 @@ function ProjectWorkspaceScreen({
     if (!isRunning || !conversation.activeRunId) return
     try {
       const cancelled = await cancelRun(conversation.threadId)
-      pushToast('info', cancelled ? t('任务已停止') : t('任务已经结束'))
+      pushToast('info', cancelled === undefined
+        ? t('连接已中断，尚无法确认任务状态，请恢复连接')
+        : cancelled ? t('任务已停止') : t('任务已经结束'))
     } catch {
       pushToast('error', t('停止任务失败，请重试'))
     }
@@ -1420,8 +1427,8 @@ function ProjectWorkspaceScreen({
               skillsStatus={composerSkills.status}
               onRetrySkills={composerSkills.retry}
               isRunning={isRunning}
-              canStop={Boolean(conversation.threadId) && !compaction.saving}
-              stopDisabledReason={compaction.saving ? t('正在保存压缩结果') : undefined}
+              canStop={canStopConversation && !compaction.saving}
+              stopDisabledReason={compaction.saving ? t('正在保存压缩结果') : !canStopConversation && conversation.threadId ? t('恢复连接后可停止任务') : undefined}
               stopPending={cancelPendingRunId === conversation.activeRunId}
               isHydrating={isConversationHydrating}
               submission={conversation.approval?.submitted || conversation.planInteraction?.submitted ? interactionConfirmation : undefined}

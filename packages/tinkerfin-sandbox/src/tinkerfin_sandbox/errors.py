@@ -163,17 +163,37 @@ class OpenSandboxBackendUnavailableError(OpenSandboxBackendError):
 
     code = OpenSandboxErrorCode.BACKEND_UNAVAILABLE
 
+    @property
+    def workspace_failure(self) -> Literal["stopped", "timeout", "unavailable"]:
+        """Expose only the confirmed availability category during preparation."""
+        reason = self.context.get("reason")
+        if reason == "stopped":
+            return "stopped"
+        if reason == "timeout":
+            return "timeout"
+        return "unavailable"
+
 
 class OpenSandboxBackendTimeoutError(OpenSandboxBackendError):
     """A remote Sandbox operation exceeded its bounded wait."""
 
     code = OpenSandboxErrorCode.BACKEND_TIMEOUT
 
+    @property
+    def workspace_failure(self) -> Literal["timeout"]:
+        """Let a Runtime report that workspace preparation exhausted its budget."""
+        return "timeout"
+
 
 class OpenSandboxPausedError(OpenSandboxBackendError):
     """The Sandbox requires an explicit successful resume before ordinary use."""
 
     code = OpenSandboxErrorCode.PAUSED
+
+    @property
+    def workspace_failure(self) -> Literal["paused"]:
+        """Require explicit resumption before preparing another run."""
+        return "paused"
 
 
 class OpenSandboxBusyError(OpenSandboxBackendError):

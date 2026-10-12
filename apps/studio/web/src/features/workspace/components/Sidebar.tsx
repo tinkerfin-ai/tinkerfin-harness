@@ -83,7 +83,7 @@ export function ConversationItem({
       : conversation.pendingInteractionKind === 'plan_clarification'
         ? 'plan'
         : 'approval'
-  const generating = !requiresAttention && isConversationRunning(conversation)
+  const generating = !requiresAttention && conversation.runStatus === 'streaming'
   const openLabel = t('打开会话：{title}', { title: conversation.title })
   return (
     <div

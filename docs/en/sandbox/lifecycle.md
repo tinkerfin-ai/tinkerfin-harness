@@ -117,9 +117,11 @@ before existing handles accept work again. Connection initializers run again, so
 must be idempotent.
 A failed connection refresh leaves the affected handle unavailable.
 
-Official OpenSandbox Server 0.2.3 uses Docker pause/unpause. `resume()` cannot start a
-container stopped through Docker or recover an expired instance. Pause does not freeze
-or extend the remote TTL; a paused instance with a finite lifetime can expire.
+The controlled [OpenSandbox Server](https://github.com/tinkerfin-ai/sandbox-runtime/tree/main/opensandbox-server)
+automatically restarts retained instances after a Docker restart. Explicit pause
+survives that restart and requires `resume()`. A container manually stopped through
+Docker must be started explicitly. Finite-TTL instances keep their provider lifecycle;
+pause does not freeze or extend their TTL or recover an expired instance.
 
 ## Diagnostics
 
@@ -198,10 +200,11 @@ semantics or extend its TTL.
 ## Health checks and replacement
 
 `OpenSandboxConfig.health_command` probes the data plane and defaults to `printf ok`.
-By default, `get()` attempts to recover the same instance up to three times, including
-the initial check, with a 30-second work budget. Retry delays start at 0.5 seconds, double after
-each retry, and stop at 2 seconds. Exhaustion raises `OpenSandboxBackendUnavailableError`
-and preserves the instance and its binding. Confirmed absence skips futile retries.
+By default, access checks the control-plane state before probing a connection. A
+transient connection failure permits one retry after 15 seconds, within a shared
+30-second work budget. Exhaustion raises `OpenSandboxBackendUnavailableError` and
+preserves the instance and its binding. Confirmed stopped, paused, or missing
+instances fail immediately; access never starts or resumes them automatically.
 
 For Sandboxes whose entire contents can be discarded, opt into recreation:
 

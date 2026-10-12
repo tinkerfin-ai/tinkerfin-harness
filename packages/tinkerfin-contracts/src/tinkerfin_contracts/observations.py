@@ -17,6 +17,7 @@ RunInputKind: TypeAlias = Literal[
     "ordinary", "branch", "continuation", "resume", "abandon", "compaction"
 ]
 RunMode: TypeAlias = Literal["default", "plan"]
+RunPhase: TypeAlias = Literal["preparing", "running"]
 RunTerminalOutcome: TypeAlias = Literal[
     "succeeded",
     "interrupted",
@@ -187,6 +188,14 @@ class RunStartedObservation(ObservationModel):
     identity: RunIdentity
 
 
+class RunPhaseObservation(ObservationModel):
+    """Record resource preparation separately from execution and terminal outcome."""
+
+    kind: Literal["run.phase"] = "run.phase"
+    identity: RunIdentity
+    phase: RunPhase
+
+
 class RunInputObservation(ObservationModel):
     """Record the determined input once before Native execution or a terminal.
 
@@ -237,8 +246,8 @@ class RunTerminalObservation(ObservationModel):
         min_length=1,
         max_length=1024,
         description=(
-            "Client-safe terminal code. runtime_initialization_error, workspace_busy "
-            "and workspace_file_conflict identify failures before Agent execution"
+            "Client-safe terminal code. runtime_initialization_error and workspace_* "
+            "preparation failures identify failures before Agent execution"
         ),
     )
     error_type: str | None = Field(default=None, min_length=1, max_length=1024)
@@ -562,6 +571,7 @@ NativeObservation: TypeAlias = (
 
 RuntimeObservation: TypeAlias = Annotated[
     RunStartedObservation
+    | RunPhaseObservation
     | RunInputObservation
     | RunResumeCheckpointedObservation
     | RunObserverFailedObservation
@@ -606,6 +616,8 @@ __all__ = [
     "RunInputObservation",
     "RunMode",
     "RunObserverFailedObservation",
+    "RunPhase",
+    "RunPhaseObservation",
     "RunResumeCheckpointedObservation",
     "RunResumeSummary",
     "RunSourceContext",

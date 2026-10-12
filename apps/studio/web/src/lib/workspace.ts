@@ -128,9 +128,8 @@ export function mergeConversationTitle(current: TitleFields | undefined, incomin
   return { title: value.title, titleSource: value.titleSource, titleGenerationStatus: value.titleGenerationStatus, titleSeq: value.titleSeq }
 }
 
-/** 连接中断时，已确认仍在运行的当前任务继续显示加载状态 */
+/** 状态未确认时保留任务占用，防止重复提交；实时加载提示由连接状态决定 */
 export function isConversationRunning(conversation: Conversation): boolean {
   return conversation.runStatus === 'streaming'
-    || (conversation.runStatus === 'detached' && conversation.trace?.status.execution === 'running'
-      && conversation.trace.headRunId === conversation.activeRunId)
+    || (conversation.runStatus === 'detached' && Boolean(conversation.activeRunId))
 }

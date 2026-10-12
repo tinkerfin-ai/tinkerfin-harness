@@ -23,12 +23,24 @@
 
 同一条消息或工具调用可能分成很多 delta。前端要按事件中的完整 ID 归并，不能按“谁先返回”猜测对应关系。
 
+`runtime.open_agui_run()` 在 `RUN_STARTED` 后发送名称为 `tinkerfin.run.phase` 的
+`CUSTOM` 事件。`value` 包含 `threadId`、`runId` 和 `phase`：资源与恢复输入准备期间为
+`preparing`，Agent 开始执行前变为 `running`。准备失败以 `RUN_ERROR` 结束，不发送
+`running`。只取消已有审批而不执行 Agent 时不发送这些阶段。接入 Tracer 后，历史中的
+`status.phase` 同样提供当前运行阶段。用户消息会在资源准备前留存，进程中断后仍可查看，
+但执行结果保持未确认，不能自动重放。阶段只表示进度，不代表执行成功，也不授权重放命令。
+
+沙箱准备失败使用 `workspace_stopped`、`workspace_paused`、`workspace_unavailable`
+或 `workspace_timeout` 错误码。停止或暂停的环境需要用户显式启动或恢复后再提交新运行。
+
 ## 一个简单顺序
 
 没有工具调用时，通常能看到：
 
 ```text
 RUN_STARTED
+CUSTOM tinkerfin.run.phase (preparing)
+CUSTOM tinkerfin.run.phase (running)
 TEXT_MESSAGE_START
 TEXT_MESSAGE_CONTENT ...
 TEXT_MESSAGE_END

@@ -42,7 +42,7 @@ export function useConversationManagement({
   defaultModelId: string
   followDetachedConversation: (threadId: string) => Promise<void>
   abandonPlanInteraction: (threadId: string) => void
-  cancelRun: (threadId: string) => Promise<boolean>
+  cancelRun: (threadId: string) => Promise<boolean | undefined>
   isActiveThread: (threadId: string) => boolean
   onToast: (kind: ToastKind, message: string) => void
   onConversationBoundary: () => void

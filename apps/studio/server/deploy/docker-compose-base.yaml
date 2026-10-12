@@ -77,7 +77,8 @@ services:
     cpus: 0.5
     mem_limit: 512m
     profiles: [bundled, opensandbox]
-    image: ghcr.io/tinkerfin-ai/opensandbox-server:0.2.3-tinkerfin.1@sha256:238060e23a14ebd22e437b15100e8c939f6865de60075d2edd488977c24c1fda
+    image: ${OPEN_SANDBOX_SERVER_IMAGE:-ghcr.io/tinkerfin-ai/opensandbox-server:0.2.3-tinkerfin.1@sha256:238060e23a14ebd22e437b15100e8c939f6865de60075d2edd488977c24c1fda}
+    pull_policy: ${OPEN_SANDBOX_SERVER_PULL_POLICY:-always}
     entrypoint: [/bin/sh, -ec]
     environment:
       OPENSANDBOX_SERVER_API_KEY: ${OPEN_SANDBOX_API_KEY:-}

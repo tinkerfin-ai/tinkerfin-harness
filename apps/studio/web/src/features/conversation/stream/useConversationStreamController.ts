@@ -182,7 +182,7 @@ export interface ConversationStreamController {
   discardDraft: (runId: string) => void
   handoffTaskTraceFollow: (threadId: string) => Promise<void>
   releaseDraft: () => void
-  cancelRun: (threadId: string) => Promise<boolean>
+  cancelRun: (threadId: string) => Promise<boolean | undefined>
   cancelPendingRunId: string | null
   hasActiveStream: () => boolean
   isActiveThread: (threadId: string) => boolean
@@ -406,12 +406,14 @@ export function useConversationStreamController({
       signal.addEventListener('abort', discardPending, { once: true })
       try {
         let attempts = 0
+        let connectionLost = false
         while (!signal.aborted) {
           try {
             for await (const item of followConversationRun(threadId, runId, { includeTaskTrace, signal, afterSeq: lastSeq })) {
               if (signal.aborted || !isMounted.current || isActiveThread(threadId)) return
               if (item.type === 'snapshot') {
                 if (item.snapshot.threadId !== threadId || item.snapshot.headRunId !== runId) throw new ConversationError('stream_event_invalid')
+                connectionLost = false
                 // 该基线与运行重放起点对应，不能用刷新前的投影或游标拼接
                 projected = restoreConversationFromTrace(item.snapshot, { model: target.model, includeTaskTrace, preserveInputFrom: target })
                 completed = !item.replay
@@ -435,8 +437,13 @@ export function useConversationStreamController({
               if (lastSeq == null && (item.event.type !== 'RUN_STARTED' || item.event.runId !== runId || item.event.threadId !== threadId)) throw new ConversationError('stream_sequence_invalid')
               if (lastSeq != null && item.seq <= lastSeq) continue
               if (lastSeq != null && item.seq !== lastSeq + 1) throw new ConversationError('stream_sequence_invalid')
+              const reconnected = connectionLost
+              connectionLost = false
               const applyEvent = (current: Conversation): Conversation => {
-                const withEvent = applyConversationEvent(current, item.event)
+                const withEvent = applyConversationEvent(reconnected ? {
+                  ...current, runStatus: 'streaming',
+                  notice: current.notice?.recovery === 'connection' ? undefined : current.notice,
+                } : current, item.event)
                 // 已提交正文直接恢复；后续新增量以完整正文作为逐字显示起点
                 const messages = item.replayed ? withEvent.messages.map(message => (
                   message.liveText ? { ...message, liveText: undefined } : message
@@ -461,6 +468,11 @@ export function useConversationStreamController({
             flushPublish()
             if (!(isTransportFailure(error) || hasConversationErrorCode(error, 'stream_disconnected') || hasConversationErrorCode(error, 'stream_sequence_invalid'))
               || attempts >= DETACHED_TRACE_RECONNECT_LIMIT) throw error
+            connectionLost = true
+            publish(current => ({ ...markConversationDetached(current), runStatus: 'detached',
+              notice: { kind: 'warning', recovery: 'connection', id: `${runId}:connection`,
+                content: translateCurrent('连接已中断，尚无法确认任务状态，请恢复连接') },
+            }))
             attempts += 1
             await waitForReconnect(Math.min(250 * (2 ** (attempts - 1)), RECONNECT_MAX_DELAY_MS), signal)
           }
@@ -623,6 +635,7 @@ export function useConversationStreamController({
       let traceAuthorityLoaded = false
       let requestPayload: ConversationRunPayload = { ...payload }
       let reconnectAttempt = 0
+      let connectionLost = false
       let lastAppliedSeq: number | null = (
         options.initialAfterSeq
         ?? (target === 'draft'
@@ -679,6 +692,16 @@ export function useConversationStreamController({
               'stream_sequence_invalid',
               `expected=${lastAppliedSeq + 1}, actual=${seq}`,
             )
+          }
+          if (connectionLost) {
+            connectionLost = false
+            const reconnected = (current: Conversation): Conversation => ({
+              ...current, runStatus: 'streaming',
+              notice: current.notice?.recovery === 'connection' ? undefined : current.notice,
+            })
+            if (validationTarget) validationTarget = reconnected(validationTarget)
+            if (draftTarget) draftTarget = reconnected(draftTarget)
+            enqueueWorkspaceUpdate(streamEpoch, state => updateConversation(state, targetThreadId, reconnected))
           }
 
           if (event.type === 'RUN_STARTED' && event.runId === payload.runId && 'forwardedProps' in payload) {
@@ -789,6 +812,21 @@ export function useConversationStreamController({
             )
               && (receivedEvent || options.initialAfterSeq != null)
             if (!canRetry || reconnectAttempt >= RECONNECT_LIMIT) throw error
+            connectionLost = true
+            const disconnected = (current: Conversation): Conversation => ({
+              ...current, runStatus: 'detached',
+              notice: { kind: 'warning', recovery: 'connection',
+                id: `${payload.runId}:connection:${streamEpoch}`,
+                content: translateCurrent('连接已中断，尚无法确认任务状态，请恢复连接') },
+            })
+            if (validationTarget) validationTarget = disconnected(validationTarget)
+            if (draftTarget) {
+              draftTarget = disconnected(draftTarget)
+              enqueueDraftUpdate(streamEpoch, draftTarget)
+            }
+            enqueueWorkspaceUpdate(streamEpoch, state => updateConversation(state, targetThreadId, disconnected))
+            flushWorkspaceUpdates()
+            flushDraftUpdate()
             reconnectAttempt += 1
             await waitForReconnect(
               Math.min(250 * (2 ** (reconnectAttempt - 1)), RECONNECT_MAX_DELAY_MS),
@@ -1083,7 +1121,7 @@ export function useConversationStreamController({
     const observedRunId = conversation?.trace?.status.execution === 'running'
       && conversation.trace.headRunId === conversation.activeRunId ? conversation.activeRunId : undefined
     const runId = stream?.runId ?? observedRunId
-    if (!runId) return Promise.resolve(false)
+    if (!runId) return Promise.resolve(undefined)
     const existing = cancelRequests.current.get(runId)
     if (existing) return existing
     if (cancelPending.current.has(runId)) return Promise.resolve(true)

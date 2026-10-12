@@ -199,6 +199,8 @@ describe('useConversationStreamController', () => {
       notice: { kind: 'warning', content: '连接已中断，尚无法确认任务状态，请恢复连接' },
     })
     expect(result.current.controller.hasActiveStream()).toBe(false)
+    await expect(result.current.controller.cancelRun(THREAD_ID)).resolves.toBeUndefined()
+    expect(clientMocks.cancel).not.toHaveBeenCalled()
     expect(readActiveRunSession(THREAD_ID, 'project-1')?.payload).toEqual(payload)
     await act(async () => { await result.current.controller.followDetachedConversation(THREAD_ID) })
     await act(async () => { await vi.runOnlyPendingTimersAsync() })
@@ -296,6 +298,39 @@ describe('useConversationStreamController', () => {
     expect(traceMocks.detail).toHaveBeenCalledOnce()
   })
 
+  it('首次断线立即显示提示，重连收到新事件后恢复执行状态', async () => {
+    vi.useFakeTimers()
+    let resume!: () => void
+    const blocked = new Promise<void>(resolve => { resume = resolve })
+    clientMocks.start.mockImplementationOnce(() => streamItems([
+      { seq: 1, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID } },
+      { seq: 2, event: { type: 'CUSTOM', name: 'tinkerfin.run.phase', value: { threadId: THREAD_ID, runId: RUN_ID, phase: 'preparing' } } },
+    ])).mockImplementationOnce(async function* () {
+      yield { seq: 3, event: { type: 'CUSTOM', name: 'tinkerfin.run.phase', value: { threadId: THREAD_ID, runId: RUN_ID, phase: 'running' } } }
+      await blocked
+      yield { seq: 4, event: { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID } }
+    })
+    const { result, unmount } = renderHook(() => useControllerHarness(conversation()))
+    let streaming!: Promise<void>
+    try {
+      await act(async () => { streaming = result.current.controller.streamRun(THREAD_ID, payload, 'start') })
+      expect(clientMocks.start).toHaveBeenCalledOnce()
+      expect(result.current.workspace.conversations[0]).toMatchObject({
+        runStatus: 'detached', runPhase: 'preparing', notice: { recovery: 'connection' },
+      })
+      await act(async () => { await vi.advanceTimersByTimeAsync(250) })
+      expect(result.current.workspace.conversations[0]).toMatchObject({ runStatus: 'streaming', runPhase: 'running' })
+      expect(result.current.workspace.conversations[0].notice).toBeUndefined()
+      resume()
+      await act(async () => { await streaming })
+      expect(clientMocks.start).toHaveBeenLastCalledWith(payload, expect.any(AbortSignal), 2)
+    } finally {
+      resume()
+      unmount()
+      await streaming
+    }
+  })
+
   it('deduplicates backend cancellation while the owned stream is active', async () => {
     let release: (() => void) | undefined
     let markStarted!: () => void
@@ -323,8 +358,8 @@ describe('useConversationStreamController', () => {
       await started
     })
 
-    let first: Promise<boolean> = Promise.resolve(false)
-    let second: Promise<boolean> = Promise.resolve(false)
+    let first: Promise<boolean | undefined> = Promise.resolve(false)
+    let second: Promise<boolean | undefined> = Promise.resolve(false)
     await act(async () => {
       first = result.current.controller.cancelRun(THREAD_ID)
       second = result.current.controller.cancelRun(THREAD_ID)
@@ -484,6 +519,36 @@ describe('已受理运行的历史恢复', () => {
   })
 
   afterEach(() => { vi.useRealTimers() })
+
+  it('历史订阅首次断线立即结束加载，新帧确认后恢复显示且不重放任务', async () => {
+    vi.useFakeTimers()
+    const feed = traceFeed()
+    traceMocks.follow.mockImplementationOnce(() => traceItems([
+      { type: 'snapshot', snapshot: runningTrace(), replay: true },
+      { type: 'event', seq: 6, event: { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID }, replayed: true },
+    ])).mockImplementation((_thread, _run, { signal }) => feed.read(signal))
+    traceMocks.detail.mockResolvedValue(traceDetail())
+    const { result, unmount } = renderHook(() => useControllerHarness(restored(runningTrace())))
+    let following!: Promise<void>
+    try {
+      await act(async () => { following = result.current.controller.followDetachedConversation(THREAD_ID) })
+      expect(result.current.workspace.conversations[0]).toMatchObject({ runStatus: 'detached', notice: { recovery: 'connection' } })
+      expect(traceMocks.follow).toHaveBeenCalledOnce()
+      await act(async () => { await vi.advanceTimersByTimeAsync(250) })
+      await act(async () => { await feed.push({ type: 'event', seq: 7, replayed: false,
+        event: { type: 'CUSTOM', name: 'tinkerfin.run.phase', value: { threadId: THREAD_ID, runId: RUN_ID, phase: 'running' } } }) })
+      expect(result.current.workspace.conversations[0]).toMatchObject({ runStatus: 'streaming', runPhase: 'running' })
+      expect(result.current.workspace.conversations[0].notice).toBeUndefined()
+      await act(async () => {
+        await feed.push({ type: 'event', seq: 8, replayed: false, event: { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID } })
+        await following
+      })
+      expect(clientMocks.start).not.toHaveBeenCalled()
+    } finally {
+      unmount()
+      await following
+    }
+  })
 
   it('恢复连接卸载只关闭读取，不取消后台运行', async () => {
     const feed = traceFeed()

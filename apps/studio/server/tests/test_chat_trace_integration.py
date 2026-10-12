@@ -277,7 +277,7 @@ async def test_rejected_first_registration_rolls_back_its_new_conversation(
 async def test_conversation_is_announced_only_when_independent_history_can_read_it(
     notifications, database, session, attachments
 ):
-    """受理通知时可读取开始事实，实际输入在运行准备完成后可见"""
+    """受理通知时可读取用户输入，执行关联仍等待运行准备完成"""
 
     class ReplyModel(FakeListChatModel):
         def bind_tools(self, tools: Sequence[object], **kwargs: object) -> ReplyModel:
@@ -372,7 +372,9 @@ async def test_conversation_is_announced_only_when_independent_history_can_read_
                         prepared.identity.thread_id, include_task_trace=False
                     )
                     assert detail.head_run_id == request.run_id
-                    assert detail.messages == ()
+                    assert len(detail.messages) == 1
+                    assert detail.messages[0].role == "user"
+                    assert detail.messages[0].content == "完成任务"
                     observed.append(detail.status.execution)
 
             async def release(self) -> None:

@@ -627,7 +627,8 @@ class ConversationHistoryService:
             messages=snapshot.messages,
             runFailures=visible_run_failures(
                 trace.projections[FAILURE_PROJECTION],
-                {item.run_id for item in snapshot.messages if _is_user_question(item)},
+                {item.run_id for item in snapshot.messages if _is_user_question(item)}
+                | {snapshot.head_run_id},
             ),
             reasoning=snapshot.reasoning,
             graph=ConversationGraph.from_graph(snapshot.graph),

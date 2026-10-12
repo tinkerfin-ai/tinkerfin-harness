@@ -7,11 +7,18 @@ import inspect
 import math
 from collections.abc import AsyncGenerator
 from functools import partial
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
-from ag_ui.core import BaseEvent, RunErrorEvent, RunStartedEvent
+from ag_ui.core import BaseEvent, CustomEvent, RunErrorEvent, RunStartedEvent
+from pydantic import BaseModel, Field
 
-from ._failure_evidence import retain_failure, select_failure
+from tinkerfin_contracts import RunPhase
+
+from ._failure_evidence import (
+    has_non_cancellation_failure,
+    retain_failure,
+    select_failure,
+)
 from ._run_callbacks import callback_scope
 from ._runtime_streams import _before_deadline, _map_sse_item, _resolve_sse_event_id
 from ._tasks import (
@@ -19,6 +26,7 @@ from ._tasks import (
     _join_operation,
     _operation_result,
     _OperationOutcome,
+    _TaskFailure,
     stop_operation,
 )
 from .errors import AgUiSettlementTimeoutError, TinkerFinLifecycleError
@@ -225,7 +233,7 @@ async def _close(
     if task is None:
         self._closed = True
         task = asyncio.create_task(
-            _capture_operation(lambda: self._close_once(active)),
+            _capture_operation(lambda: self._close_once(active, primary)),
             name="tinkerfin-agui-event-stream-close",
         )
         self._close_task = task
@@ -285,6 +293,7 @@ def _close_finished(task: asyncio.Task[_OperationOutcome[None]]) -> None:
 async def _close_once(
     self: AgUiEventStream,
     active: asyncio.Task[_OperationOutcome[BaseEvent]] | None,
+    failure_owner: BaseException | None,
 ) -> None:
     primary: BaseException | None = None
     if active is not None:
@@ -292,6 +301,10 @@ async def _close_once(
             await stop_operation(active)
         except BaseException as error:  # noqa: BLE001 - cleanup still owns the upstream
             primary = error
+    try:
+        await _stop_pending_part(self, failure_owner or primary)
+    except BaseException as error:  # noqa: BLE001 - cleanup still owns the source
+        primary = error if primary is None else select_failure(primary, error)
     close = getattr(self._source, "aclose", None)
     try:
         if close is not None:
@@ -336,14 +349,10 @@ async def _close_upstream(self: AgUiEventStream, primary: BaseException | None) 
 
     if self._upstream_closed:
         return
-    close = getattr(self._upstream, "aclose", None)
-    if close is None:
-        self._upstream_closed = True
-        return
     current = asyncio.current_task()
     cancel_count = current.cancelling() if current is not None else 0
     try:
-        await close()
+        await _settle_parts(self, primary)
     except asyncio.CancelledError as cleanup_error:
         next_cancel_count = current.cancelling() if current is not None else 0
         caller_cancelled = next_cancel_count > cancel_count
@@ -396,6 +405,106 @@ async def _close_upstream(self: AgUiEventStream, primary: BaseException | None) 
             for note in getattr(upstream_error, "__notes__", ()):
                 primary.add_note(note)
                 self._record_secondary_error_note(note)
+
+
+async def _stop_pending_part(
+    self: AgUiEventStream, primary: BaseException | None
+) -> None:
+    # Preparation stays in the Native Run owner, which also owns its ContextVars
+    # and workspace. Join its outstanding pull before closing those resources.
+    pending, self._pending_part = self._pending_part, None
+    if pending is not None:
+        try:
+            await stop_operation(pending)
+            outcome = pending.result()
+            if isinstance(outcome, _TaskFailure) and isinstance(
+                outcome.error, asyncio.CancelledError
+            ):
+                # This pull has no direct waiter after a phase has been yielded.
+                # Its cancellation evidence belongs to the enclosing failure, not
+                # to a second cleanup failure replayed by every later close.
+                if primary is not None:
+                    retain_failure(
+                        primary, outcome.error, label="Native pull also stopped"
+                    )
+                elif has_non_cancellation_failure(outcome.error):
+                    raise outcome.error
+        except StopAsyncIteration:
+            pass
+
+
+async def _settle_parts(self: AgUiEventStream, primary: BaseException | None) -> None:
+    failure: BaseException | None = None
+    try:
+        await _stop_pending_part(self, primary)
+    except BaseException as error:  # noqa: BLE001 - close still owns upstream cleanup
+        failure = error
+    close = getattr(self._upstream, "aclose", None)
+    try:
+        if close is not None:
+            await close()
+    except BaseException as error:
+        if failure is not None:
+            raise select_failure(failure, error)
+        raise
+    if failure is not None:
+        raise failure
+
+
+class _RunPhaseValue(BaseModel, frozen=True):
+    thread_id: str = Field(alias="threadId")
+    run_id: str = Field(alias="runId")
+    phase: RunPhase
+
+
+class _RunPhaseEvent(CustomEvent):
+    name: Literal["tinkerfin.run.phase"] = "tinkerfin.run.phase"
+    value: _RunPhaseValue
+
+
+async def _publish_phase(self: AgUiEventStream, phase: RunPhase) -> None:
+    await self._phase_queue.put(
+        _RunPhaseEvent(
+            value=_RunPhaseValue(
+                threadId=self._identity.thread_id,
+                runId=self._identity.run_id,
+                phase=phase,
+            )
+        )
+    )
+    self._phase_available.set()
+
+
+async def _next_part_or_phase(self: AgUiEventStream) -> object:
+    """Deliver preparation feedback while retaining one bounded Native pull.
+
+    Phase delivery never starts an extra model pull. The Native owner can hold
+    one part and one phase; consumer backpressure and cancellation still reach it.
+    The signal waiter consumes no payload, so simultaneous completion loses none.
+    """
+
+    if not self._preparation_phases:
+        return await self._next_part()
+    if self._pending_part is None:
+        self._pending_part = asyncio.create_task(
+            _capture_operation(self._next_part), name="tinkerfin-agui-native-pull"
+        )
+    pending = self._pending_part
+    if self._phase_queue.empty() and not pending.done():
+        waiter = asyncio.create_task(
+            _capture_operation(self._phase_available.wait),
+            name="tinkerfin-agui-phase-wait",
+        )
+        try:
+            await asyncio.wait((pending, waiter), return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            await stop_operation(waiter)
+    if not self._phase_queue.empty():
+        event = self._phase_queue.get_nowait()
+        self._phase_available.clear()
+        return event
+    self._pending_part = None
+    return _operation_result(pending.result())
 
 
 def _record_secondary_error_note(self: AgUiEventStream, note: str) -> None:

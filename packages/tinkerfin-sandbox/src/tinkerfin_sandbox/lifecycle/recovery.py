@@ -35,9 +35,9 @@ class OpenSandboxRecoveryPolicy:
         ValueError: A limit is outside its finite supported range.
     """
 
-    max_attempts: int = 3
-    initial_delay: float = 0.5
-    max_delay: float = 2.0
+    max_attempts: int = 2
+    initial_delay: float = 15.0
+    max_delay: float = 15.0
     timeout: float = 30.0
     on_failure: Literal["raise", "recreate"] = "raise"
 

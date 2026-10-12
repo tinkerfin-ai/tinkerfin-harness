@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator, Callable
 from typing import Literal
 
 import pytest
+from ag_ui.core import CustomEvent
 from langchain.agents.middleware.types import InputAgentState
 from test_stateless_sse import _SourceGraph
 
@@ -81,6 +82,11 @@ async def test_external_close_does_not_cancel_or_join_unrelated_consumer_work(
             )
         )
     await anext(stream)
+    if kind == "agui":
+        for phase in ("preparing", "running"):
+            event = await anext(stream)
+            assert isinstance(event, CustomEvent)
+            assert event.model_dump(mode="json")["value"]["phase"] == phase
 
     async def consume() -> None:
         try:

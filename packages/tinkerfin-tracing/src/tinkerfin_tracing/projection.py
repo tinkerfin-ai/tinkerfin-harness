@@ -11,7 +11,7 @@ from typing import Any, Literal, Protocol, TypeAlias, TypeVar, cast, runtime_che
 
 from pydantic import BaseModel, Field, JsonValue
 
-from tinkerfin_contracts import MessageSource, RunTerminalOutcome
+from tinkerfin_contracts import MessageSource, RunPhase, RunTerminalOutcome
 
 from ._abandonment import cancelled_batch
 from ._models import TraceModel
@@ -100,6 +100,7 @@ class _RunInfo:
     input_kind: str | None = None
     turn_id: str | None = None
     terminal: RunTerminalOutcome | None = None
+    phase: RunPhase | None = None
     completed_at: datetime | None = None
 
 
@@ -186,6 +187,7 @@ class CoreRunCheckpoint(TraceModel, frozen=True):
     input_kind: str | None = None
     turn_id: str | None = None
     terminal: RunTerminalOutcome | None = None
+    phase: RunPhase | None = Field(default=None, exclude_if=lambda value: value is None)
     completed_at: datetime | None = None
     state: TraceState = Field(default_factory=TraceState)
     abandonment_ids: tuple[str, ...] = ()
@@ -376,7 +378,35 @@ def _settles_input_free_lineage(fact: TraceSemanticFact) -> bool:
 
     if isinstance(fact, RunFact):
         return fact.phase == "terminal"
+    if isinstance(fact, MessageFact) and fact.phase == "submitted":
+        return False
     return not isinstance(fact, TurnFact | CallTrackingFact)
+
+
+def _inherit_request_messages(
+    previous: tuple[TraceMessage, ...], submitted: tuple[TraceMessage, ...]
+) -> tuple[TraceMessage, ...]:
+    # Updating a submitted message must preserve the original Run, timestamp, and
+    # sequence locator, just as the full Ledger fold preserves them on reconciliation.
+    messages = {message.id: message for message in previous}
+    for message in submitted:
+        original = messages.get(message.id)
+        messages[message.id] = (
+            message
+            if original is None
+            else original.model_copy(
+                update={
+                    "content": original.content
+                    if message.content_omitted and message.content is None
+                    else message.content,
+                    "content_omitted": original.content_omitted
+                    or message.content_omitted,
+                    "status": message.status,
+                    "completed_at": message.completed_at,
+                }
+            )
+        )
+    return tuple(messages.values())
 
 
 def advance_core_projection_state(
@@ -461,7 +491,7 @@ def advance_core_projection_state(
                 "messages": (
                     info.messages
                     if info.has_view_changes or parent is None
-                    else parent.messages
+                    else _inherit_request_messages(parent.messages, info.messages)
                 ),
                 "reasoning": (
                     info.reasoning
@@ -670,6 +700,8 @@ def advance_core_projection_state(
                     "has_state_changes": True,
                 }
             )
+        elif isinstance(fact, RunFact) and fact.phase in ("preparing", "running"):
+            info = info.model_copy(update={"phase": fact.phase})
         elif isinstance(fact, RunFact) and fact.phase == "terminal":
             info = info.model_copy(
                 update={
@@ -686,6 +718,10 @@ def advance_core_projection_state(
                             "runtime_initialization_error",
                             "workspace_busy",
                             "workspace_file_conflict",
+                            "workspace_stopped",
+                            "workspace_paused",
+                            "workspace_unavailable",
+                            "workspace_timeout",
                         }
                     ),
                 }
@@ -715,7 +751,14 @@ def advance_core_projection_state(
                 "own_tool_call_count": info.own_tool_call_count
                 + int(isinstance(fact, ToolFact) and fact.phase == "started"),
                 "has_view_changes": info.has_view_changes
-                or messages != info.messages
+                # Submitted input adds known request content without replacing
+                # the history inherited when its parent is later resolved.
+                or (
+                    messages != info.messages
+                    and not (
+                        isinstance(fact, MessageFact) and fact.phase == "submitted"
+                    )
+                )
                 or reasoning != info.reasoning,
             }
         )
@@ -779,6 +822,7 @@ def select_core_projection_window(
             input_kind=info.input_kind,
             turn_id=info.turn_id,
             terminal=info.terminal,
+            phase=info.phase,
             completed_at=info.completed_at,
         )
         for run_id, info in runs.items()
@@ -932,6 +976,7 @@ def select_prior_run_ids(
             started_at=info.started_at,
             parent_run_id=info.parent_run_id,
             terminal=info.terminal,
+            phase=info.phase,
         )
         for run_id, info in state.runs.items()
     }
@@ -1056,6 +1101,7 @@ def _advance_messages(
             update={"status": "streaming", "completed_at": None}
         )
     if fact.phase in {
+        "submitted",
         "completed",
         "reconciled",
         "cancelled",
@@ -1238,6 +1284,7 @@ def project_core_checkpoint(
             input_kind=info.input_kind,
             turn_id=window.run_turns.get(run_id),
             terminal=info.terminal,
+            phase=info.phase,
             completed_at=info.completed_at,
         )
         for run_id, info in sorted(
@@ -1554,6 +1601,11 @@ def _lineage(
                 elif parent not in runs:
                     missing_prefix_runs.add(run_id)
             heads.add(run_id)
+        elif isinstance(fact, RunFact) and fact.phase in ("preparing", "running"):
+            info = runs.setdefault(
+                run_id, _RunInfo(run_id=run_id, started_at=fact.occurred_at)
+            )
+            info.phase = fact.phase
         elif isinstance(fact, RunFact) and fact.phase == "terminal":
             info = runs.setdefault(
                 run_id,
@@ -1724,6 +1776,7 @@ def _messages(
         if fact.phase == "started":
             message.completed_at = None
         if fact.phase in {
+            "submitted",
             "completed",
             "reconciled",
             "cancelled",
@@ -1962,7 +2015,11 @@ def _status(
         execution = "running"
     else:
         execution = "unknown"
-    return TraceStatus(execution=execution, head_run_id=info.run_id)
+    return TraceStatus(
+        execution=execution,
+        head_run_id=info.run_id,
+        phase=info.phase if execution == "running" else None,
+    )
 
 
 def _status_with_pending(

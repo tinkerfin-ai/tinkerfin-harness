@@ -202,8 +202,10 @@ chain. The final safety pass cannot be disabled.
 rejects another scope. A writer also rejects invalid Run scope atomically before
 committing any fact in a batch, including input made through unchecked model copying.
 
-`MessageFact.phase` is `started`, `content`, `completed`, `reconciled`, `removed`,
-`cancelled`, `interrupted`, or `abandoned`. The last three describe an unfinished
+`MessageFact.phase` is `submitted`, `started`, `content`, `completed`, `reconciled`, `removed`,
+`cancelled`, `interrupted`, or `abandoned`. `submitted` retains accepted root user-role
+content before resource preparation without proving execution or binding Run ancestry.
+The last three describe an unfinished
 Assistant delivery at Run settlement and may carry its retained partial content;
 they cannot represent state snapshots or another message role. `TraceMessage.status`
 uses `completed` when delivery ends or pauses. The Graph separately records its

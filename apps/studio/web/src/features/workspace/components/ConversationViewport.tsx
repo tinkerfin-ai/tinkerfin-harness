@@ -206,12 +206,22 @@ export function ConversationViewport({
             {conversation.planInteraction?.kind === 'review' && !conversation.planInteraction.submitted && (
               <PlanReviewStatusRow interaction={conversation.planInteraction} />
             )}
-            {(conversation.runStatus === 'detached' || (!conversation.threadId && conversation.runStatus === 'error') || conversation.notice?.recovery === 'history') && onRecoverConversation && (
-              <Button type="button" variant="text" onClick={onRecoverConversation}>
-                {t(conversation.notice?.recovery === 'history' ? '重新加载' : conversation.runStatus === 'error' ? '重试' : '恢复连接')}
-              </Button>
+            {conversation.notice && (
+              <FeedbackState kind="error" appearance="retry" title={conversation.notice.content}
+                retryLabel={t(conversation.notice.recovery === 'history' ? '重新加载' : conversation.runStatus === 'error' && !conversation.threadId ? '重试' : '恢复连接')}
+                onRetry={conversation.runStatus === 'detached' || conversation.notice.recovery || (!conversation.threadId && conversation.runStatus === 'error') ? onRecoverConversation : undefined} />
             )}
-            {isRunning && !conversation.approval?.submitted && !conversation.planInteraction?.submitted && !conversation.compactions?.some(operation => operation.runId === conversation.activeRunId) && <p className="message-stream-tail stream-pending-tail"><ActivityDots label={t('任务仍在继续')} /></p>}
+            {!conversation.notice && (conversation.runStatus === 'detached' || (!conversation.threadId && conversation.runStatus === 'error')) && onRecoverConversation && (
+              <FeedbackState kind="error" appearance="retry"
+                title={t('已停止接收实时输出，后端任务可能仍在继续')}
+                retryLabel={t(conversation.runStatus === 'error' ? '重试' : '恢复连接')}
+                onRetry={onRecoverConversation} />
+            )}
+            {conversation.runStatus === 'streaming' && (conversation.runPhase === 'preparing' || (!conversation.approval?.submitted && !conversation.planInteraction?.submitted)) && !conversation.compactions?.some(operation => operation.runId === conversation.activeRunId) && (
+              conversation.runPhase === 'preparing'
+                ? <FeedbackState kind="loading" compact title={t('正在准备运行环境')} />
+                : <p className="message-stream-tail stream-pending-tail"><ActivityDots label={t('任务仍在继续')} /></p>
+            )}
             <div ref={messageEndRef} />
           </div>
         )}

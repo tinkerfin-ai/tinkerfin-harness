@@ -23,12 +23,28 @@ A normal run begins with `RUN_STARTED` and ends with one `RUN_FINISHED` or `RUN_
 
 One message or tool call may arrive as many deltas. Group them by their complete IDs, never by arrival order.
 
+`runtime.open_agui_run()` emits `CUSTOM` events named `tinkerfin.run.phase` after
+`RUN_STARTED`. Their `value` contains `threadId`, `runId`, and `phase`: `preparing`
+while resources and resume input are prepared, then `running` before Agent execution.
+Preparation failure ends with `RUN_ERROR`; it does not emit `running`. Cancellation
+of an existing approval without executing the Agent does not emit these phases.
+With Tracer attached, the active phase is also available as `status.phase` in history.
+Submitted user messages are retained before resource preparation; an interrupted
+process leaves their result unconfirmed and does not authorize automatic replay.
+A phase is progress, not a successful outcome or permission to repeat a command.
+
+Sandbox preparation errors use `workspace_stopped`, `workspace_paused`,
+`workspace_unavailable`, or `workspace_timeout`. Ask the user to start or resume a
+stopped or paused environment explicitly before submitting a new run.
+
 ## A simple sequence
 
 Without tool calls, a run commonly looks like this:
 
 ```text
 RUN_STARTED
+CUSTOM tinkerfin.run.phase (preparing)
+CUSTOM tinkerfin.run.phase (running)
 TEXT_MESSAGE_START
 TEXT_MESSAGE_CONTENT ...
 TEXT_MESSAGE_END

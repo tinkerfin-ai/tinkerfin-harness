@@ -167,6 +167,8 @@ async def test_concurrent_agui_abort_delivers_one_terminal(
         thread_id="thread", run_id="run", input={"messages": []}
     )
     assert (await anext(stream)).type.value == "RUN_STARTED"
+    assert (await anext(stream)).type.value == "CUSTOM"
+    assert (await anext(stream)).type.value == "CUSTOM"
     consumer = asyncio.create_task(anext(stream))
     await graph.started.wait()
     tails = await asyncio.gather(stream.abort(), stream.abort())
