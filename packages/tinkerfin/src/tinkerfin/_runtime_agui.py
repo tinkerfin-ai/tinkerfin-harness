@@ -7,7 +7,7 @@ import inspect
 import math
 from collections.abc import AsyncGenerator
 from functools import partial
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, cast
 
 from ag_ui.core import BaseEvent, CustomEvent, RunErrorEvent, RunStartedEvent
 from pydantic import BaseModel, Field
@@ -49,7 +49,9 @@ __all__ = [
     "_close_upstream",
     "_decorate_initialization_event",
     "_next_part",
+    "_next_part_or_phase",
     "_observe",
+    "_publish_phase",
     "_record_secondary_error_note",
 ]
 
@@ -458,7 +460,7 @@ class _RunPhaseValue(BaseModel, frozen=True):
 
 
 class _RunPhaseEvent(CustomEvent):
-    name: Literal["tinkerfin.run.phase"] = "tinkerfin.run.phase"
+    name: str = Field(default="tinkerfin.run.phase", pattern=r"^tinkerfin\.run\.phase$")
     value: _RunPhaseValue
 
 
