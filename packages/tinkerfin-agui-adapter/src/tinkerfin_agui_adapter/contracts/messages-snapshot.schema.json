@@ -1,0 +1,907 @@
+{
+  "$defs": {
+    "ActivityMessage": {
+      "additionalProperties": true,
+      "description": "An activity progress message emitted between chat messages.",
+      "properties": {
+        "activityType": {
+          "title": "Activitytype",
+          "type": "string"
+        },
+        "content": {
+          "additionalProperties": true,
+          "title": "Content",
+          "type": "object"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "role": {
+          "const": "activity",
+          "default": "activity",
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "activityType",
+        "content"
+      ],
+      "title": "ActivityMessage",
+      "type": "object"
+    },
+    "Attachment": {
+      "additionalProperties": false,
+      "description": "Describe a durable file without embedding bytes or storage credentials.\n\nIDs are opaque within the host's authorization boundary. A host must authorize\nevery resolution; the descriptor itself never grants access to its contents.",
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "mime_type": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Mime Type",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "size_bytes": {
+          "description": "Original file size in bytes",
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "mime_type",
+        "size_bytes"
+      ],
+      "title": "Attachment",
+      "type": "object"
+    },
+    "AttachmentAssistantMessage": {
+      "additionalProperties": true,
+      "description": "Preserve an assistant's durable files in an authoritative message snapshot.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content"
+        },
+        "encryptedValue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Encryptedvalue"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "role": {
+          "const": "assistant",
+          "default": "assistant",
+          "title": "Role",
+          "type": "string"
+        },
+        "toolCalls": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ToolCall"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Toolcalls"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "AttachmentAssistantMessage",
+      "type": "object"
+    },
+    "AttachmentToolMessage": {
+      "additionalProperties": true,
+      "description": "Preserve a tool result's durable files in an authoritative message snapshot.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "encryptedValue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Encryptedvalue"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "role": {
+          "const": "tool",
+          "default": "tool",
+          "title": "Role",
+          "type": "string"
+        },
+        "toolCallId": {
+          "title": "Toolcallid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "content",
+        "toolCallId"
+      ],
+      "title": "AttachmentToolMessage",
+      "type": "object"
+    },
+    "AudioInputContent": {
+      "additionalProperties": true,
+      "description": "An audio input content fragment.",
+      "properties": {
+        "metadata": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "data": "#/$defs/InputContentDataSource",
+              "url": "#/$defs/InputContentUrlSource"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/InputContentDataSource"
+            },
+            {
+              "$ref": "#/$defs/InputContentUrlSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "type": {
+          "const": "audio",
+          "default": "audio",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "AudioInputContent",
+      "type": "object"
+    },
+    "BinaryInputContent": {
+      "additionalProperties": true,
+      "description": "A deprecated binary payload reference in a multimodal user message.",
+      "properties": {
+        "data": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data"
+        },
+        "filename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filename"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "mimeType": {
+          "title": "Mimetype",
+          "type": "string"
+        },
+        "type": {
+          "const": "binary",
+          "default": "binary",
+          "title": "Type",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "required": [
+        "mimeType"
+      ],
+      "title": "BinaryInputContent",
+      "type": "object"
+    },
+    "DeveloperMessage": {
+      "additionalProperties": true,
+      "description": "A developer message.",
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "encryptedValue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Encryptedvalue"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "role": {
+          "const": "developer",
+          "default": "developer",
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "content"
+      ],
+      "title": "DeveloperMessage",
+      "type": "object"
+    },
+    "DocumentInputContent": {
+      "additionalProperties": true,
+      "description": "A document input content fragment.",
+      "properties": {
+        "metadata": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "data": "#/$defs/InputContentDataSource",
+              "url": "#/$defs/InputContentUrlSource"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/InputContentDataSource"
+            },
+            {
+              "$ref": "#/$defs/InputContentUrlSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "type": {
+          "const": "document",
+          "default": "document",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "DocumentInputContent",
+      "type": "object"
+    },
+    "FunctionCall": {
+      "additionalProperties": true,
+      "description": "Name and arguments of a function call.",
+      "properties": {
+        "arguments": {
+          "title": "Arguments",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "title": "FunctionCall",
+      "type": "object"
+    },
+    "ImageInputContent": {
+      "additionalProperties": true,
+      "description": "An image input content fragment.",
+      "properties": {
+        "metadata": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "data": "#/$defs/InputContentDataSource",
+              "url": "#/$defs/InputContentUrlSource"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/InputContentDataSource"
+            },
+            {
+              "$ref": "#/$defs/InputContentUrlSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "type": {
+          "const": "image",
+          "default": "image",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "ImageInputContent",
+      "type": "object"
+    },
+    "InputContentDataSource": {
+      "additionalProperties": true,
+      "description": "Inline base64-encoded source.",
+      "properties": {
+        "mimeType": {
+          "title": "Mimetype",
+          "type": "string"
+        },
+        "type": {
+          "const": "data",
+          "default": "data",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "mimeType"
+      ],
+      "title": "InputContentDataSource",
+      "type": "object"
+    },
+    "InputContentUrlSource": {
+      "additionalProperties": true,
+      "description": "URL-referenced source.",
+      "properties": {
+        "mimeType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mimetype"
+        },
+        "type": {
+          "const": "url",
+          "default": "url",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "InputContentUrlSource",
+      "type": "object"
+    },
+    "ReasoningMessage": {
+      "additionalProperties": true,
+      "description": "A reasoning message containing the agent's internal reasoning process.",
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "encryptedValue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Encryptedvalue"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "role": {
+          "const": "reasoning",
+          "default": "reasoning",
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "content"
+      ],
+      "title": "ReasoningMessage",
+      "type": "object"
+    },
+    "SystemMessage": {
+      "additionalProperties": true,
+      "description": "A system message.",
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "encryptedValue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Encryptedvalue"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "role": {
+          "const": "system",
+          "default": "system",
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "content"
+      ],
+      "title": "SystemMessage",
+      "type": "object"
+    },
+    "TextInputContent": {
+      "additionalProperties": true,
+      "description": "A text fragment in a multimodal user message.",
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "default": "text",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "TextInputContent",
+      "type": "object"
+    },
+    "ToolCall": {
+      "additionalProperties": true,
+      "description": "A tool call, modelled after OpenAI tool calls.",
+      "properties": {
+        "encryptedValue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Encryptedvalue"
+        },
+        "function": {
+          "$ref": "#/$defs/FunctionCall"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "function",
+          "default": "function",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "function"
+      ],
+      "title": "ToolCall",
+      "type": "object"
+    },
+    "UserMessage": {
+      "additionalProperties": true,
+      "description": "A user message supporting text or multimodal content.",
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "discriminator": {
+                  "mapping": {
+                    "audio": "#/$defs/AudioInputContent",
+                    "binary": "#/$defs/BinaryInputContent",
+                    "document": "#/$defs/DocumentInputContent",
+                    "image": "#/$defs/ImageInputContent",
+                    "text": "#/$defs/TextInputContent",
+                    "video": "#/$defs/VideoInputContent"
+                  },
+                  "propertyName": "type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/TextInputContent"
+                  },
+                  {
+                    "$ref": "#/$defs/ImageInputContent"
+                  },
+                  {
+                    "$ref": "#/$defs/AudioInputContent"
+                  },
+                  {
+                    "$ref": "#/$defs/VideoInputContent"
+                  },
+                  {
+                    "$ref": "#/$defs/DocumentInputContent"
+                  },
+                  {
+                    "$ref": "#/$defs/BinaryInputContent"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          ],
+          "title": "Content"
+        },
+        "encryptedValue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Encryptedvalue"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "role": {
+          "const": "user",
+          "default": "user",
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "content"
+      ],
+      "title": "UserMessage",
+      "type": "object"
+    },
+    "VideoInputContent": {
+      "additionalProperties": true,
+      "description": "A video input content fragment.",
+      "properties": {
+        "metadata": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "source": {
+          "discriminator": {
+            "mapping": {
+              "data": "#/$defs/InputContentDataSource",
+              "url": "#/$defs/InputContentUrlSource"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/InputContentDataSource"
+            },
+            {
+              "$ref": "#/$defs/InputContentUrlSource"
+            }
+          ],
+          "title": "Source"
+        },
+        "type": {
+          "const": "video",
+          "default": "video",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "VideoInputContent",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "description": "Validate and serialize attachment-bearing assistant and tool messages.\n\nAG-UI 0.1.19 annotates snapshots with its base message union. Pydantic otherwise\nomits declared subclass fields at that boundary. Runtime serialization and the\ninput schema therefore both include the public attachment message types.",
+  "properties": {
+    "messages": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "activity": "#/$defs/ActivityMessage",
+            "assistant": "#/$defs/AttachmentAssistantMessage",
+            "developer": "#/$defs/DeveloperMessage",
+            "reasoning": "#/$defs/ReasoningMessage",
+            "system": "#/$defs/SystemMessage",
+            "tool": "#/$defs/AttachmentToolMessage",
+            "user": "#/$defs/UserMessage"
+          },
+          "propertyName": "role"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/DeveloperMessage"
+          },
+          {
+            "$ref": "#/$defs/SystemMessage"
+          },
+          {
+            "$ref": "#/$defs/AttachmentAssistantMessage"
+          },
+          {
+            "$ref": "#/$defs/UserMessage"
+          },
+          {
+            "$ref": "#/$defs/AttachmentToolMessage"
+          },
+          {
+            "$ref": "#/$defs/ActivityMessage"
+          },
+          {
+            "$ref": "#/$defs/ReasoningMessage"
+          }
+        ]
+      },
+      "title": "Messages",
+      "type": "array"
+    },
+    "rawEvent": {
+      "anyOf": [
+        {},
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rawevent"
+    },
+    "timestamp": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timestamp"
+    },
+    "type": {
+      "const": "MESSAGES_SNAPSHOT",
+      "default": "MESSAGES_SNAPSHOT",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "messages"
+  ],
+  "title": "AttachmentMessagesSnapshotEvent",
+  "type": "object"
+}

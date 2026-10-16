@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="description" content="TinkerFin AI Agent 对话工作台" />
+    <link rel="icon" type="image/png" href="/brand/tinkerfin-favicon.png?v=1" />
+    <title>TinkerFin</title>
+    <script>
+      (() => {
+        const storageKey = 'tinkerfin:theme'
+        let preference = 'light'
+        try {
+          const storedPreference = window.localStorage.getItem(storageKey)
+          if (storedPreference === 'light' || storedPreference === 'dark' || storedPreference === 'system') {
+            preference = storedPreference
+          }
+        } catch {
+          preference = 'light'
+        }
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+        const theme = preference === 'system' ? (prefersDark ? 'dark' : 'light') : preference
+        const root = document.documentElement
+        root.setAttribute('data-theme-preference', preference)
+        root.setAttribute('data-theme', theme)
+        root.style.colorScheme = theme
+        document.querySelector('meta[name="theme-color"]')
+          ?.setAttribute('content', theme === 'dark' ? '#151517' : '#ffffff')
+      })()
+    </script>
+    <script>
+      (() => {
+        const storageKey = 'tinkerfin:language'
+        let preference = 'zh-CN'
+        try {
+          const storedPreference = window.localStorage.getItem(storageKey)
+          if (storedPreference === 'zh-CN' || storedPreference === 'en' || storedPreference === 'system') {
+            preference = storedPreference
+          }
+        } catch {
+          preference = 'zh-CN'
+        }
+        const systemLanguage = navigator.languages.find((language) => {
+          const normalized = language.toLowerCase()
+          return normalized === 'zh' || normalized.startsWith('zh-')
+            || normalized === 'en' || normalized.startsWith('en-')
+        })?.toLowerCase()
+        const language = preference === 'system'
+          ? (systemLanguage === 'zh' || systemLanguage?.startsWith('zh-') ? 'zh-CN' : 'en')
+          : preference
+        const root = document.documentElement
+        root.lang = language
+        root.setAttribute('data-language', language)
+        root.setAttribute('data-language-preference', preference)
+        document.querySelector('meta[name="description"]')?.setAttribute(
+          'content',
+          language === 'en' ? 'TinkerFin AI Agent workspace' : 'TinkerFin AI Agent 对话工作台',
+        )
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,936 @@
+@layer conversation {
+  .message-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-3);
+    margin-block: var(--space-3);
+    min-width: 0;
+  }
+  .attachment-card {
+    width: var(--layout-image-width);
+    max-width: 100%;
+    min-width: 0;
+    border: 0;
+    border-radius: var(--radius-xl);
+    background: var(--color-layer-2);
+  }
+  .attachment-card:not(.attachment-card--image) {
+    width: min(100%, var(--layout-attachment-card-width));
+    border: 1px solid var(--color-border);
+    background: var(--color-layer-1);
+    transition: background-color var(--motion-fast) var(--ease-out);
+  }
+  .attachment-card:not(.attachment-card--image):hover {
+    background: var(--color-hover);
+  }
+  .attachment-card--image {
+    width: min(100%, var(--layout-attachment-card-width));
+    background: transparent;
+  }
+  .message-attachments--multiple {
+    --layout-image-width: var(--layout-image-multiple-width);
+  }
+  .attachment-media {
+    position: relative;
+    isolation: isolate;
+    border-radius: inherit;
+  }
+  .attachment-preview {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-button);
+    outline: 0;
+    overflow: hidden;
+    background: var(--color-layer-2);
+    color: var(--color-text-secondary);
+    cursor: zoom-in;
+  }
+  .attachment-preview img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 0;
+  }
+  .attachment-preview:focus-visible {
+    filter: brightness(0.88);
+  }
+  .attachment-preview:active {
+    filter: brightness(0.94);
+  }
+  .attachment-preview:disabled {
+    cursor: default;
+  }
+  .attachment-loading {
+    display: grid;
+    place-items: center;
+    min-height: var(--layout-image-min-width);
+    padding: var(--space-4);
+    font-size: var(--type-meta-size);
+  }
+  .attachment-media[data-state='ready']::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0;
+    height: calc(var(--space-16) + var(--space-8));
+    border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+    background: linear-gradient(transparent, var(--color-media-shade));
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--motion-normal) var(--ease-out);
+  }
+  .attachment-image-actions {
+    display: flex;
+    gap: var(--space-0-5);
+    position: absolute;
+    bottom: var(--space-2);
+    left: var(--space-2);
+    z-index: var(--layer-local);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--motion-normal) var(--ease-out);
+  }
+  .attachment-media:hover::after,
+  .attachment-media:has(:focus-visible)::after,
+  .attachment-media:hover .attachment-image-actions,
+  .attachment-media:has(:focus-visible) .attachment-image-actions {
+    opacity: 1;
+  }
+  .attachment-media:hover .attachment-image-actions,
+  .attachment-media:has(:focus-visible) .attachment-image-actions {
+    pointer-events: auto;
+  }
+  .attachment-image-actions .ui-button {
+    color: var(--color-media-ink);
+    width: var(--control-composer);
+    height: var(--control-composer);
+    border: 0;
+    box-shadow: none;
+    background: transparent;
+  }
+  .attachment-image-actions .ui-button:hover:not(:disabled),
+  .attachment-image-actions .ui-button:active:not(:disabled),
+  .attachment-image-actions .ui-button:focus-visible {
+    background: var(--color-media-hover);
+    outline: 0;
+  }
+  .attachment-media[data-state='error'] .attachment-loading {
+    min-height: calc(var(--space-16) + var(--space-16));
+    padding-bottom: calc(var(--control-composer) + var(--space-4));
+  }
+  .attachment-media[data-state='error'] .attachment-image-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .attachment-media[data-state='error'] .attachment-image-actions .ui-button {
+    color: var(--color-text-secondary);
+  }
+  .attachment-media[data-state='error'] .attachment-image-actions .ui-button:hover:not(:disabled),
+  .attachment-media[data-state='error'] .attachment-image-actions .ui-button:active:not(:disabled),
+  .attachment-media[data-state='error'] .attachment-image-actions .ui-button:focus-visible {
+    color: var(--color-text-primary);
+    background: var(--color-active);
+  }
+  .attachment-description {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-height: 64px;
+    padding: var(--space-2) var(--space-4);
+  }
+  .attachment-description__text {
+    display: block;
+    flex: 1;
+    min-width: 0;
+  }
+  .attachment-description__title {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--type-meta-size);
+    font-weight: var(--weight-ui);
+  }
+  .attachment-description small {
+    display: block;
+    color: var(--color-text-secondary);
+    font-size: var(--type-micro-size);
+    margin-top: var(--space-0-5);
+    font-variant-numeric: tabular-nums;
+  }
+  .attachment-file-icon {
+    --attachment-file-color: var(--color-file-unknown);
+    position: relative;
+    display: grid;
+    place-items: end center;
+    width: var(--control-lg);
+    height: var(--control-xl);
+    flex: 0 0 auto;
+    padding-bottom: var(--space-1-5);
+    overflow: hidden;
+    border-radius: var(--radius-lg);
+    background: var(--attachment-file-color);
+    color: var(--color-file-icon-ink);
+    box-shadow: var(--shadow-file-icon);
+    font-size: var(--type-file-icon-size);
+    font-weight: var(--weight-ui);
+    letter-spacing: .02em;
+    line-height: 1;
+  }
+  .attachment-file-icon::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 13px;
+    height: 13px;
+    border-radius: var(--radius-file-icon-fold);
+    background: color-mix(in srgb, var(--attachment-file-color) 68%, white);
+  }
+  .attachment-file-icon::after {
+    content: '';
+    position: absolute;
+    top: 14px;
+    left: var(--space-2);
+    width: 20px;
+    height: 13px;
+    background: linear-gradient(
+      to bottom,
+      currentColor 0 2px,
+      transparent 2px 6px,
+      currentColor 6px 8px,
+      transparent 8px 11px,
+      currentColor 11px 13px
+    );
+    opacity: .72;
+  }
+  .attachment-file-icon > span {
+    position: relative;
+    z-index: var(--layer-local);
+  }
+  .attachment-file-icon--compact {
+    width: 30px;
+    height: 35px;
+    padding-bottom: 5px;
+    border-radius: var(--radius-file-icon-compact);
+    box-shadow: none;
+    font-size: var(--type-file-icon-compact-size);
+  }
+  .attachment-file-icon--compact::before {
+    width: 10px;
+    height: 10px;
+    border-radius: var(--radius-file-icon-compact-fold);
+  }
+  .attachment-file-icon--compact::after {
+    display: none;
+  }
+  .attachment-file-icon[data-file-kind='word'] { --attachment-file-color: var(--color-file-word); }
+  .attachment-file-icon[data-file-kind='pdf'] { --attachment-file-color: var(--color-file-pdf); }
+  .attachment-file-icon[data-file-kind='markdown'] { --attachment-file-color: var(--color-file-markdown); }
+  .attachment-file-icon[data-file-kind='sheet'] { --attachment-file-color: var(--color-file-sheet); }
+  .attachment-file-icon[data-file-kind='slides'] { --attachment-file-color: var(--color-file-slides); }
+  .attachment-file-icon[data-file-kind='text'] { --attachment-file-color: var(--color-file-text); }
+  .attachment-file-icon[data-file-kind='archive'] { --attachment-file-color: var(--color-file-archive); }
+  .attachment-file-icon[data-file-kind='code'] { --attachment-file-color: var(--color-file-code); }
+  .attachment-file-icon[data-file-kind='image'] { --attachment-file-color: var(--color-file-image); }
+  .attachment-file-icon[data-file-kind='unknown'] { --attachment-file-color: var(--color-file-unknown); }
+  .attachment-document-preview {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+    width: 100%;
+    min-height: 56px;
+    padding: 0 70px 0 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-weight: var(--weight-ui);
+    text-align: start;
+  }
+  .attachment-document-preview {
+    cursor: pointer;
+  }
+  .attachment-document-preview:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    border-radius: var(--radius-button);
+  }
+  .attachment-file-actions {
+    position: absolute;
+    top: 50%;
+    right: var(--space-2);
+    display: flex;
+    align-items: center;
+    gap: var(--space-0-5);
+    z-index: var(--layer-local);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-50%);
+    transition: opacity var(--motion-normal) var(--ease-out);
+  }
+  .attachment-description:hover .attachment-file-actions,
+  .attachment-description:focus-within .attachment-file-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  body:has(.attachment-document-viewer) .attachment-card .attachment-file-actions {
+    opacity: 0;
+    pointer-events: none;
+  }
+  body:not(:has(.modal-backdrop)) .attachment-description:not(:hover):has(.attachment-document-preview:focus) .attachment-file-actions {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .attachment-file-actions .ui-button {
+    width: var(--control-composer);
+    height: var(--control-composer);
+    border: 0;
+    background: transparent;
+    color: var(--color-text-secondary);
+    box-shadow: none;
+  }
+  .attachment-file-actions .ui-button:hover:not(:disabled),
+  .attachment-file-actions .ui-button:active:not(:disabled),
+  .attachment-file-actions .ui-button:focus-visible {
+    outline: 0;
+    background: var(--color-active);
+    color: var(--color-text-primary);
+  }
+  .attachment-document-viewer {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    min-width: 0;
+    border: 0;
+    border-radius: 0;
+    background: var(--color-canvas);
+    box-shadow: none;
+    animation: none;
+  }
+  .attachment-document-viewer .modal-dialog-head {
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--space-2);
+    height: 64px;
+    min-height: 64px;
+    padding: var(--space-3) var(--layout-page-gutter);
+  }
+  .attachment-document-viewer .modal-dialog-head h2 {
+    flex: 1;
+    overflow: hidden;
+    font-size: var(--type-caption-size);
+    font-weight: var(--weight-ui);
+    letter-spacing: normal;
+  }
+  .attachment-document-viewer .modal-dialog-head > div:first-child {
+    flex: 1;
+  }
+  .attachment-document-title {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    min-width: 0;
+  }
+  .attachment-document-title__copy {
+    display: block;
+    min-width: 0;
+  }
+  .attachment-document-title__copy > span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .attachment-document-layout {
+    position: relative;
+    display: grid;
+    grid-template-columns: 184px minmax(0, 1fr);
+    flex: 1;
+    min-height: 0;
+  }
+  .attachment-document-layout.is-info-open {
+    grid-template-columns: 184px minmax(0, 1fr) var(--layout-image-multiple-width);
+  }
+  .attachment-document-rail {
+    min-width: 0;
+    padding: 18px var(--space-3);
+    overflow: auto;
+    border-right: 1px solid var(--color-border);
+    background: var(--color-layer-1);
+  }
+  .attachment-document-rail > strong {
+    display: block;
+    margin: 0 var(--space-2) 10px;
+    color: var(--color-text-secondary);
+    font-size: var(--type-micro-size);
+    font-weight: var(--weight-ui);
+  }
+  .attachment-document-rail > button {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    min-width: 0;
+    padding: 9px var(--space-2);
+    border: 0;
+    border-radius: var(--radius-button);
+    background: transparent;
+    color: var(--color-text-primary);
+    text-align: start;
+    cursor: pointer;
+  }
+  .attachment-document-rail > button:hover {
+    background: var(--color-hover);
+  }
+  .attachment-document-rail > button:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: -2px;
+  }
+  .attachment-document-rail > button[aria-current='true'] {
+    background: var(--color-layer-2);
+    box-shadow: var(--shadow-1);
+  }
+  .attachment-document-rail > button > span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--type-micro-size);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .attachment-document-body {
+    min-height: 0;
+    overflow: auto;
+    padding: var(--layout-page-gutter);
+    background: var(--color-layer-2);
+  }
+  .attachment-document-pdf {
+    display: block;
+    width: min(100%, var(--layout-document-width));
+    height: calc(100dvh - 160px);
+    min-height: 480px;
+    margin: 0 auto;
+    border: 0;
+    background: var(--color-layer-1);
+    box-shadow: var(--shadow-2);
+  }
+  .attachment-document-content {
+    overflow-wrap: anywhere;
+  }
+  .attachment-document-page {
+    width: min(100%, var(--layout-form-width));
+    min-height: calc(100dvh - 160px);
+    margin: 0 auto;
+    padding: var(--space-10);
+    background: var(--color-layer-1);
+    box-shadow: var(--shadow-2);
+  }
+  .attachment-document-page--sheet {
+    width: min(100%, var(--layout-document-width));
+  }
+  .attachment-document-unavailable {
+    display: flex;
+    min-height: 100%;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    text-align: center;
+  }
+  .attachment-document-unavailable h3 {
+    margin: var(--space-5) 0 var(--space-1);
+    font-size: var(--type-title-size);
+  }
+  .attachment-document-unavailable p {
+    margin: 0 0 var(--space-4);
+    color: var(--color-text-secondary);
+    font-size: var(--type-caption-size);
+  }
+  .attachment-preview-note--pdf {
+    width: min(100%, var(--layout-document-width));
+    margin-inline: auto;
+  }
+  .attachment-document-content.markdown-content--article .markdown-table-wrap {
+    margin-inline: 0;
+    padding-inline: 0;
+  }
+  .attachment-sheet-scroll {
+    overflow: auto;
+    max-height: 60dvh;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+  }
+  .attachment-sheet {
+    width: max-content;
+    min-width: 100%;
+    border-collapse: collapse;
+    font-size: var(--type-caption-size);
+    font-weight: var(--weight-regular);
+    font-variant-numeric: tabular-nums;
+  }
+  .attachment-sheet :is(th, td) {
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    min-width: var(--control-xl);
+    max-width: var(--layout-image-width);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    text-align: start;
+    vertical-align: top;
+  }
+  .attachment-sheet th {
+    background: var(--color-layer-2);
+    font-weight: var(--weight-medium);
+  }
+  .attachment-sheet thead th {
+    position: sticky;
+    top: 0;
+    z-index: var(--layer-local);
+  }
+  .attachment-preview-note {
+    color: var(--color-text-secondary);
+    font-size: var(--type-caption-size);
+    margin-block: var(--space-3);
+  }
+  .attachment-error {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    color: var(--color-danger-text);
+    font-size: var(--type-caption-size);
+  }
+  .attachment-card .ui-button:focus-visible,
+  .composer-attachment .ui-button:focus-visible {
+    outline: 0;
+    background: var(--color-active);
+  }
+  .attachment-card .attachment-image-actions .ui-button:focus-visible {
+    background: var(--color-media-hover);
+  }
+
+  .modal-backdrop:has(.attachment-viewer),
+  .modal-backdrop:has(.attachment-document-viewer) {
+    padding: 0;
+    backdrop-filter: none;
+  }
+  .attachment-viewer {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    min-width: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    animation: none;
+    background: var(--color-canvas);
+  }
+  .attachment-viewer .modal-dialog-head {
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--space-2);
+    height: 64px;
+    min-height: 64px;
+    padding: var(--space-3) var(--layout-page-gutter);
+  }
+  .attachment-viewer .modal-dialog-head > div:first-child {
+    flex: 1;
+  }
+  .attachment-viewer .modal-dialog-head h2 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--type-caption-size);
+    font-weight: var(--weight-ui);
+    letter-spacing: normal;
+  }
+  .attachment-viewer-actions {
+    display: flex;
+    gap: var(--space-1);
+  }
+  .attachment-viewer .ui-button,
+  .attachment-document-viewer .ui-button {
+    border: 0;
+    box-shadow: none;
+  }
+  .attachment-viewer .ui-button:focus-visible,
+  .attachment-viewer .ui-button[aria-pressed='true'],
+  .attachment-document-viewer .ui-button:focus-visible {
+    outline: 0;
+    background: var(--color-active);
+  }
+  .attachment-viewer .modal-dialog-close,
+  .attachment-document-viewer .modal-dialog-close {
+    background: transparent;
+  }
+  .attachment-viewer .modal-dialog-close:hover,
+  .attachment-document-viewer .modal-dialog-close:hover {
+    background: var(--color-hover);
+  }
+  .attachment-viewer-body {
+    position: relative;
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    min-width: 0;
+    margin: 0 var(--layout-page-gutter);
+  }
+  .attachment-viewer-stage {
+    position: relative;
+    display: block;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    touch-action: none;
+    user-select: none;
+  }
+  .attachment-viewer-stage[data-pannable='true'] {
+    cursor: grab;
+  }
+  .attachment-viewer-stage[data-pannable='true']:active {
+    cursor: grabbing;
+  }
+  .attachment-viewer-image {
+    display: block;
+    flex: none;
+    max-width: none;
+    max-height: none;
+    object-fit: contain;
+    border: 0;
+  }
+  .attachment-viewer-empty {
+    color: var(--color-text-secondary);
+    font-size: var(--type-caption-size);
+  }
+  .attachment-viewer-status {
+    position: absolute;
+    z-index: var(--layer-local);
+    bottom: var(--space-3);
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    max-width: 100%;
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-lg);
+    background: var(--color-layer-1);
+    color: var(--color-text-secondary);
+    font-size: var(--type-caption-size);
+    box-shadow: var(--shadow-2);
+  }
+  .attachment-viewer-status.is-loading {
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .attachment-viewer-info {
+    width: var(--layout-image-multiple-width);
+    flex: 0 0 auto;
+    padding: var(--space-5);
+    overflow: auto;
+    background: var(--color-layer-2);
+    border-radius: var(--radius-xl);
+  }
+  .attachment-viewer-info h3 {
+    margin: 0 0 var(--space-6);
+    font-size: var(--type-body-size);
+  }
+  .attachment-viewer-info dl {
+    margin: 0;
+    font-size: var(--type-caption-size);
+  }
+  .attachment-viewer-info dt {
+    color: var(--color-text-secondary);
+    margin-bottom: var(--space-1);
+  }
+  .attachment-viewer-info dd {
+    margin: 0 0 var(--space-5);
+    overflow-wrap: anywhere;
+  }
+  .attachment-viewer-footer {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--layout-page-gutter);
+    min-width: 0;
+  }
+  .attachment-viewer-gallery {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    max-width: 100%;
+  }
+  .attachment-viewer-gallery .ui-button[aria-disabled='true'] {
+    opacity: .48;
+    cursor: default;
+  }
+  .attachment-viewer-thumbnails {
+    display: flex;
+    gap: var(--space-2);
+    overflow-x: auto;
+    min-width: 0;
+    padding: var(--space-1);
+  }
+  .attachment-viewer-thumbnail {
+    flex: 0 0 var(--control-xl);
+    width: var(--control-xl);
+    height: var(--control-xl);
+    padding: var(--space-1);
+    border: 0;
+    outline: 0;
+    border-radius: var(--radius-button);
+    background: transparent;
+    cursor: pointer;
+  }
+  .attachment-viewer-thumbnail img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .attachment-viewer-thumbnail span {
+    display: block;
+    overflow: hidden;
+    font-size: var(--type-micro-size);
+  }
+  .attachment-viewer-thumbnail:hover,
+  .attachment-viewer-thumbnail:active,
+  .attachment-viewer-thumbnail:focus-visible,
+  .attachment-viewer-thumbnail[aria-pressed='true'] {
+    background: var(--color-active);
+  }
+  .attachment-viewer-zoom {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+  .attachment-viewer-zoom output {
+    min-width: var(--control-xl);
+    text-align: center;
+    font-size: var(--type-caption-size);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .composer-attachments {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--space-1-5);
+    min-width: 0;
+    height: var(--control-md);
+    max-height: var(--layout-image-min-width);
+    padding: 0 var(--space-3);
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior: none;
+    scrollbar-width: none;
+  }
+  .composer-attachments::-webkit-scrollbar { display: none; }
+  .composer-attachment {
+    display: flex;
+    align-items: center;
+    gap: var(--space-0-5);
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: min(100%, var(--layout-image-multiple-width));
+    height: var(--control-md);
+    padding: var(--space-1);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: var(--color-subtle);
+    color: var(--color-text-primary);
+  }
+  .composer-attachment-thumbnail {
+    display: block;
+    flex: 0 0 auto;
+    width: var(--control-xs);
+    height: var(--control-xs);
+    object-fit: contain;
+    border-radius: var(--radius-xs);
+  }
+  .composer-attachment-icon {
+    display: grid;
+    width: var(--space-6);
+    flex: 0 0 auto;
+    place-items: center;
+    color: var(--color-text-secondary);
+  }
+  .composer-attachment-icon .attachment-file-icon--compact {
+    width: var(--control-plan-chip);
+    height: calc(var(--control-plan-chip) + var(--space-1));
+    padding-bottom: var(--space-1);
+  }
+  .composer-attachment-copy {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1-5);
+    min-width: 0;
+  }
+  .composer-attachment-actions {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 0;
+  }
+  .composer-attachment-actions .ui-button {
+    --button-control-size: var(--space-6);
+    min-width: var(--button-control-size);
+  }
+  .composer-attachment-name-text {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--type-meta-size);
+    font-weight: var(--weight-ui);
+    line-height: var(--type-meta-line);
+  }
+  .composer-attachment .composer-attachment-name {
+    min-width: 0;
+    min-height: var(--space-6);
+    padding: 0;
+    border: 0;
+    color: var(--color-text-primary);
+    text-align: start;
+  }
+  .composer-attachment-name .ui-button__label {
+    min-width: 0;
+  }
+  .composer-attachment-state {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--color-text-secondary);
+    font-size: var(--type-micro-size);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .composer-attachment[data-state='error'] .composer-attachment-state {
+    padding: var(--space-0-5) var(--space-1-5);
+    border-radius: var(--radius-xs);
+    background: var(--color-danger-soft);
+    color: var(--color-danger-text);
+  }
+  .composer-attachment-state svg {
+    flex: 0 0 auto;
+  }
+  @media (max-width: 767px) {
+    .attachment-document-layout,
+    .attachment-document-layout.is-info-open { grid-template-columns: minmax(0, 1fr); }
+    .attachment-document-rail { display: none; }
+    .attachment-document-body { padding: var(--layout-page-gutter); }
+    .attachment-document-page { padding: var(--space-5); }
+    .attachment-document-pdf { height: calc(100dvh - 120px); min-height: 0; }
+    .attachment-document-viewer .modal-dialog-head { padding: var(--space-2) var(--layout-page-gutter); gap: var(--space-1); }
+
+    .attachment-viewer .modal-dialog-head {
+      padding: var(--space-2) var(--layout-page-gutter);
+      gap: var(--space-1);
+    }
+    .attachment-viewer-body {
+      margin-inline: var(--layout-page-gutter);
+    }
+    .attachment-viewer-footer {
+      padding: var(--space-2) var(--layout-page-gutter);
+    }
+    .attachment-viewer-info {
+      position: absolute;
+      inset: 0 0 0 auto;
+      max-width: 100%;
+      z-index: var(--layer-local-raised);
+    }
+    .attachment-viewer-status {
+      width: max-content;
+      max-width: 100%;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .attachment-viewer-actions {
+      gap: 0;
+    }
+  }
+  @media (any-hover: none), (any-pointer: coarse) {
+    .composer-attachments {
+      height: var(--control-lg);
+    }
+
+    .attachment-image-actions,
+    .attachment-file-actions,
+    .attachment-media::after {
+      opacity: 1;
+    }
+    .attachment-image-actions,
+    .attachment-file-actions {
+      pointer-events: auto;
+    }
+    .attachment-card .ui-button,
+    .attachment-viewer .ui-button {
+      min-width: var(--control-lg);
+      min-height: var(--control-lg);
+      height: var(--control-lg);
+    }
+    .composer-attachment .ui-button {
+      min-width: var(--control-lg);
+      min-height: var(--control-lg);
+      height: var(--control-lg);
+    }
+    .composer-attachment {
+      height: auto;
+      min-height: var(--control-lg);
+      padding-block: 0;
+    }
+    .composer-attachment-copy {
+      gap: var(--space-1);
+    }
+    .composer-attachment[data-state='error'] .composer-attachment-state {
+      padding-inline: var(--space-1);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .attachment-image-actions,
+    .attachment-file-actions,
+    .attachment-media::after {
+      transition: none;
+    }
+  }
+  @media (forced-colors: active) {
+    .attachment-preview:focus-visible,
+    .attachment-viewer-thumbnail:focus-visible {
+      outline: 2px solid ButtonText;
+      outline-offset: -2px;
+    }
+    .attachment-image-actions {
+      background: Canvas;
+    }
+    .attachment-file-icon {
+      border: 1px solid ButtonText;
+      background: Canvas;
+      color: CanvasText;
+      box-shadow: none;
+    }
+    .attachment-image-actions .ui-button {
+      color: ButtonText;
+    }
+    .attachment-viewer .ui-button:focus-visible,
+    .attachment-card .ui-button:focus-visible {
+      outline: 2px solid ButtonText;
+    }
+    .attachment-viewer-thumbnail[aria-pressed='true'] {
+      outline: 2px solid ButtonText;
+    }
+  }
+}

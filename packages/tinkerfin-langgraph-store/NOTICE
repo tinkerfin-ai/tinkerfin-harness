@@ -1,0 +1,5 @@
+Portions of the LangGraph Store namespace validation and batch semantics are
+adapted from langgraph-checkpoint-mysql 3.0.0 by Theodore Ni:
+https://github.com/tjni/langgraph-checkpoint-mysql
+
+The applicable MIT License and copyright notice are included in LICENSE.

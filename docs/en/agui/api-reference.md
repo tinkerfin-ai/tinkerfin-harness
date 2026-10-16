@@ -1,0 +1,96 @@
+# AG-UI API
+
+[AG-UI](index.md) · [中文](../../cn/agui/api-reference.md)
+
+## Runtime API
+
+| API | Purpose |
+| --- | --- |
+| `runtime.open_agui_run(...)` | Return a lazy, single-use `AgUiRunStream` |
+| `AgUiRunStream.abort()` | Request cancellation and return remaining terminal events |
+| `AgUiRunStream.aclose()` | Settle execution and cleanup |
+| `AgUiRunStream.to_sse()` | Return a single-use `SseBody[bytes]` of UTF-8 SSE frames |
+| `AgUiResumeRequest` | Carry untrusted client decisions for pending interrupts |
+| `AgUiResumeReceipt` | Immutable saved-request receipt with `identity`, `parent_run_id`, opaque `receipt_id`, and `responses` |
+| `AgUiResumeResponse` | One saved public `interrupt_id` and `status`, without a decision payload |
+
+### `open_agui_run()`
+
+| Parameter | Default | Purpose |
+| --- | --- | --- |
+| `thread_id`, `run_id` | required | Run identity inside the Runtime namespace |
+| `messages` / `input` / `resume` | exactly one | User messages, advanced native state, or resume decisions |
+| `parent_run_id` | `None` | Authorized branch or resume lineage |
+| `mode` | Runtime default | `default` or configured `plan` |
+| `config`, `context` | `None` | Graph settings and typed invocation context |
+| `stream_timeout` | `None` | Total deadline for workspace/Graph preparation, resume resolution, and Native pulls, beginning with the first Native pull after `RUN_STARTED` |
+| `cleanup_timeout` | `None` | Caller wait limit for protected cleanup |
+| `include_reasoning_events` | `False` | Include verified public reasoning events |
+| `include_subagent_events` | `True` | Include subagent events |
+| `on_native_part`, `on_agui_event` | `None` | Asynchronous observation before delivery |
+| `on_resume_saved`, `on_resume_not_saved` | `None` | Resume-only settlement callbacks |
+
+An `AgUiSettlementTimeoutError` means the stream still owns cleanup. Await `aclose()`
+again before disposing shared resources.
+
+## Input helpers
+
+`AgUiUserInput` validates one ID-free user message when a host assigns message IDs after
+authorization. `with_attachments(AttachmentSupport(read_content=...))` configures
+authorized reads of stored attachment IDs before model calls. Native media requires
+no reader and is checked against the destination model's declared capabilities by default.
+
+`AgUiResumeBinding` is the persisted framework-resolved resume value. Ordinary hosts
+pass `AgUiResumeRequest` to the Runtime and do not construct bindings.
+
+## Standalone adapter
+
+`tinkerfin-agui-adapter` converts an existing native stream without creating an
+`AgentRuntime`:
+
+| API | Purpose |
+| --- | --- |
+| `astream_events(parts, identity=...)` | Own a complete AG-UI lifecycle around a native stream |
+| `DeepAgentAgUiAdapter` | Convert parts when a custom orchestrator owns the main lifecycle |
+| `encode_sse(event, event_id=...)` | Encode one event as SSE text (`str`) |
+| `micro_batch(events)` | Combine adjacent small deltas without crossing lifecycle boundaries |
+| `ScopedIdCodec` | Encode and decode IDs with full Graph position |
+| `ResumeMapper` | Translate trusted native or persisted AG-UI interrupt evidence |
+
+The adapter uses `RunIdentity` with required `namespace`, `thread_id`, and `run_id`
+fields. The host chooses the namespace and enforces authorization.
+
+## Interrupt contracts
+
+| Model | Purpose |
+| --- | --- |
+| `AgentRuntimeInterrupt` | Stable interrupt ID and JSON value |
+| `RuntimeInterruptEnvelope` | Validated non-tool workflow pause |
+| `HitlRequest` | Paired tool actions and review policies |
+| `ToolReviewInterruptMetadata` | Stable tool review correlation data |
+| `SubagentProvenance` | Stable delegation identity and its parent Tool request |
+
+Public tool decisions are `approve`, `edit`, `reject`, and `respond`. Edited arguments
+are validated against the action schema before native resume translation. See
+[Interrupts and resume](interrupts-and-resume.md) for the complete flow.
+
+## Recorded run results
+
+Use the namespace-bound history reader to inspect one execution with the same
+message references as live delivery. This reads retained facts without running the
+agent or opening a stream:
+
+```python
+from tinkerfin.agui import AgUiHistory
+
+result = await AgUiHistory(tracer, namespace="alice").get_run(
+    "conversation", run_id="scheduled-run"
+)
+for message in result.messages:
+    print(message.content)
+```
+
+`AgUiTraceRun` retains the exact Run identity and fixed Trace prefix. Its messages
+exclude ancestor and descendant messages; later follow-ups and forks do not change
+the selected output. The host authorizes the thread before querying. The reader
+borrows the Tracer and Store and never closes them.

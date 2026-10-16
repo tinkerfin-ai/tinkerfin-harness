@@ -1,0 +1,381 @@
+# Run and schedule Agent tasks
+
+[Documentation](../index.md) · [中文](../../cn/automation/index.md)
+
+TinkerFin Automation runs host-registered targets immediately or on saved one-time,
+interval, and Cron schedules. Owner-bound task and execution handles manage work;
+Stores coordinate request idempotency, bounded queues, and cross-worker capacity.
+The default Store is process-local; SQL persistence supports SQLite, MySQL, and PostgreSQL.
+
+## Execute once or save a task
+
+Place this fragment inside the host's async entry point. authenticated_user_id is a
+string obtained from host authentication.
+
+```python
+from tinkerfin_automation import Automation, ExecutionRequest, Schedule
+
+
+automation = Automation(namespace="my-application")
+
+
+@automation.target("project_summary")
+async def summarize(request: ExecutionRequest) -> dict[str, str]:
+    return {"project_id": str(request.input["project_id"])}
+
+
+async with automation.worker():
+    owner = automation.for_owner(authenticated_user_id)
+    run = await owner.run(
+        "project_summary",
+        input={"project_id": "project-42"},
+        request_id="summary-once",
+    )
+    await run.wait(timeout=30.0)
+    print(run.status, run.result)
+```
+
+`owner.run()` submits taskless work, `owner.create_task()` saves an enabled definition,
+and `task.run()` adds an execution to a saved task. Submission returns a RunHandle;
+it does not wait for completion. An owner is an isolation scope, not a credential.
+The host must authorize targets and omit secrets from persisted JSON input.
+
+## Choose a schedule
+
+Create tasks inside an active worker context:
+
+```python
+task = await owner.create_task(
+    name="Project summary",
+    target="project_summary",
+    schedule=Schedule.cron("0 9 * * mon-fri", timezone="Asia/Shanghai"),
+    input={"project_id": "project-42"},
+    request_id="create-summary",
+)
+```
+
+- `Schedule.once(at=...)` uses one timezone-aware instant.
+- `Schedule.every(minutes=30, start_at=...)` uses a stable anchor. Nonnegative integer
+  seconds/minutes/hours/days combine to an interval between one minute and 365 days.
+- `Schedule.cron(expression, timezone=...)` uses five fields and an explicit IANA zone,
+  with named weekdays from mon to sun.
+
+Factories return the three schedule models; annotate values with `ScheduleSpec`,
+the discriminated union. All factories accept inclusive active_from and exclusive
+active_until. Clear a bound by supplying a complete replacement schedule. Manual
+runs remain available outside the period. Reuse at/start_at when replaying a request.
+Cron skips DST gaps and selects the earlier UTC occurrence in an overlap.
+MisfirePolicy defaults to latest, with skip and bounded catch_up also available.
+
+ExecutionLimits defaults to one concurrent run, ten queued runs, a 30-minute execution
+deadline and a 24-hour queue deadline. Taskless work shares owner-level limits.
+The worker defaults to global_concurrency=16.
+
+## Persistence
+
+```bash
+pip install "tinkerfin-automation[sqlalchemy]" aiosqlite
+```
+
+The SQL extra supports SQLite, MySQL, and PostgreSQL; choose asyncmy for MySQL or
+asyncpg for PostgreSQL. The host owns the async database engine and configures
+connection and statement timeouts. host_shutdown below is supplied by the host:
+
+```python
+from sqlalchemy.ext.asyncio import create_async_engine
+from tinkerfin_automation import Automation, SqlAlchemyAutomationStore
+
+
+database = create_async_engine("sqlite+aiosqlite:///automation.db")
+store = SqlAlchemyAutomationStore(database)
+try:
+    automation = Automation(namespace="my-application", store=store)
+    automation.target("project_summary", summarize)
+    async with automation.worker() as worker:
+        await worker.check_ready()
+        await host_shutdown.wait()
+finally:
+    try:
+        await store.close()
+    finally:
+        await database.dispose()
+```
+
+Entry prepares storage. The explicitly supplied Store and database remain host-owned.
+Automation owns its default Store and assumes a supplied Scheduler's lifecycle.
+Shutdown stops admission, waits for accepted
+operations, and joins cleanup even on cancellation. Do not close Automation from
+one of its running targets or resource callbacks.
+
+An instance can be entered once. Client and worker contexts cannot be nested.
+`async with automation` starts no local Worker; with shared durable storage and a
+remote Worker it supports immediate submission, queries, manual task execution,
+cancellation, retries, and settlement. Creating, editing, pausing, enabling, and
+deleting schedules requires local worker mode or a Store with a started Notifications
+service. For remote management, bind clients and workers to shared storage and the
+same Redis notification channel. Shared SQL alone does not provide dynamic schedule
+discovery. Workers in one namespace must support all targets
+they can claim; claims are not routed by target name.
+
+Before entering a client lifecycle, declare targets used for new tasks, immediate
+submissions, or replacement targets:
+
+```python
+client = Automation(namespace="my-application", store=store)
+client.remote_target("agent", execution_namespace=namespace_for_owner)
+async with client:
+    run = await client.for_owner(authenticated_user_id).run(
+        "agent",
+        input={"messages": [{"role": "user", "content": "Summarize the project"}]},
+        request_id="remote-summary",
+    )
+```
+
+`namespace_for_owner` is the host's deterministic owner-to-namespace mapping;
+a fixed namespace string is also accepted. No Runtime is loaded. The host must keep
+the declaration consistent with the worker, which checks saved execution identity
+before invoking a target. Remote declarations cannot be entered as local workers.
+Queries and operations on saved work, including manual execution and retries,
+need no target declaration.
+
+Store setup creates empty storage or verifies the complete current structure without
+repairing partial tables. Empty storage requires DDL permission. Direct Store users
+can call `await store.setup()`. Database pool checkouts must be exclusive.
+
+`MemoryAutomationStore(notifications=notifications)` and
+`SqlAlchemyAutomationStore(database, notifications=notifications)` borrow an open
+`tinkerfin_notifications.Notifications` service. Close it after workers and observers.
+Committed task and execution hints wake workers, including remote schedule deletions
+and cancellation requests. Workers repair lost hints every 30 seconds.
+Notifications carry resource identity, not input or
+result content.
+
+## Task commands and execution results
+
+Bind identity once with automation.for_owner(); returned objects retain that scope.
+
+| Task | API and behavior |
+| --- | --- |
+| Read definitions | `owner.task(id)`, `owner.list_tasks()` return TaskHandles |
+| Change definitions | `task.update/pause/enable/delete` use the observed or explicit expected_revision |
+| Run a saved task | `task.run()` adds an execution without changing the schedule |
+| Inspect executions | `owner.get_run(execution_id)`, `owner.list_runs(task_id=...)` |
+| Wait for an outcome | `run.wait(timeout=30.0, poll_interval=1.0)` observes only this execution |
+| Request cancellation | `run.cancel()`; cancel_requested is not cancelled |
+| Try again | `run.retry()` returns a new handle for failed/timed_out/cancelled work |
+| Resolve uncertainty | Independently authorized and audited `owner.resolve_run()`; never Graph resume |
+
+Handle properties perform no I/O. snapshot/result values are detached; refresh reads
+current state explicitly. Successful mutations update that handle; separate handles
+do not refresh each other. Failures do not trigger refresh or retry.
+Pause changes future wakeups; enable does not catch up the paused period. Delete
+cancels queued work and retains history and the local last snapshot. None leaves an
+update field unchanged; input={} clears input.
+
+Preserve a remote form's original revision instead of substituting a newer lookup:
+
+```python
+task = await owner.task(task_id)
+await task.pause(
+    expected_revision=command.expected_revision,
+    request_id=command.request_id,
+)
+```
+
+Replay the same request_id, original revision, input, and schedule anchor. Omitting
+request_id does not guarantee deduplication. Different commands sharing a key conflict.
+Across requests, replay deletion with
+`owner.delete_task(task_id, expected_revision=revision, request_id=request_id)` without
+first querying the deleted definition. A response failure after COMMIT does not prove
+that no write happened; do not replace the request key and create again.
+
+wait accepts finite positive seconds, covering locks, reads, and intervals. Observation
+timeout raises AutomationWaitTimeout; cancelling observation does not cancel execution.
+Terminal states and interrupted/needs_attention return; the latter two remain nonterminal.
+Read business failure through status and snapshot.failure_code/failure_message; Store
+errors propagate. RunHandle.id is the execution record ID; identity.run_id belongs to
+the Runtime. A successful result may be None.
+
+With Store Notifications, `wait()` subscribes before reading and checks again on
+change or every 30 seconds to repair loss. Its `poll_interval` only applies without
+Notifications; cancelling the observer never cancels the execution.
+
+### Filter tasks and execution history
+
+Pass `TaskFilter(name_contains=..., statuses=(... ,))` to `list_tasks(filters=...)`.
+Use `ExecutionFilter` with the same name/status options and optional `queued_from`
+and `queued_until` for execution history. Text is a literal Unicode-casefold
+substring; `%` and `_` are ordinary characters. Queue time bounds are aware instants,
+with an inclusive start and exclusive end. Empty statuses mean every status.
+Execution names are captured when queued, survive task deletion, and do not follow
+later renames. Taskless or unknown historical names may be `None`.
+
+Both list methods return `items` and `next_cursor`. Pass that opaque cursor unchanged
+with the same owner and filters (and task ID for execution queries); start without a
+cursor when changing the query. Pages are ordered by creation time and ID, newest
+first, and remain usable if the preceding row is deleted. They are live queries,
+not a frozen snapshot. `summarize_tasks()` and `summarize_runs()` accept the same
+filters and count every matching record by status, independently of pagination.
+
+The [active-period example](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/packages/tinkerfin-automation/examples/active_period.py)
+shows a complete local task, manual execution, filtering, and aggregation without
+network services or model credentials.
+
+## Execute a TinkerFin Agent
+
+The host provides model, tools, and the authenticated identity:
+
+```python
+from tinkerfin import TinkerFin
+from tinkerfin_automation import Automation, TinkerFinTarget
+
+runtime = TinkerFin().with_namespace("my-application").build(model=model, tools=tools)
+automation = Automation(namespace="scheduled-jobs")
+automation.target("agent", TinkerFinTarget(runtime))
+async with automation.worker():
+    owner = automation.for_owner(authenticated_user_id)
+    run = await owner.run(
+        "agent",
+        input={"messages": [{"role": "user", "content": "Summarize the project"}]},
+        request_id="agent-summary",
+    )
+    await run.wait()
+```
+
+TinkerFinTarget supplies the configured Runtime's namespace automatically.
+`for_owner()` selects ownership of tasks and executions; owners sharing one Runtime
+also share its memory and workspace. For a target that builds a Runtime dynamically,
+register `automation.target("agent", target, execution_namespace=namespace_for_owner)`.
+The host-provided mapping takes an authenticated owner ID and returns an authorized
+namespace without I/O or side effects; a fixed string is also accepted.
+Ordinary function targets default to the scheduling namespace.
+
+Tasks and retries retain their saved space. A replacement target must select the
+same space; repeating a committed command retains its original binding even after
+target configuration changes. Input cannot replace model, tools, or namespace.
+TinkerFinTarget records
+success with result=None; obtain messages through configured Trace or business storage.
+An ordinary async callable's finite JSON return value becomes its execution result.
+Cancellation guarantees default to false. Use an explicit
+FunctionTarget(..., cancellation_is_final=True) only when external work is provably stopped.
+
+### Deliver executions as conversations
+
+Install `tinkerfin-automation[gateway]` and `tinkerfin[tracing]`, then bind a Gateway to `TinkerFinTarget`.
+The host opens and closes Messaging, Notifications, the Runtime's persistence, and
+any business registration; Automation owns scheduled execution and cancellation.
+The target keeps the assigned identity and waits for delivery settlement:
+
+This example also requires `langchain-openai` and `OPENAI_API_KEY` for its model.
+
+```python
+from tinkerfin_automation import Automation, TinkerFinTarget
+from tinkerfin_gateway import Gateway
+from tinkerfin import TinkerFin
+from tinkerfin_tracing import Tracer
+from langgraph.checkpoint.memory import InMemorySaver
+from tinkerfin_messaging import Messaging
+from tinkerfin_notifications import Notifications
+
+tracer = Tracer()
+runtime = (TinkerFin(checkpointer=InMemorySaver()).with_namespace("alice")
+           .with_observer(tracer).build("openai:gpt-4.1-mini"))
+async with Messaging() as messaging, Notifications() as notifications:
+    gateway = Gateway(messaging=messaging, notifications=notifications)
+    automation = Automation(namespace="reports")
+    automation.target("report", TinkerFinTarget(runtime, gateway=gateway))
+    async with automation.worker() as worker:
+        run = await automation.for_owner("alice").run(
+            "report", input={"messages": [{"role": "user", "content": "Summarize today"}]}
+        )
+        await run.wait()
+        result = await runtime.agui.history(tracer).get_run(
+            run.identity.thread_id, run_id=run.identity.run_id
+        )
+```
+
+The Runtime must record to `tracer` for historical results. Conversation mode
+accepts a messages-only input; native user attachment blocks are converted by the
+framework, while the host remains responsible for file authorization. Missing
+message IDs are allocated consistently for retries. Optional `registration`,
+`on_committed`, and `presentation` use Gateway's public host contracts. Resources
+are borrowed. Cancelling a newly admitted execution cancels its producer; attaching
+to existing delivery does not acquire that producer's cancellation ownership.
+
+## Graph interrupts
+
+A nonempty native interrupt becomes interrupted. Automation does not approve or resume
+the graph. An async automation.worker(on_interrupt=...) callback returns None to retain
+the original execution deadline or ExecutionFailure to fail. Callback errors fail the
+execution; timeout uses the original deadline. Interrupts retain capacity. Unconfirmed
+external termination becomes needs_attention until separately authorized, audited
+owner.resolve_run settlement.
+
+## Agent-created tasks
+
+```python
+from tinkerfin_automation import create_automation_tools
+
+tools = create_automation_tools(
+    automation.for_owner(authenticated_user_id),
+    allowed_targets={"project_summary"},
+)
+```
+
+The nine tools share the bound owner. Schedule writes require a worker or Store Notifications;
+models cannot replace owner, namespace, or target permissions. execute_automation_once
+submits taskless work; run_automation_task_now verifies the saved target and observed
+revision. Mutations require stable request_id values. Tools do not expose execution
+cancellation, retries, settlement, or Graph resume. Hosts select which agents receive
+management tools and constrain derived task counts, frequency, and permissions.
+
+## Implement an extension
+
+Use the existing public modules for specialized integration contracts:
+
+| Module | Public contracts |
+| --- | --- |
+| `service` / `engine` | `AutomationService` / `AutomationEngine` |
+| `store` | `AutomationStore`, `WorkItemClaim`, `WorkClaimBatch`, `ClaimRenewal`, `WorkKind`, `StartAuthorization`, `ScheduledExecution`, `MaterializationResult` |
+| `scheduler` | `AutomationScheduler`, `MemoryScheduler`, `TaskDue` |
+| `clock` | `AutomationClock`, `SystemClock`, `ManualClock` |
+| `schedules` | `materialize_schedule`, `MaterializedSchedule`, schedule JSON conversion |
+| `sql_schema` | `get_automation_store_schema`, `AutomationStoreSchema`, SQL tables |
+
+`AutomationTarget.run(ExecutionRequest)` returns success, interruption, failure, or an
+uncertain outcome. The request contains the persisted execution snapshot and deadline.
+The target's `cancellation_is_final` property describes its actual external-stop guarantee.
+
+A Scheduler implements `start(on_task_due)`, `schedule_task`, `remove_task`, and
+`close`. It delivers task IDs; the Store remains authoritative for whether an
+occurrence may be materialized. The callback must settle before its owner is closed.
+A Clock provides `now()` and asynchronous `wait_until()`; `ManualClock.advance()` is
+useful for deterministic tests.
+
+Store implementations provide asynchronous operations for commands, queries, and status summaries. Their distinct atomic boundaries
+are part of the contract:
+
+| Operations | Required invariant |
+| --- | --- |
+| Task CRUD | Owner isolation, revision checks, command idempotency |
+| Scheduled reads and `materialize_task` | Advance the observed wakeup and insert deduplicated occurrences together |
+| `enqueue_execution` | Occurrence/command deduplication, queue capacity, and optional task-revision check in one boundary |
+| `claim_work`, `renew_claim` | Return `WorkClaimBatch` with the next storage-clock delay, or `ClaimRenewal` with current cancellation intent; enforce ownership/fence and shared capacity |
+| `authorize_start` | Persist the one-time start grant before target invocation |
+| `mark_interrupted`, `finish_execution` | Preserve deadlines and release capacity only for a proven terminal outcome |
+| Cancel and resolve | Retain uncertain capacity until authorized resolution |
+| Setup, time, reads, close | Current schema validation, authoritative time, stable pagination, and borrowed-resource ownership |
+
+`claim_work(limit=0)` performs due maintenance without returning claims or allocating
+new execution capacity. The result is `WorkClaimBatch(claims, next_check_after_seconds)`;
+the delay uses Store time and callers deduct their own call duration. Zero requests
+another bounded check after obtaining claims, making maintenance progress that can
+continue, or crossing a deadline during the call;
+capacity-blocked work alone cannot cause a zero-delay retry. `renew_claim` returns
+`ClaimRenewal(claim, cancellation_requested)` from one authoritative renewal operation.
+
+The repository's `test_store_contract.py`, `test_store_atomicity.py`,
+`test_sql_queue_admission.py`, and `test_tool_permissions.py` exercise these contracts.
+The `store_with_clock` fixture runs shared scenarios against Memory and SQL stores.
+Use deterministic clocks/signals and an isolated database when validating another
+implementation; do not replay external target side effects to recover a database commit.

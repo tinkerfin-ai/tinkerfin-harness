@@ -1,0 +1,63 @@
+{
+  "$id": "https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/packages/tinkerfin-agui-adapter/src/tinkerfin_agui_adapter/contracts/subagent-provenance.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Stable identity and native provenance for one logical subagent invocation.",
+  "properties": {
+    "agentName": {
+      "description": "Validated Deep Agents subagent type",
+      "minLength": 1,
+      "title": "Agentname",
+      "type": "string"
+    },
+    "description": {
+      "description": "Task description supplied to the subagent",
+      "minLength": 1,
+      "title": "Description",
+      "type": "string"
+    },
+    "parentGraphNamespace": {
+      "description": "Complete graph namespace that issued the parent task Tool",
+      "items": {
+        "type": "string"
+      },
+      "title": "Parentgraphnamespace",
+      "type": "array"
+    },
+    "parentToolCallId": {
+      "description": "Namespace-scoped parent task Tool call ID",
+      "minLength": 1,
+      "title": "Parenttoolcallid",
+      "type": "string"
+    },
+    "requestRunId": {
+      "description": "Main AG-UI request currently carrying this event",
+      "minLength": 1,
+      "title": "Requestrunid",
+      "type": "string"
+    },
+    "schema": {
+      "const": "tinkerfin.subagent-provenance",
+      "description": "Exact TinkerFin subagent provenance schema",
+      "title": "Schema",
+      "type": "string"
+    },
+    "subagentInvocationId": {
+      "description": "Logical invocation ID stable across checkpoint resume",
+      "minLength": 1,
+      "title": "Subagentinvocationid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "subagentInvocationId",
+    "parentGraphNamespace",
+    "agentName",
+    "parentToolCallId",
+    "description",
+    "requestRunId"
+  ],
+  "title": "SubagentProvenance",
+  "type": "object"
+}

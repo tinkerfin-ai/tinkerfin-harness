@@ -1,0 +1,4 @@
+GitHub mark from https://github.com/primer/octicons/blob/main/icons/mark-github-24.svg
+Copyright (c) GitHub, Inc.
+Octicons is licensed under MIT: https://github.com/primer/octicons/blob/main/LICENSE
+GitHub trademark belongs to GitHub, Inc.

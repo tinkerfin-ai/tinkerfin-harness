@@ -1,0 +1,150 @@
+[project]
+name = "tinkerfin-harness"
+version = "0.1.1"
+description = "Development workspace for the TinkerFin libraries and Studio application."
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    { include-group = "test" },
+    { include-group = "lint" },
+    { include-group = "packaging" },
+]
+test = [
+    "ag-ui-protocol==0.1.19",
+    "aiosqlite>=0.22,<1",
+    "tinkerfin-sqlalchemy==0.1.1",
+    "deepagents>=0.7.19",
+    "langgraph>=1.2.10,<2",
+    "langgraph-checkpoint>=4.1,<5",
+    "pytest>=8.3.5,<10.0.0",
+    "pytest-asyncio>=0.25.3,<2.0.0",
+    "pytest-xdist>=3.8,<4",
+    "sse-starlette==3.4.11",
+    "sqlalchemy[asyncio]>=2.0.48,<3",
+]
+lint = [
+    "pyright>=1.1.411,<2.0.0",
+    "ruff>=0.16.1,<0.17.0",
+]
+packaging = [
+    "pip>=26,<27",
+    "packaging>=26,<27",
+    "pytest>=8.3.5,<10.0.0",
+    "pytest-asyncio>=0.25.3,<2.0.0",
+    "setuptools>=77",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+tinkerfin = { workspace = true }
+tinkerfin-sqlalchemy = { workspace = true }
+tinkerfin-contracts = { workspace = true }
+tinkerfin-tracing = { workspace = true }
+tinkerfin-langgraph-store = { workspace = true }
+tinkerfin-sandbox = { workspace = true }
+tinkerfin-agui-adapter = { workspace = true }
+tinkerfin-messaging = { workspace = true }
+tinkerfin-automation = { workspace = true }
+tinkerfin-notifications = { workspace = true }
+tinkerfin-gateway = { workspace = true }
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[tool.uv.workspace]
+members = [
+    "packages/*",
+    "apps/studio/server",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+src = [
+    "packages/*/src",
+    "apps/*/*/src",
+]
+
+[tool.ruff.lint]
+select = [
+    "B009",
+    "BLE001",
+    "DTZ005",
+    "E4",
+    "E7",
+    "E9",
+    "F",
+    "FURB167",
+    "I001",
+    "RUF022",
+    "RUF100",
+    "SIM102",
+    "TRY004",
+    "UP",
+]
+
+[tool.pyright]
+include = [
+    "scripts",
+    "tests",
+    "packages/tinkerfin/src",
+    "packages/tinkerfin/tests",
+    "packages/tinkerfin-contracts/src",
+    "packages/tinkerfin-contracts/tests",
+    "packages/tinkerfin-native-stream/src",
+    "packages/tinkerfin-native-stream/tests",
+    "packages/tinkerfin-tracing/src",
+    "packages/tinkerfin-tracing/tests",
+    "packages/tinkerfin-langgraph-store/src",
+    "packages/tinkerfin-langgraph-store/tests",
+    "packages/tinkerfin-sqlalchemy/src",
+    "packages/tinkerfin-sqlalchemy/tests",
+    "packages/tinkerfin-agui-adapter/src",
+    "packages/tinkerfin-agui-adapter/tests",
+    "packages/tinkerfin-messaging/src",
+    "packages/tinkerfin-messaging/tests",
+    "packages/tinkerfin-sandbox/src",
+    "packages/tinkerfin-sandbox/tests",
+    "packages/tinkerfin-automation/src",
+    "packages/tinkerfin-automation/tests",
+    "packages/tinkerfin-notifications/src",
+    "packages/tinkerfin-notifications/tests",
+    "packages/tinkerfin-gateway/src",
+    "packages/tinkerfin-gateway/tests",
+    "apps/studio/server/src",
+    "apps/studio/server/tests",
+]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+reportMissingTypeStubs = "none"
+reportIncompatibleMethodOverride = "error"
+
+executionEnvironments = [{ root = "." }]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+required_plugins = ["pytest-asyncio"]
+markers = [
+    "packaging_e2e: builds and installs wheels in isolated environments",
+    "studio_e2e: requires the real Studio dependencies and explicit E2E configuration",
+]
+
+testpaths = [
+    "tests",
+    "packages",
+    "apps/studio/server",
+]
+
+addopts = [
+    "--strict-config",
+    "--strict-markers",
+    "-m",
+    "not packaging_e2e",
+]

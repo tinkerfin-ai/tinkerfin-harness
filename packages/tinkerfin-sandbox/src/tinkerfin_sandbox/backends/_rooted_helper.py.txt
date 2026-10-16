@@ -1,0 +1,1423 @@
+import base64
+import binascii
+import codecs
+import errno
+import fnmatch
+import json
+import os
+import re
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+
+class RootedFailure(Exception):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def emit(request_id, operation, status, error, result):
+    print(json.dumps(
+        {
+            "request_id": request_id,
+            "operation": operation,
+            "status": status,
+            "error": error,
+            "result": result,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ))
+
+
+def fail(request_id, operation, code, message):
+    emit(
+        request_id,
+        operation,
+        "error",
+        {"code": code, "message": message},
+        None,
+    )
+
+
+def invalid_request():
+    raise ValueError("invalid rooted helper request")
+
+
+def decode_request(encoded):
+    try:
+        raw = base64.b64decode(encoded.encode("ascii"), validate=True)
+        request = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, ValueError, binascii.Error, json.JSONDecodeError):
+        invalid_request()
+    if type(request) is not dict or set(request) != {
+        "request_id",
+        "operation",
+        "root",
+        "arguments",
+    }:
+        invalid_request()
+    if type(request["request_id"]) is not str or not request["request_id"]:
+        invalid_request()
+    if request["operation"] not in {
+        "probe",
+        "read",
+        "edit",
+        "delete",
+        "list",
+        "glob",
+        "grep",
+        "transfer",
+        "offload",
+        "reset",
+    }:
+        invalid_request()
+    if type(request["root"]) is not str:
+        invalid_request()
+    if type(request["arguments"]) is not dict:
+        invalid_request()
+    return request
+
+
+def validate_virtual_path(path):
+    if type(path) is not str or not path.startswith("/") or path.startswith("//"):
+        return None
+    if "\x00" in path:
+        return None
+    parts = []
+    for part in path.split("/"):
+        if not part or part == ".":
+            continue
+        if part == "..":
+            return None
+        parts.append(part)
+    return parts
+
+
+def open_root(root):
+    descriptor = None
+    try:
+        if (
+            not os.path.isabs(root)
+            or root == "/"
+            or os.path.normpath(root) != root
+            or os.path.realpath(root) != root
+        ):
+            raise OSError(errno.EXDEV, "unsafe root")
+        before = os.lstat(root)
+        if not stat.S_ISDIR(before.st_mode) or stat.S_ISLNK(before.st_mode):
+            raise OSError(errno.EXDEV, "unsafe root")
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        descriptor = os.open(root, flags)
+        after = os.fstat(descriptor)
+        current = os.lstat(root)
+        identity = (after.st_dev, after.st_ino)
+        if identity != (before.st_dev, before.st_ino) or identity != (
+            current.st_dev,
+            current.st_ino,
+        ):
+            raise OSError(errno.EXDEV, "unsafe root")
+        return descriptor
+    except OSError as exc:
+        if descriptor is not None:
+            os.close(descriptor)
+        if exc.errno in {errno.ENOENT, errno.ELOOP, errno.ENOTDIR, errno.EXDEV}:
+            raise OSError(errno.EXDEV, "unsafe root") from exc
+        raise
+
+
+def canonical_parts(root, virtual_parts):
+    resolved_root = os.path.realpath(root)
+    candidate = os.path.join(root, *virtual_parts)
+    resolved = os.path.realpath(candidate)
+    try:
+        if os.path.commonpath((resolved_root, resolved)) != resolved_root:
+            raise OSError(errno.EXDEV, "path leaves root")
+    except ValueError:
+        raise OSError(errno.EXDEV, "path leaves root") from None
+    relative = os.path.relpath(resolved, resolved_root)
+    if relative == ".":
+        return []
+    parts = relative.split(os.sep)
+    if any(not part or part in {".", ".."} for part in parts):
+        raise OSError(errno.EXDEV, "path leaves root")
+    return parts
+
+
+def open_canonical(root_descriptor, parts):
+    descriptor = os.dup(root_descriptor)
+    try:
+        for index, part in enumerate(parts):
+            is_final = index == len(parts) - 1
+            flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+            if not is_final:
+                flags |= os.O_DIRECTORY
+            try:
+                next_descriptor = os.open(part, flags, dir_fd=descriptor)
+            except OSError as exc:
+                if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+                    try:
+                        current = os.stat(
+                            part,
+                            dir_fd=descriptor,
+                            follow_symlinks=False,
+                        )
+                    except OSError:
+                        raise exc
+                    if stat.S_ISLNK(current.st_mode):
+                        raise OSError(errno.EXDEV, "path component changed") from exc
+                raise
+            os.close(descriptor)
+            descriptor = next_descriptor
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def error_code(exc):
+    if exc.errno in {errno.ELOOP, errno.EXDEV}:
+        return "invalid_path", "path is outside the configured root"
+    if exc.errno == errno.ENOENT:
+        return "not_found", "path does not exist"
+    if exc.errno in {errno.EACCES, errno.EPERM}:
+        return "permission_denied", "path is not accessible"
+    if exc.errno == errno.ENOTDIR:
+        return "not_directory", "a path component is not a directory"
+    return "operation_failed", "rooted helper operation failed"
+
+
+def probe(root, arguments):
+    if set(arguments) != {"path"}:
+        invalid_request()
+    virtual_parts = validate_virtual_path(arguments["path"])
+    if virtual_parts is None:
+        raise OSError(errno.EXDEV, "unsafe path")
+    root_descriptor = open_root(root)
+    try:
+        parts = canonical_parts(root, virtual_parts)
+        target_descriptor = open_canonical(root_descriptor, parts)
+        try:
+            mode = os.fstat(target_descriptor).st_mode
+            if stat.S_ISREG(mode):
+                kind = "file"
+            elif stat.S_ISDIR(mode):
+                kind = "directory"
+            else:
+                kind = "other"
+            return {"kind": kind}
+        finally:
+            os.close(target_descriptor)
+    finally:
+        os.close(root_descriptor)
+
+
+def read_all(descriptor):
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    chunks = []
+    while True:
+        chunk = os.read(descriptor, 64 * 1024)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def read_result(**overrides):
+    result = {
+        "encoding": "utf-8",
+        "content": "",
+        "total_lines": None,
+        "start_line": None,
+        "end_line": None,
+        "next_offset": None,
+        "no_lines_requested": False,
+    }
+    result.update(overrides)
+    return result
+
+
+def read_file(root, arguments):
+    if set(arguments) != {"path", "offset", "limit", "binary"}:
+        invalid_request()
+    virtual_parts = validate_virtual_path(arguments["path"])
+    if virtual_parts is None:
+        raise OSError(errno.EXDEV, "unsafe path")
+    if type(arguments["offset"]) is not int or type(arguments["limit"]) is not int:
+        invalid_request()
+    if type(arguments["binary"]) is not bool:
+        invalid_request()
+    offset = max(arguments["offset"], 0)
+    limit = max(arguments["limit"], 0)
+    root_descriptor = open_root(root)
+    try:
+        parts = canonical_parts(root, virtual_parts)
+        target_descriptor = open_canonical(root_descriptor, parts)
+        try:
+            target_stat = os.fstat(target_descriptor)
+            if not stat.S_ISREG(target_stat.st_mode):
+                raise RootedFailure("not_a_file", "path is not a regular file")
+            if target_stat.st_size == 0:
+                return read_result(
+                    content="System reminder: File exists but has empty contents"
+                )
+            os.lseek(target_descriptor, 0, os.SEEK_SET)
+            prefix = os.read(target_descriptor, 8192)
+            is_binary = arguments["binary"]
+            if not is_binary:
+                try:
+                    codecs.getincrementaldecoder("utf-8")().decode(
+                        prefix,
+                        final=False,
+                    )
+                except UnicodeDecodeError:
+                    is_binary = True
+            if is_binary:
+                max_binary_bytes = 500 * 1024
+                if target_stat.st_size > max_binary_bytes:
+                    raise RootedFailure(
+                        "binary_too_large",
+                        "Binary file exceeds maximum preview size of "
+                        + str(max_binary_bytes)
+                        + " bytes",
+                    )
+                return read_result(
+                    encoding="base64",
+                    content=base64.b64encode(read_all(target_descriptor)).decode("ascii"),
+                )
+            if limit == 0:
+                return read_result(no_lines_requested=True)
+
+            line_count = 0
+            returned_lines = 0
+            parts_out = []
+            at_eof = False
+            output_truncated = False
+            current_bytes = 0
+            truncation_message = (
+                "\n\n[Output was truncated due to size limits. "
+                "This paginated read result exceeded the sandbox stdout limit. "
+                "Continue reading with a larger offset or smaller limit to inspect "
+                "the rest of the file.]"
+            )
+            effective_output_limit = 500 * 1024 - len(
+                truncation_message.encode("utf-8")
+            )
+            os.lseek(target_descriptor, 0, os.SEEK_SET)
+            with os.fdopen(
+                os.dup(target_descriptor),
+                "r",
+                encoding="utf-8",
+                newline=None,
+            ) as stream:
+                while line_count < offset:
+                    raw_line = stream.readline()
+                    if raw_line == "":
+                        at_eof = True
+                        break
+                    line_count += 1
+                while (
+                    not at_eof
+                    and returned_lines < limit
+                    and not output_truncated
+                ):
+                    raw_line = stream.readline()
+                    if raw_line == "":
+                        at_eof = True
+                        break
+                    line_count += 1
+                    line = raw_line.rstrip("\n").rstrip("\r")
+                    piece = line if returned_lines == 0 else "\n" + line
+                    encoded_piece = piece.encode("utf-8")
+                    if current_bytes + len(encoded_piece) > effective_output_limit:
+                        output_truncated = True
+                        remaining = effective_output_limit - current_bytes
+                        if remaining > 0:
+                            prefix = encoded_piece[:remaining].decode(
+                                "utf-8",
+                                errors="ignore",
+                            )
+                            if prefix:
+                                parts_out.append(prefix)
+                                current_bytes += len(prefix.encode("utf-8"))
+                        break
+                    parts_out.append(piece)
+                    current_bytes += len(encoded_piece)
+                    returned_lines += 1
+                if not at_eof:
+                    at_eof = stream.tell() == target_stat.st_size
+            if returned_lines == 0 and not output_truncated:
+                raise RootedFailure(
+                    "offset_exceeds_file_length",
+                    "Line offset "
+                    + str(offset)
+                    + " exceeds file length ("
+                    + str(line_count)
+                    + " lines)",
+                )
+            if at_eof:
+                total_lines = line_count
+            elif target_stat.st_size <= 1024 * 1024:
+                os.lseek(target_descriptor, 0, os.SEEK_SET)
+                with os.fdopen(
+                    os.dup(target_descriptor),
+                    "r",
+                    encoding="utf-8",
+                    errors="surrogateescape",
+                    newline=None,
+                ) as stream:
+                    total_lines = sum(1 for _ in stream)
+            else:
+                total_lines = None
+            if output_truncated and returned_lines == 0:
+                returned_lines = 1
+            end_line = offset + returned_lines
+            next_offset = (
+                None
+                if total_lines is not None and end_line >= total_lines
+                else end_line
+            )
+            return read_result(
+                content="".join(parts_out)
+                + (truncation_message if output_truncated else ""),
+                total_lines=total_lines,
+                start_line=offset + 1,
+                end_line=end_line,
+                next_offset=next_offset,
+            )
+        finally:
+            os.close(target_descriptor)
+    finally:
+        os.close(root_descriptor)
+
+
+def write_all(descriptor, content):
+    view = memoryview(content)
+    written = 0
+    while written < len(view):
+        count = os.write(descriptor, view[written:])
+        if count <= 0:
+            raise OSError(errno.EIO, "short write")
+        written += count
+
+
+def consume_edit_payload(root, path, expected_suffix):
+    if type(path) is not str:
+        invalid_request()
+    basename = os.path.basename(path)
+    if (
+        os.path.dirname(path) not in {"/tmp", root}
+        or re.fullmatch(
+            r"\.tinkerfin-rooted-edit-[0-9a-f]{32}" + re.escape(expected_suffix),
+            basename,
+        ) is None
+    ):
+        invalid_request()
+    descriptor = None
+    parent_descriptor = None
+    try:
+        parent_descriptor = (
+            open_root(root)
+            if os.path.dirname(path) == root
+            else os.open("/tmp", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        )
+        descriptor = os.open(
+            basename,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=parent_descriptor,
+        )
+        payload_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(payload_stat.st_mode):
+            raise RootedFailure(
+                "operation_failed",
+                "edit staging payload is not a regular file",
+            )
+        current_stat = os.stat(
+            basename, dir_fd=parent_descriptor, follow_symlinks=False
+        )
+        if (current_stat.st_dev, current_stat.st_ino) != (
+            payload_stat.st_dev, payload_stat.st_ino
+        ):
+            raise RootedFailure("operation_failed", "edit staging payload changed")
+        os.unlink(basename, dir_fd=parent_descriptor)
+        try:
+            return read_all(descriptor).decode("utf-8")
+        except UnicodeDecodeError:
+            raise RootedFailure(
+                "operation_failed",
+                "edit staging payload is not UTF-8",
+            ) from None
+    except OSError:
+        raise RootedFailure(
+            "operation_failed",
+            "edit staging payload is unavailable",
+        ) from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
+
+
+def edit_file(root, arguments):
+    inline_fields = {"path", "old", "new", "replace_all"}
+    staged_fields = {"path", "old_path", "new_path", "replace_all"}
+    argument_fields = frozenset(arguments)
+    if argument_fields not in {frozenset(inline_fields), frozenset(staged_fields)}:
+        invalid_request()
+    virtual_parts = validate_virtual_path(arguments["path"])
+    if virtual_parts is None:
+        raise OSError(errno.EXDEV, "unsafe path")
+    if type(arguments["replace_all"]) is not bool:
+        invalid_request()
+    if argument_fields == inline_fields:
+        if type(arguments["old"]) is not str or type(arguments["new"]) is not str:
+            invalid_request()
+        old = arguments["old"]
+        new = arguments["new"]
+    else:
+        old_path = arguments["old_path"]
+        new_path = arguments["new_path"]
+        old = consume_edit_payload(root, old_path, "-old")
+        new = consume_edit_payload(root, new_path, "-new")
+
+    root_descriptor = open_root(root)
+    parent_descriptor = None
+    target_descriptor = None
+    temporary_descriptor = None
+    temporary_name = None
+    try:
+        canonical = canonical_parts(root, virtual_parts)
+        if not canonical:
+            raise RootedFailure("not_a_file", "path is not a regular file")
+        parent_descriptor = open_canonical(root_descriptor, canonical[:-1])
+        target_name = canonical[-1]
+        target_descriptor = os.open(
+            target_name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=parent_descriptor,
+        )
+        target_stat = os.fstat(target_descriptor)
+        if not stat.S_ISREG(target_stat.st_mode):
+            raise RootedFailure("not_a_file", "path is not a regular file")
+        raw = read_all(target_descriptor)
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise RootedFailure("not_text_file", "path is not a text file") from None
+
+        old_crlf = old.replace("\r\n", "\n").replace("\n", "\r\n")
+        old_lf = old.replace("\r\n", "\n")
+        new_crlf = new.replace("\r\n", "\n").replace("\n", "\r\n")
+        new_lf = new.replace("\r\n", "\n")
+        count = 0
+        matched_old = old
+        matched_new = new
+        for candidate_old, candidate_new in (
+            (old, new),
+            (old_crlf, new_crlf),
+            (old_lf, new_lf),
+        ):
+            candidate_count = text.count(candidate_old)
+            if candidate_count >= 1:
+                matched_old = candidate_old
+                matched_new = candidate_new
+                count = candidate_count
+                break
+        if count == 0:
+            raise RootedFailure("string_not_found", "string was not found")
+        if count > 1 and not arguments["replace_all"]:
+            raise RootedFailure(
+                "multiple_occurrences",
+                "string appears multiple times",
+            )
+        if arguments["replace_all"]:
+            updated = text.replace(matched_old, matched_new)
+        else:
+            updated = text.replace(matched_old, matched_new, 1)
+        updated_bytes = updated.encode("utf-8")
+
+        for _ in range(16):
+            candidate_name = ".tinkerfin-edit-" + os.urandom(16).hex()
+            try:
+                temporary_descriptor = os.open(
+                    candidate_name,
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC,
+                    0o600,
+                    dir_fd=parent_descriptor,
+                )
+            except FileExistsError:
+                continue
+            temporary_name = candidate_name
+            break
+        if temporary_descriptor is None or temporary_name is None:
+            raise OSError(errno.EEXIST, "could not allocate edit temporary file")
+        os.fchmod(temporary_descriptor, stat.S_IMODE(target_stat.st_mode))
+        write_all(temporary_descriptor, updated_bytes)
+        os.fsync(temporary_descriptor)
+        current = os.stat(
+            target_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISREG(current.st_mode)
+            or (current.st_dev, current.st_ino)
+            != (target_stat.st_dev, target_stat.st_ino)
+        ):
+            raise OSError(errno.EXDEV, "target changed during edit")
+        os.replace(
+            temporary_name,
+            target_name,
+            src_dir_fd=parent_descriptor,
+            dst_dir_fd=parent_descriptor,
+        )
+        temporary_name = None
+        return {"count": count}
+    finally:
+        if temporary_descriptor is not None:
+            os.close(temporary_descriptor)
+        if temporary_name is not None and parent_descriptor is not None:
+            try:
+                os.unlink(temporary_name, dir_fd=parent_descriptor)
+            except FileNotFoundError:
+                pass
+        if target_descriptor is not None:
+            os.close(target_descriptor)
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
+        os.close(root_descriptor)
+
+
+def remove_tree_contents(directory_descriptor):
+    for name in os.listdir(directory_descriptor):
+        entry = os.stat(
+            name,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
+        if not stat.S_ISDIR(entry.st_mode):
+            os.unlink(name, dir_fd=directory_descriptor)
+            continue
+        child_descriptor = os.open(
+            name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=directory_descriptor,
+        )
+        try:
+            opened = os.fstat(child_descriptor)
+            remove_tree_contents(child_descriptor)
+            current = os.stat(
+                name,
+                dir_fd=directory_descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISDIR(current.st_mode)
+                or (current.st_dev, current.st_ino)
+                != (opened.st_dev, opened.st_ino)
+            ):
+                raise OSError(errno.EXDEV, "directory changed during deletion")
+        finally:
+            os.close(child_descriptor)
+        os.rmdir(name, dir_fd=directory_descriptor)
+
+
+def delete_path(root, arguments):
+    if set(arguments) != {"path"}:
+        invalid_request()
+    virtual_parts = validate_virtual_path(arguments["path"])
+    if not virtual_parts:
+        raise OSError(errno.EXDEV, "unsafe delete path")
+    root_descriptor = open_root(root)
+    parent_descriptor = None
+    target_descriptor = None
+    try:
+        canonical_parts(root, virtual_parts)
+        canonical_parent = canonical_parts(root, virtual_parts[:-1])
+        parent_descriptor = open_canonical(root_descriptor, canonical_parent)
+        target_name = virtual_parts[-1]
+        canonical_parts(root, virtual_parts)
+        target = os.stat(
+            target_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if not stat.S_ISDIR(target.st_mode):
+            os.unlink(target_name, dir_fd=parent_descriptor)
+            return {"deleted": True}
+        target_descriptor = os.open(
+            target_name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=parent_descriptor,
+        )
+        opened = os.fstat(target_descriptor)
+        remove_tree_contents(target_descriptor)
+        current = os.stat(
+            target_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISDIR(current.st_mode)
+            or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+        ):
+            raise OSError(errno.EXDEV, "directory changed during deletion")
+        os.close(target_descriptor)
+        target_descriptor = None
+        os.rmdir(target_name, dir_fd=parent_descriptor)
+        return {"deleted": True}
+    finally:
+        if target_descriptor is not None:
+            os.close(target_descriptor)
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
+        os.close(root_descriptor)
+
+
+def reset_workspace(root, arguments):
+    if arguments:
+        invalid_request()
+    root_descriptor = open_root(root)
+    try:
+        opened = os.fstat(root_descriptor)
+        remove_tree_contents(root_descriptor)
+        current = os.lstat(root)
+        if (
+            not stat.S_ISDIR(current.st_mode)
+            or stat.S_ISLNK(current.st_mode)
+            or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+            or os.path.realpath(root) != root
+        ):
+            raise OSError(errno.EXDEV, "workspace root changed during reset")
+        return {"reset": True}
+    finally:
+        os.close(root_descriptor)
+
+
+def list_directory(root, arguments):
+    if set(arguments) != {"path"}:
+        invalid_request()
+    virtual_parts = validate_virtual_path(arguments["path"])
+    if virtual_parts is None:
+        raise OSError(errno.EXDEV, "unsafe path")
+    root_descriptor = open_root(root)
+    target_descriptor = None
+    try:
+        canonical = canonical_parts(root, virtual_parts)
+        target_descriptor = open_canonical(root_descriptor, canonical)
+        target = os.fstat(target_descriptor)
+        if not stat.S_ISDIR(target.st_mode):
+            raise RootedFailure("not_directory", "path is not a directory")
+        display_base = "/" + "/".join(virtual_parts)
+        entries = []
+        for name in os.listdir(target_descriptor):
+            entry = os.stat(
+                name,
+                dir_fd=target_descriptor,
+                follow_symlinks=False,
+            )
+            entries.append(
+                {
+                    "path": display_base.rstrip("/") + "/" + name,
+                    "is_dir": stat.S_ISDIR(entry.st_mode),
+                }
+            )
+        return {"entries": entries, "partial_error": None}
+    finally:
+        if target_descriptor is not None:
+            os.close(target_descriptor)
+        os.close(root_descriptor)
+
+
+def glob_component_matches(name, pattern):
+    if name.startswith(".") and not pattern.startswith("."):
+        return False
+    return fnmatch.fnmatchcase(name, pattern)
+
+
+def glob_path_matches(path_parts, pattern_parts):
+    cache = {}
+
+    def match(path_index, pattern_index):
+        key = (path_index, pattern_index)
+        if key in cache:
+            return cache[key]
+        if pattern_index == len(pattern_parts):
+            result = path_index == len(path_parts)
+        else:
+            pattern = pattern_parts[pattern_index]
+            if pattern == "**":
+                result = match(path_index, pattern_index + 1)
+                if (
+                    not result
+                    and path_index < len(path_parts)
+                    and not path_parts[path_index].startswith(".")
+                ):
+                    result = match(path_index + 1, pattern_index)
+            elif path_index >= len(path_parts):
+                result = False
+            else:
+                result = glob_component_matches(path_parts[path_index], pattern) and match(
+                    path_index + 1,
+                    pattern_index + 1,
+                )
+        cache[key] = result
+        return result
+
+    return match(0, 0)
+
+
+def collect_glob_entries(
+    root,
+    root_descriptor,
+    directory_descriptor,
+    base_parts,
+    relative_parts,
+    pattern_parts,
+    ancestor_directories,
+    matches,
+):
+    for name in os.listdir(directory_descriptor):
+        candidate_relative = relative_parts + [name]
+        candidate_virtual = base_parts + candidate_relative
+        candidate_descriptor = None
+        try:
+            canonical = canonical_parts(root, candidate_virtual)
+            candidate_descriptor = open_canonical(root_descriptor, canonical)
+            candidate = os.fstat(candidate_descriptor)
+        except OSError:
+            if candidate_descriptor is not None:
+                os.close(candidate_descriptor)
+            continue
+        is_directory = stat.S_ISDIR(candidate.st_mode)
+        if glob_path_matches(candidate_relative, pattern_parts):
+            matches.append(
+                {
+                    "path": "/" + "/".join(candidate_virtual),
+                    "is_dir": is_directory,
+                }
+            )
+        identity = (candidate.st_dev, candidate.st_ino)
+        if is_directory and identity not in ancestor_directories:
+            collect_glob_entries(
+                root,
+                root_descriptor,
+                candidate_descriptor,
+                base_parts,
+                candidate_relative,
+                pattern_parts,
+                ancestor_directories | {identity},
+                matches,
+            )
+        os.close(candidate_descriptor)
+
+
+def glob_paths(root, arguments):
+    if set(arguments) != {"path", "pattern"}:
+        invalid_request()
+    virtual_parts = validate_virtual_path(arguments["path"])
+    pattern = arguments["pattern"]
+    if virtual_parts is None or type(pattern) is not str or "\x00" in pattern:
+        raise OSError(errno.EXDEV, "unsafe glob input")
+    normalized_pattern = pattern.lstrip("/")
+    validation_parts = normalized_pattern.replace("\\", "/").split("/")
+    if any(part == ".." for part in validation_parts):
+        raise OSError(errno.EXDEV, "unsafe glob pattern")
+    pattern_parts = [part for part in normalized_pattern.split("/") if part]
+    root_descriptor = open_root(root)
+    target_descriptor = None
+    try:
+        canonical = canonical_parts(root, virtual_parts)
+        target_descriptor = open_canonical(root_descriptor, canonical)
+        target = os.fstat(target_descriptor)
+        if not stat.S_ISDIR(target.st_mode):
+            raise RootedFailure("not_directory", "path is not a directory")
+        matches = []
+        if pattern_parts:
+            collect_glob_entries(
+                root,
+                root_descriptor,
+                target_descriptor,
+                virtual_parts,
+                [],
+                pattern_parts,
+                {(target.st_dev, target.st_ino)},
+                matches,
+            )
+        matches.sort(key=lambda entry: entry["path"])
+        return {"matches": matches, "truncated": False, "partial_error": None}
+    finally:
+        if target_descriptor is not None:
+            os.close(target_descriptor)
+        os.close(root_descriptor)
+
+
+def grep_path_is_included(relative_parts, include_glob):
+    if include_glob is None:
+        return True
+    if "/" not in include_glob:
+        return fnmatch.fnmatchcase(relative_parts[-1], include_glob)
+    normalized = include_glob.lstrip("/")
+    glob_parts = normalized.replace("\\", "/").split("/")
+    return glob_path_matches(relative_parts, glob_parts)
+
+
+def grep_open_file(
+    descriptor,
+    display_path,
+    pattern,
+    max_count,
+    matches,
+):
+    with os.fdopen(
+        os.dup(descriptor),
+        "r",
+        encoding="utf-8",
+        errors="ignore",
+        newline=None,
+    ) as stream:
+        for line_number, line in enumerate(stream, 1):
+            if pattern not in line:
+                continue
+            matches.append(
+                {
+                    "path": display_path,
+                    "line": line_number,
+                    "text": line.rstrip("\n"),
+                }
+            )
+            if max_count is not None and len(matches) > max_count:
+                return True
+    return False
+
+
+def grep_directory(
+    root,
+    root_descriptor,
+    directory_descriptor,
+    base_parts,
+    relative_parts,
+    pattern,
+    include_glob,
+    max_count,
+    ancestor_directories,
+    matches,
+):
+    for name in sorted(os.listdir(directory_descriptor)):
+        candidate_relative = relative_parts + [name]
+        candidate_virtual = base_parts + candidate_relative
+        candidate_descriptor = None
+        try:
+            canonical = canonical_parts(root, candidate_virtual)
+            candidate_descriptor = open_canonical(root_descriptor, canonical)
+            candidate = os.fstat(candidate_descriptor)
+        except OSError:
+            if candidate_descriptor is not None:
+                os.close(candidate_descriptor)
+            continue
+        try:
+            identity = (candidate.st_dev, candidate.st_ino)
+            if stat.S_ISDIR(candidate.st_mode):
+                if identity not in ancestor_directories and grep_directory(
+                    root,
+                    root_descriptor,
+                    candidate_descriptor,
+                    base_parts,
+                    candidate_relative,
+                    pattern,
+                    include_glob,
+                    max_count,
+                    ancestor_directories | {identity},
+                    matches,
+                ):
+                    return True
+            elif stat.S_ISREG(candidate.st_mode) and grep_path_is_included(
+                candidate_relative,
+                include_glob,
+            ):
+                display_path = "/" + "/".join(candidate_virtual)
+                if grep_open_file(
+                    candidate_descriptor,
+                    display_path,
+                    pattern,
+                    max_count,
+                    matches,
+                ):
+                    return True
+        finally:
+            os.close(candidate_descriptor)
+    return False
+
+
+def grep_paths(root, arguments):
+    if set(arguments) != {"path", "pattern", "glob", "max_count"}:
+        invalid_request()
+    virtual_parts = validate_virtual_path(arguments["path"])
+    pattern = arguments["pattern"]
+    include_glob = arguments["glob"]
+    max_count = arguments["max_count"]
+    if virtual_parts is None or type(pattern) is not str:
+        raise OSError(errno.EXDEV, "unsafe grep input")
+    if include_glob is not None and (
+        type(include_glob) is not str or "\x00" in include_glob
+    ):
+        raise OSError(errno.EXDEV, "unsafe grep glob")
+    if include_glob == "":
+        include_glob = None
+    if include_glob is not None:
+        glob_parts = include_glob.lstrip("/").replace("\\", "/").split("/")
+        if any(part == ".." for part in glob_parts):
+            raise OSError(errno.EXDEV, "unsafe grep glob")
+    if max_count is not None and type(max_count) is not int:
+        invalid_request()
+    if max_count is not None:
+        max_count = max(max_count, 0)
+
+    root_descriptor = open_root(root)
+    target_descriptor = None
+    try:
+        canonical = canonical_parts(root, virtual_parts)
+        target_descriptor = open_canonical(root_descriptor, canonical)
+        target = os.fstat(target_descriptor)
+        matches = []
+        if stat.S_ISREG(target.st_mode):
+            grep_open_file(
+                target_descriptor,
+                "/" + "/".join(virtual_parts),
+                pattern,
+                max_count,
+                matches,
+            )
+        elif stat.S_ISDIR(target.st_mode):
+            grep_directory(
+                root,
+                root_descriptor,
+                target_descriptor,
+                virtual_parts,
+                [],
+                pattern,
+                include_glob,
+                max_count,
+                {(target.st_dev, target.st_ino)},
+                matches,
+            )
+        else:
+            raise RootedFailure("not_a_file", "path is not searchable")
+        truncated = max_count is not None and len(matches) > max_count
+        if truncated:
+            matches = matches[:max_count]
+        return {
+            "matches": matches,
+            "truncated": truncated,
+            "partial_error": None,
+        }
+    finally:
+        if target_descriptor is not None:
+            os.close(target_descriptor)
+        os.close(root_descriptor)
+
+
+def allocate_capture_temp(parent_descriptor):
+    for _ in range(16):
+        name = ".tinkerfin-offload-" + os.urandom(16).hex()
+        try:
+            descriptor = os.open(
+                name,
+                os.O_RDWR
+                | os.O_CREAT
+                | os.O_EXCL
+                | os.O_NOFOLLOW
+                | os.O_CLOEXEC,
+                0o600,
+                dir_fd=parent_descriptor,
+            )
+        except FileExistsError:
+            continue
+        return name, descriptor
+    raise OSError(errno.EEXIST, "could not allocate offload temporary file")
+
+
+def prepare_offload_capture(root, virtual_parts):
+    state = {
+        "safe": False,
+        "root_descriptor": None,
+        "parent_descriptor": None,
+        "temporary_descriptor": None,
+        "temporary_name": None,
+        "temporary_file": None,
+        "target_name": None,
+        "target_identity": None,
+        "target_mode": 0o644,
+    }
+    try:
+        root_descriptor = open_root(root)
+        state["root_descriptor"] = root_descriptor
+        canonical = canonical_parts(root, virtual_parts)
+        if not canonical:
+            raise OSError(errno.EXDEV, "unsafe capture path")
+        parent_descriptor = open_transfer_parent(root_descriptor, canonical[:-1], create=True)
+        state["parent_descriptor"] = parent_descriptor
+        target_name = canonical[-1]
+        state["target_name"] = target_name
+        try:
+            target = os.stat(
+                target_name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            target = None
+        if target is not None:
+            if not stat.S_ISREG(target.st_mode):
+                raise OSError(errno.EXDEV, "capture target is not a file")
+            state["target_identity"] = (target.st_dev, target.st_ino)
+            state["target_mode"] = stat.S_IMODE(target.st_mode)
+        temporary_name, temporary_descriptor = allocate_capture_temp(
+            parent_descriptor
+        )
+        os.fchmod(temporary_descriptor, state["target_mode"])
+        state["temporary_name"] = temporary_name
+        state["temporary_descriptor"] = temporary_descriptor
+        state["safe"] = True
+        return state
+    except OSError as exc:
+        cleanup_offload_capture(state)
+        if exc.errno not in {errno.ENOENT, errno.ELOOP, errno.ENOTDIR, errno.EXDEV}:
+            raise
+        temporary_file = tempfile.TemporaryFile()
+        state["temporary_file"] = temporary_file
+        state["temporary_descriptor"] = temporary_file.fileno()
+        return state
+
+
+def cleanup_offload_capture(state):
+    temporary_descriptor = state.get("temporary_descriptor")
+    temporary_file = state.get("temporary_file")
+    if temporary_file is not None:
+        temporary_file.close()
+        state["temporary_file"] = None
+        state["temporary_descriptor"] = None
+    elif temporary_descriptor is not None:
+        os.close(temporary_descriptor)
+        state["temporary_descriptor"] = None
+    temporary_name = state.get("temporary_name")
+    parent_descriptor = state.get("parent_descriptor")
+    if temporary_name is not None and parent_descriptor is not None:
+        try:
+            os.unlink(temporary_name, dir_fd=parent_descriptor)
+        except FileNotFoundError:
+            pass
+        state["temporary_name"] = None
+    if parent_descriptor is not None:
+        os.close(parent_descriptor)
+        state["parent_descriptor"] = None
+    root_descriptor = state.get("root_descriptor")
+    if root_descriptor is not None:
+        os.close(root_descriptor)
+        state["root_descriptor"] = None
+
+
+def offload_preview(raw):
+    lines = raw.splitlines(keepends=True)
+    if len(lines) <= 10:
+        return raw[:4000], False
+    head = b"".join(lines[:5])[:2000]
+    tail = b"".join(lines[-5:])[-2000:]
+    omitted = len(lines) - 10
+    marker = ("... [" + str(omitted) + " lines truncated] ...\n").encode()
+    return head + marker + tail, True
+
+
+def publish_offload_capture(state):
+    parent_descriptor = state["parent_descriptor"]
+    target_name = state["target_name"]
+    temporary_name = state["temporary_name"]
+    expected_identity = state["target_identity"]
+    try:
+        current = os.stat(
+            target_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        current = None
+    if expected_identity is None:
+        if current is not None:
+            return False
+    elif current is None or (
+        not stat.S_ISREG(current.st_mode)
+        or (current.st_dev, current.st_ino) != expected_identity
+    ):
+        return False
+    os.replace(
+        temporary_name,
+        target_name,
+        src_dir_fd=parent_descriptor,
+        dst_dir_fd=parent_descriptor,
+    )
+    state["temporary_name"] = None
+    return True
+
+
+def terminate_process_group(process):
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    for _ in range(20):
+        if process.poll() is not None:
+            return
+        time.sleep(0.01)
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    process.wait()
+
+
+def offload_command(root, arguments):
+    expected = {
+        "path",
+        "command",
+        "max_inline_bytes",
+        "max_capture_bytes",
+        "working_directory",
+        "command_env",
+    }
+    if set(arguments) != expected:
+        invalid_request()
+    virtual_parts = validate_virtual_path(arguments["path"])
+    command = arguments["command"]
+    inline_limit = arguments["max_inline_bytes"]
+    capture_limit = arguments["max_capture_bytes"]
+    working_directory = arguments["working_directory"]
+    command_env = arguments["command_env"]
+    if virtual_parts is None or type(command) is not str or not command:
+        invalid_request()
+    if (
+        type(inline_limit) is not int
+        or inline_limit < 0
+        or type(capture_limit) is not int
+        or capture_limit < 1
+    ):
+        invalid_request()
+    if working_directory is not None and type(working_directory) is not str:
+        invalid_request()
+    if type(command_env) is not dict or any(
+        type(key) is not str or type(value) is not str
+        for key, value in command_env.items()
+    ):
+        invalid_request()
+
+    capture = prepare_offload_capture(root, virtual_parts)
+    descriptor = capture["temporary_descriptor"]
+    child_environment = os.environ.copy()
+    for key in ("PYTHONNOUSERSITE", "PYTHONPATH", "PYTHONSAFEPATH"):
+        child_environment.pop(key, None)
+    child_environment.update(command_env)
+    process = None
+    total_bytes = 0
+    try:
+        process = subprocess.Popen(
+            command,
+            shell=True,
+            cwd=working_directory,
+            env=child_environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+        def terminate_child(_signum, _frame):
+            terminate_process_group(process)
+            raise SystemExit(143)
+
+        signal.signal(signal.SIGTERM, terminate_child)
+        while True:
+            chunk = process.stdout.read(64 * 1024)
+            if not chunk:
+                break
+            remaining = capture_limit - min(total_bytes, capture_limit)
+            if remaining > 0:
+                write_all(descriptor, chunk[:remaining])
+            total_bytes += len(chunk)
+        exit_code = process.wait()
+        os.fsync(descriptor)
+        raw = read_all(descriptor)
+        capped = total_bytes >= capture_limit
+        if len(raw) <= inline_limit:
+            return {
+                "offloaded": False,
+                "output": raw.decode("utf-8", errors="replace"),
+                "exit_code": exit_code,
+                "truncated": capped,
+                "preview_has_truncation_marker": False,
+            }
+        preview, has_marker = offload_preview(raw)
+        if capture["safe"] and publish_offload_capture(capture):
+            return {
+                "offloaded": True,
+                "output": preview.decode("utf-8", errors="replace"),
+                "exit_code": exit_code,
+                "truncated": capped,
+                "preview_has_truncation_marker": has_marker,
+            }
+        return {
+            "offloaded": False,
+            "output": raw.decode("utf-8", errors="replace"),
+            "exit_code": exit_code,
+            "truncated": capped,
+            "preview_has_truncation_marker": False,
+        }
+    finally:
+        if process is not None and process.poll() is None:
+            terminate_process_group(process)
+        cleanup_offload_capture(capture)
+
+
+def open_transfer_parent(root_descriptor, canonical_parts_value, create):
+    descriptor = os.dup(root_descriptor)
+    try:
+        for part in canonical_parts_value:
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+            try:
+                next_descriptor = os.open(part, flags, dir_fd=descriptor)
+            except FileNotFoundError:
+                if not create:
+                    raise
+                os.mkdir(part, 0o755, dir_fd=descriptor)
+                next_descriptor = os.open(part, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def transfer_file(root, arguments):
+    if set(arguments) != {"path", "mode", "token", "hold_seconds"}:
+        invalid_request()
+    virtual_parts = validate_virtual_path(arguments["path"])
+    mode = arguments["mode"]
+    token = arguments["token"]
+    hold_seconds = arguments["hold_seconds"]
+    if not virtual_parts or mode not in {"upload", "download"}:
+        raise OSError(errno.EXDEV, "unsafe transfer path")
+    if type(token) is not str or not token or len(token) > 256:
+        invalid_request()
+    if (
+        type(hold_seconds) is not int
+        or hold_seconds < 1
+        or hold_seconds > 300
+    ):
+        invalid_request()
+
+    root_descriptor = open_root(root)
+    parent_descriptor = None
+    target_descriptor = None
+    try:
+        canonical = canonical_parts(root, virtual_parts)
+        parent_descriptor = open_transfer_parent(
+            root_descriptor, canonical[:-1], create=mode == "upload"
+        )
+        target_name = canonical[-1]
+        flags = os.O_NOFOLLOW | os.O_CLOEXEC
+        if mode == "upload":
+            try:
+                target_descriptor = os.open(
+                    target_name,
+                    flags | os.O_RDWR,
+                    dir_fd=parent_descriptor,
+                )
+            except FileNotFoundError:
+                target_descriptor = os.open(
+                    target_name,
+                    flags | os.O_RDWR | os.O_CREAT | os.O_EXCL,
+                    0o644,
+                    dir_fd=parent_descriptor,
+                )
+        else:
+            # A FIFO must reach fstat rejection without waiting for a writer.
+            target_descriptor = os.open(
+                target_name,
+                flags | os.O_RDONLY | os.O_NONBLOCK,
+                dir_fd=parent_descriptor,
+            )
+        target = os.fstat(target_descriptor)
+        if not stat.S_ISREG(target.st_mode):
+            raise RootedFailure("not_a_file", "path is not a regular file")
+        print(
+            json.dumps(
+                {
+                    "token": token,
+                    "mode": mode,
+                    "pid": os.getpid(),
+                    "fd": target_descriptor,
+                },
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+        deadline = time.monotonic() + hold_seconds
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+        return None
+    finally:
+        if target_descriptor is not None:
+            os.close(target_descriptor)
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
+        os.close(root_descriptor)
+
+
+def main():
+    if len(sys.argv) != 2:
+        invalid_request()
+    request = decode_request(sys.argv[1])
+    request_id = request["request_id"]
+    operation = request["operation"]
+    try:
+        if operation == "probe":
+            result = probe(request["root"], request["arguments"])
+        elif operation == "read":
+            result = read_file(request["root"], request["arguments"])
+        elif operation == "edit":
+            result = edit_file(request["root"], request["arguments"])
+        elif operation == "delete":
+            result = delete_path(request["root"], request["arguments"])
+        elif operation == "list":
+            result = list_directory(request["root"], request["arguments"])
+        elif operation == "glob":
+            result = glob_paths(request["root"], request["arguments"])
+        elif operation == "grep":
+            result = grep_paths(request["root"], request["arguments"])
+        elif operation == "offload":
+            result = offload_command(request["root"], request["arguments"])
+        elif operation == "reset":
+            result = reset_workspace(request["root"], request["arguments"])
+        else:
+            transfer_file(request["root"], request["arguments"])
+            return
+    except RootedFailure as exc:
+        fail(request_id, operation, exc.code, exc.message)
+        return
+    except OSError as exc:
+        code, message = error_code(exc)
+        fail(request_id, operation, code, message)
+        return
+    emit(request_id, operation, "ok", None, result)
+
+
+main()

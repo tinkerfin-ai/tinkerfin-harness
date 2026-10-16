@@ -1,0 +1,79 @@
+{
+  "name": "tinkerfin-studio-web",
+  "private": true,
+  "version": "0.1.1",
+  "type": "module",
+  "packageManager": "pnpm@10.8.0",
+  "engines": {
+    "node": "^20.19.0 || ^22.12.0 || >=24.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:http": "node --test tests/server/*.test.mjs",
+    "test:browser": "tsc -b && playwright test",
+    "test:watch": "vitest",
+    "preview": "vite preview",
+    "test:licenses": "pnpm build && node --test tests/packaging/document-preview-licenses.test.mjs"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.11.0",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/lint": "^6.9.7",
+    "@codemirror/state": "^6.7.4",
+    "@codemirror/view": "^6.43.11",
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@fontsource-variable/noto-sans-sc": "^5.3.0",
+    "@gsap/react": "^2.1.2",
+    "@internationalized/date": "3.12.3",
+    "@lezer/highlight": "^1.2.3",
+    "@zag-js/date-picker": "1.43.3",
+    "@zag-js/react": "1.43.3",
+    "axios": "^1.19.0",
+    "dompurify": "3.4.16",
+    "fflate": "0.8.3",
+    "gsap": "^3.15.0",
+    "jsonc-parser": "^3.3.1",
+    "lucide-react": "^0.468.0",
+    "mammoth": "1.12.3",
+    "mermaid": "11.17.2",
+    "prismjs": "1.30.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.30.0",
+    "@playwright/test": "1.62.1",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^24.0.0",
+    "@types/prismjs": "1.26.6",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "eslint": "^9.30.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^16.2.0",
+    "jsdom": "^26.1.0",
+    "rollup-plugin-license": "3.7.1",
+    "typescript": "~5.8.3",
+    "typescript-eslint": "^8.35.1",
+    "vite": "^7.0.0",
+    "vitest": "^4.1.11"
+  },
+  "pnpm": {
+    "overrides": {
+      "nanoid": "3.3.18"
+    }
+  }
+}

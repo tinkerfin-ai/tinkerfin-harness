@@ -1,0 +1,448 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { withViteTestServer } from '../server/http-servers.mjs'
+import { installProjectScope } from './fixtures/projects'
+import { installNotificationStream } from './fixtures/notifications'
+import { expect, test, type Page } from '@playwright/test'
+
+const user = { user_id: 17, username: 'settings-test', avatar_url: null, roles: [], disabled: false }
+const chat_options = { max_tokens:null, temperature:null, top_p:null, stop:null, reasoning_effort:null, context_window:null, keep_alive:null }
+const connections = [
+  { connection_id:'deepseek', display_name:'DeepSeek', provider_id:'deepseek', api_type:'openai_chat_completions', base_url:'https://api.deepseek.com', auth_type:'api_key', has_key:true },
+  { connection_id:'qwen', display_name:'通义千问', provider_id:'dashscope', api_type:'openai_chat_completions', base_url:'https://dashscope.aliyuncs.com/compatible-mode/v1', auth_type:'api_key', has_key:true },
+  { connection_id:'ollama', display_name:'本地 Ollama', provider_id:'ollama', api_type:'ollama', base_url:'http://localhost:11434', auth_type:'none', has_key:false },
+]
+const models = [
+  {model_id:'pro',connection_id:'deepseek',display_name:'DeepSeek V4 Pro',model_name:'deepseek-v4-pro',image_support:'unknown',reasoning_enabled:true,enabled:true,is_default:true,sort_order:0,chat_options},
+  {model_id:'flash',connection_id:'deepseek',display_name:'DeepSeek V4 Flash',model_name:'deepseek-v4-flash',image_support:'unknown',reasoning_enabled:true,enabled:true,is_default:false,sort_order:1,chat_options},
+  {model_id:'qwen',connection_id:'qwen',display_name:'Qwen Plus',model_name:'qwen-plus',image_support:'unknown',reasoning_enabled:false,enabled:true,is_default:false,sort_order:0,chat_options},
+  {model_id:'local',connection_id:'ollama',display_name:'Qwen3 14B',model_name:'qwen3:14b',image_support:'unknown',reasoning_enabled:true,enabled:true,is_default:false,sort_order:0,chat_options},
+]
+async function setup(page: Page, crowded = false) {
+  // 布局测量使用静态画面，避免把弹窗入场过程记录为尺寸基线
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const unknown = { automatic: 'unknown', effective: 'unknown', source: 'unknown' }
+  const savedModels = (crowded ? [...models, ...Array.from({length: 20}, (_, index) => ({...models[1], model_id: `extra-${index}`, display_name: `Model ${index}`, model_name: `model-${index}`}))] : models).map(model => ({ ...model, image_input_capability: unknown }))
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (!path.startsWith('/api/')) return route.continue()
+    let data: unknown = {}
+    if (path === '/api/auth/me') data = {expires_at:'2099-01-01T00:00:00.000Z',user}
+    else if (path === '/api/skills/installations') data = []
+    else if (path === '/api/models') data = {items:models.map(model=>({modelId:model.model_id,displayName:model.display_name,connectionId:model.connection_id,connectionDisplayName:connections.find(connection=>connection.connection_id===model.connection_id)!.display_name,reasoningEnabled:model.reasoning_enabled,isDefault:model.is_default})),defaultModelId:'pro'}
+    else if (path === '/api/models/input-capabilities') data = { image_input_capability: unknown }
+    else if (path === '/api/models/settings') data = { models: savedModels, connections, providers:[{provider_id:'custom',display_name:'自定义提供方',api_type:'openai_chat_completions',base_url:'',auth_type:'api_key',models:[]},...connections.map(connection=>({...connection,models:[]})), ...Array.from({length:15}, (_, index) => ({provider_id:`test-${index}`,display_name:`Provider ${index}`,api_type:'openai_chat_completions',base_url:'https://example.invalid',auth_type:'api_key',models:[]}))] }
+    else if (path.endsWith('/models')) data = {outcome:'success',code:'models_received',items:[{model_name:'qwen3:14b',display_name:'Qwen3 14B',image_input_capability:unknown},{model_name:'qwen3:8b',display_name:'Qwen3 8B',image_input_capability:unknown}]}
+    else if (path === '/api/conversation/config') data = {dayRanges:[7,30]}
+    else if (path === '/api/conversation/history') data = {items:[],nextCursor:null}
+    await route.fulfill({json:{code:0,message:'success',data}})
+  })
+}
+async function openSettings(page: Page, language: 'zh-CN'|'en', theme: 'light'|'dark') {
+  await page.addInitScript(({user,language,theme}) => {
+    localStorage.setItem('tinkerfin.auth.session',JSON.stringify({token:'isolated-browser-test',serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer',expiresAt:'2099-01-01T00:00:00.000Z',user}))
+    localStorage.setItem('tinkerfin:language',language)
+    localStorage.setItem('tinkerfin:theme',theme)
+  }, {user,language,theme})
+  await installNotificationStream(page)
+  await installProjectScope(page)
+  await page.goto('/')
+  if ((page.viewportSize()?.width ?? 1440) < 768) {
+    await page.getByRole('button', {name: language === 'en' ? 'Open navigation' : '打开导航', exact: true}).click()
+  }
+  await page.getByRole('button',{name:language==='en'?'Open user menu':'打开用户菜单'}).click()
+  await page.getByRole('menuitem',{name:language==='en'?'Settings':'设置',exact:true}).click()
+  await page.getByRole('button',{name:language==='en'?'Models':'模型配置',exact:true}).click()
+}
+
+const developmentTest = test.extend<Record<never, never>, { developmentOrigin: string }>({
+  developmentOrigin: [async ({ browserName }, provideOrigin) => {
+    const cache = await mkdtemp(join(tmpdir(), `studio-model-colors-${browserName}-`))
+    try {
+      await withViteTestServer({ root: resolve('.'), cacheDir: cache, logLevel: 'error' },
+        async ({ origin }: { origin: string }) => provideOrigin(origin))
+    } finally {
+      await rm(cache, { recursive: true, force: true })
+    }
+  }, { scope: 'worker' }],
+  baseURL: async ({ developmentOrigin }, provideURL) => provideURL(developmentOrigin),
+})
+
+for (const theme of ['light', 'dark'] as const) {
+  developmentTest(`开发页面保存按钮保持主题前景色 ${theme}`, async ({ page }, info) => {
+    await setup(page)
+    await openSettings(page, 'zh-CN', theme)
+    await page.getByRole('button', { name: '配置模型 DeepSeek V4 Pro', exact: true }).click()
+    const save = page.getByRole('button', { name: '保存', exact: true })
+    const foreground = theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(21, 21, 23)'
+    await expect(save).toHaveCSS('color', foreground)
+    await expect(save.getByText('保存', { exact: true })).toHaveCSS('color', foreground)
+    await save.hover()
+    await expect(save).toHaveCSS('color', foreground)
+    expect((await save.boundingBox())!.height).toBe(36)
+    await page.screenshot({ path: info.outputPath(`save-color-${theme}.png`), animations: 'disabled' })
+  })
+}
+
+for (const language of ['zh-CN','en'] as const) for (const theme of ['light','dark'] as const) {
+  test(`提供方模型设置 ${language} ${theme}`, async ({page}, testInfo) => {
+    const failures: string[] = []
+    page.on('pageerror', error => failures.push(error.message))
+    await setup(page)
+    await openSettings(page, language, theme)
+    const dialog = page.getByRole('dialog', {name:language==='en'?'Settings':'设置',exact:true})
+    for (const width of [320,768,1024,1440]) {
+      await page.setViewportSize({width,height:960})
+      await expect(dialog.getByRole('heading',{name:'DeepSeek',exact:true})).toBeVisible()
+      await expect(dialog.getByRole('button',{name:language==='en'?'Configure DeepSeek V4 Pro':'配置模型 DeepSeek V4 Pro'})).toBeVisible()
+      const bounds=await dialog.evaluate(element=>({scroll:element.scrollWidth,width:element.clientWidth}))
+      expect(bounds.scroll).toBeLessThanOrEqual(bounds.width+1)
+      await page.screenshot({path:testInfo.outputPath(`providers-${width}.png`),animations:'disabled'})
+      const search = dialog.getByRole('textbox', {name:language==='en'?'Search providers or models':'搜索提供方或模型'})
+      await search.fill(' FLASH ')
+      const list = dialog.getByRole('region', {name:language==='en'?'Model list':'模型列表',exact:true})
+      await expect(list.getByText('DeepSeek V4 Flash', {exact:true})).toBeVisible()
+      await expect(list.getByText('DeepSeek V4 Pro', {exact:true})).toHaveCount(0)
+      await page.screenshot({path:testInfo.outputPath(`search-${width}.png`),animations:'disabled'})
+      await search.fill('qwen3:14b')
+      await expect(dialog.getByRole('heading', {name:'本地 Ollama',exact:true})).toBeVisible()
+      await search.fill('missing-model')
+      await expect(dialog.getByText(language==='en'?'No matching providers or models':'没有匹配的提供方或模型')).toBeVisible()
+      await dialog.getByRole('button', {name:language==='en'?'Clear search':'清除搜索'}).click()
+      await expect(dialog.getByRole('heading', {name:'DeepSeek',exact:true})).toBeVisible()
+    }
+    await dialog.getByRole('button',{name:language==='en'?'Connection settings':'连接设置',exact:true}).click()
+    await expect(dialog.getByLabel('API Key', { exact: true })).toHaveValue('')
+    await dialog.getByRole('navigation',{name:language==='en'?'Model settings navigation':'模型配置导航'}).getByRole('button',{name:language==='en'?'Models':'模型配置',exact:true}).click()
+    await dialog.getByRole('button',{name:/本地 Ollama/}).click()
+    await expect(dialog.getByText(language==='en'?'No authentication':'无需认证',{exact:true})).toBeVisible()
+    await dialog.getByRole('button',{name:language==='en'?'Fetch models':'获取模型',exact:true}).click()
+    await expect(dialog.getByRole('checkbox',{name:'qwen3:8b',exact:true})).toBeVisible()
+    await dialog.getByRole('checkbox',{name:'qwen3:8b',exact:true}).check()
+    for (const width of [320,768,1024,1440]) {
+      await page.setViewportSize({width,height:960})
+      const search = dialog.getByRole('textbox', {name:language==='en'?'Search model names or Model IDs':'搜索模型名称或 Model ID'})
+      await search.fill('Qwen3 8B')
+      await expect(dialog.getByRole('checkbox',{name:'qwen3:8b',exact:true})).toBeChecked()
+      await expect(dialog.getByRole('checkbox',{name:/qwen3:14b/})).toHaveCount(0)
+      await expect(dialog.getByText(language==='en'?'1 selected':'已选 1 项', {exact:true})).toBeVisible()
+      const bounds = await dialog.evaluate(element=>({scroll:element.scrollWidth,width:element.clientWidth}))
+      expect(bounds.scroll).toBeLessThanOrEqual(bounds.width+1)
+      await page.screenshot({path:testInfo.outputPath(`discovery-search-${width}.png`),animations:'disabled'})
+    }
+    await dialog.getByRole('navigation',{name:language==='en'?'Model settings navigation':'模型配置导航'}).getByRole('button',{name:language==='en'?'Models':'模型配置',exact:true}).click()
+    await dialog.getByRole('button',{name:language==='en'?'Configure Qwen3 14B':'配置模型 Qwen3 14B'}).click()
+    await expect(dialog.getByLabel('Model ID',{exact:true})).toHaveValue('qwen3:14b')
+    await expect(dialog.getByRole('button',{name:language==='en'?'Image input':'图片输入',exact:true})).toContainText(language==='en'?'Auto · Unknown':'自动 · 未识别')
+    await page.screenshot({path:testInfo.outputPath('model-form.png'),animations:'disabled'})
+    const breadcrumbs = dialog.getByRole('navigation', {name:language==='en'?'Model settings navigation':'模型配置导航'})
+    for (const width of [320,768,1024,1440]) {
+      await page.setViewportSize({width,height:960})
+      for (const button of await breadcrumbs.getByRole('button').all()) {
+        await button.hover()
+        await expect(button).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+        await expect(button).toHaveCSS('box-shadow', 'none')
+        await expect(page.getByRole('tooltip')).toHaveCount(0)
+        await page.mouse.down()
+        await expect(button).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+        await expect(button).toHaveCSS('box-shadow', 'none')
+        await page.mouse.move(0, 0)
+        await page.mouse.up()
+      }
+      await breadcrumbs.getByText('Qwen3 14B', {exact:true}).hover()
+      await expect(page.getByRole('tooltip')).toHaveCount(0)
+      await breadcrumbs.getByRole('button', {name:language==='en'?'Models':'模型配置',exact:true}).focus()
+      await page.keyboard.press('Tab')
+      const provider = breadcrumbs.getByRole('button', {name:'本地 Ollama',exact:true})
+      await expect(provider).toBeFocused()
+      await expect(provider).toHaveCSS('outline-width', '2px')
+      await expect(provider).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(provider).toHaveCSS('box-shadow', 'none')
+      await expect(page.getByRole('tooltip')).toHaveCount(0)
+      await page.screenshot({path:testInfo.outputPath(`breadcrumb-focus-${width}.png`),animations:'disabled'})
+    }
+    await page.keyboard.press('Enter')
+    await expect(dialog.getByRole('heading',{name:'本地 Ollama',exact:true})).toBeVisible()
+    expect(failures).toEqual([])
+  })
+}
+
+
+test('固定工具栏、列表独立滚动、分栏拖动及设置尺寸一致', async ({page}) => {
+  await setup(page, true)
+  await openSettings(page, 'zh-CN', 'light')
+  const dialog = page.getByRole('dialog', {name:'设置', exact:true})
+  const add = dialog.getByRole('button', {name:'添加提供方', exact:true})
+  const original = await dialog.boundingBox()
+  for (const name of ['账号管理', '通用', '模型配置']) {
+    await dialog.getByRole('button', {name, exact:true}).click()
+    await expect.poll(() => dialog.boundingBox()).toEqual(original)
+  }
+  const splitter = dialog.getByRole('separator', {name:'调整提供方列表宽度'})
+  const bounds = await splitter.boundingBox()
+  const initialWidth = Number(await splitter.getAttribute('aria-valuenow'))
+  await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + 80)
+  await page.mouse.down()
+  await page.mouse.move(bounds!.x + bounds!.width / 2 + 60, bounds!.y + 80)
+  await page.mouse.up()
+  expect(Number(await splitter.getAttribute('aria-valuenow'))).toBeGreaterThan(initialWidth)
+  await splitter.press('Home')
+  expect(await splitter.getAttribute('aria-valuenow')).toBe(await splitter.getAttribute('aria-valuemin'))
+  await splitter.press('End')
+  expect(await splitter.getAttribute('aria-valuenow')).toBe(await splitter.getAttribute('aria-valuemax'))
+  const list = dialog.getByRole('region', {name:'模型列表', exact:true})
+  const addBounds = await add.boundingBox()
+  const heading = dialog.getByRole('heading', {name:'DeepSeek', exact:true})
+  const headingBounds = await heading.boundingBox()
+  await list.hover()
+  await page.mouse.wheel(0, 900)
+  await expect.poll(() => list.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+  expect(await add.boundingBox()).toEqual(addBounds)
+  expect(await heading.boundingBox()).toEqual(headingBounds)
+  await add.click()
+  const form = dialog.getByRole('region', {name:'模型配置', exact:true})
+  expect(await form.evaluate(element => element.scrollTop)).toBe(0)
+  await dialog.getByRole('button', {name:'提供方', exact:true}).click()
+  const options = dialog.getByRole('listbox', {name:'提供方', exact:true})
+  expect(await options.evaluate(element => element.scrollTop)).toBe(0)
+  expect((await options.boundingBox())!.height).toBeLessThanOrEqual(200)
+  expect((await options.getByRole('option').first().boundingBox())!.height).toBeLessThanOrEqual(40)
+  const formTop = await form.evaluate(element => element.scrollTop)
+  await options.press('End')
+  await expect.poll(() => options.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+  expect(await form.evaluate(element => element.scrollTop)).toBe(formTop)
+  await options.press('Escape')
+  const back = dialog.getByRole('navigation',{name:'模型配置导航'}).getByRole('button',{name:'模型配置',exact:true})
+  await page.setViewportSize({width:1440,height:600})
+  const backBounds = await back.boundingBox()
+  await form.hover()
+  await page.mouse.wheel(0, 900)
+  await expect.poll(() => form.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+  expect(await back.boundingBox()).toEqual(backBounds)
+  await back.click()
+  await add.click()
+  expect(await dialog.getByRole('region', {name:'模型配置', exact:true}).evaluate(element => element.scrollTop)).toBe(0)
+})
+
+test('展开生成参数保留字段与边框之间的内边距', async ({page}) => {
+  await setup(page)
+  await openSettings(page, 'zh-CN', 'light')
+  await page.getByRole('button', {name:'配置模型 DeepSeek V4 Pro'}).click()
+  const parameters = page.locator('details').filter({has:page.getByText('生成参数', {exact:true})})
+  await parameters.locator('summary').click()
+  const box = await parameters.boundingBox()
+  const label = await parameters.locator('label').filter({hasText:'最大输出 Token'}).boundingBox()
+  const helper = await parameters.getByText('用逗号分隔，最多四项').boundingBox()
+  expect(label!.x - box!.x).toBeGreaterThanOrEqual(12)
+  expect(box!.y + box!.height - helper!.y - helper!.height).toBeGreaterThanOrEqual(12)
+})
+
+for (const language of ['zh-CN', 'en'] as const) for (const theme of ['light', 'dark'] as const) {
+  test(`参数、错误和固定操作样式 ${language} ${theme}`, async ({page}, testInfo) => {
+    await setup(page)
+    await openSettings(page, language, theme)
+    const en = language === 'en'
+    const dialog = page.getByRole('dialog', {name:en?'Settings':'设置', exact:true})
+    await dialog.getByRole('button', {name:en?'Configure DeepSeek V4 Pro':'配置模型 DeepSeek V4 Pro'}).click()
+    const parameters = dialog.locator('details').filter({has:page.getByText(en?'Generation parameters':'生成参数', {exact:true})})
+    await parameters.locator('summary').click()
+    for (const width of [320,768,1024,1440]) {
+      await page.setViewportSize({width,height:960})
+      await parameters.scrollIntoViewIfNeeded()
+      const box = (await parameters.boundingBox())!
+      const labels = await parameters.locator('label').all()
+      for (const label of labels) {
+        const bounds = (await label.boundingBox())!
+        expect(bounds.x - box.x).toBeGreaterThanOrEqual(12)
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(box.x + box.width - 12)
+      }
+      const form = dialog.getByRole('region', {name:en?'Models':'模型配置', exact:true})
+      expect(await form.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+      const save = dialog.getByRole('button', {name:en?'Save':'保存', exact:true})
+      expect(await form.evaluate((element, button) => element.contains(button), await save.elementHandle())).toBe(false)
+      const saveBounds = (await save.boundingBox())!
+      const closeBounds = (await dialog.getByRole('button', {name:en?'Close dialog':'关闭对话框',exact:true}).boundingBox())!
+      const dialogBounds = (await dialog.boundingBox())!
+      expect(Math.abs(saveBounds.x + saveBounds.width - closeBounds.x - closeBounds.width)).toBeLessThanOrEqual(1)
+      expect(dialogBounds.y + dialogBounds.height - saveBounds.y - saveBounds.height).toBeLessThanOrEqual(14)
+      await page.screenshot({path:testInfo.outputPath(`parameters-${width}.png`),animations:'disabled'})
+    }
+    const stop = dialog.getByLabel(en?'Stop sequences':'停止序列', {exact:true})
+    await stop.fill('a,b,c,d,e')
+    await dialog.getByRole('button', {name:en?'Save':'保存', exact:true}).click()
+    await expect(stop).toHaveAttribute('aria-invalid','true')
+    await page.screenshot({path:testInfo.outputPath('parameter-error.png'),animations:'disabled'})
+    await stop.fill('')
+    await dialog.getByRole('navigation',{name:en?'Model settings navigation':'模型配置导航'}).getByRole('button',{name:en?'Models':'模型配置',exact:true}).click()
+    await dialog.getByRole('button', {name:en?'Connection settings':'连接设置',exact:true}).click()
+    const form = dialog.getByRole('region', {name:en?'Models':'模型配置',exact:true})
+    const deletion = dialog.getByRole('button', {name:en?'Delete provider':'删除提供方',exact:true})
+    const save = dialog.getByRole('button', {name:en?'Save':'保存',exact:true})
+    for (const button of [deletion,save]) expect(await form.evaluate((element,target) => element.contains(target),await button.elementHandle())).toBe(false)
+    const footer = await deletion.boundingBox()
+    await form.hover()
+    await page.mouse.wheel(0,900)
+    expect(await deletion.boundingBox()).toEqual(footer)
+    await deletion.click()
+    await expect(dialog.getByRole('alert')).toBeVisible()
+    await expect(save).toHaveCount(0)
+    await page.screenshot({path:testInfo.outputPath('delete-confirmation.png'),animations:'disabled'})
+    await dialog.getByRole('button',{name:en?'Cancel':'取消',exact:true}).click()
+    await expect(save).toBeVisible()
+  })
+}
+
+test('列表未溢出时保持静止且不产生滚动回弹', async ({page}) => {
+  await setup(page)
+  await openSettings(page,'zh-CN','light')
+  const list = page.getByRole('region',{name:'模型列表',exact:true})
+  expect(await list.evaluate(element => element.scrollHeight <= element.clientHeight)).toBe(true)
+  await expect(list).toHaveCSS('overscroll-behavior-y','none')
+  const before = await list.getByRole('button',{name:'配置模型 DeepSeek V4 Pro',exact:true}).boundingBox()
+  await list.hover()
+  await page.mouse.wheel(0,500)
+  await page.mouse.wheel(0,-500)
+  expect(await list.evaluate(element => element.scrollTop)).toBe(0)
+  expect(await list.getByRole('button',{name:'配置模型 DeepSeek V4 Pro',exact:true}).boundingBox()).toEqual(before)
+})
+
+test.describe('模型配置触控', () => {
+  test.use({hasTouch:true,viewport:{width:320,height:960}})
+  test('表单和操作保持可触控尺寸',async ({page},testInfo) => {
+    await setup(page)
+    await openSettings(page,'zh-CN','light')
+    const dialog = page.getByRole('dialog',{name:'设置',exact:true})
+    await dialog.getByRole('button',{name:'添加提供方',exact:true}).click()
+    const provider = dialog.getByRole('button',{name:'提供方',exact:true})
+    expect((await provider.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    await provider.click()
+    const menu = dialog.getByRole('listbox',{name:'提供方',exact:true})
+    for (const option of await menu.getByRole('option').all()) expect((await option.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    await menu.press('Escape')
+    await dialog.getByRole('button',{name:'保存',exact:true}).click()
+    await expect(dialog.getByLabel('显示名称',{exact:true})).toHaveAttribute('aria-invalid','true')
+    for (const name of ['保存','取消']) expect((await dialog.getByRole('button',{name,exact:true}).boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    expect((await dialog.getByRole('navigation',{name:'模型配置导航'}).getByRole('button',{name:'模型配置',exact:true}).boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    await page.screenshot({path:testInfo.outputPath('touch-errors-320.png'),animations:'disabled'})
+  })
+})
+
+for (const theme of ['light','dark'] as const) test(`语言选择与外观选项等宽左对齐 ${theme}`, async ({page},testInfo) => {
+  await setup(page)
+  await openSettings(page,'zh-CN',theme)
+  const dialog = page.getByRole('dialog',{name:'设置',exact:true})
+  await dialog.getByRole('button',{name:'通用',exact:true}).click()
+  for (const width of [320,768,1024,1440]) {
+    await page.setViewportSize({width,height:960})
+    const appearance = page.locator('label').filter({has:page.getByRole('radio',{name:'跟随系统',exact:true})})
+    const language = dialog.getByRole('button',{name:'界面语言',exact:true})
+    const appearanceBox = (await appearance.boundingBox())!
+    const languageBox = (await language.boundingBox())!
+    expect(languageBox.height).toBe(36)
+    expect(appearanceBox.height).toBe(languageBox.height)
+    for (const button of await dialog.getByRole('navigation', { name: '设置分类' }).getByRole('button').all()) {
+      expect((await button.boundingBox())!.height).toBe(languageBox.height)
+    }
+
+    expect(Math.abs(appearanceBox.width-languageBox.width)).toBeLessThanOrEqual(1)
+    const label = (await language.getByText('简体中文',{exact:true}).boundingBox())!
+    expect(label.x-languageBox.x).toBeGreaterThanOrEqual(12)
+    expect(label.x-languageBox.x).toBeLessThanOrEqual(14)
+    await language.click()
+    await expect(dialog.getByRole('listbox',{name:'界面语言',exact:true})).toBeVisible()
+    await dialog.getByRole('listbox',{name:'界面语言',exact:true}).press('Escape')
+    await page.screenshot({path:testInfo.outputPath(`language-${width}.png`),animations:'disabled'})
+  }
+})
+
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`模型默认标识与控件尺度 ${theme}`, async ({ page }, testInfo) => {
+    await setup(page)
+    await openSettings(page, 'zh-CN', theme)
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByText('默认对话', { exact: true })).toBeVisible()
+    const providerItems = dialog.getByRole('navigation', { name: '提供方', exact: true }).getByRole('button')
+    const first = await providerItems.nth(0).boundingBox()
+    const second = await providerItems.nth(1).boundingBox()
+    expect(first).not.toBeNull()
+    expect(second).not.toBeNull()
+    expect(second!.y - (first!.y + first!.height)).toBeGreaterThanOrEqual(8)
+    expect(first!.height).toBe(46)
+    const borders = await providerItems.nth(0).evaluate(element => {
+      const style = getComputedStyle(element)
+      return [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth]
+    })
+    expect(borders).toEqual(['0px', '0px', '0px', '0px'])
+    for (const name of ['添加提供方', '获取模型', '手动添加', '连接设置', '配置模型 DeepSeek V4 Pro']) {
+      expect((await dialog.getByRole('button', { name, exact: true }).boundingBox())!.height).toBe(36)
+    }
+    const configure = dialog.getByRole('button', { name: '配置模型 DeepSeek V4 Pro', exact: true })
+    expect((await configure.boundingBox())!.width).toBe(36)
+    const fetchButton = dialog.getByRole('button', { name: '获取模型', exact: true })
+    const addButton = dialog.getByRole('button', { name: '手动添加', exact: true })
+    const buttonStyle = (element: HTMLElement) => {
+      const style = getComputedStyle(element)
+      return [style.height, style.padding, style.border, style.borderRadius, style.backgroundColor]
+    }
+    expect(await fetchButton.evaluate(buttonStyle)).toEqual(await addButton.evaluate(buttonStyle))
+    expect((await dialog.getByRole('textbox', { name: '搜索提供方或模型' }).evaluate(element => element.closest('.ui-text-field__control')!.getBoundingClientRect().height))).toBe(36)
+    await providerItems.nth(1).hover()
+    await page.screenshot({ path: testInfo.outputPath('grouped-models.png'), animations: 'disabled' })
+    await dialog.getByRole('button', { name: '配置模型 DeepSeek V4 Pro' }).click()
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 960 })
+      const bounds = await dialog.evaluate(element => ({ scroll: element.scrollWidth, width: element.clientWidth }))
+      expect(bounds.scroll).toBeLessThanOrEqual(bounds.width + 1)
+      const inputHeight = await dialog.getByRole('textbox', { name: 'Model ID', exact: true }).evaluate(element => element.closest('.ui-text-field__control')!.getBoundingClientRect().height)
+      await expect(dialog.getByRole('radiogroup', { name: '用途' })).toHaveCount(0)
+      expect((await dialog.getByRole('button', { name: '图片输入', exact: true }).boundingBox())!.height).toBe(inputHeight)
+      for (const name of ['取消', '保存', '删除模型']) {
+        expect((await dialog.getByRole('button', { name, exact: true }).boundingBox())!.height).toBe(inputHeight)
+      }
+
+      const summary = dialog.getByText('生成参数', { exact: true })
+      expect(await summary.evaluate(element => element.closest('details')!.getBoundingClientRect().height)).toBe(inputHeight)
+      await summary.hover()
+      expect(await summary.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+      await page.screenshot({ path: testInfo.outputPath(`capability-${width}.png`), animations: 'disabled' })
+    }
+    await dialog.getByText('生成参数', { exact: true }).click()
+    const reasoning = dialog.getByRole('button', { name: '推理强度', exact: true })
+    await reasoning.click()
+    await dialog.getByRole('option', { name: '高', exact: true }).click()
+    await expect(reasoning).toHaveText('高')
+    await reasoning.click()
+    await dialog.getByRole('listbox', { name: '推理强度' }).press('Home')
+    await dialog.getByRole('listbox', { name: '推理强度' }).press('Enter')
+    await expect(reasoning).toHaveText('使用模型默认值')
+    await dialog.getByText('生成参数', { exact: true }).click()
+    await page.emulateMedia({ forcedColors: 'active', reducedMotion: 'reduce' })
+    expect(await dialog.evaluate(element => { let opacity = 1; for (let current: Element | null = element; current; current = current.parentElement) opacity *= Number(getComputedStyle(current).opacity); return opacity })).toBe(1)
+    await page.screenshot({ path: testInfo.outputPath('forced-colors.png'), animations: 'disabled' })
+  })
+}
+
+test.describe('模型表单统一触控尺度', () => {
+  test.use({ hasTouch: true, viewport: { width: 320, height: 960 } })
+  test('英文人工图片能力保持一行和48px高度', async ({ page }, testInfo) => {
+    await setup(page)
+    await openSettings(page, 'en', 'dark')
+    const dialog = page.getByRole('dialog')
+    const searchHeight = await dialog.getByRole('textbox', { name: 'Search providers or models' }).evaluate(element => element.closest('.ui-text-field__control')!.getBoundingClientRect().height)
+    expect(searchHeight).toBe(48)
+    await expect(dialog.getByText('Chat default', { exact: true })).toBeVisible()
+    await dialog.getByRole('button', { name: 'Configure DeepSeek V4 Pro' }).click()
+    const capability = dialog.getByRole('button', { name: 'Image input', exact: true })
+    await capability.click()
+    await page.getByRole('option', { name: 'Does not support image input', exact: true }).click()
+    await expect(capability).toHaveText('Unsupported')
+    expect((await capability.boundingBox())!.height).toBe(48)
+    const labelBox = (await dialog.getByText('Image input', { exact: true }).boundingBox())!
+    const controlBox = (await capability.boundingBox())!
+    expect(labelBox.y + labelBox.height / 2).toBe(controlBox.y + controlBox.height / 2)
+    expect(controlBox.x + controlBox.width).toBeLessThanOrEqual(320)
+    await page.screenshot({ path: testInfo.outputPath('english-manual-capability.png'), animations: 'disabled' })
+  })
+})

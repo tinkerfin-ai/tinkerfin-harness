@@ -1,0 +1,22 @@
+<!-- 来源：当前 Studio AuthScreen 登录页光带；独立图层用于合成动画 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-300 -300 1600 1600" preserveAspectRatio="none"><defs>
+            <linearGradient id="auth-ribbon-violet-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="rgb(190 163 255)" stop-opacity="0" />
+              <stop offset="18%" stop-color="rgb(190 163 255)" stop-opacity=".16" />
+              <stop offset="50%" stop-color="rgb(143 104 255)" stop-opacity=".36" />
+              <stop offset="76%" stop-color="rgb(194 169 255)" stop-opacity=".18" />
+              <stop offset="100%" stop-color="rgb(194 169 255)" stop-opacity="0" />
+            </linearGradient>
+            <filter id="auth-ribbon-soft-filter" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+              <feGaussianBlur stdDeviation="32" />
+            </filter>
+            <filter id="auth-ribbon-body-filter" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+              <feGaussianBlur stdDeviation="8" />
+            </filter>
+          </defs>
+
+          <g>
+            <path d="M 120 1160 C 330 820 490 1030 700 780 C 824 632 964 626 1160 510" stroke="url(#auth-ribbon-violet-gradient)" stroke-width="200" filter="url(#auth-ribbon-soft-filter)" fill="none" stroke-linecap="round" opacity=".55" />
+            <path d="M 120 1160 C 330 820 490 1030 700 780 C 824 632 964 626 1160 510" stroke="url(#auth-ribbon-violet-gradient)" stroke-width="128" filter="url(#auth-ribbon-body-filter)" fill="none" stroke-linecap="round" opacity=".48" />
+          </g>
+        </svg>

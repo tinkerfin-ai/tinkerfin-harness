@@ -1,0 +1,48 @@
+[project]
+name = "tinkerfin-messaging"
+version = "0.1.1"
+description = "Replayable messaging for TinkerFin Native and AG-UI streams."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "pydantic>=2,<3",
+    "tinkerfin-contracts==0.1.1",
+]
+
+[project.optional-dependencies]
+redis = ["redis>=6,<9"]
+sqlalchemy = ["sqlalchemy[asyncio]>=2.0.52,<3", "tinkerfin-sqlalchemy==0.1.1"]
+agui = ["ag-ui-protocol==0.1.19"]
+native = ["tinkerfin-native-stream==0.1.1"]
+
+[tool.uv.sources]
+tinkerfin-contracts = { workspace = true }
+tinkerfin-native-stream = { workspace = true }
+tinkerfin-sqlalchemy = { workspace = true }
+
+[project.urls]
+Homepage = "https://github.com/tinkerfin-ai/tinkerfin-harness"
+Repository = "https://github.com/tinkerfin-ai/tinkerfin-harness"
+Issues = "https://github.com/tinkerfin-ai/tinkerfin-harness/issues"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tinkerfin_messaging = ["py.typed"]

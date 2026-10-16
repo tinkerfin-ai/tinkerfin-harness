@@ -1,0 +1,188 @@
+"""认证用户的任务管理和只读执行历史接口"""
+
+from collections.abc import AsyncIterator
+from datetime import date, datetime
+from typing import Annotated, Literal
+
+from fastapi import APIRouter, Depends, Query, Request
+
+from tinkerfin_automation import ExecutionStatus, TaskStatus
+from tinkerfin_automation.errors import AutomationError
+from tinkerfin_studio.api.dependencies import SessionDep, UserContextDep
+from tinkerfin_studio.api.responses import ApiResponse
+from tinkerfin_studio.automation.schemas import (
+    BatchCommand,
+    BatchResult,
+    RunCalendar,
+    RunDetail,
+    RunList,
+    RunView,
+    SaveTask,
+    TaskCommand,
+    TaskList,
+    TaskView,
+)
+from tinkerfin_studio.automation.service import (
+    StudioAutomationService,
+    automation_error,
+    list_active_runs,
+)
+from tinkerfin_studio.projects.repository import ProjectRepository
+from tinkerfin_studio.resources import get_resources
+
+router = APIRouter(prefix="/automation", tags=["自动化"])
+
+
+async def automation_service(
+    request: Request,
+    user: UserContextDep,
+    session: SessionDep,
+    project_id: Annotated[str, Query(alias="projectId", min_length=1, max_length=36)],
+) -> AsyncIterator[StudioAutomationService]:
+    """将用户绑定到业务服务；框架错误统一转换为可恢复的 HTTP 错误"""
+    try:
+        await ProjectRepository(session, user.user_id).require(project_id)
+        await session.commit()
+        yield StudioAutomationService(
+            get_resources(request.app), user_id=user.user_id, project_id=project_id
+        )
+    except (AutomationError, ValueError) as error:
+        raise automation_error(error) from error
+
+
+Service = Annotated[
+    StudioAutomationService, Depends(automation_service, scope="function")
+]
+Limit = Annotated[int, Query(ge=1, le=100)]
+Search = Annotated[str | None, Query(max_length=255)]
+Cursor = Annotated[str | None, Query(max_length=2048)]
+
+
+@router.get("/tasks", response_model=ApiResponse[TaskList])
+async def list_tasks(
+    service: Service,
+    query: Search = None,
+    status: TaskStatus | None = None,
+    cursor: Cursor = None,
+    limit: Limit = 50,
+) -> ApiResponse[TaskList]:
+    """分页读取本人任务，筛选覆盖全部记录"""
+    return ApiResponse.success(
+        await service.list_tasks(query=query, status=status, cursor=cursor, limit=limit)
+    )
+
+
+@router.post("/tasks", response_model=ApiResponse[TaskView])
+async def create_task(command: SaveTask, service: Service) -> ApiResponse[TaskView]:
+    """保存任务并提交未来调度，重复请求不会创建第二个任务"""
+    return ApiResponse.success(await service.save(command))
+
+
+@router.get("/tasks/{task_id}/submission", response_model=ApiResponse[RunView | None])
+async def get_submission(
+    task_id: str,
+    service: Service,
+    request_id: Annotated[str, Query(alias="requestId", min_length=1, max_length=128)],
+) -> ApiResponse[RunView | None]:
+    """确认原手动请求对应的执行；尚无已提交回执时返回空结果"""
+    return ApiResponse.success(await service.submission(task_id, request_id))
+
+
+@router.post("/tasks/batch", response_model=ApiResponse[list[BatchResult]])
+async def batch_tasks(
+    command: BatchCommand, service: Service
+) -> ApiResponse[list[BatchResult]]:
+    """逐项暂停或删除已选任务并返回失败项"""
+    return ApiResponse.success(await service.batch(command))
+
+
+@router.put("/tasks/{task_id}", response_model=ApiResponse[TaskView])
+async def update_task(
+    task_id: str, command: SaveTask, service: Service
+) -> ApiResponse[TaskView]:
+    """按预期修订保存配置，不改写已经入队的执行"""
+    return ApiResponse.success(await service.save(command, task_id=task_id))
+
+
+@router.post(
+    "/tasks/{task_id}/{operation}", response_model=ApiResponse[TaskView | RunView]
+)
+async def task_action(
+    task_id: str,
+    operation: Literal["pause", "enable", "run"],
+    command: TaskCommand,
+    service: Service,
+) -> ApiResponse[TaskView | RunView]:
+    """暂停、启用或立即运行；手动运行不受计划有效期限制"""
+    return ApiResponse.success(await service.task_command(task_id, operation, command))
+
+
+@router.get("/runs", response_model=ApiResponse[RunList])
+async def list_runs(
+    service: Service,
+    queued_from: Annotated[datetime, Query(alias="from")],
+    queued_until: Annotated[datetime, Query(alias="until")],
+    query: Search = None,
+    status: ExecutionStatus | None = None,
+    cursor: Cursor = None,
+    limit: Limit = 50,
+) -> ApiResponse[RunList]:
+    """按带时区的左闭右开日期范围读取执行历史"""
+    return ApiResponse.success(
+        await service.list_runs(
+            queued_from=queued_from,
+            queued_until=queued_until,
+            query=query,
+            status=status,
+            cursor=cursor,
+            limit=limit,
+        )
+    )
+
+
+@router.get("/runs/calendar", response_model=ApiResponse[RunCalendar])
+async def run_calendar(
+    service: Service,
+    week_start: Annotated[
+        date, Query(alias="weekStart", description="北京时间周历起始日期，连续七天")
+    ],
+    query: Search = None,
+    status: ExecutionStatus | None = None,
+    limit: Limit = 50,
+) -> ApiResponse[RunCalendar]:
+    """一次返回七天的执行页与独立游标"""
+    return ApiResponse.success(
+        await service.run_calendar(
+            week_start=week_start, query=query, status=status, limit=limit
+        )
+    )
+
+
+@router.get("/runs/active", response_model=ApiResponse[RunList])
+async def active_runs(
+    request: Request, user: UserContextDep, cursor: Cursor = None, limit: Limit = 100
+) -> ApiResponse[RunList]:
+    """分页恢复当前用户全部项目的执行状态，不提供离线完成通知"""
+    try:
+        return ApiResponse.success(
+            await list_active_runs(
+                get_resources(request.app),
+                user_id=user.user_id,
+                cursor=cursor,
+                limit=limit,
+            )
+        )
+    except (AutomationError, ValueError) as error:
+        raise automation_error(error) from error
+
+
+@router.get("/runs/{execution_id}/status", response_model=ApiResponse[RunView])
+async def run_status(execution_id: str, service: Service) -> ApiResponse[RunView]:
+    """按执行原所属项目校验权限，只读取轻量状态与结果导航"""
+    return ApiResponse.success(await service.status(execution_id))
+
+
+@router.get("/runs/{execution_id}", response_model=ApiResponse[RunDetail])
+async def run_result(execution_id: str, service: Service) -> ApiResponse[RunDetail]:
+    """读取本人执行的只读消息、错误和文件，不提供审批恢复"""
+    return ApiResponse.success(await service.result(execution_id))

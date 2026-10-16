@@ -1,0 +1,113 @@
+{
+  "$defs": {
+    "Attachment": {
+      "additionalProperties": false,
+      "description": "Describe a durable file without embedding bytes or storage credentials.\n\nIDs are opaque within the host's authorization boundary. A host must authorize\nevery resolution; the descriptor itself never grants access to its contents.",
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "mime_type": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Mime Type",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "size_bytes": {
+          "description": "Original file size in bytes",
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "mime_type",
+        "size_bytes"
+      ],
+      "title": "Attachment",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "description": "Publish durable files with the text result of a completed tool call.",
+  "properties": {
+    "attachments": {
+      "items": {
+        "$ref": "#/$defs/Attachment"
+      },
+      "title": "Attachments",
+      "type": "array"
+    },
+    "content": {
+      "title": "Content",
+      "type": "string"
+    },
+    "messageId": {
+      "title": "Messageid",
+      "type": "string"
+    },
+    "rawEvent": {
+      "anyOf": [
+        {},
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rawevent"
+    },
+    "role": {
+      "anyOf": [
+        {
+          "const": "tool",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Role"
+    },
+    "timestamp": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timestamp"
+    },
+    "toolCallId": {
+      "title": "Toolcallid",
+      "type": "string"
+    },
+    "type": {
+      "const": "TOOL_CALL_RESULT",
+      "default": "TOOL_CALL_RESULT",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "messageId",
+    "toolCallId",
+    "content"
+  ],
+  "title": "AttachmentToolCallResultEvent",
+  "type": "object"
+}

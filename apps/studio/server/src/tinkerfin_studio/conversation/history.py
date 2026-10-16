@@ -1,0 +1,712 @@
+"""用户归属校验后的 Trace 历史分页与实时跟随"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import logging
+from collections.abc import AsyncGenerator
+from contextlib import nullcontext
+from datetime import datetime
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+)
+
+from tinkerfin import SseBody
+from tinkerfin.agui import (
+    AgUiGraphQuery,
+    AgUiHistory,
+    AgUiHistoryView,
+    AgUiLiveView,
+    AgUiReplayChannel,
+)
+from tinkerfin_messaging import InvalidCursor as InvalidDeliveryCursor
+from tinkerfin_messaging import MessagingError, RunNotFound, StreamExpired
+from tinkerfin_studio.api.errors import (
+    BusinessException,
+    ConversationErrorCode,
+    SystemException,
+)
+from tinkerfin_studio.conversation.failures import (
+    FAILURE_PROJECTION,
+    visible_run_failures,
+)
+from tinkerfin_studio.conversation.history_queries import (
+    HistoryQueryAdmission,
+    HistoryQueryTimeout,
+)
+from tinkerfin_studio.conversation.models import ConversationThread
+from tinkerfin_studio.conversation.plan_results import saved_plan_results
+from tinkerfin_studio.conversation.repository import ConversationRepository
+from tinkerfin_studio.conversation.schemas import (
+    ConversationHistoryDetail,
+    ConversationHistoryGroupConfig,
+    ConversationHistoryListItem,
+    ConversationHistoryListResponse,
+    ConversationInteractionAvailability,
+    ConversationRunSnapshotEvent,
+    ConversationSubmissionResult,
+    ConversationTraceGraphErrorEvent,
+    ConversationTraceGraphSnapshotEvent,
+    ConversationTraceGraphUpdateEvent,
+    PendingInteractionKind,
+)
+from tinkerfin_studio.conversation.todo_groups import (
+    TODO_PROJECTION,
+    TaskTraceSnapshot,
+    TodoGroupProjectionResult,
+    render_task_trace,
+)
+from tinkerfin_studio.conversation.trace_responses import (
+    ConversationGraph,
+    ConversationGraphQueryPage,
+)
+from tinkerfin_tracing import (
+    InvalidTraceCursor,
+    InvalidTraceReference,
+    TraceGraphFilter,
+    TraceMessage,
+    TraceModelRequest,
+    Tracer,
+    TraceThread,
+    TraceThreadNotFound,
+    TracingError,
+)
+
+_HISTORY_PAGE_SIZE_MAX = 100
+_HISTORY_DAY_RANGES = (7, 30)
+logger = logging.getLogger(__name__)
+_PENDING_KIND = TypeAdapter(PendingInteractionKind | None)
+
+
+# user 角色还承载应用上下文；失败提示只关联真实提问
+
+
+def _is_user_question(message: TraceMessage) -> bool:
+    return (
+        message.role == "user"
+        and not message.graph_namespace
+        and (message.source is None or message.source.kind == "user")
+    )
+
+
+class _HistoryCursorPayload(BaseModel):
+    """历史 keyset 游标的严格边界数据"""
+
+    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=True)
+
+    project_id: str | None = Field(alias="projectId")
+    archived: bool
+    pinned: bool = Field(description="游标行是否置顶")
+    updated_at: datetime = Field(
+        alias="updatedAt", description="游标行的无时区最近 Trace 活动时间"
+    )
+    row_id: int = Field(alias="id", gt=0, description="游标行数据库主键")
+    query: str | None = Field(
+        default=None,
+        max_length=255,
+        description="游标所属的规范化标题查询词",
+    )
+
+    @field_validator("updated_at")
+    @classmethod
+    def updated_at_is_naive(cls, value: datetime) -> datetime:
+        """拒绝不能与数据库无时区字段直接比较的时间"""
+
+        if value.utcoffset() is not None:
+            raise ValueError("updatedAt 必须是不含时区的 ISO 时间")
+        return value
+
+
+def _history_item(thread: ConversationThread) -> ConversationHistoryListItem:
+    return ConversationHistoryListItem(
+        id=thread.id,
+        projectId=thread.project_id,
+        archived=thread.archived,
+        threadId=thread.thread_id,
+        title=thread.title,
+        titleSource=thread.title_source,
+        titleGenerationStatus=thread.title_generation_status,
+        titleSeq=thread.title_seq,
+        status=thread.status,
+        lastRunId=thread.last_run_id,
+        lastModel=thread.last_model,
+        accessMode=thread.last_access_mode,
+        messageCount=thread.message_count,
+        toolCallCount=thread.tool_call_count,
+        hasPendingInterrupt=thread.has_pending_interrupt,
+        pendingInteractionKind=_PENDING_KIND.validate_python(
+            thread.pending_interaction_kind
+        ),
+        pinned=thread.pinned,
+        createdAt=thread.created_at,
+        updatedAt=thread.updated_at,
+    )
+
+
+class ConversationHistoryService:
+    """从 Studio 读取归属与摘要，从 Trace 读取唯一会话正文"""
+
+    def __init__(
+        self,
+        repository: ConversationRepository,
+        *,
+        user_id: int,
+        tracer: Tracer,
+        history_queries: HistoryQueryAdmission,
+        conversation_channel: AgUiReplayChannel | None = None,
+    ) -> None:
+        self._repository = repository
+        self._user_id = user_id
+        # 读取源与用户作用域在此绑定，快照、分页和跟随均使用同一会话身份
+        self._history = AgUiHistory(tracer, namespace=f"ns_{user_id}")
+        self._history_queries = history_queries
+        self._conversation_channel = conversation_channel
+
+    async def list_history(
+        self,
+        *,
+        project_id: str | None,
+        archived: bool = False,
+        page_size: int,
+        cursor: str | None,
+        query: str | None = None,
+    ) -> ConversationHistoryListResponse:
+        """按标题查询、置顶和最近 Trace 活动时间稳定分页"""
+
+        resolved_query = (query.strip() or None) if query is not None else None
+        resolved = self._decode_cursor(
+            cursor, query=resolved_query, project_id=project_id, archived=archived
+        )
+        resolved_page_size = min(max(page_size, 1), _HISTORY_PAGE_SIZE_MAX)
+        threads = await self._repository.list_threads(
+            user_id=self._user_id,
+            page_size=resolved_page_size,
+            cursor=resolved,
+            query=resolved_query,
+            project_id=project_id,
+            archived=archived,
+        )
+        has_more = len(threads) > resolved_page_size
+        page = threads[:resolved_page_size]
+        next_cursor = (
+            self._encode_cursor(
+                page[-1], query=resolved_query, project_id=project_id, archived=archived
+            )
+            if has_more and page
+            else None
+        )
+        return ConversationHistoryListResponse(
+            items=[_history_item(thread) for thread in page],
+            nextCursor=next_cursor,
+        )
+
+    @staticmethod
+    def group_config() -> ConversationHistoryGroupConfig:
+        """返回前端按本地自然日分组使用的服务端范围"""
+
+        return ConversationHistoryGroupConfig(dayRanges=list(_HISTORY_DAY_RANGES))
+
+    async def get_detail(
+        self,
+        thread_id: str,
+        *,
+        history_cursor: str | None = None,
+        limit: int = 100,
+        include_task_trace: bool = True,
+        submission_run_id: str | None = None,
+    ) -> ConversationHistoryDetail:
+        """返回一个固定 as-of、可继续向前扩展的 Trace 视图"""
+
+        thread, history = await self._load_trace(
+            thread_id,
+            history_cursor=history_cursor,
+            limit=limit,
+            include_task_trace=include_task_trace,
+        )
+        detail = await self._detail(
+            thread=thread,
+            history=history,
+            task_trace=self._task_trace(history.trace) if include_task_trace else None,
+            submission_run_id=submission_run_id,
+        )
+        await self._repository.commit()
+        return detail
+
+    async def follow_live(
+        self,
+        thread_id: str,
+        *,
+        run_id: str,
+        last_event_id: str | None,
+        include_task_trace: bool = True,
+    ) -> SseBody[bytes]:
+        """读取已授权运行的历史基线并续播，不重新执行模型或业务登记"""
+        thread = await self._require_thread(thread_id)
+        registration = await self._repository.get_run(
+            thread_pk=thread.id, run_id=run_id
+        )
+        if registration is None or registration.status == "rejected":
+            raise BusinessException(ConversationErrorCode.RUN_NOT_FOUND)
+        await self._repository.commit()
+        if self._conversation_channel is None:
+            raise RuntimeError("未配置会话续播通道")
+        needs_snapshot = include_task_trace and last_event_id is None
+        try:
+            async with (
+                self._history_queries.admit() if needs_snapshot else nullcontext()
+            ):
+                try:
+                    live = await self._history.open_live(
+                        thread_id,
+                        head_run_id=run_id,
+                        channel=self._conversation_channel,
+                        last_event_id=last_event_id,
+                        projections=(FAILURE_PROJECTION, TODO_PROJECTION)
+                        if needs_snapshot
+                        else (FAILURE_PROJECTION,),
+                    )
+                except InvalidDeliveryCursor as error:
+                    raise BusinessException(
+                        ConversationErrorCode.INVALID_LAST_EVENT_ID
+                    ) from error
+                except RunNotFound as error:
+                    raise BusinessException(
+                        ConversationErrorCode.RUN_NOT_FOUND
+                    ) from error
+                except StreamExpired as error:
+                    raise BusinessException(
+                        ConversationErrorCode.MESSAGING_STREAM_EXPIRED
+                    ) from error
+                except MessagingError as error:
+                    raise SystemException(
+                        ConversationErrorCode.MESSAGING_UNAVAILABLE
+                    ) from error
+                except ValueError as error:
+                    raise BusinessException(
+                        ConversationErrorCode.INVALID_LAST_EVENT_ID
+                    ) from error
+                except TracingError as error:
+                    raise SystemException(
+                        ConversationErrorCode.TRACE_UNAVAILABLE
+                    ) from error
+                return await self._prepare_live_body(
+                    thread,
+                    live,
+                    last_event_id=last_event_id,
+                    include_task_trace=include_task_trace,
+                )
+        except HistoryQueryTimeout as error:
+            raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE) from error
+
+    async def _prepare_live_body(
+        self,
+        thread: ConversationThread,
+        live: AgUiLiveView,
+        *,
+        last_event_id: str | None,
+        include_task_trace: bool,
+    ) -> SseBody[bytes]:
+        """由响应体接管已打开的续播资源，首快照失败时一并关闭"""
+        snapshot: ConversationRunSnapshotEvent | None = None
+        body: SseBody[bytes]
+
+        async def prepare_snapshot() -> None:
+            nonlocal snapshot
+            if last_event_id is not None:
+                return
+            detail = await self._detail(
+                thread=thread,
+                history=live.history,
+                task_trace=self._task_trace(live.history.trace)
+                if include_task_trace
+                else None,
+            )
+            snapshot = ConversationRunSnapshotEvent(
+                snapshot=detail, replay=live.body is not None
+            )
+            await self._repository.commit()
+
+        async def iterate() -> AsyncGenerator[bytes, None]:
+            if snapshot is not None:
+                yield (
+                    b"event: snapshot\ndata: "
+                    + snapshot.model_dump_json(by_alias=True).encode()
+                    + b"\n\n"
+                )
+            if live.body is not None:
+                async for chunk in live.body:
+                    yield chunk
+
+        body = SseBody(source_factory=iterate, close=live.aclose)
+        await body.prepare(preflight=prepare_snapshot)
+        return body
+
+    async def get_model_request(
+        self, thread_id: str, *, reference: str
+    ) -> TraceModelRequest:
+        """校验会话归属后，按框架引用读取单次模型调用的完整输入"""
+        await self._require_thread(thread_id)
+        await self._repository.commit()
+        try:
+            return await self._history.model_request(thread_id, reference=reference)
+        except InvalidTraceReference as error:
+            raise BusinessException(
+                ConversationErrorCode.INVALID_TRACE_REFERENCE
+            ) from error
+        except (TraceThreadNotFound, TracingError) as error:
+            raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE) from error
+
+    async def query_trace_graph(
+        self,
+        thread_id: str,
+        *,
+        where: TraceGraphFilter,
+        cursor: str | None,
+        limit: int,
+    ) -> ConversationGraphQueryPage:
+        """在框架 Store 内筛选当前会话链路节点"""
+
+        query, head_run_id = await self._load_graph_query(
+            thread_id,
+            where=where,
+            cursor=cursor,
+            limit=limit,
+        )
+        return ConversationGraphQueryPage.from_page(
+            query.snapshot,
+            generation=query.trace.key.generation,
+            head_run_id=head_run_id,
+        )
+
+    async def follow_trace_graph(
+        self,
+        thread_id: str,
+        *,
+        where: TraceGraphFilter,
+        limit: int,
+    ) -> AsyncGenerator[
+        ConversationTraceGraphSnapshotEvent
+        | ConversationTraceGraphUpdateEvent
+        | ConversationTraceGraphErrorEvent,
+        None,
+    ]:
+        """先发送当前筛选页，再跟随同一 generation 的链路变化"""
+
+        query, head_run_id = await self._load_graph_query(
+            thread_id,
+            where=where,
+            cursor=None,
+            limit=limit,
+        )
+
+        async def events() -> AsyncGenerator[
+            ConversationTraceGraphSnapshotEvent
+            | ConversationTraceGraphUpdateEvent
+            | ConversationTraceGraphErrorEvent,
+            None,
+        ]:
+            try:
+                async with query.follow() as updates:
+                    yield ConversationTraceGraphSnapshotEvent(
+                        snapshot=ConversationGraphQueryPage.from_page(
+                            query.snapshot,
+                            generation=query.trace.key.generation,
+                            head_run_id=head_run_id,
+                        )
+                    )
+                    async for update in updates:
+                        yield ConversationTraceGraphUpdateEvent(update=update)
+            except asyncio.CancelledError:
+                raise
+            except TracingError as error:
+                logger.error(
+                    "链路跟随异常结束: thread_id=%s",
+                    thread_id,
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+                yield ConversationTraceGraphErrorEvent()
+
+        return events()
+
+    async def _load_graph_query(
+        self,
+        thread_id: str,
+        *,
+        where: TraceGraphFilter,
+        cursor: str | None,
+        limit: int,
+    ) -> tuple[AgUiGraphQuery, str]:
+        """校验会话归属并在释放业务连接后查询框架索引"""
+
+        thread = await self._require_thread(thread_id)
+        head_run_id = thread.last_run_id
+        if head_run_id is None:
+            raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
+        await self._repository.commit()
+        try:
+            query = await self._history.query(
+                thread.thread_id,
+                where=where,
+                head_run_id=head_run_id,
+                cursor=cursor,
+                limit=limit,
+            )
+            return query, head_run_id
+        except InvalidTraceCursor as error:
+            raise BusinessException(ConversationErrorCode.INVALID_CURSOR) from error
+        except (TraceThreadNotFound, TracingError) as error:
+            raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE) from error
+
+    async def _load_trace(
+        self,
+        thread_id: str,
+        *,
+        history_cursor: str | None,
+        limit: int,
+        include_task_trace: bool,
+    ) -> tuple[ConversationThread, AgUiHistoryView]:
+        """释放业务事务后读取组件库中的运行轨迹"""
+
+        thread = await self._require_thread(thread_id)
+        head_run_id = thread.last_run_id
+        if head_run_id is None:
+            raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
+        # 先结束归属查询，避免读取轨迹期间继续占用业务库连接
+        await self._repository.commit()
+        try:
+            async with (
+                self._history_queries.admit() if include_task_trace else nullcontext()
+            ):
+                history = await self._history.get(
+                    thread.thread_id,
+                    head_run_id=None if history_cursor is not None else head_run_id,
+                    history_cursor=history_cursor,
+                    projections=(FAILURE_PROJECTION, TODO_PROJECTION)
+                    if include_task_trace
+                    else (FAILURE_PROJECTION,),
+                    limit=min(max(limit, 1), _HISTORY_PAGE_SIZE_MAX),
+                )
+        except HistoryQueryTimeout as error:
+            raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE) from error
+        except InvalidTraceCursor as error:
+            raise BusinessException(ConversationErrorCode.INVALID_CURSOR) from error
+        except (TraceThreadNotFound, TracingError) as error:
+            raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE) from error
+        return thread, history
+
+    @staticmethod
+    def _task_trace(trace: TraceThread) -> TaskTraceSnapshot:
+        return render_task_trace(
+            TodoGroupProjectionResult.model_validate(
+                trace.projections[TODO_PROJECTION]
+            ),
+            status=trace.status,
+            completeness=trace.completeness,
+        )
+
+    async def _detail(
+        self,
+        *,
+        thread: ConversationThread,
+        history: AgUiHistoryView,
+        task_trace: TaskTraceSnapshot | None,
+        submission_run_id: str | None = None,
+    ) -> ConversationHistoryDetail:
+        snapshot = history.snapshot
+        trace = history.trace
+        registration = await self._repository.get_run(
+            thread_pk=thread.id,
+            run_id=snapshot.head_run_id,
+        )
+        if registration is None:
+            raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
+        # 确认结果属于指定提交；当前可用性可能已由另一提交持有
+        requested_submission = submission_run_id or snapshot.head_run_id
+        submission = await self._repository.get_run(
+            thread_pk=thread.id, run_id=requested_submission
+        )
+        submission_result = None
+        if submission is not None and submission.resume_not_saved:
+            resume = submission.input_json.get("resume")
+            if not isinstance(resume, list):
+                raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
+            submitted_ids = tuple(
+                identifier
+                for entry in resume
+                if isinstance(entry, dict)
+                and isinstance(identifier := entry.get("interruptId"), str)
+                and identifier
+            )
+            if not submitted_ids or len(set(submitted_ids)) != len(resume):
+                raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
+            submission_result = ConversationSubmissionResult(
+                submissionRunId=submission.run_id,
+                interruptIds=tuple(sorted(submitted_ids)),
+            )
+        summary = snapshot.summary
+        interactions = {item.id: item for item in snapshot.interactions}
+        # Pending 项必须跨越可见 Turn 窗口保留，避免历史分页隐藏仍需用户处理的交互
+        interactions.update({item.id: item for item in summary.pending_interactions})
+        interrupt_ids = frozenset(
+            action.id
+            for item in interactions.values()
+            if item.status == "pending"
+            for action in item.agui or ()
+        )
+        plan_ids = frozenset(
+            action.id
+            for item in interactions.values()
+            for action in item.agui or ()
+            if action.reason
+            in {"tinkerfin:plan_clarification", "tinkerfin:plan_review"}
+        )
+        claims = await self._repository.list_interaction_claims(
+            thread_pk=thread.id,
+            interrupt_ids=interrupt_ids | plan_ids,
+            submission_run_id=requested_submission,
+        )
+        submitted_runs = await self._repository.get_runs(
+            thread_pk=thread.id,
+            run_ids=frozenset(
+                claim.claimed_run_id
+                for claim in claims
+                if claim.interrupt_id in plan_ids and claim.resolution_id
+            ),
+        )
+        claimed_ids = {claim.interrupt_id for claim in claims}
+        availability = [
+            ConversationInteractionAvailability(
+                interruptId=interrupt_id,
+                state="available",
+                submissionRunId=None,
+            )
+            for interrupt_id in sorted(interrupt_ids - claimed_ids)
+        ]
+        for claim in claims:
+            if claim.status == "claimed":
+                state = "confirming"
+            elif claim.status in {"resolved", "cancelled"} and claim.resolution_id:
+                state = "resolved" if claim.status == "resolved" else "cancelled"
+            else:
+                raise SystemException(ConversationErrorCode.TRACE_UNAVAILABLE)
+            availability.append(
+                ConversationInteractionAvailability(
+                    interruptId=claim.interrupt_id,
+                    state=state,
+                    submissionRunId=claim.claimed_run_id,
+                )
+            )
+        return ConversationHistoryDetail(
+            id=thread.id,
+            projectId=thread.project_id,
+            archived=thread.archived,
+            threadId=thread.thread_id,
+            title=thread.title,
+            titleSource=thread.title_source,
+            titleGenerationStatus=thread.title_generation_status,
+            titleSeq=thread.title_seq,
+            lastModel=registration.model_id,
+            accessMode=registration.access_mode,
+            pinned=thread.pinned,
+            asOfSeq=snapshot.as_of_seq,
+            generation=snapshot.generation,
+            observedAt=snapshot.observed_at,
+            headRunId=snapshot.head_run_id,
+            availableHeads=snapshot.available_heads,
+            historyCursor=snapshot.history_cursor,
+            messageCount=summary.message_count,
+            toolCallCount=summary.tool_call_count,
+            messages=snapshot.messages,
+            runFailures=visible_run_failures(
+                trace.projections[FAILURE_PROJECTION],
+                {item.run_id for item in snapshot.messages if _is_user_question(item)}
+                | {snapshot.head_run_id},
+            ),
+            reasoning=snapshot.reasoning,
+            graph=ConversationGraph.from_graph(snapshot.graph),
+            state=snapshot.state,
+            interactions=tuple(
+                sorted(
+                    interactions.values(),
+                    key=lambda item: (item.trace_seq, item.id),
+                )
+            ),
+            interactionAvailability=tuple(availability),
+            submissionResult=submission_result,
+            planResults=saved_plan_results(
+                claims, {run.run_id: run for run in submitted_runs}, plan_ids
+            ),
+            status=summary.status,
+            completeness=summary.completeness,
+            taskTrace=task_trace,
+            createdAt=thread.created_at,
+            updatedAt=thread.updated_at,
+        )
+
+    async def _require_thread(self, thread_id: str) -> ConversationThread:
+        thread = await self._repository.get_accessible_thread(
+            user_id=self._user_id,
+            thread_id=thread_id,
+        )
+        if thread is None:
+            raise BusinessException(ConversationErrorCode.NOT_FOUND)
+        return thread
+
+    @staticmethod
+    def _encode_cursor(
+        thread: ConversationThread,
+        *,
+        query: str | None = None,
+        project_id: str | None = None,
+        archived: bool = False,
+    ) -> str:
+        payload = json.dumps(
+            {
+                "pinned": thread.pinned,
+                "updatedAt": thread.updated_at.isoformat(),
+                "id": thread.id,
+                "query": query,
+                "projectId": project_id,
+                "archived": archived,
+            },
+            separators=(",", ":"),
+        )
+        return base64.urlsafe_b64encode(payload.encode()).decode()
+
+    @staticmethod
+    def _decode_cursor(
+        value: str | None,
+        *,
+        query: str | None = None,
+        project_id: str | None = None,
+        archived: bool = False,
+    ) -> tuple[bool, datetime, int] | None:
+        if value is None:
+            return None
+        try:
+            decoded = base64.b64decode(
+                value.encode(),
+                altchars=b"-_",
+                validate=True,
+            )
+            payload = _HistoryCursorPayload.model_validate_json(decoded, strict=True)
+            if (
+                payload.query != query
+                or payload.project_id != project_id
+                or payload.archived != archived
+            ):
+                raise ValueError("游标查询词与当前请求不一致")
+            return payload.pinned, payload.updated_at, payload.row_id
+        except (ValueError, TypeError, ValidationError):
+            raise BusinessException(ConversationErrorCode.INVALID_CURSOR) from None
+
+
+__all__ = ["ConversationHistoryService"]

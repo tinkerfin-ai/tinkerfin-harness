@@ -1,0 +1,507 @@
+[
+  {
+    "eventId": "event:1",
+    "traceSeq": 1,
+    "generation": "generation:multimodal",
+    "fact": {
+      "occurredAt": "2026-01-01T00:00:00.001000+00:00",
+      "monotonicNs": 1,
+      "sourceObservationId": "observation:1",
+      "identity": {
+        "namespace": "test",
+        "threadId": "thread:multimodal",
+        "runId": "run:multimodal"
+      },
+      "graphNamespace": [],
+      "kind": "run",
+      "phase": "started",
+      "inputKind": "ordinary",
+      "parentRunId": null,
+      "outcome": null,
+      "code": null,
+      "errorType": null,
+      "observerName": null,
+      "interruptIds": [],
+      "input": null,
+      "config": null
+    },
+    "persistedBytes": 1
+  },
+  {
+    "eventId": "event:2",
+    "traceSeq": 2,
+    "generation": "generation:multimodal",
+    "fact": {
+      "occurredAt": "2026-01-01T00:00:00.002000+00:00",
+      "monotonicNs": 2,
+      "sourceObservationId": "observation:2",
+      "identity": {
+        "namespace": "test",
+        "threadId": "thread:multimodal",
+        "runId": "run:multimodal"
+      },
+      "graphNamespace": [],
+      "kind": "turn.started",
+      "turnId": "turn:multimodal",
+      "userMessageId": "source:user",
+      "parentRunId": null
+    },
+    "persistedBytes": 1
+  },
+  {
+    "eventId": "event:5",
+    "traceSeq": 5,
+    "generation": "generation:multimodal",
+    "fact": {
+      "occurredAt": "2026-01-01T00:00:00.005000+00:00",
+      "monotonicNs": 5,
+      "sourceObservationId": "observation:5",
+      "identity": {
+        "namespace": "test",
+        "threadId": "thread:multimodal",
+        "runId": "run:multimodal"
+      },
+      "graphNamespace": [],
+      "kind": "message",
+      "phase": "reconciled",
+      "messageId": "message:user",
+      "sourceMessageId": "source:user",
+      "role": "user",
+      "content": {
+        "disposition": "inline",
+        "reason": null,
+        "safeSizeBytes": 835,
+        "value": [
+          {
+            "type": "text",
+            "text": "核对销售与库存，整理交付清单"
+          },
+          {
+            "type": "file",
+            "file_id": "attachment:0",
+            "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "extras": {
+              "attachment": {
+                "id": "attachment:0",
+                "name": "销售表.xlsx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "size_bytes": 64
+              }
+            }
+          },
+          {
+            "type": "file",
+            "file_id": "attachment:1",
+            "mime_type": "application/pdf",
+            "extras": {
+              "attachment": {
+                "id": "attachment:1",
+                "name": "库存.pdf",
+                "mime_type": "application/pdf",
+                "size_bytes": 64
+              }
+            }
+          },
+          {
+            "type": "file",
+            "file_id": "attachment:2",
+            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "extras": {
+              "attachment": {
+                "id": "attachment:2",
+                "name": "说明.docx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "size_bytes": 64
+              }
+            }
+          }
+        ]
+      },
+      "fingerprint": null,
+      "fromStateSnapshot": false,
+      "name": null,
+      "toolCallId": null
+    },
+    "persistedBytes": 1
+  },
+  {
+    "eventId": "event:55",
+    "traceSeq": 55,
+    "generation": "generation:multimodal",
+    "fact": {
+      "occurredAt": "2026-01-01T00:00:00.055000+00:00",
+      "monotonicNs": 55,
+      "sourceObservationId": "observation:55",
+      "identity": {
+        "namespace": "test",
+        "threadId": "thread:multimodal",
+        "runId": "run:multimodal"
+      },
+      "graphNamespace": [],
+      "kind": "tool",
+      "phase": "started",
+      "toolCallId": "tool:todos:1",
+      "sourceToolCallId": "call:todos:1",
+      "parentCallId": null,
+      "toolName": "write_todos",
+      "content": null,
+      "resultStatus": null
+    },
+    "persistedBytes": 1
+  },
+  {
+    "eventId": "event:68",
+    "traceSeq": 68,
+    "generation": "generation:multimodal",
+    "fact": {
+      "occurredAt": "2026-01-01T00:00:00.068000+00:00",
+      "monotonicNs": 68,
+      "sourceObservationId": "observation:68",
+      "identity": {
+        "namespace": "test",
+        "threadId": "thread:multimodal",
+        "runId": "run:multimodal"
+      },
+      "graphNamespace": [],
+      "kind": "tool",
+      "phase": "result",
+      "toolCallId": "tool:todos:1",
+      "sourceToolCallId": "call:todos:1",
+      "parentCallId": "model-call:4f53cda18c2baa0c0354bb5f:01a097e0-6564-7d13-b7a4-cac964a7d756",
+      "toolName": "write_todos",
+      "content": {
+        "disposition": "inline",
+        "reason": null,
+        "safeSizeBytes": 23,
+        "value": "已更新任务清单"
+      },
+      "resultStatus": "success"
+    },
+    "persistedBytes": 1
+  },
+  {
+    "eventId": "event:126",
+    "traceSeq": 126,
+    "generation": "generation:multimodal",
+    "fact": {
+      "occurredAt": "2026-01-01T00:00:00.126000+00:00",
+      "monotonicNs": 126,
+      "sourceObservationId": "observation:126",
+      "identity": {
+        "namespace": "test",
+        "threadId": "thread:multimodal",
+        "runId": "run:multimodal"
+      },
+      "graphNamespace": [],
+      "kind": "state.revision",
+      "revisionId": "revision:126",
+      "changes": {
+        "disposition": "inline",
+        "reason": null,
+        "safeSizeBytes": 305,
+        "value": {
+          "todos": [
+            {
+              "content": "核对事项 1",
+              "status": "completed"
+            },
+            {
+              "content": "核对事项 2",
+              "status": "in_progress"
+            },
+            {
+              "content": "核对事项 3",
+              "status": "pending"
+            },
+            {
+              "content": "核对事项 4",
+              "status": "pending"
+            },
+            {
+              "content": "核对事项 5",
+              "status": "pending"
+            },
+            {
+              "content": "核对事项 6",
+              "status": "pending"
+            }
+          ]
+        }
+      },
+      "removedKeys": []
+    },
+    "persistedBytes": 1
+  },
+  {
+    "eventId": "event:132",
+    "traceSeq": 132,
+    "generation": "generation:multimodal",
+    "fact": {
+      "occurredAt": "2026-01-01T00:00:00.132000+00:00",
+      "monotonicNs": 132,
+      "sourceObservationId": "observation:132",
+      "identity": {
+        "namespace": "test",
+        "threadId": "thread:multimodal",
+        "runId": "run:multimodal"
+      },
+      "graphNamespace": [],
+      "kind": "tool",
+      "phase": "started",
+      "toolCallId": "tool:todos:2",
+      "sourceToolCallId": "call:todos:2",
+      "parentCallId": null,
+      "toolName": "write_todos",
+      "content": null,
+      "resultStatus": null
+    },
+    "persistedBytes": 1
+  },
+  {
+    "eventId": "event:140",
+    "traceSeq": 140,
+    "generation": "generation:multimodal",
+    "fact": {
+      "occurredAt": "2026-01-01T00:00:00.140000+00:00",
+      "monotonicNs": 140,
+      "sourceObservationId": "observation:140",
+      "identity": {
+        "namespace": "test",
+        "threadId": "thread:multimodal",
+        "runId": "run:multimodal"
+      },
+      "graphNamespace": [],
+      "kind": "tool",
+      "phase": "result",
+      "toolCallId": "tool:todos:2",
+      "sourceToolCallId": "call:todos:2",
+      "parentCallId": "model-call:4f53cda18c2baa0c0354bb5f:01a097e0-ca91-7c52-99d0-32d57b84c103",
+      "toolName": "write_todos",
+      "content": {
+        "disposition": "inline",
+        "reason": null,
+        "safeSizeBytes": 23,
+        "value": "已更新任务清单"
+      },
+      "resultStatus": "success"
+    },
+    "persistedBytes": 1
+  },
+  {
+    "eventId": "event:142",
+    "traceSeq": 142,
+    "generation": "generation:multimodal",
+    "fact": {
+      "occurredAt": "2026-01-01T00:00:00.142000+00:00",
+      "monotonicNs": 142,
+      "sourceObservationId": "observation:142",
+      "identity": {
+        "namespace": "test",
+        "threadId": "thread:multimodal",
+        "runId": "run:multimodal"
+      },
+      "graphNamespace": [],
+      "kind": "state.revision",
+      "revisionId": "revision:142",
+      "changes": {
+        "disposition": "inline",
+        "reason": null,
+        "safeSizeBytes": 311,
+        "value": {
+          "todos": [
+            {
+              "content": "核对事项 1",
+              "status": "completed"
+            },
+            {
+              "content": "核对事项 2",
+              "status": "completed"
+            },
+            {
+              "content": "核对事项 3",
+              "status": "completed"
+            },
+            {
+              "content": "核对事项 4",
+              "status": "completed"
+            },
+            {
+              "content": "核对事项 5",
+              "status": "in_progress"
+            },
+            {
+              "content": "核对事项 6",
+              "status": "pending"
+            }
+          ]
+        }
+      },
+      "removedKeys": []
+    },
+    "persistedBytes": 1
+  },
+  {
+    "eventId": "event:161",
+    "traceSeq": 161,
+    "generation": "generation:multimodal",
+    "fact": {
+      "occurredAt": "2026-01-01T00:00:00.161000+00:00",
+      "monotonicNs": 161,
+      "sourceObservationId": "observation:161",
+      "identity": {
+        "namespace": "test",
+        "threadId": "thread:multimodal",
+        "runId": "run:multimodal"
+      },
+      "graphNamespace": [],
+      "kind": "tool",
+      "phase": "started",
+      "toolCallId": "tool:todos:3",
+      "sourceToolCallId": "call:todos:3",
+      "parentCallId": null,
+      "toolName": "write_todos",
+      "content": null,
+      "resultStatus": null
+    },
+    "persistedBytes": 1
+  },
+  {
+    "eventId": "event:169",
+    "traceSeq": 169,
+    "generation": "generation:multimodal",
+    "fact": {
+      "occurredAt": "2026-01-01T00:00:00.169000+00:00",
+      "monotonicNs": 169,
+      "sourceObservationId": "observation:169",
+      "identity": {
+        "namespace": "test",
+        "threadId": "thread:multimodal",
+        "runId": "run:multimodal"
+      },
+      "graphNamespace": [],
+      "kind": "tool",
+      "phase": "result",
+      "toolCallId": "tool:todos:3",
+      "sourceToolCallId": "call:todos:3",
+      "parentCallId": "model-call:4f53cda18c2baa0c0354bb5f:01a097e1-0861-7950-8fec-c9825f670107",
+      "toolName": "write_todos",
+      "content": {
+        "disposition": "inline",
+        "reason": null,
+        "safeSizeBytes": 23,
+        "value": "已更新任务清单"
+      },
+      "resultStatus": "success"
+    },
+    "persistedBytes": 1
+  },
+  {
+    "eventId": "event:171",
+    "traceSeq": 171,
+    "generation": "generation:multimodal",
+    "fact": {
+      "occurredAt": "2026-01-01T00:00:00.171000+00:00",
+      "monotonicNs": 171,
+      "sourceObservationId": "observation:171",
+      "identity": {
+        "namespace": "test",
+        "threadId": "thread:multimodal",
+        "runId": "run:multimodal"
+      },
+      "graphNamespace": [],
+      "kind": "state.revision",
+      "revisionId": "revision:171",
+      "changes": {
+        "disposition": "inline",
+        "reason": null,
+        "safeSizeBytes": 311,
+        "value": {
+          "todos": [
+            {
+              "content": "核对事项 1",
+              "status": "completed"
+            },
+            {
+              "content": "核对事项 2",
+              "status": "completed"
+            },
+            {
+              "content": "核对事项 3",
+              "status": "completed"
+            },
+            {
+              "content": "核对事项 4",
+              "status": "completed"
+            },
+            {
+              "content": "核对事项 5",
+              "status": "completed"
+            },
+            {
+              "content": "核对事项 6",
+              "status": "completed"
+            }
+          ]
+        }
+      },
+      "removedKeys": []
+    },
+    "persistedBytes": 1
+  },
+  {
+    "eventId": "event:178",
+    "traceSeq": 178,
+    "generation": "generation:multimodal",
+    "fact": {
+      "occurredAt": "2026-01-01T00:00:00.178000+00:00",
+      "monotonicNs": 178,
+      "sourceObservationId": "observation:178",
+      "identity": {
+        "namespace": "test",
+        "threadId": "thread:multimodal",
+        "runId": "run:multimodal"
+      },
+      "graphNamespace": [],
+      "kind": "run",
+      "phase": "terminal",
+      "inputKind": null,
+      "parentRunId": null,
+      "outcome": "succeeded",
+      "code": null,
+      "errorType": null,
+      "observerName": null,
+      "interruptIds": [],
+      "input": null,
+      "config": null
+    },
+    "persistedBytes": 1
+  },
+  {
+    "eventId": "event:179",
+    "traceSeq": 179,
+    "generation": "generation:multimodal",
+    "fact": {
+      "occurredAt": "2026-01-01T00:00:00.179000+00:00",
+      "monotonicNs": 179,
+      "sourceObservationId": "observation:179",
+      "identity": {
+        "namespace": "test",
+        "threadId": "thread:multimodal",
+        "runId": "run:multimodal"
+      },
+      "graphNamespace": [],
+      "kind": "run",
+      "phase": "closed",
+      "inputKind": null,
+      "parentRunId": null,
+      "outcome": "succeeded",
+      "code": null,
+      "errorType": null,
+      "observerName": null,
+      "interruptIds": [],
+      "input": null,
+      "config": null
+    },
+    "persistedBytes": 1
+  }
+]

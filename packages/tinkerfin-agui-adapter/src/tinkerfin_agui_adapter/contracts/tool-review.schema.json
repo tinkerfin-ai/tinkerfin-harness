@@ -1,0 +1,72 @@
+{
+  "$defs": {
+    "JsonObject": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "description": "JSON object validated before crossing a public boundary.",
+      "title": "JsonObject",
+      "type": "object"
+    },
+    "JsonValue": {}
+  },
+  "$id": "https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/packages/tinkerfin-agui-adapter/src/tinkerfin_agui_adapter/contracts/tool-review.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Persisted Tool review facts required for display and native resume.\n\nThe model is the complete public shape of `metadata.deepagents`. It is\nimmutable at the protocol boundary and does not contain host UI state,\ndatabase fields, or client-submitted decisions.",
+  "properties": {
+    "actionIndex": {
+      "description": "Action position within the native interrupt group",
+      "minimum": 0,
+      "title": "Actionindex",
+      "type": "integer"
+    },
+    "allowedDecisions": {
+      "description": "Decisions allowed for this exact action",
+      "items": {
+        "enum": [
+          "approve",
+          "edit",
+          "reject",
+          "respond"
+        ],
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Alloweddecisions",
+      "type": "array"
+    },
+    "nativeInterruptId": {
+      "description": "Native LangGraph interrupt group ID",
+      "minLength": 1,
+      "title": "Nativeinterruptid",
+      "type": "string"
+    },
+    "originalArgs": {
+      "$ref": "#/$defs/JsonObject",
+      "description": "Original reviewed Tool arguments as a JSON object"
+    },
+    "schema": {
+      "const": "tinkerfin.deepagents.tool-review",
+      "description": "Exact TinkerFin Tool review metadata schema",
+      "title": "Schema",
+      "type": "string"
+    },
+    "toolName": {
+      "description": "Reviewed Deep Agents Tool name",
+      "minLength": 1,
+      "title": "Toolname",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "nativeInterruptId",
+    "actionIndex",
+    "toolName",
+    "allowedDecisions",
+    "originalArgs"
+  ],
+  "title": "ToolReviewInterruptMetadata",
+  "type": "object"
+}

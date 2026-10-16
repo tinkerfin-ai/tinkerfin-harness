@@ -1,0 +1,51 @@
+[project]
+name = "tinkerfin-sandbox"
+version = "0.1.1"
+description = "Sandbox integration package for TinkerFin."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "deepagents>=0.7.19",
+    "httpx>=0.28.1,<1",
+    "langchain>=1.4.2,<2",
+    "langchain-core>=1.6.4,<2",
+    "opensandbox==0.1.16",
+    "pydantic>=2,<3",
+    "tinkerfin-contracts==0.1.1",
+    "tinkerfin-notifications==0.1.1",
+    "typing-extensions>=4.12.2,<5",
+]
+
+[project.optional-dependencies]
+sqlalchemy = [
+    "sqlalchemy[asyncio]==2.0.52",
+    "tinkerfin-sqlalchemy==0.1.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/tinkerfin-ai/tinkerfin-harness"
+Repository = "https://github.com/tinkerfin-ai/tinkerfin-harness"
+Issues = "https://github.com/tinkerfin-ai/tinkerfin-harness/issues"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tinkerfin_sandbox = ["py.typed"]
+"tinkerfin_sandbox.backends" = ["_rooted_helper.py.txt", "_workspace_files_helper.py.txt"]

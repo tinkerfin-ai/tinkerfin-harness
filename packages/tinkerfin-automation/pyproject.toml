@@ -1,0 +1,65 @@
+[project]
+name = "tinkerfin-automation"
+version = "0.1.1"
+description = "Durable scheduling and bounded execution for TinkerFin tasks."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "tinkerfin-notifications==0.1.1",
+    "langchain>=1.4.2,<2",
+    "langchain-core>=1.6.4,<2",
+    "pydantic>=2.12,<3",
+    "tinkerfin==0.1.1",
+    "tinkerfin-contracts==0.1.1",
+    "tinkerfin-native-stream==0.1.1",
+    "tzdata>=2025.2",
+]
+
+[project.optional-dependencies]
+gateway = [
+    "ag-ui-protocol==0.1.19",
+    "tinkerfin-agui-adapter==0.1.1",
+    "tinkerfin-gateway==0.1.1",
+    "tinkerfin-messaging[agui]==0.1.1",
+]
+sqlalchemy = [
+    "sqlalchemy[asyncio]==2.0.52",
+    "tinkerfin-sqlalchemy==0.1.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/tinkerfin-ai/tinkerfin-harness"
+Repository = "https://github.com/tinkerfin-ai/tinkerfin-harness"
+Issues = "https://github.com/tinkerfin-ai/tinkerfin-harness/issues"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tinkerfin_automation = ["py.typed"]
+
+[tool.uv.sources]
+tinkerfin-notifications = { workspace = true }
+tinkerfin-contracts = { workspace = true }
+tinkerfin-native-stream = { workspace = true }
+tinkerfin = { workspace = true }
+tinkerfin-sqlalchemy = { workspace = true }
+tinkerfin-gateway = { workspace = true }
+tinkerfin-agui-adapter = { workspace = true }
+tinkerfin-messaging = { workspace = true }

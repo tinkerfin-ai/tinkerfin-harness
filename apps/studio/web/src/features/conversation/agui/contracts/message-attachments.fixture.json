@@ -1,0 +1,205 @@
+{
+  "attachment": {
+    "id": "fixture-image",
+    "mime_type": "image/png",
+    "name": "chart.png",
+    "size_bytes": 42
+  },
+  "events": [
+    {
+      "rawEvent": {
+        "langgraphNode": "tools",
+        "runId": "run-media",
+        "source": {
+          "agentName": "main",
+          "agentType": "main",
+          "graphNamespace": [],
+          "kind": "root"
+        },
+        "streamMode": "messages",
+        "toolResultStatus": "success"
+      },
+      "toolCallId": "tf:tool:W1tdLCJtZWRpYS1jYWxsIl0",
+      "toolCallName": "picture",
+      "type": "TOOL_CALL_START"
+    },
+    {
+      "rawEvent": {
+        "langgraphNode": "tools",
+        "runId": "run-media",
+        "source": {
+          "agentName": "main",
+          "agentType": "main",
+          "graphNamespace": [],
+          "kind": "root"
+        },
+        "streamMode": "messages",
+        "toolResultStatus": "success"
+      },
+      "toolCallId": "tf:tool:W1tdLCJtZWRpYS1jYWxsIl0",
+      "type": "TOOL_CALL_END"
+    },
+    {
+      "attachments": [
+        {
+          "id": "fixture-image",
+          "mime_type": "image/png",
+          "name": "chart.png",
+          "size_bytes": 42
+        }
+      ],
+      "content": "",
+      "messageId": "tf:message:W1tdLCJ0b29sLXJlc3VsdDptZWRpYS1jYWxsIl0",
+      "rawEvent": {
+        "langgraphNode": "tools",
+        "runId": "run-media",
+        "source": {
+          "agentName": "main",
+          "agentType": "main",
+          "graphNamespace": [],
+          "kind": "root"
+        },
+        "streamMode": "messages",
+        "toolResultStatus": "success"
+      },
+      "role": "tool",
+      "toolCallId": "tf:tool:W1tdLCJtZWRpYS1jYWxsIl0",
+      "type": "TOOL_CALL_RESULT"
+    },
+    {
+      "messageId": "tf:message:W1tdLCJhbnN3ZXIiXQ",
+      "name": "main",
+      "rawEvent": {
+        "langgraphNode": "model",
+        "runId": "run-media",
+        "source": {
+          "agentName": "main",
+          "agentType": "main",
+          "graphNamespace": [],
+          "kind": "root"
+        },
+        "streamMode": "messages"
+      },
+      "role": "assistant",
+      "type": "TEXT_MESSAGE_START"
+    },
+    {
+      "name": "tinkerfin.message.attachments",
+      "rawEvent": {
+        "langgraphNode": "model",
+        "runId": "run-media",
+        "source": {
+          "agentName": "main",
+          "agentType": "main",
+          "graphNamespace": [],
+          "kind": "root"
+        },
+        "streamMode": "messages"
+      },
+      "type": "CUSTOM",
+      "value": {
+        "attachments": [
+          {
+            "id": "fixture-image",
+            "mime_type": "image/png",
+            "name": "chart.png",
+            "size_bytes": 42
+          }
+        ],
+        "messageId": "tf:message:W1tdLCJhbnN3ZXIiXQ"
+      }
+    },
+    {
+      "delta": "Generated chart",
+      "messageId": "tf:message:W1tdLCJhbnN3ZXIiXQ",
+      "rawEvent": {
+        "langgraphNode": "model",
+        "runId": "run-media",
+        "source": {
+          "agentName": "main",
+          "agentType": "main",
+          "graphNamespace": [],
+          "kind": "root"
+        },
+        "streamMode": "messages"
+      },
+      "type": "TEXT_MESSAGE_CONTENT"
+    },
+    {
+      "messageId": "tf:message:W1tdLCJhbnN3ZXIiXQ",
+      "rawEvent": {
+        "langgraphNode": "model",
+        "runId": "run-media",
+        "source": {
+          "agentName": "main",
+          "agentType": "main",
+          "graphNamespace": [],
+          "kind": "root"
+        },
+        "streamMode": "messages"
+      },
+      "type": "TEXT_MESSAGE_END"
+    }
+  ],
+  "snapshots": [
+    {
+      "messages": [
+        {
+          "attachments": [
+            {
+              "id": "fixture-image",
+              "mime_type": "image/png",
+              "name": "chart.png",
+              "size_bytes": 42
+            }
+          ],
+          "content": "",
+          "id": "tf:message:W1tdLCJzdGF0ZS1tZXNzYWdlLTAiXQ",
+          "role": "tool",
+          "toolCallId": "tf:tool:W1tdLCJtZWRpYS1jYWxsIl0"
+        },
+        {
+          "additional_kwargs": {},
+          "attachments": [
+            {
+              "id": "fixture-image",
+              "mime_type": "image/png",
+              "name": "chart.png",
+              "size_bytes": 42
+            }
+          ],
+          "content": "Generated chart",
+          "id": "tf:message:W1tdLCJhbnN3ZXIiXQ",
+          "response_metadata": {},
+          "role": "assistant"
+        }
+      ],
+      "rawEvent": {
+        "runId": "run-media",
+        "source": {
+          "agentName": "main",
+          "agentType": "main",
+          "graphNamespace": [],
+          "kind": "root"
+        },
+        "streamMode": "values"
+      },
+      "type": "MESSAGES_SNAPSHOT"
+    }
+  ],
+  "toolContent": [
+    {
+      "extras": {
+        "attachment": {
+          "id": "fixture-image",
+          "mime_type": "image/png",
+          "name": "chart.png",
+          "size_bytes": 42
+        }
+      },
+      "file_id": "fixture-image",
+      "mime_type": "image/png",
+      "type": "image"
+    }
+  ]
+}

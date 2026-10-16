@@ -1,0 +1,115 @@
+@layer workspace {
+  .conversation-region:has(.conversation-navigation) { container-type: inline-size; }
+  .conversation-region:has(.conversation-navigation) .user-message { scroll-margin-top: var(--space-6); }
+  .conversation-navigation {
+    position: absolute;
+    top: var(--space-4);
+    bottom: calc(var(--composer-height) + var(--space-4));
+    right: var(--space-3);
+    width: var(--control-lg);
+    min-height: 0;
+    pointer-events: none;
+    z-index: var(--layer-dropdown);
+    display: flex;
+    align-items: center;
+  }
+  .workspace-main:has(.composer-dock.is-taken-over) .conversation-navigation { bottom: var(--space-4); }
+  .conversation-navigation-mobile {
+    pointer-events: auto;
+    border-radius: var(--radius-button);
+    background: var(--color-layer-1);
+    box-shadow: var(--shadow-1);
+  }
+  .conversation-navigation-mobile .ui-icon-button {
+    width: var(--control-lg);
+    height: var(--control-lg);
+    min-height: var(--control-lg);
+    color: var(--color-brand-text);
+  }
+  .conversation-navigation-rail { display: none; }
+  .conversation-navigation-dialog { max-width: var(--layout-form-width); }
+  .conversation-navigation-list {
+    display: grid;
+    gap: var(--space-1);
+    padding: 0 var(--space-3) var(--space-3);
+    max-height: 60dvh;
+    overflow: auto;
+  }
+  .conversation-navigation-item {
+    text-align: left;
+    justify-content: flex-start;
+    min-height: var(--control-lg);
+    padding: var(--space-3);
+    width: 100%;
+  }
+  .conversation-navigation-item .ui-button__label { min-width: 0; width: 100%; }
+  .conversation-navigation-item strong,
+  .conversation-navigation-item span:not(.ui-button__label) {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+  .conversation-navigation-item strong {
+    font-size: var(--type-ui-size);
+    line-height: var(--type-ui-line);
+    font-weight: var(--weight-ui);
+  }
+  .conversation-navigation-item span:not(.ui-button__label) {
+    margin: var(--space-1) 0 0;
+    color: var(--color-text-secondary);
+    font-size: var(--type-meta-size);
+    line-height: var(--type-meta-line);
+  }
+  @container (min-width: 1024px) {
+    @media (hover: hover) and (pointer: fine) {
+      .conversation-navigation-mobile { display: none; }
+      .conversation-navigation-rail {
+        position: relative;
+        display: block;
+        width: 100%;
+        max-height: calc(var(--control-lg) * 9);
+        pointer-events: auto;
+      }
+    }
+  }
+  .conversation-navigation-mark {
+    position: absolute;
+    right: 0;
+    width: 100%;
+    height: calc(var(--space-2) + var(--space-0-5));
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    transform: translateY(-50%);
+  }
+  .conversation-navigation-mark::after {
+    content: '';
+    position: absolute;
+    right: var(--space-2);
+    top: 50%;
+    width: var(--space-5);
+    height: var(--space-0-5);
+    transform: scaleX(.6);
+    transform-origin: right;
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--color-brand) 45%, transparent);
+    transition: transform var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out);
+  }
+  .conversation-navigation-mark.is-preview::after,
+  .conversation-navigation-mark:hover::after { transform: scaleX(.8); background: var(--color-brand); }
+  .conversation-navigation-mark.is-current::after,
+  .conversation-navigation-mark:active::after { transform: scaleX(1); background: var(--color-brand); }
+  .conversation-navigation-mark:focus-visible { outline: 2px solid var(--color-focus); outline-offset: var(--space-0-5); }
+  .conversation-navigation-mark:disabled { opacity: .5; cursor: default; }
+  @media (prefers-reduced-motion: reduce) {
+    .conversation-navigation-mark::after { transition: none; }
+  }
+  @media (forced-colors: active) {
+      .conversation-navigation-mark::after { background: ButtonText; }
+    .conversation-navigation-mark.is-current::after { background: Highlight; }
+  }
+}

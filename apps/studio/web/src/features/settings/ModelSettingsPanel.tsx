@@ -1,0 +1,89 @@
+import { useRef, useState } from 'react'
+import { Cpu, KeyRound, Link2, MessageSquare, Monitor, Plus, RefreshCw, Search, Settings2, SlidersHorizontal, Star } from 'lucide-react'
+import { Breadcrumbs, Button, FeedbackState, IconButton, OverlayScrollbar, TextField, Tooltip } from '../../components/ui'
+import { useI18n } from '../../i18n'
+import { ImageInputStatus } from './ImageInputCapability'
+import { ModelConnectionForm } from './ModelConnectionForm'
+import { ModelConfigurationForm } from './ModelConfigurationForm'
+import { ModelDiscoveryPanel } from './ModelDiscoveryPanel'
+import { ModelProviderSplit } from './ModelProviderSplit'
+import { newModel, useModelSettings, type ModelSettings } from './useModelSettings'
+import './model-settings.css'
+import './model-connections.css'
+
+export function ModelSettingsPanel({ onChanged }: { onChanged?: () => void }) {
+  const { t } = useI18n()
+  const state = useModelSettings(onChanged)
+  const [selected, setSelected] = useState<string>()
+  const [search, setSearch] = useState('')
+  const [view, setView] = useState<'list' | 'new' | 'connection' | 'model' | 'discovery'>('list')
+  const [editing, setEditing] = useState<ModelSettings>()
+  const modelViewport = useRef<HTMLDivElement>(null)
+  const query = search.trim().toLowerCase()
+  const providers = state.connections.map(connection => {
+    const models = state.models.filter(model => model.connection_id === connection.connection_id)
+    const providerMatches = connection.display_name.toLowerCase().includes(query)
+    const matches = providerMatches ? models : models.filter(model => model.display_name.toLowerCase().includes(query) || model.model_name.toLowerCase().includes(query))
+    return { connection, models, matches, visible: providerMatches || matches.length > 0 }
+  }).filter(provider => provider.visible)
+  const activeProvider = providers.find(provider => provider.connection.connection_id === selected) ?? providers[0]
+  const connection = activeProvider?.connection
+  const models = activeProvider?.models ?? []
+  const matchingModels = activeProvider?.matches ?? []
+  const close = () => { setView('list'); setEditing(undefined) }
+  const editModel = (model: ModelSettings) => { setEditing(model); setView('model') }
+  const defaultModel = state.models.find(model => model.is_default)
+  return <section className="settings-section settings-models settings-model-connections">
+    <div className="settings-models__toolbar">
+      <Breadcrumbs label={t('模型配置导航')} size="md" disabled={state.saving} items={[
+        { label: t('模型配置'), onNavigate: close },
+        ...(view === 'list' ? [] : view === 'new' ? [{ label: t('添加提供方') }]
+          : view === 'connection' ? [{ label: connection?.display_name ?? '' }]
+            : [{ label: connection?.display_name ?? '', onNavigate: close }, { label: view === 'discovery' ? t('获取模型') : editing?.display_name || t('添加模型') }]),
+      ]} />
+      {view === 'list' && <Button type="button" size="xs" variant="primary" leadingIcon={<Plus size={14} />} disabled={state.loading || state.saving || state.loadFailed} onClick={() => setView('new')}>{t('添加提供方')}</Button>}
+    </div>
+    <div key={view} className={view === 'list' ? 'settings-models__overview' : 'settings-models__page'}>
+      {view === 'new' || (view === 'connection' && connection) ? <ModelConnectionForm key={view === 'new' ? 'new' : connection?.connection_id} connection={view === 'new' ? undefined : connection} presets={state.presets} modelCount={models.length} saving={state.saving} onCancel={close} onSave={async value => { const saved = await state.saveConnection(value); if (saved) { setSelected(value.connection_id); setSearch('') }; return saved }} onRemove={state.removeConnection} />
+        : view === 'model' && editing && connection ? <ModelConfigurationForm key={editing.model_id} model={editing} connection={connection} existing={state.models.some(model => model.model_id === editing.model_id)} saving={state.saving} onSave={state.save} onRemove={state.remove} onCancel={close} />
+          : view === 'discovery' && connection ? <ModelDiscoveryPanel connection={connection} models={models} saving={state.saving} onAdd={state.addModels} onManual={() => editModel(newModel(connection.connection_id))} onCancel={close} />
+            : <>
+              {state.loadFailed ? <div role="status"><p>{t('模型加载失败，请先重试')}</p><Button type="button" onClick={state.reload}>{t('重新加载模型')}</Button></div> : state.loading ? <FeedbackState kind="loading" title={t('正在加载模型配置')} /> : state.connections.length === 0 ? <div className="settings-models__empty"><Cpu size={28} /><h4>{t('连接你的第一个模型服务')}</h4><p>{t('添加云端提供方，或连接本地 Ollama')}</p><Button type="button" onClick={() => setView('new')}>{t('添加提供方')}</Button></div> : <>
+                <div className="settings-models__default"><MessageSquare size={14} /><span>{t('默认对话模型')}</span><strong>{defaultModel?.display_name ?? t('未设置')}</strong></div>
+                <ModelProviderSplit sidebar={<>
+                  <TextField shape="standard" fieldSize="md" rootClassName="settings-models__search" label={<span className="visually-hidden">{t('搜索提供方或模型')}</span>} placeholder={t('搜索提供方或模型')} value={search} leadingContent={<Search size={14} />} onChange={event => setSearch(event.target.value)} />
+                  <nav className="settings-models__providers" aria-label={t('提供方')}>
+                  {providers.map(({ connection: item, matches }) => {
+                    const Icon = item.api_type === 'ollama' ? Monitor : Cpu
+                    return <Tooltip key={item.connection_id} content={item.display_name}><button type="button" className={`settings-models__provider${connection?.connection_id === item.connection_id ? ' is-selected' : ''}`} aria-current={connection?.connection_id === item.connection_id ? 'true' : undefined} onClick={() => setSelected(item.connection_id)}><Icon size={18} /><span><strong>{item.display_name}</strong><small>{t('{count} 个模型', { count: matches.length })}</small></span></button></Tooltip>
+                  })}
+                </nav></>}>{connection ? <section className="settings-models__detail" aria-label={connection.display_name}>
+                  <div className="settings-models__provider-heading"><h4>{connection.display_name}</h4><Button type="button" size="xs" variant="text" leadingIcon={<Settings2 size={14} />} onClick={() => setView('connection')}>{t('连接设置')}</Button></div>
+                  <div className="settings-models__connection-meta"><span><Link2 size={13} />{connection.base_url}</span><span><KeyRound size={13} />{t(connection.auth_type === 'none' ? '无需认证' : '已配置密钥')}</span></div>
+                  <div className="settings-models__list-heading"><div className="settings-models__row-actions"><Button type="button" size="xs" leadingIcon={<RefreshCw size={13} />} onClick={() => setView('discovery')}>{t('获取模型')}</Button><Button type="button" size="xs" leadingIcon={<Plus size={13} />} onClick={() => editModel(newModel(connection.connection_id))}>{t('手动添加')}</Button></div></div>
+                  <div className="settings-models__list-shell"><div className="settings-models__list-scroll ui-scrollbar" role="region" aria-label={t('模型列表')} ref={modelViewport}>
+                  <section className="settings-models__group" aria-label={t('对话模型')}>
+                      {matchingModels.map(model => {
+                        const action = '设为默认对话'
+                        return <div key={model.model_id} className="settings-models__row">
+                          <div className="settings-models__identity">
+                            <strong>{model.display_name}{model.is_default && <span className="settings-models__badge">{t('默认对话')}</span>}</strong>
+                            <small>{model.model_name}</small>
+                            <small>{model.image_input_capability && <ImageInputStatus capability={model.image_input_capability} />}{model.reasoning_enabled ? ` · ${t('推理')}` : ''}{!model.enabled ? ` · ${t('已停用')}` : ''}</small>
+                          </div>
+                          <div className="settings-models__row-actions">
+                            <IconButton type="button" variant="ghost" size="xs" label={`${t(action)} ${model.display_name}`} tooltip={t(action)} disabled={state.saving || model.is_default} onClick={() => { void state.makeDefault(model.model_id) }} icon={<Star size={15} />} />
+                            <IconButton type="button" variant="ghost" size="xs" label={t('配置模型 {name}', { name: model.display_name })} tooltip={t('模型设置')} disabled={state.saving} onClick={() => editModel(model)} icon={<SlidersHorizontal size={15} />} />
+                            <Button type="button" variant="ghost" size="xs" role="switch" aria-checked={model.enabled} aria-label={t('启用模型 {name}', { name: model.display_name })} disabled={state.saving || model.is_default} onClick={() => { void state.save({ ...model, enabled: !model.enabled }) }}><span className={`settings-models__switch${model.enabled ? ' is-enabled' : ''}`} /></Button>
+                          </div>
+                        </div>
+                      })}
+                  </section>
+                  {models.length === 0 && <div className="settings-models__empty"><p>{t('还没有添加模型')}</p><span>{t('获取可用模型，或手动填写 Model ID')}</span></div>}
+                  </div><OverlayScrollbar viewportRef={modelViewport} /></div>
+                </section> : <div className="settings-models__empty" role="status"><p>{t('没有匹配的提供方或模型')}</p><Button type="button" onClick={() => setSearch('')}>{t('清除搜索')}</Button></div>}</ModelProviderSplit>
+              </>}
+            </>}
+    </div>
+  </section>
+}

@@ -1,0 +1,16 @@
+{
+  "actionIndex": 0,
+  "allowedDecisions": [
+    "approve",
+    "edit",
+    "reject",
+    "respond"
+  ],
+  "nativeInterruptId": "fixture-native-interrupt",
+  "originalArgs": {
+    "content": "fixture",
+    "file_path": "/workspace/report.md"
+  },
+  "schema": "tinkerfin.deepagents.tool-review",
+  "toolName": "write_file"
+}

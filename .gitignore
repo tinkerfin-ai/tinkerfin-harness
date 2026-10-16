@@ -1,0 +1,52 @@
+# OS
+.DS_Store
+
+# Local environment
+.env
+.env.*
+!.env.example
+/*.sh
+.venv/
+/.pnpm-store/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+dist/
+build/
+*.egg-info/
+.uv-cache/
+/.cache/
+
+# Runtime data
+*.log
+
+# IDE
+.idea/
+.vscode/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Local databases
+*.db
+
+# Local AI tooling
+**/.learnings/
+**/.agents/
+**/.impeccable/
+**/.codex/
+**/.claude/
+**/*superpowers*/
+**/.mcp.json
+**/AGENTS.md
+**/CLAUDE.md
+
+# Local design prototypes
+/apps/studio/web/designs/

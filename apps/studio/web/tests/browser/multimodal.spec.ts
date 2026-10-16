@@ -1,0 +1,190 @@
+import { installProjectScope } from './fixtures/projects'
+import { installNotificationStream } from './fixtures/notifications'
+import { mockDownloadPermits } from './support/attachment-storage'
+import { measureBounds } from './support/geometry'
+import { test, expect } from '@playwright/test'
+import { resolve } from 'node:path'
+import history from './fixtures/multimodal-history.json' with { type: 'json' }
+
+const sample = resolve(process.cwd(), 'tests/browser/fixtures/multimodal.png')
+
+const user = {
+  user_id: 1,
+  username: 'multimodal-test',
+  avatar_url: null,
+  roles: [],
+  disabled: false,
+}
+const models = [
+  {
+    model_id: 'flash',
+    display_name: 'DeepSeek-V4-Flash',
+    reasoning_enabled: true,
+    is_default: false,
+  },
+  {
+    model_id: 'vision',
+    display_name: 'DeepSeek-V4-Flash-Vision-Exp',
+    reasoning_enabled: true,
+    is_default: true,
+  },
+]
+
+test('附件发送失败保留输入与待发送图片', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.addInitScript(
+    (user) =>
+      localStorage.setItem(
+        'tinkerfin.auth.session',
+        JSON.stringify({
+          token: 'browser-test-token',
+          serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer',
+          expiresAt: '2099-01-01T00:00:00.000Z',
+          user,
+        }),
+      ),
+    user,
+  )
+  await page.route('**/{api,objects}/**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    let data: unknown = {}
+    if (path === '/api/auth/me')
+      data = { expires_at: '2099-01-01T00:00:00.000Z', user }
+    else if (path === '/api/skills/installations') data = []
+    else if (path === '/api/models')
+      data = {
+        items: models.map((model) => ({
+          modelId: model.model_id,
+          displayName: model.display_name,
+          connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: model.reasoning_enabled,
+
+          isDefault: model.is_default,
+        })),
+        defaultModelId: 'vision',
+      }
+    else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
+    else if (path === '/api/conversation/history')
+      data = { items: [], nextCursor: null }
+    else if (path === '/api/attachments/uploads')
+      data = { attachment_id: 'test-image', url: new URL('/objects/upload', route.request().url()).href, fields: {}, expires_in: 600 }
+    else if (path === '/objects/upload') { await route.fulfill({ status: 204 }); return }
+    else if (path === '/api/attachments/test-image/complete')
+      data = { id: 'test-image', name: 'multimodal.png', mime_type: 'image/png', size_bytes: 1494354 }
+    else if (path === '/objects/test-image') {
+      await route.fulfill({ path: sample, contentType: 'image/png' })
+      return
+    } else if (path === '/api/conversation/chat') {
+      await route.fulfill({
+        status: 422,
+        json: { code: 422, message: '发送失败，请保留草稿重试', data: null },
+      })
+      return
+    } else if (route.request().method() === 'DELETE') {
+      await route.fulfill({ json: { code: 0, message: 'success', data: null } })
+      return
+    }
+    await route.fulfill({ json: { code: 0, message: 'success', data } })
+  })
+  await mockDownloadPermits(page)
+  await installNotificationStream(page)
+  await installProjectScope(page)
+  await page.goto('/')
+  await page.locator('input[type=file]').setInputFiles(sample)
+  await expect(page.getByLabel('待发送附件').getByRole('img', { name: 'multimodal.png', exact: true })).toBeVisible()
+  await page.getByRole('textbox', { name: '消息输入' }).fill('这张图里是什么？')
+  await expect(
+    page.getByRole('button', { name: '发送消息', exact: true }),
+  ).toBeEnabled()
+  await page.getByRole('button', { name: '发送消息', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: '消息输入' })).toHaveValue(
+    '这张图里是什么？',
+  )
+  await expect(page.getByText('multimodal.png').first()).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+test('历史消息中用户图片在提示词前、工具图片在工具行后，支持预览下载与引用', async ({ page }, testInfo) => {
+  const inputText = '参考这张图片，生成一张柱状图'
+  const inputContent = [
+    { type: 'text', text: inputText },
+    { type: 'image', file_id: 'input-chart', mime_type: 'image/png', extras: { attachment: { id: 'input-chart', name: '参考图.png', mime_type: 'image/png', size_bytes: 100 } } },
+  ]
+  const displayHistory = {
+    ...history,
+    messages: history.messages.map(message => message.role === 'user' ? { ...message, content: inputContent } : message),
+    graph: { ...history.graph, nodes: history.graph.nodes.map(node => node.kind === 'human_message' ? { ...node, content: inputContent } : node) },
+  }
+  await page.addInitScript(user => localStorage.setItem('tinkerfin.auth.session', JSON.stringify({ token: 'browser-token', serverAddress: 'http://127.0.0.1:8090', tokenType: 'Bearer', expiresAt: '2099-01-01T00:00:00.000Z', user })), user)
+  await page.route('**/{api,objects}/**', async route => {
+    const url = new URL(route.request().url())
+    const path = url.pathname
+    let data: unknown = {}
+    if (path === '/api/auth/me') data = { expires_at: '2099-01-01T00:00:00.000Z', user }
+    else if (path === '/api/skills/installations') data = []
+    else if (path === '/api/models') data = { items: [{ modelId: history.lastModel, displayName: 'DeepSeek Vision',connectionId: 'test-provider', connectionDisplayName: '测试提供方', reasoningEnabled: true, isDefault: true }], defaultModelId: history.lastModel }
+    else if (path === '/api/conversation/config') data = { dayRanges: [7, 30] }
+    else if (path === '/api/conversation/history') data = { items: [{ ...history, status: 'idle', hasPendingInterrupt: false, updatedAt: new Date().toISOString() }], nextCursor: null }
+    else if (path === `/api/conversation/${history.threadId}/history`) data = displayHistory
+    else if (path === `/api/conversation/${history.threadId}/trace`) {
+      await route.fulfill({ contentType: 'text/event-stream', body: `event: trace\ndata: ${JSON.stringify({ type: 'snapshot', snapshot: displayHistory })}\n\n` }); return
+    } else if (path.startsWith('/objects/')) {
+      await route.fulfill({ path: resolve(process.cwd(), 'tests/browser/fixtures/chart.png'), contentType: 'image/png' }); return
+    }
+    await route.fulfill({ json: { code: 0, message: 'success', data } })
+  })
+  await mockDownloadPermits(page)
+  await installNotificationStream(page)
+  await installProjectScope(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: `打开会话：${history.title}`, exact: true }).click()
+  const preview = page.getByRole('button', { name: '放大图片：验收图表.png', exact: true })
+  await expect(preview).toBeEnabled()
+  const inputPreview = page.getByRole('button', { name: '放大图片：参考图.png', exact: true })
+  await expect(inputPreview).toBeEnabled()
+  const toolSummary = page.locator('details[data-tool-name="create_file"] > summary')
+  await expect(toolSummary).toBeVisible()
+  const toolImage = preview.getByRole('img')
+  const originalSource = await toolImage.getAttribute('src')
+  await toolSummary.click()
+  await expect(preview).toBeVisible()
+  expect(await toolImage.getAttribute('src')).toBe(originalSource)
+  await toolSummary.click()
+  await expect(preview).toBeVisible()
+  expect(await toolImage.getAttribute('src')).toBe(originalSource)
+  await preview.click()
+  await expect(page.getByRole('dialog').getByRole('img', { name: '验收图表.png', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '关闭对话框', exact: true }).click()
+  await expect(preview).toBeFocused()
+  await preview.hover()
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: '下载附件：验收图表.png', exact: true }).click()
+  expect((await download).suggestedFilename()).toBe('验收图表.png')
+  await page.getByRole('button', { name: '引用附件：验收图表.png', exact: true }).click()
+  await expect(page.getByLabel('待发送附件').getByRole('img', { name: '验收图表.png' })).toBeVisible()
+  for (const theme of ['light', 'dark']) {
+    await page.getByRole('button', { name: '打开用户菜单' }).click()
+    await page.getByRole('menuitem', { name: '设置' }).click()
+    await page.getByRole('button', { name: '通用', exact: true }).click()
+    await page.getByText(theme === 'dark' ? '深色' : '浅色', { exact: true }).click()
+    await page.getByRole('button', { name: '关闭对话框', exact: true }).click()
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 960 })
+      await inputPreview.scrollIntoViewIfNeeded()
+      const [inputBounds, promptBounds, userBounds] = await measureBounds(
+        inputPreview,
+        page.getByText(inputText, { exact: true }),
+        page.getByRole('article').filter({ has: inputPreview }),
+      )
+      expect(inputBounds.y + inputBounds.height).toBeLessThanOrEqual(promptBounds.y)
+      expect(inputBounds.x + inputBounds.width).toBeCloseTo(userBounds.x + userBounds.width, 0)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
+      await page.screenshot({ path: testInfo.outputPath(`input-${theme}-${width}.png`) })
+      await preview.scrollIntoViewIfNeeded()
+      const [toolBounds, imageBounds] = await measureBounds(toolSummary, preview)
+      expect(toolBounds.y + toolBounds.height).toBeLessThanOrEqual(imageBounds.y)
+      await page.screenshot({ path: testInfo.outputPath( `media-${theme}-${width}.png`) })
+    }
+  }
+})

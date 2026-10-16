@@ -1,0 +1,114 @@
+# Try Studio
+
+[Quick Start](../quick_start.md) · [中文](../../cn/studio/quick_start.md)
+
+## Prerequisites
+
+- Docker, Docker Compose 2.24+, and Bash; use WSL on Windows
+- Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- Node.js 20.19+ (20.x), 22.12+ (22.x), or 24+, and pnpm 10.8.0
+- A model provider endpoint, model name, and API key
+
+Docker runs MySQL, Redis, OpenSandbox, and MinIO. Run the Studio backend and Web client on your machine.
+
+## Start the backend
+
+Prepare dependencies and local configuration with one command, then start the Python backend:
+
+```bash
+git clone https://github.com/tinkerfin-ai/tinkerfin-harness.git
+cd tinkerfin-harness
+./apps/studio/server/deploy/start.sh --local
+uv sync --package tinkerfin-studio --locked
+uv run --package tinkerfin-studio python -m tinkerfin_studio
+```
+
+The first start creates `apps/studio/.env`. Repeated runs reuse configuration and data. Adjust this file first if a port is occupied.
+
+After startup: [readiness](http://127.0.0.1:8090/health/ready) · [API docs (Swagger)](http://127.0.0.1:8090/docs). First use may require downloading the runtime image.
+
+To run the backend and its dependencies in containers, use the following command with the same `.env`. Python and uv are not required on the host:
+
+```bash
+./apps/studio/server/deploy/start.sh --container
+```
+
+To choose your own passwords, change deployment addresses, or connect to existing services, see [server deployment](../../../apps/studio/server/README.md).
+
+## Start the Web client
+
+Open another terminal at the repository root:
+
+```bash
+cd apps/studio/web
+corepack enable
+corepack prepare pnpm@10.8.0 --activate
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+Open the address printed in the terminal, normally `http://localhost:5190`. The login page accepts a server address; leaving it blank connects to `http://127.0.0.1:8090`. The browser saves the address automatically. The backend allows any frontend origin. An HTTPS page requires an HTTPS server.
+
+## Sign in and configure a model
+
+Initializing a new database creates this account:
+
+| Field | Value |
+| --- | --- |
+| Username | `tinkerfin` |
+| Password | `123456` |
+
+Existing deployments use their existing account and password. There is no public registration endpoint.
+
+Each account manages its own projects, model and service connections, and personal skills library. After signing in for the first time, choose Create project and enter a name. Use the selector at the top of the sidebar to switch projects or create another.
+
+Conversations, workspace files, long-term memory, and scheduled tasks belong to the current project. Conversations in the same project share files and memory. Install skills for all your projects or for one project; a project skill takes precedence over a personal skill with the same name.
+
+Open the user menu at the bottom left, select Models, and choose Add provider. Select a provider or custom service, enter its URL and authentication, and save the connection.
+
+Select that connection and use Fetch models, or enter the provider's Model ID manually. Enable a chat model, make it the default, and send “Hello” to check the connection.
+
+For Ollama, start the service and install a model first. Select the native Ollama API; no placeholder key is needed. Public, local, and private-network HTTP/HTTPS addresses are supported when reachable from the backend. Container deployments need an address reachable from the container; see the [server guide](../../../apps/studio/server/README.md).
+
+To use web search or an image generation service, configure it under Settings → Services. Saving applies the configuration immediately; Test search and Test image make real requests that may consume credits.
+
+## Continue across clients
+
+Sign in to the same account in another browser or on another device, then select the same project to follow conversations and run status. Other clients update conversation lists, run status, and file lists when conversations, project resources, or workspace files change. Reconnecting or reopening the page restores the latest state.
+
+Unsent drafts stay in the current page. When an open workspace text file changes, use Refresh preview to read the latest contents. Ask the agent to deliver an attachment in the conversation when you need to download a file.
+
+## Change the initial password
+
+Change the initial password before exposing the service. Account updates are administrator operations. Generate a new password hash from the repository root:
+
+```bash
+uv run --package tinkerfin-studio python -c 'import asyncio, getpass; from tinkerfin_studio.auth.passwords import hash_password; print(asyncio.run(hash_password(getpass.getpass("New password: "))))'
+```
+
+If the backend runs in a container, use this command from the repository root instead:
+
+```bash
+docker compose --env-file apps/studio/.env -f apps/studio/server/deploy/docker-compose.yaml exec server python -c 'import asyncio, getpass; from tinkerfin_studio.auth.passwords import hash_password; print(asyncio.run(hash_password(getpass.getpass("New password: "))))'
+```
+
+Connect to the `tinkerfin` business database with your database client and use the full printed hash:
+
+```sql
+UPDATE users SET password_hash = '<full generated hash>' WHERE username = 'tinkerfin';
+```
+
+Conversations default to Full access. Use the permission picker beside the model
+to require write approval. Conversations in the same project share a workspace and long-term memory.
+For scheduled work, see [Studio automation](automation.md).
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| The page cannot reach the server | Backend readiness and the server address on the login page |
+| Sign-in fails | Whether the account exists in this data volume and whether its password was changed |
+| Sending is disabled | An enabled default model and completed attachment uploads |
+| Conversation error | Backend logs, model configuration, and OpenSandbox availability |
+
+[Documentation](../index.md) · [Web development](../../../apps/studio/web/README.md)

@@ -1,0 +1,76 @@
+import { Check, CircleAlert, Info, LoaderCircle, RotateCcw, TriangleAlert } from 'lucide-react'
+
+import { useI18n } from '../../i18n'
+import { Button } from './Button'
+import { IconButton } from './IconButton'
+import { Surface } from './Surface'
+
+type FeedbackIconKind = 'loading' | 'success' | 'info' | 'error' | 'warning'
+
+export function FeedbackIcon({ kind }: { kind: FeedbackIconKind }) {
+  return (
+    <span className={`ui-feedback-icon is-${kind}`} aria-hidden="true">
+      {kind === 'loading' && <LoaderCircle className="ui-feedback-icon__spinner" size={18} />}
+      {kind === 'success' && <Check size={17} />}
+      {kind === 'info' && <Info size={16} />}
+      {kind === 'error' && <span className="ui-feedback-icon__mark">!</span>}
+      {kind === 'warning' && <TriangleAlert size={17} />}
+    </span>
+  )
+}
+
+export function FeedbackState({
+  kind,
+  title,
+  onRetry,
+  retryLabel,
+  retryDisabled = false,
+  appearance = 'default',
+  compact = false,
+}: {
+  kind: 'loading' | 'error'
+  title: string
+  onRetry?: () => void
+  retryLabel?: string
+  retryDisabled?: boolean
+  appearance?: 'default' | 'retry'
+  compact?: boolean
+}) {
+  const { t } = useI18n()
+  const actionLabel = retryLabel ?? t('重试')
+
+  if (kind === 'loading') {
+    return (
+      <div className={`ui-feedback-state is-loading${compact ? ' is-compact' : ''}`} role="status" aria-busy="true">
+        <LoaderCircle className="ui-feedback-state__spinner" size={18} aria-hidden="true" />
+        <span className="ui-feedback-state__title">{title}</span>
+      </div>
+    )
+  }
+
+  return (
+    <Surface
+      className={`ui-feedback-state is-${kind}${onRetry ? ' has-action' : ' is-title-only'}${appearance === 'retry' ? ' is-retry' : ''}${compact ? ' is-compact' : ''}`}
+      role="alert"
+    >
+      {appearance === 'retry' && kind === 'error'
+        ? <span className="ui-feedback-state__error-icon" aria-hidden="true"><CircleAlert size={17} /></span>
+        : <FeedbackIcon kind={kind} />}
+      <strong className="ui-feedback-state__title">{title}</strong>
+      {kind === 'error' && onRetry && appearance === 'retry' && (
+        <Button type="button" size="lg" variant="text" className="ui-feedback-state__retry-action" disabled={retryDisabled} leadingIcon={<RotateCcw size={16} />} onClick={onRetry}>{actionLabel}</Button>
+      )}
+      {kind === 'error' && onRetry && appearance !== 'retry' && (
+        <IconButton
+          className="ui-feedback-state__retry"
+          size="lg"
+          label={actionLabel}
+          tooltip={actionLabel}
+          disabled={retryDisabled}
+          icon={<RotateCcw size={18} />}
+          onClick={onRetry}
+        />
+      )}
+    </Surface>
+  )
+}

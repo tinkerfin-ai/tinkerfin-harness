@@ -1,0 +1,45 @@
+{
+  "status": "ready",
+  "todoGroups": [
+    {
+      "id": "todo-group:run:multimodal",
+      "userMessageId": "message:user",
+      "userMessagePreview": "核对销售与库存，整理交付清单",
+      "groupToolCallId": "tool:todos:1",
+      "createdAt": "2026-01-01T00:00:00.055000Z",
+      "status": "completed",
+      "todos": [
+        {
+          "id": "todo-group:run:multimodal:todo:0",
+          "content": "核对事项 1",
+          "status": "completed"
+        },
+        {
+          "id": "todo-group:run:multimodal:todo:1",
+          "content": "核对事项 2",
+          "status": "completed"
+        },
+        {
+          "id": "todo-group:run:multimodal:todo:2",
+          "content": "核对事项 3",
+          "status": "completed"
+        },
+        {
+          "id": "todo-group:run:multimodal:todo:3",
+          "content": "核对事项 4",
+          "status": "completed"
+        },
+        {
+          "id": "todo-group:run:multimodal:todo:4",
+          "content": "核对事项 5",
+          "status": "completed"
+        },
+        {
+          "id": "todo-group:run:multimodal:todo:5",
+          "content": "核对事项 6",
+          "status": "completed"
+        }
+      ]
+    }
+  ]
+}

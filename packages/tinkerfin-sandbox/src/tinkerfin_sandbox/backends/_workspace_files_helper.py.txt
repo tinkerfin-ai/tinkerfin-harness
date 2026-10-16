@@ -1,0 +1,299 @@
+"""Read an existing project through the runtime's pinned observation descriptors."""
+
+import base64
+import codecs
+import hashlib
+import heapq
+import json
+import os
+import stat
+import sys
+from contextlib import ExitStack
+from datetime import UTC, datetime
+from pathlib import Path, PurePosixPath
+
+
+class QueryFailure(Exception):
+    def __init__(self, code):
+        self.code = code
+
+
+def path_parts(path):
+    if (
+        not isinstance(path, str)
+        or not path.startswith("/")
+        or path.startswith("//")
+        or "\x00" in path
+        or len(path.encode("utf-8")) > 4096
+        or ".." in PurePosixPath(path).parts
+    ):
+        raise QueryFailure("invalid_path")
+    return tuple(part for part in PurePosixPath(path).parts if part != "/")
+
+
+def stamp(info):
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+        info.st_mode,
+    )
+
+
+def token(observation, info):
+    value = (observation.project, observation.incarnation, *stamp(info))
+    return hashlib.sha256(json.dumps(value).encode()).hexdigest()
+
+
+def describe(observation, path, info):
+    kind = (
+        "directory"
+        if stat.S_ISDIR(info.st_mode)
+        else "file"
+        if stat.S_ISREG(info.st_mode)
+        else "symlink"
+        if stat.S_ISLNK(info.st_mode)
+        else "other"
+    )
+    return {
+        "path": path,
+        "name": PurePosixPath(path).name,
+        "kind": kind,
+        "size_bytes": info.st_size if kind == "file" else None,
+        "modified_at": datetime.fromtimestamp(info.st_mtime, UTC).isoformat(),
+        "etag": token(observation, info),
+    }
+
+
+def directory_identity(info):
+    return info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)
+
+
+def validate_bindings(bindings):
+    # A pinned descriptor can outlive its name. Reject results from a directory
+    # moved away from the requested path, without rejecting unrelated child edits.
+    for parent, name, descriptor in bindings:
+        try:
+            current = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        except (FileNotFoundError, NotADirectoryError):
+            raise QueryFailure("changed")
+        if directory_identity(current) != directory_identity(os.fstat(descriptor)):
+            raise QueryFailure("changed")
+
+
+def open_path(observation, parts, owned, bindings):
+    descriptor = os.dup(observation.files)
+    owned.callback(os.close, descriptor)
+    for part in parts:
+        parent = descriptor
+        descriptor = os.open(
+            part,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+            dir_fd=descriptor,
+        )
+        owned.callback(os.close, descriptor)
+        bindings.append((parent, part, descriptor))
+    return descriptor
+
+
+def bounded_int(value, maximum):
+    if type(value) is not int or not 1 <= value <= maximum:
+        raise QueryFailure("invalid_limits")
+    return value
+
+
+def read_cursor(value, path, etag):
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > 8192:
+        raise QueryFailure("invalid_cursor")
+    try:
+        raw = json.loads(base64.b64decode(value, altchars=b"-_", validate=True))
+        if (
+            not isinstance(raw, dict)
+            or set(raw) != {"path", "etag", "after"}
+            or not isinstance(raw["after"], list)
+            or len(raw["after"]) != 2
+            or type(raw["after"][0]) is not int
+            or raw["after"][0] not in (0, 1)
+            or not isinstance(raw["after"][1], str)
+        ):
+            raise ValueError("invalid cursor")
+    except (ValueError, TypeError, UnicodeError):
+        raise QueryFailure("invalid_cursor")
+    if raw["path"] != path:
+        raise QueryFailure("invalid_cursor")
+    if raw["etag"] != etag:
+        raise QueryFailure("changed")
+    return tuple(raw["after"])
+
+
+def directory_page(observation, request, parts, path, owned, bindings):
+    limit = bounded_int(request["limit"], 200)
+    descriptor = open_path(observation, parts, owned, bindings)
+    before = os.fstat(descriptor)
+    etag = token(observation, before)
+    after = read_cursor(request.get("cursor"), path, etag)
+
+    def candidates():
+        with os.scandir(descriptor) as entries:
+            for entry in entries:
+                try:
+                    info = entry.stat(follow_symlinks=False)
+                except FileNotFoundError:
+                    raise QueryFailure("changed")
+                key = (0 if stat.S_ISDIR(info.st_mode) else 1, entry.name)
+                if after is None or key > after:
+                    yield (
+                        key,
+                        describe(
+                            observation, path.rstrip("/") + "/" + entry.name, info
+                        ),
+                    )
+
+    selected = heapq.nsmallest(limit + 1, candidates(), key=lambda item: item[0])
+    if stamp(before) != stamp(os.fstat(descriptor)):
+        raise QueryFailure("changed")
+    cursor = None
+    if len(selected) > limit:
+        cursor = base64.urlsafe_b64encode(
+            json.dumps(
+                {"path": path, "etag": etag, "after": selected[limit - 1][0]},
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ).encode()
+        ).decode()
+    return {
+        "kind": "directory",
+        "path": path,
+        "entries": [item[1] for item in selected[:limit]],
+        "next_cursor": cursor,
+    }
+
+
+def query(observation, request):
+    parts = path_parts(request["path"])
+    path = "/" + "/".join(parts)
+    operation = request["operation"]
+    observation.validate()
+    with ExitStack() as owned:
+        bindings = []
+        if operation == "list":
+            result = directory_page(observation, request, parts, path, owned, bindings)
+        else:
+            parent = open_path(observation, parts[:-1], owned, bindings)
+            before = (
+                os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+                if parts
+                else os.fstat(parent)
+            )
+            info = describe(observation, path, before)
+            if operation == "stat":
+                result = {"kind": "info", "file": info}
+            elif operation == "text":
+                max_bytes = bounded_int(request["max_bytes"], 1024 * 1024)
+                max_lines = bounded_int(request["max_lines"], 10000)
+                if info["kind"] != "file":
+                    raise QueryFailure("not_text")
+                descriptor = os.open(
+                    parts[-1],
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+                    dir_fd=parent,
+                )
+                owned.callback(os.close, descriptor)
+                opened = os.fstat(descriptor)
+                if stamp(before) != stamp(opened) or not stat.S_ISREG(opened.st_mode):
+                    raise QueryFailure("changed")
+                content = bytearray()
+                lines = 0
+                while len(content) <= max_bytes and lines <= max_lines:
+                    block = os.read(
+                        descriptor, min(16384, max_bytes + 1 - len(content))
+                    )
+                    if not block:
+                        break
+                    content.extend(block)
+                    lines += block.count(b"\n")
+                    if len(content) > max_bytes or lines >= max_lines:
+                        break
+                end = min(len(content), max_bytes)
+                line_end = 0
+                for _ in range(max_lines):
+                    index = content.find(b"\n", line_end, end)
+                    if index < 0:
+                        break
+                    line_end = index + 1
+                else:
+                    end = line_end
+                truncated = end < opened.st_size
+                try:
+                    decoder = codecs.getincrementaldecoder("utf-8-sig")("strict")
+                    text = decoder.decode(bytes(content[:end]), final=not truncated)
+                except UnicodeError:
+                    raise QueryFailure("not_text")
+                if "\x00" in text:
+                    raise QueryFailure("not_text")
+                if stamp(opened) != stamp(os.fstat(descriptor)) or stamp(
+                    opened
+                ) != stamp(os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)):
+                    raise QueryFailure("changed")
+                result = {
+                    "kind": "text",
+                    "file": info,
+                    "text": text,
+                    "truncated": truncated,
+                }
+            else:
+                raise QueryFailure("invalid_operation")
+        validate_bindings(bindings)
+        observation.validate()
+        return result
+
+
+def main():
+    # The trusted runtime module owns registry identity and descriptor validation.
+    # Isolated Python ignores workload import paths and environment customization.
+    sys.path.insert(0, "/opt/sandbox-runtime/workspaces")
+    from registry import ProjectRegistry, RegistryError
+
+    try:
+        request = json.loads(sys.argv[1])
+        context = ProjectRegistry.open_existing(
+            Path("/var/lib/tinkerfin-workspaces"), request["project"]
+        )
+        try:
+            observation = context.__enter__()
+        except FileNotFoundError:
+            raise QueryFailure("not_initialized")
+        except RegistryError as error:
+            # No active root was admitted. A deletion discovered after entering
+            # the observation remains a changed read, handled below.
+            if error.reason == "stale":
+                raise QueryFailure("not_initialized")
+            raise
+        try:
+            result = query(observation, request)
+        finally:
+            context.__exit__(*sys.exc_info())
+    except QueryFailure as error:
+        result = {"kind": "error", "code": error.code}
+    except RegistryError as error:
+        result = {
+            "kind": "error",
+            "code": "busy" if error.reason == "busy" else "changed",
+        }
+    except FileNotFoundError:
+        result = {"kind": "error", "code": "not_found"}
+    except PermissionError:
+        result = {"kind": "error", "code": "permission_denied"}
+    except (NotADirectoryError, IsADirectoryError):
+        result = {"kind": "error", "code": "not_directory"}
+    except OSError:
+        result = {"kind": "error", "code": "unavailable"}
+    print(json.dumps(result, ensure_ascii=True, separators=(",", ":")))
+
+
+if __name__ == "__main__":
+    main()

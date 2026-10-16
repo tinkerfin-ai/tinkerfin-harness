@@ -1,0 +1,517 @@
+"""Exercise shared-State lifecycle coordination through public manager operations."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import AsyncGenerator, Awaitable, Mapping
+from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
+from types import ModuleType
+from typing import Literal, TypeVar
+from weakref import WeakKeyDictionary
+
+import httpx
+import pytest
+from opensandbox import Sandbox
+from opensandbox.config import ConnectionConfig
+from opensandbox.transport import RetryPolicy
+from sqlalchemy.ext.asyncio import AsyncEngine
+from tests.support.sql_engines import SqlEngineFactory
+
+from tinkerfin_sandbox import (
+    OpenSandboxAvailability,
+    OpenSandboxAvailabilityPhase,
+    OpenSandboxBackend,
+    OpenSandboxBackendUnavailableError,
+    OpenSandboxConfig,
+    OpenSandboxDiagnosticContent,
+    OpenSandboxHolderUpdate,
+    OpenSandboxLifecycleEvent,
+    OpenSandboxManager,
+    OpenSandboxOwnerClaim,
+    OpenSandboxPurpose,
+    OpenSandboxPurposeError,
+    OpenSandboxRecoveryPolicy,
+    OpenSandboxRuntimeInfo,
+    OpenSandboxStateError,
+    OpenSandboxStatusInfo,
+    SQLAlchemyOpenSandboxState,
+)
+from tinkerfin_sandbox.backends import sdk
+from tinkerfin_sandbox.lifecycle import (
+    _manager_availability,
+    _manager_recovery,
+    _sql_state_ops,
+)
+
+_ResultT = TypeVar("_ResultT")
+
+
+class _StateChanges:
+    """Wake each polling task once per committed fixture change, without timers."""
+
+    def __init__(self) -> None:
+        self.sequence = 0
+        self.changed = asyncio.Event()
+        self.observed: WeakKeyDictionary[asyncio.Task[object], int] = (
+            WeakKeyDictionary()
+        )
+
+    def publish(self) -> None:
+        self.sequence += 1
+        self.changed.set()
+        self.changed = asyncio.Event()
+
+    async def wait(self, _seconds: float) -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        if self.observed.get(task, -1) == self.sequence:
+            await self.changed.wait()
+        self.observed[task] = self.sequence
+
+
+class _HeldCommand(httpx.AsyncByteStream):
+    """Keep remote work alive independently of a cancelled command consumer."""
+
+    def __init__(self, remote: _Remote, *, unknown_id: bool) -> None:
+        self.remote = remote
+        self.unknown_id = unknown_id
+
+    async def __aiter__(self) -> AsyncGenerator[bytes]:
+        if not self.unknown_id:
+            yield b'data: {"type":"init","text":"held-command","timestamp":1}\n\n'
+        self.remote.command_started.set()
+        await self.remote.command_release.wait()
+        self.remote.active_commands -= 1
+        self.remote.changes.publish()
+        yield b'data: {"type":"execution_complete","timestamp":2}\n\n'
+
+
+class _Remote:
+    """Control SDK-visible endpoints and lifecycle effects for shared clients."""
+
+    def __init__(self) -> None:
+        self.changes = _StateChanges()
+        self.states: dict[str, str] = {}
+        self.purposes: dict[str, OpenSandboxPurpose] = {}
+        self.connection_generations: dict[str, int] = {}
+        self.endpoints: dict[str, tuple[str, int]] = {}
+        self.created = 0
+        self.pause_calls: list[tuple[str, int, int]] = []
+        self.resume_calls: list[str] = []
+        self.destroy_calls: list[str] = []
+        self.executions: list[tuple[str, int, str]] = []
+        self.uploads: list[bytes] = []
+        self.active_commands = 0
+        self.active_uploads = 0
+        self.command_started = asyncio.Event()
+        self.command_release = asyncio.Event()
+        self.upload_started = asyncio.Event()
+        self.upload_release = asyncio.Event()
+        self.pause_started = asyncio.Event()
+        self.pause_release = asyncio.Event()
+        self.pause_release.set()
+
+    def info(self, sandbox_id: str) -> OpenSandboxRuntimeInfo:
+        state = self.states.get(sandbox_id)
+        if state is None:
+            return OpenSandboxRuntimeInfo.unavailable(sandbox_id, "not_found")
+        return OpenSandboxRuntimeInfo(
+            sandbox_id=sandbox_id,
+            available=True,
+            healthy=state == "Running",
+            status=OpenSandboxStatusInfo(state=state),
+            metadata={"tinkerfin.ai/purpose": self.purposes[sandbox_id]},
+        )
+
+    def require_running(self, sandbox_id: str) -> None:
+        if self.states.get(sandbox_id) != "Running":
+            raise OpenSandboxBackendUnavailableError(
+                "Sandbox is not running", context={"reason": "unreachable"}
+            )
+
+    async def pause(self, sandbox_id: str) -> None:
+        self.require_running(sandbox_id)
+        self.pause_calls.append((sandbox_id, self.active_commands, self.active_uploads))
+        self.pause_started.set()
+        await self.pause_release.wait()
+        self.states[sandbox_id] = "Paused"
+
+    async def resume(self, sandbox_id: str) -> None:
+        if self.states.get(sandbox_id) != "Paused":
+            raise OpenSandboxBackendUnavailableError("Sandbox is not paused")
+        self.resume_calls.append(sandbox_id)
+        self.states[sandbox_id] = "Running"
+        self.connection_generations[sandbox_id] += 1
+
+    def destroy(self, sandbox_id: str) -> None:
+        self.destroy_calls.append(sandbox_id)
+        self.states.pop(sandbox_id, None)
+
+    async def respond(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.startswith("/v1/sandboxes/"):
+            sandbox_id = path.split("/")[3]
+            if request.method == "DELETE":
+                self.destroy(sandbox_id)
+                return httpx.Response(204)
+            if sandbox_id not in self.states:
+                return httpx.Response(
+                    404, json={"code": "NOT_FOUND", "message": "gone"}
+                )
+            if "/endpoints/" in path:
+                generation = self.connection_generations[sandbox_id]
+                host = f"{sandbox_id}-endpoint-{generation}.invalid"
+                self.endpoints[host] = (sandbox_id, generation)
+                return httpx.Response(200, json={"endpoint": host})
+            return httpx.Response(
+                200,
+                json={
+                    "id": sandbox_id,
+                    "status": {"state": self.states[sandbox_id]},
+                    "createdAt": "2026-09-07T00:00:00Z",
+                    "entrypoint": ["/entrypoint.sh"],
+                    "metadata": {"tinkerfin.ai/purpose": self.purposes[sandbox_id]},
+                },
+            )
+        sandbox_id, generation = self.endpoints[request.url.host]
+        if (
+            self.states.get(sandbox_id) != "Running"
+            or generation != self.connection_generations[sandbox_id]
+        ):
+            return httpx.Response(
+                503, json={"code": "UNAVAILABLE", "message": "endpoint unavailable"}
+            )
+        if request.method == "POST" and path == "/command":
+            payload = json.loads(await request.aread())
+            command = payload["command"]
+            assert isinstance(command, str)
+            self.executions.append((sandbox_id, generation, command))
+            if command in {"hold", "unknown"}:
+                self.active_commands += 1
+                return httpx.Response(
+                    200,
+                    headers={"Content-Type": "text/event-stream"},
+                    stream=_HeldCommand(self, unknown_id=command == "unknown"),
+                )
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "text/event-stream"},
+                content=(
+                    b'data: {"type":"stdout","text":"ok","timestamp":1}\n\n'
+                    b'data: {"type":"execution_complete","timestamp":2}\n\n'
+                ),
+            )
+        if path == "/files/upload":
+            self.uploads.append(await request.aread())
+            self.active_uploads += 1
+            self.upload_started.set()
+            try:
+                await self.upload_release.wait()
+            finally:
+                self.active_uploads -= 1
+                self.changes.publish()
+            return httpx.Response(200)
+        if path == "/command/status/held-command":
+            return httpx.Response(
+                200,
+                json={
+                    "id": "held-command",
+                    "running": self.active_commands > 0,
+                    "exit_code": None if self.active_commands > 0 else 0,
+                },
+            )
+        if request.method == "DELETE" and path == "/command":
+            self.command_release.set()
+            self.active_commands = 0
+            self.changes.publish()
+            return httpx.Response(204)
+        raise AssertionError(f"Unexpected SDK request: {request.method} {path}")
+
+
+class _Client:
+    """Implement the current replaceable client contract with real SDK backends."""
+
+    def __init__(self, remote: _Remote, *, workspace_root: str | None) -> None:
+        self.remote = remote
+        self.config = OpenSandboxConfig(
+            warm_pool_size=0, ttl=None, workspace_root=workspace_root
+        )
+        self.transport = httpx.MockTransport(remote.respond)
+        self.connections: list[tuple[str, int]] = []
+        self.diagnostics: list[tuple[str, str, str]] = []
+
+    async def create(
+        self,
+        *,
+        purpose: OpenSandboxPurpose = "commands",
+        metadata: Mapping[str, str] | None = None,
+    ) -> OpenSandboxBackend:
+        del metadata
+        self.remote.created += 1
+        sandbox_id = f"sandbox-{self.remote.created}"
+        self.remote.states[sandbox_id] = "Running"
+        self.remote.purposes[sandbox_id] = purpose
+        self.remote.connection_generations[sandbox_id] = 0
+        return await self.connect(sandbox_id, purpose=purpose)
+
+    async def connect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxBackend:
+        self.remote.require_running(sandbox_id)
+        if self.remote.purposes[sandbox_id] != purpose:
+            raise OpenSandboxPurposeError("Remote purpose differs")
+        sandbox = await Sandbox.connect(
+            sandbox_id,
+            connection_config=ConnectionConfig(
+                domain="control.invalid",
+                transport=self.transport,
+                retry_policy=RetryPolicy.disabled(),
+                disable_metrics=True,
+                endpoint_cache_disabled=True,
+            ),
+            skip_health_check=True,
+        )
+        self.connections.append(
+            (sandbox_id, self.remote.connection_generations[sandbox_id])
+        )
+        return OpenSandboxBackend(sandbox=sandbox)
+
+    async def inspect(
+        self, sandbox_id: str, *, purpose: OpenSandboxPurpose = "commands"
+    ) -> OpenSandboxRuntimeInfo:
+        if (
+            sandbox_id in self.remote.states
+            and self.remote.purposes[sandbox_id] != purpose
+        ):
+            raise OpenSandboxPurposeError("Remote purpose differs")
+        return self.remote.info(sandbox_id)
+
+    async def _connect_observer(self, sandbox_id: str) -> OpenSandboxBackend:
+        return await self.connect(sandbox_id, purpose="workspaces")
+
+    async def get_runtime_info(self, sandbox_id: str) -> OpenSandboxRuntimeInfo:
+        return self.remote.info(sandbox_id)
+
+    async def pause(self, sandbox_id: str) -> None:
+        await self.remote.pause(sandbox_id)
+
+    async def resume(self, sandbox_id: str) -> None:
+        await self.remote.resume(sandbox_id)
+
+    async def get_diagnostic_logs(
+        self, sandbox_id: str, *, scope: str = "container"
+    ) -> OpenSandboxDiagnosticContent:
+        self.diagnostics.append((sandbox_id, "logs", scope))
+        return OpenSandboxDiagnosticContent(
+            sandbox_id=sandbox_id,
+            kind="logs",
+            scope=scope,
+            delivery="inline",
+            content_type="text/plain",
+            truncated=False,
+            content="retained logs",
+        )
+
+    async def get_diagnostic_events(
+        self, sandbox_id: str, *, scope: str = "runtime"
+    ) -> OpenSandboxDiagnosticContent:
+        self.diagnostics.append((sandbox_id, "events", scope))
+        return OpenSandboxDiagnosticContent(
+            sandbox_id=sandbox_id,
+            kind="events",
+            scope=scope,
+            delivery="inline",
+            content_type="text/plain",
+            truncated=False,
+            content="current state summary",
+            warnings=("Summary only",),
+        )
+
+    async def destroy(self, sandbox_id: str) -> None:
+        self.remote.destroy(sandbox_id)
+
+    async def aclose(self) -> None:
+        await self.transport.aclose()
+
+
+class _ControlledState(SQLAlchemyOpenSandboxState):
+    """Delay public coordination responses while retaining real SQL transitions."""
+
+    def __init__(self, engine: AsyncEngine, changes: _StateChanges) -> None:
+        super().__init__(engine=engine, namespace="pause-resume", poll_interval=0.01)
+        self.changes = changes
+        self.acknowledged: set[tuple[str, int, int]] = set()
+        self.outage = False
+        self.delay_ack = False
+        self.ack_started = asyncio.Event()
+        self.ack_release = asyncio.Event()
+        self.stale_ack_rejected = asyncio.Event()
+        self.registration_failure: Literal["before", "after"] | None = None
+        self.registration_failed = asyncio.Event()
+        self.delay_registration = False
+        self.registration_committed = asyncio.Event()
+        self.registration_release = asyncio.Event()
+
+    async def register_holder(
+        self, claim: OpenSandboxOwnerClaim, holder_id: str
+    ) -> OpenSandboxAvailability:
+        failure = self.registration_failure
+        self.registration_failure = None
+        if failure == "before":
+            self.registration_failed.set()
+            raise OpenSandboxStateError(
+                "Holder registration is temporarily unavailable"
+            )
+        result = await super().register_holder(claim, holder_id)
+        self.changes.publish()
+        if failure == "after":
+            self.registration_failed.set()
+            raise OpenSandboxStateError("Holder registration response is unavailable")
+        if self.delay_registration:
+            self.registration_committed.set()
+            await self.registration_release.wait()
+        return result
+
+    async def acquire_owner(self, owner_key: str) -> OpenSandboxOwnerClaim:
+        if self.outage:
+            raise OpenSandboxStateError("State is temporarily unavailable")
+        return await super().acquire_owner(owner_key)
+
+    async def get_holder_updates(
+        self, holder_id: str
+    ) -> tuple[OpenSandboxHolderUpdate, ...]:
+        if self.outage:
+            raise OpenSandboxStateError("State is temporarily unavailable")
+        return await super().get_holder_updates(holder_id)
+
+    async def acknowledge_idle(
+        self, holder_id: str, availability: OpenSandboxAvailability
+    ) -> bool:
+        if self.delay_ack:
+            self.ack_started.set()
+            await self.ack_release.wait()
+        accepted = await super().acknowledge_idle(holder_id, availability)
+        if not accepted:
+            self.stale_ack_rejected.set()
+        key = (holder_id, availability.binding_generation, availability.sequence)
+        if accepted and key not in self.acknowledged:
+            self.acknowledged.add(key)
+            self.changes.publish()
+        return accepted
+
+    async def change_availability(
+        self,
+        claim: OpenSandboxOwnerClaim,
+        expected: OpenSandboxAvailability,
+        *,
+        phase: OpenSandboxAvailabilityPhase,
+        refresh_connection: bool = False,
+    ) -> OpenSandboxAvailability:
+        result = await super().change_availability(
+            claim, expected, phase=phase, refresh_connection=refresh_connection
+        )
+        self.changes.publish()
+        return result
+
+    async def release_owner(self, claim: OpenSandboxOwnerClaim) -> None:
+        await super().release_owner(claim)
+        self.changes.publish()
+
+    async def unregister_holder(
+        self, holder_id: str, availability: OpenSandboxAvailability
+    ) -> None:
+        await super().unregister_holder(holder_id, availability)
+        self.changes.publish()
+
+
+class _Observer:
+    def __init__(self) -> None:
+        self.events: list[OpenSandboxLifecycleEvent] = []
+
+    async def on_sandbox_event(self, event: OpenSandboxLifecycleEvent) -> None:
+        self.events.append(event)
+
+
+class _World:
+    """Own managers, independent SQL State instances, and test operation tasks."""
+
+    def __init__(self, tmp_path: Path, workspace_root: str | None) -> None:
+        self.url = f"sqlite+aiosqlite:///{tmp_path / 'pause-state.db'}"
+        self.engines = SqlEngineFactory()
+        self.workspace_root = workspace_root
+        self.remote = _Remote()
+        self.changes = self.remote.changes
+        self.managers: list[OpenSandboxManager[str]] = []
+        self.states: list[_ControlledState] = []
+        self.clients: list[_Client] = []
+        self.tasks: list[asyncio.Task[object]] = []
+
+    async def add(self, observer: _Observer | None = None) -> OpenSandboxManager[str]:
+        client = _Client(self.remote, workspace_root=self.workspace_root)
+        state = _ControlledState(self.engines(self.url), self.changes)
+        manager = OpenSandboxManager[str](
+            client=client,
+            key_resolver=str,
+            state=state,
+            warm_pool_size=0,
+            settlement_timeout=None,
+            recovery_policy=OpenSandboxRecoveryPolicy(max_attempts=1, timeout=1),
+            observers=() if observer is None else (observer,),
+        )
+        self.managers.append(manager)
+        self.states.append(state)
+        self.clients.append(client)
+        await manager.start()
+        return manager
+
+    def spawn(self, operation: Awaitable[_ResultT]) -> asyncio.Task[_ResultT]:
+        async def run() -> _ResultT:
+            return await operation
+
+        task = asyncio.create_task(run())
+        self.tasks.append(task)
+        return task
+
+    async def close(self) -> None:
+        self.remote.command_release.set()
+        self.remote.upload_release.set()
+        self.remote.pause_release.set()
+        for state in self.states:
+            state.outage = False
+            state.ack_release.set()
+            state.registration_release.set()
+        for task in self.tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*self.tasks, return_exceptions=True)
+        try:
+            await asyncio.gather(*(manager.aclose() for manager in self.managers))
+        finally:
+            await self.engines.aclose()
+
+
+@asynccontextmanager
+async def _world(
+    tmp_path: Path, *, workspace_root: str | None = None
+) -> AsyncGenerator[_World]:
+    world = _World(tmp_path, workspace_root)
+    controlled = ModuleType("controlled_asyncio")
+    controlled.__dict__.update(vars(asyncio))
+    setattr(controlled, "sleep", world.changes.wait)
+    setattr(controlled, "timeout", lambda _delay: asyncio.timeout(None))
+    setattr(controlled, "timeout_at", lambda _deadline: asyncio.timeout(None))
+    with pytest.MonkeyPatch.context() as patch:
+        for module in (_manager_availability, _manager_recovery, _sql_state_ops, sdk):
+            patch.setattr(module, "asyncio", controlled)
+        patch.setattr(
+            SQLAlchemyOpenSandboxState,
+            "_now",
+            staticmethod(lambda: datetime(2030, 1, 1)),
+        )
+        try:
+            yield world
+        finally:
+            await world.close()

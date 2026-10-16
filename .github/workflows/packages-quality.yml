@@ -1,0 +1,203 @@
+name: Packages quality
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UV_NO_SYNC: "true"
+  LANGSMITH_TRACING: "false"
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  script-checks:
+    name: Script checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.7"
+      - name: Install script test runner
+        run: python -m pip install pytest==9.1.1
+      - name: Test script entry points and Git boundaries
+        run: python -m pytest -c .github/pytest-scripts.ini tests/test_studio_checks.py
+
+  repository-and-studio:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.13"
+          enable-cache: true
+          python-version: "3.14.7"
+      - name: Install locked workspace
+        run: uv sync --locked --all-packages --no-default-groups --group test --group lint
+      - name: Check repository and Studio formatting
+        run: ./scripts/verify-studio-server.sh
+
+  web:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/studio/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.7"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+          cache: pnpm
+          cache-dependency-path: apps/studio/web/pnpm-lock.yaml
+      - name: Install locked web dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test, lint, build and check web packaging without Chromium
+        run: python "${{ github.workspace }}/scripts/studio_checks.py" web-no-browser
+
+  web-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    defaults:
+      run:
+        working-directory: apps/studio/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+          cache: pnpm
+          cache-dependency-path: apps/studio/web/pnpm-lock.yaml
+      - name: Install locked web dependencies
+        run: pnpm install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/studio/web/pnpm-lock.yaml') }}
+      - name: Use Ubuntu HTTPS mirrors
+        run: |
+          printf 'https://archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://security.ubuntu.com/ubuntu/\tpriority:2\n' |
+            sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps --only-shell chromium
+      - name: Test web HTTP and browser uploads
+        if: matrix.shard == 1
+        run: pnpm test:http
+      - name: Check web and browser test types
+        run: pnpm exec tsc -b
+      - name: Test browser behavior and accessibility
+        run: pnpm exec playwright test --shard=${{ matrix.shard }}/3
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-browser-results-${{ matrix.shard }}
+          path: /tmp/tinkerfin-studio-playwright/
+          retention-days: 7
+
+  static-checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.13"
+          enable-cache: true
+          python-version: "3.14.7"
+      - name: Install locked workspace
+        run: uv sync --locked --all-packages --no-default-groups --group test --group lint
+      - name: Check formatting
+        run: uv run ruff format --no-cache --check packages
+      - name: Lint packages
+        run: uv run ruff check --no-cache packages
+      - name: Check public API docstrings
+        run: >-
+          uv run ruff check --no-cache packages/*/src
+          --select D100,D101,D102,D103,D104,D105,D106,D107
+      - name: Check package source types strictly
+        run: uv run pyright -p pyright-packages-strict.json
+
+  packages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.13"
+          enable-cache: true
+          python-version: "3.14.7"
+      - name: Install locked workspace
+        run: uv sync --locked --all-packages --no-default-groups --group test --group lint
+      - name: Test packages and logging contracts
+        run: >-
+          uv run pytest packages tests/test_package_logging_contract.py
+          -n 4 --dist=loadfile --durations=20 -o faulthandler_timeout=60
+
+  wheel-boundaries:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.13"
+          enable-cache: true
+          python-version: "3.14.7"
+      - name: Install packaging test runner
+        run: uv sync --locked --all-packages --no-default-groups --group packaging
+      - uses: actions/cache@v4
+        id: dependency-wheels
+        with:
+          path: .cache/test-wheels
+          key: test-wheels-${{ runner.os }}-${{ runner.arch }}-3.14.7-${{ hashFiles('uv.lock') }}
+      - name: Prepare locked dependency wheels
+        if: steps.dependency-wheels.outputs.cache-hit != 'true'
+        run: |
+          uv export --locked --all-packages --no-dev --group packaging --no-emit-workspace --no-header --output-file "$RUNNER_TEMP/test-requirements.txt"
+          uv run python -m pip download --require-hashes --no-deps --only-binary=:all: -r "$RUNNER_TEMP/test-requirements.txt" --dest .cache/test-wheels
+      - name: Verify isolated wheel boundaries
+        run: >-
+          uv run python -m pytest --noconftest tests/packaging
+          -m packaging_e2e --durations=10
+        env:
+          UV_OFFLINE: "true"
+
+  quality-gate:
+    name: Quality gate
+    if: always()
+    needs: [script-checks, repository-and-studio, web, web-browser, static-checks, packages, wheel-boundaries]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every check to succeed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for result in $RESULTS; do
+            [[ "$result" == success ]] || exit 1
+          done

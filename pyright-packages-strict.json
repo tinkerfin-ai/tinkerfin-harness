@@ -1,0 +1,28 @@
+{
+  "include": [
+    "packages/tinkerfin/src",
+    "packages/tinkerfin-automation/src",
+    "packages/tinkerfin-contracts/src",
+    "packages/tinkerfin-native-stream/src",
+    "packages/tinkerfin-tracing/src",
+    "packages/tinkerfin-langgraph-store/src",
+    "packages/tinkerfin-sqlalchemy/src",
+    "packages/tinkerfin-agui-adapter/src",
+    "packages/tinkerfin-messaging/src",
+    "packages/tinkerfin-notifications/src",
+    "packages/tinkerfin-gateway/src",
+    "packages/tinkerfin-sandbox/src"
+  ],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "strict",
+  "reportMissingTypeStubs": "none",
+  "reportIncompatibleMethodOverride": "error",
+  "reportPrivateUsage": "none",
+  "reportUnnecessaryComparison": "none",
+  "reportUnnecessaryIsInstance": "none",
+  "executionEnvironments": [
+    {
+      "root": "."
+    }
+  ]
+}
