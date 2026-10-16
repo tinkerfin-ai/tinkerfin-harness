@@ -11,7 +11,22 @@ on:
       - uv.lock
       - .github/workflows/studio-image.yml
   push:
-    tags: ["studio-v*.*.*"]
+    branches: [main]
+    paths:
+      - apps/studio/server/**
+      - packages/**
+      - scripts/build_wheels.py
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/studio-image.yml
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Build candidate sources or verify production with published PyPI packages
+        type: choice
+        required: true
+        default: candidate
+        options: [candidate, production]
 
 permissions:
   contents: read
@@ -19,9 +34,6 @@ permissions:
 concurrency:
   group: studio-image-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-env:
-  IMAGE: ghcr.io/tinkerfin-ai/studio-server
 
 jobs:
   build:
@@ -44,39 +56,38 @@ jobs:
           python-version: "3.14.7"
       - name: Read application version
         id: version
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-          REF_TYPE: ${{ github.ref_type }}
         run: |
           version=$(python3 -c 'import runpy; print(runpy.run_path("apps/studio/server/src/tinkerfin_studio/version.py")["__version__"])')
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || exit 1
-          if [[ "$REF_TYPE" == tag && "$RELEASE_TAG" != "studio-v$version" ]]; then
-            echo "Tag must match the Studio application version" >&2
-            exit 1
-          fi
           echo "value=$version" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
       - name: Build image
+        id: image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: apps/studio/server/Dockerfile
+          target: ${{ inputs.target || 'candidate' }}
+          push: false
           platforms: ${{ matrix.platform }}
           load: true
           tags: studio-server:test
           labels: |
             org.opencontainers.image.version=${{ steps.version.outputs.value }}
             org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=studio-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=studio-${{ matrix.arch }}
+          cache-from: type=gha,scope=studio-${{ inputs.target || 'candidate' }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=studio-${{ inputs.target || 'candidate' }}-${{ matrix.arch }}
       - name: Verify runtime and file secrets
+        id: runtime
         env:
           EXPECTED_VERSION: ${{ steps.version.outputs.value }}
+          CONTAINER_NAME: studio-image-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
         run: |
-          mkdir -m 700 "$RUNNER_TEMP/studio-secrets"
-          printf 'fixture-secret' > "$RUNNER_TEMP/studio-secrets/test"
-          chmod 644 "$RUNNER_TEMP/studio-secrets/test"
-          docker run --rm --mount "type=bind,src=$RUNNER_TEMP/studio-secrets/test,dst=/run/secrets/test,readonly" \
+          secrets_directory=$(mktemp -d "$RUNNER_TEMP/studio-secrets.XXXXXX")
+          echo "secrets_directory=$secrets_directory" >> "$GITHUB_OUTPUT"
+          printf 'fixture-secret' > "$secrets_directory/test"
+          chmod 644 "$secrets_directory/test"
+          docker run --rm --name "$CONTAINER_NAME" --mount "type=bind,src=$secrets_directory/test,dst=/run/secrets/test,readonly" \
             --env EXPECTED_VERSION studio-server:test python -c '
           import os
           from pathlib import Path
@@ -87,124 +98,41 @@ jobs:
           assert Path("/run/secrets/test").read_text() == "fixture-secret"
           assert create_app().title
           '
-      - name: Export tested platform image
-        if: startsWith(github.ref, 'refs/tags/studio-v')
+      - name: Clean up verification resources
+        if: always()
         env:
-          ARCH: ${{ matrix.arch }}
-        run: docker save studio-server:test | gzip > "$RUNNER_TEMP/studio-server-$ARCH.tar.gz"
-      - name: Upload tested platform image
-        if: startsWith(github.ref, 'refs/tags/studio-v')
-        uses: actions/upload-artifact@v4
-        with:
-          name: studio-server-${{ matrix.arch }}
-          path: ${{ runner.temp }}/studio-server-${{ matrix.arch }}.tar.gz
-          compression-level: 0
-          retention-days: 1
-
-  publish:
-    if: startsWith(github.ref, 'refs/tags/studio-v')
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      checks: read
-      packages: write
-    timeout-minutes: 20
-    steps:
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14.7"
-      - name: Require successful quality checks for this commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          COMMIT: ${{ github.sha }}
+          CONTAINER_NAME: studio-image-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          IMAGE_ID: ${{ steps.image.outputs.imageid }}
+          SECRETS_DIRECTORY: ${{ steps.runtime.outputs.secrets_directory }}
         run: |
-          conclusion=$(gh api "repos/$REPOSITORY/commits/$COMMIT/check-runs" \
-            --jq '[.check_runs[] | select(.name == "Quality gate" and .app.slug == "github-actions")][0].conclusion')
-          [[ "$conclusion" == success ]] || { echo "Quality gate must pass before publishing" >&2; exit 1; }
-      - name: Reject existing image tags
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_ACTOR: ${{ github.actor }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          python3 - <<'PYTHON'
-          import base64
-          import json
-          import os
-          import urllib.error
-          import urllib.parse
-          import urllib.request
-
-          repository = os.environ["IMAGE"].removeprefix("ghcr.io/")
-          version = os.environ["RELEASE_TAG"].removeprefix("studio-v")
-          credentials = f'{os.environ["GH_ACTOR"]}:{os.environ["GH_TOKEN"]}'
-          query = urllib.parse.urlencode({"service": "ghcr.io", "scope": f"repository:{repository}:pull"})
-          request = urllib.request.Request("https://ghcr.io/token?" + query, headers={
-              "Authorization": "Basic " + base64.b64encode(credentials.encode()).decode(),
-          })
-          with urllib.request.urlopen(request, timeout=30) as response:
-              token = json.load(response)["token"]
-          for tag in (version, version + "-amd64", version + "-arm64"):
-              request = urllib.request.Request(
-                  f"https://ghcr.io/v2/{repository}/manifests/{tag}", method="HEAD",
-                  headers={"Authorization": "Bearer " + token, "Accept": "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json"},
-              )
-              try:
-                  with urllib.request.urlopen(request, timeout=30):
-                      raise SystemExit(f"Image tag already exists: {repository}:{tag}")
-              except urllib.error.HTTPError as error:
-                  if error.code != 404:
-                      raise
-          PYTHON
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: studio-server-*
-          path: images
-          merge-multiple: true
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish multi-platform image
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          version=${RELEASE_TAG#studio-v}
-          for arch in amd64 arm64; do
-            docker load --input "images/studio-server-$arch.tar.gz"
-            docker tag studio-server:test "$IMAGE:$version-$arch"
-            docker push "$IMAGE:$version-$arch"
-          done
-          docker buildx imagetools create --tag "$IMAGE:$version" \
-            "$IMAGE:$version-amd64" "$IMAGE:$version-arm64"
-
-  verify:
-    name: Verify public Studio image
-    if: startsWith(github.ref, 'refs/tags/studio-v')
-    needs: publish
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14.7"
-      - name: Verify anonymous pull and supported platforms
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          anonymous_config=$(mktemp -d)
-          trap 'rm -rf "$anonymous_config"' EXIT
-          image="$IMAGE:${RELEASE_TAG#studio-v}"
-          docker --config "$anonymous_config" manifest inspect "$image" > manifest.json
-          python3 - <<'PYTHON'
-          import json
-          with open("manifest.json") as stream:
-              manifest = json.load(stream)
-          platforms = {(item["platform"]["os"], item["platform"]["architecture"]) for item in manifest["manifests"]}
-          assert platforms == {("linux", "amd64"), ("linux", "arm64")}, platforms
-          PYTHON
-          docker --config "$anonymous_config" pull --platform linux/amd64 "$image"
+          remove_and_verify() {
+            local kind=$1 resource=$2 error
+            error=$(mktemp) || return 1
+            if ! docker "$kind" rm --force "$resource" 2>"$error"; then
+              if [[ $(cat "$error") != "Error response from daemon: No such $kind: $resource" ]]; then
+                cat "$error" >&2
+                rm -f "$error"
+                return 1
+              fi
+            fi
+            if docker "$kind" inspect "$resource" >/dev/null 2>"$error"; then
+              printf 'Verification resource still exists: %s %s\n' "$kind" "$resource" >&2
+              rm -f "$error"
+              return 1
+            fi
+            if [[ $(cat "$error") != "Error response from daemon: No such $kind: $resource" ]]; then
+              cat "$error" >&2
+              rm -f "$error"
+              return 1
+            fi
+            rm -f "$error"
+          }
+          status=0
+          remove_and_verify container "$CONTAINER_NAME" || status=1
+          if [[ -n "$IMAGE_ID" ]]; then
+            remove_and_verify image "$IMAGE_ID" || status=1
+          fi
+          if [[ -n "$SECRETS_DIRECTORY" ]]; then
+            rm -rf -- "$SECRETS_DIRECTORY" || status=1
+          fi
+          exit "$status"

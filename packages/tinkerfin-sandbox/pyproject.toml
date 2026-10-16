@@ -1,6 +1,6 @@
 [project]
 name = "tinkerfin-sandbox"
-version = "0.1.0"
+version = "0.1.1"
 description = "Sandbox integration package for TinkerFin."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,15 +23,15 @@ dependencies = [
     "langchain-core>=1.6.4,<2",
     "opensandbox==0.1.16",
     "pydantic>=2,<3",
-    "tinkerfin-contracts==0.1.0",
-    "tinkerfin-notifications==0.1.0",
+    "tinkerfin-contracts==0.1.1",
+    "tinkerfin-notifications==0.1.1",
     "typing-extensions>=4.12.2,<5",
 ]
 
 [project.optional-dependencies]
 sqlalchemy = [
     "sqlalchemy[asyncio]==2.0.52",
-    "tinkerfin-sqlalchemy==0.1.0",
+    "tinkerfin-sqlalchemy==0.1.1",
 ]
 
 [project.urls]

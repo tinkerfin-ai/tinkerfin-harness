@@ -64,7 +64,7 @@ channel，不会递归删除嵌套同名业务字段。TinkerFin Plan Runtime �
 
 `Attachment` 来自 `tinkerfin_contracts.media`，包含 `id`、`name`、`mime_type` 和
 `size_bytes`。消息只保存附件引用，宿主负责访问授权；转换器不读取文件内容。使用 Runtime
-在模型请求中解析附件时，见[附件配置](../../../packages/tinkerfin/README.md#observations-and-attachments)。
+在模型请求中解析附件时，见[附件配置](../runtime/agent-configuration.md#附件输入)。
 
 自定义适配集成可使用 `tinkerfin_agui_adapter.media` 的
 `user_message_to_langchain()` 将 AG-UI 用户消息转换为 LangChain 消息，或使用

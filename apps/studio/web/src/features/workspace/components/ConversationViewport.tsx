@@ -108,9 +108,11 @@ export function ConversationViewport({
 }) {
   const { t } = useI18n()
   const isEmpty = conversation.messages.length === 0 && !conversation.compactions?.length && !conversation.notice
+  // 手动压缩独立于聊天轮次，运行期间仍保留已完成回答的操作
+  const currentTurnRunning = isRunning && !conversation.compactions?.some(operation => operation.runId === conversation.activeRunId)
   const copyableAssistantIds = useMemo(
-    () => collectCopyableAssistantIds(entries, isRunning),
-    [entries, isRunning],
+    () => collectCopyableAssistantIds(entries, currentTurnRunning),
+    [entries, currentTurnRunning],
   )
 
   return (
@@ -218,9 +220,7 @@ export function ConversationViewport({
                 onRetry={onRecoverConversation} />
             )}
             {conversation.runStatus === 'streaming' && (conversation.runPhase === 'preparing' || (!conversation.approval?.submitted && !conversation.planInteraction?.submitted)) && !conversation.compactions?.some(operation => operation.runId === conversation.activeRunId) && (
-              conversation.runPhase === 'preparing'
-                ? <FeedbackState kind="loading" compact title={t('正在准备运行环境')} />
-                : <p className="message-stream-tail stream-pending-tail"><ActivityDots label={t('任务仍在继续')} /></p>
+              <p className="message-stream-tail stream-pending-tail"><ActivityDots label={t('任务仍在继续')} /></p>
             )}
             <div ref={messageEndRef} />
           </div>

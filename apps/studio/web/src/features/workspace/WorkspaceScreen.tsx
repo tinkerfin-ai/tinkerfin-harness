@@ -224,7 +224,6 @@ function ProjectWorkspaceScreen({
   const [automationEntryKey, setAutomationEntryKey] = useState(0)
   const composerSkills = useComposerSkills(projectId, activePage === 'conversation', composerDraft.references)
   const retrySkillRequest = useRef<AbortController | null>(null)
-  useEffect(() => () => retrySkillRequest.current?.abort(), [])
   const [automationModalOpen, setAutomationModalOpen] = useState(false)
   const [skillsModalOpen, setSkillsModalOpen] = useState(false)
   const [memoriesModalOpen, setMemoriesModalOpen] = useState(false)
@@ -276,8 +275,10 @@ function ProjectWorkspaceScreen({
   }, [pushToast])
 
   useEffect(() => {
-    if (defaultModelId) setDraftModel((current) => current || defaultModelId)
-  }, [defaultModelId])
+    if (modelCatalogStatus === 'ready' && !workspace.currentThreadId && !pendingConversations.selectedRunId && defaultModelId) {
+      setDraftModel((current) => current || defaultModelId)
+    }
+  }, [defaultModelId, modelCatalogStatus, workspace.currentThreadId, pendingConversations.selectedRunId])
 
   const {
     cancelRun,
@@ -356,6 +357,19 @@ function ProjectWorkspaceScreen({
     }
     return draftConversation ?? buildEmptyConversation({ projectId, now: new Date().toISOString(), model: draftModel, accessMode: draftAccessMode })
   }, [projectId, draftConversation, draftModel, draftAccessMode, selectedConversation, workspace.currentThreadId])
+
+  const isSelectedModelAvailable = modelCatalogStatus === 'ready' && modelIds.includes(conversation.model)
+  // 等待原技能期间改变会话、提交选项或模型目录后，必须由用户重新发起重试
+  useLayoutEffect(() => () => retrySkillRequest.current?.abort(), [
+    workspace.currentThreadId, conversation.model, conversation.mode, conversation.accessMode, modelCatalogStatus, modelIds,
+  ])
+  const modelSubmissionDisabledReason = modelCatalogStatus === 'ready' && !isSelectedModelAvailable
+    ? t('请选择可用模型') : undefined
+  const isFailedInitialSubmission = !conversation.threadId && conversation.runStatus === 'error'
+  const pendingInitial = pendingConversations.items.find(item => item.runId === pendingConversations.selectedRunId)
+  const canRecoverDisplayed = !isFailedInitialSubmission || Boolean(
+    pendingInitial && modelCatalogStatus === 'ready' && modelIds.includes(pendingInitial.conversation.model),
+  )
 
   const notifyChainWarning = useCallback((message: string) => {
     const key = `${conversation.threadId}:${message}`
@@ -631,6 +645,7 @@ function ProjectWorkspaceScreen({
   }, [messageWindow, scrollConversationToBottom])
 
   const beginSend = useCallback((content: string, modeOverride?: AgentMode, resubmission?: Message) => {
+    if (!isSelectedModelAvailable) return
     const trimmed = content.trim()
     if (!resubmission && composerSkills.selected.length > 0
       && (composerSkills.status !== 'ready' || composerSkills.selected.some(skill => skill.unavailable))) return
@@ -787,7 +802,10 @@ function ProjectWorkspaceScreen({
     })
     if (!resubmission) setDraft('')
     void streamRun(currentConversation.threadId, payload, 'start', { target: 'workspace', onAccepted, onRequestRejected }).finally(() => releaseSubmission(payload.runId))
-  }, [scope.attachments, scope.drafts, projectId, isActiveThread, t, conversation, localAttachments, composerSkills, composerDraft, draftRevision, draftConversation?.model, draftModel, pendingConversations, discardDraft, setHistoryQuery, hydrateConversation, isRunning, messageWindow, scrollConversationToBottomImmediately, setDraft, setComposerPreference, setWorkspace, streamRun, workspace.conversations, workspace.currentThreadId])
+  }, [scope.attachments, scope.drafts, projectId, isActiveThread, isSelectedModelAvailable, t, conversation, localAttachments, composerSkills, composerDraft, draftRevision, draftConversation?.model, draftModel, pendingConversations, discardDraft, setHistoryQuery, hydrateConversation, isRunning, messageWindow, scrollConversationToBottomImmediately, setDraft, setComposerPreference, setWorkspace, streamRun, workspace.conversations, workspace.currentThreadId])
+
+  const latestBeginSend = useRef(beginSend)
+  useLayoutEffect(() => { latestBeginSend.current = beginSend }, [beginSend])
 
   const retryRun = useCallback(async (message: Message) => {
     const current = latestWorkspace.current.conversations.find(item => item.threadId === workspace.currentThreadId)
@@ -802,13 +820,13 @@ function ProjectWorkspaceScreen({
     try {
       const selectedSkills = await readRunSkillSelection(current.threadId, runId, controller.signal)
       if (controller.signal.aborted || latestWorkspace.current.currentThreadId !== current.threadId) return
-      beginSend(original.content, undefined, { ...original, meta: { ...original.meta, selectedSkills } })
+      latestBeginSend.current(original.content, undefined, { ...original, meta: { ...original.meta, selectedSkills } })
     } catch {
       if (!controller.signal.aborted) pushToast('error', t('无法读取原技能选择，请重试'))
     } finally {
       if (retrySkillRequest.current === controller) retrySkillRequest.current = null
     }
-  }, [beginSend, workspace.currentThreadId, pushToast, t])
+  }, [workspace.currentThreadId, pushToast, t])
 
   useEffect(() => {
     if (!pendingResume) return
@@ -1140,13 +1158,18 @@ function ProjectWorkspaceScreen({
     setModelPickerOpen(false)
   }
 
+  const recoverDisplayedConversation = () => {
+    if (!canRecoverDisplayed) return
+    void recoverConversation(conversation.threadId, pendingConversations.selectedRunId ?? undefined)
+  }
+
   const compaction = useContextCompaction({
     conversation, setWorkspace, streamRun, isActiveThread,
     onNotice: message => pushToast('info', message),
   })
 
   const executeCompaction = () => {
-    if (!compaction.execute()) return false
+    if (!isSelectedModelAvailable || !compaction.execute()) return false
     messageWindow.restoreTail()
     scrollConversationToBottomImmediately()
     return true
@@ -1291,6 +1314,8 @@ function ProjectWorkspaceScreen({
           setActivePage('conversation')
           setWorkspaceView('conversation')
           newConversation()
+          setDraftModel('')
+          retryModelCatalog()
         }}
         onSelect={(threadId) => {
           const target = workspace.conversations.find(item => item.threadId === threadId)
@@ -1415,9 +1440,9 @@ function ProjectWorkspaceScreen({
               onRetryHistory={retryHistoryBootstrap}
               onRetryHydration={() => void hydrateConversation(conversation.threadId, { refresh: true })}
               onError={(message) => pushToast('error', message)}
-              onRecoverConversation={() => void recoverConversation(conversation.threadId, pendingConversations.selectedRunId ?? undefined)}
+              onRecoverConversation={canRecoverDisplayed ? recoverDisplayedConversation : undefined}
               onRetryRun={retryRun}
-              retryDisabled={isRunning || conversation.runStatus === 'detached' || !conversation.isHydrated || !modelIds.includes(conversation.model) || Boolean(conversation.pendingInteractionKind || conversation.approval || conversation.planInteraction)}
+              retryDisabled={isRunning || conversation.runStatus === 'detached' || !conversation.isHydrated || !isSelectedModelAvailable || Boolean(conversation.pendingInteractionKind || conversation.approval || conversation.planInteraction)}
               onLoadEarlierMessages={(trigger) => void messageWindow.loadEarlierMessages(trigger)}
             />
             <Composer
@@ -1487,7 +1512,8 @@ function ProjectWorkspaceScreen({
                 : undefined}
               onChooseModel={() => setModelPickerOpen(true)}
               onCompact={executeCompaction}
-              compactDisabledReason={compaction.disabledReason}
+              compactDisabledReason={modelSubmissionDisabledReason ?? compaction.disabledReason}
+              submissionDisabledReason={modelSubmissionDisabledReason}
               accessControl={<AccessModePicker value={conversation.accessMode} onChange={selectAccessMode}
                 disabled={isRunning || Boolean(conversation.approval || conversation.planInteraction) || isConversationHydrating} />}
               modelControl={(

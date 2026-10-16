@@ -714,6 +714,58 @@
     font-weight: var(--weight-ui);
   }
 
+  .ui-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--layout-card-grid-min-width)), 1fr));
+    gap: var(--space-5);
+    align-items: stretch;
+  }
+
+  .ui-card-lift {
+    position: relative;
+    z-index: var(--layer-base);
+    isolation: isolate;
+    transition: transform var(--motion-fast) var(--ease-out);
+  }
+
+  .ui-card-lift::after {
+    position: absolute;
+    inset: 0;
+    z-index: var(--layer-behind);
+    content: '';
+    pointer-events: none;
+    border-radius: inherit;
+    box-shadow: var(--shadow-3);
+    opacity: 0;
+    transition: opacity var(--motion-fast) var(--ease-out);
+  }
+
+  .ui-card-lift:has(:focus-visible),
+  .ui-card-lift[data-menu-open='true'] {
+    transform: translateY(calc(-1 * var(--space-1)));
+    z-index: var(--layer-local-raised);
+  }
+
+  .ui-card-lift:has(:focus-visible)::after,
+  .ui-card-lift[data-menu-open='true']::after { opacity: 1; }
+
+  @media (hover: hover) and (pointer: fine) {
+    .ui-card-lift:hover {
+      transform: translateY(calc(-1 * var(--space-1)));
+      transition-duration: var(--motion-normal);
+    }
+    .ui-card-lift:hover::after { opacity: 1; transition-duration: var(--motion-normal); }
+  }
+
+  @media (max-width: 767px) {
+    .ui-card-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ui-card-lift { transform: none !important; transition: none; }
+    .ui-card-lift::after { transition: none; }
+  }
+
   .ui-surface {
     --surface-tone: var(--color-layer-1);
     --surface-tone-border: var(--color-border);

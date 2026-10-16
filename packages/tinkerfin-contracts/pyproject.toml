@@ -1,6 +1,6 @@
 [project]
 name = "tinkerfin-contracts"
-version = "0.1.0"
+version = "0.1.1"
 description = "Protocol-neutral runtime observation contracts for TinkerFin integrations."
 readme = "README.md"
 requires-python = ">=3.11"

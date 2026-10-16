@@ -79,7 +79,7 @@ export function SkillCard({ project, scopeId, selection, sourceName, installedIn
       window.removeEventListener('resize', moved)
     }
   }, [open])
-  return <Surface as="article" className="skills-card" aria-label={skill.name} data-hovered={hovered || undefined} data-menu-open={open || undefined}
+  return <Surface as="article" className="ui-card-lift skills-card" aria-label={skill.name} data-hovered={hovered || undefined} data-menu-open={open || undefined}
     onPointerMove={event => { if (event.pointerType === 'mouse') setHovered(true) }} onPointerLeave={() => setHovered(false)}>
     <div className="skills-card-top"><SkillIcon name={skill.name} />
       {selection.kind === 'installed' ? <div className="skills-card-management">

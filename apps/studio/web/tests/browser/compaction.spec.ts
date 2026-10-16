@@ -111,7 +111,7 @@ async function openConversation(page: Page, options: { theme?: string; detail?: 
     } else if (path.endsWith('/trace/model-request')) {
       expect(url.searchParams.get('reference')).toBe('summary-model-request')
       data = { nodeId: 'summary-model', request: summaryModelRequest, requestOmitted: false }
-    } else if (path.endsWith('/follow')) {
+    } else if (/\/runs\/[^/]+\/events$/.test(path)) {
       await finish
       await route.fulfill({ contentType: 'text/event-stream', body: '' })
       return
@@ -179,6 +179,7 @@ for (const [gesture, position] of [['click', '目录'], ['Enter', '上翻'], ['T
       if (gesture !== 'send') await expect(input).toBeFocused()
       await expect(page.getByText('正在整理上下文', { exact: true })).toBeVisible()
       await expect(page.getByText('compact_conversation', { exact: true })).toBeVisible()
+      await expect(conversationPane(page).getByRole('button', { name: '复制回答', exact: true }).last()).toBeVisible()
       await expect(page.getByRole('button', { name: '停止任务', exact: true })).toBeEnabled()
       await input.fill('压缩期间编辑的新草稿')
       await expect(page.getByRole('button', { name: '停止任务', exact: true })).toBeEnabled()
@@ -337,8 +338,10 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
         await expect(region).toBeVisible()
         await expect(region.getByText('compact_conversation', { exact: true })).toBeVisible()
         await expect(region.getByText(label, { exact: true })).toBeVisible()
+        await expect(conversationPane(page).getByRole('button', { name: '复制回答', exact: true })).toBeVisible()
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
         await region.screenshot({ path: testInfo.outputPath(`${phase}-${theme}-${width}.png`) })
+        if (phase === 'generating') await page.screenshot({ path: testInfo.outputPath(`copy-${theme}-${width}.png`) })
       }
     } finally { setup.release() }
   })

@@ -49,6 +49,7 @@ export function Composer({
   stopPending = false,
   isHydrating = false,
   disabledReason,
+  submissionDisabledReason,
   hero,
   takeover,
   submission,
@@ -82,6 +83,7 @@ export function Composer({
   stopPending?: boolean
   isHydrating?: boolean
   disabledReason?: string
+  submissionDisabledReason?: string
   hero?: ReactNode
   takeover?: ReactNode
   submission?: InteractionSubmissionState
@@ -159,7 +161,8 @@ export function Composer({
   const skillSelectionMessage = skillSelectionPending
     ? skillsStatus === 'loading' ? t('正在加载技能') : t('技能列表暂不可用')
     : hasUnavailableSkills ? t('所选技能已停用或卸载，请移除后再发送') : undefined
-  const canSubmitDraft = (isCompactCommand || (!skillSelectionPending && !hasUnavailableSkills)) && (Boolean(value.trim()) || attachments.length > 0) && (!value.trim() || isSubmittableComposerDraft(value, references, caret)) && (isCompactCommand ? !compactDisabledReason : attachments.every(item => item.state === 'ready'))
+  const submissionMessage = submissionDisabledReason ?? skillSelectionMessage
+  const canSubmitDraft = !submissionDisabledReason && (isCompactCommand || (!skillSelectionPending && !hasUnavailableSkills)) && (Boolean(value.trim()) || attachments.length > 0) && (!value.trim() || isSubmittableComposerDraft(value, references, caret)) && (isCompactCommand ? !compactDisabledReason : attachments.every(item => item.state === 'ready'))
   const cancelSuggestionMenu = useCallback(() => {
     if (menuRequested) {
       setMenuRequested(false)
@@ -267,7 +270,7 @@ export function Composer({
         cancelSuggestionMenu()
         return
       }
-      if ((event.key === 'Enter' || event.key === 'Tab') && resolvedActiveId) {
+      if (!event.shiftKey && (event.key === 'Enter' || event.key === 'Tab') && resolvedActiveId) {
         event.preventDefault()
         pickSuggestion(resolvedActiveId)
         return
@@ -359,7 +362,7 @@ export function Composer({
             ))}
           </div>
         )}
-        {skillSelectionMessage && <p className="composer-skill-error" role="status">{skillSelectionMessage}</p>}
+        {submissionMessage && <p className="composer-submission-error" role="status">{submissionMessage}</p>}
         <ComposerInput ref={input} draft={draft} disabled={isDisabled} busy={isHydrating}
           menuId={menuOpen ? menuId : undefined}
           activeId={menuOpen && resolvedActiveId ? `${menuId}-${resolvedActiveId}` : undefined}

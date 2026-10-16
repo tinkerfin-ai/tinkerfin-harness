@@ -50,6 +50,29 @@ Configure delegation through `subagents` and tool approval through `interrupt_on
 Their middleware cannot be replaced; `task` and the tools of configured remote agents
 are reserved for delegation.
 
+## Attachment inputs
+
+Configure model media inputs and stored attachment reads with
+`.with_attachments(AttachmentSupport(...))`. Import `AttachmentSupport` and
+`AttachmentContent` from `tinkerfin.media`. The optional async
+`read_content(attachment)` receives an `Attachment` and returns
+`AttachmentContent(data=..., mime_type=...)`. The host must authorize each read
+and bound its size at the storage boundary. Raise `FileNotFoundError` for missing
+files; other read errors and cancellation propagate.
+
+Without a reader, stored attachments remain references for file-reading tools.
+Native media already present in messages does not need a reader. The actual
+destination model's declared image, audio, video, and PDF capabilities determine
+which media is sent; `supports_content(model, mime_type)` can restrict supported
+formats. Unknown or unsupported media becomes a text description without changing
+original messages. This does not parse documents, transcribe audio, or extract
+video frames.
+
+Each model call reads at most 5 recent supported attachments (`max_attachments`)
+and 20 MiB of total raw content (`max_bytes`, before base64 encoding) by default.
+Exceeding the byte limit raises `ValueError` before invoking the model. Compiled
+and remote subagents configure their own attachment access.
+
 ## Persistence and approval
 
 Use the namespace-bound Store to seed or read data outside an agent run. The host

@@ -5,10 +5,11 @@ include:
 
 services:
   server:
-    image: ${STUDIO_IMAGE:-ghcr.io/tinkerfin-ai/studio-server:0.1.0}
+    image: ${STUDIO_IMAGE:-tinkerfin-studio-server:local}
     build:
       context: ../../../..
       dockerfile: apps/studio/server/Dockerfile
+      target: production
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     logging:

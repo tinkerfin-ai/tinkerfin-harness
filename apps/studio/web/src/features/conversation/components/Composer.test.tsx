@@ -141,6 +141,58 @@ describe('Composer', () => {
     expect(onSend).toHaveBeenCalledOnce()
   })
 
+  it.each(['Enter', 'Tab'])('命令候选展开时 Shift+%s 保留原生编辑或焦点行为', key => {
+    const onChooseModel = vi.fn()
+    const onSend = vi.fn()
+    render(<DraftComposer {...composerChromeProps()} text="/model" isRunning={false}
+      onDraftChange={vi.fn()} onChooseModel={onChooseModel} onSend={onSend} onStop={vi.fn()} />)
+    expect(screen.getByRole('listbox', { name: '命令和技能建议' })).toBeVisible()
+    const input = screen.getByRole('textbox', { name: '消息输入' })
+    expect(fireEvent.keyDown(input, { key, shiftKey: true })).toBe(true)
+    expect(onChooseModel).not.toHaveBeenCalled()
+    expect(onSend).not.toHaveBeenCalled()
+    expect(input).toHaveValue('/model')
+  })
+
+  it.each(['Enter', 'Tab'])('命令候选展开时普通 %s 仍确认选择', key => {
+    const onChooseModel = vi.fn()
+    render(<DraftComposer {...composerChromeProps()} text="/model" isRunning={false}
+      onDraftChange={vi.fn()} onChooseModel={onChooseModel} onSend={vi.fn()} onStop={vi.fn()} />)
+    expect(fireEvent.keyDown(screen.getByRole('textbox', { name: '消息输入' }), { key })).toBe(false)
+    expect(onChooseModel).toHaveBeenCalledOnce()
+  })
+
+  it('提交暂不可用时保留草稿编辑与模型命令，恢复后可发送', () => {
+    const onSend = vi.fn()
+    const onChooseModel = vi.fn()
+    const props = { ...composerChromeProps(), text: '保留草稿', isRunning: false,
+      onDraftChange: vi.fn(), onSend, onChooseModel, onStop: vi.fn() }
+    const view = render(<DraftComposer {...props} submissionDisabledReason="请选择可用模型" />)
+    const input = screen.getByRole('textbox', { name: '消息输入' })
+    expect(input).toBeEnabled()
+    expect(screen.getByRole('status')).toHaveTextContent('请选择可用模型')
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
+    fireEvent.change(input, { target: { value: '/model', selectionStart: 6 } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChooseModel).toHaveBeenCalledOnce()
+    fireEvent.change(input, { target: { value: '继续编辑', selectionStart: 4 } })
+    expect(input).toHaveValue('继续编辑')
+    view.rerender(<DraftComposer {...props} />)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+    expect(onSend).toHaveBeenCalledOnce()
+  })
+
+  it('模型不可用于新提交时仍能停止当前运行', () => {
+    const onStop = vi.fn()
+    render(<DraftComposer {...composerChromeProps()} text="保留草稿" isRunning
+      submissionDisabledReason="请选择可用模型" onDraftChange={vi.fn()} onSend={vi.fn()} onStop={onStop} />)
+    fireEvent.click(screen.getByRole('button', { name: '停止任务' }))
+    expect(onStop).toHaveBeenCalledOnce()
+  })
+
   it('disables input and send while the selected history is hydrating', () => {
     render(
       <DraftComposer

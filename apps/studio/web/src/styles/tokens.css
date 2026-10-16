@@ -197,6 +197,7 @@
     --layout-conversation-search-height: 480px;
     --layout-toolbar-search-width: calc(var(--space-16) * 2 + var(--space-12));
     --layout-action-width: 400px;
+    --layout-card-grid-min-width: 280px;
     --layout-document-width: 1040px;
     --layout-auth-width: 344px;
     --layout-feedback-card: 288px;

@@ -1,6 +1,6 @@
 # TinkerFin documentation
 
-[中文](../cn/index.md) · [Project home](../../README.md)
+[中文](../cn/index.md) · [Project home](../../README.en.md)
 
 Build agent applications for enterprise workflows that people can interact with, inspect, and control. Start with the Studio workspace or integrate the Python framework into your own systems.
 

@@ -53,7 +53,8 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
     await page.goto('/?project=project-1&thread=' + threadId)
     await live.emit({ type: 'CUSTOM', name: 'tinkerfin.run.phase', value: { threadId, runId, phase: 'preparing' } })
     const content = page.getByRole('region', { name: '对话内容', exact: true })
-    await expect(content.getByRole('status').filter({ hasText: '正在准备运行环境' })).toBeVisible()
+    await expect(content.getByRole('status', { name: '任务仍在继续' })).toBeVisible()
+    await expect(content.getByText('正在准备运行环境')).toHaveCount(0)
     await page.screenshot({ path: testInfo.outputPath(`preparing-${theme}-${width}.png`) })
     detail = { ...detail, asOfSeq: 5, graph: emptyTraceGraph(5), observedAt: '2026-10-12T00:00:00.000001Z',
       status: { execution: 'failed', headRunId: runId },

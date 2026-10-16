@@ -3076,7 +3076,7 @@ wheels = [
 
 [[package]]
 name = "tinkerfin"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/tinkerfin" }
 dependencies = [
     { name = "anyio" },
@@ -3144,7 +3144,7 @@ dev = [
 
 [[package]]
 name = "tinkerfin-agui-adapter"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/tinkerfin-agui-adapter" }
 dependencies = [
     { name = "ag-ui-protocol" },
@@ -3169,7 +3169,7 @@ requires-dist = [
 
 [[package]]
 name = "tinkerfin-automation"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/tinkerfin-automation" }
 dependencies = [
     { name = "langchain" },
@@ -3215,7 +3215,7 @@ provides-extras = ["gateway", "sqlalchemy"]
 
 [[package]]
 name = "tinkerfin-contracts"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/tinkerfin-contracts" }
 dependencies = [
     { name = "pydantic" },
@@ -3226,7 +3226,7 @@ requires-dist = [{ name = "pydantic", specifier = ">=2,<3" }]
 
 [[package]]
 name = "tinkerfin-gateway"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/tinkerfin-gateway" }
 dependencies = [
     { name = "ag-ui-protocol" },
@@ -3260,7 +3260,7 @@ provides-extras = ["starlette"]
 
 [[package]]
 name = "tinkerfin-harness"
-version = "0.0.1"
+version = "0.1.1"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -3355,7 +3355,7 @@ test = [
 
 [[package]]
 name = "tinkerfin-langgraph-store"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/tinkerfin-langgraph-store" }
 dependencies = [
     { name = "langgraph-checkpoint" },
@@ -3379,7 +3379,7 @@ provides-extras = ["sqlalchemy"]
 
 [[package]]
 name = "tinkerfin-messaging"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/tinkerfin-messaging" }
 dependencies = [
     { name = "pydantic" },
@@ -3415,7 +3415,7 @@ provides-extras = ["redis", "sqlalchemy", "agui", "native"]
 
 [[package]]
 name = "tinkerfin-native-stream"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/tinkerfin-native-stream" }
 dependencies = [
     { name = "langchain-core" },
@@ -3436,7 +3436,7 @@ requires-dist = [
 
 [[package]]
 name = "tinkerfin-notifications"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/tinkerfin-notifications" }
 dependencies = [
     { name = "pydantic" },
@@ -3456,7 +3456,7 @@ provides-extras = ["redis"]
 
 [[package]]
 name = "tinkerfin-sandbox"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/tinkerfin-sandbox" }
 dependencies = [
     { name = "deepagents" },
@@ -3494,7 +3494,7 @@ provides-extras = ["sqlalchemy"]
 
 [[package]]
 name = "tinkerfin-sqlalchemy"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/tinkerfin-sqlalchemy" }
 dependencies = [
     { name = "sqlalchemy", extra = ["asyncio"] },
@@ -3597,7 +3597,7 @@ requires-dist = [
 
 [[package]]
 name = "tinkerfin-tracing"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/tinkerfin-tracing" }
 dependencies = [
     { name = "pydantic" },

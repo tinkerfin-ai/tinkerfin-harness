@@ -1,4 +1,4 @@
-# 只发送构建所需的源码、包信息和统一构建脚本
+# 候选目标需要框架源码；生产目标只构建 Studio wheel
 **
 !pyproject.toml
 !uv.lock

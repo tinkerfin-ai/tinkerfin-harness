@@ -136,7 +136,7 @@ function ScopedSkillsPage({ project, navigation, catalog, projectId, dialog, set
               : selections.length === 0 ? <div className="skills-empty"><h2>{navigation.view === 'mine' && library.installed.length === 0 ? t('把常用技能放在这里') : t('没有找到技能')}</h2><p>{navigation.view === 'mine' && library.installed.length === 0 ? t('从发现中安装，或导入自己的技能') : t('尝试其他关键词或来源')}</p>
                 {hasFilters ? <Button type="button" size="sm" onClick={() => navigation.changeFilters({ query: '', category: '', status: 'all' })}>{t('清除筛选')}</Button>
                   : navigation.view === 'mine' && <Button type="button" size="sm" onClick={() => navigation.selectView('discover')}>{t('发现技能')}</Button>}
-              </div> : <div className="skills-grid">{selections.map(selection => {
+              </div> : <div className="ui-card-grid skills-grid">{selections.map(selection => {
                 const skill = selection.skill
                 const key = selection.kind === 'installed' ? skill.id : `${selection.skill.source_id}/${skill.id}`
                 return <SkillCard project={project} scopeId={projectId} key={key} selection={selection} sourceName={selection.kind === 'installed' ? selection.skill.source_name : sourceOptions.get(selection.skill.source_id) ?? ''}

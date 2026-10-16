@@ -67,7 +67,7 @@ its Native records or converts it directly through `runtime.open_agui_run()`.
 `Attachment` from `tinkerfin_contracts.media` contains `id`, `name`, `mime_type`,
 and `size_bytes`. Messages retain attachment references, and the host authorizes access;
 the converter does not read file bytes. For Runtime model-request resolution, see
-[attachment configuration](../../../packages/tinkerfin/README.md#observations-and-attachments).
+[attachment configuration](../runtime/agent-configuration.md#attachment-inputs).
 
 For custom adapter integrations, `user_message_to_langchain()` from
 `tinkerfin_agui_adapter.media` converts AG-UI user messages to LangChain;

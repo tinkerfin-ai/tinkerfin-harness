@@ -106,7 +106,7 @@ _PROJECTS = (
 _CORE_CASES = (
     _InstallCase(
         "notifications-core",
-        "tinkerfin-notifications==0.1.0",
+        "tinkerfin-notifications==0.1.1",
         ("tinkerfin_notifications",),
         ("tinkerfin-notifications", "pydantic"),
         ("tinkerfin", "langgraph", "redis", "sqlalchemy", "fastapi", "starlette"),
@@ -115,7 +115,7 @@ _CORE_CASES = (
     ),
     _InstallCase(
         "gateway-core",
-        "tinkerfin-gateway==0.1.0",
+        "tinkerfin-gateway==0.1.1",
         ("tinkerfin_gateway",),
         (
             "tinkerfin-gateway",
@@ -130,7 +130,7 @@ _CORE_CASES = (
     ),
     _InstallCase(
         "contracts-core",
-        "tinkerfin-contracts==0.1.0",
+        "tinkerfin-contracts==0.1.1",
         ("tinkerfin_contracts",),
         ("tinkerfin-contracts",),
         ("tinkerfin", "ag-ui-protocol", "redis", "sqlalchemy"),
@@ -138,7 +138,7 @@ _CORE_CASES = (
     ),
     _InstallCase(
         "native-stream-core",
-        "tinkerfin-native-stream==0.1.0",
+        "tinkerfin-native-stream==0.1.1",
         ("tinkerfin_native_stream",),
         (
             "tinkerfin-native-stream",
@@ -151,7 +151,7 @@ _CORE_CASES = (
     ),
     _InstallCase(
         "adapter-core",
-        "tinkerfin-agui-adapter==0.1.0",
+        "tinkerfin-agui-adapter==0.1.1",
         ("tinkerfin_agui_adapter",),
         ("tinkerfin-agui-adapter", "ag-ui-protocol", "tinkerfin-native-stream"),
         ("tinkerfin", "deepagents", "redis", "sqlalchemy"),
@@ -159,7 +159,7 @@ _CORE_CASES = (
     ),
     _InstallCase(
         "runtime-core",
-        "tinkerfin==0.1.0",
+        "tinkerfin==0.1.1",
         ("tinkerfin",),
         ("tinkerfin", "deepagents", "langchain", "langchain-core", "langgraph"),
         ("ag-ui-protocol", "tinkerfin-agui-adapter", "redis"),
@@ -167,7 +167,7 @@ _CORE_CASES = (
     ),
     _InstallCase(
         "automation-core",
-        "tinkerfin-automation==0.1.0",
+        "tinkerfin-automation==0.1.1",
         ("tinkerfin_automation", "tinkerfin", "langchain", "langchain_core"),
         (
             "tinkerfin-automation",
@@ -202,7 +202,7 @@ _CORE_CASES = (
     ),
     _InstallCase(
         "messaging-core",
-        "tinkerfin-messaging==0.1.0",
+        "tinkerfin-messaging==0.1.1",
         ("tinkerfin_messaging",),
         ("tinkerfin-messaging", "tinkerfin-contracts"),
         ("tinkerfin", "tinkerfin-native-stream", "ag-ui-protocol", "redis"),
@@ -210,7 +210,7 @@ _CORE_CASES = (
     ),
     _InstallCase(
         "tracing-core",
-        "tinkerfin-tracing==0.1.0",
+        "tinkerfin-tracing==0.1.1",
         ("tinkerfin_tracing",),
         ("tinkerfin-tracing", "tinkerfin-contracts"),
         ("tinkerfin", "sqlalchemy", "aiosqlite", "asyncmy"),
@@ -218,7 +218,7 @@ _CORE_CASES = (
     ),
     _InstallCase(
         "sandbox-core",
-        "tinkerfin-sandbox==0.1.0",
+        "tinkerfin-sandbox==0.1.1",
         ("tinkerfin_sandbox",),
         ("tinkerfin-sandbox", "deepagents", "opensandbox"),
         ("sqlalchemy", "aiosqlite", "asyncmy"),
@@ -226,7 +226,7 @@ _CORE_CASES = (
     ),
     _InstallCase(
         "langgraph-store-core",
-        "tinkerfin-langgraph-store==0.1.0",
+        "tinkerfin-langgraph-store==0.1.1",
         ("tinkerfin_langgraph_store",),
         ("tinkerfin-langgraph-store", "langgraph-checkpoint"),
         (
@@ -246,7 +246,7 @@ _CORE_CASES = (
     ),
     _InstallCase(
         "sqlalchemy-transactions",
-        "tinkerfin-sqlalchemy==0.1.0",
+        "tinkerfin-sqlalchemy==0.1.1",
         ("tinkerfin_sqlalchemy",),
         ("tinkerfin-sqlalchemy", "sqlalchemy", "greenlet"),
         ("asyncmy", "asyncpg", "aiosqlite"),
@@ -257,7 +257,7 @@ _CORE_CASES = (
 _EXTRA_CASES = (
     _InstallCase(
         "notifications-redis",
-        "tinkerfin-notifications[redis]==0.1.0",
+        "tinkerfin-notifications[redis]==0.1.1",
         ("tinkerfin_notifications.redis",),
         ("tinkerfin-notifications", "redis"),
         ("tinkerfin", "langgraph", "sqlalchemy", "fastapi", "starlette"),
@@ -265,7 +265,7 @@ _EXTRA_CASES = (
     ),
     _InstallCase(
         "gateway-starlette",
-        "tinkerfin-gateway[starlette]==0.1.0",
+        "tinkerfin-gateway[starlette]==0.1.1",
         ("tinkerfin_gateway.starlette",),
         ("tinkerfin-gateway", "starlette"),
         ("fastapi", "redis"),
@@ -274,7 +274,7 @@ _EXTRA_CASES = (
     ),
     _InstallCase(
         "messaging-sqlalchemy",
-        "tinkerfin-messaging[sqlalchemy]==0.1.0",
+        "tinkerfin-messaging[sqlalchemy]==0.1.1",
         ("tinkerfin_messaging.sqlalchemy", "tinkerfin_sqlalchemy"),
         ("tinkerfin-messaging", "tinkerfin-sqlalchemy", "sqlalchemy"),
         ("asyncmy", "asyncpg", "aiosqlite", "redis"),
@@ -282,7 +282,7 @@ _EXTRA_CASES = (
     ),
     _InstallCase(
         "langgraph-store-sqlalchemy",
-        "tinkerfin-langgraph-store[sqlalchemy]==0.1.0",
+        "tinkerfin-langgraph-store[sqlalchemy]==0.1.1",
         ("tinkerfin_langgraph_store.sqlalchemy",),
         ("tinkerfin-langgraph-store", "tinkerfin-sqlalchemy", "sqlalchemy"),
         ("asyncmy", "asyncpg", "aiosqlite"),
@@ -290,7 +290,7 @@ _EXTRA_CASES = (
     ),
     _InstallCase(
         "automation-gateway",
-        "tinkerfin-automation[gateway]==0.1.0",
+        "tinkerfin-automation[gateway]==0.1.1",
         (
             "tinkerfin_automation",
             "tinkerfin_gateway",
@@ -311,7 +311,7 @@ _EXTRA_CASES = (
     ),
     _InstallCase(
         "automation-sqlalchemy",
-        "tinkerfin-automation[sqlalchemy]==0.1.0",
+        "tinkerfin-automation[sqlalchemy]==0.1.1",
         ("tinkerfin_automation.sqlalchemy", "tinkerfin_sqlalchemy"),
         ("tinkerfin-automation", "tinkerfin-sqlalchemy", "sqlalchemy"),
         ("apscheduler", "asyncmy", "asyncpg", "aiosqlite"),
@@ -319,7 +319,7 @@ _EXTRA_CASES = (
     ),
     _InstallCase(
         "runtime-agui",
-        "tinkerfin[agui]==0.1.0",
+        "tinkerfin[agui]==0.1.1",
         ("tinkerfin", "tinkerfin_agui_adapter", "ag_ui"),
         ("tinkerfin", "tinkerfin-agui-adapter", "ag-ui-protocol"),
         ("redis",),
@@ -327,7 +327,7 @@ _EXTRA_CASES = (
     ),
     _InstallCase(
         "runtime-redis",
-        "tinkerfin[redis]==0.1.0",
+        "tinkerfin[redis]==0.1.1",
         ("tinkerfin", "redis"),
         ("tinkerfin", "redis"),
         ("ag-ui-protocol", "tinkerfin-agui-adapter"),
@@ -335,13 +335,13 @@ _EXTRA_CASES = (
     ),
     _InstallCase(
         "runtime-agui-redis",
-        "tinkerfin[agui,redis]==0.1.0",
+        "tinkerfin[agui,redis]==0.1.1",
         ("tinkerfin", "tinkerfin_agui_adapter", "ag_ui", "redis"),
         ("tinkerfin", "tinkerfin-agui-adapter", "ag-ui-protocol", "redis"),
     ),
     _InstallCase(
         "messaging-agui",
-        "tinkerfin-messaging[agui]==0.1.0",
+        "tinkerfin-messaging[agui]==0.1.1",
         ("tinkerfin_messaging", "ag_ui"),
         ("tinkerfin-messaging", "ag-ui-protocol"),
         ("tinkerfin", "redis", "tinkerfin-native-stream"),
@@ -349,7 +349,7 @@ _EXTRA_CASES = (
     ),
     _InstallCase(
         "messaging-native",
-        "tinkerfin-messaging[native]==0.1.0",
+        "tinkerfin-messaging[native]==0.1.1",
         ("tinkerfin_messaging", "tinkerfin_native_stream"),
         ("tinkerfin-messaging", "tinkerfin-native-stream"),
         ("tinkerfin", "deepagents", "ag-ui-protocol", "redis"),
@@ -357,7 +357,7 @@ _EXTRA_CASES = (
     ),
     _InstallCase(
         "messaging-redis",
-        "tinkerfin-messaging[redis]==0.1.0",
+        "tinkerfin-messaging[redis]==0.1.1",
         ("tinkerfin_messaging", "redis"),
         ("tinkerfin-messaging", "redis"),
         ("tinkerfin", "ag-ui-protocol", "tinkerfin-native-stream"),
@@ -365,7 +365,7 @@ _EXTRA_CASES = (
     ),
     _InstallCase(
         "messaging-agui-redis",
-        "tinkerfin-messaging[agui,redis]==0.1.0",
+        "tinkerfin-messaging[agui,redis]==0.1.1",
         ("tinkerfin_messaging", "ag_ui", "redis"),
         ("tinkerfin-messaging", "ag-ui-protocol", "redis"),
         ("tinkerfin", "tinkerfin-native-stream"),
@@ -373,7 +373,7 @@ _EXTRA_CASES = (
     ),
     _InstallCase(
         "tracing-sqlalchemy",
-        "tinkerfin-tracing[sqlalchemy]==0.1.0",
+        "tinkerfin-tracing[sqlalchemy]==0.1.1",
         ("tinkerfin_tracing", "tinkerfin_sqlalchemy", "sqlalchemy"),
         ("tinkerfin-tracing", "tinkerfin-sqlalchemy", "sqlalchemy"),
         ("asyncmy", "asyncpg", "aiosqlite"),
@@ -381,7 +381,7 @@ _EXTRA_CASES = (
     ),
     _InstallCase(
         "sandbox-sqlalchemy",
-        "tinkerfin-sandbox[sqlalchemy]==0.1.0",
+        "tinkerfin-sandbox[sqlalchemy]==0.1.1",
         ("tinkerfin_sandbox", "tinkerfin_sqlalchemy", "sqlalchemy"),
         ("tinkerfin-sandbox", "tinkerfin-sqlalchemy", "sqlalchemy"),
         ("asyncmy", "asyncpg", "aiosqlite"),
@@ -391,7 +391,7 @@ _EXTRA_CASES = (
 
 _STUDIO_CASE = _InstallCase(
     "studio-production",
-    "tinkerfin-studio==0.1.0",
+    "tinkerfin-studio==0.1.1",
     (
         "tinkerfin_studio",
         "tinkerfin",
@@ -635,7 +635,7 @@ def wheel_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
             if line.startswith("Requires-Dist: "):
                 requirement = Requirement(line.removeprefix("Requires-Dist: "))
                 if canonicalize_name(requirement.name) in first_party:
-                    assert str(requirement.specifier) == "==0.1.0"
+                    assert str(requirement.specifier) == "==0.1.1"
         source_root = project.path / "src"
         assert wheel_python_payload == _source_python_payload(source_root)
         assert any(name.endswith(".dist-info/licenses/LICENSE") for name in names)
@@ -832,12 +832,12 @@ def test_isolated_wheel_installation(
 
 
 @pytest.mark.packaging_e2e
-def test_studio_deploy_wheel_set_is_self_contained(
+def test_studio_candidate_wheel_set_is_self_contained(
     wheel_directory: Path,
     dependency_wheels: Path,
     tmp_path: Path,
 ) -> None:
-    """Install the exact deployment wheel set after external locked dependencies."""
+    """Install the candidate source wheels after external locked dependencies."""
 
     expected_paths = tuple(
         str(project.path.relative_to(_ROOT)) for project in _PROJECTS

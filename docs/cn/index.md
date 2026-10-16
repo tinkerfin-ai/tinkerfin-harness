@@ -1,6 +1,6 @@
 # TinkerFin 文档
 
-[English](../en/index.md) · [项目首页](../../README.cn.md)
+[English](../en/index.md) · [项目首页](../../README.md)
 
 面向企业业务构建可交互、可追踪、可干预的智能体应用。从 Studio 工作台开始体验，或使用 Python 框架接入自己的业务系统。
 

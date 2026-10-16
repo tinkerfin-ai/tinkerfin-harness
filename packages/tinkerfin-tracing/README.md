@@ -8,176 +8,110 @@ keep traces in memory or shared storage.
 
 ```bash
 pip install tinkerfin-tracing
-
-# SQL storage, with the asynchronous driver of your choice
-pip install "tinkerfin-tracing[sqlalchemy]" asyncpg
-
 ```
 
-Use `asyncpg` for PostgreSQL, `asyncmy` for MySQL, or `aiosqlite` for SQLite. The
-`sqlalchemy` extra installs asynchronous SQLAlchemy support without choosing a driver.
+For shared SQL storage, install the extra and an asynchronous database driver:
+
+```bash
+pip install "tinkerfin-tracing[sqlalchemy]" asyncpg
+```
+
+Use `asyncpg` for PostgreSQL, `asyncmy` for MySQL, or `aiosqlite` for SQLite.
 
 ## Quick Start
 
 Install `tinkerfin` and `langchain-openai`, and set `OPENAI_API_KEY` for this example.
+Replace the model ID with one available to your account.
 
 ```python
-from langchain_core.messages import HumanMessage
+import asyncio
+
 from tinkerfin import TinkerFin
 from tinkerfin_tracing import Tracer
 
-tracer = Tracer()
-runtime = (
-    TinkerFin()
-    .with_namespace("default")
-    .with_observer(tracer)
-    .build(
-        model="openai:gpt-5.4",
-        tools=[],
-    )
-)
 
-result = await runtime.ainvoke(
-    thread_id="thread-1",
-    run_id="run-1",
-    input={"messages": [HumanMessage(content="Hello")]},
-)
-thread = runtime.thread_identity("thread-1")
-history = await tracer.get(thread)
-print(history.messages)
-print(history.summary.status.execution)
-print(history.graph.nodes)
+async def main() -> None:
+    tracer = Tracer()
+    runtime = (
+        TinkerFin()
+        .with_namespace("company-a")
+        .with_observer(tracer)
+        .build(model="openai:gpt-5.4")
+    )
+    await runtime.ainvoke(
+        thread_id="thread-1",
+        run_id="run-1",
+        input={"messages": [{"role": "user", "content": "Hello"}]},
+    )
+    history = await tracer.get(runtime.thread_identity("thread-1"))
+    print(history.messages)
+    print(history.summary.status.execution)
+    print(history.graph.nodes)
+
+
+asyncio.run(main())
 ```
 
 Runtime invocation and streaming record the same lifecycle, including failures before
 model output. Consume streams completely or close them with `await stream.aclose()`.
 Direct execution of a compiled graph does not automatically produce a complete Trace.
 
-## History and execution graphs
+## Read and follow history
 
-One Tracer and Store can serve multiple Runtime namespaces. Writers use the Runtime's
-identity; queries use `runtime.thread_identity(thread_id)` or a shared
-`tinkerfin_contracts.ThreadIdentity(namespace=..., thread_id=...)`. The host chooses
-namespace ownership and authorizes access. Equal thread and Run IDs in different
-namespaces have independent histories, writer ownership, and capacity budgets.
+One Tracer can serve multiple Runtime namespaces. Query with
+`runtime.thread_identity(thread_id)` or a `tinkerfin_contracts.ThreadIdentity` that
+the host has authorized. Equal thread and run IDs in different namespaces have
+independent histories.
 
 `tracer.get(thread)` returns messages, state, approvals, run status, and the execution
-graph at one fixed point in the history. Select `head_run_id` when the thread has
-multiple branches. Follow its updates with `history.follow()`.
+graph at a fixed point in history. Select `head_run_id` for a branch. Use
+`tracer.query(thread, where=TraceGraphFilter(...))` to filter model calls, tools, and
+subagents. Model nodes expose `request_reference` for retrieving retained inputs
+with `tracer.model_request(...)`.
 
-```python
-from tinkerfin_tracing import TraceGraphFilter, TraceGraphNodeKind
+Follow updates with `history.follow()` or the current first graph page's `follow()`;
+close the subscription on early exit. Graph cursors bind the thread, branch, filter,
+and current history tail, so a new commit invalidates an earlier graph cursor.
+History cursors retain their fixed view. Queries are bounded; a structural overflow
+raises `TraceQuotaExceeded`.
 
-graph = await tracer.query(
-    thread,
-    where=TraceGraphFilter(
-        kinds={TraceGraphNodeKind.MODEL, TraceGraphNodeKind.TOOL},
-    ),
-)
-print(graph.nodes, graph.matched_node_ids)
+## Choose what to retain
 
-model = next(node for node in graph.nodes if node.kind == TraceGraphNodeKind.MODEL)
-if model.request_reference is not None:
-    request = await tracer.model_request(thread, reference=model.request_reference)
-    print(request.request)
-```
-
-Model nodes carry a `request_reference` for reading the retained input when inspecting
-that call. References remain bound to the original conversation and generation;
-deleted generations cannot be read through an old reference.
-
-Filters cover kind, status, model, provider, agent, graph namespace, time, and literal
-content search. Search uses retained, sanitized content. ASCII queries ignore ASCII
-letter case; queries containing non-ASCII characters are case-sensitive.
-
-Each turn groups one user task. Subagents contain their own events. Model associations
-link related tools and messages without changing their display nesting. Missing
-relationships or incomplete call history are reported explicitly.
-
-Graph cursors belong to the selected thread, branch, filter, and current history tail.
-A new commit invalidates an earlier Graph cursor. `graph.follow()` is available on the
-current first page; history cursors retain their original fixed view. Follow streams
-release database connections while waiting. Pass an open `Notifications` service
-to the Store's `notifications` argument for cross-instance wakeups. Missed hints are
-repaired every 30 seconds or at the next writer lease deadline. Without this service,
-changes are checked every 0.5 seconds, configurable through
-`TraceStoreOptions.follow_poll_seconds`.
-
-Query limits bound matches, searched content, expanded subagents, and response bytes.
-Oversized details can be omitted while retaining graph structure; a structural overflow
-raises `TraceQuotaExceeded`. Subagent nesting is limited to 64 levels.
-
-## Capture and redaction
-
-`CapturePolicy.public_history()` retains sanitized public content, including tool
-inputs and results. Use `CapturePolicy.public_safe()` for metadata-only tool capture,
-or configure individual tools with `ToolTraceCapture`.
+The default `CapturePolicy.public_history()` retains sanitized public content,
+including tool inputs and results. Use `CapturePolicy.public_safe()` for
+metadata-only tool capture, or `ToolTraceCapture` for individual tools.
 
 Credential redaction and provider-private reasoning removal always apply. Add business
-rules through `Tracer(redactor=...)`; `CompositeRedactor` combines rules, and
-`redact_json_paths()` removes selected RFC 6901 paths. A redactor receives detached
-JSON and a `RedactionContext`. It must be deterministic, synchronous, free of I/O, and
-leave its input unchanged. Invalid results reject capture.
-
-Reasoning requires both an explicitly enabled Runtime extractor and
-`ReasoningCapturePolicy.content()` on the Tracer. The default retains no reasoning
-content or digest. Incomplete model output is marked rather than presented as a
-complete response.
-
-## Durable storage
-
-`InMemoryTraceStore` is bounded and local to one process. `SqlAlchemyTraceStore`
-accepts a borrowed asynchronous PostgreSQL, MySQL, or SQLite Engine:
-
-```python
-from sqlalchemy.ext.asyncio import create_async_engine
-from tinkerfin_tracing import SqlAlchemyTraceStore, Tracer
-
-engine = create_async_engine("postgresql+asyncpg://user:password@db/tinkerfin")
-store = SqlAlchemyTraceStore(engine)
-await store.setup()
-tracer = Tracer(store=store)
-
-# Dispose after accepted operations and all writers have finished.
-await engine.dispose()
-```
-
-`setup()` creates an empty schema or validates the complete existing schema. Partial
-or mismatched tables are rejected. Cancellation waits for accepted setup to finish.
-`get_trace_store_schema(dialect="postgresql").ddl` provides the same tables, indexes,
-and comments for offline setup.
-
-SQLite file databases work with the default pool. In-memory SQLite requires
-`AsyncAdaptedQueuePool` with `pool_size=1, max_overflow=0`; `StaticPool` does not isolate
-concurrent borrowers. The Store never disposes the Engine or changes its pool size.
-MySQL Graph queries require MySQL 8 or newer.
-MySQL payload tables use InnoDB compressed pages and require file-per-table tablespaces.
-
-`SqlAlchemyTraceStore(engine, notifications=notifications)` borrows a started
-[`tinkerfin-notifications`](https://github.com/tinkerfin-ai/tinkerfin-harness/tree/main/packages/tinkerfin-notifications)
-service. Configure its Redis backend on every process for shared wakeups and keep it
-open until writers and followers have closed. The Store publishes `trace.changed`
-after writer open/close, event append, and generation deletion; notifications contain
-resource identity, never captured content. `InMemoryTraceStore` and custom-backend
-`DurableTraceStore` accept the same argument.
-
-The `max_tracer_threads` and `max_tracer_bytes` limits apply separately to each namespace.
-Graph indexes can be rebuilt with `await tracer.rebuild_graph(thread)` without
-rewriting recorded events. A codec can encrypt stored event and checkpoint bytes.
-
-## Custom storage
-
-`DurableTraceStore.supports_graph_queries` and `supports_graph_rebuild` report the
-borrowed backend's available Graph features. A Ledger-only backend still supports
-ordinary history. Indexed queries and rebuilding require their respective extensions.
-
-Implement `TraceLedgerBackend` for shared durable storage; Graph query and rebuild
-extensions use `TraceGraphQueryBackend` and `TraceGraphRebuildBackend`. Use
-`verify_trace_ledger_backend()` to check the Ledger contract across cooperating instances.
-Replace `TraceStore` to customize query and persistence behavior together.
+rules with `Tracer(redactor=...)`. Redactors must be deterministic, synchronous,
+free of I/O, and leave their input unchanged; invalid results reject capture.
+Reasoning content requires both an enabled Runtime extractor and
+`ReasoningCapturePolicy.content()` on the Tracer. The default retains neither
+reasoning content nor its digest.
 
 Direct `TraceWriter` calls accept already captured facts. Use `Tracer` when content
-requires framework and business redaction. Messaging delivery and replay use their own
+requires framework and business redaction.
+
+## Durable storage and ownership
+
+The default `InMemoryTraceStore` is bounded and local to one process. For SQL
+storage, create `SqlAlchemyTraceStore(engine)`, await `store.setup()`, and pass it
+to `Tracer(store=store)`. The Tracer borrows the Store; the SQL Store borrows the
+application's `AsyncEngine`. Finish all writers, followers, and accepted operations
+before disposing the Engine.
+
+Setup creates an empty schema or validates existing tables and indexes. Partial or
+mismatched schemas are rejected. Cancellation waits for accepted setup to finish.
+SQLite files work with the default pool; in-memory SQLite requires
+`AsyncAdaptedQueuePool` with `pool_size=1, max_overflow=0`. MySQL graph queries
+require MySQL 8 or newer, and payload tables require InnoDB file-per-table tablespaces.
+
+Pass a started `Notifications` service to the Store's `notifications` argument for
+cross-instance wakeups, using the same Redis channel in each process. The service
+remains host-owned and must outlive writers and followers. Hints contain identities,
+not captured content; followers repair missed notifications through authoritative
+reads. Without Notifications, followers poll storage.
+
+See the guide for capture limits, encrypted codecs, graph rebuilding, and custom
 storage contracts.
 
 ## Documentation
@@ -187,4 +121,4 @@ storage contracts.
 
 ## License
 
-Apache License 2.0. See [LICENSE](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/LICENSE).
+[Apache License 2.0](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/LICENSE)

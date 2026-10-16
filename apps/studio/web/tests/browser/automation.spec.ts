@@ -317,6 +317,39 @@ test('定时任务读取失败可重试，Toast 避开顶部并在离开页面�
   await testInfo.attach('toast-header-measurements', { body: JSON.stringify(toastPositions, null, 2), contentType: 'application/json' })
 })
 
+test('任务卡片悬浮和键盘聚焦呈现层次，减少动态时保留反馈', async ({ page }, testInfo) => {
+  await prepare(page)
+  const card = page.getByRole('article', { name: '每日 AI 新闻简报', exact: true })
+  const settledBounds = () => card.evaluate(element => {
+    element.getAnimations({ subtree: true }).forEach(animation => animation.finish())
+    const { x, y, width, height } = element.getBoundingClientRect()
+    return { x, y, width, height }
+  })
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme }, theme)
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await page.mouse.move(0, 0)
+    await page.getByRole('tab', { name: '任务', exact: true }).focus()
+    const rest = await settledBounds()
+    await card.hover()
+    expect((await settledBounds()).y).toBeLessThan(rest.y)
+    await page.screenshot({ path: testInfo.outputPath(`automation-card-hover-${theme}.png`) })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    expect((await settledBounds()).y).toBeCloseTo(rest.y, 1)
+    await page.screenshot({ path: testInfo.outputPath(`automation-card-reduced-${theme}.png`) })
+    await page.mouse.move(0, 0)
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    const edit = card.getByRole('button', { name: '每日 AI 新闻简报', exact: true })
+    await edit.focus()
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Shift+Tab')
+    await expect(edit).toBeFocused()
+    expect((await settledBounds()).y).toBeLessThan(rest.y)
+    await page.screenshot({ path: testInfo.outputPath(`automation-card-keyboard-${theme}.png`) })
+    await page.getByRole('tab', { name: '任务', exact: true }).focus()
+  }
+})
+
 test('自动化沿用会话主题与四尺寸布局，共享表单弹层可使用', async ({ page }, testInfo) => {
   await prepare(page)
   for (const theme of ['light', 'dark']) {
@@ -330,6 +363,21 @@ test('自动化沿用会话主题与四尺寸布局，共享表单弹层可使�
       await expect(card.getByRole('heading', { name: '每日 AI 新闻简报', exact: true })).toBeVisible()
       await expect(card.getByText('每天 09:00', { exact: true })).toBeVisible()
       await expect(card.getByText('9月11日 09:00运行', { exact: true })).toBeVisible()
+      const cards = await page.getByRole('article').evaluateAll(elements => elements.map(element => {
+        const { x, y, width, height } = element.getBoundingClientRect()
+        return { x, y, width, height }
+      }))
+      for (const [index, box] of cards.entries()) {
+        expect(box.x).toBeGreaterThanOrEqual(0)
+        expect(box.x + box.width).toBeLessThanOrEqual(width)
+        expect(box.width).toBeCloseTo(cards[0].width, 1)
+        for (const other of cards.slice(index + 1)) {
+          const separated = box.x + box.width <= other.x || other.x + other.width <= box.x
+            || box.y + box.height <= other.y || other.y + other.height <= box.y
+          expect(separated).toBe(true)
+        }
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
       const prompt = await card.getByText(taskPrompt, { exact: true }).evaluate(element => ({
         height: element.getBoundingClientRect().height, lineHeight: parseFloat(getComputedStyle(element).lineHeight),
         fullHeight: element.scrollHeight, visibleHeight: element.clientHeight,
@@ -519,6 +567,36 @@ test('自动化弹窗标题正文在断点前后对齐，浅深主题占位文�
   }
 })
 
+test('历史日期范围按内容占宽，浅深主题四尺寸均不拆开日期', async ({ page }, testInfo) => {
+  await prepare(page)
+  await page.clock.setFixedTime(new Date('2026-10-16T07:00:00Z'))
+  await page.getByRole('tab', { name: '历史', exact: true }).click()
+  const title = page.getByRole('heading', { level: 2, name: '10月12日 – 10月18日', exact: true })
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect(title).toBeVisible()
+      const lineCount = await title.evaluate(element => {
+        const range = document.createRange()
+        range.selectNodeContents(element)
+        return range.getClientRects().length
+      })
+      expect(lineCount).toBe(1)
+      const [previous, range, next, tabs] = await measureBounds(
+        page.getByRole('button', { name: '上一周', exact: true }), title,
+        page.getByRole('button', { name: '下一周', exact: true }),
+        page.getByRole('tablist', { name: '运行历史显示方式' }),
+      )
+      expect(previous.x + previous.width).toBeLessThanOrEqual(range.x)
+      expect(range.x + range.width).toBeLessThanOrEqual(next.x)
+      expect(next.x + next.width <= tabs.x || next.y + next.height <= tabs.y).toBe(true)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await page.screenshot({ path: testInfo.outputPath(`date-range-${theme}-${width}.png`) })
+    }
+  }
+})
+
 test('手机周历初始对齐今天，尺寸变化保留阅读位置且切换周次重新定位', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 320, height: 900 }, hasTouch: true })
   const page = await context.newPage()
@@ -544,7 +622,7 @@ test('手机周历初始对齐今天，尺寸变化保留阅读位置且切换�
       page.getByRole('button', { name: '上一周', exact: true }).boundingBox(),
       page.getByRole('tablist', { name: '运行历史显示方式' }).boundingBox(),
     ])
-    expect(Math.abs(previousBox!.y - tabsBox!.y)).toBeLessThanOrEqual(1)
+    expect(previousBox!.x + previousBox!.width <= tabsBox!.x || previousBox!.y + previousBox!.height <= tabsBox!.y).toBe(true)
     await expect.poll(() => week.evaluate((node) => node.scrollLeft)).toBe(0)
     await page.getByRole('button', { name: '回到本周', exact: true }).click()
     await expectTodayAligned()
@@ -553,13 +631,35 @@ test('手机周历初始对齐今天，尺寸变化保留阅读位置且切换�
     }
     const range = page.getByRole('heading', { level: 2, name: '2025年12月29日 – 2026年1月4日' })
     await expect(range).toBeVisible()
+    const dateLines = await range.evaluate(element => {
+      const content = element.textContent!
+      return content.split(' – ').map(date => {
+        const start = content.indexOf(date)
+        const end = start + date.length
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+        const lineTops = new Set<number>()
+        let offset = 0
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const length = node.textContent!.length
+          if (offset < end && offset + length > start) {
+            const selection = document.createRange()
+            selection.setStart(node, Math.max(0, start - offset))
+            selection.setEnd(node, Math.min(length, end - offset))
+            for (const rect of selection.getClientRects()) lineTops.add(Math.round(rect.top))
+          }
+          offset += length
+        }
+        return lineTops.size
+      })
+    })
+    expect(dateLines).toEqual([1, 1])
     const [rangeBox, nextBox, viewBox] = await Promise.all([
       range.boundingBox(),
       page.getByRole('button', { name: '下一周', exact: true }).boundingBox(),
       page.getByRole('tablist', { name: '运行历史显示方式' }).boundingBox(),
     ])
     expect(rangeBox!.x + rangeBox!.width).toBeLessThanOrEqual(nextBox!.x)
-    expect(nextBox!.x + nextBox!.width).toBeLessThanOrEqual(viewBox!.x)
+    expect(nextBox!.x + nextBox!.width <= viewBox!.x || nextBox!.y + nextBox!.height <= viewBox!.y).toBe(true)
   } finally {
     await context.close()
   }

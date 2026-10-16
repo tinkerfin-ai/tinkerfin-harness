@@ -1,6 +1,6 @@
 [project]
 name = "tinkerfin-gateway"
-version = "0.1.0"
+version = "0.1.1"
 description = "Run commands, durable output, and client notifications for TinkerFin hosts."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,10 +16,10 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "tinkerfin[agui]==0.1.0",
-    "tinkerfin-contracts==0.1.0",
-    "tinkerfin-messaging[agui]==0.1.0",
-    "tinkerfin-notifications==0.1.0",
+    "tinkerfin[agui]==0.1.1",
+    "tinkerfin-contracts==0.1.1",
+    "tinkerfin-messaging[agui]==0.1.1",
+    "tinkerfin-notifications==0.1.1",
     "pydantic>=2,<3",
     "ag-ui-protocol==0.1.19",
     "langgraph>=1.2.10,<=1.2.11",

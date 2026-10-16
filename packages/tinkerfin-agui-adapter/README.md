@@ -28,6 +28,7 @@ The converter accepts an asynchronous iterable of live v2 parts or decoded
 <!-- adapter-quick-start:start -->
 ```python
 import asyncio
+from contextlib import aclosing
 
 from langchain_core.messages import AIMessageChunk
 
@@ -48,157 +49,83 @@ async def parts():
 
 async def main():
     identity = RunIdentity(namespace="company-a", threadId="thread-1", runId="run-1")
-    async for event in astream_events(
-        parts(),
-        identity=identity,
-    ):
-        frame = encode_sse(event)
-        print(frame, end="")
+    async with aclosing(astream_events(parts(), identity=identity)) as events:
+        async for event in events:
+            print(encode_sse(event), end="")
 
 
 asyncio.run(main())
 ```
 <!-- adapter-quick-start:end -->
 
-Production graph integration supplies `messages`, `tasks`, and `values` with
-`version="v2"` and `subgraphs=True`. `RUN_STARTED.input` is omitted; transport input and
-Graph input remain caller-owned boundaries rather than duplicated event payloads.
-One conversion exclusively consumes and closes the supplied iterator.
-Recorded Native parts retain the execution origins needed for delegated retries.
-Raw SDK parts require sufficient task-start evidence; ambiguous functional-task
-ancestry and multiple delegated requests sharing one Native task are rejected.
-`astream_events()` already creates the main lifecycle, including its unique terminal;
-`AgUiLifecycleEventFactory` is for custom orchestrators that do not use this stream
-facade. `encode_sse()` only renders an event and does not take lifecycle or transport
-ownership.
+For a live graph, supply `messages`, `tasks`, and `values` with `version="v2"`
+and `subgraphs=True`. One conversion exclusively consumes and closes the supplied
+iterator. Close the event iterator explicitly or use `aclosing` when leaving early;
+cancellation during a pull closes its upstream.
 
-## Event contract
+`astream_events()` owns the main event lifecycle. Fully consuming it emits one
+`RUN_STARTED` and exactly one main terminal, closing text, reasoning, and tool
+lifecycles before completion. Do not add a second main lifecycle around it.
+`encode_sse()` renders one event; the host owns transport, persistence, and delivery.
 
-- A fully consumed conversion emits one `RUN_STARTED` and exactly one main terminal.
-- Text, reasoning, and tool lifecycles close before state, interrupt, error, or
-  completion boundaries.
-- Full graph namespaces and IDs correlate concurrent messages, tool calls, results, and
-  subagents; arrival order is not identity.
-- Verified Deep Agents delegates use `deep_agent_subagent` provenance; ordinary
-  graphs use `compiled_subgraph` provenance.
-- Task and non-root values diagnostics use `source="langgraph.tasks"` and
-  `source="langgraph.values"`. A LangGraph task is not automatically a subagent, and
-  subgraph provenance never uses AG-UI `parentRunId`.
-- Verified Deep Agents delegates publish `SubagentProvenance` with schema
-  `tinkerfin.subagent-provenance`. Preserve its complete `subagentInvocationId`,
-  which remains stable when a new request resumes the same checkpointed invocation.
-- Delegate provenance uses the effective Deep Agents `task` fields `description` and
-  `subagent_type`. The sanitized task RAW event retains the complete native
-  pre-validation input, but additional model-produced arguments do not change the
-  delegate identity or invalidate an otherwise executable task.
-- Provider-private reasoning is removed from task, state, raw, message, and terminal
-  payloads. `expose_reasoning_events=True` enables only verified event sources.
-  Task errors in RAW events use `type="TaskError"` without exception details.
-- `expose_subagent_events=False` suppresses public subgraph events while preserving
-  validation.
-- Before an interrupt terminal, conversion publishes root state and a root-first
-  graph-scoped message snapshot. Preserve their order when storing or replaying events.
-- Declared `RuntimeInterruptEnvelope` values map to AG-UI interrupts without a Tool
-  ID. Their trusted envelope, response schema, and native ID are persisted for generic
-  resume translation; one batch cannot mix runtime and Tool interrupts.
-- `prior_tool_call_ids` accepts complete `tf:tool:...` scoped IDs and lets a resumed
-  host publish a child Tool result without synthesizing another start/args/end.
-- Tool reviews publish strict `metadata.deepagents` schema
-  `tinkerfin.deepagents.tool-review`. Use `parse_tool_review_interrupt()` on the
-  complete persisted interrupt; missing, unknown, or inconsistent fields fail closed.
-- `private_state_keys` removes only named top-level channels at known state projection
-  boundaries. Nested same-named business fields remain visible. TinkerFin Plan
-  Runtimes supply their private channels automatically.
-- Conversion pulls with bounded lookahead. Close the event iterator explicitly or use
-  `aclosing` when leaving iteration early; cancellation during a pull closes its upstream.
+## Preserve event identity and privacy
 
-`ResumeMapper.map()` translates complete AG-UI resume entries from native checkpoint
-interrupts and messages grouped by full graph namespace. Resolved reviews require those
-messages so Tool calls can be correlated safely. Identical actions in different
-Graphs require `interrupt_graph_namespaces` from trusted checkpoint evidence. `ResumeMapper.map_agui()` instead
-accepts complete AG-UI interrupts that the host persisted from an earlier terminal. It
-reuses their already verified scoped `toolCallId` values and does not query a graph or
-checkpointer. Never pass client-supplied interrupt payloads to that method.
+Preserve complete scoped IDs, graph namespaces, and event order when storing or
+replaying output. Arrival order does not identify concurrent messages, tools, or
+subagents. State and message snapshots precede an interrupt terminal. Recorded
+`NativeStreamPart` values retain the origins needed for delegated retry and resume;
+raw SDK parts must provide sufficient task-start evidence or conversion rejects
+ambiguous ancestry.
 
-Both paths distinguish resolved, abandoned, and mixed decisions and never convert
-cancellation into rejection. `ResumeTranslation.kind` distinguishes Tool review from a
-generic runtime interrupt. A `custom` Tool translation preserves every native group and
-cancelled slot for a cancellation-aware executor; stock Deep Agents cannot execute that
-shape. Persisted AG-UI Tool reviews also retain every scoped Tool ID and verified
-subagent source name needed by that executor. A `custom` generic runtime translation is
-not a Tool decision and must not be sent through Tool cancellation middleware.
+Provider-private reasoning is removed from public payloads.
+`expose_reasoning_events=True` enables only verified reasoning event sources.
+`private_state_keys` hides named top-level state channels at public projection
+boundaries; it does not hide nested fields with the same name. Standalone hosts
+must identify their private channels. Managed TinkerFin Plan Runtimes supply theirs.
 
-Edited Tool arguments are validated against the persisted `args_schema` using JSON
-Schema Draft 2020-12 before native resume data is produced. Custom runtime reasons must
-be a core reason or a namespaced extension such as `tinkerfin:plan_review` or
-`vendor:approval`; unknown unnamespaced reasons fail validation. Generic LangGraph
-interrupts use `langgraph:interrupt`.
+## Resume human-input requests
 
-`encode_sse(event, event_id=...)` encodes one event; delivery, persistence, retries,
-custom mixed execution, and transport cancellation remain caller-owned.
+Applications using TinkerFin should submit `AgUiResumeRequest` to
+`runtime.open_agui_run(resume=...)`; the Runtime owns checkpoint lookup and
+translation. Standalone integrations can use `ResumeMapper` with complete trusted
+checkpoint evidence or persisted AG-UI interrupts. Never pass client-supplied
+interrupt payloads to `ResumeMapper.map_agui()`.
 
-`RuntimeInterruptEnvelope` is intended for framework workflows such as Plan review.
-The envelope rejects malformed Draft 2020-12 response Schemas before publication.
-`ResumeMapper` validates trusted persisted correlation, full resume coverage, and the
-resolved JSON object with format checking before producing native `Command(resume=...)`
-data. `require_valid_schema(...)` and `validate_json_schema_instance(...)` expose the
-same generic validation boundary to framework integrations. The graph that emitted the
-envelope remains responsible for domain validation such as revision checks.
-
-## Exporting retained human-input requests
-
-`project_interrupt(native, tool_call_ids=..., source=...)` converts a retained
-native interrupt into the same public action contract used by live conversion.
-For Tool approval, pass the complete scoped Tool IDs already correlated in native
-action order. Runtime and generic interrupts do not take Tool IDs. The function
-preserves positional review policies and response schemas; it does not correlate
-messages, access checkpoints, or authorize a response.
+Resume entries must cover every pending interrupt. Edited tool arguments and generic
+runtime responses are validated against their persisted JSON Schemas. Cancellation
+means abandonment, not rejection. Mixed tool decisions require a cancellation-aware
+executor; stock Deep Agents cannot execute that translation. Preserve the complete
+persisted interrupts, scoped tool IDs, and provenance rather than reconstructing
+correlation from display text. See the approval guide for the complete flow and
+standalone integration contracts.
 
 To read recorded conversations, use
 [AgUiHistory](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/runtime/api-reference.md#recorded-ag-ui-conversations)
-from `tinkerfin.agui`. Its snapshots and updates include the references used by live
-AG-UI messages and pending interactions.
+from `tinkerfin.agui`. Its snapshots and updates use the same references as live
+messages and pending interactions.
 
-## Durable attachment content
+## Attachment content
 
-`user_message_to_langchain()` from `tinkerfin_agui_adapter.media` converts text and
-attachment inputs into LangChain messages. A durable attachment uses the AG-UI
-`source.value` URI `attachment:<id>` and a validated Attachment descriptor in `metadata`.
-Hosts authorize the reference before invoking an agent. Snapshot conversion preserves
-these typed content fragments rather than serializing them into answer text.
+Durable attachment inputs use `source.value="attachment:<id>"` with a validated
+Attachment descriptor in metadata. Hosts authorize references before invoking an
+agent. Descriptors contain identity, name, MIME type, and size; keep file bytes,
+signed download URLs, and credentials out of them.
 
-Tool results expose an `attachments` array alongside the standard text `content`.
-Assistant attachment blocks emit `CUSTOM` with name `tinkerfin.message.attachments`
-and value `{ "messageId": "...", "attachments": [...] }`, within a balanced message
-Start/End lifecycle. Consumers merge additions by attachment ID. Authoritative assistant
-and Tool snapshots carry the same descriptors in `attachments`; snapshot arrays replace
-prior descriptors. IDs and raw-event graph namespaces retain the ordinary scoped correlation
-contract. Attachment descriptors have `id`, `name`, `mime_type`, and `size_bytes` fields;
-`Attachment.model_json_schema()` in `tinkerfin_contracts.media` provides their schema.
-File bytes, signed download URLs, and credentials are not attachment descriptors.
-
-`MessageAttachments` in `tinkerfin_agui_adapter.media` validates the CUSTOM event
-payload. `AttachmentToolCallResultEvent`, `AttachmentAssistantMessage`, and
-`AttachmentToolMessage` declare the `attachments` field. The adapter publishes
-`AttachmentMessagesSnapshotEvent` to validate and serialize these messages together
-with standard AG-UI user, system, developer, activity, and reasoning messages.
-`parse_attachment_output_event()` validates decoded tool results or message snapshots,
-including events returned by the generic `AgUiCodec`, and returns these public types.
-
-The packaged `contracts/message-attachments.schema.json`, `tool-call-result.schema.json`,
-`assistant-message.schema.json`, `tool-message.schema.json`, and
-`messages-snapshot.schema.json` describe the corresponding wire contracts.
-Native messages use standard `image` or `file` blocks with
-`file_id`, `mime_type`, and `extras.attachment`; hosts resolve these IDs with
-`AttachmentMiddleware` before the model request.
+Tool results expose an `attachments` array. Assistant additions use the
+`tinkerfin.message.attachments` CUSTOM event: merge additions by attachment ID;
+authoritative snapshot arrays replace prior descriptors. Use
+`parse_attachment_output_event()` from `tinkerfin_agui_adapter.media` to validate
+decoded tool results and message snapshots. The adapter extensions guide covers
+input conversion, event models, and packaged JSON Schemas.
 
 ## Documentation
 
 - [AG-UI guide](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/agui/index.md)
+- [Events and identity](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/agui/events.md)
+- [Interrupts and resume](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/agui/interrupts-and-resume.md)
 - [Adapter extensions](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/agui/adapter-extensions.md)
-- [Complete documentation](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/index.md)
+- [API reference](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/agui/api-reference.md)
 
 ## License
 
-Apache License 2.0. See the
-[repository license](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/LICENSE).
+[Apache License 2.0](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/LICENSE)

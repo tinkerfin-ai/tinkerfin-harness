@@ -1,7 +1,8 @@
 # tinkerfin-sqlalchemy
 
 Async transaction support for storage integrations using SQLite, MySQL, or PostgreSQL.
-Application code normally uses a TinkerFin Store and supplies its own SQLAlchemy Engine.
+Application code normally uses a TinkerFin Store and supplies its own SQLAlchemy
+`AsyncEngine`; storage integrations use `SqlTransaction` directly.
 
 ## Installation
 
@@ -9,19 +10,52 @@ Application code normally uses a TinkerFin Store and supplies its own SQLAlchemy
 pip install tinkerfin-sqlalchemy
 ```
 
-Install an asynchronous database driver such as `aiosqlite`, `asyncmy`, or `asyncpg`.
+Python 3.11 or newer is required. Install an asynchronous database driver such as
+`aiosqlite`, `asyncmy`, or `asyncpg`.
 
 ## Quick Start
 
+Install the driver for this in-memory example:
+
+```bash
+pip install aiosqlite
+```
+
 ```python
+import asyncio
+
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import AsyncAdaptedQueuePool
+
 from tinkerfin_sqlalchemy import SqlTransaction
 
-async with SqlTransaction(engine) as connection:
-    await connection.execute(text("UPDATE balances SET amount = amount + 1"))
 
-async with SqlTransaction(engine, read_only=True) as connection:
-    rows = (await connection.execute(text("SELECT amount FROM balances"))).all()
+async def main() -> None:
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        poolclass=AsyncAdaptedQueuePool,
+        pool_size=1,
+        max_overflow=0,
+    )
+    try:
+        async with SqlTransaction(engine, schema_lock="example-balances") as connection:
+            await connection.execute(
+                text("CREATE TABLE balances (amount INTEGER NOT NULL)")
+            )
+            await connection.execute(text("INSERT INTO balances (amount) VALUES (0)"))
+
+        async with SqlTransaction(engine) as connection:
+            await connection.execute(text("UPDATE balances SET amount = amount + 1"))
+
+        async with SqlTransaction(engine, read_only=True) as connection:
+            result = await connection.execute(text("SELECT amount FROM balances"))
+            print(result.scalar_one())
+    finally:
+        await engine.dispose()
+
+
+asyncio.run(main())
 ```
 
 Successful writes commit; failed writes roll back. Reads share one database snapshot.
@@ -40,7 +74,7 @@ connection. Integrations keep their own schema, retry policy, and commit confirm
 
 ## Documentation
 
-[TinkerFin documentation](https://github.com/tinkerfin-ai/tinkerfin-harness/tree/main/docs)
+[TinkerFin documentation](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/index.md)
 
 ## License
 

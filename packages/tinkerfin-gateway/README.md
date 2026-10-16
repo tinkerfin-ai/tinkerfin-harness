@@ -11,15 +11,22 @@ pip install tinkerfin-gateway
 
 ## Run a command
 
+Install `langchain-openai` and set `OPENAI_API_KEY` for this example. Replace the
+model ID with one available to your account.
+
 ```python
+import asyncio
+
 from tinkerfin import TinkerFin
 from tinkerfin_gateway import Gateway, StartRun
 from tinkerfin_messaging import Messaging
 from tinkerfin_notifications import Notifications
 
 
-async def answer(model):
-    runtime = TinkerFin().with_namespace("authorized-account").build(model)
+async def main() -> None:
+    runtime = (
+        TinkerFin().with_namespace("authorized-account").build(model="openai:gpt-5.4")
+    )
     async with Messaging() as messaging, Notifications() as notifications:
         gateway = Gateway(messaging=messaging, notifications=notifications)
         run = await gateway.start(
@@ -33,6 +40,9 @@ async def answer(model):
         async with run.subscribe() as replies:
             async for reply in replies:
                 print(reply.envelope.seq, reply.data.type)
+
+
+asyncio.run(main())
 ```
 
 Keep Messaging and Notifications open for the application lifetime. Gateway borrows

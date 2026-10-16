@@ -1,6 +1,6 @@
 [project]
 name = "tinkerfin"
-version = "0.1.0"
+version = "0.1.1"
 description = "Request-scoped Native, Plan, Observation, and optional AG-UI streaming."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -24,18 +24,18 @@ dependencies = [
     "langgraph>=1.2.10,<=1.2.11",
     "jsonschema>=4.25,<5",
     "pydantic>=2,<3",
-    "tinkerfin-contracts==0.1.0",
-    "tinkerfin-native-stream==0.1.0",
+    "tinkerfin-contracts==0.1.1",
+    "tinkerfin-native-stream==0.1.1",
     "tzdata>=2025.2",
     "typing-extensions>=4.12.2,<5",
     "wcmatch>=11,<12",
 ]
 
 [project.optional-dependencies]
-tracing = ["tinkerfin-tracing==0.1.0"]
+tracing = ["tinkerfin-tracing==0.1.1"]
 agui = [
     "ag-ui-protocol==0.1.19",
-    "tinkerfin-agui-adapter==0.1.0",
+    "tinkerfin-agui-adapter==0.1.1",
 ]
 redis = [
     "redis>=6,<9",
@@ -45,8 +45,8 @@ redis = [
 
 [dependency-groups]
 dev = [
-    "tinkerfin-agui-adapter==0.1.0",
-    "tinkerfin-tracing==0.1.0",
+    "tinkerfin-agui-adapter==0.1.1",
+    "tinkerfin-tracing==0.1.1",
 ]
 
 [project.urls]

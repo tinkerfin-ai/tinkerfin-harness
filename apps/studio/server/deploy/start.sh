@@ -15,7 +15,7 @@ usage() {
     printf '  --local       启动所选依赖，后端由用户在本机运行\n'
     printf '  --container   从当前源码构建并启动后端容器和所选依赖\n'
     printf '  --env-file    使用指定的统一配置文件\n'
-    printf '不带模式参数时使用现成的后端镜像；依赖由 COMPOSE_PROFILES 选择\n'
+    printf '不带模式参数时从当前源码构建后端；依赖由 COMPOSE_PROFILES 选择\n'
 }
 while (($#)); do
     case "$1" in
@@ -62,7 +62,7 @@ awk -v version="$version" 'BEGIN {
 "$SCRIPT_DIR/init-env.sh" "$ENV_FILE"
 compose config --quiet
 configuration=$(compose config --environment)
-image=ghcr.io/tinkerfin-ai/studio-server:0.1.0
+image=tinkerfin-studio-server:local
 bind_address=127.0.0.1
 port=8090
 wait_timeout=600
@@ -94,11 +94,8 @@ while IFS= read -r service; do
     fi
 done <<< "$services"
 
-if ((CONTAINER)); then
-    if [[ "$image" == ghcr.io/tinkerfin-ai/studio-server:0.1.0 ]]; then
-        export STUDIO_IMAGE=tinkerfin-studio-server:local
-        image=$STUDIO_IMAGE
-    fi
+if ((!LOCAL)); then
+    image=${image:-tinkerfin-studio-server:local}
     export STUDIO_IMAGE="$image"
     printf '构建后端镜像：%s\n' "$image"
     compose build --pull server

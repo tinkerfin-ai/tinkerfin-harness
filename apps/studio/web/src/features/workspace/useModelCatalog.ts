@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { fetchModelCatalog } from '../../api/models/client'
 import type { AgentModelCatalogItem } from '../../api/models/types'
@@ -10,9 +10,11 @@ export function useModelCatalog() {
   const [catalogDefaultModelId, setCatalogDefaultModelId] = useState('')
   const [status, setStatus] = useState<ModelCatalogStatus>('loading')
   const [version, setVersion] = useState(0)
+  const activeRequest = useRef<AbortController | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
+    activeRequest.current = controller
     setStatus('loading')
     void fetchModelCatalog(controller.signal).then((catalog) => {
       if (controller.signal.aborted) return
@@ -23,7 +25,10 @@ export function useModelCatalog() {
     }).catch(() => {
       if (!controller.signal.aborted) setStatus('error')
     })
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      if (activeRequest.current === controller) activeRequest.current = null
+    }
   }, [version])
 
   const modelIds = useMemo(() => models.map((model) => model.modelId), [models])
@@ -32,7 +37,11 @@ export function useModelCatalog() {
       ? catalogDefaultModelId
       : models.find((model) => model.isDefault)?.modelId ?? models[0]?.modelId ?? ''
   ), [catalogDefaultModelId, models])
-  const retry = useCallback(() => setVersion((current) => current + 1), [])
+  const retry = useCallback(() => {
+    activeRequest.current?.abort()
+    setStatus('loading')
+    setVersion((current) => current + 1)
+  }, [])
 
   return {
     status,

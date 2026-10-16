@@ -1,6 +1,6 @@
 [project]
 name = "tinkerfin-messaging"
-version = "0.1.0"
+version = "0.1.1"
 description = "Replayable messaging for TinkerFin Native and AG-UI streams."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,14 +18,14 @@ classifiers = [
 
 dependencies = [
     "pydantic>=2,<3",
-    "tinkerfin-contracts==0.1.0",
+    "tinkerfin-contracts==0.1.1",
 ]
 
 [project.optional-dependencies]
 redis = ["redis>=6,<9"]
-sqlalchemy = ["sqlalchemy[asyncio]>=2.0.52,<3", "tinkerfin-sqlalchemy==0.1.0"]
+sqlalchemy = ["sqlalchemy[asyncio]>=2.0.52,<3", "tinkerfin-sqlalchemy==0.1.1"]
 agui = ["ag-ui-protocol==0.1.19"]
-native = ["tinkerfin-native-stream==0.1.0"]
+native = ["tinkerfin-native-stream==0.1.1"]
 
 [tool.uv.sources]
 tinkerfin-contracts = { workspace = true }

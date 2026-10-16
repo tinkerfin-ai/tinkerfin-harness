@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ConversationHistoryDetail, ConversationHistoryListItem } from '../../api/conversation/history'
 import { clearAuthSession, saveAuthSession } from '../../auth/session'
@@ -8,6 +8,7 @@ import { runFixture } from '../../test/automationFixtures'
 import { WorkspaceScreen } from './WorkspaceScreen'
 import { ProjectsWorkspace } from '../projects/ProjectsWorkspace'
 import type { Project } from '../projects/api'
+import type { ModelSettings } from '../settings/useModelSettings'
 
 const user = { user_id: 7, username: 'requests', avatar_url: null, roles: [], disabled: false }
 const time = '2030-01-01T00:00:00Z'
@@ -61,6 +62,287 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   vi.useRealTimers()
+})
+
+it('每次进入新会话刷新模型和默认选择，保留正文并丢弃过期目录', async () => {
+  const fetch = installFetch({ list: [], details: {} })
+  const original = fetch.getMockImplementation()!
+  const refreshes: { request: Request; resolve: (response: Response) => void }[] = []
+  let catalogReads = 0
+  fetch.mockImplementation((input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    if (new URL(request.url).pathname === '/api/models' && catalogReads++ > 0) {
+      return new Promise<Response>(resolve => refreshes.push({ request, resolve }))
+    }
+    return original(input, init)
+  })
+  render(<WorkspaceScreen user={user} onLogout={vi.fn()} onToast={vi.fn()} />)
+  const input = await screen.findByRole('textbox', { name: '消息输入' })
+  await waitFor(() => expect(input).toBeEnabled())
+  fireEvent.change(input, { target: { value: '保留新会话正文', selectionStart: 7 } })
+  const enterNew = () => fireEvent.click(screen.getAllByRole('button', { name: '新会话' })[0]!)
+  enterNew()
+  await waitFor(() => expect(refreshes).toHaveLength(1))
+  expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
+  enterNew()
+  await waitFor(() => expect(refreshes).toHaveLength(2))
+  expect(refreshes[0]!.request.signal.aborted).toBe(true)
+  const catalog = (id: string) => jsonResponse({ items: [{ modelId: id, displayName: id,
+    connectionId: 'provider', connectionDisplayName: '模型', reasoningEnabled: false, isDefault: true }], defaultModelId: id })
+  await act(async () => refreshes[1]!.resolve(catalog('Latest')))
+  expect(screen.getByRole('button', { name: '选择模型' })).toHaveTextContent('Latest')
+  expect(input).toHaveValue('保留新会话正文')
+  expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
+  await act(async () => refreshes[0]!.resolve(catalog('Stale')))
+  expect(screen.getByRole('button', { name: '选择模型' })).toHaveTextContent('Latest')
+  expect(fetch.mock.calls.some(([request, init]) => new Request(request, init).method === 'POST')).toBe(false)
+})
+
+it('新会话目录刷新失败可重试，空目录不能提交且正文保留', async () => {
+  const fetch = installFetch({ list: [], details: {} })
+  const original = fetch.getMockImplementation()!
+  let catalogReads = 0
+  fetch.mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    if (new URL(request.url).pathname === '/api/models') {
+      catalogReads += 1
+      if (catalogReads === 2) return new Response('', { status: 503 })
+      if (catalogReads === 3) return jsonResponse({ items: [], defaultModelId: null })
+    }
+    return original(input, init)
+  })
+  render(<WorkspaceScreen user={user} onLogout={vi.fn()} onToast={vi.fn()} />)
+  const input = await screen.findByRole('textbox', { name: '消息输入' })
+  await waitFor(() => expect(input).toBeEnabled())
+  fireEvent.change(input, { target: { value: '刷新期间保留正文', selectionStart: 8 } })
+  fireEvent.click(screen.getAllByRole('button', { name: '新会话' })[0]!)
+  fireEvent.click(await screen.findByRole('button', { name: '重新加载模型' }))
+  await screen.findByText('未配置可用模型')
+  expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
+  expect(input).toHaveValue('刷新期间保留正文')
+  fireEvent.click(screen.getByRole('button', { name: '重试' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled())
+  expect(screen.getByRole('button', { name: '选择模型' })).toHaveTextContent('Main')
+  expect(input).toHaveValue('刷新期间保留正文')
+})
+
+it('新会话刷新返回时不能覆盖已切回的历史模型', async () => {
+  const fetch = installFetch({ list: [historyItem({})], details: { thread: traceDetail({}) } })
+  const original = fetch.getMockImplementation()!
+  let catalogReads = 0
+  let finishRefresh: (response: Response) => void = () => { throw new Error('目录请求尚未开始') }
+  fetch.mockImplementation((input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    if (new URL(request.url).pathname === '/api/models' && catalogReads++ > 0) {
+      return new Promise<Response>(resolve => { finishRefresh = resolve })
+    }
+    return original(input, init)
+  })
+  render(<WorkspaceScreen user={user} onLogout={vi.fn()} onToast={vi.fn()} />)
+  await screen.findByText('来自 Trace 的历史回复')
+  fireEvent.click(screen.getAllByRole('button', { name: '新会话' })[0]!)
+  await waitFor(() => expect(catalogReads).toBe(2))
+  fireEvent.click(screen.getByRole('button', { name: '打开会话：标题' }))
+  await screen.findByText('来自 Trace 的历史回复')
+  await act(async () => finishRefresh(jsonResponse({ items: ['main', 'new-default'].map(id => ({
+    modelId: id, displayName: id === 'main' ? 'Main' : 'New Default', connectionId: 'provider',
+    connectionDisplayName: '模型', reasoningEnabled: false, isDefault: id === 'new-default',
+  })), defaultModelId: 'new-default' })))
+  expect(screen.getByRole('button', { name: '选择模型' })).toHaveTextContent('Main')
+})
+
+it('恢复已停用模型的历史时保留草稿并要求主动选择可用模型', async () => {
+  const list = [historyItem({ lastModel: 'unavailable-model' })]
+  const fetch = installFetch({ list, details: { thread: traceDetail({ lastModel: 'unavailable-model' }) } })
+  render(<WorkspaceScreen user={user} onLogout={vi.fn()} onToast={vi.fn()} />)
+  await screen.findByText('来自 Trace 的历史回复')
+  const input = screen.getByRole('textbox', { name: '消息输入' })
+  expect(input).toBeEnabled()
+  fireEvent.change(input, { target: { value: '保留正文再选模型', selectionStart: 8 } })
+  expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '选择模型' })).toHaveTextContent('请选择可用模型')
+  expect(screen.getByRole('status')).toHaveTextContent('请选择可用模型')
+  fireEvent.keyDown(input, { key: 'Enter' })
+  expect(fetch.mock.calls.some(([request, init]) => new Request(request, init).method === 'POST')).toBe(false)
+  expect(input).toHaveValue('保留正文再选模型')
+  fireEvent.click(screen.getByRole('button', { name: '选择模型' }))
+  fireEvent.click(within(screen.getByRole('listbox', { name: '模型选项' })).getByRole('option', { name: /Main/ }))
+  expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: '选择模型' })).toHaveTextContent('Main')
+  expect(input).toHaveValue('保留正文再选模型')
+})
+
+it('初始失败按原模型判断重试资格，改选有效模型只能发起新请求', async () => {
+  let models: ModelSettings[] = ['main', 'available'].map((id, index) => ({
+    model_id: id, display_name: id === 'main' ? 'Main' : 'Available', connection_id: 'provider',
+    model_name: id, reasoning_enabled: false, image_support: 'unknown', enabled: true,
+    is_default: index === 1, sort_order: index, image_input_capability: null,
+    chat_options: { max_tokens: null, temperature: null, top_p: null, stop: null,
+      reasoning_effort: null, context_window: null, keep_alive: null },
+  }))
+  const submissions: { runId: string; forwardedProps: { model: string }; messages: { content: string }[] }[] = []
+  const fetch = installFetch({ list: [], details: {} })
+  const original = fetch.getMockImplementation()!
+  fetch.mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    const path = new URL(request.url).pathname
+    if (path === '/api/models') return jsonResponse({
+      items: models.filter(model => model.enabled).map(model => ({ modelId: model.model_id,
+        displayName: model.display_name, connectionId: 'provider', connectionDisplayName: '提供方',
+        reasoningEnabled: false, isDefault: model.is_default })), defaultModelId: 'available',
+    })
+    if (path === '/api/models/settings') return jsonResponse({ models, providers: [], connections: [{
+      connection_id: 'provider', provider_id: 'custom', display_name: '提供方', api_type: 'openai_chat_completions',
+      base_url: 'https://example.invalid', auth_type: 'api_key', has_key: true,
+    }] })
+    if (path === '/api/models/configurations/main' && request.method === 'PUT') {
+      models = models.map(model => model.model_id === 'main' ? { ...model, enabled: false } : model)
+      return jsonResponse(null)
+    }
+    if (path === '/api/conversation/chat' && request.method === 'POST') {
+      submissions.push(await request.json())
+      return new Response(JSON.stringify({ code: 1001005001, message: '模型已停用', data: null }), {
+        status: 409, headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    return original(input, init)
+  })
+  render(<WorkspaceScreen user={user} onLogout={vi.fn()} onToast={vi.fn()} />)
+  const input = await screen.findByRole('textbox', { name: '消息输入' })
+  await waitFor(() => expect(input).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: '选择模型' }))
+  fireEvent.click(screen.getByRole('option', { name: 'Main' }))
+  fireEvent.change(input, { target: { value: '保留原始正文', selectionStart: 6 } })
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+  await screen.findByRole('alert')
+  expect(submissions).toHaveLength(1)
+  fireEvent.click(screen.getByRole('button', { name: '重试' }))
+  await waitFor(() => expect(submissions).toHaveLength(2))
+  await screen.findByRole('alert')
+  expect(submissions[1]!.runId).toBe(submissions[0]!.runId)
+  fireEvent.click(screen.getByRole('button', { name: '打开用户菜单' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: '设置' }))
+  fireEvent.click(screen.getByRole('button', { name: '模型配置' }))
+  const toggle = await screen.findByRole('switch', { name: '启用模型 Main' })
+  await act(async () => { fireEvent.click(toggle) })
+  fireEvent.click(screen.getByRole('button', { name: '关闭对话框' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: '选择模型' })).toHaveTextContent('请选择可用模型'))
+  expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '选择模型' }))
+  fireEvent.click(screen.getByRole('option', { name: /Available/ }))
+  expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument()
+  expect(input).toHaveValue('保留原始正文')
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+  await waitFor(() => expect(submissions).toHaveLength(3))
+  expect(submissions[2]!.forwardedProps.model).toBe('available')
+  expect(submissions[2]!.runId).not.toBe(submissions[0]!.runId)
+  expect(submissions[2]!.messages[0]!.content).toBe('保留原始正文')
+})
+
+it.each(['停用模型', '切换模型', '切换会话后返回', '编辑草稿'] as const)('历史重试准备期间%s后只提交仍有效的请求并保留新选择和草稿', async change => {
+  let models: ModelSettings[] = ['main', 'available'].map((id, index) => ({
+    model_id: id, display_name: id === 'main' ? 'Main' : 'Available', connection_id: 'provider',
+    model_name: id, reasoning_enabled: false, image_support: 'unknown', enabled: true,
+    is_default: index === 1, sort_order: index, image_input_capability: null,
+    chat_options: { max_tokens: null, temperature: null, top_p: null, stop: null,
+      reasoning_effort: null, context_window: null, keep_alive: null },
+  }))
+  const failure = traceDetail({
+    messages: [{
+      agui: null, id: 'question', sourceId: 'question', traceSeq: 1, graphNamespace: [], runId: 'run', role: 'user',
+      content: '原历史提问', contentOmitted: false, status: 'completed', createdAt: time, completedAt: time,
+    }],
+    runFailures: [{ runId: 'run', errorCode: 'runtime_initialization_error', retryable: true, failedAt: time }],
+    status: { execution: 'failed', headRunId: 'run' },
+  })
+  const fetch = installFetch({
+    list: [historyItem({}), historyItem({ id: 2, threadId: 'other', title: '另一会话' })],
+    details: { thread: failure, other: traceDetail({ id: 2, threadId: 'other', title: '另一会话' }) },
+  })
+  const original = fetch.getMockImplementation()!
+  const selections: { request: Request; resolve: (response: Response) => void }[] = []
+  const submissions: { threadId: string; forwardedProps: { model: string }; messages: { content: string }[] }[] = []
+  fetch.mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    const path = new URL(request.url).pathname
+    if (path === '/api/models') return jsonResponse({
+      items: models.filter(model => model.enabled).map(model => ({ modelId: model.model_id,
+        displayName: model.display_name, connectionId: 'provider', connectionDisplayName: '提供方',
+        reasoningEnabled: false, isDefault: model.is_default })), defaultModelId: 'available',
+    })
+    if (path === '/api/models/settings') return jsonResponse({ models, providers: [], connections: [{
+      connection_id: 'provider', provider_id: 'custom', display_name: '提供方', api_type: 'openai_chat_completions',
+      base_url: 'https://example.invalid', auth_type: 'api_key', has_key: true,
+    }] })
+    if (path === '/api/models/configurations/main' && request.method === 'PUT') {
+      models = models.map(model => model.model_id === 'main' ? { ...model, enabled: false } : model)
+      return jsonResponse(null)
+    }
+    if (path === '/api/skills/selection') {
+      return new Promise<Response>(resolve => selections.push({ request, resolve }))
+    }
+    if (path === '/api/conversation/chat' && request.method === 'POST') {
+      submissions.push(await request.json())
+      return new Response('', { status: 409 })
+    }
+    return original(input, init)
+  })
+  render(<WorkspaceScreen user={user} onLogout={vi.fn()} onToast={vi.fn()} />)
+  await screen.findByText('原历史提问')
+  const input = screen.getByRole('textbox', { name: '消息输入' })
+  fireEvent.change(input, { target: { value: '准备期间的新草稿', selectionStart: 8 } })
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: '重试' })) })
+  expect(selections).toHaveLength(1)
+  expect(new URL(selections[0]!.request.url).searchParams.get('thread_id')).toBe('thread')
+  expect(new URL(selections[0]!.request.url).searchParams.get('run_id')).toBe('run')
+  expect(submissions).toHaveLength(0)
+
+  if (change === '停用模型') {
+    fireEvent.click(screen.getByRole('button', { name: '打开用户菜单' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '模型配置' }))
+    const toggle = await screen.findByRole('switch', { name: '启用模型 Main' })
+    await act(async () => { fireEvent.click(toggle) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '关闭对话框' })) })
+    expect(screen.getByRole('button', { name: '选择模型' })).toHaveTextContent('请选择可用模型')
+    expect(screen.getByRole('button', { name: '重试' })).toBeDisabled()
+  } else if (change === '切换模型') {
+    fireEvent.click(screen.getByRole('button', { name: '选择模型' }))
+    fireEvent.click(screen.getByRole('option', { name: /Available/ }))
+  } else if (change === '切换会话后返回') {
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '打开会话：另一会话' })) })
+    fireEvent.change(screen.getByRole('textbox', { name: '消息输入' }), { target: { value: '另一会话的草稿', selectionStart: 7 } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '打开会话：标题' })) })
+    expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('准备期间的新草稿')
+  } else {
+    fireEvent.change(input, { target: { value: '继续编辑后的草稿', selectionStart: 8 } })
+  }
+
+  expect(selections[0]!.request.signal.aborted).toBe(change !== '编辑草稿')
+  await act(async () => selections[0]!.resolve(jsonResponse([])))
+  if (change === '编辑草稿') {
+    expect(submissions).toMatchObject([{ threadId: 'thread', forwardedProps: { model: 'main' },
+      messages: [{ content: '原历史提问' }] }])
+    expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('继续编辑后的草稿')
+    return
+  }
+  expect(submissions).toHaveLength(0)
+  expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('准备期间的新草稿')
+  expect(screen.getByRole('button', { name: '选择模型' })).toHaveTextContent(
+    change === '停用模型' ? '请选择可用模型' : change === '切换模型' ? 'Available' : 'Main',
+  )
+
+  if (change === '停用模型') {
+    fireEvent.click(screen.getByRole('button', { name: '选择模型' }))
+    fireEvent.click(screen.getByRole('option', { name: /Available/ }))
+  }
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: '发送消息' })) })
+  expect(submissions).toMatchObject([{ threadId: 'thread', forwardedProps: { model: change === '切换会话后返回' ? 'main' : 'available' },
+    messages: [{ content: '准备期间的新草稿' }] }])
+  if (change === '切换会话后返回') {
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '打开会话：另一会话' })) })
+    expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('另一会话的草稿')
+  }
 })
 
 it.each(['succeeded', 'running'] as const)('四十个列表会话空闲不查询，重同步和恢复前台共享标题读取：%s', async titleGenerationStatus => {

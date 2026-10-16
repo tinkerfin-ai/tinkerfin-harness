@@ -33,7 +33,7 @@ Automation tasks and subagents cannot manage other tasks.
 Automation tasks always use Full access. Both the main agent and subagents can run
 commands and import, generate, edit, delete, or deliver files without individual
 approvals, including image generation and browser screenshots. Ordinary conversations
-can still use Require write approval. Automation results are read-only: a
+can still use Ask before writing. Automation results are read-only: a
 human-interaction interrupt fails that execution. Studio never automatically approves
 or resumes it.
 

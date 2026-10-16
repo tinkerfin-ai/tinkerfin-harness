@@ -1,6 +1,6 @@
 [project]
 name = "tinkerfin-sqlalchemy"
-version = "0.1.0"
+version = "0.1.1"
 description = "Async SQL transaction and connection ownership for TinkerFin storage integrations."
 readme = "README.md"
 requires-python = ">=3.11"

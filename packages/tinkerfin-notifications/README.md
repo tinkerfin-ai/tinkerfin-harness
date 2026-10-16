@@ -13,10 +13,12 @@ pip install tinkerfin-notifications
 ## Quick start
 
 ```python
+import asyncio
+
 from tinkerfin_notifications import Notification, NotificationScope, Notifications
 
 
-async def example():
+async def main() -> None:
     async with Notifications() as notifications:
         scope = NotificationScope(namespace="project-a")
         async with notifications.subscribe(scope=scope) as changes:
@@ -24,6 +26,10 @@ async def example():
                 Notification(scope=scope, topic="documents.changed", key="document-42")
             )
             change = await anext(changes)
+            print(change)
+
+
+asyncio.run(main())
 ```
 
 Enter a subscription before reading its initial snapshot. Delivered hints are

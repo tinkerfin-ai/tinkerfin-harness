@@ -13,17 +13,14 @@ uv sync --locked --all-packages --group dev
 ```
 
 Development dependencies are grouped by task: `test` provides the test runner and
-contract fixtures, `lint` provides Ruff and Pyright, `integration` provides Docker
-and database clients, and `packaging` provides wheel verification tools. `dev`
-includes all four groups. These groups are not published as package dependencies.
+contract fixtures, `lint` provides Ruff and Pyright, and `packaging` provides package
+verification tools. `dev` includes these three groups, which are not published as
+package dependencies.
 
-Use `--no-default-groups --group NAME` to install selected groups. The current
-package/Studio suites need `test`, `lint`, and `integration`: type-contract tests
-invoke Pyright, and shared fixture collection imports the integration clients.
-Installing those clients does not start Docker services. The packaging suite can
-run independently with `--noconftest` after installing the `packaging` group and
-all workspace packages. Use `uv run --no-sync` after a selective installation to
-keep the selected environment.
+Use `--no-default-groups --group NAME` to install selected groups. Routine Python
+and Studio checks need `test` and `lint`. The packaging suite runs independently
+with `--noconftest` after installing `packaging` and all workspace packages.
+Use `uv run --no-sync` after a selective installation to keep the selected environment.
 
 ### Use the Tsinghua mirror locally
 
@@ -75,7 +72,9 @@ any wheel is written to the output directory. A missing, extra, or changed file 
 command. Add `--offline` when build requirements are already present in the uv cache.
 
 Local builds, packaging tests, and the Studio Dockerfile use this entry point.
-The Dockerfile exports locked production dependencies and builds wheels inside Docker.
+The production Dockerfile builds only the Studio wheel, installs framework packages from
+PyPI, and installs third-party dependencies from the lockfile. CI uses an explicit
+`candidate` target to verify the current framework source.
 
 ## Validate packaging
 
@@ -91,7 +90,7 @@ uv run --locked --no-sync python -m pytest --noconftest tests/packaging -m packa
 The suite checks contaminated build directories, current source contents, wheel metadata,
 licenses, declared dependencies, and installation into isolated environments. CI uses
 Python 3.14 for the core installation cases, every optional dependency combination,
-and the complete Studio deployment wheel set.
+and the Studio candidate source wheel set.
 
 
 The preparation commands download wheels for the current Python and platform and

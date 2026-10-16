@@ -1804,7 +1804,7 @@
   .composer-toolbar-button:focus-visible { border: 0; background: var(--color-hover); box-shadow: none; }
   .composer-input-backdrop .composer-skill-reference { color: var(--color-brand-text); }
   .composer-input-backdrop .composer-skill-reference[data-unavailable] { color: var(--color-danger-text); text-decoration: line-through; }
-  .composer-skill-error { margin: var(--space-2) var(--space-4); color: var(--color-danger-text); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
+  .composer-submission-error { margin: var(--space-2) var(--space-4); color: var(--color-danger-text); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
 
   .composer-plan-chip { display: inline-flex; align-items: center; gap: var(--space-1); min-width: var(--control-composer); height: var(--control-plan-chip); min-height: var(--control-plan-chip); padding: 2px var(--space-2); border: 0; border-radius: var(--radius-button); background: var(--color-warning-soft); color: var(--color-warning-text); font-size: var(--type-meta-size); font-weight: var(--weight-ui); line-height: var(--type-meta-line); cursor: pointer; box-shadow: none; transform: none; transition: color var(--motion-fast) var(--ease-out); }
   .composer-plan-chip:hover:not(:disabled),

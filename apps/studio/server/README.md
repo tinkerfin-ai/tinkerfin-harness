@@ -47,7 +47,7 @@ Docker 项目为 `tinkerfin`，依赖容器为 `mysql8`、`redis-runtime`、`min
 | `COMPOSE_PROFILES` | `bundled` | 启动全部内置依赖；填写服务名选择部分依赖，留空使用全部外部依赖 |
 | `S3_STORAGE_BUCKET` | `tinkerfin` | 应用存储桶，不存在时自动创建 |
 | `S3_STORAGE_PUBLIC_ENDPOINT` | `http://127.0.0.1:9000` | 浏览器上传和下载的存储地址 |
-| `STUDIO_IMAGE` | `ghcr.io/tinkerfin-ai/studio-server:0.1.0` | 后端镜像 |
+| `STUDIO_IMAGE` | `tinkerfin-studio-server:local` | 本机构建的后端镜像名 |
 | `STUDIO_BIND_ADDRESS` | `127.0.0.1` | 后端监听地址；允许远程访问时设为 `0.0.0.0` |
 | `STUDIO_PORT` | `8090` | 后端对外端口 |
 | `DEPLOY_WAIT_TIMEOUT` | `600` | 等待服务就绪的秒数 |
@@ -86,7 +86,7 @@ Docker 项目为 `tinkerfin`，依赖容器为 `mysql8`、`redis-runtime`、`min
 内置 MySQL 只在新数据卷首次启动时创建账号、数据库并导入业务表。已有数据库的账号、密码
 或库名必须先由管理员调整，再同步 `.env`；更改配置不会修改现有数据库账号。
 
-## 使用自己的镜像
+## 容器部署
 
 生产容器部署在 `deploy/` 目录执行：
 
@@ -98,7 +98,7 @@ Docker 项目为 `tinkerfin`，依赖容器为 `mysql8`、`redis-runtime`、`min
 
 `--local` 与 `--container` 不能同时使用；两种模式均按 `COMPOSE_PROFILES` 启动依赖。沙箱访问地址由 `OPEN_SANDBOX_PUBLIC_HOST` 指定，容器模式默认为 `host.docker.internal`，本机模式固定为 `127.0.0.1`。
 
-在 `apps/studio/.env` 中设置 `STUDIO_IMAGE` 后执行 `./start.sh`。私有仓库需要先执行 `docker login`。
+不带模式参数时，`./start.sh` 同样从源码构建并启动后端。`STUDIO_IMAGE` 指定本机构建的镜像名称。
 
 修改源码后，可直接构建并部署：
 
@@ -107,8 +107,9 @@ Docker 项目为 `tinkerfin`，依赖容器为 `mysql8`、`redis-runtime`、`min
 ```
 
 默认生成 `tinkerfin-studio-server:local`；已设置自定义镜像名时使用该名称。
-构建在 Docker 内完成，不需要宿主机安装 Python 或 uv。脚本使用当前检出的源码，
-构建后直接启动本地镜像。
+构建在 Docker 内完成，不需要宿主机安装 Python 或 uv。构建使用当前检出的 Studio 源码，
+从正式 PyPI 安装精确版本的框架包，第三方依赖按仓库锁文件安装，然后启动本地镜像。
+同时修改框架源码时，使用下文的本地开发方式；生产容器不会把工作区的框架修改带入镜像。
 
 ## 只启动基础依赖
 
@@ -175,7 +176,7 @@ S3_STORAGE_SECRET_KEY=<存储密钥>
 附件须保持私有；头像地址可公开访问，更换头像不会使原地址失效。
 外部 MySQL 需要以 `utf8mb4` 字符集和 `utf8mb4_0900_ai_ci` 排序规则创建业务库、组件库及各自账号，仅向业务库导入 `database/mysql/schema.sql`。组件库账号需有本库建表与读写权限。
 
-使用现成后端镜像时执行 `./start.sh`。容器访问宿主机服务时可使用 `host.docker.internal`。
+容器访问宿主机服务时可使用 `host.docker.internal`。
 修改依赖选择不会删除已经运行的组件或数据卷。
 
 ## 日志与数据
@@ -224,13 +225,18 @@ uv run ruff check --no-cache apps/studio/server
 uv run pyright apps/studio/server/src apps/studio/server/tests
 ```
 
-## 发布后端镜像
+## 验证容器构建
 
-更新 `src/tinkerfin_studio/version.py` 中的版本、部署示例和 Compose 默认镜像版本后，
-待发布提交的 `Quality gate` 检查通过后，再推送对应的 `studio-v<版本>` Git tag。GitHub Actions 会构建、检查并发布 `amd64` 和 `arm64`
-镜像到 `ghcr.io/tinkerfin-ai/studio-server`。首次发布需在 GitHub Packages 中把该镜像设为公开，
-使用者才能匿名拉取。若首次公开拉取检查失败，调整可见性后只需重跑失败的
-`Verify public Studio image` 任务。
+在仓库根目录执行：
+
+```bash
+docker build --target candidate -f apps/studio/server/Dockerfile -t tinkerfin-studio-server:candidate .
+docker build --target production -f apps/studio/server/Dockerfile -t tinkerfin-studio-server:local .
+```
+
+`candidate` 验证当前 Studio 和框架源码，用于提交前检查。默认的 `production` 目标只构建
+Studio，框架依赖从正式 PyPI 安装；两种目标均检查依赖一致性，以非 root 用户运行。
+GitHub Actions 验证 `amd64` 和 `arm64` 构建，不上传镜像。
 
 ## 许可证
 

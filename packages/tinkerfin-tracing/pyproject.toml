@@ -1,6 +1,6 @@
 [project]
 name = "tinkerfin-tracing"
-version = "0.1.0"
+version = "0.1.1"
 description = "Semantic Runtime tracing with bounded memory and durable database persistence."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,14 +18,14 @@ classifiers = [
 
 dependencies = [
     "pydantic>=2.12,<3",
-    "tinkerfin-contracts==0.1.0",
-    "tinkerfin-notifications==0.1.0",
+    "tinkerfin-contracts==0.1.1",
+    "tinkerfin-notifications==0.1.1",
 ]
 
 [project.optional-dependencies]
 sqlalchemy = [
     "sqlalchemy[asyncio]==2.0.52",
-    "tinkerfin-sqlalchemy==0.1.0",
+    "tinkerfin-sqlalchemy==0.1.1",
 ]
 
 [project.urls]

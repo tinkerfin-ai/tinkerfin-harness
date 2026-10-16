@@ -64,9 +64,9 @@
   .automation-history-toolbar .ui-view-tabs > button:last-child { padding-inline-end: var(--space-2); }
   .automation-history-toolbar .ui-view-tabs > button:last-child[aria-selected='true']::after { right: var(--space-2); }
   .automation-task-toolbar > .automation-batch-actions:last-child { margin-left: auto; }
-  .automation-date-nav { flex: 1; min-width: 0; gap: var(--space-2); flex-wrap: wrap; }
+  .automation-date-nav { flex: 1 1 auto; min-width: 0; gap: var(--space-2); flex-wrap: wrap; }
   .automation-date-switcher { flex-shrink: 0; min-width: 0; max-width: 100%; display: flex; align-items: center; gap: 0; }
-  .automation-date-switcher h2 { min-width: 0; inline-size: 10em; flex: 0 1 10em; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; text-align: center; }
+  .automation-date-switcher h2 { min-width: 0; inline-size: max-content; flex: 0 1 auto; word-break: keep-all; font-variant-numeric: tabular-nums; text-align: center; }
 
   .automation-calendar {
     flex: 1;
@@ -302,8 +302,7 @@
     .automation-content { padding-block: var(--space-4); }
     .chat-header:has(.header-navigation):has(.automation-header-actions) { padding-inline: var(--layout-page-gutter); }
     .automation-toolbar { flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-4); }
-    .automation-date-nav { flex-wrap: wrap; }
-    .automation-date-switcher h2 { inline-size: 9em; flex-basis: 9em; }
+    .automation-toolbar.automation-history-toolbar { flex-wrap: wrap; }
     .automation-week { display: flex; padding-bottom: var(--space-2); }
     .automation-history-day { flex: 0 0 calc(var(--space-16) * 2); }
     .automation-history-row-content { gap: var(--space-2); }
@@ -339,9 +338,8 @@
   .automation-filter-trigger:focus-visible { outline: 0; background: var(--color-hover); color: var(--color-text-primary); }
   .automation-filter-trigger.is-selected { color: var(--color-text-primary); background: var(--color-subtle); }
   .automation-filter-options { width: max-content; min-width: calc(var(--space-16) * 2 + var(--space-8)); max-width: calc(100vw - var(--space-8)); }
-  .automation-task-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--space-16) * 5)), 1fr)); gap: var(--space-4); align-items: start; }
+  .automation-task-grid { align-items: start; }
   .automation-task-card { position: relative; display: flex; flex-direction: column; min-width: 0; padding: var(--space-4); border-radius: var(--radius-2xl); }
-  .automation-task-card:hover, .automation-task-card:focus-within { background: var(--color-layer-2); }
   .automation-task-card:has(input:checked) { border-color: var(--color-border-strong); }
   .automation-task-card-head { display: flex; align-items: center; gap: var(--space-1); }
   .automation-task-title { flex: 1; min-width: 0; margin: 0; }

@@ -1,6 +1,6 @@
 [project]
 name = "tinkerfin-native-stream"
-version = "0.1.0"
+version = "0.1.1"
 description = "Validated Deep Agents native stream contracts for TinkerFin."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,7 +21,7 @@ dependencies = [
     "langgraph>=1.2.10,<=1.2.11",
     "pydantic>=2,<3",
     "pydantic-core>=2,<3",
-    "tinkerfin-contracts==0.1.0",
+    "tinkerfin-contracts==0.1.1",
 ]
 
 [project.urls]

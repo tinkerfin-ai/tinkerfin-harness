@@ -42,6 +42,8 @@ from opensandbox.exceptions import (
 from opensandbox.models import OutputMessage, WriteEntry
 from opensandbox.models.execd import (
     Execution,
+    ExecutionComplete,
+    ExecutionError,
     ExecutionHandlers,
     ExecutionInit,
     RunCommandOpts,
@@ -88,6 +90,17 @@ _ASYNC_ONLY_MESSAGE = (
     "OpenSandboxBackend supports asynchronous remote I/O only; "
     "use the corresponding async method"
 )
+
+
+class _ForegroundCommandComplete(BaseException):
+    """Close the SDK response after a confirmed foreground terminal event.
+
+    OpenSandbox 0.1.16 CommandsAdapter._execute_streaming_request awaits HTTP EOF
+    after foreground completion. A private control signal leaves its response
+    context without invoking its Exception conversion/logging. It is caught only
+    by the command that owns the response; cancellation and response-close failures
+    retain their semantics, covered by test_foreground_command_completion.py.
+    """
 
 
 class _RootedTransferOperationError(Exception):
@@ -418,6 +431,7 @@ class OpenSandboxBackend(BaseSandbox):
         options = self._command_options(timeout)
         operations = current_remote_operations(self._remote_operations)
         execution_id: str | None = None
+        captured = Execution()
 
         async def initialized(event: object) -> None:
             nonlocal execution_id
@@ -426,14 +440,55 @@ class OpenSandboxBackend(BaseSandbox):
             if not isinstance(event, ExecutionInit) or not event.id.strip():
                 raise ValueError("OpenSandbox command returned an invalid execution ID")
             execution_id = event.id
+            captured.id = event.id
+
+        async def collect_stdout(event: object) -> None:
+            if not isinstance(event, OutputMessage):
+                raise TypeError("OpenSandbox command returned invalid stdout")
+            captured.logs.add_stdout(event)
+
+        async def collect_stderr(event: object) -> None:
+            if not isinstance(event, OutputMessage):
+                raise TypeError("OpenSandbox command returned invalid stderr")
+            captured.logs.add_stderr(event)
+
+        async def failed(event: object) -> None:
+            if not isinstance(event, ExecutionError):
+                raise TypeError("OpenSandbox command returned an invalid error")
+            captured.error = event
+
+        async def completed(event: object) -> None:
+            if not isinstance(event, ExecutionComplete):
+                raise TypeError("OpenSandbox command returned invalid completion")
+            captured.complete = event
+            # Match SDK 0.1.16 foreground exit inference; an unparseable error
+            # remains uncertain and uses the existing remote settlement below.
+            if captured.error is None:
+                captured.exit_code = 0
+            else:
+                try:
+                    captured.exit_code = int(captured.error.value)
+                except ValueError:
+                    captured.exit_code = None
+            raise _ForegroundCommandComplete
 
         async def execute_once() -> Execution:
             try:
                 execution = await self._sandbox.commands.run(
                     command,
                     opts=options,
-                    handlers=ExecutionHandlers(on_init=initialized),
+                    handlers=ExecutionHandlers(
+                        on_init=initialized,
+                        on_stdout=collect_stdout,
+                        on_stderr=collect_stderr,
+                        on_error=failed,
+                        on_execution_complete=completed,
+                        skip_accumulation=True,
+                    ),
                 )
+                execution.logs = captured.logs
+            except _ForegroundCommandComplete:
+                execution = captured
             except BaseException as error:
                 if execution_id is not None:
                     command_id = execution_id

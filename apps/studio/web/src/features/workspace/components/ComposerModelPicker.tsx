@@ -55,7 +55,7 @@ export function ComposerModelPicker({
   const selectedModel = model || defaultModelId
   const byId = new Map(models.map(item => [item.modelId, item]))
   const modelIds = models.map(item => item.modelId)
-  const modelDisplayName = (id: string) => byId.get(id)?.displayName ?? id
+  const modelDisplayName = (id: string) => byId.get(id)?.displayName ?? (status === 'loading' ? t('加载模型…') : t('请选择可用模型'))
   return (
     <ListboxPicker
       value={selectedModel}

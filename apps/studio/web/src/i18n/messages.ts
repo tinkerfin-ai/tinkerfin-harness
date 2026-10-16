@@ -960,7 +960,6 @@ export const englishMessages = {
   '当前': 'Current',
   '历史': 'History',
   '当前会话 · {count} 组': 'Current conversation · {count} groups',
-  '正在准备运行环境': 'Preparing the runtime environment',
   '恢复连接后可停止任务': 'Reconnect to stop the task',
   '执行已中断，结果未确认': 'Execution was interrupted; the result is unconfirmed',
   '运行环境已停止，请启动沙箱后重试': 'The runtime environment is stopped. Start the sandbox, then retry',

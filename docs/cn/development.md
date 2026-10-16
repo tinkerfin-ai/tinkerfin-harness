@@ -13,13 +13,11 @@ uv sync --locked --all-packages --group dev
 ```
 
 开发依赖按任务分组：`test` 提供测试运行器与契约 Fixture，`lint` 提供 Ruff 和 Pyright，
-`integration` 提供 Docker 与数据库客户端，`packaging` 提供 wheel 验证工具。
-`dev` 聚合四组；这些开发依赖不会作为包依赖发布。
+`packaging` 提供打包验证工具。`dev` 聚合这三组，开发依赖不会作为包依赖发布。
 
-使用 `--no-default-groups --group NAME` 可选择安装的组。当前包与 Studio 测试需要
-`test`、`lint` 和 `integration`：类型契约测试会调用 Pyright，共享 Fixture 的收集会导入
-集成客户端。安装这些客户端不会启动 Docker 服务。安装 `packaging` 组及全部工作区包后，
-打包套件可通过 `--noconftest` 独立运行。选择性安装后使用 `uv run --no-sync`，保持已选择的环境。
+使用 `--no-default-groups --group NAME` 可选择安装的组。常规 Python 与 Studio 检查需要
+`test` 和 `lint`。安装 `packaging` 组及全部工作区包后，打包套件可通过 `--noconftest`
+独立运行。选择性安装后使用 `uv run --no-sync`，保持已选择的环境。
 
 ### 本地按需使用清华源
 
@@ -67,7 +65,8 @@ uv run --no-project --python 3.11 python scripts/build_wheels.py \
 缺少文件、多出文件或内容不同都会导致命令失败。uv 缓存已包含构建依赖时，可添加 `--offline`。
 
 本地构建、打包测试和 Studio Dockerfile 都调用此入口。
-Dockerfile 在容器内导出锁定的生产依赖并构建 wheel。
+生产 Dockerfile 只构建 Studio wheel，从 PyPI 安装框架包，并按锁文件安装第三方依赖。
+CI 使用独立的 `candidate` 构建目标验证当前框架源码。
 
 ## 验证打包
 
@@ -82,7 +81,7 @@ uv run --locked --no-sync python -m pytest --noconftest tests/packaging -m packa
 
 测试覆盖构建残留、当前源码内容、wheel 元数据、许可证、依赖声明和隔离环境安装。
 CI 统一在 Python 3.14 上验证核心安装场景、全部可选依赖组合和 Studio 部署所需的
-完整 wheel 集合。
+候选源码 wheel 集合。
 
 
 准备命令下载适合当前 Python 与平台的 wheel，并校验锁文件中的哈希。隔离安装测试

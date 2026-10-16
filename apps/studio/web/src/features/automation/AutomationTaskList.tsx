@@ -48,12 +48,12 @@ export function AutomationTaskList({ tasks, query, status, busy, executions, bat
           <Button type="button" size="sm" variant="ghost" onClick={onFinishSelection}>{t('完成选择')}</Button>
       </div>
     </div>}
-    {visible.length ? <div className="automation-task-grid">{visible.map((task) => {
+    {visible.length ? <div className="ui-card-grid automation-task-grid">{visible.map((task) => {
       const execution = executions.get(task.id)
       const running = execution !== undefined && ['submitting', 'queued', 'running', 'cancel_requested'].includes(execution)
       const label = execution === 'submitting' ? t('正在提交') : execution === 'uncertain' ? t('提交结果待确认') : execution ? t(runStatusLabels[execution]) : null
       const next = task.nextRunAt ? Date.parse(task.nextRunAt) : undefined
-      return <Surface as="article" key={task.id} className="automation-task-card" aria-label={task.name}>
+      return <Surface as="article" key={task.id} className="ui-card-lift automation-task-card" aria-label={task.name}>
         <header className="automation-task-card-head">
         {batch ? <label className="automation-select"><input type="checkbox" aria-label={t('选择 {name}', { name: task.name })}
           checked={selected.has(task.id)} onChange={(event) => setSelected((current) => {

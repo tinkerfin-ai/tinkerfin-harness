@@ -60,7 +60,9 @@ Initializing a new database creates this account:
 
 Existing deployments use their existing account and password. There is no public registration endpoint.
 
-After signing in for the first time, choose Create project and enter a name. Conversations, memories, and automation tasks belong to the current project. Use the selector at the top of the sidebar to switch projects or create another.
+Each account manages its own projects, model and service connections, and personal skills library. After signing in for the first time, choose Create project and enter a name. Use the selector at the top of the sidebar to switch projects or create another.
+
+Conversations, workspace files, long-term memory, and scheduled tasks belong to the current project. Conversations in the same project share files and memory. Install skills for all your projects or for one project; a project skill takes precedence over a personal skill with the same name.
 
 Open the user menu at the bottom left, select Models, and choose Add provider. Select a provider or custom service, enter its URL and authentication, and save the connection.
 
@@ -69,6 +71,12 @@ Select that connection and use Fetch models, or enter the provider's Model ID ma
 For Ollama, start the service and install a model first. Select the native Ollama API; no placeholder key is needed. Public, local, and private-network HTTP/HTTPS addresses are supported when reachable from the backend. Container deployments need an address reachable from the container; see the [server guide](../../../apps/studio/server/README.md).
 
 To use web search or an image generation service, configure it under Settings → Services. Saving applies the configuration immediately; Test search and Test image make real requests that may consume credits.
+
+## Continue across clients
+
+Sign in to the same account in another browser or on another device, then select the same project to follow conversations and run status. Other clients update conversation lists, run status, and file lists when conversations, project resources, or workspace files change. Reconnecting or reopening the page restores the latest state.
+
+Unsent drafts stay in the current page. When an open workspace text file changes, use Refresh preview to read the latest contents. Ask the agent to deliver an attachment in the conversation when you need to download a file.
 
 ## Change the initial password
 

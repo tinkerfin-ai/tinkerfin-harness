@@ -46,6 +46,23 @@ runtime = (
 任务委派通过 `subagents` 配置，工具审批通过 `interrupt_on` 配置，不可替换对应
 middleware；`task` 和已配置远程智能体使用的委派工具名称也不可覆盖。
 
+## 附件输入
+
+通过 `.with_attachments(AttachmentSupport(...))` 配置模型的媒体输入与已保存附件的读取。
+`AttachmentSupport` 和 `AttachmentContent` 从 `tinkerfin.media` 导入。可选的异步
+`read_content(attachment)` 接收 `Attachment`，返回
+`AttachmentContent(data=文件字节, mime_type=内容类型)`；应用须校验当前访问权限，
+并在读取存储时限制大小。找不到文件时抛出 `FileNotFoundError`，其他读取错误与取消继续传播。
+
+不提供 reader 时，保存的附件保持为可供文件工具读取的引用；消息内已有的媒体不需要 reader。
+框架按实际目标模型声明的图片、音频、视频和 PDF 能力决定是否发送媒体；可通过
+`supports_content(model, mime_type)` 收窄支持的格式。未知或不支持的媒体使用文字描述，
+不会修改原始消息，也不会自动解析文档、转录音频或抽取视频帧。
+
+每次模型调用默认最多读取最近的 5 个受支持附件（`max_attachments`），总计 20 MiB
+原始字节（`max_bytes`，不含 base64 编码开销）。超过总大小会在调用模型前抛出
+`ValueError`。编译后的子智能体和远程子智能体需自行配置附件访问。
+
 ## 持久化与审批
 
 在智能体运行之外预置或读取数据时，使用已绑定 namespace 的 Store。应用负责 Store
