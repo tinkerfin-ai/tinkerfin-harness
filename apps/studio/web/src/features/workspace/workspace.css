@@ -238,6 +238,7 @@
     padding-right: var(--space-3);
     padding-bottom: var(--space-6);
     overflow-y: auto;
+    overscroll-behavior-y: none;
     overflow-anchor: none;
   }
 
