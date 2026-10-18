@@ -979,6 +979,36 @@ const visibleSvgStrokeLeft = (locator: Locator) => locator.evaluate((element) =>
   return matrix.e + (bounds.x * scale) - ((strokeWidth * scale) / 2)
 })
 
+for (const colorScheme of ['light', 'dark'] as const) {
+  for (const width of [320, 768, 1024, 1440]) {
+    test(`会话列表禁止边缘回弹且滚动返回顶部后分组紧邻内容 ${colorScheme} ${width}`, async ({ page }, testInfo) => {
+      await page.clock.install({ time: new Date(BASE_TIME) })
+      await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+      await page.setViewportSize({ width, height: 900 })
+      await page.addInitScript(theme => localStorage.setItem('tinkerfin:theme', theme), colorScheme)
+      await mockStudio(page, { paginatedHistory: true, paginationPageCount: 1 })
+      if (width === 320) await page.getByRole('button', { name: '打开导航', exact: true }).click()
+      if (width === 768) await page.getByRole('button', { name: '打开侧边栏', exact: true }).click()
+      const region = page.getByRole('region', { name: '最近对话' })
+      const heading = region.getByRole('heading', { name: '今天', exact: true })
+      await expect(region).toBeVisible()
+      await expect(region).toHaveCSS('overscroll-behavior-y', 'none')
+      await region.evaluate(element => { element.scrollTop = 120 })
+      await expect.poll(() => region.evaluate(element => element.scrollTop)).toBe(120)
+      await expect(region.getByRole('button', { name: '打开会话：分页验证会话 5', exact: true })).toBeInViewport()
+      await page.screenshot({ path: testInfo.outputPath('history-scrolled.png') })
+      await region.evaluate(element => { element.scrollTop = 0 })
+      await expect.poll(() => region.evaluate(element => element.scrollTop)).toBe(0)
+      const [regionBounds, headingBounds, firstItemBounds] = await measureBounds(
+        region, heading, region.getByRole('button', { name: '打开会话：浏览器会话', exact: true }),
+      )
+      expect(headingBounds.y).toBe(regionBounds.y)
+      expect(firstItemBounds.y - (headingBounds.y + headingBounds.height)).toBe(8)
+      await page.screenshot({ path: testInfo.outputPath('history-top.png') })
+    })
+  }
+}
+
 test('四个目标视口保持正确导航形态且没有页面级横向溢出', async ({ page }) => {
   await mockStudio(page)
   for (const [width, expectedMode] of [
