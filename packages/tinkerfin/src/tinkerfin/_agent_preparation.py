@@ -26,7 +26,7 @@ from ._state_schema import validate_state_schema
 from ._store import validate_store_backend
 from ._store_backend import async_store_backend
 from ._subagents import validate_subagent_resources
-from .skills import SkillSource
+from .skills import SkillSource, WorkspaceSkills
 
 _DECLARED_AGENT_FIELDS = frozenset(
     {
@@ -164,9 +164,11 @@ def validate_agent_spec(spec: AgentSpec[ContextT]) -> None:
     if any(not isinstance(item, AgentMiddleware) for item in spec.middleware):
         raise TypeError("middleware must contain AgentMiddleware instances")
     if spec.skills is not None and any(
-        not isinstance(source, SkillSource) for source in spec.skills
+        not isinstance(source, (SkillSource, WorkspaceSkills)) for source in spec.skills
     ):
-        raise TypeError("skills must contain SkillSource declarations")
+        raise TypeError(
+            "skills must contain SkillSource or WorkspaceSkills declarations"
+        )
     _validate_middleware(spec.middleware)
     validate_delegation_retry(spec.middleware, persistent=spec.checkpointer is not None)
     has_remote_agents = any(
@@ -209,9 +211,12 @@ def validate_agent_spec(spec: AgentSpec[ContextT]) -> None:
                 raise TypeError("declarative subagents require system_prompt")
             skills = declaration.get("skills")
             if skills is not None and any(
-                not isinstance(source, SkillSource) for source in skills
+                not isinstance(source, (SkillSource, WorkspaceSkills))
+                for source in skills
             ):
-                raise TypeError("subagent skills must contain SkillSource declarations")
+                raise TypeError(
+                    "subagent skills must contain SkillSource or WorkspaceSkills declarations"
+                )
             middleware = declaration.get("middleware", ())
             _validate_middleware(middleware)
             validate_delegation_retry(
@@ -261,7 +266,9 @@ async def prepare_agent_spec(
     spec = replace(
         spec,
         tool_scope=resources.borrow_tools(
-            identity, None if workspace is None else workspace.workspace
+            identity,
+            None if workspace is None else workspace.workspace,
+            None if workspace is None else workspace.workspace_scope_id,
         ),
     )
     return PreparedAgentSpec(spec.snapshot(), workspace)

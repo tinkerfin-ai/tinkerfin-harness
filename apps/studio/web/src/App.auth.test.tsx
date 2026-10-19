@@ -15,6 +15,7 @@ import {
   writeActiveRunSession,
 } from './features/conversation/stream/activeRunSession'
 import { emptyTraceGraph } from './test/traceFixtures'
+import * as notifications from './api/notifications'
 
 const user = {
   user_id: 7,
@@ -75,6 +76,28 @@ describe('App authentication boundary', () => {
     vi.useRealTimers()
   })
 
+  it('设备授权在外部账号登录后重新校验，保留原授权意图', async () => {
+    const id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+    window.history.replaceState(null, '', `/?device_authorization=${id}#token=${'c'.repeat(64)}`)
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(input instanceof Request ? input.url : String(input))
+      if (url.pathname.endsWith('/api/auth/me')) return envelope(sessionPayload())
+      if (url.pathname.endsWith('/preview')) return envelope({ authorization_id: id, name: 'Test Mac', state: 'waiting', expires_at: '2099-01-01T00:00:00Z' })
+      throw new Error(`unexpected request: ${url.pathname}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument()
+    await act(async () => {
+      const value = JSON.stringify({ token: 'external-token', tokenType: 'Bearer', serverAddress: 'http://127.0.0.1:8090', expiresAt: '2099-01-01T00:00:00.000Z', user })
+      localStorage.setItem(AUTH_SESSION_STORAGE_KEY, value)
+      window.dispatchEvent(new StorageEvent('storage', { key: AUTH_SESSION_STORAGE_KEY, newValue: value }))
+    })
+    expect(await screen.findByRole('heading', { name: '允许连接这台 Mac？' })).toBeInTheDocument()
+    expect(await screen.findByText('Test Mac')).toBeInTheDocument()
+    expect(window.location.search).toContain(id)
+  })
+
   it('shows the login screen without mounting the workspace when no session exists', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
@@ -86,6 +109,71 @@ describe('App authentication boundary', () => {
     expect(screen.queryByLabelText('对话内容')).not.toBeInTheDocument()
     expect(window.location.search).toBe('')
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it.each(['authorized', 'conflict'] as const)('授权入口为 %s 时保留对应的成功或恢复页面', async outcome => {
+    const id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+    seedSession()
+    window.history.replaceState(null, '', `/?device_authorization=${id}#token=${'c'.repeat(64)}`)
+    vi.spyOn(notifications, 'startNotificationFeed').mockReturnValue(() => {})
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname
+      if (path === '/api/auth/me') return envelope(sessionPayload())
+      if (path.endsWith('/preview')) return outcome === 'conflict'
+        ? envelope(null, 409, 1_001_012_002, '另一个账号的信息不能展示')
+        : envelope({ authorization_id: id, name: 'Current Mac', state: 'authorized', expires_at: '2099-01-01T00:00:00Z' })
+      if (path === '/api/projects') return envelope([])
+      if (path === '/api/models') return envelope({ items: [], defaultModelId: null })
+      if (path === '/api/devices') return envelope([{ device_id: 'current', name: 'Current Mac', online: true, revoked: false,
+        paired_at: '2030-01-01T00:00:00Z', last_seen_at: null, capabilities: { browser: false, desktop: false, mcp: false } }])
+      if (path === '/api/automation/runs/active') return envelope({ items: [], nextCursor: null })
+      throw new Error(`unexpected request: ${path}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+    if (outcome === 'authorized') {
+      expect(await screen.findByText('授权成功，你可以关闭此页面')).toHaveAttribute('role', 'status')
+      expect(screen.queryByRole('dialog', { name: '设置' })).not.toBeInTheDocument()
+      expect(screen.queryByText('Current Mac')).not.toBeInTheDocument()
+      expect(screen.queryByText(user.username)).not.toBeInTheDocument()
+      expect(screen.queryAllByRole('button')).toHaveLength(0)
+      expect(window.location.search).toBe(`?device_authorization=${id}`)
+      expect(window.location.hash).toBe(`#token=${'c'.repeat(64)}`)
+      expect(open).not.toHaveBeenCalled()
+      expect(fetchMock.mock.calls.every(([input]) => {
+        const path = new URL(input instanceof Request ? input.url : String(input)).pathname
+        return path === '/api/auth/me' || path.endsWith('/preview')
+      })).toBe(true)
+      return
+    }
+    expect(await screen.findByRole('heading', { name: '本地设备' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: '设置' })).toBeInTheDocument()
+    expect(screen.queryByText('另一个账号的信息不能展示')).not.toBeInTheDocument()
+    expect(window.location.search).toBe('?settings=devices')
+    expect(window.location.hash).toBe('')
+    expect(open).toHaveBeenCalledOnce()
+    expect(open).toHaveBeenCalledWith('tinkerfin://connect', '_self')
+    await userEvent.setup().click(screen.getByRole('button', { name: '打开客户端' }))
+    expect(open).toHaveBeenLastCalledWith('tinkerfin://connect', '_self')
+    expect(fetchMock.mock.calls.some(([input]) => new URL(input instanceof Request ? input.url : String(input)).pathname === '/api/devices/authorizations')).toBe(false)
+  })
+
+  it('未登录的无效入口退出授权后保留安全设置目的地', async () => {
+    const id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+    window.history.replaceState(null, '', `/?device_authorization=${id}#token=${'c'.repeat(64)}`)
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname
+      if (path.endsWith('/deny')) return envelope(null, 404, 1_001_012_000)
+      throw new Error(`unexpected request: ${path}`)
+    }))
+    render(<App />)
+    await userEvent.setup().click(await screen.findByRole('button', { name: '取消' }))
+    expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument()
+    expect(window.location.search).toBe('?settings=devices')
+    expect(window.location.hash).toBe('')
+    expect(open).toHaveBeenCalledWith('tinkerfin://connect', '_self')
   })
 
   it('mounts the workspace only after the stored session is verified', async () => {

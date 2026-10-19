@@ -1,4 +1,4 @@
-"""Stable public failures for OpenSandbox capabilities."""
+"""Stable public failures for native and OpenSandbox capabilities."""
 
 from __future__ import annotations
 
@@ -46,8 +46,8 @@ class OpenSandboxErrorCode(StrEnum):
     SETTLEMENT_TIMEOUT = "sandbox.settlement_timeout"
 
 
-class OpenSandboxError(Exception):
-    """Base failure for framework-owned OpenSandbox semantics.
+class SandboxError(Exception):
+    """Base failure for framework-owned sandbox operations.
 
     ``message`` and ``context`` are safe to expose at a client boundary.
     ``diagnostic_context`` and ``cause`` are reserved for trusted logs and
@@ -60,7 +60,7 @@ class OpenSandboxError(Exception):
         cause: Original failure retained for debugging and exception chaining.
     """
 
-    code: OpenSandboxErrorCode = OpenSandboxErrorCode.ERROR
+    code: str = "sandbox.error"
 
     def __init__(
         self,
@@ -91,6 +91,15 @@ class OpenSandboxError(Exception):
         self.diagnostic_context = MappingProxyType(
             {**self.diagnostic_context, **context}
         )
+
+
+class OpenSandboxError(SandboxError):
+    """Base failure for the OpenSandbox provider.
+
+    Safe context, diagnostic evidence and exception chaining follow SandboxError.
+    """
+
+    code = OpenSandboxErrorCode.ERROR
 
 
 class OpenSandboxPurposeError(OpenSandboxError):
@@ -347,6 +356,7 @@ __all__ = [
     "OpenSandboxStateUnavailableError",
     "OpenSandboxWarmPoolUnavailableError",
     "OpenSandboxWorkspaceNotInitializedError",
+    "SandboxError",
     "UnexpectedOpenSandboxBackendError",
     "UnexpectedOpenSandboxStateError",
 ]

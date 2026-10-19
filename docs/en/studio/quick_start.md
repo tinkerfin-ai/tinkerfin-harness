@@ -78,6 +78,10 @@ Sign in to the same account in another browser or on another device, then select
 
 Unsent drafts stay in the current page. When an open workspace text file changes, use Refresh preview to read the latest contents. Ask the agent to deliver an attachment in the conversation when you need to download a file.
 
+## Use local directories and tools
+
+Select **连接** (Connect) in the Mac menu bar client, then sign in to Studio in the browser and authorize the device. Back in Studio, select a project and click the laptop icon in the header before starting a conversation. The client prepares the project directory automatically. The cloud Agent calls local tools directly; approvals and results stay in the conversation. See [local collaboration](local_devices.md) for requirements, file access and cancellation behavior.
+
 ## Change the initial password
 
 Change the initial password before exposing the service. Account updates are administrator operations. Generate a new password hash from the repository root:

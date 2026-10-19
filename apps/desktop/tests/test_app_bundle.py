@@ -1,0 +1,322 @@
+"""应用构建输入与显式选择的开发包验收，所有测试状态均使用临时目录"""
+
+import asyncio
+import importlib.util
+import json
+import os
+import platform
+import plistlib
+import sys
+from pathlib import Path
+from uuid import uuid4
+
+import pytest
+from sqlalchemy.ext.asyncio import create_async_engine
+from websockets.asyncio.server import ServerConnection, serve
+from websockets.exceptions import ConnectionClosed
+
+from tinkerfin_remote import RemoteTools
+
+
+@pytest.fixture
+def browser_build(monkeypatch):
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    monkeypatch.syspath_prepend(str(scripts))
+    spec = importlib.util.spec_from_file_location(
+        "companion_build", scripts / "build_macos.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("damaged", ["binary", "skill", "link", "license"])
+def test_browser_build_rejects_unverified_inputs_before_copy(
+    browser_build, tmp_path, monkeypatch, damaged
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    executable = source / "agent-browser"
+    executable.write_bytes(b"\xcf\xfa\xed\xfe" + b"synthetic Mach-O")
+    assets = source / "agent-browser-assets"
+    for name in (
+        "skills/agent-browser/SKILL.md",
+        "skill-data/core/SKILL.md",
+        "licenses/agent-browser/LICENSE",
+        "licenses/agent-browser/LICENSE-axe-core.txt",
+        "licenses/agent-browser/LICENSE-axe-core-THIRD-PARTY.txt",
+        "licenses/rust/example/LICENSE",
+    ):
+        path = assets / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("synthetic content")
+    metadata = browser_build.BrowserBuild(
+        upstream_version=browser_build.VERSION,
+        upstream_commit=browser_build.COMMIT,
+        source_url=browser_build.SOURCE_URL,
+        source_sha256=browser_build.SOURCE_SHA256,
+        patch_sha256=browser_build.digest(
+            browser_build.COMPANION / "runtime/patches/agent-browser-managed.patch"
+        ),
+        rust_toolchain=browser_build.RUST_TOOLCHAIN,
+        target=browser_build.TARGET,
+        binary_sha256=browser_build.digest(executable),
+        features=["managed-process"],
+        assets={
+            path.relative_to(assets).as_posix(): browser_build.digest(path)
+            for path in assets.rglob("*")
+            if path.is_file()
+        },
+        rust_dependencies=[
+            browser_build.RustDependency(
+                name="example",
+                version="1.0.0",
+                license="MIT",
+                source=None,
+                files=["licenses/rust/example/LICENSE"],
+            )
+        ],
+    )
+    if damaged == "binary":
+        executable.write_bytes(b"changed binary")
+    elif damaged == "skill":
+        (assets / "skill-data/core/SKILL.md").write_text("changed skill")
+    elif damaged == "link":
+        path = assets / "skill-data/core/SKILL.md"
+        outside = tmp_path / "outside"
+        outside.write_bytes(path.read_bytes())
+        path.unlink()
+        path.symlink_to(outside)
+    else:
+        missing = "licenses/agent-browser/LICENSE"
+        (assets / missing).unlink()
+        del metadata.assets[missing]
+    executable.with_name("agent-browser.json").write_text(metadata.model_dump_json())
+
+    def inspect_binary(*arguments, **kwargs):
+        assert arguments == ("lipo", "-archs", executable)
+        return "arm64"
+
+    monkeypatch.setattr(browser_build, "run", inspect_binary)
+    resources = tmp_path / "resources"
+    resources.mkdir()
+    with pytest.raises(ValueError):
+        browser_build.install_browser(resources, executable)
+    assert list(resources.iterdir()) == []
+
+
+def test_installation_accepts_bundled_cli_without_a_browser(tmp_path, monkeypatch):
+    from tinkerfin_companion import installation
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(platform, "machine", lambda: "arm64")
+    for name in (
+        "node/bin/node",
+        "node/bin/npm",
+        "node/bin/npx",
+        "python/lib/python3.11/site-packages/tinkerfin_companion/browser_command.py",
+        "runtime/node_modules/@anthropic-ai/sandbox-runtime/dist/cli.js",
+        "runtime/agent-browser/bin/agent-browser",
+        "runtime/agent-browser/skills/agent-browser/SKILL.md",
+        "runtime/agent-browser/skill-data/core/SKILL.md",
+        "runtime/agent-browser/build.json",
+    ):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("synthetic resource")
+        path.chmod(0o700)
+    selected = installation.Installation.read(tmp_path)
+    assert selected.browser.cli == tmp_path / "runtime/agent-browser/bin/agent-browser"
+    assert not (tmp_path / "browsers").exists()
+
+
+@pytest.fixture
+def app_bundle() -> Path:
+    selected = os.environ.get("TINKERFIN_TEST_APP")
+    if sys.platform != "darwin" or not selected:
+        pytest.skip("需要通过 TINKERFIN_TEST_APP 显式选择本轮自包含应用")
+    app = Path(selected).resolve(strict=True)
+    assert (app / "Contents/MacOS/TinkerFin").is_file()
+    return app
+
+
+def environment(home: Path) -> dict[str, str]:
+    home.mkdir(exist_ok=True)
+    return {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": str(home),
+        "LANG": "en_US.UTF-8",
+    }
+
+
+def test_bundled_menu_bar_resources_and_client_url_scheme(app_bundle):
+    resources = app_bundle / "Contents/Resources"
+    source = Path(__file__).resolve().parents[1]
+    metadata = plistlib.loads((app_bundle / "Contents/Info.plist").read_bytes())
+    assert metadata["CFBundleIdentifier"] == "com.tinkerfin.companion"
+    assert metadata["CFBundleName"] == "TinkerFin"
+    assert metadata["CFBundleDisplayName"] == "TinkerFin"
+    assert metadata["CFBundleExecutable"] == "TinkerFin"
+    assert metadata["CFBundleDevelopmentRegion"] == "en"
+    assert set(metadata["CFBundleLocalizations"]) == {"en", "zh-Hans"}
+    assert metadata["LSUIElement"] is True
+    assert "tinkerfin" in [
+        scheme
+        for item in metadata["CFBundleURLTypes"]
+        for scheme in item["CFBundleURLSchemes"]
+    ]
+    app_icon = (resources / metadata["CFBundleIconFile"]).read_bytes()
+    assert app_icon[:4] == b"icns"
+    assert int.from_bytes(app_icon[4:8], "big") == len(app_icon)
+    assert not (resources / "ui").exists()
+    brand = source.parent / "studio/web/public/brand/tinkerfin.svg"
+    assert (resources / "brand.svg").read_bytes() == brand.read_bytes()
+    for language in ("en", "zh-Hans"):
+        catalog = Path(f"{language}.lproj/Localizable.strings")
+        assert (resources / catalog).read_bytes() == (
+            source / "resources" / catalog
+        ).read_bytes()
+    expected_icons = {
+        path.name: path.read_bytes()
+        for path in (source / "resources/icons").glob("*.pdf")
+    }
+    assert len(expected_icons) == 12
+    assert {
+        path.name: path.read_bytes() for path in (resources / "icons").iterdir()
+    } == expected_icons
+    assert (resources / "licenses/supplemental/lucide-ISC.txt").read_bytes() == (
+        source / "runtime/licenses/lucide-ISC.txt"
+    ).read_bytes()
+    browser = resources / "runtime/agent-browser"
+    assert (browser / "bin/agent-browser").is_file()
+    assert (browser / "skills/agent-browser/SKILL.md").is_file()
+    assert (browser / "skill-data/core/SKILL.md").is_file()
+    native_programs = json.loads(
+        (resources / "licenses/native-programs.json").read_bytes()
+    )
+    assert len(native_programs) == 1
+    browser_program = native_programs[0]
+    assert browser_program["name"] == "agent-browser"
+    assert browser_program["version"] == "0.33.2"
+    assert browser_program["files"]
+    assert all((resources / path).is_file() for path in browser_program["files"])
+    package = resources / "python/lib/python3.11/site-packages/tinkerfin_companion"
+    assert os.access(package / "browser_command.py", os.X_OK)
+    assert (package / "browser_release.json").read_bytes() == (
+        source / "src/tinkerfin_companion/browser_release.json"
+    ).read_bytes()
+    assert not (resources / "browsers").exists()
+    assert not (resources / "runtime/node_modules/playwright").exists()
+    assert not (resources / "runtime/node_modules/playwright-core").exists()
+    configuration = json.loads((resources / "connection.json").read_bytes())
+    assert set(configuration) == {"studio_url", "api_url"}
+    assert all(isinstance(value, str) and value for value in configuration.values())
+
+
+async def test_bundled_runtime_uses_owned_python_node_browser_tool_and_native_sandbox(
+    app_bundle, tmp_path
+):
+    resources = app_bundle / "Contents/Resources"
+    project = tmp_path / "project"
+    project.mkdir()
+    process = await asyncio.create_subprocess_exec(
+        str(resources / "python/bin/python3"),
+        "-I",
+        "-B",
+        str(Path(__file__).parent / "native/bundle_smoke.py"),
+        str(resources),
+        str(project),
+        env=environment(tmp_path / "home"),
+        cwd=tmp_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await process.communicate()
+        assert process.returncode == 0, stderr.decode()
+        assert json.loads(stdout) == {
+            "runtime": "verified",
+            "browser": "verified",
+            "dependencies": "verified",
+        }
+    finally:
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+
+
+async def test_native_process_connects_bundled_host_stops_and_reopens_owned_state(
+    app_bundle, swift_contracts, tmp_path
+):
+    resources = app_bundle / "Contents/Resources"
+    device_id = str(uuid4())
+    credential = "b" * 64
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'cloud.sqlite'}")
+
+    async def broker(socket: ServerConnection) -> None:
+        assert socket.request is not None
+        assert (
+            socket.request.headers["Authorization"]
+            == f"Bearer {device_id}.{credential}"
+        )
+        assert json.loads(await socket.recv()) == {
+            "capabilities": {
+                "browser": True,
+                "desktop": False,
+                "desktop_capture": False,
+                "open_url": True,
+                "mcp": False,
+            }
+        }
+        await socket.send(
+            json.dumps(
+                {
+                    "device_id": device_id,
+                    "namespace": "ns_1",
+                    "name": "Test Mac",
+                    "connection_id": str(uuid4()),
+                }
+            )
+        )
+        try:
+
+            async def receive() -> str:
+                value = await socket.recv()
+                assert isinstance(value, str)
+                return value
+
+            await endpoint.serve(send=socket.send, receive=receive)
+        except ConnectionClosed:
+            pass
+
+    try:
+        async with RemoteTools(engine) as remote:
+            endpoint = remote.endpoint(namespace="ns_1", target=device_id)
+            async with serve(broker, "127.0.0.1", 0) as server:
+                port = next(iter(server.sockets)).getsockname()[1]
+                for _ in range(2):
+                    process = await asyncio.create_subprocess_exec(
+                        str(swift_contracts),
+                        "bundle",
+                        str(resources),
+                        str(tmp_path / "state"),
+                        f"http://127.0.0.1:{port}",
+                        device_id,
+                        env=environment(tmp_path / "home"),
+                        cwd=tmp_path,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    try:
+                        stdout, stderr = await process.communicate()
+                        assert process.returncode == 0, stderr.decode()
+                        assert stdout.strip() == b"verified bundle"
+                        assert credential.encode() not in stdout + stderr
+                    finally:
+                        if process.returncode is None:
+                            process.kill()
+                        await process.wait()
+    finally:
+        await engine.dispose()

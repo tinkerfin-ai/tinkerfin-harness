@@ -25,6 +25,7 @@ from ._store import validate_store_backend
 from ._store_backend import async_store_backend
 from ._subagents import validate_subagent_resources
 from ._summarization import ObservedCompactionTool, observe_summarization
+from ._workspace_operations import WorkspaceMemory, WorkspaceOperations
 from .skills import SkillSource
 
 _Middleware = AgentMiddleware[Any, Any, Any]
@@ -55,6 +56,7 @@ def validate_middleware_resources(middleware: Sequence[_Middleware]) -> None:
 
 def prepare_middleware_resources(
     middleware: Sequence[_Middleware],
+    operations: WorkspaceOperations | None = None,
 ) -> tuple[_Middleware, ...]:
     """Derive built-in declarations without changing caller-owned configuration.
 
@@ -102,18 +104,21 @@ def prepare_middleware_resources(
                 _permissions=list(item._permissions),
             )
         elif type(item) is MemoryMiddleware:
-            result = copy(item)
+            result = WorkspaceMemory.__new__(WorkspaceMemory)
+            result.__dict__.update(copy(item).__dict__)
             result._backend = async_store_backend(item._backend)
             result.sources = list(item.sources)
+            result.operations = operations
         elif type(item) is SkillsMiddleware:
             result = SourceSkillsMiddleware(
                 backend=async_store_backend(item._backend),
                 sources=[SkillSource(path) for path in item.sources],
                 labels=list(item.source_labels),
                 system_prompt=item.system_prompt_template,
+                operations=operations,
             )
         elif type(item) is SummarizationMiddleware:
-            result = observe_summarization(item)
+            result = observe_summarization(item, operations)
             result._backend = async_store_backend(item._backend)
         else:
             result = item

@@ -20,7 +20,7 @@
 | --- | --- | --- |
 | `thread_id`、`run_id` | 必填 | Runtime namespace 内的运行身份 |
 | `messages` / `input` / `resume` | 严格三选一 | 用户消息、高级原生状态或恢复决定 |
-| `parent_run_id` | `None` | 已授权的分支或恢复来源 |
+| `parent_run_id` | `None` | 已授权的分支来源；恢复时须为当前待审批批次所属运行，省略则自动确定 |
 | `mode` | Runtime 默认值 | `default` 或已配置的 `plan` |
 | `config`、`context` | `None` | Graph 设置与带类型调用上下文 |
 | `stream_timeout` | `None` | 工作区与 Graph 准备、恢复请求解析及原生流的总时限，从 `RUN_STARTED` 后首次拉取原生流开始计时 |

@@ -1,0 +1,73 @@
+@layer auth {
+  .device-authorization {
+    --color-device-authorization-muted: color-mix(in srgb, var(--color-text-secondary) 93%, var(--color-canvas));
+    --shadow-device-authorization: 0 var(--space-2) var(--space-6) color-mix(in srgb, var(--color-scrim) 16%, transparent);
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
+    overflow: hidden;
+    /* 按约400px高的授权组合定位，两页沿用相同Logo锚点 */
+    padding-top: max(var(--space-8), calc(44dvh - var(--space-16) * 3 - var(--space-2)));
+    background: color-mix(in srgb, var(--color-layer-2) 50%, var(--color-subtle));
+    color: var(--color-text-primary);
+  }
+  .device-authorization__brand { display: flex; flex: 0 0 auto; justify-content: center; }
+  .device-authorization__logo { width: calc(var(--space-16) * 2 + var(--space-3)); height: auto; }
+  .device-authorization__content {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    min-height: 0;
+    padding: var(--space-3) var(--space-4) var(--space-12);
+    overflow: auto;
+    scrollbar-gutter: stable both-edges;
+  }
+  .device-authorization__body {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: calc(var(--space-16) * 6 + var(--space-4));
+    padding: var(--space-6);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-2xl);
+    background: var(--color-layer-1);
+    box-shadow: var(--shadow-device-authorization);
+    text-align: center;
+  }
+  .device-authorization__badge {
+    width: calc(var(--space-12) + var(--space-2));
+    height: calc(var(--space-12) + var(--space-2));
+    display: grid;
+    place-items: center;
+    margin: 0 auto var(--space-4);
+    border-radius: var(--radius-xl);
+    background: var(--color-subtle);
+    color: var(--color-text-tertiary);
+  }
+  .device-authorization__body h2 { margin: 0; font-size: var(--type-h2-size); line-height: var(--type-h2-line); font-weight: var(--weight-semibold); text-wrap: balance; }
+  .device-authorization__description { margin: var(--space-1) 0 0; color: var(--color-device-authorization-muted); font-size: var(--type-ui-size); line-height: var(--type-ui-line); }
+  .device-authorization__fields { display: grid; gap: var(--space-4); margin-top: var(--space-6); text-align: start; }
+  .device-authorization__summary {
+    margin: var(--space-4) 0 0;
+    padding: 0 var(--space-4);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-layer-2) 50%, var(--color-subtle));
+    text-align: start;
+  }
+  .device-authorization__summary > div { display: grid; grid-template-columns: var(--space-16) minmax(0, 1fr); align-items: center; gap: var(--space-3); min-height: var(--control-lg); padding-block: var(--space-2); font-size: var(--type-ui-size); line-height: var(--type-ui-line); }
+  .device-authorization__summary > div + div { border-top: 1px solid var(--color-border-subtle); }
+  .device-authorization__summary dt { color: var(--color-device-authorization-muted); }
+  .device-authorization__summary dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  .device-authorization__summary strong { font-weight: var(--weight-medium); }
+  .device-authorization__actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.85fr); gap: var(--space-3); margin-top: var(--space-4); }
+  .device-authorization__actions--single { grid-template-columns: minmax(0, 1fr); }
+  .device-authorization__actions .ui-button { min-height: var(--control-md); border-radius: var(--radius-md); font-size: var(--type-ui-size); }
+  .device-authorization__error { margin: var(--space-4) 0 0; color: var(--color-danger-text); font-size: var(--type-ui-size); line-height: var(--type-ui-line); }
+  .device-authorization__body > .ui-feedback-state { margin-top: var(--space-4); }
+  .device-authorization__success { margin: 0; max-width: calc(var(--space-16) * 6 + var(--space-4)); color: var(--color-text-secondary); font-size: var(--type-h3-size); line-height: var(--type-h3-line); text-align: center; text-wrap: balance; }
+  @media (pointer: coarse) { .device-authorization__actions .ui-button { min-height: var(--control-lg); } }
+}

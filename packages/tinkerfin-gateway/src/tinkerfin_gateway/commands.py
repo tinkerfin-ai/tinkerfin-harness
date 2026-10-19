@@ -40,6 +40,8 @@ class StartRun(_Command):
 class ResumeRun(_Command):
     """Apply one complete, Runtime-validated batch of interrupt decisions.
 
+    Omit ``parent_run_id`` to let Runtime select the pending batch's owning run.
+    An explicit parent must identify that run.
     Admission does not confirm that decisions were saved. The separate resume
     settlement reports only confirmed saved or not-saved outcomes.
     """

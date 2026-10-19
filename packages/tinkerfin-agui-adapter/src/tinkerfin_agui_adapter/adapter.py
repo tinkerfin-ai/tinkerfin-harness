@@ -243,6 +243,7 @@ class DeepAgentAgUiAdapter:
         self._sub_namespaces_by_parent_tool_call: dict[
             tuple[tuple[str, ...], str], tuple[str, ...]
         ] = {}
+        self._executing_tools: dict[tuple[tuple[str, ...], str], frozenset[str]] = {}
         self._task_start_fingerprints: dict[
             tuple[tuple[str, ...], str], TaskStartFingerprint
         ] = {}

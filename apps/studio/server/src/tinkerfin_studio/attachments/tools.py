@@ -15,7 +15,7 @@ from tinkerfin_sandbox import RootedOpenSandboxBackend
 from tinkerfin_studio.api.errors import BusinessException, ServiceErrorCode
 from tinkerfin_studio.attachments.documents import DocumentProcessor
 from tinkerfin_studio.attachments.service import AttachmentService
-from tinkerfin_studio.attachments.workspace_tools import save_work_file
+from tinkerfin_studio.attachments.workspace_tools import WorkFileStorage, save_work_file
 from tinkerfin_studio.services.http import generate_image_bytes, image_extension
 from tinkerfin_studio.services.schemas import ImageConfig
 from tinkerfin_studio.services.service import ResolvedService
@@ -93,7 +93,7 @@ def build_attachment_tools(
     async def create_file(
         name: str,
         kind: Literal["xlsx", "pdf", "png", "md"],
-        runtime: ToolRuntime[None, RootedOpenSandboxBackend],
+        runtime: ToolRuntime[None, WorkFileStorage],
         text: str = "",
         rows: list[list[str | int | float | bool | None]] | None = None,
         values: list[float] | None = None,
@@ -139,7 +139,7 @@ def build_attachment_tools(
 
     @tool(parse_docstring=True, error_on_invalid_docstring=True)
     async def generate_image(
-        prompt: str, runtime: ToolRuntime[None, RootedOpenSandboxBackend]
+        prompt: str, runtime: ToolRuntime[None, WorkFileStorage]
     ) -> str:
         """使用本次运行绑定的图片生成服务生成工作图片，不自动交付或重复收费请求
 

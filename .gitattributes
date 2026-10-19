@@ -1,2 +1,4 @@
 *.sh text eol=lf
 .githooks/* text eol=lf
+# Unified diff context lines retain their required leading space, including blank lines.
+apps/desktop/runtime/patches/*.patch whitespace=-blank-at-eol

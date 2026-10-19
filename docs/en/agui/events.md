@@ -58,14 +58,20 @@ Tool argument fragments do not end text from the same model message. That messag
 one text start and one text end, including when more text follows a Tool fragment.
 Its Tool events and message snapshots use the same parent message identity.
 
+Executing workspace tools may emit `CUSTOM` events named `tinkerfin.tool_output`.
+Their `value` contains the complete scoped `toolCallId` and a `value` holding finite
+JSON progress, such as command output. Append progress to that tool's display.
+The final result arrives separately as `TOOL_CALL_RESULT`; the run's terminal event
+confirms its outcome. Progress retains the current cloud run and graph provenance.
+
 ## Root agent and subagents
 
 Subagents run in non-root graph namespaces. The converter preserves full graph namespaces and provenance so messages, tools, and state from different scopes are not mixed.
 
 `expose_subagent_events=True` delivers their public events. With `False`, the converter still validates their input but suppresses corresponding public events.
 
-The framework never uses `parentRunId` for LangGraph subgraphs. High-level Runtime takes
-`parent_run_id` explicitly and uses it only for checkpoint branching. A
+The framework never uses `parentRunId` for LangGraph subgraphs. High-level Runtime uses
+`parent_run_id` for branch and resume lineage. A
 verified Deep Agents delegate carries `tinkerfin.subagent-provenance` in the task
 RAW descriptor. `subagentInvocationId` stays stable across resume, `requestRunId`
 identifies the current main request, child event sources repeat the invocation ID, and

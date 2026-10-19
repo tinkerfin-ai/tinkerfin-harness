@@ -139,7 +139,7 @@ async def test_empty_json_results_and_file_content_keep_their_http_contract(
 
 
 def test_business_json_openapi_responses_publish_the_envelope() -> None:
-    """所有业务 JSON 成功响应声明统一包络；文件与 SSE 使用各自媒体类型"""
+    """业务 JSON 声明统一包络；文件与 SSE 保留各自协议"""
 
     schema = create_application(lifespan=None).openapi()
     native_paths = {

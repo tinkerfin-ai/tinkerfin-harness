@@ -14,7 +14,7 @@ import json
 from typing import Any, Literal, cast
 
 from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.base import BaseCheckpointSaver, CheckpointTuple
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from ._agui_lineage_state import (
@@ -24,12 +24,20 @@ from ._agui_lineage_state import (
     LineageMarker,
     ResumeIntent,
 )
+from ._checkpoint import NamespaceCheckpointer
+from ._checkpoint_writes import CheckpointWriteView, checkpoint_write_view
 from ._tasks import run_async_owned
 from .errors import DelegationReplayError
 
 DELEGATION_RECORD_CHANNEL = "_tinkerfin_delegation_record"
 _OWNER_PREFIX = "tinkerfin-delegation:"
-RecordKind = Literal["request", "started", "effective", "outcome", "backoff_done"]
+RecordKind = Literal[
+    "request",
+    "started",
+    "effective",
+    "outcome",
+    "backoff_done",
+]
 
 
 def canonical_json(value: object) -> str:
@@ -142,20 +150,27 @@ class DelegationJournal:
     def attempt_key(self, index: int) -> str:
         return content_digest([self.request_key, index])
 
-    async def _checkpoint(self) -> CheckpointTuple:
-        checkpoint = await self.saver.aget_tuple(self.config)
+    async def _checkpoint(self, owner_prefix: str | None = None) -> CheckpointWriteView:
+        if isinstance(self.saver, NamespaceCheckpointer):
+            checkpoint = await self.saver._aread_checkpoint_writes(
+                self.config, owner_prefix=owner_prefix
+            )
+        else:
+            saved = await self.saver.aget_tuple(self.config)
+            checkpoint = (
+                None if saved is None else checkpoint_write_view(saved, owner_prefix)
+            )
         if checkpoint is None:
             raise DelegationReplayError("Delegation source checkpoint is unavailable")
-        options = checkpoint.config.get("configurable", {})
         if (
-            options.get("thread_id") != self.writer.thread_id
-            or options.get("checkpoint_ns", "") != self.graph_namespace
-            or checkpoint.checkpoint["id"] != self.checkpoint_id
+            checkpoint.thread_id != self.writer.thread_id
+            or checkpoint.graph_namespace != self.graph_namespace
+            or checkpoint.checkpoint_id != self.checkpoint_id
         ):
             raise DelegationReplayError("Delegation source checkpoint changed identity")
         return checkpoint
 
-    def _source(self, checkpoint: CheckpointTuple) -> LineageMarker:
+    def _source(self, checkpoint: CheckpointWriteView) -> LineageMarker:
         value = checkpoint.metadata.get(LINEAGE_METADATA_KEY)
         if not isinstance(value, str):
             raise DelegationReplayError("Delegation source has no managed lineage")
@@ -169,7 +184,7 @@ class DelegationJournal:
         return source
 
     def _read(
-        self, checkpoint: CheckpointTuple, attempt_key: str, kind: RecordKind
+        self, checkpoint: CheckpointWriteView, attempt_key: str, kind: RecordKind
     ) -> DelegationRecord | None:
         prefix = f"{_OWNER_PREFIX}{attempt_key}:{kind}:"
         source = self._source(checkpoint)
@@ -183,23 +198,7 @@ class DelegationJournal:
                 raise DelegationReplayError(
                     "Delegation journal contains an invalid record", cause=error
                 ) from error
-            if (
-                channel != DELEGATION_RECORD_CHANNEL
-                or owner != prefix + record.digest
-                or record.source != source
-                or record.writer.thread != source.thread
-                or record.writer.runtime_profile != source.runtime_profile
-                or record.writer.role != source.role
-                or record.graph_namespace != self.graph_namespace
-                or record.checkpoint_id != self.checkpoint_id
-                or record.parent_task_id != self.parent_task_id
-                or record.tool_call_id != self.tool_call_id
-                or record.attempt_key != attempt_key
-                or record.kind != kind
-            ):
-                raise DelegationReplayError(
-                    "Delegation journal has conflicting ownership"
-                )
+            self._verify(record, source, owner, channel, attempt_key, kind)
             records.append(record)
         if len(records) > 1:
             raise DelegationReplayError(
@@ -207,8 +206,38 @@ class DelegationJournal:
             )
         return records[0] if records else None
 
+    def _verify(
+        self,
+        record: DelegationRecord,
+        source: LineageMarker,
+        owner: str,
+        channel: str,
+        attempt_key: str,
+        kind: RecordKind,
+    ) -> None:
+        prefix = f"{_OWNER_PREFIX}{attempt_key}:{kind}:"
+        if (
+            channel != DELEGATION_RECORD_CHANNEL
+            or owner != prefix + record.digest
+            or record.source != source
+            or record.writer.thread != source.thread
+            or record.writer.runtime_profile != source.runtime_profile
+            or record.writer.role != source.role
+            or record.graph_namespace != self.graph_namespace
+            or record.checkpoint_id != self.checkpoint_id
+            or record.parent_task_id != self.parent_task_id
+            or record.tool_call_id != self.tool_call_id
+            or record.attempt_key != attempt_key
+            or record.kind != kind
+        ):
+            raise DelegationReplayError("Delegation journal has conflicting ownership")
+
     async def read(self, attempt_key: str, kind: RecordKind) -> DelegationRecord | None:
-        return self._read(await self._checkpoint(), attempt_key, kind)
+        return self._read(
+            await self._checkpoint(f"{_OWNER_PREFIX}{attempt_key}:{kind}:"),
+            attempt_key,
+            kind,
+        )
 
     async def save(
         self, attempt_key: str, kind: RecordKind, payload: JsonValue
@@ -233,7 +262,8 @@ class DelegationJournal:
         """
 
         async def commit() -> DelegationRecord:
-            checkpoint = await self._checkpoint()
+            prefix = f"{_OWNER_PREFIX}{attempt_key}:{kind}:"
+            checkpoint = await self._checkpoint(prefix)
             previous = self._read(checkpoint, attempt_key, kind)
             if previous is not None:
                 if content_digest(previous.payload) != content_digest(payload):
@@ -259,7 +289,7 @@ class DelegationJournal:
                 [(DELEGATION_RECORD_CHANNEL, record.model_dump(mode="json"))],
                 owner,
             )
-            verified = self._read(await self._checkpoint(), attempt_key, kind)
+            verified = self._read(await self._checkpoint(prefix), attempt_key, kind)
             if verified != record:
                 raise DelegationReplayError("Delegation outcome was not durably saved")
             return record

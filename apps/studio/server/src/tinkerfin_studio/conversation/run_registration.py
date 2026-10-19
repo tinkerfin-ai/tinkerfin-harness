@@ -15,6 +15,7 @@ from tinkerfin_notifications import Notifications
 from tinkerfin_studio.api.errors import (
     BusinessException,
     ConversationErrorCode,
+    DeviceErrorCode,
     ModelErrorCode,
     ServiceErrorCode,
 )
@@ -35,6 +36,7 @@ from tinkerfin_studio.conversation.run_preparation import (
     StartChatIntent,
     conversation_identity,
 )
+from tinkerfin_studio.devices.profiles import DeviceProfileBinding, DeviceProfiles
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import AgentModelConfig
 from tinkerfin_studio.models.service import model_settings, resolved_model
@@ -69,6 +71,7 @@ class PreparedExecution:
     search_service: ResolvedService | None
     image_service: ResolvedService | None
     thread_created: bool = False
+    local_profile: DeviceProfileBinding | None = None
 
 
 class ConversationRunPreparer:
@@ -337,6 +340,27 @@ class ConversationRunPreparer:
                 )
             else:
                 skill_snapshot = await skills.snapshot(prepared.identity)
+            inherited_profile = (
+                source_run.local_profile_id
+                if isinstance(intent, ResumeChatIntent) and source_run is not None
+                else None
+            )
+            if (
+                isinstance(intent, ResumeChatIntent)
+                and inherited_profile is None
+                and prepared.local_target is not None
+            ):
+                raise BusinessException(DeviceErrorCode.PROFILE_CHANGED)
+            local_profile = await DeviceProfiles(self._session, self._user_id).capture(
+                identity=prepared.identity,
+                selection=prepared.local_target,
+                access_mode=prepared.access_mode,
+                skills=skill_snapshot,
+                inherited=inherited_profile or existing.local_profile_id,
+            )
+            existing.local_profile_id = (
+                None if local_profile is None else local_profile.profile_id
+            )
             await self._repository.commit()
             if isinstance(intent, StartChatIntent) and intent.attachments:
                 await notify_change(
@@ -363,6 +387,7 @@ class ConversationRunPreparer:
                     else None
                 ),
                 thread_created=thread_created,
+                local_profile=local_profile,
             )
         except BaseException:
             await self._repository.rollback()

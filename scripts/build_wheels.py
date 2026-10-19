@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -24,7 +25,9 @@ PROJECT_PATHS = (
     "packages/tinkerfin-sandbox",
     "packages/tinkerfin-langgraph-store",
     "packages/tinkerfin-sqlalchemy",
+    "packages/tinkerfin-remote",
     "apps/studio/server",
+    "apps/desktop",
 )
 
 _IGNORE_ARTIFACTS = shutil.ignore_patterns(
@@ -44,6 +47,51 @@ _IGNORE_ARTIFACTS = shutil.ignore_patterns(
     "*.dist-info",
     "node_modules",
 )
+
+
+def project_paths_for(package: str) -> tuple[str, ...]:
+    """Select the locked workspace dependency closure for one application.
+
+    Requested extras follow the lockfile edges. Registry dependencies are
+    installed separately by the application's exported requirements.
+
+    Args:
+        package: Workspace distribution name, such as ``tinkerfin-studio``.
+
+    Returns:
+        Repository paths in build order, including the requested application.
+
+    Raises:
+        ValueError: The target or a local dependency has no supported build path.
+        OSError: The lockfile cannot be read.
+    """
+    locked = tomllib.loads((ROOT / "uv.lock").read_text())
+    projects = {
+        item["name"]: item
+        for item in locked["package"]
+        if "editable" in item.get("source", {})
+    }
+    if package not in projects:
+        raise ValueError(f"Unknown workspace package: {package}")
+    selected: set[str] = set()
+    expanded: dict[str, set[str]] = {}
+    pending: list[tuple[str, tuple[str, ...]]] = [(package, ())]
+    while pending:
+        name, extras = pending.pop()
+        item = projects.get(name)
+        if item is None:
+            continue
+        path = item["source"]["editable"]
+        if path not in PROJECT_PATHS:
+            raise ValueError(f"Unsupported workspace build path: {path}")
+        edges = list(item.get("dependencies", [])) if name not in expanded else []
+        visited = expanded.setdefault(name, set())
+        for extra in set(extras) - visited:
+            edges.extend(item.get("optional-dependencies", {}).get(extra, []))
+        visited.update(extras)
+        selected.add(path)
+        pending.extend((edge["name"], tuple(edge.get("extra", ()))) for edge in edges)
+    return tuple(path for path in PROJECT_PATHS if path in selected)
 
 
 def _copy_project(source: Path, destination: Path) -> None:
@@ -186,15 +234,23 @@ def main() -> None:
         "projects",
         nargs="*",
         metavar="PROJECT_PATH",
-        help="repository-relative project paths; defaults to all framework and Studio projects",
+        help="repository-relative project paths; defaults to all supported workspace projects",
     )
     parser.add_argument("--out-dir", type=Path, default=ROOT / "dist")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument(
+        "--package",
+        help="build one workspace distribution and its locked local dependencies",
+    )
     args = parser.parse_args()
+    if args.package and args.projects:
+        parser.error("--package cannot be combined with explicit project paths")
     try:
         wheels = build_wheels(
-            tuple(args.projects) or PROJECT_PATHS,
+            project_paths_for(args.package)
+            if args.package
+            else tuple(args.projects) or PROJECT_PATHS,
             args.out_dir,
             python=args.python,
             offline=args.offline,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
@@ -59,6 +60,8 @@ from tinkerfin_studio.conversation.run_preparation import (
 from tinkerfin_studio.conversation.run_registration import ConversationRunPreparer
 from tinkerfin_studio.conversation.service import ConversationChatService
 from tinkerfin_studio.conversation.titles import ConversationTitles
+from tinkerfin_studio.devices.profiles import DeviceProfileBinding
+from tinkerfin_studio.infrastructure.database import Database
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import (
     AgentModelConfig,
@@ -146,7 +149,9 @@ def conversation_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
         search_service: ResolvedService | None,
         image_service: ResolvedService | None,
         access_mode: AccessMode,
+        local_profile: DeviceProfileBinding | None = None,
     ) -> AgentRuntime[None]:
+        assert local_profile is None
         del (
             thread_id,
             project_id,
@@ -185,6 +190,110 @@ def _ordinary_request(
     if parent_run_id is not None:
         payload["parentRunId"] = parent_run_id
     return ChatRequest.model_validate(payload)
+
+
+async def test_local_profile_is_registered_atomically_and_inherited_by_resume(
+    database: Database, session, attachments, notifications
+) -> None:
+    from tinkerfin_studio.api.errors import DeviceErrorCode
+    from tinkerfin_studio.devices.schemas import (
+        AuthorizationStart,
+        DevicePresence,
+    )
+    from tinkerfin_studio.devices.service import DeviceService
+
+    devices = DeviceService(database, now=lambda: datetime(2030, 1, 1, tzinfo=UTC))
+    authorization = await devices.create_authorization(
+        AuthorizationStart(name="Mac", credential=SecretStr("ab" * 32))
+    )
+    await devices.approve_authorization(
+        1, authorization.authorization_id, authorization.browser_token, 1
+    )
+    status = await devices.authorization_status(
+        authorization.authorization_id, "ab" * 32
+    )
+    assert status.device is not None
+    device = status.device
+    await devices.connect(
+        f"{device.device_id}." + "ab" * 32,
+        DevicePresence(),
+    )
+    raw = _ordinary_request(thread_id="thread-local", run_id="run-local").model_dump(
+        mode="json", by_alias=True
+    )
+    raw["forwardedProps"]["localTarget"] = {
+        "device_id": device.device_id,
+        "workspace_id": "project-1",
+    }
+    request = ChatRequest.model_validate(raw)
+    repository = ConversationRepository(session)
+    thread = await repository.create_thread(
+        user_id=1,
+        project_id="project-1",
+        thread_id=request.thread_id,
+        title="本机协作",
+        model_id="model-main",
+    )
+    preparer = ConversationRunPreparer(
+        session, user_id=1, attachments=attachments, notifications=notifications
+    )
+    prepared = prepare_run_request(
+        request, user_id=1, thread_id=thread.thread_id, project_id="project-1"
+    )
+    execution = await preparer.register(
+        intent=classify_intent(request),
+        prepared=prepared,
+        model=_model(),
+        thread=thread,
+    )
+    assert execution.local_profile is not None
+    first = await repository.get_run(thread_pk=thread.id, run_id=request.run_id)
+    assert (
+        first is not None
+        and first.local_profile_id == execution.local_profile.profile_id
+    )
+    first.status = "waiting"
+    thread.status = "waiting_approval"
+    thread.has_pending_interrupt = True
+    thread.last_run_id = first.run_id
+    await repository.commit()
+    raw["runId"] = "run-local-resume"
+    raw["messages"] = []
+    raw["resume"] = [
+        {
+            "interruptId": "local-review#0",
+            "status": "resolved",
+            "payload": {"type": "approve"},
+        }
+    ]
+    raw["forwardedProps"]["localTarget"]["workspace_id"] = "different"
+    changed = ChatRequest.model_validate(raw)
+    with pytest.raises(BusinessException) as rejected:
+        await preparer.register(
+            intent=classify_intent(changed),
+            prepared=prepare_run_request(
+                changed, user_id=1, thread_id=thread.thread_id, project_id="project-1"
+            ),
+            model=_model(),
+            thread=thread,
+        )
+    assert rejected.value.error_code == DeviceErrorCode.PROFILE_CHANGED
+    thread = await repository.get_thread(user_id=1, thread_id="thread-local")
+    assert thread is not None
+    assert (
+        await repository.get_run(thread_pk=thread.id, run_id="run-local-resume") is None
+    )
+    raw["forwardedProps"].pop("localTarget")
+    resumed = ChatRequest.model_validate(raw)
+    result = await preparer.register(
+        intent=classify_intent(resumed),
+        prepared=prepare_run_request(
+            resumed, user_id=1, thread_id=thread.thread_id, project_id="project-1"
+        ),
+        model=_model(),
+        thread=thread,
+    )
+    assert result.local_profile == execution.local_profile
 
 
 def _resume_request(
@@ -884,7 +993,15 @@ async def test_chat_accepts_images_and_uses_messaging_only_for_delivery(
         assert command.messages[1]["role"] == "user"
         source = command.messages[1]["source"]
         assert isinstance(source, dict) and source["kind"] == "context"
-        assert "/skills/reports/SKILL.md" in str(command.messages[1]["content"])
+        metadata = source["metadata"]
+        assert isinstance(metadata, dict)
+        references = metadata["skills"]
+        assert isinstance(references, list) and len(references) == 1
+        reference = references[0]
+        assert isinstance(reference, dict)
+        assert reference["id"] == selected_ids[0]
+        assert reference["name"] == "reports"
+        assert "reports" in str(command.messages[1]["content"])
         assert "读取 references/data.bin" not in str(command.messages[1]["content"])
     assert len(trace.ensured) == 1
     assert trace.ensured[0].run_id == "run-1"

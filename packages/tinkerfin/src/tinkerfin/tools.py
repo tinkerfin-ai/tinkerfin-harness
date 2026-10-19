@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Generic
 
 from deepagents import DeepAgentState
@@ -20,15 +22,38 @@ StateT = TypeVar("StateT", default=DeepAgentState)
 class _ToolRunScope(Generic[WorkspaceT]):
     """Revoke workspace access only after all graph and tool work has stopped."""
 
-    def __init__(self, identity: RunIdentity, workspace: WorkspaceT | None) -> None:
+    def __init__(
+        self,
+        identity: RunIdentity,
+        workspace: WorkspaceT | None,
+        workspace_scope_id: str | None = None,
+    ) -> None:
         self.identity = identity
+        if workspace_scope_id is not None and (
+            not workspace_scope_id
+            or workspace_scope_id.strip() != workspace_scope_id
+            or "\0" in workspace_scope_id
+        ):
+            raise ValueError("workspace_scope_id must be a canonical nonempty string")
+        self.workspace_scope_id = (
+            hashlib.sha256(
+                json.dumps(
+                    identity.thread.model_dump(mode="json"), sort_keys=True
+                ).encode()
+            ).hexdigest()
+            if workspace_scope_id is None
+            else workspace_scope_id
+        )
         self._workspace = workspace
         self._active = True
 
-    @property
-    def workspace(self) -> WorkspaceT:
+    def ensure_active(self) -> None:
         if not self._active:
             raise TinkerFinLifecycleError("The tool's run has closed")
+
+    @property
+    def workspace(self) -> WorkspaceT:
+        self.ensure_active()
         if self._workspace is None:
             raise TinkerFinLifecycleError("This run has no configured workspace")
         return self._workspace

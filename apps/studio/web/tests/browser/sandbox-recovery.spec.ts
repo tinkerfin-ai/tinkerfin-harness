@@ -61,7 +61,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
       runFailures: [{ runId, errorCode: 'workspace_stopped', failedAt: time, retryable: true }] }
     await live.emit({ type: 'RUN_ERROR', code: 'workspace_stopped', rawEvent: { runId } })
     await live.finish()
-    await expect(content.getByText('运行环境已停止，请启动沙箱后重试')).toBeVisible()
+    await expect(content.getByText('任务暂时无法执行，请稍后重试')).toBeVisible()
     await expect(content.getByLabel('任务仍在继续')).toHaveCount(0)
     await expect(content.getByRole('button', { name: '重试', exact: true })).toBeVisible()
     await expect(content.getByText('历史同步失败，请重新加载')).toHaveCount(0)

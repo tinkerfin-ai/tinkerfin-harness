@@ -1574,8 +1574,10 @@ async def test_runtime_trace_projects_messages_tree_state_todos_and_safe_events(
     assert all(event.fact.kind not in {"agui", "messaging"} for event in page.items)
 
 
+@pytest.mark.parametrize("nullable_source", [False, True])
 async def test_propagated_subagent_interrupt_uses_the_deepest_trace_scope(
     monkeypatch: pytest.MonkeyPatch,
+    nullable_source: bool,
 ) -> None:
     namespace = ("tools:subagent-task",)
     interrupt = Interrupt(
@@ -1585,6 +1587,7 @@ async def test_propagated_subagent_interrupt_uses_the_deepest_trace_scope(
                 {
                     "name": "write_file",
                     "args": {"file_path": "/result.txt", "content": "result"},
+                    **({"source_args": None} if nullable_source else {}),
                 }
             ],
             "review_configs": [

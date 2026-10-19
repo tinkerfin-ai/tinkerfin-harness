@@ -9,6 +9,11 @@ from tinkerfin_studio.conversation.models import (
     ConversationRunRegistration,
     ConversationThread,
 )
+from tinkerfin_studio.devices.models import (
+    Device,
+    DeviceAuthorization,
+    DeviceExecutionProfile,
+)
 from tinkerfin_studio.infrastructure.database import Base
 from tinkerfin_studio.models.entity import AgentModel, ModelConnection
 from tinkerfin_studio.projects.models import Project
@@ -27,6 +32,9 @@ def test_business_schema_contains_no_foreign_keys() -> None:
 
     registered = (
         User,
+        Device,
+        DeviceAuthorization,
+        DeviceExecutionProfile,
         Project,
         AttachmentFile,
         AttachmentCollection,

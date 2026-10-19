@@ -34,6 +34,7 @@ from .runtime import SsePayload as SsePayload
 from .runtime import SsePreflight as SsePreflight
 from .runtime import TinkerFin as TinkerFin
 from .skills import SkillSource as SkillSource
+from .skills import WorkspaceSkills as WorkspaceSkills
 
 if TYPE_CHECKING:
     from .agui_input import AgUiUserInput as AgUiUserInput
@@ -120,5 +121,6 @@ __all__ = [
     "TinkerFinLifecycleError",
     "TinkerFinStreamProtocolError",
     "TraceContribution",
+    "WorkspaceSkills",
     "trace_contribution",
 ]

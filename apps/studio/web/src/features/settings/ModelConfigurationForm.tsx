@@ -4,7 +4,7 @@ import { Button, TextField, ValidatedForm } from '../../components/ui'
 import { useI18n } from '../../i18n'
 import { ImageInputCapabilityField } from './ImageInputCapability'
 import { ModelChoice } from './ModelChoice'
-import { ModelSettingsLayout } from './ModelSettingsLayout'
+import { SettingsPanelLayout } from './SettingsPanelLayout'
 import type { ChatOptions, ModelConnection, ModelSettings } from './useModelSettings'
 
 export function ModelConfigurationForm({ model, connection, saving, existing, onSave, onRemove, onCancel }: {
@@ -32,7 +32,7 @@ export function ModelConfigurationForm({ model, connection, saving, existing, on
   const write = (): ModelSettings => ({ ...draft, display_name: draft.display_name.trim(), model_name: draft.model_name.trim() })
   const validate = () => { setAttempt(value => value + 1); return Object.keys(errors).length === 0 }
   return <ValidatedForm className="settings-models__editor-frame" errors={attempt ? errors : {}} validationAttempt={attempt} onSubmit={event => { event.preventDefault(); if (deleting) return; if (validate()) { void onSave(write()).then(saved => { if (saved) onCancel() }) } }}>
-    <ModelSettingsLayout actions={<>
+    <SettingsPanelLayout label={t('模型配置')} contentClassName="settings-models__editor" actions={<>
       {deleting && <p className="settings-models__delete-message" role="alert">{t('删除此模型配置，历史记录保留')}</p>}
       <div className="settings-models__row-actions">
         {existing && <Button size="sm" type="button" variant="text" className="settings-models__delete-action" leadingIcon={<Trash2 size={14} />} disabled={saving} onClick={() => {
@@ -58,6 +58,6 @@ export function ModelConfigurationForm({ model, connection, saving, existing, on
         </div></details>
       <label className="settings-models__check"><input type="checkbox" checked={draft.enabled} disabled={draft.is_default} onChange={event => update({ enabled: event.target.checked })} />{t('启用模型')}</label>
     </fieldset>
-    </ModelSettingsLayout>
+    </SettingsPanelLayout>
   </ValidatedForm>
 }

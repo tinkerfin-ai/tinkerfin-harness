@@ -1,0 +1,29 @@
+[project]
+name = "tinkerfin-companion"
+version = "0.1.1"
+description = "TinkerFin Studio macOS tool execution companion."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = [
+    "aiosqlite==0.22.1",
+    "httpx==0.28.1",
+    "langchain-core==1.6.4",
+    "pydantic>=2,<3",
+    "sqlalchemy[asyncio]==2.0.52",
+    "tinkerfin-contracts==0.1.1",
+    "tinkerfin-sandbox[mcp]==0.1.1",
+    "tinkerfin-remote==0.1.1",
+    "websockets==15.0.1",
+]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tinkerfin_companion = ["py.typed", "browser_config.json", "browser_release.json"]

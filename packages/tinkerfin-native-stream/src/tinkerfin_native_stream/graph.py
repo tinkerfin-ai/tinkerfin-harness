@@ -227,6 +227,7 @@ class NativeGraphScopeRegistry:
                 "frame opening task must belong to a proven ancestor scope"
             )
         self.resolve(task.graph_namespace)
+        request = origin.subagent_request
         enclosing = self.resolve(base[:-1])
         previous = self._origins.get(base)
         expected = (
@@ -234,7 +235,6 @@ class NativeGraphScopeRegistry:
             if previous is None
             else previous.subagent_request
         )
-        request = origin.subagent_request
         if (None if expected is None else expected.id) != (
             None if request is None else request.id
         ):

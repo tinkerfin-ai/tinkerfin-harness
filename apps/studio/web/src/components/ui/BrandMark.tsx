@@ -1,5 +1,7 @@
 import type { CSSProperties } from 'react'
 
+export const BRAND_MARK_SRC = '/brand/tinkerfin.svg'
+
 export interface BrandMarkProps {
   size?: number
   className?: string
@@ -14,7 +16,7 @@ export function BrandMark({ size = 22, className }: BrandMarkProps = {}) {
       style={style}
       aria-hidden="true"
     >
-      <img src="/brand/tinkerfin-mark.png?v=1" width="647" height="458" alt="" />
+      <img src={BRAND_MARK_SRC} width="647" height="458" alt="" />
     </span>
   )
 }

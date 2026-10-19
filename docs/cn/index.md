@@ -22,6 +22,7 @@
 | 向独立监听者广播资源变化 | [Notifications](notifications/index.md) |
 | 统一受理命令并通知客户端 | [Gateway](gateway/index.md) |
 | 让智能体在隔离环境中处理文件与命令 | [Sandbox](sandbox/index.md) |
+| 在 Mac 上处理文件并使用本机工具 | [本机协作](studio/local_devices.md) |
 | 运行或调度智能体任务 | [Automation](automation/index.md) |
 
 ## 深入了解

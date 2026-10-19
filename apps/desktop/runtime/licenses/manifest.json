@@ -1,0 +1,9 @@
+[
+  {
+    "distribution": "langsmith",
+    "release": "0.14.1",
+    "source": "https://raw.githubusercontent.com/langchain-ai/langsmith-sdk/c51e722026138478b728884d9a3b504ef2ba8ea0/LICENSE",
+    "file": "langsmith-MIT.txt",
+    "sha256": "34e0b9842c7a31d34e53bc7eb224e81e07a34996106e029bbc72dea2d449f496"
+  }
+]

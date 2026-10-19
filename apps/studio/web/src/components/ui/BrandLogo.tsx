@@ -1,3 +1,5 @@
+import { BRAND_MARK_SRC } from './BrandMark'
+
 export type BrandLogoSize = 'sm' | 'md' | 'lg'
 
 export interface BrandLogoProps {
@@ -14,14 +16,14 @@ export function BrandLogo({ size = 'sm', className }: BrandLogoProps) {
     <span className={classes} aria-hidden="true">
       <img
         className="brand-logo__mark"
-        src="/brand/tinkerfin-mark.png?v=1"
+        src={BRAND_MARK_SRC}
         width="647"
         height="458"
         alt=""
       />
       <img
         className="brand-logo__wordmark"
-        src="/brand/tinkerfin-wordmark.png?v=1"
+        src={`${BRAND_MARK_SRC}#wordmark`}
         width="1295"
         height="242"
         alt=""

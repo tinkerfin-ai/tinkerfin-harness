@@ -702,14 +702,14 @@ export function ChainTraceView({
 
   if (!threadId) {
     return (
-      <section ref={traceRegion} className="chain-trace" role="tabpanel" aria-label={t('链路')}>
+      <section ref={traceRegion} className="chain-trace" aria-label={t('链路')}>
         <div className="chain-trace-empty"><Activity size={28} /><h2>{t('链路')}</h2><p>{t('发起会话后可查看真实调用链')}</p></div>
       </section>
     )
   }
 
   return (
-    <section ref={traceRegion} id="chain-trace-panel" className={`chain-trace${detailPageOpen ? ' is-detail-page' : ''}`} role="tabpanel" aria-label={t('链路')}>
+    <section ref={traceRegion} id="chain-trace-panel" className={`chain-trace${detailPageOpen ? ' is-detail-page' : ''}`} aria-label={t('链路')}>
       {trace.state.phase === 'ready' && (
         <div
           className="chain-trace-toolbar-host"

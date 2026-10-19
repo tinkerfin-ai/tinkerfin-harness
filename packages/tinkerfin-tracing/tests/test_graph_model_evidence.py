@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypedDict
@@ -14,7 +15,7 @@ from pydantic import JsonValue
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from tinkerfin_contracts import RunIdentity
+from tinkerfin_contracts import ObservationClock, RunIdentity
 from tinkerfin_tracing import (
     CallTrackingFact,
     CapturedValue,
@@ -34,6 +35,13 @@ from tinkerfin_tracing import (
     TraceStoreProtocolError,
     TurnFact,
 )
+from tinkerfin_tracing._graph_reducer import (
+    apply_graph_events,
+    apply_graph_node_mutation,
+    graph_node_mutations,
+)
+from tinkerfin_tracing.codec import CanonicalTracePayloadCodec
+from tinkerfin_tracing.facts import TraceEvent
 
 
 class _Source(TypedDict):
@@ -154,10 +162,12 @@ async def graph_store(
 
 @pytest.mark.parametrize("same_commit", (False, True))
 @pytest.mark.parametrize("execution_namespace", ((), ("attempt:child",)))
+@pytest.mark.parametrize("renamed", (False, True))
 async def test_tool_execution_retains_model_proof_and_actual_input(
     graph_store: tuple[TraceStore, AsyncEngine | None],
     same_commit: bool,
     execution_namespace: tuple[str, ...],
+    renamed: bool,
 ) -> None:
     store, _ = graph_store
     assert isinstance(store, TraceGraphStore)
@@ -165,6 +175,13 @@ async def test_tool_execution_retains_model_proof_and_actual_input(
     tracer = Tracer(store=store)
     initial, model_completed, execution_started, execution_completed = _facts(
         identity, execution_namespace=execution_namespace
+    )
+    execution_name = "approved_tool" if renamed else "local_tool"
+    execution_started = execution_started.model_copy(
+        update={"tool_name": execution_name}
+    )
+    execution_completed = execution_completed.model_copy(
+        update={"tool_name": execution_name}
     )
     writer = await store.open_writer(identity)
     try:
@@ -202,6 +219,7 @@ async def test_tool_execution_retains_model_proof_and_actual_input(
         assert len(tools) == 1
         tool = tools[0]
         assert tool.graph_namespace == ()
+        assert tool.name == execution_name
         assert tool.request == {"value": "edited"}
         assert tool.started_at == execution_started.occurred_at
         assert tool.model_call_id == model_completed.call_id
@@ -224,11 +242,24 @@ async def test_tool_execution_retains_model_proof_and_actual_input(
         assert record.request_event is not None
         assert record.request_event.fact == execution_started
 
-        await writer.append((execution_completed,))
         await writer.append(
             (
-                RunFact(**_source(identity, 11), phase="terminal", outcome="succeeded"),
-                RunFact(**_source(identity, 12), phase="closed", outcome="succeeded"),
+                execution_completed,
+                ToolFact(
+                    **_source(identity, 11),
+                    phase="result",
+                    tool_call_id="local-tool",
+                    source_tool_call_id="local-tool",
+                    tool_name="local_tool",
+                    content=_captured({"result": "done"}),
+                    result_status="success",
+                ),
+            )
+        )
+        await writer.append(
+            (
+                RunFact(**_source(identity, 12), phase="terminal", outcome="succeeded"),
+                RunFact(**_source(identity, 13), phase="closed", outcome="succeeded"),
             ),
             mandatory=True,
         )
@@ -237,6 +268,7 @@ async def test_tool_execution_retains_model_proof_and_actual_input(
             node for node in complete.nodes if node.kind is TraceGraphNodeKind.TOOL
         )
         assert finished_tool.model_call_id == model_completed.call_id
+        assert finished_tool.name == execution_name
         assert finished_tool.request == {"value": "edited"}
         assert finished_tool.result == {"result": "done"}
         assert finished_tool.status is TraceGraphNodeStatus.SUCCEEDED
@@ -244,6 +276,74 @@ async def test_tool_execution_retains_model_proof_and_actual_input(
         assert (await tracer.query(identity.thread)).snapshot == complete.snapshot
     finally:
         await writer.aclose()
+
+
+async def test_source_clock_roundtrips_and_survives_graph_rebuild(
+    graph_store: tuple[TraceStore, AsyncEngine | None],
+) -> None:
+    store, _engine = graph_store
+    identity = RunIdentity(namespace="test", thread_id="source-clock", run_id="run")
+    initial, model, started, completed = _facts(identity)
+    clock = ObservationClock(
+        namespace="producer",
+        thread_id="source",
+        run_id="execution",
+        sequence=1,
+        observed_at=datetime(2040, 1, 1, tzinfo=UTC),
+        monotonic_ns=10,
+    )
+    end = clock.model_copy(update={"sequence": 2, "monotonic_ns": 20})
+    started = started.model_copy(update={"source_clock": clock})
+    completed = completed.model_copy(update={"source_clock": end})
+    codec = CanonicalTracePayloadCodec()
+    assert codec.decode_fact(codec.encode_fact(started).data) == started
+    writer = await store.open_writer(identity)
+    try:
+        await writer.append((*initial, model, started, completed))
+        await writer.append(
+            (
+                RunFact(**_source(identity, 12), phase="terminal", outcome="succeeded"),
+                RunFact(**_source(identity, 13), phase="closed", outcome="succeeded"),
+            ),
+            mandatory=True,
+        )
+        tracer = Tracer(store=store)
+        for _query in range(2):
+            graph = await tracer.query(identity.thread)
+            tool = next(
+                node for node in graph.nodes if node.kind is TraceGraphNodeKind.TOOL
+            )
+            assert tool.source_started == clock
+            assert tool.source_completed == end
+            assert tool.started_at == started.occurred_at
+            assert tool.completed_at == completed.occurred_at
+            await tracer.rebuild_graph(identity.thread)
+    finally:
+        await writer.aclose()
+
+
+def test_tool_rename_requires_the_exact_execution_name() -> None:
+    identity = RunIdentity(namespace="test", thread_id="evidence", run_id="run")
+    initial, _, execution, _ = _facts(identity)
+    events = tuple(
+        TraceEvent(
+            event_id=f"event-{sequence}",
+            trace_seq=sequence,
+            generation="generation",
+            persisted_bytes=1,
+            fact=fact,
+        )
+        for sequence, fact in enumerate((*initial, execution), 1)
+    )
+    revisions = {}
+    apply_graph_events(revisions, events[:-1])
+    mutation = graph_node_mutations((events[-1],))[0]
+    with pytest.raises(TraceStoreProtocolError, match="name lacks matching evidence"):
+        apply_graph_node_mutation(
+            revisions,
+            replace(mutation, name="unproven_tool"),
+            source_events={event.trace_seq: event for event in events},
+        )
 
 
 @pytest.mark.parametrize("bad_sequence", (None, 5, 9, 1000))

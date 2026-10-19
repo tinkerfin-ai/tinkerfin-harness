@@ -37,6 +37,7 @@
       --settings-control-height: var(--control-xl);
       --settings-inline-action-height: var(--control-lg);
     }
+    .settings-dialog .settings-nav__item { min-inline-size: var(--control-lg); }
   }
 
 
@@ -82,6 +83,13 @@
     overflow-y: auto;
     padding: var(--settings-content-inset);
   }
+
+  .settings-panel-host { min-width: 0; min-height: 0; overflow: hidden; }
+  .settings-panel { display: flex; flex-direction: column; flex: 1; height: 100%; min-width: 0; min-height: 0; }
+  .settings-panel__content-shell { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; }
+  .settings-panel__scroll { min-height: 0; min-width: 0; flex: 1; overflow-y: auto; overscroll-behavior: none; padding: var(--settings-content-inset); }
+  .settings-panel__actions { flex-shrink: 0; padding: var(--space-3) var(--settings-content-inset); background: var(--color-layer-1); }
+  .settings-panel__footer-content { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-3); width: 100%; }
 
   .settings-section + .settings-section { margin-top: var(--space-8); }
   .settings-section h3 { margin: 0; font-size: var(--type-title-size); line-height: var(--type-title-line); }
@@ -150,8 +158,8 @@
   @media (max-width: 767px) {
     .settings-dialog { height: calc(100dvh - 2 * var(--layout-page-gutter)); }
     .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-    .settings-nav { grid-template-columns: repeat(4, minmax(0, 1fr)); padding: var(--space-2) var(--layout-panel-inset); border-right: 0; border-bottom: 1px solid var(--color-border-subtle); }
-    .settings-nav__item { justify-content:center; padding-inline:var(--space-1); gap:var(--space-1); font-size:var(--type-caption-size); white-space:nowrap; }
+    .settings-nav { display: flex; overflow-x: auto; padding: var(--space-2) var(--layout-panel-inset); border-right: 0; border-bottom: 1px solid var(--color-border-subtle); }
+    .settings-nav__item { flex: 0 0 auto; width: auto; justify-content:center; padding-inline:var(--space-2); gap:var(--space-1); font-size:var(--type-caption-size); white-space:nowrap; }
     .settings-nav__item svg { flex-shrink:0; }
     .settings-theme-options { grid-template-columns:minmax(0,1fr); }
     .settings-choice-picker, .settings-choice-picker.settings-preference-picker { width: 100%; }

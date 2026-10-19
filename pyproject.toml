@@ -12,6 +12,7 @@ dev = [
     { include-group = "packaging" },
 ]
 test = [
+    "cryptography==50.0.0",
     "ag-ui-protocol==0.1.19",
     "aiosqlite>=0.22,<1",
     "tinkerfin-sqlalchemy==0.1.1",
@@ -29,6 +30,7 @@ lint = [
     "ruff>=0.16.1,<0.17.0",
 ]
 packaging = [
+    "zstandard==0.25.0",
     "pip>=26,<27",
     "packaging>=26,<27",
     "pytest>=8.3.5,<10.0.0",
@@ -40,6 +42,7 @@ packaging = [
 package = false
 
 [tool.uv.sources]
+tinkerfin-remote = { workspace = true }
 tinkerfin = { workspace = true }
 tinkerfin-sqlalchemy = { workspace = true }
 tinkerfin-contracts = { workspace = true }
@@ -61,6 +64,7 @@ default = true
 members = [
     "packages/*",
     "apps/studio/server",
+    "apps/desktop",
 ]
 
 [tool.ruff]
@@ -69,6 +73,7 @@ line-length = 88
 src = [
     "packages/*/src",
     "apps/*/*/src",
+    "apps/desktop/src",
 ]
 
 [tool.ruff.lint]
@@ -93,6 +98,8 @@ select = [
 include = [
     "scripts",
     "tests",
+    "packages/tinkerfin-remote/src",
+    "packages/tinkerfin-remote/tests",
     "packages/tinkerfin/src",
     "packages/tinkerfin/tests",
     "packages/tinkerfin-contracts/src",
@@ -119,6 +126,9 @@ include = [
     "packages/tinkerfin-gateway/tests",
     "apps/studio/server/src",
     "apps/studio/server/tests",
+    "apps/desktop/src",
+    "apps/desktop/tests",
+    "apps/desktop/scripts",
 ]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
@@ -132,6 +142,8 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 required_plugins = ["pytest-asyncio"]
 markers = [
+    "companion_integration: uses isolated macOS credential entries or native companion resources",
+    "docker_integration: explicitly selected tests with owned MySQL or Redis containers",
     "packaging_e2e: builds and installs wheels in isolated environments",
     "studio_e2e: requires the real Studio dependencies and explicit E2E configuration",
 ]
@@ -140,11 +152,12 @@ testpaths = [
     "tests",
     "packages",
     "apps/studio/server",
+    "apps/desktop",
 ]
 
 addopts = [
     "--strict-config",
     "--strict-markers",
     "-m",
-    "not packaging_e2e",
+    "not packaging_e2e and not docker_integration",
 ]

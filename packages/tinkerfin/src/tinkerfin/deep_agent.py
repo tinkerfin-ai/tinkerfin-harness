@@ -1551,7 +1551,9 @@ def bind_agent(builder: TinkerFin, spec: AgentSpec[ContextT]) -> AgentRuntime[Co
     )
 
     from ._compaction_observation import COMPACTION_MARKER
+    from ._file_paths import FILE_TARGETS_CHANNEL
     from ._hitl_state import TOOL_REVIEW_CHANNEL
+    from ._workspace_operations import TOOL_ORIGINS_CHANNEL, WORKSPACE_ORIGIN_CHANNEL
     from .runtime import AgentRuntime
 
     namespace = builder._require_namespace()
@@ -1572,6 +1574,9 @@ def bind_agent(builder: TinkerFin, spec: AgentSpec[ContextT]) -> AgentRuntime[Co
             SUMMARIZATION_EVENT_KEY,
             SUMMARIZATION_SESSION_ID_KEY,
             COMPACTION_MARKER,
+            FILE_TARGETS_CHANNEL,
+            TOOL_ORIGINS_CHANNEL,
+            WORKSPACE_ORIGIN_CHANNEL,
         }
     )
     middleware = tuple(spec.middleware)

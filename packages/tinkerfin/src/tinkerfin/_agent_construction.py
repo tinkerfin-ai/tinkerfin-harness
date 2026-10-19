@@ -43,15 +43,22 @@ from langgraph.typing import ContextT
 
 from tinkerfin_contracts import PreparedWorkspace
 
-from ._agent_spec import AgentMiddlewareType, AgentSpec, CheckpointSaver
+from ._agent_spec import AgentMiddlewareType, AgentSpec, CheckpointSaver, ToolDefinition
 from ._attachment_agents import _AttachmentMiddleware, preserve_media
 from ._durable_delegation import prepare_delegation_retry
+from ._file_paths import _WorkspaceFilePaths, _WorkspaceFilesystem
 from ._hitl import create_tool_review
 from ._middleware_resources import prepare_middleware_resources
-from ._skills import SourceSkillsMiddleware
+from ._skills import SourceSkillsMiddleware, resolve_skill_sources
 from ._state_schema import private_state_fields
 from ._summarization import ObservedCompactionTool, observe_summarization
 from ._tool_runtime import _ToolRuntimeMiddleware
+from ._workspace_operations import (
+    ToolOriginsMiddleware,
+    WorkspaceMemory,
+    WorkspaceOperations,
+)
+from ._workspace_tools import merge_workspace_tools
 from .media import AttachmentSupport
 from .skills import SkillSource
 from .tools import _ToolRunScope
@@ -91,8 +98,16 @@ def _filesystem(
     backend: BackendProtocol,
     permissions: Sequence[FilesystemPermission],
     workspace: PreparedWorkspace[object, BackendProtocol] | None,
-) -> AgentMiddlewareType:
-    return FilesystemMiddleware(
+    tools: Sequence[ToolDefinition],
+    operations: WorkspaceOperations | None,
+) -> FilesystemMiddleware:
+    resolver = None if workspace is None else workspace.file_path_resolver
+    filesystem_type = (
+        FilesystemMiddleware
+        if resolver is None and operations is None
+        else _WorkspaceFilesystem
+    )
+    filesystem = filesystem_type(
         backend=backend,
         _permissions=list(permissions),
         system_prompt=None if workspace is None else workspace.filesystem_instructions,
@@ -100,10 +115,19 @@ def _filesystem(
         if workspace is None
         else dict(workspace.tool_descriptions),
     )
+    if isinstance(filesystem, _WorkspaceFilesystem):
+        filesystem.operations = operations
+        if resolver is not None:
+            filesystem.file_paths = _WorkspaceFilePaths(
+                resolver, filesystem.tools, tools, operations
+            )
+    return filesystem
 
 
 def _with_attachments(
-    middleware: list[AgentMiddlewareType], attachments: AttachmentSupport | None
+    middleware: list[AgentMiddlewareType],
+    attachments: AttachmentSupport | None,
+    operations: WorkspaceOperations | None,
 ) -> list[AgentMiddlewareType]:
     support = attachments if attachments is not None else AttachmentSupport()
     return [
@@ -129,7 +153,7 @@ def _with_attachments(
             else item
             for item in middleware
         ),
-        _AttachmentMiddleware(support),
+        _AttachmentMiddleware(support, operations),
     ]
 
 
@@ -141,18 +165,34 @@ def _role_defaults(
     permissions: Sequence[FilesystemPermission],
     interrupt_on: dict[str, bool | InterruptOnConfig] | None,
     workspace: PreparedWorkspace[object, BackendProtocol] | None,
+    tools: Sequence[ToolDefinition],
+    operations: WorkspaceOperations | None,
 ) -> list[AgentMiddlewareType]:
     """Share file access, context management, and approvals across Agent roles."""
+    filesystem = _filesystem(backend, permissions, workspace, tools, operations)
+    paths = (
+        filesystem.file_paths if isinstance(filesystem, _WorkspaceFilesystem) else None
+    )
     defaults: list[AgentMiddlewareType] = [
-        _filesystem(backend, permissions, workspace),
-        observe_summarization(create_summarization_middleware(model, backend)),
+        filesystem,
+        observe_summarization(
+            create_summarization_middleware(model, backend), operations
+        ),
         PatchToolCallsMiddleware(),
     ]
-    review = create_tool_review(permissions, interrupt_on)
+    review = create_tool_review(permissions, interrupt_on, paths)
     if review is not None:
         defaults.append(review)
+    if paths is not None:
+        defaults.append(paths)
+    if operations is not None:
+        defaults.append(ToolOriginsMiddleware(operations))
     if skills is not None:
-        defaults.append(SourceSkillsMiddleware(backend=backend, sources=list(skills)))
+        defaults.append(
+            SourceSkillsMiddleware(
+                backend=backend, sources=list(skills), operations=operations
+            )
+        )
     return defaults
 
 
@@ -168,8 +208,10 @@ def _child_stack(
     attachments: AttachmentSupport | None,
     tool_scope: _ToolRunScope[object] | None,
     checkpointer: CheckpointSaver | None,
+    tools: Sequence[ToolDefinition],
     inherit_slots_only: bool = False,
 ) -> list[AgentMiddlewareType]:
+    operations = None if tool_scope is None else WorkspaceOperations(tool_scope)
     defaults = _role_defaults(
         model=model,
         backend=backend,
@@ -177,6 +219,8 @@ def _child_stack(
         permissions=permissions,
         interrupt_on=interrupt_on,
         workspace=workspace,
+        tools=tools,
+        operations=operations,
     )
     if inherit_slots_only:
         names = {item.name for item in defaults}
@@ -186,9 +230,20 @@ def _child_stack(
             *prepare_delegation_retry(
                 _merge_middleware(defaults, custom), checkpointer
             ),
-            _ToolRuntimeMiddleware(tool_scope),
+            _ToolRuntimeMiddleware(
+                tool_scope,
+                next(
+                    (
+                        item
+                        for item in defaults
+                        if isinstance(item, _WorkspaceFilePaths)
+                    ),
+                    None,
+                ),
+            ),
         ],
         attachments,
+        operations,
     )
 
 
@@ -211,7 +266,14 @@ def create_agent_graph(
         backend = StateBackend()
     if not isinstance(backend, BackendProtocol):
         raise TypeError("workspace must be prepared before agent construction")
-    custom = prepare_middleware_resources(spec.middleware)
+    operations = (
+        None if spec.tool_scope is None else WorkspaceOperations(spec.tool_scope)
+    )
+    custom = prepare_middleware_resources(spec.middleware, operations)
+    prepared_tools = () if workspace is None else workspace.tools
+    prepared_skills = () if workspace is None else workspace.skill_sources
+    tools = merge_workspace_tools(spec.tools, prepared_tools, custom)
+    skills = resolve_skill_sources(spec.skills, prepared_skills, inherit=True)
     inline: list[NativeSubAgent | CompiledSubAgent] = []
     remote: list[AsyncSubAgent] = []
     for declaration in spec.subagents:
@@ -222,11 +284,19 @@ def create_agent_graph(
         else:
             child = declaration
             child_model = resolve_model(child.get("model", model))
-            child_custom = prepare_middleware_resources(child.get("middleware", ()))
+            child_custom = prepare_middleware_resources(
+                child.get("middleware", ()), operations
+            )
+            child_tools = merge_workspace_tools(
+                child.get("tools", spec.tools), prepared_tools, child_custom
+            )
             child_stack = _child_stack(
                 model=child_model,
                 backend=backend,
-                skills=child.get("skills") or None,
+                skills=resolve_skill_sources(
+                    child.get("skills"), prepared_skills, inherit=False
+                )
+                or None,
                 permissions=child.get("permissions", spec.permissions),
                 custom=child_custom,
                 interrupt_on=child.get("interrupt_on", spec.interrupt_on),
@@ -234,13 +304,14 @@ def create_agent_graph(
                 attachments=spec.attachments,
                 tool_scope=spec.tool_scope,
                 checkpointer=spec.checkpointer,
+                tools=child_tools,
             )
             native: NativeSubAgent = {
                 "name": child["name"],
                 "description": child["description"],
                 "system_prompt": child["system_prompt"],
                 "model": child_model,
-                "tools": child.get("tools", spec.tools),
+                "tools": child_tools,
                 "middleware": child_stack,
             }
             if "response_format" in child:
@@ -256,11 +327,11 @@ def create_agent_graph(
                 if "system_prompt" in GENERAL_PURPOSE_SUBAGENT
                 else "",
                 "model": model,
-                "tools": spec.tools,
+                "tools": tools,
                 "middleware": _child_stack(
                     model=model,
                     backend=backend,
-                    skills=spec.skills,
+                    skills=skills or None,
                     permissions=spec.permissions,
                     custom=custom,
                     interrupt_on=spec.interrupt_on,
@@ -268,6 +339,7 @@ def create_agent_graph(
                     attachments=spec.attachments,
                     tool_scope=spec.tool_scope,
                     checkpointer=spec.checkpointer,
+                    tools=tools,
                     inherit_slots_only=True,
                 ),
             },
@@ -276,21 +348,33 @@ def create_agent_graph(
         backend=backend, subagents=inline, state_schema=spec.state_schema
     )
     defaults: list[AgentMiddlewareType] = []
-    if spec.skills is not None:
-        defaults.append(
-            SourceSkillsMiddleware(backend=backend, sources=list(spec.skills))
-        )
+    filesystem = _filesystem(backend, spec.permissions, workspace, tools, operations)
+    paths = (
+        filesystem.file_paths if isinstance(filesystem, _WorkspaceFilesystem) else None
+    )
     defaults.extend(
         [
-            _filesystem(backend, spec.permissions, workspace),
+            filesystem,
             delegation,
-            observe_summarization(create_summarization_middleware(model, backend)),
+            observe_summarization(
+                create_summarization_middleware(model, backend), operations
+            ),
             PatchToolCallsMiddleware(),
         ]
     )
-    review = create_tool_review(spec.permissions, spec.interrupt_on)
+    review = create_tool_review(spec.permissions, spec.interrupt_on, paths)
     if review is not None:
         defaults.append(review)
+    if paths is not None:
+        defaults.append(paths)
+    if operations is not None:
+        defaults.append(ToolOriginsMiddleware(operations))
+    if skills:
+        defaults.append(
+            SourceSkillsMiddleware(
+                backend=backend, sources=skills, operations=operations
+            )
+        )
     if remote:
         defaults.append(AsyncSubAgentMiddleware(async_subagents=remote))
     middleware = prepare_delegation_retry(
@@ -306,9 +390,11 @@ def create_agent_graph(
             raise ValueError("configure the compaction tool through one entry point")
         middleware.append(ObservedCompactionTool(summary))
     if spec.memory is not None:
-        middleware.append(MemoryMiddleware(backend=backend, sources=list(spec.memory)))
-    middleware.append(_ToolRuntimeMiddleware(spec.tool_scope))
-    middleware = _with_attachments(middleware, spec.attachments)
+        memory = WorkspaceMemory(backend=backend, sources=list(spec.memory))
+        memory.operations = operations
+        middleware.append(memory)
+    middleware.append(_ToolRuntimeMiddleware(spec.tool_scope, paths))
+    middleware = _with_attachments(middleware, spec.attachments, operations)
     schemas = [
         spec.state_schema or DeepAgentState,
         *(item.state_schema for item in middleware),
@@ -316,7 +402,7 @@ def create_agent_graph(
     delegation.private_state_keys = private_state_fields(schemas)
     graph = create_agent(
         model=model,
-        tools=spec.tools,
+        tools=tools,
         system_prompt=spec.system_prompt,
         middleware=middleware,
         response_format=spec.response_format,

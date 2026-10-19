@@ -15,7 +15,12 @@ from langchain.agents.middleware import (
     HumanInTheLoopMiddleware,
     InterruptOnConfig,
 )
-from langchain.agents.middleware.human_in_the_loop import Action, Decision, HITLRequest
+from langchain.agents.middleware.human_in_the_loop import (
+    Action,
+    ActionRequest,
+    Decision,
+    HITLRequest,
+)
 from langchain.agents.middleware.types import ToolCallRequest
 from langchain_core.messages import AIMessage, ToolCall, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -27,6 +32,11 @@ from langgraph.types import Interrupt, interrupt
 from wcmatch import glob as wcglob
 
 from ._agui_lineage_state import RUN_ID_METADATA_KEY
+from ._file_paths import (
+    _FS_TOOL_PATH_ARGS,
+    _WorkspaceFilePaths,
+    validate_file_contract,
+)
 from ._hitl_state import (
     TOOL_REVIEW_CHANNEL,
     PendingToolReview,
@@ -47,19 +57,10 @@ _CheckpointSaver: TypeAlias = (
 )
 
 _FilesystemOperation = Literal["read", "write"]
-_ToolScope = Literal["exact", "bulk"]
-_FS_TOOL_PATH_ARGS: dict[
-    str,
-    tuple[_FilesystemOperation, str, _ToolScope, str | None],
-] = {
-    "ls": ("read", "path", "bulk", None),
-    "read_file": ("read", "file_path", "exact", None),
-    "write_file": ("write", "file_path", "exact", None),
-    "edit_file": ("write", "file_path", "exact", None),
-    "delete": ("write", "file_path", "bulk", None),
-    "glob": ("read", "path", "bulk", "pattern"),
-    "grep": ("read", "path", "bulk", None),
-}
+
+
+class _PreparedActionRequest(ActionRequest):
+    source_args: dict[str, Any]
 
 
 def _normalize_path(path: str) -> str:
@@ -248,8 +249,10 @@ class ToolReviewMiddleware(HumanInTheLoopMiddleware):
     def __init__(
         self,
         interrupt_on: dict[str, bool | InterruptOnConfig],
+        file_paths: _WorkspaceFilePaths | None = None,
     ) -> None:
         HumanInTheLoopMiddleware.__init__(self, interrupt_on=interrupt_on)
+        self._file_paths = file_paths
 
     def after_model(
         self, state: AgentState, runtime: Runtime[Any]
@@ -271,6 +274,7 @@ class ToolReviewMiddleware(HumanInTheLoopMiddleware):
         """
 
         configurable = get_config().get("configurable", {})
+        file_contract = validate_file_contract(state, self._file_paths)
         message = next(
             (
                 item
@@ -283,14 +287,21 @@ class ToolReviewMiddleware(HumanInTheLoopMiddleware):
         request = HITLRequest(action_requests=[], review_configs=[])
         selected: dict[int, InterruptOnConfig] = {}
         for index, tool_call in enumerate(tool_calls):
+            effective = (
+                tool_call
+                if self._file_paths is None
+                else self._file_paths.prepared_call(tool_call, state)
+            )
             policy = self.interrupt_on.get(tool_call["name"])
             if policy is None or not self._should_interrupt(
-                tool_call, policy, state, runtime
+                effective, policy, state, runtime
             ):
                 continue
             action, review = self._create_action_and_config(
-                tool_call, policy, state, runtime
+                effective, policy, state, runtime
             )
+            if effective["args"] != tool_call["args"]:
+                action = _PreparedActionRequest(**action, source_args=tool_call["args"])
             request["action_requests"].append(action)
             request["review_configs"].append(review)
             selected[index] = policy
@@ -304,6 +315,7 @@ class ToolReviewMiddleware(HumanInTheLoopMiddleware):
             request,
             tool_calls=tool_calls,
             reviewed_ids=reviewed_ids,
+            file_contract_digest=file_contract,
         )
         execution = runtime.execution_info
         saver_value = configurable.get("__pregel_checkpointer")
@@ -389,7 +401,19 @@ class ToolReviewMiddleware(HumanInTheLoopMiddleware):
             if updated is not None:
                 revised.append(updated)
                 if decision["type"] == "edit" and (edited_id := updated.get("id")):
-                    edited_tool_calls[edited_id] = decision["edited_action"]
+                    action: Action = decision["edited_action"]
+                    if self._file_paths is not None:
+                        effective = await self._file_paths.resolve_call(
+                            {
+                                "id": edited_id,
+                                "name": action["name"],
+                                "args": action["args"],
+                            },
+                            state=state,
+                            step="reviewed-edit-paths",
+                        )
+                        action = {"name": effective["name"], "args": effective["args"]}
+                    edited_tool_calls[edited_id] = action
             if result is not None:
                 tool_messages.append(result)
         assert message is not None
@@ -462,6 +486,7 @@ def _as_interrupt_on(value: object) -> dict[str, bool | InterruptOnConfig]:
 def create_tool_review(
     permissions: Sequence[FilesystemPermission],
     interrupt_on: Mapping[str, bool | InterruptOnConfig] | None,
+    file_paths: _WorkspaceFilePaths | None = None,
 ) -> ToolReviewMiddleware | None:
     """Create one review owner for a role's explicit and file-based policies.
 
@@ -476,7 +501,7 @@ def create_tool_review(
     }
     if not merged:
         return None
-    review = ToolReviewMiddleware(merged)
+    review = ToolReviewMiddleware(merged, file_paths=file_paths)
     return review if review.interrupt_on else None
 
 

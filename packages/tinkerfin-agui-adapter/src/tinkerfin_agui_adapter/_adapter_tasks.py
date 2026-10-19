@@ -19,12 +19,13 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from ag_ui.core import (
     BaseEvent,
+    CustomEvent,
     RawEvent,
     StateDeltaEvent,
     StateSnapshotEvent,
 )
 from ag_ui.core.types import Message
-from pydantic import JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from tinkerfin_contracts import subagent_request_id
 from tinkerfin_native_stream import (
@@ -64,6 +65,15 @@ from .subagent import SubagentTaskInput, create_subagent_provenance
 
 if TYPE_CHECKING:
     from .adapter import DeepAgentAgUiAdapter
+
+
+class _ToolOutput(BaseModel):
+    """Accept only tool progress, never an externally supplied protocol event."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+    operation: Literal["tool_output"]
+    tool_call_id: str = Field(alias="toolCallId", min_length=1)
+    value: JsonValue
 
 
 def _without_private_state_keys(
@@ -409,6 +419,13 @@ def _process_task_start(
         staged_tool_names,
         staged_task_start_fingerprints,
     )
+    if (
+        payload.name == "tools"
+        and fingerprint_key not in self._task_result_fingerprints
+    ):
+        self._executing_tools[fingerprint_key] = frozenset(
+            call.id for call in tool_calls
+        )
     return [event]
 
 
@@ -491,6 +508,7 @@ def _process_task_result(
         },
     )
     self._task_result_fingerprints[key] = fingerprint
+    self._executing_tools.pop(key, None)
     return [event]
 
 
@@ -545,6 +563,35 @@ def _process_extra_part(
 
     source = self._source(part.ns)
     self._require_started_source(source)
+    custom = part.data
+    if part.type == "custom" and isinstance(custom, dict):
+        envelope = cast(dict[object, object], custom)
+        if envelope.get("operation") == "tool_output":
+            progress = _ToolOutput.model_validate(custom)
+            tool_id = self._tool_call_id(part.ns, progress.tool_call_id)
+            executing = any(
+                namespace == part.ns and progress.tool_call_id in identifiers
+                for (namespace, _task), identifiers in self._executing_tools.items()
+            )
+            if (
+                not executing
+                or tool_id not in self._started_tool_ids
+                or tool_id in self._result_fingerprints
+            ):
+                raise ValueError("tool progress has no active call in its graph scope")
+            return [
+                CustomEvent(
+                    name="tinkerfin.tool_output",
+                    value={
+                        "toolCallId": tool_id,
+                        "value": sanitize_public_data(progress.value),
+                    },
+                    raw_event=self._event_context(
+                        "custom", source, langgraph_node="tools"
+                    ),
+                )
+            ]
+
     if isinstance(part, UpdatesStreamPart):
         data = sanitize_public_data(
             {

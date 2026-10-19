@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Cpu, Link2, Monitor, MoonStar, Settings2, Sun, UserRound } from 'lucide-react'
+import { Check, ChevronDown, Cpu, Laptop, Link2, Monitor, MoonStar, Settings2, Sun, UserRound } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 
 import type { AuthUser } from '../../api/auth/types'
@@ -12,6 +12,8 @@ import { ServiceSettingsPanel } from './ServiceSettingsPanel'
 import { useServiceSettings } from './useServiceSettings'
 import { useUserProfile } from './useUserProfile'
 import { UserProfileEditor } from './UserProfileEditor'
+import { DeviceSettings } from '../devices/DeviceSettings'
+import type { useDevices } from '../devices/useDevices'
 
 const APPEARANCE_OPTIONS = [
   { value: 'system', label: '跟随系统', icon: Monitor },
@@ -27,6 +29,8 @@ const LANGUAGE_OPTIONS = ['system', 'zh-CN', 'en'] as const satisfies readonly L
 
 export interface SettingsDialogProps {
   open: boolean
+  devices?: ReturnType<typeof useDevices>
+  initialSection?: 'user' | 'devices'
   user: AuthUser
   themePreference: ThemePreference
   restoreFocusTo?: HTMLElement | null
@@ -38,6 +42,8 @@ export interface SettingsDialogProps {
 
 export function SettingsDialog({
   open,
+  devices,
+  initialSection = 'user',
   user,
   themePreference,
   restoreFocusTo,
@@ -48,7 +54,28 @@ export function SettingsDialog({
 }: SettingsDialogProps) {
   const appearanceName = useId()
   const contentRef = useRef<HTMLDivElement>(null)
-  const [activeSection, setActiveSection] = useState<'user' | 'general' | 'models' | 'services'>('user')
+  const navigationRef = useRef<HTMLElement>(null)
+  const [activeSection, setActiveSection] = useState<'user' | 'general' | 'models' | 'services' | 'devices'>(initialSection)
+  useEffect(() => { if (open) setActiveSection(initialSection) }, [open, initialSection])
+  useEffect(() => {
+    const navigation = navigationRef.current
+    if (!open || !navigation) return
+    const revealSelection = () => {
+      const selected = navigation.querySelector<HTMLElement>('[aria-current="page"]')
+      if (!selected) return
+      const viewport = navigation.getBoundingClientRect()
+      const item = selected.getBoundingClientRect()
+      const style = getComputedStyle(navigation)
+      const left = viewport.left + Number.parseFloat(style.paddingLeft)
+      const right = viewport.right - Number.parseFloat(style.paddingRight)
+      if (item.left < left) navigation.scrollLeft += Math.floor(item.left - left)
+      else if (item.right > right) navigation.scrollLeft += Math.ceil(item.right - right)
+    }
+    revealSelection()
+    const observer = new ResizeObserver(revealSelection)
+    observer.observe(navigation)
+    return () => observer.disconnect()
+  }, [open, activeSection])
   const [servicesVisited, setServicesVisited] = useState(false)
   const [confirmClose, setConfirmClose] = useState(false)
   const [confirmProfileClose, setConfirmProfileClose] = useState(false)
@@ -82,7 +109,7 @@ export function SettingsDialog({
       onClose={() => requestClose()}
     >
       <div className="settings-layout">
-        <nav className="settings-nav" aria-label={t('设置分类')}>
+        <nav ref={navigationRef} className="settings-nav" aria-label={t('设置分类')}>
           <button
             type="button"
             className={`settings-nav__item${activeSection === 'user' ? ' is-selected' : ''}`}
@@ -103,11 +130,14 @@ export function SettingsDialog({
           </button>
           <button type="button" className={`settings-nav__item${activeSection === 'models' ? ' is-selected' : ''}`} aria-current={activeSection === 'models' ? 'page' : undefined} onClick={() => setActiveSection('models')}><Cpu size={18} aria-hidden="true" />{t('模型配置')}</button>
           <button type="button" className={`settings-nav__item${activeSection === 'services' ? ' is-selected' : ''}`} aria-current={activeSection === 'services' ? 'page' : undefined} onClick={() => { setServicesVisited(true); setActiveSection('services') }}><Link2 size={18} aria-hidden="true" />{t('服务连接')}</button>
+          <button type="button" className={`settings-nav__item${activeSection === 'devices' ? ' is-selected' : ''}`} aria-current={activeSection === 'devices' ? 'page' : undefined} onClick={() => setActiveSection('devices')}><Laptop size={18} aria-hidden="true" />{t('本地设备')}</button>
         </nav>
-        {activeSection === 'services' ? <div className="settings-models-host">
+        {activeSection === 'services' ? <div className="settings-panel-host">
           <ErrorBoundary fallback={({ reset }) => <Button type="button" onClick={reset}>{t('重新加载服务配置')}</Button>}><ServiceSettingsPanel state={services} confirmClose={confirmClose} closeDisabled={closeDisabled} onCloseDecision={discard => { if (discard) requestClose('services'); else setConfirmClose(false) }} /></ErrorBoundary>
-        </div> : activeSection === 'models' ? <div className="settings-models-host">
+        </div> : activeSection === 'models' ? <div className="settings-panel-host">
           <ErrorBoundary onError={() => onToast('error', t('模型加载失败，请先重试'))} fallback={({ reset }) => <Button type="button" onClick={reset}>{t('重新加载模型')}</Button>}><ModelSettingsPanel onChanged={onModelsChanged} /></ErrorBoundary>
+        </div> : activeSection === 'devices' ? <div className="settings-panel-host">
+          <ErrorBoundary fallback={({ reset }) => <Button type="button" onClick={reset}>{t('重试设备列表')}</Button>}><DeviceSettings devices={devices} /></ErrorBoundary>
         </div> : <div
           ref={contentRef}
           className="settings-content ui-scrollbar"
@@ -176,7 +206,7 @@ export function SettingsDialog({
           </section>
           </>}
         </div>}
-        {activeSection !== 'models' && activeSection !== 'services' && <OverlayScrollbar viewportRef={contentRef} />}
+        {(activeSection === 'user' || activeSection === 'general') && <OverlayScrollbar viewportRef={contentRef} />}
       </div>
     </Dialog>
   )

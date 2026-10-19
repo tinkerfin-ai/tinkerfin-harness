@@ -23,6 +23,7 @@ class Download:
 
     content: bytes
     content_type: str
+    status_code: int
 
 
 async def download(
@@ -32,6 +33,7 @@ async def download(
     params: dict[str, str] | None = None,
     headers: dict[str, str] | None = None,
     maximum: int = MAX_ARCHIVE_BYTES,
+    accepted_statuses: frozenset[int] = frozenset(),
 ) -> Download:
     """只借用客户端；失败、取消或超限时关闭本次响应，不跟随未知重定向"""
     try:
@@ -43,26 +45,31 @@ async def download(
             follow_redirects=False,
             timeout=30,
         ) as response:
-            if response.status_code == 404:
-                raise BusinessException(SkillErrorCode.NOT_FOUND)
-            if response.status_code == 429 or (
-                response.status_code == 403
-                and response.headers.get("x-ratelimit-remaining") == "0"
-            ):
-                raise BusinessException(SkillErrorCode.RATE_LIMITED)
-            if response.status_code == 409:
-                raise BusinessException(
-                    SkillErrorCode.NOT_FOUND,
-                    message="来源中存在同名技能，请选择明确的发布者",
-                )
-            if response.status_code >= 300:
-                raise BusinessException(SkillErrorCode.UNAVAILABLE)
+            if response.status_code not in accepted_statuses:
+                if response.status_code == 404:
+                    raise BusinessException(SkillErrorCode.NOT_FOUND)
+                if response.status_code == 429 or (
+                    response.status_code == 403
+                    and response.headers.get("x-ratelimit-remaining") == "0"
+                ):
+                    raise BusinessException(SkillErrorCode.RATE_LIMITED)
+                if response.status_code == 409:
+                    raise BusinessException(
+                        SkillErrorCode.NOT_FOUND,
+                        message="来源中存在同名技能，请选择明确的发布者",
+                    )
+                if response.status_code >= 300:
+                    raise BusinessException(SkillErrorCode.UNAVAILABLE)
             content = bytearray()
             async for chunk in response.aiter_bytes():
                 if len(content) + len(chunk) > maximum:
                     raise BusinessException(SkillErrorCode.TOO_LARGE)
                 content.extend(chunk)
-            return Download(bytes(content), response.headers.get("content-type", ""))
+            return Download(
+                bytes(content),
+                response.headers.get("content-type", ""),
+                response.status_code,
+            )
     except httpx.HTTPError as error:
         raise BusinessException(SkillErrorCode.UNAVAILABLE) from error
 
@@ -73,6 +80,10 @@ class _Repository(BaseModel):
 
 class _Commit(BaseModel):
     sha: str = Field(pattern=r"^[a-f0-9]{40,64}$")
+
+
+class _CommitFailure(BaseModel):
+    message: str
 
 
 class GitHubSkillImporter:
@@ -111,12 +122,7 @@ class GitHubSkillImporter:
                 reference = _Repository.model_validate_json(
                     response.content
                 ).default_branch
-                commit_response = await download(
-                    self._client,
-                    f"{api}/commits/{quote(reference, safe='')}",
-                    maximum=2 * 1024 * 1024,
-                )
-                commit = _Commit.model_validate_json(commit_response.content).sha
+                commit = await self._resolve_commit(api, reference)
             else:
                 if len(parts) < 4 or parts[2] != "tree":
                     raise BusinessException(SkillErrorCode.INVALID_PACKAGE)
@@ -125,16 +131,11 @@ class GitHubSkillImporter:
                 for boundary in range(len(parts), 3, -1):
                     reference = "/".join(parts[3:boundary])
                     try:
-                        response = await download(
-                            self._client,
-                            f"{api}/commits/{quote(reference, safe='')}",
-                            maximum=2 * 1024 * 1024,
-                        )
+                        commit = await self._resolve_commit(api, reference)
                     except BusinessException as error:
                         if error.error_code == SkillErrorCode.NOT_FOUND:
                             continue
                         raise
-                    commit = _Commit.model_validate_json(response.content).sha
                     directory = "/".join(parts[boundary:])
                     break
                 if not commit:
@@ -142,6 +143,21 @@ class GitHubSkillImporter:
         except (ValidationError, json.JSONDecodeError) as error:
             raise BusinessException(SkillErrorCode.UNAVAILABLE) from error
         return await self.read_commit(f"{owner}/{repository}", commit, directory)
+
+    async def _resolve_commit(self, api: str, reference: str) -> str:
+        response = await download(
+            self._client,
+            f"{api}/commits/{quote(reference, safe='')}",
+            maximum=2 * 1024 * 1024,
+            accepted_statuses=frozenset({422}),
+        )
+        if response.status_code == 422:
+            # GitHub 用 422 报告引用不存在；其他校验错误不能触发下一种路径划分
+            failure = _CommitFailure.model_validate_json(response.content)
+            if failure.message == f"No commit found for SHA: {reference}":
+                raise BusinessException(SkillErrorCode.NOT_FOUND)
+            raise BusinessException(SkillErrorCode.UNAVAILABLE)
+        return _Commit.model_validate_json(response.content).sha
 
     @staticmethod
     def _validate_repository(repository: str) -> None:

@@ -1,0 +1,1743 @@
+--- a/cli/Cargo.toml
++++ b/cli/Cargo.toml
+@@ -9,6 +9,9 @@
+ readme = "../README.md"
+ keywords = ["browser", "automation", "ai", "cdp", "chrome"]
+ categories = ["command-line-utilities", "web-programming"]
++
++[features]
++managed-process = ["dep:subtle"]
+ 
+ [dependencies]
+ serde = { version = "1.0", features = ["derive"] }
+@@ -24,6 +27,7 @@
+ image = "0.25"
+ reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots", "stream"] }
+ sha2 = "0.10"
++subtle = { version = "2.6.1", optional = true }
+ aes-gcm = "0.10"
+ async-trait = "0.1"
+ socket2 = "0.6"
+--- a/cli/Cargo.lock
++++ b/cli/Cargo.lock
+@@ -65,6 +65,7 @@
+  "sha2",
+  "similar",
+  "socket2",
++ "subtle",
+  "tempfile",
+  "time",
+  "tokio",
+--- a/cli/src/connection.rs
++++ b/cli/src/connection.rs
+@@ -781,6 +781,19 @@
+ }
+ 
+ pub fn ensure_daemon(session: &str, opts: &DaemonOptions) -> Result<DaemonResult, String> {
++    if cfg!(feature = "managed-process") {
++        if !daemon_ready(session) {
++            return Err("The host-managed browser service is not ready".to_string());
++        }
++        if !daemon_version_matches(session) {
++            return Err("The host-managed browser service does not match this CLI".to_string());
++        }
++        return Ok(DaemonResult {
++            already_running: true,
++            restarted: false,
++        });
++    }
++
+     let mut restarted = false;
+ 
+     // Socket connectivity is the sole liveness check — no PID check — so
+@@ -1002,6 +1015,10 @@
+ }
+ 
+ pub fn send_command(cmd: Value, session: &str) -> Result<Response, String> {
++    if cfg!(feature = "managed-process") {
++        return send_command_once(&cmd, session);
++    }
++
+     // Retry logic for transient errors (EAGAIN/EWOULDBLOCK/connection issues)
+     const MAX_RETRIES: u32 = 5;
+     const RETRY_DELAY_MS: u64 = 200;
+@@ -1097,6 +1114,14 @@
+     stream.set_read_timeout(Some(read_timeout_for(cmd))).ok();
+     stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
+ 
++    #[cfg(feature = "managed-process")]
++    let envelope = serde_json::json!({
++        "connectionToken": env::var("AGENT_BROWSER_CONNECTION_TOKEN")
++            .map_err(|_| "Missing host-managed browser identity")?,
++        "command": cmd,
++    });
++    #[cfg(feature = "managed-process")]
++    let cmd = &envelope;
+     let mut json_str = serde_json::to_string(cmd).map_err(|e| e.to_string())?;
+     json_str.push('\n');
+ 
+--- a/cli/src/flags.rs
++++ b/cli/src/flags.rs
+@@ -397,6 +397,338 @@
+     pub cli_headed: bool,
+     pub cli_webgpu: bool,
+     pub cli_restore: bool,
++}
++
++#[cfg(feature = "managed-process")]
++pub fn validate_managed_environment() -> Result<(), String> {
++    for name in [
++        "AGENT_BROWSER_SOCKET_DIR",
++        "AGENT_BROWSER_PROFILE",
++        "AGENT_BROWSER_EXECUTABLE_PATH",
++        "AGENT_BROWSER_CONFIG",
++        "AGENT_BROWSER_STATE_DIR",
++    ] {
++        let value = env::var(name).map_err(|_| "Missing host-managed browser scope")?;
++        if !Path::new(&value).is_absolute() {
++            return Err("Host-managed browser paths must be absolute".to_string());
++        }
++    }
++    let session =
++        env::var("AGENT_BROWSER_SESSION").map_err(|_| "Missing host-managed browser session")?;
++    if !crate::validation::is_valid_session_name(&session) {
++        return Err("Invalid host-managed browser session".to_string());
++    }
++    let token = env::var("AGENT_BROWSER_CONNECTION_TOKEN")
++        .map_err(|_| "Missing host-managed browser identity")?;
++    if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
++        return Err("Invalid host-managed browser identity".to_string());
++    }
++    Ok(())
++}
++
++#[cfg(feature = "managed-process")]
++pub fn validate_managed_flags(
++    args: &[String],
++    flags: &Flags,
++    clean: &[String],
++) -> Result<(), String> {
++    if args
++        .iter()
++        .any(|arg| matches!(arg.as_str(), "--help" | "-h" | "--version" | "-V"))
++        || clean.first().map(String::as_str) == Some("skills")
++    {
++        return Ok(());
++    }
++    validate_managed_environment()?;
++    if flags.session != env::var("AGENT_BROWSER_SESSION").unwrap_or_default()
++        || flags.namespace != env::var("AGENT_BROWSER_NAMESPACE").ok()
++        || flags.profile != env::var("AGENT_BROWSER_PROFILE").ok()
++        || flags.executable_path != env::var("AGENT_BROWSER_EXECUTABLE_PATH").ok()
++        || flags.args != env::var("AGENT_BROWSER_ARGS").ok()
++    {
++        return Err("Browser scope and launch paths are owned by the host".to_string());
++    }
++    if let Some(config) = extract_config_path(args) {
++        if config != env::var("AGENT_BROWSER_CONFIG").ok() {
++            return Err("Browser configuration is owned by the host".to_string());
++        }
++    }
++    let engine = flags.engine.as_deref().unwrap_or("chrome");
++    if flags.auto_connect
++        || flags.cdp.is_some()
++        || flags.provider.is_some()
++        || flags.device.is_some()
++        || engine != "chrome"
++        || !flags.plugins.is_empty()
++    {
++        return Err("Managed browser commands cannot attach to external browsers".to_string());
++    }
++    let command = clean.first().map(String::as_str).unwrap_or_default();
++    if flags.cli_proxy
++        || flags.cli_proxy_bypass
++        || env::var_os("AGENT_BROWSER_PROXY").is_some()
++        || env::var_os("AGENT_BROWSER_PROXY_BYPASS").is_some()
++    {
++        return Err("Browser network configuration is owned by the host".to_string());
++    }
++    if command == "inspect"
++        || (command == "get" && clean.get(1).map(String::as_str) == Some("cdp-url"))
++    {
++        return Err("Managed Chrome does not expose a debugging endpoint".to_string());
++    }
++    if command == "connect" {
++        return Err("Managed browser commands cannot attach to external browsers".to_string());
++    }
++    if matches!(
++        command,
++        "install"
++            | "upgrade"
++            | "dashboard"
++            | "doctor"
++            | "profiles"
++            | "plugin"
++            | "plugins"
++            | "chat"
++            | "stream"
++    ) || (matches!(command, "close" | "quit" | "exit") && clean.iter().any(|arg| arg == "--all"))
++    {
++        return Err("Browser installation and shared services are owned by the host".to_string());
++    }
++    Ok(())
++}
++
++#[cfg(feature = "managed-process")]
++static MANAGED_SCOPE: std::sync::OnceLock<ManagedBrowserScope> = std::sync::OnceLock::new();
++
++/// A daemon owns one browser identity and one network grant for its whole lifetime.
++/// Capture before Tokio starts; command-line clients cannot change these bindings.
++#[cfg(feature = "managed-process")]
++struct ManagedBrowserScope {
++    token: String,
++    launch: serde_json::Map<String, serde_json::Value>,
++    proxy: Option<serde_json::Value>,
++}
++
++#[cfg(feature = "managed-process")]
++impl ManagedBrowserScope {
++    fn capture() -> Result<Self, String> {
++        validate_managed_environment()?;
++        let flags = parse_flags(&[]);
++        if flags.cdp.is_some()
++            || flags.auto_connect
++            || env::var_os("AGENT_BROWSER_AUTO_CONNECT").is_some()
++            || flags.provider.is_some()
++            || flags.device.is_some()
++            || flags.engine.as_deref().unwrap_or("chrome") != "chrome"
++            || !flags.plugins.is_empty()
++        {
++            return Err("Managed browsers cannot use external providers or plugins".to_string());
++        }
++        let arguments: Vec<&str> = flags
++            .args
++            .as_deref()
++            .unwrap_or_default()
++            .split([',', '\n'])
++            .map(str::trim)
++            .filter(|arg| !arg.is_empty())
++            .collect();
++        let launch = serde_json::json!({
++            "profile": flags.profile,
++            "executablePath": flags.executable_path,
++            "args": arguments,
++            "engine": "chrome",
++            "extensions": flags.extensions,
++            "headless": !flags.headed,
++            "noXvfb": flags.no_xvfb,
++        })
++        .as_object()
++        .expect("launch bindings are an object")
++        .clone();
++        let proxy = flags.proxy.as_ref().map(|value| {
++            let parsed = crate::parse_proxy(value);
++            let mut proxy = serde_json::json!({"server": parsed.server});
++            for (field, value) in [
++                ("username", parsed.username),
++                ("password", parsed.password),
++                ("bypass", flags.proxy_bypass.clone()),
++            ] {
++                if let Some(value) = value {
++                    proxy[field] = serde_json::Value::String(value);
++                }
++            }
++            proxy
++        });
++        Ok(Self {
++            token: env::var("AGENT_BROWSER_CONNECTION_TOKEN")
++                .map_err(|_| "Missing host-managed browser identity")?,
++            launch,
++            proxy,
++        })
++    }
++
++    fn prepare(&self, mut envelope: serde_json::Value) -> Result<serde_json::Value, String> {
++        use subtle::ConstantTimeEq;
++        let received = envelope
++            .get("connectionToken")
++            .and_then(serde_json::Value::as_str)
++            .unwrap_or_default();
++        if !bool::from(self.token.as_bytes().ct_eq(received.as_bytes())) {
++            return Err("Invalid managed browser identity".to_string());
++        }
++        let mut command = envelope
++            .as_object_mut()
++            .and_then(|object| object.remove("command"))
++            .ok_or("Missing managed browser command")?;
++        let object = command
++            .as_object_mut()
++            .ok_or("Managed browser command must be an object")?;
++        let action = object
++            .get("action")
++            .and_then(serde_json::Value::as_str)
++            .ok_or("Managed browser action must be a string")?;
++        if matches!(
++            action,
++            "stream_enable" | "stream_disable" | "stream_status" | "inspect" | "cdp_url"
++        ) {
++            return Err(
++                "Browser services and debugging endpoints are owned by the host".to_string(),
++            );
++        }
++        // Plugins are consulted on implicit launches too, not only action=launch.
++        if object
++            .get("plugins")
++            .is_some_and(|value| value.as_array().is_none_or(|plugins| !plugins.is_empty()))
++        {
++            return Err("Browser plugins are owned by the host".to_string());
++        }
++        if action != "launch" {
++            return Ok(command);
++        }
++        for field in object.keys() {
++            if self.launch.contains_key(field)
++                || matches!(
++                    field.as_str(),
++                    "id" | "action"
++                        | "plugins"
++                        | "storageState"
++                        | "userAgent"
++                        | "ignoreHTTPSErrors"
++                        | "colorScheme"
++                        | "downloadPath"
++                        | "hideScrollbars"
++                        | "webgpu"
++                        | "allowFileAccess"
++                        | "enable"
++                        | "initScripts"
++                        | "allowedDomains"
++                        | "restoreKey"
++                        | "restoreSave"
++                        | "restoreCheckUrl"
++                        | "restoreCheckText"
++                        | "restoreCheckFn"
++                )
++            {
++                continue;
++            }
++            return Err(format!(
++                "Browser launch field '{}' is not allowed in the host-managed scope",
++                field
++            ));
++        }
++        for (field, expected) in &self.launch {
++            if object
++                .get(field)
++                .is_some_and(|received| received != expected)
++            {
++                return Err(format!(
++                    "Browser launch field '{}' is owned by the host",
++                    field
++                ));
++            }
++            object.insert(field.clone(), expected.clone());
++        }
++        if let Some(proxy) = &self.proxy {
++            object.insert("proxy".to_string(), proxy.clone());
++        }
++        Ok(command)
++    }
++}
++
++#[cfg(feature = "managed-process")]
++pub fn freeze_managed_scope() -> Result<(), String> {
++    let scope = ManagedBrowserScope::capture()?;
++    // Official implicit launches read the daemon environment. Canonicalize it
++    // once from the same bindings used to validate explicit launch envelopes.
++    for (field, name) in [
++        ("profile", "AGENT_BROWSER_PROFILE"),
++        ("executablePath", "AGENT_BROWSER_EXECUTABLE_PATH"),
++        ("engine", "AGENT_BROWSER_ENGINE"),
++    ] {
++        env::set_var(
++            name,
++            scope.launch[field]
++                .as_str()
++                .expect("validated launch binding"),
++        );
++    }
++    for (field, name) in [
++        ("args", "AGENT_BROWSER_ARGS"),
++        ("extensions", "AGENT_BROWSER_EXTENSIONS"),
++    ] {
++        let values = scope.launch[field].as_array().expect("launch list binding");
++        env::set_var(
++            name,
++            values
++                .iter()
++                .map(|value| value.as_str().expect("launch string binding"))
++                .collect::<Vec<_>>()
++                .join(","),
++        );
++    }
++    env::set_var(
++        "AGENT_BROWSER_HEADED",
++        if scope.launch["headless"] == false {
++            "1"
++        } else {
++            "0"
++        },
++    );
++    env::set_var(
++        "AGENT_BROWSER_NO_XVFB",
++        if scope.launch["noXvfb"] == true {
++            "1"
++        } else {
++            "0"
++        },
++    );
++    env::set_var("AGENT_BROWSER_PLUGINS", "[]");
++    for (field, name) in [
++        ("server", "AGENT_BROWSER_PROXY"),
++        ("bypass", "AGENT_BROWSER_PROXY_BYPASS"),
++        ("username", "AGENT_BROWSER_PROXY_USERNAME"),
++        ("password", "AGENT_BROWSER_PROXY_PASSWORD"),
++    ] {
++        match scope
++            .proxy
++            .as_ref()
++            .and_then(|proxy| proxy.get(field))
++            .and_then(serde_json::Value::as_str)
++        {
++            Some(value) => env::set_var(name, value),
++            None => env::remove_var(name),
++        }
++    }
++    MANAGED_SCOPE
++        .set(scope)
++        .map_err(|_| "Managed browser scope was already initialized".to_string())
++}
++
++#[cfg(feature = "managed-process")]
++pub fn prepare_managed_command(envelope: serde_json::Value) -> Result<serde_json::Value, String> {
++    MANAGED_SCOPE
++        .get()
++        .ok_or("Missing managed browser scope")?
++        .prepare(envelope)
+ }
+ 
+ pub fn parse_flags(args: &[String]) -> Flags {
+@@ -1904,3 +2236,108 @@
+         assert_eq!(clean, vec!["open", "example.com"]);
+     }
+ }
++
++#[cfg(all(test, feature = "managed-process"))]
++mod managed_scope_tests {
++    use super::*;
++    use serde_json::{json, Value};
++
++    fn scope() -> ManagedBrowserScope {
++        ManagedBrowserScope {
++            token: "a".repeat(64),
++            launch: json!({"profile":"/owned/profile", "executablePath":"/owned/chrome", "args":["--no-sandbox"], "engine":"chrome", "extensions":[], "headless":false, "noXvfb":false}).as_object().unwrap().clone(),
++            proxy: Some(json!({"server":"http://localhost:1234", "username":"owned", "password":"secret"})),
++        }
++    }
++
++    fn envelope(command: Value) -> Value {
++        json!({"connectionToken":"a".repeat(64), "command":command})
++    }
++
++    #[test]
++    fn managed_requests_authenticate_before_scope_validation() {
++        let scope = scope();
++        for envelope in [
++            json!({"action":"stream_enable"}),
++            json!({"connectionToken":"b".repeat(64), "command":{"action":"stream_enable"}}),
++        ] {
++            assert_eq!(
++                scope.prepare(envelope).unwrap_err(),
++                "Invalid managed browser identity"
++            );
++        }
++        for command in [Value::Null, json!([]), json!({}), json!({"action":42})] {
++            assert!(scope.prepare(envelope(command)).is_err());
++        }
++    }
++
++    #[test]
++    fn managed_scope_rejects_external_launches_services_and_plugin_mutators() {
++        let scope = scope();
++        for action in [
++            "stream_enable",
++            "stream_disable",
++            "stream_status",
++            "inspect",
++            "cdp_url",
++        ] {
++            assert!(
++                scope.prepare(envelope(json!({"action":action}))).is_err(),
++                "{action}"
++            );
++        }
++        for (field, value) in [
++            ("cdpUrl", json!("ws://127.0.0.1:9222")),
++            ("cdpPort", json!(9222)),
++            ("autoConnect", json!(true)),
++            ("provider", json!("safari")),
++            ("deviceName", json!("iPhone")),
++            ("udid", json!("other")),
++            ("platformVersion", json!("18")),
++            ("port", json!(4444)),
++            ("profile", json!("/unowned")),
++            ("executablePath", json!("/unowned/chrome")),
++            ("args", json!(["--remote-debugging-port=9222"])),
++            ("engine", json!("lightpanda")),
++            ("extensions", json!(["/unowned/extension"])),
++            ("headless", json!(true)),
++            ("noXvfb", json!(true)),
++            ("proxy", json!({"server":"http://localhost:5678"})),
++            ("unknownLaunchField", json!(true)),
++        ] {
++            let mut command = json!({"action":"launch"});
++            command[field] = value;
++            assert!(scope.prepare(envelope(command)).is_err(), "{field}");
++        }
++        for action in ["launch", "navigate", "session_info"] {
++            for plugins in [
++                Value::Null,
++                json!({}),
++                json!([{"name":"mutator", "capabilities":["launch.mutate"]}]),
++            ] {
++                assert!(scope
++                    .prepare(envelope(json!({"action":action, "plugins":plugins})))
++                    .is_err());
++            }
++        }
++    }
++
++    #[test]
++    fn managed_scope_preserves_page_options_and_injects_owned_launch_values() {
++        let scope = scope();
++        let mut command = json!({"action":"launch", "id":"owned", "plugins":[], "storageState":"/project/state", "userAgent":"example", "ignoreHTTPSErrors":true, "colorScheme":"dark", "downloadPath":"/project/downloads", "hideScrollbars":false, "webgpu":true, "allowFileAccess":true, "enable":["devtools"], "initScripts":["/project/init.js"], "allowedDomains":[], "restoreKey":"project", "restoreSave":"never", "restoreCheckUrl":"https://example.test", "restoreCheckText":"ready", "restoreCheckFn":"true"});
++        let expected = command.clone();
++        let prepared = scope.prepare(envelope(command.clone())).unwrap();
++        for (field, value) in expected.as_object().unwrap() {
++            assert_eq!(&prepared[field], value, "{field}");
++        }
++        for (field, value) in &scope.launch {
++            assert_eq!(&prepared[field], value, "{field}");
++            command[field] = value.clone();
++        }
++        assert_eq!(prepared["proxy"], scope.proxy.as_ref().unwrap().clone());
++        assert_eq!(scope.prepare(envelope(command)).unwrap(), prepared);
++        let page = json!({"action":"navigate", "url":"https://example.test", "plugins":[]});
++        assert_eq!(scope.prepare(envelope(page.clone())).unwrap(), page);
++    }
++}
+--- a/cli/src/main.rs
++++ b/cli/src/main.rs
+@@ -938,8 +938,19 @@
+         env::set_var("MSYS2_ARG_CONV_EXCL", "*");
+     }
+ 
++    #[cfg(feature = "managed-process")]
++    if env::var_os("AGENT_BROWSER_DASHBOARD").is_some() {
++        eprintln!("Browser services are owned by the host");
++        exit(1);
++    }
++
+     // Native daemon mode: when AGENT_BROWSER_DAEMON is set, run as the daemon process
+     if env::var("AGENT_BROWSER_DAEMON").is_ok() {
++        #[cfg(feature = "managed-process")]
++        if let Err(error) = flags::freeze_managed_scope() {
++            eprintln!("{}", error);
++            exit(1);
++        }
+         // Ignore SIGPIPE so the daemon isn't killed when the parent drops
+         // the piped stderr handle after confirming the daemon is ready.
+         #[cfg(unix)]
+@@ -965,13 +976,27 @@
+ 
+     let args: Vec<String> = env::args().skip(1).collect();
+     let mut flags = parse_flags(&args);
++    let clean = clean_args(&args);
++    #[cfg(feature = "managed-process")]
++    if let Err(error) = flags::validate_managed_flags(&args, &flags, &clean) {
++        if flags.json {
++            print_json_error(error);
++        } else {
++            eprintln!("{}", error);
++        }
++        exit(1);
++    }
++    #[cfg(feature = "managed-process")]
++    {
++        flags.proxy = None;
++        flags.proxy_bypass = None;
++    }
+     if flags.restore_uses_session {
+         flags.restore = Some(flags.session.clone());
+     }
+     if let Some(ref namespace) = flags.namespace {
+         env::set_var("AGENT_BROWSER_NAMESPACE", namespace);
+     }
+-    let clean = clean_args(&args);
+ 
+     let has_help = args.iter().any(|a| a == "--help" || a == "-h");
+     let has_version = args.iter().any(|a| a == "--version" || a == "-V");
+@@ -1678,6 +1703,10 @@
+     session: &str,
+     daemon_opts: &DaemonOptions,
+ ) -> Result<connection::Response, String> {
++    if cfg!(feature = "managed-process") {
++        return send_command(cmd, session);
++    }
++
+     let first_attempt = send_command(cmd.clone(), session);
+     match first_attempt {
+         Err(ref e) if daemon_unreachable(e) => match ensure_daemon(session, daemon_opts) {
+@@ -1734,6 +1763,18 @@
+             println!("[]");
+         }
+         return;
++    }
++
++    #[cfg(feature = "managed-process")]
++    for command in &commands {
++        if let Err(error) = flags::validate_managed_flags(&[], flags, command) {
++            if flags.json {
++                print_json_error(error);
++            } else {
++                eprintln!("{}", error);
++            }
++            exit(1);
++        }
+     }
+ 
+     let output_opts = OutputOptions::from_flags(flags);
+--- a/cli/src/native/actions.rs
++++ b/cli/src/native/actions.rs
+@@ -4420,7 +4420,7 @@
+ 
+ fn handle_cdp_url(state: &DaemonState) -> Result<Value, String> {
+     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
+-    Ok(json!({ "cdpUrl": mgr.get_cdp_url() }))
++    Ok(json!({ "cdpUrl": mgr.get_cdp_url()? }))
+ }
+ 
+ async fn handle_inspect(state: &mut DaemonState) -> Result<Value, String> {
+@@ -4432,7 +4432,7 @@
+     }
+ 
+     let target_id = mgr.active_target_id()?.to_string();
+-    let chrome_hp = mgr.chrome_host_port().to_string();
++    let chrome_hp = mgr.chrome_host_port()?.to_string();
+     let proxy_handle = mgr.client.inspect_handle();
+ 
+     let server = InspectServer::start(proxy_handle, target_id, chrome_hp).await?;
+--- a/cli/src/native/browser.rs
++++ b/cli/src/native/browser.rs
+@@ -344,7 +344,7 @@
+ pub struct BrowserManager {
+     pub client: Arc<CdpClient>,
+     browser_process: Option<BrowserProcess>,
+-    ws_url: String,
++    ws_url: Option<String>,
+     pages: Vec<PageInfo>,
+     active_page_index: usize,
+     default_timeout_ms: u64,
+@@ -411,7 +411,7 @@
+         let download_path = options.download_path.clone();
+         let headless = options.effectively_headless();
+ 
+-        let (ws_url, process) = match engine {
++        let (ws_url, mut process) = match engine {
+             "lightpanda" => {
+                 let lp_options = LightpandaLaunchOptions {
+                     executable_path: options.executable_path.clone(),
+@@ -420,7 +420,7 @@
+                 };
+                 let lp = launch_lightpanda(&lp_options).await?;
+                 let url = lp.ws_url.clone();
+-                (url, BrowserProcess::Lightpanda(lp))
++                (Some(url), BrowserProcess::Lightpanda(lp))
+             }
+             _ => {
+                 let chrome = tokio::task::spawn_blocking(move || launch_chrome(&options))
+@@ -432,9 +432,22 @@
+         };
+ 
+         let manager = if engine == "lightpanda" {
+-            initialize_lightpanda_manager(ws_url, process).await?
++            initialize_lightpanda_manager(ws_url.ok_or("Lightpanda has no CDP endpoint")?, process)
++                .await?
+         } else {
+-            let client = Arc::new(CdpClient::connect(&ws_url).await?);
++            let client = match &mut process {
++                #[cfg(feature = "managed-process")]
++                BrowserProcess::Chrome(chrome) => Arc::new(CdpClient::connect_pipe(
++                    chrome
++                        .pipe
++                        .take()
++                        .ok_or("Managed Chrome pipe is unavailable")?,
++                )?),
++                _ => Arc::new(
++                    CdpClient::connect(ws_url.as_deref().ok_or("Browser has no CDP endpoint")?)
++                        .await?,
++                ),
++            };
+             let mut manager = Self {
+                 client,
+                 browser_process: Some(process),
+@@ -529,7 +542,7 @@
+         let mut manager = Self {
+             client,
+             browser_process: None,
+-            ws_url,
++            ws_url: Some(ws_url),
+             pages: Vec::new(),
+             active_page_index: 0,
+             default_timeout_ms: 25_000,
+@@ -1130,18 +1143,20 @@
+         }
+     }
+ 
+-    pub fn get_cdp_url(&self) -> &str {
+-        &self.ws_url
++    pub fn get_cdp_url(&self) -> Result<&str, String> {
++        self.ws_url
++            .as_deref()
++            .ok_or_else(|| "Managed Chrome does not expose a CDP URL".to_string())
+     }
+ 
+     /// Returns the Chrome debug server address as "host:port".
+-    pub fn chrome_host_port(&self) -> &str {
+-        let stripped = self
+-            .ws_url
++    pub fn chrome_host_port(&self) -> Result<&str, String> {
++        let url = self.get_cdp_url()?;
++        let stripped = url
+             .strip_prefix("ws://")
+-            .or_else(|| self.ws_url.strip_prefix("wss://"))
+-            .unwrap_or(&self.ws_url);
+-        stripped.split('/').next().unwrap_or(stripped)
++            .or_else(|| url.strip_prefix("wss://"))
++            .unwrap_or(url);
++        Ok(stripped.split('/').next().unwrap_or(stripped))
+     }
+ 
+     pub fn active_target_id(&self) -> Result<&str, String> {
+@@ -1954,7 +1969,7 @@
+         let mut manager = BrowserManager {
+             client: Arc::new(client),
+             browser_process: None,
+-            ws_url: ws_url.clone(),
++            ws_url: Some(ws_url.clone()),
+             pages: Vec::new(),
+             active_page_index: 0,
+             default_timeout_ms: 25_000,
+--- a/cli/src/native/cdp/client.rs
++++ b/cli/src/native/cdp/client.rs
+@@ -27,22 +27,13 @@
+ }
+ 
+ pub struct CdpClient {
+-    ws_tx: Arc<
+-        Mutex<
+-            futures_util::stream::SplitSink<
+-                tokio_tungstenite::WebSocketStream<
+-                    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+-                >,
+-                Message,
+-            >,
+-        >,
+-    >,
++    writer: SharedWriter,
+     next_id: AtomicU64,
+     pending: PendingMap,
+     event_tx: broadcast::Sender<CdpEvent>,
+     raw_tx: broadcast::Sender<RawCdpMessage>,
+     _reader_handle: tokio::task::JoinHandle<()>,
+-    _keepalive_handle: tokio::task::JoinHandle<()>,
++    _keepalive_handle: Option<tokio::task::JoinHandle<()>>,
+ }
+ 
+ /// Removes a pending entry if `send_command` is cancelled mid-await (e.g. an
+@@ -108,8 +99,8 @@
+ 
+         enable_tcp_keepalive(ws_stream.get_ref());
+ 
+-        let (ws_tx, mut ws_rx) = ws_stream.split();
+-        let ws_tx = Arc::new(Mutex::new(ws_tx));
++        let (writer, mut ws_rx) = ws_stream.split();
++        let writer = Arc::new(Mutex::new(CdpWriter::WebSocket(writer)));
+ 
+         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
+         let (event_tx, _) = broadcast::channel(4096);
+@@ -153,40 +144,7 @@
+                     }
+                 };
+ 
+-                // Broadcast raw message for inspect proxy subscribers before typed parse,
+-                // so messages with negative IDs (used by the inspect proxy) are still delivered.
+-                if raw_tx_clone.receiver_count() > 0 {
+-                    let session_id = serde_json::from_str::<serde_json::Value>(&msg)
+-                        .ok()
+-                        .and_then(|v| v.get("sessionId")?.as_str().map(String::from));
+-                    let _ = raw_tx_clone.send(RawCdpMessage {
+-                        text: msg.clone(),
+-                        session_id,
+-                    });
+-                }
+-
+-                let parsed: CdpMessage = match serde_json::from_str(&msg) {
+-                    Ok(m) => m,
+-                    // Expected for inspect proxy messages with negative IDs
+-                    // (CdpMessage.id is u64); handled via raw broadcast above.
+-                    Err(_) => continue,
+-                };
+-
+-                if let Some(id) = parsed.id {
+-                    // Response to a command
+-                    let mut pending = pending_clone.lock().await;
+-                    if let Some(tx) = pending.remove(&id) {
+-                        let _ = tx.send(parsed);
+-                    }
+-                } else if let Some(ref method) = parsed.method {
+-                    // Event
+-                    let event = CdpEvent {
+-                        method: method.clone(),
+-                        params: parsed.params.clone().unwrap_or(Value::Null),
+-                        session_id: parsed.session_id.clone(),
+-                    };
+-                    let _ = event_tx_clone.send(event);
+-                }
++                route_message(msg, &pending_clone, &event_tx_clone, &raw_tx_clone).await;
+             }
+ 
+             // Reader loop exited (connection closed or error). Drop all pending
+@@ -202,7 +160,7 @@
+         // interval. This prevents intermediate proxies (Envoy, nginx, OpenResty,
+         // cloud load balancers) from closing idle WebSocket connections. If the
+         // send fails, the connection is dead and we stop pinging.
+-        let keepalive_tx = ws_tx.clone();
++        let keepalive_tx = writer.clone();
+         let keepalive_handle = tokio::spawn(async move {
+             let interval = std::time::Duration::from_secs(WS_KEEPALIVE_INTERVAL_SECS);
+             loop {
+@@ -211,20 +169,61 @@
+                     _ = cancel_rx.changed() => break,
+                 }
+                 let mut tx = keepalive_tx.lock().await;
+-                if tx.send(Message::Ping(Vec::new())).await.is_err() {
++                if tx.ping().await.is_err() {
+                     break;
+                 }
+             }
+         });
+ 
+         Ok(Self {
+-            ws_tx,
++            writer,
+             next_id: AtomicU64::new(1),
+             pending,
+             event_tx,
+             raw_tx,
+             _reader_handle: reader_handle,
+-            _keepalive_handle: keepalive_handle,
++            _keepalive_handle: Some(keepalive_handle),
++        })
++    }
++
++    #[cfg(feature = "managed-process")]
++    pub fn connect_pipe(stream: std::os::unix::net::UnixStream) -> Result<Self, String> {
++        stream.set_nonblocking(true).map_err(|e| e.to_string())?;
++        let stream = tokio::net::UnixStream::from_std(stream).map_err(|e| e.to_string())?;
++        let (reader, writer) = stream.into_split();
++        let (closed_tx, closed_rx) = tokio::sync::watch::channel(false);
++        let writer = Arc::new(Mutex::new(CdpWriter::Pipe {
++            writer: Some(writer),
++            closed: closed_rx,
++        }));
++        let writer_reader = writer.clone();
++        let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
++        let (event_tx, _) = broadcast::channel(4096);
++        let (raw_tx, _) = broadcast::channel(4096);
++        let pending_reader = pending.clone();
++        let event_reader = event_tx.clone();
++        let raw_reader = raw_tx.clone();
++        let reader_handle = tokio::spawn(async move {
++            let mut reader = tokio::io::BufReader::new(reader);
++            while let Ok(Some(message)) = read_pipe_frame(&mut reader, PIPE_FRAME_LIMIT).await {
++                route_message(message, &pending_reader, &event_reader, &raw_reader).await;
++            }
++            // Stop in-flight writes before releasing pending responses. Once
++            // callers observe EOF, no new request may enter this dead channel.
++            let _ = closed_tx.send(true);
++            if let CdpWriter::Pipe { writer, .. } = &mut *writer_reader.lock().await {
++                writer.take();
++            }
++            pending_reader.lock().await.clear();
++        });
++        Ok(Self {
++            writer,
++            next_id: AtomicU64::new(1),
++            pending,
++            event_tx,
++            raw_tx,
++            _reader_handle: reader_handle,
++            _keepalive_handle: None,
+         })
+     }
+ 
+@@ -261,9 +260,9 @@
+         };
+ 
+         {
+-            let mut ws_tx = self.ws_tx.lock().await;
+-            ws_tx
+-                .send(Message::Text(json))
++            let mut writer = self.writer.lock().await;
++            writer
++                .send_text(json)
+                 .await
+                 .map_err(|e| format!("Failed to send CDP command: {}", e))?;
+         }
+@@ -305,7 +304,7 @@
+     /// Contains only what's needed to forward messages bidirectionally.
+     pub fn inspect_handle(&self) -> InspectProxyHandle {
+         InspectProxyHandle {
+-            ws_tx: self.ws_tx.clone(),
++            writer: self.writer.clone(),
+             raw_tx: self.raw_tx.clone(),
+         }
+     }
+@@ -355,19 +354,19 @@
+         let json = serde_json::to_string(&cmd)
+             .map_err(|e| format!("Failed to serialize CDP command: {}", e))?;
+ 
+-        let mut ws_tx = self.ws_tx.lock().await;
+-        ws_tx
+-            .send(Message::Text(json))
++        let mut writer = self.writer.lock().await;
++        writer
++            .send_text(json)
+             .await
+             .map_err(|e| format!("Failed to send CDP command: {}", e))
+     }
+ 
+-    /// Send raw JSON through the WebSocket without tracking a response.
++    /// Send raw JSON through the CDP channel without tracking a response.
+     /// Used by the inspect proxy to forward DevTools frontend messages.
+     pub async fn send_raw(&self, json: String) -> Result<(), String> {
+-        let mut ws_tx = self.ws_tx.lock().await;
+-        ws_tx
+-            .send(Message::Text(json))
++        let mut writer = self.writer.lock().await;
++        writer
++            .send_text(json)
+             .await
+             .map_err(|e| format!("Failed to send raw CDP message: {}", e))
+     }
+@@ -380,29 +379,167 @@
+     }
+ }
+ 
+-type WsTx = Arc<
+-    Mutex<
+-        futures_util::stream::SplitSink<
+-            tokio_tungstenite::WebSocketStream<
+-                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+-            >,
+-            Message,
+-        >,
+-    >,
++type WsSink = futures_util::stream::SplitSink<
++    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
++    Message,
+ >;
++type SharedWriter = Arc<Mutex<CdpWriter>>;
++
++enum CdpWriter {
++    WebSocket(WsSink),
++    #[cfg(feature = "managed-process")]
++    Pipe {
++        writer: Option<tokio::net::unix::OwnedWriteHalf>,
++        closed: tokio::sync::watch::Receiver<bool>,
++    },
++}
++
++impl CdpWriter {
++    async fn send_text(&mut self, text: String) -> Result<(), String> {
++        match self {
++            Self::WebSocket(writer) => writer
++                .send(Message::Text(text))
++                .await
++                .map_err(|e| e.to_string()),
++            #[cfg(feature = "managed-process")]
++            Self::Pipe { writer, closed } => {
++                use tokio::io::AsyncWriteExt;
++                if *closed.borrow() || closed.has_changed().is_err() {
++                    writer.take();
++                    return Err("CDP pipe is closed".to_string());
++                }
++                if text.len() > PIPE_FRAME_LIMIT {
++                    return Err("CDP pipe message exceeds its capacity".to_string());
++                }
++                // A cancelled partial frame must close the channel, never become
++                // the prefix of a later command. Only a complete write restores it.
++                let mut owned = writer.take().ok_or("CDP pipe is closed")?;
++                let result = tokio::select! {
++                    result = async {
++                        owned.write_all(text.as_bytes()).await.map_err(|e| e.to_string())?;
++                        owned.write_all(&[0]).await.map_err(|e| e.to_string())
++                    } => result,
++                    _ = closed.changed() => Err("CDP pipe is closed".to_string()),
++                };
++                result?;
++                *writer = Some(owned);
++                Ok(())
++            }
++        }
++    }
++
++    async fn ping(&mut self) -> Result<(), String> {
++        match self {
++            Self::WebSocket(writer) => writer
++                .send(Message::Ping(Vec::new()))
++                .await
++                .map_err(|e| e.to_string()),
++            #[cfg(feature = "managed-process")]
++            Self::Pipe { .. } => Err("CDP pipe does not use WebSocket keepalive".to_string()),
++        }
++    }
++}
++
++async fn route_message(
++    msg: String,
++    pending: &PendingMap,
++    event_tx: &broadcast::Sender<CdpEvent>,
++    raw_tx: &broadcast::Sender<RawCdpMessage>,
++) {
++    // Broadcast raw message for inspect proxy subscribers before typed parse,
++    // so messages with negative IDs (used by the inspect proxy) are still delivered.
++    if raw_tx.receiver_count() > 0 {
++        let session_id = serde_json::from_str::<serde_json::Value>(&msg)
++            .ok()
++            .and_then(|v| v.get("sessionId")?.as_str().map(String::from));
++        let _ = raw_tx.send(RawCdpMessage {
++            text: msg.clone(),
++            session_id,
++        });
++    }
++
++    let parsed: CdpMessage = match serde_json::from_str(&msg) {
++        Ok(m) => m,
++        // Expected for inspect proxy messages with negative IDs
++        // (CdpMessage.id is u64); handled via raw broadcast above.
++        Err(_) => return,
++    };
++
++    if let Some(id) = parsed.id {
++        // Response to a command
++        let mut pending = pending.lock().await;
++        if let Some(tx) = pending.remove(&id) {
++            let _ = tx.send(parsed);
++        }
++    } else if let Some(ref method) = parsed.method {
++        // Event
++        let event = CdpEvent {
++            method: method.clone(),
++            params: parsed.params.clone().unwrap_or(Value::Null),
++            session_id: parsed.session_id.clone(),
++        };
++        let _ = event_tx.send(event);
++    }
++}
++
++// Chromium 155 DevToolsPipeHandler uses NUL-delimited UTF-8. The host bounds
++// each payload to 100 MiB; the terminating NUL is not part of this host limit.
++#[cfg(feature = "managed-process")]
++const PIPE_FRAME_LIMIT: usize = 100 * 1024 * 1024;
++
++#[cfg(feature = "managed-process")]
++async fn read_pipe_frame<R: tokio::io::AsyncBufRead + Unpin>(
++    reader: &mut R,
++    limit: usize,
++) -> Result<Option<String>, String> {
++    use tokio::io::AsyncBufReadExt;
++    let mut frame = Vec::new();
++    loop {
++        let chunk = reader.fill_buf().await.map_err(|e| e.to_string())?;
++        if chunk.is_empty() {
++            return if frame.is_empty() {
++                Ok(None)
++            } else {
++                Err("CDP pipe closed during a message".to_string())
++            };
++        }
++        let delimiter = chunk.iter().position(|byte| *byte == 0);
++        let length = delimiter.unwrap_or(chunk.len());
++        if length > limit.saturating_sub(frame.len()) {
++            return Err("CDP pipe message exceeds its capacity".to_string());
++        }
++        frame.extend_from_slice(&chunk[..length]);
++        reader.consume(length + usize::from(delimiter.is_some()));
++        if delimiter.is_some() {
++            return String::from_utf8(frame)
++                .map(Some)
++                .map_err(|e| e.to_string());
++        }
++    }
++}
++
++#[cfg(feature = "managed-process")]
++impl Drop for CdpClient {
++    fn drop(&mut self) {
++        self._reader_handle.abort();
++        if let Some(keepalive) = &self._keepalive_handle {
++            keepalive.abort();
++        }
++    }
++}
+ 
+ /// Lightweight handle for the inspect WebSocket proxy, holding only
+ /// the cloneable parts of CdpClient needed for bidirectional message forwarding.
+ pub struct InspectProxyHandle {
+-    ws_tx: WsTx,
++    writer: SharedWriter,
+     raw_tx: broadcast::Sender<RawCdpMessage>,
+ }
+ 
+ impl InspectProxyHandle {
+     pub async fn send_raw(&self, json: String) -> Result<(), String> {
+-        let mut ws_tx = self.ws_tx.lock().await;
+-        ws_tx
+-            .send(Message::Text(json))
++        let mut writer = self.writer.lock().await;
++        writer
++            .send_text(json)
+             .await
+             .map_err(|e| format!("Failed to send raw CDP message: {}", e))
+     }
+@@ -434,3 +571,161 @@
+ 
+     let _ = sock.set_tcp_keepalive(&keepalive);
+ }
++
++#[cfg(all(test, feature = "managed-process"))]
++mod managed_pipe_tests {
++    use super::*;
++    use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
++
++    #[tokio::test]
++    async fn frames_preserve_split_and_coalesced_messages() {
++        let mut reader = BufReader::with_capacity(3, &b"{\"a\":1}\0{\"b\":2}\0"[..]);
++        assert_eq!(
++            read_pipe_frame(&mut reader, 16).await.unwrap(),
++            Some("{\"a\":1}".to_string())
++        );
++        assert_eq!(
++            read_pipe_frame(&mut reader, 16).await.unwrap(),
++            Some("{\"b\":2}".to_string())
++        );
++        assert_eq!(read_pipe_frame(&mut reader, 16).await.unwrap(), None);
++    }
++
++    #[tokio::test]
++    async fn frames_reject_truncation_invalid_utf8_and_overflow() {
++        for input in [&b"partial"[..], &b"\xff\0"[..], &b"123456789\0"[..]] {
++            let mut reader = BufReader::with_capacity(2, input);
++            assert!(read_pipe_frame(&mut reader, 8).await.is_err());
++        }
++        let mut exact = BufReader::new(&b"12345678\0"[..]);
++        assert_eq!(
++            read_pipe_frame(&mut exact, 8).await.unwrap().unwrap(),
++            "12345678"
++        );
++    }
++
++    #[tokio::test]
++    async fn pipe_routes_response_and_event_then_settles_pending_on_eof() {
++        let (owned, peer) = std::os::unix::net::UnixStream::pair().unwrap();
++        let client = Arc::new(CdpClient::connect_pipe(owned).unwrap());
++        peer.set_nonblocking(true).unwrap();
++        let peer = tokio::net::UnixStream::from_std(peer).unwrap();
++        let (read, mut write) = peer.into_split();
++        let mut reader = BufReader::new(read);
++        let mut events = client.subscribe();
++        let caller = client.clone();
++        let first = tokio::spawn(async move {
++            caller
++                .send_command_no_params("Browser.getVersion", None)
++                .await
++        });
++        let request: Value =
++            serde_json::from_str(&read_pipe_frame(&mut reader, 1024).await.unwrap().unwrap())
++                .unwrap();
++        let response = serde_json::json!({"id": request["id"], "result": {"product": "fixture"}});
++        write
++            .write_all(
++                format!(
++                    "{{\"method\":\"Target.created\",\"params\":{{}}}}\0{}\0",
++                    response
++                )
++                .as_bytes(),
++            )
++            .await
++            .unwrap();
++        assert_eq!(first.await.unwrap().unwrap()["product"], "fixture");
++        assert_eq!(events.recv().await.unwrap().method, "Target.created");
++        let caller = client.clone();
++        let pending = tokio::spawn(async move {
++            caller
++                .send_command_no_params("Browser.getVersion", None)
++                .await
++        });
++        assert!(read_pipe_frame(&mut reader, 1024).await.unwrap().is_some());
++        write.shutdown().await.unwrap();
++        assert_eq!(
++            pending.await.unwrap().unwrap_err(),
++            "CDP response channel closed"
++        );
++        assert_eq!(client.pending_len().await, 0);
++        let mut after_eof = Box::pin(client.send_command_no_params("Browser.getVersion", None));
++        assert!(matches!(
++            futures_util::poll!(&mut after_eof),
++            std::task::Poll::Ready(Err(_))
++        ));
++    }
++
++    #[tokio::test]
++    async fn cancelling_a_backpressured_frame_closes_the_writer() {
++        let (owned, peer) = std::os::unix::net::UnixStream::pair().unwrap();
++        socket2::SockRef::from(&owned)
++            .set_send_buffer_size(4096)
++            .unwrap();
++        owned.set_nonblocking(true).unwrap();
++        peer.set_nonblocking(true).unwrap();
++        let owned = tokio::net::UnixStream::from_std(owned).unwrap();
++        let (_reader, write) = owned.into_split();
++        let (_closed_tx, closed) = tokio::sync::watch::channel(false);
++        let writer = Arc::new(Mutex::new(CdpWriter::Pipe {
++            writer: Some(write),
++            closed,
++        }));
++        let mut peer = tokio::net::UnixStream::from_std(peer).unwrap();
++        let sender = writer.clone();
++        let sending =
++            tokio::spawn(
++                async move { sender.lock().await.send_text("x".repeat(1024 * 1024)).await },
++            );
++        let mut first = [0];
++        peer.read_exact(&mut first).await.unwrap();
++        assert!(!sending.is_finished());
++        sending.abort();
++        assert!(sending.await.unwrap_err().is_cancelled());
++        assert_eq!(
++            writer
++                .lock()
++                .await
++                .send_text("{}".to_string())
++                .await
++                .unwrap_err(),
++            "CDP pipe is closed"
++        );
++        let mut remaining = Vec::new();
++        peer.read_to_end(&mut remaining).await.unwrap();
++        assert!(!remaining.contains(&0));
++    }
++
++    #[tokio::test]
++    async fn peer_eof_unblocks_a_backpressured_command() {
++        let (owned, peer) = std::os::unix::net::UnixStream::pair().unwrap();
++        socket2::SockRef::from(&owned)
++            .set_send_buffer_size(4096)
++            .unwrap();
++        let client = Arc::new(CdpClient::connect_pipe(owned).unwrap());
++        peer.set_nonblocking(true).unwrap();
++        let peer = tokio::net::UnixStream::from_std(peer).unwrap();
++        let (mut reader, mut writer) = peer.into_split();
++        let sender = client.clone();
++        let sending = tokio::spawn(async move {
++            sender
++                .send_command(
++                    "Runtime.evaluate",
++                    Some(serde_json::json!({"expression": "x".repeat(1024 * 1024)})),
++                    None,
++                )
++                .await
++        });
++        let mut first = [0];
++        reader.read_exact(&mut first).await.unwrap();
++        assert!(!sending.is_finished());
++        writer.shutdown().await.unwrap();
++        assert!(sending
++            .await
++            .unwrap()
++            .unwrap_err()
++            .contains("CDP pipe is closed"));
++        let mut remainder = Vec::new();
++        reader.read_to_end(&mut remainder).await.unwrap();
++        assert!(!remainder.contains(&0));
++    }
++}
+--- a/cli/src/native/cdp/chrome.rs
++++ b/cli/src/native/cdp/chrome.rs
+@@ -7,7 +7,9 @@
+ 
+ pub struct ChromeProcess {
+     child: Child,
+-    pub ws_url: String,
++    pub ws_url: Option<String>,
++    #[cfg(feature = "managed-process")]
++    pub pipe: Option<std::os::unix::net::UnixStream>,
+     temp_user_data_dir: Option<PathBuf>,
+     /// On Unix, the process group ID used to kill the entire Chrome process tree.
+     #[cfg(unix)]
+@@ -391,6 +393,14 @@
+     // the preset's features (e.g. drop the WebGPU preset's Vulkan). To turn
+     // a preset feature off, pass --disable-features=<name>, which Chrome
+     // resolves as disabled.
++    if cfg!(feature = "managed-process")
++        && options
++            .args
++            .iter()
++            .any(|arg| arg.starts_with("--remote-debugging-"))
++    {
++        return Err("Managed Chrome transport is owned by the host".to_string());
++    }
+     let mut user_args: Vec<String> = Vec::new();
+     for arg in &options.args {
+         if let Some(values) = arg.strip_prefix("--enable-features=") {
+@@ -405,7 +415,11 @@
+     }
+ 
+     let mut args = vec![
+-        "--remote-debugging-port=0".to_string(),
++        if cfg!(feature = "managed-process") {
++            "--remote-debugging-pipe".to_string()
++        } else {
++            "--remote-debugging-port=0".to_string()
++        },
+         "--no-first-run".to_string(),
+         "--no-default-browser-check".to_string(),
+         "--disable-background-networking".to_string(),
+@@ -655,7 +669,7 @@
+         cmd.env("XAUTHORITY", &x.auth_file);
+     }
+ 
+-    // Place Chrome in its own process group so we can kill the entire tree
++    // Place standalone Chrome in its own process group so we can kill the entire tree
+     // (main process + GPU/renderer/utility/crashpad helpers) with a single
+     // killpg(), preventing orphaned processes (issue #1113).
+     //
+@@ -664,7 +678,7 @@
+     // *thread* that forked the child exits, not the process. Tokio reaps
+     // idle blocking threads after ~10s, which kills Chrome (issue #1157).
+     #[cfg(unix)]
+-    {
++    if !cfg!(feature = "managed-process") {
+         use std::os::unix::process::CommandExt;
+         // SAFETY: pre_exec runs between fork() and exec() in the child.
+         // setpgid is async-signal-safe.
+@@ -676,43 +690,83 @@
+         }
+     }
+ 
+-    let mut child = cmd.spawn().map_err(|e| {
++    #[cfg(feature = "managed-process")]
++    let (pipe_parent, pipe_child) = {
++        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
++        use std::os::unix::process::CommandExt;
++        let (parent, child) = std::os::unix::net::UnixStream::pair()
++            .map_err(|e| format!("Failed to create Chrome pipe: {}", e))?;
++        // Reserve the source above both Chrome descriptors so dup2 cannot
++        // clobber it. The parent endpoint stays close-on-exec and host-owned.
++        let fd = unsafe { libc::fcntl(child.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 5) };
++        if fd < 0 {
++            return Err(std::io::Error::last_os_error().to_string());
++        }
++        let child_fd = unsafe { OwnedFd::from_raw_fd(fd) };
++        unsafe {
++            cmd.pre_exec(move || {
++                if libc::dup2(fd, 3) < 0 || libc::dup2(fd, 4) < 0 {
++                    return Err(std::io::Error::last_os_error());
++                }
++                Ok(())
++            });
++        }
++        cmd.stderr(Stdio::inherit());
++        (parent, child_fd)
++    };
++
++    let child = cmd.spawn().map_err(|e| {
+         cleanup_temp_dir(&temp_user_data_dir);
+         format!("Failed to launch Chrome at {:?}: {}", chrome_path, e)
+     })?;
+-
+-    // Shared overall deadline so we don't double-wait (poll + stderr fallback).
+-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+-
+-    // Primary path: use DevToolsActivePort written into user-data-dir.
+-    // This is more reliable on Windows than scraping stderr for "DevTools listening on ...",
+-    // which can be missing/empty depending on how Chrome is launched.
+-    let ws_url = match wait_for_devtools_active_port(&mut child, &user_data_dir, deadline) {
+-        Ok(url) => url,
+-        Err(primary_err) => {
+-            // Fallback: scrape stderr (legacy behavior) for better diagnostics.
+-            let stderr = child.stderr.take().ok_or_else(|| {
+-                let _ = child.kill();
+-                cleanup_temp_dir(&temp_user_data_dir);
+-                "Failed to capture Chrome stderr".to_string()
+-            })?;
+-            let reader = BufReader::new(stderr);
+-            match wait_for_ws_url_until(reader, deadline) {
++    #[cfg(not(feature = "managed-process"))]
++    let mut child = child;
++
++    #[cfg(feature = "managed-process")]
++    let ws_url = {
++        drop(pipe_child);
++        None
++    };
++    #[cfg(not(feature = "managed-process"))]
++    let ws_url = {
++        // Shared overall deadline so we don't double-wait (poll + stderr fallback).
++        let deadline = std::time::Instant::now() + Duration::from_secs(30);
++
++        // Primary path: use DevToolsActivePort written into user-data-dir.
++        // This is more reliable on Windows than scraping stderr for "DevTools listening on ...",
++        // which can be missing/empty depending on how Chrome is launched.
++        let ws_url = Some(
++            match wait_for_devtools_active_port(&mut child, &user_data_dir, deadline) {
+                 Ok(url) => url,
+-                Err(fallback_err) => {
+-                    let _ = child.kill();
+-                    cleanup_temp_dir(&temp_user_data_dir);
+-                    return Err(format!(
+-                        "{}\n(also tried parsing stderr) {}",
+-                        primary_err, fallback_err
+-                    ));
++                Err(primary_err) => {
++                    // Fallback: scrape stderr (legacy behavior) for better diagnostics.
++                    let stderr = child.stderr.take().ok_or_else(|| {
++                        let _ = child.kill();
++                        cleanup_temp_dir(&temp_user_data_dir);
++                        "Failed to capture Chrome stderr".to_string()
++                    })?;
++                    let reader = BufReader::new(stderr);
++                    match wait_for_ws_url_until(reader, deadline) {
++                        Ok(url) => url,
++                        Err(fallback_err) => {
++                            let _ = child.kill();
++                            cleanup_temp_dir(&temp_user_data_dir);
++                            return Err(format!(
++                                "{}\n(also tried parsing stderr) {}",
++                                primary_err, fallback_err
++                            ));
++                        }
++                    }
+                 }
+-            }
+-        }
++            },
++        );
++        ws_url
+     };
+ 
+     #[cfg(unix)]
+-    let pgid = {
++    let pgid = if cfg!(feature = "managed-process") {
++        None
++    } else {
+         let pid = child.id() as i32;
+         // The child called setpgid(0,0) via process_group(0), so its PGID
+         // equals its own PID.
+@@ -722,6 +776,8 @@
+     Ok(ChromeProcess {
+         child,
+         ws_url,
++        #[cfg(feature = "managed-process")]
++        pipe: Some(pipe_parent),
+         temp_user_data_dir,
+         #[cfg(unix)]
+         pgid,
+@@ -2060,7 +2116,9 @@
+             let child = spawn_noop_child();
+             let _process = ChromeProcess {
+                 child,
+-                ws_url: String::new(),
++                ws_url: None,
++                #[cfg(feature = "managed-process")]
++                pipe: None,
+                 temp_user_data_dir: Some(dir.clone()),
+                 #[cfg(unix)]
+                 pgid: None,
+--- a/cli/src/native/daemon.rs
++++ b/cli/src/native/daemon.rs
+@@ -30,7 +30,7 @@
+     // output can be inspected (the daemon normally has stderr piped to its
+     // parent which drops the read end after startup).
+     #[cfg(unix)]
+-    if env::var("AGENT_BROWSER_DEBUG").is_ok() {
++    if !cfg!(feature = "managed-process") && env::var("AGENT_BROWSER_DEBUG").is_ok() {
+         let log_path = socket_dir.join(format!("{}.log", session));
+         if let Ok(file) = fs::File::create(&log_path) {
+             use std::os::unix::io::IntoRawFd;
+@@ -45,7 +45,7 @@
+                 session
+             );
+         }
+-    } else {
++    } else if !cfg!(feature = "managed-process") {
+         // Redirect stderr to /dev/null to prevent daemon crash when the
+         // parent CLI drops the piped stderr handle after startup.  Cloud
+         // providers (AgentCore, Browserbase, etc.) may write to stderr
+@@ -104,23 +104,25 @@
+         .ok()
+         .and_then(|s| s.parse::<u16>().ok())
+         .unwrap_or(0);
+-    match StreamServer::start_without_client(
+-        preferred_port,
+-        session.to_string(),
+-        true,
+-        idle_activity.clone(),
+-    )
+-    .await
+-    {
+-        Ok((stream_server, client_slot)) => {
+-            stream_client = Some(client_slot.clone());
+-            if let Err(e) = fs::write(&stream_path, stream_server.port().to_string()) {
+-                let _ = writeln!(std::io::stderr(), "Failed to write .stream file: {}", e);
+-            }
+-            stream_server_instance = Some(Arc::new(stream_server));
+-        }
+-        Err(e) => {
+-            let _ = writeln!(std::io::stderr(), "Stream server failed to start: {}", e);
++    if !cfg!(feature = "managed-process") {
++        match StreamServer::start_without_client(
++            preferred_port,
++            session.to_string(),
++            true,
++            idle_activity.clone(),
++        )
++        .await
++        {
++            Ok((stream_server, client_slot)) => {
++                stream_client = Some(client_slot.clone());
++                if let Err(e) = fs::write(&stream_path, stream_server.port().to_string()) {
++                    let _ = writeln!(std::io::stderr(), "Failed to write .stream file: {}", e);
++                }
++                stream_server_instance = Some(Arc::new(stream_server));
++            }
++            Err(e) => {
++                let _ = writeln!(std::io::stderr(), "Stream server failed to start: {}", e);
++            }
+         }
+     }
+ 
+@@ -232,6 +234,14 @@
+ 
+     let listener =
+         UnixListener::bind(socket_path).map_err(|e| format!("Failed to bind socket: {}", e))?;
++
++    #[cfg(feature = "managed-process")]
++    {
++        let mut output = std::io::stdout().lock();
++        writeln!(output, "{{\"event\":\"ready\"}}")
++            .and_then(|_| output.flush())
++            .map_err(|error| format!("Failed to notify host readiness: {}", error))?;
++    }
+ 
+     let stream_file: Option<PathBuf> = if stream_server.is_some() {
+         let dir = socket_path.parent().unwrap_or(std::path::Path::new("."));
+@@ -515,7 +525,11 @@
+ 
+     loop {
+         line.clear();
+-        match buf_reader.read_line(&mut line).await {
++        #[cfg(feature = "managed-process")]
++        let read = read_managed_line(&mut buf_reader, &mut line, MANAGED_REQUEST_LIMIT).await;
++        #[cfg(not(feature = "managed-process"))]
++        let read = buf_reader.read_line(&mut line).await;
++        match read {
+             Ok(0) => break,
+             Ok(_) => {
+                 let trimmed = line.trim();
+@@ -541,6 +555,20 @@
+                     }
+                 };
+ 
++                #[cfg(feature = "managed-process")]
++                let cmd = {
++                    match crate::flags::prepare_managed_command(cmd) {
++                        Ok(command) => command,
++                        Err(error) => {
++                            let response = serde_json::json!({"success": false, "error": error});
++                            let mut response = response.to_string();
++                            response.push('\n');
++                            let _ = writer.write_all(response.as_bytes()).await;
++                            break;
++                        }
++                    }
++                };
++
+                 idle_activity.mark();
+ 
+                 let action = cmd
+@@ -577,7 +605,103 @@
+                     return;
+                 }
+             }
+-            Err(_) => break,
++            Err(error) => {
++                #[cfg(feature = "managed-process")]
++                {
++                    let response =
++                        serde_json::json!({"success": false, "error": error.to_string()});
++                    let _ = writer.write_all(format!("{}\n", response).as_bytes()).await;
++                }
++                #[cfg(not(feature = "managed-process"))]
++                let _ = error;
++                break;
++            }
++        }
++    }
++}
++
++// Bound unauthenticated input too; the limit includes the newline delimiter.
++#[cfg(feature = "managed-process")]
++const MANAGED_REQUEST_LIMIT: usize = 16 * 1024 * 1024;
++
++#[cfg(feature = "managed-process")]
++async fn read_managed_line<R: tokio::io::AsyncBufRead + Unpin>(
++    reader: &mut R,
++    line: &mut String,
++    limit: usize,
++) -> std::io::Result<usize> {
++    use std::io::{Error, ErrorKind};
++    let mut frame = Vec::new();
++    loop {
++        let available = reader.fill_buf().await?;
++        if available.is_empty() {
++            return if frame.is_empty() {
++                Ok(0)
++            } else {
++                Err(Error::new(
++                    ErrorKind::UnexpectedEof,
++                    "Truncated managed browser request",
++                ))
++            };
++        }
++        let newline = available.iter().position(|byte| *byte == b'\n');
++        let consumed = newline.map_or(available.len(), |index| index + 1);
++        if consumed > limit.saturating_sub(frame.len()) {
++            return Err(Error::new(
++                ErrorKind::InvalidData,
++                "Managed browser request exceeds the size limit",
++            ));
++        }
++        frame.extend_from_slice(&available[..consumed]);
++        reader.consume(consumed);
++        if newline.is_some() {
++            *line = String::from_utf8(frame).map_err(|_| {
++                Error::new(
++                    ErrorKind::InvalidData,
++                    "Managed browser request must be UTF-8",
++                )
++            })?;
++            return Ok(line.len());
++        }
++    }
++}
++
++#[cfg(all(test, feature = "managed-process"))]
++mod managed_request_tests {
++    use super::*;
++
++    #[tokio::test]
++    async fn managed_request_frames_are_bounded_and_complete() {
++        let mut reader = BufReader::with_capacity(2, &b"\xc3\xa9x\n{}\n"[..]);
++        let mut line = String::new();
++        assert_eq!(
++            read_managed_line(&mut reader, &mut line, 4).await.unwrap(),
++            4
++        );
++        assert_eq!(line, "éx\n");
++        assert_eq!(
++            read_managed_line(&mut reader, &mut line, 4).await.unwrap(),
++            3
++        );
++        assert_eq!(line, "{}\n");
++        assert_eq!(
++            read_managed_line(&mut reader, &mut line, 4).await.unwrap(),
++            0
++        );
++        for (input, expected) in [
++            (&b"abcd\n"[..], std::io::ErrorKind::InvalidData),
++            (&b"abcde"[..], std::io::ErrorKind::InvalidData),
++            (&b"{}"[..], std::io::ErrorKind::UnexpectedEof),
++            (&b"\xff\n"[..], std::io::ErrorKind::InvalidData),
++        ] {
++            let mut reader = BufReader::with_capacity(2, input);
++            assert_eq!(
++                read_managed_line(&mut reader, &mut line, 4)
++                    .await
++                    .unwrap_err()
++                    .kind(),
++                expected
++            );
+         }
+     }
+ }
+--- a/cli/src/native/state.rs
++++ b/cli/src/native/state.rs
+@@ -13,7 +13,9 @@
+     CreateTargetResult, EvaluateParams,
+ };
+ use super::cookies::{self, Cookie};
+-use crate::validation::{is_valid_session_name, sanitize_session_component, session_name_error};
++#[cfg(not(feature = "managed-process"))]
++use crate::validation::sanitize_session_component;
++use crate::validation::{is_valid_session_name, session_name_error};
+ 
+ #[derive(Debug, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+@@ -826,20 +828,30 @@
+ /// `<tempdir>/agent-browser` when the home directory can't be resolved).
+ /// This is the parent of `sessions/`, auth storage, and the encryption key.
+ pub fn get_state_dir() -> PathBuf {
+-    let base = if let Some(home) = dirs::home_dir() {
+-        home.join(".agent-browser")
+-    } else {
+-        std::env::temp_dir().join("agent-browser")
+-    };
+-
+-    if let Ok(namespace) = std::env::var("AGENT_BROWSER_NAMESPACE") {
+-        let namespace = sanitize_session_component(&namespace);
+-        if !namespace.is_empty() {
+-            return base.join("namespaces").join(namespace).join("state");
+-        }
+-    }
+-
+-    base
++    #[cfg(feature = "managed-process")]
++    {
++        PathBuf::from(
++            std::env::var("AGENT_BROWSER_STATE_DIR")
++                .expect("managed daemon startup validates its state directory"),
++        )
++    }
++    #[cfg(not(feature = "managed-process"))]
++    {
++        let base = if let Some(home) = dirs::home_dir() {
++            home.join(".agent-browser")
++        } else {
++            std::env::temp_dir().join("agent-browser")
++        };
++
++        if let Ok(namespace) = std::env::var("AGENT_BROWSER_NAMESPACE") {
++            let namespace = sanitize_session_component(&namespace);
++            if !namespace.is_empty() {
++                return base.join("namespaces").join(namespace).join("state");
++            }
++        }
++
++        base
++    }
+ }
+ 
+ pub fn get_sessions_dir() -> PathBuf {

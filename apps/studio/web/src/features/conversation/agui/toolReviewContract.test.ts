@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 
+import type { JsonValue } from "../../../types"
 import fixture from "./contracts/tool-review.fixture.json"
 import {
   TOOL_REVIEW_SCHEMA,
@@ -26,10 +27,43 @@ const validInterrupt = () => ({
   },
 })
 
+const withSourceArgs = (sourceArgs: JsonValue) => {
+  const value = validInterrupt()
+  return {
+    ...value,
+    metadata: {
+      ...value.metadata,
+      langgraphValue: {
+        ...value.metadata.langgraphValue,
+        action_requests: value.metadata.langgraphValue.action_requests.map(action => ({
+          ...action,
+          source_args: sourceArgs,
+        })),
+      },
+    },
+  }
+}
+
 describe("Tool review current contract", () => {
   it("parses the generated cross-language fixture", () => {
     expect(parseToolReviewInterrupt(validInterrupt())).toEqual(fixture)
     expect(fixture.schema).toBe(TOOL_REVIEW_SCHEMA)
+  })
+
+  it.each([{ sourceArgs: { file_path: "report.txt" } }, { sourceArgs: null }])(
+    "保留有效审批参数并校验原始提案 $sourceArgs",
+    ({ sourceArgs }) => {
+      expect(parseToolReviewInterrupt(withSourceArgs(sourceArgs))).toEqual(fixture)
+    },
+  )
+
+  it.each([
+    { label: "array", sourceArgs: [] },
+    { label: "string", sourceArgs: "report.txt" },
+    { label: "number", sourceArgs: 1 },
+    { label: "boolean", sourceArgs: true },
+  ])("拒绝非对象原始提案 $label", ({ sourceArgs }) => {
+    expect(() => parseToolReviewInterrupt(withSourceArgs(sourceArgs))).toThrow(ToolReviewContractError)
   })
 
   it.each([
@@ -48,6 +82,19 @@ describe("Tool review current contract", () => {
       metadata: {
         ...value.metadata,
         deepagents: { ...value.metadata.deepagents, unknown: true },
+      },
+    })],
+    ["unknown native action field", (value: ReturnType<typeof validInterrupt>) => ({
+      ...value,
+      metadata: {
+        ...value.metadata,
+        langgraphValue: {
+          ...value.metadata.langgraphValue,
+          action_requests: value.metadata.langgraphValue.action_requests.map(action => ({
+            ...action,
+            unknown: true,
+          })),
+        },
       },
     })],
     ["tampered args", (value: ReturnType<typeof validInterrupt>) => ({

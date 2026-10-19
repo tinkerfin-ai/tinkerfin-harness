@@ -48,10 +48,10 @@ it.each([
 })
 
 it.each([
-  ['workspace_stopped', '运行环境已停止，请启动沙箱后重试'],
-  ['workspace_paused', '运行环境已暂停，请恢复沙箱后重试'],
-  ['workspace_unavailable', '暂时无法连接运行环境，请检查 Docker 和沙箱服务后重试'],
-  ['workspace_timeout', '连接运行环境超时，请检查服务后重试'],
+  ['workspace_stopped', '任务暂时无法执行，请稍后重试'],
+  ['workspace_paused', '任务暂时无法执行，请稍后重试'],
+  ['workspace_unavailable', '暂时无法连接，请重试'],
+  ['workspace_timeout', '连接超时，请重试'],
 ])('环境准备失败提供可操作提示：%s', (code, message) => {
   expect(conversationErrorMessage(conversationRunError(code, 'private diagnostics'), 'run_failed')).toBe(message)
 })

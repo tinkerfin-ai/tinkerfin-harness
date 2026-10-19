@@ -30,7 +30,7 @@ it('准备失败后保留已提交审批和暂停工具，等待历史确认而�
   })
   expect(started.approval?.submitted).toBe(true)
   expect(failed.approval).toEqual(started.approval)
-  expect(failed.notice?.content).toBe('运行环境已停止，请启动沙箱后重试')
+  expect(failed.notice?.content).toBe('任务暂时无法执行，请稍后重试')
   expect(failed.runFailures).toContainEqual(expect.objectContaining({ runId: 'resume-prepare', retryable: false, errorCode: 'workspace_stopped' }))
   expect(failed.messages.find(message => message.meta?.toolCallId === 'pending-write')?.meta).toMatchObject({
     status: 'paused', interruptId: 'approval-write',
@@ -618,4 +618,38 @@ it('准备进度归属当前运行，过期和倒退阶段不能覆盖执行中�
   const failed = applyConversationEvent(preparing, { type: 'RUN_ERROR', code: 'workspace_stopped', rawEvent: { runId: RUN_ID } })
   expect(failed.runPhase).toBeUndefined()
   expect(failed.runStatus).toBe('error')
+})
+
+it('工具增量输出只更新当前调用，最终结果替换进度且迟到输出无效', () => {
+  const source = { kind: 'root' as const, agentType: 'main' as const, agentName: 'main', graphNamespace: [] }
+  const rawEvent = { streamMode: 'custom' as const, source, runId: RUN_ID }
+  const toolCallId = rootToolId('execute')
+  let current = applyConversationEvent(buildEmptyConversation({ projectId: 'project-1', threadId: THREAD_ID, now: '2030-01-01T00:00:00Z' }), { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID })
+  current = applyConversationEvent(current, { type: 'TOOL_CALL_START', toolCallId, toolCallName: 'execute', rawEvent })
+  const progress = { type: 'CUSTOM' as const, name: 'tinkerfin.tool_output', rawEvent, value: { toolCallId, value: 'ready\n' } }
+  expect(applyConversationEvent(current, { ...progress, rawEvent: { ...rawEvent, runId: 'other' } })).toBe(current)
+  expect(applyConversationEvent(current, { ...progress, value: { toolCallId: 'unknown', value: 'wrong' } })).toBe(current)
+  expect(applyConversationEvent(current, { ...progress, rawEvent: { ...rawEvent, source: { ...source, graphNamespace: ['other'] } } })).toBe(current)
+  current = applyConversationEvent(current, progress)
+  current = applyConversationEvent(current, { ...progress, value: { toolCallId, value: 'done\n' } })
+  expect(current.messages.find(message => message.meta?.toolCallId === toolCallId)?.meta).toMatchObject({ status: 'running', result: 'ready\ndone\n' })
+  current = applyConversationEvent(current, { type: 'TOOL_CALL_RESULT', toolCallId, messageId: 'result', content: 'complete result', role: 'tool', rawEvent })
+  expect(current.messages.find(message => message.meta?.toolCallId === toolCallId)?.meta).toMatchObject({ status: 'completed', result: 'complete result' })
+  expect(applyConversationEvent(current, progress)).toBe(current)
+})
+
+it('审批恢复后的真实工具输出启动原暂停卡，准备阶段保持暂停', () => {
+  const source = { kind: 'root' as const, agentType: 'main' as const, agentName: 'main', graphNamespace: [] }
+  const toolCallId = rootToolId('approved-execute')
+  let current = applyConversationEvent(buildEmptyConversation({ projectId: 'project-1', threadId: THREAD_ID, now: '2030-01-01T00:00:00Z' }), { type: 'RUN_STARTED', threadId: THREAD_ID, runId: RUN_ID })
+  current = applyConversationEvent(current, { type: 'TOOL_CALL_START', toolCallId, toolCallName: 'execute', rawEvent: { runId: RUN_ID, source } })
+  current = applyConversationEvent(current, { type: 'RUN_FINISHED', threadId: THREAD_ID, runId: RUN_ID, outcome: { type: 'interrupt', interrupts: [interrupt({ id: 'execution-review', toolCallId })] } })
+  current = prepareResumeSubmission(current)
+  current = applyConversationEvent(current, { type: 'RUN_STARTED', threadId: THREAD_ID, runId: 'approved-run' })
+  expect(current.messages.find(message => message.meta?.toolCallId === toolCallId)?.meta?.status).toBe('paused')
+  const rawEvent = { streamMode: 'custom' as const, source, runId: 'approved-run' }
+  current = applyConversationEvent(current, { type: 'CUSTOM', name: 'tinkerfin.tool_output', rawEvent, value: { toolCallId, value: 'executing\n' } })
+  expect(current.messages.find(message => message.meta?.toolCallId === toolCallId)?.meta).toMatchObject({ status: 'running', result: 'executing\n' })
+  current = applyConversationEvent(current, { type: 'TOOL_CALL_RESULT', toolCallId, messageId: 'result', content: 'done', role: 'tool', rawEvent })
+  expect(current.messages.find(message => message.meta?.toolCallId === toolCallId)?.meta).toMatchObject({ status: 'completed', result: 'done' })
 })

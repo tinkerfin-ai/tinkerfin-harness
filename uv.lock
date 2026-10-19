@@ -21,6 +21,7 @@ members = [
     "tinkerfin",
     "tinkerfin-agui-adapter",
     "tinkerfin-automation",
+    "tinkerfin-companion",
     "tinkerfin-contracts",
     "tinkerfin-gateway",
     "tinkerfin-harness",
@@ -28,6 +29,7 @@ members = [
     "tinkerfin-messaging",
     "tinkerfin-native-stream",
     "tinkerfin-notifications",
+    "tinkerfin-remote",
     "tinkerfin-sandbox",
     "tinkerfin-sqlalchemy",
     "tinkerfin-studio",
@@ -975,8 +977,8 @@ name = "httpcore2"
 version = "2.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "h11" },
-    { name = "truststore" },
+    { name = "h11", marker = "sys_platform != 'emscripten'" },
+    { name = "truststore", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/be/ad/f4f0e57345f1870f3e8cb624e058d7eca6e5a27d33bcc3311d9b618734cd/httpcore2-2.12.0.tar.gz", hash = "sha256:9293522bba0aa7c4c8e9e3f040c16575bd8868e155a77fa30c7a9085a5eae648", size = 67548, upload-time = "2026-08-18T13:22:08.211Z" }
 wheels = [
@@ -1462,6 +1464,44 @@ wheels = [
 ]
 
 [[package]]
+name = "mcp"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "httpx2" },
+    { name = "jsonschema" },
+    { name = "mcp-types" },
+    { name = "opentelemetry-api" },
+    { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "python-multipart" },
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "sse-starlette" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+    { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9d/8d/e0d339616f4810e9051d4aba6887afab289ab1f81875fe908b606cdfd0e3/mcp-2.3.0.tar.gz", hash = "sha256:8b147a50441cf059dc88c684e0aeed3687f0aa0f39c6cde7b90330effd2b34d8", size = 4171955, upload-time = "2026-10-02T22:06:56.091Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/20/d7/4a2878f128df729db3ca04e71bfce26405cc2e0c9ebe19c592feeb4c61b9/mcp-2.3.0-py3-none-any.whl", hash = "sha256:dd0c44c089d16453e8ae31a3877a0054d7a2314caaa81f5e0541b9b1734b2377", size = 368664, upload-time = "2026-10-02T22:06:52.119Z" },
+]
+
+[[package]]
+name = "mcp-types"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/2d/7c251e34207f6c51000312fc8839111ac45cfe02023f90b44e7f1051dd8e/mcp_types-2.3.0.tar.gz", hash = "sha256:d1e46549edb35ee19a94940fcee6d1addd7e589ab7ea92dda83f5d84781fc362", size = 65898, upload-time = "2026-10-02T22:06:57.863Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/48/32583066b155bb5d4507e7887dc88ee23118cc4de8e2a12870c49719e2a8/mcp_types-2.3.0-py3-none-any.whl", hash = "sha256:968efdbdaedfab06adae40d378a34395f1090c5921d4be3c9cde283aaf76d91d", size = 69108, upload-time = "2026-10-02T22:06:54.099Z" },
+]
+
+[[package]]
 name = "ml-dtypes"
 version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1901,6 +1941,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3f/15/3db0638f9a4f2ace097e8ebfc9a592eff5a864f36933ee0579fce88350b5/opensandbox-0.1.16.tar.gz", hash = "sha256:b9253a58eb9f01bff522fccf317746b464805893c56a6ad447e0f1cc7f37276c", size = 253711, upload-time = "2026-08-26T04:07:41.242Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9a/a3/5431e516c1ed4027c4b011b1969b46b7ec6754c47e2b5a1427a99f8827a6/opensandbox-0.1.16-py3-none-any.whl", hash = "sha256:2e3b7e18e52f69f9696cb563713e2581e10a727d4dc83edc0ec27b1c725c3ce0", size = 583522, upload-time = "2026-08-26T04:07:39.503Z" },
+]
+
+[[package]]
+name = "opentelemetry-api"
+version = "1.45.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2e/02/6e0ae9cc61bd3169d401077b507b3ebc344745171e1051ab430be012dcd9/opentelemetry_api-1.45.1.tar.gz", hash = "sha256:aa38ed19bcc084ba42782a73255b3582283eced7ad6dddbd6695189e69adfb75", size = 72804, upload-time = "2026-10-06T17:32:58.133Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/41/f7dcf80b81ee8e71c1a2b59f14208bc723edbd89ed027a73b175abf6348e/opentelemetry_api-1.45.1-py3-none-any.whl", hash = "sha256:b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb", size = 60256, upload-time = "2026-10-06T17:32:33.506Z" },
 ]
 
 [[package]]
@@ -2422,6 +2474,20 @@ wheels = [
 ]
 
 [[package]]
+name = "pyjwt"
+version = "2.15.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/43/ea/5194e52748b0da83d71e082d75496eaec6e58f419f5e184786ded517e6a9/pyjwt-2.15.1.tar.gz", hash = "sha256:4f259e80cdfb6b3fc18a7de51fd1ef9ec79652f25019bae68975ca2468a34df8", size = 121252, upload-time = "2026-09-28T18:40:42.598Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/50/ca/44de4e75f8aadc457f0634be3b542815078ded46dca30efb960edeecad6e/pyjwt-2.15.1-py3-none-any.whl", hash = "sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193", size = 33860, upload-time = "2026-09-28T18:40:41.429Z" },
+]
+
+[package.optional-dependencies]
+crypto = [
+    { name = "cryptography" },
+]
+
+[[package]]
 name = "pyright"
 version = "1.1.411"
 source = { registry = "https://pypi.org/simple" }
@@ -2510,12 +2576,43 @@ wheels = [
 ]
 
 [[package]]
+name = "python-multipart"
+version = "0.0.32"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/42/55c32bb9b12693c092ad250a0e82edb5b31ddeda6eb772de5f308b3804ad/python_multipart-0.0.32.tar.gz", hash = "sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e", size = 46881, upload-time = "2026-06-04T16:18:58.647Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/04/e8135ebd1ad02c56ec633277529b2602ff99ff634be76cdba5744cf554fd/python_multipart-0.0.32-py3-none-any.whl", hash = "sha256:ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23", size = 30042, upload-time = "2026-06-04T16:18:57.319Z" },
+]
+
+[[package]]
 name = "python-ulid"
 version = "4.0.1"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/41/65079023c81491a21799c0120bce5925366b6913596bf797806f19973290/python_ulid-4.0.1.tar.gz", hash = "sha256:bbeec02556190bb9dc3401faa7268696acbfbe7b6db9908c155dc3548629f20c", size = 101683, upload-time = "2026-07-20T15:21:41.256Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b4/15/8b39b36f55b6618ec4ca9b55134dcfd9c04cecbc72709f5d8e6bdebed9cd/python_ulid-4.0.1-py3-none-any.whl", hash = "sha256:6f1d69ceb97e99fe542df8476ebcd7a668284bf53ee14b3106bcc6a341a95ed9", size = 14609, upload-time = "2026-07-20T15:21:40.214Z" },
+]
+
+[[package]]
+name = "pywin32"
+version = "312"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/f5/10a6e845a00fc5e7afd0a988b744f403d4d57162a28d160a093c4d9322f0/pywin32-312-cp311-cp311-win32.whl", hash = "sha256:17948aeadbdb091f0ced6ef0841620794e68327b94ee415571c1203594b7215c", size = 6362659, upload-time = "2026-06-04T07:49:21.349Z" },
+    { url = "https://files.pythonhosted.org/packages/35/c4/dcd2d62b5944b6d5db53413a5899016ccd57ffcb7278f3f81655d25d2027/pywin32-312-cp311-cp311-win_amd64.whl", hash = "sha256:d11417d84412f859b722fad0841b3614459ed0047f7542d8362e77884f6b6e8a", size = 6928825, upload-time = "2026-06-04T07:49:23.934Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/56/3cbb433fe4501cdba2eb9040f56a4e1a8243faa4186b25295564d1a7a79d/pywin32-312-cp311-cp311-win_arm64.whl", hash = "sha256:b2200a054ca6d6625c4842fc56a4976a4b47f96b73dbe5538c3f813a80359f47", size = 6721875, upload-time = "2026-06-04T07:49:26.416Z" },
+    { url = "https://files.pythonhosted.org/packages/83/ff/32aa7d2ed0ab12b323aaa64f9b75e6ad4f8fd09f9ccfc28c79414d46838d/pywin32-312-cp312-cp312-win32.whl", hash = "sha256:dab4f65ac9c4e48400a2a0530c46c3c579cd5905ecd11b80692373915269208b", size = 6371877, upload-time = "2026-06-04T07:49:28.836Z" },
+    { url = "https://files.pythonhosted.org/packages/03/d9/77040d3b43df3f3be32ea289433d660d2727f5ba327bc73be835127d9d60/pywin32-312-cp312-cp312-win_amd64.whl", hash = "sha256:b457f6d628a47e8a7346ce22acb7e1a46a4a78b52e1d17e1af56871bd19a93bc", size = 6914841, upload-time = "2026-06-04T07:49:31.85Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/cc/7b1ec671775756020a0ee7f4feeaf3c568f0ab86bd3900088cf986937a92/pywin32-312-cp312-cp312-win_arm64.whl", hash = "sha256:6017c58e12f6809fbb0555b75df144c2922a9ffd18e4b9b5afa863b6c1a9d950", size = 6727901, upload-time = "2026-06-04T07:49:34.244Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/41/12fbfd7f36ed2146d8bc9de96c2741296bf0d490b98508496cff322e274c/pywin32-312-cp313-cp313-win32.whl", hash = "sha256:7a27df850933d16a8eabfbaeb73d52b273e2da667f80d70b01a89d1f6828d02c", size = 6370184, upload-time = "2026-06-04T07:49:36.253Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/db/36a78e3403099d31d9746d13fdcde5accc43c1155f375a34d15983a479a7/pywin32-312-cp313-cp313-win_amd64.whl", hash = "sha256:c53e878d15a1c44788082bfe712a905433473aa38f86375b7cf8b45e3acbaaf9", size = 6914298, upload-time = "2026-06-04T07:49:38.876Z" },
+    { url = "https://files.pythonhosted.org/packages/84/37/c1697194092b76de9ed47ca124323f02c57ffc8a45c06f88a3d5acaf01eb/pywin32-312-cp313-cp313-win_arm64.whl", hash = "sha256:59aba5d5940842075343a5ddc6b11f1cdf0d1567fe745290359dfbcc7c2eb831", size = 6727640, upload-time = "2026-06-04T07:49:41.083Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/2b/1f3cded5822fd49c02f40544cbb5f58c7cfd6b1694869fd476cb6170ee97/pywin32-312-cp314-cp314-win32.whl", hash = "sha256:a77a90fbb6881238d2ca9c6fd797b25817f3768fe78d214a90137ff055a75f5b", size = 6468928, upload-time = "2026-06-04T07:49:43.188Z" },
+    { url = "https://files.pythonhosted.org/packages/21/82/3bf86d2e2808902013132e1ce905a7da0da53790f3836c64bf44d55e24f3/pywin32-312-cp314-cp314-win_amd64.whl", hash = "sha256:a4dd3a848290ef724347b19f301045831d8e802fa4464f491b98b1e0a081432e", size = 7024157, upload-time = "2026-06-04T07:49:45.34Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/0e/73f6d6800b4f27655abd9e9f6aaeaefcddb2b946e4674efa2bab184a7f7b/pywin32-312-cp314-cp314-win_arm64.whl", hash = "sha256:9fce94568364e0155e6dfb781ac5d95903be8baf28670632beab1b523f300daa", size = 6839598, upload-time = "2026-06-04T07:49:47.613Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/61/caa39686032d2ebdd04ff0ab5cbe163126c0066d98e00c9018646e42393b/pywin32-312-cp315-cp315-win32.whl", hash = "sha256:5c1fbe4a937a73ae9297384a3da38518cbc694c68ad8a809b2e19acd350f03ed", size = 6471159, upload-time = "2026-06-04T07:49:50.035Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/cd/7e1de64a4a6f69c04214169657ccab0d93a670ea50e35eb8f489d7378249/pywin32-312-cp315-cp315-win_amd64.whl", hash = "sha256:c2f03a0f73f804a13c2735b99392b0cd426bb4f2c4d0178e5ac966a0f21618d5", size = 7025293, upload-time = "2026-06-04T07:49:54.857Z" },
+    { url = "https://files.pythonhosted.org/packages/23/ed/4532e9388e65fa16b46776ef47ad631a64eda1631884488af707666350ed/pywin32-312-cp315-cp315-win_arm64.whl", hash = "sha256:a8597d28f267b39074aef51fa593530082b39cbe5a074226096857b1fed2dfb9", size = 6840337, upload-time = "2026-06-04T07:49:57.531Z" },
 ]
 
 [[package]]
@@ -3214,15 +3311,50 @@ requires-dist = [
 provides-extras = ["gateway", "sqlalchemy"]
 
 [[package]]
+name = "tinkerfin-companion"
+version = "0.1.1"
+source = { editable = "apps/desktop" }
+dependencies = [
+    { name = "aiosqlite" },
+    { name = "httpx" },
+    { name = "langchain-core" },
+    { name = "pydantic" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "tinkerfin-contracts" },
+    { name = "tinkerfin-remote" },
+    { name = "tinkerfin-sandbox", extra = ["mcp"] },
+    { name = "websockets" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite", specifier = "==0.22.1" },
+    { name = "httpx", specifier = "==0.28.1" },
+    { name = "langchain-core", specifier = "==1.6.4" },
+    { name = "pydantic", specifier = ">=2,<3" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = "==2.0.52" },
+    { name = "tinkerfin-contracts", editable = "packages/tinkerfin-contracts" },
+    { name = "tinkerfin-remote", editable = "packages/tinkerfin-remote" },
+    { name = "tinkerfin-sandbox", extras = ["mcp"], editable = "packages/tinkerfin-sandbox" },
+    { name = "websockets", specifier = "==15.0.1" },
+]
+
+[[package]]
 name = "tinkerfin-contracts"
 version = "0.1.1"
 source = { editable = "packages/tinkerfin-contracts" }
 dependencies = [
+    { name = "jsonschema" },
     { name = "pydantic" },
+    { name = "pydantic-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2,<3" }]
+requires-dist = [
+    { name = "jsonschema", specifier = ">=4.25,<5" },
+    { name = "pydantic", specifier = ">=2,<3" },
+    { name = "pydantic-core", specifier = ">=2,<3" },
+]
 
 [[package]]
 name = "tinkerfin-gateway"
@@ -3267,6 +3399,7 @@ source = { virtual = "." }
 dev = [
     { name = "ag-ui-protocol" },
     { name = "aiosqlite" },
+    { name = "cryptography" },
     { name = "deepagents" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint" },
@@ -3281,6 +3414,7 @@ dev = [
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "sse-starlette" },
     { name = "tinkerfin-sqlalchemy" },
+    { name = "zstandard" },
 ]
 lint = [
     { name = "pyright" },
@@ -3292,10 +3426,12 @@ packaging = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "setuptools" },
+    { name = "zstandard" },
 ]
 test = [
     { name = "ag-ui-protocol" },
     { name = "aiosqlite" },
+    { name = "cryptography" },
     { name = "deepagents" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint" },
@@ -3313,6 +3449,7 @@ test = [
 dev = [
     { name = "ag-ui-protocol", specifier = "==0.1.19" },
     { name = "aiosqlite", specifier = ">=0.22,<1" },
+    { name = "cryptography", specifier = "==50.0.0" },
     { name = "deepagents", specifier = ">=0.7.19" },
     { name = "langgraph", specifier = ">=1.2.10,<2" },
     { name = "langgraph-checkpoint", specifier = ">=4.1,<5" },
@@ -3327,6 +3464,7 @@ dev = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.48,<3" },
     { name = "sse-starlette", specifier = "==3.4.11" },
     { name = "tinkerfin-sqlalchemy", editable = "packages/tinkerfin-sqlalchemy" },
+    { name = "zstandard", specifier = "==0.25.0" },
 ]
 lint = [
     { name = "pyright", specifier = ">=1.1.411,<2.0.0" },
@@ -3338,10 +3476,12 @@ packaging = [
     { name = "pytest", specifier = ">=8.3.5,<10.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.25.3,<2.0.0" },
     { name = "setuptools", specifier = ">=77" },
+    { name = "zstandard", specifier = "==0.25.0" },
 ]
 test = [
     { name = "ag-ui-protocol", specifier = "==0.1.19" },
     { name = "aiosqlite", specifier = ">=0.22,<1" },
+    { name = "cryptography", specifier = "==50.0.0" },
     { name = "deepagents", specifier = ">=0.7.19" },
     { name = "langgraph", specifier = ">=1.2.10,<2" },
     { name = "langgraph-checkpoint", specifier = ">=4.1,<5" },
@@ -3455,42 +3595,83 @@ requires-dist = [
 provides-extras = ["redis"]
 
 [[package]]
-name = "tinkerfin-sandbox"
+name = "tinkerfin-remote"
 version = "0.1.1"
-source = { editable = "packages/tinkerfin-sandbox" }
+source = { editable = "packages/tinkerfin-remote" }
 dependencies = [
     { name = "deepagents" },
-    { name = "httpx" },
-    { name = "langchain" },
     { name = "langchain-core" },
-    { name = "opensandbox" },
     { name = "pydantic" },
-    { name = "tinkerfin-contracts" },
-    { name = "tinkerfin-notifications" },
-    { name = "typing-extensions" },
-]
-
-[package.optional-dependencies]
-sqlalchemy = [
     { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "tinkerfin-contracts" },
+    { name = "tinkerfin-messaging", extra = ["sqlalchemy"] },
     { name = "tinkerfin-sqlalchemy" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "deepagents", specifier = "==0.7.19" },
+    { name = "langchain-core", specifier = ">=1.6.4,<2" },
+    { name = "pydantic", specifier = ">=2.12,<3" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = "==2.0.52" },
+    { name = "tinkerfin-contracts", editable = "packages/tinkerfin-contracts" },
+    { name = "tinkerfin-messaging", extras = ["sqlalchemy"], editable = "packages/tinkerfin-messaging" },
+    { name = "tinkerfin-sqlalchemy", editable = "packages/tinkerfin-sqlalchemy" },
+]
+
+[[package]]
+name = "tinkerfin-sandbox"
+version = "0.1.1"
+source = { editable = "packages/tinkerfin-sandbox" }
+dependencies = [
+    { name = "deepagents" },
+    { name = "langchain" },
+    { name = "langchain-core" },
+    { name = "pydantic" },
+    { name = "tinkerfin-contracts" },
+    { name = "typing-extensions" },
+]
+
+[package.optional-dependencies]
+mcp = [
+    { name = "anyio" },
+    { name = "mcp" },
+    { name = "mcp-types" },
+]
+opensandbox = [
+    { name = "httpx" },
+    { name = "opensandbox" },
+    { name = "tinkerfin-notifications" },
+]
+sqlalchemy = [
+    { name = "httpx" },
+    { name = "opensandbox" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "tinkerfin-notifications" },
+    { name = "tinkerfin-sqlalchemy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anyio", marker = "extra == 'mcp'", specifier = ">=4.10,<5" },
     { name = "deepagents", specifier = ">=0.7.19" },
-    { name = "httpx", specifier = ">=0.28.1,<1" },
+    { name = "httpx", marker = "extra == 'opensandbox'", specifier = ">=0.28.1,<1" },
+    { name = "httpx", marker = "extra == 'sqlalchemy'", specifier = ">=0.28.1,<1" },
     { name = "langchain", specifier = ">=1.4.2,<2" },
     { name = "langchain-core", specifier = ">=1.6.4,<2" },
-    { name = "opensandbox", specifier = "==0.1.16" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = "==2.3.0" },
+    { name = "mcp-types", marker = "extra == 'mcp'", specifier = "==2.3.0" },
+    { name = "opensandbox", marker = "extra == 'opensandbox'", specifier = "==0.1.16" },
+    { name = "opensandbox", marker = "extra == 'sqlalchemy'", specifier = "==0.1.16" },
     { name = "pydantic", specifier = ">=2,<3" },
     { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'sqlalchemy'", specifier = "==2.0.52" },
     { name = "tinkerfin-contracts", editable = "packages/tinkerfin-contracts" },
-    { name = "tinkerfin-notifications", editable = "packages/tinkerfin-notifications" },
+    { name = "tinkerfin-notifications", marker = "extra == 'opensandbox'", editable = "packages/tinkerfin-notifications" },
+    { name = "tinkerfin-notifications", marker = "extra == 'sqlalchemy'", editable = "packages/tinkerfin-notifications" },
     { name = "tinkerfin-sqlalchemy", marker = "extra == 'sqlalchemy'", editable = "packages/tinkerfin-sqlalchemy" },
     { name = "typing-extensions", specifier = ">=4.12.2,<5" },
 ]
-provides-extras = ["sqlalchemy"]
+provides-extras = ["mcp", "opensandbox", "sqlalchemy"]
 
 [[package]]
 name = "tinkerfin-sqlalchemy"
@@ -3537,13 +3718,16 @@ dependencies = [
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "starlette" },
     { name = "tinkerfin", extra = ["agui", "redis", "tracing"] },
+    { name = "tinkerfin-agui-adapter" },
     { name = "tinkerfin-automation", extra = ["gateway", "sqlalchemy"] },
     { name = "tinkerfin-contracts" },
     { name = "tinkerfin-gateway", extra = ["starlette"] },
     { name = "tinkerfin-langgraph-store", extra = ["sqlalchemy"] },
     { name = "tinkerfin-messaging", extra = ["agui", "redis"] },
     { name = "tinkerfin-notifications", extra = ["redis"] },
+    { name = "tinkerfin-remote" },
     { name = "tinkerfin-sandbox", extra = ["sqlalchemy"] },
+    { name = "tinkerfin-sqlalchemy" },
     { name = "tinkerfin-tracing", extra = ["sqlalchemy"] },
     { name = "types-aiobotocore", extra = ["s3"] },
     { name = "types-aiobotocore-s3" },
@@ -3582,13 +3766,16 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = "==2.0.52" },
     { name = "starlette", specifier = ">=1.3.1,<2" },
     { name = "tinkerfin", extras = ["agui", "redis", "tracing"], editable = "packages/tinkerfin" },
+    { name = "tinkerfin-agui-adapter", editable = "packages/tinkerfin-agui-adapter" },
     { name = "tinkerfin-automation", extras = ["gateway", "sqlalchemy"], editable = "packages/tinkerfin-automation" },
     { name = "tinkerfin-contracts", editable = "packages/tinkerfin-contracts" },
     { name = "tinkerfin-gateway", extras = ["starlette"], editable = "packages/tinkerfin-gateway" },
     { name = "tinkerfin-langgraph-store", extras = ["sqlalchemy"], editable = "packages/tinkerfin-langgraph-store" },
     { name = "tinkerfin-messaging", extras = ["agui", "redis"], editable = "packages/tinkerfin-messaging" },
     { name = "tinkerfin-notifications", extras = ["redis"], editable = "packages/tinkerfin-notifications" },
+    { name = "tinkerfin-remote", editable = "packages/tinkerfin-remote" },
     { name = "tinkerfin-sandbox", extras = ["sqlalchemy"], editable = "packages/tinkerfin-sandbox" },
+    { name = "tinkerfin-sqlalchemy", editable = "packages/tinkerfin-sqlalchemy" },
     { name = "tinkerfin-tracing", extras = ["sqlalchemy"], editable = "packages/tinkerfin-tracing" },
     { name = "types-aiobotocore", extras = ["s3"], specifier = ">=3,<4" },
     { name = "types-aiobotocore-s3", specifier = ">=3,<4" },

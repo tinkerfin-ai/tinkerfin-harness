@@ -2,9 +2,10 @@
 
 ## What it is
 
-`tinkerfin-sandbox` provides isolated project workspaces, asynchronous files and
-commands, persistent Sandbox bindings, pause/resume, warm capacity, and cleanup. Its OpenSandbox
-integration uses SDK 0.1.16 and Server 0.2.3.
+`tinkerfin-sandbox` provides isolated native and OpenSandbox workspaces with
+asynchronous files, commands, and resource cleanup. OpenSandbox additionally
+provides persistent bindings, pause/resume, and warm capacity. Its integration
+uses SDK 0.1.16 and Server 0.2.3.
 
 The [Sandbox runtime image](https://github.com/tinkerfin-ai/sandbox-runtime) includes
 Playwright and headless Chromium. Isolated workspaces require the matching
@@ -17,7 +18,7 @@ deployment. Select a runtime image with `OpenSandboxConfig(image=...)`.
 Python 3.11 or newer is required.
 
 ```bash
-pip install tinkerfin-sandbox
+pip install "tinkerfin-sandbox[opensandbox]"
 ```
 
 For persistent state, install the SQL extra and your database's asynchronous driver:
@@ -29,7 +30,123 @@ pip install "tinkerfin-sandbox[sqlalchemy]" aiosqlite
 Use `asyncpg` for PostgreSQL or `asyncmy` for MySQL. Connection settings and Engine
 ownership remain with your application.
 
-## Quick Start
+## Native macOS workspaces
+
+Install `tinkerfin-sandbox` on macOS. Normal access uses the system's
+`sandbox-exec` and requires neither Node.js nor Sandbox Runtime. Restricted
+network access requires Sandbox Runtime 0.0.79 with Node.js. The application owns
+the working directory and grants; the workspace owns its temporary resources and
+process groups. Importing the package does not require a native runtime.
+
+```python
+from tinkerfin_sandbox import LocalWorkspace
+
+async with LocalWorkspace(directory) as local:
+    runtime = configured.build(model=model, backend=local)
+```
+
+To keep a process outside a Runtime run, borrow an explicit resource scope:
+
+```python
+async with local.open() as session:
+    async with session.open_process(arguments) as process:
+        output, diagnostic = await process.communicate(input_bytes)
+```
+
+The `local` manager must outlive this context. Closing it revokes every borrow,
+waits for admitted preparation, and removes private temporary resources. Caller
+cancellation propagates after cleanup. User files remain in the project directory.
+
+For CLI commands that submit work to a separately owned service, bind the host's
+bounded asynchronous cleanup with `on_command_abort=service.aclose`. Command
+cancellation, deadline and output failures await it after stopping the foreground
+process group. Normal results, including nonzero exits, leave the service open.
+The host retains ownership and closes the service through an independent scope.
+
+```python
+async with LocalWorkspace(directory, on_command_abort=service.aclose) as local:
+    async with local.open() as session:
+        result = await session.aexecute(command)
+```
+
+Integrations that need a canonical native path can resolve it within the borrow:
+
+```python
+async with local.open() as session:
+    path = await session.resolve_path("link/../report.html", operation="read")
+```
+
+Resolution preserves native symlink traversal and creates no files. The result
+does not reserve the file or grant access; perform subsequent I/O through the
+same session. File methods also accept native paths directly.
+
+Network access defaults to `LocalAccess(network="normal")`: programs use native
+networking, including public HTTPS, LAN and loopback services. Ordinary graphical
+programs and Unix sockets are available subject to operating-system permissions.
+The command PATH includes `/usr/local/bin` and `/opt/homebrew/bin`; explicitly
+bound commands and the managed Python environment take precedence. Use
+`LocalAccess(network="restricted", allowed_domains=("example.com",))` to restrict
+outbound destinations, or an empty allowlist to deny them. Domain patterns are
+not an independent IP firewall. Restricted connections use a managed proxy.
+Certificate verification remains enabled with the system CA bundle.
+
+To authorize a local Unix service in restricted mode, grant its socket path:
+
+```python
+from tinkerfin_sandbox import LocalAccess, LocalWorkspace
+
+access = LocalAccess(network="restricted", unix_socket_paths=(service_socket,))
+async with LocalWorkspace(directory, access=access) as local:
+    async with local.open() as session:
+        result = await session.aexecute(command)
+```
+
+The service and socket remain with their existing owner. Each grant permits
+binding and connecting to that socket file or sockets beneath a directory, including files
+created later. Grants add no filesystem access or TCP loopback access;
+protected paths and isolated roots still take precedence. The default grants
+no additional Unix paths, and `/` cannot be granted.
+
+In restricted mode, `LocalAccess(graphics=True)` enables limited IPC for supported
+multiprocess graphical programs. Normal mode needs no graphics flag. The
+application supplies the executable and owns any persistent profile.
+
+`filesystem="workspace"` limits files to the working directory and explicit
+grants. `filesystem="user"` permits ordinary user files; normal mode also allows
+`.ssh`, `.aws`, and Keychain directories unless the host declares them in
+`protected_paths`. Use `protected_paths` for private application state,
+`read_only_paths` for immutable files, and `isolated_roots` for project or input
+trees whose other contents must stay hidden. Protected paths remain inaccessible
+even when explicit read, write or Unix grants overlap them. These restrictions
+also apply to file tools and child commands; trusted runtime files remain
+read-only. Each Runtime run receives its own resource scope.
+
+To read selected inputs outside a project while hiding their siblings:
+
+```python
+access = LocalAccess(
+    isolated_roots=(projects_root, inputs_root),
+    read_directories=(selected_inputs,),
+)
+async with LocalWorkspace(project_directory, access=access) as local:
+    async with local.open() as session:
+        instructions = await session.aread(str(selected_inputs / "instructions.md"))
+```
+
+The caller prepares and retains those input directories until the workspace
+closes. Each isolated root permits its working directory, if beneath it, and
+reads of explicit `read_directories` strictly beneath that root. Other contents,
+including future siblings, stay hidden. A read grant to the root itself or an
+ancestor does not expose the tree; nested roots each retain their restrictions.
+Roots and read exceptions must exist, and an isolated root cannot be `/` or the
+working directory itself. Extra reads permit neither writes nor Unix connections
+inside an isolated tree. Those operations remain limited to its working
+directory and the selected network policy, including through path aliases.
+
+Install
+`tinkerfin-sandbox[mcp]` to use an explicitly authorized local MCP server.
+
+## OpenSandbox quick start
 
 Deploy the Server and runtime, then choose a Sandbox owner and a project:
 

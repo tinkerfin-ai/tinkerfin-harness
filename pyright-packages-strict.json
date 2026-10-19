@@ -1,5 +1,6 @@
 {
   "include": [
+    "packages/tinkerfin-remote/src",
     "packages/tinkerfin/src",
     "packages/tinkerfin-automation/src",
     "packages/tinkerfin-contracts/src",

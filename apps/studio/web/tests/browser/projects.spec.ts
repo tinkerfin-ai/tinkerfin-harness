@@ -971,7 +971,7 @@ for (const theme of ['light', 'dark'] as const) for (const width of [320, 768, 1
       await heldGraph
       await route.fulfill({ json: { code: 0, message: 'success', data: { ...emptyTraceGraph(3), nextCursor: null, generation: 'project-preview', headRunId: 'run' } } })
     })
-    await page.getByRole('tab', { name: '链路', exact: true }).click()
+    await page.getByRole('button', { name: '链路', exact: true }).click()
     const chain = page.getByRole('status').filter({ hasText: '正在加载链路…' })
     await expect(chain).toBeVisible()
     expect(await appearance(chain)).toEqual(historyAppearance)

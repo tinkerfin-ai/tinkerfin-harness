@@ -10,9 +10,16 @@ declare global {
 const installed = new WeakSet<Page>()
 
 /** 提供可取消的通知连接和空运行基线；自动化用例可保留自己的运行接口 */
-export async function installNotificationStream(page: Page, mockActiveRuns = true): Promise<void> {
+export async function installNotificationStream(page: Page, mockActiveRuns = true, mockDevices = true): Promise<void> {
   if (installed.has(page)) return
   installed.add(page)
+  if (mockDevices) {
+    await page.route('**/api/devices**', route => {
+      const path = new URL(route.request().url()).pathname
+      const data = path === '/api/devices' ? [] : null
+      return route.fulfill({ json: { code: 0, message: 'success', data } })
+    })
+  }
   await page.addInitScript(({ mockActiveRuns }) => {
     const original = window.fetch
     const readers = new Set<ReadableStreamDefaultController<Uint8Array>>()

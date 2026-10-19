@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises'
 import { expect, test } from '@playwright/test'
 
 import { installNotificationStream } from './fixtures/notifications'
@@ -10,7 +9,7 @@ for (const hasTouch of [false, true]) {
     for (const theme of ['light', 'dark']) {
       test(`用户头像的选图、取消、保存和默认图标 ${theme}`, async ({ page }, info) => {
         const user = { user_id: 7, username: 'yunsan', avatar_url: null as string | null, roles: [], disabled: false }
-        const image = await readFile('public/brand/tinkerfin-mark.png')
+        const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7q8AAAAASUVORK5CYII=', 'base64')
         let failSave = true
         let failImage = false
         let savedImage = 0
@@ -48,6 +47,8 @@ for (const hasTouch of [false, true]) {
         await page.getByRole('menuitem', { name: '设置', exact: true }).click()
         const dialog = page.getByRole('dialog', { name: '设置', exact: true })
         await expect(dialog.getByText('yunsan', { exact: true })).toBeVisible()
+        await expect(dialog.getByRole('heading', { name: '设置', exact: true })).toBeFocused()
+        await expect(dialog.getByRole('button', { name: '关闭对话框' })).toHaveCSS('outline-style', 'none')
         await expect(dialog.getByRole('textbox')).toHaveCount(0)
         await expect(dialog.getByRole('button', { name: '保存', exact: true })).toHaveCount(0)
         for (const width of [320, 768, 1024, 1440]) {
@@ -98,6 +99,22 @@ for (const hasTouch of [false, true]) {
         await expect(dialog.getByRole('status')).toHaveText('头像已保存')
         await expect(dialog.getByRole('button', { name: '移除头像' })).toHaveCount(0)
         await expect(dialog.locator('img')).toHaveCount(0)
+        await dialog.getByRole('button', { name: '关闭对话框' }).click()
+        await expect(dialog).toHaveCount(0)
+        await expect(page.getByRole('button', { name: '打开用户菜单' })).toBeFocused()
+        await page.keyboard.press('Enter')
+        await expect(page.getByRole('menuitem', { name: '设置', exact: true })).toBeFocused()
+        await page.keyboard.press('Enter')
+        await expect(dialog).toHaveAttribute('aria-modal', 'true')
+        await expect(dialog.getByRole('heading', { name: '设置', exact: true })).toBeFocused()
+        await page.keyboard.press('Tab')
+        const close = dialog.getByRole('button', { name: '关闭对话框' })
+        await expect(close).toBeFocused()
+        await expect(close).toHaveCSS('outline-style', 'solid')
+        await expect(close).toHaveCSS('outline-width', '2px')
+        await page.keyboard.press('Escape')
+        await expect(dialog).toHaveCount(0)
+        await expect(page.getByRole('button', { name: '打开用户菜单' })).toBeFocused()
       })
     }
 

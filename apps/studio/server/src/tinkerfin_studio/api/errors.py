@@ -137,6 +137,32 @@ class WorkspaceErrorCode(ErrorCode):
     FORBIDDEN = _ErrorCodeValue(1_001_011_006, 403, "无法读取此文件或目录")
 
 
+class DeviceErrorCode(ErrorCode):
+    """设备配对、授权与连接的可恢复错误"""
+
+    NOT_FOUND = _ErrorCodeValue(1_001_012_000, 404, "设备或授权申请不存在")
+    AUTHORIZATION_EXPIRED = _ErrorCodeValue(
+        1_001_012_001, 410, "授权已过期，请在客户端重新连接"
+    )
+    AUTHORIZATION_CONFLICT = _ErrorCodeValue(
+        1_001_012_002, 409, "授权已变化，请重新连接"
+    )
+    UNAUTHORIZED = _ErrorCodeValue(1_001_012_003, 401, "设备凭证无效或已被撤销")
+    LIMIT_REACHED = _ErrorCodeValue(
+        1_001_012_004, 409, "等待授权的申请已达上限，请稍后重试"
+    )
+    WORKSPACE_UNAVAILABLE = _ErrorCodeValue(1_001_012_005, 409, "当前项目不可用")
+    CONNECTION_REPLACED = _ErrorCodeValue(
+        1_001_012_006, 409, "设备连接已被新的连接替换"
+    )
+    EXECUTION_UNAVAILABLE = _ErrorCodeValue(
+        1_001_012_007, 404, "本机执行已结束或不可访问"
+    )
+    PROFILE_CHANGED = _ErrorCodeValue(
+        1_001_012_008, 409, "本机执行的授权已变化，请重新发起"
+    )
+
+
 class AuthErrorCode(ErrorCode):
     """认证模块错误"""
 
@@ -217,6 +243,9 @@ class ConversationErrorCode(ErrorCode):
         1_001_004_002,
         409,
         "会话当前状态不允许启动新的运行",
+    )
+    LOCAL_PROJECT_FIXED = _ErrorCodeValue(
+        1_001_004_035, 409, "本地会话不能移动到其他项目"
     )
     DELETE_CONFLICT = _ErrorCodeValue(
         1_001_004_003,

@@ -9,12 +9,13 @@ export interface ConversationCommandMap extends JsonObject {
   plan: ConversationPlanCommand
 }
 
-export interface ConversationForwardedProps extends JsonObject {
+export interface ConversationForwardedProps {
   projectId: string
   model: string
   accessMode: AccessMode
   command: ConversationCommandMap
   skillIds: string[]
+  localTarget?: { device_id: string; workspace_id: string }
 }
 
 export interface ChatMessageInput {
@@ -133,7 +134,7 @@ export interface SubagentProvenance {
 }
 
 export interface RawEventContext {
-  streamMode?: "messages" | "tasks" | "values"
+  streamMode?: "messages" | "tasks" | "values" | "custom"
   source?: EventSourceInfo
   runId?: string
   relatedSubagentInvocationId?: string

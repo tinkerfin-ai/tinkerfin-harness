@@ -26,10 +26,10 @@ it('已提交审批准备期间沿用运行指示，失败原因常驻', () => {
   expect(screen.queryByText('正在准备运行环境')).not.toBeInTheDocument()
   rerender(<ConversationViewport {...props} isRunning={false} conversation={{
     ...conversation, runStatus: 'error', runPhase: undefined,
-    notice: { kind: 'error', content: '运行环境已暂停，请恢复沙箱后重试' },
+    notice: { kind: 'error', content: '任务暂时无法执行，请稍后重试' },
   }} />)
   expect(screen.queryByRole('status', { name: '任务仍在继续' })).not.toBeInTheDocument()
-  expect(screen.getByRole('alert')).toHaveTextContent('运行环境已暂停，请恢复沙箱后重试')
+  expect(screen.getByRole('alert')).toHaveTextContent('任务暂时无法执行，请稍后重试')
 })
 
 it.each([

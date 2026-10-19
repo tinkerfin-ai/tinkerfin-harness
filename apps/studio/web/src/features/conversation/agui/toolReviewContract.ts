@@ -104,6 +104,7 @@ const parseNativeRequest = (value: unknown) => {
     const actionKeys = rawAction.description === undefined
       ? ["args", "name"]
       : ["args", "description", "name"]
+    if (rawAction.source_args !== undefined) actionKeys.push("source_args")
     const policyKeys = rawPolicy.args_schema === undefined
       ? ["action_name", "allowed_decisions"]
       : ["action_name", "allowed_decisions", "args_schema"]
@@ -115,6 +116,7 @@ const parseNativeRequest = (value: unknown) => {
       || !rawAction.name
       || rawAction.name !== rawPolicy.action_name
       || !isJsonObject(rawAction.args)
+      || (rawAction.source_args != null && !isJsonObject(rawAction.source_args))
       || (rawAction.description !== undefined && typeof rawAction.description !== "string")
       || (rawPolicy.args_schema !== undefined && !isJsonObject(rawPolicy.args_schema))
     ) throw new ToolReviewContractError("原生 Tool review action 与 policy 不一致")

@@ -8,6 +8,7 @@ from types import TracebackType
 from typing import Self
 
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -15,6 +16,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+
+from tinkerfin_sqlalchemy import SqlSession
 
 MYSQL_TABLE_OPTIONS = {
     "mysql_engine": "InnoDB",
@@ -40,7 +43,7 @@ class MySQLConnectionBudget:
 @dataclass(frozen=True, slots=True)
 class _DatabaseResources:
     engine: AsyncEngine
-    session_factory: async_sessionmaker[AsyncSession]
+    session_factory: async_sessionmaker[SqlSession]
 
 
 class Database:
@@ -88,6 +91,9 @@ class Database:
             "pool_pre_ping": True,
             "pool_recycle": self._pool_recycle,
         }
+        if make_url(self._url).drivername == "mysql+asyncmy":
+            # 已受理事务在取消后仍需结算；断网时由驱动读超时结束等待
+            options["connect_args"] = {"connect_timeout": 10, "read_timeout": 30}
         if not self._url.startswith("sqlite"):
             if self._pool_size is not None:
                 options["pool_size"] = self._pool_size
@@ -98,6 +104,7 @@ class Database:
             engine=engine,
             session_factory=async_sessionmaker(
                 engine,
+                class_=SqlSession,
                 expire_on_commit=False,
                 autoflush=False,
             ),

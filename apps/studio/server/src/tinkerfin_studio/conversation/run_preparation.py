@@ -14,6 +14,7 @@ from tinkerfin_contracts.media import Attachment
 from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
 from tinkerfin_studio.conversation.request import ChatRequest, CompactRequest
+from tinkerfin_studio.devices.schemas import LocalTargetSelection
 from tinkerfin_studio.services.schemas import ServiceBindings
 
 
@@ -68,6 +69,7 @@ class PreparedRunRequest:
     mode: AgentMode
     access_mode: AccessMode = "full"
     operation: Literal["chat", "compact"] = "chat"
+    local_target: LocalTargetSelection | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +167,7 @@ def prepare_run_request(
         message_ids=message_ids,
         mode=request.forwarded_props.agent_mode,
         access_mode=request.forwarded_props.access_mode,
+        local_target=request.forwarded_props.local_target,
     )
 
 

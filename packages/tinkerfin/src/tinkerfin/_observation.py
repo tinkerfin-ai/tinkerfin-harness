@@ -694,15 +694,13 @@ class RuntimeObservationHub:
             updates: dict[str, object] = {"graph_origin": origin}
             if isinstance(observation, ToolExecutionObservation):
                 delegation = None
-                if (
-                    observation.tool_name == "task"
-                    and observation.graph_task_id is not None
-                ):
+                if observation.graph_task_id is not None:
                     delegation = self.graph_scopes.execution_request(
                         observation.graph_namespace, observation.graph_task_id
                     )
                     if (
-                        observation.phase == "started"
+                        observation.tool_name == "task"
+                        and observation.phase == "started"
                         and observation.tool_call_id is not None
                     ):
                         arguments = observation.input

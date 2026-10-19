@@ -23,6 +23,61 @@ const test = base.extend<Record<never, never>, { controlsOrigin: string }>({
 })
 const fixture = '/tests/browser/fixtures/shared-controls.html'
 
+for (const theme of ['light', 'dark']) {
+  test(`图标切换状态始终透明且保留选中颜色与键盘焦点 ${theme}`, async ({ page, controlsOrigin }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.addInitScript(() => localStorage.setItem('tinkerfin:language', 'zh-CN'))
+    await page.goto(`${controlsOrigin}${fixture}?example=icons&theme=${theme}`)
+    const brand = await page.evaluate(() => {
+      const probe = document.createElement('span')
+      probe.style.color = 'var(--color-brand-text)'
+      document.body.append(probe)
+      try { return getComputedStyle(probe).color } finally { probe.remove() }
+    })
+    for (const label of ['云端', '本地 · 已连接', '链路', '已归档会话']) {
+      const button = page.getByRole('button', { name: label, exact: true })
+      if (await button.getAttribute('aria-pressed') !== 'true') await button.click()
+      await expect(button).toHaveAttribute('aria-pressed', 'true')
+      await page.mouse.move(0, 0)
+      await expect(button).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(button).toHaveCSS('box-shadow', 'none')
+      await expect(button).toHaveCSS('color', brand)
+      await button.hover()
+      await expect(button).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(button).toHaveCSS('color', brand)
+      await page.mouse.move(0, 0)
+      await page.keyboard.press('Tab')
+      await button.focus()
+      expect(await button.evaluate(element => element.matches(':focus-visible'))).toBe(true)
+      await expect(button).toHaveCSS('outline-style', 'solid')
+      await expect(button).toHaveCSS('outline-width', '2px')
+      await expect(button).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(button).toHaveCSS('box-shadow', 'none')
+      await expect(button).toHaveCSS('color', brand)
+      await button.hover()
+      await page.mouse.down()
+      try {
+        await expect(button).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+        await expect(button).toHaveCSS('box-shadow', 'none')
+        await expect(button).toHaveCSS('color', brand)
+      } finally { await page.mouse.up() }
+    }
+    const unavailable = page.getByRole('button', { name: '不可用' })
+    await expect(unavailable).toBeDisabled()
+    await expect(unavailable).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    await expect(unavailable).toHaveCSS('box-shadow', 'none')
+    await expect(unavailable).toHaveCSS('color', brand)
+    await page.emulateMedia({ forcedColors: 'active' })
+    await page.mouse.move(0, 0)
+    await page.keyboard.press('Tab')
+    const cloud = page.getByRole('button', { name: '云端', exact: true })
+    await cloud.focus()
+    await expect(cloud).toHaveCSS('outline-style', 'solid')
+    await expect(cloud).toHaveCSS('outline-width', '2px')
+    await expect(cloud).toHaveCSS('box-shadow', 'none')
+  })
+}
+
 for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440]) {
   test(`共享视觉变体按公开参数渲染 ${theme} ${width}`, async ({ page, controlsOrigin }) => {
     await page.setViewportSize({ width, height: 900 })

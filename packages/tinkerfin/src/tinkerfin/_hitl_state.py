@@ -57,11 +57,17 @@ def tool_review_digest(
     *,
     tool_calls: Sequence[ToolCall],
     reviewed_ids: Sequence[str],
+    file_contract_digest: str,
 ) -> str:
-    """Bind decisions to the review policy, exact selected IDs, and full model batch."""
+    """Bind decisions to policy, tool IDs, file declarations, and the model batch."""
 
     serialized = json.dumps(
-        {"request": request, "tools": tool_calls, "reviewed_ids": reviewed_ids},
+        {
+            "request": request,
+            "tools": tool_calls,
+            "reviewed_ids": reviewed_ids,
+            "file_contract_digest": file_contract_digest,
+        },
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),

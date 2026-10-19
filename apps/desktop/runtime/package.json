@@ -1,0 +1,11 @@
+{
+  "name": "tinkerfin-companion-runtime",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.79"
+  }
+}

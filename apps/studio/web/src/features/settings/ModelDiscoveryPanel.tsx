@@ -4,7 +4,7 @@ import { Button, FeedbackState, TextField } from '../../components/ui'
 import { requestJson } from '../../api/shared/http'
 import { useI18n } from '../../i18n'
 import { ImageInputStatus } from './ImageInputCapability'
-import { ModelSettingsLayout } from './ModelSettingsLayout'
+import { SettingsPanelLayout } from './SettingsPanelLayout'
 import { modelDiscoveryMessages } from './modelDiscoveryMessages'
 import { newModel, type ImageInputCapability, type ModelConnection, type ModelSettings } from './useModelSettings'
 interface DiscoveredModel { model_name: string; display_name: string; image_input_capability: ImageInputCapability }
@@ -33,7 +33,7 @@ export function ModelDiscoveryPanel({ connection, models, saving, onAdd, onManua
   const candidates = (result?.items ?? []).filter(item => selected.includes(item.model_name) && !existing.has(item.model_name))
   const query = search.trim().toLowerCase()
   const matches = (result?.items ?? []).filter(item => item.model_name.toLowerCase().includes(query) || item.display_name.toLowerCase().includes(query))
-  return <div className="settings-models__editor-frame"><ModelSettingsLayout actions={<div className="settings-models__row-actions">
+  return <div className="settings-models__editor-frame"><SettingsPanelLayout label={t('模型配置')} contentClassName="settings-models__editor" actions={<div className="settings-models__row-actions">
     <span className="settings-models__muted" role="status">{t('已选 {count} 项', { count: candidates.length })}</span>
     <Button size="sm" type="button" variant="text" disabled={saving} onClick={onManual}>{t('手动添加')}</Button>
     <Button size="sm" type="button" disabled={saving} onClick={onCancel}>{t('取消')}</Button><Button size="sm" type="button" variant="primary" loading={saving} disabled={candidates.length === 0 || candidates.length > 200} onClick={() => {
@@ -47,5 +47,5 @@ export function ModelDiscoveryPanel({ connection, models, saving, onAdd, onManua
       {matches.map(item => <label key={item.model_name}><input type="checkbox" aria-label={item.model_name} disabled={saving || existing.has(item.model_name)} checked={existing.has(item.model_name) || selected.includes(item.model_name)} onChange={event => setSelected(values => event.target.checked ? [...values, item.model_name] : values.filter(name => name !== item.model_name))} /><span>{item.model_name}<small><ImageInputStatus capability={item.image_input_capability} /></small></span>{existing.has(item.model_name) && <small>{t('已添加')}</small>}</label>)}
     </div></> : <div role="status"><p>{t(modelDiscoveryMessages[result?.code ?? ''] ?? '无法获取模型列表，请重试或手动添加')}</p><Button type="button" leadingIcon={<RefreshCw size={14} />} onClick={() => setRevision(value => value + 1)}>{t('重试')}</Button></div>}
 
-  </ModelSettingsLayout></div>
+  </SettingsPanelLayout></div>
 }

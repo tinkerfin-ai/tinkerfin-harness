@@ -27,6 +27,7 @@ from tinkerfin_messaging.messaging import Messaging
 from tinkerfin_messaging.redis import RedisBackend
 from tinkerfin_notifications import Notifications
 from tinkerfin_notifications.redis import RedisBackend as NotificationRedisBackend
+from tinkerfin_remote import RemoteTools
 from tinkerfin_sandbox.lifecycle.client import OpenSandboxClient
 from tinkerfin_sandbox.lifecycle.manager import OpenSandboxManager
 from tinkerfin_sandbox.lifecycle.sqlalchemy import SQLAlchemyOpenSandboxState
@@ -275,6 +276,7 @@ class ApplicationResources:
     sandbox_manager: OpenSandboxManager[str]
     conversation_trace: ConversationTraceCoordinator
     conversation_titles: ConversationTitles
+    remote_tools: RemoteTools
     readiness: ReadinessService
     automation: Automation
     automation_store: SqlAlchemyAutomationStore
@@ -458,6 +460,10 @@ def build_lifespan():
                 # worker 与会话先结算，再关闭发布观察，最后释放独立查询客户端
                 stack.push_async_callback(automation_publications.aclose)
                 await automation_publications.start()
+                # 会话生产者先退出，远端工具随后结清，最后归还组件数据库
+                remote_tools = await _enter_lifespan_context(
+                    stack, outcome, RemoteTools(engine=components_database.engine)
+                )
                 messaging_backend = RedisBackend(
                     redis_runtime,
                     key_prefix=MESSAGING_KEY_PREFIX,
@@ -531,6 +537,7 @@ def build_lifespan():
                     sandbox_manager=sandbox_manager,
                     conversation_trace=conversation_trace,
                     conversation_titles=conversation_titles,
+                    remote_tools=remote_tools,
                     readiness=ReadinessService(
                         business_database=database,
                         components_database=components_database,

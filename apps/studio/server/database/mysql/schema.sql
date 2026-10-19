@@ -123,6 +123,7 @@ CREATE TABLE conversation_run_registrations (
   automation_execution_id VARCHAR(36) COMMENT '自动化执行 ID；普通会话运行为 NULL',
   access_mode VARCHAR(32) NOT NULL DEFAULT 'full' COMMENT '文件审批模式：full、write_approval',
   model_id VARCHAR(64) NOT NULL COMMENT '主运行模型 ID',
+  local_profile_id VARCHAR(36) COMMENT '本轮固定的本机执行配置 UUID；未启用本机协作时为空',
   status VARCHAR(32) NOT NULL COMMENT '运行状态：preparing、starting、running、waiting、succeeded、failed、cancelled、abandoned；rejected 表示业务投递未受理，可已有准备阶段 Trace',
   input_json JSON NOT NULL COMMENT '运行请求内容',
   resume_not_saved BOOL NOT NULL DEFAULT 0 COMMENT '本次恢复提交已确认未保存；false 不代表已保存',
@@ -269,3 +270,52 @@ CREATE TABLE project_skill_settings (
   PRIMARY KEY (project_id, installation_id),
   KEY ix_project_skill_settings_owner (user_id, project_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='项目个人技能启用配置';
+
+CREATE TABLE devices (
+	device_id VARCHAR(36) NOT NULL COMMENT '服务端分配的设备 UUID',
+	user_id INTEGER NOT NULL COMMENT '设备所属用户 ID',
+	name VARCHAR(128) NOT NULL COMMENT '本机显示名称',
+	credential_digest VARCHAR(64) NOT NULL COMMENT '本机随机凭证的 SHA-256 摘要，非可用凭证',
+	capabilities JSON NOT NULL COMMENT '本机报告的当前可用能力，不包含目录路径或凭证',
+	connection_id VARCHAR(36) COMMENT '当前设备连接 UUID，用于排除已替换的连接',
+	paired_at DATETIME NOT NULL COMMENT 'UTC 配对完成时间',
+	last_seen_at DATETIME COMMENT 'UTC 最近一次已认证连接通信时间',
+	revoked_at DATETIME COMMENT 'UTC 凭证撤销时间，空表示仍可认证',
+	PRIMARY KEY (device_id)
+)CHARSET=utf8mb4 COMMENT='用户本机设备与凭证摘要' ENGINE=InnoDB COLLATE utf8mb4_0900_ai_ci;
+CREATE INDEX ix_devices_owner ON devices (user_id, revoked_at, device_id);
+
+CREATE TABLE device_authorizations (
+	authorization_id VARCHAR(36) NOT NULL COMMENT '授权申请 UUID',
+	user_id INTEGER COMMENT '批准申请的用户 ID，批准前为空',
+	device_id VARCHAR(36) NOT NULL COMMENT '申请固定的设备 UUID',
+	name VARCHAR(128) NOT NULL COMMENT '客户端发起授权时的设备名称',
+	credential_digest VARCHAR(64) NOT NULL COMMENT '客户端 Keychain 凭证的 SHA-256 摘要',
+	browser_token_digest VARCHAR(64) NOT NULL COMMENT '浏览器批准能力的 SHA-256 摘要，不可用于设备认证',
+	slot INTEGER NOT NULL COMMENT '短期记录独占的容量槽，范围 0 至 1023，清理后释放',
+	created_at DATETIME NOT NULL COMMENT 'UTC 发起时间',
+	expires_at DATETIME NOT NULL COMMENT 'UTC 授权有效期截止时间',
+	approved_at DATETIME COMMENT 'UTC 首次批准时间',
+	cancelled_at DATETIME COMMENT 'UTC 未批准申请的取消时间',
+	PRIMARY KEY (authorization_id),
+	CONSTRAINT uq_device_authorizations_slot UNIQUE (slot),
+	CONSTRAINT uq_device_authorizations_device UNIQUE (device_id),
+	CONSTRAINT ck_device_authorizations_slot CHECK (slot >= 0 AND slot < 1024)
+)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='本机发起的浏览器授权申请与双端能力摘要' COLLATE utf8mb4_0900_ai_ci;
+CREATE INDEX ix_device_authorizations_expiry ON device_authorizations (expires_at);
+
+CREATE TABLE device_execution_profiles (
+	profile_id VARCHAR(36) NOT NULL COMMENT '执行配置 UUID',
+	user_id INTEGER NOT NULL COMMENT '授权用户 ID',
+	device_id VARCHAR(36) NOT NULL COMMENT '固定执行设备 UUID',
+	source_thread_id VARCHAR(128) NOT NULL COMMENT '首次授权的云端会话 ID',
+	source_run_id VARCHAR(128) NOT NULL COMMENT '首次授权的云端运行 ID',
+	workspace_id VARCHAR(64) NOT NULL COMMENT '本机已授权工作区标识',
+	workspace_label VARCHAR(128) NOT NULL COMMENT '授权时的工作区显示名称',
+	access_mode VARCHAR(32) NOT NULL COMMENT '文件审批选择：full、write_approval',
+	skills JSON NOT NULL COMMENT '会话已授权技能的身份和内容摘要',
+	created_at DATETIME NOT NULL COMMENT 'UTC 授权时间',
+	PRIMARY KEY (profile_id),
+	CONSTRAINT uq_device_profiles_source UNIQUE (user_id, source_thread_id, source_run_id)
+)CHARSET=utf8mb4 ENGINE=InnoDB COMMENT='云端会话固定的本机工作区与权限快照' COLLATE utf8mb4_0900_ai_ci;
+CREATE INDEX ix_device_profiles_target ON device_execution_profiles (user_id, device_id, profile_id);

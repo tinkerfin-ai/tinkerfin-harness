@@ -445,7 +445,7 @@
     padding: 0;
     border: 0;
     background: var(--color-scrim);
-    cursor: default;
+    cursor: pointer;
   }
 
   .workspace-content {

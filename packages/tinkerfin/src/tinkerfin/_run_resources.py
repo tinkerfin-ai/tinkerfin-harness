@@ -64,10 +64,13 @@ class RunResources:
         return await self._stack.enter_async_context(declaration.prepare(identity))
 
     def borrow_tools(
-        self, identity: RunIdentity, workspace: WorkspaceT | None
+        self,
+        identity: RunIdentity,
+        workspace: WorkspaceT | None,
+        workspace_scope_id: str | None = None,
     ) -> _ToolRunScope[WorkspaceT]:
         """Keep tool access valid until graph settlement, then revoke before release."""
-        scope = _ToolRunScope(identity, workspace)
+        scope = _ToolRunScope(identity, workspace, workspace_scope_id)
         self._stack.callback(scope.close)
         return scope
 

@@ -342,6 +342,7 @@
   .ui-icon-button:active:not(:disabled),
   .ui-icon-button:focus-visible,
   .ui-icon-button.is-selected,
+  .ui-icon-button.is-selected:hover:not(:disabled),
   .ui-icon-button:disabled {
     border: 0;
     background: transparent;
@@ -354,7 +355,9 @@
     transform: none;
   }
 
-  .ui-icon-button.is-selected { color: var(--color-brand-text); }
+  .ui-icon-button.is-selected,
+  .ui-icon-button.is-selected:hover:not(:disabled),
+  .ui-icon-button.is-selected:focus-visible { color: var(--color-brand-text); }
 
   .ui-icon-button__icon {
     transition: transform var(--motion-fast) var(--ease-out);
@@ -363,8 +366,9 @@
   .ui-icon-button:active:not(:disabled) .ui-icon-button__icon { transform: scale(.9); }
 
   .ui-icon-button:focus-visible {
-    outline: 0;
-    background: var(--color-hover);
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    background: transparent;
     box-shadow: none;
     color: var(--color-text-primary);
   }
@@ -1016,6 +1020,7 @@
   .modal-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); padding: var(--dialog-content-padding) var(--dialog-content-padding) var(--space-3); }
   .modal-dialog-head > div { min-width: 0; }
   .modal-dialog-head h2 { margin: 0; font-size: var(--type-h3-size); line-height: var(--type-h3-line); letter-spacing: -.02em; }
+  .modal-dialog-head h2[tabindex='-1']:focus { outline: 0; }
   .modal-dialog-description { margin-top: var(--space-1); color: var(--color-text-secondary); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .modal-dialog form { padding: 0 var(--dialog-content-padding) var(--dialog-content-padding); }
   .modal-dialog-error { margin: var(--space-3) 0 0; color: var(--color-danger-text); font-size: var(--type-meta-size); }
@@ -1365,6 +1370,13 @@
     padding: 0;
     list-style: none;
     pointer-events: none;
+  }
+
+  @media (max-width: 440px) {
+    /* 宿主声明窄屏双行标题，全局提示据此避开完整操作区 */
+    :root:has([data-toast-header='stacked-mobile']) .toast-viewport {
+      --layout-header-height: var(--layout-header-stacked-height);
+    }
   }
 
   .toast-card {

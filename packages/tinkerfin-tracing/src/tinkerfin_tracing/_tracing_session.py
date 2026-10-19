@@ -481,6 +481,7 @@ class _TracingSession:
                 "identity": observation.identity,
                 "occurred_at": observation.observed_at,
                 "monotonic_ns": observation.monotonic_ns,
+                "source_clock": observation.source_clock,
             }
             completions = self._complete_open_reasoning(common)
             if completions:
@@ -735,6 +736,7 @@ class _TracingSession:
             "identity": observation.identity,
             "occurred_at": observation.observed_at,
             "monotonic_ns": observation.monotonic_ns,
+            "source_clock": observation.source_clock,
         }
         if isinstance(observation, RunStartedObservation):
             return [
@@ -1404,6 +1406,7 @@ class _TracingSession:
             "parent_subagent_id": self._parent_subagent_id(namespace),
             "occurred_at": observation.observed_at,
             "monotonic_ns": observation.monotonic_ns,
+            "source_clock": observation.source_clock,
         }
         previous_extractor = self._reasoning_extractors.get(key)
         if (
@@ -1561,6 +1564,7 @@ class _TracingSession:
                         ),
                         "occurred_at": observation.observed_at,
                         "monotonic_ns": observation.monotonic_ns,
+                        "source_clock": observation.source_clock,
                     },
                 )
         message_source_id = message.id or (
@@ -1579,6 +1583,7 @@ class _TracingSession:
             "parent_subagent_id": self._parent_subagent_id(observation.graph_namespace),
             "occurred_at": observation.observed_at,
             "monotonic_ns": observation.monotonic_ns,
+            "source_clock": observation.source_clock,
         }
         facts: list[TraceSemanticFact] = []
         if message.message_type == "remove":
@@ -1944,6 +1949,7 @@ class _TracingSession:
             "parent_subagent_id": self._parent_subagent_id(namespace),
             "occurred_at": observation.observed_at,
             "monotonic_ns": observation.monotonic_ns,
+            "source_clock": observation.source_clock,
         }
         facts: list[TraceSemanticFact] = []
         source_state = cast(
@@ -2255,7 +2261,9 @@ class _TracingSession:
         execution = (
             None if execution_id is None else self._tool_executions.get(execution_id)
         )
-        if callback and (execution is None or execution.tool_name != "task"):
+        if callback and (
+            execution is None or execution.graph_task_id != request.graph_task_id
+        ):
             raise TraceCorruption(
                 "Subagent callback has no observed parent task execution boundary"
             )

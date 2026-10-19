@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="apps/studio/web/public/brand/tinkerfin-mark.png" alt="TinkerFin" width="88" />
+  <img src="apps/studio/web/public/brand/tinkerfin.svg" alt="TinkerFin" width="88" />
 </p>
 <h1 align="center">TinkerFin</h1>
 <p align="center"><strong>A Python agent harness for enterprise applications and workflows.</strong></p>
@@ -33,6 +33,7 @@ Each Studio account manages its own projects, model and service connections, and
 
 - **Organize work by project**: Projects keep conversations, workspace files, long-term memory, and scheduled tasks separate. Conversations in the same project share files and memory. Personal skills work across your projects, with project-specific skills available when needed.
 - **Continue across clients**: Sign in to the same account from different browsers or devices to follow conversations and run status. Project resources and file changes notify other clients to refresh; reconnecting restores the latest state.
+- **Use directories and tools on a Mac**: Click **连接** (Connect) in Companion and complete authorization in your browser, then select a project and switch to local execution. The client prepares its workspace automatically; follow approvals and results in the conversation. See [local collaboration](docs/en/studio/local_devices.md).
 - **Drafts and file previews**: Unsent drafts stay in the current page. When an open workspace text file changes, Studio offers a preview refresh so the content you are reading is not replaced unexpectedly.
 
 ![Project conversations, file delivery, and live updates across clients](docs/assets/screenshots/studio-en.gif)

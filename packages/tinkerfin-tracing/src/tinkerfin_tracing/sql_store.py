@@ -48,6 +48,7 @@ from ._graph_reducer import (
     assistant_run_terminal_status,
     graph_execution_started,
     graph_failure_sequence,
+    graph_node_name,
     resolve_graph_link_issue,
     resolve_graph_node_kind,
 )
@@ -1665,15 +1666,16 @@ class _SqlAlchemyTraceLedgerBackend:
             raise TraceStoreProtocolError("Trace Graph node digest collision")
         if mutation.updated_seq < cast(int, row["updated_seq"]):
             raise TraceStoreProtocolError("Trace Graph node sequence moved backwards")
-        if mutation.name is not None and row["name"] != mutation.name:
-            raise TraceStoreProtocolError("Trace Graph node name changed")
+        name = graph_node_name(
+            cast(str, row["name"]), mutation, source_events=source_events
+        )
         if mutation.run_id is not None and row["run_id"] != mutation.run_id:
             raise TraceStoreProtocolError("Trace Graph node Run changed")
         if mutation.graph_namespace is not None and row[
             "graph_namespace"
         ] != _encode_namespace(mutation.graph_namespace):
             raise TraceStoreProtocolError("Trace Graph node namespace changed")
-        values: dict[str, object] = {"updated_seq": mutation.updated_seq}
+        values: dict[str, object] = {"updated_seq": mutation.updated_seq, "name": name}
         current_kind = TraceGraphNodeKind(cast(str, row["kind"]))
         resolved_kind = resolve_graph_node_kind(current_kind, mutation.kind)
         if resolved_kind is not current_kind:

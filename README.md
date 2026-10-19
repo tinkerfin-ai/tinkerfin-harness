@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="apps/studio/web/public/brand/tinkerfin-mark.png" alt="TinkerFin" width="88" />
+  <img src="apps/studio/web/public/brand/tinkerfin.svg" alt="TinkerFin" width="88" />
 </p>
 <h1 align="center">TinkerFin</h1>
 <p align="center"><strong>面向企业级智能体应用与业务工作流的 Python Agent Harness</strong></p>
@@ -31,6 +31,7 @@ Studio 为每个账号提供独立管理的项目、模型与服务连接、个�
 
 - **按项目组织工作**：不同项目分别保存会话、工作区文件、长期记忆与自动化任务。同一项目中的会话可共用文件和记忆，个人技能可跨项目复用，也可安装项目专属技能。
 - **在多个客户端继续工作**：同一账号登录不同浏览器或设备，可查看最新会话和运行状态；项目资源与文件变化会通知其他客户端刷新，重新连接后恢复最新状态。
+- **使用 Mac 上的目录与工具**：在本机客户端点击“连接”并完成浏览器授权，选择项目后切换本地执行。客户端自动准备工作区，审批和结果在会话中查看，见[本机协作](docs/cn/studio/local_devices.md)。
 - **草稿与文件预览**：未发送草稿保存在当前页面。已打开的工作区文本发生变化时，页面提示刷新预览，避免覆盖正在阅读的内容。
 
 ![个人项目中的会话、文件交付与多端同步](docs/assets/screenshots/studio-cn.gif)

@@ -19,6 +19,7 @@ _COMPONENT_ROOTS = {
     "messaging",
     "native_stream",
     "notifications",
+    "remote",
     "runtime",
     "sandbox",
     "tracing",
@@ -51,7 +52,7 @@ def test_package_logger_calls_are_safe_by_construction() -> None:
             if not (
                 isinstance(function, ast.Attribute)
                 and isinstance(function.value, ast.Name)
-                and function.value.id == "logger"
+                and function.value.id in {"logger", "_logger"}
             ):
                 continue
             assert function.attr != "exception"
@@ -89,6 +90,7 @@ before = {
 import tinkerfin_messaging._producer_runtime
 import tinkerfin_sandbox.lifecycle._manager_resources
 import tinkerfin_langgraph_store.sqlalchemy
+import tinkerfin_remote
 after = {
     "level": root.level,
     "handlers": [id(value) for value in root.handlers],
@@ -101,6 +103,7 @@ expected = (
     "tinkerfin.messaging.producer",
     "tinkerfin.sandbox.lifecycle",
     "tinkerfin.langgraph_store.store",
+    "tinkerfin.remote.worker",
 )
 for name in expected:
     logger = logging.getLogger(name)
@@ -112,6 +115,7 @@ for forbidden in (
     "tinkerfin_sandbox",
     "tinkerfin_agui_adapter",
     "tinkerfin_langgraph_store",
+    "tinkerfin_remote",
 ):
     assert not any(
         name == forbidden or name.startswith(forbidden + ".")

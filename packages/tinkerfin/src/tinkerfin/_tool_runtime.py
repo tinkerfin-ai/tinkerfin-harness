@@ -3,19 +3,36 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
 from dataclasses import replace
 from typing import Any, cast
 
-from langchain.agents.middleware.types import AgentMiddleware, ToolCallRequest
+from langchain.agents.middleware.types import (
+    AgentMiddleware,
+    AgentState,
+    ExtendedModelResponse,
+    ModelRequest,
+    ModelResponse,
+    ToolCallRequest,
+)
 from langchain.tools import ToolRuntime as LangChainToolRuntime
 from langchain_core.messages import ToolCall, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from langgraph.config import get_config
-from langgraph.runtime import get_runtime
+from langgraph.runtime import Runtime, get_runtime
 from langgraph.types import Command
-from pydantic import Field
+from pydantic import Field, JsonValue
 
+from ._file_paths import (
+    FILE_CONTRACT_CHANNEL,
+    FileContractState,
+    _WorkspaceFilePaths,
+    file_contract_digest,
+    validate_file_contract,
+)
+from ._workspace_operations import WorkspaceOperations
+from ._workspace_tools import model_tool_declarations
 from .tools import ToolRuntime, _ToolRunScope
 
 
@@ -46,10 +63,47 @@ class _InvocationTool(BaseTool):
 
 
 class _ToolRuntimeMiddleware(AgentMiddleware):
-    """Supply tool-scoped access without changing business context or graph state."""
+    """Supply tool-scoped access and preserve the proposal's file declarations."""
 
-    def __init__(self, scope: _ToolRunScope[object] | None) -> None:
+    state_schema = FileContractState
+
+    def __init__(
+        self,
+        scope: _ToolRunScope[object] | None,
+        file_paths: _WorkspaceFilePaths | None = None,
+    ) -> None:
         self._scope = scope
+        self._file_paths = file_paths
+        self._operations = None if scope is None else WorkspaceOperations(scope)
+
+    def after_model(
+        self, state: AgentState, runtime: Runtime[Any]
+    ) -> dict[str, object]:
+        # This hook runs first under LangChain 1.4.2's reverse middleware order.
+        # A fresh proposal replaces completed history's private evidence; resuming
+        # its review or tool node retains the original declaration set instead.
+        return {FILE_CONTRACT_CHANNEL: file_contract_digest(self._file_paths)}
+
+    async def aafter_model(
+        self, state: AgentState, runtime: Runtime[Any]
+    ) -> dict[str, object]:
+        return self.after_model(state, runtime)
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse | ExtendedModelResponse:
+        return handler(request.override(tools=model_tool_declarations(request.tools)))
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse | ExtendedModelResponse:
+        return await handler(
+            request.override(tools=model_tool_declarations(request.tools))
+        )
 
     def _request(self, request: ToolCallRequest) -> ToolCallRequest:
         # LangChain owns the runtime dataclass. Copy its public fields at this
@@ -77,6 +131,11 @@ class _ToolRuntimeMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
     ) -> ToolMessage | Command[Any]:
+        validate_file_contract(request.state, self._file_paths)
+        if self._file_paths is not None:
+            raise NotImplementedError(
+                "Workspace file paths require asynchronous execution"
+            )
         return handler(self._request(request))
 
     async def awrap_tool_call(
@@ -90,7 +149,10 @@ class _ToolRuntimeMiddleware(AgentMiddleware):
         )
         from .errors import DelegationReplayError
 
+        validate_file_contract(request.state, self._file_paths)
         prepared = self._request(request)
+        if self._file_paths is not None:
+            prepared = await self._file_paths.prepare_execution(prepared)
         attempt = current_delegation_attempt()
         dispatch = current_delegation_dispatch()
         if attempt is not None and attempt.owns_request(prepared):
@@ -127,7 +189,25 @@ class _ToolRuntimeMiddleware(AgentMiddleware):
             )
         elif dispatch is not None and dispatch.owns_request(prepared):
             dispatch.accept_direct(prepared)
-        return await handler(prepared)
+
+        async def emit_output(value: JsonValue) -> None:
+            native = cast(LangChainToolRuntime[Any, Any], prepared.runtime)  # pyright: ignore[reportUnknownMemberType]
+            native.stream_writer(
+                {
+                    "operation": "tool_output",
+                    "toolCallId": prepared.tool_call["id"],
+                    "value": value,
+                }
+            )
+
+        with (
+            nullcontext()
+            if self._operations is None
+            else self._operations.tool(
+                prepared.tool_call, prepared.state, emit_output=emit_output
+            )
+        ):
+            return await handler(prepared)
 
 
 __all__ = ["_ToolRuntimeMiddleware"]

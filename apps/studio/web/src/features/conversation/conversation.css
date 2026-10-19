@@ -1075,7 +1075,8 @@
     .plan-history-card-heading { min-height: var(--control-lg); }
   }
 
-  .composer-takeover { display: flex; width: 100%; justify-content: center; pointer-events: auto; }
+  .composer-takeover-actions { display: flex; justify-content: flex-end; width: min(100%, var(--layout-composer-width)); margin-inline: auto; padding-block-start: var(--space-2); }
+  .composer-takeover { display: flex; flex-direction: column; align-items: center; width: 100%; justify-content: center; pointer-events: auto; }
 
   .approval-composer,
   .plan-question-composer,

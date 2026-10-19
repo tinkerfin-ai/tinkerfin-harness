@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
+from contextlib import nullcontext
 from functools import wraps
 from typing import Any, NotRequired, cast
 
@@ -27,6 +28,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import get_runtime
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
@@ -38,6 +40,7 @@ from ._compaction_observation import _CURRENT_COMPACTION, CompactionOperation
 from ._middleware_resources import prepare_middleware_resources
 from ._state_schema import StateSchemaSource, compose_state_schema
 from ._summarization import observe_summarization
+from ._workspace_operations import WorkspaceOperations
 from .compaction import CompactionResult
 from .errors import TinkerFinLifecycleError
 from .plan._state import create_plan_state_schema
@@ -101,7 +104,21 @@ def create_compaction_stream(
         name="CompactionGraphState",
     )
 
+    operations = (
+        None if spec.tool_scope is None else WorkspaceOperations(spec.tool_scope)
+    )
+
     async def compact(
+        state: DeepAgentState, config: RunnableConfig
+    ) -> dict[str, object]:
+        with (
+            nullcontext()
+            if operations is None
+            else operations.framework("compaction", "manual-compaction", state)
+        ):
+            return await run_compact(state, config)
+
+    async def run_compact(
         state: DeepAgentState, config: RunnableConfig
     ) -> dict[str, object]:
         lineage = config.get("configurable", {}).get(LINEAGE_CONFIG_KEY)
@@ -191,7 +208,16 @@ def create_compaction_stream(
     # LangGraph 1.2.11 omits cache and checkpointer generic arguments in these
     # methods; keep their overloads and suppress only the upstream Unknowns.
     builder.add_node("compact_context", compact, input_schema=schema)  # pyright: ignore[reportUnknownMemberType]
-    builder.add_edge(START, "compact_context")
+    if operations is not None:
+
+        async def prepare_context(state: DeepAgentState) -> dict[str, object]:
+            return operations.prepare_framework(get_runtime().execution_info, state)
+
+        builder.add_node("prepare_context", prepare_context, input_schema=schema)  # pyright: ignore[reportUnknownMemberType]
+        builder.add_edge(START, "prepare_context")
+        builder.add_edge("prepare_context", "compact_context")
+    else:
+        builder.add_edge(START, "compact_context")
     builder.add_edge("compact_context", END)
     graph = builder.compile(checkpointer=saver, store=spec.store)  # pyright: ignore[reportUnknownMemberType]
     graph_stream = runtime_profile.graph_stream(graph)

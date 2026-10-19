@@ -755,7 +755,7 @@ def _coalesce_graph_mutations(
             run_id=mutation.run_id,
             kind=kind,
             status=status,
-            name=current.name or mutation.name,
+            name=graph_node_name(current.name, mutation, source_events=source_events),
             parent_subagent_id=parent_subagent_id,
             model_call_id=model_call_id,
             model_call_seq=mutation.model_call_seq or current.model_call_seq,
@@ -831,6 +831,45 @@ def graph_execution_started(
     if isinstance(fact, SubagentFact):
         return fact.phase == "started" and mutation.node_id == fact.subagent_id
     return False
+
+
+def graph_node_name(
+    current: str | None,
+    mutation: TraceGraphNodeMutation,
+    *,
+    source_events: Mapping[int, TraceEvent],
+) -> str | None:
+    """Let an exact Tool execution start name its merged proposal/execution node.
+
+    ToolFact retains the model's original proposal name. After a node exists it
+    cannot rename that node, including when its result arrives after a reviewed
+    tool redirect. Only the matching ToolExecutionFact start owns the actual name,
+    just as it owns execution input and timing. Other node names remain immutable.
+    """
+
+    name = mutation.name
+    if name is None or name == current:
+        return current
+    if mutation.kind is TraceGraphNodeKind.TOOL:
+        source = source_events.get(mutation.started_seq or 0)
+        fact = None if source is None else source.fact
+        if isinstance(fact, ToolExecutionFact):
+            if fact.tool_name == name and graph_execution_started(
+                mutation, source_events=source_events
+            ):
+                return name
+        elif isinstance(fact, ToolFact) and (
+            fact.identity.run_id == mutation.run_id
+            and fact.graph_namespace == mutation.graph_namespace
+            and _tool_node(fact.graph_namespace, fact.source_tool_call_id)
+            == mutation.node_id
+            and fact.tool_name == name
+        ):
+            return current or name
+        raise TraceStoreProtocolError("Trace Graph Tool name lacks matching evidence")
+    if current is not None:
+        raise TraceStoreProtocolError("Trace Graph node name changed")
+    return name
 
 
 def graph_failure_sequence(
@@ -926,8 +965,9 @@ def apply_graph_node_mutation(
         TraceGraphNodeKind,
         resolve_graph_node_kind(row.kind, mutation.kind),
     )
-    if mutation.name is not None and mutation.name != row.name:
-        raise TraceStoreProtocolError("Trace Graph node name changed")
+    row.name = cast(
+        str, graph_node_name(row.name, mutation, source_events=source_events)
+    )
     if (
         mutation.graph_namespace is not None
         and mutation.graph_namespace != row.graph_namespace

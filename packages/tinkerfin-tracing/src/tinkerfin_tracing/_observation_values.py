@@ -195,7 +195,9 @@ def interaction_tool_call_ids(
 
     Deep Agents publishes only policy-selected actions in an interrupt, while the
     authoritative message can also contain unreviewed Tool calls. Correlation therefore
-    matches exact ``name + args`` in model order, never arrival order or Tool name alone.
+    matches the exact name and original proposal arguments in model order, never
+    arrival order or Tool name alone. Prepared filesystem reviews supply
+    ``source_args`` because their displayed arguments contain canonical paths.
     The dynamic-programming count is capped at two because the only meaningful outcomes
     are missing, unique, and ambiguous.
 
@@ -230,7 +232,9 @@ def interaction_tool_call_ids(
         if not isinstance(action, dict):
             raise TraceCorruption("Tool review actions must be objects")
         name = action.get("name")
-        arguments = action.get("args")
+        arguments = action.get("source_args")
+        if arguments is None:
+            arguments = action.get("args")
         if not isinstance(name, str) or not name or not isinstance(arguments, dict):
             raise TraceCorruption("Tool review actions require a name and object args")
         actions.append((name, arguments))

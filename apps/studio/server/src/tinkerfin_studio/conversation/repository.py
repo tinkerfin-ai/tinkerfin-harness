@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import JsonValue
-from sqlalchemy import and_, delete, false, func, or_, select, update
+from sqlalchemy import and_, delete, false, func, or_, select, true, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.dml import Update
@@ -17,6 +17,7 @@ from tinkerfin_studio.conversation.models import (
     ConversationRunRegistration,
     ConversationThread,
 )
+from tinkerfin_studio.devices.models import DeviceExecutionProfile
 from tinkerfin_studio.services.schemas import ServiceBindings
 
 
@@ -600,7 +601,7 @@ class ConversationRepository:
         project_id: str | None,
         archived: bool | None,
     ) -> ConversationThread:
-        """在注册运行使用的会话锁内改变项目或归档状态"""
+        """在注册运行使用的会话锁内组织会话，本机执行的项目归属保持固定"""
         from tinkerfin_studio.api.errors import (
             BusinessException,
             ConversationErrorCode,
@@ -629,6 +630,19 @@ class ConversationRepository:
             raise BusinessException(ProjectErrorCode.ACTIVE_CONVERSATION)
         if project_id is not None:
             await ProjectRepository(self._session, user_id).require(project_id)
+            if project_id != thread.project_id:
+                local_run = await self._session.scalar(
+                    select(ConversationRunRegistration.id)
+                    .where(
+                        ConversationRunRegistration.conversation_thread_id == thread.id,
+                        ConversationRunRegistration.local_profile_id.is_not(None),
+                        ConversationRunRegistration.status != "rejected",
+                    )
+                    .limit(1)
+                    .with_for_update()
+                )
+                if local_run is not None:
+                    raise BusinessException(ConversationErrorCode.LOCAL_PROJECT_FIXED)
             from tinkerfin_studio.attachments.entity import AttachmentFile
 
             await self._session.execute(
@@ -838,7 +852,9 @@ class ConversationRepository:
             .execution_options(populate_existing=True)
         )
 
-    async def has_running_run(self, thread_pk: int) -> bool:
+    async def has_running_run(
+        self, thread_pk: int, *, except_run_id: str | None = None
+    ) -> bool:
         """调用方持有会话锁，以当前读取确认是否仍有正在准备或执行的运行"""
 
         run_id = await self._session.scalar(
@@ -848,6 +864,9 @@ class ConversationRepository:
                 ConversationRunRegistration.status.in_(
                     ("preparing", "starting", "running")
                 ),
+                ConversationRunRegistration.run_id != except_run_id
+                if except_run_id is not None
+                else true(),
             )
             .limit(1)
             .with_for_update()
@@ -929,6 +948,21 @@ class ConversationRepository:
                 await self._session.delete(run)
                 deleted = True
             await self._session.flush()
+            if deleted and run.local_profile_id is not None:
+                # 审批恢复可继承同一会话的授权，删除登记不能清掉仍被引用的快照
+                referenced = select(ConversationRunRegistration.id).where(
+                    ConversationRunRegistration.conversation_thread_id == thread_pk,
+                    ConversationRunRegistration.local_profile_id
+                    == run.local_profile_id,
+                )
+                await self._session.execute(
+                    delete(DeviceExecutionProfile).where(
+                        DeviceExecutionProfile.profile_id == run.local_profile_id,
+                        DeviceExecutionProfile.user_id == thread.user_id,
+                        DeviceExecutionProfile.source_thread_id == thread.thread_id,
+                        ~referenced.exists(),
+                    )
+                )
         thread_deleted = False
         if delete_empty_thread and deleted:
             remaining = await self._session.scalar(
@@ -937,7 +971,7 @@ class ConversationRepository:
                 .where(ConversationRunRegistration.conversation_thread_id == thread_pk)
             )
             if not remaining:
-                await self._session.delete(thread)
+                await self.delete_thread_cascade(thread_pk)
                 thread_deleted = True
         if (
             (deleted or resume_released)
@@ -989,7 +1023,8 @@ class ConversationRepository:
         )
 
     async def delete_thread_cascade(self, thread_pk: int) -> None:
-        """删除会话的认领、保留提交结果的 Run 注册和业务记录"""
+        """按会话归属删除认领、运行登记、本机授权快照及会话记录"""
+        thread = await self.lock_thread(thread_pk)
         await self._session.execute(
             delete(ConversationInterruptClaim).where(
                 ConversationInterruptClaim.conversation_thread_id == thread_pk
@@ -1000,6 +1035,13 @@ class ConversationRepository:
                 ConversationRunRegistration.conversation_thread_id == thread_pk
             )
         )
+        if thread is not None:
+            await self._session.execute(
+                delete(DeviceExecutionProfile).where(
+                    DeviceExecutionProfile.user_id == thread.user_id,
+                    DeviceExecutionProfile.source_thread_id == thread.thread_id,
+                )
+            )
         await self._session.execute(
             delete(ConversationThread).where(ConversationThread.id == thread_pk)
         )

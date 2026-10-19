@@ -436,7 +436,7 @@ it('恢复运行的环境原因在历史中常驻，审批编辑与未保存确�
   source.availableHeads = [source.headRunId]
   source.runFailures = [{ runId: source.headRunId, errorCode: 'workspace_paused', failedAt: '2026-10-12T00:00:00Z', retryable: false }]
   const view = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
-  expect(view.notice?.content).toBe('运行环境已暂停，请恢复沙箱后重试')
+  expect(view.notice?.content).toBe('任务暂时无法执行，请稍后重试')
   expect(view.approval?.items).toHaveLength(2)
   expect(view.runFailures?.[0].retryable).toBe(false)
 })
@@ -450,7 +450,7 @@ it('审批确认期间的迟到观测不会覆盖已知环境失败提示', () =
   source.runFailures = [{ runId: source.headRunId, errorCode: 'workspace_paused', failedAt: '2026-10-12T00:00:00Z', retryable: false }]
   source.interactionAvailability = source.interactionAvailability.map(item => ({ ...item, state: 'confirming', submissionRunId: source.headRunId }))
   const view = restoreConversationFromTrace(source, { model: 'main', includeTaskTrace: false })
-  expect(view.notice?.content).toBe('运行环境已暂停，请恢复沙箱后重试')
+  expect(view.notice?.content).toBe('任务暂时无法执行，请稍后重试')
   const delayed = restoreConversationFromTrace({ ...source, observedAt: '2026-09-05T00:00:00.000000Z' }, {
     previous: view, model: 'main', includeTaskTrace: false,
   })

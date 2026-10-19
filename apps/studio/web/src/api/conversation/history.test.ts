@@ -117,6 +117,50 @@ describe('conversation Trace client', () => {
     const stream = followConversationRun('thread-trace', 'run-1', { includeTaskTrace: true, signal: new AbortController().signal })
     await expect(stream.next()).rejects.toMatchObject({ code: 'stream_event_invalid' })
   })
+
+  it('原生文件审批历史保留原始提案并展示实际审批参数', async () => {
+    const sourceArgs = { file_path: 'report.txt', content: 'approved result' }
+    const effectiveArgs = { ...sourceArgs, file_path: '/project/report.txt' }
+    const wire: ConversationHistoryDetail = {
+      ...detail(),
+      status: { execution: 'waiting', headRunId: 'run-1' },
+      interactionAvailability: [{ interruptId: 'file-review', state: 'available', submissionRunId: null }],
+      interactions: [{
+        id: 'interaction-file-review', traceSeq: 4, sourceId: 'file-review',
+        graphNamespace: [], runId: 'run-1', kind: 'tool_review', toolCallIds: ['file-call'],
+        status: 'pending', payloadOmitted: false, openedAt: '2026-09-05T00:00:00.000000Z',
+        agui: [{
+          id: 'file-review', reason: 'tool_call', toolCallId: 'file-call',
+          metadata: {
+            deepagents: {
+              schema: 'tinkerfin.deepagents.tool-review', nativeInterruptId: 'file-review',
+              actionIndex: 0, toolName: 'write_file', allowedDecisions: ['approve', 'edit', 'reject'],
+              originalArgs: effectiveArgs,
+            },
+            langgraphValue: {
+              action_requests: [{
+                name: 'write_file', args: effectiveArgs, source_args: sourceArgs, description: 'Write report',
+              }],
+              review_configs: [{ action_name: 'write_file', allowed_decisions: ['approve', 'edit', 'reject'] }],
+            },
+          },
+        }],
+      }],
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(envelope(wire)))
+    const loaded = await fetchConversationHistoryDetail(wire.threadId, { includeTaskTrace: true })
+    const conversation = restoreConversationFromTrace(loaded, { model: 'main', includeTaskTrace: true })
+    expect(conversation.runStatus).toBe('waiting_approval')
+    expect(conversation.approval?.items).toHaveLength(1)
+    expect(conversation.approval?.items[0]).toMatchObject({
+      interruptId: 'file-review', originalArgs: effectiveArgs,
+    })
+    expect(JSON.parse(conversation.approval!.items[0].params)).toEqual(effectiveArgs)
+    expect(loaded.interactions[0].agui?.[0].metadata?.langgraphValue).toEqual(
+      wire.interactions[0].agui?.[0].metadata?.langgraphValue,
+    )
+  })
+
   it('真实框架审批恢复流与失败后的历史重载保持相同工具结果', async () => {
     const wire = frameworkDetail(frameworkResume.history)
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(envelope(wire)))

@@ -72,6 +72,39 @@ For schema setup, supply a stable `schema_lock` name and run DDL on the yielded
 connection. Integrations keep their own schema, retry policy, and commit confirmation.
 `SqlTransaction` performs one attempt and never replays application work.
 
+## ORM sessions
+
+Use `SqlSession` with SQLAlchemy ORM operations when savepoint writes must roll
+back with the enclosing session transaction:
+
+```python
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from tinkerfin_sqlalchemy import SqlSession
+
+
+async def save_balance(engine, amount):
+    sessions = async_sessionmaker(engine, class_=SqlSession, expire_on_commit=False)
+    async with sessions() as session:
+        async with session.begin_nested():
+            await session.execute(
+                text("INSERT INTO balances (amount) VALUES (:amount)"),
+                {"amount": amount},
+            )
+        await session.commit()
+```
+
+Explicit commits save changes; rollback and context exit discard uncommitted
+changes, including released savepoints. Commit, rollback and close settle before
+caller cancellation propagates. The Engine remains owned by the application.
+Native SQLAlchemy query, ORM and savepoint interfaces remain available.
+`async with sessions.begin() as session` commits on normal exit and rolls back
+on failure. It closes the session before returning or propagating cancellation,
+including when transaction settlement fails.
+Failed or cancelled context entry also closes the session.
+Ordinary reads use the Engine's isolation policy. Use `SqlTransaction` with
+`read_only=True` for a database-enforced consistent read snapshot.
+
 ## Documentation
 
 [TinkerFin documentation](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/docs/en/index.md)

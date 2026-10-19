@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ConversationHistoryDetail, ConversationHistoryListItem } from '../../api/conversation/history'
 import { clearAuthSession, saveAuthSession } from '../../auth/session'
+import { LocaleProvider } from '../../i18n'
 import { emptyTraceGraph } from '../../test/traceFixtures'
 import { mockResourceNotices } from '../../test/resourceNotices'
 import { runFixture } from '../../test/automationFixtures'
@@ -37,6 +38,8 @@ function installFetch({ list, details }: { list: ConversationHistoryListItem[]; 
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
     const path = new URL(request.url).pathname
+    if (path === '/api/devices') return jsonResponse([])
+    if (path === '/api/devices/selection') return jsonResponse(null)
     if (path === '/api/projects') return jsonResponse([{ id: 'project-1', name: '测试项目', createdAt: time, updatedAt: time }])
     if (path === '/api/models') return jsonResponse({ items: [{ modelId: 'main', displayName: 'Main', connectionId: 'provider', connectionDisplayName: '模型', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' })
     if (path === '/api/skills/installations') return jsonResponse([])
@@ -59,6 +62,7 @@ afterEach(() => {
   cleanup()
   clearAuthSession()
   window.sessionStorage.clear()
+  window.localStorage.removeItem('tinkerfin:language')
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   vi.useRealTimers()
@@ -149,6 +153,70 @@ it('新会话刷新返回时不能覆盖已切回的历史模型', async () => {
     connectionDisplayName: '模型', reasoningEnabled: false, isDefault: id === 'new-default',
   })), defaultModelId: 'new-default' })))
   expect(screen.getByRole('button', { name: '选择模型' })).toHaveTextContent('Main')
+})
+
+it('已有本地会话点击云端不新建会话，主动新建后可切换且保留草稿', async () => {
+  const fetch = installFetch({ list: [historyItem({})], details: { thread: traceDetail({}) } })
+  const original = fetch.getMockImplementation()!
+  const device = { device_id: 'device-1', name: 'Mac', online: true, revoked: false, paired_at: time, last_seen_at: time, capabilities: { browser: true, desktop: false, mcp: false } }
+  fetch.mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    const path = new URL(request.url).pathname
+    if (path === '/api/devices') return jsonResponse([device])
+    if (path === '/api/devices/selection') return jsonResponse({ device_id: device.device_id, workspace_id: 'project-1' })
+    return original(input, init)
+  })
+  render(<WorkspaceScreen user={user} onLogout={vi.fn()} onToast={vi.fn()} />)
+  await screen.findByText('来自 Trace 的历史回复')
+  await waitFor(() => expect(screen.getByRole('button', { name: '本地 · 已连接' })).toHaveAttribute('aria-pressed', 'true'))
+  const input = screen.getByRole('textbox', { name: '消息输入' })
+  fireEvent.change(input, { target: { value: '保留会话草稿', selectionStart: 6 } })
+  const location = window.location.href
+  expect(screen.getByRole('button', { name: '云端' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: '云端' }))
+  expect(window.location.href).toBe(location)
+  expect(input).toHaveValue('保留会话草稿')
+  expect(screen.getByText('来自 Trace 的历史回复')).toBeInTheDocument()
+  fireEvent.click(screen.getAllByRole('button', { name: '新会话' })[0]!)
+  await waitFor(() => expect(screen.getByRole('button', { name: '本地 · 已连接' })).toBeEnabled())
+  const draft = screen.getByRole('textbox', { name: '消息输入' })
+  fireEvent.change(draft, { target: { value: '新会话草稿', selectionStart: 5 } })
+  fireEvent.click(screen.getByRole('button', { name: '本地 · 已连接' }))
+  fireEvent.click(screen.getByRole('button', { name: '云端' }))
+  expect(draft).toHaveValue('新会话草稿')
+  expect(screen.getByRole('button', { name: '云端' })).toHaveAttribute('aria-pressed', 'true')
+})
+
+it('本地会话移动被拒绝后保留当前会话与草稿，并按界面语言显示原因', async () => {
+  window.localStorage.setItem('tinkerfin:language', 'en')
+  const fetch = installFetch({ list: [historyItem({})], details: { thread: traceDetail({}) } })
+  const original = fetch.getMockImplementation()!
+  fetch.mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    const path = new URL(request.url).pathname
+    if (path === '/api/projects') return jsonResponse(['project-1', 'project-2'].map(id => ({ id, name: id, createdAt: time, updatedAt: time })))
+    if (path === '/api/devices/selection') return jsonResponse({ device_id: 'device-1', workspace_id: 'project-1' })
+    if (path === '/api/conversation/thread' && request.method === 'PATCH') return new Response(JSON.stringify({
+      code: 1_001_004_035, message: '本地会话不能移动到其他项目', data: null,
+    }), { status: 409, headers: { 'Content-Type': 'application/json' } })
+    return original(input, init)
+  })
+  const toast = vi.fn()
+  render(<LocaleProvider><WorkspaceScreen user={user} onLogout={vi.fn()} onToast={toast} /></LocaleProvider>)
+  await screen.findByText('来自 Trace 的历史回复')
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message input' }), { target: { value: '保留本地会话草稿' } })
+  const location = window.location.href
+  fireEvent.click(screen.getByRole('button', { name: 'Manage conversation: 标题' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Move to project' }))
+  const dialog = screen.getByRole('dialog', { name: 'Move to project' })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Move' }))
+  expect(await within(dialog).findByRole('alert')).toHaveTextContent('Local conversations cannot be moved to another project')
+  expect(window.location.href).toBe(location)
+  expect(toast).not.toHaveBeenCalledWith('success', expect.anything())
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  expect(screen.getByText('来自 Trace 的历史回复')).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Message input' })).toHaveValue('保留本地会话草稿')
+  expect(screen.getByRole('button', { name: 'Local · Disconnected' })).toHaveAttribute('aria-pressed', 'true')
 })
 
 it('恢复已停用模型的历史时保留草稿并要求主动选择可用模型', async () => {
@@ -487,4 +555,25 @@ it('运行详情打开尚未在目录中的会话', async () => {
   expect(newHistoryReads.length).toBeGreaterThan(0)
   expect(window.location.search).toBe('?project=project-1&thread=fresh')
   expect(screen.getByText('自动化新会话正文')).toBeVisible()
+})
+
+
+it('设备替换后已有本地会话使用当前设备，保留历史和草稿', async () => {
+  const fetch = installFetch({ list: [historyItem({})], details: { thread: traceDetail({}) } })
+  const original = fetch.getMockImplementation()!
+  const device = { device_id: 'current-device', name: 'New Mac', online: true, revoked: false, paired_at: time, last_seen_at: time, capabilities: { browser: true, desktop: false, mcp: false } }
+  fetch.mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    const path = new URL(request.url).pathname
+    if (path === '/api/devices') return jsonResponse([device])
+    if (path === '/api/devices/selection') return jsonResponse({ device_id: 'replaced-device', workspace_id: 'project-1' })
+    return original(input, init)
+  })
+  render(<WorkspaceScreen user={user} onLogout={vi.fn()} onToast={vi.fn()} />)
+  await screen.findByText('来自 Trace 的历史回复')
+  await waitFor(() => expect(screen.getByRole('button', { name: '本地 · 已连接' })).toHaveAttribute('aria-pressed', 'true'))
+  fireEvent.change(screen.getByRole('textbox', { name: '消息输入' }), { target: { value: '继续本机任务' } })
+  expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
+  expect(screen.queryByText('请在客户端重新连接')).not.toBeInTheDocument()
+  expect(screen.getByText('来自 Trace 的历史回复')).toBeVisible()
 })

@@ -536,6 +536,11 @@ def _validate_locator_ownership(
                     "Context locator belongs to another action"
                 )
     elif record.kind is TraceGraphNodeKind.TOOL:
+        start = record.started_event.fact
+        if isinstance(start, (ToolFact, ToolExecutionFact)) and (
+            record.name != start.tool_name
+        ):
+            raise TraceStoreProtocolError("Tool name conflicts with its start evidence")
         for event in events:
             if event is None:
                 continue
@@ -928,6 +933,8 @@ def project_trace_graph_node(
         provider=record.provider,
         model=record.model,
         source_id=source_id,
+        source_started=None if request_fact is None else request_fact.source_clock,
+        source_completed=None if result_fact is None else result_fact.source_clock,
         started_at=record.started_at,
         first_output_at=record.first_output_at,
         completed_at=record.completed_at,

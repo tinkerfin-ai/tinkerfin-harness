@@ -1,5 +1,10 @@
+import '../../../src/styles/tokens.css'
 import { useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { ArchiveRestore, Workflow } from 'lucide-react'
+import { IconButton } from '../../../src/components/ui/IconButton'
+import { DevicePicker } from '../../../src/features/devices/DevicePicker'
+import type { LocalTarget } from '../../../src/features/devices/api'
 import { FeedbackState } from '../../../src/components/ui/FeedbackState'
 import { BrandLogo } from '../../../src/components/ui/BrandLogo'
 import { BrandMark } from '../../../src/components/ui/BrandMark'
@@ -8,7 +13,6 @@ import { OverlayScrollbar } from '../../../src/components/ui/OverlayScrollbar'
 import { TextField } from '../../../src/components/ui/TextField'
 import { UserAvatar } from '../../../src/components/ui/UserAvatar'
 import { ViewTabs } from '../../../src/components/ui/ViewTabs'
-import '../../../src/styles/tokens.css'
 import '../../../src/styles/typography.css'
 import '../../../src/styles/fonts.css'
 import '../../../src/styles/global.css'
@@ -19,6 +23,20 @@ import '../../../src/features/workspace/components/conversation-search.css'
 
 const parameters = new URLSearchParams(location.search)
 document.documentElement.dataset.theme = parameters.get('theme') ?? 'light'
+
+function IconButtonExamples() {
+  const [target, setTarget] = useState<LocalTarget>()
+  const [trace, setTrace] = useState(false)
+  const [archived, setArchived] = useState(false)
+  return <main style={{ padding: 24, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+    <DevicePicker projectId="review" value={target} onChange={setTarget} targetState="ready" onRetry={() => {}} locked={false} disabled={false}
+      devices={{ status: 'ready', refresh: () => {}, devices: [{ device_id: 'review', name: 'Review Mac', online: true, revoked: false,
+        paired_at: '2030-01-01T00:00:00Z', last_seen_at: null, capabilities: { browser: false, desktop: false, mcp: false } }] }} />
+    <IconButton label="链路" icon={<Workflow size={17} />} selected={trace} onClick={() => setTrace(value => !value)} />
+    <IconButton label="已归档会话" icon={<ArchiveRestore size={17} />} selected={archived} onClick={() => setArchived(value => !value)} />
+    <IconButton label="不可用" icon={<Workflow size={17} />} selected disabled />
+  </main>
+}
 
 function ScrollbarExample() {
   const viewport = useRef<HTMLDivElement>(null)
@@ -77,4 +95,4 @@ export function Controls() {
   </main>
 }
 
-createRoot(document.getElementById('root')!).render(parameters.get('example') === 'scrollbar' ? <ScrollbarExample /> : parameters.get('example') === 'loading' ? <LoadingExamples /> : <Controls />)
+createRoot(document.getElementById('root')!).render(parameters.get('example') === 'icons' ? <IconButtonExamples /> : parameters.get('example') === 'scrollbar' ? <ScrollbarExample /> : parameters.get('example') === 'loading' ? <LoadingExamples /> : <Controls />)

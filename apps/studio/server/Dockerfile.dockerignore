@@ -13,6 +13,10 @@
 !packages/*/src/
 !packages/*/src/**
 !apps/
+!apps/desktop/
+!apps/desktop/pyproject.toml
+!apps/desktop/README.md
+!apps/desktop/LICENSE
 !apps/studio/
 !apps/studio/server/
 !apps/studio/server/pyproject.toml

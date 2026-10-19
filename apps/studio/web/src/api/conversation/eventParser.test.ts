@@ -92,3 +92,17 @@ it('运行阶段校验身份与当前阶段值', () => {
   expect(() => parseConversationAgUiEvent({ ...event, value: { ...event.value, phase: 'retrying' } })).toThrow()
   expect(() => parseConversationAgUiEvent({ ...event, value: { ...event.value, runId: '' } })).toThrow()
 })
+
+it('工具进度使用custom来源并拒绝缺失归属和混入的事件', () => {
+  const event = { type: 'CUSTOM', name: 'tinkerfin.tool_output',
+    rawEvent: { streamMode: 'custom', runId: 'run', source: { kind: 'root', agentType: 'main', agentName: 'main', graphNamespace: [] } },
+    value: { toolCallId: 'tool', value: 'stdout\n' } }
+  expect(parseConversationAgUiEvent(event)).toBe(event)
+  for (const invalid of [
+    { ...event, rawEvent: undefined },
+    { ...event, rawEvent: { ...event.rawEvent, runId: '' } },
+    { ...event, rawEvent: { ...event.rawEvent, source: undefined } },
+    { ...event, value: { value: 'stdout' } },
+    { ...event, value: { ...event.value, event: { type: 'RUN_FINISHED' } } },
+  ]) expect(() => parseConversationAgUiEvent(invalid)).toThrow()
+})

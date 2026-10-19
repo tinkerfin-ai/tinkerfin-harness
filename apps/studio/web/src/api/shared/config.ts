@@ -1,4 +1,4 @@
-export const DEFAULT_SERVER_ADDRESS = 'http://127.0.0.1:8090'
+export const DEFAULT_SERVER_ADDRESS = import.meta.env.VITE_STUDIO_API_ADDRESS || 'http://127.0.0.1:8090'
 export const SERVER_ADDRESS_STORAGE_KEY = 'tinkerfin.server-address'
 const SERVER_ADDRESS_CHANGED = 'tinkerfin:server-address-changed'
 

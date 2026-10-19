@@ -178,6 +178,8 @@ function installFetch(options: {
       ? input
       : new Request(new URL(String(input), window.location.origin), init)
     const url = new URL(request.url)
+    if (url.pathname === '/api/devices/selection') return jsonResponse(null)
+    if (url.pathname === '/api/devices') return jsonResponse([])
     if (url.pathname === '/api/projects') return jsonResponse([{ id: 'project-1', name: '测试项目', createdAt: BASE_TIME, updatedAt: BASE_TIME }])
     if (url.pathname.endsWith('/api/models')) return jsonResponse(MODEL_CATALOG)
     if (url.pathname.endsWith('/api/skills/installations') || url.pathname.endsWith('/api/skills/selection')) return jsonResponse([])

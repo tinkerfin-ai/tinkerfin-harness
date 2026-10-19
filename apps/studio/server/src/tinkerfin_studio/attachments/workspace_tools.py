@@ -8,11 +8,12 @@ import json
 import shlex
 import struct
 from dataclasses import asdict, dataclass
-from typing import Annotated
+from typing import Annotated, Protocol
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 import anyio
+from deepagents.backends.protocol import FileUploadResponse
 from deepagents.backends.sandbox import MAX_BINARY_BYTES
 from langchain_core.tools import BaseTool, ToolException, tool
 from pydantic import Field, JsonValue
@@ -91,12 +92,19 @@ asyncio.run(main())
 """
 
 
+class WorkFileStorage(Protocol):
+    """云端沙箱与本机工作区共有的有界文件写入能力"""
+
+    async def aupload_files(
+        self, files: list[tuple[str, bytes]]
+    ) -> list[FileUploadResponse]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class WorkFile:
     """当前用户工作区中的文件，交付时复制该路径当时的内容
 
-    file_path 是框架工作区路径，不是宿主机路径或附件下载地址。
-    shell_path 是同一文件在工作区命令中的相对路径，含空格时须在命令中加引号。
+    file_path 用于文件工具，shell_path 用于工作区命令，含空格时须在命令中加引号。
     size_bytes 表示保存时的字节数，后续编辑不更新此工具结果。
     preview_file_path 是大图片保存时的缩略图，仅供看图；交付始终选择原文件。
     """
@@ -117,10 +125,11 @@ class WorkFile:
 
 
 async def describe_work_file(
-    workspace: RootedOpenSandboxBackend,
+    workspace: WorkFileStorage,
     processor: DocumentProcessor,
     *,
     path: str,
+    shell_path: str,
     name: str,
     data: bytes,
 ) -> WorkFile:
@@ -133,6 +142,7 @@ async def describe_work_file(
         workspace: 当前用户工作区
         processor: 应用拥有的有界文档处理器
         path: 已保存原文件的工作区路径
+        shell_path: 同一文件在当前工作区命令中使用的路径
         name: 原文件显示名称，支持图片、Markdown、PDF、DOCX、XLSX、PPTX 和技能 ZIP
         data: 原文件内容
 
@@ -161,7 +171,7 @@ async def describe_work_file(
         preview = base64.b64decode(encoded, validate=True)
         if not preview.startswith(b"\xff\xd8\xff") or len(preview) > MAX_BINARY_BYTES:
             raise ValueError("图片预览不符合读取限制")
-        preview_path = f"/preview-{uuid4().hex}.jpg"
+        preview_path = f"preview-{uuid4().hex}.jpg"
         results = await workspace.aupload_files([(preview_path, preview)])
         if (
             len(results) != 1
@@ -171,7 +181,7 @@ async def describe_work_file(
             raise OSError("图片预览保存失败")
     return WorkFile(
         file_path=path,
-        shell_path=workspace.to_shell_path(path),
+        shell_path=shell_path,
         name=name,
         mime_type=mime,
         size_bytes=len(data),
@@ -180,7 +190,7 @@ async def describe_work_file(
 
 
 async def save_work_file(
-    workspace: RootedOpenSandboxBackend,
+    workspace: WorkFileStorage,
     processor: DocumentProcessor,
     *,
     name: str,
@@ -216,12 +226,12 @@ async def save_work_file(
         raise ValueError("文件名须为不含目录的受支持格式名称")
     if not data or len(data) > MAX_FILE_BYTES:
         raise ValueError("工作文件不能为空，且单个不能超过 10 MiB")
-    path = f"/artifact-{uuid4().hex}.{extension}"
+    path = f"artifact-{uuid4().hex}.{extension}"
     results = await workspace.aupload_files([(path, data)])
     if len(results) != 1 or results[0].path != path or results[0].error is not None:
         raise OSError("工作文件保存失败")
     return await describe_work_file(
-        workspace, processor, path=path, name=name, data=data
+        workspace, processor, path=path, shell_path=path, name=name, data=data
     )
 
 
@@ -432,7 +442,12 @@ def build_sandbox_attachment_tools(
         if not width or not height or width * height > MAX_PIXELS:
             raise ValueError("网页截图尺寸不合法或超过像素限制")
         saved = await describe_work_file(
-            sandbox, service.documents, path=path, name="浏览器截图.png", data=data
+            sandbox,
+            service.documents,
+            path=path,
+            shell_path=sandbox.to_shell_path(path),
+            name="浏览器截图.png",
+            data=data,
         )
         return saved.tool_result()
 

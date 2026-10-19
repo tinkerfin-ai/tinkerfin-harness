@@ -22,6 +22,7 @@ Build agent applications for enterprise workflows that people can interact with,
 | Broadcast resource changes to independent listeners | [Notifications](notifications/index.md) |
 | Accept commands and notify connected clients | [Gateway](gateway/index.md) |
 | Work with files and commands in isolation | [Sandbox](sandbox/index.md) |
+| Work with files and tools on a Mac | [Local collaboration](studio/local_devices.md) |
 | Run or schedule Agent tasks | [Automation](automation/index.md) |
 
 ## Go deeper

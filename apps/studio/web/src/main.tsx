@@ -12,8 +12,15 @@ import './styles/global.css'
 import './components/ui/ui.css'
 import { normalizeAppLocation } from './lib/threadRoute'
 import { LocaleProvider } from './i18n'
+import { prepareDeviceAuthorization } from './features/devices/authorizationRoute'
 
-normalizeAppLocation()
+let initializationFailed = false
+try {
+  prepareDeviceAuthorization()
+  normalizeAppLocation()
+} catch {
+  initializationFailed = true
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -22,7 +29,7 @@ createRoot(document.getElementById('root')!).render(
         fallback={() => <GlobalErrorFallback />}
         onError={(error) => console.error('TinkerFin 页面渲染失败', error)}
       >
-        <App />
+        {initializationFailed ? <GlobalErrorFallback /> : <App />}
       </ErrorBoundary>
     </LocaleProvider>
   </StrictMode>,

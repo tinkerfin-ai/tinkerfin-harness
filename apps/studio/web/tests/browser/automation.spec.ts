@@ -314,6 +314,7 @@ test('定时任务读取失败可重试，Toast 避开顶部并在离开页面�
   expect(conversationToast.y).toBeLessThan(taskToast.y)
   expect(conversationToast.y - conversationHeader.y - conversationHeader.height).toBe(ordinaryToastGap)
   toastPositions.push({ page: 'conversation', width: 320, header: conversationHeader, toast: conversationToast })
+  await page.screenshot({ path: testInfo.outputPath('conversation-toast-light-320.png') })
   await testInfo.attach('toast-header-measurements', { body: JSON.stringify(toastPositions, null, 2), contentType: 'application/json' })
 })
 

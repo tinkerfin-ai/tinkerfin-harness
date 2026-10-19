@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TypeVar
+
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -17,7 +19,8 @@ from sqlalchemy import (
     inspect,
 )
 from sqlalchemy.dialects import mysql
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, Dialect
+from sqlalchemy.types import TypeEngine
 
 from .errors import MessagingBackendProtocolError
 
@@ -26,6 +29,7 @@ _BYTES = LargeBinary().with_variant(mysql.LONGBLOB(), "mysql")
 _TEXT = Text().with_variant(mysql.LONGTEXT(), "mysql")
 _TIME = DateTime(timezone=False).with_variant(mysql.DATETIME(fsp=6), "mysql")
 metadata = MetaData()
+_ColumnT = TypeVar("_ColumnT")
 
 
 def _channel_id() -> Column[bytes]:
@@ -380,6 +384,28 @@ Index(
 )
 
 
+def _same_type(
+    declared: TypeEngine[_ColumnT], reflected: TypeEngine[_ColumnT], dialect: Dialect
+) -> bool:
+    expected = declared.dialect_impl(dialect)
+    actual = reflected
+    if (
+        dialect.name == "mysql"
+        and isinstance(expected, String)
+        and expected.collation is None
+        and isinstance(actual, String)
+    ):
+        # Reflection includes the database's inherited text collation even when
+        # the declaration leaves it to the host. Keep explicit variants strict.
+        actual = actual.copy()
+        actual.collation = None
+    expected_type = str(expected.compile(dialect=dialect)).upper()
+    actual_type = str(actual.compile(dialect=dialect)).upper()
+    if expected_type == "BOOL" and dialect.name == "mysql":
+        expected_type = "TINYINT(1)"
+    return actual_type == expected_type
+
+
 def prepare_schema(connection: Connection) -> None:
     """Create empty Messaging tables or reject a different existing structure."""
 
@@ -406,15 +432,8 @@ def prepare_schema(connection: Connection) -> None:
             )
         for column in table.c:
             actual = reflected[column.name]
-            expected_type = str(column.type.compile(dialect=connection.dialect)).upper()
-            actual_type = str(
-                actual["type"].compile(dialect=connection.dialect)
-            ).upper()
-            # MySQL reflects BOOLEAN as TINYINT(1), its actual storage type.
-            if expected_type == "BOOL" and connection.dialect.name == "mysql":
-                expected_type = "TINYINT(1)"
             if (
-                actual_type != expected_type
+                not _same_type(column.type, actual["type"], connection.dialect)
                 or bool(actual["nullable"]) != column.nullable
                 or actual.get("default") is not None
             ):

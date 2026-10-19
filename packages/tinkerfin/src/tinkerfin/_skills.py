@@ -2,6 +2,7 @@
 
 from codecs import BOM_UTF8
 from collections.abc import Sequence
+from contextlib import nullcontext
 from dataclasses import replace
 from typing import Any
 
@@ -15,7 +16,8 @@ from deepagents.middleware.skills import (
 from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import Runtime
 
-from .skills import SkillSource
+from ._workspace_operations import WorkspaceOperations
+from .skills import SkillSource, WorkspaceSkills
 
 
 class _SkillDiscoveryBackend(BackendProtocol):
@@ -62,7 +64,9 @@ class SourceSkillsMiddleware(SkillsMiddleware):
         sources: Sequence[SkillSource],
         system_prompt: str | None = SKILLS_SYSTEM_PROMPT,
         labels: Sequence[str] | None = None,
+        operations: WorkspaceOperations | None = None,
     ) -> None:
+        self._operations = operations
         configured = tuple(sources)
         if any(not isinstance(source, SkillSource) for source in configured):
             raise TypeError("skills must contain SkillSource declarations")
@@ -106,12 +110,47 @@ class SourceSkillsMiddleware(SkillsMiddleware):
         skills: dict[str, SkillMetadata] = {}
         errors: list[str] = []
         for source, reader in self._readers:
-            update = await reader.abefore_agent(
-                {**state, "skills_metadata": None}, runtime, {}
-            )
+            with (
+                nullcontext()
+                if self._operations is None
+                else self._operations.framework(
+                    "skills", "discover:" + source.directory, state
+                )
+            ):
+                update = await reader.abefore_agent(
+                    {**state, "skills_metadata": None}, runtime, {}
+                )
             assert update is not None
             for skill in update["skills_metadata"]:
                 if source.names is None or skill["name"] in source.names:
                     skills[skill["name"]] = skill
             errors.extend(update.get("skills_load_errors", []))
         return {"skills_metadata": list(skills.values()), "skills_load_errors": errors}
+
+
+def resolve_skill_sources(
+    declarations: Sequence[SkillSource | WorkspaceSkills] | None,
+    prepared: Sequence[SkillSource],
+    *,
+    inherit: bool,
+) -> list[SkillSource]:
+    """Apply role selections to real prepared roots without widening host policy."""
+    result: list[SkillSource] = []
+    selected = False
+    for source in declarations or ():
+        if isinstance(source, SkillSource):
+            result.append(source)
+            continue
+        selected = True
+        for provider in prepared:
+            names = (
+                provider.names
+                if source.names is None
+                else source.names
+                if provider.names is None
+                else tuple(name for name in source.names if name in provider.names)
+            )
+            result.append(SkillSource(provider.directory, names=names))
+    if inherit and not selected:
+        result.extend(prepared)
+    return result

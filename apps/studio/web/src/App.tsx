@@ -21,9 +21,12 @@ import {
   subscribeAuthSession,
   AuthSessionStorageError,
 } from './auth/session'
-import { clearWorkspaceLocation } from './lib/threadRoute'
+import { clearWorkspaceLocation, writeDeviceSettingsToLocation } from './lib/threadRoute'
 import { clearActiveRunSession } from './features/conversation/stream/activeRunSession'
 import { useI18n } from './i18n'
+import type { LoginRequest } from './api/auth/types'
+import { deviceAuthorizationServer, openDeviceClient, readDeviceAuthorizationIntent } from './features/devices/authorizationRoute'
+import { DeviceAuthorization } from './features/devices/DeviceAuthorization'
 
 type AuthPhase = 'checking' | 'signedOut' | 'transitioning' | 'signedIn'
 type AuthEntry = 'restore' | 'manual'
@@ -38,6 +41,7 @@ const WorkspaceScreen = lazy(async () => ({
 
 export default function App() {
   const { t } = useI18n()
+  const [deviceAuthorization, setDeviceAuthorization] = useState(readDeviceAuthorizationIntent)
   const session = useSyncExternalStore(subscribeAuthSession, getAuthSession, () => null)
   const [phase, setPhase] = useState<AuthPhase>(() => (
     getAuthSession() ? 'checking' : 'signedOut'
@@ -57,7 +61,7 @@ export default function App() {
       const entry = authEntry.current
       authEntry.current = 'restore'
       setPhase(
-        entry === 'manual'
+        entry === 'manual' && !deviceAuthorization
           && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
           ? 'transitioning'
           : 'signedIn',
@@ -101,25 +105,68 @@ export default function App() {
     authEntry.current = 'restore'
     clearActiveRunSession()
     setToasts([])
-    clearWorkspaceLocation()
+    if (!deviceAuthorization) clearWorkspaceLocation()
     setPhase('signedOut')
-  }), [])
+  }), [deviceAuthorization])
 
   useEffect(() => startAuthSessionLifecycle({
     onExternalSession: () => {
       authEntry.current = 'restore'
-      setPhase((current) => current === 'signedOut' ? current : 'checking')
+      setPhase((current) => current === 'signedOut' && !deviceAuthorization ? current : 'checking')
       setAuthCheckVersion((current) => current + 1)
     },
-  }), [])
+  }), [deviceAuthorization])
 
   useEffect(() => {
-    if (phase === 'signedOut') clearWorkspaceLocation()
-  }, [phase])
+    if (phase === 'signedOut' && !deviceAuthorization) clearWorkspaceLocation()
+  }, [phase, deviceAuthorization])
+
+  const handleLogin = async (credentials: LoginRequest) => {
+    if (loginRequest.current) return
+    const serverAddress = getServerAddress()
+    if (deviceAuthorization && serverAddress !== deviceAuthorizationServer()) {
+      pushToast('error', t('授权连接已变化，请从客户端重新打开'))
+      return
+    }
+    const controller = new AbortController()
+    loginRequest.current = controller
+    setLoginPending(true)
+    try {
+      const payload = await login(credentials, controller.signal)
+      if (controller.signal.aborted || getServerAddress() !== serverAddress) return
+      authEntry.current = 'manual'
+      saveAuthSession(createAuthSession(payload))
+      setPhase('checking')
+      setAuthCheckVersion((current) => current + 1)
+    } catch (error) {
+      if (controller.signal.aborted) return
+      if (error instanceof AuthError) {
+        pushToast('error', error.message)
+      } else if (error instanceof AuthSessionStorageError) {
+        pushToast('error', t('浏览器无法保存登录状态，请检查隐私或存储设置后重试'))
+      } else if (!(error instanceof ApiError)) {
+        pushToast('error', t('登录失败，请稍后重试'))
+      }
+    } finally {
+      if (loginRequest.current === controller) loginRequest.current = null
+      if (!controller.signal.aborted) setLoginPending(false)
+    }
+  }
+
+  const exitDeviceAuthorization = useCallback((id: string) => {
+    if (!deviceAuthorization || id !== deviceAuthorization.id) return
+    writeDeviceSettingsToLocation()
+    setDeviceAuthorization(null)
+    openDeviceClient()
+  }, [deviceAuthorization])
 
   let content: ReactNode
 
-  if (phase === 'checking') {
+  if (deviceAuthorization) {
+    content = <DeviceAuthorization key={session?.token ?? 'signed-out'} intent={deviceAuthorization}
+      session={phase === 'signedIn' ? session : null} checking={phase === 'checking'}
+      pending={isLoginPending} onLogin={handleLogin} onExit={exitDeviceAuthorization} />
+  } else if (phase === 'checking') {
     content = (
       <main
         className="auth-checking"
@@ -133,33 +180,7 @@ export default function App() {
       <AuthScreen
         pending={isLoginPending}
         onError={(message) => pushToast('error', message)}
-        onLogin={async (credentials) => {
-          if (loginRequest.current) return
-          const serverAddress = getServerAddress()
-          const controller = new AbortController()
-          loginRequest.current = controller
-          setLoginPending(true)
-          try {
-            const payload = await login(credentials, controller.signal)
-            if (controller.signal.aborted || getServerAddress() !== serverAddress) return
-            authEntry.current = 'manual'
-            saveAuthSession(createAuthSession(payload))
-            setPhase('checking')
-            setAuthCheckVersion((current) => current + 1)
-          } catch (error) {
-            if (controller.signal.aborted) return
-            if (error instanceof AuthError) {
-              pushToast('error', error.message)
-            } else if (error instanceof AuthSessionStorageError) {
-              pushToast('error', t('浏览器无法保存登录状态，请检查隐私或存储设置后重试'))
-            } else if (!(error instanceof ApiError)) {
-              pushToast('error', t('登录失败，请稍后重试'))
-            }
-          } finally {
-            if (loginRequest.current === controller) loginRequest.current = null
-            if (!controller.signal.aborted) setLoginPending(false)
-          }
-        }}
+        onLogin={handleLogin}
       />
     )
   } else if (phase === 'transitioning') {

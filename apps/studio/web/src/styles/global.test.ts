@@ -157,6 +157,7 @@ describe('前端视觉契约', () => {
     expect(Object.keys(cssFiles)).toEqual(expect.arrayContaining([
       '../components/ui/ui.css',
       '../features/auth/auth.css',
+      '../features/devices/deviceAuthorization.css',
       '../features/conversation/conversation.css',
       '../features/settings/settings.css',
       '../features/workspace/workspace.css',
@@ -189,6 +190,10 @@ describe('前端视觉契约', () => {
     expect(unregisteredShadows).toEqual([])
     expect(unregisteredLayers).toEqual([])
     expect(breakpointValues).toEqual(['440', '460', '767', '920', '1024'])
+    const deviceAuthorizationBreakpointOwners = Object.entries(cssFiles)
+      .filter(([, source]) => /@(?:media|container(?: [\w-]+)?) \((?:min|max)-width:\s*600px\)/.test(source))
+      .map(([path]) => path)
+    expect(deviceAuthorizationBreakpointOwners).toEqual([])
     expect(ownerLocalMotionValues).toEqual([])
   })
 
@@ -228,6 +233,8 @@ describe('前端视觉契约', () => {
           ['.workspace-file-icon > span', 'var(--weight-bold)'],
           ['.workspace-file-information strong', 'var(--weight-semibold)'],
           ['.workspace-files-empty h3', 'var(--weight-medium)'],
+          ['.device-authorization__body h2', 'var(--weight-semibold)'],
+          ['.device-authorization__summary strong', 'var(--weight-medium)'],
         ])
         const expectedWeight = interfaceWeights.get(selector.trim())
         if (expectedWeight) {
@@ -236,7 +243,9 @@ describe('前端视觉契约', () => {
           expect(selector, `${path}: 非界面字重只能用于语义内容`).toMatch(contentBoundary)
         }
         const family = block.match(/font-family:\s*([^;]+);/)?.[1].trim()
-        if (family) expect(['var(--font-ui)', 'var(--font-code)'], `${path}: 字体必须使用公共令牌`).toContain(family)
+        if (family) {
+          expect(['var(--font-ui)', 'var(--font-code)'], `${path}: 字体必须使用公共令牌`).toContain(family)
+        }
       }
     }
   })

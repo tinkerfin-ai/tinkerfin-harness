@@ -66,7 +66,7 @@ export function AutomationPage({ projectId, executions, onOpenConversation, navi
         { value: 'tasks', label: t('任务'), controls: 'automation-panel' },
         { value: 'history', label: t('历史'), controls: 'automation-panel' },
       ]} onChange={value => { setPage(value); setBatch(false); clearFilters() }} className="workspace-view-tabs" />}
-      actions={<div className="workspace-search-actions automation-header-actions">
+      actions={<div className="workspace-search-actions automation-header-actions" data-toast-header="stacked-mobile">
         <ExpandableSearch open={searchOpen} onOpenChange={setSearchOpen} label={t('搜索任务或运行历史')}
           placeholder={t('搜索任务或运行历史')} closeLabel={t('关闭搜索')} value={query} onChange={setQuery} />
         {page === 'tasks' && <IconButton type="button" variant="ghost" size="xs" className="workspace-header-action" label={t('批量选择')}

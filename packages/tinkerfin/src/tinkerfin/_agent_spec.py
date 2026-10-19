@@ -21,7 +21,7 @@ from langgraph.typing import ContextT
 from tinkerfin_contracts import Workspace
 
 from .media import AttachmentSupport
-from .skills import SkillSource
+from .skills import SkillSource, WorkspaceSkills
 from .subagents import SubAgent
 from .tools import _ToolRunScope
 
@@ -70,7 +70,7 @@ class AgentSpec(Generic[ContextT]):
     middleware: Sequence[AgentMiddlewareType] = ()
     compaction_tool_enabled: bool = False
     subagents: Sequence[SubagentDefinition] = ()
-    skills: Sequence[SkillSource] | None = None
+    skills: Sequence[SkillSource | WorkspaceSkills] | None = None
     memory: Sequence[str] | None = None
     permissions: Sequence[FilesystemPermission] = ()
     backend: AgentBackend = None

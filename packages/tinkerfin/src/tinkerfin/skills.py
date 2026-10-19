@@ -1,29 +1,28 @@
-"""Declare directories whose current skills an agent may discover."""
+"""Select skill directories supplied by a backend or prepared workspace."""
 
 from dataclasses import dataclass
 
+from tinkerfin_contracts.skills import SkillSource as SkillSource
+
 
 @dataclass(frozen=True, slots=True)
-class SkillSource:
-    """Select current skill packages from one backend directory.
+class WorkspaceSkills:
+    """Select skills from directories supplied by the prepared workspace.
 
     Args:
-        directory: Backend directory containing named skill directories.
-        names: Exact names to expose, or ``None`` for all discovered skills.
-            An empty tuple exposes none. This selects instructions, not filesystem
-            permissions; file and execution access remain the backend's concern.
+        names: Exact skill names to expose, or ``None`` for every skill allowed
+            by the provider. An empty tuple exposes none. Provider restrictions
+            still apply; this declaration never widens filesystem permissions.
 
-    Raises:
-        ValueError: The directory is empty, or names are invalid or repeated.
+    Use ``skills=[WorkspaceSkills(names=("research",))]`` on a declared subagent
+    whose workspace directories are known only after preparation. The main and
+    automatic general-purpose agents already discover prepared workspace sources.
     """
 
-    directory: str
     names: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
-        """Reject empty paths and invalid or mutable name selections."""
-        if not isinstance(self.directory, str) or not self.directory.strip():
-            raise ValueError("skill source directory must be nonempty")
+        """Reject duplicate names and paths in an explicit skill selection."""
         if self.names is not None:
             if not isinstance(self.names, tuple) or any(
                 not isinstance(name, str) or not name or "/" in name or "\\" in name
@@ -31,4 +30,7 @@ class SkillSource:
             ):
                 raise ValueError("skill names must be a tuple of nonempty names")
             if len(set(self.names)) != len(self.names):
-                raise ValueError("skill names must be unique within a source")
+                raise ValueError("skill names must be unique within a selection")
+
+
+__all__ = ["SkillSource", "WorkspaceSkills"]

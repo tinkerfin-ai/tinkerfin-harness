@@ -50,6 +50,48 @@ Configure delegation through `subagents` and tool approval through `interrupt_on
 Their middleware cannot be replaced; `task` and the tools of configured remote agents
 are reserved for delegation.
 
+## Tool file arguments
+
+With a workspace that supplies a file path resolver, annotate custom tool inputs
+with `FilePath` from `tinkerfin_contracts`. The Runtime resolves them before
+approval and rechecks the same targets before execution. Model messages retain
+their original arguments. Keep the role's file tool declarations and path
+resolution capability unchanged while an operation awaits review or execution.
+If they change, submit a new operation; its previous approval cannot be reused.
+
+```python
+from typing import Annotated
+
+from langchain_core.tools import tool
+from tinkerfin_contracts import FilePath
+
+
+@tool
+async def selected_files(files: dict[str, Annotated[str, FilePath("read")]]) -> str:
+    """Return the resolved names of the selected files."""
+    return "\n".join(files.values())
+
+
+runtime = (
+    TinkerFin()
+    .with_namespace("reports")
+    .build(model=model, backend=workspace, tools=[selected_files])
+)
+```
+
+Annotations support nested model fields, dictionary values, and list items.
+For `ToolDescriptor` schemas, this includes local JSON Pointer references,
+`properties`, `patternProperties`, `additionalProperties`, `prefixItems` / `items`,
+and `allOf` / `anyOf` / `oneOf`. All applicable declarations must agree on access
+and `default_root`; a property matching several patterns is resolved once.
+Declarations in conditional or other unsupported schema positions are rejected
+at registration, including when reached through a reference.
+
+Input constraints must accept both proposed and canonical absolute paths without
+changing the selected file access. A resolution that violates either condition
+stops execution. `FilePath("read", default_root=True)` resolves an omitted or null
+argument to the workspace root; the input schema must also allow that input form.
+
 ## Attachment inputs
 
 Configure model media inputs and stored attachment reads with
@@ -106,6 +148,14 @@ current files before each model call, including resumed execution. Use
 `SkillSource("/skills/", names=("reporting",))` to select names; omit `names` to
 load all skills, or pass an empty tuple to expose none. Name selection controls
 instructions, not filesystem or execution permissions.
+
+When a workspace supplies its own skill directories, the root and automatic
+`general-purpose` agent discover those prepared sources. A declared subagent can
+select them by name with `skills=[WorkspaceSkills(names=("reporting",))]`, imported
+from `tinkerfin`. The workspace supplies the actual directory; the selection also
+honors any name restriction imposed by that source. Use `WorkspaceSkills()` to
+select every skill the workspace allows. Declared subagents expose none of these
+skills unless selected explicitly.
 
 A concrete checkpointer is required for resumable tool approval and Plan. Submit only
 new user messages when the checkpointer already contains the thread history.
@@ -216,7 +266,10 @@ Accessing `workspace` without a configured workspace or after the run closes rai
 An automatic `general-purpose` subagent inherits the root model, tools, skills,
 permissions, and approval rules. Declare other roles with `tinkerfin.subagents.SubAgent`.
 Omitted model, tools, permissions, and approval rules inherit from the root; skills
-must be configured explicitly. An explicit tool list replaces inherited tools.
+must be configured explicitly. An explicit tool list replaces the root's declared
+tools. Tools supplied by the prepared workspace are added to each framework-created
+role and follow that role's approval rules. Duplicate names, including names owned
+by built-in file and delegation tools, fail before the model runs.
 
 Compiled and remote subagents do not inherit workspace or attachment access. Their
 authors choose their file-input mechanism; framework-created graphs can use the
@@ -238,7 +291,7 @@ result = await graph.ainvoke(graph_input, config=config)
 
 The caller owns direct Graph execution and cleanup. Direct Graphs do not create managed
 Runtime observations, AG-UI events, Messaging delivery, or per-run workspace
-preparation. A Runtime using `workspace(...)` must use managed execution methods.
+preparation. A Runtime using `backend=workspace` must use managed execution methods.
 Tool workspace and run identity access also require managed execution.
 
 Next: [Streams and SSE](streams-and-sse.md).

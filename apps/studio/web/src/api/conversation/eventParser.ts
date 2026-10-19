@@ -115,6 +115,7 @@ const isRawEventContext = (value: unknown): value is RawEventContext => {
   return (value.streamMode === undefined
       || value.streamMode === 'messages'
       || value.streamMode === 'tasks'
+      || value.streamMode === 'custom'
       || value.streamMode === 'values')
     && (value.source === undefined || isEventSourceInfo(value.source))
     && hasOptionalString(value, 'runId')
@@ -267,6 +268,13 @@ const isConversationAgUiEvent = (value: unknown): value is ConversationAgUiEvent
         && typeof value.role === 'string'
 
     case 'CUSTOM':
+      if (value.name === 'tinkerfin.tool_output') return isRawEventContext(value.rawEvent)
+        && value.rawEvent.streamMode === 'custom'
+        && Boolean(value.rawEvent.runId) && value.rawEvent.source !== undefined
+        && isRecord(value.value)
+        && typeof value.value.toolCallId === 'string' && value.value.toolCallId.length > 0
+        && isJsonValue(value.value.value)
+        && Object.keys(value.value).every(key => key === 'toolCallId' || key === 'value')
       if (value.name === 'tinkerfin.run.phase') return hasOptionalRawEvent(value)
         && isRecord(value.value)
         && typeof value.value.threadId === 'string' && value.value.threadId.length > 0

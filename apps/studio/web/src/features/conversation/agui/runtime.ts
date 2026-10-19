@@ -770,6 +770,7 @@ export const buildInitialPayload = (
   content: string,
   attachments: readonly Attachment[] = [],
   skillIds: readonly string[] = [],
+  localTarget?: { device_id: string; workspace_id: string },
 ): ChatRequestPayload => {
   const runId = createRunId()
   return {
@@ -785,7 +786,7 @@ export const buildInitialPayload = (
     ],
     tools: [],
     context: [],
-    forwardedProps: { ...forwardedPropsFor(conversation.projectId, conversation.model, conversation.mode, conversation.accessMode), skillIds: [...skillIds] },
+    forwardedProps: { ...forwardedPropsFor(conversation.projectId, conversation.model, conversation.mode, conversation.accessMode), skillIds: [...skillIds], ...(localTarget ? { localTarget } : {}) },
   }
 }
 
@@ -1132,6 +1133,25 @@ const reduceConversationEvent = (
     }
 
     case "CUSTOM": {
+      if (event.name === 'tinkerfin.tool_output' && isJsonObject(event.value)) {
+        const raw = event.rawEvent
+        const { toolCallId, value } = event.value
+        if (conversation.runStatus !== 'streaming' || raw?.runId !== conversation.activeRunId
+          || !raw?.source || typeof toolCallId !== 'string' || value === undefined) return conversation
+        const tool = conversation.messages.find(message => message.role === 'tool'
+          && message.meta?.toolCallId === toolCallId
+          && (message.meta.status === 'running' || message.meta.status === 'paused'))
+        const scope = tool?.meta?.graphNamespace ?? []
+        if (!tool || scope.length !== raw.source.graphNamespace.length
+          || scope.some((part, index) => part !== raw.source!.graphNamespace[index])) return conversation
+        const chunk = typeof value === 'string' ? value : JSON.stringify(value) + '\n'
+        // 恢复不重复工具 Start；当前运行的实际输出证明执行已开始
+        // 详情保留有界输出尾部，完成事件替换为权威结果
+        const combined = (tool.meta?.result ?? '') + chunk
+        const result = combined.length > 256 * 1024 ? '…\n' + combined.slice(-256 * 1024) : combined
+        return updateMessage(conversation, message => message.id === tool.id,
+          message => ({ ...message, meta: { ...message.meta, result, status: 'running' } }))
+      }
       if (event.name === 'tinkerfin.run.phase' && isJsonObject(event.value)) {
         const { threadId, runId, phase } = event.value
         if (threadId !== conversation.threadId || runId !== conversation.activeRunId

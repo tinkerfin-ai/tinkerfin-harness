@@ -53,14 +53,18 @@ RUN_FINISHED
 工具参数片段不会结束同一模型消息的文字输出。即使工具片段之后还有文字，这条消息也只开始
 和结束一次。工具事件中的父消息 ID 与消息快照中的身份保持一致。
 
+工作区工具执行时可发送名称为 `tinkerfin.tool_output` 的 `CUSTOM` 事件。
+事件的 `value` 包含完整的 `toolCallId`，以及承载有限 JSON 进度的 `value`，例如命令输出。
+前端按工具 ID 追加进度；最终结果由 `TOOL_CALL_RESULT` 提供，运行结果由终止事件确认。
+进度保留当前云端运行与图作用域的来源信息。
+
 ## 主 Agent 和子 Agent
 
 子 Agent 来自非根 graph_namespace。转换器会保留完整 graph_namespace 和来源信息，避免不同子 Agent 的消息、工具和状态混在一起。
 
 `expose_subagent_events=True` 会发送子 Agent 的公开事件。设置为 `False` 时，转换器仍会检查这些数据，但不把对应事件交给前端。
 
-框架不会用 `parentRunId` 表示 LangGraph 子图。高层 Runtime 显式接收 `parent_run_id`，并且只把它
-用于 checkpoint 分支。经过校验的 Deep Agents
+框架不会用 `parentRunId` 表示 LangGraph 子图。高层 Runtime 用 `parent_run_id` 表示分支或恢复来源。经过校验的 Deep Agents
 委派会在 task RAW descriptor 中携带 `tinkerfin.subagent-provenance`：
 `subagentInvocationId` 跨 resume 稳定，`requestRunId` 表示当前主请求，子事件 source 重复该
 invocation ID，父 task Result 使用 `relatedSubagentInvocationId`。

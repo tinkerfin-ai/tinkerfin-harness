@@ -213,6 +213,11 @@ class ConversationRunRegistration(Base):
     model_id: Mapped[str] = mapped_column(
         String(64), nullable=False, comment="主运行模型 ID"
     )
+    local_profile_id: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+        comment="本轮固定的本机执行配置 UUID；未启用本机协作时为空",
+    )
     status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,

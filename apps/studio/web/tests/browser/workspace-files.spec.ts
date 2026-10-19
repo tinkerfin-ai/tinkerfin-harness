@@ -51,6 +51,8 @@ async function prepare(page: Page, theme = 'light', directories?: Record<string,
     const url = new URL(route.request().url()), path = url.pathname
     const reply = (data: unknown) => route.fulfill({ json: { code: 0, message: 'success', data } })
     if (path === '/api/auth/me') return reply({ expires_at: '2099-01-01T00:00:00Z', user })
+    if (path === '/api/devices') return reply([])
+    if (path === '/api/devices/selection') return reply(null)
     if (path === '/api/projects') return reply(projects)
     if (path === '/api/models') return reply({ items: [{ modelId: 'main', displayName: 'DeepSeek', connectionId: 'test', connectionDisplayName: '测试', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' })
     if (path === '/api/skills/installations') return reply([])
@@ -88,6 +90,7 @@ async function prepare(page: Page, theme = 'light', directories?: Record<string,
   })
   await page.goto('/?project=research&thread=one')
   await expect(page.getByRole('button', { name: '任务轨迹 1', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '工作区', exact: true })).toBeEnabled()
   return { requests, update: () => { etag = 'second' } }
 }
 
@@ -232,14 +235,16 @@ for (const [name, title] of [['工作区', '工作区'], ['任务轨迹 1', '任
   })
 }
 
-test('项目文件实时提示、同项目会话保留阅读，两个顶部入口互斥且间距与会话工具栏一致', async ({ page }) => {
+test('项目文件实时提示、同项目会话保留阅读，任务轨迹与工作区互斥且顶部操作间距一致', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const evidence = await prepare(page)
   expect(evidence.requests).toEqual([])
   const task = page.getByRole('button', { name: '任务轨迹 1', exact: true })
+  const chain = page.getByRole('button', { name: '链路', exact: true })
   const files = page.getByRole('group', { name: '会话操作' }).getByRole('button', { name: '工作区', exact: true })
-  const [taskBox, filesBox, archive, search] = await measureBounds(task, files, page.getByRole('button', { name: '已归档会话', exact: true }), page.getByRole('button', { name: '搜索会话', exact: true }))
-  expect(filesBox.x - taskBox.x - taskBox.width).toBe(search.x - archive.x - archive.width)
+  const [taskBox, chainBox, filesBox, archive, search] = await measureBounds(task, chain, files, page.getByRole('button', { name: '已归档会话', exact: true }), page.getByRole('button', { name: '搜索会话', exact: true }))
+  expect(chainBox.x - taskBox.x - taskBox.width).toBe(search.x - archive.x - archive.width)
+  expect(filesBox.x - chainBox.x - chainBox.width).toBe(search.x - archive.x - archive.width)
   expect(filesBox.width).toBe(search.width)
   await expect(task).toHaveText('1')
   const collapse = page.getByRole('button', { name: '收起侧边栏' })
@@ -262,7 +267,8 @@ test('项目文件实时提示、同项目会话保留阅读，两个顶部入�
     await page.screenshot({ path: resolve(process.env.TINKERFIN_VISUAL_QA_DIR, 'workspace-header-controls.png') })
   }
   await selectScript(page)
-  await expect(files).toBeHidden()
+  await expect(files).toBeVisible()
+  await expect(files).toHaveAttribute('aria-expanded', 'true')
   await expect(page.getByText('项目文件', { exact: true })).toHaveCount(0)
   const [refreshBox, closeBox] = await measureBounds(page.getByRole('button', { name: '刷新文件' }), page.getByRole('button', { name: '关闭工作区' }))
   expect(closeBox.x - refreshBox.x - refreshBox.width).toBe(4)
@@ -282,6 +288,7 @@ test('项目文件实时提示、同项目会话保留阅读，两个顶部入�
   await expect(preview).toContainText('print("updated")')
   await task.click()
   await expect(task).toBeHidden()
+  await expect(files).toHaveAttribute('aria-expanded', 'false')
   await expect(page.getByRole('complementary', { name: '工作区', exact: true })).toBeHidden()
   await expect(page.getByRole('complementary', { name: '任务轨迹', exact: true })).toBeVisible()
   const [taskClose] = await measureBounds(page.getByRole('button', { name: '关闭任务轨迹' }))

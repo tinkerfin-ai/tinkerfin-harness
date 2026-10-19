@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -24,11 +24,37 @@ class ContractModel(BaseModel):
     )
 
 
+class ObservationClock(ContractModel):
+    """Retain the producing execution's clock separately from relay observation time.
+
+    Monotonic values may be compared only for the same namespace, thread, and run.
+    Sequence is the producer's durable fact position, never a delivery timestamp.
+    """
+
+    namespace: str
+    thread_id: str
+    run_id: str
+    sequence: int = Field(ge=1)
+    observed_at: datetime
+    monotonic_ns: int = Field(ge=0)
+
+    @field_validator("observed_at")
+    @classmethod
+    def observed_at_is_utc(cls, value: datetime) -> datetime:
+        """Keep the original aware UTC source time without adjusting its clock."""
+        if value.tzinfo is None or value.utcoffset() != UTC.utcoffset(value):
+            raise ValueError("observed_at must be an aware UTC timestamp")
+        return value
+
+
 class ObservationModel(ContractModel):
     """Attach comparable wall and monotonic timestamps to one observation."""
 
     observed_at: datetime
     monotonic_ns: int
+    source_clock: ObservationClock | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("observed_at")
     @classmethod
@@ -49,4 +75,4 @@ class ObservationModel(ContractModel):
         return value
 
 
-__all__ = ["ContractModel", "ObservationModel"]
+__all__ = ["ContractModel", "ObservationClock", "ObservationModel"]

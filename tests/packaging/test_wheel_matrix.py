@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
-from scripts.build_wheels import PROJECT_PATHS
+from scripts.build_wheels import PROJECT_PATHS, project_paths_for
 
 _ROOT = Path(__file__).resolve().parents[2]
 
@@ -100,10 +100,56 @@ _PROJECTS = (
         _ROOT / "packages/tinkerfin-sqlalchemy",
         "tinkerfin_sqlalchemy/py.typed",
     ),
+    _WheelProject(
+        "tinkerfin-remote",
+        _ROOT / "packages/tinkerfin-remote",
+        "tinkerfin_remote/py.typed",
+    ),
     _WheelProject("tinkerfin-studio", _ROOT / "apps/studio/server", None),
+    _WheelProject(
+        "tinkerfin-companion", _ROOT / "apps/desktop", "tinkerfin_companion/py.typed"
+    ),
 )
 
 _CORE_CASES = (
+    _InstallCase(
+        "sandbox-native",
+        "tinkerfin-sandbox==0.1.1",
+        ("tinkerfin_sandbox",),
+        ("tinkerfin-sandbox", "tinkerfin-contracts", "deepagents"),
+        ("mcp", "opensandbox", "tinkerfin-notifications", "tinkerfin-studio"),
+        ("opensandbox", "tinkerfin_notifications", "tinkerfin_studio"),
+        smoke="sandbox_native",
+    ),
+    _InstallCase(
+        "sandbox-native-mcp",
+        "tinkerfin-sandbox[mcp]==0.1.1",
+        ("tinkerfin_sandbox", "mcp"),
+        ("tinkerfin-sandbox", "mcp"),
+        ("opensandbox", "tinkerfin-studio"),
+        ("opensandbox", "tinkerfin_studio"),
+        smoke="sandbox_native",
+    ),
+    _InstallCase(
+        "remote-core",
+        "tinkerfin-remote==0.1.1",
+        ("tinkerfin_remote",),
+        ("tinkerfin-remote", "tinkerfin-contracts", "tinkerfin-sqlalchemy"),
+        ("tinkerfin-studio", "tinkerfin", "tinkerfin-sandbox", "opensandbox"),
+    ),
+    _InstallCase(
+        "companion-core",
+        "tinkerfin-companion==0.1.1",
+        ("tinkerfin_companion", "tinkerfin_companion.host"),
+        (
+            "tinkerfin-companion",
+            "tinkerfin-sandbox",
+            "tinkerfin-remote",
+            "mcp",
+        ),
+        ("tinkerfin-studio", "tinkerfin", "opensandbox"),
+        smoke="companion",
+    ),
     _InstallCase(
         "notifications-core",
         "tinkerfin-notifications==0.1.1",
@@ -217,12 +263,13 @@ _CORE_CASES = (
         ("tinkerfin", "sqlalchemy", "aiosqlite", "asyncmy"),
     ),
     _InstallCase(
-        "sandbox-core",
-        "tinkerfin-sandbox==0.1.1",
+        "sandbox-opensandbox",
+        "tinkerfin-sandbox[opensandbox]==0.1.1",
         ("tinkerfin_sandbox",),
         ("tinkerfin-sandbox", "deepagents", "opensandbox"),
         ("sqlalchemy", "aiosqlite", "asyncmy"),
-        ("sqlalchemy", "aiosqlite", "asyncmy"),
+        ("sqlalchemy", "aiosqlite", "asyncmy", "tinkerfin_sandbox._native"),
+        smoke="sandbox_opensandbox",
     ),
     _InstallCase(
         "langgraph-store-core",
@@ -383,9 +430,10 @@ _EXTRA_CASES = (
         "sandbox-sqlalchemy",
         "tinkerfin-sandbox[sqlalchemy]==0.1.1",
         ("tinkerfin_sandbox", "tinkerfin_sqlalchemy", "sqlalchemy"),
-        ("tinkerfin-sandbox", "tinkerfin-sqlalchemy", "sqlalchemy"),
+        ("tinkerfin-sandbox", "tinkerfin-sqlalchemy", "sqlalchemy", "opensandbox"),
         ("asyncmy", "asyncpg", "aiosqlite"),
-        ("asyncmy", "asyncpg", "aiosqlite"),
+        ("asyncmy", "asyncpg", "aiosqlite", "tinkerfin_sandbox._native"),
+        smoke="sandbox_sqlalchemy",
     ),
 )
 
@@ -650,6 +698,19 @@ def wheel_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
             assert "tinkerfin/agui_native.py" not in names
         if project.name == "tinkerfin-agui-adapter":
             assert not any("-v1" in name for name in names)
+        if project.name == "tinkerfin-sandbox":
+            assert "tinkerfin_sandbox/_native/_sandbox_runner.mjs" in names
+            assert "tinkerfin_sandbox/_native/_process_supervisor.py" in names
+            assert "tinkerfin_sandbox/_native/_file_worker.py" in names
+            assert not any(name.startswith("tinkerfin_local/") for name in names)
+        if project.name == "tinkerfin-companion":
+            assert "tinkerfin_companion/browser.mjs" not in names
+            for resource in (
+                "browser_command.py",
+                "browser_config.json",
+                "browser_release.json",
+            ):
+                assert f"tinkerfin_companion/{resource}" in names
     return output
 
 
@@ -658,6 +719,7 @@ def _verification_script() -> str:
 import asyncio
 import importlib
 import importlib.metadata
+import importlib.resources
 import json
 import os
 import sys
@@ -674,12 +736,45 @@ for name in case["forbidden_distributions"]:
         pass
     else:
         raise AssertionError(f"forbidden distribution installed: {name}")
-for root in case["forbidden_modules"]:
-    if any(name == root or name.startswith(root + ".") for name in sys.modules):
-        raise AssertionError(f"forbidden module loaded: {root}")
 
 async def smoke() -> None:
-    if case["smoke"] == "notifications":
+    if case["smoke"] == "sandbox_native":
+        from tinkerfin_sandbox import (
+            LocalAccess, LocalError, LocalErrorCode, LocalLimits,
+            LocalProcess, LocalSession, LocalWorkspace, SandboxError,
+        )
+        assert issubclass(LocalError, SandboxError)
+        assert LocalErrorCode.UNAVAILABLE.value.startswith("sandbox.local.")
+        assert LocalAccess().network == "normal"
+        assert all(isinstance(value, type) for value in (LocalLimits, LocalProcess, LocalSession))
+        workspace = LocalWorkspace("/not-opened", sandbox_executable="not-installed")
+        assert callable(workspace.open)
+        root = importlib.resources.files("tinkerfin_sandbox").joinpath("_native")
+        for name in ("_sandbox_runner.mjs", "_process_supervisor.py", "_file_worker.py"):
+            assert root.joinpath(name).is_file(), name
+    elif case["smoke"] in {"sandbox_opensandbox", "sandbox_sqlalchemy"}:
+        from tinkerfin_sandbox import (
+            InMemoryOpenSandboxState, OpenSandboxBackend, OpenSandboxClient,
+            OpenSandboxConfig, OpenSandboxError, OpenSandboxManager, SandboxError,
+        )
+        assert issubclass(OpenSandboxError, SandboxError)
+        assert all(isinstance(value, type) for value in (
+            InMemoryOpenSandboxState, OpenSandboxBackend, OpenSandboxClient, OpenSandboxManager,
+        ))
+        assert OpenSandboxConfig().image
+        root = importlib.resources.files("tinkerfin_sandbox").joinpath("backends")
+        assert root.joinpath("_rooted_helper.py.txt").is_file()
+        assert root.joinpath("_workspace_files_helper.py.txt").is_file()
+        if case["smoke"] == "sandbox_sqlalchemy":
+            from tinkerfin_sandbox import SQLAlchemyOpenSandboxState, get_sqlalchemy_opensandbox_state_schema
+            assert isinstance(SQLAlchemyOpenSandboxState, type)
+            assert get_sqlalchemy_opensandbox_state_schema(dialect="sqlite").table_names
+    elif case["smoke"] == "companion":
+        root = importlib.resources.files("tinkerfin_companion")
+        assert not root.joinpath("browser.mjs").is_file()
+        for name in ("browser_command.py", "browser_config.json", "browser_release.json"):
+            assert root.joinpath(name).is_file(), name
+    elif case["smoke"] == "notifications":
         from tinkerfin_notifications import Notification, Notifications, NotificationScope
         async with Notifications() as service:
             scope = NotificationScope("installed")
@@ -777,6 +872,9 @@ async def smoke() -> None:
             await engine.dispose()
 
 asyncio.run(smoke())
+for root in case["forbidden_modules"]:
+    if any(name == root or name.startswith(root + ".") for name in sys.modules):
+        raise AssertionError(f"forbidden module loaded: {root}")
 """
 
 
@@ -842,8 +940,12 @@ def test_studio_candidate_wheel_set_is_self_contained(
     expected_paths = tuple(
         str(project.path.relative_to(_ROOT)) for project in _PROJECTS
     )
-    release_paths = PROJECT_PATHS
-    assert release_paths == expected_paths
+    assert PROJECT_PATHS == expected_paths
+    release_paths = project_paths_for("tinkerfin-studio")
+    assert "packages/tinkerfin-remote" in release_paths
+    assert "apps/studio/server" in release_paths
+    assert "apps/desktop" not in release_paths
+    assert "packages/tinkerfin-sandbox" in release_paths
 
     requirements = tmp_path / "requirements.txt"
     _run(

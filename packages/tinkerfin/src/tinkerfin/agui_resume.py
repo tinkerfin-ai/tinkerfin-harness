@@ -401,21 +401,25 @@ class AgUiResumeBinding(BaseModel):
                 unidentified_external_source=translation.unidentified_external_source,
             )
         if translation.mode == "custom":
+            from tinkerfin_agui_adapter.models import JsonObject
+
             if translation.kind != "tool":
                 raise ValueError(
                     "mixed runtime interrupts cannot use Tool cancellation"
                 )
             serialized_groups = {
-                interrupt_id: {
-                    "decisions": [
-                        (
-                            {"type": CANCEL_DECISION_TYPE}
-                            if decision is None
-                            else decision
-                        )
-                        for decision in decisions
-                    ]
-                }
+                interrupt_id: JsonObject.model_validate(
+                    {
+                        "decisions": [
+                            (
+                                {"type": CANCEL_DECISION_TYPE}
+                                if decision is None
+                                else decision
+                            )
+                            for decision in decisions
+                        ]
+                    }
+                ).root
                 for interrupt_id, decisions in translation.decisions_by_interrupt.items()
             }
             if not serialized_groups:

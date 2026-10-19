@@ -752,11 +752,28 @@ async def _resume_context(
     source_marker = _checkpoint_lineage(source)
     if source_marker is None:
         raise TinkerFinLifecycleError("resume source has no private lineage marker")
+    source_namespace = source.config.get("configurable", {}).get("checkpoint_ns", "")
+    owner_run_ids: set[str] = set()
     cancellation_interrupt_ids: set[str] = set()
     for interrupt_id, owner in sources.items():
         checkpoint = await checkpointer.aget_tuple(owner.config)
         if checkpoint is None or owner.task_id is None:
-            continue
+            raise TinkerFinLifecycleError("approval has no durable task source")
+        owner_lineage = _checkpoint_lineage(checkpoint)
+        if (
+            owner_lineage is None
+            or owner_lineage.thread != source_marker.thread
+            or owner_lineage.runtime_profile != source_marker.runtime_profile
+            or (
+                "|".join(owner.graph_namespace) != source_namespace
+                and checkpoint.metadata.get("parents", {}).get(source_namespace)
+                != _checkpoint_id(source)
+            )
+        ):
+            raise TinkerFinLifecycleError(
+                "approval source does not belong to the selected dispatch checkpoint"
+            )
+        owner_run_ids.add(owner_lineage.run_id)
         # Only the actual middleware's dedicated saver write can authorize this
         # interrupt. Inherited names, ordinary input, and another task's review
         # record cannot grant cancellation support to the current owner.
@@ -767,14 +784,18 @@ async def _resume_context(
         if (
             proof is not None
             and proof.graph_namespace == "|".join(owner.graph_namespace)
-            and (owner_lineage := _checkpoint_lineage(checkpoint)) is not None
             and proof.run_id == owner_lineage.run_id
             and proof.task_id == owner.task_id
             and proof.interrupt_id == interrupt_id
         ):
             cancellation_interrupt_ids.add(interrupt_id)
+    # A dynamic review can advance while its root dispatch remains suspended.
+    # Inherit the run that owns the complete pending batch, not the root's older
+    # writer; otherwise subsequent approvals lose the intervening model evidence.
+    if len(owner_run_ids) != 1:
+        raise TinkerFinLifecycleError("approval batch has ambiguous owning runs")
     return AgUiResumeContext(
-        parent_run_id=source_marker.run_id,
+        parent_run_id=next(iter(owner_run_ids)),
         interrupts=tuple(interrupts_by_id.values()),
         messages_by_graph_namespace=MappingProxyType(dict(messages_by_graph_namespace)),
         interrupt_graph_namespaces=MappingProxyType(
@@ -853,12 +874,17 @@ async def resolve_agui_resume_context(
             "resume checkpoint contains failed task evidence",
             diagnostic_context={"failed_task_count": len(failures)},
         )
-    return await _resume_context(
+    context = await _resume_context(
         snapshot,
         checkpointer=checkpointer,
         source=checkpoint,
         runtime_profile=runtime_profile,
     )
+    if parent_run_id is not None and parent_run_id != context.parent_run_id:
+        raise TinkerFinLifecycleError(
+            "parentRunId does not own the pending approval batch"
+        )
+    return context
 
 
 async def _required_thread_head(
@@ -1686,13 +1712,17 @@ async def bind_agui_lineage(
         )
 
     if resume is not None:
-        source_lineage = _checkpoint_lineage(source)
-        if source_lineage is None:
-            raise TinkerFinLifecycleError("resume source has no private lineage marker")
-        # _run_head verified the requested run's exact root ancestry. A child can
-        # own the latest review while the dispatch checkpoint still belongs to the
-        # original parent run; the frozen anchors verify that relationship again.
-        effective_parent = parent_run_id or source_lineage.run_id
+        context = await _resume_context(
+            await _read_snapshot(astream, source),
+            checkpointer=checkpointer,
+            source=source,
+            runtime_profile=runtime_profile,
+        )
+        if parent_run_id is not None and parent_run_id != context.parent_run_id:
+            raise TinkerFinLifecycleError(
+                "parentRunId does not own the pending approval batch"
+            )
+        effective_parent = context.parent_run_id
         if effective_parent == identity.run_id:
             raise TinkerFinLifecycleError(
                 "resume runId cannot own its interrupted source"

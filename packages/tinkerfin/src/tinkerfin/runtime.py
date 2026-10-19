@@ -44,6 +44,7 @@ from tinkerfin_contracts import (
     RunTerminalOutcome,
     RuntimeObserver,
     ThreadIdentity,
+    Workspace,
 )
 from tinkerfin_contracts.identity import validate_namespace
 from tinkerfin_native_stream import (
@@ -107,7 +108,7 @@ from .plan.clarification import ClarificationFormBase, DefaultClarificationForm
 from .plan.clarification_types import ClarificationType
 from .plan.models import PlanContentModel, PlanReviewAction, StructuredPlanContent
 from .runtime_profile import DeepAgentsRuntimeProfile, DeepAgentsV2RuntimeProfile
-from .skills import SkillSource
+from .skills import SkillSource, WorkspaceSkills
 from .sse import (
     SseBody,
     SseEventIdResolver,
@@ -943,7 +944,7 @@ class TinkerFin:
         system_prompt: str | SystemMessage | None = None,
         middleware: Sequence[AgentMiddlewareType] = (),
         subagents: Sequence[SubagentDefinition] | None = None,
-        skills: Sequence[SkillSource] | None = None,
+        skills: Sequence[SkillSource | WorkspaceSkills] | None = None,
         memory: Sequence[str] | None = None,
         permissions: Sequence[FilesystemPermission] | None = None,
         backend: AgentBackend = None,
@@ -963,7 +964,7 @@ class TinkerFin:
         system_prompt: str | SystemMessage | None = None,
         middleware: Sequence[AgentMiddlewareType] = (),
         subagents: Sequence[SubagentDefinition] | None = None,
-        skills: Sequence[SkillSource] | None = None,
+        skills: Sequence[SkillSource | WorkspaceSkills] | None = None,
         memory: Sequence[str] | None = None,
         permissions: Sequence[FilesystemPermission] | None = None,
         backend: AgentBackend = None,
@@ -982,7 +983,7 @@ class TinkerFin:
         system_prompt: str | SystemMessage | None = None,
         middleware: Sequence[AgentMiddlewareType] = (),
         subagents: Sequence[SubagentDefinition] | None = None,
-        skills: Sequence[SkillSource] | None = None,
+        skills: Sequence[SkillSource | WorkspaceSkills] | None = None,
         memory: Sequence[str] | None = None,
         permissions: Sequence[FilesystemPermission] | None = None,
         backend: AgentBackend = None,
@@ -1759,7 +1760,9 @@ class AgentRuntime(Generic[ContextT]):
             input: Explicit graph state, exclusive with messages and resume.
             resume: Human decisions for an interrupted run, exclusive with other inputs.
                 Copied when this method is called, before lazy preparation begins.
-            parent_run_id: Optional related run in the same namespace and thread.
+            parent_run_id: Optional branch source in the same namespace and thread.
+                For resume, omit to infer the current approval owner, or provide
+                that run explicitly.
             mode: Optional execution or Plan mode for new input.
             config: Optional graph execution settings.
             context: Context matching the schema supplied to build().
@@ -2311,6 +2314,20 @@ class AgentRuntime(Generic[ContextT]):
             identity=identity,
             runtime_profile=self._runtime_profile.profile_id,
         )
+        if isinstance(self._definition._spec.backend, Workspace):
+            modes = bound.arguments.get("stream_mode", ())
+            if isinstance(modes, str):
+                modes = (modes,)
+            if not isinstance(modes, (tuple, list)):
+                raise TypeError("workspace stream modes must be a sequence")
+            selected_modes: list[str] = []
+            for selected_mode in cast(Sequence[object], modes):
+                if not isinstance(selected_mode, str):
+                    raise TypeError("workspace stream modes must be strings")
+                selected_modes.append(selected_mode)
+            bound.arguments["stream_mode"] = tuple(
+                dict.fromkeys((*selected_modes, "custom"))
+            )
         graph_input = cast(
             InputAgentState | Command[object] | None, bound.arguments.get("input")
         )

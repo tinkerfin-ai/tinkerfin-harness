@@ -1,0 +1,37 @@
+[project]
+name = "tinkerfin-remote"
+version = "0.1.1"
+description = "Durable remote workspaces and concrete tool execution."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = [
+    "tinkerfin-contracts==0.1.1",
+    "tinkerfin-messaging[sqlalchemy]==0.1.1",
+    "tinkerfin-sqlalchemy==0.1.1",
+    "deepagents==0.7.19",
+    "langchain-core>=1.6.4,<2",
+    "sqlalchemy[asyncio]==2.0.52",
+    "pydantic>=2.12,<3",
+]
+
+[project.urls]
+Homepage = "https://github.com/tinkerfin-ai/tinkerfin-harness"
+Repository = "https://github.com/tinkerfin-ai/tinkerfin-harness"
+Issues = "https://github.com/tinkerfin-ai/tinkerfin-harness/issues"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tinkerfin_remote = ["py.typed"]
+
+[tool.uv.sources]
+tinkerfin-contracts = { workspace = true }
+tinkerfin-messaging = { workspace = true }
+tinkerfin-sqlalchemy = { workspace = true }

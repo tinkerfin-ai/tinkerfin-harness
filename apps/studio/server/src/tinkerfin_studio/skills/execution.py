@@ -77,7 +77,7 @@ def build_selected_skill_message(
     if not selected:
         return None
     instructions = "\n".join(
-        f"用户本次请求明确选择技能 {skill.name}。请先读取 /skills/{skill.name}/SKILL.md，按当前文件执行。"
+        f"用户本次请求明确选择技能 {skill.name}。请先按当前技能目录中的路径读取 {skill.name} 的 SKILL.md，按当前文件执行。"
         for skill in selected
     )
     references: list[JsonValue] = [

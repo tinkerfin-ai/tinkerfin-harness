@@ -51,6 +51,9 @@ describe('Dialog组合契约', () => {
     const { rerender } = render(<Dialog open title="示例" restoreFocusTo={original} onClose={vi.fn()}>
       <input aria-label="内容" />
     </Dialog>)
+    expect(screen.getByRole('heading', { name: '示例' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: '关闭对话框' })).toHaveFocus()
     await user.tab()
     const input = screen.getByRole('textbox', { name: '内容' })
     expect(input).toHaveFocus()
@@ -129,12 +132,51 @@ describe('Dialog组合契约', () => {
       <button type="button">范围</button>
       <button type="button" tabIndex={-1}>结果</button>
     </Dialog>)
+    expect(screen.getByRole('heading', { name: '搜索' })).toHaveFocus()
+    await user.tab({ shift: true })
+    expect(screen.getByRole('button', { name: '范围' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: '关闭对话框' })).toHaveFocus()
     await user.tab()
     expect(screen.getByRole('textbox', { name: '查询' })).toHaveFocus()
     await user.tab()
     expect(screen.getByRole('button', { name: '范围' })).toHaveFocus()
     await user.tab()
     expect(screen.getByRole('button', { name: '关闭对话框' })).toHaveFocus()
+  })
+
+  it('默认标题焦点保留弹窗名称和描述，关闭后恢复打开入口', async () => {
+    const user = userEvent.setup()
+    function DefaultFocusExample() {
+      const [open, setOpen] = useState(false)
+      return <>
+        <button type="button" onClick={() => setOpen(true)}>打开设置</button>
+        <Dialog open={open} title="设置" description="管理偏好" onClose={() => setOpen(false)}>
+          <button type="button">通用</button>
+        </Dialog>
+      </>
+    }
+    render(<DefaultFocusExample />)
+    const trigger = screen.getByRole('button', { name: '打开设置' })
+    await user.click(trigger)
+    expect(screen.getByRole('dialog', { name: '设置' })).toHaveAccessibleDescription('管理偏好')
+    expect(screen.getByRole('heading', { name: '设置' })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  it('自定义标题使用弹窗初始焦点，反向Tab保持在弹窗内', async () => {
+    const user = userEvent.setup()
+    render(<Dialog open title="详情" header={<h2>自定义标题</h2>} onClose={vi.fn()}>
+      <button type="button">首项</button>
+      <button type="button">末项</button>
+    </Dialog>)
+    expect(screen.getByRole('dialog', { name: '详情' })).toHaveFocus()
+    await user.tab({ shift: true })
+    expect(screen.getByRole('button', { name: '末项' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: '首项' })).toHaveFocus()
   })
 
 })

@@ -361,7 +361,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
     ], detail.asOfSeq)
     const setup = await openConversation(page, { theme, detail })
     try {
-      await page.getByRole('tab', { name: '链路', exact: true }).click()
+      await page.getByRole('button', { name: '链路', exact: true }).click()
       await expect(page.getByRole('button', { name: '压缩，压缩上下文，已完成，查看详情', exact: true })).not.toBeVisible()
       await expect(page.getByRole('button', { name: '上下文，压缩，已完成，查看详情', exact: true })).toBeVisible()
       const typography = await page.evaluate(() => {

@@ -7,7 +7,7 @@
 ## 安装
 
 ```bash
-pip install tinkerfin-sandbox
+pip install "tinkerfin-sandbox[opensandbox]"
 ```
 
 需要持久绑定时，安装 SQLAlchemy extra 和一种异步驱动：

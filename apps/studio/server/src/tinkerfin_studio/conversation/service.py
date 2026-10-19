@@ -261,6 +261,7 @@ class ConversationChatService:
                 search_service=search_service,
                 image_service=image_service,
                 access_mode=prepared.access_mode,
+                local_profile=execution.local_profile,
             )
             command: RunCommand
             if isinstance(intent, CompactIntent):

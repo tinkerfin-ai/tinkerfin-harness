@@ -3,7 +3,7 @@ import { KeyRound, Trash2 } from 'lucide-react'
 import { Button, TextField, ValidatedForm } from '../../components/ui'
 import { useI18n } from '../../i18n'
 import { ModelChoice } from './ModelChoice'
-import { ModelSettingsLayout } from './ModelSettingsLayout'
+import { SettingsPanelLayout } from './SettingsPanelLayout'
 import type { ConnectionWrite, ModelConnection, ProviderPreset } from './useModelSettings'
 
 export function ModelConnectionForm({ connection, presets, saving, modelCount, onSave, onRemove, onCancel }: {
@@ -32,7 +32,7 @@ export function ModelConnectionForm({ connection, presets, saving, modelCount, o
     const { has_key: _, ...value } = draft; void _
     void onSave({ ...value, display_name: value.display_name.trim(), api_key: value.auth_type === 'none' ? '' : key.trim() || null }).then(saved => { if (saved) onCancel() })
   }}>
-    <ModelSettingsLayout actions={<>
+    <SettingsPanelLayout label={t('模型配置')} contentClassName="settings-models__editor" actions={<>
       {deleting && <p className="settings-models__delete-message" role="alert">{t('删除提供方及其 {count} 个模型配置，历史记录保留，此操作不可撤销', { count: modelCount })}</p>}
       <div className="settings-models__row-actions">
         {connection && <Button size="sm" type="button" variant="text" className="settings-models__delete-action" leadingIcon={<Trash2 size={14} />} disabled={saving} onClick={() => {
@@ -53,6 +53,6 @@ export function ModelConnectionForm({ connection, presets, saving, modelCount, o
       </div></div>
       {draft.auth_type === 'api_key' && <TextField shape="standard" fieldSize="md" label="API Key" name="api_key" type="password" autoComplete="new-password" value={key} error={attempt ? errors.api_key : undefined} leadingContent={<KeyRound size={15} />} placeholder={t(canReuseKey ? '留空保留已保存的密钥' : '请输入 API Key')} onChange={event => setKey(event.target.value)} />}
     </fieldset>
-    </ModelSettingsLayout>
+    </SettingsPanelLayout>
   </ValidatedForm>
 }

@@ -512,13 +512,8 @@ async function mockChainTraceStudio(
   await installNotificationStream(page)
   await installProjectScope(page)
   await page.goto(`/?project=project-1&thread=${THREAD_ID}`)
-  const conversationLabel = language === 'en' ? 'Conversation' : '对话'
   const traceLabel = language === 'en' ? 'Trace' : '链路'
-  await expect(page.getByRole('tab', { name: conversationLabel })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  )
-  await expect(page.getByRole('tab', { name: traceLabel })).toBeVisible()
+  await expect(page.getByRole('button', { name: traceLabel, exact: true })).toHaveAttribute('aria-pressed', 'false')
   return pageErrors
 }
 
@@ -568,12 +563,12 @@ test('链路与共享历史并发，切回对话保留刷新且每次激活只�
   })
   try {
     await expect(page.getByRole('button', { name: '任务轨迹 1', exact: true })).toBeVisible()
-    await page.getByRole('tab', { name: '链路', exact: true }).click()
+    await page.getByRole('button', { name: '链路', exact: true }).click()
     await requested
     await expect(page.getByRole('region', { name: '调用时间线' })).toBeVisible()
     await expect(page.getByText('正在同步会话状态', { exact: true })).toBeVisible()
     expect((await traceRequests(page)).snapshots).toHaveLength(1)
-    await page.getByRole('tab', { name: '对话', exact: true }).click()
+    await page.getByRole('button', { name: '链路', exact: true }).click()
     const received = page.waitForResponse((response) => (
       new URL(response.url()).pathname === `/api/conversation/${THREAD_ID}/history`
     ))
@@ -582,7 +577,7 @@ test('链路与共享历史并发，切回对话保留刷新且每次激活只�
     expect(await response.finished()).toBeNull()
     await expect(page.getByRole('heading', { name: '共享刷新已应用', exact: true })).toBeVisible()
     expect(failures).toEqual([])
-    await page.getByRole('tab', { name: '链路', exact: true }).click()
+    await page.getByRole('button', { name: '链路', exact: true }).click()
     await expect(page.getByRole('region', { name: '调用时间线' })).toBeVisible()
     expect((await traceRequests(page)).snapshots).toHaveLength(2)
     expect(historyRequests).toBe(3)
@@ -620,7 +615,7 @@ for (const theme of ['light', 'dark'] as const) {
     })
     try {
       await expect(page.getByRole('button', { name: '任务轨迹 1', exact: true })).toBeVisible()
-      await page.getByRole('tab', { name: '链路', exact: true }).click()
+      await page.getByRole('button', { name: '链路', exact: true }).click()
       await requested
       await expect(page.getByRole('region', { name: '调用时间线' })).toBeVisible()
       await page.getByRole('button', { name: '关闭链路详情', exact: true }).click()
@@ -683,7 +678,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.screenshot({ path: testInfo.outputPath(`scrollbar-todo-${theme}-${width}.png`) })
       if (width === 1440) await page.getByRole('button', { name: '关闭任务轨迹' }).click()
       if (width === 320) await page.getByRole('button', { name: '返回对话' }).click()
-      await page.getByRole('tab', { name: '链路', exact: true }).click()
+      await page.getByRole('button', { name: '链路', exact: true }).click()
       const close = page.getByRole('button', { name: '关闭链路详情' })
       // 并排布局会自动选择节点，先关闭以覆盖用户主动打开详情的路径
       if (width === 1440) await close.click()
@@ -723,7 +718,7 @@ for (const theme of ['light', 'dark'] as const) {
 test('六类时间线、平级台账、Subagent 作用域和详情保持同一权威顺序', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const pageErrors = await mockChainTraceStudio(page)
-  const traceTab = page.getByRole('tab', { name: '链路' })
+  const traceTab = page.getByRole('button', { name: '链路', exact: true })
   const sidebarToggle = page.getByRole('button', { name: '收起侧边栏' })
   const [traceTabBox, sidebarToggleBox] = await Promise.all([
     traceTab.boundingBox(),
@@ -735,7 +730,7 @@ test('六类时间线、平级台账、Subagent 作用域和详情保持同一�
   )).toBeLessThanOrEqual(1)
 
   await traceTab.click()
-  await expect(page.getByRole('tabpanel', { name: '链路' })).toBeVisible()
+  await expect(page.getByRole('region', { name: '链路' })).toBeVisible()
   await expect.poll(async () => (await traceRequests(page)).snapshots.length).toBe(1)
   await expect(page.getByRole('region', { name: '调用时间线' })).toBeVisible()
   await expect(page.getByLabel('链路节点', { exact: true })).toBeVisible()
@@ -926,7 +921,7 @@ test('六类时间线、平级台账、Subagent 作用域和详情保持同一�
 test('固定列标题独立于节点滚动并同步横向列位置', async ({ page }) => {
   await page.setViewportSize({ width: 640, height: 800 })
   const pageErrors = await mockChainTraceStudio(page)
-  await page.getByRole('tab', { name: '链路' }).click()
+  await page.getByRole('button', { name: '链路', exact: true }).click()
   const ledger = page.getByLabel('链路节点', { exact: true })
   const headerViewport = page.locator('.chain-trace-ledger-header-viewport')
   const headerTop = await headerViewport.evaluate((element) => (
@@ -994,7 +989,7 @@ test('固定列标题独立于节点滚动并同步横向列位置', async ({ pa
 test('选中节点只展示所属 Turn 且蓝色选区严格对齐节点条', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 800 })
   const pageErrors = await mockChainTraceStudio(page)
-  await page.getByRole('tab', { name: '链路' }).click()
+  await page.getByRole('button', { name: '链路', exact: true }).click()
   const summary = page.locator('.chain-trace-range-summary')
   const lastTick = page.locator('.chain-trace-ticks span').last()
 
@@ -1038,7 +1033,7 @@ test('选中节点只展示所属 Turn 且蓝色选区严格对齐节点条', as
 test('搜索结果中的 Model 详情只补取一次完整响应且不重复读取列表', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 850 })
   const pageErrors = await mockChainTraceStudio(page)
-  await page.getByRole('tab', { name: '链路' }).click()
+  await page.getByRole('button', { name: '链路', exact: true }).click()
   await page.getByRole('button', { name: '搜索链路节点' }).click()
   await page.getByRole('searchbox', { name: '搜索链路节点' }).fill('4872')
   await expect.poll(async () => (await traceRequests(page)).snapshots.length).toBe(2)
@@ -1064,7 +1059,7 @@ test('详情省略时 fail-closed，英文界面不会把空响应展示为成�
     language: 'en',
     directSnapshot: responsePage(true),
   })
-  await page.getByRole('tab', { name: 'Trace' }).click()
+  await page.getByRole('button', { name: 'Trace', exact: true }).click()
   await page.getByRole('button', { name: 'Search trace nodes' }).click()
   await page.getByRole('searchbox', { name: 'Search trace nodes' })
     .fill('4872')
@@ -1091,7 +1086,7 @@ test('详情省略时 fail-closed，英文界面不会把空响应展示为成�
 test('全部模式按执行顺序等宽排列，并以一条竖线分隔每轮', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const pageErrors = await mockChainTraceStudio(page)
-  await page.getByRole('tab', { name: '链路' }).click()
+  await page.getByRole('button', { name: '链路', exact: true }).click()
 
   const details = page.locator('.chain-trace-details')
   await expect(details).toBeVisible()
@@ -1188,14 +1183,14 @@ test('全部模式按执行顺序等宽排列，并以一条竖线分隔每轮',
 test('从链路页选择其他会话始终返回对话页', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 800 })
   const pageErrors = await mockChainTraceStudio(page)
-  await page.getByRole('tab', { name: '链路' }).click()
+  await page.getByRole('button', { name: '链路', exact: true }).click()
   await page.getByText('另一个会话', { exact: true }).click()
   await expect(page).toHaveURL(new RegExp(`thread=${OTHER_THREAD_ID}`))
-  await expect(page.getByRole('tab', { name: '对话' })).toHaveAttribute(
-    'aria-selected',
-    'true',
+  await expect(page.getByRole('button', { name: '链路', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'false',
   )
-  await expect(page.getByRole('tabpanel', { name: '链路' })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: '链路' })).toHaveCount(0)
   expect(pageErrors).toEqual([])
 })
 
@@ -1263,7 +1258,7 @@ test('链路详情随宿主自动隐藏并恢复，不隔离主区焦点', async
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   const pageErrors = await mockChainTraceStudio(page, { theme: 'dark' })
-  await page.getByRole('tab', { name: '链路' }).click()
+  await page.getByRole('button', { name: '链路', exact: true }).click()
   await traceRow(page, 'failed-tool').click()
   await verifyViewports(page, 'dark')
   const details = page.getByRole('complementary', { name: '链路详情' })
@@ -1288,8 +1283,8 @@ test('链路详情随宿主自动隐藏并恢复，不隔离主区焦点', async
   await expect(details).toContainText('builtins.TimeoutError')
   await handle.press('Home')
   await expect(handle).toHaveAttribute('aria-valuenow', '300')
-  await page.getByRole('tab', { name: '对话', exact: true }).click()
-  await page.getByRole('tab', { name: '链路', exact: true }).click()
+  await page.getByRole('button', { name: '链路', exact: true }).click()
+  await page.getByRole('button', { name: '链路', exact: true }).click()
   await expect(handle).toHaveAttribute('aria-valuenow', '300')
   await page.getByRole('button', { name: '关闭链路详情' }).click()
   await page.setViewportSize({ width: 320, height: 900 })
@@ -1301,7 +1296,7 @@ test('链路详情随宿主自动隐藏并恢复，不隔离主区焦点', async
 test('浅色四视口不产生页面溢出', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const pageErrors = await mockChainTraceStudio(page, { theme: 'light' })
-  await page.getByRole('tab', { name: '链路' }).click()
+  await page.getByRole('button', { name: '链路', exact: true }).click()
   // 先建立桌面默认选择，再验证切换视口时详情的显示规则
   await expect(page.getByRole('complementary', { name: '链路详情' })).toBeVisible()
   await verifyViewports(page, 'light')
@@ -1314,7 +1309,7 @@ test('窄屏首次进入滚到底，触控搜索与详情关闭图标同轴', as
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
   const pageErrors = await mockChainTraceStudio(page)
-  await page.getByRole('tab', { name: '链路' }).click()
+  await page.getByRole('button', { name: '链路', exact: true }).click()
   const ledger = page.getByLabel('链路节点', { exact: true })
   await expect(ledger).toBeVisible()
   await expect.poll(() => ledger.evaluate((element) => (
@@ -1352,7 +1347,7 @@ test('窄屏首次进入滚到底，触控搜索与详情关闭图标同轴', as
 test('序列选择收起的子节点会展开所属作用域并在关闭详情后恢复焦点', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const pageErrors = await mockChainTraceStudio(page)
-  await page.getByRole('tab', { name: '链路' }).click()
+  await page.getByRole('button', { name: '链路', exact: true }).click()
   await page.getByRole('button', { name: '关闭链路详情' }).click()
   const outer = traceRow(page, 'subagent-outer').locator('..')
     .getByRole('button', { name: /^收起子智能体/ })
@@ -1368,7 +1363,7 @@ test('序列选择收起的子节点会展开所属作用域并在关闭详情�
 
 test('错误详情将请求入口与错误摘要紧凑并排', async ({ page }) => {
   await mockChainTraceStudio(page)
-  await page.getByRole('tab', { name: '链路', exact: true }).click()
+  await page.getByRole('button', { name: '链路', exact: true }).click()
   for (const theme of ['light', 'dark']) {
     await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
     for (const width of [320, 768, 1024, 1440]) {
@@ -1403,7 +1398,7 @@ for (const theme of ['light', 'dark'] as const) {
       await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
       const errors = await mockChainTraceStudio(page, { theme, language })
       const english = language === 'en'
-      await page.getByRole('tab', { name: english ? 'Trace' : '链路', exact: true }).click()
+      await page.getByRole('button', { name: english ? 'Trace' : '链路', exact: true }).click()
       const detail = page.getByRole('complementary', { name: english ? 'Trace details' : '链路详情' })
       const ledger = page.getByLabel(english ? 'Trace nodes' : '链路节点', { exact: true })
       await expect(detail).toBeHidden()
@@ -1461,7 +1456,7 @@ for (const theme of ['light', 'dark'] as const) {
           graphNode('after-compact', 'assistant_message', 12, { content: '压缩处理完成' }),
         ]),
       })
-      await page.getByRole('tab', { name: '链路', exact: true }).click()
+      await page.getByRole('button', { name: '链路', exact: true }).click()
       await expect(traceRow(page, 'compact-context')).toBeVisible()
       const geometry = await page.getByLabel('链路节点', { exact: true }).evaluate(ledger => {
         const rail = (id: string) => ledger.querySelector<HTMLElement>(
@@ -1520,7 +1515,7 @@ test.describe('触控链路树', () => {
   test('紧凑列表保留节点和折叠操作的触控尺寸', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     const errors = await mockChainTraceStudio(page)
-    await page.getByRole('tab', { name: '链路', exact: true }).click()
+    await page.getByRole('button', { name: '链路', exact: true }).click()
     const sizes = await page.getByLabel('链路节点', { exact: true }).evaluate(ledger => (
       [...ledger.querySelectorAll<HTMLElement>('button')]
         .filter(button => button.getClientRects().length > 0)

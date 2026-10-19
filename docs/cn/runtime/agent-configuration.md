@@ -46,6 +46,43 @@ runtime = (
 任务委派通过 `subagents` 配置，工具审批通过 `interrupt_on` 配置，不可替换对应
 middleware；`task` 和已配置远程智能体使用的委派工具名称也不可覆盖。
 
+## 工具文件参数
+
+workspace 提供文件路径解析器后，可用 `tinkerfin_contracts.FilePath` 标记自定义
+工具的文件参数。Runtime 在审批前解析路径，并在执行前重新核验同一目标；模型消息
+仍保留原始参数。恢复待审批或待执行的操作时，该角色的文件工具声明和路径解析能力
+必须保持不变；发生变化后须重新发起操作，已有审批不能复用。
+
+```python
+from typing import Annotated
+
+from langchain_core.tools import tool
+from tinkerfin_contracts import FilePath
+
+
+@tool
+async def selected_files(files: dict[str, Annotated[str, FilePath("read")]]) -> str:
+    """返回所选文件解析后的路径"""
+    return "\n".join(files.values())
+
+
+runtime = (
+    TinkerFin()
+    .with_namespace("reports")
+    .build(model=model, backend=workspace, tools=[selected_files])
+)
+```
+
+标记支持嵌套模型字段、字典值和列表元素。`ToolDescriptor` 的 schema 支持本地
+JSON Pointer 引用、`properties`、`patternProperties`、`additionalProperties`、
+`prefixItems` / `items` 和 `allOf` / `anyOf` / `oneOf`。同时适用的声明必须具有相同
+访问类型和 `default_root`；一个属性匹配多个模式时只解析一次。条件分支等不支持
+位置中的标记会在注册时被拒绝，通过引用间接声明也一样。
+
+输入约束必须同时接受原始路径和解析后的规范绝对路径，且不能改变所选的文件访问
+声明；不满足时停止执行。`FilePath("read", default_root=True)` 将省略或 null 的
+参数解析为 workspace 根目录，输入 schema 也须允许对应的输入形式。
+
 ## 附件输入
 
 通过 `.with_attachments(AttachmentSupport(...))` 配置模型的媒体输入与已保存附件的读取。
@@ -94,6 +131,12 @@ runtime = scoped.build(
 使用 `SkillSource("/skills/", names=("reporting",))` 限定提供的技能名称；
 省略 `names` 加载全部，空元组不提供技能。目录内容更新会影响后续读取，包括恢复执行。
 名称筛选只控制技能说明，不代替文件或执行权限。
+
+工作区自行提供技能目录时，主智能体和自动创建的 `general-purpose` 会发现这些已准备好的来源。
+显式声明的子智能体可从 `tinkerfin` 导入 `WorkspaceSkills`，再通过
+`skills=[WorkspaceSkills(names=("reporting",))]` 按名称选择。实际目录由工作区提供，
+选择结果仍受来源自身的名称限制。`WorkspaceSkills()` 选择工作区允许的全部技能；
+显式子智能体没有声明选择时，不会获得这些技能。
 
 可恢复的工具审批和 Plan 必须使用具体 checkpointer。checkpointer 已保存 thread 历史时，只提交新的用户消息。
 托管 AG-UI 执行要求自定义 saver 实现异步 `aget_tuple`、`alist`、`aput` 和 `aput_writes`。请求准入会读取 checkpoint 历史，防止将已完成取消的 Run 身份用于不同输入。
@@ -193,7 +236,9 @@ runtime = (
 
 自动提供的 `general-purpose` 子智能体继承主智能体的模型、工具、技能、权限和审批规则。
 其他角色通过 `tinkerfin.subagents.SubAgent` 声明：省略的模型、工具、权限和审批规则继承自
-主智能体，技能需显式配置；显式工具列表替换继承的工具。
+主智能体，技能需显式配置；显式工具列表替换主智能体声明的工具。
+工作区准备时提供的工具会加入每个由框架创建的角色，并遵循该角色的审批规则。
+名称重复（包括与内置文件、委派工具重名）会在模型运行前报错。
 
 compiled 和 remote subagent 不继承工作区或附件访问权限，其作者自行选择文件输入方式；
 框架创建的图可以使用自身 Runtime 配置的附件策略。注册的 compiled subagent 继承
@@ -211,6 +256,6 @@ graph = await create_graph(runtime)
 result = await graph.ainvoke(graph_input, config=config)
 ```
 
-直接 Graph 的执行和清理由调用方负责。它不会创建受管 Runtime 观察、AG-UI 事件、Messaging 投递或每次运行的 workspace 准备。配置了 `workspace(...)` 的 Runtime 必须使用受管执行入口；工具访问工作区和运行身份也需要受管执行。
+直接 Graph 的执行和清理由调用方负责。它不会创建受管 Runtime 观察、AG-UI 事件、Messaging 投递或每次运行的 workspace 准备。配置了 `backend=workspace` 的 Runtime 必须使用受管执行入口；工具访问工作区和运行身份也需要受管执行。
 
 下一步：[流与 SSE](streams-and-sse.md)。

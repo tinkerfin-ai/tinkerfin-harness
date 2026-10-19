@@ -1,6 +1,6 @@
 /**
  * 极简「会话 URL 路由」：用 `?thread={threadId}` 查询参数记录当前会话，
- * 让浏览器刷新后能回到原会话；自动化页面使用 `?page=automation`
+ * 让浏览器刷新后能回到原会话；自动化页面使用 `?page=automation`，设备设置使用 `?settings=devices`
  *
  * 会话和页面选择写入浏览器历史，让浏览器返回手势及后退按钮恢复上一个路由
  */
@@ -19,6 +19,7 @@ function readStoredValidLocation(): string | null {
     if (!storedLocation) return null
     const url = new URL(storedLocation, window.location.origin)
     if (url.origin !== window.location.origin || url.pathname !== APP_PATHNAME) return null
+    if (url.searchParams.has('device_authorization') || new URLSearchParams(url.hash.slice(1)).has('token')) return null
     return relativeLocation(url)
   } catch {
     return null
@@ -26,6 +27,8 @@ function readStoredValidLocation(): string | null {
 }
 
 function rememberCurrentLocation(): void {
+  const url = new URL(window.location.href)
+  if (url.searchParams.has('device_authorization') || new URLSearchParams(url.hash.slice(1)).has('token')) return
   try {
     window.sessionStorage.setItem(
       LAST_VALID_LOCATION_KEY,
@@ -66,7 +69,24 @@ export function readProjectFromLocation(): string {
 
 /** 退出登录时清除项目与会话地址，历史记录不能保留另一个账号的当前范围 */
 export function clearWorkspaceLocation(): void {
-  window.history.replaceState(null, '', APP_PATHNAME)
+  window.history.replaceState(null, '', readDeviceSettingsFromLocation() ? '/?settings=devices' : APP_PATHNAME)
+  rememberCurrentLocation()
+}
+
+export function readDeviceSettingsFromLocation(): boolean {
+  return new URLSearchParams(window.location.search).get('settings') === 'devices'
+}
+
+/** 授权结束只保留不含账号信息的设置目的地，不保存浏览器授权能力 */
+export function writeDeviceSettingsToLocation(): void {
+  window.history.replaceState(null, '', '/?settings=devices')
+  rememberCurrentLocation()
+}
+
+export function clearSettingsLocation(): void {
+  const url = new URL(window.location.href)
+  url.searchParams.delete('settings')
+  window.history.replaceState(null, '', relativeLocation(url))
   rememberCurrentLocation()
 }
 

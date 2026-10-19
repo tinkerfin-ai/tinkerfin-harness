@@ -10,11 +10,13 @@ from .capabilities import (
     sqlite_lock_error,
 )
 from .errors import SqlTransactionError
+from .session import SqlSession
 from .transaction import SqlTransaction
 
 __all__ = [
     "DatabaseCapabilities",
     "SqlDialect",
+    "SqlSession",
     "SqlTransaction",
     "SqlTransactionError",
     "database_capabilities",

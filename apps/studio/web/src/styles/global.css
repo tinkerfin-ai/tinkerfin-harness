@@ -95,6 +95,17 @@
     touch-action: manipulation;
   }
 
+  button:not(:disabled, [aria-disabled='true']),
+  [role='button']:not(:disabled, [aria-disabled='true']),
+  [role='option']:not(:disabled, [aria-disabled='true']),
+  input:is([type='checkbox'], [type='radio']):not(:disabled),
+  label:has(> input:is([type='checkbox'], [type='radio']):not(:disabled)),
+  select:not(:disabled),
+  summary,
+  a[href] {
+    cursor: pointer;
+  }
+
   button:disabled,
   input:disabled,
   textarea:disabled,

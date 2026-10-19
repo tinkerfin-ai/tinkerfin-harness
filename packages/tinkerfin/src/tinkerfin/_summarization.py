@@ -7,6 +7,7 @@ ownership of their hooks, just as in backend resource preparation.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
 from typing import Annotated, Any, NotRequired, cast
 
 from deepagents.middleware.summarization import (
@@ -30,6 +31,7 @@ from ._compaction_observation import (
     _SUMMARY_OPERATION,
     CompactionOperation,
 )
+from ._workspace_operations import WorkspaceOperations
 
 
 class ObservedSummarizationState(SummarizationState):
@@ -40,6 +42,7 @@ class ObservedSummarization(SummarizationMiddleware):
     """Retain native policy and associate selected history and summary calls."""
 
     state_schema = ObservedSummarizationState
+    operations: WorkspaceOperations | None = None
 
     @property
     def name(self) -> str:
@@ -54,7 +57,14 @@ class ObservedSummarization(SummarizationMiddleware):
         operation.original = self._get_effective_messages(request)
         token = _CURRENT_COMPACTION.set(operation)
         try:
-            response = await super().awrap_model_call(request, handler)
+            with (
+                nullcontext()
+                if self.operations is None
+                else self.operations.framework(
+                    "compaction", "automatic-compaction", request.state
+                )
+            ):
+                response = await super().awrap_model_call(request, handler)
             if (
                 isinstance(response, ExtendedModelResponse)
                 and response.command is not None
@@ -98,12 +108,15 @@ class ObservedSummarization(SummarizationMiddleware):
             _SUMMARY_OPERATION.reset(token)
 
 
-def observe_summarization(source: SummarizationMiddleware) -> SummarizationMiddleware:
+def observe_summarization(
+    source: SummarizationMiddleware, operations: WorkspaceOperations | None = None
+) -> SummarizationMiddleware:
     """Copy a native declaration while retaining its configured helper and backend."""
     if type(source) is not SummarizationMiddleware:
         return source
     result = ObservedSummarization.__new__(ObservedSummarization)
     result.__dict__.update(source.__dict__)
+    result.operations = operations
     return result
 
 

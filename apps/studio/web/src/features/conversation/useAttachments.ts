@@ -232,6 +232,16 @@ export function useAttachments(projectId: string, onError?: (message: string) =>
     store.set(key, latest.current); store.delete(previous)
     owner.current = { store, key }
   }, [])
+  const revalidateExecution = useCallback((key: string) => {
+    for (const controller of controllers.current.values()) controller.abort()
+    controllers.current.clear()
+    draftEpoch.current += 1
+    update(latest.current.map(item => ({ ...item, attachment: undefined, reference: false, progress: 0,
+      state: item.file ? 'queued' : 'error', error: item.file ? undefined : translateCurrent('请重新添加此附件'),
+    })))
+    moveTo(key)
+    pump()
+  }, [update, moveTo, pump])
   const validateProjectMove = useCallback((sourceKey: string) => {
     const items = owner.current?.key === sourceKey ? latest.current : owner.current?.store.get(sourceKey) ?? []
     if (items.some(item => !item.reference && !item.file)) {
@@ -283,6 +293,7 @@ export function useAttachments(projectId: string, onError?: (message: string) =>
     completeSend,
     addReference,
     moveTo,
+    revalidateExecution,
     validateProjectMove,
   }
 }

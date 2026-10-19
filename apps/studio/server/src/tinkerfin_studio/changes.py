@@ -22,6 +22,7 @@ StudioChangeTopic = Literal[
     "studio.conversation.interactions.changed",
     "studio.attachments.changed",
     "studio.skills.changed",
+    "studio.devices.changed",
 ]
 
 

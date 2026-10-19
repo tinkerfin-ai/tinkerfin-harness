@@ -59,7 +59,7 @@ export function Dialog({
   const titleId = useId()
   const descriptionId = useId()
   const dialogRef = useRef<HTMLDivElement>(null)
-  const closeRef = useRef<HTMLButtonElement>(null)
+  const titleRef = useRef<HTMLHeadingElement>(null)
   const restoreFocusRef = useRef(restoreFocusTo)
   const [detail, setDetail] = useState<DialogDetailOptions | null>(null)
   const detailOwner = useRef<symbol | null>(null)
@@ -102,7 +102,8 @@ export function Dialog({
   useLayoutEffect(() => {
     if (!open || hosted) return
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    ;(initialFocusRef?.current ?? closeRef.current ?? dialogRef.current)?.focus()
+    // 默认先读出标题，关闭操作在用户按 Tab 后获得可见焦点
+    ;(initialFocusRef?.current ?? titleRef.current ?? dialogRef.current)?.focus()
     return () => {
       const target = restoreFocusRef.current ?? previousFocus
       // 等待宿主解除模态隔离；其他交互已设置新焦点时不再抢回入口
@@ -138,6 +139,8 @@ export function Dialog({
     const last = focusable[focusable.length - 1]
     if (event.shiftKey && (
       document.activeElement === first
+      || document.activeElement === titleRef.current
+      || document.activeElement === dialogRef.current
       || !dialogRef.current?.contains(document.activeElement)
     )) {
       event.preventDefault()
@@ -151,11 +154,11 @@ export function Dialog({
   const content = <>
     {header === undefined ? <header className="modal-dialog-head">
       <div>
-        <h2 id={titleId}>{title}</h2>
+        <h2 ref={titleRef} id={titleId} tabIndex={-1}>{title}</h2>
         {description && <div id={descriptionId} className="modal-dialog-description">{description}</div>}
       </div>
       {headerActions}
-      <IconButton ref={closeRef} type="button" className="modal-dialog-close" label={t('关闭对话框')}
+      <IconButton type="button" className="modal-dialog-close" label={t('关闭对话框')}
         icon={<X size={18} />} disabled={closeDisabled} onClick={onClose} />
     </header> : header}
     {children}

@@ -8,12 +8,14 @@ auxiliary keys that neither checkpoint index can enumerate.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import cast
 
-from langgraph.checkpoint.base import CheckpointTuple
+from langgraph.checkpoint.base import CheckpointMetadata, CheckpointTuple, PendingWrite
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+from langgraph.checkpoint.redis.base import BaseRedisSaver
 from langgraph.checkpoint.redis.key_registry import WRITE_KEYS_ZSET_PREFIX
 from langgraph.checkpoint.redis.util import (
     from_storage_safe_id,
@@ -23,12 +25,20 @@ from langgraph.checkpoint.redis.util import (
 )
 from redis.commands.search.aggregation import AggregateRequest, AggregateResult
 from redis.commands.search.result import Result
-from redisvl.query import CountQuery
-from redisvl.query.filter import FilterExpression
+from redisvl.query import CountQuery, FilterQuery
+from redisvl.query.filter import FilterExpression, Tag
 
+from ._checkpoint_writes import CheckpointWriteView
 from .errors import TinkerFinLifecycleError
 
 _PAGE_SIZE = 128
+_ANCHOR_PATHS = (
+    "$.thread_id",
+    "$.checkpoint_ns",
+    "$.checkpoint_id",
+    "$.checkpoint.id",
+    "$.metadata",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +138,172 @@ def _expression_literal(value: str) -> str:
             arguments.append('substr("a\\b", 1, 1)')
         arguments.append(literal)
     return 'format("' + "%s" * len(arguments) + '", ' + ", ".join(arguments) + ")"
+
+
+async def checkpoint_writes(
+    saver: AsyncRedisSaver,
+    thread_id: str,
+    graph_namespace: str,
+    checkpoint_id: str,
+    owner_prefix: str,
+) -> CheckpointWriteView | None:
+    """Read one checkpoint anchor and at most two matching receipt candidates.
+
+    AsyncRedisSaver 0.5.2 indexes task_id and stores each pending write separately.
+    Two candidates suffice to detect an immutable receipt conflict; no channel
+    values, pending sends, or unrelated receipt payloads are fetched. Decode with
+    the borrowed saver serializer and preserve its explicit-checkpoint TTL refresh
+    rules, including the complete write-key set. Failure never triggers a broad
+    read or a retry. NamespaceCheckpointer verifies logical identity and lineage.
+    """
+
+    checkpoint_key = saver._make_redis_checkpoint_key(
+        thread_id, graph_namespace, checkpoint_id
+    )
+    pipeline = saver._redis.pipeline(transaction=False)
+    # redis-py's JSON get omits its variadic path types. This read requests only
+    # the exact checkpoint header, not any channel or write document.
+    get_header = cast(
+        Callable[[str, str, str, str, str, str], object],
+        pipeline.json().get,  # pyright: ignore[reportUnknownMemberType]
+    )
+    get_header(checkpoint_key, *_ANCHOR_PATHS)
+    refresh = bool(saver.ttl_config and saver.ttl_config.get("refresh_on_read"))
+    if refresh:
+        pipeline.ttl(checkpoint_key)
+    responses: list[object] = await pipeline.execute()
+    if not responses or responses[0] is None:
+        return None
+    selected = _reply_fields(responses[0])
+    header: dict[str, object] = {}
+    for path in _ANCHOR_PATHS:
+        values = selected.get(path)
+        if not isinstance(values, list):
+            raise TinkerFinLifecycleError(
+                "Redis checkpoint anchor field is unavailable"
+            )
+        entries = cast(list[object], values)
+        if len(entries) != 1:
+            raise TinkerFinLifecycleError(
+                "Redis checkpoint anchor field is unavailable"
+            )
+        header[path[2:]] = entries[0]
+    expected = {
+        "thread_id": to_storage_safe_id(thread_id),
+        "checkpoint_ns": to_storage_safe_str(graph_namespace),
+        "checkpoint_id": to_storage_safe_id(checkpoint_id),
+    }
+    if any(header.get(field) != value for field, value in expected.items()):
+        raise TinkerFinLifecycleError("Redis checkpoint write anchor changed identity")
+    if header.get("checkpoint.id") != checkpoint_id:
+        raise TinkerFinLifecycleError(
+            "Redis checkpoint header has conflicting coordinates"
+        )
+
+    if refresh:
+        ttl = responses[1] if len(responses) == 2 else None
+        if not isinstance(ttl, int) or isinstance(ttl, bool):
+            raise TinkerFinLifecycleError("Redis checkpoint TTL is invalid")
+        if ttl > 0:
+            registry = saver._key_registry
+            keys = (
+                []
+                if registry is None
+                else await registry.get_write_keys(
+                    thread_id, graph_namespace, checkpoint_id
+                )
+            )
+            await saver._apply_ttl_to_keys(checkpoint_key, keys or None)
+            default_ttl = (
+                None
+                if saver.ttl_config is None
+                else saver.ttl_config.get("default_ttl")
+            )
+            if registry is not None and default_ttl is not None:
+                await registry.apply_ttl(
+                    thread_id, graph_namespace, checkpoint_id, int(default_ttl * 60)
+                )
+
+    raw_metadata = header.get("metadata")
+    metadata = _reply_fields(
+        json.loads(raw_metadata) if isinstance(raw_metadata, str) else raw_metadata
+    )
+    sanitized = {
+        key.replace("\u0000", ""): value.replace("\u0000", "")
+        if isinstance(value, str)
+        else value
+        for key, value in metadata.items()
+    }
+    selection = cast(
+        FilterExpression,
+        (Tag("thread_id") == expected["thread_id"])
+        & (Tag("checkpoint_ns") == expected["checkpoint_ns"])
+        & (Tag("checkpoint_id") == expected["checkpoint_id"])
+        & (Tag("task_id") % (owner_prefix + "*")),
+    )
+    query = FilterQuery(
+        filter_expression=selection,
+        return_fields=[
+            "thread_id",
+            "checkpoint_ns",
+            "checkpoint_id",
+            "task_id",
+            "idx",
+            "channel",
+            "type",
+            "$.blob",
+        ],
+        num_results=2,
+    )
+    search = cast(
+        Callable[[FilterQuery], Awaitable[object]],
+        saver.checkpoint_writes_index.search,  # pyright: ignore[reportUnknownMemberType]
+    )
+    result = await search(query)
+    total = _count(result)
+    if isinstance(result, Result):
+        documents = cast(list[object], result.docs)  # pyright: ignore[reportUnknownMemberType]
+        rows = [_reply_fields(vars(document)) for document in documents]
+    else:
+        raw_rows = _reply_fields(result).get("results")
+        if not isinstance(raw_rows, list):
+            raise TinkerFinLifecycleError("Redis receipt query returned invalid rows")
+        rows = [
+            _reply_fields(_reply_fields(row).get("extra_attributes"))
+            for row in cast(list[object], raw_rows)
+        ]
+    if len(rows) != min(total, 2):
+        raise TinkerFinLifecycleError(
+            "Redis receipt query returned incomplete evidence"
+        )
+    writes: list[PendingWrite] = []
+    for row in rows:
+        if any(_text(row.get(field)) != value for field, value in expected.items()):
+            raise TinkerFinLifecycleError(
+                "Redis receipt query crossed checkpoint identity"
+            )
+        owner = _text(row.get("task_id"))
+        if not owner.startswith(owner_prefix):
+            raise TinkerFinLifecycleError(
+                "Redis receipt query crossed its selected owner"
+            )
+        index = row.get("idx")
+        if isinstance(index, bool) or index not in (0, "0", b"0"):
+            raise TinkerFinLifecycleError("Redis receipt has an invalid write index")
+        blob = row.get("$.blob")
+        if not isinstance(blob, (str, bytes)):
+            raise TinkerFinLifecycleError("Redis receipt payload is unavailable")
+        value = saver.serde.loads_typed(
+            (_text(row.get("type")), BaseRedisSaver._decode_blob_static(blob))
+        )
+        writes.append((owner, _text(row.get("channel")), value))
+    return CheckpointWriteView(
+        thread_id,
+        graph_namespace,
+        checkpoint_id,
+        cast(CheckpointMetadata, sanitized),
+        tuple(writes),
+    )
 
 
 async def checkpoint_history(

@@ -1116,8 +1116,8 @@ test('侧栏切换控件共享纵向锚点且 tooltip 避开相邻操作区', as
   const sidebar = page.locator('#workspace-sidebar')
   const brand = sidebar.locator('.brand-logo')
   const searchButton = sidebar.getByRole('button', { name: '搜索会话' }).first()
-  const conversationTab = page.getByRole('tab', { name: '对话' })
-  const traceTab = page.getByRole('tab', { name: '链路' })
+  const conversationTab = page.getByRole('button', { name: '链路' })
+  const traceTab = page.getByRole('button', { name: '链路' })
   const newChat = page.locator('[aria-keyshortcuts~="Meta+K"]')
   const collapseButton = page.getByRole('button', { name: '收起侧边栏' })
   const collapseTooltip = page.getByRole('tooltip', { name: '收起侧边栏', exact: true })
@@ -1205,9 +1205,9 @@ test('操作失败显示单条通知，读取失败保留页内提示与重试',
   await expect(page.getByText('置顶状态更新失败，请重试', { exact: true })).toHaveCount(1)
   await notifications.getByRole('button', { name: '关闭提示：置顶状态更新失败，请重试' }).click()
   await expect(notifications.getByRole('status')).toHaveCount(0)
-  await page.getByRole('tab', { name: '链路' }).click()
+  await page.getByRole('button', { name: '链路' }).click()
 
-  const trace = page.getByRole('tabpanel', { name: '链路', exact: true })
+  const trace = page.getByRole('region', { name: '链路', exact: true })
   const retry = trace.getByRole('button', { name: '重新加载', exact: true })
   await expect(notifications.getByRole('status')).toHaveText('链路加载失败')
   await expect(notifications.getByRole('listitem')).toHaveCount(1)
@@ -3938,9 +3938,12 @@ for (const { approval, touch } of [{ approval: false, touch: false }, { approval
         expect(control!.x).toBeGreaterThanOrEqual(0)
         expect(control!.x + control!.width).toBeLessThanOrEqual(width)
 
-        await page.getByRole('tab', { name: '对话', exact: true }).click()
+        await page.getByRole('button', { name: '链路', exact: true }).click()
         await page.clock.fastForward(2_000)
         await expect(button).toHaveCount(0)
+        await expect(page.getByRole('region', { name: '对话', exact: true })).toHaveCount(0)
+        await page.getByRole('button', { name: '链路', exact: true }).click()
+        await expect(page.getByRole('region', { name: '对话', exact: true })).toBeVisible()
         expect(await measure()).toEqual(baseline)
       }
     }

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Literal
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import anyio
 from anyio import to_thread
@@ -113,14 +114,21 @@ class AttachmentService:
         thread_id: str | None = None,
         collection_id: str | None = None,
         source: Literal["user", "tool"] = "user",
+        delivery_scope: str | None = None,
     ) -> Attachment:
         """有界接收并验证文件，完整保存原件和派生图后发布
 
         上传中断和进程崩溃留下的 staging 记录由清理入口回收。
         当前进程取消时完成对象清理，再传播取消，不发布半成品。
+        宿主提供 delivery_scope 时，该次交付只发布一个文件；重传必须保持同名同内容，
+        更换内容明确拒绝，正在处理的并发请求返回处理中。
         """
         if thread_id is not None and collection_id is not None:
             raise ValueError("附件只能属于会话或集合中的一种范围")
+        if delivery_scope is not None and (
+            thread_id is None or not delivery_scope or len(delivery_scope) > 128
+        ):
+            raise ValueError("幂等文件交付需要已绑定会话和有界范围标识")
         async with self._uploads:
             self._validate_name(name)
             content = bytearray()
@@ -139,14 +147,27 @@ class AttachmentService:
                 )
             except (ValueError, OSError, Warning) as error:
                 raise BusinessException(AttachmentErrorCode.INVALID_FILE) from error
+            digest = hashlib.sha256(data).hexdigest()
+            identity = (
+                uuid4().hex
+                if delivery_scope is None
+                else uuid5(
+                    NAMESPACE_URL,
+                    "studio-file:"
+                    + json.dumps(
+                        [user_id, thread_id, delivery_scope],
+                        separators=(",", ":"),
+                    ),
+                ).hex
+            )
             row = AttachmentFile(
-                id=uuid4().hex,
+                id=identity,
                 user_id=user_id,
                 thread_id=thread_id,
                 name=name,
                 mime_type=mime,
                 size_bytes=len(data),
-                sha256=hashlib.sha256(data).hexdigest(),
+                sha256=digest,
                 status="processing",
                 source=source,
             )
@@ -168,7 +189,28 @@ class AttachmentService:
                 else:
                     raise ValueError("草稿上传必须提供项目")
                 session.add(row)
-                await session.commit()
+                try:
+                    await session.commit()
+                except IntegrityError:
+                    await session.rollback()
+                    existing = (
+                        await session.get(AttachmentFile, identity)
+                        if delivery_scope is not None
+                        else None
+                    )
+                    if existing is None:
+                        raise
+                    if (
+                        existing.user_id,
+                        existing.thread_id,
+                        existing.name,
+                        existing.sha256,
+                        existing.source,
+                    ) != (user_id, thread_id, name, digest, source):
+                        raise BusinessException(AttachmentErrorCode.REFERENCE_CONFLICT)
+                    if existing.status == "ready":
+                        return descriptor(existing)
+                    raise BusinessException(AttachmentErrorCode.UPLOAD_IN_PROGRESS)
             try:
                 return await self._publish(row, data, mime, collection_id=collection_id)
             except BaseException:
@@ -752,7 +794,9 @@ class AttachmentService:
             data=data, mime_type="image/jpeg" if variant == "model" else file.mime_type
         )
 
-    async def list_thread(self, *, user_id: int, thread_id: str) -> list[Attachment]:
+    async def list_thread(
+        self, *, user_id: int, thread_id: str, message_id: str | None = None
+    ) -> list[Attachment]:
         """为长对话和压缩后的重新阅读列出当前会话附件"""
         async with self._database.session() as session:
             await self._require_thread(session, user_id, thread_id)
@@ -765,6 +809,11 @@ class AttachmentService:
                         _execution_reference(user_id=user_id, thread_id=thread_id),
                     ),
                     AttachmentFile.status == "ready",
+                    *(
+                        (AttachmentFile.message_id == message_id,)
+                        if message_id is not None
+                        else ()
+                    ),
                 )
                 .order_by(AttachmentFile.created_at)
                 .limit(100)

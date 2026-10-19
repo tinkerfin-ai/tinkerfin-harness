@@ -1,10 +1,11 @@
+import { getServerAddress } from '../../api/shared/config'
 import { MemoriesPage } from '../memories/MemoriesPage'
 import { MoveConversationDialog } from '../projects/MoveConversationDialog'
 import { useProjectConversationActions } from '../projects/useProjectConversationActions'
 import { ProjectsWorkspace, type ProjectWorkspaceScope } from '../projects/ProjectsWorkspace'
 import { ProjectSwitcher } from '../projects/ProjectSwitcher'
 import type { CSSProperties } from 'react'
-import { FolderClosed } from 'lucide-react'
+import { FolderClosed, Workflow } from 'lucide-react'
 import { WorkspaceFilesDrawer } from '../workspaceFiles/WorkspaceFilesDrawer'
 import { useWorkspaceFiles } from '../workspaceFiles/useWorkspaceFiles'
 import { restoreFocus } from '../../components/ui/focus'
@@ -32,7 +33,6 @@ import {
   Dialog,
   FeedbackState,
   useThemePreference,
-  ViewTabs,
 } from '../../components/ui'
 import type { ToastHandler } from '../../components/ui/ToastViewport'
 import { isTranslationKey, useI18n } from '../../i18n'
@@ -61,6 +61,10 @@ import { WorkspaceDialogs } from './components/WorkspaceDialogs'
 import { WorkspaceHeader } from './components/WorkspaceHeader'
 import { ScrollToBottomButton } from './components/ScrollToBottomButton'
 import { SettingsDialog } from '../settings/SettingsDialog'
+import { DevicePicker } from '../devices/DevicePicker'
+import { useDevices } from '../devices/useDevices'
+import { fetchRunLocalTarget, type LocalTarget } from '../devices/api'
+import { useExecutionLocation } from '../devices/useExecutionLocation'
 import { useWorkspaceNavigation } from './useWorkspaceNavigation'
 import { useModelCatalog } from './useModelCatalog'
 import { useWorkspaceHistory } from './useWorkspaceHistory'
@@ -103,7 +107,7 @@ import {
   selectCurrentConversation,
   updateConversation,
 } from '../../lib/workspace'
-import { readPageFromLocation, readProjectFromLocation, readThreadFromLocation, writeWorkspaceToLocation } from '../../lib/threadRoute'
+import { clearSettingsLocation, readDeviceSettingsFromLocation, readPageFromLocation, readProjectFromLocation, readThreadFromLocation, writeWorkspaceToLocation } from '../../lib/threadRoute'
 import type {
   ApprovalState,
   Conversation,
@@ -163,7 +167,28 @@ type WorkspaceScreenProps = { user: AuthUser; onLogout: () => void; onToast: Toa
 
 export function WorkspaceScreen(props: WorkspaceScreenProps) {
   const [workspaceFilesOpen, setWorkspaceFilesOpen] = useState(false)
-  return <ProjectsWorkspace key={props.user.user_id} user={props.user} onLogout={props.onLogout} onToast={props.onToast}>{scope => <ProjectWorkspaceScreen key={scope.project.id} {...props} scope={scope} workspaceFilesOpen={workspaceFilesOpen} onWorkspaceFilesOpenChange={setWorkspaceFilesOpen} />}</ProjectsWorkspace>
+  const [settings, setSettings] = useState<{ section: 'user' | 'devices'; trigger: HTMLElement | null } | null>(() => readDeviceSettingsFromLocation() ? { section: 'devices', trigger: null } : null)
+  const devices = useDevices()
+  const theme = useThemePreference()
+  const modelCatalog = useModelCatalog()
+  useEffect(() => {
+    const navigate = () => setSettings(readDeviceSettingsFromLocation() ? { section: 'devices', trigger: null } : null)
+    window.addEventListener('popstate', navigate)
+    return () => window.removeEventListener('popstate', navigate)
+  }, [])
+  const openSettings = useCallback((trigger: HTMLElement | null) => setSettings({ section: 'user', trigger }), [])
+  return <>
+    <div style={{ display: 'contents' }} inert={settings !== null || undefined} aria-hidden={settings !== null || undefined}>
+      <ProjectsWorkspace key={props.user.user_id} user={props.user} onLogout={props.onLogout} onToast={props.onToast}>{scope => <ProjectWorkspaceScreen
+        key={scope.project.id} {...props} scope={scope} devices={devices} modelCatalog={modelCatalog}
+        settingsOpen={settings !== null} onOpenSettings={openSettings}
+        workspaceFilesOpen={workspaceFilesOpen} onWorkspaceFilesOpenChange={setWorkspaceFilesOpen} />}</ProjectsWorkspace>
+    </div>
+    <SettingsDialog devices={devices} onToast={props.onToast} onModelsChanged={modelCatalog.retry}
+      open={settings !== null} initialSection={settings?.section ?? 'user'} user={props.user}
+      themePreference={theme.preference} onThemePreferenceChange={theme.selectPreference}
+      restoreFocusTo={settings?.trigger} onClose={() => { setSettings(null); clearSettingsLocation() }} />
+  </>
 }
 
 function ProjectWorkspaceScreen({
@@ -173,6 +198,10 @@ function ProjectWorkspaceScreen({
   onToast,
   workspaceFilesOpen,
   onWorkspaceFilesOpenChange,
+  devices,
+  modelCatalog,
+  settingsOpen,
+  onOpenSettings,
 }: {
   user: AuthUser
   onLogout: () => void
@@ -180,6 +209,10 @@ function ProjectWorkspaceScreen({
   scope: ProjectWorkspaceScope
   workspaceFilesOpen: boolean
   onWorkspaceFilesOpenChange: (open: boolean) => void
+  devices: ReturnType<typeof useDevices>
+  modelCatalog: ReturnType<typeof useModelCatalog>
+  settingsOpen: boolean
+  onOpenSettings: (trigger: HTMLElement | null) => void
 }) {
   const { t } = useI18n()
   const projectId = scope.project.id
@@ -212,6 +245,18 @@ function ProjectWorkspaceScreen({
   const [draftModel, setDraftModel] = useState('')
   const [draftAccessMode, setDraftAccessMode] = useState<Conversation['accessMode']>('full')
   const draftKey = workspace.currentThreadId ? `thread:${workspace.currentThreadId}` : `${projectId}:${pendingConversations.selectedRunId ? `pending:${pendingConversations.selectedRunId}` : ''}`
+  const {
+    target: localTarget, state: targetState, locked: targetLocked,
+    isAvailable: localTargetAvailable, retry: retryTargetRead, select: selectLocalTarget,
+    recordSubmission: recordLocalSubmission, registerThread: registerLocalThread,
+  } = useExecutionLocation({
+    projectId, userId: user.user_id, threadId: workspace.currentThreadId,
+    pendingRunId: pendingConversations.selectedRunId, draftKey, devices,
+    onPreferenceError: () => onToast('error', t('无法保存执行位置偏好')),
+  })
+  const targetKnown = targetState === 'ready'
+  const localTargetDisabledReason = !targetKnown ? t(targetState === 'error' ? '执行位置加载失败，请重试' : '正在加载执行位置') : !localTarget ? undefined : devices.status !== 'ready'
+    ? t('请先重新加载设备列表') : !localTargetAvailable(localTarget) ? t('请在客户端重新连接') : undefined
   const composerDraft = useComposerDraft('', { key: draftKey, store: scope.drafts })
   const draft = composerDraft.text
   const setDraft = composerDraft.setText
@@ -219,7 +264,6 @@ function ProjectWorkspaceScreen({
   const submissionLocks = useRef(new Map<string, string>())
   const [isModelPickerOpen, setModelPickerOpen] = useState(false)
   const [pendingResume, setPendingResume] = useState<PendingResume | null>(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [activePage, setActivePage] = useState(readPageFromLocation)
   const [automationEntryKey, setAutomationEntryKey] = useState(0)
   const composerSkills = useComposerSkills(projectId, activePage === 'conversation', composerDraft.references)
@@ -228,7 +272,7 @@ function ProjectWorkspaceScreen({
   const [skillsModalOpen, setSkillsModalOpen] = useState(false)
   const [memoriesModalOpen, setMemoriesModalOpen] = useState(false)
   const [workspaceView, setWorkspaceView] = useState<'conversation' | 'trace'>('conversation')
-  const filesDrawerOpen = workspaceFilesOpen && activePage === 'conversation' && workspaceView === 'conversation'
+  const filesDrawerOpen = workspaceFilesOpen && activePage === 'conversation' && workspaceView === 'conversation' && targetKnown && !localTarget
   const workspaceFiles = useWorkspaceFiles(projectId, filesDrawerOpen)
   const workspaceFilesLauncherRef = useRef<HTMLButtonElement>(null)
   const closeWorkspaceFiles = useCallback(() => {
@@ -238,8 +282,6 @@ function ProjectWorkspaceScreen({
   useEffect(() => {
     if (activePage !== 'conversation' || workspaceView !== 'conversation') onWorkspaceFilesOpenChange(false)
   }, [activePage, workspaceView, onWorkspaceFilesOpenChange])
-  const settingsRestoreFocus = useRef<HTMLElement | null>(null)
-  const theme = useThemePreference()
   const navigation = useWorkspaceNavigation()
   const {
     status: modelCatalogStatus,
@@ -247,7 +289,7 @@ function ProjectWorkspaceScreen({
     defaultModelId,
     models,
     retry: retryModelCatalog,
-  } = useModelCatalog()
+  } = modelCatalog
   const localAttachments = useAttachments(projectId, (message) => onToast(
     'error',
     isTranslationKey(message) ? t(message) : message,
@@ -361,7 +403,7 @@ function ProjectWorkspaceScreen({
   const isSelectedModelAvailable = modelCatalogStatus === 'ready' && modelIds.includes(conversation.model)
   // 等待原技能期间改变会话、提交选项或模型目录后，必须由用户重新发起重试
   useLayoutEffect(() => () => retrySkillRequest.current?.abort(), [
-    workspace.currentThreadId, conversation.model, conversation.mode, conversation.accessMode, modelCatalogStatus, modelIds,
+    workspace.currentThreadId, conversation.model, conversation.mode, conversation.accessMode, modelCatalogStatus, modelIds, localTarget,
   ])
   const modelSubmissionDisabledReason = modelCatalogStatus === 'ready' && !isSelectedModelAvailable
     ? t('请选择可用模型') : undefined
@@ -645,7 +687,9 @@ function ProjectWorkspaceScreen({
   }, [messageWindow, scrollConversationToBottom])
 
   const beginSend = useCallback((content: string, modeOverride?: AgentMode, resubmission?: Message) => {
-    if (!isSelectedModelAvailable) return
+    if (!isSelectedModelAvailable || (!resubmission && localTargetDisabledReason)) return
+    const submittedTarget = resubmission ? resubmission.meta?.localTarget : localTarget
+    if (submittedTarget && !localTargetAvailable(submittedTarget)) { pushToast('error', t('请在客户端重新连接')); return }
     const trimmed = content.trim()
     if (!resubmission && composerSkills.selected.length > 0
       && (composerSkills.status !== 'ready' || composerSkills.selected.some(skill => skill.unavailable))) return
@@ -687,7 +731,7 @@ function ProjectWorkspaceScreen({
         mode: effectiveMode,
         accessMode: conversation.accessMode,
       })
-      const payload = buildInitialPayload(nextConversation, content, readyAttachments, selectedSkills.map(skill => skill.id))
+      const payload = buildInitialPayload(nextConversation, content, readyAttachments, selectedSkills.map(skill => skill.id), submittedTarget)
       const requestMessage = payload.messages.at(0)
       if (!requestMessage) return
       const seededConversation: Conversation = {
@@ -699,7 +743,7 @@ function ProjectWorkspaceScreen({
           content: messageText(requestMessage.content),
           attachments: messageAttachments(requestMessage.content),
           createdAt: now,
-          meta: { runId: payload.runId, selectedSkills },
+          meta: { runId: payload.runId, selectedSkills, localTarget: submittedTarget },
         }],
         activeRunId: payload.runId,
         runStatus: 'streaming',
@@ -713,6 +757,7 @@ function ProjectWorkspaceScreen({
 
       submissionLocks.current.set(submissionKey, payload.runId)
       const pendingKey = `${projectId}:pending:${payload.runId}`
+      recordLocalSubmission(pendingKey, submittedTarget)
       composerDraft.moveTo(pendingKey)
       localAttachments.moveTo(pendingKey)
       scrollConversationToBottomImmediately()
@@ -731,6 +776,7 @@ function ProjectWorkspaceScreen({
         onDraftChange: next => pendingConversations.update(payload.runId, next),
         onRegistered: (threadId, selected) => {
           const key = `thread:${threadId}`
+          registerLocalThread(pendingKey, threadId, submittedTarget)
           if (selected) { composerDraft.moveTo(key); localAttachments.moveTo(key) }
           else {
             const text = scope.drafts.get(pendingKey)
@@ -772,7 +818,7 @@ function ProjectWorkspaceScreen({
     const sendingConversation = currentConversation.mode === effectiveMode
       ? currentConversation
       : { ...currentConversation, mode: effectiveMode }
-    const payload = buildInitialPayload(sendingConversation, content, readyAttachments, selectedSkills.map(skill => skill.id))
+    const payload = buildInitialPayload(sendingConversation, content, readyAttachments, selectedSkills.map(skill => skill.id), submittedTarget)
     const requestMessage = payload.messages.at(0)
     if (!requestMessage) return
     if (modeOverride) setComposerPreference(currentConversation.threadId, { mode: modeOverride })
@@ -796,13 +842,13 @@ function ProjectWorkspaceScreen({
           content: messageText(requestMessage.content),
           attachments: messageAttachments(requestMessage.content),
           createdAt: now,
-          meta: { runId: payload.runId, selectedSkills },
+          meta: { runId: payload.runId, selectedSkills, localTarget: submittedTarget },
         }],
       }))
     })
     if (!resubmission) setDraft('')
     void streamRun(currentConversation.threadId, payload, 'start', { target: 'workspace', onAccepted, onRequestRejected }).finally(() => releaseSubmission(payload.runId))
-  }, [scope.attachments, scope.drafts, projectId, isActiveThread, isSelectedModelAvailable, t, conversation, localAttachments, composerSkills, composerDraft, draftRevision, draftConversation?.model, draftModel, pendingConversations, discardDraft, setHistoryQuery, hydrateConversation, isRunning, messageWindow, scrollConversationToBottomImmediately, setDraft, setComposerPreference, setWorkspace, streamRun, workspace.conversations, workspace.currentThreadId])
+  }, [localTarget, localTargetDisabledReason, localTargetAvailable, recordLocalSubmission, registerLocalThread, pushToast, scope.attachments, scope.drafts, projectId, isActiveThread, isSelectedModelAvailable, t, conversation, localAttachments, composerSkills, composerDraft, draftRevision, draftConversation?.model, draftModel, pendingConversations, discardDraft, setHistoryQuery, hydrateConversation, isRunning, messageWindow, scrollConversationToBottomImmediately, setDraft, setComposerPreference, setWorkspace, streamRun, workspace.conversations, workspace.currentThreadId])
 
   const latestBeginSend = useRef(beginSend)
   useLayoutEffect(() => { latestBeginSend.current = beginSend }, [beginSend])
@@ -818,11 +864,14 @@ function ProjectWorkspaceScreen({
     const controller = new AbortController()
     retrySkillRequest.current = controller
     try {
-      const selectedSkills = await readRunSkillSelection(current.threadId, runId, controller.signal)
+      const [selectedSkills, originalTarget] = await Promise.all([
+        readRunSkillSelection(current.threadId, runId, controller.signal),
+        fetchRunLocalTarget(current.threadId, runId, controller.signal),
+      ])
       if (controller.signal.aborted || latestWorkspace.current.currentThreadId !== current.threadId) return
-      latestBeginSend.current(original.content, undefined, { ...original, meta: { ...original.meta, selectedSkills } })
+      latestBeginSend.current(original.content, undefined, { ...original, meta: { ...original.meta, selectedSkills, localTarget: originalTarget ?? undefined } })
     } catch {
-      if (!controller.signal.aborted) pushToast('error', t('无法读取原技能选择，请重试'))
+      if (!controller.signal.aborted) pushToast('error', t('无法读取原运行配置，请重试'))
     } finally {
       if (retrySkillRequest.current === controller) retrySkillRequest.current = null
     }
@@ -1109,6 +1158,10 @@ function ProjectWorkspaceScreen({
     onConversationBoundary,
   })
 
+  const changeExecutionLocation = (value: LocalTarget | undefined) => {
+    if (selectLocalTarget(value)) localAttachments.revalidateExecution(`${projectId}:`)
+  }
+
   const setAgentMode = useCallback((mode: AgentMode) => {
     if (mode === conversation.mode) return
     if (!workspace.currentThreadId) {
@@ -1222,6 +1275,7 @@ function ProjectWorkspaceScreen({
       open={taskDrawer.open}
       loadFailed={taskTraceLoadFailed}
       onToggle={() => {
+        setWorkspaceView('conversation')
         onWorkspaceFilesOpenChange(false)
         taskDrawer.toggle()
         if (navigation.band !== 'mobile' && !taskDrawerLayout.available) pushToast('info', t('展开窗口后可查看'))
@@ -1335,8 +1389,7 @@ function ProjectWorkspaceScreen({
         user={user}
         onOpenSettings={(restoreFocusTo) => {
           taskDrawer.close(false)
-          settingsRestoreFocus.current = restoreFocusTo ?? null
-          setSettingsOpen(true)
+          onOpenSettings(restoreFocusTo ?? null)
         }}
         onLogout={onLogout}
         backgroundInert={portalModalActive}
@@ -1376,33 +1429,32 @@ function ProjectWorkspaceScreen({
           conversationTitle={conversation.title}
           overlayTriggerRef={navigation.overlayTriggerRef}
           onOpenOverlay={navigation.openOverlay}
-          actions={workspaceView === 'conversation' ? <div className="workspace-header-tools" role="group" aria-label={t('会话操作')}>
+          actions={<div className="workspace-header-tools" role="group" aria-label={t('会话操作')}>
             {taskTraceLauncher}
-            {!filesDrawerOpen && <IconButton ref={workspaceFilesLauncherRef} size="xs" className="workspace-header-action"
-              label={t('工作区')} tooltip={t('工作区')} aria-expanded={false}
-              aria-controls="workspace-files-drawer" icon={<FolderClosed size={17} />}
-              onClick={() => resizeConversationContent(() => {
-                taskDrawer.close(false)
-                onWorkspaceFilesOpenChange(!filesDrawerOpen)
-              })} />}
-          </div> : undefined}
-          navigation={conversation.threadId ? (
-            <ViewTabs
-              value={workspaceView}
-              label={t('会话视图')}
-              options={[
-                { value: 'conversation', label: t('对话'), controls: 'conversation-panel' },
-                {
-                  value: 'trace',
-                  label: t('链路'),
-                  controls: 'chain-trace-panel',
-                  disabled: !conversation.threadId,
-                },
-              ]}
-              onChange={selectWorkspaceView}
-              className="workspace-view-tabs"
-            />
-          ) : undefined}
+            <IconButton type="button" size="xs" label={t('链路')} tooltip={t('链路')} icon={<Workflow size={17} />}
+              selected={workspaceView === 'trace'} aria-controls="chain-trace-panel" disabled={!conversation.threadId}
+              onClick={() => selectWorkspaceView(workspaceView === 'trace' ? 'conversation' : 'trace')} />
+            <IconButton type="button" ref={workspaceFilesLauncherRef} size="xs" className="workspace-header-action"
+              label={t('工作区')} tooltip={t('工作区')} aria-expanded={localTarget ? undefined : filesDrawerOpen}
+              disabled={!targetKnown} aria-controls={localTarget ? undefined : "workspace-files-drawer"} icon={<FolderClosed size={17} />}
+              onClick={() => {
+                if (!targetKnown) return
+                if (localTarget) {
+                  const query = new URLSearchParams({ server: getServerAddress(), namespace: `ns_${user.user_id}`,
+                    device: localTarget.device_id, project: projectId })
+                  window.location.href = `tinkerfin://workspace?${query}`
+                  return
+                }
+                resizeConversationContent(() => {
+                  setWorkspaceView('conversation')
+                  taskDrawer.close(false)
+                  onWorkspaceFilesOpenChange(!filesDrawerOpen)
+                })
+              }} />
+          </div>}
+          navigation={<DevicePicker targetState={targetState} onRetry={retryTargetRead} devices={devices} projectId={projectId} value={localTarget} onChange={changeExecutionLocation}
+            disabled={isConversationHydrating || isConversationHydrationFailed || !targetKnown}
+            locked={targetLocked} />}
         />
         {workspaceView === 'conversation' ? (
           <>
@@ -1454,7 +1506,7 @@ function ProjectWorkspaceScreen({
               isRunning={isRunning}
               canStop={canStopConversation && !compaction.saving}
               stopDisabledReason={compaction.saving ? t('正在保存压缩结果') : !canStopConversation && conversation.threadId ? t('恢复连接后可停止任务') : undefined}
-              stopPending={cancelPendingRunId === conversation.activeRunId}
+              stopPending={Boolean(conversation.activeRunId && cancelPendingRunId === conversation.activeRunId)}
               isHydrating={isConversationHydrating}
               submission={conversation.approval?.submitted || conversation.planInteraction?.submitted ? interactionConfirmation : undefined}
               hero={showConversationHero ? <EmptyConversationBrand /> : undefined}
@@ -1513,7 +1565,7 @@ function ProjectWorkspaceScreen({
               onChooseModel={() => setModelPickerOpen(true)}
               onCompact={executeCompaction}
               compactDisabledReason={modelSubmissionDisabledReason ?? compaction.disabledReason}
-              submissionDisabledReason={modelSubmissionDisabledReason}
+              submissionDisabledReason={modelSubmissionDisabledReason ?? localTargetDisabledReason}
               accessControl={<AccessModePicker value={conversation.accessMode} onChange={selectAccessMode}
                 disabled={isRunning || Boolean(conversation.approval || conversation.planInteraction) || isConversationHydrating} />}
               modelControl={(
@@ -1641,16 +1693,6 @@ function ProjectWorkspaceScreen({
         pending={dialogPending}
         onConfirm={confirmDialog}
         onCancel={closeDialog}
-      />
-      <SettingsDialog
-        onToast={pushToast}
-        onModelsChanged={retryModelCatalog}
-        open={settingsOpen}
-        user={user}
-        themePreference={theme.preference}
-        restoreFocusTo={settingsRestoreFocus.current}
-        onThemePreferenceChange={theme.selectPreference}
-        onClose={() => setSettingsOpen(false)}
       />
     </div>
     </AttachmentReferenceContext.Provider>

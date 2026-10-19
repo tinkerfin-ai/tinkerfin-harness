@@ -23,6 +23,7 @@ from pydantic import (
 from tinkerfin import AgUiUserInput
 from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
+from tinkerfin_studio.devices.schemas import LocalTargetSelection
 
 MAX_USER_MESSAGE_BYTES = 256 * 1024
 
@@ -62,6 +63,13 @@ class ConversationForwardedProps(BaseModel):
     """前端传给一次 run 的扩展属性"""
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    local_target: LocalTargetSelection | None = Field(
+        default=None,
+        alias="localTarget",
+        exclude_if=lambda value: value is None,
+        description="新会话的执行位置；已有会话保持原绑定，切换位置需新建会话",
+    )
 
     project_id: str = Field(
         alias="projectId",

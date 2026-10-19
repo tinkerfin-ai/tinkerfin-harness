@@ -20,7 +20,7 @@
 | --- | --- | --- |
 | `thread_id`, `run_id` | required | Run identity inside the Runtime namespace |
 | `messages` / `input` / `resume` | exactly one | User messages, advanced native state, or resume decisions |
-| `parent_run_id` | `None` | Authorized branch or resume lineage |
+| `parent_run_id` | `None` | Authorized branch source; on resume, the current pending batch's owning run, inferred when omitted |
 | `mode` | Runtime default | `default` or configured `plan` |
 | `config`, `context` | `None` | Graph settings and typed invocation context |
 | `stream_timeout` | `None` | Total deadline for workspace/Graph preparation, resume resolution, and Native pulls, beginning with the first Native pull after `RUN_STARTED` |

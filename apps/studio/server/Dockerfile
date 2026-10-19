@@ -18,14 +18,15 @@ RUN python - <<'PYTHON'
 import tomllib
 from pathlib import Path
 
-workspace = tomllib.loads(Path("pyproject.toml").read_text())["tool"]["uv"]["workspace"]
+from scripts.build_wheels import project_paths_for
+
 requirements = []
-for pattern in workspace["members"]:
-    for member in sorted(Path(".").glob(pattern)):
-        if member.parts[0] != "packages" or not member.is_dir():
-            continue
-        project = tomllib.loads((member / "pyproject.toml").read_text())["project"]
-        requirements.append(f'{project["name"]}=={project["version"]}\n')
+for selected in project_paths_for("tinkerfin-studio"):
+    member = Path(selected)
+    if member.parts[0] != "packages":
+        continue
+    project = tomllib.loads((member / "pyproject.toml").read_text())["project"]
+    requirements.append(f'{project["name"]}=={project["version"]}\n')
 if not requirements:
     raise SystemExit("No framework projects found in the workspace")
 Path("/framework-requirements.txt").write_text("".join(sorted(requirements)))
@@ -50,7 +51,7 @@ FROM sources AS candidate-artifacts
 RUN --mount=type=cache,target=/root/.cache/uv \
     UV_BUILD_CONSTRAINT=/build-constraints.txt UV_REQUIRE_HASHES=true \
     UV_DEFAULT_INDEX=${PIP_INDEX_URL} python scripts/build_wheels.py \
-        --out-dir /wheels --python /usr/local/bin/python
+        --package tinkerfin-studio --out-dir /wheels --python /usr/local/bin/python
 
 FROM python-base AS dependencies
 ARG PIP_INDEX_URL=https://pypi.org/simple

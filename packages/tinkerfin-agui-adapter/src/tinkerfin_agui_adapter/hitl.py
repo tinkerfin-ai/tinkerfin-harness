@@ -22,10 +22,20 @@ class HitlActionRequest(RuntimeModel):
 
     name: str = Field(min_length=1, description="Name of the action under review")
     args: JsonObject = Field(description="Action argument object")
+    source_args: JsonObject | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="Original proposal arguments when the framework prepared a different execution target",
+    )
     description: str | None = Field(
         default=None,
         description="Human-readable action description",
     )
+
+    @property
+    def correlation_args(self) -> JsonObject:
+        """Match the retained proposal without replacing the reviewed arguments."""
+        return self.args if self.source_args is None else self.source_args
 
 
 class HitlReviewConfig(RuntimeModel):
@@ -126,7 +136,7 @@ def _ordered_candidate_matches(
             if (
                 candidate.arguments_error is None
                 and candidate.tool_name == action.name
-                and json_values_equal(candidate.arguments, action.args.root)
+                and json_values_equal(candidate.arguments, action.correlation_args.root)
             ):
                 selected.append(candidate.tool_call_id)
                 yield from search(action_index + 1, index + 1, selected)
@@ -156,7 +166,9 @@ def _ordered_projected_matches(
             if (
                 candidate.arguments_error is not None
                 or candidate.tool_name != action.name
-                or not json_values_equal(candidate.arguments, action.args.root)
+                or not json_values_equal(
+                    candidate.arguments, action.correlation_args.root
+                )
             ):
                 continue
             for suffix in search(action_index + 1, index + 1):

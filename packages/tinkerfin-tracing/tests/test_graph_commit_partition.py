@@ -28,6 +28,7 @@ Scenario = Literal[
     "late-arguments",
     "interrupted",
     "recovery",
+    "renamed-execution",
 ]
 
 
@@ -63,6 +64,13 @@ def _events(scenario: Scenario, *, thread: str, nested: bool) -> tuple[TraceEven
         "late-arguments": ("proposal", "started", "arguments", "completed"),
         "interrupted": ("proposal", "arguments", "started", "interrupted"),
         "recovery": ("started", "failed", "started", "arguments", "completed"),
+        "renamed-execution": (
+            "proposal",
+            "arguments",
+            "started",
+            "completed",
+            "result",
+        ),
     }[scenario]
     result = []
     for sequence, name in enumerate(names, 1):
@@ -97,7 +105,9 @@ def _events(scenario: Scenario, *, thread: str, nested: bool) -> tuple[TraceEven
                 execution_id=f"execution-{1 if sequence < 3 else 2}",
                 source_tool_call_id="call",
                 tool_call_namespace=namespace,
-                tool_name="deliver_report",
+                tool_name="approved_report"
+                if scenario == "renamed-execution"
+                else "deliver_report",
                 input=captured if name == "started" else None,
                 output=captured if name == "completed" else None,
                 error_type="RuntimeError" if name == "failed" else None,
@@ -124,6 +134,7 @@ def _events(scenario: Scenario, *, thread: str, nested: bool) -> tuple[TraceEven
         "late-arguments",
         "interrupted",
         "recovery",
+        "renamed-execution",
     ],
 )
 async def test_sql_batches_and_rebuild_keep_identical_tool_records(
@@ -158,5 +169,9 @@ async def test_sql_batches_and_rebuild_keep_identical_tool_records(
             "late-arguments": 2,
             "interrupted": 3,
             "recovery": 3,
+            "renamed-execution": 3,
         }[scenario]
         assert after.nodes[0].started_seq == expected_start
+        assert after.nodes[0].name == (
+            "approved_report" if scenario == "renamed-execution" else "deliver_report"
+        )

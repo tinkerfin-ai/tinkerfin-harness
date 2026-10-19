@@ -10,6 +10,8 @@ from typing import Literal
 
 from pydantic import Field, JsonValue, field_validator, model_validator
 
+from tinkerfin_contracts import ObservationClock
+
 from ._models import TraceModel
 
 MAX_SUBAGENT_SCOPE_DEPTH = 64
@@ -248,6 +250,16 @@ class TraceGraphNode(TraceModel, frozen=True):
     provider: str | None = Field(default=None, min_length=1, max_length=1024)
     model: str | None = Field(default=None, min_length=1, max_length=1024)
     source_id: str | None = Field(default=None, min_length=1, max_length=2048)
+    source_started: ObservationClock | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="Original execution clock when started_at records relay receipt",
+    )
+    source_completed: ObservationClock | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="Original execution clock; compare only within the same source run",
+    )
     started_at: datetime
     first_output_at: datetime | None = None
     completed_at: datetime | None = None

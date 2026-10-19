@@ -8,7 +8,7 @@ environments, persistent bindings, warm capacity, pause, resume, and cleanup.
 ## Installation
 
 ```bash
-pip install tinkerfin-sandbox
+pip install "tinkerfin-sandbox[opensandbox]"
 ```
 
 For persistent bindings, install the SQLAlchemy extra and one asynchronous driver:

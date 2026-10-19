@@ -16,7 +16,7 @@ def file_review_policy(access_mode: AccessMode) -> dict[str, bool | InterruptOnC
     return {
         name: {
             "allowed_decisions": ["approve", "reject"],
-            "description": "需要人工审批：Agent 正准备运行命令或写入文件",
+            "description": "需要批准此操作",
         }
         for name in (
             "execute",

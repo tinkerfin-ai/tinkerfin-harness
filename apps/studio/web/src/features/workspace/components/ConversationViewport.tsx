@@ -126,7 +126,7 @@ export function ConversationViewport({
       <div
         id="conversation-panel"
         className="conversation-region"
-        role="tabpanel"
+        role="region"
         aria-label={t('对话')}
         aria-hidden={backgroundInert || undefined}
         inert={backgroundInert || undefined}
@@ -222,7 +222,7 @@ export function ConversationViewport({
             {conversation.runStatus === 'streaming' && (conversation.runPhase === 'preparing' || (!conversation.approval?.submitted && !conversation.planInteraction?.submitted)) && !conversation.compactions?.some(operation => operation.runId === conversation.activeRunId) && (
               <p className="message-stream-tail stream-pending-tail"><ActivityDots label={t('任务仍在继续')} /></p>
             )}
-            <div ref={messageEndRef} />
+              <div ref={messageEndRef} />
           </div>
         )}
         </section>

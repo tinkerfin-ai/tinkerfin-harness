@@ -11,7 +11,6 @@ from uuid import uuid4
 
 from deepagents.backends import StateBackend
 from deepagents.backends.protocol import BackendProtocol
-from deepagents.middleware.memory import MemoryMiddleware
 from deepagents.middleware.summarization import (
     SummarizationMiddleware,
     SummarizationToolMiddleware,
@@ -45,9 +44,13 @@ from .._agui_lineage_state import (
     RUN_ID_METADATA_KEY,
     LineageMarker,
 )
+from .._file_paths import _WorkspaceFilePaths
 from .._middleware_resources import prepare_middleware_resources
+from .._skills import resolve_skill_sources
 from .._summarization import ObservedCompactionTool
 from .._tool_runtime import _ToolRuntimeMiddleware
+from .._workspace_operations import WorkspaceMemory, WorkspaceOperations
+from .._workspace_tools import merge_workspace_tools
 from ._clarification import (
     ClarificationDiscussionResponse,
     ClarificationDismissResponse,
@@ -452,16 +455,34 @@ class _PlanningGraphFactory(Generic[ContextT]):
             else cast(BackendProtocol, backend_value)
         )
         base_state_schema = spec.state_schema
-        caller_middleware = prepare_middleware_resources(spec.middleware)
-        supplied_tools = spec.tools
+        operations = (
+            None if spec.tool_scope is None else WorkspaceOperations(spec.tool_scope)
+        )
+        caller_middleware = prepare_middleware_resources(spec.middleware, operations)
+        supplied_tools = merge_workspace_tools(
+            spec.tools,
+            () if workspace is None else workspace.tools,
+            caller_middleware,
+            reserved=("ask_user_question", "submit_plan", "confirm_plan_edit"),
+        )
+        skills = resolve_skill_sources(
+            spec.skills,
+            () if workspace is None else workspace.skill_sources,
+            inherit=True,
+        )
         resolved_model = resolve_planner_model(self._options.planner_model or model)
         defaults = _role_defaults(
             model=resolved_model,
             backend=backend,
-            skills=spec.skills,
+            skills=skills or None,
             permissions=spec.permissions,
             interrupt_on=spec.interrupt_on,
             workspace=workspace,
+            tools=supplied_tools,
+            operations=operations,
+        )
+        paths = next(
+            (item for item in defaults if isinstance(item, _WorkspaceFilePaths)), None
         )
         common_middleware = _merge_middleware(defaults, caller_middleware)
         trailing: list[AgentMiddlewareType] = []
@@ -484,9 +505,9 @@ class _PlanningGraphFactory(Generic[ContextT]):
                 )
             trailing.append(ObservedCompactionTool(summary))
         if spec.memory is not None:
-            trailing.append(
-                MemoryMiddleware(backend=backend, sources=list(spec.memory))
-            )
+            memory = WorkspaceMemory(backend=backend, sources=list(spec.memory))
+            memory.operations = operations
+            trailing.append(memory)
 
         def initialize_node(state: PlanningWorkflowNodeState) -> dict[str, object]:
             mapped = cast(Mapping[str, object], state)
@@ -927,9 +948,10 @@ class _PlanningGraphFactory(Generic[ContextT]):
             [
                 *_merge_middleware([*defaults, lifecycle], caller_middleware),
                 *trailing,
-                _ToolRuntimeMiddleware(spec.tool_scope),
+                _ToolRuntimeMiddleware(spec.tool_scope, paths),
             ],
             spec.attachments,
+            operations,
         )
         state_schema = create_plan_state_schema(
             base_state_schema,

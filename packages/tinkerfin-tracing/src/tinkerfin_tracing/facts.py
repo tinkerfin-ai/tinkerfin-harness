@@ -9,6 +9,7 @@ from pydantic import Field, TypeAdapter, model_validator
 
 from tinkerfin_contracts import (
     MessageSource,
+    ObservationClock,
     RunIdentity,
     RunInputKind,
     RunTerminalOutcome,
@@ -27,6 +28,11 @@ class TraceFactBase(TimedTraceModel, frozen=True):
 
     source_observation_id: str = Field(min_length=1, max_length=1024)
     identity: RunIdentity
+    source_clock: ObservationClock | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="Producer execution clock when this fact was relayed from another Runtime",
+    )
     graph_namespace: tuple[str, ...] = ()
     parent_subagent_id: str | None = Field(
         default=None,

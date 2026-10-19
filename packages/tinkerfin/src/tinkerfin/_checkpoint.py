@@ -14,6 +14,7 @@ from collections.abc import (
     Iterator,
     Sequence,
 )
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from langchain_core.runnables import RunnableConfig
@@ -39,6 +40,7 @@ from ._agui_lineage_state import (
     LineageMarker,
     ResumeIntent,
 )
+from ._checkpoint_writes import CheckpointWriteView, checkpoint_write_view
 from ._tasks import run_async_owned
 from .errors import TinkerFinLifecycleError
 
@@ -297,10 +299,26 @@ class NamespaceCheckpointer(BaseCheckpointSaver[V]):
             raise TinkerFinLifecycleError(
                 "checkpoint tuple has conflicting checkpoint coordinates"
             )
+        metadata = self._logical_metadata(saved.metadata, identity)
+        return CheckpointTuple(
+            config=self._logical_config(saved.config, identity),
+            checkpoint=saved.checkpoint,
+            metadata=metadata,
+            parent_config=(
+                None
+                if saved.parent_config is None
+                else self._logical_config(saved.parent_config, identity)
+            ),
+            pending_writes=saved.pending_writes,
+        )
+
+    def _logical_metadata(
+        self, saved: CheckpointMetadata, identity: ThreadIdentity
+    ) -> _ThreadMetadata:
         metadata: _ThreadMetadata = (
-            _read_redis_metadata(saved.metadata)
+            _read_redis_metadata(saved)
             if _redis_saver(self._saver) is not None
-            else {**saved.metadata}
+            else {**saved}
         )
         for key in (
             "_tinkerfin_thread_identity",
@@ -353,17 +371,7 @@ class NamespaceCheckpointer(BaseCheckpointSaver[V]):
                 raise TinkerFinLifecycleError(
                     "checkpoint has invalid resume ownership evidence", cause=error
                 ) from error
-        return CheckpointTuple(
-            config=self._logical_config(saved.config, identity),
-            checkpoint=saved.checkpoint,
-            metadata=metadata,
-            parent_config=(
-                None
-                if saved.parent_config is None
-                else self._logical_config(saved.parent_config, identity)
-            ),
-            pending_writes=saved.pending_writes,
-        )
+        return metadata
 
     @staticmethod
     def _validate_intent(intent: ResumeIntent, lineage: LineageMarker | None) -> None:
@@ -394,6 +402,57 @@ class NamespaceCheckpointer(BaseCheckpointSaver[V]):
                 "checkpoint lookup returned another requested location"
             )
         return logical
+
+    async def _aread_checkpoint_writes(
+        self, config: RunnableConfig, *, owner_prefix: str | None = None
+    ) -> CheckpointWriteView | None:
+        """Read receipt evidence without manufacturing a partial Graph checkpoint.
+
+        Redis 0.5.2 has an indexed owner field, so a selected read avoids unrelated
+        write payloads and channel state. Other savers retain their standard native
+        read contract. A Redis read failure propagates; it never selects another
+        read strategy. The Redis boundary preserves refresh-on-read TTL semantics.
+        """
+
+        identity = self._identity(config)
+        redis_saver = _redis_saver(self._saver)
+        if redis_saver is None or owner_prefix is None:
+            saved = await self.aget_tuple(config)
+            return None if saved is None else checkpoint_write_view(saved, owner_prefix)
+        from ._checkpoint_redis import checkpoint_writes
+
+        physical = self._physical(config).get("configurable", {})
+        checkpoint_id = physical.get("checkpoint_id")
+        namespace = physical.get("checkpoint_ns", "")
+        thread_id = physical.get("thread_id")
+        if (
+            not isinstance(checkpoint_id, str)
+            or not checkpoint_id
+            or not isinstance(namespace, str)
+            or not isinstance(thread_id, str)
+            or not isinstance(owner_prefix, str)
+            or not owner_prefix
+        ):
+            raise ValueError(
+                "selected checkpoint writes require exact coordinates and an owner"
+            )
+        view = await checkpoint_writes(
+            redis_saver, thread_id, namespace, checkpoint_id, owner_prefix
+        )
+        if view is None:
+            return None
+        if (view.thread_id, view.graph_namespace, view.checkpoint_id) != (
+            thread_id,
+            namespace,
+            checkpoint_id,
+        ):
+            raise TinkerFinLifecycleError("checkpoint write lookup changed its anchor")
+        return replace(
+            view,
+            thread_id=identity.thread_id,
+            graph_namespace=_decode_graph_scope(namespace),
+            metadata=self._logical_metadata(view.metadata, identity),
+        )
 
     async def alist(
         self,

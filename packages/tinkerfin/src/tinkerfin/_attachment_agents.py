@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import replace
 from typing import Any, TypeVar, cast
 from uuid import uuid4
@@ -17,6 +18,7 @@ from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 
 from tinkerfin_contracts.media import Attachment
 
+from ._workspace_operations import WorkspaceOperations
 from .media import AttachmentSupport, _content_attachment, _media_input
 
 _MessageT = TypeVar("_MessageT", bound=BaseMessage)
@@ -301,8 +303,11 @@ def preserve_media(
 class _AttachmentMiddleware(AgentMiddleware):
     """Project message and system media at the final destination model boundary."""
 
-    def __init__(self, support: AttachmentSupport) -> None:
+    def __init__(
+        self, support: AttachmentSupport, operations: WorkspaceOperations | None = None
+    ) -> None:
         self._support = support
+        self._operations = operations
 
     async def awrap_model_call(
         self,
@@ -314,7 +319,14 @@ class _AttachmentMiddleware(AgentMiddleware):
             if request.system_message is None
             else [request.system_message, *request.messages]
         )
-        messages = await self._support._prepare_messages(source, model=request.model)
+        with (
+            nullcontext()
+            if self._operations is None
+            else self._operations.framework("media", "model-input", request.state)
+        ):
+            messages = await self._support._prepare_messages(
+                source, model=request.model
+            )
         if request.system_message is None:
             return await handler(request.override(messages=messages))
         system_message = messages[0]

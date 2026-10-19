@@ -787,7 +787,7 @@ for (const theme of ['light', 'dark'] as const) {
       const groups = makeGroups(8, true)
       const evidence = await mockTodoTraceStudio(page, { groups, language })
       const english = language === 'en'
-      const pane = page.getByRole('region', { name: english ? 'Conversation' : '对话内容', exact: true })
+      const pane = page.getByRole('region', { name: english ? 'Conversation content' : '对话内容', exact: true })
       await pane.evaluate(element => {
         element.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -1 }))
         element.scrollTop = 200

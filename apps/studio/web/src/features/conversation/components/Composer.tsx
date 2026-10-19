@@ -445,7 +445,10 @@ export function Composer({
           aria-hidden={backgroundInert || undefined}
           inert={backgroundInert || undefined}
         >
-          {submission ? <InteractionSubmission state={submission} stopControl={isRunning ? stopControl : undefined}>{takeover}</InteractionSubmission> : takeover}
+          {submission ? <InteractionSubmission state={submission} stopControl={isRunning ? stopControl : undefined}>{takeover}</InteractionSubmission> : <>
+            {takeover}
+            {isRunning && <div className="composer-takeover-actions">{stopControl}</div>}
+          </>}
         </div>
       )}
       <p className="composer-note">{t('TinkerFin 可能会犯错，请核对重要信息')}</p>
