@@ -1,115 +1,94 @@
-import { Check, ChevronDown, FolderClosed, Pencil, Plus, X } from 'lucide-react'
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { Button, IconButton, TextField, ValidatedForm } from '../../components/ui'
-import { restoreFocus } from '../../components/ui/focus'
+import { Check, ChevronsUpDown, FolderKanban, Pencil, Plus, Search } from 'lucide-react'
+import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { Button, Dialog, IconButton, TextField } from '../../components/ui'
 import { useI18n } from '../../i18n'
+import { ProjectNameForm } from './ProjectNameForm'
 import type { ProjectWorkspaceScope } from './ProjectsWorkspace'
 
-/** 项目列表允许在选中行编辑名称，浏览器负责浮层叠放、外部点击与关闭 */
+/** 项目编辑与列表共用面板；关闭时保存重命名，失败则保留编辑目标和输入 */
 export function ProjectSwitcher({ scope }: { scope: ProjectWorkspaceScope }) {
   const { t } = useI18n()
-  const id = useId()
-  const trigger = useRef<HTMLButtonElement>(null)
-  const panel = useRef<HTMLDivElement>(null)
-  const selected = useRef<HTMLButtonElement>(null)
-  const renameButton = useRef<HTMLButtonElement>(null)
+  const trigger = scope.pickerTriggerRef
+  const search = useRef<HTMLInputElement>(null)
   const input = useRef<HTMLInputElement>(null)
-  const [open, setOpen] = useState(false)
-  const renaming = scope.renameForm !== null
-  const wasRenaming = useRef(false)
-  const saving = scope.renameForm?.saving ?? false
-
-  const fit = useCallback(() => {
-    const anchor = trigger.current?.getBoundingClientRect()
-    const menu = panel.current
-    if (!anchor || !menu) return
-    const tokens = getComputedStyle(document.documentElement)
-    const gap = parseFloat(tokens.getPropertyValue('--space-1')) || 0
-    const inset = parseFloat(tokens.getPropertyValue('--space-3')) || 0
-    const width = Math.min(anchor.width, window.innerWidth - inset * 2)
-    menu.style.width = `${width}px`
-    menu.style.left = `${Math.max(inset, Math.min(anchor.left, window.innerWidth - width - inset))}px`
-    menu.style.top = `${anchor.bottom + gap}px`
-    menu.style.maxHeight = `${Math.max(0, window.innerHeight - anchor.bottom - gap - inset)}px`
-  }, [])
+  const list = useRef<HTMLDivElement>(null)
+  const [query, setQuery] = useState('')
+  const form = scope.editorForm
+  const editing = form !== null
+  const editingId = form?.projectId
+  const saving = form?.saving ?? false
+  const projects = scope.projects.filter(project => project.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
 
   useLayoutEffect(() => {
-    if (!open) return
-    fit()
-    if (!renaming) {
-      selected.current?.focus({ preventScroll: true })
-      selected.current?.scrollIntoView({ block: 'nearest' })
-    }
-    window.addEventListener('resize', fit)
-    window.addEventListener('scroll', fit, true)
-    return () => { window.removeEventListener('resize', fit); window.removeEventListener('scroll', fit, true) }
-  }, [open, renaming, fit])
+    if (!scope.pickerOpen) return
+    if (editing) {
+      input.current?.focus({ preventScroll: true })
+      const length = input.current?.value.length ?? 0
+      input.current?.setSelectionRange(length, length)
+    } else search.current?.focus({ preventScroll: true })
+  }, [scope.pickerOpen, editing, editingId])
 
-  useLayoutEffect(() => {
-    if (renaming && open) input.current?.focus()
-    if (renaming && !wasRenaming.current) input.current?.select()
-    if (!renaming && wasRenaming.current) {
-      if (open) restoreFocus(renameButton.current, { preventScroll: true })
-    }
-    wasRenaming.current = renaming
-  }, [open, renaming])
-
-  useEffect(() => {
-    // 保存失败即使发生在浮层关闭之后，也重新显示原输入和错误，供用户重试
-    if (scope.renameForm?.error && !open) panel.current?.showPopover()
-  }, [open, scope.renameForm?.error])
-
-  const close = () => { if (!saving) panel.current?.hidePopover() }
-  const handleKeys = (event: KeyboardEvent<HTMLElement>) => {
-        if (event.key === 'Escape' && renaming) { event.preventDefault(); event.stopPropagation(); scope.renameForm?.cancel() }
-        else if (event.key === 'Escape') { event.preventDefault(); close(); trigger.current?.focus({ preventScroll: true }) }
-        if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && event.target instanceof HTMLButtonElement) {
-          event.preventDefault()
-          const buttons = Array.from(panel.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])
-          const index = buttons.indexOf(event.target)
-          const next = buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]
-          next?.focus({ preventScroll: true })
-          next?.scrollIntoView({ block: 'nearest' })
-        }
-
+  const close = async () => {
+    if (saving) return
+    if (form?.projectId && !await form.submit()) return
+    if (form && !form.projectId) form.cancel()
+    setQuery('')
+    scope.closePicker()
   }
-  return <div className="project-switcher">
+  const cancel = () => { form?.cancel(); setQuery('') }
+  const create = () => { scope.create(query.trim()) }
+  const handleKeys = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.nativeEvent.isComposing) return
+    if (event.key === 'Escape' && form) {
+      event.preventDefault()
+      if (!saving) cancel()
+    }
+    if (form) return
+    const options = Array.from(list.current?.querySelectorAll<HTMLButtonElement>('[data-project-choice]') ?? [])
+    if (event.key === 'Enter' && event.target === search.current) {
+      event.preventDefault()
+      if (options.length) options[0].click()
+      else create()
+    }
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && options.length) {
+      event.preventDefault()
+      const index = options.indexOf(event.target as HTMLButtonElement)
+      const next = index < 0 ? event.key === 'ArrowDown' ? 0 : options.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length
+      options[next]?.focus()
+    }
+  }
+  const title = t(form ? form.projectId ? '重命名项目' : '创建项目' : '项目管理')
+  return <div className="project-switcher" onKeyDownCapture={event => {
+    if (event.nativeEvent.isComposing) event.stopPropagation()
+  }}>
     <button ref={trigger} type="button" className="project-switcher-trigger" aria-label={t('切换项目：{name}', { name: scope.project.name })}
-      aria-haspopup="dialog" aria-expanded={open} aria-controls={id} disabled={saving}
-      popoverTarget={id}
-      onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); panel.current?.showPopover() } }}>
-      <FolderClosed size={18} aria-hidden="true" /><span>{scope.project.name}</span><ChevronDown size={15} aria-hidden="true" />
+      aria-haspopup="dialog" aria-expanded={scope.pickerOpen} onClick={scope.openPicker}
+      onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); scope.openPicker() } }}>
+      <FolderKanban className="project-switcher-icon" size={18} aria-hidden="true" /><span>{scope.project.name}</span><ChevronsUpDown size={14} aria-hidden="true" />
     </button>
-    <div ref={panel} id={id} popover="auto" role="dialog" aria-label={t('项目')} aria-hidden={!open} className="project-switcher-popover ui-scrollbar"
-      onBeforeToggle={event => { if (event.newState === 'open') fit() }}
-      onToggle={event => {
-        const visible = event.currentTarget.matches(':popover-open')
-        setOpen(visible)
-        if (!visible && scope.renameForm && !saving) scope.renameForm.cancel()
-      }}
-      onBlur={event => {
-        // 点击入口由浏览器切换浮层，提前关闭会让同一次点击再次打开
-        if (event.relatedTarget instanceof Node && event.relatedTarget !== trigger.current && !event.currentTarget.contains(event.relatedTarget)) close()
-      }}
-      >
-      {scope.projects.map(project => {
-        const active = project.id === scope.project.id
-        return <div key={project.id} className={`project-switcher-row${active ? ` is-selected${renaming ? ' is-renaming' : ''}` : ''}`}>
-          {active && scope.renameForm ? <ValidatedForm className="project-rename-form" aria-label={t('重命名项目')} errors={{ projectName: scope.renameForm.error }} validationAttempt={scope.renameForm.validationAttempt}
-            onSubmit={event => { event.preventDefault(); void scope.renameForm?.submit() }}>
-            <TextField ref={input} name="projectName" label={t('项目名称')} fieldSize="md" shape="standard" value={scope.renameForm.name} error={scope.renameForm.error} maxLength={64} autoComplete="off" onKeyDown={handleKeys} required disabled={saving} onChange={event => scope.renameForm?.change(event.target.value)} />
-            <div className="project-switcher-actions">
-              <IconButton type="submit" variant="ghost" label={t('保存')} tooltip={t('保存')} icon={<Check size={17} />} loading={saving} onKeyDown={handleKeys} />
-              <IconButton type="button" variant="ghost" label={t('取消')} tooltip={t('取消')} icon={<X size={17} />} disabled={saving} onKeyDown={handleKeys} onClick={() => scope.renameForm?.cancel()} />
-            </div>
-          </ValidatedForm> : <>
-            <Button ref={active ? selected : undefined} type="button" variant="ghost" className="project-switcher-choice" aria-current={active ? 'true' : undefined} disabled={saving || renaming}
-              leadingIcon={<FolderClosed size={16} />} onKeyDown={handleKeys} onClick={() => { close(); if (!active) scope.select(project.id) }}><span>{project.name}</span></Button>
-            {active && <div className="project-switcher-actions"><span className="project-selected-check" aria-hidden="true"><Check size={17} /></span><IconButton ref={renameButton} type="button" variant="ghost" label={t('重命名项目')} tooltip={t('重命名项目')} icon={<Pencil size={17} />} disabled={saving} onKeyDown={handleKeys} onClick={scope.rename} /></div>}
-          </>}
+    <Dialog open={scope.pickerOpen} title={title} className="modal-dialog--action modal-dialog--search project-picker" closeDisabled={saving} initialFocusRef={search} restoreFocusTo={trigger.current}
+      onClose={() => { void close() }} onKeyDown={handleKeys}
+      headerActions={!form && <Button type="button" variant="ghost" className="project-picker-create" leadingIcon={<Plus size={16} />} onClick={create}>{t('新建项目')}</Button>}>
+      {form ? <ProjectNameForm form={form} inputRef={input} onCancel={cancel} onSubmit={() => { void form.submit().then(saved => { if (saved) { setQuery(''); if (!form.projectId) scope.closePicker() } }) }} /> : <>
+        <div className="modal-dialog-search-body">
+          <TextField ref={search} type="search" role="searchbox" label={<span className="visually-hidden">{t('搜索项目')}</span>} placeholder={t('搜索项目')}
+            rootClassName="ui-dialog-search-field" shape="standard" value={query} onChange={event => setQuery(event.target.value)} leadingContent={<Search size={18} />} />
         </div>
-      })}
-      <div className="project-switcher-footer"><Button type="button" variant="ghost" leadingIcon={<Plus size={16} />} disabled={saving || renaming} onKeyDown={handleKeys} onClick={() => { close(); scope.create() }}>{t('创建项目')}</Button></div>
-    </div>
+        <div ref={list} className="project-picker-list ui-scrollbar" role="group" aria-label={t('项目')}>
+          {projects.map(project => {
+            const active = project.id === scope.project.id
+            return <div key={project.id} className="project-picker-row">
+              <Button type="button" variant="ghost" className="project-picker-choice" data-project-choice aria-current={active ? 'true' : undefined}
+                onClick={() => { scope.closePicker(); setQuery(''); if (!active) scope.select(project.id) }}>
+                <span className="project-picker-check" aria-hidden="true">{active && <Check size={14} />}</span><span className="project-picker-name">{project.name}</span>
+              </Button>
+              <IconButton type="button" variant="ghost" size="xs" className="project-picker-rename" label={t('重命名项目：{name}', { name: project.name })}
+                icon={<Pencil size={14} />} onClick={() => scope.rename(project.id)} />
+            </div>
+          })}
+          {!projects.length && <p className="project-picker-empty">{t('没有匹配的项目')}</p>}
+        </div>
+      </>}
+    </Dialog>
   </div>
 }

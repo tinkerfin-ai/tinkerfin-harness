@@ -1,14 +1,13 @@
-import { getServerAddress } from '../../api/shared/config'
 import { MemoriesPage } from '../memories/MemoriesPage'
 import { MoveConversationDialog } from '../projects/MoveConversationDialog'
 import { useProjectConversationActions } from '../projects/useProjectConversationActions'
 import { ProjectsWorkspace, type ProjectWorkspaceScope } from '../projects/ProjectsWorkspace'
+import { restoreFocus } from '../../components/ui/focus'
 import { ProjectSwitcher } from '../projects/ProjectSwitcher'
 import type { CSSProperties } from 'react'
-import { FolderClosed, Workflow } from 'lucide-react'
-import { WorkspaceFilesDrawer } from '../workspaceFiles/WorkspaceFilesDrawer'
+import { Workflow } from 'lucide-react'
+import { WorkspaceFilesPage } from '../workspaceFiles/WorkspaceFilesPage'
 import { useWorkspaceFiles } from '../workspaceFiles/useWorkspaceFiles'
-import { restoreFocus } from '../../components/ui/focus'
 import { useDrawerLayout } from '../../components/ui/useDrawerLayout'
 import { DrawerResizeHandle } from '../../components/ui/DrawerResizeHandle'
 import { isConversationRunning } from '../../lib/workspace'
@@ -166,7 +165,6 @@ const withFinalApprovalDecision = (
 type WorkspaceScreenProps = { user: AuthUser; onLogout: () => void; onToast: ToastHandler }
 
 export function WorkspaceScreen(props: WorkspaceScreenProps) {
-  const [workspaceFilesOpen, setWorkspaceFilesOpen] = useState(false)
   const [settings, setSettings] = useState<{ section: 'user' | 'devices'; trigger: HTMLElement | null } | null>(() => readDeviceSettingsFromLocation() ? { section: 'devices', trigger: null } : null)
   const devices = useDevices()
   const theme = useThemePreference()
@@ -181,8 +179,7 @@ export function WorkspaceScreen(props: WorkspaceScreenProps) {
     <div style={{ display: 'contents' }} inert={settings !== null || undefined} aria-hidden={settings !== null || undefined}>
       <ProjectsWorkspace key={props.user.user_id} user={props.user} onLogout={props.onLogout} onToast={props.onToast}>{scope => <ProjectWorkspaceScreen
         key={scope.project.id} {...props} scope={scope} devices={devices} modelCatalog={modelCatalog}
-        settingsOpen={settings !== null} onOpenSettings={openSettings}
-        workspaceFilesOpen={workspaceFilesOpen} onWorkspaceFilesOpenChange={setWorkspaceFilesOpen} />}</ProjectsWorkspace>
+        settingsOpen={settings !== null} onOpenSettings={openSettings} />}</ProjectsWorkspace>
     </div>
     <SettingsDialog devices={devices} onToast={props.onToast} onModelsChanged={modelCatalog.retry}
       open={settings !== null} initialSection={settings?.section ?? 'user'} user={props.user}
@@ -196,8 +193,6 @@ function ProjectWorkspaceScreen({
   user,
   onLogout,
   onToast,
-  workspaceFilesOpen,
-  onWorkspaceFilesOpenChange,
   devices,
   modelCatalog,
   settingsOpen,
@@ -207,8 +202,6 @@ function ProjectWorkspaceScreen({
   onLogout: () => void
   onToast: ToastHandler
   scope: ProjectWorkspaceScope
-  workspaceFilesOpen: boolean
-  onWorkspaceFilesOpenChange: (open: boolean) => void
   devices: ReturnType<typeof useDevices>
   modelCatalog: ReturnType<typeof useModelCatalog>
   settingsOpen: boolean
@@ -272,17 +265,19 @@ function ProjectWorkspaceScreen({
   const [skillsModalOpen, setSkillsModalOpen] = useState(false)
   const [memoriesModalOpen, setMemoriesModalOpen] = useState(false)
   const [workspaceView, setWorkspaceView] = useState<'conversation' | 'trace'>('conversation')
-  const filesDrawerOpen = workspaceFilesOpen && activePage === 'conversation' && workspaceView === 'conversation' && targetKnown && !localTarget
-  const workspaceFiles = useWorkspaceFiles(projectId, filesDrawerOpen)
-  const workspaceFilesLauncherRef = useRef<HTMLButtonElement>(null)
-  const closeWorkspaceFiles = useCallback(() => {
-    onWorkspaceFilesOpenChange(false)
-    window.requestAnimationFrame(() => restoreFocus(workspaceFilesLauncherRef.current, { preventScroll: true }))
-  }, [onWorkspaceFilesOpenChange])
-  useEffect(() => {
-    if (activePage !== 'conversation' || workspaceView !== 'conversation') onWorkspaceFilesOpenChange(false)
-  }, [activePage, workspaceView, onWorkspaceFilesOpenChange])
+  const filesPageActive = activePage === 'workspace'
+  const workspaceFiles = useWorkspaceFiles(projectId, filesPageActive)
   const navigation = useWorkspaceNavigation()
+  const railProjectTriggerRef = useRef<HTMLButtonElement>(null)
+  // 项目切换会重建页面；子节点挂载后再恢复到项目入口或窄屏导航入口
+  useLayoutEffect(() => {
+    if (scope.pickerOpen || !scope.pickerFocusPending.current) return
+    const trigger = scope.pickerTriggerRef.current
+    const target = trigger && !trigger.closest('[inert], [hidden]') ? trigger : navigation.mode === 'rail' ? railProjectTriggerRef.current : navigation.overlayTriggerRef.current
+    if (!target) return
+    scope.pickerFocusPending.current = false
+    restoreFocus(target, { preventScroll: true })
+  }, [scope.pickerOpen, scope.pickerFocusPending, scope.pickerTriggerRef, navigation.overlayTriggerRef, navigation.mode])
   const {
     status: modelCatalogStatus,
     modelIds,
@@ -431,7 +426,7 @@ function ProjectWorkspaceScreen({
 
   useEffect(() => {
     if (activePage !== 'conversation') {
-      const pageTitles = { skills: t('技能库'), automation: t('定时任务'), memories: t('记忆管理') }
+      const pageTitles = { skills: t('技能库'), automation: t('定时任务'), memories: t('记忆管理'), workspace: t('工作区') }
       document.title = `TinkerFin - ${pageTitles[activePage]}`
       return
     }
@@ -478,27 +473,20 @@ function ProjectWorkspaceScreen({
     active: activePage === 'conversation' && workspaceView === 'conversation',
   })
   const taskDrawerLayout = useDrawerLayout(640, resizeConversationContent)
-  const filesDrawerLayout = useDrawerLayout(640, resizeConversationContent, 560)
-  const { hostRef: taskHostRef } = taskDrawerLayout
-  const { hostRef: filesHostRef } = filesDrawerLayout
-  const drawerHostRef = useCallback((node: HTMLDivElement | null) => {
-    taskHostRef(node)
-    filesHostRef(node)
-  }, [taskHostRef, filesHostRef])
+  const { hostRef: drawerHostRef } = taskDrawerLayout
   const traceDrawerLayout = useDrawerLayout(520)
   const taskDrawer = useTodoTraceDrawer({
     threadId: conversation.threadId,
     taskTrace: conversation.taskTrace,
-    blocked: taskTraceBlocked || filesDrawerOpen,
+    blocked: taskTraceBlocked || filesPageActive,
     available: navigation.band === 'mobile' || taskDrawerLayout.available,
   })
   const taskDetailPageOpen = navigation.band === 'mobile' && taskDrawer.open
-  const filesDetailPageOpen = filesDrawerOpen && !filesDrawerLayout.available
-  const detailPageOpen = taskDetailPageOpen || filesDetailPageOpen
+  const detailPageOpen = taskDetailPageOpen
   const closeTaskDrawer = taskDrawer.close
   useWorkspaceLayoutAnimation({
     shellRef: appShell,
-    layoutKey: `${navigation.mode}:${filesDrawerOpen && !filesDetailPageOpen ? 'files' : taskDrawer.open && !taskDetailPageOpen ? 'tasks' : 'closed'}`,
+    layoutKey: `${navigation.mode}:${taskDrawer.open && !taskDetailPageOpen ? 'tasks' : 'closed'}`,
   })
   const conversationWidth = useConversationWidth(resizeConversationContent)
   const isConversationHydrating = Boolean(
@@ -1267,7 +1255,7 @@ function ProjectWorkspaceScreen({
   }
 
   // Portal 对话框打开时整块工作区退出辅助技术与键盘路径，只保留最上层操作
-  const portalModalActive = searchOpen || Boolean(projectActions.moving) || memoriesModalOpen || scope.modalOpen || settingsOpen || dialog != null || directoryOpen || automationModalOpen || skillsModalOpen
+  const portalModalActive = searchOpen || Boolean(projectActions.moving) || memoriesModalOpen || scope.pickerOpen || settingsOpen || dialog != null || directoryOpen || automationModalOpen || skillsModalOpen
   const taskTraceLauncher = taskTraceBlocked ? undefined : (
     <TodoTraceLauncher
       ref={taskDrawer.launcherRef}
@@ -1276,7 +1264,6 @@ function ProjectWorkspaceScreen({
       loadFailed={taskTraceLoadFailed}
       onToggle={() => {
         setWorkspaceView('conversation')
-        onWorkspaceFilesOpenChange(false)
         taskDrawer.toggle()
         if (navigation.band !== 'mobile' && !taskDrawerLayout.available) pushToast('info', t('展开窗口后可查看'))
       }}
@@ -1314,7 +1301,8 @@ function ProjectWorkspaceScreen({
         }}
         onArchive={projectActions.archive} onMove={projectActions.move}
         projectSelector={<ProjectSwitcher scope={scope} />}
-        onChooseProject={() => { navigation.requestExpanded(); requestAnimationFrame(() => appShell.current?.querySelector<HTMLButtonElement>('.project-switcher-trigger')?.focus()) }}
+        onChooseProject={scope.openPicker}
+        railProjectTriggerRef={railProjectTriggerRef}
         workspace={workspace}
         historyConversations={historyConversations}
         pendingConversations={pendingConversations.items}
@@ -1349,6 +1337,14 @@ function ProjectWorkspaceScreen({
         onCloseOverlay={navigation.closeOverlay}
         automationActive={activePage === 'automation'}
         skillsActive={activePage === 'skills'}
+        workspaceActive={filesPageActive}
+        onOpenWorkspace={() => {
+          messageWindow.captureReadingPosition()
+          taskDrawer.close(false)
+          changeDirectoryOpen(false)
+          navigation.closeOverlay(false)
+          setActivePage('workspace')
+        }}
         onOpenSkills={() => {
           messageWindow.captureReadingPosition()
           taskDrawer.close(false)
@@ -1394,7 +1390,7 @@ function ProjectWorkspaceScreen({
         onLogout={onLogout}
         backgroundInert={portalModalActive}
       />
-      <div ref={drawerHostRef} className={`workspace-content${detailPageOpen ? ' has-task-detail-page' : ''}`} style={{ '--layout-drawer-width': `${filesDrawerOpen ? filesDrawerLayout.width : taskDrawerLayout.width}px` } as CSSProperties}>
+      <div ref={drawerHostRef} className={`workspace-content${detailPageOpen ? ' has-task-detail-page' : ''}`} style={{ '--layout-drawer-width': `${taskDrawerLayout.width}px` } as CSSProperties}>
       <main
         ref={conversationWidth.rootRef}
         data-workspace-layout-target="main"
@@ -1403,7 +1399,11 @@ function ProjectWorkspaceScreen({
         aria-hidden={detailPageOpen || (navigation.mode === 'overlay' && navigation.overlayOpen) || undefined}
         inert={detailPageOpen || (navigation.mode === 'overlay' && navigation.overlayOpen) || undefined}
       >
-        {activePage === 'memories' ? (
+        <ErrorBoundary resetKey={projectId} fallback={({ reset }) => filesPageActive ? <><WorkspaceHeader conversationTitle={t('工作区')} overlayTriggerRef={navigation.overlayTriggerRef} onOpenOverlay={navigation.openOverlay} /><FeedbackState kind="error" title={t('工作区无法显示')} onRetry={reset} /></> : null}>
+          <WorkspaceFilesPage state={workspaceFiles} active={filesPageActive} navigationTriggerRef={navigation.overlayTriggerRef}
+            onOpenNavigation={navigation.openOverlay} onToast={pushToast} />
+        </ErrorBoundary>
+        {filesPageActive ? null : activePage === 'memories' ? (
           <ErrorBoundary fallback={({ reset }) => <div className="memories-page"><p>{t('记忆区域无法显示')}</p><Button type="button" onClick={reset}>{t('重新加载')}</Button></div>}>
             <MemoriesPage project={scope.project} navigationTriggerRef={navigation.overlayTriggerRef} onOpenNavigation={navigation.openOverlay} onModalChange={setMemoriesModalOpen} onToast={pushToast} />
           </ErrorBoundary>
@@ -1434,23 +1434,6 @@ function ProjectWorkspaceScreen({
             <IconButton type="button" size="xs" label={t('链路')} tooltip={t('链路')} icon={<Workflow size={17} />}
               selected={workspaceView === 'trace'} aria-controls="chain-trace-panel" disabled={!conversation.threadId}
               onClick={() => selectWorkspaceView(workspaceView === 'trace' ? 'conversation' : 'trace')} />
-            <IconButton type="button" ref={workspaceFilesLauncherRef} size="xs" className="workspace-header-action"
-              label={t('工作区')} tooltip={t('工作区')} aria-expanded={localTarget ? undefined : filesDrawerOpen}
-              disabled={!targetKnown} aria-controls={localTarget ? undefined : "workspace-files-drawer"} icon={<FolderClosed size={17} />}
-              onClick={() => {
-                if (!targetKnown) return
-                if (localTarget) {
-                  const query = new URLSearchParams({ server: getServerAddress(), namespace: `ns_${user.user_id}`,
-                    device: localTarget.device_id, project: projectId })
-                  window.location.href = `tinkerfin://workspace?${query}`
-                  return
-                }
-                resizeConversationContent(() => {
-                  setWorkspaceView('conversation')
-                  taskDrawer.close(false)
-                  onWorkspaceFilesOpenChange(!filesDrawerOpen)
-                })
-              }} />
           </div>}
           navigation={<DevicePicker targetState={targetState} onRetry={retryTargetRead} devices={devices} projectId={projectId} value={localTarget} onChange={changeExecutionLocation}
             disabled={isConversationHydrating || isConversationHydrationFailed || !targetKnown}
@@ -1657,16 +1640,6 @@ function ProjectWorkspaceScreen({
           onClose={() => taskDrawer.close(true)}
           onLocate={locateTodoGroup}
         />
-      </ErrorBoundary>
-      <ErrorBoundary resetKey={`${projectId}:${filesDrawerOpen}`} fallback={({ reset }) => filesDrawerOpen ? (
-        <Drawer id="workspace-files-drawer" open title={t('工作区')} description={scope.project.name} fullPage={filesDetailPageOpen}
-          closeLabel={t('关闭工作区')} backLabel={t('返回对话')} onClose={closeWorkspaceFiles}>
-          <FeedbackState kind="error" title={t('工作区无法显示')} onRetry={reset} />
-        </Drawer>
-      ) : null}>
-        <WorkspaceFilesDrawer state={workspaceFiles} open={filesDrawerOpen}
-          fullPage={filesDetailPageOpen} onClose={closeWorkspaceFiles} onToast={pushToast}
-          resizeHandle={<DrawerResizeHandle control={filesDrawerLayout} label={t('调整工作区宽度')} controls="workspace-files-drawer" />} />
       </ErrorBoundary>
       </div>
       {searchOpen && <ErrorBoundary

@@ -1,3 +1,4 @@
+import { restoreFocus } from '../../components/ui/focus'
 import { Check, ChevronLeft, ChevronRight, CircleAlert } from 'lucide-react'
 import { useLayoutEffect, useRef } from 'react'
 
@@ -103,7 +104,7 @@ export function AutomationHistory({ runs, query, status, onOpenRun, offset, onOf
         </div>
         {offset !== 0 && <Button type="button" variant="text" size="sm" onClick={() => {
           onOffsetChange(0)
-          previousWeekRef.current?.focus()
+          restoreFocus(previousWeekRef.current)
         }}>{t('回到本周')}</Button>}
       </div>
       <ViewTabs value={view} label={t('运行历史显示方式')} density="compact" options={[

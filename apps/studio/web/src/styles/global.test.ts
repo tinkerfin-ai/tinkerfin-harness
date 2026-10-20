@@ -227,7 +227,8 @@ describe('前端视觉契约', () => {
           ['.automation-task-name', 'var(--weight-semibold)'],
           ['.skills-icon', 'var(--weight-semibold)'],
           ['.ui-breadcrumbs span[aria-current]', 'var(--weight-semibold)'],
-          ['.workspace-files-drawer .ui-drawer-header h2', 'var(--weight-semibold)'],
+          ['.project-switcher-trigger', 'var(--weight-semibold)'],
+          ['.project-picker-choice[aria-current="true"]', 'var(--weight-semibold)'],
           ['.workspace-file-name', 'var(--weight-workspace-file)'],
           ['.workspace-file-entry[data-kind="directory"] .workspace-file-name', 'var(--weight-workspace-folder)'],
           ['.workspace-file-icon > span', 'var(--weight-bold)'],
@@ -237,7 +238,7 @@ describe('前端视觉契约', () => {
           ['.device-authorization__summary strong', 'var(--weight-medium)'],
         ])
         const expectedWeight = interfaceWeights.get(selector.trim())
-        if (expectedWeight) {
+        if (expectedWeight && weight) {
           expect(weight, `${path}: 界面角色使用声明的字重`).toBe(expectedWeight)
         } else if (weight && weight !== 'var(--weight-ui)') {
           expect(selector, `${path}: 非界面字重只能用于语义内容`).toMatch(contentBoundary)

@@ -253,6 +253,9 @@
 
   .ui-view-tabs > button {
     position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     height: 100%;
     padding: 0;
     border: 0;
@@ -264,6 +267,8 @@
     cursor: pointer;
   }
 
+  .ui-view-tab-icon { display: inline-flex; align-items: center; justify-content: center; width: 2em; height: var(--icon-sm); }
+  .ui-view-tab-icon > svg { width: var(--icon-sm); height: var(--icon-sm); }
   .ui-view-tabs--compact > button { font-size: var(--type-meta-size); }
   .ui-view-tabs > button:hover:not(:disabled) { color: var(--color-text-primary); }
   .ui-view-tabs > button:active:not(:disabled) { color: var(--color-brand-text); }
@@ -744,13 +749,13 @@
     transition: opacity var(--motion-fast) var(--ease-out);
   }
 
-  .ui-card-lift:has(:focus-visible),
+  .ui-card-lift:has(:focus-visible:not([data-ui-focus-restored])),
   .ui-card-lift[data-menu-open='true'] {
     transform: translateY(calc(-1 * var(--space-1)));
     z-index: var(--layer-local-raised);
   }
 
-  .ui-card-lift:has(:focus-visible)::after,
+  .ui-card-lift:has(:focus-visible:not([data-ui-focus-restored]))::after,
   .ui-card-lift[data-menu-open='true']::after { opacity: 1; }
 
   @media (hover: hover) and (pointer: fine) {
@@ -1681,4 +1686,29 @@
   .ui-drawer-resize-handle:focus-visible:not([data-dragging]) { outline: 2px solid var(--color-focus); outline-offset: -2px; }
   @media (any-pointer: coarse) { .ui-drawer-resize-handle { width: var(--control-lg); } }
 
+}
+
+@layer ui {
+  .modal-dialog--search {
+    width: min(100%, var(--layout-conversation-search-width));
+    min-width: 0;
+    max-height: calc(100dvh - var(--layout-page-gutter) * 2);
+    align-self: start;
+    margin-block-start: max(0px, calc((100dvh - var(--layout-conversation-search-height)) / 2 - var(--layout-page-gutter)));
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+    border: 0;
+    border-radius: var(--radius-xl);
+  }
+  .modal-dialog--search.has-query { height: min(var(--layout-conversation-search-height), calc(100dvh - var(--layout-page-gutter) * 2)); }
+  .modal-dialog--search .modal-dialog-head { min-height: calc(var(--control-sm) + var(--space-3)); align-items: center; gap: var(--space-1); padding: var(--space-3) var(--dialog-content-padding) 0; flex-shrink: 0; }
+  .modal-dialog--search .modal-dialog-head h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-ui-size); line-height: var(--type-ui-line); font-weight: var(--weight-ui); }
+  .modal-dialog--search .modal-dialog-head > .ui-icon-button-wrap { flex-shrink: 0; margin: 0; }
+  .modal-dialog-search-body { padding: var(--space-2) var(--dialog-content-padding) var(--space-3); flex-shrink: 0; }
+  .ui-dialog-search-field { position: relative; }
+  .ui-dialog-search-field .ui-text-field__control { padding-inline: 0; border: 0; border-bottom: 2px solid var(--color-border); border-radius: 0; background: transparent; box-shadow: none; }
+  .ui-dialog-search-field .ui-text-field__control:focus-within { border-color: var(--color-border); }
+  .ui-dialog-search-field input { font-size: var(--type-body-size); }
+  .ui-dialog-search-field input::-webkit-search-cancel-button { display: none; }
 }

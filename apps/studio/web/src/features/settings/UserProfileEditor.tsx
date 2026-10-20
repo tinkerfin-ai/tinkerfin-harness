@@ -1,3 +1,4 @@
+import { restoreFocus } from '../../components/ui/focus'
 import { useEffect, useRef } from 'react'
 
 import { Button, UserAvatar } from '../../components/ui'
@@ -19,11 +20,11 @@ export function UserProfileEditor({ username, profile, confirmClose, closeDisabl
   const continueButton = useRef<HTMLButtonElement>(null)
   const wasDirty = useRef(profile.dirty)
   useEffect(() => {
-    if (wasDirty.current && !profile.dirty) chooseButton.current?.focus()
+    if (wasDirty.current && !profile.dirty) restoreFocus(chooseButton.current)
     wasDirty.current = profile.dirty
   }, [profile.dirty])
   useEffect(() => { if (confirmClose) continueButton.current?.focus() }, [confirmClose])
-  const reset = () => { profile.reset(); chooseButton.current?.focus() }
+  const reset = () => { profile.reset(); restoreFocus(chooseButton.current) }
   return <div className="settings-profile-editor">
     <div className="settings-profile">
       <UserAvatar avatarUrl={profile.avatarUrl} size="lg" />
@@ -42,7 +43,7 @@ export function UserProfileEditor({ username, profile, confirmClose, closeDisabl
     {profile.notice && <p className="settings-profile-editor__notice" role="status">{profile.notice}</p>}
     {confirmClose && <div className="settings-profile-editor__confirm" role="group" aria-label={t('头像尚未保存')}>
       <span>{t('头像尚未保存')}</span>
-      <Button ref={continueButton} type="button" size="sm" disabled={profile.saving || closeDisabled} onClick={() => { onCloseDecision(false); chooseButton.current?.focus() }}>{t('继续编辑')}</Button>
+      <Button ref={continueButton} type="button" size="sm" disabled={profile.saving || closeDisabled} onClick={() => { onCloseDecision(false); restoreFocus(chooseButton.current) }}>{t('继续编辑')}</Button>
       <Button type="button" size="sm" variant="ghost" disabled={profile.saving || closeDisabled} onClick={() => onCloseDecision(true)}>{t('放弃更改')}</Button>
     </div>}
   </div>

@@ -13,6 +13,7 @@
     --type-micro-line: 16px;
     --type-caption-size: 12px;
     --type-caption-line: 18px;
+    --type-project-navigation-size: var(--type-caption-size);
     --type-meta-size: 13px;
     --type-meta-line: 20px;
     --type-ui-size: 14px;
@@ -59,7 +60,6 @@
     --type-inline-code-line: 22px;
     --type-code-block-size: 13px;
     --type-code-block-line: 22px;
-    --type-workspace-title-size: 17px;
     --weight-workspace-file: 450;
     --weight-workspace-folder: 550;
     --type-workspace-code-line: 22.8px;

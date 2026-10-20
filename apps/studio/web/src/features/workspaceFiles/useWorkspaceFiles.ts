@@ -25,11 +25,12 @@ interface FilesState {
   preview: WorkspacePreview | null
   previewPhase: 'idle' | 'loading' | 'ready' | 'error' | 'missing'
   updated: boolean
+  refreshing: boolean
 }
 const emptyDirectory = (): DirectoryState => ({ entries: [], phase: 'loading', nextCursor: null, pages: 1 })
 const initialState = (projectId: string): FilesState => ({
   projectId, availability: 'loading', connection: 'connecting', directories: {},
-  directoryPath: '/', selected: null, preview: null, previewPhase: 'idle', updated: false,
+  directoryPath: '/', selected: null, preview: null, previewPhase: 'idle', updated: false, refreshing: false,
 })
 const identity = () => JSON.stringify([getServerAddress(), getAuthorizationHeader()])
 const subscribeIdentity = (notify: () => void) => {
@@ -64,7 +65,10 @@ export function useWorkspaceFiles(projectId: string, enabled: boolean) {
       stateIdentity.current = ownerIdentity
       publish(() => initialState(projectId))
     }
-    if (!enabled || !getAuthorizationHeader()) return
+    if (!enabled || !getAuthorizationHeader()) {
+      if (stateRef.current.refreshing) publish(previous => ({ ...previous, refreshing: false }))
+      return
+    }
     let closed = false
     const current = () => !closed && ownerIdentity === identity() && stateRef.current.projectId === projectId
     const activeDirectories = new Map<string, AbortController>()
@@ -75,6 +79,12 @@ export function useWorkspaceFiles(projectId: string, enabled: boolean) {
     let changeTimer: ReturnType<typeof setTimeout> | undefined
     let baselineReady = false
     let noticeSequence = 0
+    const finishRefresh = () => {
+      if (current() && baselineReady && stateRef.current.refreshing
+        && !activeDirectories.size && !queuedDirectories.size && !infoRequest && !previewRequest) {
+        publish(previous => ({ ...previous, refreshing: false }))
+      }
+    }
 
     const unavailable = (error: unknown) => {
       if (!current()) return
@@ -134,6 +144,7 @@ export function useWorkspaceFiles(projectId: string, enabled: boolean) {
               if (current()) {
                 if (refreshAgain.delete(path)) queuedDirectories.set(path, null)
                 pump()
+                finishRefresh()
               }
             }
           }
@@ -162,9 +173,12 @@ export function useWorkspaceFiles(projectId: string, enabled: boolean) {
         if (!current() || controller.signal.aborted) return
         if (error instanceof ApiError && error.code === WORKSPACE_ERRORS.notFound) {
           previewRequest?.abort()
+          previewRequest = null
           publish(previous => ({ ...previous, preview: null, previewPhase: 'missing', updated: false }))
         } else unavailable(error)
-      }).finally(() => { if (infoRequest === controller) infoRequest = null })
+      }).finally(() => {
+        if (infoRequest === controller) { infoRequest = null; finishRefresh() }
+      })
     }
     const reconcile = () => {
       if (!current() || document.hidden) return
@@ -175,6 +189,7 @@ export function useWorkspaceFiles(projectId: string, enabled: boolean) {
       if (!current() || document.hidden) return
       previewRequest?.abort()
       infoRequest?.abort()
+      infoRequest = null
       const controller = new AbortController()
       previewRequest = controller
       const startedAtNotice = noticeSequence
@@ -194,7 +209,9 @@ export function useWorkspaceFiles(projectId: string, enabled: boolean) {
           updated: error instanceof ApiError && error.code === WORKSPACE_ERRORS.changed,
         }))
         if (error instanceof ApiError && [WORKSPACE_ERRORS.uninitialized, WORKSPACE_ERRORS.paused, WORKSPACE_ERRORS.forbidden].some(code => code === error.code)) unavailable(error)
-      }).finally(() => { if (previewRequest === controller) previewRequest = null })
+      }).finally(() => {
+        if (previewRequest === controller) { previewRequest = null; finishRefresh() }
+      })
     }
 
     const abortReads = () => {
@@ -204,13 +221,19 @@ export function useWorkspaceFiles(projectId: string, enabled: boolean) {
       refreshAgain.clear()
       previewRequest?.abort()
       infoRequest?.abort()
+      previewRequest = null
+      infoRequest = null
       clearTimeout(changeTimer)
       changeTimer = undefined
+      if (current() && stateRef.current.refreshing) publish(previous => ({ ...previous, refreshing: false }))
     }
     const closeFile = () => {
       previewRequest?.abort()
       infoRequest?.abort()
+      previewRequest = null
+      infoRequest = null
       publish(previous => ({ ...previous, selected: null, preview: null, previewPhase: 'idle', updated: false }))
+      finishRefresh()
     }
     actions.current = { directory, preview, closeFile, navigate(path) {
       if (!current()) return
@@ -258,7 +281,12 @@ export function useWorkspaceFiles(projectId: string, enabled: boolean) {
     if (cursor) actions.current?.directory(path, cursor)
   }, [])
   const refreshPreview = useCallback(() => { if (stateRef.current.selected) actions.current?.preview(stateRef.current.selected) }, [])
-  const refresh = useCallback(() => setAttempt(value => value + 1), [])
+  const refresh = useCallback(() => {
+    if (!enabled || document.hidden || !getAuthorizationHeader() || stateRef.current.refreshing
+      || stateRef.current.projectId !== projectId || stateIdentity.current !== ownerIdentity) return
+    publish(previous => ({ ...previous, refreshing: true }))
+    setAttempt(value => value + 1)
+  }, [enabled, projectId, ownerIdentity, publish])
   return { ...(state.projectId === projectId && stateIdentity.current === ownerIdentity ? state : initialState(projectId)), openDirectory, closeFile, selectFile, retryDirectory, loadMore, refreshPreview, refresh }
 }
 

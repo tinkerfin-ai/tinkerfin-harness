@@ -1,3 +1,4 @@
+import { restoreFocus } from '../../../components/ui/focus'
 import { Route, X } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 
@@ -46,7 +47,7 @@ export function PlanReviewCard({
   useEffect(() => {
     if (!restoreRejectFocusRef.current || interaction.action === 'reject') return
     restoreRejectFocusRef.current = false
-    const frame = window.requestAnimationFrame(() => rejectButtonRef.current?.focus())
+    const frame = window.requestAnimationFrame(() => restoreFocus(rejectButtonRef.current))
     return () => window.cancelAnimationFrame(frame)
   }, [interaction.action, interaction.interruptId])
 

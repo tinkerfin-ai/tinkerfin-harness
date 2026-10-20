@@ -27,8 +27,9 @@ function signIn(token = 'one') {
 }
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>(reply => { resolve = reply })
-  return { promise, resolve }
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((reply, fail) => { resolve = reply; reject = fail })
+  return { promise, resolve, reject }
 }
 
 beforeEach(() => {
@@ -123,4 +124,138 @@ it('就绪后空闲不重复查询目录或文件，变化合并读取，重连�
   await act(() => vi.advanceTimersByTimeAsync(90_000))
   expect(readWorkspaceDirectory).toHaveBeenCalledTimes(4)
   expect(closeFeed).toHaveBeenCalledTimes(2)
+})
+
+it('手动刷新立即显示进行中并拒绝重复点击，保留文件直至目录和选中文件检查完成', async () => {
+  const { result } = renderHook(() => useWorkspaceFiles('project', true))
+  ready(); await settle()
+  act(() => result.current.selectFile(file('/a.py'))); await settle()
+  const directory = deferred<WorkspaceDirectory>()
+  const info = deferred<WorkspaceFile>()
+  vi.mocked(readWorkspaceDirectory).mockReturnValueOnce(directory.promise)
+  vi.mocked(readWorkspaceFileInfo).mockReturnValueOnce(info.promise)
+  act(() => { result.current.refresh(); result.current.refresh() })
+  expect(result.current.refreshing).toBe(true)
+  expect(startResourceFeed).toHaveBeenCalledTimes(2)
+  expect(result.current.directories['/'].entries).toEqual([file('/a.py')])
+  expect(result.current.preview).toMatchObject({ text: 'original' })
+  ready()
+  directory.resolve(page('/', [file('/a.py', 'file', 'new')]))
+  await settle()
+  expect(result.current.refreshing).toBe(true)
+  info.resolve(file('/a.py', 'file', 'new'))
+  await settle()
+  expect(result.current.refreshing).toBe(false)
+  expect(result.current.updated).toBe(true)
+  expect(result.current.preview).toMatchObject({ text: 'original' })
+  expect(readWorkspacePreview).toHaveBeenCalledOnce()
+})
+
+it('手动刷新失败后解除进行中状态并允许再次刷新', async () => {
+  const { result } = renderHook(() => useWorkspaceFiles('project', true))
+  ready(); await settle()
+  const directory = deferred<WorkspaceDirectory>()
+  vi.mocked(readWorkspaceDirectory).mockReturnValueOnce(directory.promise)
+  act(() => result.current.refresh()); ready()
+  expect(result.current.refreshing).toBe(true)
+  directory.reject(new Error('offline'))
+  await settle()
+  expect(result.current.refreshing).toBe(false)
+  expect(result.current.directories['/'].entries).toEqual([file('/a.py')])
+  expect(result.current.directories['/'].phase).toBe('error')
+  act(() => result.current.refresh())
+  expect(result.current.refreshing).toBe(true)
+  ready(); await settle()
+  expect(result.current.refreshing).toBe(false)
+  expect(result.current.directories['/'].phase).toBe('ready')
+})
+
+it.each(['hidden', 'disconnected'] as const)('刷新时通知源%s会取消请求并结束进行中状态', async connection => {
+  const { result } = renderHook(() => useWorkspaceFiles('project', true))
+  ready(); await settle()
+  const directory = deferred<WorkspaceDirectory>()
+  vi.mocked(readWorkspaceDirectory).mockReturnValueOnce(directory.promise)
+  act(() => result.current.refresh()); ready()
+  const signal = vi.mocked(readWorkspaceDirectory).mock.calls.at(-1)![3]
+  act(() => feed().onState?.(connection))
+  expect(signal.aborted).toBe(true)
+  expect(result.current.refreshing).toBe(false)
+  directory.resolve(page('/', [file('/late.txt')]))
+  await settle()
+  expect(result.current.directories['/'].entries).toEqual([file('/a.py')])
+})
+
+it.each(['disabled', 'project', 'account', 'directory'] as const)('刷新时切换%s不会残留进行中状态或接受旧结果', async destination => {
+  const { result, rerender } = renderHook(({ project, enabled }) => useWorkspaceFiles(project, enabled),
+    { initialProps: { project: 'project', enabled: true } })
+  ready(); await settle()
+  const directory = deferred<WorkspaceDirectory>()
+  vi.mocked(readWorkspaceDirectory).mockReturnValueOnce(directory.promise)
+  act(() => result.current.refresh()); ready()
+  const signal = vi.mocked(readWorkspaceDirectory).mock.calls.at(-1)![3]
+  if (destination === 'disabled') rerender({ project: 'project', enabled: false })
+  if (destination === 'project') rerender({ project: 'next', enabled: true })
+  if (destination === 'account') act(() => signIn('two'))
+  if (destination === 'directory') act(() => result.current.openDirectory('/next'))
+  expect(signal.aborted).toBe(true)
+  expect(result.current.refreshing).toBe(false)
+  directory.resolve(page('/', [file('/late.txt')]))
+  await settle()
+  expect(result.current.directories['/']?.entries ?? []).not.toContainEqual(file('/late.txt'))
+  if (destination === 'disabled') {
+    act(() => result.current.refresh())
+    expect(result.current.refreshing).toBe(false)
+    rerender({ project: 'project', enabled: true })
+    ready(); await settle()
+    expect(result.current.refreshing).toBe(false)
+  }
+})
+
+it('关闭选中文件后不再等待其已取消的刷新检查', async () => {
+  const { result } = renderHook(() => useWorkspaceFiles('project', true))
+  ready(); await settle()
+  act(() => result.current.selectFile(file('/a.py'))); await settle()
+  const info = deferred<WorkspaceFile>()
+  vi.mocked(readWorkspaceFileInfo).mockReturnValueOnce(info.promise)
+  act(() => result.current.refresh()); ready(); await settle()
+  expect(result.current.refreshing).toBe(true)
+  const signal = vi.mocked(readWorkspaceFileInfo).mock.calls.at(-1)![2]
+  act(() => result.current.closeFile())
+  expect(signal.aborted).toBe(true)
+  expect(result.current.refreshing).toBe(false)
+  info.resolve(file('/a.py', 'file', 'late')); await settle()
+  expect(result.current.selected).toBeNull()
+})
+
+it('刷新会等待重新加载的预览，预览失败后释放进行中状态', async () => {
+  const { result } = renderHook(() => useWorkspaceFiles('project', true))
+  ready(); await settle()
+  const oldPreview = deferred<Awaited<ReturnType<typeof readWorkspacePreview>>>()
+  const nextPreview = deferred<Awaited<ReturnType<typeof readWorkspacePreview>>>()
+  vi.mocked(readWorkspacePreview).mockReturnValueOnce(oldPreview.promise).mockReturnValueOnce(nextPreview.promise)
+  act(() => result.current.selectFile(file('/a.py')))
+  const oldSignal = vi.mocked(readWorkspacePreview).mock.calls.at(-1)![2]
+  act(() => result.current.refresh()); ready(); await settle()
+  expect(oldSignal.aborted).toBe(true)
+  expect(result.current.refreshing).toBe(true)
+  oldPreview.resolve({ kind: 'text', file: file('/a.py'), text: 'late', truncated: false })
+  await settle()
+  expect(result.current.refreshing).toBe(true)
+  nextPreview.reject(new Error('unavailable')); await settle()
+  expect(result.current.refreshing).toBe(false)
+  expect(result.current.previewPhase).toBe('error')
+  expect(result.current.preview).toBeNull()
+})
+
+it('刷新选中文件检查失败后仍结束进行中状态', async () => {
+  const { result } = renderHook(() => useWorkspaceFiles('project', true))
+  ready(); await settle()
+  act(() => result.current.selectFile(file('/a.py'))); await settle()
+  const info = deferred<WorkspaceFile>()
+  vi.mocked(readWorkspaceFileInfo).mockReturnValueOnce(info.promise)
+  act(() => result.current.refresh()); ready(); await settle()
+  expect(result.current.refreshing).toBe(true)
+  info.reject(new ApiError('missing', { code: WORKSPACE_ERRORS.notFound })); await settle()
+  expect(result.current.refreshing).toBe(false)
+  expect(result.current.previewPhase).toBe('missing')
 })

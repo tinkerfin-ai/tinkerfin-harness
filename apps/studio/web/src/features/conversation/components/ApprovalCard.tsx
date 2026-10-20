@@ -1,3 +1,4 @@
+import { restoreFocus } from '../../../components/ui/focus'
 import { useEffect, useRef, useState } from 'react'
 
 import { Button, OverlayScrollbar } from '../../../components/ui'
@@ -121,7 +122,7 @@ export function ApprovalCard({
   useEffect(() => {
     if (!restoreRejectFocusRef.current || approval?.mode === 'reject') return
     restoreRejectFocusRef.current = false
-    const frame = window.requestAnimationFrame(() => rejectButtonRef.current?.focus())
+    const frame = window.requestAnimationFrame(() => restoreFocus(rejectButtonRef.current))
     return () => window.cancelAnimationFrame(frame)
   }, [activeInterruptId, approval?.mode])
 

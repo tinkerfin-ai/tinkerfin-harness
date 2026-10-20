@@ -37,7 +37,7 @@ export function useWorkspaceFileNavigation(state: WorkspaceFilesState, open: boo
       pendingRestore.current = undefined
     }
     if (priorKey.current !== key) {
-      if (selectedPath) restoreFocus(backButton.current, { preventScroll: true })
+      if (selectedPath) backButton.current?.focus({ preventScroll: true })
       else if (returnPath.current) {
         const target = Array.from(element?.querySelectorAll<HTMLButtonElement>('[data-file-path]') ?? []).find(item => item.dataset.filePath === returnPath.current)
         restoreFocus(target ?? element, { preventScroll: true })

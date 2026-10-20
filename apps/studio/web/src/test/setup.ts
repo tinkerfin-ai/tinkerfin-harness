@@ -58,3 +58,5 @@ Object.defineProperty(globalThis, 'ResizeObserver', {
 beforeEach(() => {
   window.localStorage.clear()
 })
+// jsdom 不渲染动画；相位与媒体偏好由真实浏览器验证
+Element.prototype.getAnimations = () => []

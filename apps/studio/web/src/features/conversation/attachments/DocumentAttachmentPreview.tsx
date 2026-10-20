@@ -1,3 +1,4 @@
+import { restoreFocus } from '../../../components/ui/focus'
 import { CornerDownLeft, Download, Info } from 'lucide-react'
 import { useContext, useEffect, useId, useRef, useState } from 'react'
 import { Button, Dialog, FeedbackState, IconButton } from '../../../components/ui'
@@ -119,7 +120,7 @@ export function DocumentAttachmentPreview({
         if (event.key === 'Escape' && infoOpen) {
           event.preventDefault()
           setInfoOpen(false)
-          infoButton.current?.focus()
+          restoreFocus(infoButton.current)
         }
       }}
       headerActions={

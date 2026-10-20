@@ -45,6 +45,32 @@ const composerSkill: InstalledSkill = {project_id: 'project-1', overridden: fals
   created_at: '2026-09-28T00:00:00Z', updated_at: '2026-09-28T00:00:00Z',
 }
 
+test('我的技能固定按更新时间倒序，筛选后保持顺序且不保留标题排序行', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await prepare(page, [
+    { ...composerSkill, id: 'middle', name: 'm-middle-skill', enabled: false, updated_at: '2026-09-27T12:00:00Z' },
+    { ...composerSkill, id: 'oldest', name: 'a-oldest-skill', updated_at: '2026-09-26T12:00:00Z' },
+    { ...composerSkill, id: 'latest', name: 'z-latest-skill', updated_at: '2026-09-28T12:00:00Z' },
+  ])
+  await installProjectScope(page)
+  await page.goto('/?page=skills&skillView=mine&skillSource=all&skillSort=name')
+  const cards = page.getByRole('article')
+  await expect(cards).toHaveCount(3)
+  expect(await cards.evaluateAll(elements => elements.map(element => element.getAttribute('aria-label'))))
+    .toEqual(['z-latest-skill', 'm-middle-skill', 'a-oldest-skill'])
+  await expect(page.getByRole('heading', { name: '已安装技能', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '技能排序', exact: true })).toHaveCount(0)
+  const search = page.getByRole('searchbox')
+  const searchBox = (await search.boundingBox())!
+  expect((await cards.first().boundingBox())!.y - searchBox.y - searchBox.height).toBe(40)
+  await search.fill('skill')
+  await page.getByRole('button', { name: '技能状态', exact: true }).click()
+  await page.getByRole('option', { name: '已启用', exact: true }).click()
+  await expect(cards).toHaveCount(2)
+  expect(await cards.evaluateAll(elements => elements.map(element => element.getAttribute('aria-label'))))
+    .toEqual(['z-latest-skill', 'a-oldest-skill'])
+})
+
 test('普通斜杠路径完整输入和粘贴后按文本发送，不自动绑定技能', async ({ page }) => {
   const skill = { ...composerSkill, id: 'find-skills-id', name: 'find-skills', description: 'Search and discover skills from various sources' }
   await prepare(page, [skill])
@@ -210,7 +236,7 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1265
     await expect(page.getByRole('article')).toHaveCount(gallery.length)
     await page.evaluate(() => document.fonts.ready)
     await expect(page.getByRole('switch')).toHaveCount(0)
-    await expect(page.getByRole('tablist', { name: '技能范围' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '技能范围', exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '技能状态', exact: true })).toHaveCount(0)
     if (width > 1024) {
       const sources = page.getByRole('navigation', { name: '技能来源' })
@@ -263,9 +289,37 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1265
     await page.screenshot({ path: testInfo.outputPath(`skills-import-destination-${theme}-${width}.png`), fullPage: true })
     await importDialog.getByRole('button', { name: '取消', exact: true }).click()
     await page.getByRole('tab', { name: '我的', exact: true }).click()
-    await expect(page.getByRole('tablist', { name: '技能范围' })).toBeVisible()
+    const scope = page.getByRole('button', { name: '技能范围', exact: true })
+    await expect(scope).toHaveText('当前项目')
+    const scopeBox = (await scope.boundingBox())!
+    const importBox = (await page.getByRole('button', { name: '导入技能', exact: true }).boundingBox())!
+    expect(scopeBox.x + scopeBox.width).toBeLessThan(importBox.x)
+    expect(scopeBox.y + scopeBox.height / 2).toBe(importBox.y + importBox.height / 2)
+    await scope.click()
+    const scopeOptions = page.getByRole('listbox', { name: '技能范围', exact: true })
+    await expect(scopeOptions.getByRole('option', { name: '当前项目', exact: true })).toHaveAttribute('aria-selected', 'true')
+    const scopeMenuBox = (await scopeOptions.boundingBox())!
+    expect(scopeMenuBox.x).toBeGreaterThanOrEqual(0)
+    expect(scopeMenuBox.x + scopeMenuBox.width).toBeLessThanOrEqual(width)
+    for (const option of await scopeOptions.getByRole('option').all()) {
+      expect(await option.evaluate(element => {
+        const bounds = element.getBoundingClientRect()
+        return element.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2))
+      })).toBe(true)
+    }
+    await page.screenshot({ path: testInfo.outputPath(`skills-scope-${theme}-${width}.png`), fullPage: true })
+    await scopeOptions.press('Escape')
+    await expect(scope).toBeFocused()
+    await scope.press('Escape')
+    await expect(scope).toHaveCSS('outline-width', '0px')
     await expect(page.getByRole('switch')).toHaveCount(gallery.length)
     await expect(page.locator('select')).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: '已安装技能', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '技能排序', exact: true })).toHaveCount(0)
+    const categories = (await page.getByRole('group', { name: '技能分类' }).boundingBox())!
+    const firstInstalled = (await page.getByRole('article').first().boundingBox())!
+    expect(firstInstalled.y - categories.y - categories.height).toBe(40)
+    await page.screenshot({ path: testInfo.outputPath(`skills-mine-compact-${theme}-${width}.png`), fullPage: true })
     const picker = page.getByRole('button', { name: '技能状态', exact: true })
     await picker.click()
     const options = page.getByRole('listbox', { name: '技能状态' })
@@ -406,30 +460,43 @@ for (const target of [{ projectId: 'project-1', label: '当前项目', action: '
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })
 
-test('个人管理与发现之间可连续使用方向键导航', async ({ page }) => {
-  await prepare(page)
+test('范围下拉默认当前项目，切换个人共用保持键盘导航和导入归属', async ({ page }) => {
+  await prepare(page, [composerSkill, { ...composerSkill, id: 'personal', name: 'personal-skill', project_id: null }])
   await installProjectScope(page)
   await page.goto('/?page=skills&skillView=mine')
-  await page.getByRole('tab', { name: '当前项目', exact: true }).focus()
-  await page.keyboard.press('ArrowRight')
-  await expect(page.getByRole('tab', { name: '个人共用', exact: true })).toBeFocused()
+  const scope = page.getByRole('button', { name: '技能范围', exact: true })
+  await expect(scope).toHaveText('当前项目')
+  await scope.press('Enter')
+  const options = page.getByRole('listbox', { name: '技能范围', exact: true })
+  await options.press('ArrowDown')
+  await options.press('Enter')
+  await expect(scope).toBeFocused()
+  await expect(scope).toHaveText('个人共用')
+  await expect(page.getByRole('article', { name: 'personal-skill', exact: true })).toBeVisible()
+  await expect(page.getByRole('article', { name: 'reports', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: '导入技能', exact: true }).click()
+  await expect(page.getByRole('radio', { name: /个人共用/ })).toBeChecked()
+  await page.getByRole('button', { name: '取消', exact: true }).click()
   await page.getByRole('tab', { name: '我的', exact: true }).focus()
   await page.keyboard.press('ArrowLeft')
   await expect(page.getByRole('tab', { name: '发现', exact: true })).toBeFocused()
-  await expect(page.getByRole('tablist', { name: '技能范围' })).toHaveCount(0)
+  await expect(scope).toHaveCount(0)
   await page.keyboard.press('ArrowRight')
   await expect(page.getByRole('tab', { name: '我的', exact: true })).toBeFocused()
-  await expect(page.getByRole('tab', { name: '个人共用', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(scope).toHaveText('个人共用')
   await page.keyboard.press('ArrowLeft')
   await page.getByRole('button', { name: '导入技能', exact: true }).click()
   await page.getByRole('textbox', { name: 'GitHub 地址' }).fill('https://github.com/author/repository')
   await expect(page.getByRole('radio', { name: /当前项目/ })).toBeChecked()
   await page.goBack()
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  await expect(page.getByRole('tab', { name: '个人共用', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(scope).toHaveText('个人共用')
   await page.goForward()
   await expect(page.getByRole('tab', { name: '发现', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('dialog')).toHaveCount(0)
+  await page.getByRole('tab', { name: '我的', exact: true }).click()
+  await page.reload()
+  await expect(scope).toHaveText('当前项目')
 })
 
 test('英文安装和导入位置在窄屏容纳长项目名', async ({ page }, testInfo) => {
@@ -446,6 +513,21 @@ test('英文安装和导入位置在窄屏容纳长项目名', async ({ page }, 
   await expect(page.getByRole('dialog').getByRole('group', { name: 'Install location' })).toBeVisible()
   expect(await page.getByRole('dialog').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
   await page.screenshot({ path: testInfo.outputPath('skills-import-destination-en-320.png'), fullPage: true })
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click()
+  await page.getByRole('tab', { name: 'Mine', exact: true }).click()
+  const scope = page.getByRole('button', { name: 'Skill scope', exact: true })
+  await expect(scope).toHaveText('Current project')
+  const scopeBox = (await scope.boundingBox())!
+  const importBox = (await page.getByRole('button', { name: 'Import skills', exact: true }).boundingBox())!
+  expect(scopeBox.x + scopeBox.width).toBeLessThan(importBox.x)
+  expect(scopeBox.y + scopeBox.height / 2).toBe(importBox.y + importBox.height / 2)
+  await scope.click()
+  const choices = page.getByRole('listbox', { name: 'Skill scope', exact: true })
+  const choicesBox = (await choices.boundingBox())!
+  expect(choicesBox.x).toBeGreaterThanOrEqual(0)
+  expect(choicesBox.x + choicesBox.width).toBeLessThanOrEqual(320)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('skills-scope-en-320.png'), fullPage: true })
 })
 
 test('更新失败保留卡片，重试复用操作 ID 并区分最新内容', async ({ page }, testInfo) => {

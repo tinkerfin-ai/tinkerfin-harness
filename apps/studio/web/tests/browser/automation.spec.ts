@@ -305,7 +305,7 @@ test('定时任务读取失败可重试，Toast 避开顶部并在离开页面�
   const [taskHeader, taskToast] = await measureBounds(page.locator('.chat-header'), toasts)
   expect(taskToast.y).toBeGreaterThanOrEqual(taskHeader.y + taskHeader.height)
   await page.getByRole('button', { name: '打开导航', exact: true }).click()
-  await page.locator('[aria-keyshortcuts~="Meta+K"]').click()
+  await page.locator('[aria-keyshortcuts~="Meta+K"]').press('Enter')
   await page.getByRole('button', { name: '关闭导航', exact: true }).click()
   await expect(page.getByRole('textbox', { name: '消息输入', exact: true })).toBeVisible()
   await expect(toasts).toContainText('运行结果加载失败')
@@ -741,7 +741,13 @@ test('任务卡标题、指令和底部可编辑，执行、开关与选择不�
   const dialog = page.getByRole('dialog', { name: '编辑定时任务', exact: true })
   await edit.click()
   await expect(dialog).toBeVisible()
-  await dialog.getByRole('button', { name: '取消', exact: true }).click()
+  await page.keyboard.press('Escape')
+  await expect(edit).toBeFocused()
+  expect(await edit.evaluate(element => getComputedStyle(element, '::after').outlineWidth)).toBe('0px')
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Shift+Tab')
+  await expect(edit).toBeFocused()
+  expect(await edit.evaluate(element => getComputedStyle(element, '::after').outlineWidth)).toBe('2px')
   for (const content of [card.getByText(taskPrompt, { exact: true }), card.getByText('每天 09:00', { exact: true }), card.getByText('9月11日 09:00运行', { exact: true })]) {
     const box = (await content.boundingBox())!
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)

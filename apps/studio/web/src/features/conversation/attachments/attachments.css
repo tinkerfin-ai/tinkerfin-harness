@@ -94,13 +94,13 @@
     transition: opacity var(--motion-normal) var(--ease-out);
   }
   .attachment-media:hover::after,
-  .attachment-media:has(:focus-visible)::after,
+  .attachment-media:has(:focus-visible:not([data-ui-focus-restored]))::after,
   .attachment-media:hover .attachment-image-actions,
-  .attachment-media:has(:focus-visible) .attachment-image-actions {
+  .attachment-media:has(:focus-visible:not([data-ui-focus-restored])) .attachment-image-actions {
     opacity: 1;
   }
   .attachment-media:hover .attachment-image-actions,
-  .attachment-media:has(:focus-visible) .attachment-image-actions {
+  .attachment-media:has(:focus-visible:not([data-ui-focus-restored])) .attachment-image-actions {
     pointer-events: auto;
   }
   .attachment-image-actions .ui-button {

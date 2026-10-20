@@ -1,4 +1,5 @@
 import '../../../src/styles/tokens.css'
+import { Dialog, DatePicker, TimePicker, ExpandableSearch, ListboxPicker } from '../../../src/components/ui'
 import { useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ArchiveRestore, Workflow } from 'lucide-react'
@@ -20,9 +21,41 @@ import '../../../src/components/ui/ui.css'
 import '../../../src/features/conversation/chainTrace/chainTrace.css'
 import '../../../src/features/workspaceFiles/workspaceFiles.css'
 import '../../../src/features/workspace/components/conversation-search.css'
+import '../../../src/features/workspace/workspace.css'
+import { ConversationRunIndicator } from '../../../src/features/workspace/components/ConversationRunIndicator'
 
 const parameters = new URLSearchParams(location.search)
 document.documentElement.dataset.theme = parameters.get('theme') ?? 'light'
+
+function FocusReturnExamples() {
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const input = useRef<HTMLInputElement>(null)
+  return <main style={{ padding: 24, display: 'flex', gap: 16, alignItems: 'center' }}>
+    <Button type="button" onClick={() => setDialogOpen(true)}>打开弹窗</Button>
+    <Dialog open={dialogOpen} title="焦点验证" initialFocusRef={input} onClose={() => setDialogOpen(false)}><TextField ref={input} label="弹窗输入" /></Dialog>
+    <ExpandableSearch label="展开搜索" closeLabel="关闭搜索" placeholder="搜索" open={expanded} onOpenChange={setExpanded} value={query} onChange={setQuery} />
+    <ListboxPicker value="甲" options={['甲', '乙']} open={pickerOpen} onOpenChange={setPickerOpen} onChange={() => {}}
+      triggerLabel="打开选项" listboxLabel="选项" rootClassName="ui-compact-picker" triggerClassName="ui-compact-picker-trigger" listboxClassName="ui-compact-picker-options"
+      renderTrigger={value => value} renderOption={value => value} />
+    <TimePicker label="选择时间" value="09:00" onChange={() => {}} />
+    <DatePicker label="选择日期" value="2026-10-20" onChange={() => {}} />
+    <Button type="button">后续操作</Button>
+  </main>
+}
+
+function ConversationIndicatorExamples() {
+  const [second, setSecond] = useState(false)
+  const [generation, setGeneration] = useState(0)
+  return <main>
+    <section aria-label="会话一"><ConversationRunIndicator /></section>
+    {second && <section aria-label="会话二"><ConversationRunIndicator key={generation} /></section>}
+    <button type="button" onClick={() => setSecond(value => !value)}>切换第二个会话</button>
+    <button type="button" onClick={() => setGeneration(value => value + 1)}>重建第二个会话</button>
+  </main>
+}
 
 function IconButtonExamples() {
   const [target, setTarget] = useState<LocalTarget>()
@@ -95,4 +128,4 @@ export function Controls() {
   </main>
 }
 
-createRoot(document.getElementById('root')!).render(parameters.get('example') === 'icons' ? <IconButtonExamples /> : parameters.get('example') === 'scrollbar' ? <ScrollbarExample /> : parameters.get('example') === 'loading' ? <LoadingExamples /> : <Controls />)
+createRoot(document.getElementById('root')!).render(parameters.get('example') === 'focus-return' ? <FocusReturnExamples /> : parameters.get('example') === 'conversation-indicators' ? <ConversationIndicatorExamples /> : parameters.get('example') === 'icons' ? <IconButtonExamples /> : parameters.get('example') === 'scrollbar' ? <ScrollbarExample /> : parameters.get('example') === 'loading' ? <LoadingExamples /> : <Controls />)

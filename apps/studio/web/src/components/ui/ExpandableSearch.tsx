@@ -1,3 +1,4 @@
+import { restoreFocus } from './focus'
 import { Search } from 'lucide-react'
 import { useId, useLayoutEffect, useRef } from 'react'
 
@@ -18,7 +19,7 @@ export function ExpandableSearch({ open, onOpenChange, value, onChange, label, c
   const wasOpen = useRef(false)
   useLayoutEffect(() => {
     if (open) input.current?.focus()
-    else if (wasOpen.current) trigger.current?.focus()
+    else if (wasOpen.current) restoreFocus(trigger.current)
     wasOpen.current = open
   }, [open])
   const close = () => { onChange(''); onOpenChange(false) }
