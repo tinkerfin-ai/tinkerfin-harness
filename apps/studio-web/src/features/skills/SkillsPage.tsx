@@ -68,7 +68,8 @@ function ScopedSkillsPage({ project, navigation, catalog, projectId, dialog, set
   const search = useRef<HTMLInputElement>(null)
   const modal = dialog !== null || sourceDrawer
   useSkillPagination(scroll, pagination, navigation.view === 'discover' && catalog.status === 'ready' && Boolean(catalog.cursor) && !catalog.loadingMore && !catalog.error && !modal, catalog.more)
-  useEffect(() => {
+  // 默认来源与页签地址在同一提交中结算，不能在后续键盘切换后覆盖新地址
+  useLayoutEffect(() => {
     if (navigation.view === 'discover' && !navigation.source && library.sources[0]) navigation.selectSource(library.sources[0].id, true)
   }, [navigation, library.sources])
   useLayoutEffect(() => {

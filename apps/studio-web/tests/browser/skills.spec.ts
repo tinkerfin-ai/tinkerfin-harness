@@ -483,6 +483,7 @@ test('范围下拉默认当前项目，切换个人共用保持键盘导航和�
   await expect(scope).toHaveCount(0)
   await page.keyboard.press('ArrowRight')
   await expect(page.getByRole('tab', { name: '我的', exact: true })).toBeFocused()
+  await expect(page).toHaveURL(url => url.searchParams.get('skillView') === 'mine')
   await expect(scope).toHaveText('个人共用')
   await page.keyboard.press('ArrowLeft')
   await page.getByRole('button', { name: '导入技能', exact: true }).click()
