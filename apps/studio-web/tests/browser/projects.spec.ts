@@ -315,6 +315,7 @@ test('会话移动、归档与恢复使用目标项目', async ({ page }) => {
   await page.getByRole('button', { name: '返回会话记录', exact: true }).click()
   await expect(page.getByRole('button', { name: '管理会话：本周市场观察' })).toBeVisible()
   await page.setViewportSize({ width: 768, height: 900 })
+  await expect(page.getByRole('button', { name: '打开侧边栏', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '已归档会话', exact: true }).focus()
   await page.keyboard.press('Enter')
   await expect(page.getByRole('button', { name: '返回会话记录', exact: true })).toBeFocused()
