@@ -1,3 +1,4 @@
+import { prepareFocusReturn } from './focus'
 import { parseDate, type CalendarDate } from '@internationalized/date'
 import * as datePicker from '@zag-js/date-picker'
 import { normalizeProps, Portal, useMachine } from '@zag-js/react'
@@ -55,6 +56,7 @@ export const DatePicker = forwardRef<HTMLButtonElement, DatePickerProps>(functio
   const inDialog = useContext(DialogContext)
   const pickerId = useId()
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const cancelFocusReturn = useRef<(() => void) | null>(null)
   const parsedValue = parseCalendarDate(value)
   const service = useMachine(datePicker.machine, {
     id: pickerId,
@@ -91,6 +93,10 @@ export const DatePicker = forwardRef<HTMLButtonElement, DatePickerProps>(functio
       monthSelect: t('选择月份'),
       yearSelect: t('选择年份'),
     },
+    onOpenChange: ({ open }) => {
+      cancelFocusReturn.current?.()
+      cancelFocusReturn.current = open ? null : prepareFocusReturn(triggerRef.current)
+    },
     onValueChange: (details) => {
       const nextValue = details.value[0]?.toString()
       if (!disabled && nextValue && nextValue !== value) onChange(nextValue)
@@ -100,7 +106,9 @@ export const DatePicker = forwardRef<HTMLButtonElement, DatePickerProps>(functio
 
   useEffect(() => {
     if (disabled && api.open) api.setOpen(false)
+    if (disabled) cancelFocusReturn.current?.()
   }, [api, disabled])
+  useEffect(() => () => cancelFocusReturn.current?.(), [])
 
   const setTriggerRef = (node: HTMLButtonElement | null) => {
     triggerRef.current = node

@@ -63,30 +63,33 @@ export function useProjectManagement(user: AuthUser) {
   useEffect(() => {
     if (project && readProjectFromLocation() !== project.id) writeProjectToLocation(project.id, '', { history: 'replace' })
   }, [project])
-  const openEditor = (item: Project | null) => {
+  const openEditor = (item: Project | null, initialName = '') => {
     if (mutation.current) return
-    setName(item?.name ?? ''); setError(''); setValidationAttempt(0)
+    setName(item?.name ?? initialName); setError(''); setValidationAttempt(0)
     setEditor({ project: item, trigger: document.activeElement instanceof HTMLElement ? document.activeElement : null })
   }
   const submit = async () => {
-    if (!editor || mutation.current) return
+    if (!editor || mutation.current) return false
     const value = name.trim()
-    if (!value) { setError(t('请输入项目名称')); setValidationAttempt(current => current + 1); return }
+    if (!value) { setError(t('请输入项目名称')); setValidationAttempt(current => current + 1); return false }
+    if (editor.project?.name === value) { setEditor(null); return true }
     const request = new AbortController()
     mutation.current = request; setSaving(true); setError('')
     try {
       const item = await saveProject(value, editor.project?.id ?? null, request.signal)
-      if (request.signal.aborted) return
+      if (request.signal.aborted) return false
       mutationGeneration.current += 1
       setProjects(current => editor.project ? current.map(existing => existing.id === item.id ? item : existing) : [...current, item])
       setStatus('ready'); setEditor(null)
       if (!editor.project) { writeWorkspaceToLocation('conversation', ''); select(item.id) }
       refresh.current()
+      return true
     } catch (reason) {
       if (!request.signal.aborted) {
         setError(reason instanceof Error ? isTranslationKey(reason.message) ? t(reason.message) : reason.message : t('项目未能保存，请重试'))
         setValidationAttempt(current => current + 1)
       }
+      return false
     } finally {
       if (mutation.current === request) mutation.current = null
       if (!request.signal.aborted) setSaving(false)

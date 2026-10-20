@@ -18,7 +18,7 @@ export function WorkspaceFileInformation({ file }: { file: WorkspaceFile }) {
   const reveal = (pin: boolean) => {
     pinned.current = pin
     information.current?.showPopover()
-    if (pin) restoreFocus(information.current, { preventScroll: true })
+    if (pin) information.current?.focus({ preventScroll: true })
   }
   const dismiss = (returnFocus = false) => {
     pinned.current = false

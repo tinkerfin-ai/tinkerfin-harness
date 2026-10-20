@@ -3428,6 +3428,10 @@ for (const colorScheme of ['light', 'dark'] as const) {
           await expect(menu).toHaveCount(0)
           await expect(dialog).toBeVisible()
           await expect(scope).toBeFocused()
+          await expect(scope).toHaveCSS('outline-width', '0px')
+          await scope.press('Tab')
+          await page.keyboard.press('Shift+Tab')
+          await expect(scope).toBeFocused()
           await expect(scope).toHaveCSS('outline-width', '2px')
           await expect(scope).toHaveCSS('outline-style', 'solid')
           if (width === 1440 && colorScheme === 'light' && !touch) {
@@ -3438,6 +3442,9 @@ for (const colorScheme of ['light', 'dark'] as const) {
             await expect(menu).toHaveCSS('border-top-width', '1px')
             await menu.press('Escape')
             await expect(scope).toBeFocused()
+            await expect(scope).toHaveCSS('outline-width', '0px')
+            await scope.press('Tab')
+            await page.keyboard.press('Shift+Tab')
             await expect(scope).toHaveCSS('outline-width', '2px')
             await page.emulateMedia({ forcedColors: 'none' })
           }
@@ -3552,17 +3559,16 @@ test('账户菜单、modal 隔离和定时滚动控件保持完整键盘路径',
   const taskTraceButton = page.getByRole('button', { name: '任务轨迹 1' })
   await expect(taskTraceButton).toBeVisible()
   await scrollButton.focus()
-  const filesButton = page.getByRole('button', { name: '工作区', exact: true })
   for (const width of [320, 768, 1023, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 })
-    const [scrollBox, composerBox, taskBox, filesBox] = await measureBounds(
-      scrollButton, page.locator('.composer'), taskTraceButton, filesButton,
+    const [scrollBox, composerBox, taskBox, headerBox] = await measureBounds(
+      scrollButton, page.locator('.composer'), taskTraceButton, page.locator('.chat-header'),
     )
     expect(scrollBox.x + scrollBox.width / 2).toBeCloseTo(composerBox.x + composerBox.width / 2, 5)
     expect(scrollBox.y + scrollBox.height).toBeLessThanOrEqual(composerBox.y)
-    expect(taskBox.y + taskBox.height / 2).toBeCloseTo(filesBox.y + filesBox.height / 2, 5)
+    expect(taskBox.y + taskBox.height / 2).toBeCloseTo(headerBox.y + headerBox.height / 2, 5)
     expect(taskBox.y + taskBox.height).toBeLessThan(scrollBox.y)
-    expect(taskBox.x + taskBox.width).toBeLessThanOrEqual(filesBox.x)
+    expect(taskBox.x + taskBox.width).toBeLessThanOrEqual(headerBox.x + headerBox.width)
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
   }
   await page.clock.fastForward(2_000)

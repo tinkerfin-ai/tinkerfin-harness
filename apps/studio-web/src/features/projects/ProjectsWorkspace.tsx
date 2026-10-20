@@ -1,17 +1,18 @@
 import type { EditorState } from '@codemirror/state'
 import { FolderPlus, Plus } from 'lucide-react'
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { startNotificationFeed } from '../../api/notifications'
 import type { ToastHandler } from '../../components/ui/ToastViewport'
 import { useAutomationRuns, type AutomationRuns } from '../automation/useAutomationRuns'
 import type { AuthUser } from '../../api/auth/types'
 import { BrandLogo } from '../../components/ui/BrandLogo'
-import { Button, Dialog, FeedbackState, TextField, ValidatedForm } from '../../components/ui'
+import { Button, Dialog, FeedbackState } from '../../components/ui'
 import { useI18n } from '../../i18n'
 import { useRunConversation, type OpenRunConversation } from '../automation/useRunConversation'
 import type { DraftAttachment } from '../conversation/useAttachments'
 import type { Project } from './api'
 import { useProjectManagement } from './useProjectManagement'
+import { ProjectNameForm, type ProjectEditorForm } from './ProjectNameForm'
 import './projects.css'
 
 export interface ProjectWorkspaceScope {
@@ -20,18 +21,14 @@ export interface ProjectWorkspaceScope {
   project: Project
   projects: Project[]
   select: (id: string, threadId?: string) => void
-  create: () => void
-  rename: () => void
-  renameForm: {
-    name: string
-    error: string
-    validationAttempt: number
-    saving: boolean
-    change: (value: string) => void
-    submit: () => Promise<void>
-    cancel: () => void
-  } | null
-  modalOpen: boolean
+  create: (name?: string) => void
+  rename: (projectId: string) => void
+  editorForm: ProjectEditorForm | null
+  pickerFocusPending: RefObject<boolean>
+  pickerTriggerRef: RefObject<HTMLButtonElement | null>
+  pickerOpen: boolean
+  openPicker: () => void
+  closePicker: () => void
   drafts: Map<string, EditorState>
   attachments: Map<string, DraftAttachment[]>
 }
@@ -41,10 +38,14 @@ export function ProjectsWorkspace({ user, onLogout, onToast, children }: {
   user: AuthUser; onLogout: () => void; onToast?: ToastHandler; children: (scope: ProjectWorkspaceScope) => ReactNode
 }) {
   const { t } = useI18n()
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const pickerTriggerRef = useRef<HTMLButtonElement>(null)
+  const pickerFocusPending = useRef(false)
   const input = useRef<HTMLInputElement>(null)
   const [drafts] = useState(() => new Map<string, EditorState>())
   const [attachments] = useState(() => new Map<string, DraftAttachment[]>())
   const { project, projects, status, editor, name, error, validationAttempt, saving, select, openEditor, submit, setName, closeEditor, retry } = useProjectManagement(user)
+  const editorForm: ProjectEditorForm | null = editor ? { projectId: editor.project?.id ?? null, name, error, validationAttempt, saving, change: setName, submit, cancel: closeEditor } : null
   const projectKey = projects.map(item => item.id).sort().join(',')
   useLayoutEffect(() => startNotificationFeed(), [projectKey])
   const openRunConversation = useRunConversation(target => {
@@ -53,9 +54,9 @@ export function ProjectsWorkspace({ user, onLogout, onToast, children }: {
   }, onToast)
   const automation = useAutomationRuns(user.user_id, projects.map(item => item.id), onToast)
   return <>
-    {project ? children({ automation, openRunConversation, project, projects, select, create: () => openEditor(null), rename: () => openEditor(project),
-      renameForm: editor?.project?.id === project.id ? { name, error, validationAttempt, saving, change: setName, submit, cancel: closeEditor } : null,
-      modalOpen: editor !== null && editor.project === null, drafts, attachments }) : (
+    {project ? children({ automation, openRunConversation, project, projects, select, create: name => openEditor(null, name), rename: id => { const target = projects.find(item => item.id === id); if (target) openEditor(target) },
+      editorForm, pickerFocusPending, pickerTriggerRef, pickerOpen, openPicker: () => setPickerOpen(true), closePicker: () => { pickerFocusPending.current = true; setPickerOpen(false) },
+      drafts, attachments }) : (
       <main className="projects-onboarding" inert={editor !== null || undefined} aria-hidden={editor !== null || undefined}>
         <div className="projects-onboarding-brand"><BrandLogo size="md" /></div>
         <section>
@@ -69,11 +70,8 @@ export function ProjectsWorkspace({ user, onLogout, onToast, children }: {
         <Button type="button" variant="text" onClick={onLogout}>{t('退出登录')}</Button>
       </main>
     )}
-    <Dialog open={editor !== null && editor.project === null} title={t('创建项目')} closeDisabled={saving} initialFocusRef={input} restoreFocusTo={editor?.trigger} onClose={closeEditor}>
-      <ValidatedForm className="projects-form" errors={{ projectName: error }} validationAttempt={validationAttempt} onSubmit={event => { event.preventDefault(); void submit() }}>
-        <TextField ref={input} name="projectName" label={t('项目名称')} value={name} maxLength={64} required onChange={event => setName(event.target.value)} error={error} disabled={saving} autoComplete="off" />
-        <div className="projects-form-actions"><Button type="button" variant="secondary" disabled={saving} onClick={closeEditor}>{t('取消')}</Button><Button type="submit" variant="primary" loading={saving}>{t('确认')}</Button></div>
-      </ValidatedForm>
+    <Dialog open={!project && editorForm !== null} title={t('创建项目')} closeDisabled={saving} initialFocusRef={input} restoreFocusTo={editor?.trigger} onClose={closeEditor}>
+      {editorForm && <ProjectNameForm form={editorForm} inputRef={input} onSubmit={() => { void submit() }} onCancel={closeEditor} />}
     </Dialog>
   </>
 }

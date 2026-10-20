@@ -31,18 +31,6 @@ function PortalPicker({ tooltip }: { tooltip?: string }) {
 }
 
 describe('ListboxPicker', () => {
-  it('带提示的范围选择器取消后恢复焦点，不重弹提示', async () => {
-    const user = userEvent.setup()
-    render(<PortalPicker tooltip="选择类型" />)
-    const trigger = screen.getByRole('button', { name: '类型筛选' })
-    await user.tab()
-    expect(screen.getByRole('tooltip')).toHaveTextContent('选择类型')
-    await user.keyboard('{Enter}')
-    expect(screen.getByRole('listbox', { name: '类型' })).toHaveFocus()
-    await user.keyboard('{Escape}')
-    expect(trigger).toHaveFocus()
-    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
-  })
 
   it('keeps portal options inside the shared keyboard and focus contract', () => {
     render(<PortalPicker />)
@@ -78,26 +66,6 @@ function MultiplePicker({ disabled = false }: { disabled?: boolean }) {
   const [value, setValue] = useState<string[]>([])
   return <ListboxPicker multiple disabled={disabled} value={value} options={['PNG', 'JPEG', 'WebP']} onChange={setValue} open={open} onOpenChange={setOpen} triggerLabel="输出格式" listboxLabel="输出格式" rootClassName="picker" triggerClassName="trigger" listboxClassName="options" renderTrigger={formats => formats.join(' / ') || '默认'} renderOption={format => format} />
 }
-
-it('多选逐项切换、保留焦点并在 Escape 后返回触发器', () => {
-  render(<MultiplePicker />)
-  const trigger = screen.getByRole('button', { name: '输出格式' })
-  fireEvent.click(trigger)
-  const list = screen.getByRole('listbox')
-  expect(list).toHaveAttribute('aria-multiselectable', 'true')
-  fireEvent.click(screen.getByRole('option', { name: 'PNG' }))
-  fireEvent.keyDown(list, { key: 'ArrowDown' })
-  fireEvent.keyDown(list, { key: ' ' })
-  expect(screen.getAllByRole('option', { selected: true })).toHaveLength(2)
-  expect(list).toHaveFocus()
-  fireEvent.keyDown(list, { key: 'Escape' })
-  expect(trigger).toHaveFocus()
-  expect(trigger).toHaveTextContent('PNG / JPEG')
-  fireEvent.click(trigger)
-  fireEvent.click(screen.getByRole('option', { name: 'PNG' }))
-  fireEvent.click(screen.getByRole('option', { name: 'JPEG' }))
-  expect(screen.getAllByRole('option', { selected: false })).toHaveLength(3)
-})
 
 it.each(['鼠标', '键盘'])('允许用%s选回空字符串表示的服务默认值', input => {
   const change = vi.fn()

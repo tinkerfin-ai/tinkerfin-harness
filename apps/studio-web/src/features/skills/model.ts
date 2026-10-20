@@ -22,8 +22,7 @@ export interface ImportPreview { id: string; source: 'github' | 'zip'; candidate
 export interface SkillReplacement { draft_id: string; digest: string }
 export interface SkillChangeResult { installation: InstalledSkill; changed: boolean }
 export type SkillView = 'discover' | 'mine'
-export type SkillSort = 'updated' | 'name'
 export type SkillStatus = 'all' | 'enabled' | 'disabled'
-export interface SkillFilters { query: string; sort: SkillSort; status: SkillStatus; category: string }
-export const emptySkillFilters: SkillFilters = { query: '', sort: 'updated', status: 'all', category: '' }
+export interface SkillFilters { query: string; status: SkillStatus; category: string }
+export const emptySkillFilters: SkillFilters = { query: '', status: 'all', category: '' }
 export type SkillSelection = { kind: 'remote'; skill: RemoteSkill } | { kind: 'installed'; skill: InstalledSkill }

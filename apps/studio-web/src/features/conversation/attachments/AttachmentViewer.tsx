@@ -1,3 +1,4 @@
+import { restoreFocus } from '../../../components/ui/focus'
 import {
   ChevronLeft,
   ChevronRight,
@@ -134,7 +135,7 @@ function ViewerImage({
         if (event.key === 'Escape' && infoOpen) {
           event.preventDefault()
           setInfoOpen(false)
-          infoButton.current?.focus()
+          restoreFocus(infoButton.current)
         }
         if (event.key === 'ArrowLeft') {
           event.preventDefault()

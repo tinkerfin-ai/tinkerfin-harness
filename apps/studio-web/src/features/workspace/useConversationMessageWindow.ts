@@ -1,3 +1,4 @@
+import { restoreFocus } from '../../components/ui/focus'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 
@@ -172,8 +173,8 @@ export function useConversationMessageWindow({
     if (pane) {
       pane.scrollTop = anchor.scrollTop + (pane.scrollHeight - anchor.scrollHeight)
     }
-    if (anchor.trigger.isConnected) anchor.trigger.focus({ preventScroll: true })
-    else pane?.focus({ preventScroll: true })
+    if (anchor.trigger.isConnected) restoreFocus(anchor.trigger, { preventScroll: true })
+    else restoreFocus(pane, { preventScroll: true })
     earlierAnchor.current = null
   }, [entries.length, paneRef, resolvedWindow.start, threadId])
 
@@ -203,7 +204,7 @@ export function useConversationMessageWindow({
     const loaded = await loadOlderTrace(threadId)
     if (loaded || earlierAnchor.current?.trigger !== trigger) return
     earlierAnchor.current = null
-    if (trigger.isConnected) trigger.focus({ preventScroll: true })
+    if (trigger.isConnected) restoreFocus(trigger, { preventScroll: true })
   }, [loadOlderTrace, paneRef, resolvedWindow.start, threadId])
 
   const waitForRevision = useCallback(async (

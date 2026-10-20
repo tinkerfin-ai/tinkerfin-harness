@@ -1,7 +1,6 @@
 import { File, Folder, FolderOpen } from 'lucide-react'
 import { useRef, type KeyboardEvent } from 'react'
 import { Button, FeedbackState, Tooltip } from '../../components/ui'
-import { restoreFocus } from '../../components/ui/focus'
 import { useI18n } from '../../i18n'
 import type { WorkspaceFile } from './api'
 import type { WorkspaceFilesState } from './useWorkspaceFiles'
@@ -52,7 +51,7 @@ export function WorkspaceFileBrowser({ state, view, onDirectory, onFile }: {
     const step = event.key === 'ArrowDown' ? columns : event.key === 'ArrowUp' ? -columns : event.key === 'ArrowLeft' ? -1 : 1
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : Math.max(0, Math.min(buttons.length - 1, index + step))
     event.preventDefault()
-    restoreFocus(buttons[next], { preventScroll: true })
+    buttons[next]?.focus({ preventScroll: true })
     buttons[next]?.scrollIntoView({ block: 'nearest' })
   }
   if (loading && !entries.length) return <div className="workspace-files-feedback"><FeedbackState kind="loading" title={t('正在加载文件')} compact /></div>

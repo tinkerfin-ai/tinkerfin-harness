@@ -1,11 +1,13 @@
 import { useId } from 'react'
-import type { KeyboardEvent } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
 
 export type ViewTabsDensity = 'regular' | 'medium' | 'compact'
 
 export interface ViewTabOption<Value extends string> {
   value: Value
   label: string
+  /** 提供图标时用它展示选项，label 仍作为可访问名称 */
+  icon?: ReactNode
   controls?: string
   disabled?: boolean
 }
@@ -67,6 +69,7 @@ export function ViewTabs<Value extends string>({
           id={`${tabsId}-${index}`}
           type="button"
           role="tab"
+          aria-label={option.label}
           aria-selected={option.value === value}
           aria-controls={option.controls}
           tabIndex={option.value === value ? 0 : -1}
@@ -74,7 +77,7 @@ export function ViewTabs<Value extends string>({
           onClick={() => onChange(option.value)}
           onKeyDown={(event) => selectFromKeyboard(event, index)}
         >
-          {option.label}
+          {option.icon ? <span className="ui-view-tab-icon" aria-hidden="true">{option.icon}</span> : option.label}
         </button>
       ))}
     </div>

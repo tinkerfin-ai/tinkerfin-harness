@@ -1,3 +1,4 @@
+import { restoreFocus } from '../../components/ui/focus'
 import { ArrowUpRight, Check, MoreHorizontal } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
@@ -37,7 +38,7 @@ export function SkillCard({ project, scopeId, selection, sourceName, installedIn
   useLayoutEffect(() => {
     if (choosingDestination) installForm.current?.querySelector<HTMLInputElement>('input:checked:not(:disabled)')?.focus({ preventScroll: true })
   }, [choosingDestination])
-  const closeDestination = () => { setChoosingDestination(false); (installTrigger.current ?? detailTrigger.current)?.focus({ preventScroll: true }) }
+  const closeDestination = () => { setChoosingDestination(false); restoreFocus(installTrigger.current ?? detailTrigger.current, { preventScroll: true }) }
   const dismissInstallation = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === 'Escape' && choosingDestination && !busy) { event.preventDefault(); event.stopPropagation(); closeDestination() }
   }
@@ -45,10 +46,10 @@ export function SkillCard({ project, scopeId, selection, sourceName, installedIn
     event.preventDefault()
     if (selection.kind !== 'remote' || busy || installedIn.includes(destination)) return
     if (!await onInstall(selection.skill, destination)) return
-    const restoreFocus = installForm.current?.contains(document.activeElement)
+    const returnFocus = installForm.current?.contains(document.activeElement)
     setChoosingDestination(false)
     // 用户已转向其他卡片或弹窗时，安装完成不打断正在进行的操作
-    if (restoreFocus) detailTrigger.current?.focus({ preventScroll: true })
+    if (returnFocus) restoreFocus(detailTrigger.current, { preventScroll: true })
   }
   useLayoutEffect(() => {
     if (!open) return
@@ -68,7 +69,7 @@ export function SkillCard({ project, scopeId, selection, sourceName, installedIn
     }
     const moved = (event: Event) => {
       if (event.target instanceof Node && popup.contains(event.target)) return
-      setOpen(false); trigger.current?.focus({ preventScroll: true })
+      setOpen(false); restoreFocus(trigger.current, { preventScroll: true })
     }
     document.addEventListener('pointerdown', dismiss)
     document.addEventListener('scroll', moved, true)
@@ -86,17 +87,17 @@ export function SkillCard({ project, scopeId, selection, sourceName, installedIn
         <IconButton ref={trigger} type="button" size="sm" label={t('管理技能：{name}', { name: skill.name })} icon={<MoreHorizontal size={18} />}
           aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)} />
         {open && createPortal(<div ref={menu} className="skills-menu" role="menu" tabIndex={-1} aria-label={t('技能操作')} onKeyDown={event => {
-          if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus() }
+          if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); restoreFocus(trigger.current) }
           const entries = Array.from(menu.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])
           if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
             event.preventDefault()
             const index = entries.indexOf(document.activeElement as HTMLButtonElement)
             entries[event.key === 'Home' ? 0 : event.key === 'End' ? entries.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + entries.length) % entries.length]?.focus()
           }
-          if (event.key === 'Tab') { setOpen(false); trigger.current?.focus({ preventScroll: true }) }
+          if (event.key === 'Tab') { setOpen(false); restoreFocus(trigger.current, { preventScroll: true }) }
         }}>
           <button type="button" role="menuitem" onClick={() => { setOpen(false); onOpen(selection, trigger.current!) }}>{t('详情')}</button>
-          {selection.skill.project_id === scopeId && <button type="button" role="menuitem" disabled={busy} onClick={() => { setOpen(false); trigger.current?.focus({ preventScroll: true }); onUpdate(selection.skill, trigger.current!) }}>{t('更新')}</button>}
+          {selection.skill.project_id === scopeId && <button type="button" role="menuitem" disabled={busy} onClick={() => { setOpen(false); restoreFocus(trigger.current, { preventScroll: true }); onUpdate(selection.skill, trigger.current!) }}>{t('更新')}</button>}
           {selection.skill.project_id === scopeId && <button type="button" role="menuitem" className="skills-menu-danger" disabled={busy} onClick={() => { setOpen(false); onUninstall(selection.skill, trigger.current!) }}>{t('卸载')}</button>}
         </div>, document.body)}
       </div> : skill.topics[0] && <span className="skills-card-topic">{skill.topics[0]}</span>}

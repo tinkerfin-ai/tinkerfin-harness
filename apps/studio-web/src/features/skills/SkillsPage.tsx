@@ -42,10 +42,13 @@ export function SkillsPage({ project, navigationTriggerRef, onOpenNavigation, on
   return <section className="skills-page" aria-label={t('技能库')}>
     <div className="skills-page-content" inert={modal || undefined} aria-hidden={modal || undefined}>
       <WorkspaceHeader conversationTitle={t('技能库')} overlayTriggerRef={navigationTriggerRef} onOpenOverlay={onOpenNavigation}
+        stackActionsOnMobile={navigation.view === 'mine'}
         navigation={<ViewTabs value={navigation.view} label={t('技能库视图')} options={[{ value: 'discover', label: t('发现') }, { value: 'mine', label: t('我的') }]}
           className="workspace-view-tabs" onChange={navigation.selectView} />}
-        actions={<Button type="button" variant="primary" size="sm" className="workspace-header-action" leadingIcon={<Plus size={16} />} aria-label={t('导入技能')} onClick={event => setDialog({ kind: 'import', trigger: event.currentTarget })}><span className="workspace-header-action-label">{t('导入')}</span></Button>} />
-      {navigation.view === 'mine' && <div className="skills-project-scope"><ViewTabs value={personal ? 'personal' : 'project'} label={t('技能范围')} options={[{ value: 'project', label: t('当前项目') }, { value: 'personal', label: t('个人共用') }]} onChange={value => setPersonal(value === 'personal')} /></div>}
+        actions={<>
+          {navigation.view === 'mine' && <SkillPicker value={personal ? 'personal' : 'project'} label={t('技能范围')} options={[{ value: 'project', label: t('当前项目') }, { value: 'personal', label: t('个人共用') }]} onChange={value => setPersonal(value === 'personal')} />}
+          <Button type="button" variant="primary" size="sm" className="workspace-header-action" leadingIcon={<Plus size={16} />} aria-label={t('导入技能')} onClick={event => setDialog({ kind: 'import', trigger: event.currentTarget })}><span className="workspace-header-action-label">{t('导入')}</span></Button>
+        </>} />
       <ScopedSkillsPage key={projectId ?? 'personal'} project={project} navigation={navigation} catalog={catalog} projectId={projectId}
         dialog={dialog} setDialog={setDialog} sourceDrawer={sourceDrawer} setSourceDrawer={setSourceDrawer} onToast={onToast} />
     </div>
@@ -86,7 +89,7 @@ function ScopedSkillsPage({ project, navigation, catalog, projectId, dialog, set
   const rows = [...(navigation.view === 'mine' ? [{ id: 'all', name: t('全部来源') }, { id: 'imports', name: t('个人导入') }] : []), ...Array.from(sourceOptions, ([id, name]) => ({ id, name }))]
   const sourceLabel = rows.find(row => row.id === navigation.source)?.name ?? t('选择来源')
   const sourceContent = <>
-    <div className="skills-source-heading"><span>{t('来源')}</span><span>{sourceOptions.size}</span></div>
+    <div className="skills-source-heading">{t('来源')}</div>
     <nav className="skills-source-list ui-scrollbar" aria-label={t('技能来源')}>
       {rows.map(row => <button type="button" key={row.id} aria-pressed={navigation.source === row.id} onClick={() => chooseSource(row.id)}>
         {row.id === 'all' ? <Layers2 size={17} aria-hidden="true" /> : row.id === 'imports' ? <FolderOpen size={17} aria-hidden="true" /> : <SkillSourceIcon id={row.id} />}
@@ -102,7 +105,7 @@ function ScopedSkillsPage({ project, navigation, catalog, projectId, dialog, set
     return (!query || `${skill.name} ${skill.description} ${skill.author ?? ''}`.toLocaleLowerCase().includes(query))
       && (!navigation.filters.category || skill.topics.includes(navigation.filters.category))
       && (navigation.filters.status === 'all' || skill.enabled === (navigation.filters.status === 'enabled'))
-  }).sort((left, right) => navigation.filters.sort === 'name' ? left.name.localeCompare(right.name) : right.updated_at.localeCompare(left.updated_at))
+  }).sort((left, right) => right.updated_at.localeCompare(left.updated_at))
   const selections: SkillSelection[] = navigation.view === 'mine' ? filtered.map(skill => ({ kind: 'installed', skill })) : catalog.items.map(skill => ({ kind: 'remote', skill }))
   const status = navigation.view === 'mine' ? library.installedStatus : library.sourceStatus !== 'ready' ? library.sourceStatus : !navigation.source ? 'ready' : catalog.status
   const failure = navigation.view === 'mine' ? library.installedError : library.sourceStatus === 'error' ? library.sourceError : catalog.error
@@ -125,9 +128,6 @@ function ScopedSkillsPage({ project, navigation, catalog, projectId, dialog, set
             {navigation.view === 'mine' && categories.length > 0 && <div className="skills-categories" role="group" aria-label={t('技能分类')}>
               <button type="button" aria-pressed={!navigation.filters.category} onClick={() => navigation.changeFilters({ category: '' })}>{t('全部')}</button>
               {categories.map(category => <button type="button" key={category} aria-pressed={navigation.filters.category === category} onClick={() => navigation.changeFilters({ category })}>{category}</button>)}
-            </div>}
-            {navigation.view === 'mine' && <div className="skills-toolbar"><div><h2>{t('已安装技能')}</h2>{status === 'ready' && <span aria-live="polite">{t('{count}项', { count: selections.length })}</span>}</div>
-              <SkillPicker value={navigation.filters.sort} label={t('技能排序')} onChange={sort => navigation.changeFilters({ sort })} options={[{ value: 'updated', label: t('最近更新') }, { value: 'name', label: t('按名称') }]} />
             </div>}
           </div>
           <div ref={scroll} className="skills-scroll ui-scrollbar" onScroll={rememberScroll}>

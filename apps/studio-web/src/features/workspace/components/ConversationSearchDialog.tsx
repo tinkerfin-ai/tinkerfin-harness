@@ -58,7 +58,7 @@ export function ConversationSearchDialog(props: ConversationSearchDialogProps) {
     }
   }
 
-  return <Dialog open title={t('搜索会话')} className={`modal-dialog--action conversation-search-dialog${hasQuery ? ' has-query' : ''}`}
+  return <Dialog open title={t('搜索会话')} className={`modal-dialog--action modal-dialog--search conversation-search-dialog${hasQuery ? ' has-query' : ''}`}
     initialFocusRef={inputRef} restoreFocusTo={props.restoreFocusTo} onClose={props.onClose} onKeyDown={handleKeys}
     headerActions={<div className="conversation-search-scope">
       <ListboxPicker value={props.scope} options={scopes} open={scopeOpen} onOpenChange={setScopeOpen}
@@ -70,11 +70,11 @@ export function ConversationSearchDialog(props: ConversationSearchDialogProps) {
         </span><ChevronDown size={14} /></>}
         renderOption={(value, selected) => <><span className="ui-compact-option-label">{labels[value]}</span><span className="ui-compact-option-check">{selected && <Check size={14} />}</span></>} />
     </div>}>
-    <div className="conversation-search-body">
+    <div className="modal-dialog-search-body">
       <TextField ref={inputRef} type="search" role="combobox" aria-expanded={hasQuery} aria-autocomplete="list"
         aria-controls={hasQuery ? listId : undefined} aria-activedescendant={active ? optionId(activeIndex) : undefined}
         label={<span className="visually-hidden">{t('搜索会话')}</span>} placeholder={t('输入关键词')}
-        rootClassName="conversation-search-field" shape="standard" value={props.query}
+        rootClassName="ui-dialog-search-field" shape="standard" value={props.query}
         onChange={event => { setSelection(null); props.onQueryChange(event.target.value) }}
         leadingContent={<Search size={18} />} />
     </div>

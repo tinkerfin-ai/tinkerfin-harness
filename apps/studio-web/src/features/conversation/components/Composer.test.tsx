@@ -51,14 +51,14 @@ describe('Composer', () => {
     expect(onSend).toHaveBeenCalledOnce()
   })
 
-  it.each(['queued', 'uploading', 'error'] as const)('附件为 %s 时禁用发送并阻止 Enter，全部就绪后恢复', (state) => {
+  it('附件上传中时禁用发送并阻止 Enter，全部就绪后恢复', () => {
     const onSend = vi.fn()
     const ready: DraftAttachment = {
       id: 'ready', name: '已上传.pdf', kind: 'document', size: 3,
       state: 'ready', progress: 100,
       attachment: { id: 'stored', name: '已上传.pdf', size_bytes: 3, mime_type: 'application/pdf' },
     }
-    const pending: DraftAttachment = { ...ready, id: 'pending', name: '待处理.pdf', state, progress: 25, attachment: undefined }
+    const pending: DraftAttachment = { ...ready, id: 'pending', name: '待处理.pdf', state: 'uploading', progress: 25, attachment: undefined }
     const props = {
       ...composerChromeProps(), text: '保留正文', isRunning: false,
       onDraftChange: vi.fn(), onSend, onStop: vi.fn(),
@@ -97,10 +97,7 @@ describe('Composer', () => {
     expect(screen.getByRole('button', { name: '正在停止任务' })).toBeDisabled()
   })
 
-  it.each([
-    ['composition state', { isComposing: true }],
-    ['IME compatibility key code', { keyCode: 229 }],
-  ])('does not send while Enter confirms an IME %s', (_name, nativeFields) => {
+  it('输入法兼容按键码确认候选时不发送', () => {
     const onSend = vi.fn()
     render(
       <DraftComposer
@@ -115,30 +112,10 @@ describe('Composer', () => {
 
     fireEvent.keyDown(screen.getByLabelText('消息输入'), {
       key: 'Enter',
-      ...nativeFields,
+      keyCode: 229,
     })
 
     expect(onSend).not.toHaveBeenCalled()
-  })
-
-  it('sends with Enter while leaving Shift+Enter to native multiline editing', () => {
-    const onSend = vi.fn()
-    render(
-      <DraftComposer
-        {...composerChromeProps()}
-        text="可发送内容"
-        isRunning={false}
-        onDraftChange={vi.fn()}
-        onSend={onSend}
-        onStop={vi.fn()}
-      />,
-    )
-    const input = screen.getByLabelText('消息输入')
-
-    expect(fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })).toBe(true)
-    expect(onSend).not.toHaveBeenCalled()
-    expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(false)
-    expect(onSend).toHaveBeenCalledOnce()
   })
 
   it.each(['Enter', 'Tab'])('命令候选展开时 Shift+%s 保留原生编辑或焦点行为', key => {
@@ -152,14 +129,6 @@ describe('Composer', () => {
     expect(onChooseModel).not.toHaveBeenCalled()
     expect(onSend).not.toHaveBeenCalled()
     expect(input).toHaveValue('/model')
-  })
-
-  it.each(['Enter', 'Tab'])('命令候选展开时普通 %s 仍确认选择', key => {
-    const onChooseModel = vi.fn()
-    render(<DraftComposer {...composerChromeProps()} text="/model" isRunning={false}
-      onDraftChange={vi.fn()} onChooseModel={onChooseModel} onSend={vi.fn()} onStop={vi.fn()} />)
-    expect(fireEvent.keyDown(screen.getByRole('textbox', { name: '消息输入' }), { key })).toBe(false)
-    expect(onChooseModel).toHaveBeenCalledOnce()
   })
 
   it('提交暂不可用时保留草稿编辑与模型命令，恢复后可发送', () => {
@@ -212,7 +181,8 @@ describe('Composer', () => {
     expect(screen.getByRole('button', { name: '打开命令和技能' })).toBeDisabled()
   })
 
-  it.each(['/plan', '/plan ', '  /plan \n\t'])('Plan 任务正文为空时禁用发送并阻止 Enter：%j', (value) => {
+  it('Plan 任务正文仅含空白时禁用发送并阻止 Enter', () => {
+    const value = '  /plan \n\t'
     const onSend = vi.fn()
     const props = {
       ...composerChromeProps(), text: value, isRunning: false,

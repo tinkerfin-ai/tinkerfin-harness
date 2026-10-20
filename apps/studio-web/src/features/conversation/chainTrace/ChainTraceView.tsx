@@ -1,3 +1,4 @@
+import { restoreFocus } from '../../../components/ui/focus'
 import { Activity, ChevronRight, Search, ShieldAlert } from 'lucide-react'
 import {
   useEffect,
@@ -109,7 +110,7 @@ const restoreTraceNodeFocus = (
     const target = trigger?.isConnected
       ? trigger
       : findTraceNodeTrigger(region, nodeId)
-    target?.focus({ preventScroll: true })
+    restoreFocus(target ?? null, { preventScroll: true })
   })
 }
 
@@ -226,7 +227,7 @@ function TraceDetails({
   useLayoutEffect(() => {
     if (visible && fullPage) closeButton.current?.focus({ preventScroll: true })
     if (!visible && detailsRef.current?.contains(document.activeElement)) {
-      findTraceNodeTrigger(document.getElementById('chain-trace-panel'), entry.id)?.focus({ preventScroll: true })
+      restoreFocus(findTraceNodeTrigger(document.getElementById('chain-trace-panel'), entry.id) ?? null, { preventScroll: true })
     }
   }, [entry.id, fullPage, visible])
 
@@ -685,7 +686,7 @@ export function ChainTraceView({
     manualClose.current = true
     detailTrigger.current = fallback
     setSelectedId(undefined)
-    window.requestAnimationFrame(() => fallback.focus())
+    window.requestAnimationFrame(() => restoreFocus(fallback))
   }
 
   const openSearch = () => {
@@ -697,7 +698,7 @@ export function ChainTraceView({
     setSearchInput('')
     setSearchQuery('')
     setSearchOpen(false)
-    window.requestAnimationFrame(() => searchTriggerRef.current?.focus())
+    window.requestAnimationFrame(() => restoreFocus(searchTriggerRef.current))
   }
 
   if (!threadId) {

@@ -210,7 +210,6 @@
     --layout-interaction-card-max-height: clamp(var(--layout-interaction-card-min-height), calc(100dvh - var(--layout-header-height) - var(--layout-interaction-card-context-reserve) - var(--space-10)), var(--layout-interaction-card-max-cap));
     --layout-interaction-card-gap: var(--space-6);
     --layout-drawer-width: 400px;
-    --workspace-view-control-width: 30px;
     --workspace-view-switch-inset: 3px;
     --stroke-workspace-icon: 1.7;
     --workspace-file-size-column: 62px;

@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, type HTMLAttributes, type ReactNode, type Ref } from 'react'
 import { DrawerHeader } from './DrawerHeader'
-import { restoreFocus } from './focus'
 
 export interface DrawerProps extends Omit<HTMLAttributes<HTMLElement>, 'title' | 'children'> {
   id: string
@@ -24,7 +23,7 @@ export function Drawer({ id, open, title, description, actions, closeLabel, back
   resizeHandle, drawerRef, className, announcement, children, onClose, ...attributes }: DrawerProps) {
   const closeRef = useRef<HTMLButtonElement>(null)
   useLayoutEffect(() => {
-    if (open) restoreFocus(closeRef.current, { preventScroll: true })
+    if (open) closeRef.current?.focus({ preventScroll: true })
   }, [open, fullPage])
   useEffect(() => {
     if (!open) return

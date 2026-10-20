@@ -1,3 +1,4 @@
+import { restoreFocus } from '../../components/ui/focus'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 export type SidebarMode = 'expanded' | 'rail' | 'overlay'
@@ -124,11 +125,11 @@ export function useWorkspaceNavigation() {
     setWideInteractive(true)
   }, [band])
 
-  const closeOverlay = useCallback((restoreFocus = true) => {
+  const closeOverlay = useCallback((returnFocus = true) => {
     if (band !== 'mobile') return
     setOverlayOpen(false)
     setWideInteractive(false)
-    if (restoreFocus) window.requestAnimationFrame(() => overlayTriggerRef.current?.focus())
+    if (returnFocus) window.requestAnimationFrame(() => restoreFocus(overlayTriggerRef.current))
   }, [band])
 
   const requestExpanded = useCallback(() => {

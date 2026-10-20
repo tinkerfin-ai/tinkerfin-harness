@@ -1,3 +1,4 @@
+import { restoreFocus } from './focus'
 import { Portal } from '@zag-js/react'
 import { Clock3 } from 'lucide-react'
 import {
@@ -135,7 +136,7 @@ export const TimePicker = forwardRef<HTMLButtonElement, TimePickerProps>(functio
   }
 
   const closeAndFocusTrigger = () => {
-    triggerRef.current?.focus()
+    restoreFocus(triggerRef.current)
     setOpen(false)
   }
 
