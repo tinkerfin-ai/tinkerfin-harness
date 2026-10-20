@@ -707,7 +707,7 @@ def wheel_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
             assert "tinkerfin_desktop/browser.mjs" not in names
             for resource in (
                 "browser_command.py",
-                "browser_config.json",
+                "browser_help.md",
                 "browser_release.json",
             ):
                 assert f"tinkerfin_desktop/{resource}" in names
@@ -772,7 +772,7 @@ async def smoke() -> None:
     elif case["smoke"] == "companion":
         root = importlib.resources.files("tinkerfin_desktop")
         assert not root.joinpath("browser.mjs").is_file()
-        for name in ("browser_command.py", "browser_config.json", "browser_release.json"):
+        for name in ("browser_command.py", "browser_help.md", "browser_release.json"):
             assert root.joinpath(name).is_file(), name
     elif case["smoke"] == "notifications":
         from tinkerfin_notifications import Notification, Notifications, NotificationScope

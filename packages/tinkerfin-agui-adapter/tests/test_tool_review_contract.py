@@ -152,8 +152,7 @@ def test_python_and_web_contract_fixtures_are_identical_and_valid() -> None:
     web_fixture_path = (
         _REPOSITORY_ROOT
         / "apps"
-        / "studio"
-        / "web"
+        / "studio-web"
         / "src"
         / "features"
         / "conversation"
