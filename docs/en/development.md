@@ -33,9 +33,34 @@ uv pip sync --default-index https://pypi.tuna.tsinghua.edu.cn/simple /tmp/tinker
 
 This installs locked versions and verifies the recorded package hashes without changing `uv.lock` or the global index configuration.
 
+## Applications and development environments
+
+Applications live in `apps/desktop`, `apps/studio-server` and `apps/studio-web`; framework libraries stay in `packages/`.
+
+After preparing the [server configuration and dependencies](../../apps/studio-server/README.md), manage this worktree's services on macOS or Linux:
+
+```bash
+pnpm --dir apps/studio-web install --frozen-lockfile
+uv run python -m scripts.dev start
+uv run python -m scripts.dev status
+uv run python -m scripts.dev stop
+```
+
+Choose configuration and ports on first startup with `--env-file`, `--api-port` and `--web-port`; subsequent starts reuse the recorded environment. Each worktree records its own process identities. Occupied ports cause an error without stopping another program. Logs live in `.cache/dev-environment/`.
+
+`start --dependencies` creates isolated Docker dependencies from the selected env file. Assign distinct published database, Redis, MinIO and sandbox ports to each worktree first. Use ordinary `start` with existing external dependencies; the tool never adopts them. `stop` preserves data. `uv run python -m scripts.dev destroy` permanently removes containers, networks and volumes created for this environment while retaining shared images and other environments.
+
+Develop the desktop client with `uv run python -m scripts.desktop_dev`. Server and unrelated web edits reuse the existing development app; desktop or bundled framework edits rebuild it. See the [desktop guide](../../apps/desktop/README.md) for downloads, installation and releases.
+
+## CI and releases
+
+Pull requests and main-branch pushes select checks from source paths and the `uv.lock` dependency graph. Web changes run web checks, server changes run server checks, and shared libraries select their consumers. The stable `Quality gate` aggregates selected jobs; failed or cancelled jobs cannot pass.
+
+Checks and releases are separate. Ordinary pushes do not publish the client. A `desktop-vX.Y.Z` tag or a manual `Desktop release` run builds and publishes the desktop package. `Studio server image` independently verifies the server image and does not upload a desktop app.
+
 ## Validate Studio Web
 
-Run `pnpm test:browser` from `apps/studio/web` to build and run the browser suite.
+Run `pnpm test:browser` from `apps/studio-web` to build and run the browser suite.
 To run a selected test file directly, build the application first:
 
 ```bash
@@ -45,7 +70,7 @@ pnpm exec playwright test tests/browser/todo-trace.spec.ts --workers=1
 
 ## Build wheels
 
-The shared build command produces the twelve framework wheels and the Studio server wheel:
+The shared build command produces wheels for framework libraries and Python applications:
 
 ```bash
 uv run --no-project --python 3.11 python scripts/build_wheels.py --out-dir dist

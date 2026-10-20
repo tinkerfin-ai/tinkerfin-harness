@@ -6,8 +6,8 @@ The TinkerFin client lets Studio conversations use files, Python, Node, an isola
 
 ## Connect
 
-1. Open TinkerFin on an Apple Silicon Mac running macOS 15 or later.
-2. Select **Connect** from its menu bar panel, then sign in to Studio in your browser and authorize the connection. After authorization succeeds, close the page and open the client from the menu bar.
+1. Download the client from [GitHub Releases](https://github.com/tinkerfin-ai/tinkerfin-harness/releases), extract it and open it on an Apple Silicon Mac running macOS 15 or later. The app is not notarized by Apple; follow the [installation instructions](../../../apps/desktop/README.md#安装与连接) if macOS blocks it.
+2. Select **Connect** from its menu bar panel, enter your Studio address, then sign in to Studio in your browser and authorize the connection. After authorization succeeds, close the page and open the client from the menu bar.
 3. Once the client shows **Connected**, select your Studio project and click the laptop icon in the header to start a local conversation.
 
 The client creates project workspaces automatically. No directory selection is required. Manage the connection in **Settings → Local devices**. Once a device has been connected, the header shows a laptop icon: green when connected, red when disconnected.
@@ -38,4 +38,4 @@ Ordinary network access requires no domain configuration. Tool permissions come 
 
 Stopping a task or revoking authorization cannot undo completed actions. Check files and application state before repeating offline work or an operation marked as uncertain. Uncertain operations are not automatically repeated.
 
-See the [client guide](../../../apps/desktop/README.md) for builds, data locations and removal.
+See the [client guide](../../../apps/desktop/README.md) for installation, builds, data locations and removal.

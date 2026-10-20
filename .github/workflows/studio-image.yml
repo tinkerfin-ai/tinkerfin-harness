@@ -4,18 +4,20 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - apps/studio/server/**
+      - apps/studio-server/**
       - packages/**
       - scripts/build_wheels.py
+      - scripts/ci_changes.py
       - pyproject.toml
       - uv.lock
       - .github/workflows/studio-image.yml
   push:
     branches: [main]
     paths:
-      - apps/studio/server/**
+      - apps/studio-server/**
       - packages/**
       - scripts/build_wheels.py
+      - scripts/ci_changes.py
       - pyproject.toml
       - uv.lock
       - .github/workflows/studio-image.yml
@@ -36,7 +38,26 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      server: ${{ steps.select.outputs.server }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.7"
+      - id: select
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: python scripts/ci_changes.py
+
   build:
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -57,7 +78,7 @@ jobs:
       - name: Read application version
         id: version
         run: |
-          version=$(python3 -c 'import runpy; print(runpy.run_path("apps/studio/server/src/tinkerfin_studio/version.py")["__version__"])')
+          version=$(python3 -c 'import runpy; print(runpy.run_path("apps/studio-server/src/tinkerfin_studio/version.py")["__version__"])')
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || exit 1
           echo "value=$version" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
@@ -66,7 +87,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: apps/studio/server/Dockerfile
+          file: apps/studio-server/Dockerfile
           target: ${{ inputs.target || 'candidate' }}
           push: false
           platforms: ${{ matrix.platform }}

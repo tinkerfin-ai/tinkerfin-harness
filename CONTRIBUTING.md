@@ -20,12 +20,12 @@ From the repository root:
 ```bash
 uv sync --locked --all-packages --group dev
 uv run ruff check --no-cache .
-uv run ruff format --no-cache --check packages apps/studio/server scripts tests
+uv run ruff format --no-cache --check packages apps/studio-server scripts tests
 uv run pyright
 uv run pytest
 ```
 
-For Studio web changes, run these commands from `apps/studio/web`:
+For Studio web changes, run these commands from `apps/studio-web`:
 
 ```bash
 pnpm install --frozen-lockfile

@@ -2,7 +2,7 @@
   <a href="README.en.md">English</a>
 </p>
 <p align="center">
-  <img src="apps/studio/web/public/brand/tinkerfin.svg" alt="TinkerFin" width="88" />
+  <img src="apps/studio-web/public/brand/tinkerfin.svg" alt="TinkerFin" width="88" />
 </p>
 <h1 align="center">TinkerFin</h1>
 <p align="center">面向企业级智能体应用与业务工作流的 Python Agent Harness</p>
@@ -50,7 +50,7 @@ Studio 使用 Docker Compose 启动依赖，本机后端使用 Python 和 uv，[
 
 ### 体验 Studio
 
-执行 `./apps/studio/server/deploy/start.sh --local` 准备依赖和本机配置，再启动后端和 Web 客户端；也支持容器部署。初始账号为 `tinkerfin`，密码为 `123456`；登录后配置自己的模型。
+执行 `./apps/studio-server/deploy/start.sh --local` 准备依赖和本机配置，再启动后端和 Web 客户端；也支持容器部署。初始账号为 `tinkerfin`，密码为 `123456`；登录后配置自己的模型。
 
 [打开 Studio 上手指南 →](docs/cn/studio/quick_start.md)
 
@@ -104,7 +104,9 @@ Studio 使用 Docker Compose 启动依赖，本机后端使用 Python 和 uv，[
 | 部分 | 用途 |
 | --- | --- |
 | `packages/` | 企业级 Agent Harness 框架包，提供执行、持久化、消息、人工审阅、追踪与工作区能力 |
-| `apps/studio/` | Studio 工作台，提供会话、计划审阅、文件与追踪界面 |
+| `apps/studio-server/` | Studio API、会话执行与业务存储 |
+| `apps/studio-web/` | Studio 网页工作台 |
+| `apps/desktop/` | 可直接安装的 macOS 本机工具客户端 |
 | `docs/` | 覆盖应用搭建、部署运维与深度集成的双语文档 |
 
 ## 文档

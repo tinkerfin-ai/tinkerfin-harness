@@ -1,0 +1,92 @@
+name: Desktop release
+
+on:
+  push:
+    tags: ["desktop-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing desktop-vX.Y.Z tag to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      LANGSMITH_TRACING: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.13"
+          enable-cache: true
+          python-version: "3.14.7"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.3"
+          cache: npm
+          cache-dependency-path: apps/desktop/runtime/package-lock.json
+      - name: Verify release identity
+        run: |
+          [[ "$RELEASE_TAG" =~ ^desktop-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          [[ "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" == "$(git rev-parse HEAD)" ]] || exit 1
+          version=$(uv run --no-project --python 3.14.7 python -c 'import tomllib; print(tomllib.load(open("apps/desktop/pyproject.toml", "rb"))["project"]["version"])')
+          [[ "$RELEASE_TAG" == "desktop-v$version" ]] || exit 1
+          [[ "$(uname -m)" == arm64 ]] || exit 1
+      - run: uv sync --locked --all-packages
+      - run: npm ci --prefix apps/desktop/runtime --ignore-scripts --no-audit --no-fund
+      - name: Verify desktop and native dependencies
+        run: |
+          uv run ruff check --no-cache apps/desktop
+          uv run ruff format --no-cache --check apps/desktop
+          uv run pyright apps/desktop/src apps/desktop/tests apps/desktop/scripts
+          swiftc -typecheck -swift-version 6 -target arm64-apple-macosx15.0 apps/desktop/native/*.swift
+          uv run pytest apps/desktop/tests packages/tinkerfin-sandbox/tests/native packages/tinkerfin-remote/tests -q
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/TinkerFin/build-inputs
+          key: desktop-inputs-arm64-${{ hashFiles('apps/desktop/scripts/runtime_inputs.py') }}
+      - name: Build ad-hoc signed application
+        run: uv run python apps/desktop/scripts/build_macos.py --output dist/TinkerFin.app
+      - name: Verify the packaged application
+        env:
+          TINKERFIN_TEST_APP: ${{ github.workspace }}/dist/TinkerFin.app
+        run: |
+          uv run pytest apps/desktop/tests/test_app_bundle.py -q
+          codesign --verify --deep --strict dist/TinkerFin.app
+          cd dist
+          shasum -a 256 -c TinkerFin.zip.sha256
+      - name: Publish verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
+          Apple Silicon · macOS 15+
+
+          Download `TinkerFin.zip`, extract it and move `TinkerFin.app` to Applications. Open the app, enter your Studio address and authorize the connection in your browser. Python, Node.js and browser tools are included; users do not need to compile anything.
+
+          This build is ad-hoc signed and is **not notarized by Apple**. If macOS blocks it, open System Settings → Privacy & Security and choose Open Anyway for TinkerFin after checking the download source. Do not disable Gatekeeper.
+
+          The ZIP checksum is attached. Third-party licenses and dependency inventories are included in `TinkerFin.app/Contents/Resources/licenses`.
+
+          [中文安装说明](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/apps/desktop/README.md)
+          EOF
+          gh release create "$RELEASE_TAG" dist/TinkerFin.zip dist/TinkerFin.zip.sha256 \
+            --verify-tag --draft --title "TinkerFin Desktop ${RELEASE_TAG#desktop-v}" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"
+          gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/release-check"
+          (cd "$RUNNER_TEMP/release-check" && shasum -a 256 -c TinkerFin.zip.sha256)
+          gh release edit "$RELEASE_TAG" --draft=false

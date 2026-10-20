@@ -1,11 +1,14 @@
 {
-  "name": "tinkerfin-companion-runtime",
+  "name": "tinkerfin-desktop-runtime",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=22.12"
   },
   "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "0.0.79"
+    "@anthropic-ai/sandbox-runtime": "0.0.79",
+    "@modelcontextprotocol/sdk": "1.25.2",
+    "@playwright/mcp": "0.0.83",
+    "playwright": "1.64.0-alpha-1790635538000"
   }
 }

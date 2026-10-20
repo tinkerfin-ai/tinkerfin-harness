@@ -19,12 +19,12 @@ from cryptography.x509.oid import NameOID
 def native_sandbox() -> Path:
     if sys.platform != "darwin":
         pytest.skip("本机端到端任务需要 macOS 原生沙箱")
-    selected = os.environ.get("TINKERFIN_TEST_SRT") or shutil.which("srt")
+    selected = os.environ.get("TINKERFIN_TEST_SRT")
     path = (
         Path(selected)
         if selected
-        else Path(__file__).resolve().parents[3]
-        / ".agents/tools/sandbox-runtime/node_modules/.bin/srt"
+        else Path(__file__).resolve().parents[1]
+        / "runtime/node_modules/@anthropic-ai/sandbox-runtime/dist/cli.js"
     )
     if not path.is_file():
         pytest.skip("需要安装固定版本原生沙箱")

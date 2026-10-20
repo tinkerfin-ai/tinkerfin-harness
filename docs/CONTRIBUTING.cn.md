@@ -20,12 +20,12 @@
 ```bash
 uv sync --locked --all-packages --group dev
 uv run ruff check --no-cache .
-uv run ruff format --no-cache --check packages apps/studio/server scripts tests
+uv run ruff format --no-cache --check packages apps/studio-server scripts tests
 uv run pyright
 uv run pytest
 ```
 
-修改 Studio 前端时，在 `apps/studio/web` 执行：
+修改 Studio 前端时，在 `apps/studio-web` 执行：
 
 ```bash
 pnpm install --frozen-lockfile

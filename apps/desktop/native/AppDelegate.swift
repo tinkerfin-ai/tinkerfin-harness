@@ -144,7 +144,8 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         guard wantsPanelVisible, !trackingStatusMenu, shutdown == nil, let panel, let button = statusItem?.button,
               let window = button.window, let screen = window.screen else { return }
         let buttonFrame = window.convertToScreen(button.convert(button.bounds, to: nil))
-        guard let geometry = PanelGeometry(anchor: buttonFrame, screen: screen.visibleFrame, contentHeight: requestedHeight) else { return }
+        guard let geometry = PanelGeometry(anchor: buttonFrame, screen: screen.visibleFrame, contentHeight: requestedHeight,
+                                           preferredWidth: content?.width ?? PanelGeometry.width) else { return }
         if content?.panelHeight != geometry.maximumContentHeight { content?.panelHeight = geometry.maximumContentHeight }
         if panel.frame != geometry.frame { panel.setFrame(geometry.frame, display: true) }
         panel.contentView?.needsLayout = true

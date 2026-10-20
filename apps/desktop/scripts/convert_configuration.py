@@ -1,24 +1,33 @@
-"""客户端退出后一次性启用正常联网并撤销选定设备的旧工作区授权"""
+"""客户端退出后一次性将固定部署地址收敛为可编辑的连接配置"""
 
 from __future__ import annotations
 
 import argparse
 import fcntl
-import hashlib
 import json
 import os
 import stat
 import tempfile
-from collections.abc import Sequence
 from contextlib import ExitStack
 from pathlib import Path
 from uuid import UUID
 
+import httpx
 from pydantic import JsonValue, TypeAdapter
 
-from tinkerfin_companion.configuration import WorkspacePermissions
+from tinkerfin_desktop.configuration import WorkspacePermissions, server_url
 
 _OBJECT = TypeAdapter(dict[str, JsonValue])
+
+
+def _address(value: str) -> str:
+    value = value.strip()
+    if len(value) > 4096 or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError("服务地址格式无效")
+    url = httpx.URL(server_url(value))
+    if url.port is not None and not 1 <= url.port <= 65535:
+        raise ValueError("服务地址端口无效")
+    return str(url).rstrip("/")
 
 
 def _read(path: Path) -> bytes:
@@ -39,23 +48,12 @@ def _directory(path: Path) -> None:
         raise ValueError("转换目录归属无效或被链接替换")
 
 
-def _permissions(value: JsonValue) -> WorkspacePermissions:
-    if not isinstance(value, dict) or set(value) != {
-        "allowed_domains",
-        "browser",
-        "desktop",
-        "mcp_servers",
-    }:
-        raise ValueError("配置不是待转换的域名授权形态")
-    return WorkspacePermissions.model_validate({"network": "restricted", **value})
-
-
 def _encoded(value: object) -> bytes:
     return (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode()
 
 
 def _replace(path: Path, content: bytes) -> None:
-    descriptor, temporary = tempfile.mkstemp(prefix=".network-policy-", dir=path.parent)
+    descriptor, temporary = tempfile.mkstemp(prefix=".connection-", dir=path.parent)
     try:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(content)
@@ -66,41 +64,33 @@ def _replace(path: Path, content: bytes) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
-def convert(
-    directory: Path, *, devices: Sequence[str], exclude_scopes: Sequence[str] = ()
-) -> Path:
-    """只转换显式设备；保留全部原文件并原位拒绝旧授权恢复
-
-    调用前必须退出客户端并收束云端旧运行。排除的 scope 仅按文件名跳过，
-    不读取其快照；数据库、目录索引、项目文件和 Keychain 均不在转换范围内。
+def convert(directory: Path, *, studio_url: str) -> Path:
+    """保留设备身份和权限，仅转换指定配置目录的服务地址
 
     Args:
-        directory: 包含 settings.json 与 state 子目录的应用配置根目录。
-        devices: 本次核验后允许转换的设备标识。
-        exclude_scopes: 保留原样且不读取的工作区授权标识。
+        directory: 已退出客户端的配置根目录。
+        studio_url: 该安装此前使用的 Studio 网页地址。
 
     Returns:
-        原文件备份与转换清单所在目录。
+        包含原 settings.json 的备份目录。
+
+    Raises:
+        ValueError: 地址或配置不符合待转换形态，或备份已存在。
+        OSError: 客户端仍在使用目录，或文件归属不符。
     """
     _directory(directory)
     directory = directory.resolve(strict=True)
-    state_directory = directory / "state"
-    _directory(state_directory)
-    if not devices or any(str(UUID(device)) != device for device in devices):
-        raise ValueError("必须明确指定规范 UUID 设备目录")
-    if any(
-        len(scope) != 64 or any(c not in "0123456789abcdef" for c in scope)
-        for scope in exclude_scopes
-    ):
-        raise ValueError("排除的工作区身份无效")
-    excluded = {
-        hashlib.sha256(scope.encode()).hexdigest() + ".json" for scope in exclude_scopes
-    }
-    backup = state_directory / "network-policy-backup"
+    studio = _address(studio_url)
+    backup = directory / "connection-backup"
     if backup.exists() or backup.is_symlink():
         raise ValueError("转换备份已存在，必须先核验上次操作")
     with ExitStack() as resources:
-        for lock in (directory / "application.lock", state_directory / "host.lock"):
+        locks = [directory / "application.lock"]
+        state = directory / "state"
+        if state.exists() or state.is_symlink():
+            _directory(state)
+            locks.append(state / "host.lock")
+        for lock in locks:
             descriptor = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             resources.callback(os.close, descriptor)
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -122,89 +112,58 @@ def convert(
             "permissions",
             "retiredAccounts",
         }.issubset(saved):
-            raise ValueError("配置不是待转换的当前客户端形态")
-        policy = _permissions(saved.get("permissions"))
-        current = {
-            **saved,
-            "permissions": policy.model_copy(
-                update={"network": "normal", "allowed_domains": ()}
-            ).model_dump(mode="json"),
-        }
-        changes: list[tuple[Path, bytes, bytes]] = []
-        skipped: list[str] = []
-        for device in dict.fromkeys(devices):
-            state = state_directory / device
-            _directory(state)
-            snapshots = state / "workspace-permissions"
-            if not snapshots.exists() and not snapshots.is_symlink():
-                continue
-            _directory(snapshots)
-            for path in sorted(snapshots.iterdir()):
-                if path.name in excluded:
-                    skipped.append(str(path.relative_to(directory)))
-                    continue
-                if path.suffix != ".json":
-                    raise ValueError("授权目录包含未识别的文件，需先核验")
-                content = _read(path)
-                grant = _OBJECT.validate_json(content, strict=True)
-                if set(grant) != {"project_id", "workspace_scope_id", "permissions"}:
-                    raise ValueError("工作区授权不是待转换形态")
-                project, scope = grant["project_id"], grant["workspace_scope_id"]
-                if (
-                    not isinstance(project, str)
-                    or str(UUID(project)) != project
-                    or not isinstance(scope, str)
-                ):
-                    raise ValueError("工作区授权身份无效")
-                if hashlib.sha256(scope.encode()).hexdigest() + ".json" != path.name:
-                    raise ValueError("工作区授权与文件身份不一致")
-                previous = _permissions(grant["permissions"])
-                grant.update(permissions=previous.model_dump(mode="json"), revoked=True)
-                changes.append((path, content, _encoded(grant)))
-        changes.append((settings, original, _encoded(current)))
+            raise ValueError("配置不是待转换的固定地址形态")
+        WorkspacePermissions.model_validate(saved["permissions"])
+        server = saved.pop("server")
+        if not isinstance(server, str):
+            raise TypeError("服务地址必须是字符串")
+        if saved.get("device") is not None and not server:
+            raise ValueError("设备缺少服务归属")
+        if server:
+            saved["connection"] = {"studio_url": studio, "api_url": _address(server)}
+        pending = saved.get("pending")
+        if pending is not None:
+            if not isinstance(pending, dict) or set(pending) - {
+                "account",
+                "server",
+                "authorization",
+            }:
+                raise ValueError("待授权记录形态无效")
+            pending_server = pending.get("server")
+            account = pending.get("account")
+            if (
+                not isinstance(pending_server, str)
+                or not isinstance(account, str)
+                or str(UUID(account)) != account
+            ):
+                raise ValueError("待授权记录身份无效")
+            if server and _address(pending_server) != _address(server):
+                raise ValueError("待授权目标与当前服务不同，请先取消待授权申请")
+            pending.pop("server")
+            pending["connection"] = {
+                "studio_url": studio,
+                "api_url": _address(pending_server),
+            }
+        converted = _encoded(saved)
         backup.mkdir(mode=0o700)
-        for path, content, _converted in changes:
-            target = backup / path.relative_to(directory)
-            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            with target.open("xb") as stream:
-                os.fchmod(stream.fileno(), 0o600)
-                stream.write(content)
-                stream.flush()
-                os.fsync(stream.fileno())
-        (backup / "manifest.json").write_bytes(
-            _encoded(
-                {
-                    "paths": [
-                        str(path.relative_to(directory)) for path, _, _ in changes
-                    ],
-                    "excluded": skipped,
-                }
-            )
-        )
-        os.chmod(backup / "manifest.json", 0o600)
-        written: list[tuple[Path, bytes]] = []
-        try:
-            for path, content, converted in changes:
-                _replace(path, converted)
-                written.append((path, content))
-        except BaseException:
-            for path, content in reversed(written):
-                _replace(path, content)
-            raise
+        with (backup / "settings.json").open("xb") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(original)
+            stream.flush()
+            os.fsync(stream.fileno())
+        _replace(settings, converted)
     return backup
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("application_directory", type=Path)
-    parser.add_argument("--device", action="append", required=True)
-    parser.add_argument("--exclude-scope", action="append", default=[])
+    parser.add_argument("--studio-url", required=True)
     args = parser.parse_args()
     try:
         backup = convert(
             args.application_directory,
-            devices=args.device,
-            exclude_scopes=args.exclude_scope,
+            studio_url=args.studio_url,
         )
     except (ValueError, TypeError, OSError):
         parser.exit(2, "转换未完成；请保留备份并核验状态\n")

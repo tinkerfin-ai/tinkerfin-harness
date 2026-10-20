@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from tinkerfin_companion.configuration import WorkspacePermissions
+from tinkerfin_desktop.configuration import WorkspacePermissions
 
 
 def test_network_policy_is_explicit_in_serialized_configuration():

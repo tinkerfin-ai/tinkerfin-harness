@@ -93,7 +93,7 @@ private final class ProcessOwner: @unchecked Sendable {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async { [process] in
                 process.executableURL = resources.appendingPathComponent("python/bin/python3")
-                process.arguments = ["-I", "-B", "-m", "tinkerfin_companion", "--resources", resources.path,
+                process.arguments = ["-I", "-B", "-m", "tinkerfin_desktop", "--resources", resources.path,
                                      "--state-directory", state.path]
                 process.environment = [
                     "PATH": resources.appendingPathComponent("node/bin").path + ":/usr/bin:/bin:/usr/sbin:/sbin",

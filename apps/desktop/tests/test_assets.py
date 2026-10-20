@@ -9,11 +9,11 @@ from pydantic import BaseModel
 from test_cloud import configuration, execution_request
 from tool_context import tool_context
 
-from tinkerfin_companion.assets import SkillDownload, SkillFile, SkillInputs
-from tinkerfin_companion.cloud import StudioClient
-from tinkerfin_companion.configuration import SkillReference
-from tinkerfin_companion.files import file_tools
 from tinkerfin_contracts.media import Attachment
+from tinkerfin_desktop.assets import SkillDownload, SkillFile, SkillInputs
+from tinkerfin_desktop.cloud import StudioClient
+from tinkerfin_desktop.configuration import SkillReference
+from tinkerfin_desktop.files import file_tools
 from tinkerfin_sandbox import LocalAccess, LocalWorkspace
 from tinkerfin_studio.skills.packages import SkillFile as PackageFile
 from tinkerfin_studio.skills.packages import parse_package

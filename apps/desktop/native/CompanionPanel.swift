@@ -2,10 +2,11 @@ import AppKit
 import Combine
 import SwiftUI
 
-enum CompanionPage: Equatable { case home, settings, permissions }
+enum CompanionPage: Equatable { case home, settings, permissions, connection }
 enum CompanionAction: Equatable, Sendable {
     case home, settings, permissions, saveSettings, openStudio, openConfiguration
     case startAuthorization, cancelAuthorization, reopenAuthorization, retry, accessibility, screenCapture
+    case editConnection, connectService, cancelConnection
 
 }
 
@@ -18,6 +19,9 @@ final class CompanionPanel: ObservableObject {
     @Published private(set) var selectingLanguage = false
     @Published private(set) var isWindowVisible = false
     @Published var name = ""
+    @Published var studioAddress = ""
+    @Published var apiAddress = ""
+    @Published var showingAPIAddress = false
     @Published private(set) var editingName = false
     @Published private(set) var nameFocusRequest: UUID?
     @Published private(set) var activeAction: CompanionAction?
@@ -75,11 +79,18 @@ final class CompanionPanel: ObservableObject {
     var canEditName: Bool { !closing && model.ready && actionTask == nil }
 
     var showsSettings: Bool { page == .home }
+    var showsConnectionForm: Bool {
+        page == .connection || (page == .home && model.ready && model.configuration == nil && model.saved.pending == nil)
+    }
+    var width: Double { showsConnectionForm ? 320 : page == .settings ? 280 : PanelGeometry.width }
+    var canEditConnection: Bool { !closing && model.ready && actionTask == nil && !model.busy }
     var primaryBusy: Bool {
         model.authorizationWaiting || model.retrying || ["loading", "connecting"].contains(model.connection)
             || activeAction == .startAuthorization || activeAction == .cancelAuthorization || activeAction == .retry
+            || activeAction == .connectService
     }
     var primaryAction: CompanionAction {
+        if showsConnectionForm { return .connectService }
         switch model.connection {
         case "online": return .openStudio
         case "authorizing": return .reopenAuthorization
@@ -88,6 +99,7 @@ final class CompanionPanel: ObservableObject {
         }
     }
     var primaryLabel: String {
+        if activeAction == .connectService { return "连接" }
         if model.authorizationWaiting || activeAction == .startAuthorization || activeAction == .cancelAuthorization { return "授权中" }
         if model.retrying || activeAction == .retry { return "重试中" }
         if ["loading", "connecting"].contains(model.connection) { return "连接中" }
@@ -103,8 +115,11 @@ final class CompanionPanel: ObservableObject {
         guard !closing else { return false }
         if activeAction == .saveSettings { return action != .saveSettings }
         switch action {
-        case .home: return activeAction != .saveSettings
-        case .settings, .permissions: return true
+        case .home: return activeAction != .saveSettings && activeAction != .connectService
+        case .settings, .permissions: return activeAction != .connectService
+        case .editConnection: return canSubmit && model.saved.pending == nil
+        case .connectService: return canSubmit && model.saved.pending == nil
+        case .cancelConnection: return canSubmit
         case .accessibility, .screenCapture: return true
         case .openStudio, .openConfiguration, .reopenAuthorization: return model.ready
         case .saveSettings: return editingName && model.ready && actionTask == nil
@@ -142,6 +157,13 @@ final class CompanionPanel: ObservableObject {
             case .home: navigate(.home)
             case .settings: navigate(.settings)
             case .permissions: model.checkPermissions(); navigate(.permissions)
+            case .editConnection:
+                studioAddress = model.configuration?.studioURL ?? ""
+                apiAddress = model.configuration?.apiURL ?? ""
+                showingAPIAddress = !apiAddress.isEmpty && apiAddress != studioAddress
+                if !showingAPIAddress { apiAddress = "" }
+                navigate(.connection)
+            case .cancelConnection: navigate(model.configuration == nil ? .home : .settings)
             case .openConfiguration: model.openConfiguration()
             case .openStudio: try model.openStudio()
             case .reopenAuthorization: try model.reopenAuthorization()
@@ -184,6 +206,17 @@ final class CompanionPanel: ObservableObject {
             try await model.saveName(name)
             name = model.saved.name; editingName = false; nameFocusRequest = nil
         case .startAuthorization: try await model.startAuthorization()
+        case .connectService:
+            do {
+                let selected = try await ServiceDiscovery().resolve(studio: studioAddress, api: apiAddress)
+                try Task.checkCancellation()
+                try await model.startAuthorization(to: selected)
+                navigate(.home)
+                close?()
+            } catch let error as ClientError {
+                if error == .message("无法识别 API 地址，请展开填写") { showingAPIAddress = true }
+                throw error
+            }
         case .cancelAuthorization: try await model.cancelAuthorization()
         case .retry: try await model.retry()
         default: break
@@ -198,6 +231,7 @@ final class CompanionPanel: ObservableObject {
         }
         switch page {
         case .permissions: perform(.settings)
+        case .connection: perform(.cancelConnection)
         case .settings: perform(.home)
         case .home: close?()
         }

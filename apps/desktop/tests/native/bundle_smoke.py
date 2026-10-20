@@ -8,10 +8,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from tinkerfin_companion.browser import BrowserBinding, BrowserManager
-from tinkerfin_companion.browser_install import BrowserProvider
-from tinkerfin_companion.configuration import WorkspacePermissions
-from tinkerfin_companion.installation import Installation
+from tinkerfin_desktop.browser import BrowserBinding, BrowserManager
+from tinkerfin_desktop.browser_install import BrowserProvider
+from tinkerfin_desktop.configuration import WorkspacePermissions
+from tinkerfin_desktop.installation import Installation
 from tinkerfin_sandbox import LocalAccess, LocalWorkspace
 
 
@@ -21,7 +21,7 @@ async def main() -> None:
     for name in (
         "tinkerfin_remote",
         "tinkerfin_sandbox",
-        "tinkerfin_companion",
+        "tinkerfin_desktop",
         "mcp",
         "websockets",
         "pydantic",
@@ -55,7 +55,7 @@ async def main() -> None:
                 profile=profile,
                 permissions=WorkspacePermissions(network="normal", browser=True),
             ) as binding:
-                module = importlib.import_module("tinkerfin_companion.browser_command")
+                module = importlib.import_module("tinkerfin_desktop.browser_command")
                 assert module.__file__ is not None
                 async with (
                     LocalWorkspace(
@@ -69,7 +69,7 @@ async def main() -> None:
                             "node": resources / "node/bin/node",
                             "npm": resources / "node/bin/npm",
                             "npx": resources / "node/bin/npx",
-                            "agent-browser": Path(module.__file__),
+                            "tinkerfin-browser": Path(module.__file__),
                         },
                         environment={
                             "TINKERFIN_BROWSER_SOCKET": str(binding.socket),
@@ -84,10 +84,32 @@ async def main() -> None:
                     )
                     assert dependencies.exit_code == 0, dependencies.output
                     assert "v22.23.3" in dependencies.output
+                    commands = [
+                        ("browser_navigate", {"url": page.as_uri()}),
+                        (
+                            "browser_evaluate",
+                            {
+                                "function": "() => document.querySelector('button').click()"
+                            },
+                        ),
+                        ("browser_snapshot", {}),
+                        (
+                            "browser_take_screenshot",
+                            {"type": "png", "filename": str(directory / "screen.png")},
+                        ),
+                    ]
                     result = await session.aexecute(
-                        f"agent-browser open {shlex.quote(page.as_uri())} && "
-                        "agent-browser click button && agent-browser snapshot -i && "
-                        "agent-browser screenshot screen.png"
+                        " && ".join(
+                            shlex.join(
+                                (
+                                    "tinkerfin-browser",
+                                    "call",
+                                    name,
+                                    json.dumps(arguments),
+                                )
+                            )
+                            for name, arguments in commands
+                        )
                     )
                     assert result.exit_code == 0, result.output
                     assert "done" in result.output

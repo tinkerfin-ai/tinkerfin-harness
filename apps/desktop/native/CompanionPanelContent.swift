@@ -58,7 +58,7 @@ struct CompanionPanelContent: View {
         .font(.system(size: 11))
         .foregroundStyle(.primary)
         .buttonStyle(CompanionPlainButtonStyle())
-        .frame(width: PanelGeometry.width, height: contentHeight, alignment: .top)
+        .frame(width: panel.width, height: contentHeight, alignment: .top)
         .overlayPreferenceValue(LanguageMenuAnchor.self) { anchor in
             if panel.selectingLanguage, let anchor {
                 GeometryReader { geometry in
@@ -85,6 +85,7 @@ struct CompanionPanelContent: View {
             }
         }
         .onChange(of: panel.panelHeight) { _, _ in resize() }
+        .onChange(of: panel.width) { _, _ in resize() }
     }
 
     private func resize() {
@@ -123,9 +124,11 @@ struct CompanionPanelContent: View {
     @ViewBuilder
     private var pageContent: some View {
         switch panel.page {
-        case .home: home
+        case .home:
+            if panel.showsConnectionForm { connectionSettings } else { home }
         case .settings: settings
         case .permissions: permissions
+        case .connection: connectionSettings
         }
     }
 
@@ -193,6 +196,25 @@ struct CompanionPanelContent: View {
         VStack(alignment: .leading, spacing: 0) {
             breadcrumbs([("本机", .home)], current: "设置")
                 .padding(.bottom, 16)
+            if let configuration = model.configuration {
+                HStack(spacing: 7) {
+                    (model.connection == "online" ? CompanionIcon.check : .offline).view(size: 12)
+                        .foregroundStyle(model.connection == "online" ? success : .secondary)
+                        .accessibilityHidden(false)
+                        .accessibilityLabel(localization.text(model.statusText))
+                    Text(configuration.studioURL.replacingOccurrences(of: "^https?://", with: "", options: .regularExpression))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(configuration.studioURL)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    rowAction("更换", symbol: .chevron, enabled: panel.canPerform(.editConnection)) { panel.perform(.editConnection) }
+                }
+                .padding(.bottom, 12)
+                Divider().padding(.bottom, 12)
+            } else {
+                rowAction("连接 Studio", symbol: .link, enabled: panel.canPerform(.editConnection)) { panel.perform(.editConnection) }
+                    .padding(.bottom, 12)
+            }
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 14) {
                 if model.saved.device != nil {
                     GridRow {
@@ -233,6 +255,34 @@ struct CompanionPanelContent: View {
                 rowAction("打开", symbol: .out) { panel.perform(.openConfiguration) }
             }.padding(.top, 14)
 
+        }
+    }
+
+    private var connectionSettings: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if panel.page == .connection {
+                breadcrumbs([("设置", .settings)], current: "更换服务")
+            } else {
+                title("连接 Studio")
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(localization.text("Studio 地址")).font(.system(size: 11, weight: .medium))
+                CompanionInput(text: $panel.studioAddress, label: localization.text("Studio 地址"),
+                               placeholder: "https://studio.example.com", enabled: panel.canEditConnection, limit: 4096,
+                               submit: { panel.perform(.connectService) })
+            }
+            DisclosureGroup(localization.text("独立 API 地址"), isExpanded: $panel.showingAPIAddress) {
+                CompanionInput(text: $panel.apiAddress, label: localization.text("API 地址"),
+                               placeholder: "https://api.example.com", enabled: panel.canEditConnection, limit: 4096,
+                               submit: { panel.perform(.connectService) })
+                    .padding(.top, 8)
+            }
+            .foregroundStyle(.secondary)
+            if model.saved.device != nil {
+                Text(localization.text("切换将停止本机执行。"))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -399,7 +449,7 @@ struct CompanionPanelContent: View {
     private var hasFooter: Bool {
         switch panel.page {
         case .settings, .permissions: return false
-        case .home: return true
+        case .home, .connection: return true
         }
     }
 
@@ -414,6 +464,9 @@ struct CompanionPanelContent: View {
                 switch panel.page {
                 case .settings, .permissions:
                     EmptyView()
+                case .connection:
+                    actionButton("取消", action: .cancelConnection)
+                    actionButton("连接", action: .connectService, primary: true, loading: panel.primaryBusy)
                 case .home:
                     actionButton(panel.primaryLabel, action: panel.primaryAction, primary: true, loading: panel.primaryBusy)
                 }

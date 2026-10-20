@@ -6,8 +6,8 @@ TinkerFin 客户端让 Studio 会话使用 Mac 上的文件、Python、Node、�
 
 ## 连接
 
-1. 在 Apple Silicon Mac（macOS 15+）上打开 TinkerFin 客户端。
-2. 点击菜单栏图标，选择“连接”，在浏览器登录自己的 Studio 账号并授权。看到授权成功后可关闭页面，从菜单栏打开客户端。
+1. 从 [GitHub Releases](https://github.com/tinkerfin-ai/tinkerfin-harness/releases) 下载客户端，在 Apple Silicon Mac（macOS 15+）上解压并打开。应用未通过 Apple 公证，打开方法见[安装说明](../../../apps/desktop/README.md#安装与连接)。
+2. 点击菜单栏图标，选择“连接”，填写 Studio 地址，再在浏览器登录自己的 Studio 账号并授权。看到授权成功后可关闭页面，从菜单栏打开客户端。
 3. 客户端显示“已连接”后，在 Studio 选择项目，再点击顶部的本地图标发起会话。
 
 项目工作区由客户端自动创建，无需选择目录。设备在“设置 → 本地设备”中管理；连接过设备后，顶部显示本地图标，绿点表示已连接，红点表示未连接。
@@ -38,4 +38,4 @@ TinkerFin 客户端让 Studio 会话使用 Mac 上的文件、Python、Node、�
 
 停止或撤销授权不能撤回已发生的操作。离线任务或显示“操作结果待核验”的任务，需先核验文件与应用状态，再决定是否重做；系统不会自动重做结果不确定的操作。
 
-构建、数据位置与卸载见[客户端说明](../../../apps/desktop/README.md)。
+安装、构建、数据位置与卸载见[客户端说明](../../../apps/desktop/README.md)。

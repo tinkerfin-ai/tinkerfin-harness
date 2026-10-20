@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from tinkerfin_companion.native import OpenURLCommand
+from tinkerfin_desktop.native import OpenURLCommand
 from tinkerfin_sandbox import LocalAccess
 
 

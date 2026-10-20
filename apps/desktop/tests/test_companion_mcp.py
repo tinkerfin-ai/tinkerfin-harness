@@ -6,8 +6,8 @@ from pydantic import BaseModel
 from test_cloud import configuration, execution_request
 from tool_context import tool_context
 
-from tinkerfin_companion.configuration import McpServerSelection
-from tinkerfin_companion.mcp import mcp_tools
+from tinkerfin_desktop.configuration import McpServerSelection
+from tinkerfin_desktop.mcp import mcp_tools
 from tinkerfin_sandbox import LocalWorkspace
 
 

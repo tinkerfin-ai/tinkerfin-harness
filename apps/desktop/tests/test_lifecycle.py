@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from tinkerfin_companion.lifecycle import settle
+from tinkerfin_desktop.lifecycle import settle
 
 
 async def test_cancelled_cleanup_waits_for_failure_without_logging_private_context(

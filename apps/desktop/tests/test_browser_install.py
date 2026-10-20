@@ -14,7 +14,7 @@ from zipfile import ZipFile, ZipInfo
 import httpx
 import pytest
 
-from tinkerfin_companion import browser_install
+from tinkerfin_desktop import browser_install
 
 RELEASE = "154.0.8037.57"
 URL = (
@@ -55,7 +55,7 @@ def release_files(tmp_path, monkeypatch):
     original = importlib.resources.files
 
     def resources(anchor):
-        return package if anchor == "tinkerfin_companion" else original(anchor)
+        return package if anchor == "tinkerfin_desktop" else original(anchor)
 
     monkeypatch.setattr(importlib.resources, "files", resources)
     monkeypatch.setattr(browser_install, "SYSTEM_APPLICATIONS", tmp_path / "system")

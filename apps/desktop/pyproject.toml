@@ -1,5 +1,5 @@
 [project]
-name = "tinkerfin-companion"
+name = "tinkerfin-desktop"
 version = "0.1.1"
 description = "TinkerFin Studio macOS tool execution companion."
 readme = "README.md"
@@ -26,4 +26,4 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-tinkerfin_companion = ["py.typed", "browser_config.json", "browser_release.json"]
+tinkerfin_desktop = ["py.typed", "browser_help.md", "browser_release.json"]

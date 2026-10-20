@@ -21,7 +21,7 @@ members = [
     "tinkerfin",
     "tinkerfin-agui-adapter",
     "tinkerfin-automation",
-    "tinkerfin-companion",
+    "tinkerfin-desktop",
     "tinkerfin-contracts",
     "tinkerfin-gateway",
     "tinkerfin-harness",
@@ -3311,7 +3311,7 @@ requires-dist = [
 provides-extras = ["gateway", "sqlalchemy"]
 
 [[package]]
-name = "tinkerfin-companion"
+name = "tinkerfin-desktop"
 version = "0.1.1"
 source = { editable = "apps/desktop" }
 dependencies = [
@@ -3686,7 +3686,7 @@ requires-dist = [{ name = "sqlalchemy", extras = ["asyncio"], specifier = "==2.0
 
 [[package]]
 name = "tinkerfin-studio"
-source = { editable = "apps/studio/server" }
+source = { editable = "apps/studio-server" }
 dependencies = [
     { name = "ag-ui-protocol" },
     { name = "aiobotocore" },
