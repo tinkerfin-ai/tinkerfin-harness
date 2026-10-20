@@ -1,12 +1,11 @@
+<p align="right">
+  <a href="README.en.md">English</a>
+</p>
 <p align="center">
   <img src="apps/studio/web/public/brand/tinkerfin.svg" alt="TinkerFin" width="88" />
 </p>
 <h1 align="center">TinkerFin</h1>
-<p align="center"><strong>面向企业级智能体应用与业务工作流的 Python Agent Harness</strong></p>
-<p align="center">
-  <a href="README.md">简体中文</a> · <a href="README.en.md">English</a> ·
-  <a href="docs/cn/index.md">中文文档</a> · <a href="docs/cn/quick_start.md">快速开始</a>
-</p>
+<p align="center">面向企业级智能体应用与业务工作流的 Python Agent Harness</p>
 <p align="center">
   <a href="docs/cn/runtime/quick_start.md"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white" /></a>
   <a href="https://www.typescriptlang.org/"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-0891B2?style=flat-square&amp;logo=typescript&amp;logoColor=white" /></a>
