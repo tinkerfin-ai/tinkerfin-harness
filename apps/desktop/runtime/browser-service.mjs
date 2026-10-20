@@ -199,10 +199,10 @@ try {
         return
       }
       if (!object(request.arguments)) { reply({ error: 'Browser arguments must be an object' }); return }
-      // 每个会话按收到的顺序执行，连接数同时限制排队数量；动作不自动重试
+      // 排队也归属调用连接；断开即关闭会话，不能留下脱离连接的待执行动作
+      active = true
       queue = queue.then(async () => {
         if (closing || socket.destroyed) return
-        active = true
         try {
           const result = await client.callTool({ name: request.name, arguments: request.arguments }, undefined, { timeout: 120_000 })
           reply({ result })

@@ -230,6 +230,7 @@ jobs:
     timeout-minutes: 20
     env:
       UV_MANAGED_PYTHON: "true"
+      TINKERFIN_TEST_SRT: ${{ github.workspace }}/apps/desktop/runtime/node_modules/@anthropic-ai/sandbox-runtime/dist/cli.js
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -250,7 +251,7 @@ jobs:
           uv run ruff format --no-cache --check apps/desktop
           uv run pyright apps/desktop/src apps/desktop/tests apps/desktop/scripts
           swiftc -typecheck -swift-version 6 -target arm64-apple-macosx15.0 apps/desktop/native/*.swift
-          uv run pytest apps/desktop/tests -q
+          uv run pytest apps/desktop/tests packages/tinkerfin-sandbox/tests/native packages/tinkerfin-remote/tests -q
 
   quality-gate:
     name: Quality gate

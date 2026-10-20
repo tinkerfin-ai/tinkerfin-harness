@@ -434,8 +434,9 @@ async def test_application_session_waits_for_service_exit(
     assert list((browser_directory / ".tinkerfin/browser-connections").iterdir()) == []
 
 
+@pytest.mark.parametrize("disconnect", ["active", "queued"])
 async def test_lost_action_connection_closes_browser_without_repeating(
-    browser_installation, browser_directory, chrome
+    browser_installation, browser_directory, chrome, disconnect
 ):
     requested = asyncio.Event()
     visits = []
@@ -473,7 +474,8 @@ async def test_lost_action_connection_closes_browser_without_repeating(
             await call(scope, "browser_navigate", {"url": url})
             visits.clear()
             requested.clear()
-            _reader, writer = await asyncio.open_unix_connection(scope.socket)
+            reader, writer = await asyncio.open_unix_connection(scope.socket)
+            writers = [writer]
             try:
                 function = "async () => { await fetch('/signal'); await new Promise(() => {}); }"
                 writer.write(
@@ -489,11 +491,34 @@ async def test_lost_action_connection_closes_browser_without_repeating(
                 )
                 await writer.drain()
                 await requested.wait()
+                abandoned = writer
+                if disconnect == "queued":
+                    _, abandoned = await asyncio.open_unix_connection(scope.socket)
+                    writers.append(abandoned)
+                    abandoned.write(
+                        json.dumps(
+                            {
+                                "token": scope.token,
+                                "method": "call",
+                                "name": "browser_evaluate",
+                                "arguments": {
+                                    "function": "async () => { await fetch('/queued'); }"
+                                },
+                            }
+                        ).encode()
+                        + b"\n"
+                    )
+                    await abandoned.drain()
+                abandoned.close()
+                await abandoned.wait_closed()
+                assert await scope.process.wait() == 0
+                assert await reader.read() == b""
+                assert len([line for line in visits if b"/signal " in line]) == 1
+                assert not any(b"/queued " in line for line in visits)
             finally:
-                writer.close()
-                await writer.wait_closed()
-            assert await scope.process.wait() == 0
-            assert len([line for line in visits if b"/signal " in line]) == 1
+                for connection in writers:
+                    connection.close()
+                    await connection.wait_closed()
     finally:
         server.close()
         await server.wait_closed()
