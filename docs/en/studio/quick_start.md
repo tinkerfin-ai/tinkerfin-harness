@@ -18,29 +18,29 @@ Prepare dependencies and local configuration with one command, then start the Py
 ```bash
 git clone https://github.com/tinkerfin-ai/tinkerfin-harness.git
 cd tinkerfin-harness
-./apps/studio/server/deploy/start.sh --local
+./apps/studio-server/deploy/start.sh --local
 uv sync --package tinkerfin-studio --locked
 uv run --package tinkerfin-studio python -m tinkerfin_studio
 ```
 
-The first start creates `apps/studio/.env`. Repeated runs reuse configuration and data. Adjust this file first if a port is occupied.
+The first start creates `apps/studio-server/.env`. Repeated runs reuse configuration and data. Adjust this file first if a port is occupied.
 
 After startup: [readiness](http://127.0.0.1:8090/health/ready) · [API docs (Swagger)](http://127.0.0.1:8090/docs). First use may require downloading the runtime image.
 
 To run the backend and its dependencies in containers, use the following command with the same `.env`. Python and uv are not required on the host:
 
 ```bash
-./apps/studio/server/deploy/start.sh --container
+./apps/studio-server/deploy/start.sh --container
 ```
 
-To choose your own passwords, change deployment addresses, or connect to existing services, see [server deployment](../../../apps/studio/server/README.md).
+To choose your own passwords, change deployment addresses, or connect to existing services, see [server deployment](../../../apps/studio-server/README.md).
 
 ## Start the Web client
 
 Open another terminal at the repository root:
 
 ```bash
-cd apps/studio/web
+cd apps/studio-web
 corepack enable
 corepack prepare pnpm@10.8.0 --activate
 pnpm install --frozen-lockfile
@@ -68,7 +68,7 @@ Open the user menu at the bottom left, select Models, and choose Add provider. S
 
 Select that connection and use Fetch models, or enter the provider's Model ID manually. Enable a chat model, make it the default, and send “Hello” to check the connection.
 
-For Ollama, start the service and install a model first. Select the native Ollama API; no placeholder key is needed. Public, local, and private-network HTTP/HTTPS addresses are supported when reachable from the backend. Container deployments need an address reachable from the container; see the [server guide](../../../apps/studio/server/README.md).
+For Ollama, start the service and install a model first. Select the native Ollama API; no placeholder key is needed. Public, local, and private-network HTTP/HTTPS addresses are supported when reachable from the backend. Container deployments need an address reachable from the container; see the [server guide](../../../apps/studio-server/README.md).
 
 To use web search or an image generation service, configure it under Settings → Services. Saving applies the configuration immediately; Test search and Test image make real requests that may consume credits.
 
@@ -93,7 +93,7 @@ uv run --package tinkerfin-studio python -c 'import asyncio, getpass; from tinke
 If the backend runs in a container, use this command from the repository root instead:
 
 ```bash
-docker compose --env-file apps/studio/.env -f apps/studio/server/deploy/docker-compose.yaml exec server python -c 'import asyncio, getpass; from tinkerfin_studio.auth.passwords import hash_password; print(asyncio.run(hash_password(getpass.getpass("New password: "))))'
+docker compose --env-file apps/studio-server/.env -f apps/studio-server/deploy/docker-compose.yaml exec server python -c 'import asyncio, getpass; from tinkerfin_studio.auth.passwords import hash_password; print(asyncio.run(hash_password(getpass.getpass("New password: "))))'
 ```
 
 Connect to the `tinkerfin` business database with your database client and use the full printed hash:
@@ -115,4 +115,4 @@ For scheduled work, see [Studio automation](automation.md).
 | Sending is disabled | An enabled default model and completed attachment uploads |
 | Conversation error | Backend logs, model configuration, and OpenSandbox availability |
 
-[Documentation](../index.md) · [Web development](../../../apps/studio/web/README.md)
+[Documentation](../index.md) · [Web development](../../../apps/studio-web/README.md)

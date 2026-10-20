@@ -130,19 +130,17 @@ struct NativeContracts {
                 from: Data(contentsOf: directory.appendingPathComponent("feedback.json")))
             let resources = directory.appendingPathComponent("resources")
             try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
-            try JSONEncoder().encode(ConnectionConfiguration(studioURL: fixture.server, apiURL: fixture.server))
-                .write(to: resources.appendingPathComponent("connection.json"))
             let state = directory.appendingPathComponent("state")
             let credentialStore = KeychainStore()
             _ = try await credentialStore.create(account: fixture.account)
             var saved = SavedConfiguration()
             saved.name = "Contract Mac"
             if mode == "retry-feedback" {
-                saved.server = fixture.server
+                saved.connection = ConnectionConfiguration(studioURL: fixture.server, apiURL: fixture.server)
                 saved.keychainAccount = fixture.account
                 saved.device = PairedDevice(deviceID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", namespace: "ns_1", name: saved.name)
             } else {
-                saved.pending = PendingConnection(account: fixture.account, server: fixture.server,
+                saved.pending = PendingConnection(account: fixture.account, connection: ConnectionConfiguration(studioURL: fixture.server, apiURL: fixture.server),
                     authorization: AuthorizationCreated(authorizationID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
                         browserToken: String(repeating: "b", count: 64), expiresAt: "2100-01-01T00:00:00Z"))
             }
@@ -230,7 +228,7 @@ struct NativeContracts {
                         try require(model.saved.pending == nil && !panel.primaryBusy && attentionCount == 0,
                             "恢复后授权终态没有结束等待或自动展开客户端")
                     } else {
-                        try require(model.saved.pending == nil && !panel.primaryBusy && panel.primaryAction == .startAuthorization,
+                        try require(model.saved.pending == nil && !panel.primaryBusy && panel.primaryAction == .connectService,
                             "授权终态未结束等待或无法重新发起授权")
                     }
                 }
@@ -241,6 +239,21 @@ struct NativeContracts {
                 try await credentialStore.remove(account: fixture.account)
                 throw error
             }
+        } else if mode == "service-cancel" {
+            let request = Task { try await ServiceDiscovery().resolve(studio: arguments[2], api: "") }
+            try await feedbackCheckpoint("discovery-request")
+            request.cancel()
+            do { _ = try await request.value; throw ClientError.message("发现请求未保持取消语义") }
+            catch is CancellationError { }
+        } else if mode == "service-discovery" || mode == "service-manual" {
+            do {
+                let value = try await ServiceDiscovery().resolve(studio: arguments[2],
+                    api: mode == "service-manual" ? "https://api.example.com/root/" : "")
+                print(String(decoding: try JSONEncoder().encode(value), as: UTF8.self))
+            } catch {
+                print((error as? ClientError)?.errorDescription ?? "unexpected-error")
+            }
+            return
         } else if mode == "configuration" {
             let cases = try JSONDecoder().decode([DomainCase].self, from: Data(contentsOf: directory.appendingPathComponent("domains.json")))
             for item in cases {
@@ -261,7 +274,7 @@ struct NativeContracts {
             invalid.allowedDomains = ["example.com"]
             try require((try? JSONEncoder().encode(invalid)) == nil, "正常联网接受了冲突的域名列表")
             var configuration = SavedConfiguration()
-            configuration.server = "https://studio.example.com"
+            configuration.connection = ConnectionConfiguration(studioURL: "https://studio.example.com", apiURL: "https://api.example.com")
             configuration.keychainAccount = UUID().uuidString
             configuration.permissions.network = .restricted
             configuration.permissions.allowedDomains = ["example.com"]
@@ -280,8 +293,8 @@ struct NativeContracts {
             first = nil
             _ = try ApplicationLock(directory: state)
             let owner = PairedDevice(deviceID: UUID().uuidString, namespace: "ns_1", name: "Mac")
-            configuration.acceptAuthorization(owner, at: configuration.server)
-            configuration.acceptAuthorization(owner, at: configuration.server)
+            configuration.acceptAuthorization(owner, at: configuration.connection!)
+            configuration.acceptAuthorization(owner, at: configuration.connection!)
             try require(configuration.device == owner && configuration.permissions.allowedDomains == ["example.com"], "重新连接改变了本机工具配置")
         } else if mode == "managed-projects" {
             let root = directory.appendingPathComponent("projects", isDirectory: true)
@@ -313,11 +326,9 @@ struct NativeContracts {
             let keychain = KeychainStore()
             let resources = directory.appendingPathComponent("resources")
             try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
-            try JSONEncoder().encode(ConnectionConfiguration(studioURL: "https://studio.test", apiURL: "https://studio.test"))
-                .write(to: resources.appendingPathComponent("connection.json"))
             let state = directory.appendingPathComponent("state")
             var saved = SavedConfiguration()
-            saved.server = "https://studio.test"; saved.name = "Contract Mac"; saved.keychainAccount = account
+            saved.connection = ConnectionConfiguration(studioURL: "https://studio.test", apiURL: "https://studio.test"); saved.name = "Contract Mac"; saved.keychainAccount = account
             saved.device = PairedDevice(deviceID: UUID().uuidString, namespace: "ns_1", name: saved.name)
             try await ConfigurationStore(directory: state).save(saved)
             _ = try await keychain.create(account: account)
@@ -364,8 +375,6 @@ struct NativeContracts {
         } else if mode == "panel-drafts" {
             let resources = directory.appendingPathComponent("resources")
             try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
-            try JSONEncoder().encode(ConnectionConfiguration(studioURL: "https://studio.test", apiURL: "https://studio.test"))
-                .write(to: resources.appendingPathComponent("connection.json"))
             let state = directory.appendingPathComponent("state")
             var saved = SavedConfiguration(); saved.name = "Contract Mac"
             try await ConfigurationStore(directory: state).save(saved)
@@ -486,6 +495,9 @@ struct NativeContracts {
             let saved = try await ConfigurationStore(directory: directory).read()
             try require(saved.name == "Contract Mac" && saved.permissions.network == .normal && saved.permissions.allowedDomains.isEmpty,
                 "转换后的配置无法完整读取")
+            try require(saved.connection == ConnectionConfiguration(studioURL: "https://studio.example.com", apiURL: "https://api.example.com/root"),
+                "转换后的服务地址不完整")
+            try require(saved.pending?.connection == saved.connection, "转换后的待授权服务归属变化")
         } else if mode == "connect-link" {
             for address in ["tinkerfin://connect", "tinkerfin://connect?state=online",
                             "tinkerfin://connect?state=unauthorized&device=untrusted"] {
@@ -500,12 +512,10 @@ struct NativeContracts {
         } else if mode == "pending-recovery" {
             let resources = directory.appendingPathComponent("resources")
             try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
-            try JSONEncoder().encode(ConnectionConfiguration(studioURL: "https://studio.test", apiURL: "https://studio.test"))
-                .write(to: resources.appendingPathComponent("connection.json"))
             let state = directory.appendingPathComponent("state")
             var saved = SavedConfiguration()
             saved.name = "Contract Mac"
-            saved.pending = PendingConnection(account: UUID().uuidString.lowercased(), server: "https://studio.test",
+            saved.pending = PendingConnection(account: UUID().uuidString.lowercased(), connection: ConnectionConfiguration(studioURL: "https://studio.test", apiURL: "https://studio.test"),
                 authorization: AuthorizationCreated(authorizationID: UUID().uuidString.lowercased(),
                     browserToken: String(repeating: "b", count: 64), expiresAt: "2100-01-01T00:00:00Z"))
             try await ConfigurationStore(directory: state).save(saved)

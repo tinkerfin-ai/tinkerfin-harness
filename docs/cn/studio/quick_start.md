@@ -18,29 +18,29 @@ MySQL、Redis、OpenSandbox 和 MinIO 通过 Docker 启动；Studio 后端和 We
 ```bash
 git clone https://github.com/tinkerfin-ai/tinkerfin-harness.git
 cd tinkerfin-harness
-./apps/studio/server/deploy/start.sh --local
+./apps/studio-server/deploy/start.sh --local
 uv sync --package tinkerfin-studio --locked
 uv run --package tinkerfin-studio python -m tinkerfin_studio
 ```
 
-首次启动会生成 `apps/studio/.env`。重复执行会复用配置和数据；端口被占用时需先调整该文件。
+首次启动会生成 `apps/studio-server/.env`。重复执行会复用配置和数据；端口被占用时需先调整该文件。
 
 后端就绪后可查看[健康状态](http://127.0.0.1:8090/health/ready)和 [Swagger 接口文档](http://127.0.0.1:8090/docs)。首次使用时可能需要下载运行镜像。
 
 后端和依赖全部容器化时，执行以下命令，共用同一份 `.env`，不需要宿主机安装 Python 或 uv：
 
 ```bash
-./apps/studio/server/deploy/start.sh --container
+./apps/studio-server/deploy/start.sh --container
 ```
 
-需要自定义密码、部署地址或复用已有服务时，见[服务端部署说明](../../../apps/studio/server/README.md)。
+需要自定义密码、部署地址或复用已有服务时，见[服务端部署说明](../../../apps/studio-server/README.md)。
 
 ## 启动 Web
 
 另开一个终端，从仓库根目录执行：
 
 ```bash
-cd apps/studio/web
+cd apps/studio-web
 corepack enable
 corepack prepare pnpm@10.8.0 --activate
 pnpm install --frozen-lockfile
@@ -68,7 +68,7 @@ pnpm dev
 
 选择连接，点击“获取模型”添加所需模型，或手动填写服务商提供的 Model ID。启用一个对话模型并设为默认，发送一句“你好”确认连接。
 
-使用 Ollama 时，先启动服务并安装模型，连接选择 Ollama 原生 API，无需占位密钥。支持后端可达的公网、本机及内网 HTTP/HTTPS 地址；容器部署需填写容器可访问的地址，见[服务端说明](../../../apps/studio/server/README.md)。
+使用 Ollama 时，先启动服务并安装模型，连接选择 Ollama 原生 API，无需占位密钥。支持后端可达的公网、本机及内网 HTTP/HTTPS 地址；容器部署需填写容器可访问的地址，见[服务端说明](../../../apps/studio-server/README.md)。
 
 需要网页搜索或专用生图时，在“设置 → 服务连接”填写对应服务。保存后即可使用；“测试搜索”和“试生成”会实际调用服务，可能消耗额度。
 
@@ -95,7 +95,7 @@ uv run --package tinkerfin-studio python -c 'import asyncio, getpass; from tinke
 后端在容器中运行时，在仓库根目录改用：
 
 ```bash
-docker compose --env-file apps/studio/.env -f apps/studio/server/deploy/docker-compose.yaml exec server python -c 'import asyncio, getpass; from tinkerfin_studio.auth.passwords import hash_password; print(asyncio.run(hash_password(getpass.getpass("New password: "))))'
+docker compose --env-file apps/studio-server/.env -f apps/studio-server/deploy/docker-compose.yaml exec server python -c 'import asyncio, getpass; from tinkerfin_studio.auth.passwords import hash_password; print(asyncio.run(hash_password(getpass.getpass("New password: "))))'
 ```
 
 在数据库客户端连接业务库 `tinkerfin`，将输出的完整哈希用于：
@@ -117,4 +117,4 @@ UPDATE users SET password_hash = '<生成的完整哈希>' WHERE username = 'tin
 | 无法发送消息 | 是否已添加并启用默认模型，附件是否上传完成 |
 | 会话异常 | 查看后端日志和模型配置，并确认 OpenSandbox 可用 |
 
-[返回文档首页](../index.md) · [Web 开发说明](../../../apps/studio/web/README.md)
+[返回文档首页](../index.md) · [Web 开发说明](../../../apps/studio-web/README.md)

@@ -63,7 +63,7 @@ default = true
 [tool.uv.workspace]
 members = [
     "packages/*",
-    "apps/studio/server",
+    "apps/studio-server",
     "apps/desktop",
 ]
 
@@ -72,8 +72,7 @@ target-version = "py311"
 line-length = 88
 src = [
     "packages/*/src",
-    "apps/*/*/src",
-    "apps/desktop/src",
+    "apps/*/src",
 ]
 
 [tool.ruff.lint]
@@ -124,8 +123,8 @@ include = [
     "packages/tinkerfin-notifications/tests",
     "packages/tinkerfin-gateway/src",
     "packages/tinkerfin-gateway/tests",
-    "apps/studio/server/src",
-    "apps/studio/server/tests",
+    "apps/studio-server/src",
+    "apps/studio-server/tests",
     "apps/desktop/src",
     "apps/desktop/tests",
     "apps/desktop/scripts",
@@ -151,7 +150,7 @@ markers = [
 testpaths = [
     "tests",
     "packages",
-    "apps/studio/server",
+    "apps/studio-server",
     "apps/desktop",
 ]
 

@@ -8,9 +8,9 @@ from pathlib import Path
 _REPOSITORY_ROOT = Path(__file__).parents[1]
 _ROOTS = (
     *sorted((_REPOSITORY_ROOT / "packages").glob("*/src")),
-    _REPOSITORY_ROOT / "apps" / "studio" / "server" / "src",
-    _REPOSITORY_ROOT / "apps" / "studio" / "server" / "database",
-    _REPOSITORY_ROOT / "apps" / "studio" / "web" / "src",
+    _REPOSITORY_ROOT / "apps" / "studio-server" / "src",
+    _REPOSITORY_ROOT / "apps" / "studio-server" / "database",
+    _REPOSITORY_ROOT / "apps" / "studio-web" / "src",
 )
 _TEXT_SUFFIXES = frozenset(
     {".json", ".md", ".py", ".pyi", ".sql", ".ts", ".tsx", ".txt"}

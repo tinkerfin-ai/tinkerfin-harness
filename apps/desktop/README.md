@@ -2,51 +2,47 @@
 
 在 Apple Silicon Mac 上为 Studio 会话执行文件、命令、浏览器、桌面和已授权的 MCP 工具。模型由 Studio 服务端调用。应用包含 Python、Node.js、原生沙箱和浏览器工具，需要 macOS 15 或更新版本。网页操作优先使用系统 Chrome；没有可用版本时自动下载独立浏览器，并始终使用客户端自己的浏览器资料目录。
 
-在本机客户端点击“连接”，再通过浏览器授权连接 Studio 账号。在 Studio 网页选择本地设备后，客户端自动准备项目工作区；设备名称、语言与系统权限可在客户端设置中管理。使用流程见[本机协作指南](../../docs/cn/studio/local_devices.md)。
+## 安装与连接
 
-## 构建应用
+1. 从 [GitHub Releases](https://github.com/tinkerfin-ai/tinkerfin-harness/releases) 下载 TinkerFin Desktop 的 `TinkerFin.zip`，解压并将 `TinkerFin.app` 移到“应用程序”。无需安装开发工具或自行编译。
+2. 打开客户端，在菜单栏点击“连接”，填写 Studio 网页地址，再在浏览器登录并授权。API 使用独立地址时，可展开高级设置填写；地址不含 `/api`。
+3. 客户端显示“已连接”后，在 Studio 网页选择本地设备。完整流程见[本机协作指南](../../docs/cn/studio/local_devices.md)。
 
-构建需要 Apple Silicon Mac、macOS 15 SDK、Swift 6、uv、Node.js ≥22.12 与 npm，以及以下固定运行时：
+应用使用 ad-hoc 签名，**未通过 Apple 公证**。macOS 阻止打开时，核对下载来源后，在“系统设置 → 隐私与安全性”中找到 TinkerFin 并选择“仍要打开”；不要关闭系统安全保护；操作见 [Apple 说明](https://support.apple.com/en-us/102445)。ZIP 的 SHA-256 文件随发行包提供。
 
-- [Python 3.11.14 完整发行包（20251031，Apple Silicon，pgo+lto）](https://github.com/astral-sh/python-build-standalone/releases/download/20251031/cpython-3.11.14%2B20251031-aarch64-apple-darwin-pgo%2Blto-full.tar.zst)，包含静态依赖许可证；构建脚本校验固定 SHA-256
-- [Node.js 22.23.3 darwin-arm64 官方发行包](https://nodejs.org/dist/v22.23.3/node-v22.23.3-darwin-arm64.tar.gz)，构建脚本校验固定 SHA-256
-- `runtime/package-lock.json` 锁定的原生沙箱依赖
-- `agent-browser` 0.33.2 的托管构建，包含与程序匹配的技能内容及许可证
+在设置中的服务地址旁点击“更换”可连接其他 Studio；新授权成功后停止原服务的本机执行并切换。地址须使用 HTTPS，HTTP 仅允许本机回环开发地址。网页部署应设置 `VITE_STUDIO_API_ADDRESS`，供客户端发现 API；无法发现时需要手动填写。
 
-从仓库根目录准备依赖和浏览器工具：
+## 开发与构建
+
+构建需要 Apple Silicon Mac、macOS 15 SDK、Swift 6 和 uv。在仓库根目录执行：
 
 ```bash
 uv sync --locked --all-packages
-npm ci --prefix apps/desktop/runtime --ignore-scripts
-uv run python apps/desktop/scripts/build_browser_cli.py \
-  --output /path/to/browser-runtime/agent-browser
+uv run python -m scripts.desktop_dev
 ```
 
-在 `apps/desktop/resources/connection.json` 中设置部署地址：
+开发入口按当前桌面源码及其依赖选择应用；输入变化时重建，只有 Studio 服务端或无关网页代码变化时复用已有应用。`--build-only` 只构建。切换工作树前先退出正在运行的 TinkerFin，避免多个客户端占用同一设备状态。
 
-```json
-{
-  "studio_url": "https://studio.example.com",
-  "api_url": "https://api.example.com"
-}
-```
-
-`studio_url` 是浏览器打开的 Studio 地址；`api_url` 是服务端根地址，不含 `/api`。构建 Studio 网页时，将 `VITE_STUDIO_API_ADDRESS` 设置为相同的 `api_url`。地址随应用构建固定，只有本机开发的回环地址允许使用 HTTP。
-
-将运行时和浏览器工具路径替换为实际位置。浏览器工具旁的构建清单和 `agent-browser-assets` 目录必须保留。输出路径及其同名 ZIP 必须不存在：
+生成独立分发包：
 
 ```bash
-uv run python apps/desktop/scripts/build_macos.py \
-  --python-archive /path/to/cpython-3.11.14-aarch64-full.tar.zst \
-  --node-archive /path/to/node-v22.23.3-darwin-arm64.tar.gz \
-  --browser-cli /path/to/browser-runtime/agent-browser \
-  --configuration apps/desktop/resources/connection.json \
-  --output 'dist/TinkerFin.app'
+uv run python apps/desktop/scripts/build_macos.py --output dist/TinkerFin.app
 ```
 
-构建从当前源码制作 wheel，并从 `uv.lock` 安装第三方依赖。浏览器工具构建固定上游提交与 Rust 工具链，应用构建核验程序、托管补丁、技能文件和许可证的摘要。输出包含 `.app`、ZIP 和 ZIP 摘要；应用内保留依赖许可证与清单。运行用户无需安装 Python、Node 或 Docker。
+输出路径及同名 ZIP 必须不存在。构建从当前源码制作 wheel，按 `uv.lock` 安装 Python 依赖，按 npm 锁文件安装官方 Playwright MCP、Playwright 和原生沙箱；无需单独编译浏览器工具。
 
-默认使用 ad-hoc 签名，供开发验收。正式分发使用 `--identity 'Developer ID Application: …'`，然后在发布环境完成 Apple 公证与 stapling。ad-hoc 构建不提供跨构建的稳定 Keychain 身份；替换开发包后，macOS 可能要求认证才能读取已有设备凭证。先在系统提示中完成认证，凭证仍不可用时再重新连接。构建不会安装到 `/Applications` 或上传产物。
+固定的 Python 3.11.14 与 Node.js 22.23.3 官方分发包缓存在 `~/Library/Caches/TinkerFin/build-inputs`，每次使用均校验 SHA-256，多个工作树可共用。`--cache` 可指定缓存位置；离线时可通过 `--python-archive`、`--node-archive` 指定同一固定分发包。缓存损坏时命令会报出文件路径，移除该文件后重新下载。
+
+输出包含 `.app`、ZIP 和 ZIP 摘要，应用内保存第三方许可证与依赖清单。默认 ad-hoc 签名；构建不会安装或上传产物。替换应用后 macOS 可能要求重新认证 Keychain，完成系统认证后仍无法读取凭证时，重新连接设备。
+
+## 发布
+
+`Desktop release` 工作流只由 `desktop-vX.Y.Z` 标签或选择现有标签的手动操作触发。标签版本必须与 `pyproject.toml` 中的桌面版本一致。工作流在 Apple Silicon 上执行检查、构建和完整应用验收，校验上传附件后才公开 Release。普通推送和 PR 只运行受影响的检查。
+
+```bash
+git tag desktop-v0.1.1
+git push origin desktop-v0.1.1
+```
 
 ## 验证
 
@@ -63,7 +59,7 @@ TINKERFIN_TEST_APP='/absolute/path/TinkerFin.app' \
 
 自动化浏览器继承本机工作区的文件、账号和进程隔离。macOS 不允许进程再次应用沙箱，专用 Chrome 因此使用 `--no-sandbox`，不具备 Chrome 自身额外的渲染器沙箱；这不影响日常浏览器的启动配置。
 
-辅助功能、屏幕录制、真实桌面动作和正式签名下的升级，需要在获授权的 macOS 会话中分别验收。原生沙箱不能保证终止主动脱离进程组的后台工作；停止后的不确定结果必须在本机核验。
+辅助功能、屏幕录制、真实桌面动作和系统权限授权及应用替换，需要在获授权的 macOS 会话中分别验收。原生沙箱不能保证终止主动脱离进程组的后台工作；停止后的不确定结果必须在本机核验。
 
 ## 数据与卸载
 

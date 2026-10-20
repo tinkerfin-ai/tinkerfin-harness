@@ -19,7 +19,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      scripts: ${{ steps.select.outputs.scripts }}
+      server: ${{ steps.select.outputs.server }}
+      web: ${{ steps.select.outputs.web }}
+      packages: ${{ steps.select.outputs.packages }}
+      wheels: ${{ steps.select.outputs.wheels }}
+      desktop: ${{ steps.select.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.7"
+      - id: select
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: python scripts/ci_changes.py
+
   script-checks:
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
     name: Script checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -37,6 +61,8 @@ jobs:
         run: python -m pytest -c .github/pytest-scripts.ini tests/test_studio_checks.py
 
   repository-and-studio:
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -51,10 +77,12 @@ jobs:
         run: ./scripts/verify-studio-server.sh
 
   web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
     defaults:
       run:
-        working-directory: apps/studio/web
+        working-directory: apps/studio-web
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -67,13 +95,15 @@ jobs:
         with:
           node-version: "22.23.2"
           cache: pnpm
-          cache-dependency-path: apps/studio/web/pnpm-lock.yaml
+          cache-dependency-path: apps/studio-web/pnpm-lock.yaml
       - name: Install locked web dependencies
         run: pnpm install --frozen-lockfile
       - name: Test, lint, build and check web packaging without Chromium
         run: python "${{ github.workspace }}/scripts/studio_checks.py" web-no-browser
 
   web-browser:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     strategy:
@@ -82,7 +112,7 @@ jobs:
         shard: [1, 2, 3]
     defaults:
       run:
-        working-directory: apps/studio/web
+        working-directory: apps/studio-web
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -92,13 +122,13 @@ jobs:
         with:
           node-version: "22.23.2"
           cache: pnpm
-          cache-dependency-path: apps/studio/web/pnpm-lock.yaml
+          cache-dependency-path: apps/studio-web/pnpm-lock.yaml
       - name: Install locked web dependencies
         run: pnpm install --frozen-lockfile
       - uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/studio/web/pnpm-lock.yaml') }}
+          key: chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/studio-web/pnpm-lock.yaml') }}
       - name: Use Ubuntu HTTPS mirrors
         run: |
           printf 'https://archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://security.ubuntu.com/ubuntu/\tpriority:2\n' |
@@ -121,6 +151,8 @@ jobs:
           retention-days: 7
 
   static-checks:
+    needs: changes
+    if: needs.changes.outputs.packages == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -143,6 +175,8 @@ jobs:
         run: uv run pyright -p pyright-packages-strict.json
 
   packages:
+    needs: changes
+    if: needs.changes.outputs.packages == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:
@@ -160,6 +194,8 @@ jobs:
           -n 4 --dist=loadfile --durations=20 -o faulthandler_timeout=60
 
   wheel-boundaries:
+    needs: changes
+    if: needs.changes.outputs.wheels == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -187,17 +223,49 @@ jobs:
         env:
           UV_OFFLINE: "true"
 
+  desktop:
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      UV_MANAGED_PYTHON: "true"
+      TINKERFIN_TEST_SRT: ${{ github.workspace }}/apps/desktop/runtime/node_modules/@anthropic-ai/sandbox-runtime/dist/cli.js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.13"
+          enable-cache: true
+          python-version: "3.14.7"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.3"
+          cache: npm
+          cache-dependency-path: apps/desktop/runtime/package-lock.json
+      - run: uv sync --locked --all-packages
+      - run: npm ci --prefix apps/desktop/runtime --ignore-scripts --no-audit --no-fund
+      - name: Check desktop code and native contracts
+        run: |
+          uv run ruff check --no-cache apps/desktop
+          uv run ruff format --no-cache --check apps/desktop
+          uv run pyright apps/desktop/src apps/desktop/tests apps/desktop/scripts
+          swiftc -typecheck -swift-version 6 -target arm64-apple-macosx15.0 apps/desktop/native/*.swift
+          uv run pytest apps/desktop/tests packages/tinkerfin-sandbox/tests/native packages/tinkerfin-remote/tests -q
+
   quality-gate:
     name: Quality gate
     if: always()
-    needs: [script-checks, repository-and-studio, web, web-browser, static-checks, packages, wheel-boundaries]
+    needs: [changes, script-checks, repository-and-studio, web, web-browser, static-checks, packages, wheel-boundaries, desktop]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require every check to succeed
+      - name: Require selected checks to succeed
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
+          SELECTION: ${{ needs.changes.result }}
         run: |
+          [[ "$SELECTION" == success ]] || exit 1
           for result in $RESULTS; do
-            [[ "$result" == success ]] || exit 1
+            [[ "$result" == success || "$result" == skipped ]] || exit 1
           done

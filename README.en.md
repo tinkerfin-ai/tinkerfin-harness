@@ -2,7 +2,7 @@
   <a href="README.md">简体中文</a>
 </p>
 <p align="center">
-  <img src="apps/studio/web/public/brand/tinkerfin.svg" alt="TinkerFin" width="88" />
+  <img src="apps/studio-web/public/brand/tinkerfin.svg" alt="TinkerFin" width="88" />
 </p>
 <h1 align="center">TinkerFin</h1>
 <p align="center">A Python agent harness for enterprise applications and workflows.</p>
@@ -52,7 +52,7 @@ covers the required services and configuration.
 
 ### Try Studio
 
-Run `./apps/studio/server/deploy/start.sh --local` to prepare dependencies and local configuration, then start the backend and Web client. Container deployment is also supported. Sign in with the initial username `tinkerfin` and password `123456`, then configure your model.
+Run `./apps/studio-server/deploy/start.sh --local` to prepare dependencies and local configuration, then start the backend and Web client. Container deployment is also supported. Sign in with the initial username `tinkerfin` and password `123456`, then configure your model.
 
 [Open the Studio setup guide →](docs/en/studio/quick_start.md)
 
@@ -106,7 +106,9 @@ Create one-time or recurring tasks, follow their execution, and open the resulti
 | Part | Purpose |
 | --- | --- |
 | `packages/` | Enterprise agent harness packages for execution, persistence, messaging, human review, tracing, and workspaces |
-| `apps/studio/` | Studio interface for conversations, plan review, files, and traces |
+| `apps/studio-server/` | Studio API, conversation execution, and application storage |
+| `apps/studio-web/` | Studio web interface |
+| `apps/desktop/` | Installable macOS client for local tools |
 | `docs/` | Bilingual documentation for application development, deployment, operations, and advanced integration |
 
 ## Documentation

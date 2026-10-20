@@ -10,13 +10,13 @@ import pytest
 from pydantic import SecretStr, ValidationError
 from websockets.asyncio.server import ServerConnection, serve
 
-from tinkerfin_companion.cloud import CloudError, DeviceCapabilities, StudioClient
-from tinkerfin_companion.configuration import (
+from tinkerfin_contracts import RunIdentity
+from tinkerfin_contracts.media import Attachment
+from tinkerfin_desktop.cloud import CloudError, DeviceCapabilities, StudioClient
+from tinkerfin_desktop.configuration import (
     CompanionConfiguration,
     ExecutionConfiguration,
 )
-from tinkerfin_contracts import RunIdentity
-from tinkerfin_contracts.media import Attachment
 from tinkerfin_remote import WorkspaceRequest
 
 

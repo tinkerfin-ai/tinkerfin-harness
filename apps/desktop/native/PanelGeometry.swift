@@ -8,8 +8,8 @@ struct PanelGeometry {
     let maximumContentHeight: Double
 
     /// 锚点尚无可用显示空间时返回 nil，等待状态栏窗口完成布局
-    init?(anchor: NSRect, screen: NSRect, contentHeight: Double) {
-        let width = min(Self.width, screen.width - 16)
+    init?(anchor: NSRect, screen: NSRect, contentHeight: Double, preferredWidth: Double = Self.width) {
+        let width = min(preferredWidth, screen.width - 16)
         let top = min(anchor.minY, screen.maxY) - 2
         maximumContentHeight = top - screen.minY - 8
         guard !anchor.isEmpty, width > 0, maximumContentHeight > 0, contentHeight > 0 else { return nil }

@@ -33,11 +33,11 @@ from websockets.frames import Close
 from websockets.http11 import Request, Response
 
 from tinkerfin import AgUiResumeRequest, TinkerFin
-from tinkerfin_companion import host as host_module
-from tinkerfin_companion.cloud import CloudError
-from tinkerfin_companion.configuration import CompanionConfiguration
-from tinkerfin_companion.host import CompanionHost, ConnectionState
 from tinkerfin_contracts.media import Attachment
+from tinkerfin_desktop import host as host_module
+from tinkerfin_desktop.cloud import CloudError
+from tinkerfin_desktop.configuration import CompanionConfiguration
+from tinkerfin_desktop.host import CompanionHost, ConnectionState
 from tinkerfin_remote import RemoteTools
 
 

@@ -55,7 +55,7 @@ final class CompanionModel: ObservableObject {
     private let workspaceAccess = WorkspaceAccess()
     private let desktop = DesktopAccess()
     private let client = AuthorizationClient()
-    private var configuration: ConnectionConfiguration?
+    var configuration: ConnectionConfiguration? { saved.connection }
     private var store: ConfigurationStore?
     private var lifetimeLock: ApplicationLock?
     private var operation: Task<Void, Error>?
@@ -73,7 +73,7 @@ final class CompanionModel: ObservableObject {
         stateSelection = state; self.resources = resources
         localization = ClientLocalization(resources: resources)
     }
-    var ready: Bool { store != nil && configuration != nil }
+    var ready: Bool { store != nil }
     var connection: String {
         if saved.pending?.authorization != nil { return "authorizing" }
         switch status {
@@ -86,7 +86,9 @@ final class CompanionModel: ObservableObject {
     var statusText: String {
         switch connection {
         case "online": return "已连接"
-        case "authorizing", "loading", "connecting": return "未连接"
+        case "authorizing": return "等待授权"
+        case "loading": return "正在启动"
+        case "connecting": return "正在连接"
         case "revoked": return "连接已失效"
         default: return "未连接"
         }
@@ -114,8 +116,16 @@ final class CompanionModel: ObservableObject {
             let (lock, directory) = try await self.workspaceAccess.lockState(self.stateSelection)
             self.lifetimeLock = lock
             let store = ConfigurationStore(directory: directory)
-            let configuration = try await store.readConnection(resources: self.resources)
             var saved = try await store.read()
+            saved.connection = try saved.connection?.checked()
+            if let pending = saved.pending {
+                guard try pending.connection.checked() == pending.connection else {
+                    throw ClientError.message("本机授权记录无效，请检查应用配置")
+                }
+            }
+            guard saved.device == nil || saved.connection != nil else {
+                throw ClientError.message("本机连接配置不完整，请先转换应用配置")
+            }
             guard saved.retiredAccounts.count <= 64,
                   (saved.keychainAccount.map { UUID(uuidString: $0) != nil } ?? true),
                   saved.retiredAccounts.allSatisfy({ UUID(uuidString: $0) != nil }),
@@ -126,10 +136,10 @@ final class CompanionModel: ObservableObject {
             if saved.name.isEmpty { saved.name = Host.current().localizedName ?? self.localization.text("我的 Mac") }
             _ = try await self.workspaceAccess.prepareProjects(directory.appendingPathComponent("projects", isDirectory: true))
             try await store.save(saved)
-            self.store = store; self.configuration = configuration; self.saved = saved
+            self.store = store; self.saved = saved
             self.checkPermissions()
             try await self.cleanRetiredAccounts()
-            if let pending = self.saved.pending, pending.server != configuration.apiURL || pending.authorization == nil {
+            if let pending = self.saved.pending, pending.authorization == nil {
                 try await self.discardPending()
             }
             self.status = self.saved.device == nil ? "unpaired" : "offline"
@@ -142,20 +152,19 @@ final class CompanionModel: ObservableObject {
         guard let store, let configuration, let device = saved.device, let account = saved.keychainAccount else {
             status = "unpaired"; return
         }
-        guard saved.server == configuration.apiURL else { status = "unauthorized"; throw ClientError.message("连接配置已变化，请重新连接") }
         if backend.isRunning { return }
         let secret: String
         do { secret = try await keychain.read(account: account) }
         catch { status = "unauthorized"; throw error }
         if device.name != saved.name {
             var next = saved
-            next.device = try await client.rename(server: checkedServer(saved.server), deviceID: device.deviceID, credential: secret, name: saved.name)
+            next.device = try await client.rename(server: checkedServer(configuration.apiURL), deviceID: device.deviceID, credential: secret, name: saved.name)
             try await store.save(next); saved = next
         }
         do {
             try Task.checkCancellation(); status = "connecting"
             let readiness = checkPermissions()
-            try await backend.start(configuration: HostConfiguration(server: saved.server, deviceID: device.deviceID,
+            try await backend.start(configuration: HostConfiguration(server: configuration.apiURL, deviceID: device.deviceID,
                 namespace: device.namespace, credential: secret,
                 workspaceRoot: store.directory.appendingPathComponent("projects", isDirectory: true).path,
                 permissions: saved.permissions), readiness: readiness, resources: resources,
@@ -180,15 +189,21 @@ final class CompanionModel: ObservableObject {
         } catch { retrying = false; throw error }
     }
 
-    func startAuthorization() async throws {
-        if saved.pending?.authorization != nil { try reopenAuthorization(); return }
+    func startAuthorization(to target: ConnectionConfiguration? = nil) async throws {
+        if let pending = saved.pending, pending.authorization != nil {
+            guard target == nil || pending.connection == target else {
+                throw ClientError.message("请先取消当前授权")
+            }
+            try reopenAuthorization(); return
+        }
         authorizationWaiting = true
         do { try await run {
-            guard let store = self.store, let configuration = self.configuration else { throw ClientError.message("连接配置不可用") }
+            guard let store = self.store, let selected = target ?? self.configuration else { throw ClientError.message("请填写 Studio 地址") }
+            let configuration = try selected.checked()
             if self.saved.pending != nil { try await self.discardPending() }
             let account = UUID().uuidString.lowercased()
             var next = self.saved
-            next.pending = PendingConnection(account: account, server: configuration.apiURL, authorization: nil)
+            next.pending = PendingConnection(account: account, connection: configuration, authorization: nil)
             try await store.save(next); self.saved = next
             let credential = try await self.keychain.create(account: account)
             let created = try await self.client.start(server: checkedServer(configuration.apiURL), name: next.name, credential: credential)
@@ -201,8 +216,8 @@ final class CompanionModel: ObservableObject {
 
     func reopenAuthorization() throws { try openAuthorizationBrowser(); resumeAuthorization() }
     private func openAuthorizationBrowser() throws {
-        guard let configuration, let authorization = saved.pending?.authorization else { throw ClientError.message("请重新连接") }
-        guard NSWorkspace.shared.open(try authorization.browserURL(configuration: configuration)) else {
+        guard let pending = saved.pending, let authorization = pending.authorization else { throw ClientError.message("请重新连接") }
+        guard NSWorkspace.shared.open(try authorization.browserURL(configuration: pending.connection)) else {
             throw ClientError.message("浏览器未能打开，请重试")
         }
     }
@@ -215,7 +230,7 @@ final class CompanionModel: ObservableObject {
             do {
                 let secret = try await keychain.read(account: pending.account)
                 while !Task.isCancelled, saved.pending?.account == pending.account {
-                    let result = try await client.status(server: checkedServer(pending.server), authorizationID: authorization.authorizationID, credential: secret)
+                    let result = try await client.status(server: checkedServer(pending.connection.apiURL), authorizationID: authorization.authorizationID, credential: secret)
                     if result.state != .waiting {
                         try await run { try await self.finishAuthorization(result, pending: pending) }
                         return
@@ -242,7 +257,7 @@ final class CompanionModel: ObservableObject {
             guard let authorization = pending.authorization else { try await self.endPending(pending); return }
             do {
                 let credential = try await self.keychain.read(account: pending.account)
-                let result = try await self.client.status(server: checkedServer(pending.server), authorizationID: authorization.authorizationID, credential: credential, cancel: true)
+                let result = try await self.client.status(server: checkedServer(pending.connection.apiURL), authorizationID: authorization.authorizationID, credential: credential, cancel: true)
                 try await self.finishAuthorization(result, pending: pending)
             } catch ClientError.authorizationExpired { try await self.endPending(pending) }
             catch ClientError.credentialUnavailable { try await self.endPending(pending) }
@@ -261,13 +276,13 @@ final class CompanionModel: ObservableObject {
             await backend.stopAndWait()
             var next = saved
             if let previous = next.keychainAccount, previous != pending.account { next.retiredAccounts.append(previous) }
-            next.acceptAuthorization(device, at: pending.server)
+            next.acceptAuthorization(device, at: pending.connection)
             next.keychainAccount = pending.account; next.pending = nil
             try await store.save(next); saved = next
             try await cleanRetiredAccounts()
             try await connectNow()
         } else if result.state == .superseded {
-            try await discardPending(); status = "unauthorized"
+            try await endPending(pending, notice: "授权已被替换，请重新连接")
         } else {
             try await endPending(pending, notice: result.state == .expired ? "授权已过期，请重新连接" : nil)
         }
@@ -305,8 +320,8 @@ final class CompanionModel: ObservableObject {
             guard !name.isEmpty, name.count <= 128 else { throw ClientError.message("请输入设备名称") }
             var next = self.saved
             if let device = next.device, let account = next.keychainAccount {
-                guard next.server == self.configuration?.apiURL else { throw ClientError.message("请重新连接后保存设备名称") }
-                next.device = try await self.client.rename(server: checkedServer(next.server), deviceID: device.deviceID,
+                guard let configuration = next.connection else { throw ClientError.message("请重新连接后保存设备名称") }
+                next.device = try await self.client.rename(server: checkedServer(configuration.apiURL), deviceID: device.deviceID,
                     credential: self.keychain.read(account: account), name: name)
             }
             next.name = name; try await store.save(next); self.saved = next
@@ -319,8 +334,7 @@ final class CompanionModel: ObservableObject {
         NSWorkspace.shared.open(store.directory.appendingPathComponent("settings.json"))
     }
     func refreshProjects() {
-        guard !shuttingDown, !changingIdentity, projectOperation == nil, let device = saved.device, let account = saved.keychainAccount, store != nil else { return }
-        let server = saved.server
+        guard !shuttingDown, !changingIdentity, projectOperation == nil, let device = saved.device, let account = saved.keychainAccount, let server = saved.connection?.apiURL, store != nil else { return }
         projectOperation = Task {
             defer { projectOperation = nil }
             do {
@@ -328,23 +342,22 @@ final class CompanionModel: ObservableObject {
                 try Task.checkCancellation()
                 let values = try await client.projects(server: checkedServer(server), token: device.deviceID + "." + secret)
                 try Task.checkCancellation()
-                guard saved.device?.deviceID == device.deviceID, saved.server == server else { return }
+                guard saved.device?.deviceID == device.deviceID, saved.connection?.apiURL == server else { return }
                 accountName = values.0; projects = values.1; projectsError = false
             } catch is CancellationError { }
             catch { if saved.device?.deviceID == device.deviceID { projectsError = true } }
         }
     }
     func openProject(_ id: String) async throws {
-        guard !shuttingDown, !changingIdentity, let device = saved.device, let account = saved.keychainAccount else { throw ClientError.message("请先连接 Studio") }
-        let server = saved.server
+        guard !shuttingDown, !changingIdentity, let device = saved.device, let account = saved.keychainAccount, let server = saved.connection?.apiURL else { throw ClientError.message("请先连接 Studio") }
         let secret = try await keychain.read(account: account)
         try Task.checkCancellation()
         _ = try await client.project(id, server: checkedServer(server), token: device.deviceID + "." + secret)
-        guard !shuttingDown, !changingIdentity, saved.device?.deviceID == device.deviceID, saved.server == server else { throw ClientError.message("连接已变化") }
+        guard !shuttingDown, !changingIdentity, saved.device?.deviceID == device.deviceID, saved.connection?.apiURL == server else { throw ClientError.message("连接已变化") }
         let address = SHA256.hash(data: Data(server.utf8)).map { String(format: "%02x", $0) }.joined()
         let selected = try await workspaceAccess.prepareProjects(projectRoot, components: [address, device.namespace, id])
         try Task.checkCancellation()
-        guard !shuttingDown, !changingIdentity, saved.device?.deviceID == device.deviceID, saved.server == server else { throw ClientError.message("连接已变化") }
+        guard !shuttingDown, !changingIdentity, saved.device?.deviceID == device.deviceID, saved.connection?.apiURL == server else { throw ClientError.message("连接已变化") }
         NSWorkspace.shared.open(selected)
     }
     func revealProject(_ id: String) {
@@ -360,7 +373,7 @@ final class CompanionModel: ObservableObject {
         guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), parts.host == "workspace",
               let device = saved.device else { throw ClientError.message("请从 Studio 重新打开此项目") }
         let values = Dictionary(parts.queryItems?.map { ($0.name, $0.value ?? "") } ?? [], uniquingKeysWith: { first, _ in first })
-        guard values["server"] == saved.server, values["namespace"] == device.namespace,
+        guard values["server"] == saved.connection?.apiURL, values["namespace"] == device.namespace,
               values["device"] == device.deviceID, let id = values["project"] else { throw ClientError.message("请切换到此项目所属的账号") }
         try await openProject(id)
     }
@@ -447,6 +460,7 @@ final class CompanionModel: ObservableObject {
     }
     func userError(_ error: Error) -> ClientError {
         NSLog("TinkerFin 操作未完成：%@", String(describing: error))
+        if error is URLError { return .message("无法连接到 Studio。请检查地址后重试。") }
         return (error as? ClientError) ?? .message("操作尚未完成，请重试")
     }
     func shutdown() async {

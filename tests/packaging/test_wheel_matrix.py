@@ -105,9 +105,9 @@ _PROJECTS = (
         _ROOT / "packages/tinkerfin-remote",
         "tinkerfin_remote/py.typed",
     ),
-    _WheelProject("tinkerfin-studio", _ROOT / "apps/studio/server", None),
+    _WheelProject("tinkerfin-studio", _ROOT / "apps/studio-server", None),
     _WheelProject(
-        "tinkerfin-companion", _ROOT / "apps/desktop", "tinkerfin_companion/py.typed"
+        "tinkerfin-desktop", _ROOT / "apps/desktop", "tinkerfin_desktop/py.typed"
     ),
 )
 
@@ -139,10 +139,10 @@ _CORE_CASES = (
     ),
     _InstallCase(
         "companion-core",
-        "tinkerfin-companion==0.1.1",
-        ("tinkerfin_companion", "tinkerfin_companion.host"),
+        "tinkerfin-desktop==0.1.1",
+        ("tinkerfin_desktop", "tinkerfin_desktop.host"),
         (
-            "tinkerfin-companion",
+            "tinkerfin-desktop",
             "tinkerfin-sandbox",
             "tinkerfin-remote",
             "mcp",
@@ -703,14 +703,14 @@ def wheel_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
             assert "tinkerfin_sandbox/_native/_process_supervisor.py" in names
             assert "tinkerfin_sandbox/_native/_file_worker.py" in names
             assert not any(name.startswith("tinkerfin_local/") for name in names)
-        if project.name == "tinkerfin-companion":
-            assert "tinkerfin_companion/browser.mjs" not in names
+        if project.name == "tinkerfin-desktop":
+            assert "tinkerfin_desktop/browser.mjs" not in names
             for resource in (
                 "browser_command.py",
-                "browser_config.json",
+                "browser_help.md",
                 "browser_release.json",
             ):
-                assert f"tinkerfin_companion/{resource}" in names
+                assert f"tinkerfin_desktop/{resource}" in names
     return output
 
 
@@ -770,9 +770,9 @@ async def smoke() -> None:
             assert isinstance(SQLAlchemyOpenSandboxState, type)
             assert get_sqlalchemy_opensandbox_state_schema(dialect="sqlite").table_names
     elif case["smoke"] == "companion":
-        root = importlib.resources.files("tinkerfin_companion")
+        root = importlib.resources.files("tinkerfin_desktop")
         assert not root.joinpath("browser.mjs").is_file()
-        for name in ("browser_command.py", "browser_config.json", "browser_release.json"):
+        for name in ("browser_command.py", "browser_help.md", "browser_release.json"):
             assert root.joinpath(name).is_file(), name
     elif case["smoke"] == "notifications":
         from tinkerfin_notifications import Notification, Notifications, NotificationScope
@@ -943,7 +943,7 @@ def test_studio_candidate_wheel_set_is_self_contained(
     assert PROJECT_PATHS == expected_paths
     release_paths = project_paths_for("tinkerfin-studio")
     assert "packages/tinkerfin-remote" in release_paths
-    assert "apps/studio/server" in release_paths
+    assert "apps/studio-server" in release_paths
     assert "apps/desktop" not in release_paths
     assert "packages/tinkerfin-sandbox" in release_paths
 

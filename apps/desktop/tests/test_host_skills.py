@@ -11,13 +11,13 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from test_assets import skill
 from test_cloud import configuration
 
-from tinkerfin_companion import host as host_module
-from tinkerfin_companion.configuration import ExecutionConfiguration
 from tinkerfin_contracts import (
     RunIdentity,
     ToolExecutionScope,
     bind_workspace_operation,
 )
+from tinkerfin_desktop import host as host_module
+from tinkerfin_desktop.configuration import ExecutionConfiguration
 from tinkerfin_remote import RemoteTools
 
 

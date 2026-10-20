@@ -146,7 +146,7 @@ def test_staged_test_selection_distinguishes_empty_from_failed(
     capsys: pytest.CaptureFixture[str],
     exit_code: pytest.ExitCode,
 ) -> None:
-    test_file = repository / "apps/studio/server/tests/test_external.py"
+    test_file = repository / "apps/studio-server/tests/test_external.py"
     test_file.parent.mkdir(parents=True)
     test_file.write_text("# Selected test module\n", encoding="utf-8")
     git(repository, "add", ".")

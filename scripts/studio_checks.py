@@ -11,11 +11,11 @@ import sys
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-WEB_DIR = ROOT_DIR / "apps" / "studio" / "web"
+WEB_DIR = ROOT_DIR / "apps" / "studio-web"
 SERVER_ATTACHMENT_TESTS = [
-    "apps/studio/server/tests/test_attachments.py",
-    "apps/studio/server/tests/test_sandbox_attachment_tools.py",
-    "apps/studio/server/tests/test_work_file_tools.py",
+    "apps/studio-server/tests/test_attachments.py",
+    "apps/studio-server/tests/test_sandbox_attachment_tools.py",
+    "apps/studio-server/tests/test_work_file_tools.py",
 ]
 WEB_ATTACHMENT_TESTS = [
     "src/features/conversation/attachments/DocumentAttachmentPreview.test.tsx",
@@ -46,7 +46,7 @@ def verify_server() -> None:
         "format",
         "--no-cache",
         "--check",
-        "apps/studio/server",
+        "apps/studio-server",
         "scripts",
         "tests",
     )
@@ -56,7 +56,7 @@ def verify_server() -> None:
         "ruff",
         "check",
         "--no-cache",
-        "apps/studio/server",
+        "apps/studio-server",
         "scripts",
         "tests",
     )
@@ -65,10 +65,8 @@ def verify_server() -> None:
         "uv",
         "run",
         "pytest",
-        "tests/test_latest_only_contracts.py",
-        "tests/test_studio_checks.py",
-        "tests/test_prepare_gateway_storage.py",
-        "apps/studio/server",
+        "tests",
+        "apps/studio-server",
         "--durations=10",
     )
 
@@ -179,38 +177,38 @@ def verify_staged() -> None:
         path for path in paths if path.endswith(".py") and (ROOT_DIR / path).is_file()
     ]
     web_files = [
-        path.removeprefix("apps/studio/web/")
+        path.removeprefix("apps/studio-web/")
         for path in paths
-        if path.startswith("apps/studio/web/src/")
+        if path.startswith("apps/studio-web/src/")
         and path.endswith((".ts", ".tsx"))
         and (ROOT_DIR / path).is_file()
     ]
     server_tests = [
         path
         for path in paths
-        if path.startswith("apps/studio/server/tests/")
+        if path.startswith("apps/studio-server/tests/")
         and path.endswith(".py")
         and (ROOT_DIR / path).is_file()
     ]
     web_tests = [
-        path.removeprefix("apps/studio/web/")
+        path.removeprefix("apps/studio-web/")
         for path in paths
-        if path.startswith("apps/studio/web/src/")
+        if path.startswith("apps/studio-web/src/")
         and path.endswith((".test.ts", ".test.tsx"))
         and (ROOT_DIR / path).is_file()
     ]
     server_attachment_change = any(
-        path.startswith("apps/studio/server/src/tinkerfin_studio/attachments/")
-        or path == "apps/studio/server/src/tinkerfin_studio/agent/runtime.py"
+        path.startswith("apps/studio-server/src/tinkerfin_studio/attachments/")
+        or path == "apps/studio-server/src/tinkerfin_studio/agent/runtime.py"
         for path in paths
     )
     web_attachment_change = any(
-        path.startswith("apps/studio/web/src/features/conversation/attachments/")
+        path.startswith("apps/studio-web/src/features/conversation/attachments/")
         or path
         in {
-            "apps/studio/web/src/features/conversation/useAttachments.ts",
-            "apps/studio/web/src/features/conversation/components/Composer.tsx",
-            "apps/studio/web/src/features/automation/AutomationEditor.tsx",
+            "apps/studio-web/src/features/conversation/useAttachments.ts",
+            "apps/studio-web/src/features/conversation/components/Composer.tsx",
+            "apps/studio-web/src/features/automation/AutomationEditor.tsx",
         }
         for path in paths
     )

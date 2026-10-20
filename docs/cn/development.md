@@ -30,9 +30,34 @@ uv pip sync --default-index https://pypi.tuna.tsinghua.edu.cn/simple /tmp/tinker
 
 该命令按锁定版本安装并校验已记录的包哈希，不修改 `uv.lock` 或全局源配置。
 
+## 应用与开发环境
+
+应用按职责放在 `apps/desktop`、`apps/studio-server` 和 `apps/studio-web`；框架包留在 `packages/`。
+
+准备好[服务端配置与依赖](../../apps/studio-server/README.md)后，在 macOS 或 Linux 上管理当前工作树的服务：
+
+```bash
+pnpm --dir apps/studio-web install --frozen-lockfile
+uv run python -m scripts.dev start
+uv run python -m scripts.dev status
+uv run python -m scripts.dev stop
+```
+
+首次启动可用 `--env-file`、`--api-port`、`--web-port` 选择配置与端口，之后复用该环境记录。每个工作树独立记录进程身份，端口冲突会明确报错，不会停止占用端口的其他程序。日志位于 `.cache/dev-environment/`。
+
+`start --dependencies` 按指定环境文件创建独立的 Docker 依赖；先为各工作树配置不同的数据库、Redis、MinIO 和沙箱发布端口。已有外部依赖使用普通 `start`，不会被管理工具接管。`stop` 保留数据，`uv run python -m scripts.dev destroy` 会永久删除该环境创建的容器、网络和数据卷，保留共享镜像及其他环境资源。
+
+开发桌面端使用 `uv run python -m scripts.desktop_dev`。服务端和无关网页改动不会使桌面开发包失效；桌面或其框架依赖改动后自动重建。下载、安装与发布见[桌面说明](../../apps/desktop/README.md)。
+
+## CI 与发布
+
+PR 和主分支推送先按源码路径及 `uv.lock` 依赖关系选择检查：网页运行 Web 检查，服务端运行服务端检查，共享框架变化触发实际消费方。稳定的 `Quality gate` 汇总选中的任务；选中任务失败或取消都不能通过。
+
+检查与发布独立。普通推送不发布客户端；`desktop-vX.Y.Z` 标签或 `Desktop release` 的手动操作才构建并发布桌面安装包。`Studio server image` 单独验证服务端镜像，不上传桌面应用。
+
 ## 验证 Studio Web
 
-在 `apps/studio/web` 执行 `pnpm test:browser`，构建应用并运行浏览器测试。
+在 `apps/studio-web` 执行 `pnpm test:browser`，构建应用并运行浏览器测试。
 直接运行指定测试文件时，先构建应用：
 
 ```bash
@@ -42,7 +67,7 @@ pnpm exec playwright test tests/browser/todo-trace.spec.ts --workers=1
 
 ## 构建 wheel
 
-统一构建命令生成十二个框架包和 Studio 服务端的 wheel：
+统一构建命令生成框架包和 Python 应用的 wheel：
 
 ```bash
 uv run --no-project --python 3.11 python scripts/build_wheels.py --out-dir dist

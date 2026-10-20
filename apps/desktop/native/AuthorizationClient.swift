@@ -8,10 +8,15 @@ func isClientConnectURL(_ url: URL) -> Bool {
     return true
 }
 
-struct ConnectionConfiguration: Codable, Sendable {
+struct ConnectionConfiguration: Codable, Equatable, Sendable {
     let studioURL: String
     let apiURL: String
     enum CodingKeys: String, CodingKey { case studioURL = "studio_url", apiURL = "api_url" }
+
+    func checked() throws -> Self {
+        Self(studioURL: try checkedServer(studioURL).absoluteString,
+             apiURL: try checkedServer(apiURL).absoluteString)
+    }
 }
 
 struct AuthorizationCreated: Codable, Sendable {
@@ -35,7 +40,7 @@ struct AuthorizationCreated: Codable, Sendable {
 
 struct PendingConnection: Codable, Sendable {
     let account: String
-    let server: String
+    let connection: ConnectionConfiguration
     var authorization: AuthorizationCreated?
 }
 
@@ -51,7 +56,7 @@ private struct AuthorizationProof: Encodable { let credential: String }
 private struct DeviceName: Encodable { let name: String }
 private struct Envelope<Value: Decodable>: Decodable { let code: Int; let data: Value? }
 
-private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
                     completionHandler: @escaping @Sendable (URLRequest?) -> Void) { completionHandler(nil) }

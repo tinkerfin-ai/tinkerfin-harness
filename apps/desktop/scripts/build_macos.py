@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import platform
@@ -15,61 +14,20 @@ import tarfile
 import tempfile
 import tomllib
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import zstandard
-from build_browser_cli import (
-    COMMIT,
-    RUST_TOOLCHAIN,
-    SOURCE_SHA256,
-    SOURCE_URL,
-    TARGET,
-    VERSION,
-)
-from pydantic import BaseModel, ConfigDict, Field
+from runtime_inputs import DEFAULT_CACHE, NODE, PYTHON, digest, obtain
 
 ROOT = Path(__file__).resolve().parents[3]
-COMPANION = ROOT / "apps/desktop"
-PYTHON_RELEASE = "3.11.14"
-PYTHON_SHA256 = "da32f9b54c581c203d96f55d802aca5adce2d1e72da532b7b1c83d40a4cd89aa"
-NODE_RELEASE = "22.23.3"
-NODE_SHA256 = "23b25245dcfb9af7262f8ff142e9e2e0af025368117329e7a7458a51e5922f53"
+DESKTOP = ROOT / "apps/desktop"
+PYTHON_RELEASE = PYTHON.version
+NODE_RELEASE = NODE.version
 MACHO = {
     b"\xcf\xfa\xed\xfe",
     b"\xfe\xed\xfa\xcf",
     b"\xca\xfe\xba\xbe",
     b"\xbe\xba\xfe\xca",
 }
-
-
-class RustDependency(BaseModel):
-    """浏览器构建随附的静态依赖许可证清单"""
-
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    name: str = Field(min_length=1)
-    version: str = Field(min_length=1)
-    license: str = Field(min_length=1)
-    source: str | None
-    files: list[str] = Field(min_length=1)
-
-
-class BrowserBuild(BaseModel):
-    """只接收固定源码、补丁与工具链生成的完整浏览器构建输入"""
-
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    upstream_version: str
-    upstream_commit: str
-    source_url: str
-    source_sha256: str
-    patch_sha256: str
-    rust_toolchain: str
-    target: str
-    binary_sha256: str
-    features: list[str]
-    assets: dict[str, str]
-    rust_dependencies: list[RustDependency] = Field(min_length=1)
 
 
 def run(
@@ -86,12 +44,6 @@ def run(
         timeout=600,
     )
     return result.stdout.strip()
-
-
-def digest(path: Path) -> str:
-    """按文件流计算构建输入与产物摘要"""
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def copy_python(source: Path, target: Path) -> None:
@@ -126,7 +78,7 @@ def copy_python(source: Path, target: Path) -> None:
 
 def python_runtime(archive: Path, resources: Path, temporary: Path) -> None:
     """从固定完整发行包提取解释器与静态链接依赖的许可证，不复制宿主安装"""
-    if digest(archive) != PYTHON_SHA256:
+    if digest(archive) != PYTHON.sha256:
         raise ValueError("Python 完整发行包摘要与固定官方发行包不符")
     unpacked = temporary / "python-download"
     unpacked.mkdir()
@@ -152,7 +104,7 @@ def python_runtime(archive: Path, resources: Path, temporary: Path) -> None:
 
 def node_runtime(archive: Path, target: Path, temporary: Path) -> None:
     """使用官方固定发行包及其 SHA-256，拒绝替换的 Node 输入"""
-    if digest(archive) != NODE_SHA256:
+    if digest(archive) != NODE.sha256:
         raise ValueError("Node 发行包摘要与固定官方发行包不符")
     unpacked = temporary / "node-download"
     unpacked.mkdir()
@@ -172,7 +124,7 @@ def install_python(resources: Path, temporary: Path) -> None:
         "export",
         "--locked",
         "--package",
-        "tinkerfin-companion",
+        "tinkerfin-desktop",
         "--no-dev",
         "--no-emit-workspace",
         "-o",
@@ -198,7 +150,7 @@ def install_python(resources: Path, temporary: Path) -> None:
         "--out-dir",
         wheels,
         "--package",
-        "tinkerfin-companion",
+        "tinkerfin-desktop",
     )
     run(
         "uv",
@@ -213,7 +165,7 @@ def install_python(resources: Path, temporary: Path) -> None:
     # 工具直接执行该入口，不能依赖 wheel 安装保留 Python 模块的执行位
     (
         resources
-        / "python/lib/python3.11/site-packages/tinkerfin_companion/browser_command.py"
+        / "python/lib/python3.11/site-packages/tinkerfin_desktop/browser_command.py"
     ).chmod(0o755)
     shutil.copy2(requirements, resources / "python-requirements.txt")
     (resources / "python/lib/python3.11/EXTERNALLY-MANAGED").write_text(
@@ -222,11 +174,11 @@ def install_python(resources: Path, temporary: Path) -> None:
 
 
 def install_node(resources: Path) -> None:
-    """安装锁文件固定的原生沙箱运行时，供受限执行模式使用"""
+    """安装锁文件固定的沙箱、官方浏览器依赖与应用适配入口"""
     runtime = resources / "runtime"
     runtime.mkdir()
-    for name in ("package.json", "package-lock.json"):
-        shutil.copy2(COMPANION / "runtime" / name, runtime / name)
+    for name in ("package.json", "package-lock.json", "browser-service.mjs"):
+        shutil.copy2(DESKTOP / "runtime" / name, runtime / name)
     environment = {
         **os.environ,
         "PATH": str(resources / "node/bin") + ":/usr/bin:/bin:/usr/sbin:/sbin",
@@ -242,84 +194,6 @@ def install_node(resources: Path) -> None:
         cwd=runtime,
         env=environment,
     )
-
-
-def install_browser(resources: Path, executable: Path) -> None:
-    """校验托管构建与全部附属文件，拒绝裸程序、篡改或遗漏的构建输入"""
-    metadata_file = executable.with_name(executable.name + ".json")
-    metadata_bytes = metadata_file.read_bytes()
-    metadata = BrowserBuild.model_validate_json(metadata_bytes)
-    expected = {
-        "upstream_version": VERSION,
-        "upstream_commit": COMMIT,
-        "source_url": SOURCE_URL,
-        "source_sha256": SOURCE_SHA256,
-        "patch_sha256": digest(
-            COMPANION / "runtime/patches/agent-browser-managed.patch"
-        ),
-        "rust_toolchain": RUST_TOOLCHAIN,
-        "target": TARGET,
-        "binary_sha256": digest(executable),
-        "features": ["managed-process"],
-    }
-    actual = metadata.model_dump()
-    if any(actual[key] != value for key, value in expected.items()):
-        raise ValueError("浏览器工具与固定托管构建不一致")
-    with executable.open("rb") as stream:
-        if stream.read(4) not in MACHO:
-            raise ValueError("浏览器工具必须是 Apple Silicon 原生程序")
-    if run("lipo", "-archs", executable) != "arm64":
-        raise ValueError("浏览器工具的目标平台不符")
-    assets = executable.parent / "agent-browser-assets"
-    if assets.is_symlink() or not assets.is_dir():
-        raise ValueError("浏览器工具缺少完整附属文件")
-    files: dict[str, Path] = {}
-    for path in assets.rglob("*"):
-        if path.is_symlink():
-            raise ValueError("浏览器工具附属文件不能含链接")
-        if path.is_file():
-            files[path.relative_to(assets).as_posix()] = path
-        elif not path.is_dir():
-            raise ValueError("浏览器工具附属文件类型无效")
-    if files.keys() != metadata.assets.keys() or any(
-        digest(path) != metadata.assets[relative] for relative, path in files.items()
-    ):
-        raise ValueError("浏览器工具附属文件与构建摘要不符")
-    required = {
-        "skills/agent-browser/SKILL.md",
-        "skill-data/core/SKILL.md",
-        "licenses/agent-browser/LICENSE",
-        "licenses/agent-browser/LICENSE-axe-core.txt",
-        "licenses/agent-browser/LICENSE-axe-core-THIRD-PARTY.txt",
-    }
-    for dependency in metadata.rust_dependencies:
-        if any(not path.startswith("licenses/") for path in dependency.files):
-            raise ValueError("浏览器静态依赖缺少许可证路径")
-        required.update(dependency.files)
-    if not required <= files.keys():
-        raise ValueError("浏览器工具缺少技能或许可证")
-    target = resources / "runtime/agent-browser"
-    shutil.copytree(assets, target)
-    (target / "bin").mkdir()
-    binary = target / "bin/agent-browser"
-    shutil.copy2(executable, binary)
-    (target / "build.json").write_bytes(metadata_bytes)
-    with tempfile.TemporaryDirectory(prefix="tinkerfin-browser-check-") as raw:
-        temporary = Path(raw)
-        configuration = temporary / "config.json"
-        configuration.write_text("{}\n")
-        environment = {
-            key: value
-            for key, value in os.environ.items()
-            if not key.startswith("AGENT_BROWSER_")
-        }
-        environment["AGENT_BROWSER_CONFIG"] = str(configuration)
-        if run(binary, "--version", cwd=temporary, env=environment) != (
-            f"agent-browser {VERSION}"
-        ):
-            raise ValueError("浏览器工具版本不符")
-        if not run(binary, "skills", "get", "core", cwd=temporary, env=environment):
-            raise ValueError("浏览器工具无法读取随附技能")
 
 
 def license_inventory(resources: Path) -> None:
@@ -342,7 +216,7 @@ print(json.dumps(sorted(items,key=lambda item:item['name'].lower()),ensure_ascii
 """,
     )
     packages = json.loads(inventory)
-    supplemental = COMPANION / "runtime/licenses"
+    supplemental = DESKTOP / "runtime/licenses"
     manifest = json.loads((supplemental / "manifest.json").read_text())
     for item in manifest:
         package = next(
@@ -364,44 +238,33 @@ print(json.dumps(sorted(items,key=lambda item:item['name'].lower()),ensure_ascii
         json.dumps(packages, ensure_ascii=False, indent=2) + "\n"
     )
     node_packages = []
-    for path in (resources / "runtime/node_modules").rglob("package.json"):
-        package = json.loads(path.read_text())
-        if not package.get("name") or not package.get("version"):
+    runtime = resources / "runtime"
+    lock = json.loads((runtime / "package-lock.json").read_text())
+    for relative in lock["packages"]:
+        path = runtime / relative
+        if not relative or not (path / "package.json").is_file():
             continue
+        package = json.loads((path / "package.json").read_text())
+        files = [
+            str(item.relative_to(resources))
+            for item in path.iterdir()
+            if item.is_file()
+            and item.name.lower().startswith(
+                ("license", "licence", "copying", "notice")
+            )
+        ]
+        if not files:
+            raise ValueError(f"Node 依赖缺少许可证：{relative}")
         node_packages.append(
             {
                 "name": package["name"],
                 "version": package["version"],
                 "license": package.get("license"),
-                "directory": str(path.parent.relative_to(resources)),
+                "files": sorted(files),
             }
         )
     (licenses / "node-packages.json").write_text(
         json.dumps(sorted(node_packages, key=lambda item: item["name"]), indent=2)
-        + "\n"
-    )
-    browser_root = resources / "runtime/agent-browser"
-    browser = BrowserBuild.model_validate_json(
-        (browser_root / "build.json").read_bytes()
-    )
-    (licenses / "native-programs.json").write_text(
-        json.dumps(
-            [
-                {
-                    "name": "agent-browser",
-                    "version": browser.upstream_version,
-                    "license": "Apache-2.0",
-                    "directory": "runtime/agent-browser",
-                    "build_manifest": "runtime/agent-browser/build.json",
-                    "files": [
-                        "runtime/agent-browser/" + path
-                        for path in sorted(browser.assets)
-                        if path.startswith("licenses/")
-                    ],
-                }
-            ],
-            indent=2,
-        )
         + "\n"
     )
 
@@ -476,55 +339,24 @@ def sign(app: Path, identity: str, temporary: Path) -> None:
     run("codesign", "--verify", "--deep", "--strict", app)
 
 
-def install_interface(resources: Path, configuration: Path) -> None:
-    """签名前安装界面图标、语言资源和开发者选择的连接目的地"""
-    content = configuration.read_bytes()
-    if len(content) > 4096:
-        raise ValueError("连接配置超过容量")
-    raw = json.loads(content)
-    if not isinstance(raw, dict) or set(raw) != {"studio_url", "api_url"}:
-        raise ValueError("连接配置必须只包含 studio_url 和 api_url")
-    checked: dict[str, str] = {}
-    for key in ("studio_url", "api_url"):
-        value = raw[key]
-        if not isinstance(value, str):
-            raise TypeError("连接地址必须是字符串")
-        url = urlsplit(value)
-        if (
-            not url.hostname
-            or url.username
-            or url.password
-            or url.query
-            or url.fragment
-            or (
-                url.scheme != "https"
-                and not (
-                    url.scheme == "http"
-                    and url.hostname in {"localhost", "127.0.0.1", "::1"}
-                )
-            )
-        ):
-            raise ValueError("连接地址必须是 HTTPS，HTTP 仅用于 loopback 开发服务")
-        checked[key] = value.rstrip("/")
+def install_interface(resources: Path) -> None:
+    """签名前安装界面图标和语言资源，服务地址由用户在应用中配置"""
     shutil.copy2(
-        ROOT / "apps/studio/web/public/brand/tinkerfin.svg", resources / "brand.svg"
+        ROOT / "apps/studio-web/public/brand/tinkerfin.svg", resources / "brand.svg"
     )
-    shutil.copytree(COMPANION / "resources/icons", resources / "icons")
+    shutil.copytree(DESKTOP / "resources/icons", resources / "icons")
     for language in ("en", "zh-Hans"):
         shutil.copytree(
-            COMPANION / f"resources/{language}.lproj", resources / f"{language}.lproj"
+            DESKTOP / f"resources/{language}.lproj", resources / f"{language}.lproj"
         )
     run(
         "xcrun",
         "swift",
         "-swift-version",
         "6",
-        COMPANION / "scripts/render_app_icon.swift",
+        DESKTOP / "scripts/render_app_icon.swift",
         resources / "brand.svg",
         resources / "TinkerFin.icns",
-    )
-    (resources / "connection.json").write_text(
-        json.dumps(checked, ensure_ascii=False, indent=2) + "\n"
     )
 
 
@@ -533,9 +365,7 @@ def build(
     output: Path,
     python_archive: Path,
     node_archive: Path,
-    browser_cli: Path,
     identity: str,
-    configuration: Path = COMPANION / "resources/connection.json",
 ) -> Path:
     """完成全部检查后才发布新的 .app 和 ZIP，不覆盖既有构建或用户安装"""
     if sys.platform != "darwin" or platform.machine() != "arm64":
@@ -559,11 +389,10 @@ def build(
         node_runtime(node_archive, resources / "node", temporary)
         install_python(resources, temporary)
         install_node(resources)
-        install_browser(resources, browser_cli.resolve(strict=True))
-        install_interface(resources, configuration)
+        install_interface(resources)
         license_inventory(resources)
         relocate_entrypoints(resources)
-        release = tomllib.loads((COMPANION / "pyproject.toml").read_text())["project"][
+        release = tomllib.loads((DESKTOP / "pyproject.toml").read_text())["project"][
             "version"
         ]
         (app / "Contents/Info.plist").write_bytes(
@@ -598,7 +427,7 @@ def build(
             "-O",
             "-target",
             "arm64-apple-macosx15.0",
-            *sorted((COMPANION / "native").glob("*.swift")),
+            *sorted((DESKTOP / "native").glob("*.swift")),
             "-o",
             executable,
         )
@@ -612,7 +441,7 @@ def build(
             "-I",
             "-B",
             "-m",
-            "tinkerfin_companion",
+            "tinkerfin_desktop",
             "--resources",
             resources,
             "--check",
@@ -623,7 +452,7 @@ def build(
         "-I",
         "-B",
         "-m",
-        "tinkerfin_companion",
+        "tinkerfin_desktop",
         "--resources",
         output / "Contents/Resources",
         "--check",
@@ -639,25 +468,20 @@ def build(
 
 
 def main() -> None:
-    """显式选择固定分发资源；签名身份默认仅用于本机开发验收"""
+    """复用校验过的运行时输入；默认生成未经 Apple 公证的 ad-hoc 签名包"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--python-archive", required=True, type=Path)
-    parser.add_argument("--node-archive", required=True, type=Path)
-    parser.add_argument("--browser-cli", required=True, type=Path)
+    parser.add_argument("--python-archive", type=Path)
+    parser.add_argument("--node-archive", type=Path)
+    parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--identity", default="-")
-    parser.add_argument(
-        "--configuration", type=Path, default=COMPANION / "resources/connection.json"
-    )
     args = parser.parse_args()
     print(
         build(
             output=args.output,
-            python_archive=args.python_archive,
-            node_archive=args.node_archive,
-            browser_cli=args.browser_cli,
+            python_archive=args.python_archive or obtain(PYTHON, args.cache),
+            node_archive=args.node_archive or obtain(NODE, args.cache),
             identity=args.identity,
-            configuration=args.configuration,
         )
     )
 

@@ -14,9 +14,9 @@ from typing import ClassVar, Literal, Self
 import httpx
 import pytest
 
-from tinkerfin_companion import browser, browser_command
-from tinkerfin_companion.browser_install import BrowserProvider
-from tinkerfin_companion.configuration import WorkspacePermissions
+from tinkerfin_desktop import browser, browser_command
+from tinkerfin_desktop.browser_install import BrowserProvider
+from tinkerfin_desktop.configuration import WorkspacePermissions
 from tinkerfin_sandbox import LocalAccess, LocalWorkspace
 
 PERMISSIONS = WorkspacePermissions(network="normal", browser=True)
@@ -28,7 +28,10 @@ class BrowserOwner:
     instances: ClassVar[list["BrowserOwner"]] = []
 
     def __init__(self) -> None:
-        self.environment = {"AGENT_BROWSER_SESSION": f"owned-{len(self.instances)}"}
+        self.environment = {
+            "TINKERFIN_BROWSER_SESSION_SOCKET": f"/owned/{len(self.instances)}/browser.sock",
+            "TINKERFIN_BROWSER_SESSION_TOKEN": f"{len(self.instances):064x}",
+        }
         self.available = True
         self.profile: Path | None = None
         self.close_entered = asyncio.Event()
@@ -108,7 +111,9 @@ async def manager(
     tmp_path: Path, provider: ControlledProvider, owners: list[BrowserOwner]
 ) -> AsyncIterator[browser.BrowserManager]:
     service = browser.BrowserManager(
-        browser.BrowserInstallation(Path("/owned/agent-browser")),
+        browser.BrowserInstallation(
+            Path("/owned/node"), Path("/owned/browser-service.mjs")
+        ),
         provider,
         sandbox=Path("/usr/bin/sandbox-exec"),
         projects_root=tmp_path,
@@ -207,7 +212,6 @@ async def test_ordinary_command_and_binding_do_not_start_browser(
         assert initial_progress == ["preparing"]
         assert reused_progress == []
         assert first == {
-            "cli": "/owned/agent-browser",
             "environment": owners[0].environment,
         }
         assert provider.calls == 1
@@ -216,7 +220,7 @@ async def test_ordinary_command_and_binding_do_not_start_browser(
     assert owners[0].closed
 
 
-async def test_describe_requires_binding_token_without_preparing_browser(
+async def test_unknown_prepare_action_cannot_start_browser(
     tmp_path: Path,
     manager: browser.BrowserManager,
     provider: ControlledProvider,
@@ -229,86 +233,33 @@ async def test_describe_requires_binding_token_without_preparing_browser(
         profile=tmp_path / "profile",
         permissions=PERMISSIONS,
     ) as binding:
-        for token in ("", "not-authorized"):
-            assert await prepare(binding, action="describe", token=token) == {
-                "error": "Browser preparation failed"
-            }
-        progress: list[str] = []
-        reply = await prepare(binding, action="describe", progress=progress)
-        assert reply == {
-            "cli": "/owned/agent-browser",
-            "environment": {
-                "AGENT_BROWSER_CONFIG": str(
-                    Path(browser.__file__).with_name("browser_config.json")
-                )
-            },
+        assert await prepare(binding, action="describe") == {
+            "error": "Browser preparation failed"
         }
-        assert progress == []
     assert provider.calls == 0
     assert not owners
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="真实命令入口需要 macOS")
 @pytest.mark.parametrize(
-    "arguments", [("skills", "get"), ("skills", "list"), ("--help",), ("--version",)]
+    "arguments",
+    [("--help",), ("tools", "--help"), ("describe", "--help"), ("call", "--help")],
 )
-async def test_shim_reads_skill_and_help_metadata_without_starting_browser(
-    arguments: tuple[str, ...],
-    tmp_path: Path,
-    provider: ControlledProvider,
-    owners: list[BrowserOwner],
+async def test_shim_help_requires_no_browser_or_binding(
+    arguments: tuple[str, ...], tmp_path: Path
 ) -> None:
-    cli = tmp_path / "owned-cli"
-    cli.write_text(
-        "#!/usr/bin/env python3\nimport json,os,sys\n"
-        "print(json.dumps({'arguments':sys.argv[1:],'environment':"
-        "{key:value for key,value in os.environ.items() if key.startswith('AGENT_BROWSER_')}}))\n"
-    )
-    cli.chmod(0o755)
-    service = browser.BrowserManager(
-        browser.BrowserInstallation(cli),
-        provider,
-        sandbox=Path("/usr/bin/sandbox-exec"),
-        projects_root=tmp_path,
-        protected_paths=(),
-        read_only_paths=(),
-    )
-    try:
-        async with browser.BrowserBinding(
-            service,
-            directory=tmp_path,
-            thread="owned-thread",
-            profile=tmp_path / "profile",
-            permissions=PERMISSIONS,
-        ) as binding:
-            async with LocalWorkspace(
-                tmp_path,
-                access=LocalAccess(filesystem="user"),
-                commands={"agent-browser": Path(browser_command.__file__)},
-                environment={
-                    "TINKERFIN_BROWSER_SOCKET": str(binding.socket),
-                    "TINKERFIN_BROWSER_TOKEN": binding.token,
-                    "AGENT_BROWSER_PROFILE": "untrusted-profile",
-                },
-                on_command_abort=binding.abort,
-            ) as workspace:
-                async with workspace.open() as session:
-                    result = await session.aexecute(
-                        shlex.join(("agent-browser", *arguments))
-                    )
-            assert result.exit_code == 0, result
-            assert json.loads(result.output) == {
-                "arguments": list(arguments),
-                "environment": {
-                    "AGENT_BROWSER_CONFIG": str(
-                        Path(browser.__file__).with_name("browser_config.json")
-                    )
-                },
-            }
-        assert provider.calls == 0
-        assert not owners
-    finally:
-        await service.aclose()
+    async with LocalWorkspace(
+        tmp_path,
+        access=LocalAccess(filesystem="user"),
+        commands={"tinkerfin-browser": Path(browser_command.__file__)},
+    ) as workspace:
+        async with workspace.open() as session:
+            result = await session.aexecute(
+                shlex.join(("tinkerfin-browser", *arguments))
+            )
+    assert result.exit_code == 0, result.output
+    assert "usage:" in result.output
+    assert not (tmp_path / ".tinkerfin/browser-connections").exists()
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="真实命令取消需要 macOS")
@@ -330,7 +281,7 @@ async def test_shim_preparation_cancellation_waits_for_provider_cleanup(
         async with LocalWorkspace(
             tmp_path,
             access=LocalAccess(filesystem="user"),
-            commands={"agent-browser": Path(browser_command.__file__)},
+            commands={"tinkerfin-browser": Path(browser_command.__file__)},
             environment={
                 "TINKERFIN_BROWSER_SOCKET": str(binding.socket),
                 "TINKERFIN_BROWSER_TOKEN": binding.token,
@@ -339,7 +290,7 @@ async def test_shim_preparation_cancellation_waits_for_provider_cleanup(
         ) as workspace:
             async with workspace.open() as session:
                 command = asyncio.create_task(
-                    session.aexecute("agent-browser snapshot")
+                    session.aexecute("tinkerfin-browser call browser_snapshot '{}'")
                 )
                 try:
                     await provider.started.wait()
@@ -456,6 +407,7 @@ async def test_failed_preparation_is_private_and_next_request_can_retry(
     tmp_path: Path,
     manager: browser.BrowserManager,
     provider: ControlledProvider,
+    owners: list[BrowserOwner],
 ) -> None:
     provider.error = httpx.ReadTimeout("private provider diagnostic")
     async with browser.BrowserBinding(
@@ -467,7 +419,7 @@ async def test_failed_preparation_is_private_and_next_request_can_retry(
     ) as binding:
         assert await prepare(binding) == {"error": "Browser preparation failed"}
         provider.error = None
-        assert (await prepare(binding))["cli"] == "/owned/agent-browser"
+        assert (await prepare(binding))["environment"] == owners[-1].environment
         assert provider.calls == 2
 
 
@@ -533,7 +485,9 @@ async def test_alias_removal_failure_still_attempts_real_communication_cleanup(
     with tempfile.TemporaryDirectory(prefix="tf-close-", dir="/tmp") as name:
         aliases = Path(name).resolve()
         service = browser.BrowserManager(
-            browser.BrowserInstallation(Path("/owned/cli")),
+            browser.BrowserInstallation(
+                Path("/owned/node"), Path("/owned/browser-service.mjs")
+            ),
             provider,
             sandbox=Path("/usr/bin/sandbox-exec"),
             projects_root=tmp_path,
@@ -588,7 +542,9 @@ async def test_cancelled_binding_close_waits_for_all_directory_removals(
     with tempfile.TemporaryDirectory(prefix="tf-close-", dir="/tmp") as name:
         aliases = Path(name).resolve()
         service = browser.BrowserManager(
-            browser.BrowserInstallation(Path("/owned/cli")),
+            browser.BrowserInstallation(
+                Path("/owned/node"), Path("/owned/browser-service.mjs")
+            ),
             provider,
             sandbox=Path("/usr/bin/sandbox-exec"),
             projects_root=tmp_path,
@@ -660,7 +616,9 @@ with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
     with tempfile.TemporaryDirectory(prefix="tf-bind-", dir="/tmp") as name:
         aliases = Path(name).resolve()
         service = browser.BrowserManager(
-            browser.BrowserInstallation(Path("/owned/agent-browser")),
+            browser.BrowserInstallation(
+                Path("/owned/node"), Path("/owned/browser-service.mjs")
+            ),
             provider,
             sandbox=Path("/usr/bin/sandbox-exec"),
             projects_root=tmp_path,
@@ -705,7 +663,6 @@ with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
                         assert provider.calls == 0
                     else:
                         assert json.loads(output) == {
-                            "cli": "/owned/agent-browser",
                             "environment": owners[0].environment,
                         }
             assert list(aliases.iterdir()) == []
@@ -734,7 +691,9 @@ async def test_cancelled_temporary_allocation_removes_connection_and_alias(
         session = browser.BrowserSession()
         opening = asyncio.create_task(
             session.start(
-                installation=browser.BrowserInstallation(Path("/owned/cli")),
+                installation=browser.BrowserInstallation(
+                    Path("/owned/node"), Path("/owned/browser-service.mjs")
+                ),
                 executable=Path("/owned/browser"),
                 directory=tmp_path,
                 profile=tmp_path / "profile",
@@ -744,7 +703,9 @@ async def test_cancelled_temporary_allocation_removes_connection_and_alias(
         )
     else:
         service = browser.BrowserManager(
-            browser.BrowserInstallation(Path("/owned/cli")),
+            browser.BrowserInstallation(
+                Path("/owned/node"), Path("/owned/browser-service.mjs")
+            ),
             ControlledProvider(tmp_path),
             sandbox=Path("/usr/bin/sandbox-exec"),
             projects_root=tmp_path,

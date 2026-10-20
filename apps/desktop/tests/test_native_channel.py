@@ -6,8 +6,8 @@ import socket
 import pytest
 from pydantic import ValidationError
 
-from tinkerfin_companion.desktop import desktop_tools
-from tinkerfin_companion.native import (
+from tinkerfin_desktop.desktop import desktop_tools
+from tinkerfin_desktop.native import (
     DesktopCommand,
     DesktopReply,
     NativeChannel,

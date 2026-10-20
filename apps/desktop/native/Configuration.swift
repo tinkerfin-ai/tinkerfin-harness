@@ -64,7 +64,7 @@ struct PairedDevice: Codable, Equatable, Sendable {
 }
 
 struct SavedConfiguration: Codable, Sendable {
-    var server = ""
+    var connection: ConnectionConfiguration?
     var name = ""
     var pending: PendingConnection?
     var keychainAccount: String?
@@ -72,9 +72,9 @@ struct SavedConfiguration: Codable, Sendable {
     var permissions = WorkspacePermissions()
     var retiredAccounts: [String] = []
 
-    mutating func acceptAuthorization(_ device: PairedDevice, at server: String) {
+    mutating func acceptAuthorization(_ device: PairedDevice, at connection: ConnectionConfiguration) {
         self.device = device
-        self.server = server
+        self.connection = connection
     }
 }
 
@@ -202,9 +202,13 @@ func checkedWebsiteURL(_ text: String) throws -> URL {
 }
 
 func checkedServer(_ text: String) throws -> URL {
-    guard var parts = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, trimmed.count <= 4096,
+          !trimmed.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }),
+          var parts = URLComponents(string: trimmed),
           let host = parts.host, !host.isEmpty,
           parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
+          parts.port.map({ (1...65535).contains($0) }) ?? true,
           parts.scheme == "https" || (parts.scheme == "http" && ["localhost", "127.0.0.1", "[::1]", "::1"].contains(host)) else {
         throw ClientError.message("连接配置必须使用 HTTPS；HTTP 仅用于本机开发服务")
     }
@@ -247,21 +251,6 @@ final class ConfigurationStore: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.tinkerfin.companion.configuration")
 
     init(directory: URL) { self.directory = directory }
-
-    func readConnection(resources: URL) async throws -> ConnectionConfiguration {
-        try await withCheckedThrowingContinuation { continuation in
-            queue.async {
-                do {
-                    let data = try Data(contentsOf: resources.appendingPathComponent("connection.json"))
-                    guard data.count <= 4096 else { throw ClientError.message("连接配置超过容量") }
-                    let value = try JSONDecoder().decode(ConnectionConfiguration.self, from: data)
-                    continuation.resume(returning: ConnectionConfiguration(
-                        studioURL: try checkedServer(value.studioURL).absoluteString,
-                        apiURL: try checkedServer(value.apiURL).absoluteString))
-                } catch { continuation.resume(throwing: error) }
-            }
-        }
-    }
 
     func read() async throws -> SavedConfiguration {
         try await withCheckedThrowingContinuation { continuation in

@@ -36,8 +36,7 @@ _CONTRACT_ROOT = _PACKAGE_ROOT / "src" / "tinkerfin_agui_adapter" / "contracts"
 _WEB_CONTRACT_ROOT = (
     _REPOSITORY_ROOT
     / "apps"
-    / "studio"
-    / "web"
+    / "studio-web"
     / "src"
     / "features"
     / "conversation"

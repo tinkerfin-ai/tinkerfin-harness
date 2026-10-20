@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from test_cloud import configuration
 
-from tinkerfin_companion.projects import ManagedProjects
+from tinkerfin_desktop.projects import ManagedProjects
 
 
 def projects(tmp_path, identity, suffix="state"):
@@ -75,7 +75,7 @@ async def test_permissions_are_frozen_for_workspace_scope_and_revocation_blocks_
 async def test_network_grants_keep_restricted_scope_and_reject_downgraded_normal(
     tmp_path,
 ):
-    from tinkerfin_companion.configuration import WorkspacePermissions
+    from tinkerfin_desktop.configuration import WorkspacePermissions
 
     identity = configuration(tmp_path)
     manager = projects(tmp_path, identity)

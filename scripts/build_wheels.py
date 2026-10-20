@@ -26,7 +26,7 @@ PROJECT_PATHS = (
     "packages/tinkerfin-langgraph-store",
     "packages/tinkerfin-sqlalchemy",
     "packages/tinkerfin-remote",
-    "apps/studio/server",
+    "apps/studio-server",
     "apps/desktop",
 )
 
