@@ -228,6 +228,8 @@ jobs:
     if: needs.changes.outputs.desktop == 'true'
     runs-on: macos-15
     timeout-minutes: 20
+    env:
+      UV_MANAGED_PYTHON: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6

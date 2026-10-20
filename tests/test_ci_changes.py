@@ -28,10 +28,17 @@ version = "1.0"
     ("path", "expected"),
     [
         ("docs/cn/development.md", set()),
+        ("apps/desktop/README.md", set()),
         ("apps/desktop/native/Main.swift", {"desktop"}),
+        ("apps/desktop/src/tinkerfin_desktop/browser_help.md", {"desktop", "wheels"}),
         ("apps/studio-server/src/main.py", {"server", "wheels"}),
+        ("apps/studio-server/src/prompts/system.md", {"server", "wheels"}),
         ("apps/studio-web/src/App.tsx", {"web"}),
         ("packages/shared/src/api.py", {"desktop", "server", "packages", "wheels"}),
+        (
+            "packages/shared/src/skills/browser/SKILL.md",
+            {"desktop", "server", "packages", "wheels"},
+        ),
         ("packages/unrelated/src/api.py", {"packages", "wheels"}),
         ("apps/studio-web/public/brand/tinkerfin.svg", {"desktop", "web"}),
         (".github/workflows/packages-quality.yml", set(CHECKS)),

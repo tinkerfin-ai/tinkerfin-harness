@@ -13,6 +13,12 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECKS = ("scripts", "server", "web", "packages", "wheels", "desktop")
 
 
+def _runtime_change(path: str) -> bool:
+    return not path.endswith(".md") or bool(
+        {"src", "public", "resources", "skills"} & set(Path(path).parts)
+    )
+
+
 def lock_scope(
     content: str, roots: tuple[str, ...], *, groups: tuple[str, ...] = ()
 ) -> dict[str, str]:
@@ -80,7 +86,7 @@ def select_checks(
         after = lock_scope(after_lock, (target,))
         roots = source_paths(before) | source_paths(after)
         selected[key] = any(
-            path.startswith(root + "/") and not path.endswith(".md")
+            path.startswith(root + "/") and _runtime_change(path)
             for path in changed
             for root in roots
         ) or ("uv.lock" in changed and before != after)
@@ -100,14 +106,14 @@ def select_checks(
     )
     selected["web"] = any(
         path.startswith("apps/studio-web/")
-        and not path.endswith(".md")
+        and _runtime_change(path)
         or path.startswith("packages/tinkerfin/tests/fixtures/")
         or path == "scripts/studio_checks.py"
         for path in changed
     )
     selected["packages"] |= any(
         path.startswith("packages/")
-        and not path.endswith(".md")
+        and _runtime_change(path)
         or path
         in {"pyright-packages-strict.json", "tests/test_package_logging_contract.py"}
         for path in changed
@@ -123,7 +129,7 @@ def select_checks(
         )
     selected["desktop"] |= any(
         path.startswith(("apps/desktop/", "packages/tinkerfin/"))
-        and not path.endswith(".md")
+        and _runtime_change(path)
         or path
         in {
             "apps/studio-web/public/brand/tinkerfin.svg",

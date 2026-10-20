@@ -24,6 +24,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       LANGSMITH_TRACING: "false"
+      UV_MANAGED_PYTHON: "true"
     steps:
       - uses: actions/checkout@v4
         with:
