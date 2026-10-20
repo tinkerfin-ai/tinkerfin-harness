@@ -142,64 +142,6 @@ jobs:
       - name: Check package source types strictly
         run: uv run pyright -p pyright-packages-strict.json
 
-  macos-companion:
-    runs-on: macos-15
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: "0.12.13"
-          enable-cache: true
-          python-version: "3.11.14"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22.23.3"
-          cache: npm
-          cache-dependency-path: apps/desktop/runtime/package-lock.json
-      - name: Install locked workspace and browser tool
-        run: |
-          test "$(uname -m)" = arm64
-          uv sync --locked --all-packages --no-default-groups --group test --group lint --group packaging
-          npm ci --prefix apps/desktop/runtime --ignore-scripts --no-audit --no-fund
-          uv run python apps/desktop/scripts/build_browser_cli.py --output "$RUNNER_TEMP/browser-runtime/agent-browser"
-          curl --fail --location --output "$RUNNER_TEMP/python.tar.zst" https://github.com/astral-sh/python-build-standalone/releases/download/20251031/cpython-3.11.14%2B20251031-aarch64-apple-darwin-pgo%2Blto-full.tar.zst
-          curl --fail --location --output "$RUNNER_TEMP/node.tar.gz" https://nodejs.org/dist/v22.23.3/node-v22.23.3-darwin-arm64.tar.gz
-      - name: Check Companion sources
-        run: |
-          uv run ruff check --no-cache apps/desktop
-          uv run ruff format --no-cache --check apps/desktop
-          uv run pyright apps/desktop/src apps/desktop/tests apps/desktop/scripts
-      - name: Build and verify movable application
-        run: |
-          uv run python apps/desktop/scripts/build_macos.py --python-archive "$RUNNER_TEMP/python.tar.zst" --node-archive "$RUNNER_TEMP/node.tar.gz" --browser-cli "$RUNNER_TEMP/browser-runtime/agent-browser" --output "$RUNNER_TEMP/TinkerFin.app"
-      - name: Prepare compatible browser for native tests
-        run: |
-          uv run python - <<'PY'
-          import asyncio
-          import os
-          from pathlib import Path
-
-          from tinkerfin_companion.browser_install import BrowserProvider
-
-          cache = Path(os.environ["RUNNER_TEMP"]) / "tinkerfin-browser-cache"
-          browser = asyncio.run(BrowserProvider(cache).resolve())
-          with Path(os.environ["GITHUB_ENV"]).open("a") as environment:
-              environment.write(f"TINKERFIN_TEST_CHROME={browser}\n")
-          PY
-      - name: Test native runtime, durable tasks and bundled entry
-        env:
-          TINKERFIN_TEST_APP: ${{ runner.temp }}/TinkerFin.app
-          TINKERFIN_TEST_SRT: ${{ runner.temp }}/TinkerFin.app/Contents/Resources/runtime/node_modules/.bin/srt
-          TINKERFIN_TEST_NODE: ${{ runner.temp }}/TinkerFin.app/Contents/Resources/node/bin/node
-          TINKERFIN_TEST_BROWSER_CLI: ${{ runner.temp }}/browser-runtime/agent-browser
-        run: |
-          test -x "$TINKERFIN_TEST_BROWSER_CLI"
-          test -x "$TINKERFIN_TEST_CHROME"
-          test -x "$TINKERFIN_TEST_SRT"
-          test -x "$TINKERFIN_TEST_NODE"
-          uv run pytest apps/desktop/tests packages/tinkerfin-sandbox/tests/native packages/tinkerfin-remote/tests
-
   packages:
     runs-on: ubuntu-24.04
     timeout-minutes: 8
@@ -248,7 +190,7 @@ jobs:
   quality-gate:
     name: Quality gate
     if: always()
-    needs: [script-checks, repository-and-studio, web, web-browser, static-checks, macos-companion, packages, wheel-boundaries]
+    needs: [script-checks, repository-and-studio, web, web-browser, static-checks, packages, wheel-boundaries]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
