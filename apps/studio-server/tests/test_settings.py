@@ -39,11 +39,13 @@ def test_dotenv_sources_are_isolated_from_an_existing_default_file(tmp_path):
     program = """
 import importlib.util
 import sys
+from pathlib import Path
 spec = importlib.util.spec_from_file_location('isolated_settings', sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 assert module.load_settings().log_file_enabled
+assert module.load_settings().log_file_path == Path(sys.argv[1]).parents[3] / 'logs/studio.log'
 assert not module.load_settings(env_file=sys.argv[2]).log_file_enabled
 try:
     module.load_settings(env_file=None)

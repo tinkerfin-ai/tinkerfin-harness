@@ -31,7 +31,7 @@ from tinkerfin_sandbox import OpenSandboxConfig
 from tinkerfin_studio.skills.sources import SkillSourceSettings
 
 _DEFAULT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
-_DEFAULT_LOG_FILE_PATH = Path("server/logs/studio.log")
+_DEFAULT_LOG_FILE_PATH = Path("logs/studio.log")
 
 
 class _LiteralDotEnvSource(DotEnvSettingsSource):

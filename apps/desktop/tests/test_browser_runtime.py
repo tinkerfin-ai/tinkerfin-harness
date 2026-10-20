@@ -308,6 +308,8 @@ async def test_cli_does_not_retry_when_action_response_is_lost(browser_directory
 async def test_owned_sessions_keep_page_state_and_close_independently(
     browser_installation, browser_directory, chrome
 ):
+    if sys.platform != "darwin":
+        pytest.skip("需要 macOS 进程退出通知")
     first = browser_directory / "first"
     second = browser_directory / "second"
     async with daemon(
