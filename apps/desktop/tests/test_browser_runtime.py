@@ -507,6 +507,8 @@ async def owned_pids(group: int) -> set[int]:
 async def test_real_browser_keeps_round_state_and_stops_only_owned_conversation(
     browser_cli, browser_directory, cancel_owner
 ):
+    if sys.platform != "darwin":
+        pytest.skip("需要 macOS 的进程退出通知")
     executable = Path(
         os.environ.get(
             "TINKERFIN_TEST_CHROME",
