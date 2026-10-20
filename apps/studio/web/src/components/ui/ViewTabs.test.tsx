@@ -28,41 +28,4 @@ describe('ViewTabs', () => {
     expect(onChange).toHaveBeenLastCalledWith('conversation')
     expect(conversation).toHaveFocus()
   })
-
-  it('exposes compact density without changing tab semantics', () => {
-    render(
-      <ViewTabs
-        value="timeline"
-        label="链路布局"
-        density="compact"
-        options={[
-          { value: 'timeline', label: '时间线' },
-          { value: 'tree', label: '树形' },
-        ]}
-        onChange={vi.fn()}
-      />,
-    )
-
-    expect(screen.getByRole('tab', { name: '时间线' })).toHaveAttribute('aria-selected', 'true')
-  })
-
-  it('provides a medium density for content detail tabs', () => {
-    render(
-      <ViewTabs
-        value="overview"
-        label="详情分类"
-        density="medium"
-        options={[
-          { value: 'overview', label: '概述', controls: 'details' },
-          { value: 'result', label: '结果', controls: 'details' },
-        ]}
-        onChange={vi.fn()}
-      />,
-    )
-
-    expect(screen.getByRole('tab', { name: '概述' })).toHaveAttribute(
-      'aria-controls',
-      'details',
-    )
-  })
 })

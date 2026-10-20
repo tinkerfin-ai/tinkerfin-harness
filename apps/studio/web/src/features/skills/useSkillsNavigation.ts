@@ -7,7 +7,6 @@ function readLocation() {
   const source = params.get('skillSource') ?? (view === 'mine' ? 'all' : '')
   const filters: SkillFilters = {
     query: params.get('skillQuery') ?? '', category: params.get('skillCategory') ?? '',
-    sort: params.get('skillSort') === 'name' ? 'name' : 'updated',
     status: params.get('skillStatus') === 'enabled' ? 'enabled' : params.get('skillStatus') === 'disabled' ? 'disabled' : 'all',
   }
   return { view, source, filters }
@@ -39,7 +38,7 @@ export function useSkillsNavigation() {
     const url = new URL(location.href)
     url.searchParams.set('page', 'skills')
     url.searchParams.delete('thread')
-    const values = { skillView: nextView, skillSource: nextSource, skillQuery: next.query, skillSort: next.sort, skillStatus: next.status, skillCategory: next.category }
+    const values = { skillView: nextView, skillSource: nextSource, skillQuery: next.query, skillStatus: next.status, skillCategory: next.category }
     Object.entries(values).forEach(([name, value]) => value ? url.searchParams.set(name, value) : url.searchParams.delete(name))
     const address = `${url.pathname}${url.search}`
     if (address !== `${location.pathname}${location.search}`) window.history[replace ? 'replaceState' : 'pushState'](null, '', address)

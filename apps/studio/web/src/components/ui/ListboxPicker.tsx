@@ -1,3 +1,4 @@
+import { restoreFocus } from './focus'
 import {
   useEffect,
   useId,
@@ -87,7 +88,7 @@ export function ListboxPicker<T extends string>(props: ListboxPickerProps<T>) {
 
   const closeAndFocusTrigger = () => {
     onOpenChange(false)
-    triggerRef.current?.focus({ preventScroll: true })
+    restoreFocus(triggerRef.current, { preventScroll: true })
   }
 
   useEffect(() => {

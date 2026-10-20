@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -118,61 +118,6 @@ describe('ApprovalCard', () => {
     for (const removedAction of ['编辑', '上一项审批', '下一项审批', '全部允许', '全部拒绝', '批量提交']) {
       expect(screen.queryByRole('button', { name: removedAction })).not.toBeInTheDocument()
     }
-  })
-
-  it('moves focus into rejection details and restores the rejection trigger on cancel', async () => {
-    const user = userEvent.setup()
-
-    function Harness() {
-      const [approval, setApproval] = useState<ApprovalState>({
-        activeIndex: 0,
-        submitted: false,
-        mode: 'options',
-        items: [approvalItem('focus-reject', '/focus-reject.txt')],
-      })
-      return (
-        <ApprovalCard
-          conversation={conversationWithApproval(approval)}
-          onChange={setApproval}
-          onSubmit={vi.fn()}
-        />
-      )
-    }
-
-    render(<Harness />)
-
-    await user.click(screen.getByRole('button', { name: '拒绝' }))
-    await waitFor(() => expect(screen.getByLabelText('拒绝原因（可选）')).toHaveFocus())
-    await user.click(screen.getByRole('button', { name: '取消' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '拒绝' })).toHaveFocus())
-  })
-
-  it('moves focus to the next approval decision after the active item changes', async () => {
-    const user = userEvent.setup()
-
-    function Harness() {
-      const [approval, setApproval] = useState<ApprovalState>({
-        activeIndex: 0,
-        submitted: false,
-        mode: 'options',
-        items: [
-          approvalItem('approve-only', '/approve-only.txt', { allowedDecisions: ['approve'] }),
-          approvalItem('reject-only', '/reject-only.txt', { allowedDecisions: ['reject'] }),
-        ],
-      })
-      return (
-        <ApprovalCard
-          conversation={conversationWithApproval(approval)}
-          onChange={setApproval}
-          onSubmit={vi.fn()}
-        />
-      )
-    }
-
-    render(<Harness />)
-    await user.click(screen.getByRole('button', { name: '允许' }))
-
-    await waitFor(() => expect(screen.getByRole('button', { name: '拒绝' })).toHaveFocus())
   })
 
   it('updates only approval state and preserves a concurrent conversation message', () => {

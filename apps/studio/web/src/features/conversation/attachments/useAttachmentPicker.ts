@@ -1,3 +1,4 @@
+import { restoreFocus } from '../../../components/ui/focus'
 import { useEffect, useRef, useState } from 'react'
 
 /** 显示等待反馈后打开文件选择器；选择或取消后恢复入口，卸载时取消尚未执行的打开 */
@@ -16,7 +17,7 @@ export function useAttachmentPicker(onError?: () => void) {
       if (frame.current !== null) cancelAnimationFrame(frame.current)
       frame.current = requestAnimationFrame(() => {
         frame.current = null
-        buttonRef.current?.focus()
+        restoreFocus(buttonRef.current)
       })
     }
     input?.addEventListener('change', finish)

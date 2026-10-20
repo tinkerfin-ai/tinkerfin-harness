@@ -10,6 +10,7 @@ export function WorkspaceHeader({
   onOpenOverlay,
   navigation,
   actions,
+  stackActionsOnMobile = false,
   backgroundInert = false,
 }: {
   conversationTitle: string
@@ -17,12 +18,13 @@ export function WorkspaceHeader({
   onOpenOverlay: () => void
   navigation?: ReactNode
   actions?: ReactNode
+  stackActionsOnMobile?: boolean
   backgroundInert?: boolean
 }) {
   const { t } = useI18n()
   return (
     <header
-      className="chat-header"
+      className={`chat-header${stackActionsOnMobile ? ' chat-header--stacked-mobile' : ''}`}
       aria-hidden={backgroundInert || undefined}
       inert={backgroundInert || undefined}
     >
@@ -31,7 +33,7 @@ export function WorkspaceHeader({
         <h1 className="workspace-title">{conversationTitle || t('新会话')}</h1>
       </div>
       {navigation && <div className="header-navigation">{navigation}</div>}
-      <div className="header-actions">
+      <div className="header-actions" data-toast-header={stackActionsOnMobile ? 'stacked-mobile' : undefined}>
         {actions}
       </div>
     </header>

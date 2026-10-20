@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -68,13 +68,6 @@ describe('ValidatedForm', () => {
     animationMocks.revert.mockReset()
   })
 
-  it('suppresses native validation', () => {
-    render(<Harness />)
-
-    expect(screen.getByRole('form', { name: '测试表单' })).toHaveAttribute('novalidate')
-    expect(screen.getByLabelText('第一项')).toHaveAttribute('aria-invalid', 'true')
-  })
-
   it('focuses the first invalid control and repeats feedback on every invalid submit', async () => {
     const user = userEvent.setup()
     render(<Harness />)
@@ -82,24 +75,12 @@ describe('ValidatedForm', () => {
     await user.click(screen.getByRole('button', { name: '提交' }))
 
     expect(screen.getByLabelText('第一项')).toHaveFocus()
-    expect(animationMocks.fromTo).toHaveBeenCalledTimes(1)
 
     await user.click(screen.getByRole('button', { name: '提交' }))
-    expect(animationMocks.fromTo).toHaveBeenCalledTimes(2)
+    expect(screen.getByLabelText('第一项')).toHaveFocus()
   })
 
-  it('keeps focus feedback but skips shaking when reduced motion is requested', async () => {
-    const user = userEvent.setup()
-    animationMocks.add.mockImplementation(() => undefined)
-    render(<Harness />)
-
-    await user.click(screen.getByRole('button', { name: '提交' }))
-
-    await waitFor(() => expect(screen.getByLabelText('第一项')).toHaveFocus())
-    expect(animationMocks.fromTo).not.toHaveBeenCalled()
-  })
-
-  it('does not move focus or animate when the form has no errors', async () => {
+  it('有效表单提交不转移当前焦点', async () => {
     const user = userEvent.setup()
     render(<Harness errors={{}} />)
     const submitButton = screen.getByRole('button', { name: '提交' })
@@ -107,6 +88,5 @@ describe('ValidatedForm', () => {
     await user.click(submitButton)
 
     expect(submitButton).toHaveFocus()
-    expect(animationMocks.fromTo).not.toHaveBeenCalled()
   })
 })

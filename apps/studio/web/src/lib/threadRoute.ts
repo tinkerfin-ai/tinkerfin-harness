@@ -56,11 +56,11 @@ export function readThreadFromLocation(): string {
   return new URLSearchParams(window.location.search).get(THREAD_PARAM) ?? ''
 }
 
-export type WorkspacePage = 'conversation' | 'automation' | 'skills' | 'memories'
+export type WorkspacePage = 'conversation' | 'automation' | 'skills' | 'memories' | 'workspace'
 
 export function readPageFromLocation(): WorkspacePage {
   const page = new URLSearchParams(window.location.search).get('page')
-  return page === 'automation' || page === 'skills' || page === 'memories' ? page : 'conversation'
+  return page === 'automation' || page === 'skills' || page === 'memories' || page === 'workspace' ? page : 'conversation'
 }
 
 export function readProjectFromLocation(): string {
@@ -113,7 +113,7 @@ export function writeWorkspaceToLocation(
   url.pathname = APP_PATHNAME
   if (page !== 'conversation') url.searchParams.set('page', page)
   else url.searchParams.delete('page')
-  if (page !== 'skills') for (const key of ['skillView', 'skillSource', 'skillQuery', 'skillSort', 'skillStatus', 'skillCategory']) url.searchParams.delete(key)
+  if (page !== 'skills') for (const key of ['skillView', 'skillSource', 'skillQuery', 'skillStatus', 'skillCategory']) url.searchParams.delete(key)
   if (page === 'conversation' && threadId) url.searchParams.set(THREAD_PARAM, threadId)
   else url.searchParams.delete(THREAD_PARAM)
   const desired = relativeLocation(url)

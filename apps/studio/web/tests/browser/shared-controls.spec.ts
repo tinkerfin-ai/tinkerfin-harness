@@ -280,3 +280,83 @@ test('加载反馈的转圈遵守减少动态效果偏好', async ({ page, contr
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await expect(icon).toHaveCSS('animation-name', 'none')
 })
+
+
+async function expectAligned(page: Page) {
+  const samples = await page.getByRole('region').evaluateAll(regions => {
+    const icons = regions.map(region => region.querySelector('svg')!)
+    const origins = icons.map(icon => icon.getAnimations()[0].startTime)
+    if (origins.some(origin => origin === null)) throw new Error('动画尚未绑定时间轴')
+    const sampleTime = Math.max(...origins.map(Number)) + 1200
+    const transforms = icons.map((icon, index) => {
+      const animation = icon.getAnimations()[0]
+      const origin = Number(origins[index])
+      animation.pause()
+      // 在有效区间的共同采样时刻比较角度，避免负时间下的 none 造成假通过
+      animation.currentTime = sampleTime - origin
+      const transform = getComputedStyle(icon).transform
+      animation.play()
+      animation.startTime = origin
+      return transform
+    })
+    return { origins, transforms }
+  })
+  expect(samples.origins).toEqual([0, 0])
+  expect(samples.transforms).toHaveLength(2)
+  expect(samples.transforms).not.toContain('none')
+  expect(samples.transforms[0]).toBe(samples.transforms[1])
+}
+
+test('错时出现、重新挂载和动态效果恢复后的会话指示圈保持同一相位', async ({ page, controlsOrigin }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto(`${controlsOrigin}${fixture}?example=conversation-indicators`)
+  await expect(page.getByRole('region', { name: '会话一' })).toBeVisible()
+  await page.getByRole('button', { name: '切换第二个会话' }).click()
+  await expectAligned(page)
+  await page.getByRole('button', { name: '重建第二个会话' }).click()
+  await expectAligned(page)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(page.getByRole('region').first().locator('svg')).toHaveCSS('animation-name', 'none')
+  await expect(page.getByRole('region').last().locator('svg')).toHaveCSS('animation-name', 'none')
+  await page.getByRole('region').evaluateAll(regions => {
+    for (const region of regions) {
+      const icon = region.querySelector('svg')!
+      icon.addEventListener('animationstart', function started(event) {
+        if (event.animationName !== 'workspace-spin') return
+        icon.removeEventListener('animationstart', started)
+        icon.setAttribute('data-animation-started', 'true')
+      })
+    }
+  })
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await expect(page.getByRole('region').first().locator('svg')).toHaveAttribute('data-animation-started', 'true')
+  await expect(page.getByRole('region').last().locator('svg')).toHaveAttribute('data-animation-started', 'true')
+  await expect(page.getByRole('region').last().locator('svg')).toHaveCSS('animation-name', 'workspace-spin')
+  await expectAligned(page)
+})
+
+for (const theme of ['light', 'dark']) test(`关闭共享浮层后不残留外框，后续键盘导航仍可见 ${theme}`, async ({ page, controlsOrigin }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto(`${controlsOrigin}${fixture}?example=focus-return&theme=${theme}`)
+  for (const name of ['打开弹窗', '展开搜索', '打开选项', '选择时间', '选择日期']) {
+    const trigger = page.getByRole('button', { name, exact: true })
+    await trigger.click()
+    await page.keyboard.press('Escape')
+    await expect(trigger).toBeFocused()
+    await expect(trigger).toHaveAttribute('data-ui-focus-restored', '')
+    await expect(trigger).toHaveCSS('outline-width', '0px')
+    await expect(trigger).toHaveCSS('box-shadow', 'none')
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Shift')
+    await expect(trigger).toHaveCSS('outline-width', '0px')
+    await expect(trigger).toHaveCSS('box-shadow', 'none')
+    await page.keyboard.press('Tab')
+    await expect(trigger).not.toHaveAttribute('data-ui-focus-restored')
+    await page.keyboard.press('Shift+Tab')
+    await expect(trigger).toBeFocused()
+    expect(await trigger.evaluate(el => el.matches(':focus-visible'))).toBe(true)
+  }
+  const next = page.getByRole('button', { name: '后续操作', exact: true })
+  await next.focus()
+  await expect(next).toHaveCSS('outline-width', '2px')
+})

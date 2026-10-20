@@ -1,3 +1,4 @@
+import { restoreFocus } from '../../components/ui/focus'
 import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react'
 import { CheckCircle2, ChevronDown, CircleAlert, Eye, EyeOff, Image, LoaderCircle, Search, Square, Trash2 } from 'lucide-react'
 import { Button, FeedbackState, ErrorBoundary, IconButton, TextField, ValidatedForm, ViewTabs } from '../../components/ui'
@@ -72,7 +73,7 @@ function ServiceEditor({ state, confirmClose, closeDisabled, onCloseDecision }: 
   useEffect(() => { if (confirmClose) continueRef.current?.focus({ preventScroll: true }) }, [confirmClose])
   useEffect(() => {
     if (confirmClear) keepRef.current?.focus({ preventScroll: true })
-    else if (wasConfirmingClear.current) clearRef.current?.focus({ preventScroll: true })
+    else if (wasConfirmingClear.current) restoreFocus(clearRef.current, { preventScroll: true })
     wasConfirmingClear.current = confirmClear
   }, [confirmClear])
   const change = <K extends keyof ServiceDraft>(key: K, value: ServiceDraft[K]) => state.change({ ...draft, [key]: value })

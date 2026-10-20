@@ -2,15 +2,14 @@ import {
   BookOpenCheck,
   AlarmClock,
   BrainCircuit,
-  CircleEllipsis,
   Archive,
   ArchiveRestore,
   FolderClosed,
+  FolderKanban,
   FolderInput,
   MessageSquare,
   Ellipsis,
   LogOut,
-  LoaderCircle,
   MessageCircleQuestion,
   PanelRight,
   Pencil,
@@ -32,7 +31,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent, ReactNode, Ref } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent, ReactNode, Ref, RefObject } from 'react'
 
 import { buildApiUrl } from '../../../api/shared/config'
 import type { AuthUser } from '../../../api/auth/types'
@@ -45,6 +44,7 @@ import { groupConversationHistory } from '../historyGroups'
 import type { SidebarMode } from '../useWorkspaceNavigation'
 import type { PendingConversation } from '../usePendingConversations'
 import { OverflowMarquee } from './OverflowMarquee'
+import { ConversationRunIndicator } from './ConversationRunIndicator'
 
 // 提前一段可滚动距离发起分页，让 300ms 防刷等待尽量落在用户持续浏览期间
 const HISTORY_PAGE_PRELOAD_DISTANCE_PX = 320
@@ -99,7 +99,7 @@ export function ConversationItem({
         onClick={onSelect}
       >
         <span className="conversation-status-slot" aria-hidden="true">
-          {generating && <LoaderCircle className="conversation-loading" />}
+          {generating && <ConversationRunIndicator />}
           {requiresAttention && (attentionTone === 'approval'
             ? <ShieldQuestion className="conversation-attention-icon is-approval" />
             : <MessageCircleQuestion className="conversation-attention-icon is-plan" />)}
@@ -128,10 +128,13 @@ const NO_PENDING_CONVERSATIONS: PendingConversation[] = []
 
 export interface SidebarProps {
   projectSelector: ReactNode
+  railProjectTriggerRef: RefObject<HTMLButtonElement | null>
   onChooseProject: () => void
   onOpenConversation: () => void
   onOpenMemories: () => void
   memoriesActive: boolean
+  workspaceActive: boolean
+  onOpenWorkspace: () => void
   archivedHistory: boolean
   onArchivedHistoryChange: (value: boolean) => void
   onArchive: (threadId: string) => void
@@ -177,7 +180,7 @@ export interface SidebarProps {
 }
 
 export function Sidebar({
-  projectSelector, onChooseProject, onOpenConversation, onOpenMemories, memoriesActive, archivedHistory, onArchivedHistoryChange, onArchive, onMove,
+  projectSelector, railProjectTriggerRef, onChooseProject, onOpenConversation, onOpenMemories, memoriesActive, workspaceActive, onOpenWorkspace, archivedHistory, onArchivedHistoryChange, onArchive, onMove,
   pendingConversations = NO_PENDING_CONVERSATIONS,
   selectedPendingRunId,
   onSelectPending,
@@ -217,7 +220,7 @@ export function Sidebar({
   backgroundInert = false,
 }: SidebarProps) {
   const { locale, t } = useI18n()
-  const newConversationActive = !skillsActive && !memoriesActive && !automationActive && !workspace.currentThreadId && !selectedPendingRunId
+  const newConversationActive = !skillsActive && !memoriesActive && !automationActive && !workspaceActive && !workspace.currentThreadId && !selectedPendingRunId
   const locatedSubmission = useRef<string | null>(null)
   const programmaticScroll = useRef(false)
   const [userMenu, setUserMenu] = useState(false)
@@ -347,8 +350,8 @@ export function Sidebar({
     setStickyHistoryTitle((current) => current === activeTitle ? current : activeTitle)
   }, [])
 
-  const closeMenu = (restoreFocus = false) => {
-    if (restoreFocus) openMenu?.trigger.focus()
+  const closeMenu = (returnFocus = false) => {
+    if (returnFocus) restoreFocus(openMenu?.trigger ?? null)
     setOpenMenu(null)
   }
 
@@ -374,7 +377,12 @@ export function Sidebar({
 
   useEffect(() => {
     if (mode !== 'overlay' || !overlayOpen || !wideInteractive) return
-    window.requestAnimationFrame(() => overlayCloseButtonRef.current?.focus())
+    const frame = window.requestAnimationFrame(() => overlayCloseButtonRef.current?.focus())
+    return () => window.cancelAnimationFrame(frame)
+  }, [mode, overlayOpen, wideInteractive])
+
+  useEffect(() => {
+    if (mode !== 'overlay' || !overlayOpen || !wideInteractive) return
     const handleEscape = (event: KeyboardEvent) => {
       if (event.defaultPrevented || backgroundInert || event.key !== 'Escape') return
       event.preventDefault()
@@ -394,7 +402,7 @@ export function Sidebar({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.key !== 'Escape') return
       event.preventDefault()
-      openMenu.trigger.focus()
+      restoreFocus(openMenu.trigger)
       setOpenMenu(null)
     }
     document.addEventListener('pointerdown', handleOutsidePointerDown)
@@ -499,7 +507,7 @@ export function Sidebar({
       if (event.defaultPrevented || backgroundInert || event.key !== 'Escape') return
       event.preventDefault()
       setUserMenu(false)
-      userMenuButtonRef.current?.focus()
+      restoreFocus(userMenuButtonRef.current)
     }
     document.addEventListener('pointerdown', handleOutsidePointerDown)
     document.addEventListener('keydown', handleKeyDown)
@@ -530,7 +538,7 @@ export function Sidebar({
     else if (event.key === 'Escape') {
       event.preventDefault()
       setUserMenu(false)
-      userMenuButtonRef.current?.focus()
+      restoreFocus(userMenuButtonRef.current)
       return
     }
     if (nextIndex == null) return
@@ -571,7 +579,7 @@ export function Sidebar({
       key={pending ? `pending:${pending.runId}` : conversation.threadId}
       conversation={conversation}
       pendingRunId={pending?.runId}
-      isActive={!automationActive && !skillsActive && !memoriesActive && (pending
+      isActive={!automationActive && !skillsActive && !memoriesActive && !workspaceActive && (pending
         ? selectedPendingRunId === pending.runId
         : conversation.threadId === workspace.currentThreadId)}
       isMenuOpen={!pending && openMenu?.threadId === conversation.threadId}
@@ -634,13 +642,15 @@ export function Sidebar({
 
           </div>
 
+          <div className="sidebar-project-section">
           {projectSelector}
           <nav className="sidebar-feature-nav ui-scrollbar" aria-label={t('工作区功能')}>
-            <Button type="button" variant="ghost" leadingIcon={<BookOpenCheck size={18} />} selected={skillsActive} aria-current={skillsActive ? 'page' : undefined} onClick={onOpenSkills}>{t('技能库')}</Button>
-            <Button type="button" variant="ghost" leadingIcon={<BrainCircuit size={18} />} selected={memoriesActive} aria-current={memoriesActive ? 'page' : undefined} onClick={onOpenMemories}>{t('记忆管理')}</Button>
-            <Button type="button" variant="ghost" leadingIcon={<AlarmClock size={18} />} selected={automationActive} aria-current={automationActive ? 'page' : undefined} onClick={onOpenAutomation}>{t('定时任务')}</Button>
-            <Button type="button" variant="ghost" leadingIcon={<CircleEllipsis size={18} />} disabled>{t('更多')}</Button>
+            <Button type="button" variant="ghost" leadingIcon={<BookOpenCheck size={16} />} selected={skillsActive} aria-current={skillsActive ? 'page' : undefined} onClick={onOpenSkills}>{t('技能库')}</Button>
+            <Button type="button" variant="ghost" leadingIcon={<BrainCircuit size={16} />} selected={memoriesActive} aria-current={memoriesActive ? 'page' : undefined} onClick={onOpenMemories}>{t('记忆管理')}</Button>
+            <Button type="button" variant="ghost" leadingIcon={<AlarmClock size={16} />} selected={automationActive} aria-current={automationActive ? 'page' : undefined} onClick={onOpenAutomation}>{t('定时任务')}</Button>
+            <Button type="button" variant="ghost" leadingIcon={<FolderClosed size={16} />} selected={workspaceActive} aria-current={workspaceActive ? 'page' : undefined} onClick={onOpenWorkspace}>{t('工作区')}</Button>
           </nav>
+          </div>
           <div className="sidebar-history-toolbar">
             <IconButton
               ref={archiveButtonRef}
@@ -799,11 +809,12 @@ export function Sidebar({
             aria-expanded="false"
             onClick={onToggleMode}
           />
-          <IconButton label={t('选择项目')} tooltipPlacement="right" tooltip={t('选择项目')} icon={<FolderClosed size={18} />} tabIndex={railInteractive ? 0 : -1} onClick={onChooseProject} />
-          <IconButton label={t('会话')} tooltipPlacement="right" tooltip={t('会话')} icon={<MessageSquare size={18} />} tabIndex={railInteractive ? 0 : -1} selected={!skillsActive && !memoriesActive && !automationActive && !newConversationActive} onClick={onOpenConversation} />
+          <IconButton ref={railProjectTriggerRef} label={t('选择项目')} tooltipPlacement="right" tooltip={t('选择项目')} className="rail-project-icon" icon={<FolderKanban size={18} />} tabIndex={railInteractive ? 0 : -1} onClick={onChooseProject} />
+          <IconButton label={t('会话')} tooltipPlacement="right" tooltip={t('会话')} icon={<MessageSquare size={18} />} tabIndex={railInteractive ? 0 : -1} selected={!skillsActive && !memoriesActive && !automationActive && !workspaceActive && !newConversationActive} onClick={onOpenConversation} />
           <IconButton label={t('技能库')} tooltipPlacement="right" tooltip={t('技能库')} icon={<BookOpenCheck size={18} />} selected={skillsActive} aria-current={skillsActive ? 'page' : undefined} tabIndex={railInteractive ? 0 : -1} onClick={onOpenSkills} />
           <IconButton label={t('记忆管理')} tooltipPlacement="right" tooltip={t('记忆管理')} icon={<BrainCircuit size={18} />} tabIndex={railInteractive ? 0 : -1} selected={memoriesActive} aria-current={memoriesActive ? 'page' : undefined} onClick={onOpenMemories} />
           <IconButton type="button" label={t('定时任务')} tooltipPlacement="right" tooltip={t('定时任务')} icon={<AlarmClock size={18} />} selected={automationActive} aria-current={automationActive ? 'page' : undefined} tabIndex={railInteractive ? 0 : -1} onClick={onOpenAutomation} />
+          <IconButton type="button" label={t('工作区')} tooltipPlacement="right" tooltip={t('工作区')} icon={<FolderClosed size={16} />} selected={workspaceActive} aria-current={workspaceActive ? 'page' : undefined} tabIndex={railInteractive ? 0 : -1} onClick={onOpenWorkspace} />
           <IconButton
             label={t(archivedHistory ? '返回会话记录' : '已归档会话')}
             tooltipPlacement="right" tooltip={t(archivedHistory ? '返回会话记录' : '已归档会话')}
