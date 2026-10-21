@@ -66,7 +66,7 @@ function IconButtonExamples() {
   const [archived, setArchived] = useState(false)
   return <main style={{ padding: 24, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
     <ComputerResources value={accessMode} onChange={setAccessMode} onOpenSettings={() => setSettingsOpened(true)} disabled={parameters.get('locked') === 'true'}
-      devices={{ status: deviceState === 'loading' || deviceState === 'error' ? deviceState : 'ready', refresh: () => {}, devices: deviceState === 'empty' || deviceState === 'loading' || deviceState === 'error' ? [] : [{ device_id: 'review', name: parameters.get('deviceName') ?? 'Review Mac', online: deviceState === 'online', revoked: false,
+      devices={{ status: deviceState === 'loading' || deviceState === 'error' ? deviceState : 'ready', refreshing: false, refreshed: false, refresh: () => {}, devices: deviceState === 'empty' || deviceState === 'loading' || deviceState === 'error' ? [] : [{ device_id: 'review', name: parameters.get('deviceName') ?? 'Review Mac', online: deviceState === 'online', revoked: false,
         paired_at: '2030-01-01T00:00:00Z', last_seen_at: null, capabilities: { browser: false, desktop: false, mcp: false, desktop_capture: false, open_url: false } }] }} />
     {settingsOpened && <output>设备设置已打开</output>}
     <IconButton label="链路" icon={<Workflow size={17} />} selected={trace} onClick={() => setTrace(value => !value)} />

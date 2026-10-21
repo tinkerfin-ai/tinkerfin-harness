@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { buildEmptyConversation } from '../../lib/workspace'
 import { buildInitialPayload } from '../conversation/agui'
@@ -35,4 +35,50 @@ it('新会话默认修改前确认且请求不携带设备目标', () => {
   const payload = buildInitialPayload(conversation, 'work')
   expect(payload.forwardedProps.accessMode).toBe('write_approval')
   expect(payload.forwardedProps).not.toHaveProperty('localTarget')
+})
+
+it('刷新连接时禁用重复点击，空结果提供明确反馈并保留恢复入口', async () => {
+  let complete!: (devices: LocalDevice[]) => void
+  const fetch = vi.spyOn(api, 'fetchDevices').mockResolvedValueOnce([])
+    .mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+  const open = vi.spyOn(window, 'open').mockReturnValue(null)
+  render(<DeviceSettings />)
+  fireEvent.click(await screen.findByRole('button', { name: '打开客户端' }))
+  const refresh = screen.getByRole('button', { name: '刷新连接状态' })
+  fireEvent.click(refresh)
+  expect(fetch).toHaveBeenCalledTimes(2)
+  expect(refresh).toBeDisabled()
+  expect(refresh).toHaveAttribute('aria-busy', 'true')
+  fireEvent.click(refresh)
+  expect(fetch).toHaveBeenCalledTimes(2)
+  const launch = screen.getByRole('button', { name: '打开客户端' })
+  expect(launch).toBeEnabled()
+  fireEvent.click(launch)
+  expect(open).toHaveBeenCalledTimes(2)
+  await act(async () => { complete([]) })
+  expect(refresh).toBeEnabled()
+  expect(refresh).not.toHaveAttribute('aria-busy')
+  expect(screen.getByRole('status')).toHaveTextContent('刷新完成，尚未连接设备')
+  fireEvent.click(screen.getByRole('button', { name: '打开客户端' }))
+  expect(open).toHaveBeenCalledTimes(3)
+  expect(screen.getByRole('link', { name: '下载客户端' })).toHaveAttribute('href', 'https://github.com/tinkerfin-ai/tinkerfin-harness/releases/latest/download/TinkerFin.zip')
+})
+
+it('刷新失败后保留下载和打开入口，重试成功自动显示设备', async () => {
+  const fetch = vi.spyOn(api, 'fetchDevices').mockResolvedValueOnce([])
+    .mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce([{ ...device, online: true }])
+  vi.spyOn(window, 'open').mockReturnValue(null)
+  render(<DeviceSettings />)
+  fireEvent.click(await screen.findByRole('button', { name: '打开客户端' }))
+  fireEvent.click(screen.getByRole('button', { name: '刷新连接状态' }))
+  await screen.findByText('设备列表暂不可用')
+  expect(screen.getByRole('button', { name: '刷新连接状态' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: '打开客户端' })).toBeEnabled()
+  expect(screen.getByRole('link', { name: '下载客户端' })).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: '重试' }))
+  await screen.findByText('我的 Mac')
+  expect(screen.queryByText('设备列表暂不可用')).not.toBeInTheDocument()
+  expect(screen.getByText('设备已连接')).toHaveAttribute('role', 'status')
+  expect(screen.queryByRole('button', { name: '刷新连接状态' })).not.toBeInTheDocument()
+  expect(fetch).toHaveBeenCalledTimes(3)
 })

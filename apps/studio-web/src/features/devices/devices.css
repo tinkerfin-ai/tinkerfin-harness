@@ -70,7 +70,7 @@
   .local-resources .lr-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 6px 11px; border: 1px solid var(--lr-border); border-radius: var(--radius-device-action); background: var(--lr-surface); color: var(--lr-text); font-size: var(--type-device-control-size); line-height: 18px; font-weight: var(--weight-medium); white-space: nowrap; }
   .local-resources .lr-action:hover { background: var(--lr-hover); }
   .local-resources .lr-action svg { width: 14px; height: 14px; stroke-width: 1.7; }
-  .local-resources .lr-action-primary { border-color: var(--lr-button); background: var(--lr-button); color: var(--lr-button-text); }
+  .local-resources .lr-action-primary { border-color: var(--lr-button); background: var(--lr-button); color: var(--lr-button-text); transform: none; }
   .local-resources .lr-action-primary:hover { background: var(--lr-button); filter: brightness(.94); }
   .local-resources .lr-action-danger { background: var(--lr-red-fill); border-color: var(--lr-red-fill); color: var(--color-device-on-danger); }
   .local-resources .lr-action-danger:hover { background: var(--lr-red-fill); filter: brightness(.94); }
@@ -96,6 +96,13 @@
   .local-resources .lr-empty h4 { margin: 0 0 7px; font-size: var(--type-device-title-size); line-height: 22px; font-weight: var(--weight-medium); }
   .local-resources .lr-empty p { margin: 0 0 16px; max-width: 260px; color: var(--lr-subtle); font-size: var(--type-caption-size); line-height: 19px; }
   .local-resources .lr-empty-note { margin-top: 12px; color: var(--lr-subtle); font-size: var(--type-micro-size); line-height: 17px; }
+  .local-resources .lr-connect-actions { display: flex; align-items: center; justify-content: center; gap: var(--space-2); }
+  .local-resources .lr-setup-links { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--space-1) var(--space-3); margin-top: var(--space-2); font-size: var(--type-device-control-size); line-height: 18px; }
+  .local-resources .lr-download-note { display: inline-flex; align-items: center; flex-wrap: wrap; justify-content: center; color: var(--lr-subtle); }
+  .local-resources .lr-download-link { display: inline-flex; align-items: center; min-height: var(--space-8); color: var(--lr-text); text-decoration: underline; text-underline-offset: var(--space-1); border-radius: var(--radius-sm); }
+  .local-resources .lr-download-link:hover { color: var(--color-brand-text); }
+  .local-resources .lr-download-link:active { background: var(--lr-selected); }
+  .local-resources .lr-download-link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
   .local-resources .lr-waiting-note { margin: 11px 0 0; padding: 10px 12px; border-radius: var(--radius-md); background: var(--lr-selected); color: var(--lr-subtle); font-size: var(--type-caption-size); line-height: 19px; }
   .computer-resources { display: inline-flex; min-width: 0; max-width: 100%; }
   .computer-resources__popover { position: fixed; inset: auto; margin: 0; padding: 0; border: 0; background: transparent; color: var(--lr-text); width: min(320px, calc(100vw - var(--space-8))); overflow: visible; }
@@ -134,6 +141,7 @@
     .local-resources { --lr-settings-hit-size: 44px; }
     .local-resources .lr-icon-button.ui-button { width: 44px; min-width: 44px; height: 44px; min-height: 44px; flex-basis: 44px; }
     .local-resources .lr-option { min-height: 44px; }
+    .local-resources .lr-download-link { min-width: 44px; min-height: 44px; }
   }
   @media (prefers-reduced-motion: reduce) {
     .local-resources .lr-trigger, .local-resources .lr-chevron, .local-resources .lr-option, .local-resources .lr-revoke-button { transition: none; }

@@ -21,9 +21,13 @@ const root = '/api/devices'
 const options = (signal?: AbortSignal) => ({ signal, suppressGlobalError: true })
 
 export async function fetchDevices(signal?: AbortSignal): Promise<LocalDevice[]> {
-  const devices = await requestJson<LocalDevice[]>(root, options(signal))
-  if (!Array.isArray(devices)) throw new Error('设备列表格式无效')
-  return devices
+  const deadline = new AbortController()
+  const timer = setTimeout(() => deadline.abort(new DOMException('设备状态查询超时', 'TimeoutError')), 15_000)
+  try {
+    const devices = await requestJson<LocalDevice[]>(root, options(signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal))
+    if (!Array.isArray(devices)) throw new Error('设备列表格式无效')
+    return devices
+  } finally { clearTimeout(timer) }
 }
 export function requestDeviceAuthorization(
   id: string, action: 'preview' | 'approve' | 'deny', browserToken: string,
