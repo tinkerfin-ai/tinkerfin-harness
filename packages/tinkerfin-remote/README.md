@@ -92,6 +92,21 @@ Register `read_note` in the executor's `tools`. Prepared tools and skills become
 
 Stable invocation identities prevent automatic repetition after disconnect or restart. An uncertain result means an operation may have taken effect; it is never automatically rerun. Cancellation stops owned work but does not undo effects or guarantee that unrelated processes spawned outside its ownership have stopped.
 
+An operation failure includes its original `operation_id` in `RemoteError.context`.
+Use the authenticated endpoint to read its current receipt without dispatching work:
+
+```python
+operation_id = failure.context.get("operation_id")
+if isinstance(operation_id, str):
+    status = await endpoint.get_operation(operation_id)
+```
+
+The query returns `OperationStatus` with lifecycle state, cancellation intent and
+any retained inline result. It does not download transferred results. `None` means
+no record is retained by this endpoint; neither absence nor an expired result
+proves that an operation did not execute. Keep the original identifier when
+checking again, and never replace an uncertain operation automatically.
+
 Closed, acknowledged sessions automatically release bulk transfer and progress payloads. Small results, including resolved paths, remain replayable across approval and Runtime reconstruction (16 KiB by default). Replaying an expired large result reports `UNCERTAIN` and never executes its operation again. The operation limit counts active work; retained storage also bounds compact identity and receipt evidence. Reaching that final evidence capacity remains an explicit error.
 
 If cancellation occurs while delivery is detached, the cloud saves stop intent and returns cancellation with an unconfirmed-termination note. The worker receives the intent when delivery reconnects; the cloud does not report the offline process as already stopped.

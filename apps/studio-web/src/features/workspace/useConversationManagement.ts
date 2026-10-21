@@ -78,7 +78,7 @@ export function useConversationManagement({
     onConversationBoundary()
     setDraftConversation(null)
     setDraftModel(defaultModelId)
-    setDraftAccessMode('full')
+    setDraftAccessMode('write_approval')
     setWorkspace((state) => createNewConversation(state))
   }
 

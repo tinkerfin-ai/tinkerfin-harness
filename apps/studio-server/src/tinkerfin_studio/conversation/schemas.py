@@ -62,7 +62,7 @@ class ConversationHistoryListItem(ConversationTitle):
     status: str
     last_run_id: str | None = Field(default=None, alias="lastRunId")
     last_model: str | None = Field(default=None, alias="lastModel")
-    access_mode: AccessMode = Field(default="full", alias="accessMode")
+    access_mode: AccessMode = Field(default="write_approval", alias="accessMode")
     message_count: int = Field(alias="messageCount", ge=0)
     tool_call_count: int = Field(alias="toolCallCount", ge=0)
     has_pending_interrupt: bool = Field(alias="hasPendingInterrupt")
@@ -129,7 +129,7 @@ class ConversationHistoryDetail(ConversationTitle):
     project_id: str = Field(alias="projectId")
     archived: bool
     last_model: str | None = Field(default=None, alias="lastModel")
-    access_mode: AccessMode = Field(default="full", alias="accessMode")
+    access_mode: AccessMode = Field(default="write_approval", alias="accessMode")
     pinned: bool
     as_of_seq: int = Field(alias="asOfSeq", ge=1)
     generation: str

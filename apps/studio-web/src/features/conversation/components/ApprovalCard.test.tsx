@@ -44,19 +44,25 @@ describe('ApprovalCard', () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()
     const onChange = vi.fn()
+    const retry = vi.fn()
     const conversation = conversationWithApproval({
       activeIndex: 0, submitted: true, submissionRunId: 'resume-run', mode: 'reject',
       items: [approvalItem('first', '/first.txt', { decision: 'rejected', rejectionReason: '保留原文件' })],
     })
-    render(<ApprovalCard conversation={conversation} onChange={onChange} onSubmit={onSubmit} />)
-    expect(screen.getByText('正在确认提交状态')).toHaveAttribute('role', 'status')
+    const view = render(<ApprovalCard conversation={conversation} onChange={onChange} onSubmit={onSubmit} />)
+    expect(screen.getByRole('region', { name: '提交确认' })).toBeVisible()
+    expect(screen.getByText('正在提交')).toHaveAttribute('role', 'status')
     expect(screen.getByRole('textbox')).toHaveValue('保留原文件')
     expect(screen.getByRole('textbox')).toBeDisabled()
-    for (const name of ['取消', '确认拒绝']) {
-      const button = screen.getByRole('button', { name })
-      expect(button).toBeDisabled()
-      await user.click(button)
+    for (const name of ['允许', '拒绝', '取消', '确认拒绝', '重新提交', '重新检查状态']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
     }
+    view.rerender(<ApprovalCard conversation={conversation} onChange={onChange} onSubmit={onSubmit}
+      submission={{ failed: true, checking: false, retry }} />)
+    expect(screen.getByText('暂时无法确认提交结果')).toHaveAttribute('role', 'status')
+    expect(screen.getByRole('textbox')).toHaveValue('保留原文件')
+    await user.click(screen.getByRole('button', { name: '重新检查状态' }))
+    expect(retry).toHaveBeenCalledOnce()
     expect(onSubmit).not.toHaveBeenCalled()
     expect(onChange).not.toHaveBeenCalled()
   })

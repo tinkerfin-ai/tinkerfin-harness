@@ -45,6 +45,7 @@ from ._hitl_state import (
     tool_review_owner,
 )
 from ._tasks import run_async_owned
+from ._tool_proposals import pending_tool_calls
 from .errors import TinkerFinLifecycleError
 
 CANCEL_DECISION_TYPE = "tinkerfin_cancel"
@@ -274,6 +275,8 @@ class ToolReviewMiddleware(HumanInTheLoopMiddleware):
         """
 
         configurable = get_config().get("configurable", {})
+        if self._file_paths is not None:
+            await self._file_paths.restore(state)
         file_contract = validate_file_contract(state, self._file_paths)
         message = next(
             (
@@ -284,9 +287,12 @@ class ToolReviewMiddleware(HumanInTheLoopMiddleware):
             None,
         )
         tool_calls = [] if message is None else message.tool_calls
+        pending_ids = {call["id"] for call in pending_tool_calls(state["messages"])}
         request = HITLRequest(action_requests=[], review_configs=[])
         selected: dict[int, InterruptOnConfig] = {}
         for index, tool_call in enumerate(tool_calls):
+            if tool_call["id"] not in pending_ids:
+                continue
             effective = (
                 tool_call
                 if self._file_paths is None

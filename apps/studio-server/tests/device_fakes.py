@@ -14,12 +14,11 @@ from tinkerfin_studio.devices.profiles import DeviceProfileBinding, DeviceProfil
 from tinkerfin_studio.devices.schemas import (
     AuthorizationStart,
     DevicePresence,
-    LocalTargetSelection,
 )
 from tinkerfin_studio.devices.service import DeviceService
 from tinkerfin_studio.infrastructure.database import Database
 from tinkerfin_studio.projects.models import Project
-from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
+from tinkerfin_studio.skills.repository import SkillRepository
 
 DEVICE_SECRET = "ab" * 32
 SOURCE = RunIdentity(namespace="ns_1", thread_id="cloud-thread", run_id="cloud-run")
@@ -86,13 +85,13 @@ async def create_execution(database: Database) -> LocalExecution:
             model_id="main",
             input_json={},
         )
+        await SkillRepository(session, 1).capture(
+            SOURCE, project_id="project", selected_ids=()
+        )
         binding = await DeviceProfiles(session, 1).capture(
             identity=SOURCE,
-            selection=LocalTargetSelection(
-                device_id=device.device_id, workspace_id="project"
-            ),
+            project_id="project",
             access_mode="write_approval",
-            skills=SkillSnapshotPayload(skills=()),
         )
         assert binding is not None
         run.local_profile_id = binding.profile_id

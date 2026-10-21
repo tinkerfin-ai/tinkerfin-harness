@@ -6,7 +6,7 @@
 
 1. 从 [GitHub Releases](https://github.com/tinkerfin-ai/tinkerfin-harness/releases) 下载 TinkerFin Desktop 的 `TinkerFin.zip`，解压并将 `TinkerFin.app` 移到“应用程序”。无需安装开发工具或自行编译。
 2. 打开客户端，在菜单栏点击“连接”，填写 Studio 网页地址，再在浏览器登录并授权。API 使用独立地址时，可展开高级设置填写；地址不含 `/api`。
-3. 客户端显示“已连接”后，在 Studio 网页选择本地设备。完整流程见[本机协作指南](../../docs/cn/studio/local_devices.md)。
+3. 客户端显示“已连接”后，在 Studio 网页发起会话；顶部“本机资源”可查看设备状态和当前会话的确认选择。完整流程见[本机协作指南](../../docs/cn/studio/local_devices.md)。
 
 应用使用 ad-hoc 签名，**未通过 Apple 公证**。macOS 阻止打开时，核对下载来源后，在“系统设置 → 隐私与安全性”中找到 TinkerFin 并选择“仍要打开”；不要关闭系统安全保护；操作见 [Apple 说明](https://support.apple.com/en-us/102445)。ZIP 的 SHA-256 文件随发行包提供。
 

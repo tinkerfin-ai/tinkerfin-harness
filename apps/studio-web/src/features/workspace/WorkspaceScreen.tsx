@@ -11,7 +11,6 @@ import { useWorkspaceFiles } from '../workspaceFiles/useWorkspaceFiles'
 import { useDrawerLayout } from '../../components/ui/useDrawerLayout'
 import { DrawerResizeHandle } from '../../components/ui/DrawerResizeHandle'
 import { isConversationRunning } from '../../lib/workspace'
-import { AccessModePicker } from "../../components/AccessModePicker"
 import { AutomationPage } from '../automation/AutomationPage'
 import { SkillsPage } from '../skills/SkillsPage'
 import { readRunSkillSelection } from '../skills/api'
@@ -60,10 +59,9 @@ import { WorkspaceDialogs } from './components/WorkspaceDialogs'
 import { WorkspaceHeader } from './components/WorkspaceHeader'
 import { ScrollToBottomButton } from './components/ScrollToBottomButton'
 import { SettingsDialog } from '../settings/SettingsDialog'
-import { DevicePicker } from '../devices/DevicePicker'
+import { ComputerResources } from '../devices/ComputerResources'
+import { ComputerResourceWait } from '../devices/ComputerResourceWait'
 import { useDevices } from '../devices/useDevices'
-import { fetchRunLocalTarget, type LocalTarget } from '../devices/api'
-import { useExecutionLocation } from '../devices/useExecutionLocation'
 import { useWorkspaceNavigation } from './useWorkspaceNavigation'
 import { useModelCatalog } from './useModelCatalog'
 import { useWorkspaceHistory } from './useWorkspaceHistory'
@@ -106,7 +104,7 @@ import {
   selectCurrentConversation,
   updateConversation,
 } from '../../lib/workspace'
-import { clearSettingsLocation, readDeviceSettingsFromLocation, readPageFromLocation, readProjectFromLocation, readThreadFromLocation, writeWorkspaceToLocation } from '../../lib/threadRoute'
+import { clearSettingsLocation, openDeviceSettingsAtCurrentLocation, readDeviceSettingsFromLocation, readPageFromLocation, readProjectFromLocation, readThreadFromLocation, writeWorkspaceToLocation } from '../../lib/threadRoute'
 import type {
   ApprovalState,
   Conversation,
@@ -175,11 +173,15 @@ export function WorkspaceScreen(props: WorkspaceScreenProps) {
     return () => window.removeEventListener('popstate', navigate)
   }, [])
   const openSettings = useCallback((trigger: HTMLElement | null) => setSettings({ section: 'user', trigger }), [])
+  const openDeviceSettings = useCallback((trigger: HTMLElement | null) => {
+    openDeviceSettingsAtCurrentLocation()
+    setSettings({ section: 'devices', trigger })
+  }, [])
   return <>
     <div style={{ display: 'contents' }} inert={settings !== null || undefined} aria-hidden={settings !== null || undefined}>
       <ProjectsWorkspace key={props.user.user_id} user={props.user} onLogout={props.onLogout} onToast={props.onToast}>{scope => <ProjectWorkspaceScreen
         key={scope.project.id} {...props} scope={scope} devices={devices} modelCatalog={modelCatalog}
-        settingsOpen={settings !== null} onOpenSettings={openSettings} />}</ProjectsWorkspace>
+        settingsOpen={settings !== null} onOpenSettings={openSettings} onOpenDeviceSettings={openDeviceSettings} />}</ProjectsWorkspace>
     </div>
     <SettingsDialog devices={devices} onToast={props.onToast} onModelsChanged={modelCatalog.retry}
       open={settings !== null} initialSection={settings?.section ?? 'user'} user={props.user}
@@ -197,6 +199,7 @@ function ProjectWorkspaceScreen({
   modelCatalog,
   settingsOpen,
   onOpenSettings,
+  onOpenDeviceSettings,
 }: {
   user: AuthUser
   onLogout: () => void
@@ -206,6 +209,7 @@ function ProjectWorkspaceScreen({
   modelCatalog: ReturnType<typeof useModelCatalog>
   settingsOpen: boolean
   onOpenSettings: (trigger: HTMLElement | null) => void
+  onOpenDeviceSettings: (trigger: HTMLElement | null) => void
 }) {
   const { t } = useI18n()
   const projectId = scope.project.id
@@ -236,20 +240,8 @@ function ProjectWorkspaceScreen({
     }
   }, [workspace.conversations, draftConversation, textRevealProgress])
   const [draftModel, setDraftModel] = useState('')
-  const [draftAccessMode, setDraftAccessMode] = useState<Conversation['accessMode']>('full')
+  const [draftAccessMode, setDraftAccessMode] = useState<Conversation['accessMode']>('write_approval')
   const draftKey = workspace.currentThreadId ? `thread:${workspace.currentThreadId}` : `${projectId}:${pendingConversations.selectedRunId ? `pending:${pendingConversations.selectedRunId}` : ''}`
-  const {
-    target: localTarget, state: targetState, locked: targetLocked,
-    isAvailable: localTargetAvailable, retry: retryTargetRead, select: selectLocalTarget,
-    recordSubmission: recordLocalSubmission, registerThread: registerLocalThread,
-  } = useExecutionLocation({
-    projectId, userId: user.user_id, threadId: workspace.currentThreadId,
-    pendingRunId: pendingConversations.selectedRunId, draftKey, devices,
-    onPreferenceError: () => onToast('error', t('无法保存执行位置偏好')),
-  })
-  const targetKnown = targetState === 'ready'
-  const localTargetDisabledReason = !targetKnown ? t(targetState === 'error' ? '执行位置加载失败，请重试' : '正在加载执行位置') : !localTarget ? undefined : devices.status !== 'ready'
-    ? t('请先重新加载设备列表') : !localTargetAvailable(localTarget) ? t('请在客户端重新连接') : undefined
   const composerDraft = useComposerDraft('', { key: draftKey, store: scope.drafts })
   const draft = composerDraft.text
   const setDraft = composerDraft.setText
@@ -398,7 +390,7 @@ function ProjectWorkspaceScreen({
   const isSelectedModelAvailable = modelCatalogStatus === 'ready' && modelIds.includes(conversation.model)
   // 等待原技能期间改变会话、提交选项或模型目录后，必须由用户重新发起重试
   useLayoutEffect(() => () => retrySkillRequest.current?.abort(), [
-    workspace.currentThreadId, conversation.model, conversation.mode, conversation.accessMode, modelCatalogStatus, modelIds, localTarget,
+    workspace.currentThreadId, conversation.model, conversation.mode, conversation.accessMode, modelCatalogStatus, modelIds,
   ])
   const modelSubmissionDisabledReason = modelCatalogStatus === 'ready' && !isSelectedModelAvailable
     ? t('请选择可用模型') : undefined
@@ -675,9 +667,7 @@ function ProjectWorkspaceScreen({
   }, [messageWindow, scrollConversationToBottom])
 
   const beginSend = useCallback((content: string, modeOverride?: AgentMode, resubmission?: Message) => {
-    if (!isSelectedModelAvailable || (!resubmission && localTargetDisabledReason)) return
-    const submittedTarget = resubmission ? resubmission.meta?.localTarget : localTarget
-    if (submittedTarget && !localTargetAvailable(submittedTarget)) { pushToast('error', t('请在客户端重新连接')); return }
+    if (!isSelectedModelAvailable) return
     const trimmed = content.trim()
     if (!resubmission && composerSkills.selected.length > 0
       && (composerSkills.status !== 'ready' || composerSkills.selected.some(skill => skill.unavailable))) return
@@ -719,7 +709,7 @@ function ProjectWorkspaceScreen({
         mode: effectiveMode,
         accessMode: conversation.accessMode,
       })
-      const payload = buildInitialPayload(nextConversation, content, readyAttachments, selectedSkills.map(skill => skill.id), submittedTarget)
+      const payload = buildInitialPayload(nextConversation, content, readyAttachments, selectedSkills.map(skill => skill.id))
       const requestMessage = payload.messages.at(0)
       if (!requestMessage) return
       const seededConversation: Conversation = {
@@ -731,7 +721,7 @@ function ProjectWorkspaceScreen({
           content: messageText(requestMessage.content),
           attachments: messageAttachments(requestMessage.content),
           createdAt: now,
-          meta: { runId: payload.runId, selectedSkills, localTarget: submittedTarget },
+          meta: { runId: payload.runId, selectedSkills },
         }],
         activeRunId: payload.runId,
         runStatus: 'streaming',
@@ -745,7 +735,6 @@ function ProjectWorkspaceScreen({
 
       submissionLocks.current.set(submissionKey, payload.runId)
       const pendingKey = `${projectId}:pending:${payload.runId}`
-      recordLocalSubmission(pendingKey, submittedTarget)
       composerDraft.moveTo(pendingKey)
       localAttachments.moveTo(pendingKey)
       scrollConversationToBottomImmediately()
@@ -764,7 +753,6 @@ function ProjectWorkspaceScreen({
         onDraftChange: next => pendingConversations.update(payload.runId, next),
         onRegistered: (threadId, selected) => {
           const key = `thread:${threadId}`
-          registerLocalThread(pendingKey, threadId, submittedTarget)
           if (selected) { composerDraft.moveTo(key); localAttachments.moveTo(key) }
           else {
             const text = scope.drafts.get(pendingKey)
@@ -806,7 +794,7 @@ function ProjectWorkspaceScreen({
     const sendingConversation = currentConversation.mode === effectiveMode
       ? currentConversation
       : { ...currentConversation, mode: effectiveMode }
-    const payload = buildInitialPayload(sendingConversation, content, readyAttachments, selectedSkills.map(skill => skill.id), submittedTarget)
+    const payload = buildInitialPayload(sendingConversation, content, readyAttachments, selectedSkills.map(skill => skill.id))
     const requestMessage = payload.messages.at(0)
     if (!requestMessage) return
     if (modeOverride) setComposerPreference(currentConversation.threadId, { mode: modeOverride })
@@ -830,13 +818,13 @@ function ProjectWorkspaceScreen({
           content: messageText(requestMessage.content),
           attachments: messageAttachments(requestMessage.content),
           createdAt: now,
-          meta: { runId: payload.runId, selectedSkills, localTarget: submittedTarget },
+          meta: { runId: payload.runId, selectedSkills },
         }],
       }))
     })
     if (!resubmission) setDraft('')
     void streamRun(currentConversation.threadId, payload, 'start', { target: 'workspace', onAccepted, onRequestRejected }).finally(() => releaseSubmission(payload.runId))
-  }, [localTarget, localTargetDisabledReason, localTargetAvailable, recordLocalSubmission, registerLocalThread, pushToast, scope.attachments, scope.drafts, projectId, isActiveThread, isSelectedModelAvailable, t, conversation, localAttachments, composerSkills, composerDraft, draftRevision, draftConversation?.model, draftModel, pendingConversations, discardDraft, setHistoryQuery, hydrateConversation, isRunning, messageWindow, scrollConversationToBottomImmediately, setDraft, setComposerPreference, setWorkspace, streamRun, workspace.conversations, workspace.currentThreadId])
+  }, [scope.attachments, scope.drafts, projectId, isActiveThread, isSelectedModelAvailable, t, conversation, localAttachments, composerSkills, composerDraft, draftRevision, draftConversation?.model, draftModel, pendingConversations, discardDraft, setHistoryQuery, hydrateConversation, isRunning, messageWindow, scrollConversationToBottomImmediately, setDraft, setComposerPreference, setWorkspace, streamRun, workspace.conversations, workspace.currentThreadId])
 
   const latestBeginSend = useRef(beginSend)
   useLayoutEffect(() => { latestBeginSend.current = beginSend }, [beginSend])
@@ -852,12 +840,9 @@ function ProjectWorkspaceScreen({
     const controller = new AbortController()
     retrySkillRequest.current = controller
     try {
-      const [selectedSkills, originalTarget] = await Promise.all([
-        readRunSkillSelection(current.threadId, runId, controller.signal),
-        fetchRunLocalTarget(current.threadId, runId, controller.signal),
-      ])
+      const selectedSkills = await readRunSkillSelection(current.threadId, runId, controller.signal)
       if (controller.signal.aborted || latestWorkspace.current.currentThreadId !== current.threadId) return
-      latestBeginSend.current(original.content, undefined, { ...original, meta: { ...original.meta, selectedSkills, localTarget: originalTarget ?? undefined } })
+      latestBeginSend.current(original.content, undefined, { ...original, meta: { ...original.meta, selectedSkills } })
     } catch {
       if (!controller.signal.aborted) pushToast('error', t('无法读取原运行配置，请重试'))
     } finally {
@@ -1146,10 +1131,6 @@ function ProjectWorkspaceScreen({
     onConversationBoundary,
   })
 
-  const changeExecutionLocation = (value: LocalTarget | undefined) => {
-    if (selectLocalTarget(value)) localAttachments.revalidateExecution(`${projectId}:`)
-  }
-
   const setAgentMode = useCallback((mode: AgentMode) => {
     if (mode === conversation.mode) return
     if (!workspace.currentThreadId) {
@@ -1181,7 +1162,12 @@ function ProjectWorkspaceScreen({
     }
   }
 
+  const accessModeLocked = Boolean(isRunning || conversation.approval || conversation.planInteraction || conversation.pendingInteractionKind || isConversationHydrating || isConversationHydrationFailed)
+  const waitingForComputer = isRunning && devices.status === 'ready' && !devices.devices.some(device => !device.revoked && device.online)
+    && conversation.messages.some(message => message.meta?.toolName?.startsWith('computer_') && (message.meta.status === 'running' || message.meta.status === 'paused'))
+
   const selectAccessMode = (accessMode: Conversation['accessMode']) => {
+    if (accessModeLocked) return
     if (!workspace.currentThreadId) {
       setDraftAccessMode(accessMode)
       setDraftConversation(current => current ? { ...current, accessMode } : current)
@@ -1435,9 +1421,8 @@ function ProjectWorkspaceScreen({
               selected={workspaceView === 'trace'} aria-controls="chain-trace-panel" disabled={!conversation.threadId}
               onClick={() => selectWorkspaceView(workspaceView === 'trace' ? 'conversation' : 'trace')} />
           </div>}
-          navigation={<DevicePicker targetState={targetState} onRetry={retryTargetRead} devices={devices} projectId={projectId} value={localTarget} onChange={changeExecutionLocation}
-            disabled={isConversationHydrating || isConversationHydrationFailed || !targetKnown}
-            locked={targetLocked} />}
+          navigation={<ComputerResources devices={devices} value={conversation.accessMode} onChange={selectAccessMode}
+            disabled={accessModeLocked} onOpenSettings={onOpenDeviceSettings} />}
         />
         {workspaceView === 'conversation' ? (
           <>
@@ -1480,6 +1465,8 @@ function ProjectWorkspaceScreen({
               retryDisabled={isRunning || conversation.runStatus === 'detached' || !conversation.isHydrated || !isSelectedModelAvailable || Boolean(conversation.pendingInteractionKind || conversation.approval || conversation.planInteraction)}
               onLoadEarlierMessages={(trigger) => void messageWindow.loadEarlierMessages(trigger)}
             />
+            {waitingForComputer && <ComputerResourceWait onOpenSettings={onOpenDeviceSettings} onCancel={() => void stop()}
+              cancelling={Boolean(conversation.activeRunId && cancelPendingRunId === conversation.activeRunId)} />}
             <Composer
               draft={composerDraft.state}
               skills={composerSkills.skills}
@@ -1491,13 +1478,14 @@ function ProjectWorkspaceScreen({
               stopDisabledReason={compaction.saving ? t('正在保存压缩结果') : !canStopConversation && conversation.threadId ? t('恢复连接后可停止任务') : undefined}
               stopPending={Boolean(conversation.activeRunId && cancelPendingRunId === conversation.activeRunId)}
               isHydrating={isConversationHydrating}
-              submission={conversation.approval?.submitted || conversation.planInteraction?.submitted ? interactionConfirmation : undefined}
+              submission={conversation.planInteraction?.submitted ? interactionConfirmation : undefined}
               hero={showConversationHero ? <EmptyConversationBrand /> : undefined}
               takeover={conversation.approval
                 ? (
                   <ApprovalCard
                     key={`${conversation.threadId}:${conversation.approval.items[0]?.interruptId ?? ''}`}
                     conversation={conversation}
+                    submission={interactionConfirmation}
                     onChange={(updater) => changeApproval(conversation.threadId, updater)}
                     onSubmit={submitApproval}
                   />
@@ -1548,9 +1536,7 @@ function ProjectWorkspaceScreen({
               onChooseModel={() => setModelPickerOpen(true)}
               onCompact={executeCompaction}
               compactDisabledReason={modelSubmissionDisabledReason ?? compaction.disabledReason}
-              submissionDisabledReason={modelSubmissionDisabledReason ?? localTargetDisabledReason}
-              accessControl={<AccessModePicker value={conversation.accessMode} onChange={selectAccessMode}
-                disabled={isRunning || Boolean(conversation.approval || conversation.planInteraction) || isConversationHydrating} />}
+              submissionDisabledReason={modelSubmissionDisabledReason}
               modelControl={(
                 <ComposerModelPicker
                   model={conversation.model}

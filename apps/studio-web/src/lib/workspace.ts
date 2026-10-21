@@ -24,7 +24,7 @@ export const buildEmptyConversation = (
   updatedAt: options.now,
   model: options.model ?? 'GPT-5.5',
   mode: options.mode ?? 'default',
-  accessMode: options.accessMode ?? 'full',
+  accessMode: options.accessMode ?? 'write_approval',
   messages: [],
   runFailures: [],
   todos: [],

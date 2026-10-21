@@ -54,7 +54,6 @@ export interface Message {
   meta?: {
     source?: DeepReadonly<MessageSource>
     selectedSkills?: { id: string; name: string }[]
-    localTarget?: { device_id: string; workspace_id: string }
     planHistory?: PlanInteraction
     planResult?: PlanResult
     /** 历史消息的 Trace 关联键，用于将任务定位到对应的会话消息 */

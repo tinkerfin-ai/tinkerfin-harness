@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from deepagents import AsyncSubAgent, CompiledSubAgent, DeepAgentState
 from deepagents.backends import StateBackend
@@ -63,6 +63,9 @@ from .media import AttachmentSupport
 from .skills import SkillSource
 from .tools import _ToolRunScope
 
+if TYPE_CHECKING:
+    from ._named_workspaces import NamedWorkspaces
+
 AgentGraph: TypeAlias = CompiledStateGraph[
     AgentState[Any], Any, InputAgentState, OutputAgentState[Any]
 ]
@@ -100,6 +103,7 @@ def _filesystem(
     workspace: PreparedWorkspace[object, BackendProtocol] | None,
     tools: Sequence[ToolDefinition],
     operations: WorkspaceOperations | None,
+    named: NamedWorkspaces | None = None,
 ) -> FilesystemMiddleware:
     resolver = None if workspace is None else workspace.file_path_resolver
     filesystem_type = (
@@ -117,9 +121,9 @@ def _filesystem(
     )
     if isinstance(filesystem, _WorkspaceFilesystem):
         filesystem.operations = operations
-        if resolver is not None:
+        if resolver is not None or named is not None:
             filesystem.file_paths = _WorkspaceFilePaths(
-                resolver, filesystem.tools, tools, operations
+                resolver, filesystem.tools, tools, operations, named
             )
     return filesystem
 
@@ -167,9 +171,10 @@ def _role_defaults(
     workspace: PreparedWorkspace[object, BackendProtocol] | None,
     tools: Sequence[ToolDefinition],
     operations: WorkspaceOperations | None,
+    named: NamedWorkspaces | None = None,
 ) -> list[AgentMiddlewareType]:
     """Share file access, context management, and approvals across Agent roles."""
-    filesystem = _filesystem(backend, permissions, workspace, tools, operations)
+    filesystem = _filesystem(backend, permissions, workspace, tools, operations, named)
     paths = (
         filesystem.file_paths if isinstance(filesystem, _WorkspaceFilesystem) else None
     )
@@ -210,8 +215,9 @@ def _child_stack(
     checkpointer: CheckpointSaver | None,
     tools: Sequence[ToolDefinition],
     inherit_slots_only: bool = False,
+    named: NamedWorkspaces | None = None,
 ) -> list[AgentMiddlewareType]:
-    operations = None if tool_scope is None else WorkspaceOperations(tool_scope)
+    operations = None if tool_scope is None else WorkspaceOperations(tool_scope, named)
     defaults = _role_defaults(
         model=model,
         backend=backend,
@@ -221,6 +227,7 @@ def _child_stack(
         workspace=workspace,
         tools=tools,
         operations=operations,
+        named=named,
     )
     if inherit_slots_only:
         names = {item.name for item in defaults}
@@ -240,6 +247,7 @@ def _child_stack(
                     ),
                     None,
                 ),
+                named,
             ),
         ],
         attachments,
@@ -267,12 +275,27 @@ def create_agent_graph(
     if not isinstance(backend, BackendProtocol):
         raise TypeError("workspace must be prepared before agent construction")
     operations = (
-        None if spec.tool_scope is None else WorkspaceOperations(spec.tool_scope)
+        None
+        if spec.tool_scope is None
+        else WorkspaceOperations(spec.tool_scope, spec.named_workspaces)
     )
     custom = prepare_middleware_resources(spec.middleware, operations)
     prepared_tools = () if workspace is None else workspace.tools
     prepared_skills = () if workspace is None else workspace.skill_sources
     tools = merge_workspace_tools(spec.tools, prepared_tools, custom)
+    if spec.named_workspaces is not None:
+        spec.named_workspaces.validate_tools(
+            [
+                *tools,
+                *(
+                    tool
+                    for item in custom
+                    if hasattr(item, "tools")
+                    for tool in item.tools
+                ),
+            ]
+        )
+        tools.extend(spec.named_workspaces.discovery_tools())
     skills = resolve_skill_sources(spec.skills, prepared_skills, inherit=True)
     inline: list[NativeSubAgent | CompiledSubAgent] = []
     remote: list[AsyncSubAgent] = []
@@ -290,6 +313,19 @@ def create_agent_graph(
             child_tools = merge_workspace_tools(
                 child.get("tools", spec.tools), prepared_tools, child_custom
             )
+            if spec.named_workspaces is not None:
+                spec.named_workspaces.validate_tools(
+                    [
+                        *child_tools,
+                        *(
+                            tool
+                            for item in child_custom
+                            if hasattr(item, "tools")
+                            for tool in item.tools
+                        ),
+                    ]
+                )
+                child_tools.extend(spec.named_workspaces.discovery_tools())
             child_stack = _child_stack(
                 model=child_model,
                 backend=backend,
@@ -305,6 +341,7 @@ def create_agent_graph(
                 tool_scope=spec.tool_scope,
                 checkpointer=spec.checkpointer,
                 tools=child_tools,
+                named=spec.named_workspaces,
             )
             native: NativeSubAgent = {
                 "name": child["name"],
@@ -341,6 +378,7 @@ def create_agent_graph(
                     checkpointer=spec.checkpointer,
                     tools=tools,
                     inherit_slots_only=True,
+                    named=spec.named_workspaces,
                 ),
             },
         )
@@ -348,7 +386,9 @@ def create_agent_graph(
         backend=backend, subagents=inline, state_schema=spec.state_schema
     )
     defaults: list[AgentMiddlewareType] = []
-    filesystem = _filesystem(backend, spec.permissions, workspace, tools, operations)
+    filesystem = _filesystem(
+        backend, spec.permissions, workspace, tools, operations, spec.named_workspaces
+    )
     paths = (
         filesystem.file_paths if isinstance(filesystem, _WorkspaceFilesystem) else None
     )
@@ -393,7 +433,9 @@ def create_agent_graph(
         memory = WorkspaceMemory(backend=backend, sources=list(spec.memory))
         memory.operations = operations
         middleware.append(memory)
-    middleware.append(_ToolRuntimeMiddleware(spec.tool_scope, paths))
+    middleware.append(
+        _ToolRuntimeMiddleware(spec.tool_scope, paths, spec.named_workspaces)
+    )
     middleware = _with_attachments(middleware, spec.attachments, operations)
     schemas = [
         spec.state_schema or DeepAgentState,

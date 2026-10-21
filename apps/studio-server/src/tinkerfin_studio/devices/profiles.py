@@ -1,4 +1,4 @@
-"""固定云端会话使用的本机工作区与权限快照"""
+"""在首次本机需求时固定运行的设备、项目与确认选择"""
 
 from __future__ import annotations
 
@@ -19,9 +19,8 @@ from tinkerfin_studio.conversation.models import (
     ConversationThread,
 )
 from tinkerfin_studio.devices.models import Device, DeviceExecutionProfile
-from tinkerfin_studio.devices.schemas import LocalTargetSelection
 from tinkerfin_studio.projects.repository import ProjectRepository
-from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
+from tinkerfin_studio.skills.repository import SkillRepository
 
 _skills: TypeAdapter[list[dict[str, JsonValue]]] = TypeAdapter(
     list[dict[str, JsonValue]]
@@ -67,28 +66,17 @@ class DeviceProfiles:
         self,
         *,
         identity: RunIdentity,
-        selection: LocalTargetSelection | None,
+        project_id: str,
         access_mode: AccessMode,
-        skills: SkillSnapshotPayload,
-        inherited: str | None = None,
-    ) -> DeviceProfileBinding | None:
-        """固定会话项目与执行位置；新轮次使用当前设备，审批恢复保留原授权"""
+    ) -> DeviceProfileBinding:
+        """首次本机调用原子绑定当前设备，恢复和重复调用保留原授权
+
+        只为已登记且仍在运行的会话创建授权，调用方在提交后才打开本机工作区。
+        绑定与运行记录共用事务，失败或取消回滚后不会留下孤立授权。
+        """
         if identity.namespace != f"ns_{self._user_id}":
             raise BusinessException(DeviceErrorCode.PROFILE_CHANGED)
-        if inherited is not None:
-            row = await self.require(inherited)
-            if (
-                row.source_thread_id != identity.thread_id
-                or row.access_mode != access_mode
-            ):
-                raise BusinessException(DeviceErrorCode.PROFILE_CHANGED)
-            if selection is not None and (
-                row.device_id != selection.device_id
-                or row.workspace_id != selection.workspace_id
-            ):
-                raise BusinessException(DeviceErrorCode.PROFILE_CHANGED)
-            return self.binding(row)
-        prior = await self._session.scalar(
+        run = await self._session.scalar(
             select(ConversationRunRegistration)
             .join(
                 ConversationThread,
@@ -98,37 +86,41 @@ class DeviceProfiles:
             .where(
                 ConversationThread.user_id == self._user_id,
                 ConversationThread.thread_id == identity.thread_id,
-                ConversationRunRegistration.run_id != identity.run_id,
-                ConversationRunRegistration.status != "rejected",
+                ConversationThread.project_id == project_id,
+                ConversationThread.deleted_at.is_(None),
+                ConversationThread.archived.is_(False),
+                ConversationThread.status != "deleting",
+                ConversationRunRegistration.run_id == identity.run_id,
+                ConversationRunRegistration.status.in_(
+                    ("preparing", "starting", "running")
+                ),
             )
-            .order_by(ConversationRunRegistration.id)
-            .limit(1)
+            .with_for_update()
         )
-        if prior is not None:
-            if prior.local_profile_id is None:
-                if selection is not None:
-                    raise BusinessException(DeviceErrorCode.PROFILE_CHANGED)
-            else:
-                original = await self.require(prior.local_profile_id)
-                if (
-                    selection is not None
-                    and original.workspace_id != selection.workspace_id
-                ):
-                    raise BusinessException(DeviceErrorCode.PROFILE_CHANGED)
-                if selection is None:
-                    device_id = await self._session.scalar(
-                        select(Device.device_id).where(
-                            Device.user_id == self._user_id,
-                            Device.revoked_at.is_(None),
-                        )
-                    )
-                    if device_id is None:
-                        raise BusinessException(DeviceErrorCode.NOT_FOUND)
-                    selection = LocalTargetSelection(
-                        device_id=device_id, workspace_id=original.workspace_id
-                    )
-        if selection is None:
-            return None
+        if run is None or run.access_mode != access_mode:
+            raise BusinessException(DeviceErrorCode.EXECUTION_UNAVAILABLE)
+        if run.local_profile_id is not None:
+            row = await self.require(run.local_profile_id)
+            if (
+                row.source_thread_id != identity.thread_id
+                or row.workspace_id != project_id
+                or row.access_mode != access_mode
+            ):
+                raise BusinessException(DeviceErrorCode.PROFILE_CHANGED)
+            return self.binding(row)
+        device = await self._session.scalar(
+            select(Device)
+            .where(Device.user_id == self._user_id, Device.revoked_at.is_(None))
+            .with_for_update()
+        )
+        if device is None:
+            raise BusinessException(DeviceErrorCode.NOT_FOUND)
+        project = await ProjectRepository(self._session, self._user_id).require(
+            project_id
+        )
+        skills = await SkillRepository(self._session, self._user_id).snapshot(
+            identity, project_id=project_id
+        )
         profile_id = str(
             uuid5(
                 NAMESPACE_URL,
@@ -142,42 +134,10 @@ class DeviceProfiles:
                 ),
             )
         )
-        existing = await self._session.get(DeviceExecutionProfile, profile_id)
-        if existing is not None:
-            if (
-                existing.user_id != self._user_id
-                or existing.device_id != selection.device_id
-                or existing.workspace_id != selection.workspace_id
-                or existing.access_mode != access_mode
-            ):
-                raise BusinessException(DeviceErrorCode.PROFILE_CHANGED)
-            return self.binding(existing)
-        device = await self._session.scalar(
-            select(Device)
-            .where(
-                Device.device_id == selection.device_id,
-                Device.user_id == self._user_id,
-                Device.revoked_at.is_(None),
-            )
-            .with_for_update()
-        )
-        if device is None:
-            raise BusinessException(DeviceErrorCode.NOT_FOUND)
-        thread = await self._session.scalar(
-            select(ConversationThread).where(
-                ConversationThread.user_id == self._user_id,
-                ConversationThread.thread_id == identity.thread_id,
-            )
-        )
-        if thread is None or selection.workspace_id != thread.project_id:
-            raise BusinessException(DeviceErrorCode.WORKSPACE_UNAVAILABLE)
-        project = await ProjectRepository(self._session, self._user_id).require(
-            thread.project_id
-        )
         row = DeviceExecutionProfile(
             profile_id=profile_id,
             user_id=self._user_id,
-            device_id=selection.device_id,
+            device_id=device.device_id,
             source_thread_id=identity.thread_id,
             source_run_id=identity.run_id,
             workspace_id=project.id,
@@ -189,5 +149,6 @@ class DeviceProfiles:
             created_at=datetime.now(UTC).replace(tzinfo=None),
         )
         self._session.add(row)
+        run.local_profile_id = profile_id
         await self._session.flush()
         return self.binding(row)

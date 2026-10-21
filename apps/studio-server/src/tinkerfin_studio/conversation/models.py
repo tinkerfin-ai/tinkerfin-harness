@@ -126,9 +126,9 @@ class ConversationThread(Base):
     last_access_mode: Mapped[AccessMode] = mapped_column(
         String(32),
         nullable=False,
-        default="full",
-        server_default="full",
-        comment="最近主运行文件审批模式：full、write_approval",
+        default="write_approval",
+        server_default="write_approval",
+        comment="最近主运行本机确认模式：full、write_approval",
     )
     last_model: Mapped[str | None] = mapped_column(
         String(64), nullable=True, comment="最近主运行模型 ID"
@@ -206,9 +206,9 @@ class ConversationRunRegistration(Base):
     access_mode: Mapped[AccessMode] = mapped_column(
         String(32),
         nullable=False,
-        default="full",
-        server_default="full",
-        comment="文件审批模式：full、write_approval",
+        default="write_approval",
+        server_default="write_approval",
+        comment="本机确认模式：full、write_approval",
     )
     model_id: Mapped[str] = mapped_column(
         String(64), nullable=False, comment="主运行模型 ID"
@@ -216,7 +216,7 @@ class ConversationRunRegistration(Base):
     local_profile_id: Mapped[str | None] = mapped_column(
         String(36),
         nullable=True,
-        comment="本轮固定的本机执行配置 UUID；未启用本机协作时为空",
+        comment="本轮固定的本机执行配置 UUID；首次调用本机工具前为空",
     )
     status: Mapped[str] = mapped_column(
         String(32),

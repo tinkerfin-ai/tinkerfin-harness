@@ -14,7 +14,6 @@ from tinkerfin_contracts.media import Attachment
 from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
 from tinkerfin_studio.conversation.request import ChatRequest, CompactRequest
-from tinkerfin_studio.devices.schemas import LocalTargetSelection
 from tinkerfin_studio.services.schemas import ServiceBindings
 
 
@@ -67,9 +66,8 @@ class PreparedRunRequest:
     parameters: dict[str, JsonValue]
     message_ids: tuple[str, ...]
     mode: AgentMode
-    access_mode: AccessMode = "full"
+    access_mode: AccessMode = "write_approval"
     operation: Literal["chat", "compact"] = "chat"
-    local_target: LocalTargetSelection | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +112,7 @@ def prepare_run_request(
     user_id: int,
     thread_id: str,
     project_id: str,
-    access_mode: AccessMode = "full",
+    access_mode: AccessMode = "write_approval",
 ) -> PreparedRunRequest:
     """分配服务端消息 ID 并构造一次权威标准请求快照"""
 
@@ -137,6 +135,14 @@ def prepare_run_request(
             operation="compact",
         )
 
+    if "access_mode" not in request.forwarded_props.model_fields_set:
+        request = request.model_copy(
+            update={
+                "forwarded_props": request.forwarded_props.model_copy(
+                    update={"access_mode": access_mode}
+                ),
+            }
+        )
     message_ids = tuple(
         "message-"
         + str(
@@ -167,7 +173,6 @@ def prepare_run_request(
         message_ids=message_ids,
         mode=request.forwarded_props.agent_mode,
         access_mode=request.forwarded_props.access_mode,
-        local_target=request.forwarded_props.local_target,
     )
 
 

@@ -189,7 +189,7 @@ describe('前端视觉契约', () => {
     expect(unregisteredRadii).toEqual([])
     expect(unregisteredShadows).toEqual([])
     expect(unregisteredLayers).toEqual([])
-    expect(breakpointValues).toEqual(['440', '460', '767', '920', '1024'])
+    expect(breakpointValues).toEqual(['440', '460', '500', '767', '920', '1024'])
     const deviceAuthorizationBreakpointOwners = Object.entries(cssFiles)
       .filter(([, source]) => /@(?:media|container(?: [\w-]+)?) \((?:min|max)-width:\s*600px\)/.test(source))
       .map(([path]) => path)
@@ -224,6 +224,13 @@ describe('前端视觉契约', () => {
       for (const [, selector, block] of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
         const weight = block.match(/font-weight:\s*([^;]+);/)?.[1].trim()
         const interfaceWeights = new Map([
+          ['.local-resources', 'var(--weight-device-text)'],
+          ['.local-resources .lr-trigger', 'var(--weight-medium)'],
+          ['.local-resources .lr-device-name', 'var(--weight-medium)'],
+          ['.local-resources .lr-option-title', 'var(--weight-medium)'],
+          ['.local-resources .lr-action', 'var(--weight-medium)'],
+          ['.local-resources .lr-card-device-name', 'var(--weight-medium)'],
+          ['.local-resources .lr-empty h4', 'var(--weight-medium)'],
           ['.automation-task-name', 'var(--weight-semibold)'],
           ['.skills-icon', 'var(--weight-semibold)'],
           ['.ui-breadcrumbs span[aria-current]', 'var(--weight-semibold)'],
@@ -245,7 +252,9 @@ describe('前端视觉契约', () => {
         }
         const family = block.match(/font-family:\s*([^;]+);/)?.[1].trim()
         if (family) {
-          expect(['var(--font-ui)', 'var(--font-code)'], `${path}: 字体必须使用公共令牌`).toContain(family)
+          const allowed = ['var(--font-ui)', 'var(--font-code)']
+          if (selector.trim().startsWith('.local-resources')) allowed.push('var(--font-device-ui)')
+          expect(allowed, `${path}: 字体必须使用公共令牌`).toContain(family)
         }
       }
     }

@@ -83,6 +83,14 @@ export function writeDeviceSettingsToLocation(): void {
   rememberCurrentLocation()
 }
 
+/** 在当前项目与会话上打开设备配置，保留草稿页面和阅读上下文 */
+export function openDeviceSettingsAtCurrentLocation(): void {
+  const url = new URL(window.location.href)
+  url.searchParams.set('settings', 'devices')
+  window.history.replaceState(null, '', relativeLocation(url))
+  rememberCurrentLocation()
+}
+
 export function clearSettingsLocation(): void {
   const url = new URL(window.location.href)
   url.searchParams.delete('settings')

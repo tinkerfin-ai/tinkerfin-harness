@@ -2,6 +2,31 @@
 
 @layer tokens {
   :root {
+    --color-device-surface: #ffffff;
+    --color-device-text: #242528;
+    --color-device-subtle: #787b82;
+    --color-device-border: #e7e8eb;
+    --color-device-line: #eeeff1;
+    --color-device-hover: #f7f7f8;
+    --color-device-selected: #f3f4f5;
+    --color-device-green: #25865c;
+    --color-device-red: #d64d4d;
+    --color-device-gray: #a2a6ae;
+    --color-device-red-fill: #c94b4b;
+    --color-device-revoke: #ad5959;
+    --color-device-revoke-hover: #fff5f4;
+    --color-device-revoke-border-hover: #e8c9c6;
+    --color-device-button: #292a2e;
+    --color-device-button-text: #ffffff;
+    --color-device-shadow: rgba(24, 28, 38, .085);
+      --color-device-on-danger: var(--primitive-white);
+    --radius-device-action: 7px;
+    --radius-device-panel: 14px;
+    --shadow-device-panel: 0 12px 36px -8px var(--color-device-shadow);
+    --shadow-device-status: 0 0 0 2px var(--color-device-surface);
+    --motion-device-hover: 140ms;
+    --motion-device-chevron: 160ms;
+
     color-scheme: light;
 
     /* 原始色只在语义层中消费，功能样式不得直接引用 */
@@ -270,6 +295,24 @@
   }
 
   :root[data-theme='dark'] {
+    --color-device-surface: #232426;
+    --color-device-text: #ededee;
+    --color-device-subtle: #a3a6ac;
+    --color-device-border: #3b3d41;
+    --color-device-line: #37393d;
+    --color-device-hover: #2b2d30;
+    --color-device-selected: #303236;
+    --color-device-green: #70c99c;
+    --color-device-red: #ef8383;
+    --color-device-gray: #858991;
+    --color-device-red-fill: #d65e5e;
+    --color-device-revoke: #df9999;
+    --color-device-revoke-hover: #35292b;
+    --color-device-revoke-border-hover: #68494c;
+    --color-device-button: #e8e8eb;
+    --color-device-button-text: #232426;
+    --color-device-shadow: rgba(0, 0, 0, .25);
+
     color-scheme: dark;
     --color-canvas: #151517;
     --color-sidebar: #1b1b1c;

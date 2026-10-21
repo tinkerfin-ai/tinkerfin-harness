@@ -7,7 +7,7 @@ import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import nullcontext
 from copy import deepcopy
-from typing import Annotated, Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypedDict, cast
 
 from deepagents.middleware.filesystem import (
     DELETE_TOOL_DESCRIPTION,
@@ -33,15 +33,20 @@ from pydantic.fields import FieldInfo
 from tinkerfin_contracts import (
     FilePath,
     InvalidToolArguments,
+    ToolDescriptor,
     WorkspacePathResolver,
     resolve_tool_arguments,
 )
 from tinkerfin_contracts.workspace_tools import FILE_PATH_METADATA
 
 from ._agent_spec import ToolDefinition
+from ._tool_proposals import pending_tool_calls
 from ._workspace_operations import WorkspaceOperations
 from ._workspace_tools import tool_descriptor
 from .errors import TinkerFinLifecycleError
+
+if TYPE_CHECKING:
+    from ._named_workspaces import NamedWorkspaces
 
 _FS_TOOL_PATH_ARGS: dict[
     str,
@@ -85,20 +90,21 @@ class FileContractState(AgentState):
     """Retain the file declarations presented with the current model proposal."""
 
     _tinkerfin_file_contract: Annotated[str, PrivateStateAttr]
+    _tinkerfin_named_workspaces: Annotated[dict[str, JsonValue], PrivateStateAttr]
 
 
-def file_contract_digest(paths: _WorkspaceFilePaths | None) -> str:
+def file_contract_digest(
+    paths: _WorkspaceFilePaths | None, state: Mapping[str, object] | None = None
+) -> str:
     """Distinguish a complete file capability set from absent path resolution."""
-    return (
-        hashlib.sha256(b"null").hexdigest() if paths is None else paths.contract_digest
-    )
+    return hashlib.sha256(b"null").hexdigest() if paths is None else paths.digest(state)
 
 
 def validate_file_contract(
     state: Mapping[str, object], paths: _WorkspaceFilePaths | None
 ) -> str:
     """Refuse changed or missing proposal evidence before review or execution."""
-    current = file_contract_digest(paths)
+    current = file_contract_digest(paths, state)
     if state.get(FILE_CONTRACT_CHANNEL) != current:
         raise TinkerFinLifecycleError(
             "workspace file declarations changed after proposal; "
@@ -123,6 +129,38 @@ def _has_paths(value: JsonValue) -> bool:
     return isinstance(value, list) and any(_has_paths(item) for item in value)
 
 
+def annotate_filesystem_tools(tools: Sequence[BaseTool]) -> None:
+    """Describe native path arguments before any tool names are qualified."""
+    for tool in tools:
+        schema = tool.args_schema
+        if not isinstance(schema, type) or not issubclass(schema, BaseModel):
+            raise TypeError("workspace file tools require a model input schema")
+        operation, argument, _scope, _pattern = _FS_TOOL_PATH_ARGS[tool.name]
+        path_field = deepcopy(schema.model_fields[argument])
+        default_root = tool.name in {"glob", "grep"}
+        path_field.metadata.append(FilePath(operation, default_root=default_root))
+        path_field.description = (
+            "Path to the target file or directory. Follow the workspace filesystem "
+            "instructions for supported path forms and the default root."
+        )
+        if default_root:
+            path_field.description += (
+                " Omit to use the workspace's default search root."
+            )
+        fields: _PathSchemaFields = {}
+        fields[argument] = (path_field.annotation, path_field)
+        tool.args_schema = create_model(
+            schema.__name__, __base__=schema, __doc__=schema.__doc__, **fields
+        )
+        if (
+            tool.name == "delete"
+            and tool.description == DELETE_TOOL_DESCRIPTION.strip()
+        ):
+            tool.description = tool.description.replace(
+                "given absolute path", "given path"
+            )
+
+
 class _WorkspaceFilePaths(AgentMiddleware):
     """Keep raw model history and exact approved execution arguments separate.
 
@@ -136,47 +174,27 @@ class _WorkspaceFilePaths(AgentMiddleware):
 
     def __init__(
         self,
-        resolver: WorkspacePathResolver,
+        resolver: WorkspacePathResolver | None,
         tools: Sequence[BaseTool],
         declared: Sequence[ToolDefinition] = (),
         operations: WorkspaceOperations | None = None,
+        named: NamedWorkspaces | None = None,
     ) -> None:
         self._resolver = resolver
+        self._named = named
         self._operations = operations
         self._file_tools = {
-            tool.name: tool for tool in tools if tool.name in _FS_TOOL_PATH_ARGS
+            tool.name: tool
+            for tool in tools
+            if resolver is not None and tool.name in _FS_TOOL_PATH_ARGS
         }
-        for tool in self._file_tools.values():
-            schema = tool.args_schema
-            if not isinstance(schema, type) or not issubclass(schema, BaseModel):
-                raise TypeError("workspace file tools require a model input schema")
-            operation, argument, _scope, _pattern = _FS_TOOL_PATH_ARGS[tool.name]
-            path_field = deepcopy(schema.model_fields[argument])
-            default_root = tool.name in {"glob", "grep"}
-            path_field.metadata.append(FilePath(operation, default_root=default_root))
-            path_field.description = (
-                "Path to the target file or directory. Follow the workspace filesystem "
-                "instructions for supported path forms and the default root."
-            )
-            if default_root:
-                path_field.description += (
-                    " Omit to use the workspace's default search root."
-                )
-            fields: _PathSchemaFields = {}
-            fields[argument] = (path_field.annotation, path_field)
-            tool.args_schema = create_model(
-                schema.__name__, __base__=schema, __doc__=schema.__doc__, **fields
-            )
-            if (
-                tool.name == "delete"
-                and tool.description == DELETE_TOOL_DESCRIPTION.strip()
-            ):
-                tool.description = tool.description.replace(
-                    "given absolute path", "given path"
-                )
+        annotate_filesystem_tools(tuple(self._file_tools.values()))
         self._descriptors = {
             descriptor.name: descriptor
-            for definition in (*self._file_tools.values(), *declared)
+            for definition in (
+                *self._file_tools.values(),
+                *(declared if resolver is not None else ()),
+            )
             for descriptor in (tool_descriptor(definition),)
             if descriptor is not None and _has_paths(descriptor.input_schema)
         }
@@ -197,6 +215,44 @@ class _WorkspaceFilePaths(AgentMiddleware):
             ).encode("utf-8")
         ).hexdigest()
 
+    def digest(self, state: Mapping[str, object] | None) -> str:
+        if self._named is None:
+            return self.contract_digest
+        from ._named_workspaces import NAMED_WORKSPACES_CHANNEL
+
+        return hashlib.sha256(
+            json.dumps(
+                [
+                    self.contract_digest,
+                    {} if state is None else state.get(NAMED_WORKSPACES_CHANNEL, {}),
+                ],
+                sort_keys=True,
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode()
+        ).hexdigest()
+
+    async def restore(
+        self, state: Mapping[str, object], call: ToolCall | None = None
+    ) -> None:
+        if self._named is not None:
+            await self._named.restore(state, call)
+
+    def descriptor(
+        self, name: str, state: Mapping[str, object] | None
+    ) -> ToolDescriptor | None:
+        declared = self._descriptors.get(name)
+        if declared is not None or self._named is None or state is None:
+            return declared
+        descriptor = self._named.descriptor(name, state)
+        return (
+            descriptor
+            if descriptor is not None
+            and _has_paths(descriptor.input_schema)
+            and self._named.resolver(name) is not None
+            else None
+        )
+
     async def resolve_call(
         self,
         call: ToolCall,
@@ -205,8 +261,15 @@ class _WorkspaceFilePaths(AgentMiddleware):
         recheck: bool = False,
         step: str = "prepare-paths",
     ) -> ToolCall:
-        descriptor = self._descriptors.get(call["name"])
+        descriptor = self.descriptor(call["name"], state)
         if descriptor is None:
+            return call
+        if state is not None:
+            await self.restore(state, call)
+        resolver = (
+            None if self._named is None else self._named.resolver(call["name"])
+        ) or self._resolver
+        if resolver is None:
             return call
         if self._operations is not None and state is None:
             raise TinkerFinLifecycleError("path resolution requires the saved proposal")
@@ -217,7 +280,7 @@ class _WorkspaceFilePaths(AgentMiddleware):
         ):
             try:
                 resolved = await resolve_tool_arguments(
-                    descriptor, _JSON.validate_python(call["args"]), self._resolver
+                    descriptor, _JSON.validate_python(call["args"]), resolver
                 )
             except InvalidToolArguments:
                 # Native ToolNode owns invalid argument feedback; no path or effect
@@ -230,7 +293,7 @@ class _WorkspaceFilePaths(AgentMiddleware):
         return {**call, "args": resolved}
 
     def prepared_call(self, call: ToolCall, state: Mapping[str, object]) -> ToolCall:
-        descriptor = self._descriptors.get(call["name"])
+        descriptor = self.descriptor(call["name"], state)
         if descriptor is None:
             return call
         tool_id = call.get("id")
@@ -299,7 +362,12 @@ class _WorkspaceFilePaths(AgentMiddleware):
         if message is None:
             raise TinkerFinLifecycleError("file operation has no original proposal")
         projected = message.model_copy(
-            update={"tool_calls": [effective(call) for call in message.tool_calls]},
+            update={
+                "tool_calls": [
+                    effective(call)
+                    for call in pending_tool_calls(request.state["messages"])
+                ]
+            },
             deep=True,
         )
         state = {
@@ -312,7 +380,7 @@ class _WorkspaceFilePaths(AgentMiddleware):
         return request.override(tool_call=effective(request.tool_call), state=state)
 
     async def prepare_execution(self, request: ToolCallRequest) -> ToolCallRequest:
-        if request.tool_call["name"] not in self._descriptors:
+        if self.descriptor(request.tool_call["name"], request.state) is None:
             return request
         edited = request.state.get("hitl_edited_tool_calls", {}).get(
             request.tool_call["id"]
@@ -352,8 +420,8 @@ class _WorkspaceFilePaths(AgentMiddleware):
         )
         targets: dict[str, dict[str, JsonValue]] = {}
         if message is not None:
-            for call in message.tool_calls:
-                descriptor = self._descriptors.get(call["name"])
+            for call in pending_tool_calls(state["messages"]):
+                descriptor = self.descriptor(call["name"], state)
                 if descriptor is None or not Draft202012Validator(
                     descriptor.input_schema
                 ).is_valid(call["args"]):  # pyright: ignore[reportUnknownMemberType]
@@ -402,6 +470,8 @@ class _WorkspaceFilesystem(FilesystemMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
+        if self.file_paths is not None:
+            await self.file_paths.restore(request.state)
         projected = (
             request
             if self.file_paths is None
@@ -425,7 +495,10 @@ class _WorkspaceFilesystem(FilesystemMiddleware):
             nullcontext()
             if self.operations is None
             else self.operations.tool(
-                request.tool_call, request.state, step="filesystem-result"
+                request.tool_call,
+                request.state,
+                step="filesystem-result",
+                default_workspace=True,
             )
         ):
             # Deep Agents 0.7.19 leaves the Command node type unparameterized.

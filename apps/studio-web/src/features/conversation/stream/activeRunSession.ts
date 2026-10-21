@@ -78,6 +78,7 @@ const isChatRequestPayload = (value: unknown): value is ChatRequestPayload => {
   if (!isRecord(value)) return false
   if (typeof value.threadId !== 'string' || typeof value.runId !== 'string') return false
   if (!isJsonObject(value.state) || !isJsonObject(value.forwardedProps)) return false
+  if ('localTarget' in value.forwardedProps || 'local_target' in value.forwardedProps) return false
   if (typeof value.forwardedProps.projectId !== 'string' || !value.forwardedProps.projectId) return false
   if (value.forwardedProps.accessMode !== "full" && value.forwardedProps.accessMode !== "write_approval") return false
   if (!Array.isArray(value.tools) || !value.tools.every(isJsonValue)) return false

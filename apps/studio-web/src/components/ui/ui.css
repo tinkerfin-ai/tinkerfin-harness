@@ -1588,20 +1588,8 @@
   .ui-compact-picker--flat .ui-compact-picker-trigger:is(:hover, :active, :focus-visible) { background: transparent; box-shadow: none; }
   .ui-compact-picker--flat .ui-compact-picker-trigger:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
   .ui-compact-picker-trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ui-compact-picker--access-mode .ui-compact-picker-trigger {
-    display: flex;
-    justify-content: flex-start;
-    padding-inline: var(--space-3);
-    text-align: left;
-  }
-  .ui-compact-picker--access-mode .ui-compact-picker-trigger > span { margin-inline-start: var(--space-1); }
   .ui-compact-picker-options { position: absolute; right: 0; bottom: calc(100% + var(--space-2)); z-index: var(--layer-dropdown); width: min(250px, calc(100cqw - var(--control-lg) - var(--space-2))); max-height: min(320px, calc(100vh - 96px)); overflow-y: auto; overscroll-behavior: none; padding: var(--space-2); border: 0; outline: 0; border-radius: var(--radius-2xl); background: var(--color-layer-1); box-shadow: var(--shadow-2); }
   .ui-compact-picker--flat .ui-compact-picker-options { border: 1px solid var(--color-border); box-shadow: none; }
-  .ui-compact-picker--access-mode .ui-compact-picker-options {
-    right: auto;
-    left: 0;
-    width: min(calc(var(--space-16) * 2 + var(--space-12)), calc(100cqw - var(--control-lg) - var(--space-2)));
-  }
   .ui-compact-picker-options--down { top: calc(100% + var(--space-1)); bottom: auto; }
   .ui-compact-picker-options--compact { display: flex; flex-direction: column; gap: var(--space-1); width: max-content; max-width: calc(100vw - var(--space-8)); padding: var(--space-1); border-radius: var(--radius-button); }
   .ui-compact-picker-options [role='option'] {
@@ -1620,10 +1608,6 @@
     box-shadow: none;
   }
   .ui-compact-picker-options--compact [role='option'] { min-height: var(--control-xs); padding-inline: var(--space-2); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
-  .ui-compact-picker--access-mode .ui-compact-picker-options [role='option'] {
-    grid-template-columns: var(--icon-sm) minmax(0, 1fr) var(--icon-sm);
-    padding-inline-start: var(--space-1);
-  }
   .ui-compact-picker-options [role='option']:focus { outline: 0; background: transparent; }
   .ui-compact-picker-options [role='option'][aria-selected='true'],
   .ui-compact-picker-options [role='option'][data-active='true'] { background: transparent; box-shadow: none; }
@@ -1641,7 +1625,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .ui-compact-picker--access-mode .ui-compact-option-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ui-compact-picker-options .ui-compact-option-check { display: grid; width: var(--icon-sm); place-items: center; }
   .ui-compact-picker-chevron { flex: 0 0 auto; transition: transform var(--motion-fast) var(--ease-out); }
   .ui-compact-picker-trigger[aria-expanded='true'] .ui-compact-picker-chevron { transform: rotate(180deg); }

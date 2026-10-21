@@ -1358,6 +1358,7 @@
   }
 
   .approval-composer-feedback:empty { display: none; }
+  .approval-composer-feedback.is-submitting { display: flex; align-items: center; gap: var(--space-2); color: var(--color-text-secondary); text-align: left; }
 
   .approval-composer-actions {
     display: flex;
@@ -1821,10 +1822,6 @@
   .send-button:disabled { background: var(--color-active); color: var(--color-text-tertiary); }
   .send-button.stop { background: var(--color-danger-soft); color: var(--color-danger-text); }
 
-
-  @container composer-tools (max-width: 460px) {
-    .ui-compact-picker--access-mode .ui-compact-picker-trigger > span { display: none; }
-  }
 
   .composer-model-error { display: flex; align-items: center; gap: var(--space-1); color: var(--color-danger-text); font-size: var(--type-caption-size); white-space: nowrap; }
   .composer-model-error .ui-button { min-height: var(--control-composer); }

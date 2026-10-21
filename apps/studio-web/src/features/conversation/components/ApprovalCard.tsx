@@ -1,5 +1,6 @@
 import { restoreFocus } from '../../../components/ui/focus'
 import { useEffect, useRef, useState } from 'react'
+import { LoaderCircle } from 'lucide-react'
 
 import { Button, OverlayScrollbar } from '../../../components/ui'
 import type {
@@ -13,6 +14,7 @@ import { MarkdownContent } from './MarkdownContent'
 import { ToolCallCard } from './MessageBlock'
 import { ActivityDots } from './ActivityDots'
 import { InteractionCardColorBridge } from './InteractionCardColorBridge'
+import type { InteractionSubmissionState } from './InteractionSubmission'
 
 export interface ApprovalSubmissionDecision {
   interruptId: string
@@ -77,6 +79,7 @@ export function ApprovalCard({
   conversation,
   onChange,
   onSubmit,
+  submission,
 }: {
   conversation: Conversation
   onChange: (updater: (approval: ApprovalState) => ApprovalState) => void
@@ -84,6 +87,7 @@ export function ApprovalCard({
     interruptIds: readonly string[],
     finalDecision?: ApprovalSubmissionDecision,
   ) => void
+  submission?: InteractionSubmissionState
 }) {
   const { t } = useI18n()
   const approval = conversation.approval
@@ -191,7 +195,7 @@ export function ApprovalCard({
   return (
     <section
       className="approval-composer"
-      aria-label={t('等待审批')}
+      aria-label={t(approval.submitted ? '提交确认' : '等待审批')}
       onWheel={(event) => {
         const body = bodyRef.current
         if (!body || body.scrollHeight <= body.clientHeight) {
@@ -254,11 +258,12 @@ export function ApprovalCard({
       </div>
       <OverlayScrollbar viewportRef={bodyRef} />
       <footer className="approval-composer-footer">
-        <p className="approval-composer-feedback" role={approval.submitted ? 'status' : 'alert'}>
-          {approval.submitted ? t('正在确认提交状态') : approval.error ?? ''}
+        <p className={`approval-composer-feedback${approval.submitted && !submission?.failed ? ' is-submitting' : ''}`} role={approval.submitted ? 'status' : 'alert'}>
+          {approval.submitted && !submission?.failed && <LoaderCircle size={14} className="ui-button__spinner" aria-hidden="true" />}
+          {approval.submitted ? t(submission?.failed ? '暂时无法确认提交结果' : '正在提交') : approval.error ?? ''}
         </p>
         <div className="approval-composer-actions">
-          {approval.mode === 'reject' ? (
+          {approval.submitted ? submission?.failed && <Button type="button" size="sm" variant="text" loading={submission.checking} onClick={submission.retry}>{t('重新检查状态')}</Button> : approval.mode === 'reject' ? (
             <>
               <Button size="sm" shape="capsule" disabled={approval.submitted} onClick={cancelRejection}>{t('取消')}</Button>
               <Button size="sm" shape="capsule" disabled={approval.submitted} type="submit" form={rejectionFormId} variant="danger">

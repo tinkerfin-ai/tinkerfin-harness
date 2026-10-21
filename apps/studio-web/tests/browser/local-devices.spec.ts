@@ -13,7 +13,7 @@ const threadId = 'local-collaboration'
 const toolId = rootToolId('write')
 const fileArgs = { file_path: '/Users/test/reports/summary.md', content: '# 项目报告汇总\n\n已整理研究结论和下一步事项' }
 const interrupts: InterruptEvent[] = toolReviewInterrupts('parent-review', [{
-  toolCallId: toolId, name: 'write_file', args: fileArgs,
+  toolCallId: toolId, name: 'computer_write_file', args: fileArgs,
   description: '写入报告汇总\n\n在已授权的报告目录中创建 summary.md',
 }])
 const user = { user_id: 1, username: 'local-device-test', avatar_url: null, roles: [], disabled: false }
@@ -29,7 +29,7 @@ const history: ConversationHistoryDetail = {
     content: '整理我 Mac 上授权目录中的报告，生成一个汇总文件', contentOmitted: false, status: 'completed', createdAt: time, completedAt: time }],
   reasoning: [], graph: traceGraphWithNodes([
     traceGraphNode({ id: 'local-write', agui: { kind: 'tool', toolCallId: toolId }, sourceId: 'write',
-      name: 'write_file', runId: 'cloud-run', graphNamespace: [], status: 'waiting', startedSeq: 4, updatedSeq: 5,
+      name: 'computer_write_file', runId: 'cloud-run', graphNamespace: [], status: 'waiting', startedSeq: 4, updatedSeq: 5,
       startedAt: time, completedAt: null, request: fileArgs }),
   ], 5), state: { root: {}, subgraphs: {} },
   interactions: [{ agui: interrupts, id: 'local-approval', traceSeq: 5, sourceId: 'parent-review', graphNamespace: [],
@@ -120,7 +120,6 @@ async function prepare(page: Page, theme: string, language = 'zh-CN', deviceName
     await route.fulfill({ json: { code: 0, message: 'success', data } })
   })
   await installProjectScope(page)
-  await page.route('**/api/devices/selection?*', route => route.fulfill({ json: { code: 0, message: 'success', data: { device_id: device.device_id, workspace_id: 'project-1' } } }))
   await installNotificationStream(page, true, false)
   await installResumeStream(page)
   await page.goto('/?project=project-1&thread=' + threadId)
@@ -154,11 +153,17 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
     await expect(approve).toBeVisible()
     await expect(page.getByRole('region', { name: language === 'en' ? 'Waiting for approval' : '等待审批', exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: '写入报告汇总', exact: true })).toBeVisible()
-    const target = page.getByRole('button', { name: language === 'en' ? 'Local · Disconnected' : '本地 · 未连接', exact: true })
-    await expect(target).toHaveAttribute('aria-pressed', 'true')
-    await expect(target.locator('svg')).toHaveCount(1)
-    await expect(page.getByRole('button', { name: language === 'en' ? 'Configure' : '配置', exact: true })).toHaveCount(0)
-    await expect(page.getByRole('button', { name: language === 'en' ? 'Cloud' : '云端', exact: true })).toBeDisabled()
+    const target = page.getByRole('button', { name: language === 'en' ? 'Computer resources' : '本机资源', exact: true })
+    await target.click()
+    const resources = page.getByRole('dialog', { name: language === 'en' ? 'Computer resources' : '本机资源', exact: true })
+    await expect(resources.getByText(device.name, { exact: true })).toBeVisible()
+    await expect(resources.getByRole('status')).toHaveText(language === 'en' ? 'Disconnected' : '未连接')
+    await expect(resources.getByRole('radio')).toHaveCount(0)
+    for (const radio of await resources.getByRole('radio').all()) await expect(radio).toBeDisabled()
+    await expect(resources.getByRole('button', { name: /Open app|打开客户端/ })).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath(`computer-resources-${language}-${theme}-${width}.png`) })
+    await resources.press('Escape')
+    await expect(target).toBeFocused()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     const path = (name: string) => process.env.TINKERFIN_UI_EVIDENCE_DIR
       ? join(process.env.TINKERFIN_UI_EVIDENCE_DIR, name + '-' + theme + '-' + width + '.png') : testInfo.outputPath(name + '-' + theme + '-' + width + '.png')
@@ -171,11 +176,12 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
     expect(command.forwardedProps.projectId).toBe('project-1')
     const confirmation = page.getByRole('region', { name: language === 'en' ? 'Submission confirmation' : '提交确认', exact: true })
     await expect(confirmation).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: language === 'en' ? 'Waiting for computer' : '等待本机连接' })).toBeVisible()
     const stop = page.getByRole('button', { name: language === 'en' ? 'Stop task' : '停止任务', exact: true })
     await expect(stop).toBeEnabled()
     const cancelled = theme === 'dark'
     if (cancelled) {
-      await stop.click()
+      await page.getByRole('button', { name: language === 'en' ? 'Cancel wait' : '取消等待', exact: true }).click()
       await expect.poll(() => cancellations).toEqual(['/api/conversation/' + threadId + '/runs/' + command.runId + '/cancel'])
       await expect(page.getByRole('button', { name: 'Stopping task', exact: true })).toBeDisabled()
     }
@@ -186,11 +192,11 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
     expect(cancellations).toHaveLength(cancelled ? 1 : 0)
     expect(unexpectedRequests).toEqual([])
     await expect(page.getByText(language === 'en' ? 'Local tasks' : '本机任务', { exact: true })).toHaveCount(0)
-    const userMenu = page.getByRole('button', { name: language === 'en' ? 'Open user menu' : '打开用户菜单', exact: true })
-    if (!await userMenu.isVisible()) await page.getByRole('button', { name: language === 'en' ? (width < 768 ? 'Open navigation' : 'Open sidebar') : (width < 768 ? '打开导航' : '打开侧边栏'), exact: true }).click()
-    await userMenu.click()
-    await page.getByRole('menuitem', { name: language === 'en' ? 'Settings' : '设置', exact: true }).click()
-    await page.getByRole('navigation', { name: language === 'en' ? 'Settings categories' : '设置分类' }).getByRole('button', { name: language === 'en' ? 'Local devices' : '本地设备', exact: true }).click()
+    const input = page.getByRole('textbox', { name: language === 'en' ? 'Message input' : '消息输入', exact: true })
+    await input.fill('保留这份草稿')
+    await target.click()
+    await page.getByRole('dialog', { name: language === 'en' ? 'Computer resources' : '本机资源', exact: true }).getByRole('button', { name: language === 'en' ? 'Open local device settings' : '打开本地设备设置', exact: true }).click()
+    await expect(page).toHaveURL(new RegExp('project=project-1.*thread=' + threadId + '.*settings=devices'))
     await expect(page.getByRole('heading', { name: language === 'en' ? 'Local devices' : '本地设备' })).toBeVisible()
     const categories = page.getByRole('navigation', { name: language === 'en' ? 'Settings categories' : '设置分类' })
     await expect(categories.getByRole('button', { name: language === 'en' ? 'Local devices' : '本地设备', exact: true })).toBeInViewport({ ratio: 1 })
@@ -199,32 +205,13 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
       expect(bounds!.width).toBeGreaterThanOrEqual(44)
       expect(bounds!.height).toBeGreaterThanOrEqual(44)
     }
-    await expect(page.getByText(device.name, { exact: true })).toBeVisible()
+    await expect(page.getByRole('dialog').getByText(device.name, { exact: true })).toBeVisible()
     await expect(page.getByText(language === 'en' ? 'Managed automatically' : '自动管理')).toHaveCount(0)
     await expect(page.getByText('~/.tinkerfin/projects', { exact: true })).toHaveCount(0)
-    const typography = await page.locator('.device-settings').evaluate(section => {
-      const root = getComputedStyle(document.documentElement)
-      const read = (selector: string) => Array.from(section.querySelectorAll(selector), element => {
-        const style = getComputedStyle(element)
-        return { size: style.fontSize, line: style.lineHeight }
-      })
-      return { title: read('h3'), text: read('strong, .device-settings__status'), actions: read('.ui-button--text'),
-        expectedTitle: { size: root.getPropertyValue('--type-title-size').trim(), line: root.getPropertyValue('--type-title-line').trim() },
-        expectedText: { size: root.getPropertyValue('--type-meta-size').trim(), line: root.getPropertyValue('--type-meta-line').trim() },
-        expectedAction: { size: root.getPropertyValue('--type-meta-size').trim(), line: root.getPropertyValue('--type-ui-line').trim() } }
-    })
-    expect(typography.title).toEqual([typography.expectedTitle])
-    expect(typography.text.length).toBeGreaterThan(0)
-    for (const text of typography.text) expect(text).toEqual(typography.expectedText)
-    for (const action of typography.actions) expect(action).toEqual(typography.expectedAction)
-    const revoke = page.getByRole('button', { name: language === 'en' ? 'Revoke access' : '撤销授权', exact: true })
-    await expect(revoke).toBeInViewport({ ratio: 1 })
-    await expect(revoke).toHaveCSS('font-size', typography.expectedAction.size)
-    await expect(revoke).toHaveCSS('cursor', 'pointer')
-    const footerBounds = (await page.locator('.settings-panel__actions').boundingBox())!
-    const layoutBounds = (await page.locator('.settings-layout').boundingBox())!
-    expect(footerBounds.y + footerBounds.height).toBeCloseTo(layoutBounds.y + layoutBounds.height, 0)
-    await testInfo.attach('device-settings-typography', { body: JSON.stringify(typography, null, 2), contentType: 'application/json' })
+    const deviceCard = page.getByRole('region', { name: language === 'en' ? 'Authorized device' : '已授权设备', exact: true })
+    await expect(deviceCard.getByRole('button', { name: language === 'en' ? 'Revoke access' : '撤销授权', exact: true })).toBeVisible()
+    await expect(deviceCard.getByText(device.name, { exact: true })).toHaveCSS('font-size', '13px')
+    await expect(deviceCard.getByRole('status')).toHaveCSS('font-size', '11px')
     const bounds = await page.getByRole('dialog').boundingBox()
     expect(bounds!.x).toBeGreaterThanOrEqual(0)
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width)
@@ -233,34 +220,34 @@ for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440
     await page.screenshot({ path: path('local-devices') })
     await page.mouse.move(0, 0)
     await page.getByRole('dialog').press('Escape')
-    if (!await target.isVisible()) await page.keyboard.press('Escape')
-    await expect(target).toHaveAttribute('aria-pressed', 'true')
+    await expect(target).toBeFocused()
+    await expect(input).toHaveValue('保留这份草稿')
+    await expect(page).toHaveURL(new RegExp('project=project-1.*thread=' + threadId + '$'))
+    await expect(target).toHaveAttribute('aria-expanded', 'false')
   })
 }
 
 for (const theme of ['light', 'dark']) for (const viewport of [{ width: 320, height: 360 }, { width: 622, height: 320 }]) {
-  test('设备授权操作固定在设置底部 ' + theme + ' ' + viewport.width, async ({ page }, info) => {
+  test('设备授权在卡片内确认且长名称仍可操作 ' + theme + ' ' + viewport.width, async ({ page }, info) => {
     await page.setViewportSize(viewport)
     const name = '研究项目'.repeat(16)
     await prepare(page, theme, 'zh-CN', name)
     await page.goto('/?settings=devices')
     const revoke = page.getByRole('button', { name: '撤销授权', exact: true })
+    await revoke.scrollIntoViewIfNeeded()
     await expect(revoke).toBeInViewport({ ratio: 1 })
-    await expect(page.getByText(name, { exact: true })).toBeVisible()
+    await expect(page.getByRole('dialog').getByText(name, { exact: true })).toBeVisible()
     await page.screenshot({ path: info.outputPath('device-settings-fixed-actions.png') })
     await revoke.click()
-    const confirm = page.getByRole('button', { name: '确认撤销设备', exact: true })
+    const confirm = page.getByRole('button', { name: '撤销授权', exact: true })
+    await confirm.scrollIntoViewIfNeeded()
     await expect(confirm).toBeInViewport({ ratio: 1 })
-    await expect(page.getByRole('group', { name: '撤销授权', exact: true })).toContainText(name)
-    const footer = page.locator('.settings-panel__actions')
-    const before = await footer.boundingBox()
-    const content = page.getByRole('region', { name: '设置', exact: true })
-    expect(await content.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
-    await content.evaluate(element => { element.scrollTop = element.scrollHeight })
-    expect(await footer.boundingBox()).toEqual(before)
-    await expect(confirm).toBeInViewport({ ratio: 1 })
+    const deviceCard = page.getByRole('region', { name: '已授权设备', exact: true })
+    await expect(deviceCard.getByText(name, { exact: true })).toBeVisible()
+    await expect(deviceCard.getByRole('group', { name: '撤销授权', exact: true })).toContainText('再次使用需重新授权')
     await page.screenshot({ path: info.outputPath('device-settings-revoke-confirmation.png') })
     await page.getByRole('button', { name: '取消', exact: true }).click()
+    await revoke.scrollIntoViewIfNeeded()
     await expect(revoke).toBeInViewport({ ratio: 1 })
   })
 }

@@ -48,11 +48,9 @@ from tinkerfin_studio.devices.schemas import (
     LocalFileContent,
     LocalSkillFile,
     LocalSkillPackage,
-    LocalTargetSelection,
     PairedDevice,
 )
 from tinkerfin_studio.devices.service import DeviceConnection, DeviceService
-from tinkerfin_studio.devices.views import DeviceSelections
 from tinkerfin_studio.projects.models import Project
 from tinkerfin_studio.projects.repository import ProjectRepository
 from tinkerfin_studio.resources import get_resources
@@ -233,14 +231,6 @@ async def read_execution_file(
     )
 
 
-def _device_selections(request: Request, user_id: int) -> DeviceSelections:
-    resources = get_resources(request.app)
-    return DeviceSelections(
-        resources.database,
-        user_id=user_id,
-    )
-
-
 @router.get("/projects", response_model=ApiResponse[DeviceProjectPage])
 async def device_projects(
     request: Request, token: RawTokenDep, after: str = Query(default="", max_length=64)
@@ -282,19 +272,6 @@ async def device_project(
     async with database.session() as session:
         item = await ProjectRepository(session, principal.user_id).require(project_id)
         return ApiResponse.success(DeviceProject(project_id=item.id, name=item.name))
-
-
-@router.get("/selection", response_model=ApiResponse[LocalTargetSelection | None])
-async def local_selection(
-    request: Request,
-    user: NetworkUserDep,
-    thread_id: str = Query(min_length=1, max_length=128),
-    run_id: str | None = Query(default=None, min_length=1, max_length=128),
-) -> ApiResponse[LocalTargetSelection | None]:
-    """只返回本人原运行的本机选择，供提问重试继续核验相同授权"""
-    return ApiResponse.success(
-        await _device_selections(request, user.user_id).selection(thread_id, run_id)
-    )
 
 
 @router.get(

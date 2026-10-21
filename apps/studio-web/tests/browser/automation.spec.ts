@@ -1,3 +1,4 @@
+import { installConnectedDevice } from './fixtures/devices'
 import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Locator, type Page } from '@playwright/test'
@@ -904,15 +905,15 @@ test('状态筛选独立于搜索，关闭搜索保留筛选且切换视图重�
   expect(requests.filter(request => /\/automation\/(tasks|runs)\/counts/.test(request))).toEqual([])
 })
 
-test('普通会话默认完全访问，权限选择沿用模型样式', async ({ page }, testInfo) => {
+test('普通会话默认修改前确认，本机资源入口在各视口可用', async ({ page }, testInfo) => {
   await prepare(page)
+  await installConnectedDevice(page)
   await page.locator('[aria-keyshortcuts~="Meta+K"]').click()
-  const access = page.getByRole('button', { name: '选择访问权限' })
-  await expect(access).toContainText('完全访问')
+  const access = page.getByRole('button', { name: '本机资源' })
   await access.click()
-  await expect(page.getByRole('option')).toHaveCount(2)
-  await page.getByRole('option', { name: '写入需审批' }).click()
-  await expect(access).toContainText('写入需审批')
+  await expect(page.getByRole('radio')).toHaveCount(2)
+  await expect(page.getByRole('radio', { name: '修改前确认' })).toBeChecked()
+  await page.getByRole('dialog', { name: '本机资源', exact: true }).press('Escape')
   await expect(access).toBeFocused()
   for (const theme of ['light', 'dark']) for (const width of [320, 768, 1024, 1440]) {
     await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
@@ -920,7 +921,8 @@ test('普通会话默认完全访问，权限选择沿用模型样式', async ({
     await expect(access).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
     const model = page.getByRole('button', { name: '选择模型', exact: true })
-    expect(await access.evaluate(node => getComputedStyle(node).fontSize)).toBe(await model.evaluate(node => getComputedStyle(node).fontSize))
+    await expect(access).toHaveCSS('font-size', '13px')
+    await expect(model).toBeVisible()
     if (width === 320 || width === 1440) await page.screenshot({ path: testInfo.outputPath(`permissions-${theme}-${width}.png`) })
   }
 })
@@ -931,18 +933,21 @@ test('触控环境保留普通会话权限选择，自动化创建与详情操�
   try {
     const page = await context.newPage()
     await prepare(page)
+    await installConnectedDevice(page)
     await page.getByRole('button', { name: '打开导航', exact: true }).click()
     await page.locator('[aria-keyshortcuts~="Meta+K"]').click()
     await page.getByRole('button', { name: '关闭导航', exact: true }).click()
-    const access = page.getByRole('button', { name: '选择访问权限' })
+    const access = page.getByRole('button', { name: '本机资源' })
     const box = await access.boundingBox()
     expect(box!.width).toBeGreaterThanOrEqual(44)
     expect(box!.height).toBeGreaterThanOrEqual(44)
     await access.tap()
-    for (const option of await page.getByRole('option').all()) {
-      expect((await option.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    for (const radio of await page.getByRole('radio').all()) {
+      expect(await radio.evaluate(element => (element as HTMLInputElement).labels![0].getBoundingClientRect().height)).toBeGreaterThanOrEqual(44)
     }
-    await page.getByRole('option', { name: '完全访问' }).tap()
+    await page.getByText('自动执行', { exact: true }).tap()
+    await expect(page.getByRole('dialog', { name: '本机资源', exact: true })).toBeHidden()
+    await expect(access).toContainText('自动执行')
     await page.getByRole('button', { name: '打开导航', exact: true }).click()
     await page.getByRole('button', { name: '定时任务', exact: true }).click()
     const card = page.getByRole('article', { name: '每日 AI 新闻简报', exact: true })

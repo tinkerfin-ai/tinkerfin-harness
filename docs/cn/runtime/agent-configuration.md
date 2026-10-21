@@ -200,6 +200,34 @@ Sandbox 工作区的首个 key 选择物理所有者，`workspace_key` 选择其
 项目文件、HOME、缓存和依赖环境。运行外通过 `async with project.open() as files` 访问项目；
 `await project.delete()` 只停止并删除该项目。部署和所有权要求见 [Sandbox 指南](../sandbox/index.md)。
 
+需要同时使用默认工作区和远程电脑时，将已认证设备的工作区作为具名资源绑定：
+
+```python
+computer = remote.endpoint(
+    namespace=authenticated_namespace, target=authenticated_device
+).workspace(authorization=authorized_workspace_token)
+runtime = configured.build(
+    model=model,
+    backend=project,
+    workspaces={"computer": computer},
+    interrupt_on={"computer_write_file": True, "computer_execute": True},
+)
+await runtime.ainvoke(
+    thread_id=thread_id,
+    run_id=run_id,
+    input={"messages": [{"role": "user", "content": "读取我电脑上的报告"}]},
+)
+```
+
+宿主负责认证、配置 checkpointer，以及应用级 `RemoteTools` 资源和连接传输。
+Runtime 在调用 `computer_tools` 发现工具时才准备电脑资源，开放带前缀的工具，并在运行完成、
+中断或取消后释放借用。默认文件工具和记忆路由继续使用 `project`。
+声明式子智能体与通用子智能体继承这些资源；已编译与远程子智能体自行配置。
+
+工作区名称保留对应工具前缀，不能遮蔽内置工具，名称之间也不得有重叠前缀。辅助工作区的文件必须保存在 Graph 状态之外，
+不能使用 `StateBackend`。`permissions` 只作用于默认 backend，辅助资源由提供方执行自己的访问规则；
+审批配置使用带前缀的工具名。审批恢复会核对原资源身份、工具声明和文件目标，目标改变时必须重新发起操作。
+
 工具在执行前定义，通过参数注解取得本次运行信息：
 
 ```python

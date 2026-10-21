@@ -15,7 +15,6 @@ export interface ConversationForwardedProps {
   accessMode: AccessMode
   command: ConversationCommandMap
   skillIds: string[]
-  localTarget?: { device_id: string; workspace_id: string }
 }
 
 export interface ChatMessageInput {

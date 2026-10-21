@@ -6,11 +6,14 @@ from .errors import RemoteError, RemoteErrorCode, WorkspaceRejected
 from .executor import ToolContextArg, ToolExecutor
 from .limits import RemoteLimits
 from .models import WorkspaceRequest
+from .operations import OperationState, OperationStatus
 from .remote import RemoteEndpoint, RemoteTools, RemoteWorkspace
 from .session import RemoteSession
 from .worker import ToolWorker
 
 __all__ = [
+    "OperationState",
+    "OperationStatus",
     "RemoteEndpoint",
     "RemoteError",
     "RemoteErrorCode",

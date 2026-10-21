@@ -1,3 +1,4 @@
+import { installConnectedDevice } from './fixtures/devices'
 import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test, type Page } from '@playwright/test'
@@ -41,6 +42,7 @@ async function openComposer(page: Page, locale = 'zh-CN', theme = 'light') {
     localStorage.setItem('tinkerfin:theme', theme)
   }, { locale, theme })
   await installNotificationStream(page)
+  await installConnectedDevice(page)
   await installProjectScope(page)
   await page.goto('/')
 }
@@ -89,7 +91,7 @@ test('模型菜单紧凑布局与文件选择等待反馈', async ({ page }, tes
   const device = await page.context().newCDPSession(page)
   await device.send('Emulation.setTouchEmulationEnabled', { enabled: true })
   await page.setViewportSize({ width: 320, height: 1000 })
-  for (const name of ['打开命令和技能', '添加本地附件', '选择访问权限']) {
+  for (const name of ['打开命令和技能', '添加本地附件']) {
     const bounds = await page.getByRole('button', { name, exact: true }).evaluate(element => {
       const bounds = element.getBoundingClientRect()
       return { width: bounds.width, height: bounds.height }
@@ -222,34 +224,23 @@ test('Plan 指令没有任务正文时按钮和 Enter 均不提交', async ({ pa
 
 for (const locale of ['zh-CN', 'en']) {
   for (const theme of ['light', 'dark']) {
-    test(`权限文字按工具栏实际宽度收起和恢复 ${locale} ${theme}`, async ({ page }, testInfo) => {
+    test(`本机入口与输入区控件保持各自布局 ${locale} ${theme}`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width: 1440, height: 900 })
       await page.emulateMedia({ reducedMotion: 'reduce' })
       await openComposer(page, locale, theme)
-      const access = page.getByRole('button', { name: locale === 'en' ? 'Choose access permissions' : '选择访问权限' })
+      const access = page.getByRole('button', { name: locale === 'en' ? 'Computer resources' : '本机资源' })
       const commands = page.getByRole('button', { name: locale === 'en' ? 'Open commands and skills' : '打开命令和技能' })
       const attachment = page.getByRole('button', { name: locale === 'en' ? 'Add local attachments' : '添加本地附件' })
-      const label = access.locator('span')
       const toolbar = page.locator('.composer-toolbar-container')
       const model = page.locator('.composer-toolbar-trailing .ui-compact-picker-trigger')
       await expect(model).toBeEnabled()
       await access.click()
-      await page.getByRole('option').first().click()
+      await expect(page.getByRole('radio').first()).toBeChecked()
+      await page.getByRole('dialog', { name: locale === 'en' ? 'Computer resources' : '本机资源', exact: true }).press('Escape')
       await model.click()
       const providerTypography = await page.getByRole('group', { name: '测试提供方' })
         .getByText('测试提供方', { exact: true }).evaluate(textStyle)
       await page.getByRole('option').filter({ hasText: names[2] }).click()
-      for (const width of [461, 460, 459, 600]) {
-        await toolbar.evaluate((element, width) => { (element as HTMLElement).style.width = `${width}px` }, width)
-        await expect(label).toBeVisible({ visible: width > 460 })
-        await expect(access).toHaveAccessibleDescription(locale === 'en' ? 'Ask before writing' : '写入需审批')
-        await expect(model.locator('span').first()).toBeVisible()
-        if (width === 460) {
-          await access.hover()
-          await expect(page.getByRole('tooltip').filter({ hasText: locale === 'en' ? 'Ask before writing' : '写入需审批' })).toBeVisible()
-        }
-      }
-      await toolbar.evaluate(element => { (element as HTMLElement).style.removeProperty('width') })
       for (const width of [320, 768, 1024, 1440]) {
         await page.setViewportSize({ width, height: 900 })
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
@@ -258,20 +249,18 @@ for (const locale of ['zh-CN', 'en']) {
         if (width === 320) expect(await model.locator('span').first().evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
         const bounds = await access.boundingBox()
         const modelBounds = await model.boundingBox()
-        expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(modelBounds!.x)
-        const controls = await toolbar.getByRole('button').evaluateAll(elements => elements.slice(0, 3).map(element => {
+        expect(bounds!.y).toBeLessThan(modelBounds!.y)
+        const controls = await toolbar.getByRole('button').evaluateAll(elements => elements.slice(0, 2).map(element => {
           const bounds = element.getBoundingClientRect()
           return { label: element.getAttribute('aria-label'), left: bounds.left, right: bounds.right, color: getComputedStyle(element).color }
         }))
         expect(controls.map(control => control.label)).toEqual(locale === 'en'
-          ? ['Open commands and skills', 'Add local attachments', 'Choose access permissions']
-          : ['打开命令和技能', '添加本地附件', '选择访问权限'])
+          ? ['Open commands and skills', 'Add local attachments']
+          : ['打开命令和技能', '添加本地附件'])
         expect(controls[0]!.right).toBeLessThanOrEqual(controls[1]!.left)
-        expect(controls[1]!.right).toBeLessThanOrEqual(controls[2]!.left)
-        expect(controls[0]!.color).toBe(controls[2]!.color)
-        expect(controls[1]!.color).toBe(controls[2]!.color)
+        expect(controls[0]!.color).toBe(controls[1]!.color)
         const iconGeometry = []
-        for (const control of [commands, attachment, access]) {
+        for (const control of [commands, attachment]) {
           const icon = control.locator('svg').first()
           await expect(icon).toHaveCSS('width', '17px')
           await expect(icon).toHaveCSS('height', '17px')
@@ -292,9 +281,9 @@ for (const locale of ['zh-CN', 'en']) {
         }
         await expect(commands).not.toHaveAttribute('aria-describedby')
         await access.click()
-        await expect(page.getByRole('option')).toHaveCount(2)
-        await expect(page.getByRole('option').first()).toContainText(locale === 'en' ? 'Ask before writing' : '写入需审批')
-        await page.getByRole('listbox').press('Escape')
+        await expect(page.getByRole('radio')).toHaveCount(2)
+        await expect(page.getByRole('radio', { name: locale === 'en' ? 'Ask before changes' : '修改前确认' })).toBeChecked()
+        await page.getByRole('dialog', { name: locale === 'en' ? 'Computer resources' : '本机资源', exact: true }).press('Escape')
         await page.screenshot({ path: testInfo.outputPath(`toolbar-${locale}-${theme}-${width}.png`) })
         await commands.click()
         const menu = page.getByRole('listbox', { name: locale === 'en' ? 'Command and skill suggestions' : '命令和技能建议' })

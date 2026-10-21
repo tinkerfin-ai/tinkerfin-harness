@@ -278,15 +278,20 @@ from tinkerfin_messaging import Messaging
 from tinkerfin_notifications import Notifications
 
 tracer = Tracer()
-runtime = (TinkerFin(checkpointer=InMemorySaver()).with_namespace("alice")
-           .with_observer(tracer).build("openai:gpt-4.1-mini"))
+runtime = (
+    TinkerFin(checkpointer=InMemorySaver())
+    .with_namespace("alice")
+    .with_observer(tracer)
+    .build("openai:gpt-4.1-mini")
+)
 async with Messaging() as messaging, Notifications() as notifications:
     gateway = Gateway(messaging=messaging, notifications=notifications)
     automation = Automation(namespace="reports")
     automation.target("report", TinkerFinTarget(runtime, gateway=gateway))
     async with automation.worker() as worker:
         run = await automation.for_owner("alice").run(
-            "report", input={"messages": [{"role": "user", "content": "Summarize today"}]}
+            "report",
+            input={"messages": [{"role": "user", "content": "Summarize today"}]},
         )
         await run.wait()
         result = await runtime.agui.history(tracer).get_run(

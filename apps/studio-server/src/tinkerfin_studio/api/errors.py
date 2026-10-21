@@ -245,7 +245,7 @@ class ConversationErrorCode(ErrorCode):
         "会话当前状态不允许启动新的运行",
     )
     LOCAL_PROJECT_FIXED = _ErrorCodeValue(
-        1_001_004_035, 409, "本地会话不能移动到其他项目"
+        1_001_004_035, 409, "使用过本机文件的会话不能移动到其他项目"
     )
     DELETE_CONFLICT = _ErrorCodeValue(
         1_001_004_003,

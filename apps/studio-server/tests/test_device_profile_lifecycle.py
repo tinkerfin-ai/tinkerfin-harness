@@ -18,10 +18,9 @@ from tinkerfin_studio.conversation.models import (
 from tinkerfin_studio.conversation.repository import ConversationRepository
 from tinkerfin_studio.devices.models import DeviceExecutionProfile
 from tinkerfin_studio.devices.profiles import DeviceProfiles
-from tinkerfin_studio.devices.views import DeviceSelections
 from tinkerfin_studio.infrastructure.database import Database
 from tinkerfin_studio.projects.models import Project
-from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
+from tinkerfin_studio.skills.repository import SkillRepository
 
 
 async def source_records(
@@ -88,22 +87,24 @@ async def test_completed_local_conversation_rejects_move_atomically_and_can_cont
         attachment = await session.get(AttachmentFile, "a" * 32)
         assert attachment is not None and attachment.project_id == "project"
         assert thread.project_id == "project" and not thread.archived
-    selection = await DeviceSelections(database, user_id=1).selection(
-        SOURCE.thread_id, None
+    identity = RunIdentity(
+        namespace=SOURCE.namespace, thread_id=SOURCE.thread_id, run_id="following"
     )
-    assert selection is not None and selection.workspace_id == "project"
     async with database.session() as session:
-        following = await DeviceProfiles(session, 1).capture(
-            identity=RunIdentity(
-                namespace=SOURCE.namespace,
-                thread_id=SOURCE.thread_id,
-                run_id="following",
-            ),
-            selection=selection,
-            access_mode="write_approval",
-            skills=SkillSnapshotPayload(skills=()),
+        thread, _run = await source_records(session)
+        await ConversationRepository(session).create_run_registration(
+            thread_id=thread.id,
+            run_id=identity.run_id,
+            parent_run_id=None,
+            model_id="main",
+            input_json={},
         )
-        assert following is not None
+        await SkillRepository(session, 1).capture(
+            identity, project_id="project", selected_ids=()
+        )
+        following = await DeviceProfiles(session, 1).capture(
+            identity=identity, project_id="project", access_mode="write_approval"
+        )
         assert following.workspace_id == local_conversation.binding.workspace_id
 
 
@@ -230,12 +231,10 @@ async def test_unstarted_cleanup_removes_only_unreferenced_profiles(
                 identity=RunIdentity(
                     namespace=SOURCE.namespace,
                     thread_id=SOURCE.thread_id,
-                    run_id="resumed",
+                    run_id=following.run_id,
                 ),
-                selection=None,
+                project_id="project",
                 access_mode="write_approval",
-                skills=SkillSnapshotPayload(skills=()),
-                inherited=following.local_profile_id,
             )
             assert binding is not None and binding == local_conversation.binding
             await repository.delete_unstarted_run(

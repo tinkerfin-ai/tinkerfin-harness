@@ -22,6 +22,7 @@ from tinkerfin_automation import (
 from tinkerfin_gateway import Gateway
 from tinkerfin_messaging import Messaging
 from tinkerfin_notifications import Notification, NotificationScope
+from tinkerfin_remote import RemoteTools
 from tinkerfin_studio.agent import runtime as runtime_module
 from tinkerfin_studio.api.dependencies import get_user_context
 from tinkerfin_studio.api.errors import AttachmentErrorCode, BusinessException
@@ -130,6 +131,7 @@ async def automation_environment(
             ) as client,
             Automation(namespace=NAMESPACE, store=store) as reader,
             Messaging() as messaging,
+            RemoteTools(engine=components_database.engine) as remote_tools,
         ):
             channel = messaging.agui_channel(name="automation-test")
             gateway = Gateway(
@@ -162,6 +164,7 @@ async def automation_environment(
                     automation_store=store,
                     tracer=tracer,
                     notifications=notifications,
+                    remote_tools=remote_tools,
                     gateway=gateway,
                     messaging=messaging,
                     conversation_channel=channel,
@@ -449,6 +452,7 @@ async def test_http_crud_idempotency_real_result_and_owner_isolation(
         )
         assert full.status_code == 200, full.text
         assert len(full.json()["data"]["messages"]) == 4
+        assert full.json()["data"]["accessMode"] == "full"
         original = (await client.get(f"/api/automation/runs/{execution_id}")).json()[
             "data"
         ]

@@ -1,5 +1,10 @@
 @layer tokens {
   :root {
+    --font-device-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --weight-device-text: 430;
+    --type-device-control-size: 12px;
+    --type-device-title-size: 15px;
+
     --font-ui: 'Inter Variable', 'Noto Sans SC Variable', 'PingFang SC', 'Microsoft YaHei UI', system-ui, sans-serif;
     --font-code: 'JetBrains Mono Variable', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
     --weight-ui: 400;

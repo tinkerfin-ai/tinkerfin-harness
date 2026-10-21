@@ -228,6 +228,40 @@ Use `async with project.open() as files` for access outside a run and
 `await project.delete()` to stop and remove only that project. See the
 [Sandbox guide](../sandbox/index.md) for deployment and ownership requirements.
 
+To use a remote computer alongside the default workspace, bind its authenticated
+endpoint as a named resource:
+
+```python
+computer = remote.endpoint(
+    namespace=authenticated_namespace, target=authenticated_device
+).workspace(authorization=authorized_workspace_token)
+runtime = configured.build(
+    model=model,
+    backend=project,
+    workspaces={"computer": computer},
+    interrupt_on={"computer_write_file": True, "computer_execute": True},
+)
+await runtime.ainvoke(
+    thread_id=thread_id,
+    run_id=run_id,
+    input={"messages": [{"role": "user", "content": "Read the report on my computer"}]},
+)
+```
+
+The host owns authentication, the configured checkpointer, and the application-wide
+`RemoteTools` context and socket delivery. The Runtime opens `computer` only when
+its `computer_tools` discovery tool is called, exposes prefixed operations, and closes
+the run's borrow after execution, interruption, or cancellation. The default tools
+and memory routes keep using `project`. Declared and general-purpose subagents
+inherit these resources; compiled and remote agents configure their own resources.
+
+Workspace names reserve their tool prefix and cannot overlap or shadow built-in tools. Auxiliary files must
+live outside graph state, so `StateBackend` is not supported for named resources.
+Default `permissions` apply to the primary backend; auxiliary providers enforce
+their access rules. Review rules use prefixed names. Approval recovery verifies the
+saved resource identity, tool declarations, and file targets before execution; a
+changed target requires a new proposal.
+
 Define tools before execution and annotate their injected runtime:
 
 ```python

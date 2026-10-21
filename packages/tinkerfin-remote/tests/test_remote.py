@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, aclosing, asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Literal
 
 import pytest
-from deepagents.backends import CompositeBackend
+from ag_ui.core import RunFinishedEvent
+from deepagents.backends import CompositeBackend, FilesystemBackend
 from deepagents.backends.protocol import (
     BackendProtocol,
     DeleteResult,
@@ -26,13 +27,17 @@ from deepagents.backends.protocol import (
     SandboxBackendProtocol,
     WriteResult,
 )
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage
 from langchain_core.tools import BaseTool, tool
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 from pydantic import JsonValue
 from sqlalchemy import event, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from tinkerfin import AgUiResumeRequest, TinkerFin
 from tinkerfin_contracts import (
     FilePath,
     PreparedWorkspace,
@@ -360,6 +365,129 @@ class Harness:
         await self.stack.aclose()
 
 
+class _ToolModel(FakeMessagesListChatModel):
+    def bind_tools(self, tools, *, tool_choice=None, **kwargs):
+        return self
+
+
+async def test_named_remote_workspace_preserves_cloud_files_and_review_receipt(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path)
+    await harness.open()
+    try:
+        cloud = tmp_path / "cloud"
+        cloud.mkdir()
+        model = _ToolModel(
+            responses=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "computer_tools",
+                            "id": "discover",
+                            "args": {},
+                        }
+                    ],
+                ),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "write_file",
+                            "id": "cloud-write",
+                            "args": {"file_path": "/report.md", "content": "cloud"},
+                        },
+                        {
+                            "name": "computer_write_file",
+                            "id": "computer-write",
+                            "args": {"file_path": "report.md", "content": "computer"},
+                        },
+                    ],
+                ),
+                AIMessage(content="done"),
+            ]
+        )
+        runtime = (
+            TinkerFin(checkpointer=InMemorySaver())
+            .with_namespace("account")
+            .build(
+                model=model,
+                backend=FilesystemBackend(root_dir=cloud, virtual_mode=True),
+                workspaces={
+                    "computer": harness.endpoint.workspace(authorization="grant")
+                },
+                interrupt_on={"computer_write_file": True},
+            )
+        )
+        async with aclosing(
+            runtime.open_agui_run(
+                thread_id="review-thread",
+                run_id="proposal",
+                messages=[
+                    {"id": "user", "role": "user", "content": "write both reports"}
+                ],
+            )
+        ) as stream:
+            proposal = [event async for event in stream]
+        terminal = proposal[-1]
+        assert isinstance(terminal, RunFinishedEvent)
+        assert terminal.outcome is not None and terminal.outcome.type == "interrupt"
+        assert harness.files.writes == 0
+        resume = AgUiResumeRequest.model_validate(
+            {
+                "entries": [
+                    {
+                        "interruptId": item.id,
+                        "status": "resolved",
+                        "payload": {"type": "approve"},
+                    }
+                    for item in terminal.outcome.interrupts
+                ]
+            }
+        )
+        async with aclosing(
+            runtime.open_agui_run(
+                thread_id="review-thread",
+                run_id="approved",
+                resume=resume,
+            )
+        ) as stream:
+            completed = [event async for event in stream]
+        assert isinstance(completed[-1], RunFinishedEvent)
+        assert harness.files.files == {"/workspace/report.md": b"computer"}
+        assert harness.files.writes == 1
+        assert (cloud / "report.md").read_text() == "cloud"
+        requests = [
+            command.request
+            for frame in harness.wire.cloud_frames
+            for envelope in frame.commands
+            if isinstance(command := envelope.command, Dispatch)
+            and command.request.operation.kind == "file.write"
+        ]
+        assert len({request.operation_id for request in requests}) == 1
+        assert requests[0].origin.run_id == "proposal"
+        receipt = await harness.endpoint.get_operation(requests[0].operation_id)
+        assert receipt is not None and receipt.state == "completed"
+        private_events = [
+            event.model_dump(mode="json")
+            for event in [*proposal, *completed]
+            if any(
+                key in event.model_dump_json()
+                for key in (
+                    "_tinkerfin_named_workspaces",
+                    "_tinkerfin_file_contract",
+                )
+            )
+        ]
+        assert not private_events
+        assert sum(event.type == "RUN_FINISHED" for event in proposal) == 1
+        assert sum(event.type == "RUN_FINISHED" for event in completed) == 1
+    finally:
+        await harness.close()
+    assert harness.files.closed == harness.files.opened
+
+
 @pytest.mark.asyncio
 async def test_files_binary_and_replay_use_one_concrete_effect(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
@@ -625,7 +753,20 @@ async def test_disconnect_keeps_owned_execution_and_replays_result_once(
     task = asyncio.create_task(execute())
     try:
         await harness.files.started.wait()
+        operation_id = next(
+            command.command.request.operation_id
+            for frame in harness.wire.cloud_frames
+            for command in frame.commands
+            if isinstance(command.command, Dispatch)
+        )
+        before = await harness.endpoint.get_operation(operation_id)
+        assert before is not None and before.state in {"pending", "started"}
+        assert before.result is None and not before.cancellation_requested
         await harness.wire.close()
+        assert await harness.endpoint.get_operation(operation_id) is not None
+        foreign = harness.remote.endpoint(namespace="foreign", target="device")
+        assert await foreign.get_operation(operation_id) is None
+        assert await harness.endpoint.get_operation("0" * 64) is None
         assert not harness.files.stopped.is_set()
         harness.files.release.set()
         await harness.worker.wait_idle()
@@ -633,6 +774,10 @@ async def test_disconnect_keeps_owned_execution_and_replays_result_once(
         harness.wire = harness.connect()
         assert (await task).exit_code == 0
         assert harness.output == ["running"]
+        assert harness.files.commands == 1
+        after = await harness.endpoint.get_operation(operation_id)
+        assert after is not None and after.state == "completed"
+        assert after.result_available and after.result is not None
         assert harness.files.commands == 1
     finally:
         task.cancel()

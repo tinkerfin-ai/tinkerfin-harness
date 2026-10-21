@@ -7,9 +7,22 @@ import { ModelConnectionForm } from './ModelConnectionForm'
 import { ModelConfigurationForm } from './ModelConfigurationForm'
 import { ModelDiscoveryPanel } from './ModelDiscoveryPanel'
 import { ModelProviderSplit } from './ModelProviderSplit'
-import { newModel, useModelSettings, type ModelSettings } from './useModelSettings'
+import { newModel, useModelSettings, type ModelConnection, type ModelSettings } from './useModelSettings'
 import './model-settings.css'
 import './model-connections.css'
+
+function ModelProviderButton({ connection, count, selected, onSelect }: {
+  connection: ModelConnection; count: number; selected: boolean; onSelect: () => void
+}) {
+  const { t } = useI18n()
+  const nameRef = useRef<HTMLElement>(null)
+  const Icon = connection.api_type === 'ollama' ? Monitor : Cpu
+  return <Tooltip content={connection.display_name} overflowOnly overflowRef={nameRef}>
+    <button type="button" className={`settings-models__provider${selected ? ' is-selected' : ''}`} aria-current={selected ? 'true' : undefined} onClick={onSelect}>
+      <Icon size={18} /><span><strong ref={nameRef}>{connection.display_name}</strong><small>{t('{count} 个模型', { count })}</small></span>
+    </button>
+  </Tooltip>
+}
 
 export function ModelSettingsPanel({ onChanged }: { onChanged?: () => void }) {
   const { t } = useI18n()
@@ -35,12 +48,12 @@ export function ModelSettingsPanel({ onChanged }: { onChanged?: () => void }) {
   const defaultModel = state.models.find(model => model.is_default)
   return <section className="settings-section settings-models settings-model-connections">
     <div className="settings-models__toolbar">
-      <Breadcrumbs label={t('模型配置导航')} size="md" disabled={state.saving} items={[
+      {view === 'list' ? <h3>{t('模型配置')}</h3> : <Breadcrumbs label={t('模型配置导航')} size="md" disabled={state.saving} items={[
         { label: t('模型配置'), onNavigate: close },
-        ...(view === 'list' ? [] : view === 'new' ? [{ label: t('添加提供方') }]
+        ...(view === 'new' ? [{ label: t('添加提供方') }]
           : view === 'connection' ? [{ label: connection?.display_name ?? '' }]
             : [{ label: connection?.display_name ?? '', onNavigate: close }, { label: view === 'discovery' ? t('获取模型') : editing?.display_name || t('添加模型') }]),
-      ]} />
+      ]} />}
       {view === 'list' && <Button type="button" size="xs" variant="primary" leadingIcon={<Plus size={14} />} disabled={state.loading || state.saving || state.loadFailed} onClick={() => setView('new')}>{t('添加提供方')}</Button>}
     </div>
     <div key={view} className={view === 'list' ? 'settings-models__overview' : 'settings-models__page'}>
@@ -53,10 +66,7 @@ export function ModelSettingsPanel({ onChanged }: { onChanged?: () => void }) {
                 <ModelProviderSplit sidebar={<>
                   <TextField shape="standard" fieldSize="md" rootClassName="settings-models__search" label={<span className="visually-hidden">{t('搜索提供方或模型')}</span>} placeholder={t('搜索提供方或模型')} value={search} leadingContent={<Search size={14} />} onChange={event => setSearch(event.target.value)} />
                   <nav className="settings-models__providers" aria-label={t('提供方')}>
-                  {providers.map(({ connection: item, matches }) => {
-                    const Icon = item.api_type === 'ollama' ? Monitor : Cpu
-                    return <Tooltip key={item.connection_id} content={item.display_name}><button type="button" className={`settings-models__provider${connection?.connection_id === item.connection_id ? ' is-selected' : ''}`} aria-current={connection?.connection_id === item.connection_id ? 'true' : undefined} onClick={() => setSelected(item.connection_id)}><Icon size={18} /><span><strong>{item.display_name}</strong><small>{t('{count} 个模型', { count: matches.length })}</small></span></button></Tooltip>
-                  })}
+                  {providers.map(({ connection: item, matches }) => <ModelProviderButton key={item.connection_id} connection={item} count={matches.length} selected={connection?.connection_id === item.connection_id} onSelect={() => setSelected(item.connection_id)} />)}
                 </nav></>}>{connection ? <section className="settings-models__detail" aria-label={connection.display_name}>
                   <div className="settings-models__provider-heading"><h4>{connection.display_name}</h4><Button type="button" size="xs" variant="text" leadingIcon={<Settings2 size={14} />} onClick={() => setView('connection')}>{t('连接设置')}</Button></div>
                   <div className="settings-models__connection-meta"><span><Link2 size={13} />{connection.base_url}</span><span><KeyRound size={13} />{t(connection.auth_type === 'none' ? '无需认证' : '已配置密钥')}</span></div>

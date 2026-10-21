@@ -456,7 +456,9 @@ class _PlanningGraphFactory(Generic[ContextT]):
         )
         base_state_schema = spec.state_schema
         operations = (
-            None if spec.tool_scope is None else WorkspaceOperations(spec.tool_scope)
+            None
+            if spec.tool_scope is None
+            else WorkspaceOperations(spec.tool_scope, spec.named_workspaces)
         )
         caller_middleware = prepare_middleware_resources(spec.middleware, operations)
         supplied_tools = merge_workspace_tools(
@@ -465,6 +467,9 @@ class _PlanningGraphFactory(Generic[ContextT]):
             caller_middleware,
             reserved=("ask_user_question", "submit_plan", "confirm_plan_edit"),
         )
+        if spec.named_workspaces is not None:
+            spec.named_workspaces.validate_tools(supplied_tools)
+            supplied_tools.extend(spec.named_workspaces.discovery_tools())
         skills = resolve_skill_sources(
             spec.skills,
             () if workspace is None else workspace.skill_sources,
@@ -480,6 +485,7 @@ class _PlanningGraphFactory(Generic[ContextT]):
             workspace=workspace,
             tools=supplied_tools,
             operations=operations,
+            named=spec.named_workspaces,
         )
         paths = next(
             (item for item in defaults if isinstance(item, _WorkspaceFilePaths)), None
@@ -948,7 +954,7 @@ class _PlanningGraphFactory(Generic[ContextT]):
             [
                 *_merge_middleware([*defaults, lifecycle], caller_middleware),
                 *trailing,
-                _ToolRuntimeMiddleware(spec.tool_scope, paths),
+                _ToolRuntimeMiddleware(spec.tool_scope, paths, spec.named_workspaces),
             ],
             spec.attachments,
             operations,

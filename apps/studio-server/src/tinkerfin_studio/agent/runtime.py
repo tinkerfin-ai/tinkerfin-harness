@@ -8,11 +8,11 @@ from zoneinfo import ZoneInfo
 
 from langchain.agents.middleware import TodoListMiddleware
 
-from tinkerfin import AgentRuntime, SkillSource, WorkspaceSkills
+from tinkerfin import AgentRuntime, SkillSource
 from tinkerfin.media import AttachmentSupport
 from tinkerfin.plan import PlanReviewAction
 from tinkerfin.subagents import SubAgent
-from tinkerfin_studio.agent.access import AccessMode, file_review_policy
+from tinkerfin_studio.agent.access import AccessMode, local_review_policy
 from tinkerfin_studio.agent.plan_clarification import StudioPlanClarificationForm
 from tinkerfin_studio.agent.plan_content import StudioMarkdownPlanContent
 from tinkerfin_studio.agent.tool_policy import tool_execution_policy
@@ -20,7 +20,7 @@ from tinkerfin_studio.agent.tools import build_web_search_tool
 from tinkerfin_studio.attachments.tools import build_attachment_tools
 from tinkerfin_studio.attachments.workspace_tools import build_sandbox_attachment_tools
 from tinkerfin_studio.automation.tools import build_automation_tools
-from tinkerfin_studio.devices.profiles import DeviceProfileBinding
+from tinkerfin_studio.devices.workspace import ComputerWorkspace
 from tinkerfin_studio.models.chat import create_chat_model
 from tinkerfin_studio.models.schemas import AgentModelConfig
 from tinkerfin_studio.services.service import ResolvedService
@@ -52,8 +52,11 @@ _SYSTEM_PROMPT = """你是 TinkerFin Studio 的主 Agent。
 """
 
 _LOCAL_EXECUTION_INSTRUCTIONS = """
-当前文件和 execute 工具在用户本机执行；普通本机任务直接逐步调用工具并等待结果。
-浏览器任务通过 execute 调用随附的 tinkerfin-browser。先用 --help 查看用法，再用 tools 和 describe 发现官方浏览器工具及参数。
+默认文件与 execute 工具使用云端工作区，/memories/ 保存当前项目的长期记忆。
+用户的桌面、下载目录、主目录和本机应用属于用户电脑，与云端工作区隔离。
+此类任务开始时先调用 computer_tools 获取本机路径说明，再使用 computer_ 前缀的工具；不要先尝试云端文件或 execute 工具。
+本机路径不存在时用本机工具核实，不把路径改写成云端目录继续操作；云端与本机工作文件分别保存。
+本机浏览器任务通过 computer_execute 调用随附的 tinkerfin-browser。先用 --help 查看用法，再用 tools 和 describe 发现官方浏览器工具及参数。
 客户端自动准备浏览器并绑定本次会话，不安装另一份工具，也不覆盖 session、profile、CDP、程序路径或代理配置。
 只操作当前会话的浏览器，任务完成后保留页面供后续使用，用户要求关闭时才关闭。
 """
@@ -72,7 +75,6 @@ def _build_runtime(
     namespace: str,
     collection_id: str | None,
     plan_enabled: bool,
-    local_profile: DeviceProfileBinding | None = None,
 ) -> AgentRuntime[None]:
     """为已授权会话或后台任务绑定执行能力，实际运行时准备用户工作区
 
@@ -87,11 +89,10 @@ def _build_runtime(
         model_config: 已解密的聊天模型配置
         search_service: 本次运行可用的个人网页搜索服务
         image_service: 本次运行可用的个人图片生成服务
-        access_mode: 脚本与文件写入的审批选择，不改变用户工作区范围
+        access_mode: 本机操作的确认选择，不改变工作区权限或云端执行
         namespace: 已授权业务运行的会话与记录范围
         collection_id: 后台执行的附件集合，普通会话不设置
         plan_enabled: 是否允许会话计划与人工交互
-        local_profile: 会话登记时已核验并固定的本机协作范围
 
     Returns:
         绑定用户 namespace、模型、Plan 和附件能力的 Runtime
@@ -118,19 +119,14 @@ def _build_runtime(
             image_service=image_service,
         ),
     ]
-    if local_profile is None:
-        attachment_tools.extend(
-            build_sandbox_attachment_tools(
-                service=resources.attachments,
-                user_id=user_id,
-                thread_id=None if collection_id is not None else thread_id,
-                collection_id=collection_id,
-            )
+    attachment_tools.extend(
+        build_sandbox_attachment_tools(
+            service=resources.attachments,
+            user_id=user_id,
+            thread_id=None if collection_id is not None else thread_id,
+            collection_id=collection_id,
         )
-    else:
-        attachment_tools = [
-            entry for entry in attachment_tools if entry.name != "import_attachment"
-        ]
+    )
 
     attachment_support = AttachmentSupport(
         read_content=lambda attachment: resources.attachments.read_content(
@@ -140,10 +136,8 @@ def _build_runtime(
             collection_id=collection_id,
         ),
     )
-    skill_sources = [SkillSource("/skills/")] if local_profile is None else []
-    local_instructions = (
-        _LOCAL_EXECUTION_INSTRUCTIONS if local_profile is not None else ""
-    )
+    skill_sources = [SkillSource("/skills/")]
+    local_instructions = _LOCAL_EXECUTION_INSTRUCTIONS if collection_id is None else ""
     tool_registry = {web_search.name: web_search}
     subagents: list[SubAgent] = [
         {
@@ -152,13 +146,13 @@ def _build_runtime(
             "system_prompt": "完成委派任务并返回结果；自动化任务的管理由主 Agent 处理。"
             + _IMAGE_FILE_INSTRUCTIONS
             + local_instructions,
-            "interrupt_on": file_review_policy(access_mode),
+            "interrupt_on": local_review_policy(access_mode),
             "middleware": tool_execution_policy(
                 web_search_available=search_service is not None,
                 image_generation_available=image_service is not None,
             ),
             "tools": [web_search, *attachment_tools],
-            "skills": skill_sources if local_profile is None else [WorkspaceSkills()],
+            "skills": skill_sources,
         },
     ]
     subagents.extend(
@@ -168,16 +162,12 @@ def _build_runtime(
             "system_prompt": definition.system_prompt
             + _IMAGE_FILE_INSTRUCTIONS
             + local_instructions,
-            "interrupt_on": file_review_policy(access_mode),
+            "interrupt_on": local_review_policy(access_mode),
             "middleware": tool_execution_policy(
                 web_search_available=search_service is not None,
                 image_generation_available=image_service is not None,
             ),
-            "skills": [
-                SkillSource("/skills/", names=tuple(definition.skills))
-                if local_profile is None
-                else WorkspaceSkills(names=tuple(definition.skills))
-            ],
+            "skills": [SkillSource("/skills/", names=tuple(definition.skills))],
             "tools": [
                 *(tool_registry[tool] for tool in definition.tools),
                 *attachment_tools,
@@ -250,25 +240,34 @@ def _build_runtime(
         )
     else:
         configured = configured.with_plan(enabled=False)
-    if local_profile is not None:
-        workspace = resources.remote_tools.endpoint(
-            namespace=namespace, target=local_profile.device_id
-        ).workspace(authorization=local_profile.profile_id)
-    else:
-        workspace = SkillsWorkspace(
-            resources.sandbox_manager.workspace(
-                f"users/{user_id}",
-                workspace_key=project_id,
-                routes={
-                    "/memories/": configured.files(
-                        ("projects", project_id, "memories")
-                    ).backend
-                },
-            ),
-            library=resources.skills,
-            user_id=user_id,
-            project_id=project_id,
-        )
+    workspace = SkillsWorkspace(
+        resources.sandbox_manager.workspace(
+            f"users/{user_id}",
+            workspace_key=project_id,
+            routes={
+                "/memories/": configured.files(
+                    ("projects", project_id, "memories")
+                ).backend
+            },
+        ),
+        library=resources.skills,
+        user_id=user_id,
+        project_id=project_id,
+    )
+    workspaces = (
+        {}
+        if collection_id is not None
+        else {
+            "computer": ComputerWorkspace(
+                database=resources.database,
+                remote_tools=resources.remote_tools,
+                notifications=resources.notifications,
+                user_id=user_id,
+                project_id=project_id,
+                access_mode=access_mode,
+            )
+        }
+    )
     return configured.build(
         model=model,
         tools=[
@@ -292,7 +291,8 @@ def _build_runtime(
         subagents=subagents,
         skills=skill_sources,
         backend=workspace,
-        interrupt_on=file_review_policy(access_mode),
+        workspaces=workspaces,
+        interrupt_on=local_review_policy(access_mode),
     )
 
 
@@ -305,10 +305,9 @@ def build_conversation_runtime(
     model_config: AgentModelConfig,
     search_service: ResolvedService | None,
     image_service: ResolvedService | None,
-    access_mode: AccessMode = "full",
-    local_profile: DeviceProfileBinding | None = None,
+    access_mode: AccessMode = "write_approval",
 ) -> AgentRuntime[None]:
-    """绑定会话模型、用户工作区与文件审批选择，资源由运行时按需准备"""
+    """绑定会话模型、云端项目与本机确认选择，资源由运行时按需准备"""
     return _build_runtime(
         resources=resources,
         user_id=user_id,
@@ -321,7 +320,6 @@ def build_conversation_runtime(
         namespace=f"ns_{user_id}",
         collection_id=None,
         plan_enabled=True,
-        local_profile=local_profile,
     )
 
 
