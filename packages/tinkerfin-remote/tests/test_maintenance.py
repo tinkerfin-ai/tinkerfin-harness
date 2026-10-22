@@ -89,23 +89,26 @@ async def test_maintenance_waits_for_owned_execution_and_cancel_resumes(
         await harness.files.started.wait()
         maintenance = asyncio.create_task(maintain())
         await entering.wait()
-        replay = tuple(
-            item
-            for frame in harness.wire.cloud_frames
-            for item in frame.commands
-            if isinstance(item.command, (OpenWorkspace, Dispatch))
-        )
-        # Replay accepted identities through delivery before the next fresh
-        # request, rather than reading the coordinator's completed-result cache.
-        await harness.wire.to_worker.put(
-            CoordinatorFrame(
-                namespace="account", target="device", commands=replay
-            ).model_dump_json()
-        )
+        # Snapshot delivery history before awaiting replay; preserve each frame's
+        # bounded command batch even when accepted identities were retransmitted.
+        replay = tuple(harness.wire.cloud_frames)
+        for frame in replay:
+            commands = tuple(
+                item
+                for item in frame.commands
+                if isinstance(item.command, (OpenWorkspace, Dispatch))
+            )
+            if commands:
+                await harness.wire.to_worker.put(
+                    CoordinatorFrame(
+                        namespace="account", target="device", commands=commands
+                    ).model_dump_json()
+                )
         with bind_workspace_operation(harness.scope("while-waiting")):
             with pytest.raises(RemoteError, match="maintenance"):
                 await harness.session.awrite("/workspace/refused", "value")
         assert not entered.is_set() and not harness.files.stopped.is_set()
+        assert harness.files.commands == 1 and harness.files.opened == 1
         if resolution == "cancel-maintenance":
             maintenance.cancel()
             with pytest.raises(asyncio.CancelledError):
