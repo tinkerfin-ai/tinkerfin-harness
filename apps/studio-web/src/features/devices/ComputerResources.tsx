@@ -64,14 +64,22 @@ export function ComputerResources({ devices, value, onChange, disabled, onOpenSe
     const blur = (event: FocusEvent) => {
       if (event.relatedTarget instanceof Node && !element?.contains(event.relatedTarget) && !trigger.current?.contains(event.relatedTarget)) dismiss(false)
     }
+    // 非滚动浮层消费滚轮，避免背景会话接管；Ctrl+滚轮仍保留浏览器缩放
+    const containWheel = (event: WheelEvent) => {
+      if (event.ctrlKey) return
+      event.preventDefault()
+      event.stopPropagation()
+    }
     document.addEventListener('keydown', escape, true)
     element?.addEventListener('focusout', blur)
+    element?.addEventListener('wheel', containWheel, { passive: false })
     window.addEventListener('resize', fit)
     window.addEventListener('scroll', fit, true)
     return () => {
       observer.disconnect()
       document.removeEventListener('keydown', escape, true)
       element?.removeEventListener('focusout', blur)
+      element?.removeEventListener('wheel', containWheel)
       window.removeEventListener('resize', fit)
       window.removeEventListener('scroll', fit, true)
     }
