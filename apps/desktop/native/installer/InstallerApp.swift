@@ -189,18 +189,22 @@ private final class InstallerDelegate: NSObject, NSApplicationDelegate {
         requestApplicationTermination()
     }
 
-    private func waitForExit(_ application: NSRunningApplication) async throws {
+    private func terminateAndWait(_ application: NSRunningApplication) async throws {
+        if application.isTerminated { return }
         let signals = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
-        let observer = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { _ in
-            signals.continuation.yield(())
+        let source = DispatchSource.makeProcessSource(identifier: application.processIdentifier, eventMask: .exit, queue: .main)
+        source.setEventHandler { signals.continuation.yield(()); signals.continuation.finish() }
+        // 先注册真实进程退出事件再发送请求，避免NSWorkspace通知与状态缓存的刷新窗口
+        source.setRegistrationHandler {
+            if application.isTerminated { signals.continuation.yield(()); signals.continuation.finish() }
+            else if !application.terminate() { signals.continuation.finish() }
         }
-        // terminate只确认请求已发送；对方拒绝或清理未完成时恢复重启反馈
+        source.resume()
         let deadline = Task { try? await Task.sleep(for: .seconds(30)); signals.continuation.finish() }
-        defer { deadline.cancel(); NSWorkspace.shared.notificationCenter.removeObserver(observer); signals.continuation.finish() }
-        signals.continuation.yield(())
+        defer { deadline.cancel(); source.cancel(); signals.continuation.finish() }
         for await _ in signals.stream {
             try Task.checkCancellation()
-            if application.isTerminated { return }
+            return
         }
         try Task.checkCancellation(); throw UpdateError.unavailable
     }
@@ -211,8 +215,7 @@ private final class InstallerDelegate: NSObject, NSApplicationDelegate {
             shutdown = Task {
                 if phase == .restartError, let launchedApplication, !launchedApplication.isTerminated {
                     do {
-                        guard launchedApplication.terminate() else { throw UpdateError.unavailable }
-                        try await waitForExit(launchedApplication)
+                        try await terminateAndWait(launchedApplication)
                     } catch {
                         shutdown = nil; finishing = false; sender.reply(toApplicationShouldTerminate: false); return
                     }
