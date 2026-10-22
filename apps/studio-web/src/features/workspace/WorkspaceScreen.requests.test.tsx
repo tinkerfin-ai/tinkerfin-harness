@@ -39,7 +39,6 @@ function installFetch({ list, details }: { list: ConversationHistoryListItem[]; 
     const request = input instanceof Request ? input : new Request(input, init)
     const path = new URL(request.url).pathname
     if (path === '/api/devices') return jsonResponse([])
-    if (path === '/api/devices/selection') return jsonResponse(null)
     if (path === '/api/projects') return jsonResponse([{ id: 'project-1', name: '测试项目', createdAt: time, updatedAt: time }])
     if (path === '/api/models') return jsonResponse({ items: [{ modelId: 'main', displayName: 'Main', connectionId: 'provider', connectionDisplayName: '模型', reasoningEnabled: false, isDefault: true }], defaultModelId: 'main' })
     if (path === '/api/skills/installations') return jsonResponse([])
@@ -155,36 +154,23 @@ it('新会话刷新返回时不能覆盖已切回的历史模型', async () => {
   expect(screen.getByRole('button', { name: '选择模型' })).toHaveTextContent('Main')
 })
 
-it('已有本地会话点击云端不新建会话，主动新建后可切换且保留草稿', async () => {
+it('设备离线不阻止会话继续，页面不再读取执行位置', async () => {
   const fetch = installFetch({ list: [historyItem({})], details: { thread: traceDetail({}) } })
   const original = fetch.getMockImplementation()!
-  const device = { device_id: 'device-1', name: 'Mac', online: true, revoked: false, paired_at: time, last_seen_at: time, capabilities: { browser: true, desktop: false, mcp: false } }
   fetch.mockImplementation(async (input, init) => {
-    const request = input instanceof Request ? input : new Request(input, init)
-    const path = new URL(request.url).pathname
-    if (path === '/api/devices') return jsonResponse([device])
-    if (path === '/api/devices/selection') return jsonResponse({ device_id: device.device_id, workspace_id: 'project-1' })
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname
+    if (path === '/api/devices') return jsonResponse([])
     return original(input, init)
   })
   render(<WorkspaceScreen user={user} onLogout={vi.fn()} onToast={vi.fn()} />)
   await screen.findByText('来自 Trace 的历史回复')
-  await waitFor(() => expect(screen.getByRole('button', { name: '本地 · 已连接' })).toHaveAttribute('aria-pressed', 'true'))
+  expect(screen.getByRole('button', { name: '本机资源' })).toBeEnabled()
+  expect(screen.queryByRole('button', { name: /^云端$/ })).not.toBeInTheDocument()
   const input = screen.getByRole('textbox', { name: '消息输入' })
-  fireEvent.change(input, { target: { value: '保留会话草稿', selectionStart: 6 } })
-  const location = window.location.href
-  expect(screen.getByRole('button', { name: '云端' })).toBeDisabled()
-  fireEvent.click(screen.getByRole('button', { name: '云端' }))
-  expect(window.location.href).toBe(location)
+  fireEvent.change(input, { target: { value: '保留会话草稿' } })
+  expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
   expect(input).toHaveValue('保留会话草稿')
-  expect(screen.getByText('来自 Trace 的历史回复')).toBeInTheDocument()
-  fireEvent.click(screen.getAllByRole('button', { name: '新会话' })[0]!)
-  await waitFor(() => expect(screen.getByRole('button', { name: '本地 · 已连接' })).toBeEnabled())
-  const draft = screen.getByRole('textbox', { name: '消息输入' })
-  fireEvent.change(draft, { target: { value: '新会话草稿', selectionStart: 5 } })
-  fireEvent.click(screen.getByRole('button', { name: '本地 · 已连接' }))
-  fireEvent.click(screen.getByRole('button', { name: '云端' }))
-  expect(draft).toHaveValue('新会话草稿')
-  expect(screen.getByRole('button', { name: '云端' })).toHaveAttribute('aria-pressed', 'true')
+  expect(fetch.mock.calls.some(([input]) => new URL(input instanceof Request ? input.url : String(input)).pathname === '/api/devices/selection')).toBe(false)
 })
 
 it('本地会话移动被拒绝后保留当前会话与草稿，并按界面语言显示原因', async () => {
@@ -195,9 +181,8 @@ it('本地会话移动被拒绝后保留当前会话与草稿，并按界面语�
     const request = input instanceof Request ? input : new Request(input, init)
     const path = new URL(request.url).pathname
     if (path === '/api/projects') return jsonResponse(['project-1', 'project-2'].map(id => ({ id, name: id, createdAt: time, updatedAt: time })))
-    if (path === '/api/devices/selection') return jsonResponse({ device_id: 'device-1', workspace_id: 'project-1' })
     if (path === '/api/conversation/thread' && request.method === 'PATCH') return new Response(JSON.stringify({
-      code: 1_001_004_035, message: '本地会话不能移动到其他项目', data: null,
+      code: 1_001_004_035, message: '使用过本机文件的会话不能移动到其他项目', data: null,
     }), { status: 409, headers: { 'Content-Type': 'application/json' } })
     return original(input, init)
   })
@@ -210,13 +195,13 @@ it('本地会话移动被拒绝后保留当前会话与草稿，并按界面语�
   fireEvent.click(screen.getByRole('button', { name: 'Move to project' }))
   const dialog = screen.getByRole('dialog', { name: 'Move to project' })
   fireEvent.click(within(dialog).getByRole('button', { name: 'Move' }))
-  expect(await within(dialog).findByRole('alert')).toHaveTextContent('Local conversations cannot be moved to another project')
+  expect(await within(dialog).findByRole('alert')).toHaveTextContent('Conversations that used computer files cannot be moved to another project')
   expect(window.location.href).toBe(location)
   expect(toast).not.toHaveBeenCalledWith('success', expect.anything())
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
   expect(screen.getByText('来自 Trace 的历史回复')).toBeInTheDocument()
   expect(screen.getByRole('textbox', { name: 'Message input' })).toHaveValue('保留本地会话草稿')
-  expect(screen.getByRole('button', { name: 'Local · Disconnected' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: 'Computer resources' })).toBeEnabled()
 })
 
 it('恢复已停用模型的历史时保留草稿并要求主动选择可用模型', async () => {
@@ -558,7 +543,7 @@ it('运行详情打开尚未在目录中的会话', async () => {
 })
 
 
-it('设备替换后已有本地会话使用当前设备，保留历史和草稿', async () => {
+it('设备变化不阻止已有会话继续，保留历史和草稿', async () => {
   const fetch = installFetch({ list: [historyItem({})], details: { thread: traceDetail({}) } })
   const original = fetch.getMockImplementation()!
   const device = { device_id: 'current-device', name: 'New Mac', online: true, revoked: false, paired_at: time, last_seen_at: time, capabilities: { browser: true, desktop: false, mcp: false } }
@@ -566,12 +551,11 @@ it('设备替换后已有本地会话使用当前设备，保留历史和草稿'
     const request = input instanceof Request ? input : new Request(input, init)
     const path = new URL(request.url).pathname
     if (path === '/api/devices') return jsonResponse([device])
-    if (path === '/api/devices/selection') return jsonResponse({ device_id: 'replaced-device', workspace_id: 'project-1' })
     return original(input, init)
   })
   render(<WorkspaceScreen user={user} onLogout={vi.fn()} onToast={vi.fn()} />)
   await screen.findByText('来自 Trace 的历史回复')
-  await waitFor(() => expect(screen.getByRole('button', { name: '本地 · 已连接' })).toHaveAttribute('aria-pressed', 'true'))
+  expect(screen.getByRole('button', { name: '本机资源' })).toBeEnabled()
   fireEvent.change(screen.getByRole('textbox', { name: '消息输入' }), { target: { value: '继续本机任务' } })
   expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
   expect(screen.queryByText('请在客户端重新连接')).not.toBeInTheDocument()

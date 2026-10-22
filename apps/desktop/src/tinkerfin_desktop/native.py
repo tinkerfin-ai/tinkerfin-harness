@@ -53,6 +53,25 @@ class Stop(_Message):
     kind: Literal["stop"]
 
 
+class MaintenancePrepare(_Message):
+    """同一更新请求暂停新工作，等待已接收操作完成"""
+
+    kind: Literal["maintenance_prepare"]
+    request_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
+class MaintenanceCancel(_Message):
+    kind: Literal["maintenance_cancel"]
+    request_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
+class MaintenanceCommit(_Message):
+    """已就绪的更新请求结束宿主；退出完成前不恢复接纳"""
+
+    kind: Literal["maintenance_commit"]
+    request_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
 class DesktopCommand(_Message):
     """桌面操作只能引用原生宿主已经观察到的应用、窗口和元素"""
 
@@ -115,7 +134,14 @@ class DesktopReply(_Message):
 
 
 Incoming = Annotated[
-    Initialize | Stop | DesktopReply | ReadinessChanged, Field(discriminator="kind")
+    Initialize
+    | Stop
+    | DesktopReply
+    | ReadinessChanged
+    | MaintenancePrepare
+    | MaintenanceCancel
+    | MaintenanceCommit,
+    Field(discriminator="kind"),
 ]
 incoming = TypeAdapter(Incoming)
 

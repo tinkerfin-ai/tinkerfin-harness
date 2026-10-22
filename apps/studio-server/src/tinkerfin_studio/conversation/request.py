@@ -23,7 +23,6 @@ from pydantic import (
 from tinkerfin import AgUiUserInput
 from tinkerfin_studio.agent.access import AccessMode
 from tinkerfin_studio.api.errors import BusinessException, ConversationErrorCode
-from tinkerfin_studio.devices.schemas import LocalTargetSelection
 
 MAX_USER_MESSAGE_BYTES = 256 * 1024
 
@@ -64,13 +63,6 @@ class ConversationForwardedProps(BaseModel):
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
-    local_target: LocalTargetSelection | None = Field(
-        default=None,
-        alias="localTarget",
-        exclude_if=lambda value: value is None,
-        description="新会话的执行位置；已有会话保持原绑定，切换位置需新建会话",
-    )
-
     project_id: str = Field(
         alias="projectId",
         min_length=1,
@@ -93,9 +85,9 @@ class ConversationForwardedProps(BaseModel):
         return value
 
     access_mode: AccessMode = Field(
-        default="full",
+        default="write_approval",
         alias="accessMode",
-        description="写文件工具是否需要人工审批",
+        description="本会话的本机操作确认选择，云端工具直接执行",
     )
 
     model: str = Field(min_length=1, max_length=64, description="数据库模型稳定 ID")
@@ -105,11 +97,13 @@ class ConversationForwardedProps(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def reject_removed_mode(cls, value: object) -> object:
-        """拒绝已从当前传输契约删除的 mode 字段"""
+    def reject_removed_fields(cls, value: object) -> object:
+        """拒绝不属于当前传输契约的保留字段"""
 
-        if isinstance(value, Mapping) and "mode" in value:
-            raise ValueError("forwardedProps.mode 已删除，请使用 command.plan")
+        if isinstance(value, Mapping):
+            for field in ("mode", "localTarget", "local_target"):
+                if field in value:
+                    raise ValueError(f"forwardedProps.{field} 不受支持")
         return value
 
     @property

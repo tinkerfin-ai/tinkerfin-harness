@@ -1,3 +1,4 @@
+import { installConnectedDevice } from './fixtures/devices'
 import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
 import { expect, test } from '@playwright/test'
@@ -37,6 +38,7 @@ for (const theme of ['light','dark']) test(`输入框及菜单滚动不移动会
     await route.fulfill({json:{code:0,message:'success',data}})
   })
   await installNotificationStream(page)
+  await installConnectedDevice(page)
   await installProjectScope(page)
   await page.goto('/')
   await page.getByRole('button',{name:'打开会话：滚动边界验收',exact:true}).click()
@@ -79,14 +81,36 @@ for (const theme of ['light','dark']) test(`输入框及菜单滚动不移动会
   await models.press('Home')
   await assertConversationUnchanged()
   await models.press('Escape')
-  await page.getByRole('button',{name:'选择访问权限',exact:true}).click()
-  const access = page.getByRole('listbox',{name:'访问权限选项',exact:true})
+  await page.getByRole('button',{name:'本机资源',exact:true}).click()
+  const access = page.getByRole('dialog',{name:'本机资源',exact:true})
   await access.hover()
-  await page.mouse.wheel(0,-500)
-  await page.mouse.wheel(0,500)
+  const wheelOverAccess = async (deltaY: number) => {
+    const wheel = await access.evaluateHandle(element => {
+      if (!(element instanceof HTMLElement)) throw new Error('本机资源浮层不是 HTML 元素')
+      let observe: ((event: WheelEvent) => void) | null = null
+      const handled = new Promise<{ deltaY: number; cancelled: boolean }>(resolve => {
+        observe = event => queueMicrotask(() => resolve({ deltaY: event.deltaY, cancelled: event.defaultPrevented }))
+        element.addEventListener('wheel', observe, { once: true })
+      })
+      return { handled, cancel: () => { if (observe) element.removeEventListener('wheel', observe) } }
+    })
+    try {
+      await page.mouse.wheel(0, deltaY)
+      // wheel 调用返回不代表浏览器已处理；由当前浮层实际消费事件后再检查背景
+      expect(await wheel.evaluate(async state => await state.handled)).toEqual({ deltaY, cancelled: true })
+      await expect(access).toBeVisible()
+      await assertConversationUnchanged()
+    } finally {
+      await wheel.evaluate(state => state.cancel())
+      await wheel.dispose()
+    }
+  }
+  await wheelOverAccess(-500)
+  await wheelOverAccess(500)
   await access.press('ArrowDown')
   await assertConversationUnchanged()
-  await access.press('Escape')
+  await expect(access).toBeHidden()
+  await expect(page.getByRole('button', {name:'本机资源',exact:true})).toBeFocused()
   const input = page.getByRole('textbox',{name:'消息输入',exact:true})
   await input.hover()
   await page.mouse.wheel(0,-500)

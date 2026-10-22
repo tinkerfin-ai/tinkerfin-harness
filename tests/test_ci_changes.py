@@ -40,7 +40,9 @@ version = "1.0"
             {"desktop", "server", "packages", "wheels"},
         ),
         ("packages/unrelated/src/api.py", {"packages", "wheels"}),
-        ("apps/studio-web/public/brand/tinkerfin.svg", {"desktop", "web"}),
+        ("apps/studio-web/public/brand/tinkerfin.svg", {"web"}),
+        ("apps/desktop/ui/src/App.tsx", {"desktop"}),
+        ("apps/desktop/ui/pnpm-lock.yaml", {"desktop"}),
         (".github/workflows/packages-quality.yml", set(CHECKS)),
     ],
 )

@@ -1,88 +1,6 @@
 import Darwin
 import Foundation
 
-/// 每次管道就绪等待独占通知源，取消源完成后才恢复调用方，防止句柄复用
-private final class PipeReadyWait: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Void, Error>?
-    private var source: (any DispatchSourceProtocol)?
-    private var cancelled = false
-
-    func install(_ descriptor: Int32, reading: Bool, _ continuation: CheckedContinuation<Void, Error>) {
-        lock.lock()
-        if cancelled {
-            lock.unlock()
-            continuation.resume(throwing: CancellationError())
-            return
-        }
-        self.continuation = continuation
-        let source: any DispatchSourceProtocol
-        if reading { source = DispatchSource.makeReadSource(fileDescriptor: descriptor, queue: .global(qos: .userInitiated)) }
-        else { source = DispatchSource.makeWriteSource(fileDescriptor: descriptor, queue: .global(qos: .userInitiated)) }
-        self.source = source
-        source.setEventHandler { [weak self] in self?.finish(cancelled: false) }
-        source.resume()
-        lock.unlock()
-    }
-
-    func finish(cancelled: Bool) {
-        lock.lock()
-        self.cancelled = self.cancelled || cancelled
-        let continuation = self.continuation
-        let source = self.source
-        self.continuation = nil
-        self.source = nil
-        lock.unlock()
-        guard let continuation else { return }
-        let complete: @Sendable () -> Void = {
-            if cancelled { continuation.resume(throwing: CancellationError()) }
-            else { continuation.resume() }
-        }
-        if let source {
-            source.setCancelHandler(handler: complete)
-            source.cancel()
-        } else { complete() }
-    }
-}
-
-private func writeToPipe(_ data: Data, descriptor: Int32) async throws {
-    var offset = 0
-    while offset < data.count {
-        try Task.checkCancellation()
-        let count = data.withUnsafeBytes { bytes in
-            Darwin.write(descriptor, bytes.baseAddress!.advanced(by: offset), min(65536, data.count - offset))
-        }
-        if count > 0 { offset += count; continue }
-        if count < 0 && errno == EINTR { continue }
-        guard count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) else {
-            throw ClientError.message("本机服务通信已断开")
-        }
-        let wait = PipeReadyWait()
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { wait.install(descriptor, reading: false, $0) }
-        } onCancel: { wait.finish(cancelled: true) }
-    }
-}
-
-/// 空诊断管道不能阻塞状态读取；仅在各自句柄就绪后读取一个有界块
-private func readFromPipe(_ descriptor: Int32) async throws -> Data? {
-    var bytes = Data(count: 65536)
-    while true {
-        try Task.checkCancellation()
-        let count = bytes.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress!, $0.count) }
-        if count > 0 { return bytes.prefix(count) }
-        if count == 0 { return nil }
-        if errno == EINTR { continue }
-        guard errno == EAGAIN || errno == EWOULDBLOCK else {
-            throw ClientError.message("本机服务通信已断开")
-        }
-        let wait = PipeReadyWait()
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { wait.install(descriptor, reading: true, $0) }
-        } onCancel: { wait.finish(cancelled: true) }
-    }
-}
-
 /// Foundation 的进程启动和信号操作留在单个专用队列，退出回调不复用旧进程身份
 private final class ProcessOwner: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.tinkerfin.companion.process")
@@ -132,6 +50,12 @@ final class BackendProcess {
     private var diagnosticHandle: FileHandle?
     private var inputHandle: FileHandle?
     private var stoppedWaiters: [CheckedContinuation<Void, Never>] = []
+    private enum MaintenanceState { case waiting, ready, cancelling, committing }
+    private var maintenanceID: String?
+    private var maintenanceState: MaintenanceState?
+    private var preparation: CheckedContinuation<Void, Error>?
+    private var commitment: CheckedContinuation<Void, Error>?
+    private var maintenanceCancellations: [CheckedContinuation<Void, Error>] = []
     private let event: @MainActor (HostEvent) -> Void
     private let exited: @MainActor () -> Void
     var isRunning: Bool { owner != nil }
@@ -193,10 +117,13 @@ final class BackendProcess {
                     while let bytes = try await readFromPipe(outputDescriptor) {
                         for byte in bytes {
                             if byte == 10 {
-                                let value = try JSONDecoder().decode(HostEvent.self, from: buffer)
+                                let value = try JSONDecoder().decode(HostMessage.self, from: buffer)
                                 buffer.removeAll(keepingCapacity: true)
                                 guard self?.identity == generation else { return }
-                                self?.event(value)
+                                switch value {
+                                case .event(let event): self?.event(event)
+                                case .maintenance(let receipt): self?.receiveMaintenance(receipt)
+                                }
                             } else {
                                 guard buffer.count < 4 * 1024 * 1024 else { throw ClientError.message("本机消息超过容量") }
                                 buffer.append(byte)
@@ -261,8 +188,95 @@ final class BackendProcess {
 
     func stopAndWait() async {
         stop()
+        await waitForExit()
+    }
+
+    private func waitForExit() async {
         guard isRunning else { return }
         await withCheckedContinuation { stoppedWaiters.append($0) }
+    }
+
+    /// 继续传输已接受操作的回执；调用方取消时等宿主恢复接纳后再传播取消
+    func prepareForUpdate() async throws {
+        try Task.checkCancellation()
+        guard acceptsUpdates, maintenanceID == nil else { throw ClientError.message("本机服务尚未就绪") }
+        let request = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        maintenanceID = request; maintenanceState = .waiting
+        do {
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    preparation = continuation
+                    do { try send(MaintenanceCommand(kind: .prepare, requestID: request)) }
+                    catch { finishMaintenance(error) }
+                }
+                try Task.checkCancellation()
+            } onCancel: {
+                DispatchQueue.main.async { [weak self] in self?.requestMaintenanceCancellation(request) }
+            }
+        } catch {
+            if Task.isCancelled {
+                try? await cancelUpdatePreparation()
+                throw CancellationError()
+            }
+            throw error
+        }
+    }
+
+    func cancelUpdatePreparation() async throws {
+        guard let request = maintenanceID else { return }
+        guard maintenanceState != .committing, maintenanceCancellations.count < 2 else { throw ClientError.message("安装交接已开始") }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            maintenanceCancellations.append(continuation)
+            requestMaintenanceCancellation(request)
+        }
+    }
+
+    /// 就绪回执后才允许结束宿主；真正退出前，更新器不得替换运行中的应用
+    func commitUpdatePreparation() async throws {
+        guard let request = maintenanceID, maintenanceState == .ready else { throw ClientError.message("本机操作尚未结算") }
+        maintenanceState = .committing
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            commitment = continuation
+            do { try send(MaintenanceCommand(kind: .commit, requestID: request)) }
+            catch { finishMaintenance(error); stop() }
+        }
+        await waitForExit()
+    }
+
+    private func requestMaintenanceCancellation(_ request: String) {
+        guard request == maintenanceID, maintenanceState != .committing, maintenanceState != .cancelling else { return }
+        maintenanceState = .cancelling
+        do { try send(MaintenanceCommand(kind: .cancel, requestID: request)) }
+        catch {
+            // 取消消息无法交付时关闭宿主，收到退出后才解除等待，不能误报已恢复接纳
+            stop()
+        }
+    }
+
+    private func receiveMaintenance(_ receipt: MaintenanceReceipt) {
+        guard receipt.requestID == maintenanceID else { return }
+        switch receipt.state {
+        case .ready:
+            guard maintenanceState == .waiting else { return }
+            maintenanceState = .ready
+            let waiter = preparation; preparation = nil; waiter?.resume()
+        case .cancelled:
+            let cancelled = maintenanceCancellations; maintenanceCancellations = []
+            finishMaintenance(CancellationError())
+            cancelled.forEach { $0.resume() }
+        case .failed: finishMaintenance(ClientError.message("本机操作未能结算，请重试"))
+        case .committed:
+            guard maintenanceState == .committing else { return }
+            let waiter = commitment; commitment = nil; waiter?.resume()
+        }
+    }
+
+    private func finishMaintenance(_ error: Error) {
+        maintenanceID = nil; maintenanceState = nil
+        let preparing = preparation, committing = commitment, cancelling = maintenanceCancellations
+        preparation = nil; commitment = nil; maintenanceCancellations = []
+        preparing?.resume(throwing: error); committing?.resume(throwing: error)
+        cancelling.forEach { $0.resume(throwing: error) }
     }
 
     private func failed(_ generation: UUID, _ message: String) {
@@ -295,6 +309,7 @@ final class BackendProcess {
         writer = nil; reader = nil; diagnostics = nil
         inputHandle = nil; outputHandle = nil; diagnosticHandle = nil
         owner = nil
+        finishMaintenance(ClientError.message("本机服务已结束"))
         finishing = false
         pendingExit = nil
         if status != 0 { event(.failure("连接已中断，请重试")) }

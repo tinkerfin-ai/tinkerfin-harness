@@ -1224,8 +1224,8 @@ class _AgentDefinition:
             BaseException: Agent or Planning Graph construction fails.
         """
 
-        if isinstance(self._spec.backend, Workspace):
-            raise ValueError("Workspace requires managed Runtime execution")  # noqa: TRY004 - the declaration is valid but requires a managed resource scope
+        if isinstance(self._spec.backend, Workspace) or self._spec.workspaces:
+            raise ValueError("Workspace requires managed Runtime execution")
         spec = self._spec.snapshot()
         if isinstance(spec.backend, BackendProtocol):
             spec = replace(spec, backend=async_store_backend(spec.backend))
@@ -1551,8 +1551,9 @@ def bind_agent(builder: TinkerFin, spec: AgentSpec[ContextT]) -> AgentRuntime[Co
     )
 
     from ._compaction_observation import COMPACTION_MARKER
-    from ._file_paths import FILE_TARGETS_CHANNEL
+    from ._file_paths import FILE_CONTRACT_CHANNEL, FILE_TARGETS_CHANNEL
     from ._hitl_state import TOOL_REVIEW_CHANNEL
+    from ._named_workspaces import NAMED_WORKSPACES_CHANNEL
     from ._workspace_operations import TOOL_ORIGINS_CHANNEL, WORKSPACE_ORIGIN_CHANNEL
     from .runtime import AgentRuntime
 
@@ -1575,6 +1576,8 @@ def bind_agent(builder: TinkerFin, spec: AgentSpec[ContextT]) -> AgentRuntime[Co
             SUMMARIZATION_SESSION_ID_KEY,
             COMPACTION_MARKER,
             FILE_TARGETS_CHANNEL,
+            FILE_CONTRACT_CHANNEL,
+            NAMED_WORKSPACES_CHANNEL,
             TOOL_ORIGINS_CHANNEL,
             WORKSPACE_ORIGIN_CHANNEL,
         }

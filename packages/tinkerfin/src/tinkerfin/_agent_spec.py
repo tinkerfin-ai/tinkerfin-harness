@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
-from typing import Any, Generic, TypeAlias, TypeVar, cast
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast
 
 from deepagents import AsyncSubAgent, CompiledSubAgent, DeepAgentState
 from deepagents.backends.protocol import BackendProtocol
@@ -24,6 +24,9 @@ from .media import AttachmentSupport
 from .skills import SkillSource, WorkspaceSkills
 from .subagents import SubAgent
 from .tools import _ToolRunScope
+
+if TYPE_CHECKING:
+    from ._named_workspaces import NamedWorkspaces
 
 ToolDefinition: TypeAlias = BaseTool | Callable[..., Any] | dict[str, Any]
 AgentMiddlewareType: TypeAlias = AgentMiddleware[Any, Any, Any]
@@ -74,6 +77,9 @@ class AgentSpec(Generic[ContextT]):
     memory: Sequence[str] | None = None
     permissions: Sequence[FilesystemPermission] = ()
     backend: AgentBackend = None
+    workspaces: Mapping[str, Workspace[object, BackendProtocol]] = field(
+        default_factory=dict[str, Workspace[object, BackendProtocol]]
+    )
     interrupt_on: dict[str, bool | InterruptOnConfig] | None = None
     response_format: ResponseFormatType = None
     state_schema: type[DeepAgentState] | None = None
@@ -83,6 +89,7 @@ class AgentSpec(Generic[ContextT]):
     name: str | None = None
     attachments: AttachmentSupport | None = None
     tool_scope: _ToolRunScope[object] | None = None
+    named_workspaces: NamedWorkspaces | None = None
 
     def snapshot(self) -> AgentSpec[ContextT]:
         """Retain a fresh declaration without copying borrowed resources."""
@@ -94,6 +101,7 @@ class AgentSpec(Generic[ContextT]):
             skills=None if self.skills is None else tuple(self.skills),
             memory=None if self.memory is None else tuple(self.memory),
             permissions=tuple(self.permissions),
+            workspaces=dict(self.workspaces),
             interrupt_on=copy_configuration(self.interrupt_on),
             response_format=copy_configuration(self.response_format),
         )

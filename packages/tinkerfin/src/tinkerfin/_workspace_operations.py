@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
-from typing import Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from deepagents.middleware.memory import (
     MemoryMiddleware,
@@ -31,8 +31,12 @@ from tinkerfin_contracts import (
 from tinkerfin_contracts.workspace_tools import OperationPurpose
 
 from ._delegation_journal import content_digest
+from ._tool_proposals import pending_tool_calls
 from .errors import TinkerFinLifecycleError
 from .tools import _ToolRunScope
+
+if TYPE_CHECKING:
+    from ._named_workspaces import NamedWorkspaces
 
 TOOL_ORIGINS_CHANNEL = "_tinkerfin_tool_origins"
 WORKSPACE_ORIGIN_CHANNEL = "_tinkerfin_workspace_origin"
@@ -92,8 +96,15 @@ def _coordinates(execution: ExecutionInfo | None) -> tuple[str, str, str]:
 class WorkspaceOperations:
     """Use one Run borrow to issue stable tool and framework I/O scopes."""
 
-    def __init__(self, owner: _ToolRunScope[object]) -> None:
+    def __init__(
+        self, owner: _ToolRunScope[object], named: NamedWorkspaces | None = None
+    ) -> None:
         self._owner = owner
+        self._named = named
+
+    def scope_for(self, tool_name: str) -> _ToolRunScope[object]:
+        scope = None if self._named is None else self._named.scope(tool_name)
+        return self._owner if scope is None else scope
 
     @property
     def identity(self) -> RunIdentity:
@@ -108,14 +119,16 @@ class WorkspaceOperations:
         purpose: OperationPurpose,
         tool_call_id: str | None = None,
         steps: tuple[str, ...] = (),
+        owner: _ToolRunScope[object] | None = None,
     ) -> ToolExecutionScope:
         # Workspace access also checks that the owning Run has not released its
         # resources. Context inheritance alone cannot reopen a finished borrow.
-        self._owner.ensure_active()
+        selected = self._owner if owner is None else owner
+        selected.ensure_active()
         return ToolExecutionScope(
             identity=self.identity,
             origin_identity=origin,
-            workspace_scope_id=self._owner.workspace_scope_id,
+            workspace_scope_id=selected.workspace_scope_id,
             invocation_id=invocation,
             graph_namespace=namespace,
             purpose=purpose,
@@ -131,6 +144,7 @@ class WorkspaceOperations:
         purpose: OperationPurpose = "tool",
         step: str = "execute",
         emit_output: Callable[[JsonValue], Awaitable[None]] | None = None,
+        default_workspace: bool = False,
     ) -> AbstractContextManager[ToolExecutionScope]:
         """Use the saved proposal even when an approved edit changes its action."""
         identifier = call.get("id")
@@ -139,10 +153,12 @@ class WorkspaceOperations:
         origin = _origins.validate_python(state.get(TOOL_ORIGINS_CHANNEL, {})).get(
             identifier
         )
+        owner = self.scope_for(call["name"])
         if (
             origin is None
             or origin.identity.thread != self.identity.thread
-            or origin.workspace_scope_id != self._owner.workspace_scope_id
+            or origin.workspace_scope_id != owner.workspace_scope_id
+            or self.scope_for(origin.tool_name) is not owner
         ):
             raise TinkerFinLifecycleError("workspace tool has no saved proposal origin")
         messages = state.get("messages")
@@ -166,6 +182,7 @@ class WorkspaceOperations:
                 purpose=purpose,
                 tool_call_id=identifier,
                 steps=(step,),
+                owner=self._owner if default_workspace else owner,
             ),
             emit_output=emit_output,
         )
@@ -270,7 +287,7 @@ class ToolOriginsMiddleware(AgentMiddleware):
             framework_origin = _FrameworkOrigin.model_validate(
                 state.get(WORKSPACE_ORIGIN_CHANNEL)
             )
-            for call in message.tool_calls:
+            for call in pending_tool_calls(state["messages"]):
                 identifier = call.get("id")
                 if not isinstance(identifier, str) or not identifier:
                     raise TinkerFinLifecycleError(
@@ -287,7 +304,9 @@ class ToolOriginsMiddleware(AgentMiddleware):
                 else:
                     origin = _ToolOrigin(
                         identity=framework_origin.identity,
-                        workspace_scope_id=framework_origin.workspace_scope_id,
+                        workspace_scope_id=self.operations.scope_for(
+                            call["name"]
+                        ).workspace_scope_id,
                         invocation_id=content_digest(
                             [
                                 framework_origin.invocation_id,

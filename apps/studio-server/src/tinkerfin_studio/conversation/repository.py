@@ -98,7 +98,7 @@ class ConversationRepository:
         model_id: str,
         input_json: dict[str, JsonValue],
         service_bindings: ServiceBindings = ServiceBindings.empty(),
-        access_mode: AccessMode = "full",
+        access_mode: AccessMode = "write_approval",
         automation_execution_id: str | None = None,
     ) -> ConversationRunRegistration:
         """创建固定模型与请求快照的主 Run 注册"""
@@ -992,7 +992,7 @@ class ConversationRepository:
             if previous is None:
                 thread.last_run_id = None
                 thread.last_model = None
-                thread.last_access_mode = "full"
+                thread.last_access_mode = "write_approval"
                 thread.status = "idle"
                 thread.has_pending_interrupt = False
                 thread.pending_interaction_kind = None

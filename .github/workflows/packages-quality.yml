@@ -105,11 +105,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     defaults:
       run:
         working-directory: apps/studio-web
@@ -141,7 +141,7 @@ jobs:
       - name: Check web and browser test types
         run: pnpm exec tsc -b
       - name: Test browser behavior and accessibility
-        run: pnpm exec playwright test --shard=${{ matrix.shard }}/3
+        run: pnpm exec playwright test --shard=${{ matrix.shard }}/4
       - name: Upload browser failure evidence
         if: failure()
         uses: actions/upload-artifact@v4
@@ -238,6 +238,9 @@ jobs:
           version: "0.12.13"
           enable-cache: true
           python-version: "3.14.7"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.8.0"
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.3"
@@ -245,13 +248,30 @@ jobs:
           cache-dependency-path: apps/desktop/runtime/package-lock.json
       - run: uv sync --locked --all-packages
       - run: npm ci --prefix apps/desktop/runtime --ignore-scripts --no-audit --no-fund
-      - name: Check desktop code and native contracts
+      - name: Verify independent desktop interface
+        working-directory: apps/desktop/ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm test
+          pnpm build
+          pnpm exec playwright install webkit
+          pnpm test:browser
+      - name: Check desktop code and native types
         run: |
           uv run ruff check --no-cache apps/desktop
           uv run ruff format --no-cache --check apps/desktop
           uv run pyright apps/desktop/src apps/desktop/tests apps/desktop/scripts
           swiftc -typecheck -swift-version 6 -target arm64-apple-macosx15.0 apps/desktop/native/*.swift
-          uv run pytest apps/desktop/tests packages/tinkerfin-sandbox/tests/native packages/tinkerfin-remote/tests -q
+          native_sources=()
+          for native_source in apps/desktop/native/*.swift; do
+            if [[ "$native_source" != */CompanionApp.swift ]]; then native_sources+=("$native_source"); fi
+          done
+          swiftc -typecheck -swift-version 6 -target arm64-apple-macosx15.0 "${native_sources[@]}" apps/desktop/native/installer/InstallerApp.swift
+      - name: Test desktop and system interface contracts
+        run: uv run pytest apps/desktop/tests -q --durations=10
+      - name: Test isolated macOS sandbox contracts
+        run: uv run pytest packages/tinkerfin-sandbox/tests/native -q -n 2 --dist=loadfile --durations=10
 
   quality-gate:
     name: Quality gate

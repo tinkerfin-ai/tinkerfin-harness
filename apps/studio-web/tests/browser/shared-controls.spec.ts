@@ -34,7 +34,7 @@ for (const theme of ['light', 'dark']) {
       document.body.append(probe)
       try { return getComputedStyle(probe).color } finally { probe.remove() }
     })
-    for (const label of ['云端', '本地 · 已连接', '链路', '已归档会话']) {
+    for (const label of ['链路', '已归档会话']) {
       const button = page.getByRole('button', { name: label, exact: true })
       if (await button.getAttribute('aria-pressed') !== 'true') await button.click()
       await expect(button).toHaveAttribute('aria-pressed', 'true')
@@ -70,7 +70,7 @@ for (const theme of ['light', 'dark']) {
     await page.emulateMedia({ forcedColors: 'active' })
     await page.mouse.move(0, 0)
     await page.keyboard.press('Tab')
-    const cloud = page.getByRole('button', { name: '云端', exact: true })
+    const cloud = page.getByRole('button', { name: '链路', exact: true })
     await cloud.focus()
     await expect(cloud).toHaveCSS('outline-style', 'solid')
     await expect(cloud).toHaveCSS('outline-width', '2px')
@@ -360,3 +360,68 @@ for (const theme of ['light', 'dark']) test(`关闭共享浮层后不残留外�
   await next.focus()
   await expect(next).toHaveCSS('outline-width', '2px')
 })
+
+for (const language of ['zh-CN', 'en']) for (const theme of ['light', 'dark']) {
+  test(`本机资源选择、收起与焦点 ${language} ${theme}`, async ({ page, controlsOrigin }, testInfo) => {
+    await page.addInitScript(language => localStorage.setItem('tinkerfin:language', language), language)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const label = language === 'en' ? 'Computer resources' : '本机资源'
+    const ask = language === 'en' ? 'Ask before changes' : '修改前确认'
+    const automatic = language === 'en' ? 'Run automatically' : '自动执行'
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.goto(`${controlsOrigin}${fixture}?example=icons&theme=${theme}&deviceState=online`)
+      const trigger = page.getByRole('button', { name: label, exact: true })
+      await trigger.focus()
+      await page.keyboard.press('Enter')
+      const panel = page.getByRole('dialog', { name: label, exact: true })
+      await expect(panel.getByRole('radio', { name: ask, exact: true })).toBeFocused()
+      await expect(panel.getByRole('button')).toHaveCount(1)
+      await expect(panel.getByRole('radio')).toHaveCount(2)
+      await panel.getByText(automatic, { exact: true }).click()
+      await expect(panel).toBeHidden()
+      await expect(trigger).toBeFocused()
+      await expect(trigger).toContainText(automatic)
+      await trigger.click()
+      await expect(panel.getByRole('radio', { name: automatic, exact: true })).toBeChecked()
+      const bounds = (await panel.boundingBox())!
+      expect(bounds.x).toBeGreaterThanOrEqual(0)
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+      await expect(panel.getByRole('status')).toHaveText(language === 'en' ? 'Connected' : '已连接')
+      const centers = await panel.evaluate(element => {
+        const gear = element.querySelector('.lr-icon-button svg')!.getBoundingClientRect()
+        const check = element.querySelector('input:checked + .lr-check svg')!.getBoundingClientRect()
+        return [gear.x + gear.width / 2, check.x + check.width / 2]
+      })
+      expect(centers[0]).toBe(centers[1])
+      await page.screenshot({ path: testInfo.outputPath(`computer-resources-${language}-${theme}-${width}.png`) })
+      await panel.getByText(automatic, { exact: true }).click()
+      await expect(panel).toBeHidden()
+      await expect(trigger).toBeFocused()
+      await trigger.press('Enter')
+      await page.keyboard.press('Escape')
+      await expect(trigger).toBeFocused()
+      await expect(panel).toBeHidden()
+    }
+  })
+}
+
+for (const state of ['online', 'offline', 'loading', 'error', 'empty']) {
+  test(`本机资源状态准确且配置入口始终可用 ${state}`, async ({ page, controlsOrigin }) => {
+    await page.addInitScript(() => localStorage.setItem('tinkerfin:language', 'zh-CN'))
+    await page.goto(`${controlsOrigin}${fixture}?example=icons&deviceState=${state}&locked=true`)
+    const trigger = page.getByRole('button', { name: '本机资源', exact: true })
+    await expect(trigger).toContainText(({ online: '修改前确认', offline: '未连接', loading: '加载中', error: '加载失败', empty: '去连接' })[state]!)
+    await trigger.click()
+    const panel = page.getByRole('dialog', { name: '本机资源', exact: true })
+    if (state === 'online' || state === 'offline') {
+      await expect(panel.getByRole('status')).toHaveText(state === 'online' ? '已连接' : '未连接')
+      await expect(panel.getByRole('button')).toHaveCount(1)
+      await expect(panel.getByRole('radio')).toHaveCount(state === 'online' ? 2 : 0)
+      for (const radio of await panel.getByRole('radio').all()) await expect(radio).toBeDisabled()
+      await panel.getByRole('button', { name: '打开本地设备设置', exact: true }).click()
+    }
+    await expect(panel).toBeHidden()
+    await expect(page.getByText('设备设置已打开', { exact: true })).toBeVisible()
+  })
+}

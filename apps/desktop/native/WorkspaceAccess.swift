@@ -46,6 +46,8 @@ final class WorkspaceAccess: @unchecked Sendable {
 
 }
 
+enum ApplicationLockError: Error { case alreadyRunning }
+
 /// 同一状态目录只允许一个原生客户端修改配对和授权
 final class ApplicationLock: @unchecked Sendable {
     private let descriptor: Int32
@@ -53,11 +55,11 @@ final class ApplicationLock: @unchecked Sendable {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
         let descriptor = Darwin.open(directory.appendingPathComponent("application.lock").path,
-                                     O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
+                                     O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard descriptor >= 0 else { throw ClientError.message("无法打开本机状态目录") }
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
             Darwin.close(descriptor)
-            throw ClientError.message("此本机客户端已在运行，请从菜单栏打开")
+            throw ApplicationLockError.alreadyRunning
         }
         self.descriptor = descriptor
     }

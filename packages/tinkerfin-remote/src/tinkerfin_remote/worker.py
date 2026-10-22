@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from types import TracebackType
 from typing import ClassVar, Generic, Self, TypeVar
 
@@ -81,6 +81,7 @@ class _Borrow(Generic[WorkspaceT]):
         self.ready.add_done_callback(
             lambda done: None if done.cancelled() else done.exception()
         )
+        self.ready.add_done_callback(lambda _done: worker._idle_changed.set())
         self.close_requested = asyncio.Event()
         self.task = asyncio.create_task(self._own())
         self.task.add_done_callback(lambda _done: worker._wake.set())
@@ -360,6 +361,7 @@ class ToolWorker(Generic[WorkspaceT]):
         self._closed = False
         self._serving = False
         self._delivery: asyncio.Task[None] | None = None
+        self._maintaining = False
 
     async def __aenter__(self) -> Self:
         """Open execution ownership and recover retained work without replaying effects."""
@@ -401,6 +403,7 @@ class ToolWorker(Generic[WorkspaceT]):
         self._opened = True
         self._supervisor = asyncio.create_task(self._supervise())
         self._supervisor.add_done_callback(lambda _done: self._changed.set())
+        self._supervisor.add_done_callback(lambda _done: self._idle_changed.set())
         return self
 
     async def __aexit__(
@@ -581,7 +584,7 @@ class ToolWorker(Generic[WorkspaceT]):
         ):
             await self._ledger.reclaim()
         for command in frame.commands:
-            await self._ledger.command(command)
+            await self._ledger.command(command, accept_new=not self._maintaining)
         for chunk in frame.chunks:
             await self._ledger.upload_chunk(chunk)
         if frame.commands or frame.chunks:
@@ -659,6 +662,62 @@ class ToolWorker(Generic[WorkspaceT]):
             if not self._running and not await self._ledger.dispatches():
                 return
             await _transport.changed_or_poll(self._idle_changed)
+
+    @asynccontextmanager
+    async def maintenance(self) -> AsyncGenerator[None]:
+        """Pause new work and wait for accepted operations before yielding.
+
+        Keep delivery attached while entering this context: accepted uploads,
+        cancellation requests and results still need their transport. New
+        workspace and operation requests receive durable rejection results;
+        replay of an existing request keeps its original outcome. Already
+        prepared workspaces remain borrowed until their owner closes them.
+
+        Leaving the context, including cancellation while waiting, resumes
+        admission unless the worker has closed. Only one maintenance context
+        may own a worker at a time. The host owns any maintenance work performed
+        inside the context and must finish it before resuming admission.
+
+        Raises:
+            RemoteError: The worker is unavailable or maintenance is already owned.
+        """
+        self._require_open()
+        if self._maintaining:
+            raise RemoteError(
+                RemoteErrorCode.CONFLICT, "Worker maintenance is already owned"
+            )
+        self._maintaining = True
+        try:
+            # Admission is chosen before owned_io registers its SQL task. Join
+            # those accepted writes before inspecting execution; later requests
+            # are rejected atomically in the ledger and cannot race this drain.
+            await self._ledger.wait_idle()
+            while True:
+                await self.wait_idle()
+                self._idle_changed.clear()
+                preparing = False
+                for request in await self._ledger.open_sessions():
+                    if (
+                        await self._ledger.get_workspace_reply(
+                            digest(OpenWorkspace(request=request))
+                        )
+                        is None
+                    ):
+                        preparing = True
+                        break
+                self._require_open()
+                if (
+                    not preparing
+                    and all(borrow.ready.done() for borrow in self._borrows.values())
+                    and not self._running
+                    and not self._cancelling
+                ):
+                    break
+                await self._idle_changed.wait()
+            yield
+        finally:
+            self._maintaining = False
+            self._wake.set()
 
     async def aclose(self) -> None:
         """Cancel owned work and release all borrows while retaining durable receipts."""

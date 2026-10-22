@@ -30,5 +30,18 @@ version = "1.0"
         lock.replace('version = "1.0"', 'version = "2.0"')
     )
     assert fingerprint(tmp_path) == initial
+    web = tmp_path / "apps/studio-web/public/brand/tinkerfin.svg"
+    web.parent.mkdir(parents=True)
+    web.write_text("independent studio brand")
+    assert fingerprint(tmp_path) == initial
+    interface = tmp_path / "apps/desktop/ui/src/App.tsx"
+    interface.parent.mkdir(parents=True)
+    interface.write_text("export function App() {}\n")
+    interface_key = fingerprint(tmp_path)
+    assert interface_key != initial
+    generated = tmp_path / "apps/desktop/ui/node_modules/example/index.js"
+    generated.parent.mkdir(parents=True)
+    generated.write_text("cached dependency")
+    assert fingerprint(tmp_path) == interface_key
     source.write_text("value = 2\n")
-    assert fingerprint(tmp_path) != initial
+    assert fingerprint(tmp_path) != interface_key

@@ -144,7 +144,7 @@ class DeviceExecutionProfile(Base):
         String(128), nullable=False, comment="授权时的工作区显示名称"
     )
     access_mode: Mapped[str] = mapped_column(
-        String(32), nullable=False, comment="文件审批选择：full、write_approval"
+        String(32), nullable=False, comment="本机确认选择：full、write_approval"
     )
     skills: Mapped[list[dict[str, JsonValue]]] = mapped_column(
         JSON, nullable=False, comment="会话已授权技能的身份和内容摘要"

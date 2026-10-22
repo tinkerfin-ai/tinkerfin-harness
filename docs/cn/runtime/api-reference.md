@@ -28,6 +28,7 @@ AG-UI 入口需要安装 `tinkerfin[agui]`。
 | `subagents` | 声明式、compiled 或 remote subagent |
 | `skills`、`memory` | 技能目录与记忆文件 |
 | `backend`、`permissions` | 文件 backend 或惰性 workspace 及文件规则 |
+| `workspaces` | 具名辅助工作区；通过 `<名称>_tools` 按需发现其独立文件与工具 |
 | `interrupt_on` | 指定执行前需要审批的工具 |
 | `response_format` | 结构化输出契约 |
 | `state_schema`、`context_schema` | 持久状态字段与调用上下文类型 |

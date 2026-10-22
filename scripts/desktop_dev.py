@@ -20,7 +20,6 @@ def fingerprint(root: Path) -> str:
     content = hashlib.sha256(json.dumps(scope, sort_keys=True).encode())
     paths: set[Path] = {
         root / "scripts/build_wheels.py",
-        root / "apps/studio-web/public/brand/tinkerfin.svg",
         root / "LICENSE",
     }
     for relative in source_paths(scope):
@@ -36,6 +35,17 @@ def fingerprint(root: Path) -> str:
         desktop / "runtime" / name
         for name in ("package.json", "package-lock.json", "browser-service.mjs")
     )
+    interface = desktop / "ui"
+    for name in (
+        "package.json",
+        "pnpm-lock.yaml",
+        "index.html",
+        "tsconfig.json",
+        "vite.config.ts",
+    ):
+        paths.add(interface / name)
+    for directory in ("src", "public"):
+        paths.update((interface / directory).rglob("*"))
     for path in sorted(paths):
         if (
             not path.is_file()

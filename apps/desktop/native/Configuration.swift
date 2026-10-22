@@ -282,8 +282,14 @@ final class ConfigurationStore: @unchecked Sendable {
                     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                     let content = try encoder.encode(configuration)
                     guard content.count <= 1024 * 1024 else { throw ClientError.message("本机配置超过容量") }
-                    try content.write(to: target, options: [.atomic, .completeFileProtection])
-                    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+                    // 权限与内容在替换前完成，替换后的异常不能让调用方误删已采用的Keychain账户
+                    let temporary = directory.appendingPathComponent(".settings-" + UUID().uuidString.lowercased())
+                    let descriptor = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+                    guard descriptor >= 0 else { throw ClientError.message("本机配置暂时无法保存") }
+                    let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+                    defer { try? handle.close(); try? FileManager.default.removeItem(at: temporary) }
+                    try handle.write(contentsOf: content); try handle.synchronize(); try handle.close()
+                    guard rename(temporary.path, target.path) == 0 else { throw ClientError.message("本机配置暂时无法保存") }
                     continuation.resume()
                 } catch { continuation.resume(throwing: error) }
             }

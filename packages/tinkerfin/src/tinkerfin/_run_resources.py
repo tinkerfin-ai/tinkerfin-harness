@@ -5,13 +5,16 @@ from __future__ import annotations
 import asyncio
 from contextlib import AsyncExitStack
 from types import TracebackType
-from typing import Self, TypeVar
+from typing import TYPE_CHECKING, Self, TypeVar
 
 from tinkerfin_contracts import PreparedWorkspace, RunIdentity, Workspace
 
 from ._failure_evidence import retain_failure
 from ._run_owner import RunOwner
 from .tools import _ToolRunScope
+
+if TYPE_CHECKING:
+    from ._named_workspaces import NamedWorkspaces
 
 WorkspaceT = TypeVar("WorkspaceT")
 BackendT = TypeVar("BackendT")
@@ -62,6 +65,11 @@ class RunResources:
     ) -> PreparedWorkspace[WorkspaceT, BackendT]:
         """Borrow a workspace in the Task that will release it after Graph closure."""
         return await self._stack.enter_async_context(declaration.prepare(identity))
+
+    def own_named_workspaces(self, workspaces: NamedWorkspaces) -> NamedWorkspaces:
+        """Release every lazily opened resource after graph work has settled."""
+        self._stack.push_async_callback(workspaces.aclose)
+        return workspaces
 
     def borrow_tools(
         self,

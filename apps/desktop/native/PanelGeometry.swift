@@ -2,8 +2,7 @@ import AppKit
 
 /// 浮层按菜单栏按钮的单侧边缘对齐；优先向当前屏幕空间更充足的一侧展开
 struct PanelGeometry {
-    static let width = 232.0
-    static let cornerRadius = 10.0
+    static let width = 346.0
     let frame: NSRect
     let maximumContentHeight: Double
 
@@ -20,41 +19,4 @@ struct PanelGeometry {
         let height = min(contentHeight, maximumContentHeight)
         frame = NSRect(x: x, y: top - height, width: width, height: height)
     }
-}
-
-/// 浮层采用系统材质，由 AppKit 跟随浅深色与辅助功能透明度设置
-@MainActor
-final class CompanionPanelView: NSVisualEffectView {
-    private var hosted: NSView?
-
-    init(hosted: NSView) {
-        self.hosted = hosted
-        super.init(frame: .zero)
-        material = .popover
-        blendingMode = .behindWindow
-        state = .active
-        wantsLayer = true
-        layer?.cornerRadius = PanelGeometry.cornerRadius
-        layer?.masksToBounds = true
-        let radius = PanelGeometry.cornerRadius
-        let mask = NSImage(size: NSSize(width: radius * 2 + 1, height: radius * 2 + 1), flipped: false) { rect in
-            NSColor.black.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
-            return true
-        }
-        mask.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
-        mask.resizingMode = .stretch
-        maskImage = mask
-        addSubview(hosted)
-    }
-
-    required init?(coder: NSCoder) { nil }
-
-    override func layout() {
-        super.layout()
-        hosted?.frame = bounds
-        window?.invalidateShadow()
-    }
-
-    func detachContent() { hosted?.removeFromSuperview(); hosted = nil }
 }

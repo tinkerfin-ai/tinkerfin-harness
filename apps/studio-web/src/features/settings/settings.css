@@ -92,7 +92,7 @@
   .settings-panel__footer-content { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-3); width: 100%; }
 
   .settings-section + .settings-section { margin-top: var(--space-8); }
-  .settings-section h3 { margin: 0; font-size: var(--type-title-size); line-height: var(--type-title-line); }
+  .settings-section h3 { margin: 0; align-self: flex-start; font-size: var(--type-title-size); line-height: var(--type-title-line); }
   .settings-section__heading p { margin: var(--space-1) 0 0; color: var(--color-text-secondary); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
 
   .settings-profile {

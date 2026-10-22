@@ -36,6 +36,9 @@ jobs:
           version: "0.12.13"
           enable-cache: true
           python-version: "3.14.7"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.8.0"
       - uses: actions/setup-node@v4
         with:
           node-version: "22.23.3"
@@ -50,13 +53,30 @@ jobs:
           [[ "$(uname -m)" == arm64 ]] || exit 1
       - run: uv sync --locked --all-packages
       - run: npm ci --prefix apps/desktop/runtime --ignore-scripts --no-audit --no-fund
-      - name: Verify desktop and native dependencies
+      - name: Verify independent desktop interface
+        working-directory: apps/desktop/ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm test
+          pnpm build
+          pnpm exec playwright install webkit
+          pnpm test:browser
+      - name: Verify desktop code and native types
         run: |
           uv run ruff check --no-cache apps/desktop
           uv run ruff format --no-cache --check apps/desktop
           uv run pyright apps/desktop/src apps/desktop/tests apps/desktop/scripts
           swiftc -typecheck -swift-version 6 -target arm64-apple-macosx15.0 apps/desktop/native/*.swift
-          uv run pytest apps/desktop/tests packages/tinkerfin-sandbox/tests/native packages/tinkerfin-remote/tests -q
+          native_sources=()
+          for native_source in apps/desktop/native/*.swift; do
+            if [[ "$native_source" != */CompanionApp.swift ]]; then native_sources+=("$native_source"); fi
+          done
+          swiftc -typecheck -swift-version 6 -target arm64-apple-macosx15.0 "${native_sources[@]}" apps/desktop/native/installer/InstallerApp.swift
+      - name: Test desktop and remote contracts
+        run: uv run pytest apps/desktop/tests packages/tinkerfin-remote/tests -q --durations=10
+      - name: Test isolated macOS sandbox contracts
+        run: uv run pytest packages/tinkerfin-sandbox/tests/native -q -n 2 --dist=loadfile --durations=10
       - uses: actions/cache@v4
         with:
           path: ~/Library/Caches/TinkerFin/build-inputs
@@ -71,6 +91,10 @@ jobs:
           codesign --verify --deep --strict dist/TinkerFin.app
           cd dist
           shasum -a 256 -c TinkerFin.zip.sha256
+      - name: Sign update manifest
+        env:
+          DESKTOP_UPDATE_SIGNING_KEY: ${{ secrets.DESKTOP_UPDATE_SIGNING_KEY }}
+        run: uv run python apps/desktop/scripts/sign_update.py --app dist/TinkerFin.app --archive dist/TinkerFin.zip --output dist/update.json
       - name: Publish verified assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -86,9 +110,10 @@ jobs:
 
           [中文安装说明](https://github.com/tinkerfin-ai/tinkerfin-harness/blob/main/apps/desktop/README.md)
           EOF
-          gh release create "$RELEASE_TAG" dist/TinkerFin.zip dist/TinkerFin.zip.sha256 \
+          gh release create "$RELEASE_TAG" dist/TinkerFin.zip dist/TinkerFin.zip.sha256 dist/update.json dist/update.json.sig \
             --verify-tag --draft --title "TinkerFin Desktop ${RELEASE_TAG#desktop-v}" \
             --notes-file "$RUNNER_TEMP/release-notes.md"
           gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/release-check"
           (cd "$RUNNER_TEMP/release-check" && shasum -a 256 -c TinkerFin.zip.sha256)
+          uv run python apps/desktop/scripts/sign_update.py --verify --app dist/TinkerFin.app --archive "$RUNNER_TEMP/release-check/TinkerFin.zip" --output "$RUNNER_TEMP/release-check/update.json"
           gh release edit "$RELEASE_TAG" --draft=false

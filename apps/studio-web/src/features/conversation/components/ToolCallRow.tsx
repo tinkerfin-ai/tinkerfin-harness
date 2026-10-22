@@ -8,6 +8,7 @@ import {
   FolderTree,
   Globe2,
   ListChecks,
+  Laptop,
   Pause,
   Play,
   SquareTerminal,
@@ -146,8 +147,14 @@ export function ToolCallRow({
 }) {
   const { t } = useI18n()
   const toolName = message.meta?.toolName?.trim() || 'tool'
-  const presentation = TOOL_PRESENTATIONS[toolName]
+  const computer = toolName.startsWith('computer_')
+  const operation = computer ? toolName.slice('computer_'.length) : toolName
+  const presentation = computer && operation === 'tools'
+    ? { title: '本机资源', icon: Laptop, summaryKeys: [] }
+    : TOOL_PRESENTATIONS[operation]
   const title = presentation?.title ?? 'Tool call'
+  const action = isTranslationKey(title) ? t(title) : title
+  const displayedTitle = computer && operation !== 'tools' ? t('本机 · {action}', { action }) : action
   const ToolIcon = presentation?.icon ?? Wrench
   const status = message.meta?.status ?? 'completed'
   const failure = status === 'failed' && Boolean(message.meta?.result)
@@ -155,10 +162,10 @@ export function ToolCallRow({
     : ''
   const summary = presentationOverride?.summary !== undefined
     ? presentationOverride.summary
-    : failure || toolSummary(message, toolName, presentation)
+    : failure || toolSummary(message, operation, presentation)
   return <ConversationDetailRow id={message.id}
     className={`tool-row ${status}${className ? ` ${className}` : ''}`} data-tool-name={toolName}
-    title={presentationOverride?.title ?? (isTranslationKey(title) ? t(title) : title)}
+    title={presentationOverride?.title ?? displayedTitle}
     summary={summary ? <span className={failure ? 'tool-row-error-summary' : undefined}>{summary}</span> : undefined}
     statusLabel={statusText(status, t)}
     icon={status === 'failed' || status === 'cancelled'

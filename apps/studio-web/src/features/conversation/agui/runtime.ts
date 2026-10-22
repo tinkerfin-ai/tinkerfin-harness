@@ -770,7 +770,6 @@ export const buildInitialPayload = (
   content: string,
   attachments: readonly Attachment[] = [],
   skillIds: readonly string[] = [],
-  localTarget?: { device_id: string; workspace_id: string },
 ): ChatRequestPayload => {
   const runId = createRunId()
   return {
@@ -786,7 +785,7 @@ export const buildInitialPayload = (
     ],
     tools: [],
     context: [],
-    forwardedProps: { ...forwardedPropsFor(conversation.projectId, conversation.model, conversation.mode, conversation.accessMode), skillIds: [...skillIds], ...(localTarget ? { localTarget } : {}) },
+    forwardedProps: { ...forwardedPropsFor(conversation.projectId, conversation.model, conversation.mode, conversation.accessMode), skillIds: [...skillIds] },
   }
 }
 

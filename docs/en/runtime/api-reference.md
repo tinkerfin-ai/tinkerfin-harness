@@ -29,6 +29,7 @@ and borrows supplied resources.
 | `subagents` | Declarative, compiled, or remote subagents |
 | `skills`, `memory` | Skill directories and memory files |
 | `backend`, `permissions` | Filesystem backend or lazy workspace and its file rules |
+| `workspaces` | Named auxiliary workspaces discovered on demand; prefixed tools leave the default backend unchanged |
 | `interrupt_on` | Require decisions before selected tools execute |
 | `response_format` | Structured output contract |
 | `state_schema`, `context_schema` | Persistent state fields and invocation context type |

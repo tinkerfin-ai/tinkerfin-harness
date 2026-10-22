@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from contextlib import nullcontext
 from dataclasses import replace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -31,9 +31,13 @@ from ._file_paths import (
     file_contract_digest,
     validate_file_contract,
 )
+from ._tool_proposals import pending_tool_calls
 from ._workspace_operations import WorkspaceOperations
-from ._workspace_tools import model_tool_declarations
+from ._workspace_tools import model_tool_declarations, tool_descriptor
 from .tools import ToolRuntime, _ToolRunScope
+
+if TYPE_CHECKING:
+    from ._named_workspaces import NamedWorkspaces
 
 
 class _InvocationTool(BaseTool):
@@ -71,10 +75,12 @@ class _ToolRuntimeMiddleware(AgentMiddleware):
         self,
         scope: _ToolRunScope[object] | None,
         file_paths: _WorkspaceFilePaths | None = None,
+        named: NamedWorkspaces | None = None,
     ) -> None:
         self._scope = scope
+        self._named = named
         self._file_paths = file_paths
-        self._operations = None if scope is None else WorkspaceOperations(scope)
+        self._operations = None if scope is None else WorkspaceOperations(scope, named)
 
     def after_model(
         self, state: AgentState, runtime: Runtime[Any]
@@ -82,11 +88,13 @@ class _ToolRuntimeMiddleware(AgentMiddleware):
         # This hook runs first under LangChain 1.4.2's reverse middleware order.
         # A fresh proposal replaces completed history's private evidence; resuming
         # its review or tool node retains the original declaration set instead.
-        return {FILE_CONTRACT_CHANNEL: file_contract_digest(self._file_paths)}
+        return {FILE_CONTRACT_CHANNEL: file_contract_digest(self._file_paths, state)}
 
     async def aafter_model(
         self, state: AgentState, runtime: Runtime[Any]
     ) -> dict[str, object]:
+        if self._file_paths is not None:
+            await self._file_paths.restore(state)
         return self.after_model(state, runtime)
 
     def wrap_model_call(
@@ -101,8 +109,64 @@ class _ToolRuntimeMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse | ExtendedModelResponse:
-        return await handler(
-            request.override(tools=model_tool_declarations(request.tools))
+        from ._named_workspaces import NAMED_WORKSPACES_CHANNEL
+
+        allowed = {
+            descriptor.name
+            for tool in request.tools
+            if (descriptor := tool_descriptor(tool)) is not None
+        }
+        snapshot = (
+            {}
+            if self._named is None
+            else {
+                name: declaration
+                for name, declaration in self._named.snapshot().items()
+                if f"{name}_tools" in allowed
+            }
+        )
+        auxiliary = (
+            []
+            if self._named is None
+            else [
+                tool
+                for tool in self._named.model_tools()
+                if self._named.resource_name(tool.name) in snapshot
+            ]
+        )
+        response = await handler(
+            request.override(
+                tools=model_tool_declarations([*request.tools, *auxiliary])
+            )
+        )
+        if self._named is None:
+            return response
+        available = allowed | {tool.name for tool in auxiliary}
+        errors: list[ToolMessage] = []
+        for call in pending_tool_calls(response.result):
+            name = self._named.resource_name(call["name"])
+            if name is None or call["name"] in available:
+                continue
+            discovery = f"{name}_tools"
+            guidance = (
+                f"Call {discovery}, then use a tool returned by discovery."
+                if discovery in allowed
+                else "Use one of the tools declared for this model turn."
+            )
+            errors.append(
+                ToolMessage(
+                    content=f"Tool {call['name']!r} is not available in this model turn. {guidance}",
+                    tool_call_id=call["id"],
+                    name=call["name"],
+                    status="error",
+                )
+            )
+        # Invalid model output is feedback, not an authorization to open a
+        # resource. Preserve the proposal and answer it before ownership, paths
+        # or review are prepared; saved executable proposals remain strict.
+        return ExtendedModelResponse(
+            model_response=replace(response, result=[*response.result, *errors]),
+            command=Command(update={NAMED_WORKSPACES_CHANNEL: snapshot}),
         )
 
     def _request(self, request: ToolCallRequest) -> ToolCallRequest:
@@ -123,7 +187,11 @@ class _ToolRuntimeMiddleware(AgentMiddleware):
             execution_info=native.execution_info,
             server_info=native.server_info,
         )
-        runtime._scope = self._scope
+        runtime._scope = (
+            self._scope
+            if self._named is None
+            else self._named.scope(request.tool_call["name"]) or self._scope
+        )
         return replace(request, runtime=runtime)
 
     def wrap_tool_call(
@@ -149,6 +217,8 @@ class _ToolRuntimeMiddleware(AgentMiddleware):
         )
         from .errors import DelegationReplayError
 
+        if self._file_paths is not None:
+            await self._file_paths.restore(request.state)
         validate_file_contract(request.state, self._file_paths)
         prepared = self._request(request)
         if self._file_paths is not None:
@@ -207,7 +277,11 @@ class _ToolRuntimeMiddleware(AgentMiddleware):
                 prepared.tool_call, prepared.state, emit_output=emit_output
             )
         ):
-            return await handler(prepared)
+            return (
+                await handler(prepared)
+                if self._named is None
+                else await self._named.execute(prepared, handler, self._file_paths)
+            )
 
 
 __all__ = ["_ToolRuntimeMiddleware"]

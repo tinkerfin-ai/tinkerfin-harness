@@ -1,8 +1,6 @@
 import { requestJson } from '../../api/shared/http'
 import { deviceAuthorizationServer } from './authorizationRoute'
-import type { JsonObject } from '../../types'
 
-export interface LocalTarget extends JsonObject { device_id: string; workspace_id: string }
 export interface LocalDevice {
   device_id: string
   name: string
@@ -23,9 +21,13 @@ const root = '/api/devices'
 const options = (signal?: AbortSignal) => ({ signal, suppressGlobalError: true })
 
 export async function fetchDevices(signal?: AbortSignal): Promise<LocalDevice[]> {
-  const devices = await requestJson<LocalDevice[]>(root, options(signal))
-  if (!Array.isArray(devices)) throw new Error('设备列表格式无效')
-  return devices
+  const deadline = new AbortController()
+  const timer = setTimeout(() => deadline.abort(new DOMException('设备状态查询超时', 'TimeoutError')), 15_000)
+  try {
+    const devices = await requestJson<LocalDevice[]>(root, options(signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal))
+    if (!Array.isArray(devices)) throw new Error('设备列表格式无效')
+    return devices
+  } finally { clearTimeout(timer) }
 }
 export function requestDeviceAuthorization(
   id: string, action: 'preview' | 'approve' | 'deny', browserToken: string,
@@ -41,5 +43,3 @@ export const denyDeviceAuthorization = (id: string, browserToken: string, signal
     ...options(signal), method: 'POST', requiresAuth: false, body: { browser_token: browserToken },
   })
 export const revokeDevice = (id: string, signal: AbortSignal) => requestJson<void>(`${root}/${encodeURIComponent(id)}`, { ...options(signal), method: 'DELETE' })
-export const fetchRunLocalTarget = (threadId: string, runId: string, signal: AbortSignal) => requestJson<LocalTarget | null>(`${root}/selection?${new URLSearchParams({ thread_id: threadId, run_id: runId })}`, options(signal))
-export const fetchThreadLocalTarget = (threadId: string, signal: AbortSignal) => requestJson<LocalTarget | null>(`${root}/selection?${new URLSearchParams({ thread_id: threadId })}`, options(signal))

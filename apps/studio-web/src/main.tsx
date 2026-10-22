@@ -13,9 +13,11 @@ import './components/ui/ui.css'
 import { normalizeAppLocation } from './lib/threadRoute'
 import { LocaleProvider } from './i18n'
 import { prepareDeviceAuthorization } from './features/devices/authorizationRoute'
+import { convertComputerResources } from './lib/convertComputerResources'
 
 let initializationFailed = false
 try {
+  convertComputerResources()
   prepareDeviceAuthorization()
   normalizeAppLocation()
 } catch {

@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from typing import Literal, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from sqlalchemy import Table, delete, func, insert, or_, select, update
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import SQLAlchemyError
@@ -40,9 +40,11 @@ from .models import (
     WorkspaceEvent,
     WorkspaceRequest,
 )
+from .operations import OperationState, OperationStatus
 
 ValueT = TypeVar("ValueT", bound=BaseModel)
 ItemKind = Literal["command", "chunk", "event", "workspace"]
+_operation_state: TypeAdapter[OperationState] = TypeAdapter(OperationState)
 
 
 def text_field(row: RowMapping, field: str) -> str:
@@ -331,7 +333,9 @@ class Ledger:
         return row
 
     @owned_io
-    async def command(self, envelope: CommandEnvelope) -> None:
+    async def command(
+        self, envelope: CommandEnvelope, *, accept_new: bool = True
+    ) -> None:
         async with self.transaction() as conn:
             command = envelope.command
             if envelope.command_id != digest(command):
@@ -402,6 +406,17 @@ class Ledger:
                             compacted=False,
                         )
                     )
+                    if not accept_new:
+                        await self._item(
+                            conn,
+                            "workspace",
+                            WorkspaceEvent(
+                                command_id=envelope.command_id,
+                                session_id=request.session_id,
+                                error="Remote worker is paused for maintenance",
+                            ),
+                            group=request.session_id,
+                        )
                 elif text_field(row, "digest") != digest(request):
                     raise RemoteError(
                         RemoteErrorCode.CONFLICT,
@@ -531,6 +546,18 @@ class Ledger:
                             binary_bytes=0,
                         )
                     )
+                    if not accept_new:
+                        # Persist the refusal with admission so supervision can
+                        # never execute a request rejected by maintenance.
+                        await self._receive_event(
+                            conn,
+                            OperationEvent(
+                                operation_id=request.operation_id,
+                                sequence=1,
+                                kind="failed",
+                                message="Remote worker is paused for maintenance",
+                            ),
+                        )
                 elif text_field(row, "digest") != digest(request):
                     raise RemoteError(
                         RemoteErrorCode.CONFLICT,
@@ -1028,6 +1055,50 @@ class Ledger:
                 else OperationRequest.model_validate_json(text_field(row, "request")),
                 text_field(row, "state"),
                 bool(row["cancelled"]),
+            )
+
+    @owned_io
+    async def inspect_operation(self, identifier: str) -> OperationStatus | None:
+        """Read state and its retained terminal in the same database snapshot."""
+        async with self.transaction(read=True) as conn:
+            row = (
+                (
+                    await conn.execute(
+                        select(operations).where(
+                            self.match(operations)
+                            & (operations.c.operation_id == identifier)
+                        )
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if row is None:
+                return None
+            state = _operation_state.validate_python(text_field(row, "state"))
+            terminal: OperationEvent | None = None
+            if state in TERMINAL_EVENTS:
+                payload = (
+                    await conn.execute(
+                        select(items.c.payload).where(
+                            self.match(items)
+                            & (items.c.kind == "event")
+                            & (
+                                items.c.item_key
+                                == f"{identifier}:{number_field(row, 'last_sequence')}"
+                            )
+                        )
+                    )
+                ).scalar_one_or_none()
+                if isinstance(payload, str):
+                    terminal = OperationEvent.model_validate_json(payload)
+            return OperationStatus(
+                operation_id=identifier,
+                state=state,
+                cancellation_requested=bool(row["cancelled"]),
+                result_available=bool(row["result_available"]),
+                result=None if terminal is None else terminal.result,
+                message=None if terminal is None else terminal.message,
             )
 
     @owned_io

@@ -193,4 +193,11 @@ async def test_malformed_peer_results_keep_payload_in_private_cause(
         assert isinstance(caught.value.cause, ValidationError)
         assert caught.value.__cause__ is caught.value.cause
         assert "synthetic-provider-content" not in str(caught.value)
-        assert caught.value.context == {}
+        if boundary == "transfer":
+            assert set(caught.value.context) == {"operation_id"}
+            operation_id = caught.value.context["operation_id"]
+            assert (
+                isinstance(operation_id, str) and len(bytes.fromhex(operation_id)) == 32
+            )
+        else:
+            assert caught.value.context == {}

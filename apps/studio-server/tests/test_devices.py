@@ -584,6 +584,84 @@ async def test_device_replacement_revokes_old_remote_endpoint(application, devic
     assert denied.value.code == RemoteErrorCode.REJECTED
 
 
+@pytest.mark.parametrize("committed_before_request", [False, True])
+async def test_current_device_revoke_is_recoverable_and_rejects_other_access(
+    application: FastAPI, devices: DeviceService, committed_before_request: bool
+) -> None:
+    device, token = await paired(devices)
+    await devices.connect(token, DevicePresence())
+    if committed_before_request:
+        principal = await devices.revoke_current(token)
+        assert principal.device_id == device.device_id
+    async with AsyncClient(
+        transport=ASGITransport(app=application), base_url="https://studio.test"
+    ) as client:
+        for _ in range(2):
+            response = await client.delete(
+                "/api/devices/current", headers={"Authorization": f"Bearer {token}"}
+            )
+            assert response.status_code == 200
+            assert response.json() == {"code": 0, "message": "success", "data": None}
+            assert "no-store" in response.headers["cache-control"]
+            assert "set-cookie" not in response.headers
+            assert token not in response.text
+        assert (await client.get("/api/devices")).status_code == 200
+        response = await client.get(
+            "/api/devices/projects", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert response.status_code == 401
+    with pytest.raises(BusinessException) as unauthorized:
+        await devices.authenticate(token)
+    assert unauthorized.value.error_code == DeviceErrorCode.UNAUTHORIZED
+    assert await devices.list_devices(1) == []
+    endpoint = application.state.resources.remote_tools.endpoint(
+        namespace="ns_1", target=device.device_id
+    )
+    with pytest.raises(RemoteError) as rejected:
+        async with endpoint.workspace(authorization="grant").prepare(
+            RunIdentity(namespace="ns_1", thread_id="thread", run_id="run")
+        ):
+            pytest.fail("设备自撤销后不能接受新执行")
+    assert rejected.value.code == RemoteErrorCode.REJECTED
+
+
+async def test_current_device_revoke_uses_only_the_calling_device_credential(
+    application: FastAPI, devices: DeviceService
+) -> None:
+    first, first_token = await paired(devices)
+    authorization = await devices.create_authorization(
+        AuthorizationStart(name="Other Mac", credential=SecretStr("cd" * 32))
+    )
+    await devices.approve_authorization(
+        2, authorization.authorization_id, authorization.browser_token, 2
+    )
+    result = await devices.authorization_status(
+        authorization.authorization_id, "cd" * 32
+    )
+    assert result.device is not None
+    async with AsyncClient(
+        transport=ASGITransport(app=application), base_url="https://studio.test"
+    ) as client:
+        for credential in (None, "invalid", f"{first.device_id}.{'cd' * 32}"):
+            response = await client.delete(
+                "/api/devices/current",
+                headers={}
+                if credential is None
+                else {"Authorization": f"Bearer {credential}"},
+            )
+            assert response.status_code == 401
+            assert "no-store" in response.headers["cache-control"]
+            assert "credential" not in response.text
+        # 网页账号是用户1；用户2的设备密钥只撤销用户2的调用设备
+        response = await client.delete(
+            "/api/devices/current",
+            headers={"Authorization": f"Bearer {result.device.device_id}.{'cd' * 32}"},
+        )
+        assert response.status_code == 200
+    assert (await devices.authenticate(first_token)).device_id == first.device_id
+    assert await devices.list_devices(2) == []
+
+
 async def test_malformed_authorization_requests_are_not_cached(application):
     async with AsyncClient(
         transport=ASGITransport(app=application), base_url="https://studio.test"

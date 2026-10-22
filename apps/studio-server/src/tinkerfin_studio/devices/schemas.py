@@ -154,14 +154,6 @@ class DeviceView(BaseModel):
     capabilities: DeviceCapabilities
 
 
-class LocalTargetSelection(BaseModel):
-    """用户为本次对话选择的设备与本机工作区"""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    device_id: DeviceId
-    workspace_id: WorkspaceId
-
-
 class DeviceProject(BaseModel):
     """设备可自动准备的项目身份，显示名称不参与目录定位"""
 

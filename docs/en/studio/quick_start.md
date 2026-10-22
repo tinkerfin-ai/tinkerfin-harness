@@ -80,7 +80,7 @@ Unsent drafts stay in the current page. When an open workspace text file changes
 
 ## Use local directories and tools
 
-Select **连接** (Connect) in the Mac menu bar client, then sign in to Studio in the browser and authorize the device. Back in Studio, select a project and click the laptop icon in the header before starting a conversation. The client prepares the project directory automatically. The cloud Agent calls local tools directly; approvals and results stay in the conversation. See [local collaboration](local_devices.md) for requirements, file access and cancellation behavior.
+Select **连接** (Connect) in the Mac menu bar client, then sign in to Studio in the browser and authorize the device. Back in Studio, select a project and start a conversation. **Computer resources** in the header shows connection status, opens device settings and controls computer action confirmation. The client prepares the project directory automatically. The cloud Agent calls local tools directly; approvals and results stay in the conversation. See [local collaboration](local_devices.md) for requirements, file access and cancellation behavior.
 
 ## Change the initial password
 
@@ -102,8 +102,7 @@ Connect to the `tinkerfin` business database with your database client and use t
 UPDATE users SET password_hash = '<full generated hash>' WHERE username = 'tinkerfin';
 ```
 
-Conversations default to Full access. Use the permission picker beside the model
-to require write approval. Conversations in the same project share a workspace and long-term memory.
+Cloud operations run directly. New conversations default to **Ask before changes** for computer tools; select **Run automatically** in **Computer resources** for the current conversation. Conversations within the same account and project share long-term memory, while cloud and computer working files remain separate.
 For scheduled work, see [Studio automation](automation.md).
 
 ## Troubleshooting

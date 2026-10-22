@@ -4,8 +4,9 @@ import { useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ArchiveRestore, Workflow } from 'lucide-react'
 import { IconButton } from '../../../src/components/ui/IconButton'
-import { DevicePicker } from '../../../src/features/devices/DevicePicker'
-import type { LocalTarget } from '../../../src/features/devices/api'
+import { ComputerResources } from '../../../src/features/devices/ComputerResources'
+import type { AccessMode } from '../../../src/types'
+import { LocaleProvider } from '../../../src/i18n'
 import { FeedbackState } from '../../../src/components/ui/FeedbackState'
 import { BrandLogo } from '../../../src/components/ui/BrandLogo'
 import { BrandMark } from '../../../src/components/ui/BrandMark'
@@ -58,13 +59,16 @@ function ConversationIndicatorExamples() {
 }
 
 function IconButtonExamples() {
-  const [target, setTarget] = useState<LocalTarget>()
+  const [accessMode, setAccessMode] = useState<AccessMode>('write_approval')
+  const deviceState = parameters.get('deviceState') ?? 'online'
+  const [settingsOpened, setSettingsOpened] = useState(false)
   const [trace, setTrace] = useState(false)
   const [archived, setArchived] = useState(false)
   return <main style={{ padding: 24, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-    <DevicePicker projectId="review" value={target} onChange={setTarget} targetState="ready" onRetry={() => {}} locked={false} disabled={false}
-      devices={{ status: 'ready', refresh: () => {}, devices: [{ device_id: 'review', name: 'Review Mac', online: true, revoked: false,
-        paired_at: '2030-01-01T00:00:00Z', last_seen_at: null, capabilities: { browser: false, desktop: false, mcp: false } }] }} />
+    <ComputerResources value={accessMode} onChange={setAccessMode} onOpenSettings={() => setSettingsOpened(true)} disabled={parameters.get('locked') === 'true'}
+      devices={{ status: deviceState === 'loading' || deviceState === 'error' ? deviceState : 'ready', refreshing: false, refreshed: false, refresh: () => {}, devices: deviceState === 'empty' || deviceState === 'loading' || deviceState === 'error' ? [] : [{ device_id: 'review', name: parameters.get('deviceName') ?? 'Review Mac', online: deviceState === 'online', revoked: false,
+        paired_at: '2030-01-01T00:00:00Z', last_seen_at: null, capabilities: { browser: false, desktop: false, mcp: false, desktop_capture: false, open_url: false } }] }} />
+    {settingsOpened && <output>设备设置已打开</output>}
     <IconButton label="链路" icon={<Workflow size={17} />} selected={trace} onClick={() => setTrace(value => !value)} />
     <IconButton label="已归档会话" icon={<ArchiveRestore size={17} />} selected={archived} onClick={() => setArchived(value => !value)} />
     <IconButton label="不可用" icon={<Workflow size={17} />} selected disabled />
@@ -128,4 +132,4 @@ export function Controls() {
   </main>
 }
 
-createRoot(document.getElementById('root')!).render(parameters.get('example') === 'focus-return' ? <FocusReturnExamples /> : parameters.get('example') === 'conversation-indicators' ? <ConversationIndicatorExamples /> : parameters.get('example') === 'icons' ? <IconButtonExamples /> : parameters.get('example') === 'scrollbar' ? <ScrollbarExample /> : parameters.get('example') === 'loading' ? <LoadingExamples /> : <Controls />)
+createRoot(document.getElementById('root')!).render(parameters.get('example') === 'focus-return' ? <FocusReturnExamples /> : parameters.get('example') === 'conversation-indicators' ? <ConversationIndicatorExamples /> : parameters.get('example') === 'icons' ? <LocaleProvider><IconButtonExamples /></LocaleProvider> : parameters.get('example') === 'scrollbar' ? <ScrollbarExample /> : parameters.get('example') === 'loading' ? <LoadingExamples /> : <Controls />)

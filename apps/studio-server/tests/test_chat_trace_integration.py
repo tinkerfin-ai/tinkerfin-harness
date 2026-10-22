@@ -60,7 +60,6 @@ from tinkerfin_studio.conversation.run_preparation import (
 from tinkerfin_studio.conversation.run_registration import ConversationRunPreparer
 from tinkerfin_studio.conversation.service import ConversationChatService
 from tinkerfin_studio.conversation.titles import ConversationTitles
-from tinkerfin_studio.devices.profiles import DeviceProfileBinding
 from tinkerfin_studio.infrastructure.database import Database
 from tinkerfin_studio.models.repository import AgentModelRepository
 from tinkerfin_studio.models.schemas import (
@@ -149,9 +148,7 @@ def conversation_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
         search_service: ResolvedService | None,
         image_service: ResolvedService | None,
         access_mode: AccessMode,
-        local_profile: DeviceProfileBinding | None = None,
     ) -> AgentRuntime[None]:
-        assert local_profile is None
         del (
             thread_id,
             project_id,
@@ -192,10 +189,10 @@ def _ordinary_request(
     return ChatRequest.model_validate(payload)
 
 
-async def test_local_profile_is_registered_atomically_and_inherited_by_resume(
+async def test_computer_binds_on_first_use_and_resume_retains_original_profile(
     database: Database, session, attachments, notifications
 ) -> None:
-    from tinkerfin_studio.api.errors import DeviceErrorCode
+    from tinkerfin_studio.devices.profiles import DeviceProfiles
     from tinkerfin_studio.devices.schemas import (
         AuthorizationStart,
         DevicePresence,
@@ -221,10 +218,6 @@ async def test_local_profile_is_registered_atomically_and_inherited_by_resume(
     raw = _ordinary_request(thread_id="thread-local", run_id="run-local").model_dump(
         mode="json", by_alias=True
     )
-    raw["forwardedProps"]["localTarget"] = {
-        "device_id": device.device_id,
-        "workspace_id": "project-1",
-    }
     request = ChatRequest.model_validate(raw)
     repository = ConversationRepository(session)
     thread = await repository.create_thread(
@@ -246,11 +239,22 @@ async def test_local_profile_is_registered_atomically_and_inherited_by_resume(
         model=_model(),
         thread=thread,
     )
-    assert execution.local_profile is not None
+    assert execution.registered.created
     first = await repository.get_run(thread_pk=thread.id, run_id=request.run_id)
+    assert first is not None and first.local_profile_id is None
+    profile = await DeviceProfiles(session, 1).capture(
+        identity=prepared.identity,
+        project_id="project-1",
+        access_mode=prepared.access_mode,
+    )
+    assert first.local_profile_id == profile.profile_id
     assert (
-        first is not None
-        and first.local_profile_id == execution.local_profile.profile_id
+        await DeviceProfiles(session, 1).capture(
+            identity=prepared.identity,
+            project_id="project-1",
+            access_mode=prepared.access_mode,
+        )
+        == profile
     )
     first.status = "waiting"
     thread.status = "waiting_approval"
@@ -266,24 +270,6 @@ async def test_local_profile_is_registered_atomically_and_inherited_by_resume(
             "payload": {"type": "approve"},
         }
     ]
-    raw["forwardedProps"]["localTarget"]["workspace_id"] = "different"
-    changed = ChatRequest.model_validate(raw)
-    with pytest.raises(BusinessException) as rejected:
-        await preparer.register(
-            intent=classify_intent(changed),
-            prepared=prepare_run_request(
-                changed, user_id=1, thread_id=thread.thread_id, project_id="project-1"
-            ),
-            model=_model(),
-            thread=thread,
-        )
-    assert rejected.value.error_code == DeviceErrorCode.PROFILE_CHANGED
-    thread = await repository.get_thread(user_id=1, thread_id="thread-local")
-    assert thread is not None
-    assert (
-        await repository.get_run(thread_pk=thread.id, run_id="run-local-resume") is None
-    )
-    raw["forwardedProps"].pop("localTarget")
     resumed = ChatRequest.model_validate(raw)
     result = await preparer.register(
         intent=classify_intent(resumed),
@@ -293,7 +279,9 @@ async def test_local_profile_is_registered_atomically_and_inherited_by_resume(
         model=_model(),
         thread=thread,
     )
-    assert result.local_profile == execution.local_profile
+    continued = await repository.get_run(thread_pk=thread.id, run_id="run-local-resume")
+    assert continued is not None and continued.id == result.registered.run_id
+    assert continued.local_profile_id == profile.profile_id
 
 
 def _resume_request(
@@ -749,7 +737,7 @@ async def test_continuation_preserves_source_model_and_file_access(
             parent_run_id="run-source",
         )
     if changed == "access":
-        request.forwarded_props.access_mode = "write_approval"
+        request.forwarded_props.access_mode = "full"
     thread_pk = thread.id
     await repository.commit()
     intent = classify_intent(request)

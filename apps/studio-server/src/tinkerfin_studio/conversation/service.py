@@ -261,7 +261,6 @@ class ConversationChatService:
                 search_service=search_service,
                 image_service=image_service,
                 access_mode=prepared.access_mode,
-                local_profile=execution.local_profile,
             )
             command: RunCommand
             if isinstance(intent, CompactIntent):
@@ -365,7 +364,8 @@ class ConversationChatService:
             attachments.append(attachment)
         if total > 25 * 1024 * 1024:
             raise BusinessException(AttachmentErrorCode.TOO_LARGE)
-        payload = request.model_dump()
+        # 省略确认选择表示沿用会话设置，附件规范化不能将默认值变成显式选择
+        payload = request.model_dump(exclude_unset=True)
         payload["messages"] = [
             submission.with_attachments(attachments).model_dump(mode="json")
         ]

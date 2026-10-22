@@ -1,3 +1,4 @@
+import { installConnectedDevice } from './fixtures/devices'
 import { measureBounds } from './support/geometry'
 import { installProjectScope } from './fixtures/projects'
 import { installNotificationStream } from './fixtures/notifications'
@@ -2440,11 +2441,12 @@ test('界面统一字重且文章型 Markdown 保留语义排版与可滚动表�
     conversationMessages: markdownLayoutMessages,
     expectedMessageText: '检查完整 Markdown 排版',
   })
+  await installConnectedDevice(page)
   const markdown = page.locator('#markdown-layout-assistant .message-markdown')
   const userBubble = page.locator('#markdown-layout-user .message-markdown')
   const composer = page.locator('.composer-default:not(.is-taken-over) .composer')
   const model = page.getByRole('button', { name: '选择模型', exact: true })
-  const access = page.getByRole('button', { name: '选择访问权限', exact: true })
+  const access = page.getByRole('button', { name: '本机资源', exact: true })
   const tabs = page.getByRole('tablist', { name: '会话视图' }).getByRole('tab')
   const historyTitle = page.getByRole('button', { name: '打开会话：浏览器会话', exact: true }).getByText(/浏览器会话/)
   const family = await model.evaluate(element => getComputedStyle(element).fontFamily)
@@ -2526,7 +2528,7 @@ test('界面统一字重且文章型 Markdown 保留语义排版与可滚动表�
       expect(layout.th).toEqual(['14px', '16px', '600', '8px', '24px', '8px', '0px', '160px'])
       expect(layout.td).toEqual(['14px', '24px', '400', '10px', '24px', '10px', '0px', '160px'])
       expect(layout.hr).toEqual(['28px', '28px'])
-      for (const control of [model, access, ...await tabs.all(), page.getByRole('textbox', { name: '消息输入' })]) {
+      for (const control of [model, ...await tabs.all(), page.getByRole('textbox', { name: '消息输入' })]) {
         await expect(control).toHaveCSS('font-weight', '400')
         await expect(control).toHaveCSS('font-family', family)
       }
@@ -2539,15 +2541,25 @@ test('界面统一字重且文章型 Markdown 保留语义排版与可滚动表�
       await expect(markdown.locator('pre code')).toHaveCSS('font-weight', '400')
       await expect(markdown.locator('pre code')).toHaveCSS('font-family', /JetBrains Mono/)
       await expect(markdown.getByRole('button', { name: '复制', exact: true })).toHaveCSS('font-weight', '400')
-      for (const trigger of [model, access]) {
-        await trigger.click()
-        const list = page.getByRole('listbox')
-        for (const option of await list.getByRole('option').all()) {
-          await expect(option).toHaveCSS('font-weight', '400')
-          await expect(option).toHaveCSS('font-family', family)
-        }
-        await list.press('Escape')
+      await model.click()
+      const list = page.getByRole('listbox')
+      await expect(list).toBeVisible()
+      for (const option of await list.getByRole('option').all()) {
+        await expect(option).toHaveCSS('font-weight', '400')
+        await expect(option).toHaveCSS('font-family', family)
       }
+      await list.press('Escape')
+      await expect(access).toHaveCSS('font-weight', '500')
+      await expect(access).toHaveCSS('font-family', /SF Pro Text/)
+      await access.click()
+      const resources = page.getByRole('dialog', { name: '本机资源' })
+      await expect(resources).toBeVisible()
+      for (const label of ['修改前确认', '自动执行']) {
+        await expect(resources.getByText(label, { exact: true })).toHaveCSS('font-weight', '500')
+        await expect(resources.getByText(label, { exact: true })).toHaveCSS('font-family', /SF Pro Text/)
+      }
+      await page.keyboard.press('Escape')
+      await expect(resources).toBeHidden()
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
       await page.screenshot({ path: testInfo.outputPath(`typography-${colorScheme}-${width}.png`), animations: 'disabled' })
     }

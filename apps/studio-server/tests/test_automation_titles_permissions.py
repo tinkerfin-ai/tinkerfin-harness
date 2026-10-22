@@ -83,7 +83,7 @@ def test_automation_configuration_rejects_access_selection(field):
 
 @pytest.mark.parametrize("role", ["main", "general-purpose", "researcher"])
 @pytest.mark.parametrize("automation", [True, False], ids=["automation", "chat"])
-async def test_file_writes_use_automation_full_access_and_chat_approval(
+async def test_cloud_file_writes_execute_directly_for_chats_and_automation(
     automation_resources, monkeypatch, tmp_path, role, automation
 ):
     resources = automation_resources
@@ -158,12 +158,8 @@ async def test_file_writes_use_automation_full_access_and_chat_approval(
     assert sum(isinstance(event, RunFinishedEvent) for event in events) == 1
     terminal = events[-1]
     assert isinstance(terminal, RunFinishedEvent)
-    assert isinstance(terminal.outcome, RunFinishedInterruptOutcome) is not automation
-    path = tmp_path / "workspace" / "result.txt"
-    if automation:
-        assert path.read_text() == "result"
-    else:
-        assert not path.exists()
+    assert not isinstance(terminal.outcome, RunFinishedInterruptOutcome)
+    assert (tmp_path / "workspace" / "result.txt").read_text() == "result"
     assert workspace.opened == workspace.closed
 
 

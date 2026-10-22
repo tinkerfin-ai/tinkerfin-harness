@@ -172,7 +172,11 @@ class PlanLifecycle(AgentMiddleware[PlanningWorkflowNodeState, ContextT, Any]):
                 "Planning model did not return an assistant message"
             )
         current = read_plan_state(state, self._options.content)
+        from .._named_workspaces import named_tool_names
+
         allowed = self._allowed_tools(current)
+        if allowed:
+            allowed |= named_tool_names(state)
         error: str | None = None
         if last.invalid_tool_calls:
             error = "Tool arguments must be valid JSON matching the provided schema."

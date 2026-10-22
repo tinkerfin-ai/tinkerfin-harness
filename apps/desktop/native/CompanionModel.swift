@@ -5,34 +5,6 @@ import CoreGraphics
 import CryptoKit
 import Foundation
 
-/// 命令只解析为 argv，不执行 shell 展开；带空格的路径通过引号保留
-func parseMCPCommand(_ value: String) throws -> [String] {
-    guard value.count <= 16384, !value.contains("\0") else { throw ClientError.message("MCP 命令超过容量") }
-    var arguments: [String] = [], word = "", quote: Character?, escaped = false, started = false
-    for character in value {
-        if escaped { word.append(character); escaped = false; started = true; continue }
-        if character == "\\", quote != "'" { escaped = true; started = true; continue }
-        if let delimiter = quote {
-            if character == delimiter { quote = nil } else { word.append(character) }
-            continue
-        }
-        if character == "'" || character == "\"" { quote = character; started = true }
-        else if character.isWhitespace {
-            if started { arguments.append(word); word = ""; started = false }
-        } else { word.append(character); started = true }
-    }
-    guard quote == nil, !escaped else { throw ClientError.message("请补全 MCP 命令中的引号或转义") }
-    if started { arguments.append(word) }
-    guard arguments.count <= 64, arguments.allSatisfy({ !$0.isEmpty && $0.count <= 4096 }) else {
-        throw ClientError.message("请检查 MCP 程序与参数")
-    }
-    return arguments
-}
-
-func displayMCPCommand(_ arguments: [String]) -> String {
-    arguments.map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }.joined(separator: " ")
-}
-
 @MainActor
 final class CompanionModel: ObservableObject {
     let localization: ClientLocalization
@@ -41,9 +13,12 @@ final class CompanionModel: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var retrying = false
     @Published private(set) var authorizationWaiting = false
+    @Published private(set) var authorizationNotice = ""
+    @Published private(set) var connectionReason: DesktopConnectionReason = .restore
     @Published private(set) var accountName = ""
     @Published private(set) var projects: [ManagedProject] = []
     @Published private(set) var projectsError = false
+    @Published private(set) var projectsLoading = false
     @Published private(set) var error: ClientError?
     @Published private(set) var accessibility = false
     @Published private(set) var screenCapture = false
@@ -67,6 +42,9 @@ final class CompanionModel: ObservableObject {
     private var activeDesktop: DesktopRequest?
     private var reportedReadiness: NativeReadiness?
     private var shuttingDown = false
+    private var preparingUpdate = false
+    private var updateSession = false
+    private var committingAuthorization = false
     private lazy var backend = BackendProcess(event: { [weak self] in self?.receive($0) }, exited: { [weak self] in self?.backendExited() })
 
     init(state: URL, resources: URL) {
@@ -75,6 +53,7 @@ final class CompanionModel: ObservableObject {
     }
     var ready: Bool { store != nil }
     var connection: String {
+        if !ready, status == "failed" { return "offline" }
         if saved.pending?.authorization != nil { return "authorizing" }
         switch status {
         case "online": return "online"
@@ -111,7 +90,7 @@ final class CompanionModel: ObservableObject {
         try await task.value
     }
 
-    func restore() async throws {
+    func restore(connect: Bool = true) async throws {
         try await run {
             let (lock, directory) = try await self.workspaceAccess.lockState(self.stateSelection)
             self.lifetimeLock = lock
@@ -143,16 +122,23 @@ final class CompanionModel: ObservableObject {
                 try await self.discardPending()
             }
             self.status = self.saved.device == nil ? "unpaired" : "offline"
-            if self.saved.pending == nil, self.saved.device != nil { try await self.connectNow() }
+            if connect, self.saved.pending == nil, self.saved.device != nil { try await self.connectNow() }
         }
+        if connect { resumeAuthorization() }
+    }
+
+    /// 启动恢复先取得状态目录独占权，更新事务恢复完成后才重新接收服务端工作
+    func connectRestoredState() async throws {
+        try await run { if self.saved.pending == nil, self.saved.device != nil { try await self.connectNow() } }
         resumeAuthorization()
     }
 
-    private func connectNow() async throws {
+    private func connectNow(reason: DesktopConnectionReason = .restore) async throws {
         guard let store, let configuration, let device = saved.device, let account = saved.keychainAccount else {
             status = "unpaired"; return
         }
         if backend.isRunning { return }
+        connectionReason = reason
         let secret: String
         do { secret = try await keychain.read(account: account) }
         catch { status = "unauthorized"; throw error }
@@ -177,13 +163,14 @@ final class CompanionModel: ObservableObject {
 
     func retry() async throws {
         guard !retrying else { return }
+        if !ready { lifetimeLock = nil; try await restore(); return }
         do {
             try await run {
                 self.cancelDesktop(message: "连接正在重试，请核验已开始操作的结果")
                 await self.backend.stopAndWait()
                 // 旧进程已结算；新一轮等待真实连接结果，不能在进程刚启动时结束反馈
                 self.retrying = true
-                try await self.connectNow()
+                try await self.connectNow(reason: .retry)
                 if !self.backend.isRunning { self.retrying = false }
             }
         } catch { retrying = false; throw error }
@@ -196,7 +183,7 @@ final class CompanionModel: ObservableObject {
             }
             try reopenAuthorization(); return
         }
-        authorizationWaiting = true
+        authorizationWaiting = true; authorizationNotice = ""
         do { try await run {
             guard let store = self.store, let selected = target ?? self.configuration else { throw ClientError.message("请填写 Studio 地址") }
             let configuration = try selected.checked()
@@ -223,7 +210,7 @@ final class CompanionModel: ObservableObject {
     }
 
     func resumeAuthorization() {
-        guard authorizationTask == nil, let pending = saved.pending, let authorization = pending.authorization, !shuttingDown else { return }
+        guard authorizationTask == nil, let pending = saved.pending, let authorization = pending.authorization, !shuttingDown, !updateSession else { return }
         authorizationWaiting = true
         authorizationTask = Task {
             defer { authorizationTask = nil; authorizationWaiting = false }
@@ -265,22 +252,26 @@ final class CompanionModel: ObservableObject {
     }
 
     private func finishAuthorization(_ result: AuthorizationResult, pending: PendingConnection) async throws {
-        guard saved.pending?.account == pending.account, let store else { return }
+        guard !updateSession, !shuttingDown, saved.pending?.account == pending.account, let store else { return }
         if result.state == .authorized, let device = result.device {
             changingIdentity = true
             defer { changingIdentity = false; refreshProjects() }
             projectOperation?.cancel(); openProjectOperation?.cancel()
             await projectOperation?.value; await openProjectOperation?.value
-            projects = []; accountName = ""; projectsError = false
             cancelDesktop(message: "设备连接已更新，请重新读取窗口")
             await backend.stopAndWait()
+            // 更新可在停止旧宿主时接管；提交配置后才算新身份，不能在中途接纳更新
+            guard !updateSession, !shuttingDown else { return }
+            committingAuthorization = true
+            defer { committingAuthorization = false }
             var next = saved
             if let previous = next.keychainAccount, previous != pending.account { next.retiredAccounts.append(previous) }
             next.acceptAuthorization(device, at: pending.connection)
             next.keychainAccount = pending.account; next.pending = nil
             try await store.save(next); saved = next
+            projects = []; accountName = ""; projectsError = false
             try await cleanRetiredAccounts()
-            try await connectNow()
+            try await connectNow(reason: .authorization)
         } else if result.state == .superseded {
             try await endPending(pending, notice: "授权已被替换，请重新连接")
         } else {
@@ -295,6 +286,7 @@ final class CompanionModel: ObservableObject {
         if saved.device == nil { status = "unpaired" }
         else { try await connectNow() }
         error = notice.map(ClientError.message)
+        authorizationNotice = notice == nil ? "" : "授权已失效，请重新连接"
     }
 
     private func discardPending() async throws {
@@ -328,15 +320,111 @@ final class CompanionModel: ObservableObject {
         }
     }
 
-    var projectRoot: URL { (store?.directory ?? stateSelection).appendingPathComponent("projects", isDirectory: true) }
-    func openConfiguration() {
-        guard let store else { return }
-        NSWorkspace.shared.open(store.directory.appendingPathComponent("settings.json"))
+    /// 退出登录撤销本设备及尚未交接的授权；网页账号与本机偏好保持独立
+    func revokeAuthorization() async throws {
+        authorizationTask?.cancel(); await authorizationTask?.value
+        try await run(reportError: false) {
+            try await self.abandonPendingAuthorization()
+            guard let store = self.store, let configuration = self.configuration,
+                  let device = self.saved.device, let account = self.saved.keychainAccount else {
+                throw ClientError.message("请重新连接")
+            }
+            let credential = try await self.keychain.read(account: account)
+            try await self.client.revoke(server: checkedServer(configuration.apiURL), deviceID: device.deviceID, credential: credential)
+            self.changingIdentity = true
+            defer { self.changingIdentity = false }
+            self.projectOperation?.cancel(); self.openProjectOperation?.cancel()
+            await self.projectOperation?.value; await self.openProjectOperation?.value
+            self.cancelDesktop(message: "设备授权已撤销")
+            await self.backend.stopAndWait()
+            var next = self.saved
+            next.device = nil; next.keychainAccount = nil; next.retiredAccounts.append(account)
+            try await store.save(next); self.saved = next
+            self.projects = []; self.accountName = ""; self.projectsError = false
+            self.authorizationNotice = ""; self.status = "unpaired"
+            try await self.cleanRetiredAccounts()
+        }
     }
+
+    /// 更新或退出不能把未完成交接的网页批准变成新的本机身份
+    private func abandonPendingAuthorization() async throws {
+        guard let pending = saved.pending else { return }
+        if let authorization = pending.authorization {
+            do {
+                let credential = try await keychain.read(account: pending.account)
+                let result = try await client.status(server: checkedServer(pending.connection.apiURL),
+                    authorizationID: authorization.authorizationID, credential: credential, cancel: true)
+                if result.state == .authorized, let device = result.device {
+                    try await client.revoke(server: checkedServer(pending.connection.apiURL), deviceID: device.deviceID, credential: credential)
+                }
+            } catch ClientError.authorizationExpired {
+                // 已过期申请不再可能授予本机身份
+            } catch ClientError.credentialUnavailable {
+                // 本机已无密钥，清除未提交记录，不能在下次启动重新接纳
+            }
+        }
+        try await discardPending()
+    }
+
+    var updateDirectory: URL { (store?.directory ?? stateSelection).appendingPathComponent("state/updates", isDirectory: true) }
+    var stateDirectory: URL { store?.directory ?? stateSelection }
+
+    var canBeginUpdate: Bool { !updateSession && !committingAuthorization && !shuttingDown }
+
+    /// 从检查更新开始冻结授权交接；已进入不可分割保存的身份必须先完成
+    func beginUpdateSession() throws {
+        guard canBeginUpdate else { throw ClientError.message("请稍后重试") }
+        updateSession = true
+    }
+
+    /// 安装准备只暂停授权交接；已接受的原生工具仍可完成并向工作端提交回执
+    func prepareForUpdate() async throws {
+        guard !preparingUpdate, !committingAuthorization, !shuttingDown else { throw ClientError.message("更新准备已开始") }
+        updateSession = true
+        preparingUpdate = true
+        do {
+            authorizationTask?.cancel(); await authorizationTask?.value
+            try await run(reportError: false) { try await self.abandonPendingAuthorization() }
+            await projectOperation?.value; await openProjectOperation?.value
+            if backend.isRunning { try await backend.prepareForUpdate() }
+            await desktopOperation?.value
+        } catch { preparingUpdate = false; throw error }
+    }
+
+    func commitUpdatePreparation() async throws {
+        guard preparingUpdate else { throw ClientError.message("本机操作尚未结算") }
+        if backend.isRunning { try await backend.commitUpdatePreparation() }
+    }
+
+    /// Keychain与配置分开提交，预登记新账户使中断后的未采用条目也有明确清理归属
+    func prepareUpdateCredential(application: URL) async throws {
+        guard preparingUpdate, let store, let account = saved.keychainAccount else { throw ClientError.credentialUnavailable }
+        try await run(reportError: false) {
+            try await self.cleanRetiredAccounts()
+            let nextAccount = UUID().uuidString.lowercased()
+            var next = self.saved
+            next.retiredAccounts.append(nextAccount)
+            try await store.save(next); self.saved = next
+            try await self.keychain.createForUpdate(account: nextAccount, existingAccount: account, application: application)
+            next.keychainAccount = nextAccount
+            next.retiredAccounts.removeAll { $0 == nextAccount }; next.retiredAccounts.append(account)
+            try await store.save(next); self.saved = next
+            try await self.cleanRetiredAccounts()
+        }
+    }
+
+    func resumeAfterUpdate() async throws {
+        defer { preparingUpdate = false; updateSession = false; resumeAuthorization() }
+        try await backend.cancelUpdatePreparation()
+        if !backend.isRunning, saved.device != nil { try await connectNow() }
+    }
+
+    var projectRoot: URL { (store?.directory ?? stateSelection).appendingPathComponent("projects", isDirectory: true) }
     func refreshProjects() {
-        guard !shuttingDown, !changingIdentity, projectOperation == nil, let device = saved.device, let account = saved.keychainAccount, let server = saved.connection?.apiURL, store != nil else { return }
+        guard !shuttingDown, !changingIdentity, !preparingUpdate, projectOperation == nil, let device = saved.device, let account = saved.keychainAccount, let server = saved.connection?.apiURL, store != nil else { return }
+        projectsLoading = true
         projectOperation = Task {
-            defer { projectOperation = nil }
+            defer { projectOperation = nil; projectsLoading = false }
             do {
                 let secret = try await keychain.read(account: account)
                 try Task.checkCancellation()
@@ -348,6 +436,7 @@ final class CompanionModel: ObservableObject {
             catch { if saved.device?.deviceID == device.deviceID { projectsError = true } }
         }
     }
+    func reloadProjects() async { refreshProjects(); await projectOperation?.value }
     func openProject(_ id: String) async throws {
         guard !shuttingDown, !changingIdentity, let device = saved.device, let account = saved.keychainAccount, let server = saved.connection?.apiURL else { throw ClientError.message("请先连接 Studio") }
         let secret = try await keychain.read(account: account)
@@ -366,7 +455,7 @@ final class CompanionModel: ObservableObject {
             defer { openProjectOperation = nil }
             do { try await openProject(id) }
             catch is CancellationError { }
-            catch { self.error = userError(error); attention?() }
+            catch { _ = userError(error) }
         }
     }
     func openProjectURL(_ url: URL) async throws {

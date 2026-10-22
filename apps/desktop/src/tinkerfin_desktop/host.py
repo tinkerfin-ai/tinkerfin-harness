@@ -444,6 +444,14 @@ class CompanionHost:
             raise RuntimeError("本机宿主未打开")
         await self._worker.wait_idle()
 
+    @asynccontextmanager
+    async def maintenance(self) -> AsyncIterator[None]:
+        """暂停新工作并等候本机操作结算，进入期间继续处理上传和原生回执"""
+        if self._worker is None or self._closed:
+            raise RuntimeError("本机宿主未打开")
+        async with self._worker.maintenance():
+            yield
+
     async def _close_browsers(self) -> None:
         if self._browsers is not None:
             await self._browsers.aclose()

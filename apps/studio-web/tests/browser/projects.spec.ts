@@ -1041,7 +1041,7 @@ test('侧栏右侧操作同列且品牌与页头垂直居中', async ({ page }) 
   const more = page.getByRole('button', { name: '管理会话：本周市场观察' })
   const [chevron, dots] = await measureBounds(trigger.locator('svg').last(), more.locator('svg'))
   expect(chevron.x + chevron.width / 2).toBe(dots.x + dots.width / 2)
-  const [collapse, cloud] = await measureBounds(page.getByRole('button', { name: '收起侧边栏', exact: true }), page.getByRole('button', { name: '云端', exact: true }))
+  const [collapse, cloud] = await measureBounds(page.getByRole('button', { name: '收起侧边栏', exact: true }), page.getByRole('button', { name: '本机资源', exact: true }))
   expect(collapse.y + collapse.height / 2).toBe(cloud.y + cloud.height / 2)
 })
 

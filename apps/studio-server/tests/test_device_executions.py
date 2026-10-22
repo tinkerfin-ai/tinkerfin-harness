@@ -54,31 +54,21 @@ async def test_configuration_contains_only_the_authorized_workspace(execution_ap
         assert denied.status_code == 404
 
 
-async def test_retry_selection_preserves_original_device_after_revocation(
-    execution_api,
-):
-    client, app, execution = execution_api
-    params = {"thread_id": SOURCE.thread_id, "run_id": SOURCE.run_id}
-    before = await client.get("/api/devices/selection", params=params)
-    assert before.status_code == 200
-    assert before.json()["data"] == {
-        "device_id": execution.binding.device_id,
-        "workspace_id": execution.binding.workspace_id,
-    }
+async def test_revocation_never_rebinds_an_existing_operation(database, execution_api):
+    from tinkerfin_studio.api.errors import BusinessException
+    from tinkerfin_studio.devices.profiles import DeviceProfiles
+
+    _client, _app, execution = execution_api
     await execution.devices.revoke(1, execution.binding.device_id)
-    after = await client.get("/api/devices/selection", params=params)
-    assert after.json() == before.json()
-    assert (
-        await client.get(
-            "/api/devices/selection", params={**params, "run_id": "missing"}
+    async with database.session() as session:
+        retained = await DeviceProfiles(session, 1).capture(
+            identity=SOURCE, project_id="project", access_mode="write_approval"
         )
-    ).status_code == 404
-    app.dependency_overrides[get_network_user_context] = lambda: UserContext(
-        user_id=2, username="other", roles=(), disabled=False
-    )
-    assert (
-        await client.get("/api/devices/selection", params=params)
-    ).status_code == 404
+        assert retained == execution.binding
+        with pytest.raises(BusinessException):
+            await DeviceProfiles(session, 2).capture(
+                identity=SOURCE, project_id="project", access_mode="write_approval"
+            )
 
 
 @pytest.mark.parametrize(
@@ -198,13 +188,12 @@ async def test_replacement_device_is_used_for_new_turn_but_not_old_approval(
     from pydantic import SecretStr
 
     from tinkerfin_contracts import RunIdentity
-    from tinkerfin_studio.api.errors import BusinessException
+    from tinkerfin_studio.conversation.repository import ConversationRepository
     from tinkerfin_studio.devices.profiles import DeviceProfiles
     from tinkerfin_studio.devices.schemas import (
         AuthorizationStart,
-        LocalTargetSelection,
     )
-    from tinkerfin_studio.skills.schemas import SkillSnapshotPayload
+    from tinkerfin_studio.skills.repository import SkillRepository
 
     client, _app, execution = execution_api
     secret = "cd" * 32
@@ -223,50 +212,37 @@ async def test_replacement_device_is_used_for_new_turn_but_not_old_approval(
         request.authorization_id, secret
     )
     assert paired.device is not None
-    target = LocalTargetSelection(
-        device_id=paired.device.device_id, workspace_id="project"
-    )
-    current = await client.get(
+    removed = await client.get(
         "/api/devices/selection", params={"thread_id": SOURCE.thread_id}
     )
-    original = await client.get(
-        "/api/devices/selection",
-        params={"thread_id": SOURCE.thread_id, "run_id": SOURCE.run_id},
-    )
-    assert current.json()["data"] == target.model_dump()
-    assert original.json()["data"]["device_id"] == execution.binding.device_id
+    assert removed.status_code == 405
     async with database.session() as session:
+        repository = ConversationRepository(session)
+        thread = await repository.get_accessible_thread(
+            user_id=1, thread_id=SOURCE.thread_id
+        )
+        assert thread is not None
+        identity = RunIdentity(
+            namespace=SOURCE.namespace, thread_id=SOURCE.thread_id, run_id="next"
+        )
+        run = await repository.create_run_registration(
+            thread_id=thread.id,
+            run_id=identity.run_id,
+            parent_run_id=None,
+            model_id="main",
+            input_json={},
+        )
+        assert run.local_profile_id is None
+        await SkillRepository(session, 1).capture(
+            identity, project_id="project", selected_ids=()
+        )
         profiles = DeviceProfiles(session, 1)
         new = await profiles.capture(
-            identity=RunIdentity(
-                namespace=SOURCE.namespace, thread_id=SOURCE.thread_id, run_id="next"
-            ),
-            selection=target,
-            access_mode="write_approval",
-            skills=SkillSnapshotPayload(skills=()),
+            identity=identity, project_id="project", access_mode="write_approval"
         )
-        assert new is not None and new.device_id == target.device_id
-        with pytest.raises(BusinessException):
-            await profiles.capture(
-                identity=RunIdentity(
-                    namespace=SOURCE.namespace,
-                    thread_id=SOURCE.thread_id,
-                    run_id="resume",
-                ),
-                selection=target,
-                access_mode="write_approval",
-                skills=SkillSnapshotPayload(skills=()),
-                inherited=execution.binding.profile_id,
-            )
+        assert new.device_id == paired.device.device_id
+        assert run.local_profile_id == new.profile_id
         retained = await profiles.capture(
-            identity=RunIdentity(
-                namespace=SOURCE.namespace,
-                thread_id=SOURCE.thread_id,
-                run_id="resume-original",
-            ),
-            selection=None,
-            access_mode="write_approval",
-            skills=SkillSnapshotPayload(skills=()),
-            inherited=execution.binding.profile_id,
+            identity=SOURCE, project_id="project", access_mode="write_approval"
         )
         assert retained == execution.binding

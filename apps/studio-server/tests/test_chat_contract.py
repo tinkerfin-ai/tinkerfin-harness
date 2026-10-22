@@ -59,7 +59,7 @@ def test_chat_request_preserves_command_extensions_and_derives_plan_mode() -> No
     assert payload["forwardedProps"] == {
         "projectId": "project-1",
         "skillIds": [],
-        "accessMode": "full",
+        "accessMode": "write_approval",
         "model": "main",
         "command": {"plan": "on", "compact": "保留这段命令输入"},
         "trace": "x",
@@ -234,3 +234,58 @@ def test_chat_request_preserves_skill_text_and_rejects_client_context_source() -
 
 
 pytestmark = pytest.mark.usefixtures("projects")
+
+
+@pytest.mark.parametrize("field", ["localTarget", "local_target"])
+def test_client_cannot_choose_the_computer_target(field: str) -> None:
+    from tinkerfin_studio.conversation.request import ConversationForwardedProps
+
+    with pytest.raises(ValidationError, match=field):
+        ConversationForwardedProps.model_validate(
+            {
+                "projectId": "project-1",
+                "model": "main",
+                "command": {"plan": "off"},
+                field: {
+                    "device_id": "untrusted-device",
+                    "workspace_id": "other-project",
+                },
+            }
+        )
+
+
+def test_omitted_confirmation_choice_keeps_the_existing_conversation_preference():
+    request = ChatRequest.model_validate(
+        {
+            "threadId": "thread",
+            "runId": "run",
+            "state": {},
+            "tools": [],
+            "context": [],
+            "messages": [{"role": "user", "content": "继续"}],
+            "forwardedProps": {
+                "projectId": "project-1",
+                "model": "main",
+                "command": {"plan": "off"},
+            },
+        }
+    )
+    retained = prepare_run_request(
+        request,
+        user_id=1,
+        thread_id="thread",
+        project_id="project-1",
+        access_mode="full",
+    )
+    assert retained.access_mode == "full"
+    forwarded = retained.input_json["forwardedProps"]
+    assert isinstance(forwarded, dict) and forwarded["accessMode"] == "full"
+    request.forwarded_props.access_mode = "write_approval"
+    changed = prepare_run_request(
+        request,
+        user_id=1,
+        thread_id="thread",
+        project_id="project-1",
+        access_mode="full",
+    )
+    assert changed.access_mode == "write_approval"

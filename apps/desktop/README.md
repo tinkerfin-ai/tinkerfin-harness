@@ -5,16 +5,20 @@
 ## 安装与连接
 
 1. 从 [GitHub Releases](https://github.com/tinkerfin-ai/tinkerfin-harness/releases) 下载 TinkerFin Desktop 的 `TinkerFin.zip`，解压并将 `TinkerFin.app` 移到“应用程序”。无需安装开发工具或自行编译。
-2. 打开客户端，在菜单栏点击“连接”，填写 Studio 网页地址，再在浏览器登录并授权。API 使用独立地址时，可展开高级设置填写；地址不含 `/api`。
-3. 客户端显示“已连接”后，在 Studio 网页选择本地设备。完整流程见[本机协作指南](../../docs/cn/studio/local_devices.md)。
+2. 打开客户端，在“连接”页填写服务地址，再在浏览器登录并授权。菜单栏图标打开状态浮层，其中的设置按钮进入工作台。API 使用独立地址时可展开填写；地址不含 `/api`。
+3. 客户端显示“已连接”后，在 Studio 网页发起会话；顶部“本机资源”可查看设备状态和当前会话的确认选择。完整流程见[本机协作指南](../../docs/cn/studio/local_devices.md)。
 
 应用使用 ad-hoc 签名，**未通过 Apple 公证**。macOS 阻止打开时，核对下载来源后，在“系统设置 → 隐私与安全性”中找到 TinkerFin 并选择“仍要打开”；不要关闭系统安全保护；操作见 [Apple 说明](https://support.apple.com/en-us/102445)。ZIP 的 SHA-256 文件随发行包提供。
 
-在设置中的服务地址旁点击“更换”可连接其他 Studio；新授权成功后停止原服务的本机执行并切换。地址须使用 HTTPS，HTTP 仅允许本机回环开发地址。网页部署应设置 `VITE_STUDIO_API_ADDRESS`，供客户端发现 API；无法发现时需要手动填写。
+在“连接”页修改服务地址可连接其他 Studio；新授权成功后停止原服务的本机执行并切换。地址须使用 HTTPS，HTTP 仅允许本机回环开发地址。网页部署应设置 `VITE_STUDIO_API_ADDRESS`，供客户端发现 API；无法发现时需要手动填写。
+
+在“我的”查看当前版本并检查更新。确认后客户端下载并校验官方发行包，等本机操作完成后安装、重新启动；开始安装前可以取消。连接授权、本机偏好和未提交的编辑内容会保留。
+
+“我的 → 退出登录”撤销本设备授权并断开连接，不退出浏览器中的 Studio 账号。关闭或最小化工作台会将其收回菜单栏；菜单栏中的“退出”结束整个客户端。
 
 ## 开发与构建
 
-构建需要 Apple Silicon Mac、macOS 15 SDK、Swift 6 和 uv。在仓库根目录执行：
+构建需要 Apple Silicon Mac、macOS 15 SDK、Swift 6、uv、Node.js 22.12+ 和 pnpm 10.8.0。在仓库根目录执行：
 
 ```bash
 uv sync --locked --all-packages
@@ -29,24 +33,29 @@ uv run python -m scripts.desktop_dev
 uv run python apps/desktop/scripts/build_macos.py --output dist/TinkerFin.app
 ```
 
-输出路径及同名 ZIP 必须不存在。构建从当前源码制作 wheel，按 `uv.lock` 安装 Python 依赖，按 npm 锁文件安装官方 Playwright MCP、Playwright 和原生沙箱；无需单独编译浏览器工具。
+输出路径及同名 ZIP 必须不存在。构建从当前源码制作 wheel，按 `uv.lock` 安装 Python 依赖，按 npm 锁文件安装官方 Playwright MCP、Playwright 和原生沙箱，按 `apps/desktop/ui/pnpm-lock.yaml` 构建离线界面。桌面界面使用系统 WebView，源码、依赖与构建均独立于 Studio 网页；无需单独编译浏览器工具。
 
 固定的 Python 3.11.14 与 Node.js 22.23.3 官方分发包缓存在 `~/Library/Caches/TinkerFin/build-inputs`，每次使用均校验 SHA-256，多个工作树可共用。`--cache` 可指定缓存位置；离线时可通过 `--python-archive`、`--node-archive` 指定同一固定分发包。缓存损坏时命令会报出文件路径，移除该文件后重新下载。
 
-输出包含 `.app`、ZIP 和 ZIP 摘要，应用内保存第三方许可证与依赖清单。默认 ad-hoc 签名；构建不会安装或上传产物。替换应用后 macOS 可能要求重新认证 Keychain，完成系统认证后仍无法读取凭证时，重新连接设备。
+输出包含 `.app`、ZIP 和 ZIP 摘要，应用内保存第三方许可证与依赖清单。默认 ad-hoc 签名；构建不会安装或上传产物。客户端内更新会保留设备凭证；手动替换开发包后，如果显示未授权，需要重新连接设备。
 
 ## 发布
 
-`Desktop release` 工作流只由 `desktop-vX.Y.Z` 标签或选择现有标签的手动操作触发。标签版本必须与 `pyproject.toml` 中的桌面版本一致。工作流在 Apple Silicon 上执行检查、构建和完整应用验收，校验上传附件后才公开 Release。普通推送和 PR 只运行受影响的检查。
+`Desktop release` 工作流只由 `desktop-vX.Y.Z` 标签或选择现有标签的手动操作触发。标签版本必须与 `pyproject.toml` 中的桌面版本一致。仓库须配置 `DESKTOP_UPDATE_SIGNING_KEY` Secret（Base64 编码的 Ed25519 私钥），与客户端固定公钥对应。工作流在 Apple Silicon 上执行检查、构建和应用验收，为更新清单签名，校验上传附件后才公开 Release。普通推送和 PR 只运行受影响的检查。
 
 ```bash
-git tag desktop-v0.1.1
-git push origin desktop-v0.1.1
+git tag desktop-v0.1.2
+git push origin desktop-v0.1.2
 ```
 
 ## 验证
 
 ```bash
+pnpm --dir apps/desktop/ui install --frozen-lockfile
+pnpm --dir apps/desktop/ui build
+pnpm --dir apps/desktop/ui test
+pnpm --dir apps/desktop/ui exec playwright install webkit
+pnpm --dir apps/desktop/ui test:browser
 uv run pytest apps/desktop/tests packages/tinkerfin-sandbox/tests/native packages/tinkerfin-remote/tests
 uv run ruff check --no-cache apps/desktop
 uv run ruff format --no-cache --check apps/desktop
@@ -65,7 +74,7 @@ TINKERFIN_TEST_APP='/absolute/path/TinkerFin.app' \
 
 客户端默认读取 `~/.tinkerfin/settings.json`；工具执行状态保存在 `~/.tinkerfin/state/`，技能暂存文件保存在 `~/.tinkerfin/state-inputs/`，设备凭证存放在 Keychain。项目文件位于 `~/.tinkerfin/projects/<服务地址摘要>/<账号命名空间>/<项目 ID>/`，与私有配置和工具执行状态隔离。移除应用不会删除项目文件或工具执行状态。
 
-卸载前在 Studio 的“设置 → 本地设备”中撤销设备授权，在 Mac 菜单栏菜单中选择“退出 TinkerFin”，再移除应用。需要彻底清理状态时，先确认没有仍需核验的操作，再由用户删除应用状态目录、技能暂存目录及 Keychain 中对应的 TinkerFin 设备连接条目。切换账号保留原项目目录，切回原账号继续使用。
+卸载前在客户端“我的”点击“退出登录”撤销授权，也可在 Studio 的“设置 → 本地设备”中撤销；然后在 Mac 菜单栏菜单中选择“退出”，再移除应用。需要彻底清理状态时，先确认没有仍需核验的操作，再由用户删除应用状态目录、技能暂存目录及 Keychain 中对应的 TinkerFin 设备连接条目。切换账号保留原项目目录，切回原账号继续使用。
 
 ## 许可证
 

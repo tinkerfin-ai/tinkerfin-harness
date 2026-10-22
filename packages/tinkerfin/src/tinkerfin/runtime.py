@@ -18,6 +18,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast, overload
 from uuid import uuid4
 
+from deepagents.backends.protocol import BackendProtocol
 from deepagents.graph import DeepAgentState
 from deepagents.middleware.filesystem import FilesystemPermission
 from langchain.agents.middleware import InterruptOnConfig
@@ -948,6 +949,7 @@ class TinkerFin:
         memory: Sequence[str] | None = None,
         permissions: Sequence[FilesystemPermission] | None = None,
         backend: AgentBackend = None,
+        workspaces: Mapping[str, Workspace[object, BackendProtocol]] | None = None,
         interrupt_on: dict[str, bool | InterruptOnConfig] | None = None,
         response_format: ResponseFormatType = None,
         state_schema: type[DeepAgentState] | None = None,
@@ -968,6 +970,7 @@ class TinkerFin:
         memory: Sequence[str] | None = None,
         permissions: Sequence[FilesystemPermission] | None = None,
         backend: AgentBackend = None,
+        workspaces: Mapping[str, Workspace[object, BackendProtocol]] | None = None,
         interrupt_on: dict[str, bool | InterruptOnConfig] | None = None,
         response_format: ResponseFormatType = None,
         state_schema: type[DeepAgentState] | None = None,
@@ -987,6 +990,7 @@ class TinkerFin:
         memory: Sequence[str] | None = None,
         permissions: Sequence[FilesystemPermission] | None = None,
         backend: AgentBackend = None,
+        workspaces: Mapping[str, Workspace[object, BackendProtocol]] | None = None,
         interrupt_on: dict[str, bool | InterruptOnConfig] | None = None,
         response_format: ResponseFormatType = None,
         state_schema: type[DeepAgentState] | None = None,
@@ -1029,7 +1033,18 @@ class TinkerFin:
             memory: Backend files loaded as persistent instructions.
             permissions: File-tool rules. These do not restrict arbitrary shell
                 commands; executable backends only support protected non-shell routes.
-            backend: Borrowed filesystem backend or lazy workspace declaration.
+            backend: Borrowed default filesystem backend or workspace declaration.
+            workspaces: Auxiliary workspaces exposed through ``<name>_tools`` discovery
+                and ``<name>_<tool>`` operations. Names are lowercase identifiers
+                without overlapping prefixes or prefixes of built-in tools.
+                Each resource is prepared on demand
+                and released after the run, including interrupted or cancelled runs.
+                Built-in file permissions apply to the default backend; auxiliary
+                providers enforce their own access. Configure reviews using the
+                prefixed tool names. Declared and general-purpose subagents inherit
+                these resources; compiled and remote agents own their configuration.
+                Auxiliary files must live outside graph state; StateBackend is not
+                supported as an auxiliary filesystem.
             interrupt_on: Tool-review rules requiring a configured checkpointer.
             response_format: Optional structured response schema or strategy.
             state_schema: Additional persistent fields for this agent.
@@ -1057,6 +1072,7 @@ class TinkerFin:
             memory=memory,
             permissions=permissions if permissions is not None else (),
             backend=backend,
+            workspaces={} if workspaces is None else workspaces,
             interrupt_on=interrupt_on,
             response_format=response_format,
             state_schema=state_schema,
@@ -2314,7 +2330,10 @@ class AgentRuntime(Generic[ContextT]):
             identity=identity,
             runtime_profile=self._runtime_profile.profile_id,
         )
-        if isinstance(self._definition._spec.backend, Workspace):
+        if (
+            isinstance(self._definition._spec.backend, Workspace)
+            or self._definition._spec.workspaces
+        ):
             modes = bound.arguments.get("stream_mode", ())
             if isinstance(modes, str):
                 modes = (modes,)

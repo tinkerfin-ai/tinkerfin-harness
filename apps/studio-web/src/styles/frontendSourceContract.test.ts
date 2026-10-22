@@ -107,7 +107,11 @@ describe('前端源码契约', () => {
     expect(invalidComments).toEqual([])
   })
 
-  it('前端产品提示不以全角句号结尾', () => {
+  it('产品短提示不以句号结尾，设备连接说明保留完整句子', () => {
+    const deviceParagraphs = new Set([
+      '在客户端完成授权后，刷新连接状态。', '连接后即可使用已授权的本机资源。',
+      '请在客户端完成连接，然后刷新设备状态。', '撤销后将无法访问此设备，再次使用需重新授权。',
+    ])
     const invalidCopy: string[] = []
     for (const [path, source] of productionSources) {
       const file = parse(path, source)
@@ -116,6 +120,7 @@ describe('前端源码契约', () => {
           (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))
           && /[\u3400-\u9fff]/.test(node.text)
           && /。$/.test(node.text)
+          && !(deviceParagraphs.has(node.text) && (path === '../features/devices/DeviceSettings.tsx' || path === '../i18n/messages.ts'))
         ) {
           const line = file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1
           invalidCopy.push(`${path}:${line}:${node.text}`)

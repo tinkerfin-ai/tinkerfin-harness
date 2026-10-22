@@ -21,6 +21,7 @@ from ._agent_spec import AgentMiddlewareType, AgentSpec, ToolDefinition
 from ._durable_delegation import validate_delegation_retry
 from ._hitl import _as_permissions
 from ._middleware_resources import validate_middleware_resources
+from ._named_workspaces import NamedWorkspaces, validate_workspace_names
 from ._run_resources import RunResources
 from ._state_schema import validate_state_schema
 from ._store import validate_store_backend
@@ -157,6 +158,7 @@ def validate_agent_spec(spec: AgentSpec[ContextT]) -> None:
     validate_state_schema(spec.state_schema, source="Agent state_schema")
     _as_permissions(spec.permissions)
     validate_store_backend(spec.backend)
+    validate_workspace_names(spec.workspaces)
     if spec.backend is not None and not isinstance(
         spec.backend, (BackendProtocol, Workspace)
     ):
@@ -269,6 +271,11 @@ async def prepare_agent_spec(
             identity,
             None if workspace is None else workspace.workspace,
             None if workspace is None else workspace.workspace_scope_id,
+        ),
+        named_workspaces=(
+            resources.own_named_workspaces(NamedWorkspaces(spec.workspaces, identity))
+            if spec.workspaces
+            else None
         ),
     )
     return PreparedAgentSpec(spec.snapshot(), workspace)

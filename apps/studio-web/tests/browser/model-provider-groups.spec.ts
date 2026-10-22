@@ -100,18 +100,11 @@ for (const theme of ['light', 'dark']) {
         await expect(trigger).toContainText(models[0].displayName)
       }
       if (entry === 'conversation') {
-        const access = page.getByRole('button', { name: '选择访问权限', exact: true })
-        const closedIcon = (await access.locator('svg').first().boundingBox())!
-        const gap = (button: typeof access) => button.evaluate(el => {
-          const label = el.querySelector('span')!.getBoundingClientRect()
-          const icons = el.querySelectorAll('svg')
-          return icons[icons.length - 1].getBoundingClientRect().left - label.right
-        })
-        expect(await gap(access)).toBe(await gap(trigger))
-        await access.click()
-        for (const option of await page.getByRole('listbox', { name: '访问权限选项' }).getByRole('option').all()) {
-          expect((await option.locator('svg').first().boundingBox())!.x).toBe(closedIcon.x)
-        }
+        const resources = page.getByRole('button', { name: '本机资源', exact: true })
+        await resources.click()
+        await expect(page.getByRole('heading', { name: '本地设备', exact: true })).toBeVisible()
+        await page.getByRole('dialog', { name: '设置', exact: true }).press('Escape')
+        await expect(resources).toBeFocused()
       }
       expect(errors).toEqual([])
     })

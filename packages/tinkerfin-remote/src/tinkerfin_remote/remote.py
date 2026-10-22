@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -62,6 +63,7 @@ from .models import (
     WorkspaceDescription,
     WorkspaceRequest,
 )
+from .operations import OperationStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +115,30 @@ class RemoteEndpoint:
         if not authorization or len(authorization) > 16_384:
             raise ValueError("authorization must be nonempty bounded text")
         return RemoteWorkspace(self, authorization)
+
+    async def get_operation(self, operation_id: str) -> OperationStatus | None:
+        """Read retained execution evidence without sending any remote command.
+
+        Args:
+            operation_id: Original operation's 64-character hexadecimal identifier.
+
+        Returns:
+            Current evidence for this endpoint, or ``None`` when it has no retained
+            record. Absence, pending delivery, and expired results do not prove
+            nonexecution and must never trigger an automatic replacement call.
+
+        Raises:
+            ValueError: The identifier is malformed.
+            RemoteError: The endpoint is closed or storage cannot be read.
+            asyncio.CancelledError: The caller cancelled the query; accepted
+                database I/O settles before its resources are released.
+        """
+        if re.fullmatch(r"[0-9a-f]{64}", operation_id) is None:
+            raise ValueError(
+                "operation_id must be a 64-character hexadecimal identifier"
+            )
+        await self._prepare()
+        return await self._ledger.inspect_operation(operation_id)
 
     async def _command(self, command: Command) -> str:
         await self._prepare()
@@ -472,6 +498,7 @@ class RemoteEndpoint:
                     self._changed.set()
             return await self._wait_result(request.operation_id)
         except asyncio.CancelledError as error:
+            error.add_note(f"Remote operation ID: {request.operation_id}")
             try:
                 confirmed = await settle(self._cancel(request))
             except Exception as cleanup_error:
@@ -482,8 +509,16 @@ class RemoteEndpoint:
                     "Remote cancellation is durable; endpoint termination is not yet confirmed"
                 )
             raise
-        except Exception:
+        except Exception as error:
             await settle(self._cancel(request))
+            if isinstance(error, RemoteError):
+                raise RemoteError(
+                    error.code,
+                    error.message,
+                    context={**error.context, "operation_id": request.operation_id},
+                    diagnostic_context=error.diagnostic_context,
+                    cause=error.cause or error,
+                ) from (error.cause or error)
             raise
 
     async def _cancel(self, request: OperationRequest) -> bool:
