@@ -172,7 +172,7 @@ test('622×320失效入口回到设备设置，不保留独立结果页', async 
   await expect(page.getByRole('heading', { name: '本地设备' })).toBeVisible()
   await expect(page.locator('.device-authorization')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '打开客户端' })).toBeVisible()
-  await expect(page.getByText('尚未连接设备', { exact: true })).toBeInViewport({ ratio: 1 })
+  await expect(page.getByRole('region', { name: '尚未配置本地设备', exact: true }).getByRole('heading')).toBeInViewport({ ratio: 1 })
   await page.evaluate(() => document.fonts.ready)
   const bounds = (await page.getByRole('dialog', { name: '设置', exact: true }).boundingBox())!
   expect(bounds.y).toBeGreaterThanOrEqual(0)
