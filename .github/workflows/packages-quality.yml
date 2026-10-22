@@ -263,7 +263,11 @@ jobs:
           uv run ruff format --no-cache --check apps/desktop
           uv run pyright apps/desktop/src apps/desktop/tests apps/desktop/scripts
           swiftc -typecheck -swift-version 6 -target arm64-apple-macosx15.0 apps/desktop/native/*.swift
-          swiftc -typecheck -swift-version 6 -target arm64-apple-macosx15.0 $(rg --files apps/desktop/native -g '*.swift' -g '!CompanionApp.swift')
+          native_sources=()
+          for native_source in apps/desktop/native/*.swift; do
+            if [[ "$native_source" != */CompanionApp.swift ]]; then native_sources+=("$native_source"); fi
+          done
+          swiftc -typecheck -swift-version 6 -target arm64-apple-macosx15.0 "${native_sources[@]}" apps/desktop/native/installer/InstallerApp.swift
           uv run pytest apps/desktop/tests packages/tinkerfin-sandbox/tests/native packages/tinkerfin-remote/tests -q
 
   quality-gate:
