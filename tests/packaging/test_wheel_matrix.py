@@ -139,7 +139,7 @@ _CORE_CASES = (
     ),
     _InstallCase(
         "companion-core",
-        "tinkerfin-desktop==0.1.1",
+        "tinkerfin-desktop==0.1.2",
         ("tinkerfin_desktop", "tinkerfin_desktop.host"),
         (
             "tinkerfin-desktop",

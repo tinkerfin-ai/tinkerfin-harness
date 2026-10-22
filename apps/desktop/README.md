@@ -44,8 +44,8 @@ uv run python apps/desktop/scripts/build_macos.py --output dist/TinkerFin.app
 `Desktop release` 工作流只由 `desktop-vX.Y.Z` 标签或选择现有标签的手动操作触发。标签版本必须与 `pyproject.toml` 中的桌面版本一致。仓库须配置 `DESKTOP_UPDATE_SIGNING_KEY` Secret（Base64 编码的 Ed25519 私钥），与客户端固定公钥对应。工作流在 Apple Silicon 上执行检查、构建和应用验收，为更新清单签名，校验上传附件后才公开 Release。普通推送和 PR 只运行受影响的检查。
 
 ```bash
-git tag desktop-v0.1.1
-git push origin desktop-v0.1.1
+git tag desktop-v0.1.2
+git push origin desktop-v0.1.2
 ```
 
 ## 验证
